@@ -10,6 +10,7 @@ use crate::types::{
     WorkspaceVesloConfig,
 };
 use crate::workspace::files::{ensure_workspace_files, seed_soul_templates};
+use crate::workspace::reserved::is_reserved_internal_workspace_dir_name;
 use crate::workspace::state::{
     load_workspace_state, private_workspace_root_from_data_dir, save_workspace_state,
     stable_workspace_id, stable_workspace_id_for_remote, stable_workspace_id_for_veslo,
@@ -446,6 +447,16 @@ pub fn workspace_create(
 ) -> Result<WorkspaceList, String> {
     println!("[workspace] create local request");
     let folder_path = validate_workspace_path(&app, &folder_path, ValidationMode::NotSystemPath)?;
+    if folder_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(is_reserved_internal_workspace_dir_name)
+    {
+        return Err(
+            "This is an internal Veslo/OpenCode directory and cannot be used as a workspace root"
+                .to_string(),
+        );
+    }
     let folder = folder_path.to_string_lossy().to_string();
 
     let workspace_name = name.trim().to_string();

@@ -19,6 +19,7 @@ pub struct VesloServerState {
     pub connect_url: Option<String>,
     pub mdns_url: Option<String>,
     pub lan_url: Option<String>,
+    pub engine_url: Option<String>,
     pub client_token: Option<String>,
     pub host_token: Option<String>,
     pub last_stdout: Option<String>,
@@ -70,6 +71,7 @@ impl VesloServerManager {
             connect_url: state.connect_url.clone(),
             mdns_url: state.mdns_url.clone(),
             lan_url: state.lan_url.clone(),
+            engine_url: state.engine_url.clone(),
             client_token: state.client_token.clone(),
             host_token: state.host_token.clone(),
             pid,
@@ -86,6 +88,7 @@ impl VesloServerManager {
         state.connect_url = None;
         state.mdns_url = None;
         state.lan_url = None;
+        state.engine_url = None;
         // Intentionally keep client_token / host_token / workspace_paths so a
         // subsequent start_veslo_server can decide whether to skip respawn or
         // reuse the existing tokens (avoids the 401 "Invalid bearer token"

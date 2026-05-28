@@ -3372,8 +3372,18 @@ async function runWorkspaceCommand(args: ParsedArgs) {
     }
     if (subcommand === "path") {
       if (!id) throw new Error("workspace id is required");
-      const result = await requestRouter(args, "GET", `/workspaces/${encodeURIComponent(id)}/path`);
-      outputResult({ ok: true, ...result }, outputJson);
+      const result = await requestRouter(args, "GET", `/workspaces/${encodeURIComponent(id)}`);
+      const workspace = (result as { workspace?: RouterWorkspace }).workspace;
+      if (!workspace) throw new Error("workspace not found");
+      outputResult({
+        ok: true,
+        path: {
+          id: workspace.id,
+          directory: workspace.path ?? workspace.directory ?? "",
+          workspaceType: workspace.workspaceType,
+        },
+        workspace,
+      }, outputJson);
       return;
     }
     throw new Error("workspace requires add|add-remote|list|switch|info|path");

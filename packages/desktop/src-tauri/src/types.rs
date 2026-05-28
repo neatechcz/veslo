@@ -101,6 +101,7 @@ pub struct VesloServerInfo {
     pub connect_url: Option<String>,
     pub mdns_url: Option<String>,
     pub lan_url: Option<String>,
+    pub engine_url: Option<String>,
     pub client_token: Option<String>,
     pub host_token: Option<String>,
     pub pid: Option<u32>,

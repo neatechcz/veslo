@@ -191,10 +191,40 @@ fn register_workspace_with_orchestrator(
         "name": name,
     });
 
-    let add_response = ureq::post(&add_url)
+    eprintln!(
+        "[veslo:http] OUT POST {add_url} (orchestrator.add-workspace) path={workspace_path:?}"
+    );
+    let started = Instant::now();
+    let add_response = match ureq::post(&add_url)
         .set("Content-Type", "application/json")
         .send_json(payload)
-        .map_err(|e| format!("Failed to add workspace: {e}"))?;
+    {
+        Ok(r) => {
+            eprintln!(
+                "[veslo:http] IN  {} ({}ms) {add_url} (orchestrator.add-workspace)",
+                r.status(),
+                started.elapsed().as_millis()
+            );
+            r
+        }
+        Err(ureq::Error::Status(code, response)) => {
+            let body = response.into_string().unwrap_or_default();
+            let excerpt: String = body.chars().take(500).collect();
+            eprintln!(
+                "[veslo:http] IN  {code} ({}ms) {add_url} (orchestrator.add-workspace) body={excerpt:?}",
+                started.elapsed().as_millis()
+            );
+            return Err(format!("Failed to add workspace: status {code}: {excerpt}"));
+        }
+        Err(ureq::Error::Transport(t)) => {
+            eprintln!(
+                "[veslo:http] IN  ERR ({}ms) {add_url} (orchestrator.add-workspace) transport={:?}",
+                started.elapsed().as_millis(),
+                t.to_string()
+            );
+            return Err(format!("Failed to add workspace: transport error: {t}"));
+        }
+    };
     let added: OrchestratorWorkspaceResponse = add_response
         .into_json()
         .map_err(|e| format!("Failed to parse orchestrator response: {e}"))?;
@@ -262,10 +292,40 @@ pub async fn orchestrator_workspace_activate(
             base_url.trim_end_matches('/'),
             added.id
         );
-        ureq::post(&activate_url)
+        eprintln!(
+            "[veslo:http] OUT POST {activate_url} (orchestrator.activate) wsId={:?}",
+            added.id
+        );
+        let started = Instant::now();
+        match ureq::post(&activate_url)
             .set("Content-Type", "application/json")
             .send_string("")
-            .map_err(|e| format!("Failed to activate workspace: {e}"))?;
+        {
+            Ok(r) => {
+                eprintln!(
+                    "[veslo:http] IN  {} ({}ms) {activate_url} (orchestrator.activate)",
+                    r.status(),
+                    started.elapsed().as_millis()
+                );
+            }
+            Err(ureq::Error::Status(code, response)) => {
+                let body = response.into_string().unwrap_or_default();
+                let excerpt: String = body.chars().take(500).collect();
+                eprintln!(
+                    "[veslo:http] IN  {code} ({}ms) {activate_url} (orchestrator.activate) body={excerpt:?}",
+                    started.elapsed().as_millis()
+                );
+                return Err(format!("Failed to activate workspace: status {code}: {excerpt}"));
+            }
+            Err(ureq::Error::Transport(t)) => {
+                eprintln!(
+                    "[veslo:http] IN  ERR ({}ms) {activate_url} (orchestrator.activate) transport={:?}",
+                    started.elapsed().as_millis(),
+                    t.to_string()
+                );
+                return Err(format!("Failed to activate workspace: transport error: {t}"));
+            }
+        }
         Ok::<_, String>(added)
     })
     .await

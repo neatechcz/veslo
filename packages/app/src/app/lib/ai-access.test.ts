@@ -216,6 +216,25 @@ test("shouldEnsureManagedAiLocalGateway starts the desktop local gateway for sig
   );
 });
 
+test("resolveManagedAiProviderRoutingTarget keeps the UI URL separate from the engine URL", () => {
+  assert.deepEqual(
+    resolveManagedAiProviderRoutingTarget({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      activeBaseUrl: "http://127.0.0.1:8787",
+      engineBaseUrl: "http://engine-host.internal:8787",
+      activeToken: "local-client-token",
+      gatewayBaseUrl: "",
+      gatewayToken: "",
+    }),
+    {
+      baseUrl: "http://127.0.0.1:8787",
+      engineBaseUrl: "http://engine-host.internal:8787",
+      serverClientToken: "local-client-token",
+    },
+  );
+});
+
 test("resolveManagedAiGatewayBaseUrl keeps desktop local-first even when env config has a remote Veslo URL", () => {
   assert.equal(
     resolveManagedAiGatewayBaseUrl({
@@ -235,6 +254,30 @@ test("resolveManagedAiGatewayBaseUrl keeps desktop local-first even when env con
       isDesktopRuntime: true,
     }),
     "",
+  );
+});
+
+test("formatManagedAiAccessConfig can route provider calls through an engine-reachable base URL", () => {
+  const content = formatManagedAiAccessConfig("{}", {
+    profile: managedCodexProfile,
+    serverBaseUrl: "http://127.0.0.1:8787",
+    engineBaseUrl: "http://engine-host.internal:8787",
+    serverClientToken: "veslo-client-token",
+    gatewayAccessToken: "gateway-access-token",
+  });
+  const parsed = JSON.parse(content) as {
+    provider?: {
+      codex_oauth?: {
+        options?: {
+          baseURL?: string;
+        };
+      };
+    };
+  };
+
+  assert.equal(
+    parsed.provider?.codex_oauth?.options?.baseURL,
+    "http://engine-host.internal:8787/ai-gateway/providers/codex_oauth/v1",
   );
 });
 
@@ -274,6 +317,7 @@ test("resolveManagedAiProviderRoutingTarget keeps desktop local provider routing
     }),
     {
       baseUrl: "http://127.0.0.1:55021",
+      engineBaseUrl: "http://127.0.0.1:55021",
       serverClientToken: "local-client-token",
     },
   );
@@ -291,6 +335,7 @@ test("resolveManagedAiProviderRoutingTarget does not fall back to remote routing
     }),
     {
       baseUrl: "http://127.0.0.1:55021",
+      engineBaseUrl: "http://127.0.0.1:55021",
       serverClientToken: "",
     },
   );
@@ -322,6 +367,7 @@ test("resolveManagedAiProviderRoutingTarget keeps remote routing outside desktop
     }),
     {
       baseUrl: "https://veslo.example.test",
+      engineBaseUrl: "https://veslo.example.test",
       serverClientToken: "remote-client-token",
     },
   );

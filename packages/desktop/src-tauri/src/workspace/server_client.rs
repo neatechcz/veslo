@@ -9,13 +9,14 @@
 // přeskočí. Jakýkoli HTTP error se jen loguje, nikdy se nepropaguje do UI:
 // lokální state už byl uložen, takže pro uživatele operace prošla.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager};
 
 use crate::veslo_server::manager::VesloServerManager;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
+const BODY_EXCERPT_LIMIT: usize = 500;
 
 fn collect_server_state(app: &AppHandle) -> Option<(String, String)> {
     let manager = app.try_state::<VesloServerManager>()?;
@@ -42,6 +43,8 @@ pub fn post_local_workspace(app: &AppHandle, path: &str, name: &str) {
     let url = format!("{}/workspaces/local", base_url.trim_end_matches('/'));
     let payload = serde_json::json!({ "path": path, "name": name });
 
+    crate::flow_log!("[veslo:http] OUT POST {url} (workspace.local) path={path:?}");
+    let started = Instant::now();
     let result = build_agent()
         .post(&url)
         .set("Content-Type", "application/json")
@@ -49,11 +52,34 @@ pub fn post_local_workspace(app: &AppHandle, path: &str, name: &str) {
         .send_string(&payload.to_string());
 
     match result {
-        Ok(_) => {}
-        Err(ureq::Error::Status(409, _)) => {
-            // Workspace already exists server-side — fine.
+        Ok(response) => {
+            crate::flow_log!(
+                "[veslo:http] IN  {} ({}ms) {url} (workspace.local)",
+                response.status(),
+                started.elapsed().as_millis()
+            );
         }
-        Err(e) => eprintln!("[workspace] server POST /workspaces/local failed: {e}"),
+        Err(ureq::Error::Status(409, _)) => {
+            crate::flow_log!(
+                "[veslo:http] IN  409 ({}ms) {url} (workspace.local) already-registered",
+                started.elapsed().as_millis()
+            );
+        }
+        Err(ureq::Error::Status(code, response)) => {
+            let body = response.into_string().unwrap_or_default();
+            let excerpt: String = body.chars().take(BODY_EXCERPT_LIMIT).collect();
+            crate::flow_log!(
+                "[veslo:http] IN  {code} ({}ms) {url} (workspace.local) body={excerpt:?}",
+                started.elapsed().as_millis()
+            );
+        }
+        Err(ureq::Error::Transport(t)) => {
+            crate::flow_log!(
+                "[veslo:http] IN  ERR ({}ms) {url} (workspace.local) transport={:?}",
+                started.elapsed().as_millis(),
+                t.to_string()
+            );
+        }
     }
 }
 
@@ -131,6 +157,8 @@ pub fn patch_workspace(app: &AppHandle, workspace_id: &str, name: &str) {
     );
     let payload = serde_json::json!({ "name": name });
 
+    crate::flow_log!("[veslo:http] OUT PATCH {url} (workspace.rename)");
+    let started = Instant::now();
     let result = build_agent()
         .request("PATCH", &url)
         .set("Content-Type", "application/json")
@@ -138,11 +166,34 @@ pub fn patch_workspace(app: &AppHandle, workspace_id: &str, name: &str) {
         .send_string(&payload.to_string());
 
     match result {
-        Ok(_) => {}
-        Err(ureq::Error::Status(404, _)) => {
-            // Server doesn't know this workspace yet — happens before first POST sync.
+        Ok(response) => {
+            crate::flow_log!(
+                "[veslo:http] IN  {} ({}ms) {url} (workspace.rename)",
+                response.status(),
+                started.elapsed().as_millis()
+            );
         }
-        Err(e) => eprintln!("[workspace] server PATCH /workspaces/{workspace_id} failed: {e}"),
+        Err(ureq::Error::Status(404, _)) => {
+            crate::flow_log!(
+                "[veslo:http] IN  404 ({}ms) {url} (workspace.rename) not-yet-synced",
+                started.elapsed().as_millis()
+            );
+        }
+        Err(ureq::Error::Status(code, response)) => {
+            let body = response.into_string().unwrap_or_default();
+            let excerpt: String = body.chars().take(BODY_EXCERPT_LIMIT).collect();
+            crate::flow_log!(
+                "[veslo:http] IN  {code} ({}ms) {url} (workspace.rename) body={excerpt:?}",
+                started.elapsed().as_millis()
+            );
+        }
+        Err(ureq::Error::Transport(t)) => {
+            crate::flow_log!(
+                "[veslo:http] IN  ERR ({}ms) {url} (workspace.rename) transport={:?}",
+                started.elapsed().as_millis(),
+                t.to_string()
+            );
+        }
     }
 }
 
@@ -157,16 +208,41 @@ pub fn delete_workspace(app: &AppHandle, workspace_id: &str) {
         workspace_id
     );
 
+    crate::flow_log!("[veslo:http] OUT DELETE {url} (workspace.delete)");
+    let started = Instant::now();
     let result = build_agent()
         .delete(&url)
         .set("x-veslo-host-token", &host_token)
         .call();
 
     match result {
-        Ok(_) => {}
-        Err(ureq::Error::Status(404, _)) => {
-            // Already gone server-side — fine.
+        Ok(response) => {
+            crate::flow_log!(
+                "[veslo:http] IN  {} ({}ms) {url} (workspace.delete)",
+                response.status(),
+                started.elapsed().as_millis()
+            );
         }
-        Err(e) => eprintln!("[workspace] server DELETE /workspaces/{workspace_id} failed: {e}"),
+        Err(ureq::Error::Status(404, _)) => {
+            crate::flow_log!(
+                "[veslo:http] IN  404 ({}ms) {url} (workspace.delete) already-gone",
+                started.elapsed().as_millis()
+            );
+        }
+        Err(ureq::Error::Status(code, response)) => {
+            let body = response.into_string().unwrap_or_default();
+            let excerpt: String = body.chars().take(BODY_EXCERPT_LIMIT).collect();
+            crate::flow_log!(
+                "[veslo:http] IN  {code} ({}ms) {url} (workspace.delete) body={excerpt:?}",
+                started.elapsed().as_millis()
+            );
+        }
+        Err(ureq::Error::Transport(t)) => {
+            crate::flow_log!(
+                "[veslo:http] IN  ERR ({}ms) {url} (workspace.delete) transport={:?}",
+                started.elapsed().as_millis(),
+                t.to_string()
+            );
+        }
     }
 }

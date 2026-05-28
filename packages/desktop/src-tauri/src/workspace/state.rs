@@ -8,6 +8,7 @@ use tauri::Manager;
 use crate::types::{
     RemoteType, WorkspaceInfo, WorkspaceState, WorkspaceType, WORKSPACE_STATE_VERSION,
 };
+use crate::workspace::reserved::is_reserved_internal_workspace_dir_name;
 
 // Match orchestrator's workspaceIdForLocal in packages/orchestrator/src/cli.ts.
 // SHA1(path) truncated to 12 hex chars produces a deterministic ID that stays
@@ -166,6 +167,63 @@ fn workspace_exists_by_id_or_identity(
     !identity.trim().is_empty() && seen_identity.contains(&identity)
 }
 
+fn normalized_local_path_key(path: &str) -> String {
+    let mut normalized = path.trim().replace('\\', "/");
+    while normalized.ends_with('/') {
+        normalized.pop();
+    }
+    normalized.to_ascii_lowercase()
+}
+
+fn reserved_internal_child_parent_key(path: &str) -> Option<String> {
+    let normalized = normalized_local_path_key(path);
+    let (parent, leaf) = normalized.rsplit_once('/')?;
+    if is_reserved_internal_workspace_dir_name(leaf) && !parent.is_empty() {
+        Some(parent.to_string())
+    } else {
+        None
+    }
+}
+
+fn prune_reserved_internal_child_workspaces(state: &mut WorkspaceState) -> bool {
+    let mut local_workspace_by_path = std::collections::HashMap::<String, String>::new();
+    for workspace in &state.workspaces {
+        if workspace.workspace_type != WorkspaceType::Local {
+            continue;
+        }
+        let path_key = normalized_local_path_key(&workspace.path);
+        if !path_key.is_empty() {
+            local_workspace_by_path.insert(path_key, workspace.id.clone());
+        }
+    }
+
+    let mut changed = false;
+    let mut active_replacement: Option<String> = None;
+    state.workspaces.retain(|workspace| {
+        if workspace.workspace_type != WorkspaceType::Local {
+            return true;
+        }
+        let Some(parent_key) = reserved_internal_child_parent_key(&workspace.path) else {
+            return true;
+        };
+        let Some(parent_id) = local_workspace_by_path.get(&parent_key) else {
+            return true;
+        };
+        if state.active_id == workspace.id {
+            active_replacement = Some(parent_id.clone());
+        }
+        changed = true;
+        false
+    });
+
+    if let Some(parent_id) = active_replacement {
+        state.active_id = parent_id;
+        changed = true;
+    }
+
+    changed
+}
+
 fn merge_workspace_states(base: &mut WorkspaceState, imported: Vec<WorkspaceState>) -> bool {
     let mut changed = false;
     let mut seen_ids = HashSet::new();
@@ -292,6 +350,11 @@ fn load_workspace_state_from_paths(
         }
     }
 
+    if prune_reserved_internal_child_workspaces(&mut state) {
+
+        changed = true;
+    }
+
     let active_is_valid = state
         .workspaces
         .iter()
@@ -357,7 +420,7 @@ pub fn stable_workspace_id_for_veslo(host_url: &str, workspace_id: Option<&str>)
 mod tests {
     use super::{
         legacy_state_candidates, load_workspace_state_from_paths,
-        private_workspace_root_from_data_dir, try_load_legacy_workspace_state,
+        private_workspace_root_from_data_dir, stable_workspace_id, try_load_legacy_workspace_state,
     };
     use crate::types::{RemoteType, WorkspaceInfo, WorkspaceState, WorkspaceType};
     use std::fs;
@@ -555,6 +618,48 @@ mod tests {
             .expect("load merged state");
         assert_eq!(loaded.workspaces.len(), 1);
         assert_eq!(loaded.workspaces[0].id, "ws-local-a");
+
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn load_workspace_state_prunes_internal_opencode_child_workspace() {
+        let root = temp_root("prune-opencode-child");
+        let current_data_dir = root.join("com.neatech.veslo.dev");
+        let current_state_path = current_data_dir.join("veslo-workspaces.json");
+        let workspace_root = root.join("project");
+        let opencode_root = workspace_root.join(".opencode");
+        fs::create_dir_all(&opencode_root).expect("create workspace dirs");
+
+        let workspace_path = workspace_root.to_string_lossy().to_string();
+        let opencode_path = opencode_root.to_string_lossy().to_string();
+        let workspace_id = stable_workspace_id(&workspace_path);
+        let opencode_id = stable_workspace_id(&opencode_path);
+
+        write_state(
+            &current_state_path,
+            &WorkspaceState {
+                version: 4,
+                active_id: opencode_id.clone(),
+                workspaces: vec![
+                    local_workspace(&opencode_id, ".opencode", &opencode_path),
+                    local_workspace(&workspace_id, "project", &workspace_path),
+                ],
+            },
+        );
+
+        let loaded = load_workspace_state_from_paths(&current_data_dir, &current_state_path)
+            .expect("load migrated state");
+        assert_eq!(loaded.active_id, workspace_id);
+        assert_eq!(loaded.workspaces.len(), 1);
+        assert_eq!(loaded.workspaces[0].path, workspace_path);
+
+        let persisted = fs::read_to_string(&current_state_path).expect("read persisted state");
+        let parsed: WorkspaceState =
+            serde_json::from_str(&persisted).expect("parse persisted state");
+        assert_eq!(parsed.active_id, workspace_id);
+        assert_eq!(parsed.workspaces.len(), 1);
+        assert_eq!(parsed.workspaces[0].path, workspace_path);
 
         fs::remove_dir_all(root).expect("cleanup temp dir");
     }

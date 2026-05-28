@@ -111,6 +111,7 @@ fn sanitize_live_info_with_health(
     info.connect_url = None;
     info.mdns_url = None;
     info.lan_url = None;
+    info.engine_url = None;
     info.client_token = None;
     info.host_token = None;
     info.pid = None;
@@ -314,6 +315,7 @@ mod tests {
             connect_url: Some("http://192.168.0.10:8787".to_string()),
             mdns_url: Some("http://veslo.local:8787".to_string()),
             lan_url: Some("http://192.168.0.10:8787".to_string()),
+            engine_url: Some("http://engine-host.internal:8787".to_string()),
             client_token: Some("client-token".to_string()),
             host_token: Some("host-token".to_string()),
             pid: Some(12345),
@@ -347,6 +349,7 @@ mod tests {
         assert_eq!(sanitized.connect_url, info.connect_url);
         assert_eq!(sanitized.mdns_url, info.mdns_url);
         assert_eq!(sanitized.lan_url, info.lan_url);
+        assert_eq!(sanitized.engine_url, info.engine_url);
         assert_eq!(sanitized.client_token, info.client_token);
         assert_eq!(sanitized.host_token, info.host_token);
         assert_eq!(sanitized.pid, info.pid);
