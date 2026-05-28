@@ -2,7 +2,6 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::commands::opencode_router::opencodeRouter_start;
 use crate::commands::orchestrator::reconcile_orchestrator_workspaces;
-use crate::workspace::server_client::reconcile_server_workspaces;
 use crate::config::{read_opencode_config, write_opencode_config};
 use crate::engine::doctor::{
     opencode_serve_help, opencode_version, resolve_engine_path, resolve_sidecar_candidate,
@@ -20,6 +19,7 @@ use crate::utils::truncate_output;
 use crate::veslo_server::{
     manager::VesloServerManager, persisted_veslo_server_plugin_state_path, start_veslo_server,
 };
+use crate::workspace::server_client::reconcile_server_workspaces;
 use serde_json::json;
 use std::time::Duration;
 use uuid::Uuid;
@@ -278,7 +278,9 @@ pub fn engine_info(
                 .find(|ws| ws.path.trim_end_matches('/') == normalized)
         });
         let resolved_ws = by_id.or(by_path);
-        let resolved_ws_id = resolved_ws.map(|ws| ws.id.clone()).unwrap_or_else(|| ws_id.clone());
+        let resolved_ws_id = resolved_ws
+            .map(|ws| ws.id.clone())
+            .unwrap_or_else(|| ws_id.clone());
         let engine = status
             .engines
             .iter()
@@ -822,13 +824,7 @@ pub fn engine_start(
             .daemon
             .as_ref()
             .map(|d| d.port)
-            .unwrap_or_else(|| {
-                health
-                    .opencode
-                    .as_ref()
-                    .map(|o| o.port)
-                    .unwrap_or(0)
-        });
+            .unwrap_or_else(|| health.opencode.as_ref().map(|o| o.port).unwrap_or(0));
         let active_ws_id = health.active_id.clone();
         let opencode_port = health
             .opencode

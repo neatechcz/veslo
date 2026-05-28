@@ -9,13 +9,10 @@ pub fn opkg_install(
     project_dir: String,
     package: String,
 ) -> Result<ExecResult, String> {
-    let project_dir = validate_workspace_path(
-        &app,
-        &project_dir,
-        ValidationMode::IsRegisteredWorkspace,
-    )?
-    .to_string_lossy()
-    .to_string();
+    let project_dir =
+        validate_workspace_path(&app, &project_dir, ValidationMode::IsRegisteredWorkspace)?
+            .to_string_lossy()
+            .to_string();
 
     let package = package.trim().to_string();
     if package.is_empty() {
@@ -32,13 +29,9 @@ pub fn import_skill(
     source_dir: String,
     overwrite: bool,
 ) -> Result<ExecResult, String> {
-    let project_dir = validate_workspace_path(
-        &app,
-        &project_dir,
-        ValidationMode::IsRegisteredWorkspace,
-    )?;
-    let src =
-        validate_workspace_path(&app, &source_dir, ValidationMode::InAuthorizedRoot)?;
+    let project_dir =
+        validate_workspace_path(&app, &project_dir, ValidationMode::IsRegisteredWorkspace)?;
+    let src = validate_workspace_path(&app, &source_dir, ValidationMode::InAuthorizedRoot)?;
 
     let name = src
         .file_name()

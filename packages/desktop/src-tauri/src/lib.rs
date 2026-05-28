@@ -153,7 +153,10 @@ fn kill_orphan_sidecars() {
     use std::process::Command;
 
     let my_pid = std::process::id().to_string();
-    let my_pgid = match Command::new("ps").args(["-o", "pgid=", "-p", &my_pid]).output() {
+    let my_pgid = match Command::new("ps")
+        .args(["-o", "pgid=", "-p", &my_pid])
+        .output()
+    {
         Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         Err(_) => return,
     };
@@ -162,7 +165,10 @@ fn kill_orphan_sidecars() {
     }
 
     let output = match Command::new("pgrep")
-        .args(["-f", "veslo-server|veslo-orchestrator|veslo-code-router|veslo-code"])
+        .args([
+            "-f",
+            "veslo-server|veslo-orchestrator|veslo-code-router|veslo-code",
+        ])
         .output()
     {
         Ok(o) => o,

@@ -217,13 +217,10 @@ pub fn opencodeRouter_start(
     opencode_password: Option<String>,
     health_port: Option<u16>,
 ) -> Result<OpenCodeRouterInfo, String> {
-    let workspace_path = validate_workspace_path(
-        &app,
-        &workspace_path,
-        ValidationMode::IsRegisteredWorkspace,
-    )?
-    .to_string_lossy()
-    .to_string();
+    let workspace_path =
+        validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?
+            .to_string_lossy()
+            .to_string();
 
     let mut state = manager
         .inner

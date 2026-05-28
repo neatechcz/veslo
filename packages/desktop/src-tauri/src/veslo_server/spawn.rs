@@ -115,10 +115,14 @@ fn detect_zombie_veslo_server_pids(port: u16) -> Vec<u32> {
 
 fn kill_pid(pid: u32) {
     use std::process::Command;
-    let _ = Command::new("kill").args(["-TERM", &pid.to_string()]).status();
+    let _ = Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .status();
     // Give the process a moment to clean up, then force-kill if still alive.
     std::thread::sleep(std::time::Duration::from_millis(250));
-    let _ = Command::new("kill").args(["-KILL", &pid.to_string()]).status();
+    let _ = Command::new("kill")
+        .args(["-KILL", &pid.to_string()])
+        .status();
 }
 
 fn reclaim_default_veslo_port_from_zombies(port: u16) {

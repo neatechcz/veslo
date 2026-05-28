@@ -270,8 +270,7 @@ fn load_workspace_state_from_paths(
     // workspace switches hang in "connecting" forever. We map old ID → new ID
     // and rewrite both the workspaces table and active_id so the rest of the
     // app sees a self-consistent state.
-    let mut id_remap: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
+    let mut id_remap: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for workspace in state.workspaces.iter_mut() {
         if workspace.workspace_type != WorkspaceType::Local {
             continue;

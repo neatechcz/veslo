@@ -3,10 +3,11 @@ use tauri::{AppHandle, State};
 use crate::engine::manager::EngineManager;
 use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::types::{VesloServerInfo, WorkspaceState, WorkspaceType};
+use crate::utils::truncate_output;
 use crate::veslo_server::manager::VesloServerManager;
 use crate::veslo_server::{
-    clear_persisted_veslo_server_info, recover_persisted_veslo_server_info,
-    server_health_identity, start_veslo_server, HealthIdentity,
+    clear_persisted_veslo_server_info, recover_persisted_veslo_server_info, server_health_identity,
+    start_veslo_server, HealthIdentity,
 };
 use crate::workspace::state::load_workspace_state;
 

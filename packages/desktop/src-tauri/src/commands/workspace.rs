@@ -717,16 +717,9 @@ pub fn workspace_add_authorized_root(
     workspace_path: String,
     folder_path: String,
 ) -> Result<ExecResult, String> {
-    let workspace_path = validate_workspace_path(
-        &app,
-        &workspace_path,
-        ValidationMode::IsRegisteredWorkspace,
-    )?;
-    let folder_path = validate_workspace_path(
-        &app,
-        &folder_path,
-        ValidationMode::NotSystemPath,
-    )?;
+    let workspace_path =
+        validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?;
+    let folder_path = validate_workspace_path(&app, &folder_path, ValidationMode::NotSystemPath)?;
     let workspace_path_str = workspace_path.to_string_lossy().to_string();
     let folder_path_str = folder_path.to_string_lossy().to_string();
 
@@ -743,13 +736,21 @@ pub fn workspace_add_authorized_root(
         serde_json::from_str(&raw).unwrap_or_default()
     } else {
         let mut cfg = WorkspaceVesloConfig::default();
-        if !cfg.authorized_roots.iter().any(|p| p == &workspace_path_str) {
+        if !cfg
+            .authorized_roots
+            .iter()
+            .any(|p| p == &workspace_path_str)
+        {
             cfg.authorized_roots.push(workspace_path_str.clone());
         }
         cfg
     };
 
-    if !config.authorized_roots.iter().any(|p| p == &folder_path_str) {
+    if !config
+        .authorized_roots
+        .iter()
+        .any(|p| p == &folder_path_str)
+    {
         config.authorized_roots.push(folder_path_str);
     }
 
@@ -772,11 +773,8 @@ pub fn workspace_veslo_read(
     app: tauri::AppHandle,
     workspace_path: String,
 ) -> Result<WorkspaceVesloConfig, String> {
-    let workspace_path = validate_workspace_path(
-        &app,
-        &workspace_path,
-        ValidationMode::IsRegisteredWorkspace,
-    )?;
+    let workspace_path =
+        validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?;
 
     let veslo_path = workspace_path.join(".opencode").join("veslo.json");
 
@@ -800,11 +798,8 @@ pub fn workspace_veslo_write(
     workspace_path: String,
     config: WorkspaceVesloConfig,
 ) -> Result<ExecResult, String> {
-    let workspace_path = validate_workspace_path(
-        &app,
-        &workspace_path,
-        ValidationMode::IsRegisteredWorkspace,
-    )?;
+    let workspace_path =
+        validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?;
 
     let veslo_path = workspace_path.join(".opencode").join("veslo.json");
 
@@ -982,8 +977,7 @@ pub fn workspace_export_config(
     if workspace_id.is_empty() {
         return Err("workspaceId is required".to_string());
     }
-    let output_path =
-        validate_workspace_path(&app, &output_path, ValidationMode::NotSystemPath)?;
+    let output_path = validate_workspace_path(&app, &output_path, ValidationMode::NotSystemPath)?;
 
     let state = load_workspace_state(&app)?;
     let workspace = state
