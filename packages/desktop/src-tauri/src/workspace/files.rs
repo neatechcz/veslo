@@ -560,7 +560,11 @@ pub fn ensure_workspace_files(
     let mut config: serde_json::Value = if config_exists {
         let raw = fs::read_to_string(&config_path)
             .map_err(|e| format!("Failed to read {}: {e}", config_path.display()))?;
-        json5::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}))
+        let sanitized = crate::config::strip_trailing_nul_padding(raw.clone());
+        if sanitized.len() != raw.len() {
+            config_changed = true;
+        }
+        json5::from_str(&sanitized).unwrap_or_else(|_| serde_json::json!({}))
     } else {
         serde_json::json!({
           "$schema": "https://opencode.ai/config.json"

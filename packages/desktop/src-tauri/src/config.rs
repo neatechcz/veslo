@@ -4,6 +4,28 @@ use std::path::PathBuf;
 use crate::paths::xdg_config_home;
 use crate::types::{ExecResult, OpencodeConfigFile};
 
+pub(crate) fn strip_trailing_nul_padding(mut content: String) -> String {
+    if !content.as_bytes().contains(&0) {
+        return content;
+    }
+
+    let bytes = content.as_bytes();
+    let mut suffix_start = bytes.len();
+    while suffix_start > 0 && matches!(bytes[suffix_start - 1], b' ' | b'\t' | b'\r' | b'\n') {
+        suffix_start -= 1;
+    }
+
+    let mut nul_start = suffix_start;
+    while nul_start > 0 && bytes[nul_start - 1] == 0 {
+        nul_start -= 1;
+    }
+
+    if nul_start < suffix_start {
+        content.replace_range(nul_start..suffix_start, "");
+    }
+    content
+}
+
 fn opencode_config_candidates(
     scope: &str,
     project_dir: &str,
@@ -46,10 +68,9 @@ pub fn read_opencode_config(scope: &str, project_dir: &str) -> Result<OpencodeCo
     let exists = path.exists();
 
     let content = if exists {
-        Some(
-            fs::read_to_string(&path)
-                .map_err(|e| format!("Failed to read {}: {e}", path.display()))?,
-        )
+        let raw = fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+        Some(strip_trailing_nul_padding(raw))
     } else {
         None
     };
@@ -73,7 +94,8 @@ pub fn write_opencode_config(
             .map_err(|e| format!("Failed to create config dir {}: {e}", parent.display()))?;
     }
 
-    fs::write(&path, content).map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
+    fs::write(&path, strip_trailing_nul_padding(content.to_string()))
+        .map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
 
     Ok(ExecResult {
         ok: true,
@@ -105,6 +127,22 @@ mod tests {
                 .join(".config")
                 .join("opencode")
                 .join("opencode.jsonc")
+        );
+    }
+
+    #[test]
+    fn strips_trailing_nul_padding_before_final_whitespace() {
+        assert_eq!(
+            strip_trailing_nul_padding("{\"ok\":true}\0\0\n".to_string()),
+            "{\"ok\":true}\n"
+        );
+    }
+
+    #[test]
+    fn keeps_embedded_nul_invalid() {
+        assert_eq!(
+            strip_trailing_nul_padding("{\"bad\":\"\0\"}\n".to_string()),
+            "{\"bad\":\"\0\"}\n"
         );
     }
 }
