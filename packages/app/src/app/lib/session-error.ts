@@ -1,3 +1,5 @@
+import { formatManagedAiAccessError } from "./ai-gateway-errors";
+
 const truncateErrorField = (value: unknown, max = 500) => {
   if (typeof value !== "string") return null;
   const text = value.trim();
@@ -119,6 +121,9 @@ const isInvalidFileInputError = (options: {
 };
 
 export const formatSessionError = (errorObj: Record<string, unknown>) => {
+  const managedAiAccessError = formatManagedAiAccessError(errorObj);
+  if (managedAiAccessError) return managedAiAccessError;
+
   const records = getNestedRecords(errorObj);
   const errorName = typeof errorObj.name === "string" ? errorObj.name : "UnknownError";
   const rawMessage = firstStringField(records, ["message", "detail", "reason"]);

@@ -1,6 +1,10 @@
+import { formatManagedAiAccessError } from "./ai-gateway-errors";
 import { safeStringify } from "../utils";
 
 export const describeRequestError = (error: unknown, fallback: string): string => {
+  const managedAiAccessError = formatManagedAiAccessError(error);
+  if (managedAiAccessError) return managedAiAccessError;
+
   const readString = (value: unknown, max = 700) => {
     if (typeof value !== "string") return null;
     const trimmed = value.trim();

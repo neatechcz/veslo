@@ -2255,6 +2255,7 @@ export default function App() {
         sessionID,
         message,
       });
+      setError(addOpencodeCacheHint(message));
       sessionStore.appendSessionErrorTurn(sessionID, addOpencodeCacheHint(message));
       return false;
     } finally {

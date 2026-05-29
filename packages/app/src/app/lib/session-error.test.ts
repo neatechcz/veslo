@@ -37,3 +37,37 @@ test("non-file API errors retain standard API diagnostics", () => {
   assert.match(text, /^Rate limit exceeded/);
   assert.match(text, /Retryable: yes/);
 });
+
+test("managed Codex credential failures are mapped to actionable AI access guidance", () => {
+  const text = formatSessionError({
+    name: "APIError",
+    message: "AI gateway upstream request failed",
+    data: {
+      statusCode: 502,
+      responseBody: JSON.stringify({
+        code: "ai_gateway_upstream_failed",
+        message: "AI gateway upstream request failed",
+        details: {
+          provider: "codex_oauth",
+          upstreamStatus: 503,
+          upstreamResponse: JSON.stringify({
+            error: "no_eligible_codex_credentials",
+            reason: "no_eligible_binding",
+            provider: "codex_oauth",
+          }),
+        },
+      }),
+    },
+  });
+
+  assert.equal(
+    text,
+    [
+      "AI access unavailable",
+      "No eligible Codex credential is available for your account. Ask an admin to assign or refresh Codex AI access, then retry.",
+      "Provider: codex_oauth",
+      "Reason: no_eligible_binding",
+    ].join("\n"),
+  );
+  assert.equal(text.includes("Response:"), false);
+});
