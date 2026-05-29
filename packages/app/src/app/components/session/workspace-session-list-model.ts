@@ -548,10 +548,20 @@ export const filterVisibleProjectGroups = (
   shouldShowSessionRow: (row: FlatSessionRow) => boolean,
 ): ProjectSessionGroup[] =>
   projectGroups
-    .map((group) => ({
-      ...group,
-      sessions: group.sessions.filter((row) => shouldShowSessionRow(row)),
-    }))
+    .map((group) => {
+      const sessions = group.sessions.filter((row) => shouldShowSessionRow(row));
+      const becameEmptyLocalProject =
+        group.sessions.length > 0 &&
+        sessions.length === 0 &&
+        group.workspace.workspaceType === "local" &&
+        !group.isPrivateProject;
+
+      return {
+        ...group,
+        sessions,
+        isWorkspaceOnlyProject: group.isWorkspaceOnlyProject || becameEmptyLocalProject,
+      };
+    })
     .filter((group) => group.sessions.length > 0 || group.isWorkspaceOnlyProject);
 
 export const buildRecentRows = (

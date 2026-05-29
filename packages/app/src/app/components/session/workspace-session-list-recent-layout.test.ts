@@ -37,6 +37,28 @@ test("recent mode renders from recentRowsVisible without using the chat project 
   );
 });
 
+test("recent mode falls back to visible empty local workspaces", () => {
+  const recentBranch = recentRenderBranch();
+
+  assert.match(
+    source,
+    /const recentFallbackProjectGroups = createMemo\(\(\) =>/,
+    "recent mode should derive a fallback list from visible empty local workspace groups",
+  );
+
+  assert.match(
+    source,
+    /: recentRowsTreeVisible\(\)\.length > 0 \|\| recentFallbackProjectGroups\(\)\.length > 0/,
+    "recent mode should treat visible empty local workspaces as sidebar content",
+  );
+
+  assert.match(
+    recentBranch,
+    /<Show when=\{recentRowsVisible\(\)\.length === 0\}>[\s\S]*<For each=\{recentFallbackProjectGroups\(\)\}>/,
+    "recent mode should render empty local workspaces when no recent rows remain visible",
+  );
+});
+
 test("recent show-less memo reads its baseline only after the helper is declared", () => {
   const showLessMemoIndex = source.indexOf("const recentCanShowLess = createMemo(() =>");
   const baselineHelperIndex = source.indexOf("const initialRecentVisibleCount = () =>");

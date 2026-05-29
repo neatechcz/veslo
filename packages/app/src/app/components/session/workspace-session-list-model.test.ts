@@ -715,6 +715,36 @@ test("filterVisibleProjectGroups keeps empty workspace-only projects visible", (
   assert.equal(visibleGroups[0].projectLabel, "Company searcher");
 });
 
+test("filterVisibleProjectGroups keeps a local workspace visible when its last session is filtered out", () => {
+  const groups = buildProjectGroups([
+    {
+      workspace: {
+        id: "weather-veslo",
+        name: "Weather - Veslo",
+        path: "/Users/test/projects/Weather - Veslo",
+        preset: "starter",
+        workspaceType: "local" as const,
+      },
+      sessions: [
+        {
+          id: "archived-session",
+          title: "Archived session",
+          directory: "/Users/test/projects/Weather - Veslo",
+          time: { created: 100, updated: 200 },
+        },
+      ],
+      status: "ready",
+    },
+  ]);
+
+  const visibleGroups = filterVisibleProjectGroups(groups, () => false);
+
+  assert.equal(visibleGroups.length, 1);
+  assert.equal(visibleGroups[0].projectLabel, "Weather - Veslo");
+  assert.equal(visibleGroups[0].sessions.length, 0);
+  assert.equal(visibleGroups[0].isWorkspaceOnlyProject, true);
+});
+
 test("buildProjectGroups keeps empty private workspaces hidden", () => {
   const privateRoot = "/Users/test/.veslo/workspaces/private";
   const isPrivateWorkspacePath = (folder: string | null | undefined) =>

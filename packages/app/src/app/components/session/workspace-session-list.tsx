@@ -305,6 +305,9 @@ export default function WorkspaceSessionList(props: Props) {
   const projectSidebarSplit = createMemo(() => splitProjectGroupsForSidebar(allProjectModeGroups()));
   const normalProjectGroups = createMemo(() => projectSidebarSplit().projectGroups);
   const chatProjectGroup = createMemo(() => projectSidebarSplit().chatGroup);
+  const recentFallbackProjectGroups = createMemo(() =>
+    normalProjectGroups().filter((group) => group.isWorkspaceOnlyProject && group.sessions.length === 0),
+  );
 
   const recentHierarchy = createMemo(() => buildRowHierarchyLookup(visibleRecentRows()));
 
@@ -562,7 +565,7 @@ export default function WorkspaceSessionList(props: Props) {
   const hasVisibleRows = createMemo(() =>
     sidebarMode() === "by-project"
       ? normalProjectGroups().length > 0 || Boolean(chatProjectGroup())
-      : recentRowsTreeVisible().length > 0,
+      : recentRowsTreeVisible().length > 0 || recentFallbackProjectGroups().length > 0,
   );
 
   const sessionDecorationFor = (sessionId: string): SidebarSubagentDecoration | null => {
@@ -1770,6 +1773,108 @@ export default function WorkspaceSessionList(props: Props) {
                       );
                     }}
                   </For>
+                  <Show when={recentRowsVisible().length === 0}>
+                    <For each={recentFallbackProjectGroups()}>
+                      {(project) => {
+                        const workspace = () => project.workspace;
+                        const isActiveWorkspace = () => props.activeWorkspaceId === workspace().id;
+                        const isConnecting = () => isConnectingWorkspace(workspace().id);
+                        const canRecover = () => canRecoverWorkspace(workspace());
+                        const soulStatus = () => props.soulStatusByWorkspaceId[workspace().id] ?? null;
+                        const soulEnabled = () => Boolean(soulStatus()?.enabled);
+                        const taskLoadError = () => taskLoadErrorFor(workspace(), project.error);
+                        const isConnectionActionBusy = () => isConnectionActionBusyFor(workspace().id);
+                        const anchorKey = `recent-project:${workspace().id}`;
+
+                        return (
+                          <div class="group relative rounded-lg transition-colors">
+                            <div class="relative flex items-start gap-2">
+                              <button
+                                type="button"
+                                class={`min-w-0 flex-1 rounded-lg px-1.5 py-1 text-left transition-colors ${
+                                  isActiveWorkspace()
+                                    ? "text-gray-12"
+                                    : "text-gray-11 hover:text-gray-12 hover:bg-gray-2/70"
+                                }`}
+                                title={project.projectTitle}
+                                aria-label={project.projectLabel
+                                  ? `${tr("sidebar.open_project")} ${project.projectLabel}`
+                                  : tr("sidebar.open_project")}
+                                onClick={() => props.onOpenPendingDirectoryDraftInWorkspace(workspace().id)}
+                              >
+                                <div class="flex items-center gap-2 min-w-0">
+                                  <Folder size={13} class="shrink-0 text-gray-8" />
+                                  <span class="truncate text-[12px] font-semibold text-gray-10">
+                                    {project.projectLabel || workspaceLabel(workspace())}
+                                  </span>
+                                  <Show when={workspace().workspaceType === "remote"}>
+                                    <span class="shrink-0 text-[10px] text-gray-8 uppercase tracking-[0.12em]">
+                                      {workspaceKindLabel(workspace())}
+                                    </span>
+                                  </Show>
+                                  <Show when={soulEnabled()}>
+                                    <span class="inline-flex items-center gap-1 rounded-full border border-ruby-7 bg-ruby-3 px-1.5 py-0.5 text-[10px] text-ruby-11">
+                                      <HeartPulse size={10} />
+                                      {tr("sidebar.soul_badge")}
+                                    </span>
+                                  </Show>
+                                  <Show when={isConnecting()}>
+                                    <Loader2 size={11} class="animate-spin text-gray-10" />
+                                  </Show>
+                                  <Show when={project.status === "error"}>
+                                    <span
+                                      class={`text-[10px] px-1.5 py-0.5 rounded-full border ${
+                                        taskLoadError().tone === "offline"
+                                          ? "border-amber-7 text-amber-11 bg-amber-3"
+                                          : "border-red-7 text-red-11 bg-red-3"
+                                      }`}
+                                      title={taskLoadError().title}
+                                    >
+                                      {taskLoadError().label}
+                                    </span>
+                                  </Show>
+                                </div>
+                              </button>
+
+                              <div class="flex items-center gap-1 shrink-0">
+                                <button
+                                  type="button"
+                                  class="p-1 rounded-md text-gray-8 hover:text-gray-11 hover:bg-gray-3"
+                                  onClick={() => props.onOpenPendingDirectoryDraftInWorkspace(workspace().id)}
+                                  aria-label={tr("sidebar.create_session_in_project")}
+                                  title={tr("sidebar.create_session_in_project")}
+                                >
+                                  <Plus size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  class="p-1 rounded-md text-gray-8 hover:text-gray-11 hover:bg-gray-3 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setWorkspaceMenuTarget((current) =>
+                                      current?.anchorKey === anchorKey
+                                        ? null
+                                        : { workspaceId: workspace().id, anchorKey, source: "workspace" },
+                                    );
+                                  }}
+                                  aria-label={tr("sidebar.workspace_options")}
+                                >
+                                  <MoreHorizontal size={14} />
+                                </button>
+                              </div>
+                              {workspaceMenu(
+                                workspace(),
+                                anchorKey,
+                                soulEnabled(),
+                                canRecover(),
+                                isConnectionActionBusy(),
+                              )}
+                            </div>
+                          </div>
+                        );
+                      }}
+                    </For>
+                  </Show>
                 </div>
                 <Show when={sidebarMode() === "recent"}>
                   <div ref={(el) => (recentSentinelRef = el)} class="h-0.5 w-full" />

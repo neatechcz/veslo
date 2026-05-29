@@ -159,6 +159,8 @@ Main model source:
 
 Session archive behavior removes sessions from the active primary list and exposes archived items through Settings.
 
+Archiving the last visible session must not hide a local non-private workspace. The sidebar keeps the empty workspace visible as a workspace-only project so the user can create a new session, open workspace actions, or re-add the same directory without the app appearing to do nothing. This applies in by-project mode and as a Recent-mode fallback when no recent rows remain visible.
+
 In local desktop mode, archive state can be persisted through the local Veslo server without a cloud sign-in by using a local desktop archive owner key. Remote/cloud archive state still requires a stable signed-in account identity so records do not mix across users.
 
 If archive semantics change, update this doc and `docs/features/settings-and-preferences.md`.
