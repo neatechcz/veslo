@@ -418,9 +418,20 @@ async function runCodexExecRateLimitProbe(input: {
       updatedAuthJson,
     };
   } finally {
-    await rm(codexHome, { recursive: true, force: true });
-    await rm(scratchDir, { recursive: true, force: true });
+    await Promise.all([
+      removeTemporaryProbeDirectory(codexHome),
+      removeTemporaryProbeDirectory(scratchDir),
+    ]);
   }
+}
+
+async function removeTemporaryProbeDirectory(directory: string): Promise<void> {
+  await rm(directory, {
+    recursive: true,
+    force: true,
+    maxRetries: 3,
+    retryDelay: 100,
+  }).catch(() => {});
 }
 
 async function readUpdatedCodexAuthJson(codexHome: string, previousAuthJson: string): Promise<string | null> {
