@@ -832,7 +832,7 @@ export function buildVesloWorkspaceBaseUrl(hostUrl: string, workspaceId?: string
   }
 }
 
-export const DEFAULT_VESLO_CONNECT_APP_URL = "https://app.veslo.neatech.com";
+export const DEFAULT_VESLO_CONNECT_APP_URL = "https://app.veslo.work";
 
 const VESLO_INVITE_PARAM_URL = "veslo_url";
 const VESLO_INVITE_PARAM_TOKEN = "veslo_token";

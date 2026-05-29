@@ -26,6 +26,8 @@ The minimum supported host profile is:
 - Off-server backup storage for database dumps and configuration recovery material.
 - Outbound HTTPS access for GitHub, npm/pnpm registry traffic, OpenAI and other model-provider APIs, Polar, YouTrack, Lettr, and any transition-only provider APIs that remain enabled in the environment.
 
+The owned-server stack owns Den, standalone AI Gateway, the web app, worker manager, and hosted worker traffic. Desktop updater metadata and public release downloads are still GitHub-backed. Public bundle publishing is still served by the separate share service until a `share.veslo.work` deployment is added to the owned-server stack.
+
 Auth email delivery uses Lettr over HTTPS. Direct SMTP access is not required for Veslo production auth email.
 
 Operators must keep firewall ownership, OS patching ownership, backup ownership, restore testing cadence, monitoring/alerting ownership, and host swap policy documented for the production server.

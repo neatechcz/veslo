@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildVesloBundleInviteUrl,
+  buildVesloConnectInviteUrl,
   createVesloServerClient,
+  DEFAULT_VESLO_CONNECT_APP_URL,
   deriveLocalVesloServerUrlFromOpencodeBaseUrl,
   requestManagedAiAccessBundle,
   resolveSessionArchiveClientOptions,
@@ -28,6 +31,25 @@ test("deriveLocalVesloServerUrlFromOpencodeBaseUrl returns null for non-local ho
 test("deriveLocalVesloServerUrlFromOpencodeBaseUrl accepts explicit target port", () => {
   const derived = deriveLocalVesloServerUrlFromOpencodeBaseUrl("http://localhost:64792", 9999);
   assert.equal(derived, "http://localhost:9999");
+});
+
+test("Veslo connect invite defaults to the owned web app", () => {
+  assert.equal(DEFAULT_VESLO_CONNECT_APP_URL, "https://app.veslo.work");
+
+  const url = buildVesloConnectInviteUrl({
+    workspaceUrl: "https://worker.example.test",
+    token: "token_123",
+  });
+
+  assert.equal(new URL(url).origin, "https://app.veslo.work");
+});
+
+test("Veslo bundle invite defaults to the owned web app", () => {
+  const url = buildVesloBundleInviteUrl({
+    bundleUrl: "https://share.example.test/b/bundle_123",
+  });
+
+  assert.equal(new URL(url).origin, "https://app.veslo.work");
 });
 
 test("resolveSessionArchiveClientOptions prefers active server credentials", () => {

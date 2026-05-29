@@ -1,9 +1,9 @@
-const VESLO_SITE_URL = "https://veslo.neatech.com";
-const VESLO_DOWNLOAD_URL = "https://veslo.neatech.com/download";
+const VESLO_SITE_URL = "https://app.veslo.work";
+const VESLO_DOWNLOAD_URL = "https://github.com/neatechcz/veslo/releases/latest";
 const VESLO_APP_URL =
   typeof process.env.PUBLIC_VESLO_APP_URL === "string" && process.env.PUBLIC_VESLO_APP_URL.trim()
     ? process.env.PUBLIC_VESLO_APP_URL.trim()
-    : "https://app.veslo.neatech.com";
+    : "https://app.veslo.work";
 
 function escapeHtml(value) {
   return String(value)
@@ -67,7 +67,7 @@ function buildOpenInAppUrls(shareUrl, options = {}) {
 
   const openInAppDeepLink = `veslo://import-bundle?${query.toString()}`;
 
-  const appUrl = normalizeAppUrl(VESLO_APP_URL) || "https://app.veslo.neatech.com";
+  const appUrl = normalizeAppUrl(VESLO_APP_URL) || "https://app.veslo.work";
   try {
     const url = new URL(appUrl);
     for (const [key, value] of query.entries()) {
@@ -80,7 +80,7 @@ function buildOpenInAppUrls(shareUrl, options = {}) {
   } catch {
     return {
       openInAppDeepLink,
-      openInWebAppUrl: `${"https://app.veslo.neatech.com"}?${query.toString()}`,
+      openInWebAppUrl: `${"https://app.veslo.work"}?${query.toString()}`,
     };
   }
 }

@@ -1,6 +1,6 @@
 # Veslo Cloud App (`packages/web`)
 
-Frontend for `app.veslo.neatech.com`.
+Frontend for `app.veslo.work`.
 
 ## What it does
 
@@ -25,10 +25,10 @@ Frontend for `app.veslo.neatech.com`.
 - `DEN_AUTH_ORIGIN` (server-only): Origin header sent to Better Auth endpoints.
   - default: `https://api.veslo.work`
 - `NEXT_PUBLIC_OPENWORK_APP_CONNECT_URL` (client): Base URL for "Open in App" links.
-  - Example: `https://veslo.neatech.com/app`
+  - Example: `https://app.veslo.work/app`
   - The web panel appends `/connect-remote` and injects worker URL/token params automatically.
 - `NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL` (client): Canonical URL used for GitHub auth callback redirects.
-  - default: `https://app.veslo.neatech.com`
+  - default: `https://app.veslo.work`
 - `NEXT_PUBLIC_POSTHOG_KEY` (client): PostHog project key used for Den analytics.
   - set this to the same project key used by `packages/landing`
 - `NEXT_PUBLIC_POSTHOG_HOST` (client): PostHog host URL.
@@ -56,4 +56,4 @@ Recommended project settings:
 
 Then assign custom domain:
 
-- `app.veslo.neatech.com`
+- `app.veslo.work`

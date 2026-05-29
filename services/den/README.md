@@ -197,7 +197,7 @@ Optional GitHub Actions variable:
 - `DEN_RENDER_WORKER_REPO` (defaults to `https://github.com/<github.repository>` in workflow, or `https://github.com/neatechcz/veslo` fallback)
 - `DEN_RENDER_WORKER_PLAN` (defaults to `standard`)
 - `DEN_RENDER_WORKER_VESLO_VERSION` (defaults to `0.11.113` and is used for `veslo-orchestrator`)
-- `DEN_CORS_ORIGINS` (defaults to `https://app.veslo.neatech.com,https://api.veslo.neatech.com,<render-service-url>`)
+- `DEN_CORS_ORIGINS` (defaults to `https://app.veslo.work,https://api.veslo.work,<render-service-url>`)
 - `DEN_RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX` (defaults to `veslo.studio`)
 - `DEN_RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS` (defaults to `240000`)
 - `DEN_VERCEL_API_BASE` (defaults to `https://api.vercel.com`)
@@ -206,7 +206,7 @@ Optional GitHub Actions variable:
 - `DEN_VERCEL_DNS_DOMAIN` (defaults to `veslo.studio`)
 - `DEN_POLAR_FEATURE_GATE_ENABLED` (`true`/`false`, defaults to `false`)
 - `DEN_POLAR_API_BASE` (defaults to `https://api.polar.sh`)
-- `DEN_POLAR_SUCCESS_URL` (defaults to `https://app.veslo.neatech.com`)
+- `DEN_POLAR_SUCCESS_URL` (defaults to `https://app.veslo.work`)
 - `DEN_POLAR_RETURN_URL` (defaults to `DEN_POLAR_SUCCESS_URL`)
 - `DEN_AUTH_EMAIL_ADDRESS` sender email value for hosted auth emails, for example `noreply@mail.veslo.work`
 - `DEN_AUTH_EMAIL_FROM_NAME` optional sender display name for hosted auth emails, for example `Veslo`

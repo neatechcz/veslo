@@ -52,7 +52,7 @@
     "primary": {
       "type": "button",
       "label": "Download Veslo",
-      "href": "https://veslo.neatech.com/download"
+      "href": "https://github.com/neatechcz/veslo/releases/latest"
     }
   }
 }

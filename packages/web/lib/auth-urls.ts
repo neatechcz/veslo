@@ -1,8 +1,8 @@
-const AUTH_BASE = (process.env.NEXT_PUBLIC_VESLO_AUTH_CALLBACK_URL ?? "https://app.veslo.neatech.com").trim();
+const AUTH_BASE = (process.env.NEXT_PUBLIC_VESLO_AUTH_CALLBACK_URL ?? "https://app.veslo.work").trim();
 const DESKTOP_ONBOARDING_PARAM = "desktopOnboarding";
 
 export function buildAuthCallbackUrl(pathname: string) {
-  const url = new URL(pathname, AUTH_BASE || "https://app.veslo.neatech.com");
+  const url = new URL(pathname, AUTH_BASE || "https://app.veslo.work");
 
   if (typeof window !== "undefined") {
     const currentParams = new URLSearchParams(window.location.search);
