@@ -274,6 +274,11 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
     return;
   }
 
+  if (url.pathname === '/v1/skill-rollout-policies') {
+    json(res, 200, { policies: [], nextCursor: null });
+    return;
+  }
+
   if (url.pathname === '/v1/skill-registry-events') {
     json(res, 200, { events: [], nextCursor: null });
     return;
