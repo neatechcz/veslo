@@ -95,6 +95,8 @@ export type RetargetSkillInstallationStep = {
   packageSha256: string;
   fromLocation: SkillLocation;
   targetLocation: SkillLocation;
+  replaceInstallationId?: string;
+  requiresBackupSnapshot?: true;
 };
 
 export type RequireSkillBackupSnapshotStep = {
@@ -117,6 +119,7 @@ export type SkillLocationActionStep =
 export type SkillLocationActionConflict = {
   action: SkillLocationConflictPolicy;
   policy: SkillLocationConflictPolicy;
+  reason?: "retarget-source-unavailable";
   skillId: string;
   name: string;
   slug: string;
@@ -154,6 +157,11 @@ type OccupiedSkillName = {
   installationId: string;
   name: string;
   slug: string;
+};
+
+type RetargetSkillInstallationSource = {
+  installationId: string;
+  location: SkillLocation;
 };
 
 type PlannedCreateStep = CreateSkillInstallationStep | RestoreSkillInstallationStep;
@@ -238,15 +246,7 @@ function planCreateAction(input: {
   conflicts: SkillLocationActionConflict[];
 }): PlannedTargetAction {
   if (input.targetConstraint === "retarget-same-skill") {
-    const retargetStep = buildRetargetStep(input.selection, input.targetLocation, input.existingTargetLocations);
-    if (retargetStep) {
-      reserveLocationName(input.occupiedByLocation, input.targetLocation, {
-        installationId: retargetStep.installationId,
-        name: retargetStep.name,
-        slug: retargetStep.slug,
-      });
-      return { steps: [retargetStep] };
-    }
+    return planRetargetAction(input);
   }
 
   const { conflict, name, slug } = resolveTargetName(input);
@@ -295,32 +295,113 @@ function planCreateAction(input: {
   return { steps, createStep };
 }
 
+function planRetargetAction(input: {
+  operation: "copy" | "move";
+  selection: SkillLocationSelection;
+  targetLocation: SkillLocation;
+  conflictPolicy: SkillLocationConflictPolicy;
+  existingTargetLocations: readonly ExistingSkillTargetLocation[];
+  occupiedByLocation: Map<string, OccupiedSkillName[]>;
+  conflicts: SkillLocationActionConflict[];
+}): PlannedTargetAction {
+  const source = findRetargetSource(input.selection, input.targetLocation, input.existingTargetLocations);
+  if (!source) {
+    input.conflicts.push({
+      action: "skip",
+      policy: "skip",
+      reason: "retarget-source-unavailable",
+      skillId: input.selection.skillId,
+      name: normalizeName(input.selection.name),
+      slug: normalizeSlug(input.selection.slug || input.selection.name),
+      targetLocation: input.targetLocation,
+      existingInstallationId: input.selection.installationId,
+    });
+    return { steps: [] };
+  }
+
+  const { conflict, name, slug } = resolveTargetName(input);
+  if (conflict?.action === "skip") {
+    return { steps: [] };
+  }
+
+  const steps: SkillLocationActionStep[] = [];
+  if (conflict?.action === "overwrite") {
+    steps.push({
+      type: "require-backup-snapshot",
+      operation: "move",
+      skillId: input.selection.skillId,
+      name: input.selection.name,
+      slug: input.selection.slug,
+      targetLocation: input.targetLocation,
+      existingInstallationId: conflict.existingInstallationId,
+    });
+  }
+
+  const retargetStep = buildRetargetStep({
+    selection: input.selection,
+    source,
+    targetLocation: input.targetLocation,
+    name,
+    slug,
+    ...(conflict?.action === "overwrite" ? { replaceInstallationId: conflict.existingInstallationId } : {}),
+  });
+
+  steps.push(retargetStep);
+  reserveLocationName(input.occupiedByLocation, input.targetLocation, {
+    installationId: retargetStep.installationId,
+    name,
+    slug,
+  });
+  return { steps };
+}
+
 function buildRetargetStep(
-  selection: SkillLocationSelection,
-  targetLocation: SkillLocation,
-  existingTargets: readonly ExistingSkillTargetLocation[],
-): RetargetSkillInstallationStep | null {
-  const source = canRetargetBetweenLocations(selection.location, targetLocation)
-    ? { installationId: selection.installationId, location: selection.location }
-    : existingTargets.find(
-        (target) =>
-          target.skillId === selection.skillId &&
-          canRetargetBetweenLocations(target.location, targetLocation),
-      );
-
-  if (!source) return null;
-
+  input: {
+    selection: SkillLocationSelection;
+    source: RetargetSkillInstallationSource;
+    targetLocation: SkillLocation;
+    name: string;
+    slug: string;
+    replaceInstallationId?: string;
+  },
+): RetargetSkillInstallationStep {
   return {
     type: "retarget-installation",
     operation: "move",
-    installationId: source.installationId,
-    skillId: selection.skillId,
-    name: normalizeName(selection.name),
-    slug: normalizeSlug(selection.slug || selection.name),
-    versionId: selection.versionId,
-    packageSha256: selection.packageSha256,
-    fromLocation: source.location,
-    targetLocation,
+    installationId: input.source.installationId,
+    skillId: input.selection.skillId,
+    name: input.name,
+    slug: input.slug,
+    versionId: input.selection.versionId,
+    packageSha256: input.selection.packageSha256,
+    fromLocation: input.source.location,
+    targetLocation: input.targetLocation,
+    ...(input.replaceInstallationId
+      ? {
+          replaceInstallationId: input.replaceInstallationId,
+          requiresBackupSnapshot: true as const,
+        }
+      : {}),
+  };
+}
+
+function findRetargetSource(
+  selection: SkillLocationSelection,
+  targetLocation: SkillLocation,
+  existingTargets: readonly ExistingSkillTargetLocation[],
+): RetargetSkillInstallationSource | undefined {
+  if (canRetargetBetweenLocations(selection.location, targetLocation)) {
+    return { installationId: selection.installationId, location: selection.location };
+  }
+
+  const existingSource = existingTargets.find(
+    (target) => target.skillId === selection.skillId && canRetargetBetweenLocations(target.location, targetLocation),
+  );
+  if (!existingSource) return undefined;
+
+  return {
+    installationId: existingSource.installationId,
+    location: existingSource.location,
   };
 }
 

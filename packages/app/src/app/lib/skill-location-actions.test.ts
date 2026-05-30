@@ -35,6 +35,13 @@ const workspaceArchive: SkillLocation = {
   workspaceId: "archive",
 };
 
+const organization: SkillLocation = {
+  id: "organization:org-1",
+  kind: "organization",
+  label: "Organization",
+  orgId: "org-1",
+};
+
 const sourceSkill = (overrides: Partial<SkillLocationSelection> = {}): SkillLocationSelection => ({
   installationId: "install-research-personal",
   skillId: "skill-research",
@@ -218,6 +225,66 @@ test("exclusive same-skill target changes produce retarget steps instead of para
       sourceLocationIds: ["personal:user-1"],
       targetLocationIds: ["workspace:alpha"],
       stepTypes: ["retarget-installation"],
+    },
+  ]);
+});
+
+test("exclusive retarget skips non-retargetable org or platform sources instead of creating installs", () => {
+  const review = buildSkillLocationActionReview({
+    operation: "copy",
+    targetConstraint: "retarget-same-skill",
+    selectedSourceLocations: [
+      sourceSkill({
+        installationId: "rollout-research-org",
+        location: organization,
+      }),
+    ],
+    targetLocations: [workspaceAlpha],
+  });
+
+  assert.deepEqual(review.steps, []);
+  assert.deepEqual(review.conflicts, [
+    {
+      action: "skip",
+      policy: "skip",
+      reason: "retarget-source-unavailable",
+      skillId: "skill-research",
+      name: "Research",
+      slug: "research",
+      targetLocation: workspaceAlpha,
+      existingInstallationId: "rollout-research-org",
+    },
+  ]);
+  assert.equal(review.confirmationRequired, false);
+});
+
+test("exclusive retarget applies target name conflicts before emitting retarget steps", () => {
+  const review = buildSkillLocationActionReview({
+    operation: "copy",
+    targetConstraint: "retarget-same-skill",
+    selectedSourceLocations: [sourceSkill()],
+    targetLocations: [workspaceAlpha],
+    existingTargetLocations: [
+      {
+        installationId: "install-deploy-alpha",
+        skillId: "skill-deploy",
+        name: "Research",
+        slug: "research",
+        location: workspaceAlpha,
+      },
+    ],
+  });
+
+  assert.deepEqual(review.steps, []);
+  assert.deepEqual(review.conflicts, [
+    {
+      action: "skip",
+      policy: "skip",
+      skillId: "skill-research",
+      name: "Research",
+      slug: "research",
+      targetLocation: workspaceAlpha,
+      existingInstallationId: "install-deploy-alpha",
     },
   ]);
 });
