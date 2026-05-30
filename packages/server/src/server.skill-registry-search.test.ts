@@ -250,3 +250,428 @@ test("GET /v1/skill-registry-events returns empty events when registry is not co
     registryConfigured: false,
   });
 });
+
+test("host registry mutations proxy create skill, version, and installation", async () => {
+  const registryCalls: Array<{
+    method: string;
+    url: string;
+    auth: string | null;
+    org: string | null;
+    user: string | null;
+    body: unknown;
+  }> = [];
+  const registry = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      const url = new URL(request.url);
+      const body = await request.json();
+      registryCalls.push({
+        method: request.method,
+        url: `${url.pathname}${url.search}`,
+        auth: request.headers.get("authorization"),
+        org: request.headers.get("x-veslo-den-org-id"),
+        user: request.headers.get("x-veslo-den-user-id"),
+        body,
+      });
+
+      if (request.method === "POST" && url.pathname === "/v1/skills") {
+        return Response.json({
+          skill: {
+            id: "skill_demo",
+            slug: "demo",
+            name: "demo",
+            visibility: "workspace",
+            reviewStatus: "draft",
+            createdAt: "2026-05-26T10:00:00.000Z",
+            updatedAt: "2026-05-26T10:01:00.000Z",
+          },
+        });
+      }
+
+      if (request.method === "POST" && url.pathname === "/v1/skills/skill_demo/versions") {
+        return Response.json({
+          version: {
+            id: "version_1",
+            version: "1.0.0",
+            packageSha256: "a".repeat(64),
+            createdAt: "2026-05-26T10:02:00.000Z",
+          },
+        });
+      }
+
+      if (request.method === "POST" && url.pathname === "/v1/skill-installations") {
+        return Response.json({
+          installation: {
+            installationId: "installation_1",
+            skillId: "skill_demo",
+            versionId: "version_1",
+            enabled: true,
+            source: "workspace",
+            installedAt: "2026-05-26T10:03:00.000Z",
+            workspaceId: "ws_1",
+          },
+        });
+      }
+
+      return Response.json({ code: "not_found", message: "Not found" }, { status: 404 });
+    },
+  });
+  runningServers.push(registry as { stop?: (closeActiveConnections?: boolean) => void });
+  const server = await startFixture(`http://127.0.0.1:${registry.port}`);
+  const headers = {
+    "Content-Type": "application/json",
+    "X-Veslo-Host-Token": "host-token",
+    "x-veslo-den-org-id": "org_1",
+    "x-veslo-den-user-id": "user_1",
+  };
+
+  const skillResponse = await fetch(`http://127.0.0.1:${server.port}/v1/skills`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      scope: "workspace",
+      name: "demo",
+      displayName: "Demo",
+      description: "Demo skill",
+      workspaceId: "ws_1",
+    }),
+  });
+  const versionResponse = await fetch(`http://127.0.0.1:${server.port}/v1/skills/skill_demo/versions`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ package: { schemaVersion: 1, entrypoint: "SKILL.md" } }),
+  });
+  const installationResponse = await fetch(`http://127.0.0.1:${server.port}/v1/skill-installations`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      scope: "workspace",
+      skillId: "skill_demo",
+      versionId: "version_1",
+      workspaceId: "ws_1",
+      updatePolicy: "pinned",
+    }),
+  });
+
+  expect(skillResponse.status).toBe(200);
+  expect(versionResponse.status).toBe(200);
+  expect(installationResponse.status).toBe(200);
+  expect(await skillResponse.json()).toEqual({
+    skill: {
+      id: "skill_demo",
+      slug: "demo",
+      name: "demo",
+      visibility: "workspace",
+      reviewStatus: "draft",
+      createdAt: "2026-05-26T10:00:00.000Z",
+      updatedAt: "2026-05-26T10:01:00.000Z",
+    },
+  });
+  expect(registryCalls).toEqual([
+    {
+      method: "POST",
+      url: "/v1/skills",
+      auth: "Bearer registry-token",
+      org: "org_1",
+      user: "user_1",
+      body: {
+        scope: "workspace",
+        name: "demo",
+        displayName: "Demo",
+        description: "Demo skill",
+        workspaceId: "ws_1",
+      },
+    },
+    {
+      method: "POST",
+      url: "/v1/skills/skill_demo/versions",
+      auth: "Bearer registry-token",
+      org: "org_1",
+      user: "user_1",
+      body: { package: { schemaVersion: 1, entrypoint: "SKILL.md" } },
+    },
+    {
+      method: "POST",
+      url: "/v1/skill-installations",
+      auth: "Bearer registry-token",
+      org: "org_1",
+      user: "user_1",
+      body: {
+        scope: "workspace",
+        skillId: "skill_demo",
+        versionId: "version_1",
+        workspaceId: "ws_1",
+        updatePolicy: "pinned",
+      },
+    },
+  ]);
+});
+
+test("registry mutations require host authorization", async () => {
+  const registry = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: () => Response.json({ ok: true }),
+  });
+  runningServers.push(registry as { stop?: (closeActiveConnections?: boolean) => void });
+  const server = await startFixture(`http://127.0.0.1:${registry.port}`);
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/v1/skills`, {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer client-token",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ scope: "workspace", name: "demo" }),
+  });
+
+  expect(response.status).toBe(401);
+});
+
+test("registry proxy exposes version history, installation changes, restore, and review requests", async () => {
+  const registryCalls: Array<{
+    method: string;
+    url: string;
+    auth: string | null;
+    body: unknown;
+  }> = [];
+  const registry = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      const url = new URL(request.url);
+      registryCalls.push({
+        method: request.method,
+        url: `${url.pathname}${url.search}`,
+        auth: request.headers.get("authorization"),
+        body: request.method === "GET" || request.method === "DELETE" ? null : await request.json(),
+      });
+
+      if (request.method === "GET" && url.pathname === "/v1/skills/skill_demo/versions") {
+        return Response.json({
+          versions: [
+            {
+              id: "version_2",
+              version: "2.0.0",
+              packageSha256: "b".repeat(64),
+              createdAt: "2026-05-26T10:02:00.000Z",
+            },
+          ],
+          nextCursor: null,
+        });
+      }
+
+      if (url.pathname === "/v1/skill-installations/installation_1") {
+        return Response.json({
+          installation: {
+            installationId: "installation_1",
+            skillId: "skill_demo",
+            versionId: "version_2",
+            enabled: request.method !== "PATCH",
+            source: "workspace",
+            installedAt: "2026-05-26T10:03:00.000Z",
+          },
+        });
+      }
+
+      if (request.method === "POST" && url.pathname === "/v1/skill-installations/installation_1/restore") {
+        return Response.json({
+          installation: {
+            installationId: "installation_1",
+            skillId: "skill_demo",
+            versionId: "version_2",
+            enabled: true,
+            source: "workspace",
+            installedAt: "2026-05-26T10:03:00.000Z",
+          },
+        });
+      }
+
+      if (request.method === "POST" && url.pathname === "/v1/skills/skill_demo/review-requests") {
+        return Response.json({
+          requestId: "review_1",
+          skillId: "skill_demo",
+          status: "pending_review",
+          createdAt: "2026-05-26T10:04:00.000Z",
+        });
+      }
+
+      return Response.json({ code: "not_found", message: "Not found" }, { status: 404 });
+    },
+  });
+  runningServers.push(registry as { stop?: (closeActiveConnections?: boolean) => void });
+  const server = await startFixture(`http://127.0.0.1:${registry.port}`);
+  const hostHeaders = {
+    "Content-Type": "application/json",
+    "X-Veslo-Host-Token": "host-token",
+  };
+
+  const versionsResponse = await fetch(
+    `http://127.0.0.1:${server.port}/v1/skills/skill_demo/versions?cursor=next%2Fcursor&limit=10`,
+    { headers: { Authorization: "Bearer client-token" } },
+  );
+  const updateResponse = await fetch(
+    `http://127.0.0.1:${server.port}/v1/skill-installations/installation_1`,
+    {
+      method: "PATCH",
+      headers: hostHeaders,
+      body: JSON.stringify({ enabled: false, versionId: "version_2", releaseChannel: null }),
+    },
+  );
+  const deleteResponse = await fetch(
+    `http://127.0.0.1:${server.port}/v1/skill-installations/installation_1`,
+    { method: "DELETE", headers: hostHeaders },
+  );
+  const restoreResponse = await fetch(
+    `http://127.0.0.1:${server.port}/v1/skill-installations/installation_1/restore`,
+    {
+      method: "POST",
+      headers: hostHeaders,
+      body: JSON.stringify({ workspaceId: "ws_1", versionId: "version_2" }),
+    },
+  );
+  const reviewResponse = await fetch(
+    `http://127.0.0.1:${server.port}/v1/skills/skill_demo/review-requests`,
+    {
+      method: "POST",
+      headers: hostHeaders,
+      body: JSON.stringify({ scope: "org", versionId: "version_2", orgId: "org_1", reason: "Ready" }),
+    },
+  );
+
+  expect(versionsResponse.status).toBe(200);
+  expect(updateResponse.status).toBe(200);
+  expect(deleteResponse.status).toBe(200);
+  expect(restoreResponse.status).toBe(200);
+  expect(reviewResponse.status).toBe(200);
+  expect(registryCalls).toEqual([
+    {
+      method: "GET",
+      url: "/v1/skills/skill_demo/versions?cursor=next%2Fcursor&limit=10",
+      auth: "Bearer registry-token",
+      body: null,
+    },
+    {
+      method: "PATCH",
+      url: "/v1/skill-installations/installation_1",
+      auth: "Bearer registry-token",
+      body: { enabled: false, versionId: "version_2", releaseChannel: null },
+    },
+    {
+      method: "DELETE",
+      url: "/v1/skill-installations/installation_1",
+      auth: "Bearer registry-token",
+      body: null,
+    },
+    {
+      method: "POST",
+      url: "/v1/skill-installations/installation_1/restore",
+      auth: "Bearer registry-token",
+      body: { workspaceId: "ws_1", versionId: "version_2" },
+    },
+    {
+      method: "POST",
+      url: "/v1/skills/skill_demo/review-requests",
+      auth: "Bearer registry-token",
+      body: { scope: "org", versionId: "version_2", orgId: "org_1", reason: "Ready" },
+    },
+  ]);
+});
+
+test("registry proxy exposes workspace skill-set replacement and review decisions", async () => {
+  const registryCalls: Array<{ method: string; url: string; body: unknown }> = [];
+  const registry = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      const url = new URL(request.url);
+      registryCalls.push({
+        method: request.method,
+        url: `${url.pathname}${url.search}`,
+        body: await request.json(),
+      });
+
+      if (request.method === "PATCH" && url.pathname === "/v1/workspaces/ws_1/skill-set") {
+        return Response.json({ workspaceId: "ws_1", skillSetId: "set_1", revision: "rev_2", skills: [] });
+      }
+
+      if (request.method === "POST" && url.pathname === "/v1/skill-review-requests/review_1/approve") {
+        return Response.json({
+          requestId: "review_1",
+          skillId: "skill_demo",
+          status: "approved",
+          createdAt: "2026-05-26T10:04:00.000Z",
+        });
+      }
+
+      if (request.method === "POST" && url.pathname === "/v1/skill-review-requests/review_2/reject") {
+        return Response.json({
+          requestId: "review_2",
+          skillId: "skill_demo",
+          status: "rejected",
+          createdAt: "2026-05-26T10:04:00.000Z",
+        });
+      }
+
+      return Response.json({ code: "not_found", message: "Not found" }, { status: 404 });
+    },
+  });
+  runningServers.push(registry as { stop?: (closeActiveConnections?: boolean) => void });
+  const server = await startFixture(`http://127.0.0.1:${registry.port}`);
+  const hostHeaders = {
+    "Content-Type": "application/json",
+    "X-Veslo-Host-Token": "host-token",
+  };
+
+  const skillSetResponse = await fetch(`http://127.0.0.1:${server.port}/v1/workspaces/ws_1/skill-set`, {
+    method: "PATCH",
+    headers: hostHeaders,
+    body: JSON.stringify({
+      orgId: "org_1",
+      releaseChannel: "stable",
+      skills: [{ installationId: "installation_1", desiredVersionId: "version_2" }],
+    }),
+  });
+  const approveResponse = await fetch(
+    `http://127.0.0.1:${server.port}/v1/skill-review-requests/review_1/approve`,
+    {
+      method: "POST",
+      headers: hostHeaders,
+      body: JSON.stringify({ reviewerNote: "Approved", releaseChannel: "stable" }),
+    },
+  );
+  const rejectResponse = await fetch(
+    `http://127.0.0.1:${server.port}/v1/skill-review-requests/review_2/reject`,
+    {
+      method: "POST",
+      headers: hostHeaders,
+      body: JSON.stringify({ reviewerNote: "Needs docs" }),
+    },
+  );
+
+  expect(skillSetResponse.status).toBe(200);
+  expect(approveResponse.status).toBe(200);
+  expect(rejectResponse.status).toBe(200);
+  expect(registryCalls).toEqual([
+    {
+      method: "PATCH",
+      url: "/v1/workspaces/ws_1/skill-set",
+      body: {
+        orgId: "org_1",
+        releaseChannel: "stable",
+        skills: [{ installationId: "installation_1", desiredVersionId: "version_2" }],
+      },
+    },
+    {
+      method: "POST",
+      url: "/v1/skill-review-requests/review_1/approve",
+      body: { reviewerNote: "Approved", releaseChannel: "stable" },
+    },
+    {
+      method: "POST",
+      url: "/v1/skill-review-requests/review_2/reject",
+      body: { reviewerNote: "Needs docs" },
+    },
+  ]);
+});

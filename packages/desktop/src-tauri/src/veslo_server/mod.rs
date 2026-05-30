@@ -10,7 +10,8 @@ use uuid::Uuid;
 
 use crate::debug_logs_forwarder::DebugLogsForwarder;
 use crate::process_supervisor::spawn_output_collector_with_forwarder;
-use crate::types::VesloServerInfo;
+use crate::types::{VesloServerInfo, WorkspaceType};
+use crate::workspace::state::load_workspace_state;
 use std::sync::Arc;
 
 pub mod manager;
@@ -20,6 +21,29 @@ use manager::VesloServerManager;
 use spawn::{resolve_veslo_port, spawn_veslo_server};
 
 const PERSISTED_STATE_FILE_NAME: &str = "veslo-server-state.json";
+
+fn resolve_workspace_ids(app: &AppHandle, workspace_paths: &[String]) -> Vec<Option<String>> {
+    let state = load_workspace_state(app).ok();
+    workspace_paths
+        .iter()
+        .map(|path| {
+            let trimmed = path.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            state.as_ref().and_then(|state| {
+                state
+                    .workspaces
+                    .iter()
+                    .find(|workspace| {
+                        workspace.workspace_type == WorkspaceType::Local
+                            && workspace.path.trim() == trimmed
+                    })
+                    .map(|workspace| workspace.id.clone())
+            })
+        })
+        .collect()
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -263,12 +287,14 @@ pub fn start_veslo_server(
         .first()
         .map(|path| path.as_str())
         .unwrap_or("");
+    let workspace_ids = resolve_workspace_ids(app, workspace_paths);
 
     let (rx, child) = spawn_veslo_server(
         app,
         &host,
         port,
         workspace_paths,
+        &workspace_ids,
         &client_token,
         &host_token,
         opencode_base_url,

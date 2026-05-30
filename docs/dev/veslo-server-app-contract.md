@@ -86,27 +86,49 @@ Auth scopes:
 
 Local contract validators live server-side and are intentionally narrow. They validate only registry response shapes consumed by the local Veslo server and app, including skill lists, skill detail, version lists, package downloads, installations, workspace skill sets, review responses, and search results. Package download validation delegates to the existing skill package manifest model so local install behavior stays aligned with pack/unpack.
 
-Veslo server also exposes a local proxy for registry search:
+Veslo server also exposes a local proxy for registry search, registry events, and registry writes. Read routes require client auth; mutation routes require host or owner auth and use server-side registry auth plus response validation:
 
 - `GET /v1/skills/search`
   Requires client auth. Proxies configured registry search with server-side response validation. If no registry base URL is configured, returns an empty search result instead of treating the local runtime as failed.
 - `GET /v1/skill-registry-events`
   Requires client auth. Proxies ordered registry mutation events with cursor, org, workspace, and limit filters. If no registry base URL is configured, returns an empty event page so the app can keep polling without surfacing a local runtime error.
+- `POST /v1/skills`
+  Requires host or owner auth. Proxies skill record creation with server-side registry auth and response validation.
+- `POST /v1/skills/:skillId/versions`
+  Requires host or owner auth. Proxies immutable package version creation for an existing registry skill.
+- `GET /v1/skills/:skillId/versions`
+  Requires client auth. Proxies version history lookup for a registry skill.
+- `POST /v1/skills/:skillId/review-requests`
+  Requires host or owner auth. Proxies publish or approval review request creation.
+- `POST /v1/skill-review-requests/:requestId/approve`
+  Requires host or owner auth. Proxies review approval decisions.
+- `POST /v1/skill-review-requests/:requestId/reject`
+  Requires host or owner auth. Proxies review rejection decisions.
+- `POST /v1/skill-installations`
+  Requires host or owner auth. Proxies installation creation for personal, workspace, organization, or platform targets.
+- `PATCH /v1/skill-installations/:installationId`
+  Requires host or owner auth. Proxies installation policy, desired version, release channel, or enabled-state updates.
+- `DELETE /v1/skill-installations/:installationId`
+  Requires host or owner auth. Proxies installation deletion.
+- `POST /v1/skill-installations/:installationId/restore`
+  Requires host or owner auth. Proxies restoration of a deleted installation.
+- `PATCH /v1/workspaces/:workspaceId/skill-set`
+  Requires host or owner auth. Replaces the desired registry-backed skill set for a workspace.
 
-Managed registry package materialization is a local server responsibility:
+Server-controlled registry package materialization is a local server responsibility:
 
 - `GET /skills/materialization`
-  Requires client auth. Returns local managed personal-global skill materialization status.
+  Requires client auth. Returns local server-controlled user skill materialization status.
 - `POST /skills/materialization/sync-global`
-  Requires host or owner auth. Downloads desired personal-global registry installations, validates package archives, writes managed global runtime skill directories, and returns `pending` without mutating files when the caller reports an active run.
+  Requires host or owner auth. Downloads desired user-skill registry installations, validates package archives, writes server-controlled user skill directories, and returns `pending` without mutating files when the caller reports an active run.
 - `GET /workspace/:id/skills/materialization`
-  Requires client auth. Returns local managed skill materialization status for the workspace.
+  Requires client auth. Returns local server-controlled skill materialization status for the workspace.
 - `POST /workspace/:id/skills/materialization/sync`
-  Requires host or owner auth. Downloads the desired registry workspace skill set, validates package archives, writes managed runtime skill directories, and returns `pending` without mutating files when the caller reports an active run.
+  Requires host or owner auth. Downloads the desired registry workspace skill set, validates package archives, writes server-controlled runtime skill directories, and returns `pending` without mutating files when the caller reports an active run.
 
 ## Workspace Scope
 
-Many routes are workspace-scoped and should be called with an active workspace id.
+Many routes are workspace-scoped and should be called with an active workspace id. Desktop-launched local servers pass the app workspace id into the server process so app state, registry workspace skill-set sync, and `/workspace/:id/*` routes share the same identifier instead of falling back to a path-hash id.
 
 Common app flows:
 

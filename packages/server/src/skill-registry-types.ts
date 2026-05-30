@@ -47,6 +47,10 @@ export type RegistrySkillVersionsResponse = {
   nextCursor?: string | null;
 };
 
+export type RegistrySkillVersionResponse = {
+  version: RegistrySkillVersionSummary;
+};
+
 export type RegistrySkillPackageFile = SkillPackageFile & {
   contentBase64: string;
 };
@@ -355,6 +359,13 @@ export function validateRegistrySkillVersionsResponse(value: unknown): RegistryS
   return {
     versions: record.versions.map((version, index) => validateVersionSummary(version, `versions[${index}]`)),
     nextCursor: validatePaginatedCursor(record.nextCursor, "nextCursor"),
+  };
+}
+
+export function validateRegistrySkillVersionResponse(value: unknown): RegistrySkillVersionResponse {
+  const record = requireRecord(value, "skill version response");
+  return {
+    version: validateVersionSummary(record.version, "version"),
   };
 }
 

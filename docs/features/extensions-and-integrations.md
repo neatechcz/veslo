@@ -39,35 +39,40 @@ Current skills surface includes:
 - hub skills
 - local skill import
 - reading and saving skill content
-- single-skill sharing
 
 Skills are filesystem-backed and usually live under `.opencode/skills/`.
 
 The Skills page is an app-wide inventory, not a current-workspace-only view. It
-separates globally available skills from workspace-specific skills. A global
-skill is shown once in the all-workspaces section, not repeated under each
-workspace. When a skill has a global copy and workspace-local copies, the
-workspace-local copies are shown as workspace overrides.
+separates user skills from workspace-specific skills. A user skill is shown once
+in the user-skills section, not repeated under each workspace. When a skill has
+a user-level copy and workspace-local copies, the workspace-local copies are
+shown as workspace overrides.
 
-Global skills in this surface are user-global runtime skills discovered from
-local OpenCode-compatible skill roots. They are not organization catalog entries
-and do not imply Den/admin approval. Promotion to an organization catalog,
+User skills in this surface are runtime skills discovered from local
+OpenCode-compatible user-level skill roots. They are not organization catalog
+entries and do not imply Den/admin approval. Promotion to an organization catalog,
 system-approved catalog, or bulk organization rollout remains future work.
 Starter workspace provisioning does not install creator skills such as
 `skill-creator`, `plugin-creator`, or `agent-creator` into workspace-local
 skill roots. Those creator skills are expected to be supplied through the
-user-global skill root when available.
+user skill root when available.
 
 Hub skill installs require an explicit target. Today, the supported target is
 the active workspace; all-workspaces Hub install is visible as unavailable until
 there is a safe global-write backend.
 
+User skills can be installed into a local workspace from the skill detail
+drawer. Workspace skills use separate local actions for copying or moving into
+user skills, so the drawer should show only actions relevant to the selected
+skill location.
+
 Registry-backed distribution is documented separately in
 `docs/features/skill-registry-and-distribution.md`. The Skills page may show
-registry-oriented copy, move, publish, approval, restore, and adoption controls
-only when they are backed by registry routes or clearly surfaced as pending.
-Filesystem-only inventory must remain a fallback and must not be treated as the
-source of truth for organization-approved or platform-approved skills.
+registry-oriented copy, move, publish, approval, restore, install, and
+deactivate controls only when they are backed by registry routes or clearly
+surfaced as pending. Filesystem-only inventory must remain a fallback and must
+not be treated as the source of truth for organization-approved or
+platform-approved skills.
 
 ## Plugins
 

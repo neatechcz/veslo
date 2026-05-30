@@ -11,6 +11,7 @@ export type ProviderPlacement = "in-sandbox" | "host-machine" | "client-machine"
 export type LogFormat = "pretty" | "json";
 
 export interface WorkspaceConfig {
+  id?: string;
   path: string;
   name?: string;
   workspaceType?: WorkspaceType;

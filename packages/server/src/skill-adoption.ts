@@ -19,6 +19,35 @@ export type SkillAdoptionRequest = {
   package: SkillPackageArchive;
 };
 
+export type SkillAdoptionRegistryScope = "user" | "workspace";
+
+export type SkillAdoptionRegistryClient = {
+  createSkill(input: {
+    scope: SkillAdoptionRegistryScope;
+    name: string;
+    displayName?: string;
+    description?: string;
+    workspaceId?: string;
+  }): Promise<{ skillId: string }>;
+  createVersion(input: {
+    skillId: string;
+    package: SkillPackageArchive;
+  }): Promise<{ versionId: string }>;
+  createInstallation(input: {
+    scope: SkillAdoptionRegistryScope;
+    skillId: string;
+    versionId: string;
+    workspaceId?: string;
+    updatePolicy?: "pinned";
+  }): Promise<{ installationId: string }>;
+};
+
+export type SkillAdoptionResult = SkillAdoptionRequest & {
+  skillId: string;
+  versionId: string;
+  installationId: string;
+};
+
 const MANAGED_MARKER_FILE = ".veslo-managed.json";
 
 const normalizeSkillDir = (skillDir: string): string => {
@@ -74,3 +103,41 @@ export async function prepareSkillAdoptionRequest(input: {
   };
 }
 
+const registryScopeForTarget = (target: SkillAdoptionTarget): SkillAdoptionRegistryScope =>
+  target.scope === "workspace" ? "workspace" : "user";
+
+export async function adoptSkillIntoRegistry(input: {
+  skillDir: string;
+  target: SkillAdoptionTarget;
+  registry: SkillAdoptionRegistryClient;
+}): Promise<SkillAdoptionResult> {
+  const adoption = await prepareSkillAdoptionRequest({
+    skillDir: input.skillDir,
+    target: input.target,
+  });
+  const scope = registryScopeForTarget(adoption.target);
+  const createdSkill = await input.registry.createSkill({
+    scope,
+    name: adoption.package.metadata.name,
+    description: adoption.package.metadata.description,
+    ...(adoption.target.workspaceId ? { workspaceId: adoption.target.workspaceId } : {}),
+  });
+  const createdVersion = await input.registry.createVersion({
+    skillId: createdSkill.skillId,
+    package: adoption.package,
+  });
+  const createdInstallation = await input.registry.createInstallation({
+    scope,
+    skillId: createdSkill.skillId,
+    versionId: createdVersion.versionId,
+    updatePolicy: "pinned",
+    ...(adoption.target.workspaceId ? { workspaceId: adoption.target.workspaceId } : {}),
+  });
+
+  return {
+    ...adoption,
+    skillId: createdSkill.skillId,
+    versionId: createdVersion.versionId,
+    installationId: createdInstallation.installationId,
+  };
+}

@@ -16,10 +16,11 @@ Or from source:
 ```bash
 pnpm --filter veslo-server dev -- \
   --workspace /path/to/workspace \
+  --workspace-id app-workspace-id \
   --approval auto
 ```
 
-The server logs the client token and host token on boot when they are auto-generated.
+The server logs the client token and host token on boot when they are auto-generated. `--workspace-id` is optional for standalone use, but desktop-launched servers should provide the app workspace id so `/workspace/:id/*` routes use the same id as the app state.
 
 Add `--verbose` to print resolved config details on startup. Use `--version` to print the server version and exit.
 
@@ -34,6 +35,7 @@ Defaults to `~/.config/veslo/server.json` (override with `VESLO_SERVER_CONFIG` o
   "approval": { "mode": "manual", "timeoutMs": 30000 },
   "workspaces": [
     {
+      "id": "workspace-finance",
       "path": "/Users/susan/Finance",
       "name": "Finance",
       "workspaceType": "local",
@@ -98,6 +100,17 @@ Sandbox advertisement (for capability discovery):
 - `POST /workspace/:id/skills/resolve`
 - `GET /v1/skills/search`
 - `GET /v1/skill-registry-events`
+- `POST /v1/skills` (host/owner auth)
+- `GET /v1/skills/:skillId/versions`
+- `POST /v1/skills/:skillId/versions` (host/owner auth)
+- `POST /v1/skills/:skillId/review-requests` (host/owner auth)
+- `POST /v1/skill-review-requests/:requestId/approve` (host/owner auth)
+- `POST /v1/skill-review-requests/:requestId/reject` (host/owner auth)
+- `POST /v1/skill-installations` (host/owner auth)
+- `PATCH /v1/skill-installations/:installationId` (host/owner auth)
+- `DELETE /v1/skill-installations/:installationId` (host/owner auth)
+- `POST /v1/skill-installations/:installationId/restore` (host/owner auth)
+- `PATCH /v1/workspaces/:workspaceId/skill-set` (host/owner auth)
 - `GET /skills/materialization`
 - `POST /skills/materialization/sync-global` (host/owner auth)
 - `GET /workspace/:id/skills/materialization`

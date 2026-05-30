@@ -8,7 +8,7 @@ import {
 } from "../http/org-auth.js"
 import { requireSession } from "../http/session.js"
 import { requireOrgSkillAdmin, requirePlatformSkillAdmin, requireWorkspaceSkillAdmin } from "./approvals.js"
-import { normalizeSkillRegistrySearchQuery } from "./search.js"
+import { parseSkillRegistrySearchRouteQuery } from "./search-route.js"
 import {
   InMemorySkillRegistryStore,
   SkillRegistryStoreError,
@@ -59,8 +59,7 @@ export function createSkillRegistryRouter(options: SkillRegistryRouterOptions = 
     const context = await resolveContext(req, res)
     if (!context) return
 
-    const query = normalizeSkillRegistrySearchQuery(req.query.q ?? req.query.query)
-    res.json(await store.searchSkills(context, { ...req.query, query }))
+    res.json(await store.searchSkills(context, { ...req.query, ...parseSkillRegistrySearchRouteQuery(req.query) }))
   }))
 
   router.get("/skill-registry-events", asyncRoute(async (req, res) => {

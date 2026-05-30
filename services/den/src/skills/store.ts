@@ -6,6 +6,10 @@ import {
   type SkillRegistryPackageArchive,
 } from "./packages.js"
 import {
+  buildSkillSearchDocument,
+  queryMatchesSkillSearchText,
+} from "./search-indexer.js"
+import {
   evaluateSkillRegistryRetentionPolicy,
   skillApprovalOwnerKey,
   skillReleaseChannelKey,
@@ -1008,21 +1012,30 @@ export class InMemorySkillRegistryStore implements SkillRegistryStore {
 
   async searchSkills(context: SkillRegistryRouteContext, filters: Record<string, unknown> & { query?: string | null }) {
     const query = filters.query?.trim() ?? ""
-    const lowered = query.toLowerCase()
+    const language = optionalFilterString(filters.language)
     const listed = await this.listSkills(context, filters)
     const skills = query
       ? listed.skills.filter((skill) => {
           const version = skill.latestVersion ? this.versions.get(skill.latestVersion.id) : null
-          return [
+          const files = version
+            ? Array.from(this.versionFiles.values()).filter((file) => file.versionId === version.id)
+            : []
+          const document = buildSkillSearchDocument({
+            name: version?.metadata.name ?? skill.name,
+            description: version?.metadata.description ?? skill.description,
+            trigger: version?.metadata.trigger,
+            tags: skill.tags,
+            files,
+          })
+          return queryMatchesSkillSearchText(query, [
             skill.name,
             skill.description,
             ...(skill.tags ?? []),
             version?.metadata.name,
             version?.metadata.description,
             version?.metadata.trigger,
-          ]
-            .filter((value): value is string => typeof value === "string")
-            .some((value) => value.toLowerCase().includes(lowered))
+            document.searchText,
+          ], { language })
         })
       : listed.skills
     return { query, skills, nextCursor: null }

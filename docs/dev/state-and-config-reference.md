@@ -323,6 +323,8 @@ Registry auth is account-scoped:
 
 Registry-backed workspace skill-set changes are durable behavior. If the local app applies a changed workspace skill set, it should trigger the same server-backed install and reload semantics used for other skill mutations rather than writing only through the UI.
 
+Desktop-launched local Veslo server instances preserve the app workspace id when registering local workspace roots. Standalone `veslo-server` still generates a stable path-hash id unless a config workspace `id` or matching `--workspace-id` is provided.
+
 ## Import and Export
 
 Workspace config export/import is handled by `packages/app/src/app/stores/config-store.ts` and Tauri commands.

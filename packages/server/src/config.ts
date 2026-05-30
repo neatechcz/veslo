@@ -24,6 +24,7 @@ interface CliArgs {
   opencodeUsername?: string;
   opencodePassword?: string;
   workspaces: string[];
+  workspaceIds: string[];
   corsOrigins?: string[];
   readOnly?: boolean;
   verbose?: boolean;
@@ -90,7 +91,7 @@ function normalizeOptionalUrl(value: string | undefined): string | undefined {
 }
 
 export function parseCliArgs(argv: string[]): CliArgs {
-  const args: CliArgs = { workspaces: [] };
+  const args: CliArgs = { workspaces: [], workspaceIds: [] };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (!value) continue;
@@ -183,6 +184,12 @@ export function parseCliArgs(argv: string[]): CliArgs {
       index += 1;
       continue;
     }
+    if (value === "--workspace-id") {
+      const id = argv[index + 1];
+      if (id) args.workspaceIds.push(id);
+      index += 1;
+      continue;
+    }
     if (value === "--cors") {
       args.corsOrigins = parseList(argv[index + 1]);
       index += 1;
@@ -213,6 +220,7 @@ export function printHelp(): void {
     "  --opencode-username <user> OpenCode server username",
     "  --opencode-password <pass> OpenCode server password",
     "  --workspace <path>       Workspace root (repeatable)",
+    "  --workspace-id <id>      Workspace id for the matching --workspace entry",
     "  --cors <origins>          Comma-separated origins or *",
     "  --read-only              Disable writes",
     "  --log-format <format>     Log output format: pretty | json",
@@ -238,7 +246,7 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
   const envWorkspaces = parseList(process.env.VESLO_WORKSPACES);
   let workspaceConfigs: WorkspaceConfig[] =
     cli.workspaces.length > 0
-      ? cli.workspaces.map((path) => ({ path }))
+      ? cli.workspaces.map((path, index) => ({ path, id: cli.workspaceIds[index] }))
       : envWorkspaces.length > 0
         ? envWorkspaces.map((path) => ({ path }))
         : fileConfig.workspaces ?? [];

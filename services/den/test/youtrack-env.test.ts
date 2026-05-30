@@ -11,21 +11,19 @@ Object.assign(process.env, baseEnv)
 
 const { parseEnv } = await import("../src/env.js")
 
-test("youtrack env parses remote MCP URL and token", () => {
+test("youtrack env parses REST URL and token", () => {
   const parsed = parseEnv({
     ...baseEnv,
     YOUTRACK_PROJECT_KEY: "VSLO",
-    YOUTRACK_MCP_URL: "https://youtrack.example.test/mcp",
-    YOUTRACK_MCP_TOKEN: "service-token",
+    YOUTRACK_URL: "https://youtrack.example.test/",
+    YOUTRACK_TOKEN: "service-token",
+    YOUTRACK_TIMEOUT_MS: "1500",
   })
 
   assert.deepEqual(parsed.youtrack, {
     projectKey: "VSLO",
-    mcpCommand: null,
-    mcpArgs: [],
-    mcpTimeoutMs: 20_000,
-    mcpWireProtocol: "content-length",
-    mcpUrl: "https://youtrack.example.test/mcp",
-    mcpToken: "service-token",
+    baseUrl: "https://youtrack.example.test",
+    token: "service-token",
+    timeoutMs: 1500,
   })
 })

@@ -23,7 +23,7 @@ This log records sanitized verification evidence for the VSLO-185 owned-server m
 - Build validation: `pnpm --filter @neatech/veslo-web build` exited 0.
 - Scope: wired owned-server app services to Docker image build targets that enable Corepack, prepare `pnpm@10.27.0`, install from `pnpm-lock.yaml`, run each service build, and start with the existing package start script.
 - Health checks: Compose defines Den `/health`, AI Gateway `/health`, and web `/` checks.
-- Local validation: `/usr/bin/env -u YOUTRACK_MCP_TOKEN -u YOUTRACK_MCP_URL -u YOUTRACK_MCP_ARGS -u RENDER_API_KEY -u VERCEL_TOKEN -u POLAR_ACCESS_TOKEN -u LETTR_API_KEY docker compose --env-file packaging/owned-server/env.example -f packaging/owned-server/compose.yml config --quiet` exited 0.
+- Local validation: `/usr/bin/env -u YOUTRACK_TOKEN -u YOUTRACK_URL -u RENDER_API_KEY -u VERCEL_TOKEN -u POLAR_ACCESS_TOKEN -u LETTR_API_KEY docker compose --env-file packaging/owned-server/env.example -f packaging/owned-server/compose.yml config --quiet` exited 0.
 - Server validation: copied the updated deployment files to `/home/neatech/veslo-owned-server-config-check` on `62.109.146.43`; `sudo docker compose --env-file packaging/owned-server/env.example -f packaging/owned-server/compose.yml config --quiet` exited 0. No containers were started.
 
 ## 2026-05-20 - Phase 2 Task 4 production env mapping

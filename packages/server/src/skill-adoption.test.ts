@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { prepareSkillAdoptionRequest } from "./skill-adoption.js";
+import { adoptSkillIntoRegistry, prepareSkillAdoptionRequest } from "./skill-adoption.js";
 
 const tempDirs: string[] = [];
 
@@ -88,5 +88,40 @@ describe("skill adoption", () => {
       }),
     ).rejects.toThrow(/workspaceId/);
   });
-});
 
+  test("adopts an unmanaged skill by creating skill, version, and installation in order", async () => {
+    const root = await tempDir("veslo-skill-adoption-registry-");
+    const skillDir = await writeSkill(root, "client-notes");
+    const calls: string[] = [];
+
+    const result = await adoptSkillIntoRegistry({
+      skillDir,
+      target: { scope: "workspace", workspaceId: "workspace_1" },
+      registry: {
+        createSkill: async (input) => {
+          calls.push(`createSkill:${input.scope}:${input.name}:${input.workspaceId ?? ""}`);
+          return { skillId: "skill_client_notes" };
+        },
+        createVersion: async (input) => {
+          calls.push(`createVersion:${input.skillId}:${input.package.metadata.name}`);
+          return { versionId: "version_client_notes_1" };
+        },
+        createInstallation: async (input) => {
+          calls.push(`createInstallation:${input.scope}:${input.skillId}:${input.versionId}:${input.workspaceId ?? ""}`);
+          return { installationId: "installation_client_notes_workspace" };
+        },
+      },
+    });
+
+    expect(calls).toEqual([
+      "createSkill:workspace:client-notes:workspace_1",
+      "createVersion:skill_client_notes:client-notes",
+      "createInstallation:workspace:skill_client_notes:version_client_notes_1:workspace_1",
+    ]);
+    expect(result).toMatchObject({
+      skillId: "skill_client_notes",
+      versionId: "version_client_notes_1",
+      installationId: "installation_client_notes_workspace",
+    });
+  });
+});

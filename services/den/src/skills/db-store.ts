@@ -7,6 +7,10 @@ import {
   type SkillRegistryPackageArchive,
 } from "./packages.js"
 import {
+  buildSkillSearchDocument,
+  queryMatchesSkillSearchText,
+} from "./search-indexer.js"
+import {
   evaluateSkillRegistryRetentionPolicy,
   skillApprovalOwnerKey,
   skillReleaseChannelKey,
@@ -207,18 +211,31 @@ export class DbSkillRegistryStore implements SkillRegistryStore {
       })
     }
 
+    const searchDocument = buildSkillSearchDocument({
+      name: decoded.metadata.name,
+      description: decoded.metadata.description,
+      trigger: decoded.metadata.trigger,
+      tags: decoded.metadata.tags,
+      files: decoded.files.map((file) => ({
+        path: file.path,
+        text: file.text,
+        sizeBytes: file.sizeBytes,
+        mediaType: file.mediaType,
+      })),
+    })
+
     await this.database.insert(SkillSearchDocumentTable).values({
       id: newId("search_doc"),
       org_id: skill.org_id,
       skill_id: skill.id,
       version_id: versionId,
-      source_language: "en",
+      source_language: decoded.metadata.language ?? "en",
       locale: MANIFEST_LOCALE,
-      title: decoded.metadata.name,
-      body: JSON.stringify(decoded.metadata),
+      title: searchDocument.title,
+      body: searchDocument.body,
       translated_title: null,
       translated_body: null,
-      search_text: JSON.stringify({ metadata: decoded.metadata }),
+      search_text: searchDocument.searchText,
       created_at: now,
       updated_at: now,
     })
@@ -730,25 +747,27 @@ export class DbSkillRegistryStore implements SkillRegistryStore {
 
   async searchSkills(context: SkillRegistryRouteContext, filters: Record<string, unknown> & { query?: string | null }) {
     const query = filters.query?.trim() ?? ""
+    const language = optionalFilterString(filters.language)
     const listed = await this.listSkills(context, filters)
     if (!query) {
       return { query, skills: listed.skills, nextCursor: null }
     }
-    const lowered = query.toLowerCase()
     const searchDocuments = await this.database.select().from(SkillSearchDocumentTable)
     const skills = listed.skills.filter((skill) => {
       const documents = skill.latestVersion
         ? searchDocuments.filter((document) => document.skill_id === skill.id && document.version_id === skill.latestVersion?.id)
         : []
-      return [skill.name, skill.description, ...(skill.tags ?? []), ...documents.flatMap((document) => [
+      return queryMatchesSkillSearchText(query, [
+        skill.name,
+        skill.description,
+        ...(skill.tags ?? []),
+        ...documents.flatMap((document) => [
         document.title,
         document.body,
         document.translated_title,
         document.translated_body,
         document.search_text,
-      ])]
-        .filter((value): value is string => typeof value === "string")
-        .some((value) => value.toLowerCase().includes(lowered))
+      ])], { language })
     })
     return { query, skills, nextCursor: null }
   }

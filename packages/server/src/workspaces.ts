@@ -7,6 +7,11 @@ export function workspaceIdForPath(path: string): string {
   return `ws_${hash.slice(0, 12)}`;
 }
 
+function normalizeConfiguredWorkspaceId(id: string | undefined): string | undefined {
+  const trimmed = id?.trim();
+  return trimmed || undefined;
+}
+
 export function buildWorkspaceInfos(
   workspaces: WorkspaceConfig[],
   cwd: string,
@@ -14,7 +19,7 @@ export function buildWorkspaceInfos(
   return workspaces.map((workspace) => {
     const resolvedPath = resolve(cwd, workspace.path);
     return {
-      id: workspaceIdForPath(resolvedPath),
+      id: normalizeConfiguredWorkspaceId(workspace.id) ?? workspaceIdForPath(resolvedPath),
       name: workspace.name ?? basename(resolvedPath),
       path: resolvedPath,
       workspaceType: workspace.workspaceType ?? "local",

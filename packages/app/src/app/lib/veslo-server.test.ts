@@ -464,6 +464,283 @@ test("searchRegistrySkills rejects invalid registry search payloads", async () =
   }
 });
 
+test("registry mutation helpers call local server with host auth and Den context", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method?: string; headers: Headers; body?: string | null }> = [];
+
+  const responses = [
+    {
+      skill: registrySkill({ id: "skill_demo", slug: "demo", name: "demo" }),
+    },
+    {
+      version: {
+        id: "version_demo_1",
+        version: "1.0.0",
+        packageSha256: "a".repeat(64),
+        createdAt: "2026-05-26T10:00:00.000Z",
+      },
+    },
+    {
+      installation: {
+        installationId: "installation_demo_1",
+        skillId: "skill_demo",
+        versionId: "version_demo_1",
+        enabled: true,
+        source: "workspace",
+        installedAt: "2026-05-26T10:01:00.000Z",
+      },
+    },
+  ];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method,
+      headers: new Headers(init?.headers),
+      body: typeof init?.body === "string" ? init.body : null,
+    });
+    return new Response(JSON.stringify(responses.shift()), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+
+    await client.createRegistrySkill({
+      scope: "workspace",
+      name: "demo",
+      workspaceId: "workspace_1",
+      denToken: "den-token",
+      denOrgId: "org_1",
+      denUserId: "user_1",
+    });
+    await client.createRegistrySkillVersion("skill_demo", {
+      package: { schemaVersion: 1, entrypoint: "SKILL.md" },
+      denToken: "den-token",
+      denOrgId: "org_1",
+      denUserId: "user_1",
+    });
+    await client.createRegistrySkillInstallation({
+      scope: "workspace",
+      skillId: "skill_demo",
+      versionId: "version_demo_1",
+      workspaceId: "workspace_1",
+      updatePolicy: "pinned",
+      denToken: "den-token",
+      denOrgId: "org_1",
+      denUserId: "user_1",
+    });
+
+    assert.deepEqual(calls.map((call) => `${call.method ?? "GET"} ${call.url}`), [
+      "POST https://veslo.example/v1/skills",
+      "POST https://veslo.example/v1/skills/skill_demo/versions",
+      "POST https://veslo.example/v1/skill-installations",
+    ]);
+    assert.equal(calls[0]?.headers.get("authorization"), "Bearer token-123");
+    assert.equal(calls[0]?.headers.get("x-veslo-host-token"), "host-token-123");
+    assert.equal(calls[0]?.headers.get("x-veslo-den-token"), "den-token");
+    assert.equal(calls[0]?.headers.get("x-veslo-den-org-id"), "org_1");
+    assert.equal(calls[0]?.headers.get("x-veslo-den-user-id"), "user_1");
+    assert.deepEqual(JSON.parse(calls[0]?.body ?? "{}"), {
+      scope: "workspace",
+      name: "demo",
+      workspaceId: "workspace_1",
+    });
+    assert.deepEqual(JSON.parse(calls[1]?.body ?? "{}"), {
+      package: { schemaVersion: 1, entrypoint: "SKILL.md" },
+    });
+    assert.deepEqual(JSON.parse(calls[2]?.body ?? "{}"), {
+      scope: "workspace",
+      skillId: "skill_demo",
+      versionId: "version_demo_1",
+      workspaceId: "workspace_1",
+      updatePolicy: "pinned",
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("registry version and installation helpers call local server mutation routes", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method?: string; headers: Headers; body?: string | null }> = [];
+  const responses = [
+    {
+      versions: [
+        {
+          id: "version_demo_2",
+          version: "2.0.0",
+          packageSha256: "b".repeat(64),
+          createdAt: "2026-05-26T10:00:00.000Z",
+        },
+      ],
+      nextCursor: null,
+    },
+    {
+      installation: {
+        installationId: "installation_demo_1",
+        skillId: "skill_demo",
+        versionId: "version_demo_2",
+        enabled: false,
+        source: "workspace",
+        installedAt: "2026-05-26T10:01:00.000Z",
+      },
+    },
+    {
+      installation: {
+        installationId: "installation_demo_1",
+        skillId: "skill_demo",
+        versionId: "version_demo_2",
+        enabled: false,
+        source: "workspace",
+        installedAt: "2026-05-26T10:01:00.000Z",
+      },
+    },
+    {
+      installation: {
+        installationId: "installation_demo_1",
+        skillId: "skill_demo",
+        versionId: "version_demo_2",
+        enabled: true,
+        source: "workspace",
+        installedAt: "2026-05-26T10:01:00.000Z",
+      },
+    },
+    {
+      requestId: "review_1",
+      skillId: "skill_demo",
+      status: "pending_review",
+      createdAt: "2026-05-26T10:02:00.000Z",
+    },
+    {
+      workspaceId: "workspace_1",
+      skillSetId: "set_1",
+      revision: "rev_2",
+      skills: [],
+    },
+    {
+      requestId: "review_1",
+      skillId: "skill_demo",
+      status: "approved",
+      createdAt: "2026-05-26T10:02:00.000Z",
+    },
+    {
+      requestId: "review_2",
+      skillId: "skill_demo",
+      status: "rejected",
+      createdAt: "2026-05-26T10:02:00.000Z",
+    },
+  ];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method,
+      headers: new Headers(init?.headers),
+      body: typeof init?.body === "string" ? init.body : null,
+    });
+    return new Response(JSON.stringify(responses.shift()), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+
+    await client.listRegistrySkillVersions("skill_demo", {
+      cursor: "next/cursor",
+      limit: 10,
+      denOrgId: "org_1",
+    });
+    await client.updateRegistrySkillInstallation("installation_demo_1", {
+      enabled: false,
+      versionId: "version_demo_2",
+      releaseChannel: null,
+      denOrgId: "org_1",
+    });
+    await client.deleteRegistrySkillInstallation("installation_demo_1", { denOrgId: "org_1" });
+    await client.restoreRegistrySkillInstallation("installation_demo_1", {
+      workspaceId: "workspace_1",
+      versionId: "version_demo_2",
+      denOrgId: "org_1",
+    });
+    await client.createRegistrySkillReviewRequest("skill_demo", {
+      scope: "org",
+      versionId: "version_demo_2",
+      orgId: "org_1",
+      reason: "Ready",
+      denOrgId: "org_1",
+    });
+    await client.replaceRegistryWorkspaceSkillSet("workspace_1", {
+      orgId: "org_1",
+      releaseChannel: "stable",
+      skills: [{ installationId: "installation_demo_1", desiredVersionId: "version_demo_2" }],
+      denOrgId: "org_1",
+    });
+    await client.approveRegistrySkillReviewRequest("review_1", {
+      reviewerNote: "Approved",
+      releaseChannel: "stable",
+      denOrgId: "org_1",
+    });
+    await client.rejectRegistrySkillReviewRequest("review_2", {
+      reviewerNote: "Needs docs",
+      denOrgId: "org_1",
+    });
+
+    assert.deepEqual(calls.map((call) => `${call.method ?? "GET"} ${call.url}`), [
+      "GET https://veslo.example/v1/skills/skill_demo/versions?cursor=next%2Fcursor&limit=10",
+      "PATCH https://veslo.example/v1/skill-installations/installation_demo_1",
+      "DELETE https://veslo.example/v1/skill-installations/installation_demo_1",
+      "POST https://veslo.example/v1/skill-installations/installation_demo_1/restore",
+      "POST https://veslo.example/v1/skills/skill_demo/review-requests",
+      "PATCH https://veslo.example/v1/workspaces/workspace_1/skill-set",
+      "POST https://veslo.example/v1/skill-review-requests/review_1/approve",
+      "POST https://veslo.example/v1/skill-review-requests/review_2/reject",
+    ]);
+    assert.equal(calls[0]?.headers.get("x-veslo-den-org-id"), "org_1");
+    assert.deepEqual(JSON.parse(calls[1]?.body ?? "{}"), {
+      enabled: false,
+      versionId: "version_demo_2",
+      releaseChannel: null,
+    });
+    assert.deepEqual(JSON.parse(calls[3]?.body ?? "{}"), {
+      workspaceId: "workspace_1",
+      versionId: "version_demo_2",
+    });
+    assert.deepEqual(JSON.parse(calls[4]?.body ?? "{}"), {
+      scope: "org",
+      versionId: "version_demo_2",
+      orgId: "org_1",
+      reason: "Ready",
+    });
+    assert.deepEqual(JSON.parse(calls[5]?.body ?? "{}"), {
+      orgId: "org_1",
+      releaseChannel: "stable",
+      skills: [{ installationId: "installation_demo_1", desiredVersionId: "version_demo_2" }],
+    });
+    assert.deepEqual(JSON.parse(calls[6]?.body ?? "{}"), {
+      reviewerNote: "Approved",
+      releaseChannel: "stable",
+    });
+    assert.deepEqual(JSON.parse(calls[7]?.body ?? "{}"), {
+      reviewerNote: "Needs docs",
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("skill materialization helpers call workspace and global status and sync endpoints", async () => {
   const previousFetch = globalThis.fetch;
   const calls: Array<{ url: string; method: string; headers: Headers; body: string | null }> = [];

@@ -10,7 +10,7 @@ import {
   type SafeDenAuthSummary,
 } from "../helpers/live-feedback-den-auth.js";
 import {
-  assertMcpCommandAvailable,
+  assertYouTrackRestConfigAvailable,
   resolveLiveFeedbackYouTrackConfig,
   waitForYouTrackFeedbackIssue,
   writeLiveFeedbackArtifact,
@@ -178,7 +178,7 @@ describe("Live feedback bug reporting to YouTrack", () => {
     this.retries(0);
 
     const config = resolveLiveFeedbackYouTrackConfig();
-    assertMcpCommandAvailable(config);
+    assertYouTrackRestConfigAvailable(config);
 
     await navigateToHash("/dashboard/settings");
     await waitForRoute("#/dashboard/settings");

@@ -4,12 +4,24 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import { ApiError } from "./errors.js";
 import {
+  createRegistrySkill,
+  createRegistrySkillInstallation,
+  createRegistrySkillReviewRequest,
+  createRegistrySkillVersion,
+  deleteRegistrySkillInstallation,
   downloadSkillPackageFromRegistry,
   listRegistrySkillInstallations,
+  listRegistrySkillVersions,
   listRegistrySkills,
+  rejectRegistrySkillReviewRequest,
+  replaceRegistryWorkspaceSkillSet,
+  restoreRegistrySkillInstallation,
   searchRegistrySkills,
+  approveRegistrySkillReviewRequest,
+  updateRegistrySkillInstallation,
 } from "./skill-registry-client.js";
 import { computeSkillPackageSha256 } from "./skill-package-model.js";
+import type { RegistrySkillPackageArchive } from "./skill-registry-types.js";
 
 const originalFetch = globalThis.fetch;
 const digest = "a".repeat(64);
@@ -51,7 +63,7 @@ const packageResponse = () => ({
       entrypoint: "SKILL.md",
       metadata: { name: "Demo Skill" },
       files: [{ ...file, contentBase64: skillBase64 }],
-    } as const;
+    } satisfies Omit<RegistrySkillPackageArchive, "packageSha256">;
     return {
       ...archive,
       packageSha256: computeSkillPackageSha256({
@@ -187,6 +199,251 @@ describe("skill registry client", () => {
       "https://registry.example/v1/skill-installations?source=personal&target=personal-global",
     );
     expect(response.installations[0].installationId).toBe("install_personal");
+  });
+
+  test("creates registry skill, version, and installation with JSON bodies", async () => {
+    const responses = [
+      { skill: skillSummary() },
+      { version: skillSummary().latestVersion },
+      {
+        installation: {
+          installationId: "install_demo",
+          skillId: "skill_demo",
+          versionId: "version_demo_1",
+          enabled: true,
+          source: "workspace",
+          installedAt: "2026-05-26T12:00:00.000Z",
+        },
+      },
+    ];
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init });
+      return Response.json(responses.shift());
+    }) as typeof fetch;
+
+    await createRegistrySkill({
+      baseUrl: "https://registry.example",
+      token: "registry-token",
+      scope: "workspace",
+      name: "demo",
+      workspaceId: "workspace_1",
+    });
+    await createRegistrySkillVersion({
+      baseUrl: "https://registry.example",
+      token: "registry-token",
+      skillId: "skill_demo",
+      package: packageResponse().package,
+    });
+    await createRegistrySkillInstallation({
+      baseUrl: "https://registry.example",
+      token: "registry-token",
+      scope: "workspace",
+      skillId: "skill_demo",
+      versionId: "version_demo_1",
+      workspaceId: "workspace_1",
+      updatePolicy: "pinned",
+    });
+
+    expect(calls.map((call) => `${call.init?.method ?? "GET"} ${call.url}`)).toEqual([
+      "POST https://registry.example/v1/skills",
+      "POST https://registry.example/v1/skills/skill_demo/versions",
+      "POST https://registry.example/v1/skill-installations",
+    ]);
+    expect(JSON.parse(String(calls[0].init?.body))).toMatchObject({
+      scope: "workspace",
+      name: "demo",
+      workspaceId: "workspace_1",
+    });
+    expect(JSON.parse(String(calls[1].init?.body))).toMatchObject({
+      package: { entrypoint: "SKILL.md" },
+    });
+    expect(JSON.parse(String(calls[2].init?.body))).toMatchObject({
+      scope: "workspace",
+      skillId: "skill_demo",
+      versionId: "version_demo_1",
+      workspaceId: "workspace_1",
+      updatePolicy: "pinned",
+    });
+  });
+
+  test("proxies versions, installation mutations, restore, and review requests", async () => {
+    const previousFetch = globalThis.fetch;
+    const responses = [
+      { versions: [skillSummary().latestVersion], nextCursor: null },
+      {
+        installation: {
+          installationId: "install_demo",
+          skillId: "skill_demo",
+          versionId: "version_demo_2",
+          enabled: false,
+          source: "workspace",
+          installedAt: "2026-05-26T12:00:00.000Z",
+        },
+      },
+      {
+        installation: {
+          installationId: "install_demo",
+          skillId: "skill_demo",
+          versionId: "version_demo_2",
+          enabled: false,
+          source: "workspace",
+          installedAt: "2026-05-26T12:00:00.000Z",
+        },
+      },
+      {
+        installation: {
+          installationId: "install_demo",
+          skillId: "skill_demo",
+          versionId: "version_demo_2",
+          enabled: true,
+          source: "workspace",
+          installedAt: "2026-05-26T12:00:00.000Z",
+        },
+      },
+      {
+        requestId: "review_1",
+        skillId: "skill_demo",
+        status: "pending_review",
+        createdAt: "2026-05-26T12:00:00.000Z",
+      },
+    ];
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init });
+      return Response.json(responses.shift());
+    }) as typeof fetch;
+
+    try {
+      await listRegistrySkillVersions({
+        baseUrl: "https://registry.example",
+        skillId: "skill_demo",
+        cursor: "next/cursor",
+        limit: 10,
+      });
+      await updateRegistrySkillInstallation({
+        baseUrl: "https://registry.example",
+        installationId: "install_demo",
+        enabled: false,
+        versionId: "version_demo_2",
+        releaseChannel: null,
+      });
+      await deleteRegistrySkillInstallation({
+        baseUrl: "https://registry.example",
+        installationId: "install_demo",
+      });
+      await restoreRegistrySkillInstallation({
+        baseUrl: "https://registry.example",
+        installationId: "install_demo",
+        workspaceId: "workspace_1",
+        versionId: "version_demo_2",
+      });
+      await createRegistrySkillReviewRequest({
+        baseUrl: "https://registry.example",
+        skillId: "skill_demo",
+        versionId: "version_demo_2",
+        scope: "org",
+        targetOrgId: "org_1",
+        reason: "Ready for org use",
+      });
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+
+    expect(calls.map((call) => `${call.init?.method ?? "GET"} ${call.url}`)).toEqual([
+      "GET https://registry.example/v1/skills/skill_demo/versions?cursor=next%2Fcursor&limit=10",
+      "PATCH https://registry.example/v1/skill-installations/install_demo",
+      "DELETE https://registry.example/v1/skill-installations/install_demo",
+      "POST https://registry.example/v1/skill-installations/install_demo/restore",
+      "POST https://registry.example/v1/skills/skill_demo/review-requests",
+    ]);
+    expect(JSON.parse(String(calls[1].init?.body))).toEqual({
+      enabled: false,
+      versionId: "version_demo_2",
+      releaseChannel: null,
+    });
+    expect(JSON.parse(String(calls[3].init?.body))).toEqual({
+      workspaceId: "workspace_1",
+      versionId: "version_demo_2",
+    });
+    expect(JSON.parse(String(calls[4].init?.body))).toEqual({
+      scope: "org",
+      versionId: "version_demo_2",
+      orgId: "org_1",
+      reason: "Ready for org use",
+    });
+  });
+
+  test("proxies workspace skill-set replacement and review decisions", async () => {
+    const previousFetch = globalThis.fetch;
+    const responses = [
+      {
+        workspaceId: "workspace_1",
+        skillSetId: "set_1",
+        revision: "rev_2",
+        skills: [],
+      },
+      {
+        requestId: "review_1",
+        skillId: "skill_demo",
+        status: "approved",
+        createdAt: "2026-05-26T12:00:00.000Z",
+        updatedAt: "2026-05-26T12:05:00.000Z",
+      },
+      {
+        requestId: "review_2",
+        skillId: "skill_demo",
+        status: "rejected",
+        createdAt: "2026-05-26T12:00:00.000Z",
+        updatedAt: "2026-05-26T12:05:00.000Z",
+      },
+    ];
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init });
+      return Response.json(responses.shift());
+    }) as typeof fetch;
+
+    try {
+      await replaceRegistryWorkspaceSkillSet({
+        baseUrl: "https://registry.example",
+        workspaceId: "workspace_1",
+        targetOrgId: "org_1",
+        releaseChannel: "stable",
+        skills: [{ installationId: "install_1", desiredVersionId: "version_2", releaseChannel: null }],
+      });
+      await approveRegistrySkillReviewRequest({
+        baseUrl: "https://registry.example",
+        requestId: "review_1",
+        reviewerNote: "Approved",
+        releaseChannel: "stable",
+      });
+      await rejectRegistrySkillReviewRequest({
+        baseUrl: "https://registry.example",
+        requestId: "review_2",
+        reviewerNote: "Needs docs",
+      });
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+
+    expect(calls.map((call) => `${call.init?.method ?? "GET"} ${call.url}`)).toEqual([
+      "PATCH https://registry.example/v1/workspaces/workspace_1/skill-set",
+      "POST https://registry.example/v1/skill-review-requests/review_1/approve",
+      "POST https://registry.example/v1/skill-review-requests/review_2/reject",
+    ]);
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      orgId: "org_1",
+      releaseChannel: "stable",
+      skills: [{ installationId: "install_1", desiredVersionId: "version_2", releaseChannel: null }],
+    });
+    expect(JSON.parse(String(calls[1].init?.body))).toEqual({
+      reviewerNote: "Approved",
+      releaseChannel: "stable",
+    });
+    expect(JSON.parse(String(calls[2].init?.body))).toEqual({
+      reviewerNote: "Needs docs",
+    });
   });
 
   test("preserves base URL path prefixes", async () => {

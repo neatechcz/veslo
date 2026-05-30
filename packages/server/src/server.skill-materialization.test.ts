@@ -234,12 +234,19 @@ test("POST /skills/materialization/sync-global downloads personal global package
       scope: string;
       status: string;
       synced: boolean;
-      materializedSkills: Array<{ name: string; packageSha256: string }>;
+      materializedSkills: Array<{ installationId: string; skillId: string; name: string; versionId: string; packageSha256: string; target: string }>;
     };
     expect(payload.scope).toBe("personal-global");
     expect(payload.status).toBe("synced");
     expect(payload.synced).toBe(true);
-    expect(payload.materializedSkills).toEqual([{ name: "global-tool", packageSha256: pkg.packageSha256 }]);
+    expect(payload.materializedSkills).toEqual([{
+      installationId: "install_global",
+      skillId: "skill_global",
+      name: "global-tool",
+      versionId: "version_global",
+      packageSha256: pkg.packageSha256,
+      target: "personal-global",
+    }]);
     expect(
       await readFile(join(homeRoot, ".config", "opencode", "skills", "veslo-managed", "global-tool", "SKILL.md"), "utf8"),
     ).toContain("# global-tool");
@@ -324,11 +331,18 @@ test("POST /workspace/:id/skills/materialization/sync downloads desired packages
   const payload = await response.json() as {
     status: string;
     synced: boolean;
-    materializedSkills: Array<{ name: string; packageSha256: string }>;
+    materializedSkills: Array<{ installationId: string; skillId: string; name: string; versionId: string; packageSha256: string; target: string }>;
   };
   expect(payload.status).toBe("synced");
   expect(payload.synced).toBe(true);
-  expect(payload.materializedSkills).toEqual([{ name: "registry-tool", packageSha256: pkg.packageSha256 }]);
+  expect(payload.materializedSkills).toEqual([{
+    installationId: "install_1",
+    skillId: "skill_1",
+    name: "registry-tool",
+    versionId: "version_1",
+    packageSha256: pkg.packageSha256,
+    target: "workspace",
+  }]);
   expect(await readFile(join(workspaceRoot, ".opencode", "skills", "veslo-managed", "registry-tool", "SKILL.md"), "utf8"))
     .toContain("# registry-tool");
   expect(registryCalls).toEqual([
@@ -443,10 +457,17 @@ test("POST workspace materialization sync resolves org skill sets, writes lockfi
 
     expect(response.status).toBe(200);
     const payload = await response.json() as {
-      materializedSkills: Array<{ name: string; packageSha256: string }>;
+      materializedSkills: Array<{ installationId: string; skillId: string; name: string; versionId: string; packageSha256: string; target: string }>;
       lockfilePath?: string;
     };
-    expect(payload.materializedSkills).toEqual([{ name: "shared-tool", packageSha256: orgPkg.packageSha256 }]);
+    expect(payload.materializedSkills).toEqual([{
+      installationId: "install_org_shared",
+      skillId: "skill_shared_org",
+      name: "shared-tool",
+      versionId: "version_org",
+      packageSha256: orgPkg.packageSha256,
+      target: "workspace",
+    }]);
     expect(payload.lockfilePath).toBe(join(workspaceRoot, ".opencode", "veslo.skills.lock.json"));
     expect(await readFile(join(workspaceRoot, ".opencode", "skills", "veslo-managed", "shared-tool", "SKILL.md"), "utf8"))
       .toContain("# shared-tool");

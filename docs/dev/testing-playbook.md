@@ -103,18 +103,17 @@ The second command is required proof that the refreshed baselines pass in normal
 
 Use this only when a real feedback report and a real YouTrack issue are acceptable. This is not a CI gate.
 
-The live smoke uses the desktop WebdriverIO harness to click the feedback UI, submit a unique report, confirm that the UI shows the returned YouTrack task number, and then poll YouTrack through the locally configured MCP transport until the projected issue appears.
+The live smoke uses the desktop WebdriverIO harness to click the feedback UI, submit a unique report, confirm that the UI shows the returned YouTrack task number, and then poll YouTrack through REST until the projected issue appears.
 
 Requirements:
 
 - run the Desktop Test Runtime Preflight first
 - build the E2E desktop binary with `pnpm tauri build --debug --no-bundle --config src-tauri/tauri.dev.conf.json -- --features e2e`
 - use a signed-in Den desktop profile with `E2E_USE_EXISTING_PROFILE=1`, or provide `E2E_DEN_AUTH_JSON`
-- ensure the YouTrack MCP command is available at `~/.config/youtrack-mcp/run-remote.sh`, or set `E2E_YOUTRACK_MCP_COMMAND`
+- set `E2E_YOUTRACK_URL` and `E2E_YOUTRACK_TOKEN`
 - set `E2E_YOUTRACK_PROJECT_KEY` if the target project differs from `VSLO`
-- set `E2E_YOUTRACK_MCP_WIRE_PROTOCOL=content-length` only when using a Content-Length framed MCP server; the local wrapper defaults to line-delimited JSON-RPC
 
-When `E2E_DEN_AUTH_JSON` is provided, the live spec treats it as authoritative and does not replace loopback Den auth from the desktop snapshot. This allows a Coding Agent run to point the real desktop UI at a locally started Den instance whose projector uses the local YouTrack MCP wrapper.
+When `E2E_DEN_AUTH_JSON` is provided, the live spec treats it as authoritative and does not replace loopback Den auth from the desktop snapshot. This allows a Coding Agent run to point the real desktop UI at a locally started Den instance whose projector uses the configured YouTrack REST API.
 
 Run from `packages/e2e`:
 

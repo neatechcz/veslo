@@ -36,7 +36,7 @@ import { orgsRouter } from "./http/orgs.js"
 import { orgMcpCatalogRouter } from "./http/org-mcp-catalog.js"
 import { orgSkillsCatalogRouter } from "./http/org-skills-catalog.js"
 import { workersRouter } from "./http/workers.js"
-import { createYouTrackMcpIssueClient } from "./integrations/youtrack-mcp.js"
+import { createYouTrackRestIssueClient } from "./integrations/youtrack-rest.js"
 
 const app = express()
 const MANAGED_AI_PROXY_JSON_LIMIT = "10mb"
@@ -49,13 +49,10 @@ const publicDir = path.resolve(path.dirname(currentFile), "../public")
 const feedbackProjector = createFeedbackProjector({
   projectKey: env.youtrack.projectKey,
   store: createDbFeedbackProjectorStore(db),
-  issueClient: createYouTrackMcpIssueClient({
-    command: env.youtrack.mcpCommand,
-    args: env.youtrack.mcpArgs,
-    timeoutMs: env.youtrack.mcpTimeoutMs,
-    wireProtocol: env.youtrack.mcpWireProtocol,
-    remoteUrl: env.youtrack.mcpUrl,
-    remoteToken: env.youtrack.mcpToken,
+  issueClient: createYouTrackRestIssueClient({
+    baseUrl: env.youtrack.baseUrl,
+    token: env.youtrack.token,
+    timeoutMs: env.youtrack.timeoutMs,
   }),
 })
 const feedbackRouter = createFeedbackRouter({

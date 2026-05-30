@@ -2,18 +2,29 @@ import { ApiError } from "./errors.js";
 import {
   validateRegistrySkillListResponse,
   validateRegistrySkillEventsResponse,
+  validateRegistrySkillInstallationResponse,
   validateRegistrySkillInstallationsResponse,
   validateRegistrySkillPackageResponse,
+  validateRegistrySkillResponse,
+  validateRegistrySkillReviewRequestResponse,
   validateRegistrySkillSearchResponse,
+  validateRegistrySkillVersionResponse,
+  validateRegistrySkillVersionsResponse,
   validateWorkspaceSkillSetResponse,
 } from "./skill-registry-types.js";
 import type {
   RegistrySkillEventsResponse,
+  RegistrySkillInstallationResponse,
   RegistrySkillInstallationSource,
   RegistrySkillInstallationsResponse,
   RegistrySkillListResponse,
   RegistrySkillPackageResponse,
+  RegistrySkillPackageArchive,
+  RegistrySkillResponse,
+  RegistrySkillReviewRequestResponse,
   RegistrySkillSearchResponse,
+  RegistrySkillVersionResponse,
+  RegistrySkillVersionsResponse,
   WorkspaceSkillSetResponse,
 } from "./skill-registry-types.js";
 
@@ -43,6 +54,10 @@ type DownloadPackageInput = RegistryClientInput & {
   versionId: string;
 };
 
+type SkillVersionsInput = PaginatedInput & {
+  skillId: string;
+};
+
 type WorkspaceSkillSetInput = RegistryClientInput & {
   workspaceId: string;
 };
@@ -55,6 +70,76 @@ type ListInstallationsInput = PaginatedInput & {
 type EventsInput = PaginatedInput & {
   orgId?: string;
   workspaceId?: string;
+};
+
+type CreateSkillInput = RegistryClientInput & {
+  scope: string;
+  name: string;
+  displayName?: string;
+  description?: string;
+  targetOrgId?: string;
+  workspaceId?: string;
+};
+
+type CreateVersionInput = RegistryClientInput & {
+  skillId: string;
+  package: RegistrySkillPackageArchive;
+};
+
+type CreateInstallationInput = RegistryClientInput & {
+  scope: string;
+  skillId: string;
+  versionId: string;
+  targetOrgId?: string;
+  workspaceId?: string;
+  ownerUserId?: string;
+  updatePolicy?: string;
+  releaseChannel?: string;
+};
+
+type UpdateInstallationInput = RegistryClientInput & {
+  installationId: string;
+  enabled?: boolean;
+  versionId?: string | null;
+  updatePolicy?: string;
+  releaseChannel?: string | null;
+};
+
+type InstallationIdInput = RegistryClientInput & {
+  installationId: string;
+};
+
+type RestoreInstallationInput = InstallationIdInput & {
+  targetOrgId?: string | null;
+  ownerUserId?: string | null;
+  workspaceId?: string | null;
+  versionId?: string | null;
+};
+
+type CreateReviewRequestInput = RegistryClientInput & {
+  skillId: string;
+  versionId: string;
+  scope: string;
+  targetOrgId?: string;
+  reason?: string;
+  releaseChannel?: string;
+};
+
+type ReplaceWorkspaceSkillSetInput = RegistryClientInput & {
+  workspaceId: string;
+  targetOrgId?: string;
+  releaseChannel?: string;
+  skills: Array<{
+    installationId: string;
+    desiredVersionId?: string | null;
+    releaseChannel?: string | null;
+  }>;
+};
+
+type ReviewDecisionInput = RegistryClientInput & {
+  requestId: string;
+  reviewerNote?: string;
+  releaseChannel?: string;
 };
 
 function parseBaseUrl(baseUrl: string): URL {
@@ -144,12 +229,20 @@ async function throwRegistryStatusError(response: Response, url: string): Promis
   );
 }
 
-async function fetchRegistryJson(input: RegistryClientInput, url: string): Promise<unknown> {
+async function fetchRegistryJson(
+  input: RegistryClientInput,
+  url: string,
+  options: { method?: string; body?: unknown } = {},
+): Promise<unknown> {
   let response: Response;
+  const headers = buildHeaders(input);
+  const hasBody = options.body !== undefined;
+  if (hasBody) headers.set("content-type", "application/json");
   try {
     response = await fetch(url, {
-      method: "GET",
-      headers: buildHeaders(input),
+      ...(options.method ? { method: options.method } : {}),
+      headers,
+      ...(hasBody ? { body: JSON.stringify(options.body) } : {}),
     });
   } catch (error) {
     throw new ApiError(
@@ -189,6 +282,15 @@ export async function listRegistrySkills(input: PaginatedInput): Promise<Registr
   return validatePayload(validateRegistrySkillListResponse, payload, url);
 }
 
+export async function listRegistrySkillVersions(input: SkillVersionsInput): Promise<RegistrySkillVersionsResponse> {
+  const url = buildUrl(input.baseUrl, `/v1/skills/${encodeURIComponent(input.skillId)}/versions`, {
+    cursor: input.cursor,
+    limit: input.limit,
+  });
+  const payload = await fetchRegistryJson(input, url);
+  return validatePayload(validateRegistrySkillVersionsResponse, payload, url);
+}
+
 export async function searchRegistrySkills(input: SearchInput): Promise<RegistrySkillSearchResponse> {
   const url = buildUrl(input.baseUrl, "/v1/skills/search", {
     q: input.query,
@@ -220,6 +322,21 @@ export async function getWorkspaceSkillSetFromRegistry(
   return validatePayload(validateWorkspaceSkillSetResponse, payload, url);
 }
 
+export async function replaceRegistryWorkspaceSkillSet(
+  input: ReplaceWorkspaceSkillSetInput,
+): Promise<WorkspaceSkillSetResponse> {
+  const url = buildUrl(input.baseUrl, `/v1/workspaces/${encodeURIComponent(input.workspaceId)}/skill-set`);
+  const payload = await fetchRegistryJson(input, url, {
+    method: "PATCH",
+    body: {
+      orgId: input.targetOrgId,
+      releaseChannel: input.releaseChannel,
+      skills: input.skills,
+    },
+  });
+  return validatePayload(validateWorkspaceSkillSetResponse, payload, url);
+}
+
 export async function listRegistrySkillInstallations(
   input: ListInstallationsInput,
 ): Promise<RegistrySkillInstallationsResponse> {
@@ -242,4 +359,136 @@ export async function listRegistrySkillEvents(input: EventsInput): Promise<Regis
   });
   const payload = await fetchRegistryJson(input, url);
   return validatePayload(validateRegistrySkillEventsResponse, payload, url);
+}
+
+export async function createRegistrySkill(input: CreateSkillInput): Promise<RegistrySkillResponse> {
+  const url = buildUrl(input.baseUrl, "/v1/skills");
+  const payload = await fetchRegistryJson(input, url, {
+    method: "POST",
+    body: {
+      scope: input.scope,
+      name: input.name,
+      displayName: input.displayName,
+      description: input.description,
+      orgId: input.targetOrgId,
+      workspaceId: input.workspaceId,
+    },
+  });
+  return validatePayload(validateRegistrySkillResponse, payload, url);
+}
+
+export async function createRegistrySkillVersion(input: CreateVersionInput): Promise<RegistrySkillVersionResponse> {
+  const url = buildUrl(input.baseUrl, `/v1/skills/${encodeURIComponent(input.skillId)}/versions`);
+  const payload = await fetchRegistryJson(input, url, {
+    method: "POST",
+    body: { package: input.package },
+  });
+  return validatePayload(validateRegistrySkillVersionResponse, payload, url);
+}
+
+export async function createRegistrySkillInstallation(
+  input: CreateInstallationInput,
+): Promise<RegistrySkillInstallationResponse> {
+  const url = buildUrl(input.baseUrl, "/v1/skill-installations");
+  const payload = await fetchRegistryJson(input, url, {
+    method: "POST",
+    body: {
+      scope: input.scope,
+      skillId: input.skillId,
+      versionId: input.versionId,
+      orgId: input.targetOrgId,
+      ownerUserId: input.ownerUserId,
+      workspaceId: input.workspaceId,
+      updatePolicy: input.updatePolicy,
+      releaseChannel: input.releaseChannel,
+    },
+  });
+  return validatePayload(validateRegistrySkillInstallationResponse, payload, url);
+}
+
+export async function updateRegistrySkillInstallation(
+  input: UpdateInstallationInput,
+): Promise<RegistrySkillInstallationResponse> {
+  const url = buildUrl(input.baseUrl, `/v1/skill-installations/${encodeURIComponent(input.installationId)}`);
+  const payload = await fetchRegistryJson(input, url, {
+    method: "PATCH",
+    body: {
+      enabled: input.enabled,
+      versionId: input.versionId,
+      updatePolicy: input.updatePolicy,
+      releaseChannel: input.releaseChannel,
+    },
+  });
+  return validatePayload(validateRegistrySkillInstallationResponse, payload, url);
+}
+
+export async function deleteRegistrySkillInstallation(
+  input: InstallationIdInput,
+): Promise<RegistrySkillInstallationResponse> {
+  const url = buildUrl(input.baseUrl, `/v1/skill-installations/${encodeURIComponent(input.installationId)}`);
+  const payload = await fetchRegistryJson(input, url, { method: "DELETE" });
+  return validatePayload(validateRegistrySkillInstallationResponse, payload, url);
+}
+
+export async function restoreRegistrySkillInstallation(
+  input: RestoreInstallationInput,
+): Promise<RegistrySkillInstallationResponse> {
+  const url = buildUrl(
+    input.baseUrl,
+    `/v1/skill-installations/${encodeURIComponent(input.installationId)}/restore`,
+  );
+  const payload = await fetchRegistryJson(input, url, {
+    method: "POST",
+    body: {
+      orgId: input.targetOrgId,
+      ownerUserId: input.ownerUserId,
+      workspaceId: input.workspaceId,
+      versionId: input.versionId,
+    },
+  });
+  return validatePayload(validateRegistrySkillInstallationResponse, payload, url);
+}
+
+export async function createRegistrySkillReviewRequest(
+  input: CreateReviewRequestInput,
+): Promise<RegistrySkillReviewRequestResponse> {
+  const url = buildUrl(input.baseUrl, `/v1/skills/${encodeURIComponent(input.skillId)}/review-requests`);
+  const payload = await fetchRegistryJson(input, url, {
+    method: "POST",
+    body: {
+      scope: input.scope,
+      versionId: input.versionId,
+      orgId: input.targetOrgId,
+      reason: input.reason,
+      releaseChannel: input.releaseChannel,
+    },
+  });
+  return validatePayload(validateRegistrySkillReviewRequestResponse, payload, url);
+}
+
+export async function approveRegistrySkillReviewRequest(
+  input: ReviewDecisionInput,
+): Promise<RegistrySkillReviewRequestResponse> {
+  const url = buildUrl(input.baseUrl, `/v1/skill-review-requests/${encodeURIComponent(input.requestId)}/approve`);
+  const payload = await fetchRegistryJson(input, url, {
+    method: "POST",
+    body: {
+      reviewerNote: input.reviewerNote,
+      releaseChannel: input.releaseChannel,
+    },
+  });
+  return validatePayload(validateRegistrySkillReviewRequestResponse, payload, url);
+}
+
+export async function rejectRegistrySkillReviewRequest(
+  input: ReviewDecisionInput,
+): Promise<RegistrySkillReviewRequestResponse> {
+  const url = buildUrl(input.baseUrl, `/v1/skill-review-requests/${encodeURIComponent(input.requestId)}/reject`);
+  const payload = await fetchRegistryJson(input, url, {
+    method: "POST",
+    body: {
+      reviewerNote: input.reviewerNote,
+    },
+  });
+  return validatePayload(validateRegistrySkillReviewRequestResponse, payload, url);
 }

@@ -20,11 +20,22 @@ import { deleteSkill, deleteSkillAtPath, listSkills, readSkillAtPath, updateSkil
 import { installHubSkill } from "./skill-hub.js";
 import { fetchOrgMcpCatalog, fetchOrgSkillsCatalog } from "./den-catalog.js";
 import {
+  createRegistrySkill,
+  createRegistrySkillInstallation,
+  createRegistrySkillReviewRequest,
+  createRegistrySkillVersion,
+  approveRegistrySkillReviewRequest,
+  deleteRegistrySkillInstallation,
   downloadSkillPackageFromRegistry,
   getWorkspaceSkillSetFromRegistry,
   listRegistrySkillEvents,
   listRegistrySkillInstallations,
+  listRegistrySkillVersions,
+  rejectRegistrySkillReviewRequest,
+  replaceRegistryWorkspaceSkillSet,
+  restoreRegistrySkillInstallation,
   searchRegistrySkills,
+  updateRegistrySkillInstallation,
 } from "./skill-registry-client.js";
 import {
   materializeWorkspaceSkillSet,
@@ -33,6 +44,7 @@ import {
   readSkillMaterializationManifest,
   workspaceManagedSkillsRoot,
 } from "./skill-materializer.js";
+import type { RegistrySkillPackageArchive } from "./skill-registry-types.js";
 import type { SkillPackageArchive } from "./skill-packages.js";
 import { resolveSkillMatch } from "./skill-resolver.js";
 import { resolveWorkspaceSkillSet } from "./workspace-skill-set.js";
@@ -1778,6 +1790,12 @@ function skillRegistryBaseUrl(config: ServerConfig): string {
   return config.skillRegistryBaseUrl?.trim() || "";
 }
 
+function requireSkillRegistryBaseUrl(config: ServerConfig): void {
+  if (!skillRegistryBaseUrl(config)) {
+    throw new ApiError(503, "skill_registry_misconfigured", "Skill registry base URL is missing");
+  }
+}
+
 function skillRegistryRequestInput(ctx: RequestContext) {
   const userId = ctx.request.headers.get("x-veslo-den-user-id")?.trim() ||
     ctx.request.headers.get("x-veslo-user-id")?.trim() ||
@@ -1810,8 +1828,12 @@ function materializationEntryPayload(entry: WorkspaceSkillMaterialization & {
 
 function materializationSummaryPayload(entry: WorkspaceSkillMaterialization) {
   return {
+    installationId: entry.installationId,
+    skillId: entry.skillId,
     name: entry.name,
+    versionId: entry.versionId,
     packageSha256: entry.packageSha256,
+    target: entry.target,
   };
 }
 
@@ -1992,6 +2014,38 @@ const trimmedSearchParam = (params: URLSearchParams, key: string): string | unde
   const value = params.get(key)?.trim();
   return value || undefined;
 };
+
+function requireBodyString(body: Record<string, unknown>, field: string): string {
+  const value = body[field];
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new ApiError(400, "invalid_request", `Field ${field} is required`);
+  }
+  return value.trim();
+}
+
+function optionalBodyString(body: Record<string, unknown>, field: string): string | undefined {
+  const value = body[field];
+  if (typeof value !== "string") return undefined;
+  return value.trim() || undefined;
+}
+
+function optionalBodyNullableString(body: Record<string, unknown>, field: string): string | null | undefined {
+  if (body[field] === null) return null;
+  return optionalBodyString(body, field);
+}
+
+function optionalBodyBoolean(body: Record<string, unknown>, field: string): boolean | undefined {
+  const value = body[field];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function requireBodyObject(body: Record<string, unknown>, field: string): Record<string, unknown> {
+  const value = body[field];
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ApiError(400, "invalid_request", `Field ${field} is required`);
+  }
+  return value as Record<string, unknown>;
+}
 
 function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: TokenService): Route[] {
   const routes: Route[] = [];
@@ -4108,6 +4162,160 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       });
     }
     const result = await listPlugins(workspace.path, false);
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "POST", "/v1/skills", "host", async (ctx) => {
+    ensureWritable(config);
+    requireSkillRegistryBaseUrl(config);
+    const body = await readJsonBody(ctx.request);
+    const result = await createRegistrySkill({
+      ...skillRegistryRequestInput(ctx),
+      scope: requireBodyString(body, "scope"),
+      name: requireBodyString(body, "name"),
+      displayName: optionalBodyString(body, "displayName"),
+      description: optionalBodyString(body, "description"),
+      targetOrgId: optionalBodyString(body, "orgId"),
+      workspaceId: optionalBodyString(body, "workspaceId"),
+    });
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "GET", "/v1/skills/:skillId/versions", "client", async (ctx) => {
+    requireSkillRegistryBaseUrl(config);
+    const limit = parseInteger(trimmedSearchParam(ctx.url.searchParams, "limit"));
+    const result = await listRegistrySkillVersions({
+      ...skillRegistryRequestInput(ctx),
+      skillId: ctx.params.skillId ?? "",
+      cursor: trimmedSearchParam(ctx.url.searchParams, "cursor"),
+      limit: limit ?? undefined,
+    });
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "POST", "/v1/skills/:skillId/versions", "host", async (ctx) => {
+    ensureWritable(config);
+    requireSkillRegistryBaseUrl(config);
+    const body = await readJsonBody(ctx.request);
+    const result = await createRegistrySkillVersion({
+      ...skillRegistryRequestInput(ctx),
+      skillId: ctx.params.skillId ?? "",
+      package: requireBodyObject(body, "package") as RegistrySkillPackageArchive,
+    });
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "POST", "/v1/skills/:skillId/review-requests", "host", async (ctx) => {
+    ensureWritable(config);
+    requireSkillRegistryBaseUrl(config);
+    const body = await readJsonBody(ctx.request);
+    const result = await createRegistrySkillReviewRequest({
+      ...skillRegistryRequestInput(ctx),
+      skillId: ctx.params.skillId ?? "",
+      scope: requireBodyString(body, "scope"),
+      versionId: requireBodyString(body, "versionId"),
+      targetOrgId: optionalBodyString(body, "orgId"),
+      reason: optionalBodyString(body, "reason"),
+      releaseChannel: optionalBodyString(body, "releaseChannel"),
+    });
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "POST", "/v1/skill-review-requests/:requestId/approve", "host", async (ctx) => {
+    ensureWritable(config);
+    requireSkillRegistryBaseUrl(config);
+    const body = await readJsonBody(ctx.request);
+    const result = await approveRegistrySkillReviewRequest({
+      ...skillRegistryRequestInput(ctx),
+      requestId: ctx.params.requestId ?? "",
+      reviewerNote: optionalBodyString(body, "reviewerNote"),
+      releaseChannel: optionalBodyString(body, "releaseChannel"),
+    });
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "POST", "/v1/skill-review-requests/:requestId/reject", "host", async (ctx) => {
+    ensureWritable(config);
+    requireSkillRegistryBaseUrl(config);
+    const body = await readJsonBody(ctx.request);
+    const result = await rejectRegistrySkillReviewRequest({
+      ...skillRegistryRequestInput(ctx),
+      requestId: ctx.params.requestId ?? "",
+      reviewerNote: optionalBodyString(body, "reviewerNote"),
+    });
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "POST", "/v1/skill-installations", "host", async (ctx) => {
+    ensureWritable(config);
+    requireSkillRegistryBaseUrl(config);
+    const body = await readJsonBody(ctx.request);
+    const result = await createRegistrySkillInstallation({
+      ...skillRegistryRequestInput(ctx),
+      scope: requireBodyString(body, "scope"),
+      skillId: requireBodyString(body, "skillId"),
+      versionId: requireBodyString(body, "versionId"),
+      targetOrgId: optionalBodyString(body, "orgId"),
+      ownerUserId: optionalBodyString(body, "ownerUserId"),
+      workspaceId: optionalBodyString(body, "workspaceId"),
+      updatePolicy: optionalBodyString(body, "updatePolicy"),
+      releaseChannel: optionalBodyString(body, "releaseChannel"),
+    });
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "PATCH", "/v1/skill-installations/:installationId", "host", async (ctx) => {
+    ensureWritable(config);
+    requireSkillRegistryBaseUrl(config);
+    const body = await readJsonBody(ctx.request);
+    const result = await updateRegistrySkillInstallation({
+      ...skillRegistryRequestInput(ctx),
+      installationId: ctx.params.installationId ?? "",
+      enabled: optionalBodyBoolean(body, "enabled"),
+      versionId: optionalBodyNullableString(body, "versionId"),
+      updatePolicy: optionalBodyString(body, "updatePolicy"),
+      releaseChannel: optionalBodyNullableString(body, "releaseChannel"),
+    });
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "DELETE", "/v1/skill-installations/:installationId", "host", async (ctx) => {
+    ensureWritable(config);
+    requireSkillRegistryBaseUrl(config);
+    const result = await deleteRegistrySkillInstallation({
+      ...skillRegistryRequestInput(ctx),
+      installationId: ctx.params.installationId ?? "",
+    });
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "POST", "/v1/skill-installations/:installationId/restore", "host", async (ctx) => {
+    ensureWritable(config);
+    requireSkillRegistryBaseUrl(config);
+    const body = await readJsonBody(ctx.request);
+    const result = await restoreRegistrySkillInstallation({
+      ...skillRegistryRequestInput(ctx),
+      installationId: ctx.params.installationId ?? "",
+      targetOrgId: optionalBodyNullableString(body, "orgId"),
+      ownerUserId: optionalBodyNullableString(body, "ownerUserId"),
+      workspaceId: optionalBodyNullableString(body, "workspaceId"),
+      versionId: optionalBodyNullableString(body, "versionId"),
+    });
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "PATCH", "/v1/workspaces/:workspaceId/skill-set", "host", async (ctx) => {
+    ensureWritable(config);
+    requireSkillRegistryBaseUrl(config);
+    const body = await readJsonBody(ctx.request);
+    const skills = Array.isArray(body.skills) ? body.skills : [];
+    const result = await replaceRegistryWorkspaceSkillSet({
+      ...skillRegistryRequestInput(ctx),
+      workspaceId: ctx.params.workspaceId ?? "",
+      targetOrgId: optionalBodyString(body, "orgId"),
+      releaseChannel: optionalBodyString(body, "releaseChannel"),
+      skills: skills as Array<{ installationId: string; desiredVersionId?: string | null; releaseChannel?: string | null }>,
+    });
     return jsonResponse(result);
   });
 
