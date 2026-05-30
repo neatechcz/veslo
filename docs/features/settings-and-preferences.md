@@ -10,12 +10,15 @@ Current visible tabs:
 
 - `general`
 - `archived`
-- `model` when developer mode is enabled
-- `advanced` when developer mode is enabled
-- `debug` when developer mode is enabled
+- `scheduled` link tab
+- `soul` link tab
+- `skills` link tab
+- `mcp` link tab
 
-Developer mode restores the full support and diagnostics surface inside Settings, including the model/provider controls and the advanced connection/runtime controls.
-The developer mode toggle itself remains reachable from the always-visible `general` tab so the extra tabs can be enabled without already being inside the advanced subsection.
+The `scheduled`, `soul`, `skills`, and `mcp` entries are navigation links, not Settings-owned content.
+They route to the same dashboard destinations as the left menu and must preserve the left-menu ordering and behavior.
+
+Settings-owned content is limited to the `general` and `archived` tabs. Support and diagnostics controls can still exist behind internal gating, but they are not exposed as visible Settings tabs in the default product surface.
 
 ## Scope Model
 
@@ -82,13 +85,16 @@ Current advanced and debug areas include:
 
 These are primarily debugging and support surfaces. If behavior changes, update this doc and `docs/dev/state-and-config-reference.md` when persistence or scope changes too.
 
-## Extensions Overview
+## Dashboard Link Tabs
 
-Settings still contains the legacy extensions overview during the Skills
-inventory transition. It can show workspace-local skills and integration config
-where the current workspace data is readable, but it is not the canonical
-app-wide skills inventory. Use the Skills page for global, workspace-specific,
-override, and Hub skill visibility.
+Settings includes link tabs for Automations, Soul, Skills, and Extensions.
+Those entries are aliases to the existing dashboard pages, so their page content,
+state, and source-of-truth behavior remain owned by the same destinations that
+are reachable from the left menu.
+
+Do not add a separate Settings-owned Skills, MCP, or Extensions overview. The
+Skills page remains the canonical app-wide skills inventory, and the Extensions
+entry routes to the MCP dashboard page.
 
 ## Workspace Config Entry Point
 

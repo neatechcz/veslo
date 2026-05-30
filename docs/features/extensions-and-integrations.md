@@ -48,6 +48,9 @@ in the user-skills section, not repeated under each workspace. When a skill has
 a user-level copy and workspace-local copies, the workspace-local copies are
 shown as workspace overrides.
 
+Settings can expose Skills as a link tab, but that tab routes to this same
+Skills page. It must not duplicate or summarize the inventory inside Settings.
+
 User skills in this surface are runtime skills discovered from local
 OpenCode-compatible user-level skill roots. They are not organization catalog
 entries and do not imply Den/admin approval. Promotion to an organization catalog,
@@ -96,6 +99,9 @@ Current MCP behavior includes:
 - reload banner when config changes require engine reload
 
 MCP config is still OpenCode config, not `.opencode/veslo.json`.
+
+Settings can expose Extensions as a link tab, but that tab routes to the same
+MCP dashboard page. The MCP page remains the owner of connected-app behavior.
 
 ## Messaging
 

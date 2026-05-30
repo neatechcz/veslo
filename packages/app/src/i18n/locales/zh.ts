@@ -733,7 +733,6 @@ export default {
   "settings.sidecar_unsupported": "Sidecar 已支持 Windows",
   "settings.sidecar_unavailable_detail": "Sidecar 可用时会随应用内置。",
   "settings.general": "常规",
-  "settings.extensions": "技能和 MCP",
   "settings.archived": "已归档",
   "settings.archived_sessions_label": "已归档会话",
   "settings.archived_sessions_description": "浏览所有 workspace 中已归档的会话，并在此处取消归档。",
