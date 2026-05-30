@@ -422,7 +422,7 @@ test("dashboard keeps settings page state out of the shared titlebar chrome", ()
   );
   assert.match(settingsSource, /resolveVisibleSettingsTab\(\s*props\.settingsTab,\s*props\.developerMode\s*\)/);
   assert.match(settingsSource, /<h1 class="font-product type-title-md text-gray-12">\s*\{translate\("dashboard\.settings"\)\}\s*<\/h1>/);
-  assert.match(settingsSource, /{resolveSettingsTabLabel\(tab\)}/);
+  assert.match(settingsSource, /{resolveNavItemLabel\(item\)}/);
   assert.doesNotMatch(settingsSource, /tabLabel\(tab\)/);
 });
 

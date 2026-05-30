@@ -41,6 +41,8 @@ import { currentLocale, LANGUAGE_OPTIONS, t, type Language } from "../../i18n";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 import { MODEL_VARIANT_OPTIONS } from "../lib/model-variant";
 
+type SettingsDashboardLinkTab = Extract<DashboardTab, "scheduled" | "soul" | "skills" | "mcp">;
+
 export type SettingsViewProps = {
   startupPreference: StartupPreference | null;
   baseUrl: string;
@@ -48,7 +50,7 @@ export type SettingsViewProps = {
   busy: boolean;
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
-  onOpenDashboardTab?: (tab: DashboardTab) => void;
+  onOpenDashboardTab?: (tab: SettingsDashboardLinkTab) => void;
   vesloServerStatus: VesloServerStatus;
   vesloServerUrl: string;
   vesloReconnectBusy: boolean;
@@ -149,7 +151,7 @@ export type SettingsViewProps = {
 
 type SettingsNavItem =
   | { kind: "settings"; tab: SettingsTab }
-  | { kind: "dashboard"; tab: Extract<DashboardTab, "scheduled" | "soul" | "skills" | "mcp"> };
+  | { kind: "dashboard"; tab: SettingsDashboardLinkTab };
 
 export default function SettingsView(props: SettingsViewProps) {
   const translate = (key: string) => t(key, currentLocale());
@@ -570,7 +572,7 @@ export default function SettingsView(props: SettingsViewProps) {
     }
   });
 
-  const resolveDashboardTabLabel = (tab: Extract<DashboardTab, "scheduled" | "soul" | "skills" | "mcp">) => {
+  const resolveDashboardTabLabel = (tab: SettingsDashboardLinkTab) => {
     switch (tab) {
       case "scheduled":
         return translate("nav.automations");
@@ -897,20 +899,16 @@ export default function SettingsView(props: SettingsViewProps) {
         <div class="flex flex-wrap gap-2 rounded-2xl border border-gray-6/40 bg-gray-1/40 px-3 py-2">
           <For each={availableTabs()}>
             {(item) => {
-              const active = item.kind === "settings" && activeTab() === item.tab;
-              const tab = item.kind === "settings" ? item.tab : "general";
               return (
                 <button
                   class={`px-3 py-2 rounded-xl text-xs font-medium border transition-colors ${
-                    active
+                    item.kind === "settings" && activeTab() === item.tab
                       ? "bg-gray-12/10 text-white border-gray-6/30"
                       : "text-gray-10 border-gray-6/50 hover:text-gray-12 hover:bg-gray-2/40"
                   }`}
                   onClick={() => selectNavItem(item)}
                 >
-                  <Show when={item.kind === "settings"} fallback={resolveNavItemLabel(item)}>
-                    {resolveSettingsTabLabel(tab)}
-                  </Show>
+                  {resolveNavItemLabel(item)}
                 </button>
               );
             }}
