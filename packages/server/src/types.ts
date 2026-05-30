@@ -187,6 +187,26 @@ export type WorkspaceSkillSetUser = {
 
 export type WorkspaceSkillSetUpdatePolicy = "pinned" | "latest_user" | "latest_approved" | "release_channel";
 
+export type WorkspaceSkillRolloutRemovalPolicy = "user_removable" | "admin_removable" | "locked";
+
+export type WorkspaceSkillRolloutPolicy = {
+  id: string;
+  skillId: string;
+  name: string;
+  versionId: string;
+  packageSha256: string;
+  enabled: boolean;
+  source: Extract<ManagedSkillSource, "organization" | "platform">;
+  target: "workspace" | "personal-global";
+  audience: "user" | "selected-workspaces" | "all-org-users" | "all-platform-users";
+  orgId?: string | null;
+  userId?: string | null;
+  workspaceId?: string | null;
+  removalPolicy: WorkspaceSkillRolloutRemovalPolicy;
+  updatePolicy?: WorkspaceSkillSetUpdatePolicy;
+  releaseChannel?: string | null;
+};
+
 export type WorkspaceSkillRegistryInstallation = {
   installationId: string;
   skillId: string;
@@ -237,7 +257,7 @@ export type WorkspaceSkillMaterialization = {
 };
 
 export type WorkspaceSkillConflict = {
-  code: "personal-global-shadowed" | "unmanaged-local-shadowed";
+  code: "personal-global-shadowed" | "unmanaged-local-shadowed" | "target-conflict";
   name: string;
   message: string;
   blockingInstallationId?: string;

@@ -675,3 +675,178 @@ test("registry proxy exposes workspace skill-set replacement and review decision
     },
   ]);
 });
+
+test("registry proxy exposes rollout policy reads and host-only writes", async () => {
+  const registryCalls: Array<{
+    method: string;
+    url: string;
+    auth: string | null;
+    org: string | null;
+    user: string | null;
+    body: unknown;
+  }> = [];
+  const policy = {
+    id: "policy_1",
+    skillId: "skill_demo",
+    versionId: "version_1",
+    target: "workspace",
+    audience: "selected-workspaces",
+    catalogScope: "organization",
+    orgId: "org_1",
+    workspaceId: "ws_1",
+    enabled: true,
+    updatePolicy: "release_channel",
+    releaseChannel: "stable",
+    removalPolicy: "admin_removable",
+    createdAt: "2026-05-26T10:00:00.000Z",
+    updatedAt: "2026-05-26T10:05:00.000Z",
+  };
+  const registry = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      const url = new URL(request.url);
+      registryCalls.push({
+        method: request.method,
+        url: `${url.pathname}${url.search}`,
+        auth: request.headers.get("authorization"),
+        org: request.headers.get("x-veslo-den-org-id"),
+        user: request.headers.get("x-veslo-den-user-id"),
+        body: request.method === "GET" || request.method === "DELETE" ? null : await request.json(),
+      });
+
+      if (request.method === "GET" && url.pathname === "/v1/skill-rollout-policies") {
+        return Response.json({ policies: [policy], nextCursor: null });
+      }
+
+      if (request.method === "POST" && url.pathname === "/v1/skill-rollout-policies") {
+        return Response.json({ policy });
+      }
+
+      if (request.method === "PATCH" && url.pathname === "/v1/skill-rollout-policies/policy_1") {
+        return Response.json({ policy: { ...policy, enabled: false, versionId: null, releaseChannel: null } });
+      }
+
+      if (request.method === "DELETE" && url.pathname === "/v1/skill-rollout-policies/policy_1") {
+        return Response.json({ policy: { ...policy, enabled: false } });
+      }
+
+      return Response.json({ code: "not_found", message: "Not found" }, { status: 404 });
+    },
+  });
+  runningServers.push(registry as { stop?: (closeActiveConnections?: boolean) => void });
+  const server = await startFixture(`http://127.0.0.1:${registry.port}`);
+  const clientHeaders = {
+    Authorization: "Bearer client-token",
+    "x-veslo-den-org-id": "org_1",
+    "x-veslo-den-user-id": "user_1",
+  };
+  const hostHeaders = {
+    "Content-Type": "application/json",
+    "X-Veslo-Host-Token": "host-token",
+    "x-veslo-den-org-id": "org_1",
+    "x-veslo-den-user-id": "user_1",
+  };
+
+  const listResponse = await fetch(
+    `http://127.0.0.1:${server.port}/v1/skill-rollout-policies?cursor=next%2Fcursor&limit=20&orgId=org_1&workspaceId=ws_1`,
+    { headers: clientHeaders },
+  );
+  const unauthorizedWrite = await fetch(`http://127.0.0.1:${server.port}/v1/skill-rollout-policies`, {
+    method: "POST",
+    headers: {
+      ...clientHeaders,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ skillId: "skill_demo" }),
+  });
+  const createResponse = await fetch(`http://127.0.0.1:${server.port}/v1/skill-rollout-policies`, {
+    method: "POST",
+    headers: hostHeaders,
+    body: JSON.stringify({
+      skillId: "skill_demo",
+      versionId: "version_1",
+      target: "workspace",
+      audience: "selected-workspaces",
+      catalogScope: "organization",
+      orgId: "org_1",
+      workspaceId: "ws_1",
+      enabled: true,
+      updatePolicy: "release_channel",
+      releaseChannel: "stable",
+      removalPolicy: "admin_removable",
+    }),
+  });
+  const updateResponse = await fetch(`http://127.0.0.1:${server.port}/v1/skill-rollout-policies/policy_1`, {
+    method: "PATCH",
+    headers: hostHeaders,
+    body: JSON.stringify({
+      enabled: false,
+      versionId: null,
+      updatePolicy: "latest_approved",
+      releaseChannel: null,
+    }),
+  });
+  const deleteResponse = await fetch(`http://127.0.0.1:${server.port}/v1/skill-rollout-policies/policy_1`, {
+    method: "DELETE",
+    headers: hostHeaders,
+  });
+
+  expect(listResponse.status).toBe(200);
+  expect(unauthorizedWrite.status).toBe(401);
+  expect(createResponse.status).toBe(200);
+  expect(updateResponse.status).toBe(200);
+  expect(deleteResponse.status).toBe(200);
+  expect(await listResponse.json()).toEqual({ policies: [policy], nextCursor: null });
+  expect(registryCalls).toEqual([
+    {
+      method: "GET",
+      url: "/v1/skill-rollout-policies?cursor=next%2Fcursor&limit=20&orgId=org_1&workspaceId=ws_1",
+      auth: "Bearer registry-token",
+      org: "org_1",
+      user: "user_1",
+      body: null,
+    },
+    {
+      method: "POST",
+      url: "/v1/skill-rollout-policies",
+      auth: "Bearer registry-token",
+      org: "org_1",
+      user: "user_1",
+      body: {
+        skillId: "skill_demo",
+        versionId: "version_1",
+        target: "workspace",
+        audience: "selected-workspaces",
+        catalogScope: "organization",
+        orgId: "org_1",
+        workspaceId: "ws_1",
+        enabled: true,
+        updatePolicy: "release_channel",
+        releaseChannel: "stable",
+        removalPolicy: "admin_removable",
+      },
+    },
+    {
+      method: "PATCH",
+      url: "/v1/skill-rollout-policies/policy_1",
+      auth: "Bearer registry-token",
+      org: "org_1",
+      user: "user_1",
+      body: {
+        versionId: null,
+        enabled: false,
+        updatePolicy: "latest_approved",
+        releaseChannel: null,
+      },
+    },
+    {
+      method: "DELETE",
+      url: "/v1/skill-rollout-policies/policy_1",
+      auth: "Bearer registry-token",
+      org: "org_1",
+      user: "user_1",
+      body: null,
+    },
+  ]);
+});

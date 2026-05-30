@@ -6,10 +6,13 @@ import { ApiError } from "./errors.js";
 import {
   createRegistrySkill,
   createRegistrySkillInstallation,
+  createRegistrySkillRolloutPolicy,
   createRegistrySkillReviewRequest,
   createRegistrySkillVersion,
   deleteRegistrySkillInstallation,
+  deleteRegistrySkillRolloutPolicy,
   downloadSkillPackageFromRegistry,
+  listRegistrySkillRolloutPolicies,
   listRegistrySkillInstallations,
   listRegistrySkillVersions,
   listRegistrySkills,
@@ -18,6 +21,7 @@ import {
   restoreRegistrySkillInstallation,
   searchRegistrySkills,
   approveRegistrySkillReviewRequest,
+  updateRegistrySkillRolloutPolicy,
   updateRegistrySkillInstallation,
 } from "./skill-registry-client.js";
 import { computeSkillPackageSha256 } from "./skill-package-model.js";
@@ -46,6 +50,23 @@ const skillSummary = () => ({
 });
 
 const listResponse = () => ({ skills: [skillSummary()], nextCursor: null });
+
+const rolloutPolicy = () => ({
+  id: "policy_1",
+  skillId: "skill_demo",
+  versionId: "version_demo_1",
+  target: "workspace",
+  audience: "selected-workspaces",
+  catalogScope: "organization",
+  orgId: "org_1",
+  workspaceId: "workspace_1",
+  enabled: true,
+  updatePolicy: "release_channel",
+  releaseChannel: "stable",
+  removalPolicy: "admin_removable",
+  createdAt: "2026-05-26T12:00:00.000Z",
+  updatedAt: "2026-05-26T12:10:00.000Z",
+});
 
 const packageResponse = () => ({
   versionId: "version_demo_1",
@@ -443,6 +464,89 @@ describe("skill registry client", () => {
     });
     expect(JSON.parse(String(calls[2].init?.body))).toEqual({
       reviewerNote: "Needs docs",
+    });
+  });
+
+  test("lists and mutates rollout policies", async () => {
+    const previousFetch = globalThis.fetch;
+    const responses = [
+      { policies: [rolloutPolicy()], nextCursor: null },
+      { policy: rolloutPolicy() },
+      { policy: { ...rolloutPolicy(), enabled: false, versionId: null, releaseChannel: null } },
+      { policy: { ...rolloutPolicy(), enabled: false } },
+    ];
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init });
+      return Response.json(responses.shift());
+    }) as typeof fetch;
+
+    try {
+      await listRegistrySkillRolloutPolicies({
+        baseUrl: "https://registry.example",
+        token: "registry-token",
+        cursor: "next/cursor",
+        limit: 20,
+        targetOrgId: "org_1",
+        workspaceId: "workspace_1",
+      });
+      await createRegistrySkillRolloutPolicy({
+        baseUrl: "https://registry.example",
+        token: "registry-token",
+        skillId: "skill_demo",
+        versionId: "version_demo_1",
+        target: "workspace",
+        audience: "selected-workspaces",
+        catalogScope: "organization",
+        targetOrgId: "org_1",
+        workspaceId: "workspace_1",
+        enabled: true,
+        updatePolicy: "release_channel",
+        releaseChannel: "stable",
+        removalPolicy: "admin_removable",
+      });
+      await updateRegistrySkillRolloutPolicy({
+        baseUrl: "https://registry.example",
+        token: "registry-token",
+        policyId: "policy_1",
+        enabled: false,
+        versionId: null,
+        releaseChannel: null,
+        updatePolicy: "latest_approved",
+      });
+      await deleteRegistrySkillRolloutPolicy({
+        baseUrl: "https://registry.example",
+        token: "registry-token",
+        policyId: "policy_1",
+      });
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+
+    expect(calls.map((call) => `${call.init?.method ?? "GET"} ${call.url}`)).toEqual([
+      "GET https://registry.example/v1/skill-rollout-policies?cursor=next%2Fcursor&limit=20&orgId=org_1&workspaceId=workspace_1",
+      "POST https://registry.example/v1/skill-rollout-policies",
+      "PATCH https://registry.example/v1/skill-rollout-policies/policy_1",
+      "DELETE https://registry.example/v1/skill-rollout-policies/policy_1",
+    ]);
+    expect(JSON.parse(String(calls[1].init?.body))).toEqual({
+      skillId: "skill_demo",
+      versionId: "version_demo_1",
+      target: "workspace",
+      audience: "selected-workspaces",
+      catalogScope: "organization",
+      orgId: "org_1",
+      workspaceId: "workspace_1",
+      enabled: true,
+      updatePolicy: "release_channel",
+      releaseChannel: "stable",
+      removalPolicy: "admin_removable",
+    });
+    expect(JSON.parse(String(calls[2].init?.body))).toEqual({
+      versionId: null,
+      enabled: false,
+      updatePolicy: "latest_approved",
+      releaseChannel: null,
     });
   });
 

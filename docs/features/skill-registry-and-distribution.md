@@ -13,13 +13,33 @@ Registry skill records describe identity and governance:
 
 Registry package versions are immutable. Each version points to a package archive whose manifest follows the Veslo skill package model: schema version 1, `SKILL.md` entrypoint, normalized file paths, file digests, metadata, and package digest. The registry can store and serve package bytes, but the local server validates the manifest before using an archive.
 
-Installations connect a skill version to a target:
+Catalog source and install target are separate concepts. Catalog source
+describes governance and visibility: personal, organization, or platform.
+Install target describes where the package is materialized locally: user skill
+root or a specific workspace. An organization skill remains organization-owned
+when installed as a user skill, and a platform skill remains platform-owned when
+installed into selected workspaces.
+
+Installations and rollout policies connect a skill version to a target:
 
 - personal installations apply to the signed-in user
 - workspace installations apply to one workspace
 - organization installations define org-managed availability or default rollout
+- rollout policies define default distribution without creating per-recipient
+  rows up front
 
 Workspace skill sets represent the effective, reconciled registry-backed skills for a workspace. They contain at most one installation per `skillId` and are separate from locally discovered `.opencode/skills/` inventory rows, though applying a workspace skill set ultimately materializes local runtime skill files through Veslo server.
+
+A rollout policy can target either `user-global` or `workspace`, never both for
+the same effective audience and skill. Changing between those targets is a
+retarget or move operation, not a second parallel installation. Selected
+workspace installs can have one policy row per workspace because they share the
+same target type.
+
+Rollout policies can be `user_removable`, `admin_removable`, or `locked`.
+Locked policies are reserved for required system or office-style skills. They
+must be enforced by API and UI as non-removable for normal users, but they
+remain data-driven rather than hardcoded in the app.
 
 Organization-shared workspaces should commit `.opencode/veslo.skills.lock.json` when they opt into registry-backed skills. The lockfile records the resolved skill set identity, revision, installation ids, version ids, skill names, and package hashes. Managed package payloads should not be committed unless an organization explicitly chooses vendored skills for regulated or offline operation.
 
@@ -37,6 +57,10 @@ The expected cloud registry routes are:
 - `PATCH /v1/skill-installations/:installationId`
 - `DELETE /v1/skill-installations/:installationId`
 - `POST /v1/skill-installations/:installationId/restore`
+- `GET /v1/skill-rollout-policies`
+- `POST /v1/skill-rollout-policies`
+- `PATCH /v1/skill-rollout-policies/:policyId`
+- `DELETE /v1/skill-rollout-policies/:policyId`
 - `GET /v1/workspaces/:workspaceId/skill-set`
 - `PATCH /v1/workspaces/:workspaceId/skill-set`
 - `POST /v1/skills/:skillId/review-requests`
@@ -51,9 +75,9 @@ Personal users can create personal skills, publish personal versions, install pe
 
 Workspace collaborators can read workspace skill sets. Workspace admins can patch workspace skill sets and manage workspace-targeted installations.
 
-Org skill admins can manage organization-scoped skills, review requests, approvals, rejections, restores, and org installations.
+Org skill admins can manage organization-scoped skills, review requests, approvals, rejections, restores, org installations, and organization rollout policies.
 
-Platform admins can manage platform-scoped skills and moderate registry state across tenants.
+Platform admins can manage platform-scoped skills, platform rollout policies, and moderate registry state across tenants.
 
 Registry event polling returns ordered mutation events visible to the caller and can be narrowed by org, workspace, cursor, and limit. Clients can use it as the baseline update transport until an SSE or WebSocket stream is available.
 
@@ -85,7 +109,14 @@ Installing or updating a registry-backed skill should follow the same local safe
 
 The local Veslo server materializes server-controlled workspace skills into `.opencode/skills/veslo-managed/` and records both a root manifest and per-skill ownership markers. Server-controlled replacements and removals create pre-change backups under the Veslo data directory. Existing user skill directories are never overwritten by registry sync unless the user explicitly installs the registry-backed version into a server-controlled target.
 
-Registry search can be reached through the local server at `/v1/skills/search` when the desktop app needs server-side registry auth and validation. Registry update polling can be reached through `/v1/skill-registry-events`; app clients should invalidate inventory for all visible events, mark active workspace updates as pending reload, and materialize idle workspace or personal-global updates through the local server. Workspace runtime sync uses `/workspace/:id/skills/materialization`; personal-global sync uses `/skills/materialization`. Registry writes are proxied through local host or owner-authenticated routes for skill creation, immutable version publishing, installation create/update/delete/restore, review request create/approve/reject, and workspace skill-set replacement. Filesystem materialization writes require host or owner auth and active runs should return a pending reload state instead of mutating files.
+Registry search can be reached through the local server at `/v1/skills/search` when the desktop app needs server-side registry auth and validation. Registry update polling can be reached through `/v1/skill-registry-events`; app clients should invalidate inventory for all visible events, mark active workspace updates as pending reload, and materialize idle workspace or personal-global updates through the local server. Workspace runtime sync uses `/workspace/:id/skills/materialization`; personal-global sync uses `/skills/materialization`. Registry writes are proxied through local host or owner-authenticated routes for skill creation, immutable version publishing, installation create/update/delete/restore, rollout policy create/update/delete, review request create/approve/reject, and workspace skill-set replacement. Filesystem materialization writes require host or owner auth and active runs should return a pending reload state instead of mutating files.
+
+Rollout policy events are registry events. A user-global rollout can be
+materialized by `/skills/materialization/sync-global`; a selected-workspace
+rollout can be materialized by `/workspace/:id/skills/materialization/sync`.
+When both target types are active for the same effective skill/audience because
+of legacy data or a race, the resolver and materialization sync response must
+return a target conflict and avoid materializing both variants.
 
 Registry search is server-side. The registry indexes package metadata plus searchable text/code files under the configured size limit. Query handling can expand localized terms, starting with Czech-to-English skill discovery terms such as meeting-minutes searches, so the app should pass the UI language instead of trying to implement semantic search locally.
 
@@ -107,3 +138,7 @@ The detail drawer action bar operates on the selected skill location unless a lo
 Unavailable actions should be hidden when the app can determine that the selected location cannot support the operation. A visible action may be disabled only when it is relevant to the selected location but temporarily blocked, for example by an in-flight request.
 
 Registry distribution does not make cloud the execution environment. The Tauri desktop app and local Veslo server remain the runtime under test; the cloud registry owns catalog, package, review, and installation metadata.
+
+Future marketplace behavior should sit above catalog identity and rollout
+policy. Pricing, listing, ratings, purchases, and entitlements are not part of
+the current runtime install model.

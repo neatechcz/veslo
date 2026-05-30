@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { resolveWorkspaceSkillSet } from "./workspace-skill-set.js";
-import type { WorkspaceSkillRegistryInstallation } from "./workspace-skill-set.js";
+import type { WorkspaceSkillRegistryInstallation, WorkspaceSkillRolloutPolicy } from "./workspace-skill-set.js";
 
 const installedAt = "2026-05-26T12:00:00.000Z";
 
@@ -28,6 +28,31 @@ function installation(
     releaseChannel: overrides.releaseChannel,
     desiredVersionId: overrides.desiredVersionId,
     desiredPackageSha256: overrides.desiredPackageSha256,
+  };
+}
+
+function rollout(
+  overrides: Partial<WorkspaceSkillRolloutPolicy> & Pick<WorkspaceSkillRolloutPolicy, "name" | "source" | "target" | "audience">,
+): WorkspaceSkillRolloutPolicy {
+  const name = overrides.name;
+  return {
+    id: overrides.id ?? `${overrides.source}_${name}_rollout`,
+    skillId: overrides.skillId ?? `${name}_skill`,
+    name,
+    versionId: overrides.versionId ?? `${name}_v1`,
+    packageSha256:
+      overrides.packageSha256 ??
+      "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    enabled: overrides.enabled ?? true,
+    source: overrides.source,
+    target: overrides.target,
+    audience: overrides.audience,
+    orgId: overrides.orgId,
+    userId: overrides.userId,
+    workspaceId: overrides.workspaceId,
+    removalPolicy: overrides.removalPolicy ?? "user_removable",
+    updatePolicy: overrides.updatePolicy,
+    releaseChannel: overrides.releaseChannel,
   };
 }
 
@@ -143,11 +168,16 @@ describe("resolveWorkspaceSkillSet", () => {
       policy: { allowPersonalGlobalShadowOrgManaged: true },
     });
 
-    expect(allowed.effectiveManagedSkills.map((skill) => skill.source)).toEqual([
-      "organization",
-      "personal",
+    expect(allowed.effectiveManagedSkills.map((skill) => skill.source)).toEqual(["organization"]);
+    expect(allowed.conflicts).toEqual([
+      {
+        code: "target-conflict",
+        name: "research",
+        blockingInstallationId: "organization_research_install",
+        blockedInstallationId: "personal_research_install",
+        message: "Skill research cannot be active as both user-global and workspace targets.",
+      },
     ]);
-    expect(allowed.conflicts).toEqual([]);
   });
 
   test("conflict output identifies unmanaged local skills blocked by managed names", () => {
@@ -177,5 +207,128 @@ describe("resolveWorkspaceSkillSet", () => {
       },
     ]);
     expect(result.reloadRequired).toBe(true);
+  });
+
+  test("all-org-users rollout applies as personal-global only for organization members", () => {
+    const included = resolveWorkspaceSkillSet({
+      workspace: { id: "ws_org", scope: "organization", orgId: "org_1" },
+      user: { id: "user_1", orgId: "org_1" },
+      registryInstallations: [],
+      rolloutPolicies: [
+        rollout({
+          name: "office-writer",
+          source: "organization",
+          target: "personal-global",
+          audience: "all-org-users",
+          orgId: "org_1",
+          removalPolicy: "locked",
+        }),
+      ],
+      localUnmanagedSkills: [],
+    });
+
+    expect(included.requiredMaterializations).toEqual([
+      {
+        installationId: "rollout:organization_office-writer_rollout",
+        skillId: "office-writer_skill",
+        name: "office-writer",
+        versionId: "office-writer_v1",
+        packageSha256:
+          "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        target: "personal-global",
+      },
+    ]);
+
+    const excluded = resolveWorkspaceSkillSet({
+      workspace: { id: "ws_other", scope: "organization", orgId: "org_2" },
+      user: { id: "user_2", orgId: "org_2" },
+      registryInstallations: [],
+      rolloutPolicies: [
+        rollout({
+          name: "office-writer",
+          source: "organization",
+          target: "personal-global",
+          audience: "all-org-users",
+          orgId: "org_1",
+        }),
+      ],
+      localUnmanagedSkills: [],
+    });
+
+    expect(excluded.requiredMaterializations).toEqual([]);
+  });
+
+  test("selected workspace rollout applies only to the chosen workspace", () => {
+    const result = resolveWorkspaceSkillSet({
+      workspace: { id: "ws_target", scope: "organization", orgId: "org_1" },
+      user: { id: "user_1", orgId: "org_1" },
+      registryInstallations: [],
+      rolloutPolicies: [
+        rollout({
+          name: "planning",
+          source: "organization",
+          target: "workspace",
+          audience: "selected-workspaces",
+          orgId: "org_1",
+          workspaceId: "ws_target",
+        }),
+        rollout({
+          name: "not-this-workspace",
+          source: "organization",
+          target: "workspace",
+          audience: "selected-workspaces",
+          orgId: "org_1",
+          workspaceId: "ws_other",
+        }),
+      ],
+      localUnmanagedSkills: [],
+    });
+
+    expect(result.requiredMaterializations.map((skill) => skill.name)).toEqual(["planning"]);
+    expect(result.requiredMaterializations[0]?.target).toBe("workspace");
+  });
+
+  test("target conflicts do not materialize both user-global and workspace rollouts", () => {
+    const result = resolveWorkspaceSkillSet({
+      workspace: { id: "ws_target", scope: "organization", orgId: "org_1" },
+      user: { id: "user_1", orgId: "org_1" },
+      registryInstallations: [],
+      rolloutPolicies: [
+        rollout({
+          name: "office-writer",
+          source: "organization",
+          target: "personal-global",
+          audience: "all-org-users",
+          orgId: "org_1",
+          removalPolicy: "user_removable",
+        }),
+        rollout({
+          id: "office_locked_workspace",
+          name: "office-writer",
+          source: "organization",
+          target: "workspace",
+          audience: "selected-workspaces",
+          orgId: "org_1",
+          workspaceId: "ws_target",
+          removalPolicy: "locked",
+        }),
+      ],
+      localUnmanagedSkills: [],
+    });
+
+    expect(result.requiredMaterializations).toHaveLength(1);
+    expect(result.requiredMaterializations[0]).toMatchObject({
+      installationId: "rollout:office_locked_workspace",
+      target: "workspace",
+    });
+    expect(result.conflicts).toEqual([
+      {
+        code: "target-conflict",
+        name: "office-writer",
+        blockingInstallationId: "rollout:office_locked_workspace",
+        blockedInstallationId: "rollout:organization_office-writer_rollout",
+        message: "Skill office-writer cannot be active as both user-global and workspace targets.",
+      },
+    ]);
   });
 });

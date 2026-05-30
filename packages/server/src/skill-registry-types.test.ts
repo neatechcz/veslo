@@ -7,6 +7,8 @@ import {
   validateRegistrySkillInstallationResponse,
   validateRegistrySkillListResponse,
   validateRegistrySkillPackageResponse,
+  validateRegistrySkillRolloutPoliciesResponse,
+  validateRegistrySkillRolloutPolicyResponse,
   validateRegistrySkillResponse,
   validateRegistrySkillReviewRequestResponse,
   validateRegistrySkillSearchResponse,
@@ -62,6 +64,24 @@ const installation = (overrides: Record<string, unknown> = {}) => ({
   enabled: true,
   source: "workspace",
   installedAt: "2026-05-26T12:00:00.000Z",
+  ...overrides,
+});
+
+const rolloutPolicy = (overrides: Record<string, unknown> = {}) => ({
+  id: "policy_1",
+  skillId: "skill_demo",
+  versionId: "version_demo_1",
+  target: "workspace",
+  audience: "selected-workspaces",
+  catalogScope: "organization",
+  orgId: "org_1",
+  workspaceId: "workspace_1",
+  enabled: true,
+  updatePolicy: "release_channel",
+  releaseChannel: "stable",
+  removalPolicy: "admin_removable",
+  createdAt: "2026-05-26T12:00:00.000Z",
+  updatedAt: "2026-05-26T12:10:00.000Z",
   ...overrides,
 });
 
@@ -303,6 +323,62 @@ test("validateRegistrySkillInstallationsResponse accepts a page and rejects dupl
       ],
     }),
   ).toThrow(/duplicate installationId/);
+});
+
+test("validateRegistrySkillRolloutPolicyResponse accepts rollout policy metadata", () => {
+  const response = validateRegistrySkillRolloutPolicyResponse({
+    policy: rolloutPolicy({
+      versionId: null,
+      target: "user-global",
+      audience: "user",
+      catalogScope: "platform",
+      orgId: null,
+      userId: "user_1",
+      workspaceId: null,
+      updatePolicy: "latest_approved",
+      releaseChannel: null,
+    }),
+  });
+
+  expect(response.policy.id).toBe("policy_1");
+  expect(response.policy.versionId).toBeNull();
+  expect(response.policy.target).toBe("user-global");
+  expect(response.policy.userId).toBe("user_1");
+  expect(response.policy.releaseChannel).toBeNull();
+});
+
+test("validateRegistrySkillRolloutPoliciesResponse accepts a page and rejects invalid rollout policies", () => {
+  const response = validateRegistrySkillRolloutPoliciesResponse({
+    policies: [rolloutPolicy()],
+    nextCursor: "cursor_2",
+  });
+
+  expect(response.policies[0].audience).toBe("selected-workspaces");
+  expect(response.nextCursor).toBe("cursor_2");
+
+  expect(() =>
+    validateRegistrySkillRolloutPoliciesResponse({
+      policies: [rolloutPolicy({ audience: "team" })],
+    }),
+  ).toThrow(/audience/);
+
+  expect(() =>
+    validateRegistrySkillRolloutPoliciesResponse({
+      policies: [
+        rolloutPolicy(),
+        rolloutPolicy({
+          skillId: "skill_other",
+          createdAt: "2026-05-26T12:01:00.000Z",
+        }),
+      ],
+    }),
+  ).toThrow(/duplicate policy id/);
+
+  expect(() =>
+    validateRegistrySkillRolloutPolicyResponse({
+      policy: rolloutPolicy({ createdAt: "2026-05-26" }),
+    }),
+  ).toThrow(/createdAt/);
 });
 
 test("validateWorkspaceSkillSetResponse accepts installations and rejects duplicate skill ids", () => {

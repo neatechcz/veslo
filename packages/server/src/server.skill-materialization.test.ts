@@ -183,6 +183,7 @@ test("POST /skills/materialization/sync-global downloads personal global package
 
   try {
     const pkg = await archive("global-tool");
+    const rolloutPkg = await archive("global-rollout-tool");
     const registryCalls: Array<{ pathname: string; search: string; auth: string | null }> = [];
     const registry = Bun.serve({
       hostname: "127.0.0.1",
@@ -209,11 +210,37 @@ test("POST /skills/materialization/sync-global downloads personal global package
             nextCursor: null,
           });
         }
+        if (url.pathname === "/v1/skill-rollout-policies") {
+          return Response.json({
+            policies: [
+              {
+                id: "rollout_global",
+                skillId: "skill_global_rollout",
+                versionId: "version_global_rollout",
+                target: "user-global",
+                audience: "all-platform-users",
+                catalogScope: "platform",
+                enabled: true,
+                updatePolicy: "pinned",
+                removalPolicy: "locked",
+                createdAt: "2026-05-30T10:00:00.000Z",
+              },
+            ],
+            nextCursor: null,
+          });
+        }
         if (url.pathname === "/v1/skill-versions/version_global/package") {
           return Response.json({
             versionId: "version_global",
             skillId: "skill_global",
             package: pkg,
+          });
+        }
+        if (url.pathname === "/v1/skill-versions/version_global_rollout/package") {
+          return Response.json({
+            versionId: "version_global_rollout",
+            skillId: "skill_global_rollout",
+            package: rolloutPkg,
           });
         }
         return Response.json({ error: "not_found" }, { status: 404 });
@@ -246,6 +273,13 @@ test("POST /skills/materialization/sync-global downloads personal global package
       versionId: "version_global",
       packageSha256: pkg.packageSha256,
       target: "personal-global",
+    }, {
+      installationId: "rollout:rollout_global",
+      skillId: "skill_global_rollout",
+      name: "global-rollout-tool",
+      versionId: "version_global_rollout",
+      packageSha256: rolloutPkg.packageSha256,
+      target: "personal-global",
     }]);
     expect(
       await readFile(join(homeRoot, ".config", "opencode", "skills", "veslo-managed", "global-tool", "SKILL.md"), "utf8"),
@@ -258,6 +292,16 @@ test("POST /skills/materialization/sync-global downloads personal global package
       },
       {
         pathname: "/v1/skill-versions/version_global/package",
+        search: "",
+        auth: "Bearer registry-token",
+      },
+      {
+        pathname: "/v1/skill-rollout-policies",
+        search: "?target=user-global&enabled=true",
+        auth: "Bearer registry-token",
+      },
+      {
+        pathname: "/v1/skill-versions/version_global_rollout/package",
         search: "",
         auth: "Bearer registry-token",
       },
@@ -278,6 +322,7 @@ test("POST /skills/materialization/sync-global downloads personal global package
 
 test("POST /workspace/:id/skills/materialization/sync downloads desired packages and writes managed runtime files", async () => {
   const pkg = await archive("registry-tool");
+  const rolloutPkg = await archive("registry-rollout-tool");
   const registryCalls: Array<{ pathname: string; auth: string | null; org: string | null; user: string | null }> = [];
   const registry = Bun.serve({
     hostname: "127.0.0.1",
@@ -305,11 +350,42 @@ test("POST /workspace/:id/skills/materialization/sync downloads desired packages
           ],
         });
       }
+      if (url.pathname === "/v1/skill-rollout-policies" && url.searchParams.get("target") === "workspace") {
+        return Response.json({
+          policies: [
+            {
+              id: "rollout_workspace",
+              skillId: "skill_rollout",
+              versionId: "version_rollout",
+              target: "workspace",
+              audience: "selected-workspaces",
+              catalogScope: "organization",
+              orgId: "org_1",
+              workspaceId: "ws_1",
+              enabled: true,
+              updatePolicy: "pinned",
+              removalPolicy: "admin_removable",
+              createdAt: "2026-05-30T10:00:00.000Z",
+            },
+          ],
+          nextCursor: null,
+        });
+      }
+      if (url.pathname === "/v1/skill-rollout-policies" && url.searchParams.get("target") === "user-global") {
+        return Response.json({ policies: [], nextCursor: null });
+      }
       if (url.pathname === "/v1/skill-versions/version_1/package") {
         return Response.json({
           versionId: "version_1",
           skillId: "skill_1",
           package: pkg,
+        });
+      }
+      if (url.pathname === "/v1/skill-versions/version_rollout/package") {
+        return Response.json({
+          versionId: "version_rollout",
+          skillId: "skill_rollout",
+          package: rolloutPkg,
         });
       }
       return Response.json({ error: "not_found" }, { status: 404 });
@@ -342,6 +418,13 @@ test("POST /workspace/:id/skills/materialization/sync downloads desired packages
     versionId: "version_1",
     packageSha256: pkg.packageSha256,
     target: "workspace",
+  }, {
+    installationId: "rollout:rollout_workspace",
+    skillId: "skill_rollout",
+    name: "registry-rollout-tool",
+    versionId: "version_rollout",
+    packageSha256: rolloutPkg.packageSha256,
+    target: "workspace",
   }]);
   expect(await readFile(join(workspaceRoot, ".opencode", "skills", "veslo-managed", "registry-tool", "SKILL.md"), "utf8"))
     .toContain("# registry-tool");
@@ -358,7 +441,237 @@ test("POST /workspace/:id/skills/materialization/sync downloads desired packages
       org: "org_1",
       user: "user_1",
     },
+    {
+      pathname: "/v1/skill-rollout-policies",
+      auth: "Bearer registry-token",
+      org: "org_1",
+      user: "user_1",
+    },
+    {
+      pathname: "/v1/skill-versions/version_rollout/package",
+      auth: "Bearer registry-token",
+      org: "org_1",
+      user: "user_1",
+    },
+    {
+      pathname: "/v1/skill-rollout-policies",
+      auth: "Bearer registry-token",
+      org: "org_1",
+      user: "user_1",
+    },
   ]);
+});
+
+test("POST /workspace/:id/skills/materialization/sync reports rollout target conflicts", async () => {
+  const personalPkg = await archive("conflict-user-tool");
+  const workspacePkg = await archive("conflict-workspace-tool");
+  const registry = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      const url = new URL(request.url);
+      if (url.pathname === "/v1/workspaces/ws_1/skill-set") {
+        return Response.json({
+          workspaceId: "ws_1",
+          skills: [
+            {
+              installationId: "install_conflict_user",
+              skillId: "skill_conflict",
+              versionId: "version_conflict_user",
+              enabled: true,
+              source: "personal",
+              installedAt: "2026-05-26T12:00:00.000Z",
+              ownerUserId: "user_1",
+            },
+          ],
+        });
+      }
+      if (url.pathname === "/v1/skill-rollout-policies" && url.searchParams.get("target") === "workspace") {
+        return Response.json({
+          policies: [
+            {
+              id: "rollout_conflict_workspace",
+              skillId: "skill_conflict",
+              versionId: "version_conflict_workspace",
+              target: "workspace",
+              audience: "selected-workspaces",
+              catalogScope: "organization",
+              orgId: "org_1",
+              workspaceId: "ws_1",
+              enabled: true,
+              updatePolicy: "pinned",
+              removalPolicy: "admin_removable",
+              createdAt: "2026-05-30T10:00:00.000Z",
+            },
+          ],
+          nextCursor: null,
+        });
+      }
+      if (url.pathname === "/v1/skill-rollout-policies" && url.searchParams.get("target") === "user-global") {
+        return Response.json({ policies: [], nextCursor: null });
+      }
+      if (url.pathname === "/v1/skill-versions/version_conflict_user/package") {
+        return Response.json({ versionId: "version_conflict_user", skillId: "skill_conflict", package: personalPkg });
+      }
+      if (url.pathname === "/v1/skill-versions/version_conflict_workspace/package") {
+        return Response.json({
+          versionId: "version_conflict_workspace",
+          skillId: "skill_conflict",
+          package: workspacePkg,
+        });
+      }
+      return Response.json({ error: "not_found" }, { status: 404 });
+    },
+  });
+  runningServers.push(registry as { stop?: (closeActiveConnections?: boolean) => void });
+  const { server } = await startFixture({ registryBaseUrl: `http://127.0.0.1:${registry.port}` });
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/skills/materialization/sync`, {
+    method: "POST",
+    headers: {
+      "x-veslo-host-token": "host-token",
+      "x-veslo-den-org-id": "org_1",
+      "x-veslo-den-user-id": "user_1",
+    },
+  });
+
+  expect(response.status).toBe(200);
+  const payload = await response.json() as {
+    materializedSkills: Array<{ installationId: string; target: string }>;
+    conflicts?: Array<{
+      code: string;
+      name: string;
+      blockingInstallationId?: string;
+      blockedInstallationId?: string;
+      message: string;
+    }>;
+  };
+  expect(payload.materializedSkills).toMatchObject([{
+    installationId: "rollout:rollout_conflict_workspace",
+    target: "workspace",
+  }]);
+  expect(payload.conflicts).toEqual([
+    {
+      code: "target-conflict",
+      name: "conflict-user-tool",
+      blockingInstallationId: "rollout:rollout_conflict_workspace",
+      blockedInstallationId: "install_conflict_user",
+      message: "Skill conflict-user-tool cannot be active as both user-global and workspace targets.",
+    },
+  ]);
+});
+
+test("POST /workspace/:id/skills/materialization/sync reports rollout-versus-rollout target conflicts", async () => {
+  const userGlobalPkg = await archive("rollout-user-tool");
+  const workspacePkg = await archive("rollout-workspace-tool");
+  const registryCalls: Array<{ pathname: string; search: string }> = [];
+  const registry = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      const url = new URL(request.url);
+      registryCalls.push({ pathname: url.pathname, search: url.search });
+      if (url.pathname === "/v1/workspaces/ws_1/skill-set") {
+        return Response.json({ workspaceId: "ws_1", skills: [] });
+      }
+      if (url.pathname === "/v1/skill-rollout-policies" && url.searchParams.get("target") === "workspace") {
+        return Response.json({
+          policies: [
+            {
+              id: "rollout_conflict_workspace",
+              skillId: "skill_rollout_conflict",
+              versionId: "version_rollout_workspace",
+              target: "workspace",
+              audience: "selected-workspaces",
+              catalogScope: "organization",
+              orgId: "org_1",
+              workspaceId: "ws_1",
+              enabled: true,
+              updatePolicy: "pinned",
+              removalPolicy: "locked",
+              createdAt: "2026-05-30T10:00:00.000Z",
+            },
+          ],
+          nextCursor: null,
+        });
+      }
+      if (url.pathname === "/v1/skill-rollout-policies" && url.searchParams.get("target") === "user-global") {
+        return Response.json({
+          policies: [
+            {
+              id: "rollout_conflict_user",
+              skillId: "skill_rollout_conflict",
+              versionId: "version_rollout_user",
+              target: "user-global",
+              audience: "all-org-users",
+              catalogScope: "organization",
+              orgId: "org_1",
+              enabled: true,
+              updatePolicy: "pinned",
+              removalPolicy: "user_removable",
+              createdAt: "2026-05-30T10:00:00.000Z",
+            },
+          ],
+          nextCursor: null,
+        });
+      }
+      if (url.pathname === "/v1/skill-versions/version_rollout_workspace/package") {
+        return Response.json({
+          versionId: "version_rollout_workspace",
+          skillId: "skill_rollout_conflict",
+          package: workspacePkg,
+        });
+      }
+      if (url.pathname === "/v1/skill-versions/version_rollout_user/package") {
+        return Response.json({
+          versionId: "version_rollout_user",
+          skillId: "skill_rollout_conflict",
+          package: userGlobalPkg,
+        });
+      }
+      return Response.json({ error: "not_found" }, { status: 404 });
+    },
+  });
+  runningServers.push(registry as { stop?: (closeActiveConnections?: boolean) => void });
+  const { server } = await startFixture({ registryBaseUrl: `http://127.0.0.1:${registry.port}` });
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/skills/materialization/sync`, {
+    method: "POST",
+    headers: {
+      "x-veslo-host-token": "host-token",
+      "x-veslo-den-org-id": "org_1",
+      "x-veslo-den-user-id": "user_1",
+    },
+  });
+
+  expect(response.status).toBe(200);
+  const payload = await response.json() as {
+    materializedSkills: Array<{ installationId: string; target: string }>;
+    conflicts?: Array<{
+      code: string;
+      name: string;
+      blockingInstallationId?: string;
+      blockedInstallationId?: string;
+      message: string;
+    }>;
+  };
+  expect(payload.materializedSkills).toMatchObject([{
+    installationId: "rollout:rollout_conflict_workspace",
+    target: "workspace",
+  }]);
+  expect(payload.conflicts).toEqual([
+    {
+      code: "target-conflict",
+      name: "rollout-user-tool",
+      blockingInstallationId: "rollout:rollout_conflict_workspace",
+      blockedInstallationId: "rollout:rollout_conflict_user",
+      message: "Skill rollout-user-tool cannot be active as both user-global and workspace targets.",
+    },
+  ]);
+  expect(registryCalls).toContainEqual({
+    pathname: "/v1/skill-rollout-policies",
+    search: "?target=user-global&enabled=true",
+  });
 });
 
 test("GET workspace materialization status stays pending when registry is configured and only a local manifest exists", async () => {
@@ -433,6 +746,9 @@ test("POST workspace materialization sync resolves org skill sets, writes lockfi
               },
             ],
           });
+        }
+        if (url.pathname === "/v1/skill-rollout-policies") {
+          return Response.json({ policies: [], nextCursor: null });
         }
         if (url.pathname === "/v1/skill-versions/version_org/package") {
           return Response.json({ versionId: "version_org", skillId: "skill_shared_org", package: orgPkg });

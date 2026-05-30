@@ -5,6 +5,8 @@ import type {
   WorkspaceSkillConflict,
   WorkspaceSkillMaterialization,
   WorkspaceSkillRegistryInstallation,
+  WorkspaceSkillRolloutPolicy,
+  WorkspaceSkillRolloutRemovalPolicy,
   WorkspaceSkillSetLocalUnmanagedSkill,
   WorkspaceSkillSetPolicy,
   WorkspaceSkillSetResolution,
@@ -19,6 +21,7 @@ export type {
   WorkspaceSkillConflict,
   WorkspaceSkillMaterialization,
   WorkspaceSkillRegistryInstallation,
+  WorkspaceSkillRolloutPolicy,
   WorkspaceSkillSetLocalUnmanagedSkill,
   WorkspaceSkillSetPolicy,
   WorkspaceSkillSetResolution,
@@ -30,8 +33,13 @@ export type ResolveWorkspaceSkillSetInput = {
   workspace: WorkspaceSkillSetWorkspace;
   user: WorkspaceSkillSetUser;
   registryInstallations: WorkspaceSkillRegistryInstallation[];
+  rolloutPolicies?: WorkspaceSkillRolloutPolicy[];
   localUnmanagedSkills: WorkspaceSkillSetLocalUnmanagedSkill[];
   policy?: WorkspaceSkillSetPolicy;
+};
+
+type ManagedCandidate = ResolvedWorkspaceSkill & {
+  removalPolicy: WorkspaceSkillRolloutRemovalPolicy;
 };
 
 const normalize = (value: string | null | undefined) => String(value ?? "").trim();
@@ -94,6 +102,22 @@ const toResolvedSkill = (installation: WorkspaceSkillRegistryInstallation): Reso
   };
 };
 
+const toCandidateFromInstallation = (installation: WorkspaceSkillRegistryInstallation): ManagedCandidate => ({
+  ...toResolvedSkill(installation),
+  removalPolicy: "user_removable",
+});
+
+const toCandidateFromRollout = (policy: WorkspaceSkillRolloutPolicy): ManagedCandidate => ({
+  installationId: `rollout:${policy.id}`,
+  skillId: policy.skillId,
+  name: policy.name,
+  versionId: policy.versionId,
+  packageSha256: policy.packageSha256,
+  source: policy.source,
+  target: policy.target,
+  removalPolicy: policy.removalPolicy,
+});
+
 const toMaterialization = (skill: ResolvedWorkspaceSkill): WorkspaceSkillMaterialization => ({
   installationId: skill.installationId,
   skillId: skill.skillId,
@@ -103,13 +127,74 @@ const toMaterialization = (skill: ResolvedWorkspaceSkill): WorkspaceSkillMateria
   target: skill.target,
 });
 
+function isRolloutInScope(
+  policy: WorkspaceSkillRolloutPolicy,
+  workspace: WorkspaceSkillSetWorkspace,
+  user: WorkspaceSkillSetUser,
+): boolean {
+  if (!policy.enabled) return false;
+  if (policy.source === "organization" && (!workspace.orgId || policy.orgId !== workspace.orgId)) return false;
+
+  if (policy.target === "workspace") {
+    return policy.audience === "selected-workspaces" && policy.workspaceId === workspace.id;
+  }
+
+  if (policy.audience === "user") {
+    return policy.userId === user.id;
+  }
+  if (policy.audience === "all-org-users") {
+    return Boolean(user.orgId && policy.orgId === user.orgId);
+  }
+  return policy.audience === "all-platform-users";
+}
+
+function targetConflictPriority(skill: ManagedCandidate): number {
+  const removalPriority = skill.removalPolicy === "locked" ? 300 : skill.removalPolicy === "admin_removable" ? 200 : 0;
+  const targetPriority = skill.target === "workspace" ? 100 : 0;
+  return removalPriority + targetPriority;
+}
+
+function resolveTargetConflicts(
+  candidates: ManagedCandidate[],
+  conflicts: WorkspaceSkillConflict[],
+): ResolvedWorkspaceSkill[] {
+  const bySkill = new Map<string, ManagedCandidate[]>();
+  for (const candidate of candidates) {
+    const existing = bySkill.get(candidate.skillId) ?? [];
+    existing.push(candidate);
+    bySkill.set(candidate.skillId, existing);
+  }
+
+  const resolved: ResolvedWorkspaceSkill[] = [];
+  for (const group of bySkill.values()) {
+    const targets = new Set(group.map((candidate) => candidate.target));
+    if (targets.size < 2) {
+      resolved.push(...group);
+      continue;
+    }
+
+    const ordered = [...group].sort((left, right) => targetConflictPriority(right) - targetConflictPriority(left));
+    const winner = ordered[0];
+    resolved.push(winner);
+    for (const loser of ordered.slice(1)) {
+      conflicts.push({
+        code: "target-conflict",
+        name: loser.name,
+        blockingInstallationId: winner.installationId,
+        blockedInstallationId: loser.installationId,
+        message: `Skill ${loser.name} cannot be active as both user-global and workspace targets.`,
+      });
+    }
+  }
+  return resolved;
+}
+
 export function resolveWorkspaceSkillSet(input: ResolveWorkspaceSkillSetInput): WorkspaceSkillSetResolution {
   const policy = input.policy ?? {};
-  const effectiveManagedSkills: ResolvedWorkspaceSkill[] = [];
+  const effectiveManagedSkillCandidates: ManagedCandidate[] = [];
   const blockedInstallations: BlockedWorkspaceSkillInstallation[] = [];
   const conflicts: WorkspaceSkillConflict[] = [];
-  const managedByName = new Map<string, ResolvedWorkspaceSkill>();
-  const orgManagedNames = new Map<string, WorkspaceSkillRegistryInstallation>();
+  const orgManagedNames = new Map<string, Pick<WorkspaceSkillRegistryInstallation, "installationId" | "name">>();
 
   for (const installation of input.registryInstallations) {
     const name = normalize(installation.name);
@@ -118,6 +203,15 @@ export function resolveWorkspaceSkillSet(input: ResolveWorkspaceSkillSetInput): 
     if (!isInstallationInScope(installation, input.workspace, input.user, policy)) continue;
     if (isApprovedRequired(installation.source) && installation.approved !== true) continue;
     orgManagedNames.set(name, { ...installation, name });
+  }
+  for (const rolloutPolicy of input.rolloutPolicies ?? []) {
+    const name = normalize(rolloutPolicy.name);
+    if (!name || rolloutPolicy.target === "personal-global") continue;
+    if (!isRolloutInScope(rolloutPolicy, input.workspace, input.user)) continue;
+    orgManagedNames.set(name, {
+      installationId: `rollout:${rolloutPolicy.id}`,
+      name,
+    });
   }
 
   for (const installation of input.registryInstallations) {
@@ -160,7 +254,7 @@ export function resolveWorkspaceSkillSet(input: ResolveWorkspaceSkillSetInput): 
       continue;
     }
 
-    const existing = managedByName.get(name);
+    const existing = effectiveManagedSkillCandidates.find((candidate) => candidate.name === name);
     if (
       input.workspace.scope === "organization" &&
       installation.source === "personal" &&
@@ -179,10 +273,23 @@ export function resolveWorkspaceSkillSet(input: ResolveWorkspaceSkillSetInput): 
       continue;
     }
 
-    const resolved = toResolvedSkill({ ...installation, name });
-    effectiveManagedSkills.push(resolved);
-    if (!managedByName.has(name) || resolved.source !== "personal") {
-      managedByName.set(name, resolved);
+    const resolved = toCandidateFromInstallation({ ...installation, name });
+    effectiveManagedSkillCandidates.push(resolved);
+  }
+
+  for (const rolloutPolicy of input.rolloutPolicies ?? []) {
+    const name = normalize(rolloutPolicy.name);
+    if (!name || !isRolloutInScope(rolloutPolicy, input.workspace, input.user)) {
+      continue;
+    }
+    effectiveManagedSkillCandidates.push(toCandidateFromRollout({ ...rolloutPolicy, name }));
+  }
+
+  const effectiveManagedSkills = resolveTargetConflicts(effectiveManagedSkillCandidates, conflicts);
+  const managedByName = new Map<string, ResolvedWorkspaceSkill>();
+  for (const skill of effectiveManagedSkills) {
+    if (!managedByName.has(skill.name) || skill.source !== "personal") {
+      managedByName.set(skill.name, skill);
     }
   }
 

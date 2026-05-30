@@ -58,6 +58,14 @@ Expected registry routes:
   Remove an installation from its target.
 - `POST /v1/skill-installations/:installationId/restore`
   Restore a previously removed installation where audit and retention policy allow it.
+- `GET /v1/skill-rollout-policies`
+  List rollout policies visible to the caller. Policies describe default or explicit distribution intent without requiring one row per receiving user or workspace.
+- `POST /v1/skill-rollout-policies`
+  Create a rollout policy for an organization or platform skill. A policy targets either `user-global` or `workspace`, never both for the same skill and audience.
+- `PATCH /v1/skill-rollout-policies/:policyId`
+  Update enabled state, desired version policy, release channel, or removal policy where the caller has admin rights.
+- `DELETE /v1/skill-rollout-policies/:policyId`
+  Disable or soft-delete a rollout policy. `admin_removable` and `locked` policies reject ordinary user removal.
 - `GET /v1/workspaces/:workspaceId/skill-set`
   Read the effective desired registry-backed skill set for a workspace.
 - `PATCH /v1/workspaces/:workspaceId/skill-set`
@@ -80,9 +88,9 @@ Auth scopes:
 - Workspace collaborator/admin
   Can read workspace skill sets. Workspace admins can patch workspace skill sets and manage workspace-targeted installations.
 - Org skill admin
-  Can review, approve, reject, publish, restore, and manage organization-scoped skills and installations for the org.
+  Can review, approve, reject, publish, restore, and manage organization-scoped skills, installations, and rollout policies for the org.
 - Platform admin
-  Can manage platform-scoped skills, approve platform distribution, moderate all review requests, and perform registry support actions across tenants.
+  Can manage platform-scoped skills and rollout policies, approve platform distribution, moderate all review requests, and perform registry support actions across tenants.
 
 Local contract validators live server-side and are intentionally narrow. They validate only registry response shapes consumed by the local Veslo server and app, including skill lists, skill detail, version lists, package downloads, installations, workspace skill sets, review responses, and search results. Package download validation delegates to the existing skill package manifest model so local install behavior stays aligned with pack/unpack.
 
@@ -112,6 +120,14 @@ Veslo server also exposes a local proxy for registry search, registry events, an
   Requires host or owner auth. Proxies installation deletion.
 - `POST /v1/skill-installations/:installationId/restore`
   Requires host or owner auth. Proxies restoration of a deleted installation.
+- `GET /v1/skill-rollout-policies`
+  Requires client auth. Proxies rollout policy lookup for the current registry context.
+- `POST /v1/skill-rollout-policies`
+  Requires host or owner auth. Proxies rollout policy creation for user-global or selected-workspace targets.
+- `PATCH /v1/skill-rollout-policies/:policyId`
+  Requires host or owner auth. Proxies rollout policy updates.
+- `DELETE /v1/skill-rollout-policies/:policyId`
+  Requires host or owner auth. Proxies rollout policy deletion or disablement.
 - `PATCH /v1/workspaces/:workspaceId/skill-set`
   Requires host or owner auth. Replaces the desired registry-backed skill set for a workspace.
 
@@ -120,11 +136,16 @@ Server-controlled registry package materialization is a local server responsibil
 - `GET /skills/materialization`
   Requires client auth. Returns local server-controlled user skill materialization status.
 - `POST /skills/materialization/sync-global`
-  Requires host or owner auth. Downloads desired user-skill registry installations, validates package archives, writes server-controlled user skill directories, and returns `pending` without mutating files when the caller reports an active run.
+  Requires host or owner auth. Downloads desired user-skill registry installations and matching user-global rollout policies, validates package archives, writes server-controlled user skill directories, returns any resolver `conflicts`, and returns `pending` without mutating files when the caller reports an active run.
 - `GET /workspace/:id/skills/materialization`
   Requires client auth. Returns local server-controlled skill materialization status for the workspace.
 - `POST /workspace/:id/skills/materialization/sync`
-  Requires host or owner auth. Downloads the desired registry workspace skill set, validates package archives, writes server-controlled runtime skill directories, and returns `pending` without mutating files when the caller reports an active run.
+  Requires host or owner auth. Downloads the desired registry workspace skill set and matching selected-workspace rollout policies, validates package archives, writes server-controlled runtime skill directories, returns any resolver `conflicts`, and returns `pending` without mutating files when the caller reports an active run.
+
+Rollout policy resolution must enforce target exclusivity: the same effective
+skill/audience cannot be materialized as both a user skill and a workspace skill.
+If registry state contains both because of legacy data or a race, the server
+returns a conflict and avoids writing both targets.
 
 ## Workspace Scope
 

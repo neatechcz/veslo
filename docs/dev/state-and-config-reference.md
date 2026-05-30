@@ -295,6 +295,7 @@ Registry-owned state:
 - skill records, slugs, descriptions, tags, visibility, and review status
 - immutable package versions and package digests
 - personal, workspace, and organization installation records
+- rollout policies for organization and platform distribution
 - workspace desired skill sets
 - review requests, reviewer decisions, and restore history
 
@@ -308,7 +309,21 @@ Local Veslo state:
 - workspace activation or reload state after a skill set changes
 - any temporary install progress, errors, or selected install target in the app UI
 
-The local server validates registry responses before using them. Validators accept only the response fields needed by the app/server contract and delegate package manifest checks to the skill package model. They are not a backend implementation and do not replace registry-side authorization, review workflow, package storage, or audit enforcement.
+The local server validates registry responses before using them. Validators accept only the response fields needed by the app/server contract and delegate package manifest checks to the skill package model. They are not a backend implementation and do not replace registry-side authorization, review workflow, package storage, rollout policy enforcement, or audit enforcement.
+
+Rollout policies keep catalog source separate from install target. An
+organization or public skill can be targeted either as a user skill or as a
+workspace skill, but the same effective skill/audience cannot have both target
+types active at once. Target changes are retarget or move operations. Policy
+removal can be `user_removable`, `admin_removable`, or `locked`; locked policies
+are reserved for future required system skills and must be treated as
+non-removable by normal users.
+
+Registry-backed rollout policy changes are durable distribution state. Event
+polling should invalidate visible skill inventory, mark active workspaces as
+pending reload, and allow idle user-skill or workspace materialization to sync
+through the local server. Offline clients keep using the last local lockfile and
+materialization manifests until registry sync succeeds.
 
 Registry search can be proxied through the local Veslo server at `/v1/skills/search` so the app can reuse server-side registry auth configuration and response validation. Search indexing remains registry-owned and includes package metadata plus searchable package text/code under the registry size limit; clients may pass language context for server-side query expansion and must not implement semantic skill search locally. Registry update events can be polled through `/v1/skill-registry-events`; active workspace updates should become pending reload state, while idle workspace and user-skill updates can be materialized immediately. Registry writes use host/owner-authenticated local proxy routes for skill creation, immutable version publishing, installation create/update/delete/restore, review request create/approve/reject, and workspace skill-set replacement. Runtime mutation remains explicit: `/workspace/:id/skills/materialization/sync` and `/skills/materialization/sync-global` require host or owner auth and must not rewrite server-controlled skill files while an agent run is active.
 

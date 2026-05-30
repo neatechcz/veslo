@@ -12,6 +12,19 @@ import {
 export type RegistrySkillVisibility = "personal" | "workspace" | "organization" | "platform";
 export type RegistrySkillReviewStatus = "draft" | "pending_review" | "approved" | "rejected";
 export type RegistrySkillInstallationSource = "personal" | "workspace" | "organization" | "platform";
+export type RegistrySkillRolloutPolicyTarget = "user-global" | "workspace";
+export type RegistrySkillRolloutPolicyAudience =
+  | "user"
+  | "selected-workspaces"
+  | "all-org-users"
+  | "all-platform-users";
+export type RegistrySkillRolloutPolicyCatalogScope = "organization" | "platform";
+export type RegistrySkillRolloutPolicyUpdatePolicy =
+  | "pinned"
+  | "latest_user"
+  | "latest_approved"
+  | "release_channel";
+export type RegistrySkillRolloutPolicyRemovalPolicy = "user_removable" | "admin_removable" | "locked";
 
 export type RegistrySkillVersionSummary = {
   id: string;
@@ -90,6 +103,33 @@ export type RegistrySkillInstallationResponse = {
 export type RegistrySkillInstallationsResponse = {
   installations: RegistrySkillInstallation[];
   nextCursor?: string | null;
+};
+
+export type RegistrySkillRolloutPolicy = {
+  id: string;
+  skillId: string;
+  versionId: string | null;
+  target: RegistrySkillRolloutPolicyTarget;
+  audience: RegistrySkillRolloutPolicyAudience;
+  catalogScope: RegistrySkillRolloutPolicyCatalogScope;
+  orgId?: string | null;
+  userId?: string | null;
+  workspaceId?: string | null;
+  enabled: boolean;
+  updatePolicy: RegistrySkillRolloutPolicyUpdatePolicy;
+  releaseChannel?: string | null;
+  removalPolicy: RegistrySkillRolloutPolicyRemovalPolicy;
+  createdAt: string;
+  updatedAt?: string;
+};
+
+export type RegistrySkillRolloutPoliciesResponse = {
+  policies: RegistrySkillRolloutPolicy[];
+  nextCursor?: string | null;
+};
+
+export type RegistrySkillRolloutPolicyResponse = {
+  policy: RegistrySkillRolloutPolicy;
 };
 
 export type WorkspaceSkillSetResponse = {
@@ -265,6 +305,11 @@ const validatePaginatedCursor = (value: unknown, field: string): string | null |
 
 const optionalNullableString = (value: unknown, field: string): string | null | undefined => {
   if (value === undefined) return undefined;
+  if (value === null) return null;
+  return requireString(value, field);
+};
+
+const requireNullableString = (value: unknown, field: string): string | null => {
   if (value === null) return null;
   return requireString(value, field);
 };
@@ -478,6 +523,74 @@ export function validateRegistrySkillInstallationsResponse(value: unknown): Regi
   });
   return {
     installations,
+    nextCursor: validatePaginatedCursor(record.nextCursor, "nextCursor"),
+  };
+}
+
+const validateRolloutPolicy = (value: unknown, field: string): RegistrySkillRolloutPolicy => {
+  const record = requireRecord(value, field);
+  const orgId = optionalNullableString(record.orgId, `${field}.orgId`);
+  const userId = optionalNullableString(record.userId, `${field}.userId`);
+  const workspaceId = optionalNullableString(record.workspaceId, `${field}.workspaceId`);
+  const releaseChannel = optionalNullableString(record.releaseChannel, `${field}.releaseChannel`);
+  const updatedAt = record.updatedAt === undefined ? undefined : requireIsoDateString(record.updatedAt, `${field}.updatedAt`);
+  const policy: RegistrySkillRolloutPolicy = {
+    id: requireString(record.id, `${field}.id`),
+    skillId: requireString(record.skillId, `${field}.skillId`),
+    versionId: requireNullableString(record.versionId, `${field}.versionId`),
+    target: requireEnum(record.target, `${field}.target`, ["user-global", "workspace"]),
+    audience: requireEnum(record.audience, `${field}.audience`, [
+      "user",
+      "selected-workspaces",
+      "all-org-users",
+      "all-platform-users",
+    ]),
+    catalogScope: requireEnum(record.catalogScope, `${field}.catalogScope`, ["organization", "platform"]),
+    enabled: requireBoolean(record.enabled, `${field}.enabled`),
+    updatePolicy: requireEnum(record.updatePolicy, `${field}.updatePolicy`, [
+      "pinned",
+      "latest_user",
+      "latest_approved",
+      "release_channel",
+    ]),
+    removalPolicy: requireEnum(record.removalPolicy, `${field}.removalPolicy`, [
+      "user_removable",
+      "admin_removable",
+      "locked",
+    ]),
+    createdAt: requireIsoDateString(record.createdAt, `${field}.createdAt`),
+  };
+  if (orgId !== undefined) policy.orgId = orgId;
+  if (userId !== undefined) policy.userId = userId;
+  if (workspaceId !== undefined) policy.workspaceId = workspaceId;
+  if (releaseChannel !== undefined) policy.releaseChannel = releaseChannel;
+  if (updatedAt) policy.updatedAt = updatedAt;
+  return policy;
+};
+
+export function validateRegistrySkillRolloutPolicyResponse(value: unknown): RegistrySkillRolloutPolicyResponse {
+  const record = requireRecord(value, "skill rollout policy response");
+  return {
+    policy: validateRolloutPolicy(record.policy, "policy"),
+  };
+}
+
+export function validateRegistrySkillRolloutPoliciesResponse(value: unknown): RegistrySkillRolloutPoliciesResponse {
+  const record = requireRecord(value, "skill rollout policies response");
+  if (!Array.isArray(record.policies)) {
+    throw new Error("Skill registry rollout policies must be an array");
+  }
+  const seenPolicyIds = new Set<string>();
+  const policies = record.policies.map((policy, index) => {
+    const parsed = validateRolloutPolicy(policy, `policies[${index}]`);
+    if (seenPolicyIds.has(parsed.id)) {
+      throw new Error(`Skill registry rollout policies contain duplicate policy id: ${parsed.id}`);
+    }
+    seenPolicyIds.add(parsed.id);
+    return parsed;
+  });
+  return {
+    policies,
     nextCursor: validatePaginatedCursor(record.nextCursor, "nextCursor"),
   };
 }

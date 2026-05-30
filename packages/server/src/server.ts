@@ -11,6 +11,7 @@ import type {
   ReloadReason,
   ReloadTrigger,
   TokenScope,
+  WorkspaceSkillConflict,
   WorkspaceSkillMaterialization,
 } from "./types.js";
 import { ApprovalService } from "./approvals.js";
@@ -22,19 +23,23 @@ import { fetchOrgMcpCatalog, fetchOrgSkillsCatalog } from "./den-catalog.js";
 import {
   createRegistrySkill,
   createRegistrySkillInstallation,
+  createRegistrySkillRolloutPolicy,
   createRegistrySkillReviewRequest,
   createRegistrySkillVersion,
   approveRegistrySkillReviewRequest,
   deleteRegistrySkillInstallation,
+  deleteRegistrySkillRolloutPolicy,
   downloadSkillPackageFromRegistry,
   getWorkspaceSkillSetFromRegistry,
   listRegistrySkillEvents,
   listRegistrySkillInstallations,
+  listRegistrySkillRolloutPolicies,
   listRegistrySkillVersions,
   rejectRegistrySkillReviewRequest,
   replaceRegistryWorkspaceSkillSet,
   restoreRegistrySkillInstallation,
   searchRegistrySkills,
+  updateRegistrySkillRolloutPolicy,
   updateRegistrySkillInstallation,
 } from "./skill-registry-client.js";
 import {
@@ -44,11 +49,19 @@ import {
   readSkillMaterializationManifest,
   workspaceManagedSkillsRoot,
 } from "./skill-materializer.js";
-import type { RegistrySkillPackageArchive } from "./skill-registry-types.js";
+import type {
+  RegistrySkillPackageArchive,
+  RegistrySkillRolloutPolicy,
+  RegistrySkillRolloutPolicyAudience,
+  RegistrySkillRolloutPolicyCatalogScope,
+  RegistrySkillRolloutPolicyRemovalPolicy,
+  RegistrySkillRolloutPolicyTarget,
+  RegistrySkillRolloutPolicyUpdatePolicy,
+} from "./skill-registry-types.js";
 import type { SkillPackageArchive } from "./skill-packages.js";
 import { resolveSkillMatch } from "./skill-resolver.js";
 import { resolveWorkspaceSkillSet } from "./workspace-skill-set.js";
-import type { WorkspaceSkillRegistryInstallation } from "./workspace-skill-set.js";
+import type { WorkspaceSkillRegistryInstallation, WorkspaceSkillRolloutPolicy } from "./workspace-skill-set.js";
 import { writeWorkspaceSkillLockfile } from "./workspace-skill-lockfile.js";
 import { deleteCommand, listCommands, upsertCommand } from "./commands.js";
 import { deleteScheduledJob, listScheduledJobs, resolveScheduledJob } from "./scheduler.js";
@@ -1905,11 +1918,48 @@ function registryInstallationToWorkspaceInstallation(input: {
   };
 }
 
+function requireRolloutPolicyVersionId(policy: RegistrySkillRolloutPolicy): string {
+  const versionId = policy.versionId?.trim();
+  if (versionId) return versionId;
+  throw new ApiError(
+    409,
+    "skill_rollout_version_unresolved",
+    "Skill rollout policy must resolve to a concrete package version before materialization",
+    { policyId: policy.id, skillId: policy.skillId },
+  );
+}
+
+function registryRolloutPolicyToWorkspacePolicy(input: {
+  policy: RegistrySkillRolloutPolicy;
+  packageResponse: { versionId: string; package: SkillPackageArchive };
+  orgId?: string;
+}): WorkspaceSkillRolloutPolicy {
+  const { policy, packageResponse, orgId } = input;
+  return {
+    id: policy.id,
+    skillId: policy.skillId,
+    name: packageResponse.package.metadata.name,
+    versionId: packageResponse.versionId,
+    packageSha256: packageResponse.package.packageSha256,
+    enabled: policy.enabled,
+    source: policy.catalogScope === "organization" ? "organization" : "platform",
+    target: policy.target === "user-global" ? "personal-global" : "workspace",
+    audience: policy.audience,
+    orgId: policy.orgId ?? (policy.catalogScope === "organization" ? orgId : undefined),
+    userId: policy.userId ?? undefined,
+    workspaceId: policy.workspaceId ?? undefined,
+    removalPolicy: policy.removalPolicy,
+    updatePolicy: policy.updatePolicy,
+    releaseChannel: policy.releaseChannel ?? null,
+  };
+}
+
 async function fetchRegistryWorkspaceMaterializations(
   ctx: RequestContext,
   workspace: WorkspaceInfo,
 ): Promise<{
   materializations: WorkspaceSkillMaterialization[];
+  conflicts: WorkspaceSkillConflict[];
   packagesByInstallationId: Map<string, SkillPackageArchive>;
   skillSetId: string;
   skillSetRevision: string;
@@ -1926,6 +1976,7 @@ async function fetchRegistryWorkspaceMaterializations(
   });
 
   const registryInstallations: WorkspaceSkillRegistryInstallation[] = [];
+  const rolloutPolicies: WorkspaceSkillRolloutPolicy[] = [];
   const packagesByInstallationId = new Map<string, SkillPackageArchive>();
   for (const installation of skillSet.skills) {
     if (!installation.enabled) continue;
@@ -1945,6 +1996,31 @@ async function fetchRegistryWorkspaceMaterializations(
     packagesByInstallationId.set(workspaceInstallation.installationId, packageResponse.package);
   }
 
+  for (const query of [
+    { target: "workspace" as const, workspaceId: workspace.id },
+    { target: "user-global" as const },
+  ]) {
+    const rolloutPoliciesResponse = await listRegistrySkillRolloutPolicies({
+      ...registryInput,
+      ...query,
+      enabled: true,
+    });
+    for (const policy of rolloutPoliciesResponse.policies) {
+      if (!policy.enabled) continue;
+      const packageResponse = await downloadSkillPackageFromRegistry({
+        ...registryInput,
+        versionId: requireRolloutPolicyVersionId(policy),
+      });
+      const workspacePolicy = registryRolloutPolicyToWorkspacePolicy({
+        policy,
+        packageResponse,
+        orgId: registryInput.orgId,
+      });
+      rolloutPolicies.push(workspacePolicy);
+      packagesByInstallationId.set(`rollout:${workspacePolicy.id}`, packageResponse.package);
+    }
+  }
+
   const resolution = resolveWorkspaceSkillSet({
     workspace: {
       id: workspace.id,
@@ -1956,6 +2032,7 @@ async function fetchRegistryWorkspaceMaterializations(
       orgId: registryInput.orgId,
     },
     registryInstallations,
+    rolloutPolicies,
     localUnmanagedSkills: [],
     policy: {},
   });
@@ -1963,6 +2040,7 @@ async function fetchRegistryWorkspaceMaterializations(
 
   return {
     materializations,
+    conflicts: resolution.conflicts,
     packagesByInstallationId,
     skillSetId: skillSet.skillSetId?.trim() || `workspace:${workspace.id}`,
     skillSetRevision: skillSet.revision?.trim() || desiredSkillSetRevision(materializations),
@@ -1973,6 +2051,7 @@ async function fetchRegistryPersonalGlobalMaterializations(
   ctx: RequestContext,
 ): Promise<{
   materializations: WorkspaceSkillMaterialization[];
+  conflicts: WorkspaceSkillConflict[];
   packagesByInstallationId: Map<string, SkillPackageArchive>;
 }> {
   const baseUrl = skillRegistryBaseUrl(ctx.config);
@@ -1987,27 +2066,70 @@ async function fetchRegistryPersonalGlobalMaterializations(
     target: "personal-global",
   });
 
-  const materializations: WorkspaceSkillMaterialization[] = [];
+  const registryInstallations: WorkspaceSkillRegistryInstallation[] = [];
+  const rolloutPolicies: WorkspaceSkillRolloutPolicy[] = [];
   const packagesByInstallationId = new Map<string, SkillPackageArchive>();
+  const personalGlobalWorkspace: WorkspaceInfo = {
+    id: "personal-global",
+    name: "Personal global skills",
+    path: personalGlobalManagedSkillsRoot(),
+    workspaceType: "local",
+  };
   for (const installation of installations.installations) {
     if (!installation.enabled) continue;
     const packageResponse = await downloadSkillPackageFromRegistry({
       ...registryInput,
       versionId: installation.versionId,
     });
-    const materialization: WorkspaceSkillMaterialization = {
-      installationId: installation.installationId,
-      skillId: installation.skillId,
-      name: packageResponse.package.metadata.name,
-      versionId: packageResponse.versionId,
-      packageSha256: packageResponse.package.packageSha256,
-      target: "personal-global",
-    };
-    materializations.push(materialization);
-    packagesByInstallationId.set(materialization.installationId, packageResponse.package);
+    const workspaceInstallation = registryInstallationToWorkspaceInstallation({
+      installation,
+      workspace: personalGlobalWorkspace,
+      packageResponse,
+      orgId: registryInput.orgId,
+      userId: registryInput.userId,
+    });
+    registryInstallations.push(workspaceInstallation);
+    packagesByInstallationId.set(workspaceInstallation.installationId, packageResponse.package);
   }
 
-  return { materializations, packagesByInstallationId };
+  const rolloutPoliciesResponse = await listRegistrySkillRolloutPolicies({
+    ...registryInput,
+    target: "user-global",
+    enabled: true,
+  });
+  for (const policy of rolloutPoliciesResponse.policies) {
+    if (!policy.enabled) continue;
+    const packageResponse = await downloadSkillPackageFromRegistry({
+      ...registryInput,
+      versionId: requireRolloutPolicyVersionId(policy),
+    });
+    const workspacePolicy = registryRolloutPolicyToWorkspacePolicy({
+      policy,
+      packageResponse,
+      orgId: registryInput.orgId,
+    });
+    rolloutPolicies.push(workspacePolicy);
+    packagesByInstallationId.set(`rollout:${workspacePolicy.id}`, packageResponse.package);
+  }
+
+  const resolution = resolveWorkspaceSkillSet({
+    workspace: {
+      id: personalGlobalWorkspace.id,
+      scope: registryInput.orgId ? "organization" : "personal",
+      orgId: registryInput.orgId,
+    },
+    user: {
+      id: registryInput.userId ?? "local-user",
+      orgId: registryInput.orgId,
+    },
+    registryInstallations,
+    rolloutPolicies,
+    localUnmanagedSkills: [],
+    policy: {},
+  });
+  const materializations = resolution.requiredMaterializations;
+
+  return { materializations, conflicts: resolution.conflicts, packagesByInstallationId };
 }
 
 const trimmedSearchParam = (params: URLSearchParams, key: string): string | undefined => {
@@ -4319,6 +4441,90 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     return jsonResponse(result);
   });
 
+  addRoute(routes, "GET", "/v1/skill-rollout-policies", "client", async (ctx) => {
+    if (!skillRegistryBaseUrl(config)) {
+      return jsonResponse({ policies: [], nextCursor: null });
+    }
+
+    const limit = parseInteger(trimmedSearchParam(ctx.url.searchParams, "limit"));
+    const enabledParam = trimmedSearchParam(ctx.url.searchParams, "enabled");
+    const result = await listRegistrySkillRolloutPolicies({
+      ...skillRegistryRequestInput(ctx),
+      cursor: trimmedSearchParam(ctx.url.searchParams, "cursor"),
+      limit: limit ?? undefined,
+      skillId: trimmedSearchParam(ctx.url.searchParams, "skillId"),
+      target: trimmedSearchParam(ctx.url.searchParams, "target") as RegistrySkillRolloutPolicyTarget | undefined,
+      audience: trimmedSearchParam(ctx.url.searchParams, "audience") as
+        | RegistrySkillRolloutPolicyAudience
+        | undefined,
+      catalogScope: trimmedSearchParam(ctx.url.searchParams, "catalogScope") as
+        | RegistrySkillRolloutPolicyCatalogScope
+        | undefined,
+      targetOrgId: trimmedSearchParam(ctx.url.searchParams, "orgId"),
+      targetUserId: trimmedSearchParam(ctx.url.searchParams, "userId"),
+      workspaceId: trimmedSearchParam(ctx.url.searchParams, "workspaceId"),
+      enabled: enabledParam === undefined ? undefined : enabledParam === "true",
+    });
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "POST", "/v1/skill-rollout-policies", "host", async (ctx) => {
+    ensureWritable(config);
+    requireSkillRegistryBaseUrl(config);
+    const body = await readJsonBody(ctx.request);
+    const result = await createRegistrySkillRolloutPolicy({
+      ...skillRegistryRequestInput(ctx),
+      skillId: requireBodyString(body, "skillId"),
+      versionId: optionalBodyNullableString(body, "versionId"),
+      target: requireBodyString(body, "target") as RegistrySkillRolloutPolicyTarget,
+      audience: requireBodyString(body, "audience") as RegistrySkillRolloutPolicyAudience,
+      catalogScope: requireBodyString(body, "catalogScope") as RegistrySkillRolloutPolicyCatalogScope,
+      targetOrgId: optionalBodyString(body, "orgId"),
+      targetUserId: optionalBodyString(body, "userId"),
+      workspaceId: optionalBodyString(body, "workspaceId"),
+      enabled: optionalBodyBoolean(body, "enabled"),
+      updatePolicy: requireBodyString(body, "updatePolicy") as RegistrySkillRolloutPolicyUpdatePolicy,
+      releaseChannel: optionalBodyNullableString(body, "releaseChannel"),
+      removalPolicy: requireBodyString(body, "removalPolicy") as RegistrySkillRolloutPolicyRemovalPolicy,
+    });
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "PATCH", "/v1/skill-rollout-policies/:policyId", "host", async (ctx) => {
+    ensureWritable(config);
+    requireSkillRegistryBaseUrl(config);
+    const body = await readJsonBody(ctx.request);
+    const result = await updateRegistrySkillRolloutPolicy({
+      ...skillRegistryRequestInput(ctx),
+      policyId: ctx.params.policyId ?? "",
+      skillId: optionalBodyString(body, "skillId"),
+      versionId: optionalBodyNullableString(body, "versionId"),
+      target: optionalBodyString(body, "target") as RegistrySkillRolloutPolicyTarget | undefined,
+      audience: optionalBodyString(body, "audience") as RegistrySkillRolloutPolicyAudience | undefined,
+      catalogScope: optionalBodyString(body, "catalogScope") as RegistrySkillRolloutPolicyCatalogScope | undefined,
+      targetOrgId: optionalBodyNullableString(body, "orgId"),
+      targetUserId: optionalBodyNullableString(body, "userId"),
+      workspaceId: optionalBodyNullableString(body, "workspaceId"),
+      enabled: optionalBodyBoolean(body, "enabled"),
+      updatePolicy: optionalBodyString(body, "updatePolicy") as RegistrySkillRolloutPolicyUpdatePolicy | undefined,
+      releaseChannel: optionalBodyNullableString(body, "releaseChannel"),
+      removalPolicy: optionalBodyString(body, "removalPolicy") as
+        | RegistrySkillRolloutPolicyRemovalPolicy
+        | undefined,
+    });
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "DELETE", "/v1/skill-rollout-policies/:policyId", "host", async (ctx) => {
+    ensureWritable(config);
+    requireSkillRegistryBaseUrl(config);
+    const result = await deleteRegistrySkillRolloutPolicy({
+      ...skillRegistryRequestInput(ctx),
+      policyId: ctx.params.policyId ?? "",
+    });
+    return jsonResponse(result);
+  });
+
   addRoute(routes, "GET", "/v1/skills/search", "client", async (ctx) => {
     const query = trimmedSearchParam(ctx.url.searchParams, "q");
     if (!query) {
@@ -4385,10 +4591,11 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
         status: "pending",
         synced: false,
         reloadRequired: true,
+        conflicts: [],
       }, 202);
     }
 
-    const { materializations, packagesByInstallationId } = await fetchRegistryPersonalGlobalMaterializations(ctx);
+    const { materializations, conflicts, packagesByInstallationId } = await fetchRegistryPersonalGlobalMaterializations(ctx);
     const loadPackage = async (skill: WorkspaceSkillMaterialization) => {
       const archive = packagesByInstallationId.get(skill.installationId);
       if (!archive) {
@@ -4428,6 +4635,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       registryConfigured: true,
       rootDir: result.rootDir,
       materializedSkills: materializations.map(materializationSummaryPayload),
+      conflicts,
       removedSkillNames: result.removedSkillNames,
       backupDirs: result.backupDirs,
     });
@@ -4525,10 +4733,11 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
         status: "pending",
         synced: false,
         reloadRequired: true,
+        conflicts: [],
       }, 202);
     }
 
-    const { materializations, packagesByInstallationId, skillSetId, skillSetRevision } =
+    const { materializations, conflicts, packagesByInstallationId, skillSetId, skillSetRevision } =
       await fetchRegistryWorkspaceMaterializations(ctx, workspace);
     const workspaceMaterializations = materializations.filter((skill) => skill.target === "workspace");
     const personalGlobalMaterializations = materializations.filter((skill) => skill.target === "personal-global");
@@ -4597,6 +4806,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       globalRootDir: personalGlobalResult.rootDir,
       lockfilePath,
       materializedSkills: materializations.map(materializationSummaryPayload),
+      conflicts,
       removedSkillNames: [
         ...workspaceResult.removedSkillNames,
         ...personalGlobalResult.removedSkillNames,

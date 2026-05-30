@@ -397,12 +397,22 @@ export type VesloSkillMaterializationEntry = {
   materializedAt?: string;
 };
 
+export type VesloSkillMaterializationConflict = {
+  code: "personal-global-shadowed" | "unmanaged-local-shadowed" | "target-conflict" | string;
+  name: string;
+  message: string;
+  blockingInstallationId?: string;
+  blockedInstallationId?: string;
+  localPath?: string;
+};
+
 export type VesloSkillMaterializationStatus = {
   workspaceId: string;
   status: "not-configured" | "pending" | "current" | "synced" | string;
   registryConfigured: boolean;
   rootDir?: string;
   materializedSkills: VesloSkillMaterializationEntry[];
+  conflicts?: VesloSkillMaterializationConflict[];
   reloadRequired?: boolean;
   synced?: boolean;
 };

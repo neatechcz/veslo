@@ -5,6 +5,8 @@ import {
   validateRegistrySkillInstallationResponse,
   validateRegistrySkillInstallationsResponse,
   validateRegistrySkillPackageResponse,
+  validateRegistrySkillRolloutPoliciesResponse,
+  validateRegistrySkillRolloutPolicyResponse,
   validateRegistrySkillResponse,
   validateRegistrySkillReviewRequestResponse,
   validateRegistrySkillSearchResponse,
@@ -20,6 +22,13 @@ import type {
   RegistrySkillListResponse,
   RegistrySkillPackageResponse,
   RegistrySkillPackageArchive,
+  RegistrySkillRolloutPoliciesResponse,
+  RegistrySkillRolloutPolicyAudience,
+  RegistrySkillRolloutPolicyCatalogScope,
+  RegistrySkillRolloutPolicyRemovalPolicy,
+  RegistrySkillRolloutPolicyResponse,
+  RegistrySkillRolloutPolicyTarget,
+  RegistrySkillRolloutPolicyUpdatePolicy,
   RegistrySkillResponse,
   RegistrySkillReviewRequestResponse,
   RegistrySkillSearchResponse,
@@ -65,6 +74,17 @@ type WorkspaceSkillSetInput = RegistryClientInput & {
 type ListInstallationsInput = PaginatedInput & {
   source?: RegistrySkillInstallationSource;
   target?: "personal-global" | "workspace";
+};
+
+type ListRolloutPoliciesInput = PaginatedInput & {
+  skillId?: string;
+  target?: RegistrySkillRolloutPolicyTarget;
+  audience?: RegistrySkillRolloutPolicyAudience;
+  catalogScope?: RegistrySkillRolloutPolicyCatalogScope;
+  targetOrgId?: string;
+  targetUserId?: string;
+  workspaceId?: string;
+  enabled?: boolean;
 };
 
 type EventsInput = PaginatedInput & {
@@ -114,6 +134,41 @@ type RestoreInstallationInput = InstallationIdInput & {
   ownerUserId?: string | null;
   workspaceId?: string | null;
   versionId?: string | null;
+};
+
+type CreateRolloutPolicyInput = RegistryClientInput & {
+  skillId: string;
+  versionId?: string | null;
+  target: RegistrySkillRolloutPolicyTarget;
+  audience: RegistrySkillRolloutPolicyAudience;
+  catalogScope: RegistrySkillRolloutPolicyCatalogScope;
+  targetOrgId?: string;
+  targetUserId?: string;
+  workspaceId?: string;
+  enabled?: boolean;
+  updatePolicy: RegistrySkillRolloutPolicyUpdatePolicy;
+  releaseChannel?: string | null;
+  removalPolicy: RegistrySkillRolloutPolicyRemovalPolicy;
+};
+
+type UpdateRolloutPolicyInput = RegistryClientInput & {
+  policyId: string;
+  skillId?: string;
+  versionId?: string | null;
+  target?: RegistrySkillRolloutPolicyTarget;
+  audience?: RegistrySkillRolloutPolicyAudience;
+  catalogScope?: RegistrySkillRolloutPolicyCatalogScope;
+  targetOrgId?: string | null;
+  targetUserId?: string | null;
+  workspaceId?: string | null;
+  enabled?: boolean;
+  updatePolicy?: RegistrySkillRolloutPolicyUpdatePolicy;
+  releaseChannel?: string | null;
+  removalPolicy?: RegistrySkillRolloutPolicyRemovalPolicy;
+};
+
+type RolloutPolicyIdInput = RegistryClientInput & {
+  policyId: string;
 };
 
 type CreateReviewRequestInput = RegistryClientInput & {
@@ -361,6 +416,25 @@ export async function listRegistrySkillEvents(input: EventsInput): Promise<Regis
   return validatePayload(validateRegistrySkillEventsResponse, payload, url);
 }
 
+export async function listRegistrySkillRolloutPolicies(
+  input: ListRolloutPoliciesInput,
+): Promise<RegistrySkillRolloutPoliciesResponse> {
+  const url = buildUrl(input.baseUrl, "/v1/skill-rollout-policies", {
+    cursor: input.cursor,
+    limit: input.limit,
+    orgId: input.targetOrgId,
+    userId: input.targetUserId,
+    workspaceId: input.workspaceId,
+    skillId: input.skillId,
+    target: input.target,
+    audience: input.audience,
+    catalogScope: input.catalogScope,
+    enabled: input.enabled === undefined ? undefined : input.enabled ? "true" : "false",
+  });
+  const payload = await fetchRegistryJson(input, url);
+  return validatePayload(validateRegistrySkillRolloutPoliciesResponse, payload, url);
+}
+
 export async function createRegistrySkill(input: CreateSkillInput): Promise<RegistrySkillResponse> {
   const url = buildUrl(input.baseUrl, "/v1/skills");
   const payload = await fetchRegistryJson(input, url, {
@@ -404,6 +478,62 @@ export async function createRegistrySkillInstallation(
     },
   });
   return validatePayload(validateRegistrySkillInstallationResponse, payload, url);
+}
+
+export async function createRegistrySkillRolloutPolicy(
+  input: CreateRolloutPolicyInput,
+): Promise<RegistrySkillRolloutPolicyResponse> {
+  const url = buildUrl(input.baseUrl, "/v1/skill-rollout-policies");
+  const payload = await fetchRegistryJson(input, url, {
+    method: "POST",
+    body: {
+      skillId: input.skillId,
+      versionId: input.versionId,
+      target: input.target,
+      audience: input.audience,
+      catalogScope: input.catalogScope,
+      orgId: input.targetOrgId,
+      userId: input.targetUserId,
+      workspaceId: input.workspaceId,
+      enabled: input.enabled,
+      updatePolicy: input.updatePolicy,
+      releaseChannel: input.releaseChannel,
+      removalPolicy: input.removalPolicy,
+    },
+  });
+  return validatePayload(validateRegistrySkillRolloutPolicyResponse, payload, url);
+}
+
+export async function updateRegistrySkillRolloutPolicy(
+  input: UpdateRolloutPolicyInput,
+): Promise<RegistrySkillRolloutPolicyResponse> {
+  const url = buildUrl(input.baseUrl, `/v1/skill-rollout-policies/${encodeURIComponent(input.policyId)}`);
+  const payload = await fetchRegistryJson(input, url, {
+    method: "PATCH",
+    body: {
+      skillId: input.skillId,
+      versionId: input.versionId,
+      target: input.target,
+      audience: input.audience,
+      catalogScope: input.catalogScope,
+      orgId: input.targetOrgId,
+      userId: input.targetUserId,
+      workspaceId: input.workspaceId,
+      enabled: input.enabled,
+      updatePolicy: input.updatePolicy,
+      releaseChannel: input.releaseChannel,
+      removalPolicy: input.removalPolicy,
+    },
+  });
+  return validatePayload(validateRegistrySkillRolloutPolicyResponse, payload, url);
+}
+
+export async function deleteRegistrySkillRolloutPolicy(
+  input: RolloutPolicyIdInput,
+): Promise<RegistrySkillRolloutPolicyResponse> {
+  const url = buildUrl(input.baseUrl, `/v1/skill-rollout-policies/${encodeURIComponent(input.policyId)}`);
+  const payload = await fetchRegistryJson(input, url, { method: "DELETE" });
+  return validatePayload(validateRegistrySkillRolloutPolicyResponse, payload, url);
 }
 
 export async function updateRegistrySkillInstallation(
