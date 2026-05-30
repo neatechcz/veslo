@@ -1708,7 +1708,8 @@ export function createExtensionsStore(options: {
       return { ok: false, message };
     }
 
-    const deleteSource = optionsOverride?.deleteSource === true;
+    // Cross-location transfers are retarget operations: one active source per skill.
+    const deleteSource = true;
     options.setBusy(true);
     options.setError(null);
     setSkillsStatus(null);
@@ -1819,6 +1820,11 @@ export function createExtensionsStore(options: {
         const message = installResult.stderr || installResult.stdout || translate("skills.failed_save_skill");
         setSkillsStatus(message);
         return { ok: false, message };
+      }
+
+      const deleteResult = await uninstallSkillAtPath(targetDir, trimmed, entryFilePath);
+      if (!deleteResult.ok) {
+        throw new Error(deleteResult.stderr || deleteResult.stdout || translate("skills.uninstall_failed"));
       }
 
       const message = translate("skills.copied_to_workspace");

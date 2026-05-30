@@ -292,15 +292,17 @@ test("workspace skill copy and move are local scope transfer actions, not disabl
   assert.match(source, /const detailInstanceForAction = \(input\?: SkillDetailActionInput\): SkillInstance \| null =>/);
   assert.match(source, /const copySelectedSkillToGlobal = \(deleteSource: boolean, input\?: SkillDetailActionInput\) =>/);
   assert.match(source, /const actionInstance = detailInstanceForAction\(input\)/);
-  assert.match(source, /props\.copySkillInstanceToGlobal\(target, \{ deleteSource \}\)/);
+  assert.match(source, /props\.copySkillInstanceToGlobal\(target, \{ deleteSource: true \}\)/);
   assert.match(source, /const selectedDetailCanTransferToUserSkill = createMemo/);
   assert.match(source, /const selectedDetailCanInstallToWorkspace = createMemo/);
   assert.match(source, /copy: selectedDetailCanTransferToUserSkill\(\) \? null : selectedDetailGlobalTransferDisabledReason\(\)/);
   assert.match(source, /move: selectedDetailCanTransferToUserSkill\(\) \? null : selectedDetailGlobalTransferDisabledReason\(\)/);
-  assert.match(source, /onCopySkill=\{selectedDetailIsWorkspaceSkill\(\) \? \(input\) => copySelectedSkillToGlobal\(false, input\) : undefined\}/);
+  assert.match(source, /onCopySkill=\{selectedDetailIsWorkspaceSkill\(\) \? \(input\) => copySelectedSkillToGlobal\(true, input\) : undefined\}/);
   assert.match(source, /onMoveSkill=\{selectedDetailIsWorkspaceSkill\(\) \? \(input\) => copySelectedSkillToGlobal\(true, input\) : undefined\}/);
   assert.match(source, /onCopyToWorkspaceSkill=\{selectedDetailCanInstallToWorkspace\(\) \? openWorkspaceInstallTargetPicker : undefined\}/);
   assert.match(source, /props\.copySkillInstanceToWorkspace\(target, workspaceId\)/);
+  assert.doesNotMatch(source, /transferSelectedSkillsToGlobal\(false\)/);
+  assert.doesNotMatch(source, /copySelectedSkillToGlobal\(false/);
   assert.doesNotMatch(source, /translate\("skills\.bulk_copy"\)[\s\S]{0,240}<Button[\s\S]{0,180}\sdisabled\s/);
   assert.doesNotMatch(source, /translate\("skills\.bulk_move"\)[\s\S]{0,240}<Button[\s\S]{0,180}\sdisabled\s/);
 });
@@ -385,7 +387,7 @@ test("skills page gives user skills and workspace skills different relevant deta
   assert.match(source, /const selectedDetailDeleteDisabledReason = createMemo\(\(\) =>/);
   assert.match(source, /delete: selectedDetailDeleteDisabledReason\(\)/);
   assert.match(source, /onEditSkill=\{selectedDetailIsWorkspaceSkill\(\) \? editSelectedSkill : undefined\}/);
-  assert.match(source, /onCopySkill=\{selectedDetailIsWorkspaceSkill\(\) \? \(input\) => copySelectedSkillToGlobal\(false, input\) : undefined\}/);
+  assert.match(source, /onCopySkill=\{selectedDetailIsWorkspaceSkill\(\) \? \(input\) => copySelectedSkillToGlobal\(true, input\) : undefined\}/);
   assert.match(source, /onMoveSkill=\{selectedDetailIsWorkspaceSkill\(\) \? \(input\) => copySelectedSkillToGlobal\(true, input\) : undefined\}/);
   assert.match(source, /onDeleteSkill=\{selectedDetailIsWorkspaceSkill\(\) \? requestDetailDelete : undefined\}/);
   assert.match(enSource, /"skills\.detail_copy_to_workspace":\s*"Install to workspace"/);

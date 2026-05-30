@@ -505,7 +505,7 @@ export default function SkillsView(props: SkillsViewProps) {
     }
 
     for (const target of selectedGlobalTransferTargets()) {
-      const result = await props.copySkillInstanceToGlobal(target, { deleteSource });
+      const result = await props.copySkillInstanceToGlobal(target, { deleteSource: true });
       if (!result.ok) {
         setToast(result.message ?? translate("skills.failed_save_skill"));
         return;
@@ -513,7 +513,7 @@ export default function SkillsView(props: SkillsViewProps) {
     }
 
     setSelectedInventoryIds([]);
-    setToast(translate(deleteSource ? "skills.moved_to_global" : "skills.copied_to_global"));
+    setToast(translate("skills.moved_to_global"));
     props.refreshSkillInventory({ force: true });
   };
 
@@ -704,8 +704,8 @@ export default function SkillsView(props: SkillsViewProps) {
       return;
     }
 
-    void props.copySkillInstanceToGlobal(target, { deleteSource }).then((result) => {
-      setToast(result.message ?? translate(result.ok ? "skills.copied_to_global" : "skills.failed_save_skill"));
+    void props.copySkillInstanceToGlobal(target, { deleteSource: true }).then((result) => {
+      setToast(result.message ?? translate(result.ok ? "skills.moved_to_global" : "skills.failed_save_skill"));
       if (result.ok) props.refreshSkillInventory({ force: true });
     });
   };
@@ -1478,7 +1478,7 @@ export default function SkillsView(props: SkillsViewProps) {
                 data-testid="skills-bulk-copy-to-user-button"
                 title={globalTransferDisabledReason() ?? translate("skills.copy_to_global")}
                 disabled={props.busy || Boolean(globalTransferDisabledReason())}
-                onClick={() => void transferSelectedSkillsToGlobal(false)}
+                onClick={() => void transferSelectedSkillsToGlobal(true)}
               >
                 <Copy size={13} />
                 {translate("skills.copy_to_global")}
@@ -2165,7 +2165,7 @@ export default function SkillsView(props: SkillsViewProps) {
           delete: selectedDetailDeleteDisabledReason(),
         }}
         onEditSkill={selectedDetailIsWorkspaceSkill() ? editSelectedSkill : undefined}
-        onCopySkill={selectedDetailIsWorkspaceSkill() ? (input) => copySelectedSkillToGlobal(false, input) : undefined}
+        onCopySkill={selectedDetailIsWorkspaceSkill() ? (input) => copySelectedSkillToGlobal(true, input) : undefined}
         onMoveSkill={selectedDetailIsWorkspaceSkill() ? (input) => copySelectedSkillToGlobal(true, input) : undefined}
         onCopyToWorkspaceSkill={selectedDetailCanInstallToWorkspace() ? openWorkspaceInstallTargetPicker : undefined}
         onPublishSkill={selectedDetailCanPublishFromLocal() ? (action) => openSkillReviewDialog("organization", action) : undefined}
