@@ -1943,26 +1943,14 @@ export default function WorkspaceSessionList(props: Props) {
                                 <button
                                   type="button"
                                   class="p-1 rounded-md text-gray-8 hover:text-gray-11 hover:bg-gray-3 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    setWorkspaceMenuTarget((current) =>
-                                      current?.anchorKey === anchorKey
-                                        ? null
-                                        : { workspaceId: workspace().id, anchorKey, source: "workspace" },
-                                    );
-                                  }}
+                                  onClick={(event) =>
+                                    handleWorkspaceMenuButtonClick(event, workspace().id, anchorKey)
+                                  }
                                   aria-label={tr("sidebar.workspace_options")}
                                 >
                                   <MoreHorizontal size={14} />
                                 </button>
                               </div>
-                              {workspaceMenu(
-                                workspace(),
-                                anchorKey,
-                                soulEnabled(),
-                                canRecover(),
-                                isConnectionActionBusy(),
-                              )}
                             </div>
                           </div>
                         );
