@@ -186,6 +186,21 @@ runWhenIsolatedProfile("Skills global inventory", () => {
       timeoutMsg: "Global skill card was not selected after clicking the card.",
     });
     await waitForBodyText("1 selected");
+    await expect($('[data-testid="skills-bulk-install-workspace-button"]')).toExist();
+
+    await $('[data-testid="skills-bulk-install-workspace-button"]').click();
+    await expect($('[data-testid="skill-install-workspace-modal"]')).toExist();
+    await $('[data-testid="skill-install-workspace-close"]').click();
+    await expect($('[data-testid="skill-install-workspace-modal"]')).not.toExist();
+
+    await clickInventoryCardSelector(workspaceSkillSelector);
+    await waitForBodyText("2 selected");
+    await expect($('[data-testid="skills-bulk-install-workspace-button"]')).not.toExist();
+    await expect($('[data-testid="skills-bulk-copy-to-user-button"]')).not.toExist();
+    await expect($('[data-testid="skills-bulk-move-to-user-button"]')).not.toExist();
+
+    await clickInventoryCardSelector(workspaceSkillSelector);
+    await waitForBodyText("1 selected");
 
     await clickInventoryCardDetailButton(globalSkillSelector);
     await expect($('[data-testid="skill-detail-drawer"]')).toExist();

@@ -38,6 +38,7 @@ import {
   X,
 } from "lucide-solid";
 import { currentLocale, t } from "../../i18n";
+import { buildSkillInstallTargetWorkspaces } from "../lib/skill-install-targets";
 import { skillMutationTargetFromInstance } from "../lib/skill-inventory";
 import type { SkillMutationTarget } from "../lib/skill-inventory";
 import {
@@ -52,6 +53,11 @@ import { isTauriRuntime } from "../utils";
 type InstallResult = { ok: boolean; message: string };
 type ActionSkillCard = SkillCard & { mutationTarget: SkillMutationTarget };
 type InventoryViewMode = "cards" | "table";
+type WorkspaceInstallAction = {
+  name: string;
+  source: "detail" | "selection";
+  targets: SkillMutationTarget[];
+};
 
 type SkillBundleV1 = {
   schemaVersion: 1;
@@ -96,7 +102,9 @@ const mergeRemoteFallbackIntoInventory = (
 export type SkillsViewProps = {
   workspaceName: string;
   activeWorkspaceId: string;
+  activeWorkspaceRoot: string;
   isRemoteWorkspace: boolean;
+  isPrivateWorkspacePath: (folder: string | null | undefined) => boolean;
   busy: boolean;
   canInstallSkillCreator: boolean;
   canUseDesktopTools: boolean;
@@ -194,7 +202,7 @@ export default function SkillsView(props: SkillsViewProps) {
   const [installTargetSkill, setInstallTargetSkill] = createSignal<HubSkillCard | null>(null);
   const [selectedInstallScope, setSelectedInstallScope] = createSignal<"global" | "workspace">("workspace");
   const [selectedInstallWorkspaceId, setSelectedInstallWorkspaceId] = createSignal<string | null>(null);
-  const [workspaceInstallAction, setWorkspaceInstallAction] = createSignal<SkillDetailActionInput | null>(null);
+  const [workspaceInstallAction, setWorkspaceInstallAction] = createSignal<WorkspaceInstallAction | null>(null);
   const [selectedWorkspaceInstallWorkspaceId, setSelectedWorkspaceInstallWorkspaceId] = createSignal<string | null>(null);
   const [workspaceInstallBusy, setWorkspaceInstallBusy] = createSignal(false);
 
@@ -306,6 +314,26 @@ export default function SkillsView(props: SkillsViewProps) {
     return skillMutationTargetFromInstance(instance);
   };
 
+  const workspaceForInstance = (instance: SkillInstance) => {
+    const workspaceId = instance.workspaceId?.trim();
+    if (!workspaceId) return null;
+    return props.workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
+  };
+
+  const workspaceInstanceHasLocalTransferSource = (instance: SkillInstance) => {
+    const workspaceId = instance.workspaceId?.trim();
+    if (!workspaceId) return false;
+    if (workspaceId === props.activeWorkspaceId) return !props.isRemoteWorkspace;
+    const workspace = workspaceForInstance(instance);
+    const workspacePath = workspace?.path?.trim() || workspace?.directory?.trim() || "";
+    return workspace?.workspaceType === "local" && Boolean(workspacePath);
+  };
+
+  const globalTransferTargetForInstance = (instance: SkillInstance): SkillMutationTarget | null => {
+    if (globalTransferDisabledReasonForInstance(instance)) return null;
+    return skillMutationTargetFromInstance(instance);
+  };
+
   const actionSkillForInstance = (instance: SkillInstance): ActionSkillCard | null => {
     const mutationTarget = mutationTargetForInstance(instance);
     if (!mutationTarget) return null;
@@ -335,7 +363,7 @@ export default function SkillsView(props: SkillsViewProps) {
     if (instance.writable === false) return translate("skills.copy_to_global_read_only");
     if (instance.scope === "user-global") return translate("skills.copy_to_global_already_global");
     if (instance.scope !== "workspace") return translate("skills.copy_to_global_unavailable");
-    if (instance.workspaceId !== props.activeWorkspaceId) return translate("skills.copy_to_global_not_active_workspace");
+    if (!workspaceInstanceHasLocalTransferSource(instance)) return translate("skills.copy_to_global_workspace_local_required");
     return null;
   };
 
@@ -425,17 +453,49 @@ export default function SkillsView(props: SkillsViewProps) {
   const selectedInventoryRows = createMemo(() =>
     inventoryTableRows().filter((row) => selectedInventoryIdSet().has(skillInventoryInstanceId(row.instance)))
   );
+  const selectedInventoryScope = createMemo<SkillInstance["scope"] | "mixed" | null>(() => {
+    const selectedRows = selectedInventoryRows();
+    if (selectedRows.length === 0) return null;
+    const [first] = selectedRows;
+    return selectedRows.every((row) => row.instance.scope === first.instance.scope)
+      ? first.instance.scope
+      : "mixed";
+  });
   const selectedGlobalTransferTargets = createMemo(() =>
     selectedInventoryRows()
-      .map((row) => mutationTargetForInstance(row.instance))
+      .map((row) => globalTransferTargetForInstance(row.instance))
       .filter((target): target is SkillMutationTarget => Boolean(target))
   );
   const globalTransferDisabledReason = createMemo(() => {
     const selectedRows = selectedInventoryRows();
     if (selectedRows.length === 0) return translate("skills.select_skill_location");
+    if (selectedInventoryScope() === "mixed") return translate("skills.bulk_mixed_scope_actions_unavailable");
+    const firstDisabledReason = selectedRows
+      .map((row) => globalTransferDisabledReasonForInstance(row.instance))
+      .find((reason): reason is string => Boolean(reason));
+    if (firstDisabledReason) return firstDisabledReason;
     if (selectedGlobalTransferTargets().length !== selectedRows.length) return translate("skills.copy_to_global_unavailable");
     return null;
   });
+  const selectedWorkspaceInstallTargets = createMemo(() =>
+    selectedInventoryRows()
+      .filter((row) => row.instance.scope === "user-global" && row.instance.readable !== false)
+      .map((row) => skillMutationTargetFromInstance(row.instance))
+  );
+  const workspaceInstallDisabledReason = createMemo(() => {
+    const selectedRows = selectedInventoryRows();
+    if (selectedRows.length === 0) return translate("skills.select_skill_location");
+    if (selectedInventoryScope() === "mixed") return translate("skills.bulk_mixed_scope_actions_unavailable");
+    if (selectedInventoryScope() !== "user-global") return translate("skills.copy_to_workspace_unavailable");
+    if (selectedWorkspaceInstallTargets().length !== selectedRows.length) return translate("skills.copy_to_workspace_unavailable");
+    return null;
+  });
+  const selectedInventoryShowsWorkspaceInstallAction = createMemo(() =>
+    selectedInventoryRows().length > 0 && selectedInventoryScope() === "user-global"
+  );
+  const selectedInventoryShowsGlobalTransferActions = createMemo(() =>
+    selectedInventoryRows().length > 0 && selectedInventoryScope() === "workspace"
+  );
 
   const transferSelectedSkillsToGlobal = async (deleteSource: boolean) => {
     const disabledReason = globalTransferDisabledReason();
@@ -455,6 +515,27 @@ export default function SkillsView(props: SkillsViewProps) {
     setSelectedInventoryIds([]);
     setToast(translate(deleteSource ? "skills.moved_to_global" : "skills.copied_to_global"));
     props.refreshSkillInventory({ force: true });
+  };
+
+  const openSelectedWorkspaceInstallTargetPicker = () => {
+    if (props.busy || workspaceInstallBusy()) return;
+    const disabledReason = workspaceInstallDisabledReason();
+    if (disabledReason) {
+      setToast(disabledReason);
+      return;
+    }
+    const targets = selectedWorkspaceInstallTargets();
+    if (targets.length === 0) {
+      setToast(translate("skills.copy_to_workspace_unavailable"));
+      return;
+    }
+    const defaultWorkspace = defaultWorkspaceInstallTarget();
+    setSelectedWorkspaceInstallWorkspaceId(defaultWorkspace?.id ?? null);
+    setWorkspaceInstallAction({
+      name: targets.length === 1 ? targets[0].name : translate("skills.selected_count", { count: String(targets.length) }),
+      source: "selection",
+      targets,
+    });
   };
 
   const activeWorkspaceInstalledNames = createMemo(() =>
@@ -629,26 +710,16 @@ export default function SkillsView(props: SkillsViewProps) {
     });
   };
 
-  const workspaceInstallTargetWorkspaces = createMemo<WorkspaceInfo[]>(() => {
-    const workspaces = props.workspaces.some((workspace) => workspace.id === props.activeWorkspaceId)
-      ? props.workspaces
-      : [
-          {
-            id: props.activeWorkspaceId,
-            name: props.workspaceName,
-            path: "",
-            preset: "",
-            workspaceType: props.isRemoteWorkspace ? "remote" : "local",
-          } satisfies WorkspaceInfo,
-          ...props.workspaces,
-        ];
-    const seen = new Set<string>();
-    return workspaces.filter((workspace) => {
-      if (seen.has(workspace.id)) return false;
-      seen.add(workspace.id);
-      return true;
-    });
-  });
+  const workspaceInstallTargetWorkspaces = createMemo<WorkspaceInfo[]>(() =>
+    buildSkillInstallTargetWorkspaces({
+      activeWorkspaceId: props.activeWorkspaceId,
+      activeWorkspaceName: props.workspaceName,
+      activeWorkspaceRoot: props.activeWorkspaceRoot,
+      activeWorkspaceType: props.isRemoteWorkspace ? "remote" : "local",
+      isPrivateWorkspacePath: props.isPrivateWorkspacePath,
+      workspaces: props.workspaces,
+    })
+  );
 
   const workspaceInstallTargetDisabledReason = (workspace: WorkspaceInfo) => {
     if (workspace.workspaceType !== "local") return translate("skills.install_workspace_target_local_required");
@@ -678,13 +749,17 @@ export default function SkillsView(props: SkillsViewProps) {
   const openWorkspaceInstallTargetPicker = (input: SkillDetailActionInput) => {
     if (props.busy || workspaceInstallBusy()) return;
     const actionInstance = detailInstanceForAction(input);
-    if (!actionInstance || actionInstance.scope !== "user-global") {
+    if (!actionInstance || actionInstance.scope !== "user-global" || actionInstance.readable === false) {
       setToast(translate("skills.copy_to_workspace_unavailable"));
       return;
     }
     const defaultWorkspace = defaultWorkspaceInstallTarget();
     setSelectedWorkspaceInstallWorkspaceId(defaultWorkspace?.id ?? null);
-    setWorkspaceInstallAction(input);
+    setWorkspaceInstallAction({
+      name: input.skill.name,
+      source: "detail",
+      targets: [skillMutationTargetFromInstance(actionInstance)],
+    });
   };
 
   const closeWorkspaceInstallTargetPicker = () => {
@@ -706,22 +781,25 @@ export default function SkillsView(props: SkillsViewProps) {
       setToast(translate("skills.install_workspace_target_local_required"));
       return;
     }
-    const actionInstance = detailInstanceForAction(action);
-    if (!actionInstance || actionInstance.scope !== "user-global") {
+    if (action.targets.length === 0 || action.targets.some((target) => target.scope !== "user-global")) {
       setToast(translate("skills.copy_to_workspace_unavailable"));
       return;
     }
 
-    const target = skillMutationTargetFromInstance(actionInstance);
     setWorkspaceInstallBusy(true);
     try {
-      const result = await props.copySkillInstanceToWorkspace(target, workspaceId);
-      setToast(result.message ?? translate(result.ok ? "skills.copied_to_workspace" : "skills.failed_save_skill"));
-      if (result.ok) {
-        setWorkspaceInstallAction(null);
-        setSelectedWorkspaceInstallWorkspaceId(null);
-        props.refreshSkillInventory({ force: true });
+      for (const target of action.targets) {
+        const result = await props.copySkillInstanceToWorkspace(target, workspaceId);
+        if (!result.ok) {
+          setToast(result.message ?? translate("skills.failed_save_skill"));
+          return;
+        }
       }
+      setToast(translate("skills.copied_to_workspace"));
+      setWorkspaceInstallAction(null);
+      setSelectedWorkspaceInstallWorkspaceId(null);
+      if (action.source === "selection") setSelectedInventoryIds([]);
+      props.refreshSkillInventory({ force: true });
     } catch (e) {
       setToast(e instanceof Error ? e.message : translate("skills.failed_save_skill"));
     } finally {
@@ -835,21 +913,16 @@ export default function SkillsView(props: SkillsViewProps) {
     });
   });
 
-  const installTargetWorkspaces = createMemo<WorkspaceInfo[]>(() => {
-    if (props.workspaces.some((workspace) => workspace.id === props.activeWorkspaceId)) {
-      return props.workspaces;
-    }
-    return [
-      {
-        id: props.activeWorkspaceId,
-        name: props.workspaceName,
-        path: "",
-        preset: "",
-        workspaceType: props.isRemoteWorkspace ? "remote" : "local",
-      },
-      ...props.workspaces,
-    ];
-  });
+  const installTargetWorkspaces = createMemo<WorkspaceInfo[]>(() =>
+    buildSkillInstallTargetWorkspaces({
+      activeWorkspaceId: props.activeWorkspaceId,
+      activeWorkspaceName: props.workspaceName,
+      activeWorkspaceRoot: props.activeWorkspaceRoot,
+      activeWorkspaceType: props.isRemoteWorkspace ? "remote" : "local",
+      isPrivateWorkspacePath: props.isPrivateWorkspacePath,
+      workspaces: props.workspaces,
+    })
+  );
 
   const selectedInstallWorkspace = createMemo(() => {
     const workspaceId = selectedInstallWorkspaceId()?.trim();
@@ -1385,26 +1458,43 @@ export default function SkillsView(props: SkillsViewProps) {
             <span class="font-product type-ui-xs text-dls-secondary">
               {translate("skills.selected_count", { count: String(selectedInventoryCount()) })}
             </span>
-            <Button
-              variant="outline"
-              class="h-8 px-2 type-ui-xs"
-              title={globalTransferDisabledReason() ?? translate("skills.copy_to_global")}
-              disabled={props.busy || Boolean(globalTransferDisabledReason())}
-              onClick={() => void transferSelectedSkillsToGlobal(false)}
-            >
-              <Copy size={13} />
-              {translate("skills.copy_to_global")}
-            </Button>
-            <Button
-              variant="outline"
-              class="h-8 px-2 type-ui-xs"
-              title={globalTransferDisabledReason() ?? translate("skills.move_to_global")}
-              disabled={props.busy || Boolean(globalTransferDisabledReason())}
-              onClick={() => void transferSelectedSkillsToGlobal(true)}
-            >
-              <ArrowRightToLine size={13} />
-              {translate("skills.move_to_global")}
-            </Button>
+            <Show when={selectedInventoryShowsWorkspaceInstallAction()}>
+              <Button
+                variant="outline"
+                class="h-8 px-2 type-ui-xs"
+                data-testid="skills-bulk-install-workspace-button"
+                title={workspaceInstallDisabledReason() ?? translate("skills.detail_copy_to_workspace")}
+                disabled={props.busy || Boolean(workspaceInstallDisabledReason())}
+                onClick={openSelectedWorkspaceInstallTargetPicker}
+              >
+                <Copy size={13} />
+                {translate("skills.detail_copy_to_workspace")}
+              </Button>
+            </Show>
+            <Show when={selectedInventoryShowsGlobalTransferActions()}>
+              <Button
+                variant="outline"
+                class="h-8 px-2 type-ui-xs"
+                data-testid="skills-bulk-copy-to-user-button"
+                title={globalTransferDisabledReason() ?? translate("skills.copy_to_global")}
+                disabled={props.busy || Boolean(globalTransferDisabledReason())}
+                onClick={() => void transferSelectedSkillsToGlobal(false)}
+              >
+                <Copy size={13} />
+                {translate("skills.copy_to_global")}
+              </Button>
+              <Button
+                variant="outline"
+                class="h-8 px-2 type-ui-xs"
+                data-testid="skills-bulk-move-to-user-button"
+                title={globalTransferDisabledReason() ?? translate("skills.move_to_global")}
+                disabled={props.busy || Boolean(globalTransferDisabledReason())}
+                onClick={() => void transferSelectedSkillsToGlobal(true)}
+              >
+                <ArrowRightToLine size={13} />
+                {translate("skills.move_to_global")}
+              </Button>
+            </Show>
             <Button variant="outline" class="h-8 px-2 type-ui-xs" disabled title={translate("skills.registry_action_pending")} onClick={showRegistryActionPending}>
               <Upload size={13} />
               {translate("skills.bulk_publish")}
@@ -1858,7 +1948,9 @@ export default function SkillsView(props: SkillsViewProps) {
                       {translate("skills.install_workspace_target_title")}
                     </h3>
                     <p class="text-sm text-dls-secondary mt-1">
-                      {translate("skills.install_workspace_target_description", { name: action().skill.name })}
+                      {action().targets.length === 1
+                        ? translate("skills.install_workspace_target_description", { name: action().name })
+                        : translate("skills.install_workspace_target_bulk_description", { count: String(action().targets.length) })}
                     </p>
                   </div>
                   <button

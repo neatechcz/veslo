@@ -241,25 +241,50 @@ Veslo pages that mutate plugins or MCP are usually editing this config, not `.op
 
 The Skills page builds an app-wide inventory from three sources:
 
-- user-global runtime skills from global OpenCode-compatible skill roots
+- user skills from user-level OpenCode-compatible skill roots
 - workspace-local skills discovered per readable local workspace
 - Hub skills from the existing prepared catalog flow
 
-User-global skills are runtime-available skills, not organization catalog or
+Use product terminology consistently:
+
+- **User skill** means a skill installed for the current user and available
+  across workspaces. Code and registry payloads may still call this
+  `user-global` or `personal-global`; those are implementation scopes, not
+  product labels.
+- **Workspace skill** means a skill installed in one workspace.
+- **Organization skill** means a skill owned by an organization catalog.
+- **Public skill** means a skill published for broad catalog discovery.
+- **Installed skill** means an active local or registry installation.
+  **Deactivated skill** means the installation is not active but can be
+  installed again from an available source.
+
+Avoid product copy such as "global skill", "managed skill", or "adopt". Use
+"user skill", "installed skill", "organization skill", "public skill",
+"install", "publish", and "deactivate" instead.
+
+User skills are runtime-available skills, not organization catalog or
 admin-approved skills. Organization promotion and bulk rollout remain future
 work until the Den/admin backend owns those concepts.
 
-For inventory correctness, global skill roots and workspace skill roots are read
+For inventory correctness, user skill roots and workspace skill roots are read
 separately. Runtime-effective discovery may still include both scopes for active
-workspace behavior, but the inventory must not expand global skills under every
+workspace behavior, but the inventory must not expand user skills under every
 workspace. Workspace rows represent only real workspace-local instances or
 overrides.
 
 Skill edit and save flows target a concrete inventory instance by scope,
-workspace id, and path before falling back to name-based legacy commands. Delete
-remains disabled for scoped inventory rows until a path-specific backend command
-exists. Hub install uses an explicit target picker; current writes are limited
-to the active workspace.
+workspace id, and path before falling back to name-based legacy commands.
+Deactivate targets only concrete installed skill locations that the app can
+mutate safely. Hub install uses an explicit target picker; current writes are
+limited to the active workspace. Installing a user skill into a workspace uses
+an explicit workspace picker and writes only to local workspace skill roots.
+Private app-created workspaces are valid inventory sources when they already
+contain skills, but they are not valid install targets and should be omitted
+from workspace install pickers.
+Bulk transfer actions are scoped by homogeneous inventory selections: selected
+user skills can be installed into a workspace, selected workspace skills can be
+copied or moved into user skills, and mixed user/workspace selections do not
+expose transfer actions.
 
 ## Skill Registry State
 
@@ -278,16 +303,16 @@ Local Veslo state:
 - downloaded package archives before install
 - cached package archives under `${VESLO_DATA_DIR or ~/.veslo/veslo-server}/skill-package-cache/`, keyed by package SHA-256 and verified before use
 - unpacked runtime skill directories controlled by the local Veslo server
-- workspace managed skill materializations under `.opencode/skills/veslo-managed/`, with a root manifest and per-skill managed markers
-- pre-change backups for managed materialization replacement/removal under the Veslo data directory
+- server-controlled workspace skill materializations under `.opencode/skills/veslo-managed/`, with a root manifest and per-skill ownership markers
+- pre-change backups for server-controlled materialization replacement/removal under the Veslo data directory
 - workspace activation or reload state after a skill set changes
 - any temporary install progress, errors, or selected install target in the app UI
 
 The local server validates registry responses before using them. Validators accept only the response fields needed by the app/server contract and delegate package manifest checks to the skill package model. They are not a backend implementation and do not replace registry-side authorization, review workflow, package storage, or audit enforcement.
 
-Registry search can be proxied through the local Veslo server at `/v1/skills/search` so the app can reuse server-side registry auth configuration and response validation. Registry update events can be polled through `/v1/skill-registry-events`; active workspace updates should become pending reload state, while idle workspace and personal-global updates can be materialized immediately. Runtime mutation remains explicit: `/workspace/:id/skills/materialization/sync` and `/skills/materialization/sync-global` require host or owner auth and must not rewrite managed skill files while an agent run is active.
+Registry search can be proxied through the local Veslo server at `/v1/skills/search` so the app can reuse server-side registry auth configuration and response validation. Search indexing remains registry-owned and includes package metadata plus searchable package text/code under the registry size limit; clients may pass language context for server-side query expansion and must not implement semantic skill search locally. Registry update events can be polled through `/v1/skill-registry-events`; active workspace updates should become pending reload state, while idle workspace and user-skill updates can be materialized immediately. Registry writes use host/owner-authenticated local proxy routes for skill creation, immutable version publishing, installation create/update/delete/restore, review request create/approve/reject, and workspace skill-set replacement. Runtime mutation remains explicit: `/workspace/:id/skills/materialization/sync` and `/skills/materialization/sync-global` require host or owner auth and must not rewrite server-controlled skill files while an agent run is active.
 
-The Skills page now treats installed skills as an app-wide inventory with filterable location rows. UI filters are local presentation state. Registry-backed copy, move, publish, approval, restore, and adoption controls must stay review/pending-only until the corresponding cloud registry mutation routes exist and are connected through the local Veslo server.
+The Skills page now treats installed skills as an app-wide inventory with filterable location rows. UI filters are local presentation state. Registry-backed install and publish preparation can create the initial skill, version, and installation through the local server proxy. Registry-backed publish, approval, restore, deactivation, and workspace skill-set controls should call the local proxy only when the selected row has concrete registry identifiers for the action target, then refresh registry metadata and local inventory after success.
 
 Registry auth is account-scoped:
 

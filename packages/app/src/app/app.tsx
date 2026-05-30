@@ -3027,6 +3027,7 @@ export default function App() {
     saveSkillInstance,
     deleteSkillInstance,
     copySkillInstanceToGlobal,
+    copySkillInstanceToWorkspace,
     abortRefreshes,
   } = extensionsStore;
 
@@ -9389,6 +9390,7 @@ export default function App() {
       saveSkillInstance,
       deleteSkillInstance,
       copySkillInstanceToGlobal,
+      copySkillInstanceToWorkspace,
       pluginsAccessHint,
       canEditPlugins,
       canUseGlobalPluginScope,
