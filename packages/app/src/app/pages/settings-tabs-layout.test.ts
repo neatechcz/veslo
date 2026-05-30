@@ -71,8 +71,8 @@ test("settings keeps compact update controls in general instead of a floating to
 test("settings locales include Settings and dashboard labels", () => {
   assert.match(enLocaleSource, /"settings\.archived": "Archived"/);
   assert.match(csLocaleSource, /"settings\.archived": "Archivované"/);
-  assert.match(source, /translate\("nav\.automations"\)/);
-  assert.match(source, /translate\("nav\.soul"\)/);
-  assert.match(source, /translate\("nav\.skills"\)/);
-  assert.match(source, /translate\("nav\.extensions"\)/);
+  assert.match(source, /case\s+"scheduled":[\s\S]*?translate\("nav\.automations"\)/);
+  assert.match(source, /case\s+"soul":[\s\S]*?translate\("nav\.soul"\)/);
+  assert.match(source, /case\s+"skills":[\s\S]*?translate\("nav\.skills"\)/);
+  assert.match(source, /case\s+"mcp":[\s\S]*?translate\("nav\.extensions"\)/);
 });

@@ -336,7 +336,7 @@ test("dashboard routes active nav re-clicks through the session return helper", 
   );
   assert.match(
     dashboardSource,
-    /<SettingsView[\s\S]*onOpenDashboardTab=\{\(nextTab\)\s*=>\s*handleDashboardTabSelection\(nextTab\)\}/,
+    /<SettingsView[\s\S]*onOpenDashboardTab=\{[^}]*handleDashboardTabSelection[^}]*\}/,
   );
   assert.match(
     dashboardSource,
