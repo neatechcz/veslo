@@ -23,6 +23,10 @@ CREATE TABLE `skill_rollout_policies` (
   `updated_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   CONSTRAINT `skill_rollout_user_target_shape` CHECK (`target` <> 'user-global' OR `workspace_id` IS NULL),
   CONSTRAINT `skill_rollout_workspace_target_shape` CHECK (`target` <> 'workspace' OR `audience` = 'selected-workspaces'),
+  CONSTRAINT `skill_rollout_audience_user_shape` CHECK (`audience` <> 'user' OR (`user_id` IS NOT NULL AND `workspace_id` IS NULL)),
+  CONSTRAINT `skill_rollout_audience_workspace_shape` CHECK (`audience` <> 'selected-workspaces' OR (`workspace_id` IS NOT NULL AND `user_id` IS NULL)),
+  CONSTRAINT `skill_rollout_audience_all_org_shape` CHECK (`audience` <> 'all-org-users' OR (`catalog_scope` = 'organization' AND `owner_org_id` IS NOT NULL AND `user_id` IS NULL AND `workspace_id` IS NULL)),
+  CONSTRAINT `skill_rollout_audience_all_platform_shape` CHECK (`audience` <> 'all-platform-users' OR (`catalog_scope` = 'platform' AND `org_id` IS NULL AND `owner_org_id` IS NULL AND `user_id` IS NULL AND `workspace_id` IS NULL)),
   CONSTRAINT `skill_rollout_policies_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint

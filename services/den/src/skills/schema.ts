@@ -251,6 +251,22 @@ export const SkillRolloutPolicyTable = mysqlTable(
       "skill_rollout_workspace_target_shape",
       sql`${table.target} <> 'workspace' OR ${table.audience} = 'selected-workspaces'`,
     ),
+    check(
+      "skill_rollout_audience_user_shape",
+      sql`${table.audience} <> 'user' OR (${table.user_id} IS NOT NULL AND ${table.workspace_id} IS NULL)`,
+    ),
+    check(
+      "skill_rollout_audience_workspace_shape",
+      sql`${table.audience} <> 'selected-workspaces' OR (${table.workspace_id} IS NOT NULL AND ${table.user_id} IS NULL)`,
+    ),
+    check(
+      "skill_rollout_audience_all_org_shape",
+      sql`${table.audience} <> 'all-org-users' OR (${table.catalog_scope} = 'organization' AND ${table.owner_org_id} IS NOT NULL AND ${table.user_id} IS NULL AND ${table.workspace_id} IS NULL)`,
+    ),
+    check(
+      "skill_rollout_audience_all_platform_shape",
+      sql`${table.audience} <> 'all-platform-users' OR (${table.catalog_scope} = 'platform' AND ${table.org_id} IS NULL AND ${table.owner_org_id} IS NULL AND ${table.user_id} IS NULL AND ${table.workspace_id} IS NULL)`,
+    ),
   ],
 )
 

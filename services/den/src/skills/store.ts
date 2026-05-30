@@ -18,6 +18,7 @@ import {
   skillScopeOwnerKey,
   skillVersionFilePathSha256,
   validateManagedSkillInstallationApproval,
+  validateRolloutPolicyApproval,
   type SkillRegistryRetentionRole,
 } from "./policy.js"
 import type {
@@ -973,6 +974,7 @@ export class InMemorySkillRegistryStore implements SkillRegistryStore {
       updatedAt: now,
     }
     validateRolloutPolicyShape(policy)
+    this.enforceRolloutPolicyApproval(policy, version)
     this.enforceNoRolloutTargetConflict(policy)
     this.rolloutPolicies.set(policy.id, policy)
     this.recordEvent(context, "skill.rollout_policy.changed", {
@@ -1024,6 +1026,7 @@ export class InMemorySkillRegistryStore implements SkillRegistryStore {
       nextPolicy.ownerOrgId = owner.orgId
     }
     validateRolloutPolicyShape(nextPolicy)
+    this.enforceRolloutPolicyApproval(nextPolicy, nextVersion)
     this.enforceNoRolloutTargetConflict(nextPolicy, policy.id)
     this.rolloutPolicies.set(policy.id, nextPolicy)
     this.recordEvent(context, "skill.rollout_policy.changed", {
@@ -1601,6 +1604,26 @@ export class InMemorySkillRegistryStore implements SkillRegistryStore {
     }
   }
 
+  private enforceRolloutPolicyApproval(candidate: StoredRolloutPolicy, version: StoredVersion | null) {
+    if (!version) return
+    const result = validateRolloutPolicyApproval({
+      catalogScope: candidate.catalogScope,
+      ownerOrgId: candidate.ownerOrgId,
+      skillId: candidate.skillId,
+      versionId: version.id,
+      approvals: Array.from(this.approvals.values()).map((approval) => ({
+        scope: approval.scope,
+        orgId: approval.orgId,
+        skillId: approval.skillId,
+        versionId: approval.versionId,
+        revokedAt: approval.revokedAt,
+      })),
+    })
+    if (!result.ok) {
+      throw new SkillRegistryStoreError(409, result.code)
+    }
+  }
+
   private isRolloutPolicyVisibleToContext(policy: StoredRolloutPolicy, context: SkillRegistryRouteContext) {
     if (context.isPlatformAdmin) return true
     if (policy.catalogScope === "platform") return true
@@ -1725,6 +1748,7 @@ function resolveRolloutPolicyOwner(
   inputOrgId?: string | null,
 ) {
   if (catalogScope === "platform") {
+    if (inputOrgId) throw new SkillRegistryStoreError(400, "org_id_forbidden")
     rolloutPolicyOwnerKey({ catalogScope })
     return { catalogScope, orgId: null }
   }
@@ -1788,6 +1812,9 @@ function validateRolloutPolicyShape(policy: Pick<
   if (policy.catalogScope === "organization" && !policy.ownerOrgId) {
     throw new SkillRegistryStoreError(400, "org_id_required")
   }
+  if (policy.catalogScope === "platform" && policy.ownerOrgId) {
+    throw new SkillRegistryStoreError(400, "org_id_forbidden")
+  }
   if (policy.catalogScope === "organization" && policy.audience === "all-platform-users") {
     throw new SkillRegistryStoreError(400, "audience_scope_mismatch")
   }
@@ -1803,11 +1830,23 @@ function validateRolloutPolicyShape(policy: Pick<
   if (policy.target === "workspace" && !policy.workspaceId) {
     throw new SkillRegistryStoreError(400, "workspace_id_required")
   }
-  if (policy.audience === "user" && !policy.userId) {
-    throw new SkillRegistryStoreError(400, "user_id_required")
-  }
-  if (policy.audience === "selected-workspaces" && !policy.workspaceId) {
-    throw new SkillRegistryStoreError(400, "workspace_id_required")
+  switch (policy.audience) {
+    case "user":
+      if (!policy.userId) throw new SkillRegistryStoreError(400, "user_id_required")
+      if (policy.workspaceId) throw new SkillRegistryStoreError(400, "workspace_id_forbidden")
+      break
+    case "selected-workspaces":
+      if (policy.userId) throw new SkillRegistryStoreError(400, "user_id_forbidden")
+      if (!policy.workspaceId) throw new SkillRegistryStoreError(400, "workspace_id_required")
+      break
+    case "all-org-users":
+      if (policy.userId) throw new SkillRegistryStoreError(400, "user_id_forbidden")
+      if (policy.workspaceId) throw new SkillRegistryStoreError(400, "workspace_id_forbidden")
+      break
+    case "all-platform-users":
+      if (policy.userId) throw new SkillRegistryStoreError(400, "user_id_forbidden")
+      if (policy.workspaceId) throw new SkillRegistryStoreError(400, "workspace_id_forbidden")
+      break
   }
 }
 

@@ -81,7 +81,8 @@ export function createSkillRegistryRouter(options: SkillRegistryRouterOptions = 
     if (!context) return
 
     const catalogScope = requireRolloutCatalogScope(req.body?.catalogScope)
-    const orgId = optionalString(req.body?.orgId) ?? optionalString(req.body?.ownerOrgId) ?? context.orgId ?? null
+    const explicitOrgId = optionalString(req.body?.orgId) ?? optionalString(req.body?.ownerOrgId) ?? null
+    const orgId = catalogScope === "organization" ? explicitOrgId ?? context.orgId ?? null : explicitOrgId
     enforceRolloutPolicyMutationAccess(context, catalogScope, orgId)
     const rawVersionId = req.body?.versionId !== undefined ? req.body.versionId : req.body?.desiredVersionId
     const policy = await store.createRolloutPolicy(context, {

@@ -85,6 +85,56 @@ export function hasRolloutTargetConflict(
   })
 }
 
+export type SkillRolloutApprovalRef = {
+  scope: SkillApprovalScope
+  orgId?: string | null
+  skillId: string
+  versionId: string
+  revokedAt?: Date | string | null
+}
+
+export type SkillRolloutApprovalValidationCode =
+  | "approval_missing"
+  | "approval_scope_mismatch"
+  | "approval_org_mismatch"
+
+export function validateRolloutPolicyApproval(input: {
+  catalogScope: "organization" | "platform"
+  ownerOrgId?: string | null
+  skillId: string
+  versionId: string
+  approvals: readonly SkillRolloutApprovalRef[]
+}): SkillRegistryPolicyResult<SkillRolloutApprovalValidationCode> {
+  const candidates = input.approvals.filter((approval) =>
+    approval.revokedAt == null &&
+    approval.skillId === input.skillId &&
+    approval.versionId === input.versionId
+  )
+
+  if (input.catalogScope === "platform") {
+    if (candidates.some((approval) => approval.scope === "system" && approval.orgId == null)) {
+      return { ok: true }
+    }
+    return candidates.length > 0
+      ? { ok: false, code: "approval_scope_mismatch" }
+      : { ok: false, code: "approval_missing" }
+  }
+
+  if (!input.ownerOrgId) {
+    return { ok: false, code: "approval_org_mismatch" }
+  }
+  if (candidates.some((approval) => approval.scope === "org" && approval.orgId === input.ownerOrgId)) {
+    return { ok: true }
+  }
+  if (candidates.some((approval) => approval.scope !== "org")) {
+    return { ok: false, code: "approval_scope_mismatch" }
+  }
+  if (candidates.some((approval) => approval.scope === "org" && approval.orgId !== input.ownerOrgId)) {
+    return { ok: false, code: "approval_org_mismatch" }
+  }
+  return { ok: false, code: "approval_missing" }
+}
+
 export function skillReleaseChannelKey(releaseChannel?: string | null): string {
   const normalized = releaseChannel?.trim()
   return normalized ? normalized : DEFAULT_RELEASE_CHANNEL_KEY

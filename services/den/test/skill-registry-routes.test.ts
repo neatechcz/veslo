@@ -140,6 +140,54 @@ async function createApprovedOrgSkillVersion(
   return { skill: createdSkill.skill, version: version.version }
 }
 
+async function createPersonalSkillVersion(
+  server: Awaited<ReturnType<typeof startServer>>,
+  owner: TestSession,
+  name: string,
+) {
+  const { body: createdSkill } = await jsonRequest(server.baseUrl, "/skills", {
+    method: "POST",
+    body: JSON.stringify({ scope: "user", name }),
+    session: owner,
+  })
+  const archive = await packageArchive(name, `# ${name}\n`)
+  const { body: version } = await jsonRequest(server.baseUrl, `/skills/${createdSkill.skill.id}/versions`, {
+    method: "POST",
+    body: JSON.stringify({ package: archive }),
+    session: owner,
+  })
+  return { skill: createdSkill.skill, version: version.version }
+}
+
+async function createApprovedSystemSkillVersion(
+  server: Awaited<ReturnType<typeof startServer>>,
+  platformAdmin: TestSession,
+  name: string,
+) {
+  const { body: createdSkill } = await jsonRequest(server.baseUrl, "/skills", {
+    method: "POST",
+    body: JSON.stringify({ scope: "system", name }),
+    session: platformAdmin,
+  })
+  const archive = await packageArchive(name, `# ${name}\n`)
+  const { body: version } = await jsonRequest(server.baseUrl, `/skills/${createdSkill.skill.id}/versions`, {
+    method: "POST",
+    body: JSON.stringify({ package: archive }),
+    session: platformAdmin,
+  })
+  const { body: review } = await jsonRequest(server.baseUrl, `/skills/${createdSkill.skill.id}/review-requests`, {
+    method: "POST",
+    body: JSON.stringify({ scope: "system", versionId: version.version.id }),
+    session: platformAdmin,
+  })
+  await jsonRequest(server.baseUrl, `/skill-review-requests/${review.requestId}/approve`, {
+    method: "POST",
+    body: JSON.stringify({}),
+    session: platformAdmin,
+  })
+  return { skill: createdSkill.skill, version: version.version }
+}
+
 test("rollout policy installs org skill as user-global for one user", async () => {
   const server = await startServer()
   try {
@@ -175,6 +223,152 @@ test("rollout policy installs org skill as user-global for one user", async () =
     assert.equal(listed.policies.length, 1)
     assert.equal(listed.nextCursor, null)
     assert.ok(server.store.snapshot().events.some((event) => event.action === "skill.rollout_policy.changed"))
+  } finally {
+    await server.close()
+  }
+})
+
+test("rollout policies require catalog-owner approvals", async () => {
+  const server = await startServer()
+  try {
+    const owner = { userId: "owner_1", orgId: "org_1", orgRole: "owner" as const }
+    const platformAdmin = { userId: "platform_owner", isPlatformAdmin: true }
+    const { skill: missingSkill, version: missingVersion } = await createPersonalSkillVersion(
+      server,
+      owner,
+      "missing-org-approval-tool",
+    )
+
+    const missingApproval = await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
+      method: "POST",
+      body: JSON.stringify({
+        skillId: missingSkill.id,
+        versionId: missingVersion.id,
+        target: "user-global",
+        audience: "user",
+        userId: "user_1",
+        catalogScope: "organization",
+        orgId: "org_1",
+      }),
+      session: owner,
+    })
+    assert.equal(missingApproval.response.status, 409)
+    assert.equal(missingApproval.body.error, "approval_missing")
+
+    const { skill: systemApprovedSkill, version: systemApprovedVersion } = await createPersonalSkillVersion(
+      server,
+      owner,
+      "wrong-scope-approval-tool",
+    )
+    const { body: systemReview } = await jsonRequest(
+      server.baseUrl,
+      `/skills/${systemApprovedSkill.id}/review-requests`,
+      {
+        method: "POST",
+        body: JSON.stringify({ scope: "system", versionId: systemApprovedVersion.id }),
+        session: owner,
+      },
+    )
+    await jsonRequest(server.baseUrl, `/skill-review-requests/${systemReview.requestId}/approve`, {
+      method: "POST",
+      body: JSON.stringify({}),
+      session: platformAdmin,
+    })
+
+    const wrongScope = await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
+      method: "POST",
+      body: JSON.stringify({
+        skillId: systemApprovedSkill.id,
+        versionId: systemApprovedVersion.id,
+        target: "user-global",
+        audience: "user",
+        userId: "user_1",
+        catalogScope: "organization",
+        orgId: "org_1",
+      }),
+      session: owner,
+    })
+    assert.equal(wrongScope.response.status, 409)
+    assert.equal(wrongScope.body.error, "approval_scope_mismatch")
+  } finally {
+    await server.close()
+  }
+})
+
+test("rollout policies reject mismatched audience selectors", async () => {
+  const server = await startServer()
+  try {
+    const owner = { userId: "owner_1", orgId: "org_1", orgRole: "owner" as const }
+    const platformAdmin = { userId: "platform_owner", isPlatformAdmin: true }
+    const { skill, version } = await createApprovedOrgSkillVersion(server, owner, "audience-shape-tool")
+
+    const selectedWorkspaceWithUser = await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
+      method: "POST",
+      body: JSON.stringify({
+        skillId: skill.id,
+        versionId: version.id,
+        target: "workspace",
+        audience: "selected-workspaces",
+        userId: "user_1",
+        workspaceId: "workspace_1",
+        catalogScope: "organization",
+        orgId: "org_1",
+      }),
+      session: owner,
+    })
+    assert.equal(selectedWorkspaceWithUser.response.status, 400)
+    assert.equal(selectedWorkspaceWithUser.body.error, "user_id_forbidden")
+
+    const allOrgUsersWithUser = await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
+      method: "POST",
+      body: JSON.stringify({
+        skillId: skill.id,
+        versionId: version.id,
+        target: "user-global",
+        audience: "all-org-users",
+        userId: "user_1",
+        catalogScope: "organization",
+        orgId: "org_1",
+      }),
+      session: owner,
+    })
+    assert.equal(allOrgUsersWithUser.response.status, 400)
+    assert.equal(allOrgUsersWithUser.body.error, "user_id_forbidden")
+
+    const { skill: systemSkill, version: systemVersion } = await createApprovedSystemSkillVersion(
+      server,
+      platformAdmin,
+      "platform-audience-shape-tool",
+    )
+    const platformWithUser = await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
+      method: "POST",
+      body: JSON.stringify({
+        skillId: systemSkill.id,
+        versionId: systemVersion.id,
+        target: "user-global",
+        audience: "all-platform-users",
+        userId: "user_1",
+        catalogScope: "platform",
+      }),
+      session: platformAdmin,
+    })
+    assert.equal(platformWithUser.response.status, 400)
+    assert.equal(platformWithUser.body.error, "user_id_forbidden")
+
+    const platformWithOrg = await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
+      method: "POST",
+      body: JSON.stringify({
+        skillId: systemSkill.id,
+        versionId: systemVersion.id,
+        target: "user-global",
+        audience: "all-platform-users",
+        catalogScope: "platform",
+        orgId: "org_1",
+      }),
+      session: platformAdmin,
+    })
+    assert.equal(platformWithOrg.response.status, 400)
+    assert.equal(platformWithOrg.body.error, "org_id_forbidden")
   } finally {
     await server.close()
   }
