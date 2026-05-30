@@ -172,7 +172,7 @@ type PlannedTargetAction = {
 };
 
 const DEFAULT_CONFLICT_POLICY: SkillLocationConflictPolicy = "skip";
-const DEFAULT_TARGET_CONSTRAINT: SkillLocationTargetConstraint = "allow-parallel";
+const DEFAULT_TARGET_CONSTRAINT: SkillLocationTargetConstraint = "retarget-same-skill";
 
 export function buildSkillLocationActionReview(input: BuildSkillLocationActionReviewInput): SkillLocationActionReview {
   const conflictPolicy = input.conflictPolicy ?? DEFAULT_CONFLICT_POLICY;

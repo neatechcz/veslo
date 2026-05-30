@@ -53,9 +53,10 @@ const sourceSkill = (overrides: Partial<SkillLocationSelection> = {}): SkillLoca
   ...overrides,
 });
 
-test("copy defaults conflicts to skip and creates target installation steps for the same package", () => {
+test("copy with allow-parallel conflicts to skip and creates target installation steps for the same package", () => {
   const review = buildSkillLocationActionReview({
     operation: "copy",
+    targetConstraint: "allow-parallel",
     selectedSourceLocations: [sourceSkill()],
     targetLocations: [workspaceAlpha, workspaceBeta],
     existingTargetLocations: [
@@ -117,6 +118,7 @@ test("copy defaults conflicts to skip and creates target installation steps for 
 test("move orders target creation before source deletion and marks overwrite backup requirements", () => {
   const review = buildSkillLocationActionReview({
     operation: "move",
+    targetConstraint: "allow-parallel",
     conflictPolicy: "overwrite",
     selectedSourceLocations: [sourceSkill()],
     targetLocations: [workspaceAlpha],
@@ -183,10 +185,9 @@ test("move orders target creation before source deletion and marks overwrite bac
   assert.equal(review.confirmationRequired, true);
 });
 
-test("exclusive same-skill target changes produce retarget steps instead of parallel create steps", () => {
+test("same-skill target changes default to retarget steps instead of parallel create steps", () => {
   const review = buildSkillLocationActionReview({
     operation: "copy",
-    targetConstraint: "retarget-same-skill",
     selectedSourceLocations: [sourceSkill()],
     targetLocations: [workspaceAlpha],
     existingTargetLocations: [
@@ -229,10 +230,9 @@ test("exclusive same-skill target changes produce retarget steps instead of para
   ]);
 });
 
-test("exclusive retarget skips non-retargetable org or platform sources instead of creating installs", () => {
+test("default retarget skips non-retargetable org or platform sources instead of creating installs", () => {
   const review = buildSkillLocationActionReview({
     operation: "copy",
-    targetConstraint: "retarget-same-skill",
     selectedSourceLocations: [
       sourceSkill({
         installationId: "rollout-research-org",
@@ -258,10 +258,9 @@ test("exclusive retarget skips non-retargetable org or platform sources instead 
   assert.equal(review.confirmationRequired, false);
 });
 
-test("exclusive retarget applies target name conflicts before emitting retarget steps", () => {
+test("default retarget applies target name conflicts before emitting retarget steps", () => {
   const review = buildSkillLocationActionReview({
     operation: "copy",
-    targetConstraint: "retarget-same-skill",
     selectedSourceLocations: [sourceSkill()],
     targetLocations: [workspaceAlpha],
     existingTargetLocations: [
@@ -292,6 +291,7 @@ test("exclusive retarget applies target name conflicts before emitting retarget 
 test("rename conflict policy assigns unique target slugs and names", () => {
   const review = buildSkillLocationActionReview({
     operation: "copy",
+    targetConstraint: "allow-parallel",
     conflictPolicy: "rename",
     selectedSourceLocations: [
       sourceSkill({
