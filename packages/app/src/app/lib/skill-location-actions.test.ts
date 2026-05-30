@@ -176,6 +176,52 @@ test("move orders target creation before source deletion and marks overwrite bac
   assert.equal(review.confirmationRequired, true);
 });
 
+test("exclusive same-skill target changes produce retarget steps instead of parallel create steps", () => {
+  const review = buildSkillLocationActionReview({
+    operation: "copy",
+    targetConstraint: "retarget-same-skill",
+    selectedSourceLocations: [sourceSkill()],
+    targetLocations: [workspaceAlpha],
+    existingTargetLocations: [
+      {
+        installationId: "install-research-personal",
+        skillId: "skill-research",
+        name: "Research",
+        slug: "research",
+        location: personal,
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    review.steps.map((step) => step.type),
+    ["retarget-installation"],
+  );
+  assert.deepEqual(review.steps[0], {
+    type: "retarget-installation",
+    operation: "move",
+    installationId: "install-research-personal",
+    skillId: "skill-research",
+    name: "Research",
+    slug: "research",
+    versionId: "version-research-1",
+    packageSha256: "sha-research-1",
+    fromLocation: personal,
+    targetLocation: workspaceAlpha,
+  });
+  assert.equal(review.steps.some((step) => step.type === "create-installation"), false);
+  assert.deepEqual(review.affectedSkills, [
+    {
+      skillId: "skill-research",
+      name: "Research",
+      slug: "research",
+      sourceLocationIds: ["personal:user-1"],
+      targetLocationIds: ["workspace:alpha"],
+      stepTypes: ["retarget-installation"],
+    },
+  ]);
+});
+
 test("rename conflict policy assigns unique target slugs and names", () => {
   const review = buildSkillLocationActionReview({
     operation: "copy",

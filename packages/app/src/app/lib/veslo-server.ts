@@ -153,6 +153,15 @@ export type VesloHubMcpItem = {
 export type VesloSkillRegistryOwnerScope = "user" | "workspace" | "org" | "system";
 export type VesloSkillRegistryVisibility = "personal" | "workspace" | "organization" | "platform";
 export type VesloSkillRegistryReviewStatus = "draft" | "pending_review" | "approved" | "rejected";
+export type VesloSkillRegistryUpdatePolicy = "pinned" | "latest_user" | "latest_approved" | "release_channel";
+export type VesloSkillRegistryRolloutTarget = "user-global" | "workspace";
+export type VesloSkillRegistryRolloutAudience =
+  | "user"
+  | "selected-workspaces"
+  | "all-org-users"
+  | "all-platform-users";
+export type VesloSkillRegistryRolloutCatalogScope = "organization" | "platform";
+export type VesloSkillRegistryRolloutRemovalPolicy = "user_removable" | "admin_removable" | "locked";
 
 export type VesloSkillRegistryVersionSummary = {
   id: string;
@@ -232,6 +241,33 @@ export type VesloSkillRegistryWorkspaceSkillSetResponse = {
   skills: VesloSkillRegistryInstallation[];
 };
 
+export type VesloSkillRegistryRolloutPolicy = {
+  id: string;
+  skillId: string;
+  versionId: string | null;
+  target: VesloSkillRegistryRolloutTarget;
+  audience: VesloSkillRegistryRolloutAudience;
+  catalogScope: VesloSkillRegistryRolloutCatalogScope;
+  orgId?: string | null;
+  userId?: string | null;
+  workspaceId?: string | null;
+  enabled: boolean;
+  updatePolicy: VesloSkillRegistryUpdatePolicy;
+  releaseChannel?: string | null;
+  removalPolicy: VesloSkillRegistryRolloutRemovalPolicy;
+  createdAt: string;
+  updatedAt?: string;
+};
+
+export type VesloSkillRegistryRolloutPolicyResponse = {
+  policy: VesloSkillRegistryRolloutPolicy;
+};
+
+export type VesloSkillRegistryRolloutPoliciesResponse = {
+  policies: VesloSkillRegistryRolloutPolicy[];
+  nextCursor?: string | null;
+};
+
 export type VesloSkillRegistrySearchParams = {
   q: string;
   workspaceId?: string;
@@ -266,8 +302,30 @@ export type VesloSkillRegistryCreateInstallationInput = VesloSkillRegistryAuthCo
   orgId?: string;
   ownerUserId?: string;
   workspaceId?: string;
-  updatePolicy?: "pinned" | "latest_user" | "latest_approved" | "release_channel" | string;
+  updatePolicy?: VesloSkillRegistryUpdatePolicy | string;
   releaseChannel?: string;
+};
+
+export type VesloSkillRegistryListRolloutPoliciesInput = VesloSkillRegistryAuthContext & {
+  cursor?: string;
+  limit?: number;
+  target?: VesloSkillRegistryRolloutTarget;
+  audience?: VesloSkillRegistryRolloutAudience;
+  workspaceId?: string;
+};
+
+export type VesloSkillRegistryCreateRolloutPolicyInput = VesloSkillRegistryAuthContext & {
+  skillId: string;
+  versionId?: string | null;
+  target: VesloSkillRegistryRolloutTarget;
+  audience: VesloSkillRegistryRolloutAudience;
+  catalogScope: VesloSkillRegistryRolloutCatalogScope;
+  orgId?: string | null;
+  userId?: string | null;
+  workspaceId?: string | null;
+  updatePolicy?: VesloSkillRegistryUpdatePolicy;
+  releaseChannel?: string | null;
+  removalPolicy?: VesloSkillRegistryRolloutRemovalPolicy;
 };
 
 export type VesloSkillRegistryListVersionsInput = VesloSkillRegistryAuthContext & {
@@ -278,8 +336,23 @@ export type VesloSkillRegistryListVersionsInput = VesloSkillRegistryAuthContext 
 export type VesloSkillRegistryUpdateInstallationInput = VesloSkillRegistryAuthContext & {
   enabled?: boolean;
   versionId?: string | null;
-  updatePolicy?: "pinned" | "latest_user" | "latest_approved" | "release_channel" | string;
+  updatePolicy?: VesloSkillRegistryUpdatePolicy | string;
   releaseChannel?: string | null;
+};
+
+export type VesloSkillRegistryUpdateRolloutPolicyInput = VesloSkillRegistryAuthContext & {
+  skillId?: string;
+  versionId?: string | null;
+  target?: VesloSkillRegistryRolloutTarget;
+  audience?: VesloSkillRegistryRolloutAudience;
+  catalogScope?: VesloSkillRegistryRolloutCatalogScope;
+  orgId?: string | null;
+  userId?: string | null;
+  workspaceId?: string | null;
+  enabled?: boolean;
+  updatePolicy?: VesloSkillRegistryUpdatePolicy;
+  releaseChannel?: string | null;
+  removalPolicy?: VesloSkillRegistryRolloutRemovalPolicy;
 };
 
 export type VesloSkillRegistryRestoreInstallationInput = VesloSkillRegistryAuthContext & {
@@ -1630,6 +1703,19 @@ function buildSkillRegistryVersionsPath(skillId: string, params?: VesloSkillRegi
   return `/v1/skills/${encodeURIComponent(skillId)}/versions${suffix ? `?${suffix}` : ""}`;
 }
 
+function buildSkillRegistryRolloutPoliciesPath(params?: VesloSkillRegistryListRolloutPoliciesInput) {
+  const search = new URLSearchParams();
+  setTrimmedSearchParam(search, "cursor", params?.cursor);
+  if (typeof params?.limit === "number" && Number.isSafeInteger(params.limit) && params.limit > 0) {
+    search.set("limit", String(params.limit));
+  }
+  if (params?.target) search.set("target", params.target);
+  if (params?.audience) search.set("audience", params.audience);
+  setTrimmedSearchParam(search, "workspaceId", params?.workspaceId);
+  const suffix = search.toString();
+  return `/v1/skill-rollout-policies${suffix ? `?${suffix}` : ""}`;
+}
+
 function buildHeaders(
   token?: string,
   hostToken?: string,
@@ -2459,6 +2545,79 @@ export function createVesloServerClient(options: {
           body: {
             reviewerNote: input.reviewerNote,
           },
+          extraHeaders: buildDenContextHeaders(input),
+          timeoutMs: timeouts.skillRegistryMutation,
+        },
+      ),
+    listRegistrySkillRolloutPolicies: (input?: VesloSkillRegistryListRolloutPoliciesInput) =>
+      requestJson<VesloSkillRegistryRolloutPoliciesResponse>(
+        baseUrl,
+        buildSkillRegistryRolloutPoliciesPath(input),
+        {
+          token,
+          hostToken,
+          extraHeaders: buildDenContextHeaders(input),
+          timeoutMs: timeouts.skillRegistrySearch,
+        },
+      ),
+    createRegistrySkillRolloutPolicy: (input: VesloSkillRegistryCreateRolloutPolicyInput) =>
+      requestJson<VesloSkillRegistryRolloutPolicyResponse>(baseUrl, "/v1/skill-rollout-policies", {
+        token,
+        hostToken,
+        method: "POST",
+        body: {
+          skillId: input.skillId,
+          versionId: input.versionId,
+          target: input.target,
+          audience: input.audience,
+          catalogScope: input.catalogScope,
+          orgId: input.orgId,
+          userId: input.userId,
+          workspaceId: input.workspaceId,
+          updatePolicy: input.updatePolicy,
+          releaseChannel: input.releaseChannel,
+          removalPolicy: input.removalPolicy,
+        },
+        extraHeaders: buildDenContextHeaders(input),
+        timeoutMs: timeouts.skillRegistryMutation,
+      }),
+    updateRegistrySkillRolloutPolicy: (
+      policyId: string,
+      input: VesloSkillRegistryUpdateRolloutPolicyInput,
+    ) =>
+      requestJson<VesloSkillRegistryRolloutPolicyResponse>(
+        baseUrl,
+        `/v1/skill-rollout-policies/${encodeURIComponent(policyId)}`,
+        {
+          token,
+          hostToken,
+          method: "PATCH",
+          body: {
+            skillId: input.skillId,
+            versionId: input.versionId,
+            target: input.target,
+            audience: input.audience,
+            catalogScope: input.catalogScope,
+            orgId: input.orgId,
+            userId: input.userId,
+            workspaceId: input.workspaceId,
+            enabled: input.enabled,
+            updatePolicy: input.updatePolicy,
+            releaseChannel: input.releaseChannel,
+            removalPolicy: input.removalPolicy,
+          },
+          extraHeaders: buildDenContextHeaders(input),
+          timeoutMs: timeouts.skillRegistryMutation,
+        },
+      ),
+    deleteRegistrySkillRolloutPolicy: (policyId: string, input?: VesloSkillRegistryAuthContext) =>
+      requestJson<VesloSkillRegistryRolloutPolicyResponse>(
+        baseUrl,
+        `/v1/skill-rollout-policies/${encodeURIComponent(policyId)}`,
+        {
+          token,
+          hostToken,
+          method: "DELETE",
           extraHeaders: buildDenContextHeaders(input),
           timeoutMs: timeouts.skillRegistryMutation,
         },

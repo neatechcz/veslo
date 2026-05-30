@@ -13,6 +13,8 @@ export type SkillLocationOperation = "copy" | "move" | "remove" | "restore";
 
 export type SkillLocationConflictPolicy = "skip" | "rename" | "overwrite";
 
+export type SkillLocationTargetConstraint = "allow-parallel" | "retarget-same-skill";
+
 export type SkillLocationSelection = {
   installationId: string;
   skillId: string;
@@ -38,6 +40,7 @@ export type BuildSkillLocationActionReviewInput = {
   targetLocations?: readonly SkillLocation[];
   existingTargetLocations?: readonly ExistingSkillTargetLocation[];
   conflictPolicy?: SkillLocationConflictPolicy;
+  targetConstraint?: SkillLocationTargetConstraint;
 };
 
 export type CreateSkillInstallationStep = {
@@ -81,6 +84,19 @@ export type RestoreSkillInstallationStep = {
   requiresBackupSnapshot?: true;
 };
 
+export type RetargetSkillInstallationStep = {
+  type: "retarget-installation";
+  operation: "move";
+  installationId: string;
+  skillId: string;
+  name: string;
+  slug: string;
+  versionId: string;
+  packageSha256: string;
+  fromLocation: SkillLocation;
+  targetLocation: SkillLocation;
+};
+
 export type RequireSkillBackupSnapshotStep = {
   type: "require-backup-snapshot";
   operation: "copy" | "move" | "restore";
@@ -95,6 +111,7 @@ export type SkillLocationActionStep =
   | CreateSkillInstallationStep
   | DeleteSkillInstallationStep
   | RestoreSkillInstallationStep
+  | RetargetSkillInstallationStep
   | RequireSkillBackupSnapshotStep;
 
 export type SkillLocationActionConflict = {
@@ -147,9 +164,12 @@ type PlannedTargetAction = {
 };
 
 const DEFAULT_CONFLICT_POLICY: SkillLocationConflictPolicy = "skip";
+const DEFAULT_TARGET_CONSTRAINT: SkillLocationTargetConstraint = "allow-parallel";
 
 export function buildSkillLocationActionReview(input: BuildSkillLocationActionReviewInput): SkillLocationActionReview {
   const conflictPolicy = input.conflictPolicy ?? DEFAULT_CONFLICT_POLICY;
+  const targetConstraint = input.targetConstraint ?? DEFAULT_TARGET_CONSTRAINT;
+  const existingTargetLocations = input.existingTargetLocations ?? [];
   const occupiedByLocation = buildOccupiedLocations(input.existingTargetLocations ?? []);
   const conflicts: SkillLocationActionConflict[] = [];
   const steps: SkillLocationActionStep[] = [];
@@ -190,6 +210,8 @@ export function buildSkillLocationActionReview(input: BuildSkillLocationActionRe
         selection,
         targetLocation,
         conflictPolicy,
+        targetConstraint,
+        existingTargetLocations,
         occupiedByLocation,
         conflicts,
       });
@@ -210,9 +232,23 @@ function planCreateAction(input: {
   selection: SkillLocationSelection;
   targetLocation: SkillLocation;
   conflictPolicy: SkillLocationConflictPolicy;
+  targetConstraint: SkillLocationTargetConstraint;
+  existingTargetLocations: readonly ExistingSkillTargetLocation[];
   occupiedByLocation: Map<string, OccupiedSkillName[]>;
   conflicts: SkillLocationActionConflict[];
 }): PlannedTargetAction {
+  if (input.targetConstraint === "retarget-same-skill") {
+    const retargetStep = buildRetargetStep(input.selection, input.targetLocation, input.existingTargetLocations);
+    if (retargetStep) {
+      reserveLocationName(input.occupiedByLocation, input.targetLocation, {
+        installationId: retargetStep.installationId,
+        name: retargetStep.name,
+        slug: retargetStep.slug,
+      });
+      return { steps: [retargetStep] };
+    }
+  }
+
   const { conflict, name, slug } = resolveTargetName(input);
   if (conflict?.action === "skip") {
     return { steps: [] };
@@ -257,6 +293,44 @@ function planCreateAction(input: {
     slug,
   });
   return { steps, createStep };
+}
+
+function buildRetargetStep(
+  selection: SkillLocationSelection,
+  targetLocation: SkillLocation,
+  existingTargets: readonly ExistingSkillTargetLocation[],
+): RetargetSkillInstallationStep | null {
+  const source = canRetargetBetweenLocations(selection.location, targetLocation)
+    ? { installationId: selection.installationId, location: selection.location }
+    : existingTargets.find(
+        (target) =>
+          target.skillId === selection.skillId &&
+          canRetargetBetweenLocations(target.location, targetLocation),
+      );
+
+  if (!source) return null;
+
+  return {
+    type: "retarget-installation",
+    operation: "move",
+    installationId: source.installationId,
+    skillId: selection.skillId,
+    name: normalizeName(selection.name),
+    slug: normalizeSlug(selection.slug || selection.name),
+    versionId: selection.versionId,
+    packageSha256: selection.packageSha256,
+    fromLocation: source.location,
+    targetLocation,
+  };
+}
+
+function canRetargetBetweenLocations(fromLocation: SkillLocation, targetLocation: SkillLocation) {
+  if (fromLocation.id === targetLocation.id) return false;
+  return isRetargetableTargetKind(fromLocation.kind) && isRetargetableTargetKind(targetLocation.kind);
+}
+
+function isRetargetableTargetKind(kind: SkillLocationKind) {
+  return kind === "personal-global" || kind === "workspace";
 }
 
 function planRestoreAction(input: {
@@ -436,6 +510,9 @@ function buildAffectedSkills(steps: readonly SkillLocationActionStep[]): SkillLo
     } else if (step.type === "restore-installation") {
       pushUnique(affected.sourceLocationIds, step.sourceLocation.id);
       pushUnique(affected.targetLocationIds, step.targetLocation.id);
+    } else if (step.type === "retarget-installation") {
+      pushUnique(affected.sourceLocationIds, step.fromLocation.id);
+      pushUnique(affected.targetLocationIds, step.targetLocation.id);
     } else {
       pushUnique(affected.targetLocationIds, step.targetLocation.id);
     }
@@ -475,6 +552,9 @@ function buildReloadImpact(steps: readonly SkillLocationActionStep[]): SkillLoca
       pushUnique(locationIds, step.targetLocation.id);
     } else if (step.type === "delete-installation") {
       pushUnique(locationIds, step.sourceLocation.id);
+    } else if (step.type === "retarget-installation") {
+      pushUnique(locationIds, step.fromLocation.id);
+      pushUnique(locationIds, step.targetLocation.id);
     } else {
       pushUnique(locationIds, step.targetLocation.id);
     }

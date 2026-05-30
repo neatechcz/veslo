@@ -741,6 +741,142 @@ test("registry version and installation helpers call local server mutation route
   }
 });
 
+test("rollout policy helpers call local server routes with host auth and Den context", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method?: string; headers: Headers; body?: string | null }> = [];
+  const policy = {
+    id: "rollout_1",
+    skillId: "skill_demo",
+    versionId: "version_demo_1",
+    target: "user-global",
+    audience: "user",
+    catalogScope: "organization",
+    orgId: "org_1",
+    userId: "user_1",
+    enabled: true,
+    updatePolicy: "pinned",
+    removalPolicy: "locked",
+    createdAt: "2026-05-30T10:00:00.000Z",
+    updatedAt: "2026-05-30T10:01:00.000Z",
+  };
+  const responses = [
+    {
+      policies: [policy],
+      nextCursor: null,
+    },
+    {
+      policy,
+    },
+    {
+      policy: {
+        ...policy,
+        enabled: false,
+        versionId: null,
+        updatePolicy: "release_channel",
+        releaseChannel: "stable",
+      },
+    },
+    {
+      policy: {
+        ...policy,
+        enabled: false,
+      },
+    },
+  ];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method,
+      headers: new Headers(init?.headers),
+      body: typeof init?.body === "string" ? init.body : null,
+    });
+    return new Response(JSON.stringify(responses.shift()), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+
+    await client.listRegistrySkillRolloutPolicies({
+      target: "user-global",
+      audience: "user",
+      workspaceId: "workspace_1",
+      cursor: "next/cursor",
+      limit: 25,
+      denToken: "den-token",
+      denOrgId: "org_1",
+      denUserId: "user_1",
+    });
+    await client.createRegistrySkillRolloutPolicy({
+      skillId: "skill_demo",
+      versionId: "version_demo_1",
+      target: "user-global",
+      audience: "user",
+      userId: "user_1",
+      catalogScope: "organization",
+      orgId: "org_1",
+      updatePolicy: "pinned",
+      removalPolicy: "locked",
+      denToken: "den-token",
+      denOrgId: "org_1",
+      denUserId: "user_1",
+    });
+    await client.updateRegistrySkillRolloutPolicy("rollout_1", {
+      enabled: false,
+      versionId: null,
+      updatePolicy: "release_channel",
+      releaseChannel: "stable",
+      denToken: "den-token",
+      denOrgId: "org_1",
+      denUserId: "user_1",
+    });
+    await client.deleteRegistrySkillRolloutPolicy("rollout_1", {
+      denToken: "den-token",
+      denOrgId: "org_1",
+      denUserId: "user_1",
+    });
+
+    assert.deepEqual(calls.map((call) => `${call.method ?? "GET"} ${call.url}`), [
+      "GET https://veslo.example/v1/skill-rollout-policies?cursor=next%2Fcursor&limit=25&target=user-global&audience=user&workspaceId=workspace_1",
+      "POST https://veslo.example/v1/skill-rollout-policies",
+      "PATCH https://veslo.example/v1/skill-rollout-policies/rollout_1",
+      "DELETE https://veslo.example/v1/skill-rollout-policies/rollout_1",
+    ]);
+    assert.equal(calls[1]?.headers.get("authorization"), "Bearer token-123");
+    assert.equal(calls[1]?.headers.get("x-veslo-host-token"), "host-token-123");
+    assert.equal(calls[1]?.headers.get("x-veslo-den-token"), "den-token");
+    assert.equal(calls[1]?.headers.get("x-veslo-den-org-id"), "org_1");
+    assert.equal(calls[1]?.headers.get("x-veslo-den-user-id"), "user_1");
+    assert.deepEqual(JSON.parse(calls[1]?.body ?? "{}"), {
+      skillId: "skill_demo",
+      versionId: "version_demo_1",
+      target: "user-global",
+      audience: "user",
+      catalogScope: "organization",
+      orgId: "org_1",
+      userId: "user_1",
+      updatePolicy: "pinned",
+      removalPolicy: "locked",
+    });
+    assert.deepEqual(JSON.parse(calls[2]?.body ?? "{}"), {
+      enabled: false,
+      versionId: null,
+      updatePolicy: "release_channel",
+      releaseChannel: "stable",
+    });
+    assert.equal(calls[3]?.body, null);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("skill materialization helpers call workspace and global status and sync endpoints", async () => {
   const previousFetch = globalThis.fetch;
   const calls: Array<{ url: string; method: string; headers: Headers; body: string | null }> = [];
