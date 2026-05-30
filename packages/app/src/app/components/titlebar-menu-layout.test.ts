@@ -11,7 +11,7 @@ test("macOS Tauri titlebar menu keeps drag strip active in overlay mode", () => 
   assert.deepEqual(resolveTitlebarMenuLayout({ tauri: true, windows: false, mac: true, hideTitlebar: false }), {
     rootClass: "pointer-events-none fixed inset-x-0 top-0 z-[60] flex items-start justify-between",
     leftOffsetClass: "pointer-events-auto relative z-10 mt-0.5 ml-[66px]",
-    centerContentClass: "pointer-events-none absolute inset-x-0 top-0 z-10 flex h-9 items-start justify-center px-[152px] pt-0.5",
+    centerContentClass: "pointer-events-none absolute left-[220px] right-[108px] top-0 z-10 flex h-9 items-start justify-center pt-0.5",
     rightOffsetClass: "pointer-events-auto relative z-10 mt-0.5 mr-2",
     dragRegionClass: "pointer-events-auto fixed inset-x-0 top-0 z-[59] h-9",
   });
@@ -21,7 +21,7 @@ test("Windows Tauri titlebar menu keeps right-side safe spacing", () => {
   assert.deepEqual(resolveTitlebarMenuLayout({ tauri: true, windows: true, mac: false, hideTitlebar: false }), {
     rootClass: "pointer-events-none fixed inset-x-0 top-0 z-[60] flex items-start justify-between",
     leftOffsetClass: "pointer-events-auto relative z-10 mt-1 ml-2.5",
-    centerContentClass: "pointer-events-none absolute inset-x-0 top-0 z-10 flex h-9 items-start justify-center px-[176px] pt-1",
+    centerContentClass: "pointer-events-none absolute left-[176px] right-[224px] top-0 z-10 flex h-9 items-start justify-center pt-1",
     rightOffsetClass: "pointer-events-auto relative z-10 mr-0",
     dragRegionClass: "pointer-events-auto fixed inset-x-0 top-0 z-[59] h-9",
   });
@@ -31,7 +31,7 @@ test("Tauri titlebar menu exposes drag strip only when native titlebar is hidden
   assert.deepEqual(resolveTitlebarMenuLayout({ tauri: true, windows: false, mac: true, hideTitlebar: true }), {
     rootClass: "pointer-events-none fixed inset-x-0 top-0 z-[60] flex items-start justify-between",
     leftOffsetClass: "pointer-events-auto relative z-10 mt-0.5 ml-[66px]",
-    centerContentClass: "pointer-events-none absolute inset-x-0 top-0 z-10 flex h-9 items-start justify-center px-[152px] pt-0.5",
+    centerContentClass: "pointer-events-none absolute left-[220px] right-[108px] top-0 z-10 flex h-9 items-start justify-center pt-0.5",
     rightOffsetClass: "pointer-events-auto relative z-10 mt-0.5 mr-2",
     dragRegionClass: "pointer-events-auto fixed inset-x-0 top-0 z-[59] h-9",
   });

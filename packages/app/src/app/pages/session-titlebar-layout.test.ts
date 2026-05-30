@@ -55,8 +55,14 @@ test("session titlebar directory uses the shared app font instead of monospace",
 test("session titlebar session label truncates within the minimum window width", () => {
   assert.match(
     source,
-    /class="[^"]*\bmin-w-0\b[^"]*\bmax-w-full\b[^"]*\btruncate\b[^"]*"[\s\S]*title=\{label\(\)\}[\s\S]*>\s*\{label\(\)\}/,
+    /class="[^"]*\bmin-w-0\b[^"]*max-w-\[14rem\][^"]*\btruncate\b[^"]*"[\s\S]*title=\{label\(\)\}[\s\S]*>\s*\{label\(\)\}/,
     "session title label should own truncation so long names fit inside the narrow centered titlebar slot",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /class="[^"]*\bmax-w-full\b[^"]*"[\s\S]*title=\{label\(\)\}[\s\S]*>\s*\{label\(\)\}/,
+    "session title label should keep an explicit width cap instead of using unbounded max-w-full",
   );
 
   assert.doesNotMatch(
