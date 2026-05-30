@@ -35,3 +35,22 @@ test("managed Codex credential request failures are mapped to actionable AI acce
     ].join("\n"),
   );
 });
+
+test("plain assigned Codex credential request failures are mapped to actionable AI access guidance", () => {
+  const text = describeRequestError(
+    {
+      message: "AI gateway upstream request failed",
+      statusCode: 502,
+      responseBody: "assigned_credential_unavailable",
+    },
+    "Request failed",
+  );
+
+  assert.equal(
+    text,
+    [
+      "AI access unavailable",
+      "No eligible Codex credential is available for your account. Ask an admin to assign or refresh Codex AI access, then retry.",
+    ].join("\n"),
+  );
+});

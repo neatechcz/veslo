@@ -13,9 +13,10 @@ type ManagedAiFailure = {
   reason: string | null;
 };
 
+const managedCodexFailureCodes = ["no_eligible_codex_credentials", "assigned_credential_unavailable"] as const;
+
 const isManagedCodexFailureCode = (value: string | null) =>
-  value === "no_eligible_codex_credentials" ||
-  value === "assigned_credential_unavailable";
+  managedCodexFailureCodes.some((code) => value === code);
 
 const detectManagedAiFailure = (
   value: unknown,
@@ -27,7 +28,7 @@ const detectManagedAiFailure = (
   if (typeof value === "string") {
     const parsed = parseJsonValue(value);
     if (parsed !== null) return detectManagedAiFailure(parsed, depth + 1, inherited);
-    if (value.includes("no_eligible_codex_credentials")) {
+    if (managedCodexFailureCodes.some((code) => value.includes(code))) {
       return inherited;
     }
     return null;
