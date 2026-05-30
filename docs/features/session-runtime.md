@@ -77,6 +77,14 @@ Clicking the pencil loads the reconstructed user draft into the composer and arm
 
 When the user is already at the latest message, new user posts and streamed assistant output keep the message list pinned to the bottom. Auto-scroll may be throttled for render performance, but the final pending scroll must still run while the bottom pin intent remains active. If the user scrolls away from the latest message, Veslo stops auto-pinning and shows the jump-to-latest control instead of forcing the viewport downward.
 
+## Message Progress Grouping
+
+Assistant activity between a user message and the final assistant answer is treated as progress for that user turn. While a run is still streaming, the newest visible assistant text can stay live because the UI cannot yet know whether it is the final answer. Once the turn has a later final assistant text, earlier actions and intermediate assistant comments are collapsed into one expandable progress group before the final answer.
+
+The collapsed group summarizes both action rows and intermediate comments. Expanding it preserves original order and shows non-final assistant text comments directly as normal assistant-visible text without card framing. Tool/action rows, subagent rows, and verification rows stay as nested collapsed progress items so the user can expand only the detail they want to inspect. Intermediate comments are normal assistant-visible text, not model thinking.
+
+`showThinking=false` hides model reasoning content and reasoning technical details only. It must not hide progress actions, non-final assistant comments, tool summaries, or other non-reasoning progress details that regular users need in order to understand what happened during the run.
+
 ## Pending Drafts
 
 Unstarted sessions are modeled as pending drafts.

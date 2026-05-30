@@ -6,6 +6,7 @@ const source = readFileSync(new URL("./message-list.tsx", import.meta.url), "utf
 
 test("message list integrates the hybrid timeline model and collapse state helpers", () => {
   assert.match(source, /buildTimelineDetailModel/);
+  assert.match(source, /buildProgressRenderBlocks/);
   assert.match(source, /reconcileTimelineOpenSectionIds/);
   assert.match(source, /createTimelineSectionStateId/);
   assert.match(source, /toggleTimelineSection/);
@@ -56,16 +57,30 @@ test("timeline section reconciliation avoids writing a fresh Set when nothing ch
   );
 });
 
-test("adjacent step-only assistant messages merge into a single timeline block", () => {
-  assert.match(
-    source,
-    /const previousBlock = blocks\[blocks\.length - 1\];[\s\S]*previousBlock\?\.kind === "steps-cluster"[\s\S]*previousBlock\.isUser === isUser[\s\S]*previousBlock\.stepGroups\.push\(/s,
-  );
+test("turn-scoped assistant activity grouping is delegated to the progress model", () => {
+  assert.match(source, /buildProgressRenderBlocks\(\{/);
+  assert.doesNotMatch(source, /previousBlock\?\.kind === "steps-cluster"/);
 });
 
 test("mixed message blocks render a single inline timeline for all step groups", () => {
   assert.match(source, /const inlineStepGroups = \(\) =>\s*block\.groups[\s\S]*group\.kind === "steps"/);
   assert.match(source, /stepGroups=\{inlineStepGroups\(\)\}/);
+});
+
+test("turn-scoped progress groups render comments inside the expandable progress block", () => {
+  assert.match(source, /block\.kind === "progress-group"/);
+  assert.match(source, /ProgressComment/);
+  assert.match(source, /ProgressStepGroup/);
+  assert.match(source, /data-testid="session-progress-group"/);
+  assert.match(source, /data-testid="session-progress-comment"/);
+  assert.match(source, /data-testid="session-progress-step-group"/);
+  assert.match(source, /isProgressChild=\{true\}/);
+  assert.doesNotMatch(source, /<ProgressStepRows/);
+});
+
+test("progress group comments render as plain assistant text without a framed card", () => {
+  assert.match(source, /data-testid="session-progress-comment"/);
+  assert.doesNotMatch(source, /data-testid="session-progress-comment"\s+class="[^"]*(?:rounded|border|bg-gray)/);
 });
 
 test("action summaries distinguish thinking-only rows from real actions", () => {
@@ -86,11 +101,10 @@ test("collapsed timeline meta is not the generic execution label", () => {
 });
 
 test("message grouping respects thinking visibility for timeline steps", () => {
-  assert.match(source, /if \(part\.type === "reasoning"\) \{\s*return props\.showThinking;\s*\}/s);
-  assert.match(source, /groupMessageParts\(renderableParts, groupId, \{ showThinking: props\.showThinking \}\)/);
+  assert.match(source, /buildProgressRenderBlocks\(\{[\s\S]*showThinking: props\.showThinking,[\s\S]*\}\)/s);
 });
 
 test("timeline technical detail disclosure is controlled by the same toggle", () => {
-  assert.match(source, /<Show when=\{props\.showThinking && row\.technicalDetail\}>/);
+  assert.match(source, /canShowTimelineTechnicalDetail\(entry\)/);
   assert.doesNotMatch(source, /props\.developerMode && entry\.part/);
 });
