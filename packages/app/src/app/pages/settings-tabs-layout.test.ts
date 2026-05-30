@@ -10,10 +10,10 @@ const generalSection = source.match(/<Match when=\{activeTab\(\) === "general"\}
 
 test("settings exposes archived tab and keeps developer tabs unavailable", () => {
   assert.match(source, /const tabs: SettingsTab\[\] = \["general", "archived"\]/);
-  assert.match(source, /kind:\s*"dashboard"[\s\S]*tab:\s*"scheduled"/);
-  assert.match(source, /kind:\s*"dashboard"[\s\S]*tab:\s*"soul"/);
-  assert.match(source, /kind:\s*"dashboard"[\s\S]*tab:\s*"skills"/);
-  assert.match(source, /kind:\s*"dashboard"[\s\S]*tab:\s*"mcp"/);
+  assert.match(source, /\{\s*kind:\s*"dashboard",\s*tab:\s*"scheduled"\s*\}/);
+  assert.match(source, /\{\s*kind:\s*"dashboard",\s*tab:\s*"soul"\s*\}/);
+  assert.match(source, /\{\s*kind:\s*"dashboard",\s*tab:\s*"skills"\s*\}/);
+  assert.match(source, /\{\s*kind:\s*"dashboard",\s*tab:\s*"mcp"\s*\}/);
   assert.match(source, /props\.onOpenDashboardTab\?\.\(item\.tab\)/);
   assert.doesNotMatch(source, /<ExtensionsOverview/);
   assert.doesNotMatch(source, /<Match when=\{activeTab\(\) === "extensions"\}>/);
@@ -71,8 +71,8 @@ test("settings keeps compact update controls in general instead of a floating to
 test("settings locales include Settings and dashboard labels", () => {
   assert.match(enLocaleSource, /"settings\.archived": "Archived"/);
   assert.match(csLocaleSource, /"settings\.archived": "Archivované"/);
-  assert.match(source, /label:\s*"nav\.automations"/);
-  assert.match(source, /label:\s*"nav\.soul"/);
-  assert.match(source, /label:\s*"nav\.skills"/);
-  assert.match(source, /label:\s*"nav\.extensions"/);
+  assert.match(source, /translate\("nav\.automations"\)/);
+  assert.match(source, /translate\("nav\.soul"\)/);
+  assert.match(source, /translate\("nav\.skills"\)/);
+  assert.match(source, /translate\("nav\.extensions"\)/);
 });
