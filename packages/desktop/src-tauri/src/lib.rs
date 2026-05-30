@@ -19,10 +19,10 @@ mod workspace;
 
 pub use types::*;
 
+use commands::clipboard::clipboard_file_paths;
 use commands::command_files::{
     opencode_command_delete, opencode_command_list, opencode_command_write,
 };
-use commands::clipboard::clipboard_file_paths;
 use commands::config::{read_opencode_config, write_opencode_config};
 use commands::den_auth::{den_auth_snapshot_read, den_auth_snapshot_write};
 use commands::engine::{
@@ -52,14 +52,15 @@ use commands::session_reader::{opencode_db_read_sessions, opencode_db_read_trans
 use commands::skills::{
     install_skill_template, list_local_skills, read_local_skill, uninstall_skill, write_local_skill,
 };
-use commands::updater::updater_environment;
+use commands::updater::{updater_environment, updater_prepare_install};
 use commands::veslo_server::{veslo_server_info, veslo_server_restart};
 use commands::window::set_window_decorations;
 use commands::workspace::{
     workspace_add_authorized_root, workspace_bootstrap, workspace_copy_into_folder,
     workspace_create, workspace_create_remote, workspace_export_config, workspace_forget,
-    workspace_import_config, workspace_private_root, workspace_veslo_read, workspace_veslo_write,
-    workspace_set_active, workspace_update_display_name, workspace_update_remote,
+    workspace_import_config, workspace_private_root, workspace_set_active,
+    workspace_update_display_name, workspace_update_remote, workspace_veslo_read,
+    workspace_veslo_write,
 };
 use engine::manager::EngineManager;
 use opencode_router::manager::OpenCodeRouterManager;
@@ -73,11 +74,7 @@ fn register_debug_logs_forwarder(app_handle: &tauri::AppHandle) {
     use std::time::Duration;
 
     let spool_dir = paths::app_local_data_dir_override()
-        .or_else(|| {
-            tauri::Manager::path(app_handle)
-                .app_local_data_dir()
-                .ok()
-        })
+        .or_else(|| tauri::Manager::path(app_handle).app_local_data_dir().ok())
         .map(|dir| dir.join("desktop-debug-log-spool"));
 
     let Some(spool_dir) = spool_dir else {
@@ -94,19 +91,45 @@ fn register_debug_logs_forwarder(app_handle: &tauri::AppHandle) {
     tauri::Manager::manage(app_handle, forwarder);
 }
 
-fn stop_managed_services(app_handle: &tauri::AppHandle) {
+pub(crate) fn stop_managed_services(app_handle: &tauri::AppHandle) -> Vec<u32> {
+    let mut pids = Vec::new();
+
     if let Ok(mut engine) = app_handle.state::<EngineManager>().inner.lock() {
+        if !engine.child_exited {
+            if let Some(child) = engine.child.as_ref() {
+                pids.push(child.pid());
+            }
+        }
         EngineManager::stop_locked(&mut engine);
     }
     if let Ok(mut orchestrator) = app_handle.state::<OrchestratorManager>().inner.lock() {
+        if !orchestrator.child_exited {
+            if let Some(child) = orchestrator.child.as_ref() {
+                pids.push(child.pid());
+            }
+        }
         OrchestratorManager::stop_locked(&mut orchestrator);
     }
     if let Ok(mut veslo_server) = app_handle.state::<VesloServerManager>().inner.lock() {
+        if !veslo_server.child_exited {
+            if let Some(child) = veslo_server.child.as_ref() {
+                pids.push(child.pid());
+            }
+        }
         VesloServerManager::stop_locked(&mut veslo_server);
     }
     if let Ok(mut opencode_router) = app_handle.state::<OpenCodeRouterManager>().inner.lock() {
+        if !opencode_router.child_exited {
+            if let Some(child) = opencode_router.child.as_ref() {
+                pids.push(child.pid());
+            }
+        }
         OpenCodeRouterManager::stop_locked(&mut opencode_router);
     }
+
+    pids.sort_unstable();
+    pids.dedup();
+    pids
 }
 
 pub fn run() {
@@ -210,6 +233,7 @@ pub fn run() {
             read_opencode_config,
             write_opencode_config,
             updater_environment,
+            updater_prepare_install,
             app_build_info,
             obsidian_is_available,
             open_in_obsidian,

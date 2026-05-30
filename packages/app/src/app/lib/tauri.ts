@@ -948,6 +948,10 @@ export async function updaterEnvironment(): Promise<UpdaterEnvironment> {
   return invoke<UpdaterEnvironment>("updater_environment");
 }
 
+export async function updaterPrepareInstall(): Promise<void> {
+  return invoke<void>("updater_prepare_install");
+}
+
 export async function readOpencodeConfig(
   scope: "project" | "global",
   projectDir: string,

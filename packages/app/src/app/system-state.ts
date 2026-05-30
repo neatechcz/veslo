@@ -23,6 +23,7 @@ import {
   resetVesloState,
   resetOpencodeCache,
   sandboxCleanupVesloContainers,
+  updaterPrepareInstall,
 } from "./lib/tauri";
 import { unwrap, waitForHealthy } from "./lib/opencode";
 
@@ -567,6 +568,7 @@ export function createSystemState(options: {
 
     options.setError(null);
     try {
+      await updaterPrepareInstall();
       await pending.update.install();
       await pending.update.close();
       await relaunch();
