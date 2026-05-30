@@ -26,7 +26,7 @@ The minimum supported host profile is:
 - Off-server backup storage for database dumps and configuration recovery material.
 - Outbound HTTPS access for GitHub, npm/pnpm registry traffic, OpenAI and other model-provider APIs, Polar, YouTrack, Lettr, and any transition-only provider APIs that remain enabled in the environment.
 
-The owned-server stack owns Den, standalone AI Gateway, the web app, worker manager, and hosted worker traffic. Desktop updater metadata and public release downloads are still GitHub-backed. Public bundle publishing is still served by the separate share service until a `share.veslo.work` deployment is added to the owned-server stack.
+The owned-server stack owns Den, standalone AI Gateway, the web app, worker manager, and hosted worker traffic. Desktop updater metadata and public release downloads are static public GitHub release assets in the `neatechcz/veslo-updates` repository, not served by the owned-server stack. The Windows MSI build and signing path currently runs on a GitHub-hosted Windows runner, and the updater mirror/publish jobs run on GitHub-hosted Ubuntu runners. Moving desktop updater publishing to owned-server infrastructure would require either a dedicated Windows self-hosted runner for MSI build/signing, or replacing GitHub release hosting and CDN delivery with a repo-owned artifact host. Public bundle publishing is still served by the separate share service until a `share.veslo.work` deployment is added to the owned-server stack.
 
 Auth email delivery uses Lettr over HTTPS. Direct SMTP access is not required for Veslo production auth email.
 
