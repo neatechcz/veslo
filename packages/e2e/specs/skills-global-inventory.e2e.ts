@@ -299,8 +299,18 @@ runWhenIsolatedProfile("Skills global inventory", () => {
     });
 
     expect(reviewDialogMetrics).not.toBeNull();
-    expect(reviewDialogMetrics!.width).toBeGreaterThan(reviewDialogMetrics!.viewportWidth - 48);
-    expect(reviewDialogMetrics!.height).toBeGreaterThan(reviewDialogMetrics!.viewportHeight - 48);
+    const expectedDialogWidth = Math.min(1080, reviewDialogMetrics!.viewportWidth - 32);
+    const expectedDialogHeight = Math.min(902, reviewDialogMetrics!.viewportHeight - 32);
+    expect(reviewDialogMetrics!.width).toBeGreaterThanOrEqual(expectedDialogWidth - 2);
+    expect(reviewDialogMetrics!.width).toBeLessThanOrEqual(expectedDialogWidth + 2);
+    expect(reviewDialogMetrics!.height).toBeGreaterThanOrEqual(expectedDialogHeight - 2);
+    expect(reviewDialogMetrics!.height).toBeLessThanOrEqual(expectedDialogHeight + 2);
+
+    const reviewDialogText = await $('[data-testid="skill-review-dialog"]').getText();
+    expect(reviewDialogText).toContain("What will be submitted");
+    expect(reviewDialogText).toContain("Where to publish");
+    expect(reviewDialogText).toContain("Pre-submit check");
+    expect(reviewDialogText).toContain("valid package");
 
     await browser.keys('Escape');
     await expect($('[data-testid="skill-review-dialog"]')).not.toExist();

@@ -34,7 +34,6 @@ test("skill review dialog localizes all visible static copy", () => {
   assert.match(source, /const translate = \(key: string\) => t\(key, currentLocale\(\)\)/);
   for (const key of [
     "skills.review_close",
-    "skills.review_file_tree_diff",
     "skills.review_warnings",
     "skills.review_request_title",
     "skills.review_request_mode_label",
@@ -50,6 +49,10 @@ test("skill review dialog localizes all visible static copy", () => {
     "skills.review_what_will_be_submitted",
     "skills.review_valid_package",
     "skills.review_submitted_data_description",
+    "skills.review_field_files",
+    "skills.review_field_visibility",
+    "skills.review_visibility_organization",
+    "skills.review_visibility_system",
     "skills.review_changes_title",
     "skills.review_changes_metadata",
     "skills.review_changes_local_runtime",
@@ -69,9 +72,6 @@ test("skill review dialog localizes all visible static copy", () => {
     "skills.review_save_draft",
     "skills.review_footer_unavailable",
     "skills.review_request_intro",
-    "skills.review_no_metadata_changes",
-    "skills.review_no_file_changes",
-    "skills.review_no_warnings",
     "skills.review_non_markdown",
     "skills.review_executable",
     "skills.review_script_path",
@@ -79,8 +79,6 @@ test("skill review dialog localizes all visible static copy", () => {
     "skills.review_cancel",
     "skills.review_request_organization_publish",
     "skills.review_request_system_approval",
-    "skills.review_previous_value",
-    "skills.review_current_value",
     "skills.review_approve_organization_version",
     "skills.review_reject_organization_version",
     "skills.review_approve_system_version",
@@ -104,13 +102,15 @@ test("skill review dialog renders required review evidence", () => {
   assert.match(source, /<textarea/);
 });
 
-test("skill review dialog uses a near full-page review layout with readable metadata rows", () => {
+test("skill review dialog matches the Pencil publish proposal layout", () => {
   assert.match(source, /size="none"/);
   assert.match(source, /align="center"/);
-  assert.match(source, /class="h-\[calc\(100vh-2rem\)\] w-\[calc\(100vw-2rem\)\] max-w-none rounded-xl bg-gray-1"/);
+  assert.match(source, /max-w-\[1080px\]/);
+  assert.match(source, /max-h-\[calc\(100vh-2rem\)\]/);
+  assert.match(source, /rounded-\[10px\] bg-gray-1/);
   assert.match(source, /class="flex h-full min-h-0 flex-col"/);
-  assert.match(source, /class="shrink-0 border-b border-dls-border px-6 py-5"/);
-  assert.match(source, /<footer class="shrink-0 flex flex-wrap items-center gap-3 border-t border-dls-border px-6 py-4">/);
+  assert.match(source, /class="shrink-0 px-7 pb-6 pt-6"/);
+  assert.match(source, /<footer class="shrink-0 flex flex-wrap items-center gap-3 border-t border-dls-border px-7 py-4">/);
   assert.match(source, /translate\("skills\.review_request_title"\)/);
   assert.match(source, /translate\("skills\.review_summary_skill"\)/);
   assert.match(source, /translate\("skills\.review_summary_approver"\)/);
@@ -122,21 +122,22 @@ test("skill review dialog uses a near full-page review layout with readable meta
   assert.match(source, /translate\("skills\.review_preconditions_title"\)/);
   assert.match(source, /translate\("skills\.review_reviewer_note"\)/);
   assert.match(source, /translate\("skills\.review_footer_unavailable"\)/);
+  assert.match(source, /translate\("skills\.review_field_files"\)/);
+  assert.match(source, /translate\("skills\.review_field_visibility"\)/);
+  assert.match(source, /submittedRows/);
+  assert.match(source, /fileSummary/);
   assert.match(source, /xl:grid-cols-\[minmax\(0,1fr\)_360px\]/);
-  assert.match(source, /<div class="min-w-0 space-y-4">/);
-  assert.match(source, /<aside class="min-w-0 space-y-4">/);
+  assert.match(source, /<div class="min-w-0 space-y-\[14px\]">/);
+  assert.match(source, /<aside class="min-w-0 space-y-\[14px\]">/);
   assert.match(source, /translate\("skills\.review_request_intro"\)/);
-  assert.match(source, /translate\("skills\.review_previous_value"\)/);
-  assert.match(source, /translate\("skills\.review_current_value"\)/);
-  assert.match(source, /border-blue-6 bg-blue-2/);
+  assert.match(source, /bg-gray-1 text-dls-text shadow-\[0_1px_2px_rgba\(15,23,42,0\.08\)\]/);
   assert.match(source, /sm:grid-cols-4/);
-  assert.match(source, /border-amber-6 bg-amber-2/);
-  assert.doesNotMatch(source, /max-w-\[1080px\]/);
-  assert.doesNotMatch(source, /max-w-\[1480px\]/);
-  assert.doesNotMatch(source, /max-h-\[88vh\]/);
+  assert.match(source, /border-amber-7 bg-amber-2/);
+  assert.doesNotMatch(source, /max-w-none/);
+  assert.doesNotMatch(source, /class="h-\[calc\(100vh-2rem\)\]/);
   assert.doesNotMatch(source, /align="start"/);
-  assert.doesNotMatch(source, /sm:grid-cols-\[120px_minmax\(0,1fr\)\]/);
-  assert.doesNotMatch(source, /md:grid-cols-2/);
+  assert.doesNotMatch(source, /translate\("skills\.review_previous_value"\)/);
+  assert.doesNotMatch(source, /translate\("skills\.review_current_value"\)/);
 });
 
 test("skill review dialog identifies non-Markdown files and executable scripts", () => {
