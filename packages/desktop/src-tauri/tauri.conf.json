@@ -65,7 +65,13 @@
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI2N0QxRkVDNzU0RTk4NDEKUldSQm1FNTE3Qjk5dGprZ3NRM2dzUkF0SURCTDFxTmgvdHhIZE9nN1VMbi8wS2pxRHpNWkJoL2IK",
       "endpoints": [
         "https://github.com/neatechcz/veslo-updates/releases/latest/download/latest.json"
-      ]
+      ],
+      "windows": {
+        "installerArgs": [
+          "/l*v",
+          "C:\\ProgramData\\veslo-updater-msi.log"
+        ]
+      }
     }
   }
 }
