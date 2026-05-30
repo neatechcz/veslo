@@ -4,6 +4,9 @@
  */
 
 export default {
+  // ==================== 通用 ====================
+  "common.copy": "复制",
+
   // ==================== Dashboard ====================
   "dashboard.title": "主页",
   "dashboard.sessions": "会话",

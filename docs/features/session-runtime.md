@@ -19,6 +19,10 @@ Key sub-surfaces:
 
 Dashboard and menu-style surfaces preserve a return path to session work. When the user opens a dashboard/menu tab from a session and clicks the left menu button again, Veslo returns to the active session. If the live selection is currently empty, the app falls back to the active workspace's persisted last selected session. When neither id is available, Veslo closes the dashboard/menu surface to bare `/session`, which is the draft-ready new-session screen without a directory. Re-selecting the active dashboard destination, including Settings from the header or left sidebar status controls, follows the same close-to-session behavior.
 
+## Desktop Context Menu
+
+The desktop app must not expose the webview's default browser context menu or web inspector entry points. Unhandled right-clicks are cancelled globally. If the user has selected text, Veslo shows a small app-owned context menu with only Copy. If a surface already handles `contextmenu` for its own menu, that surface remains authoritative and the global copy menu does not replace it.
+
 ## Unread Session Indication
 
 The left session menu marks a session title in bold when an assistant response arrives while the user is not actively reading that session. Active reading means the session is selected and the app window has focus.

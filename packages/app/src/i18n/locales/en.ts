@@ -4,6 +4,9 @@
  */
 
 export default {
+  // ==================== Common ====================
+  "common.copy": "Copy",
+
   // ==================== Dashboard ====================
   "dashboard.title": "Dashboard",
   "dashboard.sessions": "Sessions",

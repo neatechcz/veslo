@@ -109,6 +109,7 @@ import { partitionVesloUtilitySessions } from "./lib/veslo-utility-session";
 import ResetModal from "./components/reset-modal";
 import ConfirmModal from "./components/confirm-modal";
 import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
+import DesktopContextMenu from "./components/desktop-context-menu";
 import VesloLogo from "./components/veslo-logo";
 import CreateRemoteWorkspaceModal from "./components/create-remote-workspace-modal";
 import CreateWorkspaceModal from "./components/create-workspace-modal";
@@ -9952,6 +9953,8 @@ export default function App() {
           <DashboardView {...dashboardProps()} onOpenFeedback={openFeedbackModal} />
         </Match>
       </Switch>
+
+      <DesktopContextMenu />
 
       <WorkspaceSwitchOverlay
         open={workspaceSwitchOpen()}

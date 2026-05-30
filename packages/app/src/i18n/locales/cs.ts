@@ -4,6 +4,9 @@
  */
 
 export default {
+  // ==================== Obecné ====================
+  "common.copy": "Kopírovat",
+
   // ==================== Dashboard ====================
   "dashboard.title": "Přehled",
   "dashboard.sessions": "Relace",
