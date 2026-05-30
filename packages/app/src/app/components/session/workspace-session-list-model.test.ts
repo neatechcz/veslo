@@ -178,6 +178,73 @@ test("buildRecentRows keeps private chat sessions mixed with project sessions by
   );
 });
 
+test("buildRecentRows keeps subagents of private chats under the parent chat context", () => {
+  const privateRoot = "/Users/test/.veslo/private-workspaces";
+  const isPrivateWorkspacePath = (folder: string | null | undefined) =>
+    typeof folder === "string" && folder.startsWith(privateRoot);
+
+  const rows = buildRecentRows(
+    [
+      {
+        workspace: {
+          id: "chat-a",
+          name: "Private workspace",
+          path: `${privateRoot}/chat-a`,
+          preset: "starter",
+          workspaceType: "local" as const,
+        },
+        sessions: [
+          {
+            id: "private-parent",
+            title: "Private parent",
+            directory: `${privateRoot}/chat-a`,
+            time: { created: 100, updated: 100 },
+          },
+        ],
+        status: "ready",
+      },
+      {
+        workspace: {
+          id: "project-a",
+          name: "Project A",
+          path: "/Users/test/project-a",
+          preset: "starter",
+          workspaceType: "local" as const,
+        },
+        sessions: [
+          {
+            id: "private-child",
+            title: "Private child",
+            parentID: "private-parent",
+            directory: "/Users/test/project-a",
+            time: { created: 200, updated: 2_000 },
+          },
+          {
+            id: "project-peer",
+            title: "Project peer",
+            directory: "/Users/test/project-a",
+            time: { created: 300, updated: 1_500 },
+          },
+        ],
+        status: "ready",
+      },
+    ],
+    isPrivateWorkspacePath,
+  );
+
+  assert.deepEqual(
+    rows.map((row) => row.session.id),
+    ["private-parent", "private-child", "project-peer"],
+  );
+
+  const child = rows.find((row) => row.session.id === "private-child");
+  assert.equal(child?.workspace.id, "chat-a");
+  assert.equal(child?.isPrivateProject, true);
+  assert.equal(child?.projectLabel, "");
+  assert.equal(child?.projectRoot, `${privateRoot}/chat-a`);
+  assert.equal(child?.nestingLevel, 1);
+});
+
 test("buildProjectGroups keeps subagents nested under their parent in by-project mode", () => {
   const workspace = {
     id: "workspace-1",

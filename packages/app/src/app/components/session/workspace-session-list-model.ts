@@ -480,13 +480,29 @@ const buildHierarchicalRows = (
 
   const emittedSessionIds = new Set<string>();
   const ordered: FlatSessionRow[] = [];
+  const applyPrivateRootContext = (row: FlatSessionRow, rootRow: FlatSessionRow): FlatSessionRow => {
+    if (!rootRow.isPrivateProject || rootRow.session.id === row.session.id) return row;
+    return {
+      ...row,
+      rowKey: `${rootRow.workspace.id}:${row.session.id}`,
+      workspace: rootRow.workspace,
+      status: rootRow.status,
+      error: rootRow.error,
+      projectRoot: rootRow.projectRoot,
+      projectLabel: rootRow.projectLabel,
+      projectTitle: rootRow.projectTitle,
+      isPrivateProject: true,
+    };
+  };
   const appendRow = (row: FlatSessionRow) => {
     if (emittedSessionIds.has(row.session.id)) return;
     emittedSessionIds.add(row.session.id);
 
     const info = resolveHierarchy(row.session.id);
+    const rootRow = rowBySessionId.get(info.rootSessionId) ?? row;
+    const contextualRow = applyPrivateRootContext(row, rootRow);
     ordered.push({
-      ...row,
+      ...contextualRow,
       rootSessionId: info.rootSessionId,
       nestingLevel: info.nestingLevel,
       isSubagent: info.nestingLevel > 0,

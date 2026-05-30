@@ -118,6 +118,7 @@ Current behavior:
 - unsent private drafts hide generated private workspace paths so the state label is not mistaken for a directory
 - existing chats with messages show the directory or remote workspace context without the `Chat` prefix, except private chat sessions use the chat title instead of the generated private workspace path
 - in by-project sidebar mode, private workspace sessions are grouped into a bottom `Chats` section; recent mode keeps them mixed with all other conversations by activity
+- subagents launched from private chat sessions stay nested under their parent chat and inherit that parent chat's sidebar context, so they do not surface as separate project/workspace rows
 - long local paths can be abbreviated in the titlebar, but the full path remains available as the location tooltip
 - titlebar labels are non-selectable and participate in the Tauri drag region so the window can be moved from the text itself
 - desktop titlebar chrome is platform-aware: macOS keeps the native overlay behavior, while Windows uses the app-owned titlebar rail so shared navigation, context, feedback, and window controls occupy the top caption area
