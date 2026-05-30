@@ -9,7 +9,14 @@ const csLocaleSource = readFileSync(new URL("../../i18n/locales/cs.ts", import.m
 const generalSection = source.match(/<Match when=\{activeTab\(\) === "general"\}>[\s\S]*?<\/Match>/)?.[0] ?? "";
 
 test("settings exposes archived tab and keeps developer tabs unavailable", () => {
-  assert.match(source, /const tabs: SettingsTab\[\] = \["general", "extensions", "archived"\]/);
+  assert.match(source, /const tabs: SettingsTab\[\] = \["general", "archived"\]/);
+  assert.match(source, /kind:\s*"dashboard"[\s\S]*tab:\s*"scheduled"/);
+  assert.match(source, /kind:\s*"dashboard"[\s\S]*tab:\s*"soul"/);
+  assert.match(source, /kind:\s*"dashboard"[\s\S]*tab:\s*"skills"/);
+  assert.match(source, /kind:\s*"dashboard"[\s\S]*tab:\s*"mcp"/);
+  assert.match(source, /props\.onOpenDashboardTab\?\.\(item\.tab\)/);
+  assert.doesNotMatch(source, /<ExtensionsOverview/);
+  assert.doesNotMatch(source, /<Match when=\{activeTab\(\) === "extensions"\}>/);
   assert.doesNotMatch(source, /if \(props\.developerMode\) tabs\.push\("advanced", "debug"\);/);
   assert.match(source, /<Match when=\{activeTab\(\) === "archived"\}>/);
   assert.doesNotMatch(source, /<Match when=\{activeTab\(\) === "model"\}>/);
@@ -61,7 +68,11 @@ test("settings keeps compact update controls in general instead of a floating to
   assert.doesNotMatch(source, /"Checking for updates"|"Up to date"|"Check"|"Download"|"Install"|"Retry"|"Last checked"/);
 });
 
-test("settings locales include the archived tab label", () => {
+test("settings locales include Settings and dashboard labels", () => {
   assert.match(enLocaleSource, /"settings\.archived": "Archived"/);
   assert.match(csLocaleSource, /"settings\.archived": "Archivované"/);
+  assert.match(source, /label:\s*"nav\.automations"/);
+  assert.match(source, /label:\s*"nav\.soul"/);
+  assert.match(source, /label:\s*"nav\.skills"/);
+  assert.match(source, /label:\s*"nav\.extensions"/);
 });

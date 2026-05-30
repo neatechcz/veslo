@@ -336,6 +336,10 @@ test("dashboard routes active nav re-clicks through the session return helper", 
   );
   assert.match(
     dashboardSource,
+    /<SettingsView[\s\S]*onOpenDashboardTab=\{\(nextTab\)\s*=>\s*handleDashboardTabSelection\(nextTab\)\}/,
+  );
+  assert.match(
+    dashboardSource,
     /onClick\s*=\s*\{\s*\(\)\s*=>\s*handleDashboardTabSelection\s*\(\s*["']skills["']\s*\)\s*\}/,
   );
   assert.match(
@@ -445,8 +449,9 @@ test("settings tab labels include archived and keep developer tabs unavailable",
   assert.doesNotMatch(settingsTabLabelSource, /model:\s*"settings\.model"/);
   assert.match(
     settingsTabLabelSource,
-    /const visibleSettingsTabs: SettingsTab\[] = \["general", "extensions", "archived"\]/,
+    /const visibleSettingsTabs: SettingsTab\[] = \["general", "archived"\]/,
   );
+  assert.doesNotMatch(settingsTabLabelSource, /extensions:\s*"settings\.extensions"/);
 
   const enLocale = readFileSync(new URL("../../i18n/locales/en.ts", import.meta.url), "utf8");
   const csLocale = readFileSync(new URL("../../i18n/locales/cs.ts", import.meta.url), "utf8");
