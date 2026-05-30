@@ -49,6 +49,7 @@ import {
   readSkillMaterializationManifest,
   workspaceManagedSkillsRoot,
 } from "./skill-materializer.js";
+import type { SkillSetMaterializationResult } from "./skill-materializer.js";
 import type {
   RegistrySkillPackageArchive,
   RegistrySkillRolloutPolicy,
@@ -4754,17 +4755,38 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       skills: workspaceMaterializations,
       loadPackage,
     });
-    const personalGlobalResult = personalGlobalMaterializations.length > 0
-      ? await materializePersonalGlobalSkillSet({
-          skills: personalGlobalMaterializations,
-          loadPackage,
-        })
-      : {
-          rootDir: personalGlobalManagedSkillsRoot(),
-          materializedSkills: [],
-          removedSkillNames: [],
-          backupDirs: [],
-        };
+    let globalMaterializations = personalGlobalMaterializations;
+    let globalConflicts: WorkspaceSkillConflict[] = [];
+    let personalGlobalResult: SkillSetMaterializationResult = {
+      rootDir: personalGlobalManagedSkillsRoot(),
+      materializedSkills: [],
+      removedSkillNames: [],
+      backupDirs: [],
+    };
+    if (personalGlobalMaterializations.length > 0) {
+      const globalResolution = await fetchRegistryPersonalGlobalMaterializations(ctx);
+      globalMaterializations = globalResolution.materializations;
+      globalConflicts = globalResolution.conflicts;
+      const loadGlobalPackage = async (skill: WorkspaceSkillMaterialization) => {
+        const archive = globalResolution.packagesByInstallationId.get(skill.installationId);
+        if (!archive) {
+          throw new ApiError(500, "skill_package_missing", `Missing package for skill ${skill.name}`);
+        }
+        return archive;
+      };
+      personalGlobalResult = await materializePersonalGlobalSkillSet({
+        skills: globalMaterializations,
+        loadPackage: loadGlobalPackage,
+      });
+    }
+    const responseMaterializations = [
+      ...workspaceMaterializations,
+      ...globalMaterializations,
+    ];
+    const responseConflicts = [
+      ...conflicts,
+      ...globalConflicts,
+    ];
     const lockfileEntries = workspaceMaterializations.map((skill) => ({
       skillId: skill.skillId,
       installationId: skill.installationId,
@@ -4786,7 +4808,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       actor: ctx.actor ?? { type: "host" },
       action: "skills.materialization.sync",
       target: workspaceResult.rootDir,
-      summary: `Synced ${materializations.length} managed skill materialization(s)`,
+      summary: `Synced ${responseMaterializations.length} managed skill materialization(s)`,
       timestamp: Date.now(),
     });
     emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
@@ -4805,8 +4827,8 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       rootDir: workspaceResult.rootDir,
       globalRootDir: personalGlobalResult.rootDir,
       lockfilePath,
-      materializedSkills: materializations.map(materializationSummaryPayload),
-      conflicts,
+      materializedSkills: responseMaterializations.map(materializationSummaryPayload),
+      conflicts: responseConflicts,
       removedSkillNames: [
         ...workspaceResult.removedSkillNames,
         ...personalGlobalResult.removedSkillNames,
