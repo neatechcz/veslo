@@ -1,8 +1,8 @@
-import { Show, type JSX } from "solid-js";
+import { Show, createEffect, onCleanup, type JSX } from "solid-js";
 
 export type ModalLayer = "default" | "elevated" | "top";
 export type ModalBackdrop = "light" | "medium";
-export type ModalSize = "sm" | "md" | "lg";
+export type ModalSize = "sm" | "md" | "lg" | "none";
 export type ModalAlign = "center" | "start";
 
 type AriaRole = NonNullable<JSX.HTMLAttributes<HTMLDivElement>["role"]>;
@@ -36,6 +36,7 @@ const SIZE_CLASS: Record<ModalSize, string> = {
   sm: "max-w-md",
   md: "max-w-lg",
   lg: "max-w-xl",
+  none: "",
 };
 
 const ALIGN_CLASS: Record<ModalAlign, string> = {
@@ -44,6 +45,7 @@ const ALIGN_CLASS: Record<ModalAlign, string> = {
 };
 
 export default function ModalShell(props: ModalShellProps) {
+  let rootRef: HTMLDivElement | undefined;
   const layer = () => props.layer ?? "default";
   const backdrop = () => props.backdrop ?? "light";
   const size = () => props.size ?? "md";
@@ -54,15 +56,32 @@ export default function ModalShell(props: ModalShellProps) {
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
+    if (e.defaultPrevented) return;
     if (e.key === "Escape") {
       e.preventDefault();
       props.onClose?.();
     }
   };
 
+  createEffect(() => {
+    if (!props.open) return;
+    const closeFromEscape = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.key !== "Escape") return;
+      const modalRoots = Array.from(document.querySelectorAll("[data-modal-shell-root]"));
+      if (rootRef && modalRoots.at(-1) !== rootRef) return;
+      event.preventDefault();
+      props.onClose?.();
+    };
+    window.addEventListener("keydown", closeFromEscape, true);
+    onCleanup(() => window.removeEventListener("keydown", closeFromEscape, true));
+  });
+
   return (
     <Show when={props.open}>
       <div
+        ref={rootRef}
+        data-modal-shell-root
         class={`fixed inset-0 ${LAYER_CLASS[layer()]} ${BACKDROP_CLASS[backdrop()]} backdrop-blur-sm flex ${ALIGN_CLASS[align()]} justify-center p-4`}
         onClick={handleBackdropClick}
         onKeyDown={handleKeyDown}

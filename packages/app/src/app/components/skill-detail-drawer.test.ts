@@ -22,6 +22,7 @@ test("skill detail drawer props support required operational callbacks", () => {
   assert.match(source, /actionUnavailableReason\?: Partial<Record<SkillDetailAction, string \| null \| undefined>>/);
   assert.match(source, /onCopySkill\?: \(input: SkillDetailActionInput\) => void/);
   assert.match(source, /onMoveSkill\?: \(input: SkillDetailActionInput\) => void/);
+  assert.match(source, /onCopyToWorkspaceSkill\?: \(input: SkillDetailActionInput\) => void/);
   assert.match(source, /onPublishSkill\?: \(input: SkillDetailActionInput\) => void/);
   assert.match(source, /onRequestApproval\?: \(input: SkillDetailActionInput\) => void/);
   assert.match(source, /onRestoreVersion\?: \(version: SkillVersionRow\) => void/);
@@ -42,6 +43,20 @@ test("skill detail drawer closes from backdrop clicks and leaves titlebar cleara
   assert.match(source, /if \(event\.target === event\.currentTarget\) props\.onClose\(\)/);
   assert.match(source, /onClick=\{closeFromBackdrop\}/);
   assert.match(source, /class="border-b border-dls-border px-4 pb-3 pt-10"/);
+});
+
+test("skill detail drawer closes on Escape while open and cleans up the key listener", () => {
+  assert.match(source, /createEffect/);
+  assert.match(source, /onCleanup/);
+  assert.match(source, /if \(!props\.open\) return/);
+  assert.match(source, /const closeFromEscape = \(event: KeyboardEvent\) =>/);
+  assert.match(source, /if \(event\.defaultPrevented\) return/);
+  assert.match(source, /if \(event\.key !== "Escape"\) return/);
+  assert.match(source, /if \(document\.querySelector\("\[data-modal-shell-root\]"\)\) return/);
+  assert.match(source, /event\.preventDefault\(\)/);
+  assert.match(source, /props\.onClose\(\)/);
+  assert.match(source, /window\.addEventListener\("keydown", closeFromEscape\)/);
+  assert.match(source, /window\.removeEventListener\("keydown", closeFromEscape\)/);
 });
 
 test("skill detail drawer renders all requested tabs without wiring into the skills page", () => {
@@ -72,6 +87,7 @@ test("skill detail drawer localizes all visible static copy", () => {
     "skills.detail_package_hash",
     "skills.detail_not_set",
     "skills.detail_copy_to_global",
+    "skills.detail_copy_to_workspace",
     "skills.detail_move_to_global",
     "skills.detail_publish_organization",
     "skills.detail_request_system_approval",
@@ -94,15 +110,30 @@ test("skill detail drawer localizes all visible static copy", () => {
   assert.doesNotMatch(source, />Request approval</);
 });
 
-test("skill detail drawer disables unavailable local transfer actions with explicit reasons", () => {
+test("skill detail drawer hides unavailable actions and still keeps explicit reasons for available local transfers", () => {
   assert.match(source, /const actionUnavailableReason = \(action: SkillDetailAction\) =>/);
-  assert.match(source, /const actionDisabled = \(action: SkillDetailAction, enabled: unknown\) =>/);
-  assert.match(source, /disabled=\{actionDisabled\("copy", props\.onCopySkill\)\}/);
+  assert.match(source, /const actionDisabled = \(action: SkillDetailAction\) =>/);
+  assert.match(source, /<Show when=\{props\.onCopySkill\}>/);
+  assert.match(source, /disabled=\{actionDisabled\("copy"\)\}/);
   assert.match(source, /title=\{actionTitle\("copy", "skills\.detail_copy_to_global"\)\}/);
-  assert.match(source, /disabled=\{actionDisabled\("move", props\.onMoveSkill\)\}/);
+  assert.match(source, /<Show when=\{props\.onMoveSkill\}>/);
+  assert.match(source, /disabled=\{actionDisabled\("move"\)\}/);
   assert.match(source, /title=\{actionTitle\("move", "skills\.detail_move_to_global"\)\}/);
+  assert.match(source, /<Show when=\{props\.onCopyToWorkspaceSkill\}>/);
+  assert.match(source, /translate\("skills\.detail_copy_to_workspace"\)/);
+  assert.match(source, /<Show when=\{props\.onPublishSkill\}>/);
+  assert.match(source, /<Show when=\{props\.onRequestApproval\}>/);
+  assert.match(source, /<Show when=\{props\.onDeleteSkill\}>/);
+  assert.match(source, /disabled=\{actionDisabled\("delete"\)\}/);
+  assert.match(source, /title=\{actionTitle\("delete", "skills\.detail_delete"\)\}/);
   assert.match(source, /location\.actionUnavailableReason\?\.copy/);
   assert.match(source, /location\.actionUnavailableReason\?\.move/);
+  assert.doesNotMatch(source, /disabled=\{!props\.onCopySkill/);
+  assert.doesNotMatch(source, /disabled=\{!props\.onMoveSkill/);
+  assert.doesNotMatch(source, /disabled=\{!props\.onCopyToWorkspaceSkill/);
+  assert.doesNotMatch(source, /disabled=\{!props\.onPublishSkill/);
+  assert.doesNotMatch(source, /disabled=\{!props\.onRequestApproval/);
+  assert.doesNotMatch(source, /disabled=\{!props\.onDeleteSkill/);
 });
 
 test("skill detail drawer delegates version restore and target selection to skill version history", () => {

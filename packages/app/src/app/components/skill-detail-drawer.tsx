@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createMemo, createSignal } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { Copy, MapPin, MoveRight, Send, ShieldCheck, Trash2, X } from "lucide-solid";
 
 import Button from "./button";
@@ -79,6 +79,7 @@ export type SkillDetailDrawerProps = {
   onEditSkill?: (input: SkillDetailActionInput) => void;
   onCopySkill?: (input: SkillDetailActionInput) => void;
   onMoveSkill?: (input: SkillDetailActionInput) => void;
+  onCopyToWorkspaceSkill?: (input: SkillDetailActionInput) => void;
   onPublishSkill?: (input: SkillDetailActionInput) => void;
   onRequestApproval?: (input: SkillDetailActionInput) => void;
   onRestoreVersion?: (version: SkillVersionRow) => void;
@@ -107,16 +108,16 @@ export default function SkillDetailDrawer(props: SkillDetailDrawerProps) {
     location: location ?? null,
   });
   const actionUnavailableReason = (action: SkillDetailAction) => props.actionUnavailableReason?.[action] ?? null;
-  const actionDisabled = (action: SkillDetailAction, enabled: unknown) =>
-    !enabled || Boolean(props.actionPending?.[action]) || Boolean(actionUnavailableReason(action));
+  const actionDisabled = (action: SkillDetailAction) =>
+    Boolean(props.actionPending?.[action]) || Boolean(actionUnavailableReason(action));
   const actionTitle = (action: SkillDetailAction, labelKey: string) => actionUnavailableReason(action) ?? translate(labelKey);
   const locationActionUnavailableReason = (location: SkillDetailLocation, action: SkillDetailAction) => {
     if (action === "copy") return location.actionUnavailableReason?.copy ?? null;
     if (action === "move") return location.actionUnavailableReason?.move ?? null;
     return location.actionUnavailableReason?.[action] ?? null;
   };
-  const locationActionDisabled = (location: SkillDetailLocation, action: SkillDetailAction, enabled: unknown) =>
-    !enabled || Boolean(props.actionPending?.[action]) || Boolean(locationActionUnavailableReason(location, action));
+  const locationActionDisabled = (location: SkillDetailLocation, action: SkillDetailAction) =>
+    Boolean(props.actionPending?.[action]) || Boolean(locationActionUnavailableReason(location, action));
   const locationActionTitle = (location: SkillDetailLocation, action: SkillDetailAction, labelKey: string) =>
     locationActionUnavailableReason(location, action) ?? translate(labelKey);
 
@@ -134,6 +135,19 @@ export default function SkillDetailDrawer(props: SkillDetailDrawerProps) {
   const closeFromBackdrop = (event: MouseEvent & { currentTarget: HTMLDivElement; target: Element }) => {
     if (event.target === event.currentTarget) props.onClose();
   };
+
+  createEffect(() => {
+    if (!props.open) return;
+    const closeFromEscape = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.key !== "Escape") return;
+      if (document.querySelector("[data-modal-shell-root]")) return;
+      event.preventDefault();
+      props.onClose();
+    };
+    window.addEventListener("keydown", closeFromEscape);
+    onCleanup(() => window.removeEventListener("keydown", closeFromEscape));
+  });
 
   return (
     <Show when={props.open ? props.skill : null} keyed>
@@ -216,61 +230,84 @@ export default function SkillDetailDrawer(props: SkillDetailDrawerProps) {
                     </div>
 
                     <div class="flex flex-wrap gap-2">
-                      <Button
-                        variant="outline"
-                        class="h-9 px-3 type-ui-sm"
-                        disabled={!props.onEditSkill}
-                        onClick={() => props.onEditSkill?.(actionInput(skill))}
-                      >
-                        {translate("skills.detail_edit")}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        class="h-9 px-3 type-ui-sm"
-                        disabled={actionDisabled("copy", props.onCopySkill)}
-                        title={actionTitle("copy", "skills.detail_copy_to_global")}
-                        onClick={() => props.onCopySkill?.(actionInput(skill))}
-                      >
-                        <Copy size={14} />
-                        {translate("skills.detail_copy_to_global")}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        class="h-9 px-3 type-ui-sm"
-                        disabled={actionDisabled("move", props.onMoveSkill)}
-                        title={actionTitle("move", "skills.detail_move_to_global")}
-                        onClick={() => props.onMoveSkill?.(actionInput(skill))}
-                      >
-                        <MoveRight size={14} />
-                        {translate("skills.detail_move_to_global")}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        class="h-9 px-3 type-ui-sm"
-                        disabled={!props.onPublishSkill || props.actionPending?.publish}
-                        onClick={() => props.onPublishSkill?.(actionInput(skill))}
-                      >
-                        <Send size={14} />
-                        {translate("skills.detail_publish_organization")}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        class="h-9 px-3 type-ui-sm"
-                        disabled={!props.onRequestApproval || props.actionPending?.requestApproval}
-                        onClick={() => props.onRequestApproval?.(actionInput(skill))}
-                      >
-                        <ShieldCheck size={14} />
-                        {translate("skills.detail_request_system_approval")}
-                      </Button>
-                      <Button
-                        variant="danger"
-                        class="h-9 px-3 type-ui-sm"
-                        disabled={!props.onDeleteSkill || props.actionPending?.delete}
-                        onClick={() => props.onDeleteSkill?.(actionInput(skill))}
-                      >
-                        <Trash2 size={14} />
-                        {translate("skills.detail_delete")}
-                      </Button>
+                      <Show when={props.onEditSkill}>
+                        <Button
+                          variant="outline"
+                          class="h-9 px-3 type-ui-sm"
+                          onClick={() => props.onEditSkill?.(actionInput(skill))}
+                        >
+                          {translate("skills.detail_edit")}
+                        </Button>
+                      </Show>
+                      <Show when={props.onCopySkill}>
+                        <Button
+                          variant="outline"
+                          class="h-9 px-3 type-ui-sm"
+                          disabled={actionDisabled("copy")}
+                          title={actionTitle("copy", "skills.detail_copy_to_global")}
+                          onClick={() => props.onCopySkill?.(actionInput(skill))}
+                        >
+                          <Copy size={14} />
+                          {translate("skills.detail_copy_to_global")}
+                        </Button>
+                      </Show>
+                      <Show when={props.onCopyToWorkspaceSkill}>
+                        <Button
+                          variant="outline"
+                          class="h-9 px-3 type-ui-sm"
+                          data-testid="skill-detail-install-workspace-button"
+                          onClick={() => props.onCopyToWorkspaceSkill?.(actionInput(skill))}
+                        >
+                          <Copy size={14} />
+                          {translate("skills.detail_copy_to_workspace")}
+                        </Button>
+                      </Show>
+                      <Show when={props.onMoveSkill}>
+                        <Button
+                          variant="outline"
+                          class="h-9 px-3 type-ui-sm"
+                          disabled={actionDisabled("move")}
+                          title={actionTitle("move", "skills.detail_move_to_global")}
+                          onClick={() => props.onMoveSkill?.(actionInput(skill))}
+                        >
+                          <MoveRight size={14} />
+                          {translate("skills.detail_move_to_global")}
+                        </Button>
+                      </Show>
+                      <Show when={props.onPublishSkill}>
+                        <Button
+                          variant="outline"
+                          class="h-9 px-3 type-ui-sm"
+                          disabled={props.actionPending?.publish}
+                          onClick={() => props.onPublishSkill?.(actionInput(skill))}
+                        >
+                          <Send size={14} />
+                          {translate("skills.detail_publish_organization")}
+                        </Button>
+                      </Show>
+                      <Show when={props.onRequestApproval}>
+                        <Button
+                          variant="outline"
+                          class="h-9 px-3 type-ui-sm"
+                          disabled={props.actionPending?.requestApproval}
+                          onClick={() => props.onRequestApproval?.(actionInput(skill))}
+                        >
+                          <ShieldCheck size={14} />
+                          {translate("skills.detail_request_system_approval")}
+                        </Button>
+                      </Show>
+                      <Show when={props.onDeleteSkill}>
+                        <Button
+                          variant="danger"
+                          class="h-9 px-3 type-ui-sm"
+                          disabled={actionDisabled("delete")}
+                          title={actionTitle("delete", "skills.detail_delete")}
+                          onClick={() => props.onDeleteSkill?.(actionInput(skill))}
+                        >
+                          <Trash2 size={14} />
+                          {translate("skills.detail_delete")}
+                        </Button>
+                      </Show>
                     </div>
                   </section>
                 </Match>
@@ -298,24 +335,32 @@ export default function SkillDetailDrawer(props: SkillDetailDrawerProps) {
                                 </p>
                               </div>
                               <div class="flex shrink-0 gap-1">
-                                <Button
-                                  variant="ghost"
-                                  class="h-8 px-2 type-ui-sm"
-                                  disabled={locationActionDisabled(location, "copy", props.onCopySkill)}
-                                  title={locationActionTitle(location, "copy", "skills.detail_copy_to_global")}
-                                  onClick={() => props.onCopySkill?.(actionInput(skill, location))}
-                                >
-                                  {translate("skills.detail_copy_to_global")}
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  class="h-8 px-2 type-ui-sm"
-                                  disabled={locationActionDisabled(location, "move", props.onMoveSkill)}
-                                  title={locationActionTitle(location, "move", "skills.detail_move_to_global")}
-                                  onClick={() => props.onMoveSkill?.(actionInput(skill, location))}
-                                >
-                                  {translate("skills.detail_move_to_global")}
-                                </Button>
+                                <Show when={props.onCopySkill}>
+                                  <Show when={!locationActionUnavailableReason(location, "copy")}>
+                                    <Button
+                                      variant="ghost"
+                                      class="h-8 px-2 type-ui-sm"
+                                      disabled={locationActionDisabled(location, "copy")}
+                                      title={locationActionTitle(location, "copy", "skills.detail_copy_to_global")}
+                                      onClick={() => props.onCopySkill?.(actionInput(skill, location))}
+                                    >
+                                      {translate("skills.detail_copy_to_global")}
+                                    </Button>
+                                  </Show>
+                                </Show>
+                                <Show when={props.onMoveSkill}>
+                                  <Show when={!locationActionUnavailableReason(location, "move")}>
+                                    <Button
+                                      variant="ghost"
+                                      class="h-8 px-2 type-ui-sm"
+                                      disabled={locationActionDisabled(location, "move")}
+                                      title={locationActionTitle(location, "move", "skills.detail_move_to_global")}
+                                      onClick={() => props.onMoveSkill?.(actionInput(skill, location))}
+                                    >
+                                      {translate("skills.detail_move_to_global")}
+                                    </Button>
+                                  </Show>
+                                </Show>
                               </div>
                             </div>
                           </article>
@@ -351,24 +396,28 @@ export default function SkillDetailDrawer(props: SkillDetailDrawerProps) {
                       </div>
                     </dl>
                     <div class="flex flex-wrap gap-2">
-                      <Button
-                        variant="outline"
-                        class="h-9 px-3 type-ui-sm"
-                        disabled={!props.onPublishSkill || props.actionPending?.publish}
-                        onClick={() => props.onPublishSkill?.(actionInput(skill))}
-                      >
-                        <Send size={14} />
-                        {translate("skills.detail_publish_organization")}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        class="h-9 px-3 type-ui-sm"
-                        disabled={!props.onRequestApproval || props.actionPending?.requestApproval}
-                        onClick={() => props.onRequestApproval?.(actionInput(skill))}
-                      >
-                        <ShieldCheck size={14} />
-                        {translate("skills.detail_request_system_approval")}
-                      </Button>
+                      <Show when={props.onPublishSkill}>
+                        <Button
+                          variant="outline"
+                          class="h-9 px-3 type-ui-sm"
+                          disabled={props.actionPending?.publish}
+                          onClick={() => props.onPublishSkill?.(actionInput(skill))}
+                        >
+                          <Send size={14} />
+                          {translate("skills.detail_publish_organization")}
+                        </Button>
+                      </Show>
+                      <Show when={props.onRequestApproval}>
+                        <Button
+                          variant="outline"
+                          class="h-9 px-3 type-ui-sm"
+                          disabled={props.actionPending?.requestApproval}
+                          onClick={() => props.onRequestApproval?.(actionInput(skill))}
+                        >
+                          <ShieldCheck size={14} />
+                          {translate("skills.detail_request_system_approval")}
+                        </Button>
+                      </Show>
                     </div>
                   </section>
                 </Match>

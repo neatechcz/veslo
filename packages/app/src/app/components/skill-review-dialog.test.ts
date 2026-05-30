@@ -33,14 +33,41 @@ test("skill review dialog localizes all visible static copy", () => {
   assert.match(source, /import \{ currentLocale, t \} from "\.\.\/\.\.\/i18n"/);
   assert.match(source, /const translate = \(key: string\) => t\(key, currentLocale\(\)\)/);
   for (const key of [
-    "skills.review_publish_request",
-    "skills.review_approval_review",
     "skills.review_close",
-    "skills.review_metadata_diff",
     "skills.review_file_tree_diff",
     "skills.review_warnings",
-    "skills.review_target_scope",
-    "skills.review_changelog_reason",
+    "skills.review_request_title",
+    "skills.review_request_mode_label",
+    "skills.review_review_mode_label",
+    "skills.review_summary_skill",
+    "skills.review_summary_version",
+    "skills.review_summary_target",
+    "skills.review_summary_approver",
+    "skills.review_approver_organization",
+    "skills.review_approver_system",
+    "skills.review_service_unavailable_title",
+    "skills.review_service_unavailable_body",
+    "skills.review_what_will_be_submitted",
+    "skills.review_valid_package",
+    "skills.review_submitted_data_description",
+    "skills.review_changes_title",
+    "skills.review_changes_metadata",
+    "skills.review_changes_local_runtime",
+    "skills.review_changes_reviewer_diff",
+    "skills.review_catalog_target_title",
+    "skills.review_approval_flow_title",
+    "skills.review_approval_flow_create_request",
+    "skills.review_approval_flow_reviewer_checks",
+    "skills.review_approval_flow_approved_catalog",
+    "skills.review_approval_flow_rejected_reason",
+    "skills.review_preconditions_title",
+    "skills.review_precondition_metadata",
+    "skills.review_precondition_skill_file",
+    "skills.review_precondition_name_conflicts",
+    "skills.review_precondition_service_unavailable",
+    "skills.review_reviewer_note",
+    "skills.review_save_draft",
+    "skills.review_footer_unavailable",
     "skills.review_request_intro",
     "skills.review_no_metadata_changes",
     "skills.review_no_file_changes",
@@ -48,8 +75,7 @@ test("skill review dialog localizes all visible static copy", () => {
     "skills.review_non_markdown",
     "skills.review_executable",
     "skills.review_script_path",
-    "skills.review_scope",
-    "skills.review_target",
+    "skills.review_scope_system",
     "skills.review_cancel",
     "skills.review_request_organization_publish",
     "skills.review_request_system_approval",
@@ -78,18 +104,37 @@ test("skill review dialog renders required review evidence", () => {
   assert.match(source, /<textarea/);
 });
 
-test("skill review dialog uses a wider review layout with readable metadata rows", () => {
-  assert.match(source, /class="max-w-6xl rounded-lg bg-gray-1"/);
-  assert.match(source, /<div class="space-y-4">/);
-  assert.match(source, /md:grid-cols-\[minmax\(0,1fr\)_220px\]/);
-  assert.match(source, /xl:grid-cols-\[minmax\(560px,1fr\)_320px\]/);
+test("skill review dialog uses a near full-page review layout with readable metadata rows", () => {
+  assert.match(source, /size="none"/);
+  assert.match(source, /align="center"/);
+  assert.match(source, /class="h-\[calc\(100vh-2rem\)\] w-\[calc\(100vw-2rem\)\] max-w-none rounded-xl bg-gray-1"/);
+  assert.match(source, /class="flex h-full min-h-0 flex-col"/);
+  assert.match(source, /class="shrink-0 border-b border-dls-border px-6 py-5"/);
+  assert.match(source, /<footer class="shrink-0 flex flex-wrap items-center gap-3 border-t border-dls-border px-6 py-4">/);
+  assert.match(source, /translate\("skills\.review_request_title"\)/);
+  assert.match(source, /translate\("skills\.review_summary_skill"\)/);
+  assert.match(source, /translate\("skills\.review_summary_approver"\)/);
+  assert.match(source, /requestServiceUnavailable/);
+  assert.match(source, /translate\("skills\.review_service_unavailable_title"\)/);
+  assert.match(source, /translate\("skills\.review_what_will_be_submitted"\)/);
+  assert.match(source, /translate\("skills\.review_catalog_target_title"\)/);
+  assert.match(source, /translate\("skills\.review_approval_flow_title"\)/);
+  assert.match(source, /translate\("skills\.review_preconditions_title"\)/);
+  assert.match(source, /translate\("skills\.review_reviewer_note"\)/);
+  assert.match(source, /translate\("skills\.review_footer_unavailable"\)/);
+  assert.match(source, /xl:grid-cols-\[minmax\(0,1fr\)_360px\]/);
   assert.match(source, /<div class="min-w-0 space-y-4">/);
   assert.match(source, /<aside class="min-w-0 space-y-4">/);
   assert.match(source, /translate\("skills\.review_request_intro"\)/);
   assert.match(source, /translate\("skills\.review_previous_value"\)/);
   assert.match(source, /translate\("skills\.review_current_value"\)/);
   assert.match(source, /border-blue-6 bg-blue-2/);
-  assert.match(source, /sm:grid-cols-2/);
+  assert.match(source, /sm:grid-cols-4/);
+  assert.match(source, /border-amber-6 bg-amber-2/);
+  assert.doesNotMatch(source, /max-w-\[1080px\]/);
+  assert.doesNotMatch(source, /max-w-\[1480px\]/);
+  assert.doesNotMatch(source, /max-h-\[88vh\]/);
+  assert.doesNotMatch(source, /align="start"/);
   assert.doesNotMatch(source, /sm:grid-cols-\[120px_minmax\(0,1fr\)\]/);
   assert.doesNotMatch(source, /md:grid-cols-2/);
 });
@@ -110,4 +155,8 @@ test("skill review dialog uses operational button actions for request and review
   assert.match(source, /translate\("skills\.review_approve_system_version"\)/);
   assert.match(source, /translate\("skills\.review_reject_system_version"\)/);
   assert.match(source, /variant="danger"/);
+  assert.match(source, /onSaveDraft\?: \(input: SkillReviewActionInput\) => void/);
+  assert.match(source, /props\.onSaveDraft\?\.\(actionInput\(\)\)/);
+  assert.match(source, /translate\("skills\.review_save_draft"\)/);
+  assert.match(source, /disabled=\{requestDisabled\(\)\}/);
 });

@@ -1,5 +1,5 @@
 import { For, Match, Show, Switch, createMemo, createSignal } from "solid-js";
-import { AlertTriangle, Check, FileCode, GitCompare, Send, ShieldCheck, X } from "lucide-solid";
+import { AlertTriangle, Check, FileCode, GitCompare, Save, Send, ShieldCheck, X } from "lucide-solid";
 
 import Button from "./button";
 import ModalShell from "./modal-shell";
@@ -54,6 +54,7 @@ export type SkillReviewDialogProps = {
   pending?: boolean;
   onClose: () => void;
   onReasonChange?: (reason: string) => void;
+  onSaveDraft?: (input: SkillReviewActionInput) => void;
   onRequestOrganizationPublish?: (input: SkillReviewActionInput) => void;
   onRequestSystemApproval?: (input: SkillReviewActionInput) => void;
   onApproveOrganizationVersion?: (input: SkillReviewActionInput) => void;
@@ -162,6 +163,27 @@ export default function SkillReviewDialog(props: SkillReviewDialogProps) {
     }),
     ...(props.warnings ?? []),
   ]);
+  const canRequestPublish = createMemo(() =>
+    props.targetScope === "organization" ? Boolean(props.onRequestOrganizationPublish) : Boolean(props.onRequestSystemApproval),
+  );
+  const requestServiceUnavailable = createMemo(() => props.mode === "request" && !canRequestPublish());
+  const dialogTitle = createMemo(() =>
+    props.mode === "request" ? translate("skills.review_request_title") : props.skillName,
+  );
+  const modeLabel = createMemo(() =>
+    props.mode === "request" ? translate("skills.review_request_mode_label") : translate("skills.review_review_mode_label"),
+  );
+  const approverLabel = createMemo(() =>
+    props.targetScope === "organization"
+      ? translate("skills.review_approver_organization")
+      : translate("skills.review_approver_system"),
+  );
+  const summaryItems = createMemo(() => [
+    { label: translate("skills.review_summary_skill"), value: props.skillName },
+    { label: translate("skills.review_summary_version"), value: props.versionLabel ?? props.versionId },
+    { label: translate("skills.review_summary_target"), value: scopeLabel(props.targetScope, translate) },
+    { label: translate("skills.review_summary_approver"), value: approverLabel() },
+  ]);
 
   const updateReason = (event: Event & { currentTarget: HTMLTextAreaElement }) => {
     const value = event.currentTarget.value;
@@ -198,8 +220,7 @@ export default function SkillReviewDialog(props: SkillReviewDialogProps) {
       : translate("skills.review_system_approval_description");
 
   const requestDisabled = () =>
-    props.pending ||
-    (props.targetScope === "organization" ? !props.onRequestOrganizationPublish : !props.onRequestSystemApproval);
+    props.pending || !canRequestPublish();
 
   const approveDisabled = () =>
     props.pending ||
@@ -210,11 +231,16 @@ export default function SkillReviewDialog(props: SkillReviewDialogProps) {
     (props.targetScope === "organization" ? !props.onRejectOrganizationVersion : !props.onRejectSystemVersion);
 
   const submitRequest = () => {
+    if (requestDisabled()) return;
     if (props.targetScope === "organization") {
       props.onRequestOrganizationPublish?.(actionInput());
     } else {
       props.onRequestSystemApproval?.(actionInput());
     }
+  };
+
+  const saveDraft = () => {
+    props.onSaveDraft?.(actionInput());
   };
 
   const approve = () => {
@@ -237,37 +263,42 @@ export default function SkillReviewDialog(props: SkillReviewDialogProps) {
     <ModalShell
       open={props.open}
       onClose={props.onClose}
-      size="lg"
-      align="start"
+      size="none"
+      align="center"
       ariaLabelledBy={titleId}
       ariaDescribedBy={descriptionId}
-      class="max-w-6xl rounded-lg bg-gray-1"
+      class="h-[calc(100vh-2rem)] w-[calc(100vw-2rem)] max-w-none rounded-xl bg-gray-1"
     >
-      <div data-testid="skill-review-dialog" class="flex max-h-[82vh] flex-col">
-        <header class="border-b border-dls-border px-5 py-4">
-          <div class="flex items-start justify-between gap-3">
-            <div class="min-w-0">
-              <p id={descriptionId} class="type-ui-xs uppercase text-dls-muted">
-                {props.mode === "request" ? translate("skills.review_publish_request") : translate("skills.review_approval_review")}
-              </p>
-              <h2 id={titleId} class="mt-0.5 truncate type-heading-sm text-dls-text">
-                {props.skillName}
-              </h2>
-              <p class="mt-1 max-w-2xl type-ui-sm text-dls-secondary">
-                {translate("skills.review_request_intro")}
-              </p>
-              <div class="mt-3 flex flex-wrap items-center gap-2 type-ui-xs text-dls-secondary">
-                <span class="rounded-full border border-dls-border bg-gray-2 px-2 py-0.5">
-                  {props.versionLabel ?? props.versionId}
-                </span>
-                <span class="rounded-full border border-dls-border bg-gray-2 px-2 py-0.5">
+      <div data-testid="skill-review-dialog" class="flex h-full min-h-0 flex-col">
+        <header class="shrink-0 border-b border-dls-border px-6 py-5">
+          <div class="flex items-start justify-between gap-4">
+            <div class="min-w-0 flex-1">
+              <div class="mb-2 flex flex-wrap items-center gap-2">
+                <span class="rounded-full border border-blue-6 bg-blue-2 px-2.5 py-1 type-ui-xs font-semibold text-blue-11">
                   {scopeLabel(props.targetScope, translate)}
                 </span>
+                <span class="type-ui-xs font-semibold uppercase text-dls-muted">{modeLabel()}</span>
               </div>
+              <h2 id={titleId} class="type-heading-sm text-dls-text">{dialogTitle()}</h2>
+              <p id={descriptionId} class="mt-2 max-w-3xl type-ui-sm leading-6 text-dls-secondary">
+                {props.mode === "request" ? targetScopeDescription() : translate("skills.review_request_intro")}
+              </p>
+              <dl class="mt-4 grid gap-2 sm:grid-cols-4">
+                <For each={summaryItems()}>
+                  {(item) => (
+                    <div class="min-w-0 rounded-lg border border-dls-border bg-gray-2 px-3 py-2">
+                      <dt class="type-ui-xs font-semibold uppercase text-dls-muted">{item.label}</dt>
+                      <dd class="mt-1 truncate type-ui-sm font-semibold text-dls-text" title={item.value}>
+                        {item.value}
+                      </dd>
+                    </div>
+                  )}
+                </For>
+              </dl>
             </div>
             <button
               type="button"
-              class="rounded-lg p-2 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+              class="rounded-lg border border-dls-border bg-gray-2 p-2 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
               aria-label={translate("skills.review_close")}
               onClick={props.onClose}
             >
@@ -276,56 +307,56 @@ export default function SkillReviewDialog(props: SkillReviewDialogProps) {
           </div>
         </header>
 
-        <div class="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-          <div class="space-y-4">
-            <section class="rounded-lg border border-dls-border bg-gray-2 p-3 shadow-[inset_3px_0_0_var(--dls-accent)]" aria-label={translate("skills.review_target_scope")}>
-              <div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
-                <div class="min-w-0">
-                  <h3 class="type-ui-sm font-semibold text-dls-text">{translate("skills.review_target_scope")}</h3>
-                  <p class="mt-1 type-ui-sm text-dls-secondary">{targetScopeDescription()}</p>
-                </div>
-                <dl class="grid min-w-0 grid-cols-2 gap-3 rounded border border-dls-border bg-gray-1 px-3 py-2 type-ui-sm md:grid-cols-1">
-                  <div class="min-w-0">
-                    <dt class="type-ui-xs uppercase text-dls-muted">{translate("skills.review_scope")}</dt>
-                    <dd class="truncate text-dls-text">{scopeLabel(props.targetScope, translate)}</dd>
-                  </div>
-                  <div class="min-w-0">
-                    <dt class="type-ui-xs uppercase text-dls-muted">{translate("skills.review_target")}</dt>
-                    <dd class="truncate text-dls-text" title={props.targetLabel ?? undefined}>
-                      {props.targetLabel ?? scopeLabel(props.targetScope, translate)}
-                    </dd>
-                  </div>
-                </dl>
+        <Show when={requestServiceUnavailable()}>
+          <section class="border-b border-amber-6 bg-amber-2 px-6 py-3" aria-label={translate("skills.review_service_unavailable_title")}>
+            <div class="flex gap-3">
+              <span class="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-4 text-amber-11">
+                <AlertTriangle size={16} />
+              </span>
+              <div class="min-w-0">
+                <h3 class="type-ui-sm font-semibold text-amber-12">{translate("skills.review_service_unavailable_title")}</h3>
+                <p class="mt-0.5 type-ui-sm leading-5 text-amber-11">{translate("skills.review_service_unavailable_body")}</p>
               </div>
-            </section>
+            </div>
+          </section>
+        </Show>
 
-            <div class="grid gap-4 xl:grid-cols-[minmax(560px,1fr)_320px]">
+        <div class="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+          <div class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
             <div class="min-w-0 space-y-4">
-              <section class="rounded-lg border border-dls-border bg-gray-2 p-3" aria-label={translate("skills.review_metadata_diff")}>
-                <div class="mb-2 flex items-center gap-2">
-                  <GitCompare size={15} class="text-dls-secondary" />
-                  <h3 class="type-ui-sm font-semibold text-dls-text">{translate("skills.review_metadata_diff")}</h3>
+              <section class="rounded-lg border border-dls-border bg-gray-2 p-4" aria-label={translate("skills.review_what_will_be_submitted")}>
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <h3 class="type-ui-lg font-semibold text-dls-text">{translate("skills.review_what_will_be_submitted")}</h3>
+                    <p class="mt-1 type-ui-sm leading-5 text-dls-secondary">{translate("skills.review_submitted_data_description")}</p>
+                  </div>
+                  <span class="shrink-0 rounded-full border border-green-6 bg-green-3 px-2.5 py-1 type-ui-xs font-semibold text-green-11">
+                    {translate("skills.review_valid_package")}
+                  </span>
                 </div>
+
                 <Show
                   when={metadataDiff().length > 0}
-                  fallback={<p class="type-ui-sm text-dls-secondary">{translate("skills.review_no_metadata_changes")}</p>}
+                  fallback={<p class="mt-4 type-ui-sm text-dls-secondary">{translate("skills.review_no_metadata_changes")}</p>}
                 >
-                  <dl class="space-y-2">
+                  <dl class="mt-4 overflow-hidden rounded-lg border border-dls-border bg-gray-1">
                     <For each={metadataDiff()}>
                       {(item) => (
-                        <div class="rounded border border-dls-border bg-gray-1 px-3 py-2 type-ui-sm">
-                          <dt class="type-ui-xs uppercase text-dls-muted">{item.field}</dt>
-                          <dd class="mt-2 grid min-w-0 gap-2 sm:grid-cols-2">
-                            <div class="min-w-0 rounded border border-dls-border bg-gray-2 px-2 py-1.5">
-                              <div class="type-ui-xs uppercase text-dls-muted">{translate("skills.review_previous_value")}</div>
-                              <div class="mt-0.5 truncate text-dls-secondary" title={item.before ?? undefined}>
-                                {formatValue(item.before, translate("skills.review_field_not_set"))}
+                        <div class="grid gap-2 border-b border-dls-border px-3 py-2.5 last:border-b-0 sm:grid-cols-[132px_minmax(0,1fr)]">
+                          <dt class="type-ui-sm font-semibold text-dls-muted">{item.field}</dt>
+                          <dd class="min-w-0">
+                            <div class="grid gap-2 sm:grid-cols-2">
+                              <div class="min-w-0 rounded border border-dls-border bg-gray-2 px-2 py-1.5">
+                                <div class="type-ui-xs font-semibold uppercase text-dls-muted">{translate("skills.review_previous_value")}</div>
+                                <div class="mt-0.5 truncate type-ui-sm text-dls-secondary" title={item.before ?? undefined}>
+                                  {formatValue(item.before, translate("skills.review_field_not_set"))}
+                                </div>
                               </div>
-                            </div>
-                            <div class="min-w-0 rounded border border-blue-6 bg-blue-2 px-2 py-1.5">
-                              <div class="type-ui-xs uppercase text-blue-10">{translate("skills.review_current_value")}</div>
-                              <div class="mt-0.5 truncate text-dls-text" title={item.after ?? undefined}>
-                                {formatValue(item.after, translate("skills.review_field_not_set"))}
+                              <div class="min-w-0 rounded border border-blue-6 bg-blue-2 px-2 py-1.5">
+                                <div class="type-ui-xs font-semibold uppercase text-blue-10">{translate("skills.review_current_value")}</div>
+                                <div class="mt-0.5 truncate type-ui-sm font-semibold text-dls-text" title={item.after ?? undefined}>
+                                  {formatValue(item.after, translate("skills.review_field_not_set"))}
+                                </div>
                               </div>
                             </div>
                           </dd>
@@ -336,55 +367,125 @@ export default function SkillReviewDialog(props: SkillReviewDialogProps) {
                 </Show>
               </section>
 
-              <section class="rounded-lg border border-dls-border bg-gray-2 p-3" aria-label={translate("skills.review_file_tree_diff")}>
-                <div class="mb-2 flex items-center gap-2">
-                  <FileCode size={15} class="text-dls-secondary" />
-                  <h3 class="type-ui-sm font-semibold text-dls-text">{translate("skills.review_file_tree_diff")}</h3>
-                </div>
-                <Show
-                  when={fileDiffs().length > 0}
-                  fallback={<p class="type-ui-sm text-dls-secondary">{translate("skills.review_no_file_changes")}</p>}
-                >
-                  <div class="space-y-1" role="list">
-                    <For each={fileDiffs()}>
-                      {(file) => (
-                        <div class="grid grid-cols-[104px_minmax(0,1fr)_auto] items-center gap-2 rounded border border-dls-border bg-gray-1 px-2 py-1.5 type-ui-sm" role="listitem">
-                          <span class={`rounded-full border px-2 py-0.5 text-center type-ui-xs capitalize ${fileKindClass(file.kind)}`}>
-                            {translate(`skills.review_file_kind_${file.kind}`)}
-                          </span>
-                          <span class="min-w-0 truncate font-mono text-[12px] text-dls-text" title={file.path}>
-                            {file.path}
-                          </span>
-                          <span class="flex items-center gap-1 text-[11px] text-dls-muted">
-                            <Show when={!isMarkdownFile(file.path)}>
-                              <span>{translate("skills.review_non_markdown")}</span>
-                            </Show>
-                            <Show when={file.executable}>
-                              <span>{translate("skills.review_executable")}</span>
-                            </Show>
-                            <Show when={formatBytes(file.sizeBytes)}>
-                              {(size) => <span>{size()}</span>}
-                            </Show>
-                          </span>
-                        </div>
-                      )}
-                    </For>
+              <section class="rounded-lg border border-dls-border bg-gray-1 p-4" aria-label={translate("skills.review_changes_title")}>
+                <h3 class="type-ui-lg font-semibold text-dls-text">{translate("skills.review_changes_title")}</h3>
+                <div class="mt-3 space-y-2 type-ui-sm leading-5 text-dls-secondary">
+                  <div class="flex gap-2">
+                    <Check size={15} class="mt-0.5 shrink-0 text-green-10" />
+                    <span>{translate("skills.review_changes_metadata")}</span>
                   </div>
-                </Show>
+                  <div class="flex gap-2">
+                    <Check size={15} class="mt-0.5 shrink-0 text-green-10" />
+                    <span>{translate("skills.review_changes_local_runtime")}</span>
+                  </div>
+                  <div class="flex gap-2">
+                    <GitCompare size={15} class="mt-0.5 shrink-0 text-dls-secondary" />
+                    <span>{translate("skills.review_changes_reviewer_diff")}</span>
+                  </div>
+                </div>
+
+                <div class="mt-4 border-t border-dls-border pt-3">
+                  <div class="mb-2 flex items-center gap-2">
+                    <FileCode size={15} class="text-dls-secondary" />
+                    <h4 class="type-ui-sm font-semibold text-dls-text">{translate("skills.review_file_tree_diff")}</h4>
+                  </div>
+                  <Show
+                    when={fileDiffs().length > 0}
+                    fallback={<p class="type-ui-sm text-dls-secondary">{translate("skills.review_no_file_changes")}</p>}
+                  >
+                    <div class="space-y-1" role="list">
+                      <For each={fileDiffs()}>
+                        {(file) => (
+                          <div class="grid grid-cols-[104px_minmax(0,1fr)] items-center gap-2 rounded border border-dls-border bg-gray-2 px-2 py-1.5 type-ui-sm sm:grid-cols-[104px_minmax(0,1fr)_auto]" role="listitem">
+                            <span class={`rounded-full border px-2 py-0.5 text-center type-ui-xs capitalize ${fileKindClass(file.kind)}`}>
+                              {translate(`skills.review_file_kind_${file.kind}`)}
+                            </span>
+                            <span class="min-w-0 truncate font-mono text-[12px] text-dls-text" title={file.path}>
+                              {file.path}
+                            </span>
+                            <span class="flex items-center gap-1 text-[11px] text-dls-muted">
+                              <Show when={!isMarkdownFile(file.path)}>
+                                <span>{translate("skills.review_non_markdown")}</span>
+                              </Show>
+                              <Show when={file.executable}>
+                                <span>{translate("skills.review_executable")}</span>
+                              </Show>
+                              <Show when={formatBytes(file.sizeBytes)}>
+                                {(size) => <span>{size()}</span>}
+                              </Show>
+                            </span>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+                </div>
               </section>
             </div>
 
             <aside class="min-w-0 space-y-4">
-              <section class="rounded-lg border border-dls-border bg-gray-2 p-3" aria-label={translate("skills.review_warnings")}>
-                <div class="mb-2 flex items-center gap-2">
-                  <AlertTriangle size={15} class="text-dls-secondary" />
-                  <h3 class="type-ui-sm font-semibold text-dls-text">{translate("skills.review_warnings")}</h3>
+              <section class="rounded-lg border border-dls-border bg-gray-2 p-4" aria-label={translate("skills.review_catalog_target_title")}>
+                <h3 class="type-ui-sm font-semibold text-dls-text">{translate("skills.review_catalog_target_title")}</h3>
+                <div class="mt-3 grid grid-cols-2 gap-1 rounded-lg bg-gray-4 p-1">
+                  <div
+                    classList={{
+                      "border-blue-6 bg-blue-2 text-blue-11": props.targetScope === "organization",
+                      "border-transparent text-dls-secondary": props.targetScope !== "organization",
+                    }}
+                    class="rounded-md border px-2 py-2 text-center type-ui-xs font-semibold"
+                  >
+                    {translate("skills.detail_scope_organization")}
+                  </div>
+                  <div
+                    classList={{
+                      "border-blue-6 bg-blue-2 text-blue-11": props.targetScope === "system",
+                      "border-transparent text-dls-secondary": props.targetScope !== "system",
+                    }}
+                    class="rounded-md border px-2 py-2 text-center type-ui-xs font-semibold"
+                  >
+                    {translate("skills.review_scope_system")}
+                  </div>
                 </div>
+              </section>
+
+              <section class="rounded-lg border border-dls-border bg-gray-1 p-4" aria-label={translate("skills.review_approval_flow_title")}>
+                <h3 class="type-ui-sm font-semibold text-dls-text">{translate("skills.review_approval_flow_title")}</h3>
+                <ol class="mt-3 space-y-2 type-ui-sm leading-5 text-dls-secondary">
+                  <li class="flex gap-2"><span class="font-semibold text-dls-text">1.</span>{translate("skills.review_approval_flow_create_request")}</li>
+                  <li class="flex gap-2"><span class="font-semibold text-dls-text">2.</span>{translate("skills.review_approval_flow_reviewer_checks")}</li>
+                  <li class="flex gap-2"><span class="font-semibold text-dls-text">3.</span>{translate("skills.review_approval_flow_approved_catalog")}</li>
+                  <li class="flex gap-2"><span class="font-semibold text-dls-text">4.</span>{translate("skills.review_approval_flow_rejected_reason")}</li>
+                </ol>
+              </section>
+
+              <section class="rounded-lg border border-dls-border bg-gray-2 p-4" aria-label={translate("skills.review_preconditions_title")}>
+                <h3 class="type-ui-sm font-semibold text-dls-text">{translate("skills.review_preconditions_title")}</h3>
+                <div class="mt-3 space-y-2 type-ui-sm leading-5 text-dls-secondary">
+                  <div class="flex gap-2">
+                    <Check size={15} class="mt-0.5 shrink-0 text-green-10" />
+                    <span>{translate("skills.review_precondition_metadata")}</span>
+                  </div>
+                  <div class="flex gap-2">
+                    <Check size={15} class="mt-0.5 shrink-0 text-green-10" />
+                    <span>{translate("skills.review_precondition_skill_file")}</span>
+                  </div>
+                  <div class="flex gap-2">
+                    <Check size={15} class="mt-0.5 shrink-0 text-green-10" />
+                    <span>{translate("skills.review_precondition_name_conflicts")}</span>
+                  </div>
+                  <Show when={requestServiceUnavailable()}>
+                    <div class="flex gap-2 text-amber-11">
+                      <AlertTriangle size={15} class="mt-0.5 shrink-0" />
+                      <span>{translate("skills.review_precondition_service_unavailable")}</span>
+                    </div>
+                  </Show>
+                </div>
+
                 <Show
                   when={executableWarnings().length > 0}
-                  fallback={<p class="type-ui-sm text-dls-secondary">{translate("skills.review_no_warnings")}</p>}
+                  fallback={<p class="mt-3 type-ui-sm text-dls-secondary">{translate("skills.review_no_warnings")}</p>}
                 >
-                  <div class="space-y-1">
+                  <div class="mt-3 space-y-1" aria-label={translate("skills.review_warnings")}>
                     <For each={executableWarnings()}>
                       {(warning) => (
                         <div class={`rounded border px-2 py-1.5 type-ui-sm ${warningClass(warning.severity)}`}>
@@ -399,11 +500,11 @@ export default function SkillReviewDialog(props: SkillReviewDialogProps) {
                 </Show>
               </section>
 
-              <section class="rounded-lg border border-dls-border bg-gray-2 p-3" aria-label={translate("skills.review_changelog_reason")}>
+              <section class="rounded-lg border border-dls-border bg-gray-1 p-4" aria-label={translate("skills.review_reviewer_note")}>
                 <label class="block">
-                  <span class="type-ui-sm font-semibold text-dls-text">{translate("skills.review_changelog_reason")}</span>
+                  <span class="type-ui-sm font-semibold text-dls-text">{translate("skills.review_reviewer_note")}</span>
                   <textarea
-                    class="mt-2 min-h-28 w-full resize-y rounded-lg border border-dls-border bg-gray-1 px-3 py-2 type-ui-sm text-dls-text outline-none focus:border-dls-accent"
+                    class="mt-2 min-h-28 w-full resize-y rounded-lg border border-dls-border bg-gray-2 px-3 py-2 type-ui-sm text-dls-text outline-none focus:border-dls-accent"
                     value={reason()}
                     placeholder={props.mode === "request" ? translate("skills.review_request_reason_placeholder") : translate("skills.review_decision_reason_placeholder")}
                     onInput={updateReason}
@@ -411,27 +512,35 @@ export default function SkillReviewDialog(props: SkillReviewDialogProps) {
                 </label>
               </section>
             </aside>
-            </div>
           </div>
         </div>
 
-        <footer class="flex flex-wrap items-center justify-end gap-2 border-t border-dls-border px-5 py-3">
-          <Button variant="ghost" class="h-9 px-3 type-ui-sm" onClick={props.onClose}>
+        <footer class="shrink-0 flex flex-wrap items-center gap-3 border-t border-dls-border px-6 py-4">
+          <p class="min-w-[220px] flex-1 type-ui-sm leading-5 text-dls-secondary">
+            {requestServiceUnavailable() ? translate("skills.review_footer_unavailable") : translate("skills.review_request_intro")}
+          </p>
+          <Button variant="ghost" class="h-10 px-3 type-ui-sm" onClick={props.onClose}>
             {translate("skills.review_cancel")}
           </Button>
           <Switch>
             <Match when={props.mode === "request"}>
-              <Button variant="primary" class="h-9 px-3 type-ui-sm" disabled={requestDisabled()} onClick={submitRequest}>
+              <Show when={props.onSaveDraft}>
+                <Button variant="outline" class="h-10 px-3 type-ui-sm" onClick={saveDraft}>
+                  <Save size={14} />
+                  {translate("skills.review_save_draft")}
+                </Button>
+              </Show>
+              <Button variant="primary" class="h-10 px-3 type-ui-sm" disabled={requestDisabled()} onClick={submitRequest}>
                 <Send size={14} />
                 {requestLabel()}
               </Button>
             </Match>
             <Match when={props.mode === "review"}>
-              <Button variant="danger" class="h-9 px-3 type-ui-sm" disabled={rejectDisabled()} onClick={reject}>
+              <Button variant="danger" class="h-10 px-3 type-ui-sm" disabled={rejectDisabled()} onClick={reject}>
                 <X size={14} />
                 {rejectLabel()}
               </Button>
-              <Button variant="primary" class="h-9 px-3 type-ui-sm" disabled={approveDisabled()} onClick={approve}>
+              <Button variant="primary" class="h-10 px-3 type-ui-sm" disabled={approveDisabled()} onClick={approve}>
                 <Check size={14} />
                 <ShieldCheck size={14} />
                 {approveLabel()}

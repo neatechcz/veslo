@@ -9,6 +9,7 @@ const extensionsSource = readFileSync(new URL("../context/extensions.ts", import
 const enSource = readFileSync(new URL("../../i18n/locales/en.ts", import.meta.url), "utf8");
 const csSource = readFileSync(new URL("../../i18n/locales/cs.ts", import.meta.url), "utf8");
 const zhSource = readFileSync(new URL("../../i18n/locales/zh.ts", import.meta.url), "utf8");
+const skillDetailDrawerSource = readFileSync(new URL("../components/skill-detail-drawer.tsx", import.meta.url), "utf8");
 const renderInventoryCardSource = source.slice(
   source.indexOf("const renderInventoryCard"),
   source.indexOf("\n  return (\n    <section", source.indexOf("const renderInventoryCard")),
@@ -52,10 +53,10 @@ test("skills page uses inventory as primary installed source", () => {
   assert.doesNotMatch(source, /\{props\.skills\.length\}/);
 });
 
-test("skills page separates global and workspace-specific inventory sections", () => {
+test("skills page separates user and workspace-specific inventory sections", () => {
   assert.match(source, /translate\("skills\.all_workspaces"\)/);
   assert.match(source, /translate\("skills\.workspace_specific"\)/);
-  assert.match(enSource, /"skills\.all_workspaces":\s*"All workspaces"/);
+  assert.match(enSource, /"skills\.all_workspaces":\s*"User skills"/);
   assert.match(enSource, /"skills\.workspace_specific":\s*"Workspace-specific"/);
   assert.match(csSource, /"skills\.all_workspaces":/);
   assert.match(csSource, /"skills\.workspace_specific":/);
@@ -253,12 +254,13 @@ test("skill edit and delete callbacks are targeted by inventory instance", () =>
   assert.match(dashboardSource, /deleteSkillInstance:\s*\(target: SkillMutationTarget\) => Promise<void>/);
   assert.match(extensionsSource, /async function readSkillInstance\(target: SkillMutationTarget\)/);
   assert.match(extensionsSource, /async function saveSkillInstance\(target: SkillMutationTarget, content: string\)/);
+  assert.match(extensionsSource, /const skillEntryFilePathForMutationPath = \(value: string \| undefined\) =>/);
   assert.match(extensionsSource, /readSkill\(resolved\.skill\.name, resolved\.skill\.path\)/);
   assert.match(extensionsSource, /writeLocalSkillAtPath/);
   assert.match(extensionsSource, /path: resolved\.skill\.path/);
   assert.match(extensionsSource, /async function deleteSkillInstance\(target: SkillMutationTarget\)/);
   assert.match(extensionsSource, /deleteSkill\(vesloWorkspaceId, resolved\.skill\.name, \{ path: resolved\.skill\.path \}\)/);
-  assert.match(extensionsSource, /uninstallSkillAtPath\(root, resolved\.skill\.name, resolved\.skill\.path\)/);
+  assert.match(extensionsSource, /uninstallSkillAtPath\(root, resolved\.skill\.name, resolved\.entryFilePath\)/);
   assert.match(source, /const mutationTargetForInstance = \(instance: SkillInstance\): SkillMutationTarget \| null =>/);
   assert.match(source, /skillMutationTargetFromInstance\(instance\)/);
   assert.match(source, /props\.readSkillInstance\(skill\.mutationTarget\)/);
@@ -271,12 +273,19 @@ test("skill edit and delete callbacks are targeted by inventory instance", () =>
 
 test("workspace skill copy and move are local scope transfer actions, not disabled placeholders", () => {
   assert.match(source, /copySkillInstanceToGlobal:\s*\(target: SkillMutationTarget, options\?: \{ deleteSource\?: boolean \}\) => Promise<SkillSaveResult>/);
+  assert.match(source, /copySkillInstanceToWorkspace:\s*\(target: SkillMutationTarget, workspaceId: string\) => Promise<SkillSaveResult>/);
   assert.match(dashboardSource, /copySkillInstanceToGlobal:\s*\(target: SkillMutationTarget, options\?: \{ deleteSource\?: boolean \}\) => Promise<SkillSaveResult>/);
+  assert.match(dashboardSource, /copySkillInstanceToWorkspace:\s*\(target: SkillMutationTarget, workspaceId: string\) => Promise<SkillSaveResult>/);
   assert.match(
     extensionsSource,
     /async function copySkillInstanceToGlobal\(\s*target: SkillMutationTarget,\s*optionsOverride\?: \{ deleteSource\?: boolean \},?\s*\): Promise<SkillSaveResult>/,
   );
+  assert.match(
+    extensionsSource,
+    /async function copySkillInstanceToWorkspace\(\s*target: SkillMutationTarget,\s*workspaceId: string,?\s*\): Promise<SkillSaveResult>/,
+  );
   assert.match(appSource, /\bcopySkillInstanceToGlobal,/);
+  assert.match(appSource, /\bcopySkillInstanceToWorkspace,/);
   assert.match(appSource, /\bdeleteSkillInstance,/);
   assert.match(source, /const globalTransferDisabledReasonForInstance = \(instance: SkillInstance\) =>/);
   assert.match(source, /if \(instance\.scope === "user-global"\) return translate\("skills\.copy_to_global_already_global"\)/);
@@ -284,11 +293,34 @@ test("workspace skill copy and move are local scope transfer actions, not disabl
   assert.match(source, /const copySelectedSkillToGlobal = \(deleteSource: boolean, input\?: SkillDetailActionInput\) =>/);
   assert.match(source, /const actionInstance = detailInstanceForAction\(input\)/);
   assert.match(source, /props\.copySkillInstanceToGlobal\(target, \{ deleteSource \}\)/);
-  assert.match(source, /actionUnavailableReason=\{\{\s*copy: selectedDetailGlobalTransferDisabledReason\(\),\s*move: selectedDetailGlobalTransferDisabledReason\(\),\s*\}\}/);
-  assert.match(source, /onCopySkill=\{\(input\) => copySelectedSkillToGlobal\(false, input\)\}/);
-  assert.match(source, /onMoveSkill=\{\(input\) => copySelectedSkillToGlobal\(true, input\)\}/);
+  assert.match(source, /const selectedDetailCanTransferToUserSkill = createMemo/);
+  assert.match(source, /const selectedDetailCanInstallToWorkspace = createMemo/);
+  assert.match(source, /copy: selectedDetailCanTransferToUserSkill\(\) \? null : selectedDetailGlobalTransferDisabledReason\(\)/);
+  assert.match(source, /move: selectedDetailCanTransferToUserSkill\(\) \? null : selectedDetailGlobalTransferDisabledReason\(\)/);
+  assert.match(source, /onCopySkill=\{selectedDetailIsWorkspaceSkill\(\) \? \(input\) => copySelectedSkillToGlobal\(false, input\) : undefined\}/);
+  assert.match(source, /onMoveSkill=\{selectedDetailIsWorkspaceSkill\(\) \? \(input\) => copySelectedSkillToGlobal\(true, input\) : undefined\}/);
+  assert.match(source, /onCopyToWorkspaceSkill=\{selectedDetailCanInstallToWorkspace\(\) \? openWorkspaceInstallTargetPicker : undefined\}/);
+  assert.match(source, /props\.copySkillInstanceToWorkspace\(target, workspaceId\)/);
   assert.doesNotMatch(source, /translate\("skills\.bulk_copy"\)[\s\S]{0,240}<Button[\s\S]{0,180}\sdisabled\s/);
   assert.doesNotMatch(source, /translate\("skills\.bulk_move"\)[\s\S]{0,240}<Button[\s\S]{0,180}\sdisabled\s/);
+});
+
+test("workspace install target picker is an elevated cancellable modal with constrained height", () => {
+  assert.match(source, /import ModalShell from "\.\.\/components\/modal-shell"/);
+  assert.match(source, /const workspaceInstallTitleId = "skill-install-workspace-title"/);
+  assert.match(
+    source,
+    /<ModalShell\s+open=\{Boolean\(workspaceInstallAction\(\)\)\}\s+onClose=\{closeWorkspaceInstallTargetPicker\}\s+layer="elevated"[\s\S]*ariaLabelledBy=\{workspaceInstallTitleId\}[\s\S]*class="[^"]*max-h-\[calc\(100vh-2rem\)\]/,
+  );
+  assert.match(
+    source,
+    /data-testid="skill-install-workspace-modal"[\s\S]*class="flex max-h-\[calc\(100vh-2rem\)\] min-h-0 flex-col"/,
+  );
+  assert.match(source, /id=\{workspaceInstallTitleId\}/);
+  assert.match(source, /data-testid="skill-install-workspace-close"/);
+  assert.match(source, /aria-label=\{translate\("common\.close"\)\}[\s\S]*onClick=\{closeWorkspaceInstallTargetPicker\}[\s\S]*<X size=\{18\}/);
+  assert.match(source, /class="min-h-0 flex-1 overflow-y-auto px-6 py-5"/);
+  assert.doesNotMatch(source, /<Show when=\{workspaceInstallAction\(\)\}>[\s\S]{0,220}<div class="fixed inset-0 z-50/);
 });
 
 test("skills page wires registry inventory filters, table mode, bulk selection, and detail drawer", () => {
@@ -296,11 +328,83 @@ test("skills page wires registry inventory filters, table mode, bulk selection, 
   assert.match(source, /selectAllSkillInventoryIdsForCurrentFilter/);
   assert.match(source, /data-testid="skills-inventory-table"/);
   assert.match(source, /data-testid="skills-bulk-toolbar"/);
-  assert.match(source, /translate\("skills\.bulk_adopt"\)/);
+  assert.doesNotMatch(source, /translate\("skills\.bulk_adopt"\)/);
   assert.match(source, /<SkillDetailDrawer/);
   assert.match(source, /<SkillReviewDialog/);
-  assert.match(source, /onPublishSkill=\{\(action\) => openSkillReviewDialog\("organization", action\)\}/);
-  assert.match(source, /onRequestApproval=\{\(action\) => openSkillReviewDialog\("system", action\)\}/);
+  assert.match(source, /const selectedDetailCanPublishFromLocal = createMemo/);
+  assert.match(source, /onPublishSkill=\{selectedDetailCanPublishFromLocal\(\) \? \(action\) => openSkillReviewDialog\("organization", action\) : undefined\}/);
+  assert.match(source, /onRequestApproval=\{selectedDetailCanPublishFromLocal\(\) \? \(action\) => openSkillReviewDialog\("system", action\) : undefined\}/);
+});
+
+test("skills page removes single-skill sharing and public skill link publishing", () => {
+  assert.doesNotMatch(source, /Share2/);
+  assert.doesNotMatch(source, /publishVesloBundleJson/);
+  assert.doesNotMatch(source, /DEFAULT_VESLO_PUBLISHER_BASE_URL/);
+  assert.doesNotMatch(source, /shareTarget|shareOpen|shareBusy|shareUrl|shareError/);
+  assert.doesNotMatch(source, /openShareLink|publishShareLink|copyShareLink/);
+  assert.doesNotMatch(source, /translate\("skills\.share_action"\)/);
+  assert.doesNotMatch(source, /translate\("skills\.share_title"\)/);
+  assert.doesNotMatch(enSource, /"skills\.share_action":/);
+  assert.doesNotMatch(enSource, /"skills\.share_title":/);
+  assert.doesNotMatch(csSource, /"skills\.share_action":/);
+  assert.doesNotMatch(zhSource, /"skills\.share_title":/);
+});
+
+test("skills page uses install and user-skill terminology instead of adopt or global labels", () => {
+  assert.doesNotMatch(source, /bulk_adopt/);
+  assert.doesNotMatch(enSource, /Adopt|Copy to global|Move to global|"skills\.filter_scope_global":\s*"Global"/);
+  assert.doesNotMatch(csSource, /Adoptovat|globálních|"skills\.filter_scope_global":\s*"Globální"/);
+  assert.doesNotMatch(zhSource, /采用|复制到全局|移动到全局|"skills\.filter_scope_global":\s*"全局"/);
+  assert.match(enSource, /"skills\.add_hub":\s*"Install"/);
+  assert.match(enSource, /"skills\.copy_to_global":\s*"Copy to user skills"/);
+  assert.match(enSource, /"skills\.move_to_global":\s*"Move to user skills"/);
+  assert.match(csSource, /"skills\.add_hub":\s*"Nainstalovat"/);
+  assert.match(csSource, /"skills\.copy_to_global":\s*"Kopírovat do user skills"/);
+  assert.match(csSource, /"skills\.move_to_global":\s*"Přesunout do user skills"/);
+});
+
+test("skill detail drawer hides unavailable actions instead of rendering irrelevant disabled buttons", () => {
+  assert.match(skillDetailDrawerSource, /<Show when=\{props\.onCopySkill\}>/);
+  assert.match(skillDetailDrawerSource, /<Show when=\{props\.onMoveSkill\}>/);
+  assert.match(skillDetailDrawerSource, /<Show when=\{props\.onCopyToWorkspaceSkill\}>/);
+  assert.match(skillDetailDrawerSource, /<Show when=\{props\.onPublishSkill\}>/);
+  assert.match(skillDetailDrawerSource, /<Show when=\{props\.onRequestApproval\}>/);
+  assert.match(skillDetailDrawerSource, /<Show when=\{props\.onDeleteSkill\}>/);
+  assert.doesNotMatch(skillDetailDrawerSource, /disabled=\{!props\.onCopySkill/);
+  assert.doesNotMatch(skillDetailDrawerSource, /disabled=\{!props\.onMoveSkill/);
+  assert.doesNotMatch(skillDetailDrawerSource, /disabled=\{!props\.onCopyToWorkspaceSkill/);
+  assert.doesNotMatch(skillDetailDrawerSource, /disabled=\{!props\.onPublishSkill/);
+  assert.doesNotMatch(skillDetailDrawerSource, /disabled=\{!props\.onRequestApproval/);
+  assert.doesNotMatch(skillDetailDrawerSource, /disabled=\{!props\.onDeleteSkill/);
+});
+
+test("skills page gives user skills and workspace skills different relevant detail actions", () => {
+  assert.match(source, /const selectedDetailIsWorkspaceSkill = createMemo\(\(\) =>[\s\S]*detail\?\.instance\.scope === "workspace"/);
+  assert.match(source, /const selectedDetailCanTransferToUserSkill = createMemo\(\(\) =>[\s\S]*detail\.instance\.scope === "workspace"[\s\S]*\)/);
+  assert.match(source, /const selectedDetailCanInstallToWorkspace = createMemo\(\(\) =>[\s\S]*detail\.instance\.scope === "user-global"[\s\S]*\)/);
+  assert.match(source, /const selectedDetailDeleteDisabledReason = createMemo\(\(\) =>/);
+  assert.match(source, /delete: selectedDetailDeleteDisabledReason\(\)/);
+  assert.match(source, /onEditSkill=\{selectedDetailIsWorkspaceSkill\(\) \? editSelectedSkill : undefined\}/);
+  assert.match(source, /onCopySkill=\{selectedDetailIsWorkspaceSkill\(\) \? \(input\) => copySelectedSkillToGlobal\(false, input\) : undefined\}/);
+  assert.match(source, /onMoveSkill=\{selectedDetailIsWorkspaceSkill\(\) \? \(input\) => copySelectedSkillToGlobal\(true, input\) : undefined\}/);
+  assert.match(source, /onDeleteSkill=\{selectedDetailIsWorkspaceSkill\(\) \? requestDetailDelete : undefined\}/);
+  assert.match(enSource, /"skills\.detail_copy_to_workspace":\s*"Install to workspace"/);
+  assert.match(csSource, /"skills\.detail_copy_to_workspace":\s*"Nainstalovat do workspace"/);
+  assert.match(zhSource, /"skills\.detail_copy_to_workspace":/);
+});
+
+test("skills page stores skill review drafts while registry publishing is unavailable", () => {
+  assert.match(source, /const \[reviewDrafts, setReviewDrafts\] = createSignal<Record<string, string>>\(\{\}\)/);
+  assert.match(source, /const skillReviewDraftKey = \(targetScope: SkillReviewTargetScope, action: SkillDetailActionInput\) =>/);
+  assert.match(source, /setReviewReason\(reviewDrafts\(\)\[skillReviewDraftKey\(targetScope, action\)\] \?\? ""\)/);
+  assert.match(source, /const saveSkillReviewDraft = \(input: SkillReviewActionInput\) =>/);
+  assert.match(source, /setReviewDrafts\(\(current\) => \(\{/);
+  assert.match(source, /setToast\(translate\("skills\.review_draft_saved"\)\)/);
+  assert.match(source, /onSaveDraft=\{saveSkillReviewDraft\}/);
+  assert.doesNotMatch(source, /onRequestOrganizationPublish=\{\(\) => \{\s*showRegistryActionPending\(\);/);
+  assert.match(enSource, /"skills\.review_draft_saved":/);
+  assert.match(csSource, /"skills\.review_draft_saved":/);
+  assert.match(zhSource, /"skills\.review_draft_saved":/);
 });
 
 test("skills page localizes skill review metadata field labels", () => {
