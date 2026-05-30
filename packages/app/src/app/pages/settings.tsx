@@ -901,6 +901,10 @@ export default function SettingsView(props: SettingsViewProps) {
             {(item) => {
               return (
                 <button
+                  type="button"
+                  data-settings-nav-kind={item.kind}
+                  data-settings-nav-tab={item.tab}
+                  aria-current={item.kind === "settings" && activeTab() === item.tab ? "page" : undefined}
                   class={`px-3 py-2 rounded-xl text-xs font-medium border transition-colors ${
                     item.kind === "settings" && activeTab() === item.tab
                       ? "bg-gray-12/10 text-white border-gray-6/30"

@@ -30,6 +30,7 @@ const defaultSpecs = [
   './specs/shared-workspace-skill-lock.e2e.ts',
   './specs/session-prefetch.spec.ts',
   './specs/session.spec.ts',
+  './specs/settings-dashboard-link-tabs.spec.ts',
   './specs/settings-gear-navigation.spec.ts',
   './specs/sidebar-primary-actions-overflow.spec.ts',
   './specs/sidebar-primary-actions-pointer-navigation.spec.ts',
