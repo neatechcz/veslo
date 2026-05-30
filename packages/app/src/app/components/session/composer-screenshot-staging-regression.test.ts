@@ -33,7 +33,7 @@ test("send flow snapshots pending draft context before materializing a real sess
   const sessionTarget = appSource.indexOf("let sessionID = options.targetSessionId?.trim() || selectedSessionId();", sendStart);
   const pendingSnapshot = appSource.indexOf("const pendingDraftSendState = (() => {", sessionTarget);
   const pendingKey = appSource.indexOf("const pendingDraftKey = (activePendingDraftKey() ?? \"\").trim();", pendingSnapshot);
-  const sessionCreate = appSource.indexOf("sessionID = (await createSessionAndOpen()) ?? selectedSessionId();", pendingSnapshot);
+  const sessionCreate = appSource.indexOf("sessionID = (await createSessionAndOpen(initialSessionTitle)) ?? selectedSessionId();", pendingSnapshot);
 
   assert.notEqual(sendStart, -1, "sendPrompt should exist");
   assert.ok(sessionTarget > sendStart, "send flow should resolve the target session before pending draft snapshot");

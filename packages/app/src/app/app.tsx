@@ -1380,6 +1380,26 @@ export default function App() {
     if ((session.directory ?? "").trim() === override) return session;
     return { ...session, directory: override } as T;
   };
+  const BACKEND_PLACEHOLDER_SESSION_TITLE_PATTERN = /^New session(?:\s*[-–—]\s*.+)?$/i;
+  const isBackendPlaceholderSessionTitle = (title?: string | null) => {
+    const normalized = title?.trim() ?? "";
+    return !normalized || BACKEND_PLACEHOLDER_SESSION_TITLE_PATTERN.test(normalized);
+  };
+  const [pendingInitialSessionTitleById, setPendingInitialSessionTitleById] = createSignal<
+    Record<string, string>
+  >({});
+  const registerPendingInitialSessionTitle = (sessionId: string, title: string) => {
+    const id = sessionId.trim();
+    const cleanTitle = title.trim();
+    if (!id || !cleanTitle) return;
+    setPendingInitialSessionTitleById((current) => ({ ...current, [id]: cleanTitle }));
+  };
+  const applyPendingInitialSessionTitle = <T extends Session | SidebarSessionItem>(session: T): T => {
+    const pendingTitle = pendingInitialSessionTitleById()[session.id]?.trim() ?? "";
+    if (!pendingTitle || !isBackendPlaceholderSessionTitle(session.title)) return session;
+    if (session.title === pendingTitle) return session;
+    return { ...session, title: pendingTitle } as T;
+  };
   const [sessionModelOverrideById, setSessionModelOverrideById] = createSignal<
     Record<string, ModelRef>
   >({});
@@ -1493,6 +1513,25 @@ export default function App() {
     hydrateTranscriptSnapshot,
     hasWarmTranscript,
   } = sessionStore;
+
+  createEffect(() => {
+    const pending = pendingInitialSessionTitleById();
+    const currentSessions = sessions();
+    let changed = false;
+    const next = { ...pending };
+    for (const session of currentSessions) {
+      if (!pending[session.id]) continue;
+      if (isBackendPlaceholderSessionTitle(session.title)) continue;
+      delete next[session.id];
+      changed = true;
+    }
+    if (changed) setPendingInitialSessionTitleById(next);
+  });
+
+  const selectedSessionDisplayTitle = createMemo(() => {
+    const session = selectedSession();
+    return session ? applyPendingInitialSessionTitle(session).title ?? null : null;
+  });
 
   createEffect(() => {
     const id = selectedSessionId();
@@ -2064,6 +2103,7 @@ export default function App() {
     };
     resolvedDraft = await maybeResolveSkillCommand(resolvedDraft);
 
+    const initialSessionTitle = resolvedDraft.text.trim();
     const initialContent = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
     if (!initialContent && !resolvedDraft.attachments.length) {
       recordSendTrace("sendPrompt:blocked-empty");
@@ -2138,7 +2178,7 @@ export default function App() {
     })();
     if (!sessionID) {
       recordSendTrace("sendPrompt:create-session-needed");
-      sessionID = (await createSessionAndOpen()) ?? selectedSessionId();
+      sessionID = (await createSessionAndOpen(initialSessionTitle)) ?? selectedSessionId();
     }
     if (!sessionID) {
       recordSendTrace("sendPrompt:blocked-no-session");
@@ -3155,7 +3195,9 @@ export default function App() {
       setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [workspaceId]: "loading" as const }));
       const { readSessionsFromDb, dbSessionRowToSidebarItem } = await import("./lib/db-reader");
       const rows = await readSessionsFromDb(directory);
-      const { visible: items } = partitionVesloUtilitySessions(rows.map(dbSessionRowToSidebarItem));
+      const { visible: items } = partitionVesloUtilitySessions(
+        rows.map(dbSessionRowToSidebarItem).map(applyPendingInitialSessionTitle),
+      );
       setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [workspaceId]: items }));
       setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [workspaceId]: "ready" as const }));
     },
@@ -3552,7 +3594,9 @@ export default function App() {
           if (wsDirectory) {
             const { readSessionsFromDb, dbSessionRowToSidebarItem } = await import("./lib/db-reader");
             const rows = await readSessionsFromDb(wsDirectory);
-            const { visible: items } = partitionVesloUtilitySessions(rows.map(dbSessionRowToSidebarItem));
+            const { visible: items } = partitionVesloUtilitySessions(
+              rows.map(dbSessionRowToSidebarItem).map(applyPendingInitialSessionTitle),
+            );
             setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [id]: items }));
             setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" as const }));
             setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
@@ -3682,14 +3726,17 @@ export default function App() {
       }
 
       const visible = expandSidebarSessionSliceWithAncestors(visibleSessions, requestLimit);
-      const items: SidebarSessionItem[] = visible.map((session) => ({
-        id: session.id,
-        title: session.title,
-        slug: session.slug,
-        parentID: session.parentID,
-        time: session.time,
-        directory: session.directory,
-      }));
+      const items: SidebarSessionItem[] = visible.map((session) => {
+        const displaySession = applyPendingInitialSessionTitle(session);
+        return {
+          id: displaySession.id,
+          title: displaySession.title,
+          slug: displaySession.slug,
+          parentID: displaySession.parentID,
+          time: displaySession.time,
+          directory: displaySession.directory,
+        };
+      });
 
       setSidebarSessionsByWorkspaceId((prev) => ({
         ...prev,
@@ -3877,14 +3924,17 @@ export default function App() {
       const visibleRows = expandSidebarSessionSliceWithAncestors(visibleSessions, requestLimit);
       setSidebarSessionsByWorkspaceId((prev) => ({
         ...prev,
-        [wsId]: visibleRows.map((s) => ({
-          id: s.id,
-          title: s.title,
-          slug: s.slug,
-          parentID: s.parentID,
-          time: s.time,
-          directory: s.directory,
-        })),
+        [wsId]: visibleRows.map((s) => {
+          const displaySession = applyPendingInitialSessionTitle(s);
+          return {
+            id: displaySession.id,
+            title: displaySession.title,
+            slug: displaySession.slug,
+            parentID: displaySession.parentID,
+            time: displaySession.time,
+            directory: displaySession.directory,
+          };
+        }),
       }));
       setSidebarSessionHasMoreByWorkspaceId((prev) => ({
         ...prev,
@@ -7324,7 +7374,7 @@ export default function App() {
     }
   }
 
-  async function createSessionAndOpen() {
+  async function createSessionAndOpen(initialTitle = "") {
     recordSendTrace("createSessionAndOpen:start", {
       connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
       activeWorkspaceId: workspaceStore.activeWorkspaceId(),
@@ -7440,11 +7490,13 @@ export default function App() {
         console.warn("[createSessionAndOpen] health preflight failed; continuing to session.create", healthErr);
       }
 
+      const initialSessionTitle = initialTitle.trim();
       let rawResult: Awaited<ReturnType<typeof c.session.create>>;
       try {
         mark("session:create:start");
         rawResult = await c.session.create({
           directory: sessionDirectory,
+          title: initialSessionTitle || undefined,
         });
         recordSendTrace("createSessionAndOpen:create-ok", {
           sessionDirectory,
@@ -7461,6 +7513,10 @@ export default function App() {
       }
 
       const session = unwrap(rawResult);
+      if (initialSessionTitle) {
+        registerPendingInitialSessionTitle(session.id, initialSessionTitle);
+      }
+      const displaySession = applyPendingInitialSessionTitle(session);
       // Immediately select and show the new session before background list refresh.
       setBusyLabel("status.loading_session");
       mark("session:select:start", { sessionID: session.id });
@@ -7476,12 +7532,12 @@ export default function App() {
       }
 
       const newItem: SidebarSessionItem = {
-        id: session.id,
-        title: session.title,
-        slug: session.slug,
-        parentID: session.parentID,
-        time: session.time,
-        directory: session.directory,
+        id: displaySession.id,
+        title: displaySession.title,
+        slug: displaySession.slug,
+        parentID: displaySession.parentID,
+        time: displaySession.time,
+        directory: displaySession.directory,
       };
       const wsId = (workspaceStore.connectingWorkspaceId() ?? workspaceStore.activeWorkspaceId()).trim();
       if (wsId) {
@@ -9615,7 +9671,7 @@ export default function App() {
     selectSession: selectSession,
     pendingSessionLoad: pendingSessionLoad(),
     setPendingSessionLoad,
-    selectedSessionTitle: selectedSession()?.title ?? null,
+    selectedSessionTitle: selectedSessionDisplayTitle(),
     messages: visibleMessages(),
     todos: activeTodos(),
     busyLabel: busyLabel(),

@@ -25,6 +25,12 @@ The left session menu marks a session title in bold when an assistant response a
 
 Opening the session clears its unread indication. If the app regains focus while that session is already selected, the unread indication is also cleared. The indicator is local UI state for the current app run and is not persisted or synced.
 
+## Session Titles
+
+When a pending draft is first sent and a real OpenCode session must be created, Veslo uses the trimmed composer text as the session's initial backend title. The title comes from the text the user entered in the composer, not from internally resolved prompt text. If the first send has no text, such as an attachment-only send, the backend default title can remain in place.
+
+Later backend session title updates remain authoritative. The app accepts `session.updated` events into the session store and sidebar, so an explicit rename or backend title update can replace the prompt-derived initial title when the backend emits it.
+
 ## Composer
 
 The composer supports:
