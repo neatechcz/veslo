@@ -5,9 +5,11 @@ import { readFileSync } from "node:fs"
 import type { AddressInfo } from "node:net"
 import test from "node:test"
 import express from "express"
+import { MySqlDialect, getTableConfig } from "drizzle-orm/mysql-core"
 
 import { errorMiddleware } from "../src/http/errors.js"
 import { InMemorySkillRegistryStore } from "../src/skills/store.js"
+import { createDbSkillRegistryStore } from "../src/skills/db-store.js"
 import { buildSkillRegistryPackageArchive } from "../src/skills/packages.js"
 
 type TestSession = {
@@ -57,6 +59,152 @@ async function startServer(store = new InMemorySkillRegistryStore()) {
       await once(server, "close")
     },
   }
+}
+
+const testSqlDialect = new MySqlDialect({ casing: "snake_case" })
+
+class TestDbSkillRegistryDatabase {
+  private readonly rows = new Map<string, Record<string, unknown>[]>()
+
+  select(projection?: Record<string, { name: string }>) {
+    return new TestSelectQuery(this.rows, projection)
+  }
+
+  insert(table: unknown) {
+    return {
+      values: (value: Record<string, unknown> | Record<string, unknown>[]) => {
+        const tableRows = this.rowsFor(table)
+        const inserted = Array.isArray(value) ? value : [value]
+        for (const row of inserted) {
+          tableRows.push({ ...row })
+        }
+        return new TestMutationQuery()
+      },
+    }
+  }
+
+  update(table: unknown) {
+    return {
+      set: (changes: Record<string, unknown>) => ({
+        where: (where: unknown) => {
+          const tableRows = this.rowsFor(table)
+          for (const row of tableRows) {
+            if (matchesWhere(row, where)) Object.assign(row, changes)
+          }
+          return new TestMutationQuery()
+        },
+      }),
+    }
+  }
+
+  private rowsFor(table: unknown) {
+    const name = tableName(table)
+    const rows = this.rows.get(name) ?? []
+    this.rows.set(name, rows)
+    return rows
+  }
+}
+
+class TestSelectQuery {
+  private sourceRows: Record<string, unknown>[] = []
+  private whereClause: unknown
+  private limitCount: number | null = null
+  private orderByColumns: Array<{ name: string }> = []
+
+  constructor(
+    private readonly rows: Map<string, Record<string, unknown>[]>,
+    private readonly projection?: Record<string, { name: string }>,
+  ) {}
+
+  from(table: unknown) {
+    this.sourceRows = this.rows.get(tableName(table)) ?? []
+    return this
+  }
+
+  where(where: unknown) {
+    this.whereClause = where
+    return this
+  }
+
+  orderBy(...columns: Array<{ name: string }>) {
+    this.orderByColumns = columns
+    return this
+  }
+
+  limit(count: number) {
+    this.limitCount = count
+    return this
+  }
+
+  then<TResult1 = Record<string, unknown>[], TResult2 = never>(
+    onfulfilled?: ((value: Record<string, unknown>[]) => TResult1 | PromiseLike<TResult1>) | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+  ) {
+    return Promise.resolve(this.run()).then(onfulfilled, onrejected)
+  }
+
+  private run() {
+    let result = this.sourceRows.filter((row) => matchesWhere(row, this.whereClause))
+    for (const column of [...this.orderByColumns].reverse()) {
+      result = result.slice().sort((left, right) => compareDescending(left[column.name], right[column.name]))
+    }
+    if (this.limitCount !== null) result = result.slice(0, this.limitCount)
+    return result.map((row) => projectRow(row, this.projection))
+  }
+}
+
+class TestMutationQuery {
+  onDuplicateKeyUpdate() {
+    return this
+  }
+
+  then<TResult1 = void, TResult2 = never>(
+    onfulfilled?: ((value: void) => TResult1 | PromiseLike<TResult1>) | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+  ) {
+    return Promise.resolve().then(onfulfilled, onrejected)
+  }
+}
+
+function dbBackedSkillRegistryStore() {
+  return createDbSkillRegistryStore(new TestDbSkillRegistryDatabase() as never)
+}
+
+function tableName(table: unknown) {
+  return getTableConfig(table as never).name
+}
+
+function projectRow(row: Record<string, unknown>, projection?: Record<string, { name: string }>) {
+  if (!projection) return { ...row }
+  return Object.fromEntries(Object.entries(projection).map(([key, column]) => [key, row[column.name]]))
+}
+
+function matchesWhere(row: Record<string, unknown>, where: unknown) {
+  if (!where) return true
+  const { sql, params } = testSqlDialect.sqlToQuery(where as never)
+  const comparisons = sql.replace(/^\(|\)$/g, "").split(/\s+and\s+/i)
+  let paramIndex = 0
+  for (const comparison of comparisons) {
+    const equals = comparison.match(/`[^`]+`\.`([^`]+)` = \?/)
+    if (equals) {
+      if (row[equals[1]] !== params[paramIndex++]) return false
+      continue
+    }
+    const isNull = comparison.match(/`[^`]+`\.`([^`]+)` is null/)
+    if (isNull) {
+      if (row[isNull[1]] !== null) return false
+      continue
+    }
+    throw new Error(`unsupported test DB where clause: ${comparison}`)
+  }
+  return true
+}
+
+function compareDescending(left: unknown, right: unknown) {
+  const leftValue = left instanceof Date ? left.getTime() : left
+  const rightValue = right instanceof Date ? right.getTime() : right
+  if (leftValue === rightValue) return 0
+  return leftValue < rightValue ? 1 : -1
 }
 
 function setupEnv() {
@@ -355,6 +503,197 @@ test("rollout policies reject mismatched audience selectors", async () => {
     assert.equal(platformWithUser.response.status, 400)
     assert.equal(platformWithUser.body.error, "user_id_forbidden")
 
+    const platformWithOrg = await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
+      method: "POST",
+      body: JSON.stringify({
+        skillId: systemSkill.id,
+        versionId: systemVersion.id,
+        target: "user-global",
+        audience: "all-platform-users",
+        catalogScope: "platform",
+        orgId: "org_1",
+      }),
+      session: platformAdmin,
+    })
+    assert.equal(platformWithOrg.response.status, 400)
+    assert.equal(platformWithOrg.body.error, "org_id_forbidden")
+  } finally {
+    await server.close()
+  }
+})
+
+test("DB-backed rollout policy routes require catalog-owner approvals for create and update", async () => {
+  const server = await startServer(dbBackedSkillRegistryStore())
+  try {
+    const owner = { userId: "owner_1", orgId: "org_1", orgRole: "owner" as const }
+    const platformAdmin = { userId: "platform_owner", isPlatformAdmin: true }
+    const { skill: missingSkill, version: missingVersion } = await createPersonalSkillVersion(
+      server,
+      owner,
+      "db-missing-org-approval-tool",
+    )
+
+    const missingApprovalCreate = await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
+      method: "POST",
+      body: JSON.stringify({
+        skillId: missingSkill.id,
+        versionId: missingVersion.id,
+        target: "user-global",
+        audience: "user",
+        userId: "user_1",
+        catalogScope: "organization",
+        orgId: "org_1",
+      }),
+      session: owner,
+    })
+    assert.equal(missingApprovalCreate.response.status, 409)
+    assert.equal(missingApprovalCreate.body.error, "approval_missing")
+
+    const { body: createdMissingPolicy } = await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
+      method: "POST",
+      body: JSON.stringify({
+        skillId: missingSkill.id,
+        target: "user-global",
+        audience: "user",
+        userId: "user_1",
+        catalogScope: "organization",
+        orgId: "org_1",
+      }),
+      session: owner,
+    })
+    const missingApprovalUpdate = await jsonRequest(
+      server.baseUrl,
+      `/skill-rollout-policies/${createdMissingPolicy.policy.id}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ versionId: missingVersion.id }),
+        session: owner,
+      },
+    )
+    assert.equal(missingApprovalUpdate.response.status, 409)
+    assert.equal(missingApprovalUpdate.body.error, "approval_missing")
+
+    const { skill: systemApprovedSkill, version: systemApprovedVersion } = await createPersonalSkillVersion(
+      server,
+      owner,
+      "db-wrong-scope-approval-tool",
+    )
+    const { body: systemReview } = await jsonRequest(
+      server.baseUrl,
+      `/skills/${systemApprovedSkill.id}/review-requests`,
+      {
+        method: "POST",
+        body: JSON.stringify({ scope: "system", versionId: systemApprovedVersion.id }),
+        session: owner,
+      },
+    )
+    await jsonRequest(server.baseUrl, `/skill-review-requests/${systemReview.requestId}/approve`, {
+      method: "POST",
+      body: JSON.stringify({}),
+      session: platformAdmin,
+    })
+
+    const wrongScopeCreate = await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
+      method: "POST",
+      body: JSON.stringify({
+        skillId: systemApprovedSkill.id,
+        versionId: systemApprovedVersion.id,
+        target: "user-global",
+        audience: "user",
+        userId: "user_2",
+        catalogScope: "organization",
+        orgId: "org_1",
+      }),
+      session: owner,
+    })
+    assert.equal(wrongScopeCreate.response.status, 409)
+    assert.equal(wrongScopeCreate.body.error, "approval_scope_mismatch")
+
+    const { body: createdWrongScopePolicy } = await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
+      method: "POST",
+      body: JSON.stringify({
+        skillId: systemApprovedSkill.id,
+        target: "user-global",
+        audience: "user",
+        userId: "user_2",
+        catalogScope: "organization",
+        orgId: "org_1",
+      }),
+      session: owner,
+    })
+    const wrongScopeUpdate = await jsonRequest(
+      server.baseUrl,
+      `/skill-rollout-policies/${createdWrongScopePolicy.policy.id}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ versionId: systemApprovedVersion.id }),
+        session: owner,
+      },
+    )
+    assert.equal(wrongScopeUpdate.response.status, 409)
+    assert.equal(wrongScopeUpdate.body.error, "approval_scope_mismatch")
+  } finally {
+    await server.close()
+  }
+})
+
+test("DB-backed rollout policy routes reject invalid audience selector shapes", async () => {
+  const server = await startServer(dbBackedSkillRegistryStore())
+  try {
+    const owner = { userId: "owner_1", orgId: "org_1", orgRole: "owner" as const }
+    const platformAdmin = { userId: "platform_owner", isPlatformAdmin: true }
+    const { skill, version } = await createApprovedOrgSkillVersion(server, owner, "db-audience-shape-tool")
+
+    const selectedWorkspaceWithUser = await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
+      method: "POST",
+      body: JSON.stringify({
+        skillId: skill.id,
+        versionId: version.id,
+        target: "workspace",
+        audience: "selected-workspaces",
+        userId: "user_1",
+        workspaceId: "workspace_1",
+        catalogScope: "organization",
+        orgId: "org_1",
+      }),
+      session: owner,
+    })
+    assert.equal(selectedWorkspaceWithUser.response.status, 400)
+    assert.equal(selectedWorkspaceWithUser.body.error, "user_id_forbidden")
+
+    const { body: createdPolicy } = await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
+      method: "POST",
+      body: JSON.stringify({
+        skillId: skill.id,
+        versionId: version.id,
+        target: "user-global",
+        audience: "user",
+        userId: "user_1",
+        catalogScope: "organization",
+        orgId: "org_1",
+      }),
+      session: owner,
+    })
+    const allOrgUsersWithUser = await jsonRequest(
+      server.baseUrl,
+      `/skill-rollout-policies/${createdPolicy.policy.id}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          audience: "all-org-users",
+          userId: "user_1",
+        }),
+        session: owner,
+      },
+    )
+    assert.equal(allOrgUsersWithUser.response.status, 400)
+    assert.equal(allOrgUsersWithUser.body.error, "user_id_forbidden")
+
+    const { skill: systemSkill, version: systemVersion } = await createApprovedSystemSkillVersion(
+      server,
+      platformAdmin,
+      "db-platform-audience-shape-tool",
+    )
     const platformWithOrg = await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
       method: "POST",
       body: JSON.stringify({
