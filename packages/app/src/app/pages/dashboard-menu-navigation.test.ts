@@ -307,6 +307,7 @@ test("dashboard source keeps a single left-menu handler without the legacy viewp
 });
 
 test("dashboard routes active nav re-clicks through the session return helper", () => {
+  assert.match(dashboardSource, /import DashboardTabRail/);
   assert.match(
     dashboardSource,
     /const\s+handleDashboardTabSelection\s*=\s*\(\s*nextTab:\s*DashboardTab(?:,\s*nextSettingsTab\?:\s*SettingsTab)?\s*\)\s*=>\s*\{/s,
@@ -348,6 +349,11 @@ test("dashboard routes active nav re-clicks through the session return helper", 
   assert.match(
     dashboardSource,
     /onClick\s*=\s*\{\s*\(\)\s*=>\s*handleDashboardTabSelection\s*\(\s*["']scheduled["']\s*\)\s*\}/,
+  );
+  assert.match(dashboardSource, /const\s+showDashboardTabRail\s*=\s*createMemo\s*\(\s*\(\)\s*=>/);
+  assert.match(
+    dashboardSource,
+    /<Show when=\{showDashboardTabRail\(\)\}>[\s\S]*<DashboardTabRail[\s\S]*activeDashboardTab=\{props\.tab\}[\s\S]*activeSettingsTab=\{props\.settingsTab\}[\s\S]*onOpenSettingsTab=\{openSettings\}[\s\S]*onOpenDashboardTab=\{handleDashboardTabSelection\}[\s\S]*<\/Show>[\s\S]*<Switch>/,
   );
 });
 
@@ -418,11 +424,13 @@ test("dashboard keeps settings page state out of the shared titlebar chrome", ()
   assert.doesNotMatch(dashboardSource, /resolveSettingsTabLabel\(visibleSettingsTab\(\)\)/);
   assert.match(
     settingsSource,
-    /import\s*\{\s*resolveSettingsTabLabel,\s*resolveVisibleSettingsTab\s*\}\s*from\s+["']\.\.\/lib\/settings-tab-label["'];/,
+    /import\s*\{\s*resolveVisibleSettingsTab\s*\}\s*from\s+["']\.\.\/lib\/settings-tab-label["'];/,
   );
+  assert.match(settingsSource, /import DashboardTabRail/);
   assert.match(settingsSource, /resolveVisibleSettingsTab\(\s*props\.settingsTab,\s*props\.developerMode\s*\)/);
   assert.match(settingsSource, /<h1 class="font-product type-title-md text-gray-12">\s*\{translate\("dashboard\.settings"\)\}\s*<\/h1>/);
-  assert.match(settingsSource, /{resolveNavItemLabel\(item\)}/);
+  assert.match(settingsSource, /<DashboardTabRail/);
+  assert.doesNotMatch(settingsSource, /{resolveNavItemLabel\(item\)}/);
   assert.doesNotMatch(settingsSource, /tabLabel\(tab\)/);
 });
 

@@ -58,6 +58,7 @@ import { DEFAULT_VESLO_PUBLISHER_BASE_URL, publishVesloBundleJson } from "../lib
 import type { SkillMutationTarget } from "../lib/skill-inventory";
 
 import Button from "../components/button";
+import DashboardTabRail, { shouldShowDashboardTabRail } from "../components/dashboard-tab-rail";
 import ExtensionsView from "./extensions";
 import ScheduledTasksView from "./scheduled";
 import SoulView from "./soul";
@@ -683,6 +684,8 @@ export default function DashboardView(props: DashboardViewProps) {
     props.setSettingsTab(tab);
     props.setTab("settings");
   };
+
+  const showDashboardTabRail = createMemo(() => shouldShowDashboardTabRail(props.tab));
 
   const handleSettingsButtonClick = () => {
     handleDashboardTabSelection("settings", "general");
@@ -1509,6 +1512,15 @@ export default function DashboardView(props: DashboardViewProps) {
         </header>
 
         <div class="p-6 md:p-10 max-w-5xl mx-auto space-y-10">
+          <Show when={showDashboardTabRail()}>
+            <DashboardTabRail
+              activeDashboardTab={props.tab}
+              activeSettingsTab={props.settingsTab}
+              onOpenSettingsTab={openSettings}
+              onOpenDashboardTab={handleDashboardTabSelection}
+            />
+          </Show>
+
           <Switch>
             <Match when={props.tab === "scheduled"}>
               <ScheduledTasksView

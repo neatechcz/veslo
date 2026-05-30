@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("./settings.tsx", import.meta.url), "utf8");
@@ -7,14 +7,22 @@ const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 const enLocaleSource = readFileSync(new URL("../../i18n/locales/en.ts", import.meta.url), "utf8");
 const csLocaleSource = readFileSync(new URL("../../i18n/locales/cs.ts", import.meta.url), "utf8");
 const generalSection = source.match(/<Match when=\{activeTab\(\) === "general"\}>[\s\S]*?<\/Match>/)?.[0] ?? "";
+const dashboardTabRailPath = new URL("../components/dashboard-tab-rail.tsx", import.meta.url);
+const dashboardTabRailSource = existsSync(dashboardTabRailPath) ? readFileSync(dashboardTabRailPath, "utf8") : "";
 
 test("settings exposes archived tab and keeps developer tabs unavailable", () => {
-  assert.match(source, /const tabs: SettingsTab\[\] = \["general", "archived"\]/);
-  assert.match(source, /\{\s*kind:\s*"dashboard",\s*tab:\s*"scheduled"\s*\}/);
-  assert.match(source, /\{\s*kind:\s*"dashboard",\s*tab:\s*"soul"\s*\}/);
-  assert.match(source, /\{\s*kind:\s*"dashboard",\s*tab:\s*"skills"\s*\}/);
-  assert.match(source, /\{\s*kind:\s*"dashboard",\s*tab:\s*"mcp"\s*\}/);
-  assert.match(source, /props\.onOpenDashboardTab\?\.\(item\.tab\)/);
+  assert.match(source, /import DashboardTabRail/);
+  assert.match(source, /<DashboardTabRail[\s\S]*activeDashboardTab="settings"[\s\S]*activeSettingsTab=\{activeTab\(\)\}/);
+  assert.match(source, /onOpenDashboardTab=\{\(tab\) => props\.onOpenDashboardTab\?\.\(tab\)\}/);
+  assert.match(dashboardTabRailSource, /\{\s*kind:\s*"settings",\s*tab:\s*"general"\s*\}/);
+  assert.match(dashboardTabRailSource, /\{\s*kind:\s*"settings",\s*tab:\s*"archived"\s*\}/);
+  assert.match(dashboardTabRailSource, /\{\s*kind:\s*"dashboard",\s*tab:\s*"scheduled"\s*\}/);
+  assert.match(dashboardTabRailSource, /\{\s*kind:\s*"dashboard",\s*tab:\s*"soul"\s*\}/);
+  assert.match(dashboardTabRailSource, /\{\s*kind:\s*"dashboard",\s*tab:\s*"skills"\s*\}/);
+  assert.match(dashboardTabRailSource, /\{\s*kind:\s*"dashboard",\s*tab:\s*"mcp"\s*\}/);
+  assert.doesNotMatch(source, /type SettingsNavItem/);
+  assert.doesNotMatch(source, /const\s+settingsTabs\s*=/);
+  assert.doesNotMatch(source, /const\s+dashboardLinkTabs\s*=/);
   assert.doesNotMatch(source, /<ExtensionsOverview/);
   assert.doesNotMatch(source, /<Match when=\{activeTab\(\) === "extensions"\}>/);
   assert.doesNotMatch(source, /if \(props\.developerMode\) tabs\.push\("advanced", "debug"\);/);
@@ -71,8 +79,10 @@ test("settings keeps compact update controls in general instead of a floating to
 test("settings locales include Settings and dashboard labels", () => {
   assert.match(enLocaleSource, /"settings\.archived": "Archived"/);
   assert.match(csLocaleSource, /"settings\.archived": "Archivované"/);
-  assert.match(source, /case\s+"scheduled":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*translate\("nav\.automations"\)/);
-  assert.match(source, /case\s+"soul":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*translate\("nav\.soul"\)/);
-  assert.match(source, /case\s+"skills":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*translate\("nav\.skills"\)/);
-  assert.match(source, /case\s+"mcp":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*translate\("nav\.extensions"\)/);
+  assert.match(dashboardTabRailSource, /case\s+"scheduled":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.automations", currentLocale\(\)\)/);
+  assert.match(dashboardTabRailSource, /case\s+"soul":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.soul", currentLocale\(\)\)/);
+  assert.match(dashboardTabRailSource, /case\s+"skills":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.skills", currentLocale\(\)\)/);
+  assert.match(dashboardTabRailSource, /case\s+"mcp":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.extensions", currentLocale\(\)\)/);
+  assert.match(dashboardTabRailSource, /data-settings-nav-kind=\{item\.kind\}/);
+  assert.match(dashboardTabRailSource, /data-settings-nav-tab=\{item\.tab\}/);
 });

@@ -91,6 +91,9 @@ Settings includes link tabs for Automations, Soul, Skills, and Extensions.
 Those entries are aliases to the existing dashboard pages, so their page content,
 state, and source-of-truth behavior remain owned by the same destinations that
 are reachable from the left menu.
+The same tab rail is also shown on those destination pages so users can move
+between Settings-owned tabs and dashboard destinations without returning to the
+left menu.
 
 Do not add a separate Settings-owned Skills, MCP, or Extensions overview. The
 Skills page remains the canonical app-wide skills inventory, and the Extensions

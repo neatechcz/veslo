@@ -3,8 +3,9 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onMou
 import { formatBytes, formatRelativeTime, isTauriRuntime, isWindowsPlatform } from "../utils";
 
 import Button from "../components/button";
+import DashboardTabRail, { type DashboardTabRailDashboardTab } from "../components/dashboard-tab-rail";
 import { CircleAlert, Copy, Download, FolderOpen, Loader2, PlugZap, RefreshCcw, Smartphone, X } from "lucide-solid";
-import type { DashboardTab, OpencodeConnectStatus, SessionArchiveItem, SettingsTab, StartupPreference } from "../types";
+import type { OpencodeConnectStatus, SessionArchiveItem, SettingsTab, StartupPreference } from "../types";
 import type {
   VesloAuditEntry,
   VesloServerCapabilities,
@@ -36,12 +37,10 @@ import {
   readDenApiBaseOverride,
   writeDenApiBaseOverride,
 } from "../lib/den-auth";
-import { resolveSettingsTabLabel, resolveVisibleSettingsTab } from "../lib/settings-tab-label";
+import { resolveVisibleSettingsTab } from "../lib/settings-tab-label";
 import { currentLocale, LANGUAGE_OPTIONS, t, type Language } from "../../i18n";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 import { MODEL_VARIANT_OPTIONS } from "../lib/model-variant";
-
-type SettingsDashboardLinkTab = Extract<DashboardTab, "scheduled" | "soul" | "skills" | "mcp">;
 
 export type SettingsViewProps = {
   startupPreference: StartupPreference | null;
@@ -50,7 +49,7 @@ export type SettingsViewProps = {
   busy: boolean;
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
-  onOpenDashboardTab?: (tab: SettingsDashboardLinkTab) => void;
+  onOpenDashboardTab?: (tab: DashboardTabRailDashboardTab) => void;
   vesloServerStatus: VesloServerStatus;
   vesloServerUrl: string;
   vesloReconnectBusy: boolean;
@@ -148,10 +147,6 @@ export type SettingsViewProps = {
   sessionArchives?: SessionArchiveItem[];
   onUnarchiveSession?: (sessionId: string) => Promise<void> | void;
 };
-
-type SettingsNavItem =
-  | { kind: "settings"; tab: SettingsTab }
-  | { kind: "dashboard"; tab: SettingsDashboardLinkTab };
 
 export default function SettingsView(props: SettingsViewProps) {
   const translate = (key: string) => t(key, currentLocale());
@@ -545,23 +540,6 @@ export default function SettingsView(props: SettingsViewProps) {
   const isLocalEngineRunning = createMemo(() => Boolean(props.engineInfo?.running));
   const startupLabel = createMemo(() => "Connect to cloud server");
 
-  const settingsTabs = createMemo<SettingsTab[]>(() => {
-    const tabs: SettingsTab[] = ["general", "archived"];
-    return tabs;
-  });
-
-  const dashboardLinkTabs = createMemo<SettingsNavItem[]>(() => [
-    { kind: "dashboard", tab: "scheduled" },
-    { kind: "dashboard", tab: "soul" },
-    { kind: "dashboard", tab: "skills" },
-    { kind: "dashboard", tab: "mcp" },
-  ]);
-
-  const availableTabs = createMemo<SettingsNavItem[]>(() => [
-    ...settingsTabs().map((tab): SettingsNavItem => ({ kind: "settings", tab })),
-    ...dashboardLinkTabs(),
-  ]);
-
   const activeTab = createMemo<SettingsTab>(() => {
     return resolveVisibleSettingsTab(props.settingsTab, props.developerMode);
   });
@@ -571,30 +549,6 @@ export default function SettingsView(props: SettingsViewProps) {
       props.setSettingsTab(activeTab());
     }
   });
-
-  const resolveDashboardTabLabel = (tab: SettingsDashboardLinkTab) => {
-    switch (tab) {
-      case "scheduled":
-        return translate("nav.automations");
-      case "soul":
-        return translate("nav.soul");
-      case "skills":
-        return translate("nav.skills");
-      case "mcp":
-        return translate("nav.extensions");
-    }
-  };
-
-  const resolveNavItemLabel = (item: SettingsNavItem) =>
-    item.kind === "settings" ? resolveSettingsTabLabel(item.tab) : resolveDashboardTabLabel(item.tab);
-
-  const selectNavItem = (item: SettingsNavItem) => {
-    if (item.kind === "settings") {
-      props.setSettingsTab(item.tab);
-      return;
-    }
-    props.onOpenDashboardTab?.(item.tab);
-  };
 
   const formatActor = (entry: VesloAuditEntry) => {
     const actor = entry.actor;
@@ -896,28 +850,12 @@ export default function SettingsView(props: SettingsViewProps) {
     <section class="space-y-6">
       <div class="space-y-4">
         <h1 class="font-product type-title-md text-gray-12">{translate("dashboard.settings")}</h1>
-        <div class="flex flex-wrap gap-2 rounded-2xl border border-gray-6/40 bg-gray-1/40 px-3 py-2">
-          <For each={availableTabs()}>
-            {(item) => {
-              return (
-                <button
-                  type="button"
-                  data-settings-nav-kind={item.kind}
-                  data-settings-nav-tab={item.tab}
-                  aria-current={item.kind === "settings" && activeTab() === item.tab ? "page" : undefined}
-                  class={`px-3 py-2 rounded-xl text-xs font-medium border transition-colors ${
-                    item.kind === "settings" && activeTab() === item.tab
-                      ? "bg-gray-12/10 text-white border-gray-6/30"
-                      : "text-gray-10 border-gray-6/50 hover:text-gray-12 hover:bg-gray-2/40"
-                  }`}
-                  onClick={() => selectNavItem(item)}
-                >
-                  {resolveNavItemLabel(item)}
-                </button>
-              );
-            }}
-          </For>
-        </div>
+        <DashboardTabRail
+          activeDashboardTab="settings"
+          activeSettingsTab={activeTab()}
+          onOpenSettingsTab={props.setSettingsTab}
+          onOpenDashboardTab={(tab) => props.onOpenDashboardTab?.(tab)}
+        />
       </div>
 
       <Switch>

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("./settings.tsx", import.meta.url), "utf8");
+const dashboardTabRailSource = readFileSync(new URL("../components/dashboard-tab-rail.tsx", import.meta.url), "utf8");
 const generalSection = source.match(/<Match when=\{activeTab\(\) === "general"\}>[\s\S]*?<\/Match>/)?.[0] ?? "";
 const archivedSection = source.match(/<Match when=\{activeTab\(\) === "archived"\}>[\s\S]*?<\/Match>/)?.[0] ?? "";
 
@@ -23,8 +24,11 @@ test("settings renders archived sessions inside the archived tab only", () => {
 });
 
 test("settings tab list exposes general and archived only", () => {
-  assert.match(source, /const tabs: SettingsTab\[] = \["general", "archived"\]/);
-  assert.doesNotMatch(source, /const tabs: SettingsTab\[] = \["general", "extensions", "archived"\]/);
+  assert.match(dashboardTabRailSource, /\{\s*kind:\s*"settings",\s*tab:\s*"general"\s*\}/);
+  assert.match(dashboardTabRailSource, /\{\s*kind:\s*"settings",\s*tab:\s*"archived"\s*\}/);
+  assert.doesNotMatch(dashboardTabRailSource, /\{\s*kind:\s*"settings",\s*tab:\s*"extensions"\s*\}/);
+  assert.doesNotMatch(dashboardTabRailSource, /\{\s*kind:\s*"settings",\s*tab:\s*"advanced"\s*\}/);
+  assert.doesNotMatch(dashboardTabRailSource, /\{\s*kind:\s*"settings",\s*tab:\s*"debug"\s*\}/);
   assert.doesNotMatch(source, /<Match when=\{activeTab\(\) === "extensions"\}>/);
   assert.doesNotMatch(source, /if \(props\.developerMode\) tabs\.push\("advanced", "debug"\);/);
 });
