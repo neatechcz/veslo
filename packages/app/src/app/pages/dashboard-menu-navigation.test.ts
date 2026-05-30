@@ -35,6 +35,9 @@ const shouldReturnToSessionOnEscape = (
 
 const dashboardSource = readFileSync(new URL("./dashboard.tsx", import.meta.url), "utf8");
 const settingsSource = readFileSync(new URL("./settings.tsx", import.meta.url), "utf8");
+const settingsViewSource = dashboardSource.match(/<SettingsView[\s\S]*?\/>/)?.[0] ?? "";
+const settingsViewDashboardCallbackSource =
+  settingsViewSource.match(/onOpenDashboardTab=\{([\s\S]*?)\}/)?.[1] ?? "";
 const headerSourceMatch = dashboardSource.match(
   /<header class="h-14 flex items-center justify-between px-6 md:px-10 border-b border-dls-border sticky top-0 bg-dls-surface z-10">[\s\S]*?<\/header>/,
 );
@@ -335,8 +338,8 @@ test("dashboard routes active nav re-clicks through the session return helper", 
     /<SidebarAdvancedNav[\s\S]*currentTab=\{props\.tab\}[\s\S]*onSelect=\{\(\)\s*=>\s*handleDashboardTabSelection\(\s*["']config["']\s*\)\}/,
   );
   assert.match(
-    dashboardSource,
-    /<SettingsView[\s\S]*onOpenDashboardTab=\{[^}]*handleDashboardTabSelection[^}]*\}/,
+    settingsViewDashboardCallbackSource,
+    /^(?:\s*handleDashboardTabSelection\s*|\s*\(\s*([A-Za-z_$][\w$]*)\s*\)\s*=>\s*handleDashboardTabSelection\(\s*\1\s*\)\s*)$/,
   );
   assert.match(
     dashboardSource,
