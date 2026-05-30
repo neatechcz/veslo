@@ -323,9 +323,10 @@ export type VesloSkillRegistryCreateRolloutPolicyInput = VesloSkillRegistryAuthC
   orgId?: string | null;
   userId?: string | null;
   workspaceId?: string | null;
-  updatePolicy?: VesloSkillRegistryUpdatePolicy;
+  enabled?: boolean;
+  updatePolicy: VesloSkillRegistryUpdatePolicy;
   releaseChannel?: string | null;
-  removalPolicy?: VesloSkillRegistryRolloutRemovalPolicy;
+  removalPolicy: VesloSkillRegistryRolloutRemovalPolicy;
 };
 
 export type VesloSkillRegistryListVersionsInput = VesloSkillRegistryAuthContext & {
@@ -2574,6 +2575,7 @@ export function createVesloServerClient(options: {
           orgId: input.orgId,
           userId: input.userId,
           workspaceId: input.workspaceId,
+          enabled: input.enabled,
           updatePolicy: input.updatePolicy,
           releaseChannel: input.releaseChannel,
           removalPolicy: input.removalPolicy,

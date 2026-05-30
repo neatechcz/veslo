@@ -822,6 +822,7 @@ test("rollout policy helpers call local server routes with host auth and Den con
       userId: "user_1",
       catalogScope: "organization",
       orgId: "org_1",
+      enabled: false,
       updatePolicy: "pinned",
       removalPolicy: "locked",
       denToken: "den-token",
@@ -862,6 +863,7 @@ test("rollout policy helpers call local server routes with host auth and Den con
       catalogScope: "organization",
       orgId: "org_1",
       userId: "user_1",
+      enabled: false,
       updatePolicy: "pinned",
       removalPolicy: "locked",
     });
