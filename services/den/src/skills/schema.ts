@@ -15,7 +15,7 @@ import {
 } from "drizzle-orm/mysql-core"
 
 const idColumn = () => varchar("id", { length: 64 }).notNull()
-const orgIdColumn = () => varchar("org_id", { length: 64 })
+const orgIdColumn = (name = "org_id") => varchar(name, { length: 64 })
 const userIdColumn = (name = "user_id") => varchar(name, { length: 64 })
 const skillIdColumn = (name = "skill_id") => varchar(name, { length: 64 })
 const versionIdColumn = (name = "version_id") => varchar(name, { length: 64 })
@@ -54,6 +54,7 @@ export const SkillRegistryTables = {
   skill_share_links: "skill_share_links",
   skill_search_documents: "skill_search_documents",
   skill_audit_events: "skill_audit_events",
+  skill_rollout_policies: "skill_rollout_policies",
 } as const
 
 export const SkillScope = ["user", "org", "workspace", "system"] as const
@@ -64,6 +65,10 @@ export const SkillMaterializationStatus = ["pending", "materialized", "failed", 
 export const SkillReviewRequestStatus = ["pending", "approved", "rejected", "cancelled"] as const
 export const SkillApprovalScope = ["org", "system"] as const
 export const SkillShareLinkAudience = ["private", "org", "public"] as const
+export const SkillRolloutCatalogScope = ["organization", "platform"] as const
+export const SkillRolloutTarget = ["user-global", "workspace"] as const
+export const SkillRolloutAudience = ["user", "selected-workspaces", "all-org-users", "all-platform-users"] as const
+export const SkillRolloutRemovalPolicy = ["user_removable", "admin_removable", "locked"] as const
 
 export type SkillScope = (typeof SkillScope)[number]
 export type SkillVersionStatus = (typeof SkillVersionStatus)[number]
@@ -73,6 +78,10 @@ export type SkillMaterializationStatus = (typeof SkillMaterializationStatus)[num
 export type SkillReviewRequestStatus = (typeof SkillReviewRequestStatus)[number]
 export type SkillApprovalScope = (typeof SkillApprovalScope)[number]
 export type SkillShareLinkAudience = (typeof SkillShareLinkAudience)[number]
+export type SkillRolloutCatalogScope = (typeof SkillRolloutCatalogScope)[number]
+export type SkillRolloutTarget = (typeof SkillRolloutTarget)[number]
+export type SkillRolloutAudience = (typeof SkillRolloutAudience)[number]
+export type SkillRolloutRemovalPolicy = (typeof SkillRolloutRemovalPolicy)[number]
 
 export const SkillTable = mysqlTable(
   SkillRegistryTables.skills,
@@ -195,6 +204,52 @@ export const SkillInstallationTable = mysqlTable(
     check(
       "skill_installation_active_managed_approval",
       sql`${table.status} <> 'active' OR ${table.scope} NOT IN ('org','system') OR (${table.approval_id} IS NOT NULL AND ${table.approved_version_id} IS NOT NULL)`,
+    ),
+  ],
+)
+
+export const SkillRolloutPolicyTable = mysqlTable(
+  SkillRegistryTables.skill_rollout_policies,
+  {
+    id: idColumn().primaryKey(),
+    org_id: orgIdColumn(),
+    skill_id: skillIdColumn().notNull(),
+    desired_version_id: versionIdColumn("desired_version_id"),
+    release_channel: varchar("release_channel", { length: 128 }),
+    update_policy: mysqlEnum("update_policy", SkillInstallationUpdatePolicy).notNull().default("pinned"),
+    catalog_scope: mysqlEnum("catalog_scope", SkillRolloutCatalogScope).notNull(),
+    owner_org_id: orgIdColumn("owner_org_id"),
+    target: mysqlEnum("target", SkillRolloutTarget).notNull(),
+    audience: mysqlEnum("audience", SkillRolloutAudience).notNull(),
+    user_id: userIdColumn("user_id"),
+    workspace_id: varchar("workspace_id", { length: 64 }),
+    enabled: boolean("enabled").notNull().default(true),
+    removal_policy: mysqlEnum("removal_policy", SkillRolloutRemovalPolicy).notNull().default("user_removable"),
+    created_by_user_id: userIdColumn("created_by_user_id").notNull(),
+    ...softDeleteColumns,
+    ...timestamps,
+  },
+  (table) => [
+    index("skill_rollout_org_audience").on(table.org_id, table.audience, table.enabled),
+    index("skill_rollout_workspace_lookup").on(table.org_id, table.workspace_id, table.enabled),
+    index("skill_rollout_user_lookup").on(table.user_id, table.enabled),
+    index("skill_rollout_skill").on(table.skill_id, table.enabled),
+    uniqueIndex("skill_rollout_active_target_guard").on(
+      table.skill_id,
+      table.catalog_scope,
+      table.owner_org_id,
+      table.target,
+      table.audience,
+      table.user_id,
+      table.workspace_id,
+    ),
+    check(
+      "skill_rollout_user_target_shape",
+      sql`${table.target} <> 'user-global' OR ${table.workspace_id} IS NULL`,
+    ),
+    check(
+      "skill_rollout_workspace_target_shape",
+      sql`${table.target} <> 'workspace' OR ${table.audience} = 'selected-workspaces'`,
     ),
   ],
 )

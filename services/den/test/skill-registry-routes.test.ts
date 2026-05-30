@@ -111,6 +111,164 @@ async function packageArchive(name: string, body: string, extraFiles: Record<str
   })
 }
 
+async function createApprovedOrgSkillVersion(
+  server: Awaited<ReturnType<typeof startServer>>,
+  owner: TestSession,
+  name: string,
+) {
+  const { body: createdSkill } = await jsonRequest(server.baseUrl, "/skills", {
+    method: "POST",
+    body: JSON.stringify({ scope: "org", orgId: owner.orgId, name }),
+    session: owner,
+  })
+  const archive = await packageArchive(name, `# ${name}\n`)
+  const { body: version } = await jsonRequest(server.baseUrl, `/skills/${createdSkill.skill.id}/versions`, {
+    method: "POST",
+    body: JSON.stringify({ package: archive }),
+    session: owner,
+  })
+  const { body: review } = await jsonRequest(server.baseUrl, `/skills/${createdSkill.skill.id}/review-requests`, {
+    method: "POST",
+    body: JSON.stringify({ scope: "org", orgId: owner.orgId, versionId: version.version.id }),
+    session: owner,
+  })
+  await jsonRequest(server.baseUrl, `/skill-review-requests/${review.requestId}/approve`, {
+    method: "POST",
+    body: JSON.stringify({}),
+    session: owner,
+  })
+  return { skill: createdSkill.skill, version: version.version }
+}
+
+test("rollout policy installs org skill as user-global for one user", async () => {
+  const server = await startServer()
+  try {
+    const owner = { userId: "owner_1", orgId: "org_1", orgRole: "owner" as const }
+    const { skill, version } = await createApprovedOrgSkillVersion(server, owner, "meeting-minutes")
+
+    const { response, body } = await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
+      method: "POST",
+      body: JSON.stringify({
+        skillId: skill.id,
+        versionId: version.id,
+        target: "user-global",
+        audience: "user",
+        userId: "user_1",
+        catalogScope: "organization",
+        orgId: "org_1",
+      }),
+      session: owner,
+    })
+
+    assert.equal(response.status, 201)
+    assert.equal(body.policy.target, "user-global")
+    assert.equal(body.policy.audience, "user")
+    assert.equal(body.policy.versionId, version.id)
+    assert.equal(body.policy.removalPolicy, "user_removable")
+
+    const { response: listResponse, body: listed } = await jsonRequest(
+      server.baseUrl,
+      "/skill-rollout-policies?target=user-global",
+      { session: owner },
+    )
+    assert.equal(listResponse.status, 200)
+    assert.equal(listed.policies.length, 1)
+    assert.equal(listed.nextCursor, null)
+    assert.ok(server.store.snapshot().events.some((event) => event.action === "skill.rollout_policy.changed"))
+  } finally {
+    await server.close()
+  }
+})
+
+test("rollout policies reject user-global and workspace targets for same skill and audience", async () => {
+  const server = await startServer()
+  try {
+    const owner = { userId: "owner_1", orgId: "org_1", orgRole: "owner" as const }
+    const { skill, version } = await createApprovedOrgSkillVersion(server, owner, "office-writer")
+
+    await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
+      method: "POST",
+      body: JSON.stringify({
+        skillId: skill.id,
+        versionId: version.id,
+        target: "user-global",
+        audience: "user",
+        userId: "user_1",
+        catalogScope: "organization",
+        orgId: "org_1",
+      }),
+      session: owner,
+    })
+    const { response, body } = await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
+      method: "POST",
+      body: JSON.stringify({
+        skillId: skill.id,
+        versionId: version.id,
+        target: "workspace",
+        audience: "selected-workspaces",
+        workspaceId: "workspace_1",
+        catalogScope: "organization",
+        orgId: "org_1",
+      }),
+      session: owner,
+    })
+
+    assert.equal(response.status, 409)
+    assert.equal(body.error, "target_conflict")
+  } finally {
+    await server.close()
+  }
+})
+
+test("rollout policy mutations require org admin and locked policies block user deletion", async () => {
+  const server = await startServer()
+  try {
+    const owner = { userId: "owner_1", orgId: "org_1", orgRole: "owner" as const }
+    const member = { userId: "member_1", orgId: "org_1", orgRole: "member" as const }
+    const { skill, version } = await createApprovedOrgSkillVersion(server, owner, "locked-org-tool")
+
+    const nonOwnerCreate = await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
+      method: "POST",
+      body: JSON.stringify({
+        skillId: skill.id,
+        versionId: version.id,
+        target: "user-global",
+        audience: "user",
+        userId: "member_1",
+        catalogScope: "organization",
+        orgId: "org_1",
+      }),
+      session: member,
+    })
+    assert.equal(nonOwnerCreate.response.status, 403)
+
+    const { body: created } = await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
+      method: "POST",
+      body: JSON.stringify({
+        skillId: skill.id,
+        versionId: version.id,
+        target: "user-global",
+        audience: "user",
+        userId: "member_1",
+        catalogScope: "organization",
+        orgId: "org_1",
+        removalPolicy: "locked",
+      }),
+      session: owner,
+    })
+
+    const lockedDelete = await jsonRequest(server.baseUrl, `/skill-rollout-policies/${created.policy.id}`, {
+      method: "DELETE",
+      session: member,
+    })
+
+    assert.equal(lockedDelete.response.status, 409)
+    assert.equal(lockedDelete.body.error, "removal_not_allowed")
+  } finally {
+    await server.close()
+  }
+})
+
 test("package upload creates an immutable content-addressed version", async () => {
   const server = await startServer()
   try {

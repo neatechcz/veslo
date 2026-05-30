@@ -45,6 +45,46 @@ export function skillApprovalOwnerKey(input: SkillApprovalOwnerKeyInput): string
   }
 }
 
+export type SkillRolloutTargetConflictRef = {
+  skillId: string
+  catalogScope: "organization" | "platform"
+  ownerOrgId?: string | null
+  target: "user-global" | "workspace"
+  audience: string
+  userId?: string | null
+  workspaceId?: string | null
+  enabled?: boolean
+  deletedAt?: Date | string | null
+}
+
+export function rolloutPolicyOwnerKey(input: {
+  catalogScope: "organization" | "platform"
+  ownerOrgId?: string | null
+}): string {
+  if (input.catalogScope === "platform") return "platform:__platform__"
+  if (!input.ownerOrgId) throw new Error("org_id_required")
+  return `org:${encodeKeyPart(input.ownerOrgId)}`
+}
+
+export function hasRolloutTargetConflict(
+  candidate: SkillRolloutTargetConflictRef,
+  existing: readonly SkillRolloutTargetConflictRef[],
+): boolean {
+  if (candidate.enabled === false || candidate.deletedAt != null) return false
+  return existing.some((policy) => {
+    if (policy.deletedAt != null || policy.enabled === false) return false
+    if (policy.skillId !== candidate.skillId) return false
+    if (policy.catalogScope !== candidate.catalogScope) return false
+    if ((policy.ownerOrgId ?? null) !== (candidate.ownerOrgId ?? null)) return false
+    if (policy.target === candidate.target) return false
+    if (candidate.audience === "user" && policy.audience === "user") {
+      return (policy.userId ?? null) === (candidate.userId ?? null)
+    }
+    if (candidate.catalogScope === "organization") return true
+    return candidate.audience === "all-platform-users" || policy.audience === "all-platform-users"
+  })
+}
+
 export function skillReleaseChannelKey(releaseChannel?: string | null): string {
   const normalized = releaseChannel?.trim()
   return normalized ? normalized : DEFAULT_RELEASE_CHANNEL_KEY

@@ -69,6 +69,75 @@ export function createSkillRegistryRouter(options: SkillRegistryRouterOptions = 
     res.json(await store.listEvents(context, req.query))
   }))
 
+  router.get("/skill-rollout-policies", asyncRoute(async (req, res) => {
+    const context = await resolveContext(req, res)
+    if (!context) return
+
+    res.json(await store.listRolloutPolicies(context, req.query))
+  }))
+
+  router.post("/skill-rollout-policies", asyncRoute(async (req, res) => {
+    const context = await resolveContext(req, res)
+    if (!context) return
+
+    const catalogScope = requireRolloutCatalogScope(req.body?.catalogScope)
+    const orgId = optionalString(req.body?.orgId) ?? optionalString(req.body?.ownerOrgId) ?? context.orgId ?? null
+    enforceRolloutPolicyMutationAccess(context, catalogScope, orgId)
+    const rawVersionId = req.body?.versionId !== undefined ? req.body.versionId : req.body?.desiredVersionId
+    const policy = await store.createRolloutPolicy(context, {
+      skillId: requireString(req.body?.skillId, "skillId"),
+      versionId: optionalNullableString(rawVersionId),
+      target: requireRolloutTarget(req.body?.target),
+      audience: requireRolloutAudience(req.body?.audience),
+      catalogScope,
+      orgId,
+      userId: optionalNullableString(req.body?.userId),
+      workspaceId: optionalNullableString(req.body?.workspaceId),
+      updatePolicy: optionalUpdatePolicy(req.body?.updatePolicy),
+      releaseChannel: optionalNullableString(req.body?.releaseChannel),
+      removalPolicy: optionalRemovalPolicy(req.body?.removalPolicy),
+    })
+    res.status(201).json({ policy })
+  }))
+
+  router.patch("/skill-rollout-policies/:policyId", asyncRoute(async (req, res) => {
+    const context = await resolveContext(req, res)
+    if (!context) return
+
+    const rawVersionId = req.body?.versionId !== undefined ? req.body.versionId : req.body?.desiredVersionId
+    const policy = await store.updateRolloutPolicy(context, req.params.policyId, {
+      versionId: optionalNullableString(rawVersionId),
+      target: optionalRolloutTarget(req.body?.target),
+      audience: optionalRolloutAudience(req.body?.audience),
+      orgId: req.body?.orgId !== undefined || req.body?.ownerOrgId !== undefined
+        ? optionalNullableString(req.body?.orgId ?? req.body?.ownerOrgId)
+        : undefined,
+      userId: optionalNullableString(req.body?.userId),
+      workspaceId: optionalNullableString(req.body?.workspaceId),
+      enabled: optionalBoolean(req.body?.enabled),
+      updatePolicy: optionalUpdatePolicy(req.body?.updatePolicy),
+      releaseChannel: optionalNullableString(req.body?.releaseChannel),
+      removalPolicy: optionalRemovalPolicy(req.body?.removalPolicy),
+    })
+    if (!policy) {
+      res.status(404).json({ error: "rollout_policy_not_found" })
+      return
+    }
+    res.json({ policy })
+  }))
+
+  router.delete("/skill-rollout-policies/:policyId", asyncRoute(async (req, res) => {
+    const context = await resolveContext(req, res)
+    if (!context) return
+
+    const policy = await store.deleteRolloutPolicy(context, req.params.policyId)
+    if (!policy) {
+      res.status(404).json({ error: "rollout_policy_not_found" })
+      return
+    }
+    res.json({ policy })
+  }))
+
   router.get("/skills/:skillId", asyncRoute(async (req, res) => {
     const context = await resolveContext(req, res)
     if (!context) return
@@ -371,6 +440,18 @@ function enforceReviewRequestAccess(context: SkillRegistryRouteContext, scope: s
   }
 }
 
+function enforceRolloutPolicyMutationAccess(
+  context: SkillRegistryRouteContext,
+  catalogScope: "organization" | "platform",
+  orgId: string | null,
+) {
+  if (catalogScope === "platform") {
+    requirePlatformSkillAdmin(context)
+    return
+  }
+  requireOrgSkillAdmin(context, orgId)
+}
+
 function requireOrganizationContext(context: SkillRegistryRouteContext) {
   if (context.orgId) return context.orgId
   throw new SkillRegistryStoreError(403, "organization_required")
@@ -419,6 +500,44 @@ function requireApprovalScope(value: unknown) {
   throw new SkillRegistryStoreError(400, "approval_scope_required")
 }
 
+function requireRolloutCatalogScope(value: unknown) {
+  if (value === "organization" || value === "platform") {
+    return value
+  }
+  throw new SkillRegistryStoreError(400, "catalog_scope_required")
+}
+
+function requireRolloutTarget(value: unknown) {
+  const target = optionalRolloutTarget(value)
+  if (target) return target
+  throw new SkillRegistryStoreError(400, "target_required")
+}
+
+function optionalRolloutTarget(value: unknown) {
+  if (value === undefined) return undefined
+  if (value === "user-global" || value === "workspace") return value
+  throw new SkillRegistryStoreError(400, "target_invalid")
+}
+
+function requireRolloutAudience(value: unknown) {
+  const audience = optionalRolloutAudience(value)
+  if (audience) return audience
+  throw new SkillRegistryStoreError(400, "audience_required")
+}
+
+function optionalRolloutAudience(value: unknown) {
+  if (value === undefined) return undefined
+  if (
+    value === "user" ||
+    value === "selected-workspaces" ||
+    value === "all-org-users" ||
+    value === "all-platform-users"
+  ) {
+    return value
+  }
+  throw new SkillRegistryStoreError(400, "audience_invalid")
+}
+
 function optionalUpdatePolicy(value: unknown) {
   if (
     value === undefined ||
@@ -430,4 +549,16 @@ function optionalUpdatePolicy(value: unknown) {
     return value
   }
   throw new SkillRegistryStoreError(400, "update_policy_invalid")
+}
+
+function optionalRemovalPolicy(value: unknown) {
+  if (
+    value === undefined ||
+    value === "user_removable" ||
+    value === "admin_removable" ||
+    value === "locked"
+  ) {
+    return value
+  }
+  throw new SkillRegistryStoreError(400, "removal_policy_invalid")
 }

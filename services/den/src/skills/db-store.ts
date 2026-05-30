@@ -12,6 +12,8 @@ import {
 } from "./search-indexer.js"
 import {
   evaluateSkillRegistryRetentionPolicy,
+  hasRolloutTargetConflict,
+  rolloutPolicyOwnerKey,
   skillApprovalOwnerKey,
   skillReleaseChannelKey,
   skillScopeOwnerKey,
@@ -24,6 +26,7 @@ import {
   SkillBlobTable,
   SkillInstallationTable,
   SkillReviewRequestTable,
+  SkillRolloutPolicyTable,
   SkillSearchDocumentTable,
   SkillTable,
   SkillVersionFileTable,
@@ -34,11 +37,13 @@ import {
   SkillAuditEventTable,
   type SkillApprovalScope,
   type SkillInstallationUpdatePolicy,
+  type SkillRolloutCatalogScope,
   type SkillScope,
   type SkillVersionStatus,
 } from "./schema.js"
 import {
   SkillRegistryStoreError,
+  type RegistrySkillRolloutPolicy,
   type RegistryReviewResponse,
   type RegistrySkillEvent,
   type RegistrySkillInstallation,
@@ -55,6 +60,8 @@ type CreateVersionInput = Parameters<SkillRegistryStore["createVersion"]>[1]
 type CreateInstallationInput = Parameters<SkillRegistryStore["createInstallation"]>[1]
 type UpdateInstallationInput = Parameters<SkillRegistryStore["updateInstallation"]>[2]
 type RestoreInstallationInput = Parameters<SkillRegistryStore["restoreInstallation"]>[2]
+type CreateRolloutPolicyInput = Parameters<SkillRegistryStore["createRolloutPolicy"]>[1]
+type UpdateRolloutPolicyInput = Parameters<SkillRegistryStore["updateRolloutPolicy"]>[2]
 type PatchWorkspaceSkillSetInput = Parameters<SkillRegistryStore["replaceWorkspaceSkillSet"]>[1]
 type CreateReviewRequestInput = Parameters<SkillRegistryStore["createReviewRequest"]>[1]
 type ResolveReviewInput = Parameters<SkillRegistryStore["approveReviewRequest"]>[1]
@@ -62,6 +69,7 @@ type ResolveReviewInput = Parameters<SkillRegistryStore["approveReviewRequest"]>
 type SkillRow = typeof SkillTable.$inferSelect
 type VersionRow = typeof SkillVersionTable.$inferSelect
 type InstallationRow = typeof SkillInstallationTable.$inferSelect
+type RolloutPolicyRow = typeof SkillRolloutPolicyTable.$inferSelect
 type ApprovalRow = typeof SkillApprovalTable.$inferSelect
 type ReviewRequestRow = typeof SkillReviewRequestTable.$inferSelect
 type WorkspaceSkillSetRow = typeof WorkspaceSkillSetTable.$inferSelect
@@ -533,6 +541,176 @@ export class DbSkillRegistryStore implements SkillRegistryStore {
       payload: { restoredAt: toIso(now) },
     })
     return this.toInstallationResponse(restored)
+  }
+
+  async listRolloutPolicies(context: SkillRegistryRouteContext, filters: Record<string, unknown> = {}) {
+    const target = optionalFilterString(filters.target)
+    const audience = optionalFilterString(filters.audience)
+    const orgId = optionalFilterString(filters.orgId) ?? context.orgId ?? null
+    const workspaceId = optionalFilterString(filters.workspaceId)
+    const rows = await this.database.select().from(SkillRolloutPolicyTable)
+    const policies = rows
+      .filter((policy) => policy.deleted_at === null)
+      .filter((policy) => isRolloutPolicyVisibleToContext(policy, context))
+      .filter((policy) => !target || policy.target === target)
+      .filter((policy) => !audience || policy.audience === audience)
+      .filter((policy) => !orgId || policy.org_id === orgId)
+      .filter((policy) => !workspaceId || policy.workspace_id === workspaceId)
+      .sort((left, right) => toIso(left.created_at).localeCompare(toIso(right.created_at)) || left.id.localeCompare(right.id))
+      .map(toRolloutPolicyResponse)
+    return { policies, nextCursor: null }
+  }
+
+  async createRolloutPolicy(context: SkillRegistryRouteContext, input: CreateRolloutPolicyInput) {
+    const skill = await this.requireVisibleSkill(context, input.skillId)
+    const owner = resolveRolloutPolicyOwner(context, input.catalogScope, input.orgId)
+    enforceRolloutPolicyManagementAccess(context, owner)
+    const version = input.versionId ? await this.requireVersion(input.versionId) : null
+    validateRolloutPolicyVersion(skill, version)
+
+    const policy = {
+      catalogScope: input.catalogScope,
+      ownerOrgId: owner.orgId,
+      target: input.target,
+      audience: input.audience,
+      userId: input.userId ?? null,
+      workspaceId: input.workspaceId ?? null,
+    }
+    validateRolloutPolicyShape(policy)
+    await this.enforceNoRolloutTargetConflict({
+      skillId: skill.id,
+      catalogScope: input.catalogScope,
+      ownerOrgId: owner.orgId,
+      target: input.target,
+      audience: input.audience,
+      userId: input.userId ?? null,
+      workspaceId: input.workspaceId ?? null,
+      enabled: true,
+      deletedAt: null,
+    })
+
+    const now = new Date()
+    const id = newId("rollout")
+    await this.database.insert(SkillRolloutPolicyTable).values({
+      id,
+      org_id: input.catalogScope === "organization" ? owner.orgId : null,
+      skill_id: skill.id,
+      desired_version_id: version?.id ?? null,
+      release_channel: input.releaseChannel?.trim() || null,
+      update_policy: input.updatePolicy ?? "pinned",
+      catalog_scope: input.catalogScope,
+      owner_org_id: owner.orgId,
+      target: input.target,
+      audience: input.audience,
+      user_id: input.userId ?? null,
+      workspace_id: input.workspaceId ?? null,
+      enabled: true,
+      removal_policy: input.removalPolicy ?? "user_removable",
+      created_by_user_id: context.userId,
+      deleted_at: null,
+      deleted_by_user_id: null,
+      purge_after: null,
+      restored_at: null,
+      restored_by_user_id: null,
+      created_at: now,
+      updated_at: now,
+    })
+    await this.recordEvent(context, "skill.rollout_policy.changed", {
+      orgId: input.catalogScope === "organization" ? owner.orgId : null,
+      skillId: skill.id,
+      versionId: version?.id ?? null,
+      workspaceId: input.workspaceId ?? null,
+      payload: { policyId: id, target: input.target, audience: input.audience, enabled: true },
+    })
+    return toRolloutPolicyResponse(await this.requireRolloutPolicy(id))
+  }
+
+  async updateRolloutPolicy(context: SkillRegistryRouteContext, policyId: string, input: UpdateRolloutPolicyInput) {
+    const policy = await this.findRolloutPolicy(policyId)
+    if (!policy || policy.deleted_at !== null) {
+      return null
+    }
+    enforceRolloutPolicyManagementAccess(context, {
+      catalogScope: policy.catalog_scope,
+      orgId: policy.owner_org_id,
+    })
+    const skill = await this.requireVisibleSkill(context, policy.skill_id)
+    const version = input.versionId !== undefined
+      ? input.versionId
+        ? await this.requireVersion(input.versionId)
+        : null
+      : policy.desired_version_id
+        ? await this.requireVersion(policy.desired_version_id)
+        : null
+    validateRolloutPolicyVersion(skill, version)
+
+    const owner = input.orgId !== undefined
+      ? resolveRolloutPolicyOwner(context, policy.catalog_scope, input.orgId)
+      : { catalogScope: policy.catalog_scope, orgId: policy.owner_org_id }
+    enforceRolloutPolicyManagementAccess(context, owner)
+    const next = {
+      skillId: policy.skill_id,
+      catalogScope: policy.catalog_scope,
+      ownerOrgId: owner.orgId,
+      target: input.target ?? policy.target,
+      audience: input.audience ?? policy.audience,
+      userId: input.userId !== undefined ? input.userId : policy.user_id,
+      workspaceId: input.workspaceId !== undefined ? input.workspaceId : policy.workspace_id,
+      enabled: input.enabled ?? policy.enabled,
+      deletedAt: policy.deleted_at,
+    }
+    validateRolloutPolicyShape(next)
+    await this.enforceNoRolloutTargetConflict(next, policy.id)
+
+    const now = new Date()
+    await this.database.update(SkillRolloutPolicyTable).set({
+      org_id: policy.catalog_scope === "organization" ? owner.orgId : null,
+      desired_version_id: input.versionId !== undefined ? version?.id ?? null : policy.desired_version_id,
+      release_channel: input.releaseChannel !== undefined ? input.releaseChannel?.trim() || null : policy.release_channel,
+      update_policy: input.updatePolicy ?? policy.update_policy,
+      owner_org_id: owner.orgId,
+      target: next.target,
+      audience: next.audience,
+      user_id: next.userId,
+      workspace_id: next.workspaceId,
+      enabled: next.enabled,
+      removal_policy: input.removalPolicy ?? policy.removal_policy,
+      updated_at: now,
+    }).where(eq(SkillRolloutPolicyTable.id, policy.id))
+    const updated = await this.requireRolloutPolicy(policy.id)
+    await this.recordEvent(context, "skill.rollout_policy.changed", {
+      orgId: updated.org_id,
+      skillId: updated.skill_id,
+      versionId: updated.desired_version_id,
+      workspaceId: updated.workspace_id,
+      payload: { policyId: updated.id, target: updated.target, audience: updated.audience, enabled: updated.enabled },
+    })
+    return toRolloutPolicyResponse(updated)
+  }
+
+  async deleteRolloutPolicy(context: SkillRegistryRouteContext, policyId: string) {
+    const policy = await this.findRolloutPolicy(policyId)
+    if (!policy || policy.deleted_at !== null) {
+      return null
+    }
+    enforceRolloutPolicyRemovalAccess(context, policy)
+    const now = new Date()
+    await this.database.update(SkillRolloutPolicyTable).set({
+      enabled: false,
+      deleted_at: now,
+      deleted_by_user_id: context.userId,
+      purge_after: new Date(now.getTime() + RETENTION_DAYS * 86_400_000),
+      updated_at: now,
+    }).where(eq(SkillRolloutPolicyTable.id, policy.id))
+    const deleted = await this.requireRolloutPolicy(policy.id)
+    await this.recordEvent(context, "skill.rollout_policy.changed", {
+      orgId: deleted.org_id,
+      skillId: deleted.skill_id,
+      versionId: deleted.desired_version_id,
+      workspaceId: deleted.workspace_id,
+      payload: { policyId: deleted.id, deletedAt: toIso(now), enabled: deleted.enabled },
+    })
+    return toRolloutPolicyResponse(deleted)
   }
 
   async getWorkspaceSkillSet(context: SkillRegistryRouteContext, workspaceId: string) {
@@ -1122,6 +1300,42 @@ export class DbSkillRegistryStore implements SkillRegistryStore {
     }
   }
 
+  private async enforceNoRolloutTargetConflict(
+    candidate: {
+      skillId: string
+      catalogScope: "organization" | "platform"
+      ownerOrgId?: string | null
+      target: "user-global" | "workspace"
+      audience: string
+      userId?: string | null
+      workspaceId?: string | null
+      enabled?: boolean
+      deletedAt?: Date | string | null
+    },
+    ignorePolicyId?: string,
+  ) {
+    const rows = await this.database
+      .select()
+      .from(SkillRolloutPolicyTable)
+      .where(and(eq(SkillRolloutPolicyTable.skill_id, candidate.skillId), isNull(SkillRolloutPolicyTable.deleted_at)))
+    const existing = rows
+      .filter((policy) => policy.id !== ignorePolicyId)
+      .map((policy) => ({
+        skillId: policy.skill_id,
+        catalogScope: policy.catalog_scope,
+        ownerOrgId: policy.owner_org_id,
+        target: policy.target,
+        audience: policy.audience,
+        userId: policy.user_id,
+        workspaceId: policy.workspace_id,
+        enabled: policy.enabled,
+        deletedAt: policy.deleted_at,
+      }))
+    if (hasRolloutTargetConflict(candidate, existing)) {
+      throw new SkillRegistryStoreError(409, "target_conflict")
+    }
+  }
+
   private async recordEvent(
     context: SkillRegistryRouteContext,
     action: string,
@@ -1209,6 +1423,17 @@ export class DbSkillRegistryStore implements SkillRegistryStore {
     const installation = await this.findInstallation(installationId)
     if (!installation) throw new SkillRegistryStoreError(404, "installation_not_found")
     return installation
+  }
+
+  private async findRolloutPolicy(policyId: string) {
+    const rows = await this.database.select().from(SkillRolloutPolicyTable).where(eq(SkillRolloutPolicyTable.id, policyId)).limit(1)
+    return rows[0] ?? null
+  }
+
+  private async requireRolloutPolicy(policyId: string) {
+    const policy = await this.findRolloutPolicy(policyId)
+    if (!policy) throw new SkillRegistryStoreError(404, "rollout_policy_not_found")
+    return policy
   }
 
   private async findReviewRequest(requestId: string) {
@@ -1307,6 +1532,102 @@ function resolveInstallationOwner(context: SkillRegistryRouteContext, input: Cre
   }
 }
 
+function resolveRolloutPolicyOwner(
+  context: SkillRegistryRouteContext,
+  catalogScope: SkillRolloutCatalogScope,
+  inputOrgId?: string | null,
+) {
+  if (catalogScope === "platform") {
+    rolloutPolicyOwnerKey({ catalogScope })
+    return { catalogScope, orgId: null }
+  }
+  const orgId = inputOrgId ?? context.orgId
+  if (!orgId) throw new SkillRegistryStoreError(400, "org_id_required")
+  rolloutPolicyOwnerKey({ catalogScope, ownerOrgId: orgId })
+  return { catalogScope, orgId }
+}
+
+function enforceRolloutPolicyManagementAccess(
+  context: SkillRegistryRouteContext,
+  policy: { catalogScope: SkillRolloutCatalogScope; orgId: string | null },
+) {
+  if (policy.catalogScope === "platform") {
+    if (!context.isPlatformAdmin) throw new SkillRegistryStoreError(403, "forbidden")
+    return
+  }
+  if (context.isPlatformAdmin) return
+  if (!policy.orgId || context.orgId !== policy.orgId) {
+    throw new SkillRegistryStoreError(403, "organization_forbidden")
+  }
+  if (context.orgRole !== "owner") {
+    throw new SkillRegistryStoreError(403, "insufficient_role")
+  }
+}
+
+function canManageRolloutPolicy(
+  context: SkillRegistryRouteContext,
+  policy: Pick<RolloutPolicyRow, "catalog_scope" | "owner_org_id">,
+) {
+  if (context.isPlatformAdmin) return true
+  if (policy.catalog_scope === "platform") return false
+  return Boolean(policy.owner_org_id && context.orgId === policy.owner_org_id && context.orgRole === "owner")
+}
+
+function enforceRolloutPolicyRemovalAccess(context: SkillRegistryRouteContext, policy: RolloutPolicyRow) {
+  if (canManageRolloutPolicy(context, policy)) return
+  if (policy.removal_policy !== "user_removable") {
+    throw new SkillRegistryStoreError(409, "removal_not_allowed")
+  }
+  if (policy.audience === "user" && policy.user_id === context.userId) {
+    return
+  }
+  throw new SkillRegistryStoreError(403, "forbidden")
+}
+
+function validateRolloutPolicyVersion(skill: SkillRow, version: VersionRow | null) {
+  if (!version) return
+  if (version.skill_id !== skill.id) {
+    throw new SkillRegistryStoreError(400, "version_skill_mismatch")
+  }
+  if ((skill.scope === "org" || skill.scope === "system") && version.status !== "approved") {
+    throw new SkillRegistryStoreError(409, "version_not_approved")
+  }
+}
+
+function validateRolloutPolicyShape(policy: {
+  catalogScope: SkillRolloutCatalogScope
+  ownerOrgId?: string | null
+  target: "user-global" | "workspace"
+  audience: string
+  userId?: string | null
+  workspaceId?: string | null
+}) {
+  if (policy.catalogScope === "organization" && !policy.ownerOrgId) {
+    throw new SkillRegistryStoreError(400, "org_id_required")
+  }
+  if (policy.catalogScope === "organization" && policy.audience === "all-platform-users") {
+    throw new SkillRegistryStoreError(400, "audience_scope_mismatch")
+  }
+  if (policy.catalogScope === "platform" && policy.audience === "all-org-users") {
+    throw new SkillRegistryStoreError(400, "audience_scope_mismatch")
+  }
+  if (policy.target === "user-global" && policy.workspaceId) {
+    throw new SkillRegistryStoreError(400, "workspace_id_forbidden")
+  }
+  if (policy.target === "workspace" && policy.audience !== "selected-workspaces") {
+    throw new SkillRegistryStoreError(400, "audience_target_mismatch")
+  }
+  if (policy.target === "workspace" && !policy.workspaceId) {
+    throw new SkillRegistryStoreError(400, "workspace_id_required")
+  }
+  if (policy.audience === "user" && !policy.userId) {
+    throw new SkillRegistryStoreError(400, "user_id_required")
+  }
+  if (policy.audience === "selected-workspaces" && !policy.workspaceId) {
+    throw new SkillRegistryStoreError(400, "workspace_id_required")
+  }
+}
+
 function normalizeName(name: string) {
   const normalized = name.trim()
   if (!normalized) throw new SkillRegistryStoreError(400, "skill_name_required")
@@ -1394,6 +1715,26 @@ function toEventResponse(event: EventRow): RegistrySkillEvent {
   }
 }
 
+function toRolloutPolicyResponse(policy: RolloutPolicyRow): RegistrySkillRolloutPolicy {
+  return {
+    id: policy.id,
+    skillId: policy.skill_id,
+    versionId: policy.desired_version_id,
+    target: policy.target,
+    audience: policy.audience,
+    catalogScope: policy.catalog_scope,
+    orgId: policy.org_id,
+    userId: policy.user_id,
+    workspaceId: policy.workspace_id,
+    enabled: policy.enabled && policy.deleted_at === null,
+    updatePolicy: policy.update_policy,
+    releaseChannel: policy.release_channel,
+    removalPolicy: policy.removal_policy,
+    createdAt: toIso(policy.created_at),
+    updatedAt: toIso(policy.updated_at),
+  }
+}
+
 function isSkillVisibleToContext(skill: SkillRow, context: SkillRegistryRouteContext) {
   if (context.isPlatformAdmin) return true
   switch (skill.scope) {
@@ -1405,6 +1746,12 @@ function isSkillVisibleToContext(skill: SkillRow, context: SkillRegistryRouteCon
     case "workspace":
       return Boolean(context.orgId && skill.org_id === context.orgId)
   }
+}
+
+function isRolloutPolicyVisibleToContext(policy: RolloutPolicyRow, context: SkillRegistryRouteContext) {
+  if (context.isPlatformAdmin) return true
+  if (policy.catalog_scope === "platform") return true
+  return Boolean(context.orgId && policy.org_id === context.orgId)
 }
 
 function isEventVisibleToContext(event: EventRow, context: SkillRegistryRouteContext) {

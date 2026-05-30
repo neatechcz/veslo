@@ -8,7 +8,10 @@ const skillPolicy = await import("../src/skills/policy.js")
 const dbSchema = await import("../src/db/schema.js")
 const { getTableConfig } = await import("drizzle-orm/mysql-core")
 
-const migrationUrl = new URL("../drizzle/0013_skill_registry.sql", import.meta.url)
+const migrationUrls = [
+  new URL("../drizzle/0013_skill_registry.sql", import.meta.url),
+  new URL("../drizzle/0014_skill_rollout_policies.sql", import.meta.url),
+]
 
 const requiredTables = [
   "skills",
@@ -24,11 +27,14 @@ const requiredTables = [
   "skill_share_links",
   "skill_search_documents",
   "skill_audit_events",
+  "skill_rollout_policies",
 ] as const
 
 function readMigration() {
-  assert.equal(existsSync(migrationUrl), true)
-  return readFileSync(migrationUrl, "utf8")
+  return migrationUrls.map((migrationUrl) => {
+    assert.equal(existsSync(migrationUrl), true)
+    return readFileSync(migrationUrl, "utf8")
+  }).join("\n")
 }
 
 function tableBlock(migration: string, tableName: string) {
@@ -169,6 +175,27 @@ test("approved org and system installations have approval and approved-version w
   assert.match(approvalsBlock, /`version_id` varchar\(64\) NOT NULL/)
   assert.match(migration, /skill_installation_scope_approval/)
   assert.match(migration, /skill_approval_scope_version/)
+})
+
+test("skill rollout policies encode target, audience, and removal policy", () => {
+  const migration = readMigration()
+  const rolloutBlock = tableBlock(migration, "skill_rollout_policies")
+
+  assert.match(rolloutBlock, /`target` enum\('user-global','workspace'\) NOT NULL/)
+  assert.match(
+    rolloutBlock,
+    /`audience` enum\('user','selected-workspaces','all-org-users','all-platform-users'\) NOT NULL/,
+  )
+  assert.match(
+    rolloutBlock,
+    /`removal_policy` enum\('user_removable','admin_removable','locked'\) NOT NULL DEFAULT 'user_removable'/,
+  )
+  assert.match(rolloutBlock, /`enabled` boolean NOT NULL DEFAULT true/)
+  assert.match(rolloutBlock, /CONSTRAINT `skill_rollout_user_target_shape` CHECK/)
+  assert.match(rolloutBlock, /CONSTRAINT `skill_rollout_workspace_target_shape` CHECK/)
+  assert.match(migration, /skill_rollout_active_target_guard/)
+  assert.match(migration, /skill_rollout_org_audience/)
+  assert.match(migration, /skill_rollout_workspace_lookup/)
 })
 
 test("approved org and system installation policy rejects unapproved or mismatched versions", () => {
