@@ -7,6 +7,10 @@ const source = existsSync(sourceUrl) ? readFileSync(sourceUrl, "utf8") : "";
 const enSource = readFileSync(new URL("../../i18n/locales/en.ts", import.meta.url), "utf8");
 const csSource = readFileSync(new URL("../../i18n/locales/cs.ts", import.meta.url), "utf8");
 const zhSource = readFileSync(new URL("../../i18n/locales/zh.ts", import.meta.url), "utf8");
+const locationsTabSource = source.slice(
+  source.indexOf('<Match when={activeTab() === "locations"}>'),
+  source.indexOf('<Match when={activeTab() === "versions"}>'),
+);
 
 test("skill detail drawer exports tab and data contracts", () => {
   assert.match(source, /export type SkillDetailTab = "overview" \| "locations" \| "versions" \| "sharing" \| "audit"/);
@@ -126,14 +130,24 @@ test("skill detail drawer hides unavailable actions and still keeps explicit rea
   assert.match(source, /<Show when=\{props\.onDeleteSkill\}>/);
   assert.match(source, /disabled=\{actionDisabled\("delete"\)\}/);
   assert.match(source, /title=\{actionTitle\("delete", "skills\.detail_delete"\)\}/);
-  assert.match(source, /location\.actionUnavailableReason\?\.copy/);
-  assert.match(source, /location\.actionUnavailableReason\?\.move/);
   assert.doesNotMatch(source, /disabled=\{!props\.onCopySkill/);
   assert.doesNotMatch(source, /disabled=\{!props\.onMoveSkill/);
   assert.doesNotMatch(source, /disabled=\{!props\.onCopyToWorkspaceSkill/);
   assert.doesNotMatch(source, /disabled=\{!props\.onPublishSkill/);
   assert.doesNotMatch(source, /disabled=\{!props\.onRequestApproval/);
   assert.doesNotMatch(source, /disabled=\{!props\.onDeleteSkill/);
+});
+
+test("skill detail locations tab is informational and does not expose placement-changing actions", () => {
+  assert.match(locationsTabSource, /translate\("skills\.detail_locations"\)/);
+  assert.match(locationsTabSource, /<MapPin size=\{14\}/);
+  assert.match(locationsTabSource, /scopeLabel\(location\.scope\)/);
+  assert.match(locationsTabSource, /\{location\.path\}/);
+  assert.doesNotMatch(locationsTabSource, /props\.onCopySkill/);
+  assert.doesNotMatch(locationsTabSource, /props\.onMoveSkill/);
+  assert.doesNotMatch(locationsTabSource, /skills\.detail_copy_to_global/);
+  assert.doesNotMatch(locationsTabSource, /skills\.detail_move_to_global/);
+  assert.doesNotMatch(source, /location\.actionUnavailableReason/);
 });
 
 test("skill detail drawer delegates version restore and target selection to skill version history", () => {

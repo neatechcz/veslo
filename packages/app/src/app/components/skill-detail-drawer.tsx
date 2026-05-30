@@ -43,7 +43,6 @@ export type SkillDetailLocation = {
   writable?: boolean;
   active?: boolean;
   source?: string | null;
-  actionUnavailableReason?: Partial<Record<SkillDetailAction, string | null | undefined>>;
 };
 
 export type SkillAuditEntry = {
@@ -111,15 +110,6 @@ export default function SkillDetailDrawer(props: SkillDetailDrawerProps) {
   const actionDisabled = (action: SkillDetailAction) =>
     Boolean(props.actionPending?.[action]) || Boolean(actionUnavailableReason(action));
   const actionTitle = (action: SkillDetailAction, labelKey: string) => actionUnavailableReason(action) ?? translate(labelKey);
-  const locationActionUnavailableReason = (location: SkillDetailLocation, action: SkillDetailAction) => {
-    if (action === "copy") return location.actionUnavailableReason?.copy ?? null;
-    if (action === "move") return location.actionUnavailableReason?.move ?? null;
-    return location.actionUnavailableReason?.[action] ?? null;
-  };
-  const locationActionDisabled = (location: SkillDetailLocation, action: SkillDetailAction) =>
-    Boolean(props.actionPending?.[action]) || Boolean(locationActionUnavailableReason(location, action));
-  const locationActionTitle = (location: SkillDetailLocation, action: SkillDetailAction, labelKey: string) =>
-    locationActionUnavailableReason(location, action) ?? translate(labelKey);
 
   const scopeLabel = (scope: SkillDetailLocation["scope"]) => {
     switch (scope) {
@@ -333,34 +323,6 @@ export default function SkillDetailDrawer(props: SkillDetailDrawerProps) {
                                 <p class="mt-1 truncate font-mono text-[12px] text-dls-secondary" title={location.path}>
                                   {location.path}
                                 </p>
-                              </div>
-                              <div class="flex shrink-0 gap-1">
-                                <Show when={props.onCopySkill}>
-                                  <Show when={!locationActionUnavailableReason(location, "copy")}>
-                                    <Button
-                                      variant="ghost"
-                                      class="h-8 px-2 type-ui-sm"
-                                      disabled={locationActionDisabled(location, "copy")}
-                                      title={locationActionTitle(location, "copy", "skills.detail_copy_to_global")}
-                                      onClick={() => props.onCopySkill?.(actionInput(skill, location))}
-                                    >
-                                      {translate("skills.detail_copy_to_global")}
-                                    </Button>
-                                  </Show>
-                                </Show>
-                                <Show when={props.onMoveSkill}>
-                                  <Show when={!locationActionUnavailableReason(location, "move")}>
-                                    <Button
-                                      variant="ghost"
-                                      class="h-8 px-2 type-ui-sm"
-                                      disabled={locationActionDisabled(location, "move")}
-                                      title={locationActionTitle(location, "move", "skills.detail_move_to_global")}
-                                      onClick={() => props.onMoveSkill?.(actionInput(skill, location))}
-                                    >
-                                      {translate("skills.detail_move_to_global")}
-                                    </Button>
-                                  </Show>
-                                </Show>
                               </div>
                             </div>
                           </article>

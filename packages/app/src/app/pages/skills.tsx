@@ -500,10 +500,6 @@ export default function SkillsView(props: SkillsViewProps) {
     writable: instance.writable,
     active: selectedDetail()?.instance.id === instance.id,
     source: instance.source,
-    actionUnavailableReason: {
-      copy: globalTransferDisabledReasonForInstance(instance),
-      move: globalTransferDisabledReasonForInstance(instance),
-    },
   });
 
   const selectedDetailLocations = createMemo<SkillDetailLocation[]>(() => {
