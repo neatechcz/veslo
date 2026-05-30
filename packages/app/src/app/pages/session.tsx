@@ -519,7 +519,7 @@ export default function SessionView(props: SessionViewProps) {
         <Show when={stateLabel}>
           {(label) => (
             <span
-              class="inline-flex shrink-0 items-center rounded-md border border-gray-6/70 bg-gray-2 px-1.5 text-[11px] font-medium leading-5 text-gray-11"
+              class="inline-block min-w-0 max-w-full truncate rounded-md border border-gray-6/70 bg-gray-2 px-1.5 align-middle text-[11px] font-medium leading-5 text-gray-11"
               title={label()}
             >
               {label()}
