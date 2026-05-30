@@ -545,18 +545,26 @@ export class DbSkillRegistryStore implements SkillRegistryStore {
   }
 
   async listRolloutPolicies(context: SkillRegistryRouteContext, filters: Record<string, unknown> = {}) {
+    const skillId = optionalFilterString(filters.skillId)
     const target = optionalFilterString(filters.target)
     const audience = optionalFilterString(filters.audience)
-    const orgId = optionalFilterString(filters.orgId) ?? context.orgId ?? null
+    const catalogScope = optionalFilterString(filters.catalogScope)
+    const orgId = optionalFilterString(filters.orgId)
+    const userId = optionalFilterString(filters.userId)
     const workspaceId = optionalFilterString(filters.workspaceId)
+    const enabled = optionalFilterBoolean(filters.enabled)
     const rows = await this.database.select().from(SkillRolloutPolicyTable)
     const policies = rows
       .filter((policy) => policy.deleted_at === null)
       .filter((policy) => isRolloutPolicyVisibleToContext(policy, context))
+      .filter((policy) => !skillId || policy.skill_id === skillId)
       .filter((policy) => !target || policy.target === target)
       .filter((policy) => !audience || policy.audience === audience)
+      .filter((policy) => !catalogScope || policy.catalog_scope === catalogScope)
       .filter((policy) => !orgId || policy.org_id === orgId)
+      .filter((policy) => !userId || policy.user_id === userId)
       .filter((policy) => !workspaceId || policy.workspace_id === workspaceId)
+      .filter((policy) => enabled === null || policy.enabled === enabled)
       .sort((left, right) => toIso(left.created_at).localeCompare(toIso(right.created_at)) || left.id.localeCompare(right.id))
       .map(toRolloutPolicyResponse)
     return { policies, nextCursor: null }
@@ -1696,6 +1704,15 @@ function optionalFilterString(value: unknown) {
   if (typeof value !== "string") return null
   const trimmed = value.trim()
   return trimmed || null
+}
+
+function optionalFilterBoolean(value: unknown) {
+  if (typeof value === "boolean") return value
+  if (typeof value !== "string") return null
+  const trimmed = value.trim().toLowerCase()
+  if (trimmed === "true") return true
+  if (trimmed === "false") return false
+  return null
 }
 
 function optionalPositiveInteger(value: unknown) {

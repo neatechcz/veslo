@@ -336,6 +336,11 @@ async function createApprovedSystemSkillVersion(
   return { skill: createdSkill.skill, version: version.version }
 }
 
+const rolloutPolicyStoreCases = [
+  { label: "in-memory", createStore: () => new InMemorySkillRegistryStore() },
+  { label: "DB-backed", createStore: dbBackedSkillRegistryStore },
+] as const
+
 test("rollout policy installs org skill as user-global for one user", async () => {
   const server = await startServer()
   try {
@@ -375,6 +380,168 @@ test("rollout policy installs org skill as user-global for one user", async () =
     await server.close()
   }
 })
+
+for (const { label, createStore } of rolloutPolicyStoreCases) {
+  test(`${label} rollout policy list includes platform policies for organization users`, async () => {
+    const server = await startServer(createStore())
+    try {
+      const platformAdmin = { userId: "platform_owner", isPlatformAdmin: true }
+      const orgMember = { userId: "member_1", orgId: "org_1", orgRole: "member" as const }
+      const { skill, version } = await createApprovedSystemSkillVersion(
+        server,
+        platformAdmin,
+        `${label}-platform-rollout-tool`,
+      )
+
+      const { body: created } = await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
+        method: "POST",
+        body: JSON.stringify({
+          skillId: skill.id,
+          versionId: version.id,
+          target: "user-global",
+          audience: "all-platform-users",
+          catalogScope: "platform",
+        }),
+        session: platformAdmin,
+      })
+
+      const { response, body } = await jsonRequest(
+        server.baseUrl,
+        "/skill-rollout-policies?target=user-global&enabled=true",
+        { session: orgMember },
+      )
+
+      assert.equal(response.status, 200)
+      assert.deepEqual(body.policies.map((policy: { id: string }) => policy.id), [created.policy.id])
+    } finally {
+      await server.close()
+    }
+  })
+}
+
+for (const { label, createStore } of rolloutPolicyStoreCases) {
+  test(`${label} rollout policy list filters by skill, user, catalog scope, and enabled state`, async () => {
+    const server = await startServer(createStore())
+    try {
+      const owner = { userId: "owner_1", orgId: "org_1", orgRole: "owner" as const }
+      const platformAdmin = { userId: "platform_owner", isPlatformAdmin: true }
+      const { skill: matchingSkill, version: matchingVersion } = await createApprovedOrgSkillVersion(
+        server,
+        owner,
+        `${label}-matching-rollout-tool`,
+      )
+      const { skill: otherSkill, version: otherVersion } = await createApprovedOrgSkillVersion(
+        server,
+        owner,
+        `${label}-other-rollout-tool`,
+      )
+      const { skill: disabledSkill, version: disabledVersion } = await createApprovedOrgSkillVersion(
+        server,
+        owner,
+        `${label}-disabled-rollout-tool`,
+      )
+      const { skill: platformSkill, version: platformVersion } = await createApprovedSystemSkillVersion(
+        server,
+        platformAdmin,
+        `${label}-catalog-scope-rollout-tool`,
+      )
+
+      const { body: matching } = await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
+        method: "POST",
+        body: JSON.stringify({
+          skillId: matchingSkill.id,
+          versionId: matchingVersion.id,
+          target: "user-global",
+          audience: "user",
+          userId: "user_1",
+          catalogScope: "organization",
+          orgId: "org_1",
+        }),
+        session: owner,
+      })
+      await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
+        method: "POST",
+        body: JSON.stringify({
+          skillId: matchingSkill.id,
+          versionId: matchingVersion.id,
+          target: "user-global",
+          audience: "user",
+          userId: "user_2",
+          catalogScope: "organization",
+          orgId: "org_1",
+        }),
+        session: owner,
+      })
+      await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
+        method: "POST",
+        body: JSON.stringify({
+          skillId: otherSkill.id,
+          versionId: otherVersion.id,
+          target: "user-global",
+          audience: "user",
+          userId: "user_1",
+          catalogScope: "organization",
+          orgId: "org_1",
+        }),
+        session: owner,
+      })
+      const { body: disabled } = await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
+        method: "POST",
+        body: JSON.stringify({
+          skillId: disabledSkill.id,
+          versionId: disabledVersion.id,
+          target: "user-global",
+          audience: "user",
+          userId: "user_3",
+          catalogScope: "organization",
+          orgId: "org_1",
+        }),
+        session: owner,
+      })
+      await jsonRequest(server.baseUrl, `/skill-rollout-policies/${disabled.policy.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled: false }),
+        session: owner,
+      })
+      const { body: platform } = await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
+        method: "POST",
+        body: JSON.stringify({
+          skillId: platformSkill.id,
+          versionId: platformVersion.id,
+          target: "user-global",
+          audience: "all-platform-users",
+          catalogScope: "platform",
+        }),
+        session: platformAdmin,
+      })
+
+      const encodedSkillId = encodeURIComponent(matchingSkill.id)
+      const { response: filteredResponse, body: filtered } = await jsonRequest(
+        server.baseUrl,
+        `/skill-rollout-policies?target=user-global&skillId=${encodedSkillId}&userId=user_1&catalogScope=organization&enabled=true`,
+        { session: owner },
+      )
+      assert.equal(filteredResponse.status, 200)
+      assert.deepEqual(filtered.policies.map((policy: { id: string }) => policy.id), [matching.policy.id])
+
+      const { body: disabledList } = await jsonRequest(
+        server.baseUrl,
+        "/skill-rollout-policies?target=user-global&enabled=false",
+        { session: owner },
+      )
+      assert.deepEqual(disabledList.policies.map((policy: { id: string }) => policy.id), [disabled.policy.id])
+
+      const { body: platformList } = await jsonRequest(
+        server.baseUrl,
+        "/skill-rollout-policies?target=user-global&catalogScope=platform&enabled=true",
+        { session: owner },
+      )
+      assert.deepEqual(platformList.policies.map((policy: { id: string }) => policy.id), [platform.policy.id])
+    } finally {
+      await server.close()
+    }
+  })
+}
 
 test("rollout policies require catalog-owner approvals", async () => {
   const server = await startServer()
