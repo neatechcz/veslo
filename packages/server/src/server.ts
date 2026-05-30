@@ -1955,6 +1955,29 @@ function registryRolloutPolicyToWorkspacePolicy(input: {
   };
 }
 
+function registryRolloutPolicyAppliesToMaterialization(input: {
+  policy: RegistrySkillRolloutPolicy;
+  userId?: string;
+  orgId?: string;
+  workspaceId?: string;
+}): boolean {
+  const { policy, userId, orgId, workspaceId } = input;
+  if (!policy.enabled) return false;
+  if (policy.catalogScope === "organization" && (!orgId || policy.orgId !== orgId)) return false;
+
+  if (policy.target === "workspace") {
+    return policy.audience === "selected-workspaces" && Boolean(workspaceId && policy.workspaceId === workspaceId);
+  }
+
+  if (policy.audience === "user") {
+    return Boolean(userId && policy.userId === userId);
+  }
+  if (policy.audience === "all-org-users") {
+    return Boolean(orgId && policy.orgId === orgId);
+  }
+  return policy.audience === "all-platform-users";
+}
+
 async function fetchRegistryWorkspaceMaterializations(
   ctx: RequestContext,
   workspace: WorkspaceInfo,
@@ -1962,6 +1985,7 @@ async function fetchRegistryWorkspaceMaterializations(
   materializations: WorkspaceSkillMaterialization[];
   conflicts: WorkspaceSkillConflict[];
   packagesByInstallationId: Map<string, SkillPackageArchive>;
+  personalGlobalSyncRequired: boolean;
   skillSetId: string;
   skillSetRevision: string;
 }> {
@@ -1979,8 +2003,21 @@ async function fetchRegistryWorkspaceMaterializations(
   const registryInstallations: WorkspaceSkillRegistryInstallation[] = [];
   const rolloutPolicies: WorkspaceSkillRolloutPolicy[] = [];
   const packagesByInstallationId = new Map<string, SkillPackageArchive>();
-  for (const installation of skillSet.skills) {
-    if (!installation.enabled) continue;
+  const seenInstallationIds = new Set<string>();
+  const personalGlobalWorkspace: WorkspaceInfo = {
+    id: "personal-global",
+    name: "Personal global skills",
+    path: personalGlobalManagedSkillsRoot(),
+    workspaceType: "local",
+  };
+  let personalGlobalSyncRequired = false;
+  const addRegistryInstallation = async (
+    installation: typeof skillSet.skills[number],
+    targetWorkspace: WorkspaceInfo,
+  ) => {
+    if (!installation.enabled) return;
+    if (seenInstallationIds.has(installation.installationId)) return;
+    seenInstallationIds.add(installation.installationId);
     const versionId = installation.desiredVersionId?.trim() || installation.versionId;
     const packageResponse = await downloadSkillPackageFromRegistry({
       ...registryInput,
@@ -1988,13 +2025,29 @@ async function fetchRegistryWorkspaceMaterializations(
     });
     const workspaceInstallation = registryInstallationToWorkspaceInstallation({
       installation,
-      workspace,
+      workspace: targetWorkspace,
       packageResponse,
       orgId: registryInput.orgId,
       userId: registryInput.userId,
     });
     registryInstallations.push(workspaceInstallation);
     packagesByInstallationId.set(workspaceInstallation.installationId, packageResponse.package);
+  };
+
+  for (const installation of skillSet.skills) {
+    await addRegistryInstallation(installation, workspace);
+  }
+
+  const personalGlobalInstallations = await listRegistrySkillInstallations({
+    ...registryInput,
+    source: "personal",
+    target: "personal-global",
+  });
+  if (personalGlobalInstallations.installations.length > 0) {
+    personalGlobalSyncRequired = true;
+  }
+  for (const installation of personalGlobalInstallations.installations) {
+    await addRegistryInstallation(installation, personalGlobalWorkspace);
   }
 
   for (const query of [
@@ -2007,7 +2060,17 @@ async function fetchRegistryWorkspaceMaterializations(
       enabled: true,
     });
     for (const policy of rolloutPoliciesResponse.policies) {
-      if (!policy.enabled) continue;
+      if (!registryRolloutPolicyAppliesToMaterialization({
+        policy,
+        userId: registryInput.userId,
+        orgId: registryInput.orgId,
+        workspaceId: workspace.id,
+      })) {
+        continue;
+      }
+      if (policy.target === "user-global") {
+        personalGlobalSyncRequired = true;
+      }
       const packageResponse = await downloadSkillPackageFromRegistry({
         ...registryInput,
         versionId: requireRolloutPolicyVersionId(policy),
@@ -2043,6 +2106,7 @@ async function fetchRegistryWorkspaceMaterializations(
     materializations,
     conflicts: resolution.conflicts,
     packagesByInstallationId,
+    personalGlobalSyncRequired,
     skillSetId: skillSet.skillSetId?.trim() || `workspace:${workspace.id}`,
     skillSetRevision: skillSet.revision?.trim() || desiredSkillSetRevision(materializations),
   };
@@ -2099,7 +2163,13 @@ async function fetchRegistryPersonalGlobalMaterializations(
     enabled: true,
   });
   for (const policy of rolloutPoliciesResponse.policies) {
-    if (!policy.enabled) continue;
+    if (!registryRolloutPolicyAppliesToMaterialization({
+      policy,
+      userId: registryInput.userId,
+      orgId: registryInput.orgId,
+    })) {
+      continue;
+    }
     const packageResponse = await downloadSkillPackageFromRegistry({
       ...registryInput,
       versionId: requireRolloutPolicyVersionId(policy),
@@ -4738,7 +4808,14 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       }, 202);
     }
 
-    const { materializations, conflicts, packagesByInstallationId, skillSetId, skillSetRevision } =
+    const {
+      materializations,
+      conflicts,
+      packagesByInstallationId,
+      personalGlobalSyncRequired,
+      skillSetId,
+      skillSetRevision,
+    } =
       await fetchRegistryWorkspaceMaterializations(ctx, workspace);
     const workspaceMaterializations = materializations.filter((skill) => skill.target === "workspace");
     const personalGlobalMaterializations = materializations.filter((skill) => skill.target === "personal-global");
@@ -4755,37 +4832,21 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       skills: workspaceMaterializations,
       loadPackage,
     });
-    let globalMaterializations = personalGlobalMaterializations;
-    let globalConflicts: WorkspaceSkillConflict[] = [];
     let personalGlobalResult: SkillSetMaterializationResult = {
       rootDir: personalGlobalManagedSkillsRoot(),
       materializedSkills: [],
       removedSkillNames: [],
       backupDirs: [],
     };
-    if (personalGlobalMaterializations.length > 0) {
-      const globalResolution = await fetchRegistryPersonalGlobalMaterializations(ctx);
-      globalMaterializations = globalResolution.materializations;
-      globalConflicts = globalResolution.conflicts;
-      const loadGlobalPackage = async (skill: WorkspaceSkillMaterialization) => {
-        const archive = globalResolution.packagesByInstallationId.get(skill.installationId);
-        if (!archive) {
-          throw new ApiError(500, "skill_package_missing", `Missing package for skill ${skill.name}`);
-        }
-        return archive;
-      };
+    if (personalGlobalSyncRequired) {
       personalGlobalResult = await materializePersonalGlobalSkillSet({
-        skills: globalMaterializations,
-        loadPackage: loadGlobalPackage,
+        skills: personalGlobalMaterializations,
+        loadPackage,
       });
     }
     const responseMaterializations = [
       ...workspaceMaterializations,
-      ...globalMaterializations,
-    ];
-    const responseConflicts = [
-      ...conflicts,
-      ...globalConflicts,
+      ...personalGlobalMaterializations,
     ];
     const lockfileEntries = workspaceMaterializations.map((skill) => ({
       skillId: skill.skillId,
@@ -4828,7 +4889,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       globalRootDir: personalGlobalResult.rootDir,
       lockfilePath,
       materializedSkills: responseMaterializations.map(materializationSummaryPayload),
-      conflicts: responseConflicts,
+      conflicts,
       removedSkillNames: [
         ...workspaceResult.removedSkillNames,
         ...personalGlobalResult.removedSkillNames,

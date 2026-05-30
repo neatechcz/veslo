@@ -350,6 +350,9 @@ test("POST /workspace/:id/skills/materialization/sync downloads desired packages
           ],
         });
       }
+      if (url.pathname === "/v1/skill-installations") {
+        return Response.json({ installations: [], nextCursor: null });
+      }
       if (url.pathname === "/v1/skill-rollout-policies" && url.searchParams.get("target") === "workspace") {
         return Response.json({
           policies: [
@@ -442,6 +445,12 @@ test("POST /workspace/:id/skills/materialization/sync downloads desired packages
       user: "user_1",
     },
     {
+      pathname: "/v1/skill-installations",
+      auth: "Bearer registry-token",
+      org: "org_1",
+      user: "user_1",
+    },
+    {
       pathname: "/v1/skill-rollout-policies",
       auth: "Bearer registry-token",
       org: "org_1",
@@ -485,6 +494,9 @@ test("POST /workspace/:id/skills/materialization/sync reports rollout target con
             },
           ],
         });
+      }
+      if (url.pathname === "/v1/skill-installations") {
+        return Response.json({ installations: [], nextCursor: null });
       }
       if (url.pathname === "/v1/skill-rollout-policies" && url.searchParams.get("target") === "workspace") {
         return Response.json({
@@ -573,6 +585,9 @@ test("POST /workspace/:id/skills/materialization/sync reports rollout-versus-rol
       registryCalls.push({ pathname: url.pathname, search: url.search });
       if (url.pathname === "/v1/workspaces/ws_1/skill-set") {
         return Response.json({ workspaceId: "ws_1", skills: [] });
+      }
+      if (url.pathname === "/v1/skill-installations") {
+        return Response.json({ installations: [], nextCursor: null });
       }
       if (url.pathname === "/v1/skill-rollout-policies" && url.searchParams.get("target") === "workspace") {
         return Response.json({
@@ -793,6 +808,223 @@ test("POST workspace materialization sync preserves existing personal global reg
   }
 });
 
+test("POST workspace materialization sync removes personal global skill shadowed by workspace rollout", async () => {
+  const previousHome = process.env.HOME;
+  const previousXdgConfigHome = process.env.XDG_CONFIG_HOME;
+  const homeRoot = await tempDir("veslo-workspace-retarget-global-home-");
+  process.env.HOME = homeRoot;
+  process.env.XDG_CONFIG_HOME = join(homeRoot, ".config");
+
+  try {
+    const personalPkg = await archive("retargeted-tool");
+    const workspacePkg = await archive("retargeted-tool");
+    const registry = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (url.pathname === "/v1/skill-installations") {
+          return Response.json({
+            installations: [
+              {
+                installationId: "install_personal_global",
+                skillId: "skill_retargeted",
+                versionId: "version_personal_global",
+                enabled: true,
+                source: "personal",
+                installedAt: "2026-05-26T12:00:00.000Z",
+                ownerUserId: "user_1",
+              },
+            ],
+            nextCursor: null,
+          });
+        }
+        if (url.pathname === "/v1/workspaces/ws_1/skill-set") {
+          return Response.json({ workspaceId: "ws_1", skills: [] });
+        }
+        if (url.pathname === "/v1/skill-rollout-policies" && url.searchParams.get("target") === "workspace") {
+          return Response.json({
+            policies: [
+              {
+                id: "rollout_workspace",
+                skillId: "skill_retargeted",
+                versionId: "version_workspace",
+                target: "workspace",
+                audience: "selected-workspaces",
+                catalogScope: "organization",
+                orgId: "org_1",
+                workspaceId: "ws_1",
+                enabled: true,
+                updatePolicy: "pinned",
+                removalPolicy: "admin_removable",
+                createdAt: "2026-05-30T10:00:00.000Z",
+              },
+            ],
+            nextCursor: null,
+          });
+        }
+        if (url.pathname === "/v1/skill-rollout-policies" && url.searchParams.get("target") === "user-global") {
+          return Response.json({ policies: [], nextCursor: null });
+        }
+        if (url.pathname === "/v1/skill-versions/version_personal_global/package") {
+          return Response.json({
+            versionId: "version_personal_global",
+            skillId: "skill_retargeted",
+            package: personalPkg,
+          });
+        }
+        if (url.pathname === "/v1/skill-versions/version_workspace/package") {
+          return Response.json({
+            versionId: "version_workspace",
+            skillId: "skill_retargeted",
+            package: workspacePkg,
+          });
+        }
+        return Response.json({ error: "not_found" }, { status: 404 });
+      },
+    });
+    runningServers.push(registry as { stop?: (closeActiveConnections?: boolean) => void });
+    const { server, workspaceRoot } = await startFixture({ registryBaseUrl: `http://127.0.0.1:${registry.port}` });
+
+    const globalResponse = await fetch(`http://127.0.0.1:${server.port}/skills/materialization/sync-global`, {
+      method: "POST",
+      headers: {
+        "x-veslo-host-token": "host-token",
+        "x-veslo-den-org-id": "org_1",
+        "x-veslo-den-user-id": "user_1",
+      },
+    });
+    expect(globalResponse.status).toBe(200);
+
+    const workspaceResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/skills/materialization/sync`, {
+      method: "POST",
+      headers: {
+        "x-veslo-host-token": "host-token",
+        "x-veslo-den-org-id": "org_1",
+        "x-veslo-den-user-id": "user_1",
+      },
+    });
+
+    expect(workspaceResponse.status).toBe(200);
+    const payload = await workspaceResponse.json() as {
+      materializedSkills: Array<{ installationId: string; target: string }>;
+      removedSkillNames: string[];
+      conflicts?: Array<{ code: string; blockingInstallationId?: string; blockedInstallationId?: string }>;
+    };
+    expect(payload.materializedSkills).toMatchObject([{
+      installationId: "rollout:rollout_workspace",
+      target: "workspace",
+    }]);
+    expect(payload.removedSkillNames).toContain("retargeted-tool");
+    expect(payload.conflicts).toMatchObject([
+      {
+        code: "personal-global-shadowed",
+        blockingInstallationId: "rollout:rollout_workspace",
+        blockedInstallationId: "install_personal_global",
+      },
+    ]);
+    expect(await readFile(join(workspaceRoot, ".opencode", "skills", "veslo-managed", "retargeted-tool", "SKILL.md"), "utf8"))
+      .toContain("# retargeted-tool");
+    await expect(stat(join(homeRoot, ".config", "opencode", "skills", "veslo-managed", "retargeted-tool"))).rejects.toThrow();
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+    if (previousXdgConfigHome === undefined) {
+      delete process.env.XDG_CONFIG_HOME;
+    } else {
+      process.env.XDG_CONFIG_HOME = previousXdgConfigHome;
+    }
+  }
+});
+
+test("POST workspace materialization sync skips out-of-scope user rollout package downloads", async () => {
+  const pkg = await archive("org-rollout-tool");
+  const registryCalls: Array<{ pathname: string; search: string }> = [];
+  const registry = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      const url = new URL(request.url);
+      registryCalls.push({ pathname: url.pathname, search: url.search });
+      if (url.pathname === "/v1/workspaces/ws_1/skill-set") {
+        return Response.json({ workspaceId: "ws_1", skills: [] });
+      }
+      if (url.pathname === "/v1/skill-installations") {
+        return Response.json({ installations: [], nextCursor: null });
+      }
+      if (url.pathname === "/v1/skill-rollout-policies" && url.searchParams.get("target") === "workspace") {
+        return Response.json({ policies: [], nextCursor: null });
+      }
+      if (url.pathname === "/v1/skill-rollout-policies" && url.searchParams.get("target") === "user-global") {
+        return Response.json({
+          policies: [
+            {
+              id: "rollout_other_user",
+              skillId: "skill_other_user",
+              versionId: "version_other_user",
+              target: "user-global",
+              audience: "user",
+              catalogScope: "organization",
+              orgId: "org_1",
+              userId: "user_2",
+              enabled: true,
+              updatePolicy: "pinned",
+              removalPolicy: "user_removable",
+              createdAt: "2026-05-30T10:00:00.000Z",
+            },
+            {
+              id: "rollout_org",
+              skillId: "skill_org_rollout",
+              versionId: "version_org_rollout",
+              target: "user-global",
+              audience: "all-org-users",
+              catalogScope: "organization",
+              orgId: "org_1",
+              enabled: true,
+              updatePolicy: "pinned",
+              removalPolicy: "admin_removable",
+              createdAt: "2026-05-30T10:00:00.000Z",
+            },
+          ],
+          nextCursor: null,
+        });
+      }
+      if (url.pathname === "/v1/skill-versions/version_org_rollout/package") {
+        return Response.json({
+          versionId: "version_org_rollout",
+          skillId: "skill_org_rollout",
+          package: pkg,
+        });
+      }
+      return Response.json({ error: "not_found" }, { status: 404 });
+    },
+  });
+  runningServers.push(registry as { stop?: (closeActiveConnections?: boolean) => void });
+  const { server } = await startFixture({ registryBaseUrl: `http://127.0.0.1:${registry.port}` });
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/skills/materialization/sync`, {
+    method: "POST",
+    headers: {
+      "x-veslo-host-token": "host-token",
+      "x-veslo-den-org-id": "org_1",
+      "x-veslo-den-user-id": "user_1",
+    },
+  });
+
+  expect(response.status).toBe(200);
+  expect(registryCalls).toContainEqual({
+    pathname: "/v1/skill-versions/version_org_rollout/package",
+    search: "",
+  });
+  expect(registryCalls).not.toContainEqual({
+    pathname: "/v1/skill-versions/version_other_user/package",
+    search: "",
+  });
+});
+
 test("GET workspace materialization status stays pending when registry is configured and only a local manifest exists", async () => {
   const registry = Bun.serve({
     hostname: "127.0.0.1",
@@ -865,6 +1097,9 @@ test("POST workspace materialization sync resolves org skill sets, writes lockfi
               },
             ],
           });
+        }
+        if (url.pathname === "/v1/skill-installations") {
+          return Response.json({ installations: [], nextCursor: null });
         }
         if (url.pathname === "/v1/skill-rollout-policies") {
           return Response.json({ policies: [], nextCursor: null });
