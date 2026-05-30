@@ -132,6 +132,8 @@ type WorkspaceMenuTarget = {
   workspaceId: string;
   anchorKey: string;
   source: "session" | "workspace";
+  x: number;
+  y: number;
 };
 
 type ProjectDropIndicator = {
@@ -163,6 +165,9 @@ type ChatSidebarResizeState = {
 };
 
 const CHAT_SIDEBAR_COLLAPSED_DRAG_ACTIVATION_PX = 4;
+const VIEWPORT_PADDING = 12;
+const WORKSPACE_MENU_DEFAULT_WIDTH = 176;
+const WORKSPACE_MENU_DEFAULT_HEIGHT = 220;
 
 const workspaceLabel = (workspace: WorkspaceInfo) =>
   workspace.displayName?.trim() ||
@@ -218,6 +223,10 @@ export default function WorkspaceSessionList(props: Props) {
   const [chatSidebarResizeDrag, setChatSidebarResizeDrag] = createSignal<ChatSidebarResizeState | null>(null);
   const [lastClickedSessionId, setLastClickedSessionId] = createSignal<string | null>(null);
   const [workspaceMenuTarget, setWorkspaceMenuTarget] = createSignal<WorkspaceMenuTarget | null>(null);
+  const [workspaceMenuSize, setWorkspaceMenuSize] = createSignal({
+    width: WORKSPACE_MENU_DEFAULT_WIDTH,
+    height: WORKSPACE_MENU_DEFAULT_HEIGHT,
+  });
   const [moreActionsMenuOpen, setMoreActionsMenuOpen] = createSignal(false);
   const [pendingArchiveConfirmationSessionId, setPendingArchiveConfirmationSessionId] = createSignal<string | null>(
     null,
@@ -734,7 +743,37 @@ export default function WorkspaceSessionList(props: Props) {
   ) => {
     event.preventDefault();
     event.stopPropagation();
-    setWorkspaceMenuTarget({ workspaceId, anchorKey, source: "session" });
+    setWorkspaceMenuTarget({
+      workspaceId,
+      anchorKey,
+      source: "session",
+      x: event.clientX,
+      y: event.clientY,
+    });
+  };
+
+  const handleWorkspaceMenuButtonClick = (
+    event: MouseEvent,
+    workspaceId: string,
+    anchorKey: string,
+  ) => {
+    event.stopPropagation();
+    const currentTarget = event.currentTarget;
+    if (!(currentTarget instanceof HTMLElement)) return;
+    const rect = currentTarget.getBoundingClientRect();
+    const width = workspaceMenuSize().width || WORKSPACE_MENU_DEFAULT_WIDTH;
+
+    setWorkspaceMenuTarget((current) =>
+      current?.anchorKey === anchorKey
+        ? null
+        : {
+            workspaceId,
+            anchorKey,
+            source: "workspace",
+            x: rect.right - width,
+            y: rect.bottom + 4,
+          },
+    );
   };
 
   const PROJECT_POINTER_DRAG_START_THRESHOLD_PX = 2;
@@ -1217,8 +1256,6 @@ export default function WorkspaceSessionList(props: Props) {
     });
   });
 
-  const workspaceMenuOpen = (anchorKey: string) => workspaceMenuTarget()?.anchorKey === anchorKey;
-
   const connectionStateFor = (workspaceId: string) =>
     props.workspaceConnectionStateById[workspaceId] ?? { status: "idle", message: null };
 
@@ -1233,113 +1270,180 @@ export default function WorkspaceSessionList(props: Props) {
   const taskLoadErrorFor = (workspace: WorkspaceInfo, error: string | null) =>
     getWorkspaceTaskLoadErrorDisplay(workspace, error);
 
-  const workspaceMenu = (
-    workspace: WorkspaceInfo,
-    anchorKey: string,
-    soulEnabled: boolean,
-    canRecover: boolean,
-    isConnectionActionBusy: boolean,
-  ) => {
+  const workspaceMenuContext = createMemo(() => {
+    const target = workspaceMenuTarget();
+    if (!target) return null;
+    const group = props.workspaceSessionGroups.find((candidate) => candidate.workspace.id === target.workspaceId);
+    const workspace = group?.workspace;
+    if (!workspace) return null;
+    return {
+      target,
+      workspace,
+      soulEnabled: Boolean(props.soulStatusByWorkspaceId[workspace.id]?.enabled),
+      canRecover: canRecoverWorkspace(workspace),
+      isConnectionActionBusy: isConnectionActionBusyFor(workspace.id),
+    };
+  });
+
+  const workspaceMenuStyle = createMemo(() => {
+    const target = workspaceMenuTarget();
+    if (!target || typeof window === "undefined") return undefined;
+    const size = workspaceMenuSize();
+    const maxX = Math.max(VIEWPORT_PADDING, window.innerWidth - size.width - VIEWPORT_PADDING);
+    const maxY = Math.max(VIEWPORT_PADDING, window.innerHeight - size.height - VIEWPORT_PADDING);
+    return {
+      left: `${Math.min(Math.max(VIEWPORT_PADDING, target.x), maxX)}px`,
+      top: `${Math.min(Math.max(VIEWPORT_PADDING, target.y), maxY)}px`,
+      width: `${WORKSPACE_MENU_DEFAULT_WIDTH}px`,
+    };
+  });
+
+  createEffect(() => {
+    if (!workspaceMenuContext()) return;
+    queueMicrotask(() => {
+      if (!workspaceMenuRef || typeof window === "undefined") return;
+      const rect = workspaceMenuRef.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      setWorkspaceMenuSize({ width: rect.width, height: rect.height });
+    });
+  });
+
+  createEffect(() => {
+    if (!workspaceMenuTarget()) return;
+    const handleWorkspaceMenuKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" && event.key !== "Tab") return;
+      setWorkspaceMenuTarget(null);
+    };
+    window.addEventListener("keydown", handleWorkspaceMenuKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", handleWorkspaceMenuKeyDown));
+  });
+
+  const workspaceMenu = () => {
     const allowRemoteActions = props.showRemoteActions !== false;
     return (
-      <Show when={workspaceMenuOpen(anchorKey)}>
-        <div
-          ref={(el) => (workspaceMenuRef = el)}
-          class="absolute right-0 top-[calc(100%+4px)] z-20 w-44 rounded-lg border border-gray-6 bg-gray-1 shadow-lg p-1"
-          onClick={(event) => event.stopPropagation()}
-        >
-          <button
-            type="button"
-            class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
-            onClick={() => {
-              props.onOpenRenameWorkspace(workspace.id);
-              setWorkspaceMenuTarget(null);
-            }}
-          >
-            {tr("sidebar.edit_name")}
-          </button>
-          <button
-            type="button"
-            class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
-            onClick={() => {
-              props.onShareWorkspace(workspace.id);
-              setWorkspaceMenuTarget(null);
-            }}
-          >
-            {tr("sidebar.share")}
-          </button>
-          <button
-            type="button"
-            class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
-            onClick={() => {
-              props.onOpenSoul(workspace.id);
-              setWorkspaceMenuTarget(null);
-            }}
-          >
-            {soulEnabled ? tr("sidebar.soul_settings") : tr("sidebar.enable_soul")}
-          </button>
-          <Show when={workspace.workspaceType === "local"}>
-            <button
-              type="button"
-              class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
-              onClick={() => {
-                props.onRevealWorkspace(workspace.id);
-                setWorkspaceMenuTarget(null);
+      <Show when={workspaceMenuContext()}>
+        {(context) => {
+          const target = () => context().target;
+          const workspace = () => context().workspace;
+          const soulEnabled = () => context().soulEnabled;
+          const canRecover = () => context().canRecover;
+          const isConnectionActionBusy = () => context().isConnectionActionBusy;
+
+          return (
+            <div
+              ref={(el) => (workspaceMenuRef = el)}
+              data-testid="session-workspace-context-menu"
+              class="fixed z-[100] w-44 max-h-[calc(100vh-24px)] overflow-y-auto rounded-lg border border-gray-6 bg-gray-1 shadow-2xl shadow-gray-12/10 p-1"
+              style={workspaceMenuStyle()}
+              onClick={(event) => event.stopPropagation()}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
               }}
+              role="menu"
             >
-              {revealLabel}
-            </button>
-          </Show>
-          <Show when={workspace.workspaceType === "remote" && allowRemoteActions}>
-            <Show when={canRecover}>
               <button
                 type="button"
                 class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
+                role="menuitem"
                 onClick={() => {
-                  void Promise.resolve(props.onRecoverWorkspace(workspace.id));
+                  props.onOpenRenameWorkspace(workspace().id);
                   setWorkspaceMenuTarget(null);
                 }}
-                disabled={isConnectionActionBusy}
               >
-                {tr("sidebar.recover")}
+                {tr("sidebar.edit_name")}
               </button>
-            </Show>
-            <button
-              type="button"
-              class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
-              onClick={() => {
-                void Promise.resolve(props.onTestWorkspaceConnection(workspace.id));
-                setWorkspaceMenuTarget(null);
-              }}
-              disabled={isConnectionActionBusy}
-            >
-              {tr("sidebar.test_connection")}
-            </button>
-            <button
-              type="button"
-              class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
-              onClick={() => {
-                props.onEditWorkspaceConnection(workspace.id);
-                setWorkspaceMenuTarget(null);
-              }}
-              disabled={isConnectionActionBusy}
-            >
-              {tr("sidebar.edit_connection")}
-            </button>
-          </Show>
-          <Show when={workspaceMenuTarget()?.source !== "session"}>
-            <button
-              type="button"
-              class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3 text-red-11"
-              onClick={() => {
-                props.onForgetWorkspace(workspace.id);
-                setWorkspaceMenuTarget(null);
-              }}
-            >
-              {tr("sidebar.remove_workspace")}
-            </button>
-          </Show>
-        </div>
+              <button
+                type="button"
+                class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
+                role="menuitem"
+                onClick={() => {
+                  props.onShareWorkspace(workspace().id);
+                  setWorkspaceMenuTarget(null);
+                }}
+              >
+                {tr("sidebar.share")}
+              </button>
+              <button
+                type="button"
+                class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
+                role="menuitem"
+                onClick={() => {
+                  props.onOpenSoul(workspace().id);
+                  setWorkspaceMenuTarget(null);
+                }}
+              >
+                {soulEnabled() ? tr("sidebar.soul_settings") : tr("sidebar.enable_soul")}
+              </button>
+              <Show when={workspace().workspaceType === "local"}>
+                <button
+                  type="button"
+                  class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
+                  role="menuitem"
+                  onClick={() => {
+                    props.onRevealWorkspace(workspace().id);
+                    setWorkspaceMenuTarget(null);
+                  }}
+                >
+                  {revealLabel}
+                </button>
+              </Show>
+              <Show when={workspace().workspaceType === "remote" && allowRemoteActions}>
+                <Show when={canRecover()}>
+                  <button
+                    type="button"
+                    class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
+                    role="menuitem"
+                    onClick={() => {
+                      void Promise.resolve(props.onRecoverWorkspace(workspace().id));
+                      setWorkspaceMenuTarget(null);
+                    }}
+                    disabled={isConnectionActionBusy()}
+                  >
+                    {tr("sidebar.recover")}
+                  </button>
+                </Show>
+                <button
+                  type="button"
+                  class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
+                  role="menuitem"
+                  onClick={() => {
+                    void Promise.resolve(props.onTestWorkspaceConnection(workspace().id));
+                    setWorkspaceMenuTarget(null);
+                  }}
+                  disabled={isConnectionActionBusy()}
+                >
+                  {tr("sidebar.test_connection")}
+                </button>
+                <button
+                  type="button"
+                  class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
+                  role="menuitem"
+                  onClick={() => {
+                    props.onEditWorkspaceConnection(workspace().id);
+                    setWorkspaceMenuTarget(null);
+                  }}
+                  disabled={isConnectionActionBusy()}
+                >
+                  {tr("sidebar.edit_connection")}
+                </button>
+              </Show>
+              <Show when={target().source !== "session"}>
+                <button
+                  type="button"
+                  class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3 text-red-11"
+                  role="menuitem"
+                  onClick={() => {
+                    props.onForgetWorkspace(workspace().id);
+                    setWorkspaceMenuTarget(null);
+                  }}
+                >
+                  {tr("sidebar.remove_workspace")}
+                </button>
+              </Show>
+            </div>
+          );
+        }}
       </Show>
     );
   };
@@ -1462,15 +1566,6 @@ export default function WorkspaceSessionList(props: Props) {
           </button>
         </div>
 
-        <Show when={showWorkspaceMenu}>
-          {workspaceMenu(
-            row.workspace,
-            options.anchorKey,
-            options.soulEnabled?.() ?? false,
-            options.canRecover?.() ?? false,
-            options.isConnectionActionBusy?.() ?? false,
-          )}
-        </Show>
       </div>
     );
   };
@@ -1768,13 +1863,6 @@ export default function WorkspaceSessionList(props: Props) {
                             </button>
                           </div>
 
-                          {workspaceMenu(
-                            workspace(),
-                            anchorKey,
-                            soulEnabled(),
-                            canRecover(),
-                            isConnectionActionBusy(),
-                          )}
                         </div>
                       );
                     }}
@@ -2054,26 +2142,12 @@ export default function WorkspaceSessionList(props: Props) {
                         <button
                           type="button"
                           class="p-1 rounded-md text-gray-8 hover:text-gray-11 hover:bg-gray-3 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setWorkspaceMenuTarget((current) =>
-                              current?.anchorKey === anchorKey
-                                ? null
-                                : { workspaceId: workspace().id, anchorKey, source: "workspace" },
-                            );
-                          }}
+                          onClick={(event) => handleWorkspaceMenuButtonClick(event, workspace().id, anchorKey)}
                           aria-label={tr("sidebar.workspace_options")}
                         >
                           <MoreHorizontal size={14} />
                         </button>
                       </div>
-                    {workspaceMenu(
-                      workspace(),
-                      anchorKey,
-                      soulEnabled(),
-                      canRecover(),
-                      isConnectionActionBusy(),
-                    )}
                     </div>
 
                     <Show when={!collapsed()}>
@@ -2238,6 +2312,7 @@ export default function WorkspaceSessionList(props: Props) {
           );
         }}
       </Show>
+      {workspaceMenu()}
       <Show when={projectDragPreview()}>
         {(preview) => (
           <div

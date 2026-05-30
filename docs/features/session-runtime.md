@@ -21,7 +21,7 @@ Dashboard and menu-style surfaces preserve a return path to session work. When t
 
 ## Desktop Context Menu
 
-The desktop app must not expose the webview's default browser context menu or web inspector entry points. Unhandled right-clicks are cancelled globally. If the user has selected text, Veslo shows a small app-owned context menu with only Copy. If a surface already handles `contextmenu` for its own menu, that surface remains authoritative and the global copy menu does not replace it.
+The desktop app must not expose the webview's default browser context menu or web inspector entry points. Unhandled right-clicks are cancelled globally. If the user has selected text, Veslo shows a small app-owned context menu with only Copy. If a surface already handles `contextmenu` for its own menu, that surface remains authoritative and the global copy menu does not replace it. App-owned right-click menus are viewport-fixed, top-layer controls that clamp inside the visible window instead of being clipped by sidebar scroll containers.
 
 ## Unread Session Indication
 
