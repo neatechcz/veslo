@@ -1647,6 +1647,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   busy={props.busy}
                   settingsTab={props.settingsTab}
                   setSettingsTab={props.setSettingsTab}
+                  onOpenDashboardTab={(nextTab) => handleDashboardTabSelection(nextTab)}
                   vesloServerStatus={props.vesloServerStatus}
                   vesloServerUrl={props.vesloServerUrl}
                   vesloReconnectBusy={props.vesloReconnectBusy}
@@ -1734,7 +1735,6 @@ export default function DashboardView(props: DashboardViewProps) {
                   connectNotion={props.connectNotion}
                   sessionArchives={props.sessionArchives}
                   onUnarchiveSession={props.onUnarchiveArchivedSession}
-                  workspaces={props.workspaces}
                 />
 
             </Match>
