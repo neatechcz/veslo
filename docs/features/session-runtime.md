@@ -96,6 +96,7 @@ Current behavior:
 - in by-project sidebar mode, private workspace sessions are grouped into a bottom `Chats` section; recent mode keeps them mixed with all other conversations by activity
 - long local paths can be abbreviated in the titlebar, but the full path remains available as the location tooltip
 - titlebar labels are non-selectable and participate in the Tauri drag region so the window can be moved from the text itself
+- desktop titlebar chrome is platform-aware: macOS keeps the native overlay behavior, while Windows uses the app-owned titlebar rail so shared navigation, context, feedback, and window controls occupy the top caption area
 
 ## Global Model and Thinking Behavior
 

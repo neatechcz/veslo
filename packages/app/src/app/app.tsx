@@ -115,6 +115,7 @@ import CreateWorkspaceModal from "./components/create-workspace-modal";
 import FeedbackModal, { type FeedbackFormValues } from "./components/feedback-modal";
 import RenameWorkspaceModal from "./components/rename-workspace-modal";
 import McpAuthModal from "./components/mcp-auth-modal";
+import { resolveNativeWindowDecorationsVisible } from "./components/titlebar-menu-layout";
 import OnboardingView from "./pages/onboarding";
 import DashboardView from "./pages/dashboard";
 import SessionView from "./pages/session";
@@ -8212,7 +8213,13 @@ export default function App() {
     }
     // Apply to window decorations (only in Tauri desktop environment)
     if (isTauriRuntime()) {
-      setWindowDecorations(!hide).catch(e => reportError(e, "titlebar.setDecorations"));
+      setWindowDecorations(
+        resolveNativeWindowDecorationsVisible({
+          tauri: true,
+          windows: isWindowsPlatform(),
+          hideTitlebar: hide,
+        }),
+      ).catch(e => reportError(e, "titlebar.setDecorations"));
     }
   });
 

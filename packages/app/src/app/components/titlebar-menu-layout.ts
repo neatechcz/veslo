@@ -11,6 +11,12 @@ export type TitlebarContentInsetInputs = {
   hideTitlebar: boolean;
 };
 
+export type NativeWindowDecorationsInputs = {
+  tauri: boolean;
+  windows: boolean;
+  hideTitlebar: boolean;
+};
+
 export type TitlebarMenuLayout = {
   rootClass: string;
   leftOffsetClass: string;
@@ -46,8 +52,8 @@ export const resolveTitlebarMenuLayout = ({
       rootClass: TAURI_OVERLAY_ROOT_CLASS,
       leftOffsetClass: "pointer-events-auto relative z-10 mt-1 ml-2.5",
       centerContentClass: "pointer-events-none absolute inset-x-0 top-0 z-10 flex h-9 items-start justify-center px-[176px] pt-1",
-      rightOffsetClass: "pointer-events-auto relative z-10 mt-1 mr-[136px]",
-      dragRegionClass: hideTitlebar ? TAURI_DRAG_REGION_CLASS : null,
+      rightOffsetClass: "pointer-events-auto relative z-10 mr-0",
+      dragRegionClass: TAURI_DRAG_REGION_CLASS,
     };
   }
 
@@ -77,4 +83,14 @@ export const resolveTitlebarContentInsetClass = ({
 }: TitlebarContentInsetInputs): string => {
   if (!tauri || !mac || hideTitlebar) return "";
   return "pt-7";
+};
+
+export const resolveNativeWindowDecorationsVisible = ({
+  tauri,
+  windows,
+  hideTitlebar,
+}: NativeWindowDecorationsInputs): boolean => {
+  if (!tauri) return true;
+  if (windows) return false;
+  return !hideTitlebar;
 };

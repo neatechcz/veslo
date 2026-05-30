@@ -94,10 +94,22 @@ test("titlebar menu toggles keep macOS-sized icon controls", () => {
     "right titlebar toggle icon should use the 18px size needed for the visible outline to match native titlebar button height",
   );
 
-  assert.doesNotMatch(
+  assert.doesNotMatch(source, /LeftSidebarToggleIcon size=\{1[13]\}/, "left titlebar toggle should not regress");
+  assert.doesNotMatch(source, /RightSidebarToggleIcon size=\{1[13]\}/, "right titlebar toggle should not regress");
+});
+
+test("Windows Tauri titlebar exposes app-owned window controls", () => {
+  assert.match(source, /const\s+showWindowsWindowControls\s*=\s*isTauri\s*&&\s*isWindows;/);
+  assert.match(source, /aria-label="Minimize window"/);
+  assert.match(source, /minimizeCurrentWindow/);
+  assert.match(source, /aria-label="Maximize or restore window"/);
+  assert.match(source, /toggleMaximizeCurrentWindow/);
+  assert.match(source, /aria-label="Close window"/);
+  assert.match(source, /closeCurrentWindow/);
+  assert.match(
     source,
-    /h-5 w-5|size=\{11\}|size=\{13\}/,
-    "titlebar toggles should not regress to undersized icon metrics",
+    /onDblClick=\{handleTitlebarDoubleClick\}/,
+    "Windows app-owned titlebar should preserve double-click maximize behavior",
   );
 });
 

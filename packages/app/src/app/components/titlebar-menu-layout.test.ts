@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  resolveNativeWindowDecorationsVisible,
   resolveTitlebarContentInsetClass,
   resolveTitlebarMenuLayout,
 } from "./titlebar-menu-layout.js";
@@ -21,8 +22,8 @@ test("Windows Tauri titlebar menu keeps right-side safe spacing", () => {
     rootClass: "pointer-events-none fixed inset-x-0 top-0 z-[60] flex items-start justify-between",
     leftOffsetClass: "pointer-events-auto relative z-10 mt-1 ml-2.5",
     centerContentClass: "pointer-events-none absolute inset-x-0 top-0 z-10 flex h-9 items-start justify-center px-[176px] pt-1",
-    rightOffsetClass: "pointer-events-auto relative z-10 mt-1 mr-[136px]",
-    dragRegionClass: null,
+    rightOffsetClass: "pointer-events-auto relative z-10 mr-0",
+    dragRegionClass: "pointer-events-auto fixed inset-x-0 top-0 z-[59] h-9",
   });
 });
 
@@ -50,6 +51,29 @@ test("macOS Tauri titlebar reserves top inset when native titlebar is visible", 
   assert.equal(
     resolveTitlebarContentInsetClass({ tauri: true, mac: true, hideTitlebar: false }),
     "pt-7",
+  );
+});
+
+test("native window decorations remain hidden only for Windows Tauri titlebar chrome", () => {
+  assert.equal(
+    resolveNativeWindowDecorationsVisible({ tauri: true, windows: true, hideTitlebar: false }),
+    false,
+  );
+  assert.equal(
+    resolveNativeWindowDecorationsVisible({ tauri: true, windows: true, hideTitlebar: true }),
+    false,
+  );
+  assert.equal(
+    resolveNativeWindowDecorationsVisible({ tauri: true, windows: false, hideTitlebar: false }),
+    true,
+  );
+  assert.equal(
+    resolveNativeWindowDecorationsVisible({ tauri: true, windows: false, hideTitlebar: true }),
+    false,
+  );
+  assert.equal(
+    resolveNativeWindowDecorationsVisible({ tauri: false, windows: true, hideTitlebar: true }),
+    true,
   );
 });
 

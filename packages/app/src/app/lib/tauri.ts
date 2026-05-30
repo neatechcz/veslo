@@ -1257,6 +1257,39 @@ export async function setWindowTitle(title: string): Promise<void> {
   }
 }
 
+export async function minimizeCurrentWindow(): Promise<void> {
+  if (!isTauriRuntime()) return;
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  try {
+    await getCurrentWindow().minimize();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[tauri.minimizeCurrentWindow] Failed to minimize window: ${message}`);
+  }
+}
+
+export async function toggleMaximizeCurrentWindow(): Promise<void> {
+  if (!isTauriRuntime()) return;
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  try {
+    await getCurrentWindow().toggleMaximize();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[tauri.toggleMaximizeCurrentWindow] Failed to toggle maximize: ${message}`);
+  }
+}
+
+export async function closeCurrentWindow(): Promise<void> {
+  if (!isTauriRuntime()) return;
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  try {
+    await getCurrentWindow().close();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[tauri.closeCurrentWindow] Failed to close window: ${message}`);
+  }
+}
+
 /**
  * Start dragging the current native window.
  * Intended as a reliability fallback for custom drag regions.

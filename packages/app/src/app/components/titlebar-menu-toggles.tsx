@@ -1,5 +1,11 @@
 import { Show, type JSX } from "solid-js";
-import { startWindowDragging } from "../lib/tauri";
+import { Minus, Square, X } from "lucide-solid";
+import {
+  closeCurrentWindow,
+  minimizeCurrentWindow,
+  startWindowDragging,
+  toggleMaximizeCurrentWindow,
+} from "../lib/tauri";
 import { isMacPlatform, isTauriRuntime, isWindowsPlatform } from "../utils";
 import { LeftSidebarToggleIcon, RightSidebarToggleIcon } from "./session/sidebar-toggle-icons";
 import { resolveTitlebarMenuLayout } from "./titlebar-menu-layout";
@@ -18,12 +24,16 @@ type TitlebarMenuTogglesProps = {
 };
 
 export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
+  const isTauri = isTauriRuntime();
+  const isWindows = isWindowsPlatform();
+  const isMac = isMacPlatform();
   const layout = resolveTitlebarMenuLayout({
-    tauri: isTauriRuntime(),
-    windows: isWindowsPlatform(),
-    mac: isMacPlatform(),
+    tauri: isTauri,
+    windows: isWindows,
+    mac: isMac,
     hideTitlebar: props.hideTitlebar,
   });
+  const showWindowsWindowControls = isTauri && isWindows;
 
   const buttonClass = (active: boolean) =>
     `h-6 w-6 flex items-center justify-center bg-transparent transition-colors focus:outline-none focus-visible:ring-0 ${
@@ -41,6 +51,19 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
       // Ignore: data-tauri-drag-region remains the primary drag path.
     });
   };
+  const handleTitlebarDoubleClick = () => {
+    if (!isWindows) return;
+    void toggleMaximizeCurrentWindow().catch((error) => {
+      console.error("[titlebar.windowControls] Failed to toggle maximize from titlebar double-click", error);
+    });
+  };
+  const runWindowControl = (label: string, action: () => Promise<void>) => {
+    void action().catch((error) => {
+      console.error(`[titlebar.windowControls] Failed to ${label}`, error);
+    });
+  };
+  const windowControlButtonClass =
+    "inline-flex h-9 w-11 items-center justify-center bg-transparent text-gray-9 transition-colors hover:bg-gray-3/80 hover:text-gray-12 focus:outline-none focus-visible:ring-0";
 
   return (
     <>
@@ -49,6 +72,7 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
           data-tauri-drag-region
           class={layout.dragRegionClass}
           onMouseDown={handleTitlebarDragMouseDown}
+          onDblClick={handleTitlebarDoubleClick}
         />
       ) : null}
       <div class={layout.rootClass}>
@@ -67,6 +91,7 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
               <span
                 data-tauri-drag-region
                 onMouseDown={handleTitlebarDragMouseDown}
+                onDblClick={handleTitlebarDoubleClick}
                 class="select-none truncate text-[13px] font-medium leading-6 text-gray-12"
               >
                 Veslo by Neatech
@@ -80,6 +105,7 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
             <div
               data-tauri-drag-region
               onMouseDown={handleTitlebarDragMouseDown}
+              onDblClick={handleTitlebarDoubleClick}
               class="pointer-events-auto min-w-0 max-w-full select-none truncate text-[12px] leading-6 text-gray-10"
             >
               {props.centerContent}
@@ -98,6 +124,37 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
           >
             <RightSidebarToggleIcon size={18} />
           </button>
+          <Show when={showWindowsWindowControls}>
+            <div class="ml-1 flex h-9 overflow-hidden">
+              <button
+                type="button"
+                class={windowControlButtonClass}
+                onClick={() => runWindowControl("minimize window", minimizeCurrentWindow)}
+                aria-label="Minimize window"
+                title="Minimize window"
+              >
+                <Minus size={13} />
+              </button>
+              <button
+                type="button"
+                class={windowControlButtonClass}
+                onClick={() => runWindowControl("toggle maximize", toggleMaximizeCurrentWindow)}
+                aria-label="Maximize or restore window"
+                title="Maximize or restore window"
+              >
+                <Square size={11} />
+              </button>
+              <button
+                type="button"
+                class={`${windowControlButtonClass} hover:bg-red-9 hover:text-white`}
+                onClick={() => runWindowControl("close window", closeCurrentWindow)}
+                aria-label="Close window"
+                title="Close window"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          </Show>
         </div>
       </div>
     </>
