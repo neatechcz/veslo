@@ -122,6 +122,34 @@ export type VesloSkillResolveResult = {
   candidates: VesloSkillResolveCandidate[];
 };
 
+export type VesloSkillRemovalScope = "workspace" | "user-global";
+
+export type VesloSkillRemovalItem = {
+  id: string;
+  name: string;
+  scope: VesloSkillRemovalScope;
+  workspaceId?: string;
+  path: string;
+  reason?: string;
+  status: "removed" | "restored";
+  removedAt: string;
+  restoredAt?: string;
+  canRestore: boolean;
+};
+
+export type VesloSkillRemovalsResponse = {
+  items: VesloSkillRemovalItem[];
+};
+
+export type VesloSkillRemovalMutationResult = {
+  ok: true;
+  name?: string;
+  path: string;
+  removalId?: string;
+  reloadRequired?: boolean;
+  trigger?: VesloReloadTrigger & { scope?: VesloSkillRemovalScope };
+};
+
 export type VesloHubSkillItem = {
   name: string;
   description: string;
@@ -1727,6 +1755,29 @@ function buildSkillRegistryRolloutPoliciesPath(params?: VesloSkillRegistryListRo
   return `/v1/skill-rollout-policies${suffix ? `?${suffix}` : ""}`;
 }
 
+function buildSkillRemovalsPath(params?: {
+  scope?: VesloSkillRemovalScope;
+  workspaceId?: string;
+  includeRestored?: boolean;
+}) {
+  const search = new URLSearchParams();
+  if (params?.scope) search.set("scope", params.scope);
+  setTrimmedSearchParam(search, "workspaceId", params?.workspaceId);
+  if (typeof params?.includeRestored === "boolean") {
+    search.set("includeRestored", params.includeRestored ? "true" : "false");
+  }
+  const suffix = search.toString();
+  return `/skill-removals${suffix ? `?${suffix}` : ""}`;
+}
+
+function buildDeleteGlobalSkillPath(name: string, options?: { path?: string; reason?: string }) {
+  const search = new URLSearchParams();
+  setTrimmedSearchParam(search, "path", options?.path);
+  setTrimmedSearchParam(search, "reason", options?.reason);
+  const suffix = search.toString();
+  return `/skills/user-global/${encodeURIComponent(name)}${suffix ? `?${suffix}` : ""}`;
+}
+
 function buildHeaders(
   token?: string,
   hostToken?: string,
@@ -2780,6 +2831,28 @@ export function createVesloServerClient(options: {
         { token, hostToken, method: "DELETE" },
       );
     },
+    deleteGlobalSkill: (name: string, options?: { path?: string; reason?: string }) =>
+      requestJson<VesloSkillRemovalMutationResult>(
+        baseUrl,
+        buildDeleteGlobalSkillPath(name, options),
+        { token, hostToken, method: "DELETE" },
+      ),
+    listSkillRemovals: (params?: {
+      scope?: VesloSkillRemovalScope;
+      workspaceId?: string;
+      includeRestored?: boolean;
+    }) =>
+      requestJson<VesloSkillRemovalsResponse>(
+        baseUrl,
+        buildSkillRemovalsPath(params),
+        { token, hostToken },
+      ),
+    restoreSkillRemoval: (removalId: string) =>
+      requestJson<VesloSkillRemovalMutationResult>(
+        baseUrl,
+        `/skill-removals/${encodeURIComponent(removalId)}/restore`,
+        { token, hostToken, method: "POST" },
+      ),
     listMcp: (workspaceId: string) =>
       requestJson<{ items: VesloMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp`, { token, hostToken }),
     addMcp: (workspaceId: string, payload: { name: string; config: Record<string, unknown> }) =>

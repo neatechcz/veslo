@@ -31,6 +31,7 @@ import {
   Package,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
   Table2,
   Trash2,
@@ -128,6 +129,8 @@ export type SkillsViewProps = {
   readSkillInstance: (target: SkillMutationTarget) => Promise<{ name: string; path: string; content: string } | null>;
   saveSkillInstance: (target: SkillMutationTarget, content: string) => Promise<SkillSaveResult>;
   deleteSkillInstance: (target: SkillMutationTarget) => Promise<void>;
+  removeSkillInstance: (target: SkillMutationTarget) => Promise<SkillSaveResult>;
+  restoreSkillInstance: (target: SkillMutationTarget) => Promise<SkillSaveResult>;
   copySkillInstanceToGlobal: (target: SkillMutationTarget, options?: { deleteSource?: boolean }) => Promise<SkillSaveResult>;
   copySkillInstanceToWorkspace: (target: SkillMutationTarget, workspaceId: string) => Promise<SkillSaveResult>;
   createSessionAndOpen: () => void;
@@ -176,16 +179,28 @@ export default function SkillsView(props: SkillsViewProps) {
     }));
   });
 
-  const installedInventoryItems = createMemo(() =>
+  const activeInstalledInventoryItems = createMemo(() =>
     mergeRemoteFallbackIntoInventory(
       filterSkillInventoryItems(props.skillInventory, { includeDeleted: false })
         .filter((item) => item.status !== "hub-only"),
       activeRemoteInventoryItems(),
     )
   );
+  const installedInventoryItems = createMemo(() => activeInstalledInventoryItems());
+  const inventoryItemsForDisplay = createMemo(() =>
+    mergeRemoteFallbackIntoInventory(
+      props.skillInventory,
+      activeRemoteInventoryItems(),
+    )
+  );
 
   const [uninstallTarget, setUninstallTarget] = createSignal<SkillMutationTarget | null>(null);
   const uninstallOpen = createMemo(() => uninstallTarget() != null);
+  const [restoreTarget, setRestoreTarget] = createSignal<SkillMutationTarget | null>(null);
+  const restoreOpen = createMemo(() => restoreTarget() != null);
+  const [removePending, setRemovePending] = createSignal(false);
+  const [restorePending, setRestorePending] = createSignal(false);
+  const skillMutationBusy = createMemo(() => props.busy || removePending() || restorePending());
   const [searchQuery, setSearchQuery] = createSignal("");
   const [inventoryScopeFilter, setInventoryScopeFilter] = createSignal<"all" | "user-global" | "workspace">("all");
   const [inventoryWorkspaceFilter, setInventoryWorkspaceFilter] = createSignal("all");
@@ -307,10 +322,46 @@ export default function SkillsView(props: SkillsViewProps) {
     workspace.id
   );
 
-  const mutationTargetForInstance = (instance: SkillInstance): SkillMutationTarget | null => {
+  const inventoryInstanceLifecycle = (instance: SkillInstance) =>
+    instance.lifecycle === "removed" ? "removed" : "active";
+
+  const canRevealInventoryInstanceLocation = (instance: SkillInstance) =>
+    inventoryInstanceLifecycle(instance) === "active" && Boolean(instance.path.trim());
+
+  const instanceHasRegistryMutationMetadata = (instance: SkillInstance) =>
+    Boolean(instance.registry?.installationId?.trim() || instance.registry?.policyId?.trim());
+
+  const instanceHasRestoreMetadata = (instance: SkillInstance) =>
+    Boolean(instance.restoreTarget || instanceHasRegistryMutationMetadata(instance));
+
+  const editableWorkspaceMutationTargetForInstance = (instance: SkillInstance): SkillMutationTarget | null => {
+    if (inventoryInstanceLifecycle(instance) === "removed") return null;
     if (!instance.writable) return null;
     if (instance.scope !== "workspace") return null;
     if (instance.workspaceId !== props.activeWorkspaceId) return null;
+    return skillMutationTargetFromInstance(instance);
+  };
+
+  const removeTargetForInstance = (instance: SkillInstance): SkillMutationTarget | null => {
+    if (inventoryInstanceLifecycle(instance) === "removed") return null;
+    if (instance.registry?.removalPolicy === "locked") return null;
+    if (instance.scope === "user-global") return skillMutationTargetFromInstance(instance);
+    if (instance.scope === "workspace") {
+      if (instanceHasRegistryMutationMetadata(instance)) return skillMutationTargetFromInstance(instance);
+      if (!instance.workspaceId?.trim()) return null;
+      if (instance.writable === false) return null;
+      return skillMutationTargetFromInstance(instance);
+    }
+    if (instance.scope === "organization" && instanceHasRegistryMutationMetadata(instance)) {
+      return skillMutationTargetFromInstance(instance);
+    }
+    return null;
+  };
+
+  const restoreTargetForInstance = (instance: SkillInstance): SkillMutationTarget | null => {
+    if (inventoryInstanceLifecycle(instance) !== "removed") return null;
+    if (instance.registry?.removalPolicy === "locked") return null;
+    if (!instanceHasRestoreMetadata(instance)) return null;
     return skillMutationTargetFromInstance(instance);
   };
 
@@ -335,7 +386,7 @@ export default function SkillsView(props: SkillsViewProps) {
   };
 
   const actionSkillForInstance = (instance: SkillInstance): ActionSkillCard | null => {
-    const mutationTarget = mutationTargetForInstance(instance);
+    const mutationTarget = editableWorkspaceMutationTargetForInstance(instance);
     if (!mutationTarget) return null;
     const instancePath = normalizeSkillPath(instance.path);
     const skill = props.skills.find((candidate) =>
@@ -349,14 +400,33 @@ export default function SkillsView(props: SkillsViewProps) {
       : null;
   };
 
-  const canUninstallInventoryInstance = (input: { item: SkillInventoryItem; instance: SkillInstance }) =>
-    Boolean(mutationTargetForInstance(input.instance));
+  const canRemoveInventoryInstance = (input: { item: SkillInventoryItem; instance: SkillInstance }) =>
+    Boolean(removeTargetForInstance(input.instance));
+
+  const canRestoreInventoryInstance = (input: { item: SkillInventoryItem; instance: SkillInstance }) =>
+    Boolean(restoreTargetForInstance(input.instance));
 
   const uninstallDisabledReason = (input: { item: SkillInventoryItem; instance: SkillInstance }) => {
-    if (input.instance.writable === false) return translate("skills.uninstall_read_only");
-    if (input.instance.scope !== "workspace") return translate("skills.uninstall_scope_ambiguous");
-    if (input.instance.workspaceId !== props.activeWorkspaceId) return translate("skills.uninstall_not_active_workspace");
-    return translate("skills.uninstall_scoped_pending");
+    if (inventoryInstanceLifecycle(input.instance) === "removed") return translate("skills.remove_location_unavailable");
+    if (input.instance.registry?.removalPolicy === "locked") return translate("skills.managed_remove_locked");
+    if (input.instance.scope === "workspace") {
+      if (instanceHasRegistryMutationMetadata(input.instance)) return null;
+      if (!input.instance.workspaceId?.trim()) return translate("skills.remove_location_unavailable");
+      if (input.instance.writable === false) return translate("skills.uninstall_read_only");
+      return null;
+    }
+    if (input.instance.scope === "user-global") return null;
+    if (input.instance.scope === "organization") {
+      return instanceHasRegistryMutationMetadata(input.instance) ? null : translate("skills.remove_location_unavailable");
+    }
+    return translate("skills.remove_location_unavailable");
+  };
+
+  const restoreDisabledReason = (input: { item: SkillInventoryItem; instance: SkillInstance }) => {
+    if (inventoryInstanceLifecycle(input.instance) !== "removed") return translate("skills.restore_location_unavailable");
+    if (input.instance.registry?.removalPolicy === "locked") return translate("skills.managed_restore_locked");
+    if (!instanceHasRestoreMetadata(input.instance)) return translate("skills.restore_location_unavailable");
+    return null;
   };
 
   const globalTransferDisabledReasonForInstance = (instance: SkillInstance) => {
@@ -379,7 +449,10 @@ export default function SkillsView(props: SkillsViewProps) {
   });
 
   const filteredInstalledInventoryItems = createMemo(() =>
-    filterSkillInventoryItems(installedInventoryItems(), installedInventoryFilterState())
+    filterSkillInventoryItems(
+      inventoryItemsForDisplay(),
+      installedInventoryFilterState(),
+    ).filter((item) => item.status !== "hub-only")
   );
 
   const allWorkspaceInventoryItems = createMemo(() =>
@@ -465,6 +538,7 @@ export default function SkillsView(props: SkillsViewProps) {
   });
   const selectedGlobalTransferTargets = createMemo(() =>
     selectedInventoryRows()
+      .filter((row) => inventoryInstanceLifecycle(row.instance) === "active")
       .map((row) => globalTransferTargetForInstance(row.instance))
       .filter((target): target is SkillMutationTarget => Boolean(target))
   );
@@ -472,6 +546,9 @@ export default function SkillsView(props: SkillsViewProps) {
     const selectedRows = selectedInventoryRows();
     if (selectedRows.length === 0) return translate("skills.select_skill_location");
     if (selectedInventoryScope() === "mixed") return translate("skills.bulk_mixed_scope_actions_unavailable");
+    if (selectedRows.some((row) => inventoryInstanceLifecycle(row.instance) !== "active")) {
+      return translate("skills.bulk_removed_actions_unavailable");
+    }
     const firstDisabledReason = selectedRows
       .map((row) => globalTransferDisabledReasonForInstance(row.instance))
       .find((reason): reason is string => Boolean(reason));
@@ -481,22 +558,33 @@ export default function SkillsView(props: SkillsViewProps) {
   });
   const selectedWorkspaceInstallTargets = createMemo(() =>
     selectedInventoryRows()
-      .filter((row) => row.instance.scope === "user-global" && row.instance.readable !== false)
+      .filter((row) =>
+        inventoryInstanceLifecycle(row.instance) === "active" &&
+        row.instance.scope === "user-global" &&
+        row.instance.readable !== false
+      )
       .map((row) => skillMutationTargetFromInstance(row.instance))
   );
   const workspaceInstallDisabledReason = createMemo(() => {
     const selectedRows = selectedInventoryRows();
     if (selectedRows.length === 0) return translate("skills.select_skill_location");
     if (selectedInventoryScope() === "mixed") return translate("skills.bulk_mixed_scope_actions_unavailable");
+    if (selectedRows.some((row) => inventoryInstanceLifecycle(row.instance) !== "active")) {
+      return translate("skills.bulk_removed_actions_unavailable");
+    }
     if (selectedInventoryScope() !== "user-global") return translate("skills.copy_to_workspace_unavailable");
     if (selectedWorkspaceInstallTargets().length !== selectedRows.length) return translate("skills.copy_to_workspace_unavailable");
     return null;
   });
   const selectedInventoryShowsWorkspaceInstallAction = createMemo(() =>
-    selectedInventoryRows().length > 0 && selectedInventoryScope() === "user-global"
+    selectedInventoryRows().length > 0 &&
+    selectedInventoryRows().every((row) => inventoryInstanceLifecycle(row.instance) === "active") &&
+    selectedInventoryScope() === "user-global"
   );
   const selectedInventoryShowsGlobalTransferActions = createMemo(() =>
-    selectedInventoryRows().length > 0 && selectedInventoryScope() === "workspace"
+    selectedInventoryRows().length > 0 &&
+    selectedInventoryRows().every((row) => inventoryInstanceLifecycle(row.instance) === "active") &&
+    selectedInventoryScope() === "workspace"
   );
 
   const transferSelectedSkillsToGlobal = async (deleteSource: boolean) => {
@@ -577,12 +665,19 @@ export default function SkillsView(props: SkillsViewProps) {
 
   const skillDetailLocationFromInstance = (instance: SkillInstance): SkillDetailLocation => ({
     id: instance.id,
-    label: instance.scope === "user-global" ? translate("skills.all_workspaces") : workspaceLabelForInstance(instance),
-    scope: instance.scope === "user-global" ? "global" : "workspace",
+    label: instance.scope === "user-global"
+      ? translate("skills.all_workspaces")
+      : instance.scope === "organization"
+        ? translate("skills.detail_scope_organization")
+        : workspaceLabelForInstance(instance),
+    scope: instance.scope === "user-global" ? "global" : instance.scope === "organization" ? "organization" : "workspace",
     path: instance.path,
     writable: instance.writable,
     active: selectedDetail()?.instance.id === instance.id,
     source: instance.source,
+    lifecycle: inventoryInstanceLifecycle(instance),
+    restoreAvailable: inventoryInstanceLifecycle(instance) === "removed" && instanceHasRestoreMetadata(instance),
+    restoreUnavailableReason: restoreDisabledReason({ item: selectedDetail()?.item ?? { name: instance.name, workspaceInstances: [], status: "workspace-only" }, instance }),
   });
 
   const selectedDetailLocations = createMemo<SkillDetailLocation[]>(() => {
@@ -606,7 +701,7 @@ export default function SkillsView(props: SkillsViewProps) {
       name: detail.item.name,
       description: detail.instance.description ?? detail.item.description ?? null,
       trigger: detail.instance.trigger ?? detail.item.trigger ?? null,
-      status: detail.item.status,
+      status: inventoryInstanceLifecycle(detail.instance) === "removed" ? translate("skills.removed_status") : detail.item.status,
       source: detail.instance.source,
       approvalStatus: "approved",
       updatedAt: null,
@@ -658,7 +753,7 @@ export default function SkillsView(props: SkillsViewProps) {
 
   const selectedDetailIsWorkspaceSkill = createMemo(() => {
     const detail = selectedDetail();
-    return detail?.instance.scope === "workspace";
+    return detail?.instance.scope === "workspace" && inventoryInstanceLifecycle(detail.instance) === "active";
   });
 
   const selectedDetailCanTransferToUserSkill = createMemo(() => {
@@ -674,6 +769,7 @@ export default function SkillsView(props: SkillsViewProps) {
     const detail = selectedDetail();
     return Boolean(
       detail &&
+      inventoryInstanceLifecycle(detail.instance) === "active" &&
       detail.instance.scope === "user-global" &&
       detail.instance.readable !== false,
     );
@@ -682,13 +778,36 @@ export default function SkillsView(props: SkillsViewProps) {
   const selectedDetailCanPublishFromLocal = createMemo(() => {
     const detail = selectedDetail();
     if (!detail) return false;
+    if (inventoryInstanceLifecycle(detail.instance) !== "active") return false;
     if (detail.instance.readable === false) return false;
     return detail.instance.scope === "user-global" || detail.instance.scope === "workspace";
   });
 
   const selectedDetailCanDeactivate = createMemo(() => {
     const detail = selectedDetail();
-    return detail ? canUninstallInventoryInstance({ item: detail.item, instance: detail.instance }) : false;
+    return detail ? canRemoveInventoryInstance({ item: detail.item, instance: detail.instance }) : false;
+  });
+
+  const selectedDetailShowsRemoveAction = createMemo(() => {
+    const detail = selectedDetail();
+    return Boolean(detail && inventoryInstanceLifecycle(detail.instance) === "active");
+  });
+
+  const selectedDetailCanRestore = createMemo(() => {
+    const detail = selectedDetail();
+    return detail ? canRestoreInventoryInstance({ item: detail.item, instance: detail.instance }) : false;
+  });
+
+  const selectedDetailHasRestoreAction = createMemo(() => {
+    const detail = selectedDetail();
+    if (!detail) return false;
+    return [detail.item.globalInstance, ...detail.item.workspaceInstances].some((instance) =>
+      Boolean(
+        instance &&
+        inventoryInstanceLifecycle(instance) === "removed" &&
+        instanceHasRestoreMetadata(instance),
+      )
+    );
   });
 
   const selectedDetailDeleteDisabledReason = createMemo(() => {
@@ -697,10 +816,16 @@ export default function SkillsView(props: SkillsViewProps) {
     return selectedDetailCanDeactivate() ? null : uninstallDisabledReason({ item: detail.item, instance: detail.instance });
   });
 
+  const selectedDetailRestoreDisabledReason = createMemo(() => {
+    const detail = selectedDetail();
+    if (!detail) return null;
+    return selectedDetailCanRestore() ? null : restoreDisabledReason({ item: detail.item, instance: detail.instance });
+  });
+
   const copySelectedSkillToGlobal = (deleteSource: boolean, input?: SkillDetailActionInput) => {
     const actionInstance = detailInstanceForAction(input);
     if (!actionInstance) return;
-    const target = mutationTargetForInstance(actionInstance);
+    const target = globalTransferTargetForInstance(actionInstance);
     if (!target) {
       setToast(globalTransferDisabledReasonForInstance(actionInstance) ?? translate("skills.copy_to_global_unavailable"));
       return;
@@ -888,12 +1013,34 @@ export default function SkillsView(props: SkillsViewProps) {
   const requestDetailDelete = () => {
     const detail = selectedDetail();
     if (!detail) return;
-    const target = mutationTargetForInstance(detail.instance);
+    const target = removeTargetForInstance(detail.instance);
     if (!target) {
       setToast(uninstallDisabledReason({ item: detail.item, instance: detail.instance }));
       return;
     }
     setUninstallTarget(target);
+  };
+
+  const removeWarningForTarget = (target: SkillMutationTarget | null) => {
+    const key = target?.scope === "user-global"
+      ? "skills.uninstall_warning_user_global"
+      : target?.scope === "organization" || target?.registry
+        ? "skills.uninstall_warning_managed"
+        : "skills.uninstall_warning_workspace";
+    return translate(key).replace("{name}", target?.name ?? "");
+  };
+
+  const requestDetailRestore = (input?: SkillDetailActionInput) => {
+    const detail = selectedDetail();
+    if (!detail) return;
+    const actionInstance = detailInstanceForAction(input);
+    if (!actionInstance) return;
+    const target = restoreTargetForInstance(actionInstance);
+    if (!target) {
+      setToast(restoreDisabledReason({ item: detail.item, instance: actionInstance }));
+      return;
+    }
+    setRestoreTarget(target);
   };
 
   const availableHubSkills = createMemo(() =>
@@ -1190,15 +1337,52 @@ export default function SkillsView(props: SkillsViewProps) {
     }
   };
 
+  const confirmRemoveSkillInstance = async () => {
+    const target = uninstallTarget();
+    if (!target || removePending()) return;
+    setUninstallTarget(null);
+    setRemovePending(true);
+    try {
+      const result = await props.removeSkillInstance(target);
+      setToast(result.message ?? translate(result.ok ? "skills.uninstalled" : "skills.uninstall_failed"));
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : translate("skills.uninstall_failed"));
+    } finally {
+      props.refreshSkillInventory({ force: true });
+      setRemovePending(false);
+    }
+  };
+
+  const confirmRestoreSkillInstance = async () => {
+    const target = restoreTarget();
+    if (!target || restorePending()) return;
+    setRestoreTarget(null);
+    setRestorePending(true);
+    try {
+      const result = await props.restoreSkillInstance(target);
+      setToast(result.message ?? translate(result.ok ? "skills.restored" : "skills.restore_location_unavailable"));
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : translate("skills.restore_location_unavailable"));
+    } finally {
+      props.refreshSkillInventory({ force: true });
+      setRestorePending(false);
+    }
+  };
+
   const renderInventoryCard = (input: {
     item: SkillInventoryItem;
     instance: SkillInstance;
     workspaceLabel?: string;
   }) => {
     const displayDescription = () => input.instance.description ?? input.item.description ?? "";
-    const canUninstall = () => canUninstallInventoryInstance({ item: input.item, instance: input.instance });
-    const uninstallTitle = () =>
+    const lifecycle = () => inventoryInstanceLifecycle(input.instance);
+    const canRemove = () => canRemoveInventoryInstance({ item: input.item, instance: input.instance });
+    const canRestore = () => canRestoreInventoryInstance({ item: input.item, instance: input.instance });
+    const showRestoreAction = () => lifecycle() === "removed" && instanceHasRestoreMetadata(input.instance);
+    const removeTitle = () =>
       uninstallDisabledReason({ item: input.item, instance: input.instance }) ?? translate("skills.uninstall");
+    const restoreTitle = () =>
+      restoreDisabledReason({ item: input.item, instance: input.instance }) ?? translate("skills.restore_skill");
     const selectionId = () => skillInventoryInstanceId(input.instance);
     const selected = () => selectedInventoryIdSet().has(selectionId());
     const toggleCurrentSelection = () => toggleInventorySelection(selectionId(), !selected());
@@ -1210,6 +1394,7 @@ export default function SkillsView(props: SkillsViewProps) {
         data-skill-inventory-name={input.item.name}
         data-skill-inventory-scope={input.instance.scope}
         data-skill-inventory-workspace-id={input.instance.workspaceId ?? ""}
+        data-skill-inventory-lifecycle={inventoryInstanceLifecycle(input.instance)}
         role="button"
         tabindex="0"
         class="bg-dls-surface border border-dls-border rounded-xl p-4 flex items-start justify-between group transition-all text-left hover:border-dls-border hover:bg-dls-hover cursor-pointer"
@@ -1242,6 +1427,11 @@ export default function SkillsView(props: SkillsViewProps) {
               >
                 {input.item.name}
               </h4>
+              <Show when={lifecycle() === "removed"}>
+                <span class="shrink-0 rounded-full border border-amber-7/40 bg-amber-3/20 px-2 py-0.5 type-ui-xs text-amber-11">
+                  {translate("skills.removed_status")}
+                </span>
+              </Show>
               <button
                 type="button"
                 class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-dls-border bg-dls-hover text-dls-secondary transition-colors hover:bg-dls-active hover:text-dls-text disabled:opacity-40"
@@ -1250,7 +1440,7 @@ export default function SkillsView(props: SkillsViewProps) {
                   e.stopPropagation();
                   void openInventoryInstanceLocation(input.instance.path);
                 }}
-                disabled={!input.instance.path.trim()}
+                disabled={!canRevealInventoryInstanceLocation(input.instance)}
                 title={translate("skills.reveal_skill_location")}
                 aria-label={translate("skills.reveal_skill_location")}
               >
@@ -1282,26 +1472,56 @@ export default function SkillsView(props: SkillsViewProps) {
           >
             <Edit2 size={14} />
           </button>
-          <button
-            type="button"
-            class={`p-1.5 rounded-md transition-colors ${
-              props.busy || !canUninstall()
-                ? "text-dls-secondary opacity-40"
-                : "text-dls-secondary hover:text-red-11 hover:bg-red-3/10"
-            }`}
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              const target = mutationTargetForInstance(input.instance);
-              if (!target || props.busy) return;
-              setUninstallTarget(target);
-            }}
-            disabled={props.busy || !canUninstall()}
-            title={uninstallTitle()}
-            aria-label={uninstallTitle()}
+          <Show
+            when={lifecycle() === "removed"}
+            fallback={
+              <button
+                type="button"
+                data-testid="skill-inventory-deactivate-button"
+                class={`p-1.5 rounded-md transition-colors ${
+                  skillMutationBusy() || !canRemove()
+                    ? "text-dls-secondary opacity-40"
+                    : "text-dls-secondary hover:text-red-11 hover:bg-red-3/10"
+                }`}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const target = removeTargetForInstance(input.instance);
+                  if (!target || skillMutationBusy()) return;
+                  setUninstallTarget(target);
+                }}
+                disabled={skillMutationBusy() || !canRemove()}
+                title={removeTitle()}
+                aria-label={removeTitle()}
+              >
+                <Trash2 size={14} />
+              </button>
+            }
           >
-            <Trash2 size={14} />
-          </button>
+            <Show when={showRestoreAction()}>
+              <button
+                type="button"
+                data-testid="skill-inventory-restore-button"
+                class={`p-1.5 rounded-md transition-colors ${
+                  skillMutationBusy() || !canRestore()
+                    ? "text-dls-secondary opacity-40"
+                    : "text-dls-secondary hover:text-green-11 hover:bg-green-3/10"
+                }`}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const target = restoreTargetForInstance(input.instance);
+                  if (!target || skillMutationBusy()) return;
+                  setRestoreTarget(target);
+                }}
+                disabled={skillMutationBusy() || !canRestore()}
+                title={restoreTitle()}
+                aria-label={restoreTitle()}
+              >
+                <RotateCcw size={14} />
+              </button>
+            </Show>
+          </Show>
         </div>
       </div>
     );
@@ -1370,10 +1590,11 @@ export default function SkillsView(props: SkillsViewProps) {
         <label class="font-product type-ui-xs flex items-center gap-1.5 text-dls-secondary">
           <input
             type="checkbox"
+            data-testid="skills-filter-deleted-checkbox"
             checked={inventoryIncludeDeleted()}
             onChange={(event) => setInventoryIncludeDeleted(event.currentTarget.checked)}
           />
-          {translate("skills.filter_deleted")}
+          {translate("skills.restore_skills")}
         </label>
         <div class="flex rounded-lg border border-dls-border bg-dls-surface p-0.5">
           <button
@@ -1582,11 +1803,27 @@ export default function SkillsView(props: SkillsViewProps) {
                   <For each={inventoryTableRows()}>
                     {(row) => {
                       const selectionId = () => skillInventoryInstanceId(row.instance);
+                      const lifecycle = () => inventoryInstanceLifecycle(row.instance);
+                      const canRemove = () => canRemoveInventoryInstance({ item: row.item, instance: row.instance });
+                      const canRestore = () => canRestoreInventoryInstance({ item: row.item, instance: row.instance });
+                      const showRestoreAction = () => lifecycle() === "removed" && instanceHasRestoreMetadata(row.instance);
+                      const removeTitle = () =>
+                        uninstallDisabledReason({ item: row.item, instance: row.instance }) ?? translate("skills.uninstall");
+                      const restoreTitle = () =>
+                        restoreDisabledReason({ item: row.item, instance: row.instance }) ?? translate("skills.restore_skill");
+                      const scopeLabel = () => {
+                        if (row.instance.scope === "user-global") return translate("skills.filter_scope_global");
+                        if (row.instance.scope === "organization") return translate("skills.detail_scope_organization");
+                        return translate("skills.filter_scope_workspace");
+                      };
                       return (
                         <tr
                           class="border-b border-dls-border last:border-0 hover:bg-dls-hover"
                           data-testid="skill-inventory-table-row"
                           data-skill-inventory-name={row.item.name}
+                          data-skill-inventory-scope={row.instance.scope}
+                          data-skill-inventory-workspace-id={row.instance.workspaceId ?? ""}
+                          data-skill-inventory-lifecycle={inventoryInstanceLifecycle(row.instance)}
                           onClick={() => toggleTableRowSelection(row.instance)}
                         >
                           <td class="px-3 py-2">
@@ -1599,13 +1836,20 @@ export default function SkillsView(props: SkillsViewProps) {
                             />
                           </td>
                           <td class="max-w-[220px] px-3 py-2">
-                            <div class="truncate font-product type-ui-sm font-semibold text-dls-text">{row.item.name}</div>
+                            <div class="flex min-w-0 items-center gap-2">
+                              <div class="truncate font-product type-ui-sm font-semibold text-dls-text">{row.item.name}</div>
+                              <Show when={lifecycle() === "removed"}>
+                                <span class="shrink-0 rounded-full border border-amber-7/40 bg-amber-3/20 px-2 py-0.5 type-ui-xs text-amber-11">
+                                  {translate("skills.removed_status")}
+                                </span>
+                              </Show>
+                            </div>
                             <Show when={row.instance.description ?? row.item.description}>
                               {(description) => <div class="truncate type-ui-xs text-dls-secondary">{description()}</div>}
                             </Show>
                           </td>
                           <td class="px-3 py-2 type-ui-sm text-dls-secondary">
-                            {row.instance.scope === "user-global" ? translate("skills.filter_scope_global") : translate("skills.filter_scope_workspace")}
+                            {scopeLabel()}
                           </td>
                           <td class="max-w-[220px] px-3 py-2 type-ui-sm text-dls-secondary">
                             <span class="block truncate">{row.workspaceLabel}</span>
@@ -1629,17 +1873,69 @@ export default function SkillsView(props: SkillsViewProps) {
                               </button>
                               <button
                                 type="button"
-                                class="rounded-md p-1.5 text-dls-secondary hover:bg-dls-active hover:text-dls-text"
+                                class="rounded-md p-1.5 text-dls-secondary hover:bg-dls-active hover:text-dls-text disabled:opacity-40"
                                 onClick={(event) => {
                                   event.preventDefault();
                                   event.stopPropagation();
+                                  if (!canRevealInventoryInstanceLocation(row.instance)) return;
                                   void openInventoryInstanceLocation(row.instance.path);
                                 }}
+                                disabled={!canRevealInventoryInstanceLocation(row.instance)}
                                 aria-label={translate("skills.reveal_skill_location")}
                                 title={translate("skills.reveal_skill_location")}
                               >
                                 <FolderOpen size={14} />
                               </button>
+                              <Show
+                                when={lifecycle() === "removed"}
+                                fallback={
+                                  <button
+                                    type="button"
+                                    data-testid="skill-inventory-deactivate-button"
+                                    class={`rounded-md p-1.5 ${
+                                      skillMutationBusy() || !canRemove()
+                                        ? "text-dls-secondary opacity-40"
+                                        : "text-dls-secondary hover:bg-red-3/10 hover:text-red-11"
+                                    }`}
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      const target = removeTargetForInstance(row.instance);
+                                      if (!target || skillMutationBusy()) return;
+                                      setUninstallTarget(target);
+                                    }}
+                                    disabled={skillMutationBusy() || !canRemove()}
+                                    aria-label={removeTitle()}
+                                    title={removeTitle()}
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                }
+                              >
+                                <Show when={showRestoreAction()}>
+                                  <button
+                                    type="button"
+                                    data-testid="skill-inventory-restore-button"
+                                    class={`rounded-md p-1.5 ${
+                                      skillMutationBusy() || !canRestore()
+                                        ? "text-dls-secondary opacity-40"
+                                        : "text-dls-secondary hover:bg-green-3/10 hover:text-green-11"
+                                    }`}
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      const target = restoreTargetForInstance(row.instance);
+                                      if (!target || skillMutationBusy()) return;
+                                      setRestoreTarget(target);
+                                    }}
+                                    disabled={skillMutationBusy() || !canRestore()}
+                                    aria-label={restoreTitle()}
+                                    title={restoreTitle()}
+                                  >
+                                    <RotateCcw size={14} />
+                                  </button>
+                                </Show>
+                              </Show>
                             </div>
                           </td>
                         </tr>
@@ -2113,13 +2409,16 @@ export default function SkillsView(props: SkillsViewProps) {
 
       <Show when={uninstallOpen()}>
         <div class="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm flex items-center justify-center p-4">
-          <div class="bg-dls-surface border border-dls-border w-full max-w-md rounded-2xl shadow-2xl overflow-hidden">
+          <div
+            data-testid="skill-uninstall-modal"
+            class="bg-dls-surface border border-dls-border w-full max-w-md rounded-2xl shadow-2xl overflow-hidden"
+          >
             <div class="p-6">
               <div class="flex items-start justify-between gap-4">
                 <div>
                   <h3 class="text-lg font-semibold text-dls-text">{translate("skills.uninstall_title")}</h3>
                   <p class="text-sm text-dls-secondary mt-1">
-                    {translate("skills.uninstall_warning").replace("{name}", uninstallTarget()?.name ?? "")}
+                    {removeWarningForTarget(uninstallTarget())}
                   </p>
                 </div>
               </div>
@@ -2129,22 +2428,64 @@ export default function SkillsView(props: SkillsViewProps) {
               </div>
 
               <div class="mt-6 flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setUninstallTarget(null)} disabled={props.busy}>
+                <Button
+                  variant="outline"
+                  data-testid="skill-uninstall-cancel"
+                  onClick={() => setUninstallTarget(null)}
+                  disabled={skillMutationBusy()}
+                >
                   {translate("common.cancel")}
                 </Button>
                 <Button
                   variant="danger"
-                  onClick={() => {
-                    const target = uninstallTarget();
-                    setUninstallTarget(null);
-                    if (!target) return;
-                    void Promise.resolve(props.deleteSkillInstance(target)).finally(() => {
-                      props.refreshSkillInventory({ force: true });
-                    });
-                  }}
-                  disabled={props.busy}
+                  data-testid="skill-uninstall-confirm"
+                  onClick={() => void confirmRemoveSkillInstance()}
+                  disabled={skillMutationBusy()}
                 >
                   {translate("skills.uninstall")}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Show>
+
+      <Show when={restoreOpen()}>
+        <div class="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm flex items-center justify-center p-4">
+          <div
+            data-testid="skill-restore-modal"
+            class="bg-dls-surface border border-dls-border w-full max-w-md rounded-2xl shadow-2xl overflow-hidden"
+          >
+            <div class="p-6">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <h3 class="text-lg font-semibold text-dls-text">{translate("skills.restore_title")}</h3>
+                  <p class="text-sm text-dls-secondary mt-1">
+                    {translate("skills.restore_warning").replace("{name}", restoreTarget()?.name ?? "")}
+                  </p>
+                </div>
+              </div>
+
+              <div class="mt-4 rounded-xl bg-dls-hover border border-dls-border p-3 text-xs text-dls-secondary font-mono break-all">
+                {restoreTarget()?.path}
+              </div>
+
+              <div class="mt-6 flex justify-end gap-2">
+                <Button
+                  variant="outline"
+                  data-testid="skill-restore-cancel"
+                  onClick={() => setRestoreTarget(null)}
+                  disabled={skillMutationBusy()}
+                >
+                  {translate("common.cancel")}
+                </Button>
+                <Button
+                  variant="primary"
+                  data-testid="skill-restore-confirm"
+                  onClick={() => void confirmRestoreSkillInstance()}
+                  disabled={skillMutationBusy()}
+                >
+                  {translate("skills.restore")}
                 </Button>
               </div>
             </div>
@@ -2165,6 +2506,7 @@ export default function SkillsView(props: SkillsViewProps) {
           copy: selectedDetailCanTransferToUserSkill() ? null : selectedDetailGlobalTransferDisabledReason(),
           move: selectedDetailCanTransferToUserSkill() ? null : selectedDetailGlobalTransferDisabledReason(),
           delete: selectedDetailDeleteDisabledReason(),
+          restore: selectedDetailRestoreDisabledReason(),
         }}
         onEditSkill={selectedDetailIsWorkspaceSkill() ? editSelectedSkill : undefined}
         onCopySkill={selectedDetailIsWorkspaceSkill() ? (input) => copySelectedSkillToGlobal(true, input) : undefined}
@@ -2172,8 +2514,9 @@ export default function SkillsView(props: SkillsViewProps) {
         onCopyToWorkspaceSkill={selectedDetailCanInstallToWorkspace() ? openWorkspaceInstallTargetPicker : undefined}
         onPublishSkill={selectedDetailCanPublishFromLocal() ? (action) => openSkillReviewDialog("organization", action) : undefined}
         onRequestApproval={selectedDetailCanPublishFromLocal() ? (action) => openSkillReviewDialog("system", action) : undefined}
+        onRestoreSkill={selectedDetailHasRestoreAction() ? requestDetailRestore : undefined}
         onRestoreVersion={showRegistryActionPending}
-        onDeleteSkill={selectedDetailIsWorkspaceSkill() ? requestDetailDelete : undefined}
+        onDeleteSkill={selectedDetailShowsRemoveAction() ? requestDetailDelete : undefined}
       />
 
       <Show when={reviewDialog()}>

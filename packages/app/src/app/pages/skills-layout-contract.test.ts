@@ -50,16 +50,30 @@ test("skills page receives app-wide skill inventory props", () => {
   assert.match(dashboardSource, /refreshSkillInventory=\{props\.refreshSkillInventory\}/);
 });
 
+test("skills page wires remove and restore skill instance actions through app props", () => {
+  assert.match(source, /removeSkillInstance:\s*\(target: SkillMutationTarget\) => Promise<SkillSaveResult>/);
+  assert.match(source, /restoreSkillInstance:\s*\(target: SkillMutationTarget\) => Promise<SkillSaveResult>/);
+  assert.match(source, /deleteSkillInstance:\s*\(target: SkillMutationTarget\) => Promise<void>/);
+  assert.match(dashboardSource, /removeSkillInstance:\s*\(target: SkillMutationTarget\) => Promise<SkillSaveResult>/);
+  assert.match(dashboardSource, /restoreSkillInstance:\s*\(target: SkillMutationTarget\) => Promise<SkillSaveResult>/);
+  assert.match(dashboardSource, /removeSkillInstance=\{props\.removeSkillInstance\}/);
+  assert.match(dashboardSource, /restoreSkillInstance=\{props\.restoreSkillInstance\}/);
+  assert.match(appSource, /\bremoveSkillInstance,\s*[\s\S]*\brestoreSkillInstance,/);
+  assert.match(appSource, /removeSkillInstance,\s*[\s\S]*restoreSkillInstance,/);
+});
+
 test("skills page uses inventory as primary installed source", () => {
-  assert.match(source, /const installedInventoryItems = createMemo\(\(\) =>\s*mergeRemoteFallbackIntoInventory\(\s*filterSkillInventoryItems\(\s*props\.skillInventory/);
+  assert.match(source, /const inventoryItemsForDisplay = createMemo\(\(\) =>\s*mergeRemoteFallbackIntoInventory\(\s*props\.skillInventory,\s*activeRemoteInventoryItems\(\),\s*\)\s*\)/);
+  assert.match(source, /filterSkillInventoryItems\(\s*inventoryItemsForDisplay\(\),\s*installedInventoryFilterState\(\),\s*\)\s*\.filter\(\(item\) => item\.status !== "hub-only"\)/);
   assert.doesNotMatch(source, /\{props\.skills\.length\}/);
 });
 
 test("skills page derives installed inventory from visible active lifecycle state", () => {
   assert.match(
     source,
-    /const installedInventoryItems = createMemo\(\(\) =>\s*mergeRemoteFallbackIntoInventory\(\s*filterSkillInventoryItems\(\s*props\.skillInventory,\s*\{\s*includeDeleted:\s*false\s*\}\s*\)\s*\.filter\(\(item\) => item\.status !== "hub-only"\)/,
+    /const activeInstalledInventoryItems = createMemo\(\(\) =>\s*mergeRemoteFallbackIntoInventory\(\s*filterSkillInventoryItems\(\s*props\.skillInventory,\s*\{\s*includeDeleted:\s*false\s*\}\s*\)\s*\.filter\(\(item\) => item\.status !== "hub-only"\)/,
   );
+  assert.match(source, /const installedInventoryItems = createMemo\(\(\) => activeInstalledInventoryItems\(\)\)/);
 });
 
 test("skills page separates user and workspace-specific inventory sections", () => {
@@ -87,12 +101,15 @@ test("skills inventory cards avoid duplicate placement badges", () => {
   assert.match(source, /await import\("@tauri-apps\/plugin-opener"\)/);
   assert.match(source, /await openPath\(target\)/);
   assert.match(source, /await revealItemInDir\(originalTarget \|\| target\)/);
+  assert.match(source, /const canRevealInventoryInstanceLocation = \(instance: SkillInstance\) =>/);
+  assert.match(source, /inventoryInstanceLifecycle\(instance\) === "active" && Boolean\(instance\.path\.trim\(\)\)/);
   assert.doesNotMatch(renderInventoryCardSource, /scopeBadge/);
   assert.match(renderInventoryCardSource, /<h4[\s\S]*?title=\{input\.item\.name\}[\s\S]*?>[\s\S]*?\{input\.item\.name\}[\s\S]*?<\/h4>/);
   assert.doesNotMatch(renderInventoryCardSource, /translate\("skills\.scope_global"\)/);
   assert.doesNotMatch(renderInventoryCardSource, /translate\("skills\.workspace_scope_multiple"\)/);
   assert.match(renderInventoryCardSource, /<FolderOpen size=\{13\}/);
   assert.match(renderInventoryCardSource, /openInventoryInstanceLocation\(input\.instance\.path\)/);
+  assert.match(renderInventoryCardSource, /disabled=\{!canRevealInventoryInstanceLocation\(input\.instance\)\}/);
   assert.match(renderInventoryCardSource, /title=\{translate\("skills\.reveal_skill_location"\)\}/);
   assert.match(renderInventoryCardSource, /e\.stopPropagation\(\)/);
   assert.doesNotMatch(renderInventoryCardSource, /\{input\.instance\.path\}<\/div>/);
@@ -123,21 +140,82 @@ test("local skill import refreshes the app-wide installed inventory", () => {
   assert.doesNotMatch(source, /id: "import-local"[\s\S]{0,300}onClick: props\.importLocalSkill/);
 });
 
-test("inventory card uninstall targets writable active workspace instances", () => {
+test("inventory remove actions use target-aware remove and restore helpers", () => {
+  const removeHelperSource = source.slice(
+    source.indexOf("const removeTargetForInstance"),
+    source.indexOf("\n\n  const restoreTargetForInstance", source.indexOf("const removeTargetForInstance")),
+  );
   assert.match(source, /activeWorkspaceId: string/);
-  assert.match(source, /const canUninstallInventoryInstance = \(input: \{ item: SkillInventoryItem; instance: SkillInstance \}\) =>\s*Boolean\(mutationTargetForInstance\(input\.instance\)\)/);
+  assert.match(source, /const removeTargetForInstance = \(instance: SkillInstance\): SkillMutationTarget \| null =>/);
+  assert.match(removeHelperSource, /inventoryInstanceLifecycle\(instance\) === "removed"/);
+  assert.match(removeHelperSource, /instance\.registry\?\.removalPolicy === "locked"/);
+  assert.match(removeHelperSource, /instance\.scope === "user-global"/);
+  assert.match(removeHelperSource, /instance\.scope === "workspace"[\s\S]*instance\.workspaceId\?\.trim\(\)/);
+  assert.doesNotMatch(removeHelperSource, /props\.activeWorkspaceId/);
+  assert.match(source, /const restoreTargetForInstance = \(instance: SkillInstance\): SkillMutationTarget \| null =>/);
+  assert.match(source, /const canRemoveInventoryInstance = \(input: \{ item: SkillInventoryItem; instance: SkillInstance \}\) =>\s*Boolean\(removeTargetForInstance\(input\.instance\)\)/);
+  assert.match(source, /const canRestoreInventoryInstance = \(input: \{ item: SkillInventoryItem; instance: SkillInstance \}\) =>\s*Boolean\(restoreTargetForInstance\(input\.instance\)\)/);
   assert.match(source, /if \(input\.instance\.writable === false\) return translate\("skills\.uninstall_read_only"\)/);
-  assert.match(source, /if \(input\.instance\.scope !== "workspace"\) return translate\("skills\.uninstall_scope_ambiguous"\)/);
-  assert.match(source, /if \(input\.instance\.workspaceId !== props\.activeWorkspaceId\) return translate\("skills\.uninstall_not_active_workspace"\)/);
-  assert.match(renderInventoryCardSource, /disabled=\{props\.busy \|\| !canUninstall\(\)\}/);
-  assert.match(source, /aria-label=\{uninstallTitle\(\)\}/);
+  assert.match(source, /translate\("skills\.managed_remove_locked"\)/);
+  assert.match(source, /translate\("skills\.restore_location_unavailable"\)/);
+  assert.match(renderInventoryCardSource, /data-testid="skill-inventory-deactivate-button"/);
+  assert.match(renderInventoryCardSource, /disabled=\{skillMutationBusy\(\) \|\| !canRemove\(\)\}/);
+  assert.match(source, /aria-label=\{removeTitle\(\)\}/);
   assert.match(renderInventoryCardSource, /setUninstallTarget/);
+  assert.match(source, /props\.removeSkillInstance\(target\)/);
 });
 
-test("removed inventory rows reserve restore metadata for a later UI affordance", () => {
+test("removed inventory rows expose lifecycle and restore affordances", () => {
   assert.match(typesSource, /export type SkillInventoryLifecycle = "active" \| "removed"/);
   assert.match(typesSource, /restoreTarget\?:\s*\{/);
   assert.match(skillInventoryFiltersSource, /metadata\.lifecycle === "removed"/);
+  assert.match(source, /data-testid="skills-filter-deleted-checkbox"/);
+  assert.match(source, /translate\("skills\.restore_skills"\)/);
+  assert.match(renderInventoryCardSource, /data-skill-inventory-lifecycle=\{inventoryInstanceLifecycle\(input\.instance\)\}/);
+  assert.match(renderInventoryCardSource, /translate\("skills\.removed_status"\)/);
+  assert.match(renderInventoryCardSource, /data-testid="skill-inventory-restore-button"/);
+  assert.match(source, /data-skill-inventory-lifecycle=\{inventoryInstanceLifecycle\(row\.instance\)\}/);
+  assert.match(source, /data-testid="skill-inventory-restore-button"/);
+  assert.match(source, /props\.restoreSkillInstance\(target\)/);
+});
+
+test("skills remove and restore confirmation modals expose stable selectors", () => {
+  assert.match(source, /data-testid="skill-uninstall-modal"/);
+  assert.match(source, /data-testid="skill-uninstall-confirm"/);
+  assert.match(source, /data-testid="skill-uninstall-cancel"/);
+  assert.match(source, /data-testid="skill-restore-modal"/);
+  assert.match(source, /data-testid="skill-restore-confirm"/);
+  assert.match(source, /data-testid="skill-restore-cancel"/);
+});
+
+test("skill detail drawer exposes restore actions separately from version restore", () => {
+  assert.match(skillDetailDrawerSource, /onRestoreSkill\?: \(input: SkillDetailActionInput\) => void/);
+  assert.match(skillDetailDrawerSource, /const showOverviewRestoreAction = createMemo/);
+  assert.match(skillDetailDrawerSource, /props\.onRestoreSkill\?\.\(actionInput\(skill, activeLocation\(\)\)\)/);
+  assert.match(skillDetailDrawerSource, /props\.onRestoreSkill\?\.\(actionInput\(skill, location\)\)/);
+  assert.match(skillDetailDrawerSource, /data-testid="skill-detail-location"/);
+  assert.match(skillDetailDrawerSource, /data-skill-detail-location-lifecycle=\{location\.lifecycle \?\? "active"\}/);
+  assert.match(source, /const selectedDetailHasRestoreAction = createMemo/);
+  assert.match(source, /onRestoreSkill=\{selectedDetailHasRestoreAction\(\) \? requestDetailRestore : undefined\}/);
+  assert.match(source, /onRestoreVersion=\{showRegistryActionPending\}/);
+});
+
+test("skills remove and restore locale keys are present", () => {
+  for (const localeSource of [enSource, csSource, zhSource]) {
+    assert.match(localeSource, /"skills\.restore_skills":/);
+    assert.match(localeSource, /"skills\.restore_skill":/);
+    assert.match(localeSource, /"skills\.restore_title":/);
+    assert.match(localeSource, /"skills\.restore_warning":/);
+    assert.match(localeSource, /"skills\.restore":/);
+    assert.match(localeSource, /"skills\.removed_status":/);
+    assert.match(localeSource, /"skills\.uninstall_warning_workspace":/);
+    assert.match(localeSource, /"skills\.uninstall_warning_user_global":/);
+    assert.match(localeSource, /"skills\.uninstall_warning_managed":/);
+    assert.match(localeSource, /"skills\.remove_location_unavailable":/);
+    assert.match(localeSource, /"skills\.restore_location_unavailable":/);
+    assert.match(localeSource, /"skills\.recoverable_remove_server_required":/);
+    assert.match(localeSource, /"skills\.bulk_removed_actions_unavailable":/);
+  }
 });
 
 test("install-from-link overwrite is gated by active workspace conflicts only", () => {
@@ -282,13 +360,13 @@ test("skill edit and delete callbacks are targeted by inventory instance", () =>
   assert.match(extensionsSource, /writeLocalSkillAtPath/);
   assert.match(extensionsSource, /path: resolved\.skill\.path/);
   assert.match(extensionsSource, /async function deleteSkillInstance\(target: SkillMutationTarget\)/);
-  assert.match(extensionsSource, /deleteSkill\(vesloWorkspaceId, resolved\.skill\.name, \{ path: resolved\.skill\.path \}\)/);
-  assert.match(extensionsSource, /uninstallSkillAtPath\(root, resolved\.skill\.name, resolved\.entryFilePath\)/);
-  assert.match(source, /const mutationTargetForInstance = \(instance: SkillInstance\): SkillMutationTarget \| null =>/);
+  assert.match(extensionsSource, /await removeSkillInstance\(target\)/);
+  assert.match(extensionsSource, /await vesloClient\.deleteSkill\(workspaceId, name, \{ path: skillEntryFilePathForMutationPath\(path\) \}\)/);
+  assert.match(source, /const editableWorkspaceMutationTargetForInstance = \(instance: SkillInstance\): SkillMutationTarget \| null =>/);
   assert.match(source, /skillMutationTargetFromInstance\(instance\)/);
   assert.match(source, /props\.readSkillInstance\(skill\.mutationTarget\)/);
   assert.match(source, /props\.saveSkillInstance\(skill\.mutationTarget, selectedContent\(\)\)/);
-  assert.match(source, /props\.deleteSkillInstance\(target\)/);
+  assert.match(source, /props\.removeSkillInstance\(target\)/);
   assert.doesNotMatch(source, /props\.readSkill\(skill\.name\)/);
   assert.doesNotMatch(source, /props\.saveSkill\(\{\s*name: skill\.name/);
   assert.doesNotMatch(source, /props\.uninstallSkill\(target\.name\)/);
@@ -318,6 +396,8 @@ test("workspace skill copy and move are local scope transfer actions, not disabl
   assert.match(source, /props\.copySkillInstanceToGlobal\(target, \{ deleteSource: true \}\)/);
   assert.match(source, /const selectedDetailCanTransferToUserSkill = createMemo/);
   assert.match(source, /const selectedDetailCanInstallToWorkspace = createMemo/);
+  assert.match(source, /selectedInventoryRows\(\)\s*\.filter\(\(row\) =>\s*inventoryInstanceLifecycle\(row\.instance\) === "active"/);
+  assert.match(source, /translate\("skills\.bulk_removed_actions_unavailable"\)/);
   assert.match(source, /copy: selectedDetailCanTransferToUserSkill\(\) \? null : selectedDetailGlobalTransferDisabledReason\(\)/);
   assert.match(source, /move: selectedDetailCanTransferToUserSkill\(\) \? null : selectedDetailGlobalTransferDisabledReason\(\)/);
   assert.match(source, /onCopySkill=\{selectedDetailIsWorkspaceSkill\(\) \? \(input\) => copySelectedSkillToGlobal\(true, input\) : undefined\}/);
@@ -412,7 +492,7 @@ test("skills page gives user skills and workspace skills different relevant deta
   assert.match(source, /onEditSkill=\{selectedDetailIsWorkspaceSkill\(\) \? editSelectedSkill : undefined\}/);
   assert.match(source, /onCopySkill=\{selectedDetailIsWorkspaceSkill\(\) \? \(input\) => copySelectedSkillToGlobal\(true, input\) : undefined\}/);
   assert.match(source, /onMoveSkill=\{selectedDetailIsWorkspaceSkill\(\) \? \(input\) => copySelectedSkillToGlobal\(true, input\) : undefined\}/);
-  assert.match(source, /onDeleteSkill=\{selectedDetailIsWorkspaceSkill\(\) \? requestDetailDelete : undefined\}/);
+  assert.match(source, /onDeleteSkill=\{selectedDetailShowsRemoveAction\(\) \? requestDetailDelete : undefined\}/);
   assert.match(enSource, /"skills\.detail_copy_to_workspace":\s*"Install to workspace"/);
   assert.match(csSource, /"skills\.detail_copy_to_workspace":\s*"Nainstalovat do workspace"/);
   assert.match(zhSource, /"skills\.detail_copy_to_workspace":/);

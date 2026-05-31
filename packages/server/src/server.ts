@@ -18,12 +18,14 @@ import { ApprovalService } from "./approvals.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
 import { addMcp, installHubMcp, listMcp, removeMcp } from "./mcp.js";
 import {
+  deleteGlobalSkillRecoverable,
   deleteSkillAtPathRecoverable,
   deleteSkillRecoverable,
   listSkills,
   readSkillAtPath,
   updateSkillAtPath,
   upsertSkill,
+  userGlobalSkillRootsForMutation,
   workspaceSkillRootsForMutation,
 } from "./skills.js";
 import { installHubSkill } from "./skill-hub.js";
@@ -2241,6 +2243,7 @@ type SkillRemovalListItem = {
   name: string;
   scope: SkillRemovalScope;
   workspaceId?: string;
+  path: string;
   reason?: string;
   status: "removed" | "restored";
   removedAt: string;
@@ -2253,6 +2256,7 @@ const serializeSkillRemoval = (record: SkillRemovalRecord): SkillRemovalListItem
   name: record.name,
   scope: record.scope,
   ...(record.workspaceId ? { workspaceId: record.workspaceId } : {}),
+  path: record.originalPath,
   ...(record.reason ? { reason: record.reason } : {}),
   status: record.restoredAt ? "restored" : "removed",
   removedAt: record.removedAt ?? "",
@@ -4764,7 +4768,9 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
             },
             authorizedRoots: config.authorizedRoots,
           }
-        : {}),
+        : record.scope === "user-global"
+          ? { userGlobalSkillRoots: userGlobalSkillRootsForMutation() }
+          : {}),
     });
     const reloadTrigger = {
       type: "skill" as const,
@@ -4798,6 +4804,52 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       ...result,
       reloadRequired: true,
       trigger: { ...reloadTrigger, scope: record.scope },
+    });
+  });
+
+  addRoute(routes, "DELETE", "/skills/user-global/:name", "none", async (ctx) => {
+    ensureWritable(config);
+    const actor = await requireHostOrClient(ctx.request, config, ctx.tokens);
+    if (scopeRank(actor.scope ?? "viewer") < scopeRank("collaborator")) {
+      throw new ApiError(403, "forbidden", "Insufficient token scope", {
+        required: "collaborator",
+        scope: actor.scope,
+      });
+    }
+    const name = String(ctx.params.name ?? "").trim();
+    if (!name) {
+      throw new ApiError(400, "invalid_skill_name", "Skill name is required");
+    }
+    const result = await deleteGlobalSkillRecoverable(
+      name,
+      { path: trimmedSearchParam(ctx.url.searchParams, "path") },
+      {
+        dataDir: serverDataDir,
+        actor,
+        reason: trimmedSearchParam(ctx.url.searchParams, "reason"),
+      },
+    );
+    const reloadTrigger = {
+      type: "skill" as const,
+      name,
+      action: "removed" as const,
+      path: result.path,
+    };
+    for (const configuredWorkspace of config.workspaces) {
+      try {
+        const resolved = await resolveWorkspace(config, configuredWorkspace.id);
+        emitReloadEvent(ctx.reloadEvents, resolved, "skills", reloadTrigger);
+      } catch {
+        // Skip workspaces that are no longer authorized for this server.
+      }
+    }
+    return jsonResponse({
+      ok: true,
+      name,
+      path: result.path,
+      removalId: result.removalId,
+      reloadRequired: true,
+      trigger: { ...reloadTrigger, scope: "user-global" },
     });
   });
 

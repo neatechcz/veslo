@@ -229,6 +229,8 @@ export type DashboardViewProps = {
   readSkillInstance: (target: SkillMutationTarget) => Promise<{ name: string; path: string; content: string } | null>;
   saveSkillInstance: (target: SkillMutationTarget, content: string) => Promise<SkillSaveResult>;
   deleteSkillInstance: (target: SkillMutationTarget) => Promise<void>;
+  removeSkillInstance: (target: SkillMutationTarget) => Promise<SkillSaveResult>;
+  restoreSkillInstance: (target: SkillMutationTarget) => Promise<SkillSaveResult>;
   copySkillInstanceToGlobal: (target: SkillMutationTarget, options?: { deleteSource?: boolean }) => Promise<SkillSaveResult>;
   copySkillInstanceToWorkspace: (target: SkillMutationTarget, workspaceId: string) => Promise<SkillSaveResult>;
   pluginsAccessHint?: string | null;
@@ -1590,6 +1592,8 @@ export default function DashboardView(props: DashboardViewProps) {
                 readSkillInstance={props.readSkillInstance}
                 saveSkillInstance={props.saveSkillInstance}
                 deleteSkillInstance={props.deleteSkillInstance}
+                removeSkillInstance={props.removeSkillInstance}
+                restoreSkillInstance={props.restoreSkillInstance}
                 copySkillInstanceToGlobal={props.copySkillInstanceToGlobal}
                 copySkillInstanceToWorkspace={props.copySkillInstanceToWorkspace}
                 createSessionAndOpen={props.createSessionAndOpen}

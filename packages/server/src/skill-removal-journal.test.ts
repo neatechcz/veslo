@@ -357,9 +357,9 @@ test("workspace skill deletion creates a recoverable removal and restore routes 
     headers: { Authorization: "Bearer client-token" },
   });
   expect(listResponse.status).toBe(200);
-  const listPayload = await listResponse.json() as { items: Array<{ id: string; name: string; restoredAt?: string }> };
+  const listPayload = await listResponse.json() as { items: Array<{ id: string; name: string; path: string; restoredAt?: string }> };
   expect(listPayload.items).toEqual([
-    expect.objectContaining({ id: deletePayload.removalId, name: "demo-skill" }),
+    expect.objectContaining({ id: deletePayload.removalId, name: "demo-skill", path: skillPath }),
   ]);
   expect(listPayload.items[0]).not.toHaveProperty("actor");
   expect(listPayload.items[0]).not.toHaveProperty("tokenHash");
@@ -389,6 +389,114 @@ test("workspace skill deletion creates a recoverable removal and restore routes 
 
   const hiddenAfterRestore = await listSkillRemovals({ dataDir });
   expect(hiddenAfterRestore).toEqual([]);
+});
+
+test("user-global skill deletion creates a recoverable removal and restore routes can restore it", async () => {
+  const previousHome = process.env.HOME;
+  const homeDir = await tempDir("veslo-skill-removal-home-");
+  process.env.HOME = homeDir;
+  try {
+    const { dataDir, server } = await startFixture();
+    const userRoot = join(homeDir, ".config", "opencode", "skills");
+    const skillDir = join(userRoot, "global-skill");
+    await mkdir(join(skillDir, "nested"), { recursive: true });
+    const skillPath = join(skillDir, "SKILL.md");
+    await writeFile(skillPath, "---\nname: global-skill\ndescription: Global\n---\n\nGlobal body.\n", "utf8");
+    await writeFile(join(skillDir, "nested", "notes.txt"), "global notes\n", "utf8");
+
+    const deleteResponse = await fetch(
+      `http://127.0.0.1:${server.port}/skills/user-global/global-skill?path=${encodeURIComponent(skillPath)}&reason=${encodeURIComponent("cleanup")}`,
+      {
+        method: "DELETE",
+        headers: { Authorization: "Bearer client-token" },
+      },
+    );
+
+    expect(deleteResponse.status).toBe(200);
+    const deletePayload = await deleteResponse.json() as {
+      ok: true;
+      name: string;
+      path: string;
+      removalId: string;
+      reloadRequired?: boolean;
+      trigger?: { type: string; name: string; action: string; path: string; scope?: string };
+    };
+    expect(deletePayload).toMatchObject({
+      ok: true,
+      name: "global-skill",
+      path: join(userRoot, "global-skill"),
+      reloadRequired: true,
+      trigger: {
+        type: "skill",
+        name: "global-skill",
+        action: "removed",
+        path: join(userRoot, "global-skill"),
+        scope: "user-global",
+      },
+    });
+    expect(deletePayload.removalId).toBeString();
+    expect(await exists(join(userRoot, "global-skill"))).toBe(false);
+
+    const [record] = await listSkillRemovals({ dataDir, scope: "user-global" });
+    expect(record).toMatchObject({
+      id: deletePayload.removalId,
+      name: "global-skill",
+      scope: "user-global",
+      rootDir: userRoot,
+      originalDir: join(userRoot, "global-skill"),
+      originalPath: skillPath,
+      reason: "cleanup",
+    });
+
+    const restoreResponse = await fetch(
+      `http://127.0.0.1:${server.port}/skill-removals/${encodeURIComponent(deletePayload.removalId)}/restore`,
+      {
+        method: "POST",
+        headers: { "x-veslo-host-token": "host-token" },
+      },
+    );
+
+    expect(restoreResponse.status).toBe(200);
+    const restorePayload = await restoreResponse.json() as { ok: true; path: string };
+    expect(restorePayload.path).toBe(skillPath);
+    expect(await readFile(restorePayload.path, "utf8")).toContain("global-skill");
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+  }
+});
+
+test("user-global skill deletion rejects registry materialized paths", async () => {
+  const previousHome = process.env.HOME;
+  const homeDir = await tempDir("veslo-skill-removal-home-");
+  process.env.HOME = homeDir;
+  try {
+    const { server } = await startFixture();
+    const managedDir = join(homeDir, ".config", "opencode", "skills", "veslo-managed", "managed-skill");
+    const managedPath = join(managedDir, "SKILL.md");
+    await mkdir(managedDir, { recursive: true });
+    await writeFile(managedPath, "---\nname: managed-skill\ndescription: Managed\n---\n", "utf8");
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/skills/user-global/managed-skill?path=${encodeURIComponent(managedPath)}`,
+      {
+        method: "DELETE",
+        headers: { "x-veslo-host-token": "host-token" },
+      },
+    );
+
+    expect(response.status).toBe(409);
+    expect(await exists(managedPath)).toBe(true);
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+  }
 });
 
 test("GET /skill-removals requires collaborator-or-host access", async () => {
@@ -487,35 +595,94 @@ test("recoverable delete supports skills discovered in a parent workspace root",
 });
 
 test("user-global restore returns reload metadata for callers without workspace audit", async () => {
-  const userRoot = await tempDir("veslo-skill-removal-user-");
-  const { dataDir, server } = await startFixture();
-  const skillPath = await createSkill(userRoot, "global-skill");
-  const record = await removeSkillWithSnapshot({
-    dataDir,
-    actor: { type: "host" },
-    source: { scope: "user-global", rootDir: userRoot, skillPath },
-    reason: "cleanup",
-  });
+  const previousHome = process.env.HOME;
+  const homeDir = await tempDir("veslo-skill-removal-home-");
+  process.env.HOME = homeDir;
+  try {
+    const userRoot = join(homeDir, ".config", "opencode", "skills");
+    const { dataDir, server } = await startFixture();
+    const skillDir = join(userRoot, "global-skill");
+    await mkdir(skillDir, { recursive: true });
+    const skillPath = join(skillDir, "SKILL.md");
+    await writeFile(skillPath, "---\nname: global-skill\ndescription: Global\n---\n", "utf8");
+    const record = await removeSkillWithSnapshot({
+      dataDir,
+      actor: { type: "host" },
+      source: { scope: "user-global", rootDir: userRoot, skillPath },
+      reason: "cleanup",
+    });
 
-  const response = await fetch(`http://127.0.0.1:${server.port}/skill-removals/${encodeURIComponent(record.id)}/restore`, {
-    method: "POST",
-    headers: { "x-veslo-host-token": "host-token" },
-  });
+    const response = await fetch(`http://127.0.0.1:${server.port}/skill-removals/${encodeURIComponent(record.id)}/restore`, {
+      method: "POST",
+      headers: { "x-veslo-host-token": "host-token" },
+    });
 
-  expect(response.status).toBe(200);
-  const payload = await response.json() as {
-    ok: true;
-    path: string;
-    reloadRequired?: boolean;
-    trigger?: { type: string; name: string; action: string; path: string; scope?: string };
-  };
-  expect(payload.path.endsWith("global-skill/SKILL.md")).toBe(true);
-  expect(payload.reloadRequired).toBe(true);
-  expect(payload.trigger).toEqual({
-    type: "skill",
-    name: "global-skill",
-    action: "added",
-    path: payload.path,
-    scope: "user-global",
-  });
+    expect(response.status).toBe(200);
+    const payload = await response.json() as {
+      ok: true;
+      path: string;
+      reloadRequired?: boolean;
+      trigger?: { type: string; name: string; action: string; path: string; scope?: string };
+    };
+    expect(payload.path).toBe(skillPath);
+    expect(payload.reloadRequired).toBe(true);
+    expect(payload.trigger).toEqual({
+      type: "skill",
+      name: "global-skill",
+      action: "added",
+      path: payload.path,
+      scope: "user-global",
+    });
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+  }
+});
+
+test("user-global restore rejects tampered managed materialization paths", async () => {
+  const previousHome = process.env.HOME;
+  const homeDir = await tempDir("veslo-skill-removal-home-");
+  process.env.HOME = homeDir;
+  try {
+    const userRoot = join(homeDir, ".config", "opencode", "skills");
+    const { dataDir, server } = await startFixture();
+    const skillDir = join(userRoot, "global-skill");
+    await mkdir(skillDir, { recursive: true });
+    const skillPath = join(skillDir, "SKILL.md");
+    await writeFile(skillPath, "---\nname: global-skill\ndescription: Global\n---\n", "utf8");
+    const record = await removeSkillWithSnapshot({
+      dataDir,
+      actor: { type: "host" },
+      source: { scope: "user-global", rootDir: userRoot, skillPath },
+      reason: "cleanup",
+    });
+    const managedDir = join(userRoot, "veslo-managed", "global-skill");
+    await writeFile(
+      join(dataDir, "skill-removals", "records", `${record.id}.json`),
+      JSON.stringify({
+        ...record,
+        rootDir: join(userRoot, "veslo-managed"),
+        originalDir: managedDir,
+        originalPath: join(managedDir, "SKILL.md"),
+      }, null, 2) + "\n",
+      "utf8",
+    );
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/skill-removals/${encodeURIComponent(record.id)}/restore`, {
+      method: "POST",
+      headers: { "x-veslo-host-token": "host-token" },
+    });
+
+    expect(response.status).toBe(409);
+    expect(await exists(managedDir)).toBe(false);
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+  }
 });

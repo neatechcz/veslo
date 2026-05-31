@@ -54,6 +54,7 @@ export interface RestoreSkillRemovalInput {
     rootDir: string;
     skillRoots: string[];
   };
+  userGlobalSkillRoots?: string[];
   authorizedRoots?: string[];
 }
 
@@ -175,6 +176,31 @@ const normalizeListableRecord = async (
   return { ...record, status: "removed" };
 };
 
+const assertRecordPathsValid = (record: SkillRemovalRecord): { originalPath: string; originalDir: string } => {
+  const originalPath = resolve(record.originalPath);
+  const originalDir = resolve(record.originalDir);
+  if (basename(originalPath) !== SKILL_ENTRYPOINT || dirname(originalPath) !== originalDir || basename(originalDir) !== record.name) {
+    throw new ApiError(400, "invalid_skill_removal_record", "Skill removal record paths are invalid");
+  }
+  return { originalPath, originalDir };
+};
+
+const assertRestorePathInsideSkillRoots = (
+  record: SkillRemovalRecord,
+  skillRoots: string[],
+  originalPath: string,
+): void => {
+  const resolvedSkillRoots = skillRoots.map((root) => resolve(root));
+  const owningRoot = resolvedSkillRoots.find((root) => isPathInside(root, originalPath));
+  if (!owningRoot) {
+    throw new ApiError(403, "skill_restore_forbidden", "Skill removal path is outside authorized skill roots");
+  }
+  const relativeToRoot = relative(owningRoot, originalPath).replace(/\\/g, "/");
+  if (relativeToRoot === `veslo-managed/${record.name}/${SKILL_ENTRYPOINT}` || relativeToRoot.startsWith("veslo-managed/")) {
+    throw new ApiError(409, "managed_skill_read_only", "Managed materialized skills must be restored through the registry");
+  }
+};
+
 const assertWorkspaceRestoreAllowed = (record: SkillRemovalRecord, input: RestoreSkillRemovalInput): void => {
   if (!input.workspace) return;
   if (record.scope !== "workspace" || record.workspaceId !== input.workspace.id) {
@@ -189,17 +215,18 @@ const assertWorkspaceRestoreAllowed = (record: SkillRemovalRecord, input: Restor
     }
   }
 
-  const originalPath = resolve(record.originalPath);
-  const originalDir = resolve(record.originalDir);
-  if (basename(originalPath) !== SKILL_ENTRYPOINT || dirname(originalPath) !== originalDir || basename(originalDir) !== record.name) {
-    throw new ApiError(400, "invalid_skill_removal_record", "Skill removal record paths are invalid");
-  }
+  const { originalPath } = assertRecordPathsValid(record);
+  assertRestorePathInsideSkillRoots(record, input.workspace.skillRoots, originalPath);
+};
 
-  const skillRoots = input.workspace.skillRoots.map((root) => resolve(root));
-  const insideSkillRoot = skillRoots.some((root) => isPathInside(root, originalPath));
-  if (!insideSkillRoot) {
-    throw new ApiError(403, "skill_restore_forbidden", "Skill removal path is outside authorized skill roots");
+const assertUserGlobalRestoreAllowed = (record: SkillRemovalRecord, input: RestoreSkillRemovalInput): void => {
+  if (record.scope !== "user-global") return;
+  const { originalPath } = assertRecordPathsValid(record);
+  const skillRoots = input.userGlobalSkillRoots ?? [];
+  if (!skillRoots.length) {
+    throw new ApiError(403, "skill_restore_forbidden", "User-global restore requires authorized skill roots");
   }
+  assertRestorePathInsideSkillRoots(record, skillRoots, originalPath);
 };
 
 export async function removeSkillWithSnapshot(input: RemoveSkillWithSnapshotInput): Promise<SkillRemovalRecord> {
@@ -284,6 +311,7 @@ export async function restoreSkillRemoval(input: RestoreSkillRemovalInput): Prom
     throw new ApiError(409, "skill_removal_already_restored", "Skill removal has already been restored");
   }
   assertWorkspaceRestoreAllowed(record, input);
+  assertUserGlobalRestoreAllowed(record, input);
   if (await exists(record.originalDir)) {
     throw new ApiError(409, "skill_restore_conflict", `Skill directory already exists: ${record.originalDir}`);
   }

@@ -304,6 +304,7 @@ export type SkillInstance = {
     scope: SkillInventoryScope;
     workspaceId?: string;
     orgId?: string;
+    removalId?: string;
   };
   readable: boolean;
   writable: boolean;

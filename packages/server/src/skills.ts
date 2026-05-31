@@ -25,6 +25,8 @@ export interface SkillRemovalJournalContext {
   reason?: string;
 }
 
+const userHomeDir = (): string => process.env.HOME?.trim() || homedir();
+
 async function findWorkspaceRoots(workspaceRoot: string): Promise<string[]> {
   const roots: string[] = [];
   let current = resolve(workspaceRoot);
@@ -127,10 +129,11 @@ export async function listSkills(workspaceRoot: string, includeGlobal: boolean):
   }
 
   if (includeGlobal) {
-    const globalOpenCode = join(homedir(), ".config", "opencode", "skills");
-    const globalClaude = join(homedir(), ".claude", "skills");
-    const globalAgents = join(homedir(), ".agents", "skills");
-    const globalAgentLegacy = join(homedir(), ".agent", "skills");
+    const homeDir = userHomeDir();
+    const globalOpenCode = join(homeDir, ".config", "opencode", "skills");
+    const globalClaude = join(homeDir, ".claude", "skills");
+    const globalAgents = join(homeDir, ".agents", "skills");
+    const globalAgentLegacy = join(homeDir, ".agent", "skills");
     items.push(...(await listSkillsInDir(globalOpenCode, "global")));
     items.push(...(await listSkillsInDir(globalClaude, "global")));
     items.push(...(await listSkillsInDir(globalAgents, "global")));
@@ -190,6 +193,13 @@ export const workspaceSkillRootsForMutation = async (workspaceRoot: string): Pro
   ]);
 };
 
+export const userGlobalSkillRootsForMutation = (): string[] => [
+  join(userHomeDir(), ".config", "opencode", "skills"),
+  join(userHomeDir(), ".claude", "skills"),
+  join(userHomeDir(), ".agents", "skills"),
+  join(userHomeDir(), ".agent", "skills"),
+];
+
 async function resolveExistingWorkspaceSkillTarget(
   workspaceRoot: string,
   name: string,
@@ -211,6 +221,35 @@ async function resolveExistingWorkspaceSkillTarget(
   }
   const relativeToRoot = relative(owningRoot, target).replace(/\\/g, "/");
   if (!options.allowManaged && (relativeToRoot === `veslo-managed/${name}/${SKILL_ENTRYPOINT}` || relativeToRoot.startsWith("veslo-managed/"))) {
+    throw new ApiError(409, "managed_skill_read_only", "Managed materialized skills must be edited through the registry");
+  }
+  if (!(await exists(target))) {
+    throw new ApiError(404, "skill_not_found", `Skill not found: ${name}`);
+  }
+  return { skillPath: target, skillRoot: owningRoot };
+}
+
+async function resolveExistingUserGlobalSkillTarget(
+  name: string,
+  instancePath?: string,
+): Promise<{ skillPath: string; skillRoot: string }> {
+  validateSkillName(name);
+  const roots = userGlobalSkillRootsForMutation().map((root) => resolve(root));
+  const target = instancePath?.trim()
+    ? resolve(instancePath.trim())
+    : join(roots[0], name, SKILL_ENTRYPOINT);
+  if (basename(target) !== SKILL_ENTRYPOINT) {
+    throw new ApiError(400, "invalid_skill_path", "Skill instance path must point to SKILL.md");
+  }
+  if (basename(dirname(target)) !== name) {
+    throw new ApiError(400, "invalid_skill_path", "Skill instance path must match payload name");
+  }
+  const owningRoot = roots.find((root) => isPathInside(root, target));
+  if (!owningRoot) {
+    throw new ApiError(400, "invalid_skill_path", "Skill instance path must be inside a user-global skill root");
+  }
+  const relativeToRoot = relative(owningRoot, target).replace(/\\/g, "/");
+  if (relativeToRoot === `veslo-managed/${name}/${SKILL_ENTRYPOINT}` || relativeToRoot.startsWith("veslo-managed/")) {
     throw new ApiError(409, "managed_skill_read_only", "Managed materialized skills must be edited through the registry");
   }
   if (!(await exists(target))) {
@@ -303,6 +342,27 @@ export async function deleteSkillRecoverable(
       workspaceId: journal.workspaceId,
       rootDir: baseDir,
       skillPath,
+    },
+  });
+  return { path: record.originalDir, removalId: record.id };
+}
+
+export async function deleteGlobalSkillRecoverable(
+  name: string,
+  options: { path?: string } | undefined,
+  journal: SkillRemovalJournalContext,
+): Promise<{ path: string; removalId: string }> {
+  const trimmed = name.trim();
+  validateSkillName(trimmed);
+  const target = await resolveExistingUserGlobalSkillTarget(trimmed, options?.path);
+  const record = await removeSkillWithSnapshot({
+    dataDir: journal.dataDir,
+    actor: journal.actor,
+    reason: journal.reason,
+    source: {
+      scope: "user-global",
+      rootDir: target.skillRoot,
+      skillPath: target.skillPath,
     },
   });
   return { path: record.originalDir, removalId: record.id };
