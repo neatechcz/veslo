@@ -12,6 +12,7 @@ services:
   den-db:
     image: mysql:8.4
     restart: unless-stopped
+    command: ["--log-bin-trust-function-creators=1"]
     environment:
       MYSQL_DATABASE: ${DEN_DB_NAME:-den}
       MYSQL_USER: ${DEN_DB_USER:-den}
@@ -29,6 +30,7 @@ services:
   ai-gateway-db:
     image: mysql:8.4
     restart: unless-stopped
+    command: ["--log-bin-trust-function-creators=1"]
     environment:
       MYSQL_DATABASE: ${AI_GATEWAY_DB_NAME:-veslo_ai_gateway}
       MYSQL_USER: ${AI_GATEWAY_DB_USER:-gateway}
