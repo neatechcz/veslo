@@ -177,8 +177,28 @@ test("accepted first pending submit captures and remaps the pending queue key", 
 test("accepted pending queue drain removes the sent item from the materialized session queue", () => {
   assert.match(
     source,
-    /if \(accepted\) \{\s*const acceptedSessionKey = !sessionIdForQueueKey\(sessionKey\) && props\.selectedSessionId\?\.trim\(\)\s*\? sessionQueueKeyForSessionId\(props\.selectedSessionId\)\s*: sessionKey;\s*updateQueueForSessionKey\(acceptedSessionKey, \(queue\) => removeQueuedDraft\(queue, item\.id\)\);\s*return;\s*\}/s,
-    "accepted pending queue drains should remove the sent item from the real-session queue after remap",
+    /const resolveQueueKeyForQueuedDraft = \(originalSessionKey: string, draftId: string\) => \{[\s\S]*const originalQueue = queuedDraftsBySessionKey\(\)\[originalSessionKey\] \?\? \[\];[\s\S]*if \(originalQueue\.some\(\(item\) => item\.id === draftId\)\) return originalSessionKey;[\s\S]*const selectedSessionId = props\.selectedSessionId\?\.trim\(\);[\s\S]*const selectedSessionKey = sessionQueueKeyForSessionId\(selectedSessionId\);[\s\S]*if \(selectedSessionKey !== originalSessionKey\) \{[\s\S]*const selectedQueue = queuedDraftsBySessionKey\(\)\[selectedSessionKey\] \?\? \[\];[\s\S]*if \(selectedQueue\.some\(\(item\) => item\.id === draftId\)\) return selectedSessionKey;[\s\S]*return originalSessionKey;[\s\S]*\};/s,
+    "session view should resolve a queued draft's current key by item presence before falling back to the original key",
+  );
+
+  assert.match(
+    source,
+    /if \(accepted\) \{\s*const acceptedSessionKey = resolveQueueKeyForQueuedDraft\(sessionKey, item\.id\);\s*updateQueueForSessionKey\(acceptedSessionKey, \(queue\) => removeQueuedDraft\(queue, item\.id\)\);\s*return;\s*\}/s,
+    "accepted pending queue drains should remove the sent item from whichever queue currently contains it",
+  );
+});
+
+test("rejected pending queue drain updates the remapped item key", () => {
+  assert.match(
+    source,
+    /if \(currentSessionQueueKey\(\) !== sessionKey && !sessionIdForQueueKey\(sessionKey\)\) \{\s*const queuedSessionKey = resolveQueueKeyForQueuedDraft\(sessionKey, item\.id\);\s*updateQueueForSessionKey\(queuedSessionKey, \(queue\) => markQueuedDraftQueued\(queue, item\.id\)\);\s*return;\s*\}/s,
+    "queued fallback should restore the item in whichever queue currently contains it",
+  );
+
+  assert.match(
+    source,
+    /const errorSessionKey = resolveQueueKeyForQueuedDraft\(sessionKey, item\.id\);\s*updateQueueForSessionKey\(errorSessionKey, \(queue\) =>\s*markQueuedDraftError\(queue, item\.id, props\.error \?\? tr\("session\.connect_server_to_attach"\)\),\s*\);/s,
+    "rejected queue drains should mark the remapped queued item as error instead of updating the stale pending key",
   );
 });
 
@@ -232,8 +252,8 @@ test("edited queued send-now marks the edited item sending before awaiting hando
 test("edited queued send-now marks the edited item error when handoff is rejected", () => {
   assert.match(
     source,
-    /const accepted = await sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*restoreDraftOnFailure: false,\s*\}\);\s*if \(!accepted\) \{\s*updateQueueForSessionKey\(sessionKey, \(queue\) =>\s*markQueuedDraftError\(queue, editingId, props\.error \?\? tr\("session\.connect_server_to_attach"\)\),\s*\);\s*return false;\s*\}\s*updateQueueForSessionKey\(sessionKey, \(queue\) => removeQueuedDraft\(queue, editingId\)\);[\s\S]*if \(accepted && wasPaused\) \{\s*setQueuePausedForSessionKey\(sessionKey, false\);\s*\}/s,
-    "rejected edited queued send-now should leave an errored queue item instead of restoring the draft into Composer",
+    /const accepted = await sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*restoreDraftOnFailure: false,\s*\}\);\s*const resultSessionKey = resolveQueueKeyForQueuedDraft\(sessionKey, editingId\);\s*if \(!accepted\) \{\s*updateQueueForSessionKey\(resultSessionKey, \(queue\) =>\s*markQueuedDraftError\(queue, editingId, props\.error \?\? tr\("session\.connect_server_to_attach"\)\),\s*\);\s*return false;\s*\}\s*updateQueueForSessionKey\(resultSessionKey, \(queue\) => removeQueuedDraft\(queue, editingId\)\);[\s\S]*if \(accepted && wasPaused\) \{\s*setQueuePausedForSessionKey\(sessionKey, false\);\s*\}/s,
+    "edited queued send-now should update whichever queue contains the edited item after a pending remap",
   );
 });
 

@@ -2084,6 +2084,20 @@ export default function SessionView(props: SessionViewProps) {
     updateQueueForSessionKey(currentSessionQueueKey(), updater);
   };
 
+  const resolveQueueKeyForQueuedDraft = (originalSessionKey: string, draftId: string) => {
+    const originalQueue = queuedDraftsBySessionKey()[originalSessionKey] ?? [];
+    if (originalQueue.some((item) => item.id === draftId)) return originalSessionKey;
+    const selectedSessionId = props.selectedSessionId?.trim();
+    if (selectedSessionId) {
+      const selectedSessionKey = sessionQueueKeyForSessionId(selectedSessionId);
+      if (selectedSessionKey !== originalSessionKey) {
+        const selectedQueue = queuedDraftsBySessionKey()[selectedSessionKey] ?? [];
+        if (selectedQueue.some((item) => item.id === draftId)) return selectedSessionKey;
+      }
+    }
+    return originalSessionKey;
+  };
+
   const setQueuePausedForSessionKey = (sessionKey: string, paused: boolean) => {
     setQueuePausedAfterStopBySessionKey((current) => {
       if (Boolean(current[sessionKey]) === paused) return current;
@@ -3737,23 +3751,24 @@ export default function SessionView(props: SessionViewProps) {
     updateQueueForSessionKey(sessionKey, (queue) => markQueuedDraftSending(queue, item.id));
     try {
       if (currentSessionQueueKey() !== sessionKey && !sessionIdForQueueKey(sessionKey)) {
-        updateQueueForSessionKey(sessionKey, (queue) => markQueuedDraftQueued(queue, item.id));
+        const queuedSessionKey = resolveQueueKeyForQueuedDraft(sessionKey, item.id);
+        updateQueueForSessionKey(queuedSessionKey, (queue) => markQueuedDraftQueued(queue, item.id));
         return;
       }
 
       const accepted = await sendPromptImmediate(item.draft, { reason, expectedSessionKey: sessionKey });
       if (accepted) {
-        const acceptedSessionKey = !sessionIdForQueueKey(sessionKey) && props.selectedSessionId?.trim()
-          ? sessionQueueKeyForSessionId(props.selectedSessionId)
-          : sessionKey;
+        const acceptedSessionKey = resolveQueueKeyForQueuedDraft(sessionKey, item.id);
         updateQueueForSessionKey(acceptedSessionKey, (queue) => removeQueuedDraft(queue, item.id));
         return;
       }
       if (currentSessionQueueKey() !== sessionKey && !sessionIdForQueueKey(sessionKey)) {
-        updateQueueForSessionKey(sessionKey, (queue) => markQueuedDraftQueued(queue, item.id));
+        const queuedSessionKey = resolveQueueKeyForQueuedDraft(sessionKey, item.id);
+        updateQueueForSessionKey(queuedSessionKey, (queue) => markQueuedDraftQueued(queue, item.id));
         return;
       }
-      updateQueueForSessionKey(sessionKey, (queue) =>
+      const errorSessionKey = resolveQueueKeyForQueuedDraft(sessionKey, item.id);
+      updateQueueForSessionKey(errorSessionKey, (queue) =>
         markQueuedDraftError(queue, item.id, props.error ?? tr("session.connect_server_to_attach")),
       );
     } finally {
@@ -3839,13 +3854,14 @@ export default function SessionView(props: SessionViewProps) {
         expectedSessionKey: sessionKey,
         restoreDraftOnFailure: false,
       });
+      const resultSessionKey = resolveQueueKeyForQueuedDraft(sessionKey, editingId);
       if (!accepted) {
-        updateQueueForSessionKey(sessionKey, (queue) =>
+        updateQueueForSessionKey(resultSessionKey, (queue) =>
           markQueuedDraftError(queue, editingId, props.error ?? tr("session.connect_server_to_attach")),
         );
         return false;
       }
-      updateQueueForSessionKey(sessionKey, (queue) => removeQueuedDraft(queue, editingId));
+      updateQueueForSessionKey(resultSessionKey, (queue) => removeQueuedDraft(queue, editingId));
       if (accepted && wasPaused) {
         setQueuePausedForSessionKey(sessionKey, false);
       }
