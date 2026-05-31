@@ -28,6 +28,7 @@ const defaultSpecs = [
   './specs/session-capabilities.spec.ts',
   './specs/skill-registry-materialization.e2e.ts',
   './specs/shared-workspace-skill-lock.e2e.ts',
+  './specs/session-artifacts.spec.ts',
   './specs/session-prefetch.spec.ts',
   './specs/session.spec.ts',
   './specs/settings-dashboard-link-tabs.spec.ts',

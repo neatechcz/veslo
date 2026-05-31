@@ -175,6 +175,8 @@ export default {
   "session.capabilities_scope_workspace": "Pracovní prostor",
   "session.capabilities_scope_global": "Globální",
   "session.artifact_family_files": "Soubory",
+  "session.artifact_files_modified": "Upravené",
+  "session.artifact_files_opened": "Otevřené",
   "session.artifact_family_skills": "Dovednosti",
   "session.artifact_family_mcp": "MCP",
   "session.artifact_family_soul": "Soul",

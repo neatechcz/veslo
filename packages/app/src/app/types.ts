@@ -157,6 +157,7 @@ export type ArtifactItem = {
   kind: "file" | "text";
   size?: string;
   messageId?: string;
+  fileInteraction?: "modified" | "opened";
 };
 
 export type OpencodeEvent = {
