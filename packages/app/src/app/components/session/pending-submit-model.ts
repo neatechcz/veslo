@@ -78,14 +78,15 @@ export function pendingSubmittedDraftToMessage(
   const sessionID = pending.sessionId ?? "";
   const parts: Part[] = [];
   const text = (pending.draft.resolvedText ?? pending.draft.text).trim();
+  const placeholderText = pending.draft.attachments.length === 1 ? "Attachment" : "Attachments";
 
-  if (text) {
+  if (text || pending.draft.attachments.length > 0) {
     parts.push({
       id: `${pending.id}:text`,
       sessionID,
       messageID: pending.id,
       type: "text",
-      text,
+      text: text || placeholderText,
     } as Part);
   }
 

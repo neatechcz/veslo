@@ -18,6 +18,23 @@ const draft = (text: string): ComposerDraft => ({
   resolvedText: text,
 });
 
+const attachmentOnlyDraft = (): ComposerDraft => ({
+  mode: "prompt",
+  parts: [],
+  attachments: [
+    {
+      id: "attachment-1",
+      name: "screenshot.png",
+      mimeType: "image/png",
+      size: 10,
+      kind: "image",
+      dataUrl: "data:image/png;base64,AAAA",
+    },
+  ],
+  text: "",
+  resolvedText: "",
+});
+
 test("pending submit creates a user message before a real session id exists", () => {
   const pending = createPendingSubmittedDraft({
     id: "pending-submit-1",
@@ -68,4 +85,23 @@ test("pending submit can be remapped to the real session id", () => {
 
   assert.equal(remapped.sessionId, "session-123");
   assert.equal(pendingSubmittedDraftToMessage(remapped, "/tmp/workspace").info.sessionID, "session-123");
+});
+
+test("pending submit creates a renderable text placeholder for attachment-only drafts", () => {
+  const pending = createPendingSubmittedDraft({
+    id: "pending-submit-1",
+    sessionKey: "pending-draft:abc",
+    sessionId: null,
+    createdAt: 10,
+    draft: attachmentOnlyDraft(),
+  });
+
+  const message = pendingSubmittedDraftToMessage(pending, "/tmp/workspace");
+  const attachment = message.parts.find((part) => part.type === "file");
+  const placeholder = message.parts.find((part) => part.type === "text");
+
+  assert.equal(attachment?.type, "file");
+  assert.equal((attachment as { filename?: string } | undefined)?.filename, "screenshot.png");
+  assert.equal(placeholder?.type, "text");
+  assert.notEqual(((placeholder as { text?: string } | undefined)?.text ?? "").trim(), "");
 });
