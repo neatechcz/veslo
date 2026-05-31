@@ -125,3 +125,16 @@ test("artifacts panel uses i18n keys instead of hardcoded English labels", () =>
   assert.match(source, /tr\("session\.artifact_files_modified"\)/, "Modified file group should be localized");
   assert.match(source, /tr\("session\.artifact_files_opened"\)/, "Opened file group should be localized");
 });
+
+test("artifacts panel resolves labels against the current locale", () => {
+  assert.match(
+    source,
+    /currentLocale/,
+    "artifacts panel should use the current locale instead of relying on default translation resolution",
+  );
+  assert.match(
+    source,
+    /t\(key,\s*currentLocale\(\)\)/,
+    "artifacts panel translation helper should pass the current locale explicitly",
+  );
+});

@@ -3,7 +3,7 @@ import { FilePenLine, FileSearch, FolderSearch, HeartPulse, PlugZap, Sparkles } 
 import type { JSX } from "solid-js";
 
 import type { ArtifactFamily, ArtifactFamilyId, ArtifactFamilyItem } from "./artifact-family-model";
-import { t as tr } from "../../../i18n";
+import { currentLocale, t } from "../../../i18n";
 import { splitPathSegments, toWorkspaceRelative, getBasename, getDirname, normalizePath } from "../../utils/workspace-path";
 
 export type ArtifactsPanelProps = {
@@ -12,6 +12,8 @@ export type ArtifactsPanelProps = {
   onRevealArtifact?: (path: string) => void;
   id?: string;
 };
+
+const tr = (key: string) => t(key, currentLocale());
 
 const statusLabel = (value: string) => {
   if (value === "scanned") return tr("session.artifact_status_scanned");
