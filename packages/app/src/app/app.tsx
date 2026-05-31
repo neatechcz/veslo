@@ -103,6 +103,7 @@ import {
   initialSidebarSessionLimit,
   nextSidebarSessionLimit,
 } from "./pages/sidebar-session-pagination";
+import { promoteStoredProjectOrderKey } from "./components/session/workspace-session-list-prefs";
 import { shouldFallbackFromSessionRoute } from "./lib/session-route-selection-guard";
 import { shouldSyncSidebarFromSessionStore } from "./lib/sidebar-session-sync-guard";
 import { partitionVesloUtilitySessions } from "./lib/veslo-utility-session";
@@ -2080,7 +2081,7 @@ export default function App() {
 
   async function sendPrompt(
     draft?: ComposerDraft,
-    options: { targetSessionId?: string | null } = {},
+    options: { targetSessionId?: string | null; messageId?: string | null } = {},
   ): Promise<boolean> {
     recordSendTrace("sendPrompt:start", {
       engineReady: engineReady(),
@@ -2091,6 +2092,7 @@ export default function App() {
       busyLabel: busyLabel(),
     });
     let sessionID = options.targetSessionId?.trim() || selectedSessionId();
+    const replacementMessageID = options.messageId?.trim() || undefined;
     const hasExplicitDraft = Boolean(draft);
     const fallbackDraft = composerDraft();
     const fallbackText = fallbackDraft.text.trim();
@@ -2287,7 +2289,7 @@ export default function App() {
         }
 
         // Slash command: route through session.command() API
-        commandMessageIDToClear = createClientMessageID();
+        commandMessageIDToClear = replacementMessageID ?? createClientMessageID();
         sessionStore.setCommandDisplay(commandMessageIDToClear, command.name, command.arguments);
         const modelString = `${model.providerID}/${model.modelID}`;
         const files = buildCommandFileParts(resolvedDraft);
@@ -2311,6 +2313,7 @@ export default function App() {
 
       } else {
         const result = await c.session.promptAsync({
+          ...(replacementMessageID ? { messageID: replacementMessageID } : {}),
           sessionID,
           model,
           agent: agent ?? undefined,
@@ -2655,7 +2658,7 @@ export default function App() {
     const next = await revertSession(c, sessionID, messageID);
     upsertLocalSession(next);
 
-    const accepted = await sendPrompt(draft, { targetSessionId: sessionID });
+    const accepted = await sendPrompt(draft, { targetSessionId: sessionID, messageId: messageID });
     if (!accepted) {
       try {
         const restored = previousRevertMessageID
@@ -3930,6 +3933,14 @@ export default function App() {
     setSidebarSessionHasMoreByWorkspaceId((prev) =>
       Object.prototype.hasOwnProperty.call(prev, id) ? prev : { ...prev, [id]: false },
     );
+
+    const workspace = workspaceStore.workspaces().find((entry) => entry.id === id) ?? null;
+    const projectKey = workspace?.workspaceType === "local"
+      ? normalizeDirectoryPath(workspace.path?.trim() || workspace.directory?.trim() || "")
+      : "";
+    if (projectKey && !workspaceStore.isPrivateWorkspacePath(projectKey)) {
+      promoteStoredProjectOrderKey(projectKey);
+    }
   };
 
   const refreshAllSidebarWorkspaceSessions = async (prioritizeWorkspaceId?: string | null) => {

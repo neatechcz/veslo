@@ -642,6 +642,11 @@ test("directory picker flow publishes the registered workspace into the sidebar 
     "app should expose a scoped sidebar publication helper for registered workspaces",
   );
   assert.match(
+    appSource,
+    /const projectKey = workspace\?\.workspaceType === "local"[\s\S]*workspaceStore\.isPrivateWorkspacePath\(projectKey\)[\s\S]*promoteStoredProjectOrderKey\(projectKey\)/s,
+    "registered local workspaces should be promoted to the top of the by-project sidebar order",
+  );
+  assert.match(
     openDirectorySessionSource,
     /ensureWorkspaceForFolder: workspaceStore\.ensureWorkspaceForFolder,[\s\S]*onWorkspaceRegistered: \(\{ workspaceId \}\) => publishRegisteredWorkspaceToSidebar\(workspaceId\),[\s\S]*activateWorkspace: \(workspaceId\) => workspaceStore\.activateWorkspace\(workspaceId, \{ promoteToFront: true \}\),/s,
     "the picker flow should publish the registered workspace before the existing activation continuation",

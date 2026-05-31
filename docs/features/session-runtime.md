@@ -200,7 +200,7 @@ Session archive behavior removes sessions from the active primary list and expos
 
 Archiving the last visible session must not hide a local non-private workspace. The sidebar keeps the empty workspace visible as a workspace-only project so the user can create a new session, open workspace actions, or re-add the same directory without the app appearing to do nothing. This applies in by-project mode and as a Recent-mode fallback when no recent rows remain visible.
 
-Adding a local directory follows the same empty-workspace visibility rule. The directory is published to the sidebar as soon as it is registered, before the existing pending-draft activation/opening flow continues, so by-project mode shows the new project immediately without requiring a real session to exist first.
+Adding a local directory follows the same empty-workspace visibility rule. The directory is published to the sidebar as soon as it is registered, before the existing pending-draft activation/opening flow continues, so by-project mode shows the new project immediately at the top without requiring a real session to exist first.
 
 In local desktop mode, archive state can be persisted through the local Veslo server without a cloud sign-in by using a local desktop archive owner key. Remote/cloud archive state still requires a stable signed-in account identity so records do not mix across users.
 

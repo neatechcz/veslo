@@ -62,11 +62,13 @@ import {
 import {
   applyProjectOrder,
   mergeVisibleOrder,
+  promoteProjectKeyInOrder,
   type ProjectDropPosition,
   reorderProjectKeys,
 } from "./workspace-session-list-order";
 import { resolveRenderableProjectGroups } from "./workspace-session-list-render-model";
 import {
+  PROJECT_ORDER_PROMOTED_EVENT,
   readCollapsedProjectMap,
   readChatSidebarCollapsed,
   readChatSidebarHeight,
@@ -79,6 +81,7 @@ import {
   writeExpandedParentSessionIds,
   writeProjectOrder,
   writeSidebarViewMode,
+  type ProjectOrderPromotedEventDetail,
   type SidebarViewMode,
 } from "./workspace-session-list-prefs";
 import { deriveLoadedSidebarPrefetchInterest } from "./workspace-session-list-prefetch-interest";
@@ -291,6 +294,35 @@ export default function WorkspaceSessionList(props: Props) {
   const addDirectorySessionDisabled = createMemo(() => !props.onAddDirectorySession);
   const [frozenProjectGroups, setFrozenProjectGroups] = createSignal<ProjectSessionGroup[]>([]);
   const suspendProjectReorder = createMemo(() => Boolean(props.suspendProjectReorder));
+
+  const promoteProjectOrder = (projectKey: string) => {
+    const key = projectKey.trim();
+    if (!key) return;
+
+    setProjectOrder((current) => {
+      const materializedOrder = mergeVisibleOrder(
+        current,
+        visibleProjectGroups().map((group) => group.key),
+      );
+      const next = promoteProjectKeyInOrder(materializedOrder, key);
+      writeProjectOrder(next);
+      return next;
+    });
+  };
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleProjectOrderPromoted = (event: Event) => {
+      const detail = event instanceof CustomEvent
+        ? event.detail as ProjectOrderPromotedEventDetail | null
+        : null;
+      promoteProjectOrder(detail?.projectKey ?? "");
+    };
+
+    window.addEventListener(PROJECT_ORDER_PROMOTED_EVENT, handleProjectOrderPromoted);
+    onCleanup(() => window.removeEventListener(PROJECT_ORDER_PROMOTED_EVENT, handleProjectOrderPromoted));
+  });
 
   createEffect(() => {
     const next = orderedProjectGroups();

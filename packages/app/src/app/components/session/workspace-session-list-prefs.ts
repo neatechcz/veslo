@@ -1,4 +1,5 @@
 import type { CollapsedProjectMap } from "./workspace-session-list-model";
+import { promoteProjectKeyInOrder } from "./workspace-session-list-order";
 import {
   CHAT_SIDEBAR_DEFAULT_HEIGHT_PX,
   clampChatSidebarHeight,
@@ -17,7 +18,13 @@ export const SIDEBAR_PROJECT_ORDER_KEY = "veslo.sidebar-project-order.v1";
 export const SIDEBAR_EXPANDED_PARENT_SESSIONS_KEY = "veslo.sidebar-expanded-parent-sessions.v1";
 export const SIDEBAR_CHAT_HEIGHT_KEY = "veslo.sidebar-chat-height.v1";
 export const SIDEBAR_CHAT_COLLAPSED_KEY = "veslo.sidebar-chat-collapsed.v1";
+export const PROJECT_ORDER_PROMOTED_EVENT = "veslo:sidebar-project-order-promoted";
 export const DEFAULT_SIDEBAR_VIEW_MODE: SidebarViewMode = "by-project";
+
+export type ProjectOrderPromotedEventDetail = {
+  projectKey: string;
+  order: string[];
+};
 
 const resolveStorage = (storage?: SidebarPrefsStorage | null): SidebarPrefsStorage | null => {
   if (storage) return storage;
@@ -148,6 +155,26 @@ export const writeProjectOrder = (
   } catch {
     // ignore storage failures
   }
+};
+
+const dispatchProjectOrderPromoted = (
+  detail: ProjectOrderPromotedEventDetail,
+  storage?: SidebarPrefsStorage | null,
+) => {
+  if (storage || typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent<ProjectOrderPromotedEventDetail>(PROJECT_ORDER_PROMOTED_EVENT, { detail }));
+};
+
+export const promoteStoredProjectOrderKey = (
+  projectKey: string,
+  storage?: SidebarPrefsStorage | null,
+): string[] => {
+  const key = projectKey.trim();
+  const next = promoteProjectKeyInOrder(readProjectOrder(storage), key);
+  if (!key) return next;
+  writeProjectOrder(next, storage);
+  dispatchProjectOrderPromoted({ projectKey: key, order: next }, storage);
+  return next;
 };
 
 export const readExpandedParentSessionIds = (

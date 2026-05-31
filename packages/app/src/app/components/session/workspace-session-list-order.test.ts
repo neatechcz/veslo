@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   applyProjectOrder,
   mergeVisibleOrder,
+  promoteProjectKeyInOrder,
   reorderProjectKeys,
 } from "./workspace-session-list-order.js";
 
@@ -60,6 +61,18 @@ test("reorderProjectKeys ignores missing keys", () => {
 
   assert.deepEqual(reorderProjectKeys(keys, "x", "b"), keys);
   assert.deepEqual(reorderProjectKeys(keys, "a", "x"), keys);
+});
+
+test("promoteProjectKeyInOrder moves a registered project to the front", () => {
+  const next = promoteProjectKeyInOrder(["project:a", "project:b", "project:c"], " project:b ");
+
+  assert.deepEqual(next, ["project:b", "project:a", "project:c"]);
+});
+
+test("promoteProjectKeyInOrder inserts a new registered project before existing projects", () => {
+  const next = promoteProjectKeyInOrder(["project:a", "project:b"], "project:c");
+
+  assert.deepEqual(next, ["project:c", "project:a", "project:b"]);
 });
 
 test("mergeVisibleOrder keeps hidden keys stable while applying reordered visible keys", () => {
