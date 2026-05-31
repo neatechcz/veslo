@@ -607,6 +607,7 @@ export function createWorkspaceStore(options: {
 
       const denAuth = readDenAuth();
       const materializationAuth = {
+        denApiBase: denAuth?.denApiBase?.trim() || undefined,
         denToken: denAuth?.token?.trim() || undefined,
         denOrgId: denAuth?.orgId?.trim() || undefined,
         denUserId: denAuth?.user?.id?.trim() || undefined,

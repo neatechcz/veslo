@@ -18,6 +18,20 @@ test("workspace store defines a server-backed skill materialization sync gate", 
   );
 });
 
+test("workspace materialization sync forwards the signed-in Den API base", () => {
+  const syncStart = source.indexOf("async function syncWorkspaceSkillMaterializationBeforeRuntime(");
+  assert.notStrictEqual(syncStart, -1, "syncWorkspaceSkillMaterializationBeforeRuntime is missing");
+  const syncEnd = source.indexOf("async function activateWorkspace(", syncStart);
+  assert.notStrictEqual(syncEnd, -1, "activateWorkspace should follow the sync helper");
+  const syncSource = source.slice(syncStart, syncEnd);
+
+  assert.match(
+    syncSource,
+    /denApiBase:\s*denAuth\?\.denApiBase\?\.trim\(\)\s*\|\|\s*undefined/,
+    "runtime-start materialization sync must use the current signed-in Den API base, not only the server fallback config",
+  );
+});
+
 test("local materialization sync starts the managed server before using the fallback client", () => {
   const syncStart = source.indexOf("async function syncWorkspaceSkillMaterializationBeforeRuntime(");
   assert.notStrictEqual(syncStart, -1, "syncWorkspaceSkillMaterializationBeforeRuntime is missing");
