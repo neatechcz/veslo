@@ -347,10 +347,23 @@ export function summarizeStep(part: Part): { title: string; detail?: string; isS
   return { title: "Step", toolCategory: "tool" };
 }
 
-const ARTIFACT_PATH_PATTERN =
-  /(?:^|[\s"'`([{])((?:[a-zA-Z]:[/\\]|\.{1,2}[/\\]|~[/\\]|[/\\])[\w./\\\-]*\.[a-z][a-z0-9]{0,9}|[\w.\-]+[/\\][\w./\\\-]*\.[a-z][a-z0-9]{0,9})/gi;
-const ARTIFACT_OUTPUT_SCAN_LIMIT = 4000;
-const ARTIFACT_OUTPUT_SKIP_TOOLS = new Set(["webfetch"]);
+const APPLY_PATCH_SCAN_LIMIT = 4000;
+const LEGACY_OPEN_TOOLS = new Set(["open", "read"]);
+const LEGACY_MODIFIED_TOOLS = new Set(["apply_patch", "edit", "write"]);
+const LEGACY_INPUT_PATH_KEYS = ["filePath", "path", "file", "target"] as const;
+const LEGACY_FILE_INTERACTION_RANK: Record<NonNullable<ArtifactItem["fileInteraction"]>, number> = {
+  modified: 2,
+  opened: 1,
+};
+const LEGACY_URI_TARGET_PATTERN = /^[a-z][a-z0-9+.-]*:/i;
+const LEGACY_HOST_WITH_ROUTE_PATTERN =
+  /^(?:localhost\.?(?::\d+|[/\\?#])|(?:\d{1,3}\.){3}\d{1,3}\.?(?::\d+|[/\\?#])|(?:[a-z0-9-]+\.)+[a-z]{2,}\.?(?::\d+|[/\\?#]))/i;
+const LEGACY_BARE_HOST_PATTERN = /^(?:localhost\.?|(?:\d{1,3}\.){3}\d{1,3}\.?|(?:[a-z0-9-]+\.)+[a-z]{2,}\.?)$/i;
+const LEGACY_PROTOCOL_RELATIVE_HOST_PATTERN = /^[/\\]{2}/;
+const LEGACY_BARE_FILE_EXTENSION_PATTERN =
+  /\.(?:[cm]?[jt]sx?|jsonc?|ya?ml|toml|mdx?|md|txt|tsx?|css|scss|sass|less|html?|xml|svg|png|jpe?g|gif|webp|ico|pdf|csv|tsv|sql|rs|go|py|rb|php|java|kt|kts|swift|cs|cpp|cxx|cc|c|h|hpp|sh|bash|zsh|fish|ps1|bat|cmd|lock|env|ini|conf|config|properties|gradle|dockerfile)$/i;
+const APPLY_PATCH_SUMMARY_INTRO_PATTERN =
+  /^(?:success\.\s*)?(?:updated|created|deleted|modified|changed|added|removed) the following files:\s*(.*)$/i;
 
 // Patterns that indicate a path is a truncated system/absolute path rather than a workspace-relative path
 const TRUNCATED_SYSTEM_PATH_PATTERNS = [
@@ -394,6 +407,128 @@ type DeriveArtifactsOptions = {
   maxMessages?: number;
 };
 
+function isUrlLikeLegacyArtifactPath(value: string, options: { rejectBareHost?: boolean } = {}): boolean {
+  const trimmed = value.trim();
+  if (/^[A-Za-z]:[\\/]/.test(trimmed)) return false;
+  const isLikelyBareFile = !/[\\/]/.test(trimmed) && LEGACY_BARE_FILE_EXTENSION_PATTERN.test(trimmed);
+  return (
+    LEGACY_URI_TARGET_PATTERN.test(trimmed) ||
+    LEGACY_PROTOCOL_RELATIVE_HOST_PATTERN.test(trimmed) ||
+    LEGACY_HOST_WITH_ROUTE_PATTERN.test(trimmed) ||
+    (options.rejectBareHost === true && LEGACY_BARE_HOST_PATTERN.test(trimmed) && !isLikelyBareFile)
+  );
+}
+
+function isLegacyArtifactPathCandidate(value: string, options: { rejectBareHost?: boolean } = {}): boolean {
+  const trimmed = value.trim();
+  return (
+    trimmed.length > 0 &&
+    trimmed.length <= 500 &&
+    !/^\.{2,}$/.test(trimmed) &&
+    !isUrlLikeLegacyArtifactPath(trimmed, options)
+  );
+}
+
+function collectLegacyDirectPaths(record: any, state: any, input: Record<string, unknown>, toolName: string): string[] {
+  const directValues = [
+    ...LEGACY_INPUT_PATH_KEYS.map((key) => input[key]),
+    ...LEGACY_INPUT_PATH_KEYS.map((key) => state?.[key]),
+    ...LEGACY_INPUT_PATH_KEYS.map((key) => record?.[key]),
+  ];
+  return directValues
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => value.trim())
+    .filter((value) => isLegacyArtifactPathCandidate(value, { rejectBareHost: true }));
+}
+
+function collectApplyPatchHeaderPaths(value: unknown): string[] {
+  if (typeof value !== "string") return [];
+  const matches = new Set<string>();
+  const normalizeCandidatePath = (rawPath: string): string | null => {
+    const path = rawPath.split(/\s+->\s+/).pop()?.trim() ?? rawPath.trim();
+    return isLegacyArtifactPathCandidate(path, { rejectBareHost: true }) ? path : null;
+  };
+  const addPath = (rawPath: string) => {
+    const path = normalizeCandidatePath(rawPath);
+    if (path) matches.add(path);
+    return path;
+  };
+  let pendingMoveSource: string | null = null;
+
+  for (const line of value.split(/\r?\n/)) {
+    const patchHeaderMatch = line.match(/^\*\*\* (Add|Update|Delete) File:\s+(.+)$/);
+    if (patchHeaderMatch?.[1]) {
+      pendingMoveSource = patchHeaderMatch[1] === "Update" ? addPath(patchHeaderMatch[2] ?? "") : null;
+      continue;
+    }
+    const moveMatch = line.match(/^\*\*\* Move to:\s+(.+)$/);
+    if (moveMatch?.[1]) {
+      const movePath = normalizeCandidatePath(moveMatch[1]);
+      if (movePath) {
+        if (pendingMoveSource) matches.delete(pendingMoveSource);
+        matches.add(movePath);
+      }
+      pendingMoveSource = null;
+      continue;
+    }
+    if (/^\*\*\* /.test(line)) pendingMoveSource = null;
+  }
+
+  return Array.from(matches);
+}
+
+function collectApplyPatchSummaryPaths(value: unknown): string[] {
+  if (typeof value !== "string") return [];
+  const text = value.slice(0, APPLY_PATCH_SCAN_LIMIT);
+  const matches = new Set<string>();
+  const addPath = (rawPath: string) => {
+    const path = rawPath.split(/\s+->\s+/).pop()?.trim() ?? rawPath.trim();
+    if (isLegacyArtifactPathCandidate(path, { rejectBareHost: true })) matches.add(path);
+  };
+  let inSummaryBlock = false;
+
+  for (const line of text.split(/\r?\n/)) {
+    const introMatch = line.trimEnd().match(APPLY_PATCH_SUMMARY_INTRO_PATTERN);
+    if (introMatch) {
+      inSummaryBlock = true;
+      const inlineSummary = introMatch[1]?.trim();
+      if (inlineSummary) {
+        const inlineSummaryMatch = inlineSummary.match(/^[MADRC]\s+(.+)$/);
+        if (inlineSummaryMatch?.[1]) {
+          addPath(inlineSummaryMatch[1]);
+          continue;
+        }
+        inSummaryBlock = false;
+      }
+      continue;
+    }
+    if (!inSummaryBlock) continue;
+
+    if (!line.trim()) {
+      inSummaryBlock = false;
+      continue;
+    }
+
+    const summaryMatch = line.trimEnd().match(/^[MADRC]\s+(.+)$/);
+    if (summaryMatch?.[1]) {
+      addPath(summaryMatch[1]);
+      continue;
+    }
+
+    inSummaryBlock = false;
+  }
+
+  return Array.from(matches);
+}
+
+function shouldReplaceLegacyArtifact(
+  current: ArtifactItem | undefined,
+  interaction: NonNullable<ArtifactItem["fileInteraction"]>,
+): boolean {
+  if (!current?.fileInteraction) return true;
+  return LEGACY_FILE_INTERACTION_RANK[interaction] >= LEGACY_FILE_INTERACTION_RANK[current.fileInteraction];
+}
+
 export function deriveArtifacts(list: MessageWithParts[], options: DeriveArtifactsOptions = {}): ArtifactItem[] {
   const results = new Map<string, ArtifactItem>();
   const maxMessages =
@@ -410,47 +545,24 @@ export function deriveArtifacts(list: MessageWithParts[], options: DeriveArtifac
       const record = part as any;
       const state = record.state ?? {};
       const matches = new Set<string>();
-
-      const explicit = [
-        state.path,
-        state.file,
-        ...(Array.isArray(state.files) ? state.files : []),
-      ];
-
-      explicit.forEach((f) => {
-        if (typeof f === "string") {
-          const trimmed = f.trim();
-          if (
-            trimmed.length > 0 &&
-            trimmed.length <= 500 &&
-            trimmed.includes(".") &&
-            !/^\.{2,}$/.test(trimmed)
-          ) {
-            matches.add(trimmed);
-          }
-        }
-      });
-
       const toolName =
         typeof record.tool === "string" && record.tool.trim()
           ? record.tool.trim().toLowerCase()
           : "";
-      const titleText = typeof state.title === "string" ? state.title : "";
-      const outputText =
-        typeof state.output === "string" && !ARTIFACT_OUTPUT_SKIP_TOOLS.has(toolName)
-          ? state.output.slice(0, ARTIFACT_OUTPUT_SCAN_LIMIT)
-          : "";
+      const input = getToolInput(state);
+      const interaction: ArtifactItem["fileInteraction"] = LEGACY_MODIFIED_TOOLS.has(toolName)
+        ? "modified"
+        : LEGACY_OPEN_TOOLS.has(toolName)
+          ? "opened"
+          : undefined;
 
-      const text = [titleText, outputText]
-        .filter((v): v is string => Boolean(v))
-        .join(" ");
+      if (!interaction) return;
 
-      if (text) {
-        ARTIFACT_PATH_PATTERN.lastIndex = 0;
-        Array.from(text.matchAll(ARTIFACT_PATH_PATTERN))
-          .map((m) => m[1])
-          .filter((f) => f && f.length <= 500)
-          .forEach((f) => matches.add(f));
+      collectLegacyDirectPaths(record, state, input, toolName).forEach((path) => matches.add(path));
+
+      if (toolName === "apply_patch") {
+        collectApplyPatchHeaderPaths(input.patch).forEach((path) => matches.add(path));
+        collectApplyPatchSummaryPaths(state.output).forEach((path) => matches.add(path));
       }
 
       if (matches.size === 0) return;
@@ -462,6 +574,9 @@ export function deriveArtifacts(list: MessageWithParts[], options: DeriveArtifac
         const key = cleanedPath.toLowerCase();
         const name = cleanedPath.split("/").pop() ?? cleanedPath;
         const id = `artifact-${encodeURIComponent(cleanedPath)}`;
+        const current = results.get(key);
+
+        if (!shouldReplaceLegacyArtifact(current, interaction)) return;
 
         // Delete and re-add to move to end (most recent)
         if (results.has(key)) results.delete(key);
@@ -472,6 +587,7 @@ export function deriveArtifacts(list: MessageWithParts[], options: DeriveArtifac
           kind: "file" as const,
           size: state.size ? String(state.size) : undefined,
           messageId: messageId || undefined,
+          fileInteraction: interaction,
         });
       });
     });

@@ -228,6 +228,54 @@ test("resolveArtifactFamilies falls back to legacy ArtifactItem data only when s
   assert.deepEqual(serverPreferred.map(familyLabel), ["Skills"]);
 });
 
+test("resolveArtifactFamilies maps legacy file interactions to server-like file artifacts", () => {
+  const families = resolveArtifactFamilies({
+    serverArtifacts: undefined,
+    legacyArtifacts: [
+      {
+        id: "opened",
+        name: "opened.ts",
+        path: "src/opened.ts",
+        kind: "file",
+        fileInteraction: "opened",
+      },
+      {
+        id: "modified",
+        name: "modified.ts",
+        path: "src/modified.ts",
+        kind: "file",
+        fileInteraction: "modified",
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    familyItems(families[0] as Record<string, unknown>).map((item) => {
+      const record = item as Record<string, unknown>;
+      return {
+        kind: record.kind,
+        status: record.status,
+        path: record.path,
+        fileInteraction: record.fileInteraction,
+      };
+    }),
+    [
+      {
+        kind: "file_output",
+        status: "updated",
+        path: "src/modified.ts",
+        fileInteraction: "modified",
+      },
+      {
+        kind: "file_discovered",
+        status: "scanned",
+        path: "src/opened.ts",
+        fileInteraction: "opened",
+      },
+    ],
+  );
+});
+
 test("resolveArtifactFamilies keeps an empty server response authoritative when preferServerArtifacts is enabled", () => {
   const families = resolveArtifactFamilies({
     serverArtifacts: [],

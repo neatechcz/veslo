@@ -291,23 +291,24 @@ function legacyArtifactPath(item: ArtifactItem): string {
 }
 
 function buildLegacyFallbackArtifacts(input: ResolveArtifactFamiliesInput): VesloSessionArtifactItem[] {
-  const results: VesloSessionArtifactItem[] = [];
-  const seen = new Set<string>();
+  const results = new Map<string, VesloSessionArtifactItem>();
 
-  const pushPath = (rawPath: string, timestamp: number) => {
+  const pushPath = (rawPath: string, timestamp: number, fileInteraction: ArtifactItem["fileInteraction"] = "opened") => {
     const path = normalizePath(rawPath);
     if (!path || isTechnicalArtifactPath(path, input.workspaceRoot)) return;
     const key = path.toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    results.push({
+    const kind = fileInteraction === "modified" ? "file_output" : "file_discovered";
+    const status = fileInteraction === "modified" ? "updated" : "scanned";
+    const current = results.get(key);
+    if (current && fileInteractionForKind(current.kind) === "modified" && fileInteraction !== "modified") return;
+    results.set(key, {
       id: `legacy:${key}`,
       sessionId: "",
       workspaceId: "",
       runId: "legacy",
       family: "files",
-      kind: "file_discovered",
-      status: "scanned",
+      kind,
+      status,
       title: basename(path),
       subtitle: path,
       path,
@@ -317,7 +318,8 @@ function buildLegacyFallbackArtifacts(input: ResolveArtifactFamiliesInput): Vesl
 
   const legacyArtifacts = input.legacyArtifacts ?? [];
   for (let index = 0; index < legacyArtifacts.length; index += 1) {
-    pushPath(legacyArtifactPath(legacyArtifacts[index]), legacyArtifacts.length - index);
+    const artifact = legacyArtifacts[index];
+    pushPath(legacyArtifactPath(artifact), legacyArtifacts.length - index, artifact.fileInteraction);
   }
 
   const workingFiles = input.workingFiles ?? [];
@@ -325,7 +327,7 @@ function buildLegacyFallbackArtifacts(input: ResolveArtifactFamiliesInput): Vesl
     pushPath(workingFiles[index] ?? "", workingFiles.length - index);
   }
 
-  return results;
+  return Array.from(results.values());
 }
 
 export function resolveArtifactFamilies(input: ResolveArtifactFamiliesInput): ArtifactFamily[] {
