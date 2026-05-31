@@ -8,6 +8,8 @@ import { exists } from "./utils.js";
 import { validateDescription, validateSkillName } from "./validators.js";
 import { ApiError } from "./errors.js";
 import { projectSkillsDir } from "./workspace-files.js";
+import { removeSkillWithSnapshot } from "./skill-removal-journal.js";
+import type { Actor } from "./types.js";
 import {
   extractTriggerFromSkillBody,
   parseSkillMarkdownMetadata,
@@ -15,6 +17,13 @@ import {
 } from "./skill-metadata.js";
 
 export const SKILL_ENTRYPOINT = "SKILL.md";
+
+export interface SkillRemovalJournalContext {
+  dataDir?: string;
+  workspaceId?: string;
+  actor: Actor;
+  reason?: string;
+}
 
 async function findWorkspaceRoots(workspaceRoot: string): Promise<string[]> {
   const roots: string[] = [];
@@ -173,7 +182,7 @@ const prepareSkillContent = (payload: { name: string; content: string; descripti
   return content.endsWith("\n") ? content : content + "\n";
 };
 
-const workspaceSkillRootsForMutation = async (workspaceRoot: string): Promise<string[]> => {
+export const workspaceSkillRootsForMutation = async (workspaceRoot: string): Promise<string[]> => {
   const roots = await findWorkspaceRoots(workspaceRoot);
   return roots.flatMap((root) => [
     join(root, ".opencode", "skills"),
@@ -181,12 +190,12 @@ const workspaceSkillRootsForMutation = async (workspaceRoot: string): Promise<st
   ]);
 };
 
-async function resolveExistingWorkspaceSkillPath(
+async function resolveExistingWorkspaceSkillTarget(
   workspaceRoot: string,
   name: string,
   instancePath: string,
   options: { allowManaged?: boolean } = {},
-): Promise<string> {
+): Promise<{ skillPath: string; skillRoot: string }> {
   validateSkillName(name);
   const target = resolve(instancePath.trim());
   if (basename(target) !== SKILL_ENTRYPOINT) {
@@ -207,7 +216,16 @@ async function resolveExistingWorkspaceSkillPath(
   if (!(await exists(target))) {
     throw new ApiError(404, "skill_not_found", `Skill not found: ${name}`);
   }
-  return target;
+  return { skillPath: target, skillRoot: owningRoot };
+}
+
+async function resolveExistingWorkspaceSkillPath(
+  workspaceRoot: string,
+  name: string,
+  instancePath: string,
+  options: { allowManaged?: boolean } = {},
+): Promise<string> {
+  return (await resolveExistingWorkspaceSkillTarget(workspaceRoot, name, instancePath, options)).skillPath;
 }
 
 export async function upsertSkill(
@@ -263,6 +281,33 @@ export async function deleteSkill(workspaceRoot: string, name: string): Promise<
   return { path: skillDir };
 }
 
+export async function deleteSkillRecoverable(
+  workspaceRoot: string,
+  name: string,
+  journal: SkillRemovalJournalContext,
+): Promise<{ path: string; removalId: string }> {
+  const trimmed = name.trim();
+  validateSkillName(trimmed);
+  const baseDir = projectSkillsDir(workspaceRoot);
+  const skillDir = join(baseDir, trimmed);
+  const skillPath = join(skillDir, SKILL_ENTRYPOINT);
+  if (!(await exists(skillPath))) {
+    throw new ApiError(404, "skill_not_found", `Skill not found: ${trimmed}`);
+  }
+  const record = await removeSkillWithSnapshot({
+    dataDir: journal.dataDir,
+    actor: journal.actor,
+    reason: journal.reason,
+    source: {
+      scope: "workspace",
+      workspaceId: journal.workspaceId,
+      rootDir: baseDir,
+      skillPath,
+    },
+  });
+  return { path: record.originalDir, removalId: record.id };
+}
+
 export async function deleteSkillAtPath(
   workspaceRoot: string,
   payload: { name: string; path: string },
@@ -271,4 +316,24 @@ export async function deleteSkillAtPath(
   const skillDir = dirname(skillPath);
   await rm(skillDir, { recursive: true, force: true });
   return { path: skillDir };
+}
+
+export async function deleteSkillAtPathRecoverable(
+  workspaceRoot: string,
+  payload: { name: string; path: string },
+  journal: SkillRemovalJournalContext,
+): Promise<{ path: string; removalId: string }> {
+  const target = await resolveExistingWorkspaceSkillTarget(workspaceRoot, payload.name.trim(), payload.path);
+  const record = await removeSkillWithSnapshot({
+    dataDir: journal.dataDir,
+    actor: journal.actor,
+    reason: journal.reason,
+    source: {
+      scope: "workspace",
+      workspaceId: journal.workspaceId,
+      rootDir: target.skillRoot,
+      skillPath: target.skillPath,
+    },
+  });
+  return { path: record.originalDir, removalId: record.id };
 }
