@@ -969,16 +969,7 @@ export default function Composer(props: ComposerProps) {
   const [sending, setSending] = createSignal(false);
   const [sendNowPending, setSendNowPending] = createSignal(false);
   const submitLocked = createMemo(() => sending());
-  const sendDisabled = createMemo(() => !hasDraftContent() || props.busy || submitLocked());
-
-  const restoreSubmittedDraft = (draft: ComposerDraft) => {
-    setMode(draft.mode);
-    renderParts(draft.parts.length ? draft.parts : (draft.text ? [{ type: "text", text: draft.text }] : []), false);
-    setDraftText(draft.text);
-    setAttachments((draft.attachments ?? []).map((attachment) => ({ ...attachment })));
-    props.onDraftChange(draft);
-    queueMicrotask(() => focusEditorEnd());
-  };
+  const sendDisabled = createMemo(() => !hasDraftContent() || (props.busy && !props.isStreaming));
 
   const sendDraft = async (options: ComposerSendOptions = {}) => {
     if (options.sendNow && sendNowPending()) return;
@@ -1018,6 +1009,18 @@ export default function Composer(props: ComposerProps) {
     setSlashQuery("");
     setAttachments([]);
     setEditorText("");
+    rememberRecentEmit("");
+    suppressPromptSync = true;
+    props.onDraftChange({
+      mode: submittedDraft.mode,
+      parts: [],
+      attachments: [],
+      text: "",
+      resolvedText: "",
+    });
+    queueMicrotask(() => {
+      suppressPromptSync = false;
+    });
     recordSendTrace("sendDraft:onSend", {
       textLength: text.length,
       attachmentCount: draft.attachments.length,
@@ -1026,8 +1029,11 @@ export default function Composer(props: ComposerProps) {
     });
     let sent = false;
     try {
-      sent = await props.onSend(submittedDraft, options);
+      const sendPromise = props.onSend(submittedDraft, options);
+      setSending(false);
+      sent = await sendPromise;
     } catch (error) {
+      setSending(false);
       recordSendTrace("sendDraft:onSend:error", {
         message: error instanceof Error ? error.message : String(error),
         sendNow: options.sendNow,
@@ -1044,12 +1050,9 @@ export default function Composer(props: ComposerProps) {
       source: options.source,
     });
     if (!sent) {
-      restoreSubmittedDraft(submittedDraft);
-      setSending(false);
       return;
     }
     emitDraftChange();
-    setSending(false);
     queueMicrotask(() => focusEditorEnd());
   };
 
@@ -1920,7 +1923,7 @@ export default function Composer(props: ComposerProps) {
                                   busy: props.busy,
                                   hasDraftContent: hasDraftContent(),
                                 });
-                                if (sending() || props.busy) {
+                                if (sending() || (props.busy && !props.isStreaming)) {
                                   recordSendTrace("sendButton:blocked", {
                                     sending: sending(),
                                     busy: props.busy,
