@@ -10,12 +10,8 @@ export type ArtifactsPanelProps = {
   families: ArtifactFamily[];
   workspaceRoot?: string;
   onRevealArtifact?: (path: string) => void;
-  onOpenInObsidian?: (path: string) => void;
-  obsidianAvailable?: boolean;
   id?: string;
 };
-
-const isMarkdown = (value: string) => /\.(md|mdx|markdown)$/i.test(value);
 
 const statusLabel = (value: string) => {
   if (value === "scanned") return tr("session.artifact_status_scanned");
@@ -71,15 +67,12 @@ type ArtifactRowProps = {
   status: string;
   workspaceRoot?: string;
   canRevealArtifact: () => boolean;
-  canOpenObsidian: () => boolean;
   onRevealArtifact?: (path: string) => void;
-  onOpenInObsidian?: (path: string) => void;
 };
 
 function ArtifactRow(props: ArtifactRowProps) {
   const subtitle = () => subtitleText(props.item, props.workspaceRoot);
   const canReveal = () => Boolean(props.item.path) && props.canRevealArtifact();
-  const canOpenMd = () => Boolean(props.item.path) && isMarkdown(props.item.path ?? "") && props.canOpenObsidian();
   const displayTitle = () => {
     if (props.item.path) {
       return getBasename(normalizePath(props.item.path));
@@ -97,16 +90,6 @@ function ArtifactRow(props: ArtifactRowProps) {
           <div class="shrink-0 rounded-md border border-gray-6 bg-gray-2 px-1.5 py-0.5 text-[10px] font-medium text-gray-10">
             {props.status}
           </div>
-          <Show when={canOpenMd()}>
-            <button
-              type="button"
-              class="rounded-md border border-gray-6 bg-gray-2 px-1.5 py-0.5 text-[10px] font-medium text-gray-10 transition-colors hover:border-gray-7 hover:text-gray-12"
-              onClick={() => props.item.path && props.onOpenInObsidian?.(props.item.path)}
-              title={tr("session.open_in_obsidian")}
-            >
-              Obsidian
-            </button>
-          </Show>
           <Show when={canReveal()}>
             <button
               type="button"
@@ -133,9 +116,7 @@ type FileArtifactGroupProps = {
   icon: JSX.Element;
   workspaceRoot?: string;
   canRevealArtifact: () => boolean;
-  canOpenObsidian: () => boolean;
   onRevealArtifact?: (path: string) => void;
-  onOpenInObsidian?: (path: string) => void;
 };
 
 function FileArtifactGroup(props: FileArtifactGroupProps) {
@@ -158,9 +139,7 @@ function FileArtifactGroup(props: FileArtifactGroupProps) {
               status={fileStatusLabel(item)}
               workspaceRoot={props.workspaceRoot}
               canRevealArtifact={props.canRevealArtifact}
-              canOpenObsidian={props.canOpenObsidian}
               onRevealArtifact={props.onRevealArtifact}
-              onOpenInObsidian={props.onOpenInObsidian}
             />
           )}
         </For>
@@ -174,9 +153,6 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
     props.families.reduce((sum, family) => sum + family.items.length, 0),
   );
   const canRevealArtifact = createMemo(() => typeof props.onRevealArtifact === "function");
-  const canOpenObsidian = createMemo(
-    () => Boolean(props.obsidianAvailable) && typeof props.onOpenInObsidian === "function",
-  );
 
   return (
     <div id={props.id}>
@@ -222,9 +198,7 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
                               status={statusLabel(item.status)}
                               workspaceRoot={props.workspaceRoot}
                               canRevealArtifact={canRevealArtifact}
-                              canOpenObsidian={canOpenObsidian}
                               onRevealArtifact={props.onRevealArtifact}
-                              onOpenInObsidian={props.onOpenInObsidian}
                             />
                           )}
                         </For>
@@ -238,9 +212,7 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
                           items={modifiedFiles()}
                           workspaceRoot={props.workspaceRoot}
                           canRevealArtifact={canRevealArtifact}
-                          canOpenObsidian={canOpenObsidian}
                           onRevealArtifact={props.onRevealArtifact}
-                          onOpenInObsidian={props.onOpenInObsidian}
                         />
                         <FileArtifactGroup
                           testId="session-artifact-files-opened"
@@ -249,9 +221,7 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
                           items={openedFiles()}
                           workspaceRoot={props.workspaceRoot}
                           canRevealArtifact={canRevealArtifact}
-                          canOpenObsidian={canOpenObsidian}
                           onRevealArtifact={props.onRevealArtifact}
-                          onOpenInObsidian={props.onOpenInObsidian}
                         />
                       </div>
                     </Show>

@@ -74,6 +74,20 @@ test("file artifact rows use file interaction status labels", () => {
   );
 });
 
+test("artifact file rows do not expose an Obsidian action", () => {
+  assert.doesNotMatch(source, /Obsidian/, "artifacts panel should not render an Obsidian button");
+  assert.doesNotMatch(
+    source,
+    /session\.open_in_obsidian/,
+    "artifacts panel should not reference the Obsidian i18n label",
+  );
+  assert.doesNotMatch(
+    source,
+    /onOpenInObsidian|obsidianAvailable/,
+    "artifacts panel props should not expose Obsidian action plumbing",
+  );
+});
+
 test("file groups fall back to file artifact kind when interaction metadata is absent", () => {
   assert.match(
     source,
