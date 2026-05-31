@@ -434,6 +434,8 @@ test("registry proxy exposes version history, installation changes, restore, and
     method: string;
     url: string;
     auth: string | null;
+    org: string | null;
+    user: string | null;
     body: unknown;
   }> = [];
   const registry = Bun.serve({
@@ -445,6 +447,8 @@ test("registry proxy exposes version history, installation changes, restore, and
         method: request.method,
         url: `${url.pathname}${url.search}`,
         auth: request.headers.get("authorization"),
+        org: request.headers.get("x-veslo-den-org-id"),
+        user: request.headers.get("x-veslo-den-user-id"),
         body: request.method === "GET" || request.method === "DELETE" ? null : await request.json(),
       });
 
@@ -505,6 +509,9 @@ test("registry proxy exposes version history, installation changes, restore, and
   const hostHeaders = {
     "Content-Type": "application/json",
     "X-Veslo-Host-Token": "host-token",
+    "x-veslo-den-token": "den-token",
+    "x-veslo-den-org-id": "org_1",
+    "x-veslo-den-user-id": "user_1",
   };
 
   const versionsResponse = await fetch(
@@ -550,30 +557,40 @@ test("registry proxy exposes version history, installation changes, restore, and
       method: "GET",
       url: "/v1/skills/skill_demo/versions?cursor=next%2Fcursor&limit=10",
       auth: "Bearer registry-token",
+      org: null,
+      user: null,
       body: null,
     },
     {
       method: "PATCH",
       url: "/v1/skill-installations/installation_1",
       auth: "Bearer registry-token",
+      org: "org_1",
+      user: "user_1",
       body: { enabled: false, versionId: "version_2", releaseChannel: null },
     },
     {
       method: "DELETE",
       url: "/v1/skill-installations/installation_1",
       auth: "Bearer registry-token",
+      org: "org_1",
+      user: "user_1",
       body: null,
     },
     {
       method: "POST",
       url: "/v1/skill-installations/installation_1/restore",
       auth: "Bearer registry-token",
+      org: "org_1",
+      user: "user_1",
       body: { workspaceId: "ws_1", versionId: "version_2" },
     },
     {
       method: "POST",
       url: "/v1/skills/skill_demo/review-requests",
       auth: "Bearer registry-token",
+      org: "org_1",
+      user: "user_1",
       body: { scope: "org", versionId: "version_2", orgId: "org_1", reason: "Ready" },
     },
   ]);

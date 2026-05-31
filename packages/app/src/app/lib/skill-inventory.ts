@@ -44,6 +44,8 @@ export type SkillMutationTarget = {
   path: string;
   scope: SkillInventoryScope;
   workspaceId?: string;
+  registry?: SkillInstance["registry"];
+  restoreTarget?: SkillInstance["restoreTarget"];
 };
 
 type SkillInventoryGroup = {
@@ -108,6 +110,8 @@ export const skillMutationTargetFromInstance = (instance: SkillInstance): SkillM
   path: instance.path,
   scope: instance.scope,
   ...(instance.workspaceId ? { workspaceId: instance.workspaceId } : {}),
+  ...(instance.registry ? { registry: instance.registry } : {}),
+  ...(instance.restoreTarget ? { restoreTarget: instance.restoreTarget } : {}),
 });
 
 const instanceId = (scope: SkillInventoryScope, workspaceId: string | undefined, name: string, path: string) =>

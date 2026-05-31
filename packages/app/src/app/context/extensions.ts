@@ -14,6 +14,7 @@ import type {
   ReloadReason,
   ReloadTrigger,
   SkillCard,
+  SkillInstance,
   SkillInventoryItem,
   SkillSaveResult,
 } from "../types";
@@ -56,6 +57,10 @@ export type ExtensionsStore = ReturnType<typeof createExtensionsStore>;
 type ListLocalSkillsScoped = (projectDir: string, scope: LocalSkillListScope) => Promise<LocalSkillCard[]>;
 type SkillInventoryRefreshResult = "published" | "stale" | "failed" | "aborted";
 type LocalSkillInventoryWorkspace = { id: string; label: string; path: string };
+type ManagedSkillMutationTarget = SkillMutationTarget & {
+  registry?: SkillInstance["registry"];
+  restoreTarget?: SkillInstance["restoreTarget"];
+};
 
 const vesloServerClientIdentities = new WeakMap<object, string>();
 let nextVesloServerClientIdentity = 1;
@@ -1600,16 +1605,70 @@ export function createExtensionsStore(options: {
     });
   }
 
-  async function deleteSkillInstance(target: SkillMutationTarget): Promise<void> {
+  const managedSkillMutationUnavailable = (message: string): SkillSaveResult => {
+    setSkillsStatus(message);
+    return { ok: false, message };
+  };
+
+  const resolveDenRegistryContext = () => {
+    const denAuth = readDenAuth();
+    return {
+      denToken: denAuth?.token?.trim() ?? "",
+      denOrgId: denAuth?.orgId?.trim() ?? "",
+      denUserId: denAuth?.user?.id?.trim() ?? "",
+    };
+  };
+
+  const requireDenRegistryContext = (): SkillSaveResult | null => {
+    const { denToken, denOrgId, denUserId } = resolveDenRegistryContext();
+    if (denToken && denOrgId && denUserId) return null;
+    return managedSkillMutationUnavailable(translate("skills.managed_den_context_required"));
+  };
+
+  const registryMutationClient = <TMethod extends string>(
+    method: TMethod,
+  ): (VesloServerClient & Record<TMethod, (...args: unknown[]) => Promise<unknown>>) | null => {
+    const vesloClient = options.vesloServerClient();
+    if (
+      options.vesloServerStatus() === "connected" &&
+      vesloClient &&
+      typeof (vesloClient as Record<string, unknown>)[method] === "function"
+    ) {
+      return vesloClient as VesloServerClient & Record<TMethod, (...args: unknown[]) => Promise<unknown>>;
+    }
+    return null;
+  };
+
+  const managedSkillTargetAffectsActiveRuntime = (target: ManagedSkillMutationTarget) => {
+    if (target.scope === "user-global") return true;
+    if (target.scope !== "workspace" && target.scope !== "organization") return false;
+    const targetWorkspaceId = target.workspaceId?.trim() || target.restoreTarget?.workspaceId?.trim() || "";
+    if (!targetWorkspaceId) return target.scope === "workspace" || target.scope === "organization";
+    const activeWorkspaceId = options.activeWorkspaceId().trim();
+    const vesloWorkspaceId = options.vesloServerWorkspaceId()?.trim() ?? "";
+    return targetWorkspaceId === activeWorkspaceId || Boolean(vesloWorkspaceId && targetWorkspaceId === vesloWorkspaceId);
+  };
+
+  const refreshAfterManagedSkillMutation = async (
+    target: ManagedSkillMutationTarget,
+    action: NonNullable<ReloadTrigger["action"]>,
+  ) => {
+    if (managedSkillTargetAffectsActiveRuntime(target)) {
+      options.markReloadRequired?.("skills", { type: "skill", name: target.name.trim(), action });
+    }
+    await refreshHubSkills({ force: true });
+    await refreshSkillInventory({ force: true });
+  };
+
+  async function removeWorkspaceFilesystemSkillInstance(target: SkillMutationTarget): Promise<SkillSaveResult> {
     const resolved = activeSkillForMutationTarget(target);
     if ("message" in resolved) {
       setSkillsStatus(resolved.message);
-      return;
+      return { ok: false, message: resolved.message };
     }
 
     if (isManagedSkillMutationPath(resolved.skill.path)) {
-      setSkillsStatus(translate("skills.registry_action_pending"));
-      return;
+      return managedSkillMutationUnavailable(translate("skills.registry_action_pending"));
     }
 
     const root = options.activeWorkspaceRoot().trim();
@@ -1650,15 +1709,199 @@ export function createExtensionsStore(options: {
         }
       }
 
-      setSkillsStatus(translate("skills.uninstalled"));
+      const message = translate("skills.uninstalled");
+      setSkillsStatus(message);
       options.markReloadRequired?.("skills", { type: "skill", name: resolved.skill.name, action: "removed" });
       await refreshSkills({ force: true });
+      return { ok: true, message };
     } catch (e) {
       const message = e instanceof Error ? e.message : translate("skills.unknown_error");
-      options.setError(addOpencodeCacheHint(message));
+      const hintedMessage = addOpencodeCacheHint(message);
+      options.setError(hintedMessage);
+      return { ok: false, message: hintedMessage };
     } finally {
       options.setBusy(false);
     }
+  }
+
+  async function removeSkillInstance(target: ManagedSkillMutationTarget): Promise<SkillSaveResult> {
+    const name = target.name.trim();
+    if (!name) return managedSkillMutationUnavailable(translate("skills.failed_load_skill"));
+
+    const registry = target.registry;
+    if (registry?.removalPolicy === "locked") {
+      return managedSkillMutationUnavailable(translate("skills.managed_remove_locked"));
+    }
+
+    const installationId = registry?.installationId?.trim() ?? "";
+    const policyId = registry?.policyId?.trim() ?? "";
+
+    if (installationId) {
+      const missingContext = requireDenRegistryContext();
+      if (missingContext) return missingContext;
+
+      const vesloClient = registryMutationClient("deleteRegistrySkillInstallation");
+      if (!vesloClient) {
+        return managedSkillMutationUnavailable(translate("skills.managed_remove_server_required"));
+      }
+
+      options.setBusy(true);
+      options.setError(null);
+      setSkillsStatus(null);
+
+      try {
+        await vesloClient.deleteRegistrySkillInstallation(installationId, resolveDenRegistryContext());
+        const message = translate("skills.uninstalled");
+        setSkillsStatus(message);
+        await refreshAfterManagedSkillMutation(target, "removed");
+        return { ok: true, message };
+      } catch (e) {
+        const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+        const hintedMessage = addOpencodeCacheHint(message);
+        options.setError(hintedMessage);
+        return { ok: false, message: hintedMessage };
+      } finally {
+        options.setBusy(false);
+      }
+    }
+
+    if (policyId) {
+      const missingContext = requireDenRegistryContext();
+      if (missingContext) return missingContext;
+
+      const vesloClient = registryMutationClient("updateRegistrySkillRolloutPolicy");
+      if (!vesloClient) {
+        return managedSkillMutationUnavailable(translate("skills.managed_rollout_server_required"));
+      }
+
+      options.setBusy(true);
+      options.setError(null);
+      setSkillsStatus(null);
+
+      try {
+        await vesloClient.updateRegistrySkillRolloutPolicy(policyId, {
+          enabled: false,
+          ...resolveDenRegistryContext(),
+        });
+        const message = translate("skills.uninstalled");
+        setSkillsStatus(message);
+        await refreshAfterManagedSkillMutation(target, "removed");
+        return { ok: true, message };
+      } catch (e) {
+        const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+        const hintedMessage = addOpencodeCacheHint(message);
+        options.setError(hintedMessage);
+        return { ok: false, message: hintedMessage };
+      } finally {
+        options.setBusy(false);
+      }
+    }
+
+    if (target.scope === "workspace") {
+      return removeWorkspaceFilesystemSkillInstance(target);
+    }
+
+    if (target.scope === "user-global") {
+      return managedSkillMutationUnavailable(translate("skills.user_global_recoverable_remove_unavailable"));
+    }
+
+    return managedSkillMutationUnavailable(translate("skills.remove_location_unavailable"));
+  }
+
+  async function restoreSkillInstance(target: ManagedSkillMutationTarget): Promise<SkillSaveResult> {
+    const name = target.name.trim();
+    if (!name) return managedSkillMutationUnavailable(translate("skills.failed_load_skill"));
+
+    const registry = target.registry;
+    if (registry?.removalPolicy === "locked") {
+      return managedSkillMutationUnavailable(translate("skills.managed_restore_locked"));
+    }
+
+    const installationId = registry?.installationId?.trim() ?? "";
+    const policyId = registry?.policyId?.trim() ?? "";
+
+    if (installationId) {
+      const missingContext = requireDenRegistryContext();
+      if (missingContext) return missingContext;
+
+      const vesloClient = registryMutationClient("restoreRegistrySkillInstallation");
+      if (!vesloClient) {
+        return managedSkillMutationUnavailable(translate("skills.managed_restore_server_required"));
+      }
+
+      const denContext = resolveDenRegistryContext();
+      const registryMetadata = registry ?? {};
+      const restoreScope = target.restoreTarget?.scope ?? target.scope;
+      const restoreWorkspaceId = target.restoreTarget?.workspaceId?.trim() || target.workspaceId?.trim() || undefined;
+      const restoreOrgId =
+        target.restoreTarget?.orgId?.trim() || (restoreScope === "organization" ? denContext.denOrgId : undefined);
+      const restoreOwnerUserId =
+        restoreScope === "user-global" || registryMetadata.source === "personal" ? denContext.denUserId : undefined;
+      const versionId = registryMetadata.versionId?.trim() || undefined;
+
+      options.setBusy(true);
+      options.setError(null);
+      setSkillsStatus(null);
+
+      try {
+        await vesloClient.restoreRegistrySkillInstallation(installationId, {
+          ...denContext,
+          ...(restoreOrgId ? { orgId: restoreOrgId } : {}),
+          ...(restoreOwnerUserId ? { ownerUserId: restoreOwnerUserId } : {}),
+          ...(restoreWorkspaceId ? { workspaceId: restoreWorkspaceId } : {}),
+          ...(versionId ? { versionId } : {}),
+        });
+        const message = translate("skills.restored");
+        setSkillsStatus(message);
+        await refreshAfterManagedSkillMutation(target, "added");
+        return { ok: true, message };
+      } catch (e) {
+        const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+        const hintedMessage = addOpencodeCacheHint(message);
+        options.setError(hintedMessage);
+        return { ok: false, message: hintedMessage };
+      } finally {
+        options.setBusy(false);
+      }
+    }
+
+    if (policyId) {
+      const missingContext = requireDenRegistryContext();
+      if (missingContext) return missingContext;
+
+      const vesloClient = registryMutationClient("updateRegistrySkillRolloutPolicy");
+      if (!vesloClient) {
+        return managedSkillMutationUnavailable(translate("skills.managed_rollout_server_required"));
+      }
+
+      options.setBusy(true);
+      options.setError(null);
+      setSkillsStatus(null);
+
+      try {
+        await vesloClient.updateRegistrySkillRolloutPolicy(policyId, {
+          enabled: true,
+          ...resolveDenRegistryContext(),
+        });
+        const message = translate("skills.restored");
+        setSkillsStatus(message);
+        await refreshAfterManagedSkillMutation(target, "added");
+        return { ok: true, message };
+      } catch (e) {
+        const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+        const hintedMessage = addOpencodeCacheHint(message);
+        options.setError(hintedMessage);
+        return { ok: false, message: hintedMessage };
+      } finally {
+        options.setBusy(false);
+      }
+    }
+
+    return managedSkillMutationUnavailable(translate("skills.restore_location_unavailable"));
+  }
+
+  async function deleteSkillInstance(target: SkillMutationTarget): Promise<void> {
+    await removeSkillInstance(target);
   }
 
   async function copySkillInstanceToGlobal(
@@ -1989,6 +2232,8 @@ export function createExtensionsStore(options: {
     readSkillInstance,
     saveSkillInstance,
     deleteSkillInstance,
+    removeSkillInstance,
+    restoreSkillInstance,
     copySkillInstanceToGlobal,
     copySkillInstanceToWorkspace,
     installHubMcp,
