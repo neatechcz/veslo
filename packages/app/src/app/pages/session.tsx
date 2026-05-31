@@ -3792,15 +3792,13 @@ export default function SessionView(props: SessionViewProps) {
     const transcriptEditMessageId = editingTranscriptMessageId();
     if (transcriptEditMessageId) {
       const sessionKey = currentSessionQueueKey();
+      setEditingTranscriptMessageId(null);
       const accepted = await sendPromptImmediate(draft, {
         reason: "replacement",
         expectedSessionKey: sessionKey,
         replaceMessageId: transcriptEditMessageId,
       });
       if (!accepted) return false;
-      if (currentSessionQueueKey() === sessionKey) {
-        setEditingTranscriptMessageId(null);
-      }
       return true;
     }
 

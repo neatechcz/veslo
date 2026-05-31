@@ -36,8 +36,13 @@ test("clicking a transcript edit action loads the draft and arms replacement sen
   );
   assert.match(
     sessionSource,
-    /const transcriptEditMessageId = editingTranscriptMessageId\(\);[\s\S]*if \(transcriptEditMessageId\) \{[\s\S]*const sessionKey = currentSessionQueueKey\(\);[\s\S]*const accepted = await sendPromptImmediate\(draft, \{[\s\S]*reason: "replacement",[\s\S]*expectedSessionKey: sessionKey,[\s\S]*replaceMessageId: transcriptEditMessageId,[\s\S]*\}\);[\s\S]*if \(currentSessionQueueKey\(\) === sessionKey\) \{[\s\S]*setEditingTranscriptMessageId\(null\);/,
-    "sending while a transcript edit is armed should use the replacement path and then clear edit state",
+    /const transcriptEditMessageId = editingTranscriptMessageId\(\);[\s\S]*if \(transcriptEditMessageId\) \{\s*const sessionKey = currentSessionQueueKey\(\);\s*setEditingTranscriptMessageId\(null\);\s*const accepted = await sendPromptImmediate\(draft, \{[\s\S]*reason: "replacement",[\s\S]*expectedSessionKey: sessionKey,[\s\S]*replaceMessageId: transcriptEditMessageId,[\s\S]*\}\);/,
+    "sending while a transcript edit is armed should clear edit state before handoff and use the captured replacement id",
+  );
+  assert.doesNotMatch(
+    sessionSource,
+    /const accepted = await sendPromptImmediate\(draft, \{[\s\S]*reason: "replacement"[\s\S]*\}\);[\s\S]*setEditingTranscriptMessageId\(null\);/,
+    "replacement sends should not keep edit state armed until after the handoff settles",
   );
 });
 
