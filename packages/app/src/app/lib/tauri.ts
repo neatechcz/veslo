@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { isTauriRuntime } from "../utils";
 import { validateMcpServerName } from "../mcp";
-import type { ComposerAttachment, ComposerDraft, ComposerPart } from "../types";
+import type { ComposerAttachment, ComposerDraft, ComposerPart, SkillInventoryRegistryMetadata } from "../types";
 
 export type EngineInfo = {
   running: boolean;
@@ -920,6 +920,7 @@ export type LocalSkillCard = {
   path: string;
   description?: string;
   trigger?: string;
+  registry?: SkillInventoryRegistryMetadata;
 };
 
 export type LocalSkillContent = {

@@ -345,7 +345,10 @@ fn resolve_skill_file_at_path(
                 let mut parts = relative.components();
                 if parts.next().and_then(|part| part.as_os_str().to_str()) == Some("veslo-managed")
                 {
-                    return Err("Managed materialized skills must be edited through the registry".to_string());
+                    return Err(
+                        "Managed materialized skills must be edited through the registry"
+                            .to_string(),
+                    );
                 }
             }
         }
@@ -357,11 +360,32 @@ fn resolve_skill_file_at_path(
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct LocalSkillRegistryMetadata {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub installation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub removal_policy: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct LocalSkillCard {
     pub name: String,
     pub path: String,
     pub description: Option<String>,
     pub trigger: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registry: Option<LocalSkillRegistryMetadata>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -491,11 +515,59 @@ fn extract_description(raw: &str) -> Option<String> {
     None
 }
 
+fn marker_string(value: &serde_json::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(|candidate| candidate.as_str())
+        .map(str::trim)
+        .filter(|candidate| !candidate.is_empty())
+        .map(ToString::to_string)
+}
+
+fn registry_metadata_from_managed_marker(skill_dir: &Path) -> Option<LocalSkillRegistryMetadata> {
+    let raw = fs::read_to_string(skill_dir.join(".veslo-managed.json")).ok()?;
+    let marker: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let marker_installation_id = marker_string(&marker, "installationId")?;
+
+    let (installation_id, policy_id, source, removal_policy) =
+        if let Some(policy_id) = marker_installation_id.strip_prefix("rollout:") {
+            let policy_id = policy_id.trim().to_string();
+            if policy_id.is_empty() {
+                return None;
+            }
+            (None, Some(policy_id), None, None)
+        } else {
+            let source = match marker_string(&marker, "target").as_deref() {
+                Some("workspace") => Some("workspace".to_string()),
+                Some("personal-global") => Some("personal".to_string()),
+                _ => None,
+            };
+            (
+                Some(marker_installation_id),
+                None,
+                source,
+                Some("user_removable".to_string()),
+            )
+        };
+
+    Some(LocalSkillRegistryMetadata {
+        skill_id: marker_string(&marker, "skillId"),
+        installation_id,
+        policy_id,
+        version_id: marker_string(&marker, "versionId"),
+        package_sha256: marker_string(&marker, "packageSha256"),
+        source,
+        removal_policy,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_skill_roots, extract_description, select_skill_roots_for_scope, SkillListScope,
+        collect_skill_roots, extract_description, registry_metadata_from_managed_marker,
+        select_skill_roots_for_scope, SkillListScope,
     };
+    use std::fs;
     use std::path::PathBuf;
     use std::str::FromStr;
 
@@ -594,6 +666,63 @@ mod tests {
 
         assert_eq!(description, "Short description");
     }
+
+    #[test]
+    fn managed_marker_exposes_installation_metadata_for_inventory() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let skill_dir = temp.path().join("managed-tool");
+        fs::create_dir_all(&skill_dir).expect("create skill dir");
+        fs::write(
+            skill_dir.join(".veslo-managed.json"),
+            r#"{
+              "installationId": "install_workspace_tool",
+              "skillId": "skill_workspace_tool",
+              "versionId": "version_1",
+              "packageSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "target": "workspace"
+            }"#,
+        )
+        .expect("write managed marker");
+
+        let metadata =
+            registry_metadata_from_managed_marker(&skill_dir).expect("registry metadata");
+
+        assert_eq!(
+            metadata.installation_id.as_deref(),
+            Some("install_workspace_tool")
+        );
+        assert_eq!(metadata.policy_id.as_deref(), None);
+        assert_eq!(metadata.skill_id.as_deref(), Some("skill_workspace_tool"));
+        assert_eq!(metadata.version_id.as_deref(), Some("version_1"));
+        assert_eq!(metadata.source.as_deref(), Some("workspace"));
+        assert_eq!(metadata.removal_policy.as_deref(), Some("user_removable"));
+    }
+
+    #[test]
+    fn managed_marker_maps_rollout_installation_to_policy_metadata() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let skill_dir = temp.path().join("managed-tool");
+        fs::create_dir_all(&skill_dir).expect("create skill dir");
+        fs::write(
+            skill_dir.join(".veslo-managed.json"),
+            r#"{
+              "installationId": "rollout:policy_workspace_tool",
+              "skillId": "skill_workspace_tool",
+              "versionId": "version_1",
+              "packageSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "target": "workspace"
+            }"#,
+        )
+        .expect("write managed marker");
+
+        let metadata =
+            registry_metadata_from_managed_marker(&skill_dir).expect("registry metadata");
+
+        assert_eq!(metadata.installation_id.as_deref(), None);
+        assert_eq!(metadata.policy_id.as_deref(), Some("policy_workspace_tool"));
+        assert_eq!(metadata.source.as_deref(), None);
+        assert_eq!(metadata.removal_policy.as_deref(), None);
+    }
 }
 
 #[tauri::command]
@@ -640,6 +769,7 @@ fn list_skill_cards_from_roots(skill_roots: Vec<PathBuf>) -> Result<Vec<LocalSki
             path: path.to_string_lossy().to_string(),
             description,
             trigger,
+            registry: registry_metadata_from_managed_marker(&path),
         });
     }
 
@@ -679,8 +809,8 @@ pub fn read_local_skill_at_path(
     path: String,
 ) -> Result<LocalSkillContent, String> {
     let path = resolve_skill_file_at_path(&project_dir, &name, &path, true)?;
-    let raw = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    let raw =
+        fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
     Ok(LocalSkillContent {
         path: path.to_string_lossy().to_string(),
         content: raw,

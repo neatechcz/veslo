@@ -173,6 +173,8 @@ export const E2E_SKILL_REGISTRY_FIXTURE = {
 let registryServer: Server | null = null;
 let registryBaseUrl: string | null = null;
 let useUpdatedRuntimeVersion = false;
+let deletedInstallationIds = new Set<string>();
+let deletedInstallationCalls: string[] = [];
 
 const fixtureInfoPath = () => join(process.cwd(), '.tmp-skill-registry-fixture.json');
 
@@ -216,12 +218,18 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
   const url = new URL(req.url ?? '/', base);
   if (req.method === 'POST' && url.pathname === '/__e2e/reset') {
     useUpdatedRuntimeVersion = false;
+    deletedInstallationIds = new Set();
+    deletedInstallationCalls = [];
     json(res, 200, { ok: true, mode: 'initial' });
     return;
   }
   if (req.method === 'POST' && url.pathname === '/__e2e/use-updated-runtime-version') {
     useUpdatedRuntimeVersion = true;
     json(res, 200, { ok: true, mode: 'updated' });
+    return;
+  }
+  if (req.method === 'GET' && url.pathname === '/__e2e/events') {
+    json(res, 200, { deletedInstallationCalls });
     return;
   }
 
@@ -248,7 +256,32 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
         installationFor(orgShadowedSkill, workspaceId),
         installationFor(orgLockedSkill, workspaceId),
         installationFor(personalShadowSkill, workspaceId),
-      ],
+      ].filter((installation) => !deletedInstallationIds.has(installation.installationId)),
+    });
+    return;
+  }
+
+  const installationMatch = /^\/v1\/skill-installations\/([^/]+)$/.exec(url.pathname);
+  if (req.method === 'DELETE' && installationMatch?.[1]) {
+    const installationId = decodeURIComponent(installationMatch[1]);
+    deletedInstallationIds.add(installationId);
+    deletedInstallationCalls.push(installationId);
+    const skill = [
+      runtimeSkill,
+      runtimeSkillUpdated,
+      orgShadowedSkill,
+      orgLockedSkill,
+      personalShadowSkill,
+    ].find((candidate) => candidate.installationId === installationId);
+    if (!skill) {
+      json(res, 404, { code: 'not_found', message: 'Installation not found' });
+      return;
+    }
+    json(res, 200, {
+      installation: {
+        ...installationFor(skill),
+        enabled: false,
+      },
     });
     return;
   }
@@ -320,6 +353,8 @@ export async function stopSkillRegistryFixture(): Promise<void> {
   registryServer = null;
   registryBaseUrl = null;
   useUpdatedRuntimeVersion = false;
+  deletedInstallationIds = new Set();
+  deletedInstallationCalls = [];
   rmSync(fixtureInfoPath(), { force: true });
   if (!server) return;
   await new Promise<void>((resolve, reject) => {
@@ -353,4 +388,12 @@ export async function resetSkillRegistryFixtureState(): Promise<void> {
 
 export async function useUpdatedRuntimeSkillVersion(): Promise<void> {
   await postFixtureControl('/__e2e/use-updated-runtime-version');
+}
+
+export async function readSkillRegistryFixtureEvents(): Promise<{ deletedInstallationCalls: string[] }> {
+  const response = await fetch(`${readSkillRegistryFixtureBaseUrl()}/__e2e/events`);
+  if (!response.ok) {
+    throw new Error(`Skill registry fixture events failed with ${response.status}`);
+  }
+  return (await response.json()) as { deletedInstallationCalls: string[] };
 }

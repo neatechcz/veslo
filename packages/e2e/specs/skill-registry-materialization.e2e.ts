@@ -9,6 +9,7 @@ import {
   E2E_SKILL_REGISTRY_TOKEN,
   E2E_SKILL_REGISTRY_USER_ID,
   E2E_SKILL_REGISTRY_WORKSPACE_ID,
+  readSkillRegistryFixtureEvents,
   resetSkillRegistryFixtureState,
   useUpdatedRuntimeSkillVersion,
 } from "../helpers/skill-registry-fixture.js";
@@ -74,6 +75,11 @@ const materializedSkillPath = () => join(materializedSkillRoot(), "SKILL.md");
 const materializationManifestPath = () => join(workspaceManagedSkillsRoot(), ".veslo-materialization.json");
 const skillMarkerPath = () => join(materializedSkillRoot(), ".veslo-managed.json");
 const lockfilePath = () => join(workspaceRoot(), ".opencode", "veslo.skills.lock.json");
+const managedSkillInstanceSelector = () =>
+  `[data-skill-inventory-name="${E2E_SKILL_REGISTRY_FIXTURE.runtimeSkill.name}"]` +
+  `[data-skill-inventory-scope="workspace"]` +
+  `[data-skill-inventory-workspace-id="${E2E_SKILL_REGISTRY_WORKSPACE_ID}"]` +
+  `[data-skill-inventory-lifecycle="active"]`;
 
 function normalizePath(value: string): string {
   return value.replace(/\\/g, "/").replace(/\/+$/, "");
@@ -329,6 +335,74 @@ async function waitForManagedSkillCard(): Promise<InventoryCard> {
   return card;
 }
 
+async function clickManagedSkillRemoveButton(): Promise<void> {
+  let latestResult: {
+    hasInstance: boolean;
+    hasButton: boolean;
+    disabled: boolean | null;
+    text: string;
+  } | null = null;
+
+  await browser.waitUntil(
+    async () => {
+      latestResult = await browser.execute(
+        (selector) => {
+          const instance = document.querySelector<HTMLElement>(selector);
+          const button = instance?.querySelector<HTMLButtonElement>('[data-testid="skill-inventory-deactivate-button"]');
+          return {
+            hasInstance: Boolean(instance),
+            hasButton: Boolean(button),
+            disabled: button?.disabled ?? null,
+            text: instance?.innerText ?? "",
+          };
+        },
+        managedSkillInstanceSelector(),
+      );
+      return Boolean(latestResult.hasInstance && latestResult.hasButton && latestResult.disabled === false);
+    },
+    {
+      timeout: 10_000,
+      timeoutMsg: "Managed skill remove button did not become enabled.",
+    },
+  );
+
+  const clicked = await browser.execute(
+    (selector) => {
+      const button = document
+        .querySelector<HTMLElement>(selector)
+        ?.querySelector<HTMLButtonElement>('[data-testid="skill-inventory-deactivate-button"]');
+      button?.click();
+      return Boolean(button);
+    },
+    managedSkillInstanceSelector(),
+  );
+  expect(clicked).toBe(true);
+}
+
+async function removeManagedSkillThroughUi(): Promise<void> {
+  await clickManagedSkillRemoveButton();
+  await expect($('[data-testid="skill-uninstall-modal"]')).toExist();
+  expect(await $('[data-testid="skill-uninstall-modal"]').getText()).toContain(E2E_SKILL_REGISTRY_FIXTURE.runtimeSkill.name);
+
+  await $('[data-testid="skill-uninstall-confirm"]').click();
+  await expect($('[data-testid="skill-uninstall-modal"]')).not.toExist();
+
+  await browser.waitUntil(
+    async () => {
+      const events = await readSkillRegistryFixtureEvents();
+      return events.deletedInstallationCalls.includes(E2E_SKILL_REGISTRY_FIXTURE.runtimeSkill.installationId);
+    },
+    {
+      timeout: 10_000,
+      timeoutMsg: "Managed skill removal did not call the registry installation delete endpoint.",
+    },
+  );
+}
+
+async function visibleBodyText(): Promise<string> {
+  return browser.execute(() => document.body.innerText);
+}
+
 const runWhenIsolatedProfile = process.env.E2E_USE_EXISTING_PROFILE?.trim() === "1"
   ? describe.skip
   : describe;
@@ -347,5 +421,10 @@ runWhenIsolatedProfile("Skill registry materialization", () => {
 
     expect(card.scope).toBe("workspace");
     expect(card.section).toBe("workspace-specific");
+
+    await removeManagedSkillThroughUi();
+    const bodyText = await visibleBodyText();
+    expect(bodyText).not.toContain("Managed materialized skills must be edited through the registry");
+    expect(bodyText).not.toContain("Skill instance path must point to SKILL.md");
   });
 });
