@@ -8,6 +8,8 @@ import {
 
 export type ArtifactFamilyId = "files" | "skills" | "mcp" | "soul";
 
+export type ArtifactFileInteraction = "modified" | "opened";
+
 export type ArtifactFamilyItem = {
   id: string;
   family: ArtifactFamilyId;
@@ -17,6 +19,7 @@ export type ArtifactFamilyItem = {
   subtitle?: string;
   path?: string;
   sourceName?: string;
+  fileInteraction?: ArtifactFileInteraction;
   timestamp: number;
 };
 
@@ -52,6 +55,11 @@ const FILE_STATUS_RANK: Record<string, number> = {
   created: 3,
   updated: 2,
   scanned: 1,
+};
+
+const FILE_INTERACTION_RANK: Record<ArtifactFileInteraction, number> = {
+  modified: 2,
+  opened: 1,
 };
 
 const SOUL_KIND_RANK: Record<string, number> = {
@@ -147,9 +155,29 @@ function normalizeSkillName(raw: string | undefined): string | null {
     .join(" ");
 }
 
+function fileInteractionForKind(kind: string): ArtifactFileInteraction | undefined {
+  if (kind === "file_output") return "modified";
+  if (kind === "file_discovered") return "opened";
+  return undefined;
+}
+
 function toFamilyItem(item: VesloSessionArtifactItem, workspaceRoot?: string): ArtifactFamilyItem | null {
   if (item.family === "files" && isTechnicalArtifactPath(item.path, workspaceRoot)) {
     return null;
+  }
+  if (item.family === "files") {
+    return {
+      id: item.id,
+      family: item.family,
+      kind: item.kind,
+      status: item.status,
+      title: item.title,
+      subtitle: item.subtitle,
+      path: item.path,
+      sourceName: item.sourceName,
+      fileInteraction: fileInteractionForKind(item.kind),
+      timestamp: item.timestamp,
+    };
   }
   if (item.family === "skills") {
     const title =
@@ -181,9 +209,44 @@ function toFamilyItem(item: VesloSessionArtifactItem, workspaceRoot?: string): A
   };
 }
 
+function fileInteractionRank(item: ArtifactFamilyItem): number {
+  return item.fileInteraction ? FILE_INTERACTION_RANK[item.fileInteraction] : 0;
+}
+
+function fileFamilyDedupeKey(item: ArtifactFamilyItem): string {
+  const path = normalizeComparablePath(item.path ?? "").toLowerCase();
+  if (path) return path;
+  return normalizeComparablePath(item.title).toLowerCase();
+}
+
+function shouldReplaceFileFamilyItem(current: ArtifactFamilyItem, candidate: ArtifactFamilyItem): boolean {
+  const currentRank = fileInteractionRank(current);
+  const candidateRank = fileInteractionRank(candidate);
+  if (currentRank !== candidateRank) return candidateRank > currentRank;
+  return candidate.timestamp >= current.timestamp;
+}
+
+function dedupeFileFamilyItems(items: ArtifactFamilyItem[]): ArtifactFamilyItem[] {
+  const byFile = new Map<string, ArtifactFamilyItem>();
+
+  for (const item of items) {
+    const key = fileFamilyDedupeKey(item);
+    const current = byFile.get(key);
+    if (!current || shouldReplaceFileFamilyItem(current, item)) {
+      byFile.set(key, item);
+    }
+  }
+
+  return Array.from(byFile.values());
+}
+
 function sortFamilyItems(family: ArtifactFamilyId, items: ArtifactFamilyItem[]): ArtifactFamilyItem[] {
   return items.slice().sort((left, right) => {
     if (family === "files") {
+      const leftInteractionRank = fileInteractionRank(left);
+      const rightInteractionRank = fileInteractionRank(right);
+      if (leftInteractionRank !== rightInteractionRank) return rightInteractionRank - leftInteractionRank;
+
       const leftRank = FILE_STATUS_RANK[left.status] ?? 0;
       const rightRank = FILE_STATUS_RANK[right.status] ?? 0;
       if (leftRank !== rightRank) return rightRank - leftRank;
@@ -213,10 +276,11 @@ export function buildArtifactFamilies(input: BuildArtifactFamiliesInput): Artifa
     .map((family) => {
       const items = grouped.get(family) ?? [];
       if (!items.length) return null;
+      const familyItems = family === "files" ? dedupeFileFamilyItems(items) : items;
       return {
         family,
         label: FAMILY_LABELS[family],
-        items: sortFamilyItems(family, items),
+        items: sortFamilyItems(family, familyItems),
       } satisfies ArtifactFamily;
     })
     .filter((family): family is ArtifactFamily => Boolean(family));

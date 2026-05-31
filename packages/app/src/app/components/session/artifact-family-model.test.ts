@@ -25,6 +25,16 @@ const familyItems = (family: Record<string, unknown>) => {
 const familyKinds = (family: Record<string, unknown>) =>
   familyItems(family).map((item) => String((item as Record<string, unknown>).kind ?? ""));
 
+const fileRows = (family: Record<string, unknown>) =>
+  familyItems(family).map((item) => {
+    const record = item as Record<string, unknown>;
+    return {
+      kind: String(record.kind ?? ""),
+      path: String(record.path ?? ""),
+      fileInteraction: String(record.fileInteraction ?? ""),
+    };
+  });
+
 test("buildArtifactFamilies groups server latest-run artifacts into Files, Skills, MCP, and Soul families", () => {
   const families = buildArtifactFamilies({
     artifacts: [
@@ -88,6 +98,93 @@ test("buildArtifactFamilies groups server latest-run artifacts into Files, Skill
   assert.deepEqual(families.map(familyLabel), ["Files", "Skills", "MCP", "Soul"]);
   assert.deepEqual(familyKinds(families[0] as Record<string, unknown>), ["file_output", "file_discovered"]);
   assert.deepEqual(familyKinds(families[3] as Record<string, unknown>), ["soul_memory_used", "heartbeat_used"]);
+});
+
+test("file artifacts carry modified and opened interactions for right menu grouping", () => {
+  const families = buildArtifactFamilies({
+    artifacts: [
+      artifact({
+        id: "opened",
+        family: "files",
+        kind: "file_discovered",
+        status: "scanned",
+        title: "opened.ts",
+        path: "src/opened.ts",
+        timestamp: 30,
+      }),
+      artifact({
+        id: "modified",
+        family: "files",
+        kind: "file_output",
+        status: "updated",
+        title: "modified.ts",
+        path: "src/modified.ts",
+        timestamp: 10,
+      }),
+    ],
+  });
+
+  assert.deepEqual(fileRows(families[0] as Record<string, unknown>), [
+    { kind: "file_output", path: "src/modified.ts", fileInteraction: "modified" },
+    { kind: "file_discovered", path: "src/opened.ts", fileInteraction: "opened" },
+  ]);
+});
+
+test("modified file artifacts replace opened duplicates in the app family model", () => {
+  const families = buildArtifactFamilies({
+    artifacts: [
+      artifact({
+        id: "opened",
+        family: "files",
+        kind: "file_discovered",
+        status: "scanned",
+        title: "app.ts",
+        path: "src/app.ts",
+        timestamp: 30,
+      }),
+      artifact({
+        id: "modified",
+        family: "files",
+        kind: "file_output",
+        status: "updated",
+        title: "app.ts",
+        path: "src/app.ts",
+        timestamp: 20,
+      }),
+    ],
+  });
+
+  assert.deepEqual(fileRows(families[0] as Record<string, unknown>), [
+    { kind: "file_output", path: "src/app.ts", fileInteraction: "modified" },
+  ]);
+});
+
+test("same-rank file duplicates use the latest row when timestamps match", () => {
+  const families = buildArtifactFamilies({
+    artifacts: [
+      artifact({
+        id: "first",
+        family: "files",
+        kind: "file_output",
+        status: "updated",
+        title: "first.ts",
+        path: "src/shared.ts",
+        timestamp: 20,
+      }),
+      artifact({
+        id: "second",
+        family: "files",
+        kind: "file_output",
+        status: "updated",
+        title: "second.ts",
+        path: "src/shared.ts",
+        timestamp: 20,
+      }),
+    ],
+  });
+
+  const [fileItem] = familyItems(families[0] as Record<string, unknown>) as Array<Record<string, unknown>>;
+  assert.equal(fileItem.id, "second");
 });
 
 test("resolveArtifactFamilies falls back to legacy ArtifactItem data only when server artifacts are absent", () => {
