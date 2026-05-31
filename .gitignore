@@ -1,5 +1,6 @@
 node_modules/
 packages/*/node_modules/
+outputs/skill-actions-matrix/node_modules
 .next/
 out/
 dist/
