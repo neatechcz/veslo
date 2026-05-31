@@ -103,6 +103,13 @@ import type { ComposerSendOptions } from "../components/session/composer";
 import QueuedMessageList from "../components/session/queued-message-list";
 import { getEditableUserMessageDraft, type EditableUserMessageDraft } from "../components/session/message-editability";
 import {
+  createPendingSubmittedDraft,
+  markPendingSubmittedFailed,
+  pendingSubmittedDraftToEditable,
+  pendingSubmittedDraftToMessage,
+  type PendingSubmittedDraft,
+} from "../components/session/pending-submit-model";
+import {
   appendQueuedDraft,
   firstQueuedDraft,
   markQueuedDraftEditing,
@@ -969,63 +976,18 @@ export default function SessionView(props: SessionViewProps) {
     return `${index + 1}/${size}`;
   });
 
-  type OptimisticSubmittedDraft = {
-    id: string;
-    createdAt: number;
-    sessionId: string | null;
-    draft: ComposerDraft;
-  };
-  const [optimisticSubmittedDraft, setOptimisticSubmittedDraft] = createSignal<OptimisticSubmittedDraft | null>(null);
+  const sessionQueueKeyForSessionId = (sessionId: string | null | undefined) =>
+    sessionId ?? `pending:${props.activeWorkspaceId || "default"}`;
+  const sessionIdForQueueKey = (sessionKey: string) =>
+    sessionKey.startsWith("pending:") ? null : sessionKey;
+  const currentSessionQueueKey = createMemo(() => sessionQueueKeyForSessionId(props.selectedSessionId));
+  const [optimisticSubmittedDraft, setOptimisticSubmittedDraft] = createSignal<PendingSubmittedDraft | null>(null);
 
   const optimisticSubmittedMessage = createMemo<MessageWithParts | null>(() => {
     const submitted = optimisticSubmittedDraft();
     if (!submitted) return null;
-
-    const sessionID = submitted.sessionId ?? props.selectedSessionId ?? "";
-    const text = (submitted.draft.resolvedText ?? submitted.draft.text).trim();
-    const parts: Part[] = [];
-    if (text) {
-      parts.push({
-        id: `${submitted.id}:text`,
-        sessionID,
-        messageID: submitted.id,
-        type: "text",
-        text,
-      } as Part);
-    }
-    submitted.draft.attachments.forEach((attachment, index) => {
-      parts.push({
-        id: `${submitted.id}:attachment:${index}`,
-        sessionID,
-        messageID: submitted.id,
-        type: "file",
-        url: attachment.dataUrl,
-        filename: attachment.name,
-        mime: attachment.mimeType,
-      } as Part);
-    });
-
-    return {
-      info: {
-        id: submitted.id,
-        sessionID,
-        role: "user",
-        time: { created: submitted.createdAt },
-        parentID: "",
-        model: "",
-        modelID: "",
-        providerID: "",
-        mode: submitted.draft.mode,
-        agent: "",
-        path: {
-          cwd: props.activeWorkspaceRoot,
-          root: props.activeWorkspaceRoot,
-        },
-        cost: 0,
-        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-      } as unknown as MessageWithParts["info"],
-      parts,
-    };
+    if (submitted.sessionKey !== currentSessionQueueKey()) return null;
+    return pendingSubmittedDraftToMessage(submitted, props.activeWorkspaceRoot);
   });
 
   const searchActive = createMemo(() => searchOpen() && searchQuery().trim().length > 0);
@@ -2071,6 +2033,12 @@ export default function SessionView(props: SessionViewProps) {
     assistantId: null,
     partCount: 0,
   });
+  const resetRunState = () => {
+    setRunStartedAt(null);
+    setRunHasBegun(false);
+    setRunLastProgressAt(null);
+    setRunBaseline({ assistantId: null, partCount: 0 });
+  };
   const [queuedDraftsBySessionKey, setQueuedDraftsBySessionKey] = createSignal<Record<string, QueuedDraft[]>>({});
   const [queuePausedAfterStopBySessionKey, setQueuePausedAfterStopBySessionKey] = createSignal<Record<string, boolean>>({});
   const [editingQueuedDraftId, setEditingQueuedDraftId] = createSignal<string | null>(null);
@@ -2079,11 +2047,6 @@ export default function SessionView(props: SessionViewProps) {
   const [todoExpanded, setTodoExpanded] = createSignal(false);
   let queueDrainAttemptInFlight = false;
 
-  const sessionQueueKeyForSessionId = (sessionId: string | null | undefined) =>
-    sessionId ?? `pending:${props.activeWorkspaceId || "default"}`;
-  const sessionIdForQueueKey = (sessionKey: string) =>
-    sessionKey.startsWith("pending:") ? null : sessionKey;
-  const currentSessionQueueKey = createMemo(() => sessionQueueKeyForSessionId(props.selectedSessionId));
   const queuedDrafts = createMemo(() => queuedDraftsBySessionKey()[currentSessionQueueKey()] ?? []);
   const queuePaused = createMemo(() => Boolean(queuePausedAfterStopBySessionKey()[currentSessionQueueKey()]));
   const queuePausedForSessionKey = (sessionKey: string) =>
@@ -2192,14 +2155,34 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const showRunIndicator = createMemo(() => runPhase() !== "idle");
-  const editableUserMessage = createMemo(() =>
-    getEditableUserMessageDraft({
-      messages: props.messages,
-      sessionIdle: !showRunIndicator(),
-      queueEmpty: queuedDrafts().length === 0,
-      composerEmpty: isComposerDraftEmpty(props.composerDraft),
-    }),
-  );
+  const createTranscriptEditableUserMessage = () => {
+    const editableUserMessage = createMemo(() =>
+      getEditableUserMessageDraft({
+        messages: props.messages,
+        sessionIdle: !showRunIndicator(),
+        queueEmpty: queuedDrafts().length === 0,
+        composerEmpty: isComposerDraftEmpty(props.composerDraft),
+      }),
+    );
+    return editableUserMessage;
+  };
+  const transcriptEditableUserMessage = createTranscriptEditableUserMessage();
+  const editableUserMessage = createMemo(() => {
+    const submitted = optimisticSubmittedDraft();
+    const sessionIdle = !showRunIndicator();
+    const queueEmpty = queuedDrafts().length === 0;
+    const composerEmpty = isComposerDraftEmpty(props.composerDraft);
+    if (
+      submitted?.sessionKey === currentSessionQueueKey() &&
+      sessionIdle &&
+      queueEmpty &&
+      composerEmpty
+    ) {
+      const editable = pendingSubmittedDraftToEditable(submitted);
+      if (editable) return editable;
+    }
+    return transcriptEditableUserMessage();
+  });
 
   const latestRunPart = createMemo<Part | null>(() => {
     if (!showRunIndicator()) return null;
@@ -2414,10 +2397,7 @@ export default function SessionView(props: SessionViewProps) {
 
         // Reset run state when switching sessions so a stuck error from a
         // previous session doesn't bleed into the new one.
-        setRunStartedAt(null);
-        setRunHasBegun(false);
-        setRunLastProgressAt(null);
-        setRunBaseline({ assistantId: null, partCount: 0 });
+        resetRunState();
         const previousEditingQueuedDraftId = editingQueuedDraftId();
         restoreEditingQueuedDraft(sessionQueueKeyForSessionId(previousSessionId), previousEditingQueuedDraftId);
         if (previousEditingQueuedDraftId) {
@@ -2653,10 +2633,7 @@ export default function SessionView(props: SessionViewProps) {
   createEffect(() => {
     if (!runStartedAt()) return;
     if (props.sessionStatus === "idle" && (runHasBegun() || responseStarted())) {
-      setRunStartedAt(null);
-      setRunHasBegun(false);
-      setRunLastProgressAt(null);
-      setRunBaseline({ assistantId: null, partCount: 0 });
+      resetRunState();
     }
   });
 
@@ -2670,10 +2647,7 @@ export default function SessionView(props: SessionViewProps) {
     if (runHasBegun() || responseStarted()) return;
     const timer = setTimeout(() => {
       if (runStartedAt() && props.sessionStatus === "idle" && !runHasBegun() && !responseStarted()) {
-        setRunStartedAt(null);
-        setRunHasBegun(false);
-        setRunLastProgressAt(null);
-        setRunBaseline({ assistantId: null, partCount: 0 });
+        resetRunState();
       }
     }, 2_000);
     onCleanup(() => clearTimeout(timer));
@@ -2798,10 +2772,7 @@ export default function SessionView(props: SessionViewProps) {
     // If the run is already in error state (e.g. model failed before responding),
     // the session is already idle server-side. Just dismiss the stuck indicator locally.
     if (runPhase() === "error") {
-      setRunStartedAt(null);
-      setRunHasBegun(false);
-      setRunLastProgressAt(null);
-      setRunBaseline({ assistantId: null, partCount: 0 });
+      resetRunState();
       return;
     }
 
@@ -3594,7 +3565,6 @@ export default function SessionView(props: SessionViewProps) {
   ) => {
     const expectedSessionKey = options.expectedSessionKey;
     const targetSessionId = expectedSessionKey ? sessionIdForQueueKey(expectedSessionKey) : null;
-    const restoreDraftOnFailure = options.restoreDraftOnFailure !== false;
     recordSendTrace("sendPromptImmediate:start", {
       aiAccessBlockedReason: props.aiAccessBlockedReason,
       busyHint: props.busyHint ?? null,
@@ -3616,13 +3586,18 @@ export default function SessionView(props: SessionViewProps) {
     }
 
     const showOptimisticSubmit = !options.replaceMessageId && options.reason !== "queue-drain";
+    const sessionKey = expectedSessionKey ?? currentSessionQueueKey();
+    const pendingSubmitId = `optimistic-submit:${Date.now()}:${Math.random().toString(36).slice(2)}`;
     if (showOptimisticSubmit) {
-      setOptimisticSubmittedDraft({
-        id: `optimistic-submit:${Date.now()}:${Math.random().toString(36).slice(2)}`,
-        createdAt: Date.now(),
-        sessionId: targetSessionId ?? props.selectedSessionId,
-        draft,
-      });
+      setOptimisticSubmittedDraft(
+        createPendingSubmittedDraft({
+          id: pendingSubmitId,
+          sessionKey,
+          createdAt: Date.now(),
+          sessionId: targetSessionId ?? props.selectedSessionId,
+          draft,
+        }),
+      );
       setStickToBottom(true);
       scheduleScrollToLatest("auto");
       startRun();
@@ -3642,8 +3617,13 @@ export default function SessionView(props: SessionViewProps) {
       });
       if (!accepted) {
         if (showOptimisticSubmit) {
-          if (restoreDraftOnFailure) props.setComposerDraft(draft);
-          setOptimisticSubmittedDraft(null);
+          const errorMessage = props.error ?? tr("session.connect_server_to_attach");
+          setOptimisticSubmittedDraft((current) =>
+            current?.id === pendingSubmitId && current.sessionKey === sessionKey
+              ? markPendingSubmittedFailed(current, errorMessage)
+              : current,
+          );
+          resetRunState();
         }
         setToastMessage(props.error ?? tr("session.connect_server_to_attach"));
         return false;
@@ -3663,8 +3643,13 @@ export default function SessionView(props: SessionViewProps) {
       return true;
     } catch (e) {
       if (showOptimisticSubmit) {
-        if (restoreDraftOnFailure) props.setComposerDraft(draft);
-        setOptimisticSubmittedDraft(null);
+        const errorMessage = props.error ?? (e instanceof Error ? e.message : tr("session.connect_server_to_attach"));
+        setOptimisticSubmittedDraft((current) =>
+          current?.id === pendingSubmitId && current.sessionKey === sessionKey
+            ? markPendingSubmittedFailed(current, errorMessage)
+            : current,
+        );
+        resetRunState();
       }
       reportError(e, "session.sendPrompt");
       setToastMessage(props.error ?? tr("session.connect_server_to_attach"));
@@ -3734,6 +3719,15 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const handleEditUserMessage = (editable: EditableUserMessageDraft) => {
+    const submitted = optimisticSubmittedDraft();
+    const pendingEditable =
+      submitted?.sessionKey === currentSessionQueueKey() ? pendingSubmittedDraftToEditable(submitted) : null;
+    if (pendingEditable?.messageId === editable.messageId) {
+      setOptimisticSubmittedDraft(null);
+      setEditingTranscriptMessageId(null);
+      props.setComposerDraft(pendingEditable.draft);
+      return;
+    }
     if (editableUserMessage()?.messageId !== editable.messageId) return;
     setEditingTranscriptMessageId(editable.messageId);
     props.setComposerDraft(editable.draft);

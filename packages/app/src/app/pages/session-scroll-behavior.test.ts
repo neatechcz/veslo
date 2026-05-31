@@ -7,20 +7,28 @@ const appStyles = readFileSync(new URL("../index.css", import.meta.url), "utf8")
 
 test("session send flow starts optimistic run UI before prompt handoff resolves", () => {
   const handlerStart = source.indexOf("const sendPromptImmediate = async (");
-  const optimisticSet = source.indexOf("setOptimisticSubmittedDraft({", handlerStart);
+  const optimisticSet = source.indexOf("createPendingSubmittedDraft({", handlerStart);
   const startRun = source.indexOf("startRun();", optimisticSet);
   const sendCall = source.indexOf("props.sendPromptAsync(draft, targetSessionId ? { targetSessionId } : undefined)", startRun);
   const rejectedBranch = source.indexOf("if (!accepted) {", sendCall);
-  const restoreDraft = source.indexOf("props.setComposerDraft(draft);", rejectedBranch);
-  const clearAfterFailure = source.indexOf("setOptimisticSubmittedDraft(null);", rejectedBranch);
+  const markFailed = source.indexOf("markPendingSubmittedFailed(", rejectedBranch);
+  const resetRun = source.indexOf("resetRunState();", rejectedBranch);
+  const failedBranchEnd = source.indexOf("setToastMessage(props.error ?? tr(\"session.connect_server_to_attach\"));", rejectedBranch);
+  const failedBranch = source.slice(rejectedBranch, failedBranchEnd);
 
   assert.notEqual(handlerStart, -1, "session send handler should exist");
-  assert.ok(optimisticSet > handlerStart, "session should capture an optimistic submitted draft during send");
+  assert.ok(optimisticSet > handlerStart, "session should create a pending submitted draft during send");
   assert.ok(startRun > optimisticSet, "session should start visible run state after the optimistic message is captured");
   assert.ok(sendCall > startRun, "session should show optimistic waiting UI before prompt handoff resolves");
   assert.ok(rejectedBranch > sendCall, "session should check whether the prompt was accepted");
-  assert.ok(restoreDraft > rejectedBranch, "failed handoff should restore the draft for correction");
-  assert.ok(clearAfterFailure > rejectedBranch, "failed handoff should remove the optimistic timeline message");
+  assert.ok(failedBranchEnd > rejectedBranch, "session should toast after a failed prompt handoff");
+  assert.ok(markFailed > rejectedBranch, "failed handoff should mark the pending timeline message as failed");
+  assert.ok(resetRun > rejectedBranch, "failed handoff should reset visible run state");
+  assert.doesNotMatch(
+    failedBranch,
+    /props\.setComposerDraft\(draft\);/,
+    "failed handoff should not restore the draft into Composer automatically",
+  );
 });
 
 test("session renders a temporary submitted user message until the real transcript takes over", () => {
@@ -34,8 +42,8 @@ test("session renders a temporary submitted user message until the real transcri
 
   assert.match(
     source,
-    /const optimisticSubmittedMessage = createMemo<MessageWithParts \| null>\(\(\) => \{/,
-    "session should derive a synthetic user message from the optimistic submitted draft",
+    /pendingSubmittedDraftToMessage\(submitted, props\.activeWorkspaceRoot\)/,
+    "session should derive a synthetic user message from the pending submitted draft model",
   );
 
   assert.match(
@@ -48,6 +56,20 @@ test("session renders a temporary submitted user message until the real transcri
     source,
     /if \(accepted\) \{[\s\S]*setOptimisticSubmittedDraft\(null\);[\s\S]*\}/,
     "accepted handoff should clear the optimistic placeholder so the server transcript owns display",
+  );
+});
+
+test("failed pending submitted messages become editable only through explicit action", () => {
+  assert.match(
+    source,
+    /pendingSubmittedDraftToEditable\(submitted\)/,
+    "failed pending submitted messages should contribute an editable draft through the model",
+  );
+
+  assert.match(
+    source,
+    /handleEditUserMessage[\s\S]*setOptimisticSubmittedDraft\(null\);[\s\S]*props\.setComposerDraft\(pendingEditable\.draft\);/,
+    "explicit edit should clear the pending timeline message and load that exact draft into Composer",
   );
 });
 
