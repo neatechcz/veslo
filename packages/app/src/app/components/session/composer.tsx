@@ -1005,6 +1005,8 @@ export default function Composer(props: ComposerProps) {
     const submittedDraft = draft;
     setSending(true);
     if (options.sendNow) setSendNowPending(true);
+    setMentionOpen(false);
+    setMentionQuery("");
     setSlashOpen(false);
     setSlashQuery("");
     setAttachments([]);

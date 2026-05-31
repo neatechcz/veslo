@@ -85,7 +85,7 @@ test("composer clears the submitted draft and releases the editor before send ha
 
   assert.match(
     composerSource,
-    /const submittedDraft = draft;[\s\S]*setSending\(true\);[\s\S]*setAttachments\(\[\]\);[\s\S]*setEditorText\(""\);[\s\S]*props\.onDraftChange\(\{[\s\S]*mode: submittedDraft\.mode,[\s\S]*parts: \[\],[\s\S]*attachments: \[\],[\s\S]*text: "",[\s\S]*resolvedText: "",[\s\S]*\}\);/,
+    /const submittedDraft = draft;[\s\S]*setSending\(true\);[\s\S]*setMentionOpen\(false\);\s*setMentionQuery\(""\);\s*setSlashOpen\(false\);\s*setSlashQuery\(""\);[\s\S]*setAttachments\(\[\]\);[\s\S]*setEditorText\(""\);[\s\S]*props\.onDraftChange\(\{[\s\S]*mode: submittedDraft\.mode,[\s\S]*parts: \[\],[\s\S]*attachments: \[\],[\s\S]*text: "",[\s\S]*resolvedText: "",[\s\S]*\}\);/,
     "composer should clear the editor and immediately emit an empty draft after snapshotting the submitted draft",
   );
 

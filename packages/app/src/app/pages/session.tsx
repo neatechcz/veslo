@@ -3589,10 +3589,12 @@ export default function SessionView(props: SessionViewProps) {
       reason?: "normal" | "queue-drain" | "send-now" | "replacement";
       expectedSessionKey?: string;
       replaceMessageId?: string;
+      restoreDraftOnFailure?: boolean;
     } = {},
   ) => {
     const expectedSessionKey = options.expectedSessionKey;
     const targetSessionId = expectedSessionKey ? sessionIdForQueueKey(expectedSessionKey) : null;
+    const restoreDraftOnFailure = options.restoreDraftOnFailure !== false;
     recordSendTrace("sendPromptImmediate:start", {
       aiAccessBlockedReason: props.aiAccessBlockedReason,
       busyHint: props.busyHint ?? null,
@@ -3640,7 +3642,7 @@ export default function SessionView(props: SessionViewProps) {
       });
       if (!accepted) {
         if (showOptimisticSubmit) {
-          props.setComposerDraft(draft);
+          if (restoreDraftOnFailure) props.setComposerDraft(draft);
           setOptimisticSubmittedDraft(null);
         }
         setToastMessage(props.error ?? tr("session.connect_server_to_attach"));
@@ -3661,7 +3663,7 @@ export default function SessionView(props: SessionViewProps) {
       return true;
     } catch (e) {
       if (showOptimisticSubmit) {
-        props.setComposerDraft(draft);
+        if (restoreDraftOnFailure) props.setComposerDraft(draft);
         setOptimisticSubmittedDraft(null);
       }
       reportError(e, "session.sendPrompt");
@@ -3762,13 +3764,25 @@ export default function SessionView(props: SessionViewProps) {
 
       const sessionKey = currentSessionQueueKey();
       const wasPaused = queuePausedForSessionKey(sessionKey);
-      const accepted = await sendPromptImmediate(draft, { reason: "send-now", expectedSessionKey: sessionKey });
-      if (!accepted) return false;
-      updateQueueForSessionKey(sessionKey, (queue) => removeQueuedDraft(queue, editingId));
+      updateQueueForSessionKey(sessionKey, (queue) =>
+        markQueuedDraftSending(updateQueuedDraft(queue, editingId, draft), editingId),
+      );
       if (currentSessionQueueKey() === sessionKey) {
         setEditingQueuedDraftId(null);
         props.setComposerDraft(emptyComposerDraft(draft.mode));
       }
+      const accepted = await sendPromptImmediate(draft, {
+        reason: "send-now",
+        expectedSessionKey: sessionKey,
+        restoreDraftOnFailure: false,
+      });
+      if (!accepted) {
+        updateQueueForSessionKey(sessionKey, (queue) =>
+          markQueuedDraftError(queue, editingId, props.error ?? tr("session.connect_server_to_attach")),
+        );
+        return false;
+      }
+      updateQueueForSessionKey(sessionKey, (queue) => removeQueuedDraft(queue, editingId));
       if (accepted && wasPaused) {
         setQueuePausedForSessionKey(sessionKey, false);
       }

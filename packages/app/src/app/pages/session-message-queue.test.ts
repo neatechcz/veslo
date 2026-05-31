@@ -167,11 +167,19 @@ test("queued edit lifecycle restores editing items and drains idle saves", () =>
   );
 });
 
-test("edited queued send-now resumes a paused queue after accepted send", () => {
+test("edited queued send-now marks the edited item sending before awaiting handoff", () => {
   assert.match(
     source,
-    /const sessionKey = currentSessionQueueKey\(\);\s*const wasPaused = queuePausedForSessionKey\(sessionKey\);\s*const accepted = await sendPromptImmediate\(draft, \{ reason: "send-now", expectedSessionKey: sessionKey \}\);[\s\S]*updateQueueForSessionKey\(sessionKey, \(queue\) => removeQueuedDraft\(queue, editingId\)\);[\s\S]*if \(accepted && wasPaused\) \{\s*setQueuePausedForSessionKey\(sessionKey, false\);\s*\}/,
-    "edited queued send-now should unpause after an accepted immediate send",
+    /const sessionKey = currentSessionQueueKey\(\);\s*const wasPaused = queuePausedForSessionKey\(sessionKey\);\s*updateQueueForSessionKey\(sessionKey, \(queue\) =>\s*markQueuedDraftSending\(updateQueuedDraft\(queue, editingId, draft\), editingId\),\s*\);\s*if \(currentSessionQueueKey\(\) === sessionKey\) \{\s*setEditingQueuedDraftId\(null\);\s*props\.setComposerDraft\(emptyComposerDraft\(draft\.mode\)\);\s*\}\s*const accepted = await sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*restoreDraftOnFailure: false,\s*\}\);/s,
+    "edited queued send-now should persist the edited draft into a sending queue item and release the composer before awaiting handoff",
+  );
+});
+
+test("edited queued send-now marks the edited item error when handoff is rejected", () => {
+  assert.match(
+    source,
+    /const accepted = await sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*restoreDraftOnFailure: false,\s*\}\);\s*if \(!accepted\) \{\s*updateQueueForSessionKey\(sessionKey, \(queue\) =>\s*markQueuedDraftError\(queue, editingId, props\.error \?\? tr\("session\.connect_server_to_attach"\)\),\s*\);\s*return false;\s*\}\s*updateQueueForSessionKey\(sessionKey, \(queue\) => removeQueuedDraft\(queue, editingId\)\);[\s\S]*if \(accepted && wasPaused\) \{\s*setQueuePausedForSessionKey\(sessionKey, false\);\s*\}/s,
+    "rejected edited queued send-now should leave an errored queue item instead of restoring the draft into Composer",
   );
 });
 
