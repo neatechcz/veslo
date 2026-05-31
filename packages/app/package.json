@@ -30,6 +30,7 @@
     "test:local-workspace-mode": "node scripts/local-workspace-mode.mjs",
     "test:local-ui-guards": "node scripts/local-ui-guards.mjs",
     "test:primary-localization": "node scripts/primary-flow-localization.mjs",
+    "test:ui-localization": "node scripts/ui-localization.mjs",
     "test:cloud-onboarding": "node scripts/cloud-onboarding.mjs",
     "test:cloud-ui-guards": "node scripts/cloud-ui-guards.mjs",
     "test:sidebar-flat": "pnpm exec tsx scripts/sidebar-flat-sessions.mjs",

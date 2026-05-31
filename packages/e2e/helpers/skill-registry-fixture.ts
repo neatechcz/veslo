@@ -159,12 +159,22 @@ const personalShadowSkill = fixtureSkill({
   description: 'Personal global copy that must not shadow the organization-managed skill.',
 });
 
+const personalGlobalSkill = fixtureSkill({
+  name: 'e2e-user-managed-skill',
+  skillId: 'skill_e2e_user_managed',
+  installationId: 'install_e2e_user_managed',
+  versionId: 'version_user_managed_1',
+  source: 'personal',
+  description: 'Personal managed skill from the registry fixture.',
+});
+
 export const E2E_SKILL_REGISTRY_FIXTURE = {
   runtimeSkill,
   runtimeSkillUpdated,
   orgShadowedSkill,
   orgLockedSkill,
   personalShadowSkill,
+  personalGlobalSkill,
   workspaceSkillSetId: 'skill_set_e2e_org_workspace',
   workspaceSkillSetRevision: 'rev_e2e_org_workspace_1',
   workspaceSkillSetUpdatedRevision: 'rev_e2e_org_workspace_2',
@@ -241,6 +251,7 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
       orgShadowedSkill,
       orgLockedSkill,
       personalShadowSkill,
+      personalGlobalSkill,
     ].map((skill) => [skill.versionId, skill]),
   );
 
@@ -272,6 +283,7 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
       orgShadowedSkill,
       orgLockedSkill,
       personalShadowSkill,
+      personalGlobalSkill,
     ].find((candidate) => candidate.installationId === installationId);
     if (!skill) {
       json(res, 404, { code: 'not_found', message: 'Installation not found' });
@@ -303,7 +315,12 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
   }
 
   if (url.pathname === '/v1/skill-installations') {
-    json(res, 200, { installations: [], nextCursor: null });
+    const source = url.searchParams.get('source')?.trim() ?? '';
+    const target = url.searchParams.get('target')?.trim() ?? '';
+    const installations = source === 'personal' && target === 'personal-global'
+      ? [installationFor(personalGlobalSkill)].filter((installation) => !deletedInstallationIds.has(installation.installationId))
+      : [];
+    json(res, 200, { installations, nextCursor: null });
     return;
   }
 

@@ -314,8 +314,8 @@ pub fn stable_workspace_id_for_veslo(host_url: &str, workspace_id: Option<&str>)
 #[cfg(test)]
 mod tests {
     use super::{
-        legacy_state_candidates, load_workspace_state_from_paths, private_workspace_root_from_data_dir,
-        try_load_legacy_workspace_state,
+        legacy_state_candidates, load_workspace_state_from_paths,
+        private_workspace_root_from_data_dir, try_load_legacy_workspace_state,
     };
     use crate::types::{RemoteType, WorkspaceInfo, WorkspaceState, WorkspaceType};
     use std::fs;

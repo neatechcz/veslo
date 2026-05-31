@@ -2,6 +2,7 @@ import type { Part } from "@opencode-ai/sdk/v2/client";
 
 import type { ComposerDraft, MessageWithParts } from "../../types";
 import type { EditableUserMessageDraft } from "./message-editability";
+import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../../i18n";
 
 export type PendingSubmittedDraftState = "sending" | "error";
 
@@ -78,7 +79,7 @@ export function pendingSubmittedDraftToMessage(
   const sessionID = pending.sessionId ?? "";
   const parts: Part[] = [];
   const text = (pending.draft.resolvedText ?? pending.draft.text).trim();
-  const placeholderText = pending.draft.attachments.length === 1 ? "Attachment" : "Attachments";
+  const placeholderText = pending.draft.attachments.length === 1 ? __vesloIndirectT("ui.indirect.attachment_1417wq", __vesloIndirectLocale()) : __vesloIndirectT("ui.indirect.attachments_8925gh", __vesloIndirectLocale());
 
   if (text || pending.draft.attachments.length > 0) {
     parts.push({

@@ -22,7 +22,9 @@ export const SUGGESTED_PLUGINS: SuggestedPlugin[] = [
     name: "opencode-scheduler",
     packageName: "opencode-scheduler",
     description: "Run scheduled jobs with the OpenCode scheduler plugin.",
+    descriptionKey: "plugins.suggested_scheduler_description",
     tags: ["automation", "jobs"],
+    tagKeys: ["plugins.tag_automation", "plugins.tag_jobs"],
     installMode: "simple",
   },
 ];
@@ -31,6 +33,7 @@ export type McpDirectoryInfo = {
   id?: string;
   name: string;
   description: string;
+  descriptionKey?: string;
   url?: string;
   type?: "remote" | "local";
   command?: string[];
@@ -42,6 +45,7 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     id: "chrome-devtools",
     name: "Control Chrome",
     description: "Drive Chrome tabs with browser automation.",
+    descriptionKey: "mcp.quick_control_chrome_description",
     type: "local",
     command: ["npx", "-y", "chrome-devtools-mcp@latest", "--isolated"],
     oauth: false,

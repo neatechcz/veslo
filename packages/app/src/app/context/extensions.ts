@@ -59,6 +59,7 @@ import type {
   VesloServerStatus,
 } from "../lib/veslo-server";
 import { readDenAuth } from "../lib/den-auth";
+import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 
 export type ExtensionsStore = ReturnType<typeof createExtensionsStore>;
 type ListLocalSkillsScoped = (projectDir: string, scope: LocalSkillListScope) => Promise<LocalSkillCard[]>;
@@ -260,7 +261,7 @@ export function createExtensionsStore(options: {
     } catch (e) {
       if (refreshHubMcpAborted) return;
       setHubMcpCards([]);
-      setHubMcpStatus(e instanceof Error ? e.message : "Failed to load hub MCP.");
+      setHubMcpStatus(e instanceof Error ? e.message : __vesloIndirectT("ui.indirect.failed_to_load_hub_mcp_1s9f65", __vesloIndirectLocale()));
     } finally {
       refreshHubMcpInFlight = false;
     }
@@ -377,7 +378,7 @@ export function createExtensionsStore(options: {
         hubSkillsRoot = root;
         hubSkillsContextKey = contextKey;
         markHubSkillsSourceChanged();
-        setHubSkillsStatus(e instanceof Error ? e.message : "Failed to load hub skills.");
+        setHubSkillsStatus(e instanceof Error ? e.message : __vesloIndirectT("ui.indirect.failed_to_load_hub_skills_1u0vcu", __vesloIndirectLocale()));
       } finally {
         refreshHubSkillsInFlight = false;
         refreshHubSkillsInFlightContextKey = "";
@@ -798,7 +799,7 @@ export function createExtensionsStore(options: {
 
   async function installHubSkill(name: string, target: HubSkillInstallTarget): Promise<{ ok: boolean; message: string }> {
     const trimmed = name.trim();
-    if (!trimmed) return { ok: false, message: "Skill name is required." };
+    if (!trimmed) return { ok: false, message: __vesloIndirectT("ui.indirect.skill_name_is_required_5te74i", __vesloIndirectLocale()) };
     if (!target) return { ok: false, message: translate("skills.install_target_required") };
     if (target.scope === "global") {
       return { ok: false, message: translate("skills.install_target_global_unavailable") };
@@ -823,9 +824,9 @@ export function createExtensionsStore(options: {
 
     if (!canUseVesloServer) {
       if (isRemoteWorkspace) {
-        return { ok: false, message: "Veslo server unavailable. Connect to install skills." };
+        return { ok: false, message: __vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_install_sk_7q26rj", __vesloIndirectLocale()) };
       }
-      return { ok: false, message: "Hub install requires Veslo server." };
+      return { ok: false, message: __vesloIndirectT("ui.indirect.hub_install_requires_veslo_server_yn3vz5", __vesloIndirectLocale()) };
     }
 
     options.setBusy(true);
@@ -837,7 +838,7 @@ export function createExtensionsStore(options: {
       await refreshSkills({ force: true });
       await refreshHubSkills({ force: true });
       if (!result?.ok) {
-        return { ok: false, message: "Install failed." };
+        return { ok: false, message: __vesloIndirectT("ui.indirect.install_failed_1etsn4", __vesloIndirectLocale()) };
       }
       return { ok: true, message: `Installed ${trimmed}.` };
     } catch (e) {
@@ -851,7 +852,7 @@ export function createExtensionsStore(options: {
 
   async function installHubMcp(name: string): Promise<{ ok: boolean; message: string; entry?: HubMcpCard }> {
     const trimmed = name.trim();
-    if (!trimmed) return { ok: false, message: "MCP name is required." };
+    if (!trimmed) return { ok: false, message: __vesloIndirectT("ui.indirect.mcp_name_is_required_1eoxeh", __vesloIndirectLocale()) };
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const vesloClient = options.vesloServerClient();
@@ -866,9 +867,9 @@ export function createExtensionsStore(options: {
 
     if (!canUseVesloServer) {
       if (isRemoteWorkspace) {
-        return { ok: false, message: "Veslo server unavailable. Connect to install MCP." };
+        return { ok: false, message: __vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_install_mc_wnm5lf", __vesloIndirectLocale()) };
       }
-      return { ok: false, message: "Hub install requires Veslo server." };
+      return { ok: false, message: __vesloIndirectT("ui.indirect.hub_install_requires_veslo_server_yn3vz5", __vesloIndirectLocale()) };
     }
 
     options.setBusy(true);
@@ -881,7 +882,7 @@ export function createExtensionsStore(options: {
       const denToken = denAuth?.token?.trim() ?? "";
       const denOrgId = denAuth?.orgId?.trim() ?? "";
       if (!denToken || !denOrgId) {
-        return { ok: false, message: "Missing Den auth context." };
+        return { ok: false, message: __vesloIndirectT("ui.indirect.missing_den_auth_context_1l81wa", __vesloIndirectLocale()) };
       }
 
       const result = await (vesloClient as any).installHubMcp(vesloWorkspaceId, trimmed, {
@@ -890,7 +891,7 @@ export function createExtensionsStore(options: {
       });
       await refreshHubMcp({ force: true });
       if (!result?.ok) {
-        return { ok: false, message: "Install failed." };
+        return { ok: false, message: __vesloIndirectT("ui.indirect.install_failed_1etsn4", __vesloIndirectLocale()) };
       }
       return { ok: true, message: `Installed ${trimmed}.`, ...(selectedEntry ? { entry: selectedEntry } : {}) };
     } catch (e) {
@@ -1034,7 +1035,7 @@ export function createExtensionsStore(options: {
     if (!c) {
       setSkills([]);
       markLocalSkillsSourceChanged();
-      setSkillsStatus("Veslo server unavailable. Connect to load skills.");
+      setSkillsStatus(__vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_load_skill_1whzfl", __vesloIndirectLocale()));
       return;
     }
 
@@ -1127,9 +1128,9 @@ export function createExtensionsStore(options: {
     const targetDir = options.projectDir().trim();
 
     if (scope !== "project" && !isLocalWorkspace) {
-      setPluginStatus("Global plugins are only available for local workers.");
+      setPluginStatus(__vesloIndirectT("ui.indirect.global_plugins_are_only_available_for_local_wo_1cc1zl", __vesloIndirectLocale()));
       setPluginList([]);
-      setSidebarPluginStatus("Global plugins require a local worker.");
+      setSidebarPluginStatus(__vesloIndirectT("ui.indirect.global_plugins_require_a_local_worker_1pmhql", __vesloIndirectLocale()));
       setSidebarPluginList([]);
       refreshPluginsInFlight = false;
       return;
@@ -1154,14 +1155,14 @@ export function createExtensionsStore(options: {
         setSidebarPluginList(list);
 
         if (!list.length) {
-          setPluginStatus("No plugins configured yet.");
+          setPluginStatus(__vesloIndirectT("plugins.no_plugins_yet", __vesloIndirectLocale()));
         }
       } catch (e) {
         if (refreshPluginsAborted) return;
         setPluginList([]);
-        setSidebarPluginStatus("Failed to load plugins.");
+        setSidebarPluginStatus(__vesloIndirectT("ui.indirect.failed_to_load_plugins_i1skhr", __vesloIndirectLocale()));
         setSidebarPluginList([]);
-        setPluginStatus(e instanceof Error ? e.message : "Failed to load plugins.");
+        setPluginStatus(e instanceof Error ? e.message : __vesloIndirectT("ui.indirect.failed_to_load_plugins_i1skhr", __vesloIndirectLocale()));
       } finally {
         refreshPluginsInFlight = false;
       }
@@ -1179,9 +1180,9 @@ export function createExtensionsStore(options: {
     }
 
     if (!isLocalWorkspace && !canUseVesloServer) {
-      setPluginStatus("Veslo server unavailable. Connect to manage plugins.");
+      setPluginStatus(__vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_manage_plu_1vx4p1", __vesloIndirectLocale()));
       setPluginList([]);
-      setSidebarPluginStatus("Connect an Veslo server to load plugins.");
+      setSidebarPluginStatus(__vesloIndirectT("ui.indirect.connect_an_veslo_server_to_load_plugins_g3md41", __vesloIndirectLocale()));
       setSidebarPluginList([]);
       refreshPluginsInFlight = false;
       return;
@@ -1263,7 +1264,7 @@ export function createExtensionsStore(options: {
     }
 
     if (pluginScope() !== "project" && !isLocalWorkspace) {
-      setPluginStatus("Global plugins are only available for local workers.");
+      setPluginStatus(__vesloIndirectT("ui.indirect.global_plugins_are_only_available_for_local_wo_1cc1zl", __vesloIndirectLocale()));
       return;
     }
 
@@ -1276,7 +1277,7 @@ export function createExtensionsStore(options: {
         }
         await refreshPlugins("project");
       } catch (e) {
-        setPluginStatus(e instanceof Error ? e.message : "Failed to add plugin.");
+        setPluginStatus(e instanceof Error ? e.message : __vesloIndirectT("ui.indirect.failed_to_add_plugin_p52vxh", __vesloIndirectLocale()));
       }
       return;
     }
@@ -1287,7 +1288,7 @@ export function createExtensionsStore(options: {
     }
 
     if (!isLocalWorkspace && !canUseVesloServer) {
-      setPluginStatus("Veslo server unavailable. Connect to manage plugins.");
+      setPluginStatus(__vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_manage_plu_1vx4p1", __vesloIndirectLocale()));
       return;
     }
 
@@ -1360,7 +1361,7 @@ export function createExtensionsStore(options: {
       vesloCapabilities?.plugins?.write;
 
     if (pluginScope() !== "project" && !isLocalWorkspace) {
-      setPluginStatus("Global plugins are only available for local workers.");
+      setPluginStatus(__vesloIndirectT("ui.indirect.global_plugins_are_only_available_for_local_wo_1cc1zl", __vesloIndirectLocale()));
       return;
     }
 
@@ -1370,7 +1371,7 @@ export function createExtensionsStore(options: {
         await vesloClient.removePlugin(vesloWorkspaceId, name);
         await refreshPlugins("project");
       } catch (e) {
-        setPluginStatus(e instanceof Error ? e.message : "Failed to remove plugin.");
+        setPluginStatus(e instanceof Error ? e.message : __vesloIndirectT("ui.indirect.failed_to_remove_plugin_1fuges", __vesloIndirectLocale()));
       }
       return;
     }
@@ -1381,7 +1382,7 @@ export function createExtensionsStore(options: {
     }
 
     if (!isLocalWorkspace && !canUseVesloServer) {
-      setPluginStatus("Veslo server unavailable. Connect to manage plugins.");
+      setPluginStatus(__vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_manage_plu_1vx4p1", __vesloIndirectLocale()));
       return;
     }
 
@@ -1398,7 +1399,7 @@ export function createExtensionsStore(options: {
       const config = await readOpencodeConfig(scope, targetDir);
       const raw = config.content ?? "";
       if (!raw.trim()) {
-        setPluginStatus("No plugins configured yet.");
+        setPluginStatus(__vesloIndirectT("plugins.no_plugins_yet", __vesloIndirectLocale()));
         return;
       }
 
@@ -1406,7 +1407,7 @@ export function createExtensionsStore(options: {
       const desired = stripPluginVersion(name).toLowerCase();
       const next = plugins.filter((entry) => stripPluginVersion(entry).toLowerCase() !== desired);
       if (next.length === plugins.length) {
-        setPluginStatus("Plugin not found.");
+        setPluginStatus(__vesloIndirectT("ui.indirect.plugin_not_found_1yk6mg", __vesloIndirectLocale()));
         return;
       }
 
@@ -1518,7 +1519,7 @@ export function createExtensionsStore(options: {
 
     // Remote workspace without server
     if (isRemoteWorkspace) {
-      const message = "Veslo server unavailable. Connect to install skills.";
+      const message = __vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_install_sk_7q26rj", __vesloIndirectLocale());
       setSkillsStatus(message);
       return { ok: false, message };
     }
@@ -1530,7 +1531,7 @@ export function createExtensionsStore(options: {
     }
 
     if (!isLocalWorkspace) {
-      const message = "Local workers are required to install skills.";
+      const message = __vesloIndirectT("ui.indirect.local_workers_are_required_to_install_skills_1v84gi", __vesloIndirectLocale());
       options.setError(message);
       setSkillsStatus(message);
       return { ok: false, message };
@@ -1692,7 +1693,7 @@ export function createExtensionsStore(options: {
     }
 
     if (isRemoteWorkspace) {
-      setSkillsStatus("Veslo server unavailable. Connect to view skills.");
+      setSkillsStatus(__vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_view_skill_1fomxi", __vesloIndirectLocale()));
       return null;
     }
 
@@ -1702,7 +1703,7 @@ export function createExtensionsStore(options: {
     }
 
     if (!isLocalWorkspace) {
-      setSkillsStatus("Local workers are required to view skills.");
+      setSkillsStatus(__vesloIndirectT("ui.indirect.local_workers_are_required_to_view_skills_sfpklk", __vesloIndirectLocale()));
       return null;
     }
 
@@ -1813,6 +1814,7 @@ export function createExtensionsStore(options: {
   const resolveDenRegistryContext = () => {
     const denAuth = readDenAuth();
     return {
+      denApiBase: denAuth?.denApiBase?.trim() ?? "",
       denToken: denAuth?.token?.trim() ?? "",
       denOrgId: denAuth?.orgId?.trim() ?? "",
       denUserId: denAuth?.user?.id?.trim() ?? "",
@@ -2030,6 +2032,88 @@ export function createExtensionsStore(options: {
     }
 
     return managedSkillMutationUnavailable(translate("skills.remove_location_unavailable"));
+  }
+
+  async function batchRemoveSkillInstances(targets: ManagedSkillMutationTarget[]): Promise<SkillSaveResult> {
+    const validTargets = targets.map((target) => ({
+      ...target,
+      name: target.name.trim(),
+      path: skillEntryFilePathForMutationPath(target.path),
+      workspaceId: target.workspaceId?.trim() || undefined,
+      registry: target.registry
+        ? {
+            ...target.registry,
+            installationId: target.registry.installationId?.trim(),
+            policyId: target.registry.policyId?.trim(),
+          }
+        : undefined,
+    }));
+    if (validTargets.length === 0 || validTargets.some((target) => !target.name)) {
+      return managedSkillMutationUnavailable(translate("skills.remove_location_unavailable"));
+    }
+    if (validTargets.some((target) => target.registry?.removalPolicy === "locked")) {
+      return managedSkillMutationUnavailable(translate("skills.managed_remove_locked"));
+    }
+
+    const vesloClient = registryMutationClient("batchRemoveSkills");
+    if (!vesloClient) {
+      return managedSkillMutationUnavailable(translate("skills.recoverable_remove_server_required"));
+    }
+
+    options.setBusy(true);
+    options.setError(null);
+    setSkillsStatus(null);
+
+    try {
+      const response = await vesloClient.batchRemoveSkills({
+        ...resolveDenRegistryContext(),
+        items: validTargets.map((target, index) => {
+          const installationId = target.registry?.installationId?.trim() ?? "";
+          const policyId = target.registry?.policyId?.trim() ?? "";
+          return {
+            id: `${target.scope}:${target.workspaceId ?? ""}:${target.name}:${target.path || index}`,
+            name: target.name,
+            scope: target.scope,
+            ...(target.path ? { path: target.path } : {}),
+            ...(target.workspaceId ? { workspaceId: target.workspaceId } : {}),
+            reason: "user-requested",
+            ...(installationId || policyId
+              ? {
+                  registry: {
+                    ...(installationId ? { installationId } : {}),
+                    ...(policyId ? { policyId } : {}),
+                  },
+                }
+              : {}),
+          };
+        }),
+      });
+      const baseMessage = response.ok
+        ? translate("skills.bulk_removed")
+        : translate("skills.bulk_remove_partial");
+      const firstFailure = response.results.find((result) => !result.ok);
+      const message = !response.ok && firstFailure && "message" in firstFailure
+        ? `${baseMessage} ${firstFailure.message}`
+        : baseMessage;
+      setSkillsStatus(message);
+      if (!response.ok) options.setError(addOpencodeCacheHint(message));
+      for (const target of validTargets) {
+        if (managedSkillTargetAffectsActiveRuntime(target)) {
+          options.markReloadRequired?.("skills", { type: "skill", name: target.name, action: "removed" });
+        }
+      }
+      await refreshHubSkills({ force: true });
+      await refreshSkills({ force: true });
+      await refreshSkillInventory({ force: true });
+      return { ok: response.ok, message };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      const hintedMessage = addOpencodeCacheHint(message);
+      options.setError(hintedMessage);
+      return { ok: false, message: hintedMessage };
+    } finally {
+      options.setBusy(false);
+    }
   }
 
   async function restoreSkillInstance(target: ManagedSkillMutationTarget): Promise<SkillSaveResult> {
@@ -2374,7 +2458,7 @@ export function createExtensionsStore(options: {
         });
         options.markReloadRequired?.("skills", { type: "skill", name: trimmed, action: "updated" });
         await refreshSkills({ force: true });
-        const message = "Saved.";
+        const message = __vesloIndirectT("ui.indirect.saved_1caget", __vesloIndirectLocale());
         setSkillsStatus(message);
         return { ok: true, message };
       } catch (e) {
@@ -2388,7 +2472,7 @@ export function createExtensionsStore(options: {
     }
 
     if (isRemoteWorkspace) {
-      const message = "Veslo server unavailable. Connect to edit skills.";
+      const message = __vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_edit_skill_f47jbk", __vesloIndirectLocale());
       setSkillsStatus(message);
       return { ok: false, message };
     }
@@ -2400,7 +2484,7 @@ export function createExtensionsStore(options: {
     }
 
     if (!isLocalWorkspace) {
-      const message = "Local workers are required to edit skills.";
+      const message = __vesloIndirectT("ui.indirect.local_workers_are_required_to_edit_skills_uvlvll", __vesloIndirectLocale());
       setSkillsStatus(message);
       return { ok: false, message };
     }
@@ -2419,7 +2503,7 @@ export function createExtensionsStore(options: {
         await refreshSkills({ force: true });
         return { ok: false, message };
       } else {
-        const successMessage = result.stdout || "Saved.";
+        const successMessage = result.stdout || __vesloIndirectT("ui.indirect.saved_1caget", __vesloIndirectLocale());
         setSkillsStatus(successMessage);
         options.markReloadRequired?.("skills", { type: "skill", name: trimmed, action: "updated" });
         await refreshSkills({ force: true });
@@ -2484,6 +2568,7 @@ export function createExtensionsStore(options: {
     saveSkillInstance,
     deleteSkillInstance,
     removeSkillInstance,
+    batchRemoveSkillInstances,
     restoreSkillInstance,
     copySkillInstanceToGlobal,
     copySkillInstanceToWorkspace,

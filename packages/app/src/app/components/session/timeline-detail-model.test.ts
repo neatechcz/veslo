@@ -6,6 +6,9 @@ import {
   buildTimelineDetailModel,
   type TimelineSectionKind,
 } from "./timeline-detail-model.js";
+import { setLocale } from "../../../i18n/index.js";
+
+setLocale("cs");
 
 test("buildTimelineDetailModel derives explore and action sections", () => {
   const model = buildTimelineDetailModel({

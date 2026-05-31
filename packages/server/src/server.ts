@@ -474,18 +474,18 @@ export function startServer(config: ServerConfig) {
 
       const finalize = (response: Response) => {
         const wrapped = withCors(response, request, config);
-        if (config.logRequests) {
-            logRequest({
-              logger,
-              request,
-              response: wrapped,
-              durationMs: Date.now() - startedAt,
-              authMode,
-              proxyService,
-              proxyBaseUrl,
-              error: errorMessage,
-              errorDetails,
-            });
+        if (config.logRequests && url.pathname !== "/debug-logs") {
+          logRequest({
+            logger,
+            request,
+            response: wrapped,
+            durationMs: Date.now() - startedAt,
+            authMode,
+            proxyService,
+            proxyBaseUrl,
+            error: errorMessage,
+            errorDetails,
+          });
         }
         return wrapped;
       };
@@ -1829,8 +1829,28 @@ function skillRegistryBaseUrl(config: ServerConfig): string {
   return config.skillRegistryBaseUrl?.trim() || "";
 }
 
-function requireSkillRegistryBaseUrl(config: ServerConfig): void {
-  if (!skillRegistryBaseUrl(config)) {
+function normalizeSkillRegistryBaseUrl(value: string | null | undefined): string {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) return "";
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+    if (url.username || url.password || url.search || url.hash) return "";
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function skillRegistryRequestBaseUrl(ctx: RequestContext): string {
+  return (
+    skillRegistryBaseUrl(ctx.config) ||
+    normalizeSkillRegistryBaseUrl(ctx.request.headers.get("x-veslo-den-api-base"))
+  );
+}
+
+function requireSkillRegistryRequestBaseUrl(ctx: RequestContext): void {
+  if (!skillRegistryRequestBaseUrl(ctx)) {
     throw new ApiError(503, "skill_registry_misconfigured", "Skill registry base URL is missing");
   }
 }
@@ -1841,7 +1861,7 @@ function skillRegistryRequestInput(ctx: RequestContext) {
     ctx.request.headers.get("x-veslo-account-id")?.trim() ||
     undefined;
   return {
-    baseUrl: skillRegistryBaseUrl(ctx.config),
+    baseUrl: skillRegistryRequestBaseUrl(ctx),
     token: ctx.config.skillRegistryToken?.trim() || undefined,
     denToken: ctx.request.headers.get("x-veslo-den-token")?.trim() || undefined,
     orgId: ctx.request.headers.get("x-veslo-den-org-id")?.trim() || undefined,
@@ -2014,7 +2034,7 @@ async function fetchRegistryWorkspaceMaterializations(
   skillSetId: string;
   skillSetRevision: string;
 }> {
-  const baseUrl = skillRegistryBaseUrl(ctx.config);
+  const baseUrl = skillRegistryRequestBaseUrl(ctx);
   if (!baseUrl) {
     throw new ApiError(503, "skill_registry_misconfigured", "Skill registry base URL is missing");
   }
@@ -2144,7 +2164,7 @@ async function fetchRegistryPersonalGlobalMaterializations(
   conflicts: WorkspaceSkillConflict[];
   packagesByInstallationId: Map<string, SkillPackageArchive>;
 }> {
-  const baseUrl = skillRegistryBaseUrl(ctx.config);
+  const baseUrl = skillRegistryRequestBaseUrl(ctx);
   if (!baseUrl) {
     throw new ApiError(503, "skill_registry_misconfigured", "Skill registry base URL is missing");
   }
@@ -4540,7 +4560,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
   addRoute(routes, "POST", "/v1/skills", "host", async (ctx) => {
     ensureWritable(config);
-    requireSkillRegistryBaseUrl(config);
+    requireSkillRegistryRequestBaseUrl(ctx);
     const body = await readJsonBody(ctx.request);
     const result = await createRegistrySkill({
       ...skillRegistryRequestInput(ctx),
@@ -4555,7 +4575,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
   });
 
   addRoute(routes, "GET", "/v1/skills/:skillId/versions", "client", async (ctx) => {
-    requireSkillRegistryBaseUrl(config);
+    requireSkillRegistryRequestBaseUrl(ctx);
     const limit = parseInteger(trimmedSearchParam(ctx.url.searchParams, "limit"));
     const result = await listRegistrySkillVersions({
       ...skillRegistryRequestInput(ctx),
@@ -4568,7 +4588,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
   addRoute(routes, "POST", "/v1/skills/:skillId/versions", "host", async (ctx) => {
     ensureWritable(config);
-    requireSkillRegistryBaseUrl(config);
+    requireSkillRegistryRequestBaseUrl(ctx);
     const body = await readJsonBody(ctx.request);
     const result = await createRegistrySkillVersion({
       ...skillRegistryRequestInput(ctx),
@@ -4580,7 +4600,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
   addRoute(routes, "POST", "/v1/skills/:skillId/review-requests", "host", async (ctx) => {
     ensureWritable(config);
-    requireSkillRegistryBaseUrl(config);
+    requireSkillRegistryRequestBaseUrl(ctx);
     const body = await readJsonBody(ctx.request);
     const result = await createRegistrySkillReviewRequest({
       ...skillRegistryRequestInput(ctx),
@@ -4596,7 +4616,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
   addRoute(routes, "POST", "/v1/skill-review-requests/:requestId/approve", "host", async (ctx) => {
     ensureWritable(config);
-    requireSkillRegistryBaseUrl(config);
+    requireSkillRegistryRequestBaseUrl(ctx);
     const body = await readJsonBody(ctx.request);
     const result = await approveRegistrySkillReviewRequest({
       ...skillRegistryRequestInput(ctx),
@@ -4609,7 +4629,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
   addRoute(routes, "POST", "/v1/skill-review-requests/:requestId/reject", "host", async (ctx) => {
     ensureWritable(config);
-    requireSkillRegistryBaseUrl(config);
+    requireSkillRegistryRequestBaseUrl(ctx);
     const body = await readJsonBody(ctx.request);
     const result = await rejectRegistrySkillReviewRequest({
       ...skillRegistryRequestInput(ctx),
@@ -4621,7 +4641,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
   addRoute(routes, "POST", "/v1/skill-installations", "host", async (ctx) => {
     ensureWritable(config);
-    requireSkillRegistryBaseUrl(config);
+    requireSkillRegistryRequestBaseUrl(ctx);
     const body = await readJsonBody(ctx.request);
     const result = await createRegistrySkillInstallation({
       ...skillRegistryRequestInput(ctx),
@@ -4639,7 +4659,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
   addRoute(routes, "PATCH", "/v1/skill-installations/:installationId", "host", async (ctx) => {
     ensureWritable(config);
-    requireSkillRegistryBaseUrl(config);
+    requireSkillRegistryRequestBaseUrl(ctx);
     const body = await readJsonBody(ctx.request);
     const result = await updateRegistrySkillInstallation({
       ...skillRegistryRequestInput(ctx),
@@ -4654,7 +4674,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
   addRoute(routes, "DELETE", "/v1/skill-installations/:installationId", "host", async (ctx) => {
     ensureWritable(config);
-    requireSkillRegistryBaseUrl(config);
+    requireSkillRegistryRequestBaseUrl(ctx);
     const result = await deleteRegistrySkillInstallation({
       ...skillRegistryRequestInput(ctx),
       installationId: ctx.params.installationId ?? "",
@@ -4664,7 +4684,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
   addRoute(routes, "POST", "/v1/skill-installations/:installationId/restore", "host", async (ctx) => {
     ensureWritable(config);
-    requireSkillRegistryBaseUrl(config);
+    requireSkillRegistryRequestBaseUrl(ctx);
     const body = await readJsonBody(ctx.request);
     const result = await restoreRegistrySkillInstallation({
       ...skillRegistryRequestInput(ctx),
@@ -4679,7 +4699,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
   addRoute(routes, "PATCH", "/v1/workspaces/:workspaceId/skill-set", "host", async (ctx) => {
     ensureWritable(config);
-    requireSkillRegistryBaseUrl(config);
+    requireSkillRegistryRequestBaseUrl(ctx);
     const body = await readJsonBody(ctx.request);
     const skills = Array.isArray(body.skills) ? body.skills : [];
     const result = await replaceRegistryWorkspaceSkillSet({
@@ -4693,7 +4713,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
   });
 
   addRoute(routes, "GET", "/v1/skill-rollout-policies", "client", async (ctx) => {
-    if (!skillRegistryBaseUrl(config)) {
+    if (!skillRegistryRequestBaseUrl(ctx)) {
       return jsonResponse({ policies: [], nextCursor: null });
     }
 
@@ -4721,7 +4741,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
   addRoute(routes, "POST", "/v1/skill-rollout-policies", "host", async (ctx) => {
     ensureWritable(config);
-    requireSkillRegistryBaseUrl(config);
+    requireSkillRegistryRequestBaseUrl(ctx);
     const body = await readJsonBody(ctx.request);
     const result = await createRegistrySkillRolloutPolicy({
       ...skillRegistryRequestInput(ctx),
@@ -4743,7 +4763,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
   addRoute(routes, "PATCH", "/v1/skill-rollout-policies/:policyId", "host", async (ctx) => {
     ensureWritable(config);
-    requireSkillRegistryBaseUrl(config);
+    requireSkillRegistryRequestBaseUrl(ctx);
     const body = await readJsonBody(ctx.request);
     const result = await updateRegistrySkillRolloutPolicy({
       ...skillRegistryRequestInput(ctx),
@@ -4768,7 +4788,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
   addRoute(routes, "DELETE", "/v1/skill-rollout-policies/:policyId", "host", async (ctx) => {
     ensureWritable(config);
-    requireSkillRegistryBaseUrl(config);
+    requireSkillRegistryRequestBaseUrl(ctx);
     const result = await deleteRegistrySkillRolloutPolicy({
       ...skillRegistryRequestInput(ctx),
       policyId: ctx.params.policyId ?? "",
@@ -4782,7 +4802,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       throw new ApiError(400, "invalid_query", "Skill registry search query is required");
     }
 
-    if (!skillRegistryBaseUrl(config)) {
+    if (!skillRegistryRequestBaseUrl(ctx)) {
       return jsonResponse({
         query,
         skills: [],
@@ -4808,7 +4828,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
   });
 
   addRoute(routes, "GET", "/v1/skill-registry-events", "client", async (ctx) => {
-    if (!skillRegistryBaseUrl(config)) {
+    if (!skillRegistryRequestBaseUrl(ctx)) {
       return jsonResponse({
         events: [],
         nextCursor: null,
@@ -4936,7 +4956,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
   ): Promise<SkillBatchRemoveSuccess> => {
     const installationId = item.registry?.installationId?.trim() ?? "";
     if (installationId) {
-      requireSkillRegistryBaseUrl(config);
+      requireSkillRegistryRequestBaseUrl(ctx);
       await deleteRegistrySkillInstallation({
         ...skillRegistryRequestInput(ctx),
         installationId,
@@ -4956,7 +4976,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
     const policyId = item.registry?.policyId?.trim() ?? "";
     if (policyId) {
-      requireSkillRegistryBaseUrl(config);
+      requireSkillRegistryRequestBaseUrl(ctx);
       await updateRegistrySkillRolloutPolicy({
         ...skillRegistryRequestInput(ctx),
         policyId,

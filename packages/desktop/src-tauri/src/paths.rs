@@ -34,7 +34,8 @@ pub fn app_data_dir_override() -> Option<PathBuf> {
 }
 
 pub fn app_local_data_dir_override() -> Option<PathBuf> {
-    env_path("VESLO_APP_LOCAL_DATA_DIR").or_else(|| app_data_dir_override().map(|dir| dir.join("local")))
+    env_path("VESLO_APP_LOCAL_DATA_DIR")
+        .or_else(|| app_data_dir_override().map(|dir| dir.join("local")))
 }
 
 pub fn candidate_xdg_data_dirs() -> Vec<PathBuf> {

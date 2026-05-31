@@ -3,14 +3,21 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve, dirname, win32, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { prepareDesktopAuthSeed } from './desktop-auth-seed.js';
-import { startSkillRegistryFixture, stopSkillRegistryFixture } from './skill-registry-fixture.js';
+import {
+  E2E_SKILL_REGISTRY_ORG_ID,
+  E2E_SKILL_REGISTRY_TOKEN,
+  E2E_SKILL_REGISTRY_USER_ID,
+  startSkillRegistryFixture,
+  stopSkillRegistryFixture,
+} from './skill-registry-fixture.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const DEFAULT_WEBDRIVER_PORT = 4445;
+const DEFAULT_LAUNCH_TIMEOUT = 120_000;
 const WEBDRIVER_PORT = resolveWebDriverPort();
-const LAUNCH_TIMEOUT = parseInt(process.env.E2E_LAUNCH_TIMEOUT ?? '30000', 10);
+const LAUNCH_TIMEOUT = resolveLaunchTimeout();
 const POLL_INTERVAL = 250;
 const REAL_PROFILE_ENV = process.env.E2E_USE_EXISTING_PROFILE?.trim() === '1';
 const CUSTOM_BINARY_PATH = process.env.E2E_TAURI_BINARY?.trim() ?? '';
@@ -54,6 +61,18 @@ export function resolveWebDriverPort(env: Record<string, string | undefined> = p
   }
 
   return port;
+}
+
+export function resolveLaunchTimeout(env: Record<string, string | undefined> = process.env): number {
+  const raw = env.E2E_LAUNCH_TIMEOUT?.trim();
+  if (!raw) return DEFAULT_LAUNCH_TIMEOUT;
+
+  const timeout = Number(raw);
+  if (!Number.isInteger(timeout) || timeout < 1) {
+    throw new Error(`Invalid E2E_LAUNCH_TIMEOUT: ${raw}`);
+  }
+
+  return timeout;
 }
 
 async function fetchWebDriverStatus(port: number, timeoutMs: number): Promise<Response> {
@@ -289,6 +308,21 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
   const skillRegistryFixtureBaseUrl = process.env.E2E_SKILL_REGISTRY_FIXTURE?.trim() === '0'
     ? null
     : await startSkillRegistryFixture();
+  const exposeSkillRegistryServerEnv = process.env.E2E_SKILL_REGISTRY_SERVER_ENV?.trim() !== '0';
+  const seedDenAuthFromSkillRegistryFixture =
+    process.env.E2E_SKILL_REGISTRY_AUTH_BASE?.trim() === 'fixture' && Boolean(skillRegistryFixtureBaseUrl);
+  const seedEnv = seedDenAuthFromSkillRegistryFixture
+    ? {
+        ...process.env,
+        E2E_DEN_AUTH_JSON: JSON.stringify({
+          denApiBase: skillRegistryFixtureBaseUrl,
+          token: E2E_SKILL_REGISTRY_TOKEN,
+          orgId: E2E_SKILL_REGISTRY_ORG_ID,
+          user: { id: `${E2E_SKILL_REGISTRY_USER_ID}_fixture`, email: 'veslo-registry-e2e@example.test' },
+          org: { id: E2E_SKILL_REGISTRY_ORG_ID, slug: 'veslo-e2e' },
+        }),
+      }
+    : process.env;
   if (skillRegistryFixtureBaseUrl) {
     console.log(`[e2e] Skill registry fixture: ${skillRegistryFixtureBaseUrl}`);
   }
@@ -297,10 +331,10 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
   let env: NodeJS.ProcessEnv;
 
   if (CUSTOM_OPENCODE_HOME) {
-    const snapshotPath = prepareDesktopAuthSeed(CUSTOM_OPENCODE_HOME, process.env, {
+    const snapshotPath = prepareDesktopAuthSeed(CUSTOM_OPENCODE_HOME, seedEnv, {
       preserveExisting: true,
     });
-    env = createAppLaunchEnv(process.env, {
+    env = createAppLaunchEnv(seedEnv, {
       port,
       opencodeHome: CUSTOM_OPENCODE_HOME,
       snapshotPath,
@@ -310,8 +344,8 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
   } else if (!REAL_PROFILE_ENV) {
     rmSync(ISOLATED_PROFILE_ROOT, { recursive: true, force: true });
     rmSync(tmpDir, { recursive: true, force: true });
-    const snapshotPath = prepareDesktopAuthSeed(tmpDir);
-    env = createAppLaunchEnv(process.env, {
+    const snapshotPath = prepareDesktopAuthSeed(tmpDir, seedEnv);
+    env = createAppLaunchEnv(seedEnv, {
       port,
       opencodeHome: tmpDir,
       snapshotPath,
@@ -339,7 +373,7 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
   appProcess = spawn(binaryPath, [], {
     env: {
       ...env,
-      ...(skillRegistryFixtureBaseUrl
+      ...(skillRegistryFixtureBaseUrl && exposeSkillRegistryServerEnv
         ? {
             VESLO_SKILL_REGISTRY_BASE_URL: skillRegistryFixtureBaseUrl,
             VESLO_SKILL_REGISTRY_TOKEN: 'veslo-e2e-registry-token',
@@ -357,8 +391,8 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
     process.stderr.write(`[app:stderr] ${data}`);
   });
 
-  appProcess.on('exit', (code) => {
-    console.log(`[e2e] App process exited with code ${code}`);
+  appProcess.on('exit', (code, signal) => {
+    console.log(`[e2e] App process exited with code ${code}${signal ? ` signal ${signal}` : ''}`);
     appProcess = null;
     appProcessOwnedByHarness = false;
   });

@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   createAppLaunchEnv,
+  resolveLaunchTimeout,
   resolveWebDriverPort,
   seedDefaultWorkspaceState,
   terminateAppProcess,
@@ -63,6 +64,14 @@ test('createAppLaunchEnv isolates Windows app, local, and WebView2 storage so st
 
 test('resolveWebDriverPort allows E2E runs to move off a stale default port', () => {
   assert.equal(resolveWebDriverPort({ E2E_WEBDRIVER_PORT: '4455' }), 4455);
+});
+
+test('resolveLaunchTimeout gives cold desktop starts enough time by default', () => {
+  assert.equal(resolveLaunchTimeout({}), 120000);
+});
+
+test('resolveLaunchTimeout allows local overrides for slow machines', () => {
+  assert.equal(resolveLaunchTimeout({ E2E_LAUNCH_TIMEOUT: '180000' }), 180000);
 });
 
 test('seedDefaultWorkspaceState skips network-backed enterprise creators for deterministic E2E fixtures', () => {

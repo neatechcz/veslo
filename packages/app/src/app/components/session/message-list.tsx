@@ -31,6 +31,7 @@ import {
   type ProgressRenderBlock,
   type ProgressStepItem,
 } from "./progress-grouping-model.js";
+import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../../i18n";
 
 export type PendingMessageState = {
   state: "sending" | "error";
@@ -820,50 +821,50 @@ export default function MessageList(props: MessageListProps) {
         const description = pick("description");
         if (description) return compactHumanStepText(description, 42);
         const command = pick("command", "cmd");
-        return command ? compactText(`Run ${command}`, 48) : "Run command";
+        return command ? compactText(t("tools.run_target", currentLocale()).replace("{target}", command), 48) : t("tools.run_command", currentLocale());
       }
 
       if (tool === "read") {
         const file = target("filePath", "path", "file");
-        return file ? `Read ${file}` : "Read file";
+        return file ? t("tools.read_target", currentLocale()).replace("{target}", file) : t("tools.read_file", currentLocale());
       }
 
       if (tool === "edit") {
         const file = target("filePath", "path", "file");
-        return file ? `Edit ${file}` : "Edit file";
+        return file ? t("tools.edit_target", currentLocale()).replace("{target}", file) : t("tools.edit_file", currentLocale());
       }
 
       if (tool === "write" || tool === "apply_patch") {
         const file = target("filePath", "path", "file");
-        return file ? `Update ${file}` : "Update file";
+        return file ? t("tools.write_target", currentLocale()).replace("{target}", file) : t("tools.write_file", currentLocale());
       }
 
       if (tool === "grep" || tool === "glob" || tool === "search") {
         const pattern = pick("pattern", "query");
-        return pattern ? `Search ${compactText(pattern, 36)}` : "Search code";
+        return pattern ? t("tools.search_target", currentLocale()).replace("{target}", compactText(pattern, 36)) : t("tools.search_code", currentLocale());
       }
 
       if (tool === "list" || tool === "list_files") {
         const path = target("path");
-        return path ? `List ${path}` : "List files";
+        return path ? t("tools.list_target", currentLocale()).replace("{target}", path) : t("tools.list_files", currentLocale());
       }
 
       if (tool === "task") {
         const agent = pick("subagent_type");
-        if (isVesloInternalSubagentType(agent)) return "Internal processing";
+        if (isVesloInternalSubagentType(agent)) return t("tools.internal_processing", currentLocale());
         const description = pick("description");
         if (description) return compactHumanStepText(description, 42);
-        return agent ? `Delegate ${agent}` : "Delegate task";
+        return agent ? t("tools.delegate_target", currentLocale()).replace("{target}", agent) : t("tools.delegate_task", currentLocale());
       }
 
       if (tool === "webfetch") {
         const url = pick("url");
-        return url ? `Fetch ${compactText(url, 36)}` : "Fetch web page";
+        return url ? t("tools.fetch_target", currentLocale()).replace("{target}", compactText(url, 36)) : t("tools.fetch_web_page", currentLocale());
       }
 
       if (tool === "skill") {
         const name = pick("name");
-        return name ? `Load skill ${name}` : "Load skill";
+        return name ? t("tools.load_skill_named", currentLocale()).replace("{name}", name) : t("tools.load_skill", currentLocale());
       }
 
       return "";
@@ -871,7 +872,7 @@ export default function MessageList(props: MessageListProps) {
 
     const latestStepLabel = () => {
       const step = latestStep();
-      if (!step) return "Last step";
+      if (!step) return t("session.last_step", currentLocale());
 
       const fromTool = toolHeadline(step);
       if (fromTool) return compactText(fromTool, 42, { preservePaths: true });
@@ -892,7 +893,7 @@ export default function MessageList(props: MessageListProps) {
       if (title && !generic) return title;
       if (detail) return detail;
       if (title) return title;
-      return "Last step";
+      return t("session.last_step", currentLocale());
     };
 
     const timelineModel = createMemo(() =>
@@ -1211,7 +1212,7 @@ export default function MessageList(props: MessageListProps) {
                                           </span>
                                         </Show>
                                         <Show when={entry.task.agentType}>
-                                          {(agentType) => <span class="text-[11px] text-gray-9">{agentType()} agent</span>}
+                                          {(agentType) => <span class="text-[11px] text-gray-9">{agentType()} {__vesloT("ui.literal.agent_m65q5i", __vesloCurrentLocale())}</span>}
                                         </Show>
                                         <Show when={entry.task.isInternal}>
                                           <span class="text-[11px] text-gray-9">{tr("session.timeline_internal_processing")}</span>
@@ -1460,7 +1461,7 @@ export default function MessageList(props: MessageListProps) {
                   </Show>
                   <button
                     class="text-dls-secondary hover:text-dls-text p-1 rounded hover:bg-dls-hover transition-colors"
-                    title="Copy message"
+                    title={__vesloT("ui.literal.copy_message_1b3i55", __vesloCurrentLocale())}
                     onClick={() => {
                       const text = block.renderableParts
                         .map((part) => partToText(part))

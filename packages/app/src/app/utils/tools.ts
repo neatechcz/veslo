@@ -1,6 +1,17 @@
 import type { Part } from "@opencode-ai/sdk/v2/client";
 import type { ArtifactItem, MessageWithParts } from "../types";
 import { isVesloInternalSubagentType } from "../lib/internal-subagents";
+import { currentLocale, t } from "../../i18n";
+
+const tr = (key: string, replacements?: Record<string, string>): string => {
+  let value = t(key, currentLocale());
+  if (replacements) {
+    for (const [placeholder, replacement] of Object.entries(replacements)) {
+      value = value.replaceAll(`{${placeholder}}`, replacement);
+    }
+  }
+  return value;
+};
 
 /** Classify a tool name into a semantic category for icon selection */
 export function classifyTool(toolName: string): "read" | "edit" | "write" | "search" | "terminal" | "glob" | "task" | "skill" | "tool" {
@@ -103,57 +114,57 @@ function buildToolTitle(state: any, toolName: string): string {
 
   if (lower === "read") {
     const target = file("filePath", "path", "file");
-    return target ? `Read ${target}` : "Read file";
+    return target ? tr("tools.read_target", { target }) : tr("tools.read_file");
   }
 
   if (lower === "edit") {
     const target = file("filePath", "path", "file");
-    return target ? `Edit ${target}` : "Edit file";
+    return target ? tr("tools.edit_target", { target }) : tr("tools.edit_file");
   }
 
   if (lower === "write") {
     const target = file("filePath", "path", "file");
-    return target ? `Write ${target}` : "Write file";
+    return target ? tr("tools.write_target", { target }) : tr("tools.write_file");
   }
 
   if (lower === "apply_patch") {
-    return "Apply patch";
+    return tr("tools.apply_patch");
   }
 
   if (lower === "list" || lower === "list_files") {
     const target = file("path");
-    return target ? `List ${target}` : "List files";
+    return target ? tr("tools.list_target", { target }) : tr("tools.list_files");
   }
 
   if (lower === "grep" || lower === "glob" || lower === "search") {
     const pattern = pick("pattern", "query");
-    return pattern ? `Search ${truncateStepText(pattern, 44)}` : "Search code";
+    return pattern ? tr("tools.search_target", { target: truncateStepText(pattern, 44) }) : tr("tools.search_code");
   }
 
   if (lower === "bash") {
     const description = pick("description");
     if (description) return compactHumanStepText(description, 56);
     const command = pick("command", "cmd");
-    if (command) return truncateStepText(`Run ${command}`, 56);
-    return "Run command";
+    if (command) return truncateStepText(tr("tools.run_target", { target: command }), 56);
+    return tr("tools.run_command");
   }
 
   if (lower === "task") {
     const rawAgent = pick("subagent_type");
-    if (isVesloInternalSubagentType(rawAgent)) return "Internal processing";
+    if (isVesloInternalSubagentType(rawAgent)) return tr("tools.internal_processing");
     const agent = formatAgentLabel(rawAgent);
-    if (agent) return `${agent} task`;
-    return "Task";
+    if (agent) return tr("tools.agent_task", { agent });
+    return tr("tools.task");
   }
 
   if (lower === "webfetch") {
     const url = pick("url");
-    return url ? `Fetch ${truncateStepText(url, 44)}` : "Fetch web page";
+    return url ? tr("tools.fetch_target", { target: truncateStepText(url, 44) }) : tr("tools.fetch_web_page");
   }
 
   if (lower === "skill") {
     const name = pick("name");
-    return name ? `Load skill ${name}` : "Load skill";
+    return name ? tr("tools.load_skill_named", { name }) : tr("tools.load_skill");
   }
 
   const stateTitle = normalizeStepText(state?.title);
@@ -162,7 +173,7 @@ function buildToolTitle(state: any, toolName: string): string {
   }
 
   const fallback = normalizeStepText(toolName).replace(/[_-]+/g, " ");
-  return fallback || "Tool";
+  return fallback || tr("tools.tool");
 }
 
 /** Build a concise detail line for a tool call — avoids dumping raw output */
@@ -194,7 +205,7 @@ function buildToolDetail(state: any, toolName: string): string | undefined {
   if (lower === "task") {
     const rawAgent = pick("subagent_type");
     if (isVesloInternalSubagentType(rawAgent)) {
-      return "processing request";
+      return tr("tools.processing_request");
     }
     const description = pick("description");
     if (description) return compactHumanStepText(description, 80);
@@ -273,7 +284,7 @@ function buildToolDetail(state: any, toolName: string): string | undefined {
         // "Success. Updated the following files: M foo.ts" -> "foo.ts"
         const match = first.match(/:\s*[MADR]\s+(.+)/);
         if (match) return extractFilename(match[1].trim());
-        return "Done";
+        return tr("tools.done");
       }
       return first.length > 80 ? `${first.slice(0, 77)}...` : first;
     }
@@ -306,7 +317,7 @@ export function summarizeStep(part: Part): { title: string; detail?: string; isS
   if (part.type === "reasoning") {
     const record = part as any;
     const text = typeof record.text === "string" ? cleanReasoningText(record.text) : "";
-    if (!text) return { title: "Thinking", toolCategory: "tool" };
+    if (!text) return { title: tr("tools.thinking"), toolCategory: "tool" };
 
     const lines = text
       .split(/\r?\n/)
@@ -331,20 +342,20 @@ export function summarizeStep(part: Part): { title: string; detail?: string; isS
     }
 
     headline = headline.replace(/^thinking[:\s-]*/i, "").trim();
-    const title = `Thinking: ${truncateStepText(headline || "reviewing context", 96)}`;
+    const title = tr("tools.thinking_prefix", { text: truncateStepText(headline || tr("tools.reviewing_context"), 96) });
     return { title, detail: detail || undefined, toolCategory: "tool" };
   }
 
   if (part.type === "step-start" || part.type === "step-finish") {
     const reason = (part as any).reason;
     return {
-      title: part.type === "step-start" ? "Step started" : "Step finished",
+      title: part.type === "step-start" ? tr("tools.step_started") : tr("tools.step_finished"),
       detail: reason ? String(reason) : undefined,
       toolCategory: "tool",
     };
   }
 
-  return { title: "Step", toolCategory: "tool" };
+  return { title: tr("tools.step"), toolCategory: "tool" };
 }
 
 const APPLY_PATCH_SCAN_LIMIT = 4000;

@@ -1,6 +1,9 @@
 import type { WorkspaceInfo } from "../../lib/tauri";
 import type { WorkspaceSessionGroup } from "../../types";
 import { normalizeDirectoryPath } from "../../utils";
+import { currentLocale, t } from "../../../i18n";
+
+const tr = (key: string) => t(key, currentLocale());
 
 export type FlatSessionRow = {
   rowKey: string;
@@ -158,7 +161,7 @@ const DAY_MS = 24 * HOUR_MS;
 export const formatSessionRelativeAge = (timestampMs: number, nowMs = Date.now()) => {
   const delta = nowMs - timestampMs;
 
-  if (delta < 0) return "just now";
+  if (delta < 0) return tr("time.just_now");
   if (delta < MINUTE_MS) return `${Math.max(1, Math.round(delta / SECOND_MS))}s`;
   if (delta < HOUR_MS) return `${Math.max(1, Math.round(delta / MINUTE_MS))}m`;
   if (delta < DAY_MS) return `${Math.max(1, Math.round(delta / HOUR_MS))}h`;

@@ -167,6 +167,10 @@ export type VesloSkillBatchRemoveItem = {
 
 export type VesloSkillBatchRemoveRequest = {
   items: VesloSkillBatchRemoveItem[];
+  denApiBase?: string;
+  denToken?: string;
+  denOrgId?: string;
+  denUserId?: string;
 };
 
 export type VesloSkillBatchRemoveSuccess = {
@@ -508,6 +512,7 @@ export type VesloSkillMaterializationSyncOptions = {
 };
 
 export type VesloSkillRegistryAuthContext = {
+  denApiBase?: string;
   denToken?: string;
   denOrgId?: string;
   denUserId?: string;
@@ -1879,10 +1884,12 @@ function buildGatewayCallerHeaders(userToken: string) {
 }
 
 function buildDenContextHeaders(options?: VesloSkillRegistryAuthContext): Record<string, string> | undefined {
+  const denApiBase = options?.denApiBase?.trim() ?? "";
   const denToken = options?.denToken?.trim() ?? "";
   const denOrgId = options?.denOrgId?.trim() ?? "";
   const denUserId = options?.denUserId?.trim() ?? "";
   const headers = {
+    ...(denApiBase ? { "x-veslo-den-api-base": denApiBase } : {}),
     ...(denToken ? { "x-veslo-den-token": denToken } : {}),
     ...(denOrgId ? { "x-veslo-den-org-id": denOrgId } : {}),
     ...(denUserId ? { "x-veslo-den-user-id": denUserId } : {}),
@@ -2891,12 +2898,21 @@ export function createVesloServerClient(options: {
         buildDeleteGlobalSkillPath(name, options),
         { token, hostToken, method: "DELETE" },
       ),
-    batchRemoveSkills: (input: VesloSkillBatchRemoveRequest) =>
-      requestJson<VesloSkillBatchRemoveResponse>(
+    batchRemoveSkills: (input: VesloSkillBatchRemoveRequest) => {
+      const { denApiBase, denToken, denOrgId, denUserId, ...body } = input;
+      return requestJson<VesloSkillBatchRemoveResponse>(
         baseUrl,
         "/skills/batch-remove",
-        { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.skillRegistryMutation },
-      ),
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body,
+          extraHeaders: buildDenContextHeaders({ denApiBase, denToken, denOrgId, denUserId }),
+          timeoutMs: timeouts.skillRegistryMutation,
+        },
+      );
+    },
     listSkillRemovals: (params?: {
       scope?: VesloSkillRemovalScope;
       workspaceId?: string;

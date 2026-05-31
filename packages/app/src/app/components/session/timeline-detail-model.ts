@@ -1,5 +1,6 @@
 import type { Part } from "@opencode-ai/sdk/v2/client";
 import { getBasename as basename } from "../../utils/workspace-path";
+import { currentLocale, t } from "../../../i18n";
 
 export type TimelineSectionKind = "plan" | "explore" | "action" | "verify" | "issues";
 
@@ -63,13 +64,23 @@ const STRONG_TOOL_ERROR_PATTERNS = [
   /\btool not found\b/i,
 ] as const;
 
-const SECTION_TITLES: Record<TimelineSectionKind, string> = {
-  plan: "Plan",
-  explore: "Explore",
-  action: "Action",
-  verify: "Verify",
-  issues: "Issues",
+const SECTION_TITLE_KEYS: Record<TimelineSectionKind, string> = {
+  plan: "timeline.section.plan",
+  explore: "timeline.section.explore",
+  action: "timeline.section.action",
+  verify: "timeline.section.verify",
+  issues: "timeline.section.issues",
 };
+
+function tr(key: string, replacements?: Record<string, string>): string {
+  let value = t(key, currentLocale());
+  if (replacements) {
+    for (const [placeholder, replacement] of Object.entries(replacements)) {
+      value = value.replaceAll(`{${placeholder}}`, replacement);
+    }
+  }
+  return value;
+}
 
 function normalizeText(value: unknown): string {
   if (typeof value !== "string") return "";
@@ -192,11 +203,11 @@ function formatReadPathHint(path: string): string {
 function buildReadRow(part: Part): TimelineRowModel {
   const input = getInput(part);
   const path = toolInputText(input, ["filePath", "path", "file"]);
-  const label = path ? basename(path) : "soubor";
+  const label = path ? basename(path) : tr("timeline.file_fallback");
   return {
     kind: "explore",
     rowType: "read",
-    primary: `Načetl ${label}`,
+    primary: tr("timeline.read_row", { label }),
     secondary: path ? formatReadPathHint(path) : undefined,
     technicalDetail: path || undefined,
     status: getStatus(part),
@@ -206,11 +217,11 @@ function buildReadRow(part: Part): TimelineRowModel {
 function buildListRow(part: Part): TimelineRowModel {
   const input = getInput(part);
   const path = toolInputText(input, ["path"]);
-  const label = path ? basename(path) : "soubory";
+  const label = path ? basename(path) : tr("timeline.files_fallback");
   return {
     kind: "explore",
     rowType: "list",
-    primary: `Vypsal ${label}`,
+    primary: tr("timeline.list_row", { label }),
     secondary: path ? formatReadPathHint(path) : undefined,
     technicalDetail: path || undefined,
     status: getStatus(part),
@@ -224,7 +235,7 @@ function buildSearchRow(part: Part): TimelineRowModel {
   return {
     kind: "explore",
     rowType: "search",
-    primary: pattern ? `Vyhledal "${pattern}"` : "Vyhledal",
+    primary: pattern ? tr("timeline.search_row", { pattern }) : tr("timeline.search_fallback"),
     secondary: path ? formatReadPathHint(path) : undefined,
     technicalDetail: pattern || path || undefined,
     status: getStatus(part),
@@ -234,10 +245,10 @@ function buildSearchRow(part: Part): TimelineRowModel {
 function buildWriteRow(part: Part, verb: string): TimelineRowModel {
   const input = getInput(part);
   const path = toolInputText(input, ["filePath", "path", "file"]);
-  const label = path ? basename(path) : "soubor";
+  const label = path ? basename(path) : tr("timeline.file_fallback");
   return {
     kind: "action",
-    rowType: verb === "Upravil" ? "edit" : "write",
+    rowType: verb === tr("timeline.edit_verb") ? "edit" : "write",
     primary: `${verb} ${label}`,
     secondary: path ? formatReadPathHint(path) : undefined,
     technicalDetail: path || undefined,
@@ -254,8 +265,10 @@ function buildTaskRow(part: Part): TimelineRowModel {
   return {
     kind: "action",
     rowType: isSkill ? "skill" : "task",
-    primary: isSkill ? `Načetl skill ${agentType || "skill"}` : `Delegoval ${description || "úlohu"}`,
-    secondary: description ? description : agentType ? `${agentType} agent` : undefined,
+    primary: isSkill
+      ? tr("timeline.loaded_skill_row", { label: agentType || tr("timeline.skill_fallback") })
+      : tr("timeline.delegated_row", { label: description || tr("timeline.task_fallback") }),
+    secondary: description ? description : agentType ? tr("timeline.agent_suffix", { agent: agentType }) : undefined,
     technicalDetail: description || agentType || undefined,
     status: getStatus(part),
   };
@@ -267,15 +280,15 @@ function buildBashRow(part: Part): TimelineRowModel {
   const description = toolInputText(input, ["description", "title"]);
   const output = toolOutputText(part);
   const status = getStatus(part);
-  const primary = description || (command ? `Spustil ${command}` : "Spustil příkaz");
+  const primary = description || (command ? tr("timeline.command_row", { command }) : tr("timeline.command_fallback"));
   const outcome =
     status === "error"
-      ? output || "selhalo"
+      ? output || tr("timeline.failed")
       : status === "running"
-        ? "běží"
+        ? tr("timeline.running")
         : output.startsWith("Success")
-          ? output.match(/:\s*[MADR]\s+(.+)$/)?.[1] ?? "hotovo"
-          : output || "hotovo";
+          ? output.match(/:\s*[MADR]\s+(.+)$/)?.[1] ?? tr("timeline.done")
+          : output || tr("timeline.done");
 
   return {
     kind: "action",
@@ -293,13 +306,13 @@ function buildVerifyRow(part: Part): TimelineRowModel {
   const description = toolInputText(input, ["description", "title"]);
   const output = toolOutputText(part);
   const status = getStatus(part);
-  const primary = description || (command ? `Ověřil ${command}` : "Ověřil změny");
+  const primary = description || (command ? tr("timeline.verify_row", { command }) : tr("timeline.verify_fallback"));
   const secondary =
     status === "error"
-      ? output || "selhalo"
+      ? output || tr("timeline.failed")
       : status === "running"
-        ? "běží"
-        : output || "hotovo";
+        ? tr("timeline.running")
+        : output || tr("timeline.done");
 
   return {
     kind: "verify",
@@ -319,7 +332,7 @@ function buildGenericReasoningRow(part: Part, kind: TimelineSectionKind): Timeli
     return {
       kind,
       rowType: "issue",
-      primary: "Chyba relace",
+      primary: tr("timeline.session_error"),
       secondary: clean || undefined,
       technicalDetail: text || undefined,
       status: "error",
@@ -340,7 +353,7 @@ function buildGenericReasoningRow(part: Part, kind: TimelineSectionKind): Timeli
   return {
     kind,
     rowType: kind === "verify" ? "verify" : "note",
-    primary: clean || "Přemýšlení",
+    primary: clean || tr("timeline.thinking"),
     secondary: undefined,
     technicalDetail: text || undefined,
     status,
@@ -366,8 +379,8 @@ function buildRowModel(part: Part, kind: TimelineSectionKind): TimelineRowModel 
   if (toolName === "read") return buildReadRow(part);
   if (toolName === "list" || toolName === "list_files") return buildListRow(part);
   if (toolName === "grep" || toolName === "glob" || toolName === "search") return buildSearchRow(part);
-  if (toolName === "edit") return buildWriteRow(part, "Upravil");
-  if (toolName === "write" || toolName === "apply_patch") return buildWriteRow(part, "Zapsal");
+  if (toolName === "edit") return buildWriteRow(part, tr("timeline.edit_verb"));
+  if (toolName === "write" || toolName === "apply_patch") return buildWriteRow(part, tr("timeline.write_verb"));
   if (toolName === "task" || toolName === "skill") return buildTaskRow(part);
   if (kind === "verify") return buildVerifyRow(part);
   if (toolName === "bash" || toolName === "shell" || toolName === "exec" || toolName === "command" || toolName === "run") {
@@ -375,7 +388,7 @@ function buildRowModel(part: Part, kind: TimelineSectionKind): TimelineRowModel 
   }
 
   const input = getInput(part);
-  const title = normalized ? `Provedl ${normalized}` : "Provedl krok";
+  const title = normalized ? tr("timeline.generic_tool_row", { tool: normalized }) : tr("timeline.generic_tool_fallback");
   const raw = toolInputText(input, ["command", "cmd", "path", "filePath", "pattern", "query", "description", "name"]);
 
   return {
@@ -418,31 +431,37 @@ function summarizeSection(kind: TimelineSectionKind, rows: TimelineRowModel[]): 
   switch (kind) {
     case "plan": {
       const plans = countRows(rows, ["plan"]);
-      return plans === 1 ? "Plán připraven" : `Plán rozdělen do ${plans} kroků`;
+      return plans === 1 ? tr("timeline.plan_ready") : tr("timeline.plan_steps", { count: String(plans) });
     }
     case "explore": {
       const files = countRows(rows, ["read"]);
       const searches = countRows(rows, ["search"]);
       const lists = countRows(rows, ["list"]);
       const items: string[] = [];
-      if (files > 0) items.push(`${files} soubor${files === 1 ? "" : files >= 2 && files <= 4 ? "y" : "ů"}`);
-      if (searches > 0) items.push(`${searches} hledání`);
-      if (lists > 0) items.push(`${lists} výpis${lists === 1 ? "" : "ů"}`);
-      return items.length > 0 ? items.join(" · ") : `${rows.length} průzkumů`;
+      if (files > 0) {
+        items.push(
+          tr(files === 1 ? "timeline.explore_file_one" : files >= 2 && files <= 4 ? "timeline.explore_file_few" : "timeline.explore_file_other", {
+            count: String(files),
+          }),
+        );
+      }
+      if (searches > 0) items.push(tr("timeline.explore_search", { count: String(searches) }));
+      if (lists > 0) items.push(tr(lists === 1 ? "timeline.explore_list_one" : "timeline.explore_list_other", { count: String(lists) }));
+      return items.length > 0 ? items.join(" · ") : tr("timeline.explore_generic", { count: String(rows.length) });
     }
     case "action": {
       const actions = countRows(rows, ["edit", "write", "task", "skill", "command", "tool", "note"]);
-      return actions === 1 ? "1 akce" : `${actions} akcí`;
+      return actions === 1 ? tr("timeline.action_one") : tr("timeline.action_other", { count: String(actions) });
     }
     case "verify":
       return countRows(rows, ["verify"]) > 0 && rows.some((row) => row.status === "error")
-        ? "ověření selhalo"
+        ? tr("timeline.verify_failed")
         : rows.some((row) => row.status === "running")
-          ? "ověření běží"
-          : "ověření OK";
+          ? tr("timeline.verify_running")
+          : tr("timeline.verify_ok");
     case "issues": {
       const issues = countRows(rows, ["issue"]);
-      return issues === 1 ? "1 problém" : `${issues} problémů`;
+      return issues === 1 ? tr("timeline.issue_one") : tr("timeline.issue_other", { count: String(issues) });
     }
   }
 }
@@ -463,7 +482,8 @@ export function buildCollapsedSummary(input: BuildCollapsedSummaryInput): string
   const summaries = input.sections.map((section) => normalizeText(section.summary)).filter(Boolean);
   const base = summaries.join(" · ");
   if (input.latestLabel && summaries.length <= 1) {
-    return base ? `${base} · poslední: ${input.latestLabel}` : `poslední: ${input.latestLabel}`;
+    const latest = tr("timeline.latest_label", { label: input.latestLabel });
+    return base ? `${base} · ${latest}` : latest;
   }
   return base;
 }
@@ -478,7 +498,7 @@ export function buildTimelineDetailModel(input: BuildTimelineDetailModelInput): 
     if (!current || current.kind !== kind) {
       current = {
         kind,
-        title: SECTION_TITLES[kind],
+        title: tr(SECTION_TITLE_KEYS[kind]),
         summary: "",
         rows: [],
       };

@@ -12,6 +12,7 @@ import {
   type LinkType,
 } from "./part-view-link-utils";
 import { createCustomRenderer } from "./part-view-markdown-renderer";
+import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 
 type Props = {
   part: Part;
@@ -575,8 +576,7 @@ export default function PartView(props: Props) {
                   setExpandedLongText(true);
                 }}
               >
-                Show full message ({rawText().length.toLocaleString()} chars)
-              </button>
+                {__vesloT("ui.literal.show_full_message_1p75xm", __vesloCurrentLocale())}{rawText().length.toLocaleString()} {__vesloT("ui.literal.chars_wddxa1", __vesloCurrentLocale())}</button>
           </div>
         </Show>
         <Show
@@ -674,7 +674,7 @@ export default function PartView(props: Props) {
           }
         >
           <details class={`rounded-lg ${panelBgClass()} p-2`.trim()}>
-            <summary class={`font-product type-ui-xs cursor-pointer ${subtleTextClass()}`.trim()}>Thinking</summary>
+            <summary class={`font-product type-ui-xs cursor-pointer ${subtleTextClass()}`.trim()}>{__vesloT("settings.thinking", __vesloCurrentLocale())}</summary>
             <pre class={`font-mono type-ui-sm mt-2 whitespace-pre-wrap break-words text-gray-12`.trim()}>
               {clampText(String((p() as { text: string }).text), 2000)}
             </pre>
@@ -713,7 +713,7 @@ export default function PartView(props: Props) {
 
             <Show when={diagnostics().length > 0}>
               <div class={`rounded-lg border ${panelBgClass()} p-2`.trim()}>
-                <div class={`font-product type-ui-xs font-medium ${subtleTextClass()}`.trim()}>Diagnostics</div>
+                <div class={`font-product type-ui-xs font-medium ${subtleTextClass()}`.trim()}>{__vesloT("ui.literal.diagnostics_1stxhg", __vesloCurrentLocale())}</div>
                 <div class="mt-2 grid gap-2">
                   <For each={diagnostics()}>
                     {(diag: any) => (
@@ -741,7 +741,7 @@ export default function PartView(props: Props) {
 
             <Show when={diffText()}>
               <div class={`rounded-lg border ${panelBgClass()} p-2`.trim()}>
-                <div class={`font-product type-ui-xs font-medium ${subtleTextClass()}`.trim()}>Diff</div>
+                <div class={`font-product type-ui-xs font-medium ${subtleTextClass()}`.trim()}>{__vesloT("ui.literal.diff_1m4w7z", __vesloCurrentLocale())}</div>
                 <div class="mt-2 grid gap-1 rounded-md overflow-hidden">
                   <For each={diffLines()}>
                     {(line) => (
@@ -788,7 +788,7 @@ export default function PartView(props: Props) {
 
             <Show when={showToolOutput() && hasReadXmlOutput()}>
               <details class={`rounded-lg ${panelBgClass()} p-2`.trim()}>
-                <summary class={`cursor-pointer text-xs ${subtleTextClass()}`.trim()}>Raw read output</summary>
+                <summary class={`cursor-pointer text-xs ${subtleTextClass()}`.trim()}>{__vesloT("ui.literal.raw_read_output_yjrlf8", __vesloCurrentLocale())}</summary>
                 <pre class={`mt-2 whitespace-pre-wrap break-words text-xs text-gray-12`.trim()}>
                   {outputPreview()}
                 </pre>
@@ -800,13 +800,13 @@ export default function PartView(props: Props) {
                 class={`text-[11px] ${subtleTextClass()} hover:text-gray-12 transition-colors`}
                 onClick={() => setExpandedOutput((current) => !current)}
               >
-                {expandedOutput() ? "Show less" : "Show more"}
+                {expandedOutput() ? __vesloT("common.show_less", __vesloCurrentLocale()) : __vesloT("common.show_more", __vesloCurrentLocale())}
               </button>
             </Show>
 
             <Show when={showToolOutput() && toolInput() != null}>
               <details class={`rounded-lg ${panelBgClass()} p-2`.trim()}>
-                <summary class={`cursor-pointer text-xs ${subtleTextClass()}`.trim()}>Input</summary>
+                <summary class={`cursor-pointer text-xs ${subtleTextClass()}`.trim()}>{__vesloT("ui.literal.input_189z5s", __vesloCurrentLocale())}</summary>
                 <pre class={`mt-2 whitespace-pre-wrap break-words text-xs text-gray-12`.trim()}>
                   {safeStringify(toolInput())}
                 </pre>
@@ -826,7 +826,7 @@ export default function PartView(props: Props) {
 
       <Match when={p().type === "step-start" || p().type === "step-finish"}>
         <div class={`text-xs ${subtleTextClass()}`.trim()}>
-          {p().type === "step-start" ? "Step started" : "Step finished"}
+          {p().type === "step-start" ? __vesloT("tools.step_started", __vesloCurrentLocale()) : __vesloT("tools.step_finished", __vesloCurrentLocale())}
           <Show when={"reason" in p() && (p() as any).reason}>
             <span class={tone() === "dark" ? "text-gray-12/80" : "text-gray-11"}>
               {" "}· {String((p() as any).reason)}

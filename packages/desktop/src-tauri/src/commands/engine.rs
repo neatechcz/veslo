@@ -7,12 +7,12 @@ use crate::engine::doctor::{
 };
 use crate::engine::manager::EngineManager;
 use crate::engine::spawn::{find_free_port, spawn_engine};
+use crate::env_guard::EnvVarGuard;
 use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::opencode_router::spawn::resolve_opencode_router_health_port;
 use crate::orchestrator::manager::OrchestratorManager;
 use crate::orchestrator::{self, OrchestratorSpawnOptions};
 use crate::types::{EngineDoctorResult, EngineInfo, EngineRuntime, ExecResult};
-use crate::env_guard::EnvVarGuard;
 use crate::utils::truncate_output;
 use crate::veslo_server::{manager::VesloServerManager, resolve_connect_url, start_veslo_server};
 use serde_json::json;
@@ -100,7 +100,11 @@ fn format_orchestrator_start_error(
     message
 }
 
-fn should_retry_orchestrator_start(attempt: usize, max_attempts: usize, child_exited: bool) -> bool {
+fn should_retry_orchestrator_start(
+    attempt: usize,
+    max_attempts: usize,
+    child_exited: bool,
+) -> bool {
     child_exited && attempt < max_attempts && max_attempts > 1
 }
 
@@ -540,8 +544,9 @@ pub fn engine_start(
                                 );
                             }
                             if let Ok(mut state) = orchestrator_state_handle.try_lock() {
-                                let next = state.last_stdout.as_deref().unwrap_or_default().to_string()
-                                    + &line;
+                                let next =
+                                    state.last_stdout.as_deref().unwrap_or_default().to_string()
+                                        + &line;
                                 state.last_stdout = Some(truncate_output(&next, 8000));
                             }
                         }
@@ -555,8 +560,9 @@ pub fn engine_start(
                                 );
                             }
                             if let Ok(mut state) = orchestrator_state_handle.try_lock() {
-                                let next = state.last_stderr.as_deref().unwrap_or_default().to_string()
-                                    + &line;
+                                let next =
+                                    state.last_stderr.as_deref().unwrap_or_default().to_string()
+                                        + &line;
                                 state.last_stderr = Some(truncate_output(&next, 8000));
                             }
                         }
@@ -575,8 +581,9 @@ pub fn engine_start(
                             }
                             if let Ok(mut state) = orchestrator_state_handle.try_lock() {
                                 state.child_exited = true;
-                                let next = state.last_stderr.as_deref().unwrap_or_default().to_string()
-                                    + &message;
+                                let next =
+                                    state.last_stderr.as_deref().unwrap_or_default().to_string()
+                                        + &message;
                                 state.last_stderr = Some(truncate_output(&next, 8000));
                             }
                         }
@@ -756,7 +763,11 @@ pub fn engine_start(
                 CommandEvent::Stdout(line_bytes) => {
                     let line = String::from_utf8_lossy(&line_bytes).to_string();
                     if let Some(fwd) = engine_forwarder.as_ref() {
-                        fwd.append("engine", crate::debug_logs_forwarder::LogStream::Stdout, &line);
+                        fwd.append(
+                            "engine",
+                            crate::debug_logs_forwarder::LogStream::Stdout,
+                            &line,
+                        );
                     }
                     if let Ok(mut output) = output_state_handle.lock() {
                         output.stdout.push_str(&line);
@@ -770,7 +781,11 @@ pub fn engine_start(
                 CommandEvent::Stderr(line_bytes) => {
                     let line = String::from_utf8_lossy(&line_bytes).to_string();
                     if let Some(fwd) = engine_forwarder.as_ref() {
-                        fwd.append("engine", crate::debug_logs_forwarder::LogStream::Stderr, &line);
+                        fwd.append(
+                            "engine",
+                            crate::debug_logs_forwarder::LogStream::Stderr,
+                            &line,
+                        );
                     }
                     if let Ok(mut output) = output_state_handle.lock() {
                         output.stderr.push_str(&line);

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "bun:test";
@@ -24,7 +24,7 @@ afterEach(async () => {
   }
 });
 
-async function startFixture() {
+async function startFixture(options: { logRequests?: boolean } = {}) {
   const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-debug-logs-route-"));
   const dataDir = await mkdtemp(join(tmpdir(), "veslo-debug-logs-data-"));
   tempDirs.push(workspaceRoot, dataDir);
@@ -47,7 +47,7 @@ async function startFixture() {
     tokenSource: "cli",
     hostTokenSource: "cli",
     logFormat: "pretty",
-    logRequests: false,
+    logRequests: options.logRequests ?? false,
     debugLogs: {
       enabled: false,
       ingestUrl: null,
@@ -61,6 +61,27 @@ async function startFixture() {
 
   runningServers.push(server as { stop?: (closeActiveConnections?: boolean) => void });
   return server;
+}
+
+async function readSpooledEvents(dataDir: string): Promise<Array<Record<string, unknown>>> {
+  const eventDir = join(dataDir, "debug-log-spool", "events");
+  const files = await readdir(eventDir).catch(() => []);
+  const events: Array<Record<string, unknown>> = [];
+  for (const file of files) {
+    if (!file.endsWith(".json")) continue;
+    const raw = await readFile(join(eventDir, file), "utf8");
+    events.push(JSON.parse(raw) as Record<string, unknown>);
+  }
+  return events;
+}
+
+async function waitForSpooledEvents(dataDir: string): Promise<Array<Record<string, unknown>>> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const events = await readSpooledEvents(dataDir);
+    if (events.length > 0) return events;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return readSpooledEvents(dataDir);
 }
 
 function makeBatch(overrides: Record<string, unknown> = {}) {
@@ -107,6 +128,30 @@ test("POST /debug-logs with host token accepts a valid batch (202)", async () =>
   const payload = await response.json() as { ok: boolean; acceptedBatchIds: string[] };
   expect(payload.ok).toBe(true);
   expect(payload.acceptedBatchIds).toEqual(["batch-1"]);
+});
+
+test("POST /debug-logs does not spool its own request log", async () => {
+  const server = await startFixture({ logRequests: true });
+  const dataDir = process.env.VESLO_DATA_DIR ?? "";
+  const response = await fetch(`http://127.0.0.1:${server.port}/debug-logs`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-veslo-host-token": "host-token",
+    },
+    body: JSON.stringify(makeBatch()),
+  });
+  expect(response.status).toBe(202);
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const events = await waitForSpooledEvents(dataDir);
+  expect(events.some((event) => event.id === "evt-1")).toBe(true);
+  expect(
+    events.some((event) => {
+      const payload = event.payload as { attributes?: { path?: string } } | undefined;
+      return event.source === "veslo-server-self" && payload?.attributes?.path === "/debug-logs";
+    }),
+  ).toBe(false);
 });
 
 test("POST /debug-logs with malformed body returns 400 with issues", async () => {

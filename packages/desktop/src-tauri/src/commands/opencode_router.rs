@@ -417,8 +417,8 @@ pub async fn opencodeRouter_config_set(
     key: String,
     value: String,
 ) -> Result<(), String> {
-    let command =
-        resolve_opencode_router_command(&app).map_err(|e| format!("Failed to resolve router command: {e}"))?;
+    let command = resolve_opencode_router_command(&app)
+        .map_err(|e| format!("Failed to resolve router command: {e}"))?;
 
     let output = command
         .args(["config", "set", &key, &value])
@@ -439,8 +439,8 @@ async fn opencodeRouter_json(
     args: &[&str],
     context: &str,
 ) -> Result<serde_json::Value, String> {
-    let command =
-        resolve_opencode_router_command(app).map_err(|e| format!("Failed to resolve router command: {e}"))?;
+    let command = resolve_opencode_router_command(app)
+        .map_err(|e| format!("Failed to resolve router command: {e}"))?;
 
     let output = command
         .args(args)

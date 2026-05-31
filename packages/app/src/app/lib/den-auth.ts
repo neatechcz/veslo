@@ -1,6 +1,7 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { LANGUAGE_PREF_KEY, ONBOARDING_COMPLETE_STORAGE_KEY } from "../constants";
 import { isTauriRuntime } from "../utils";
+import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 
 const DEN_AUTH_STORAGE_KEY = "veslo.den.auth";
 const DEN_KEEP_SIGNED_IN_STORAGE_KEY = "veslo.den.keepSignedIn";
@@ -144,7 +145,7 @@ export function resolveAuthenticatedDenUserLabel(
 ): string | null {
   const label = resolvePreferredDenUserLabel(auth?.user);
   if (label) return label;
-  return auth ? "Signed in" : null;
+  return auth ? __vesloIndirectT("ui.indirect.signed_in_15swka", __vesloIndirectLocale()) : null;
 }
 
 function localStorageAccess(): Storage | null {
@@ -227,7 +228,7 @@ export function readDenApiBaseOverride(): string | null {
 export function writeDenApiBaseOverride(value: string): DenApiBaseOverrideWriteResult {
   const store = storage();
   if (!store) {
-    return { ok: false, error: "Local storage is unavailable in this environment." };
+    return { ok: false, error: __vesloIndirectT("ui.indirect.local_storage_is_unavailable_in_this_environme_125e8t", __vesloIndirectLocale()) };
   }
 
   const trimmed = value.trim();
@@ -236,20 +237,20 @@ export function writeDenApiBaseOverride(value: string): DenApiBaseOverrideWriteR
       store.removeItem(DEN_API_BASE_OVERRIDE_STORAGE_KEY);
       return { ok: true, value: null };
     } catch {
-      return { ok: false, error: "Failed to clear endpoint override." };
+      return { ok: false, error: __vesloIndirectT("ui.indirect.failed_to_clear_endpoint_override_1853v4", __vesloIndirectLocale()) };
     }
   }
 
   const normalized = normalizeDenApiBase(trimmed);
   if (!normalized) {
-    return { ok: false, error: "Enter a valid http(s) URL." };
+    return { ok: false, error: __vesloIndirectT("ui.indirect.enter_a_valid_http_s_url_4spp7x", __vesloIndirectLocale()) };
   }
 
   try {
     store.setItem(DEN_API_BASE_OVERRIDE_STORAGE_KEY, normalized);
     return { ok: true, value: normalized };
   } catch {
-    return { ok: false, error: "Failed to save endpoint override." };
+    return { ok: false, error: __vesloIndirectT("ui.indirect.failed_to_save_endpoint_override_12wxta", __vesloIndirectLocale()) };
   }
 }
 
@@ -849,7 +850,7 @@ export async function startDesktopBrowserAuth(intent: "signin" | "signup" = "sig
           : "";
     const expiresAtRaw = typeof payload?.expiresAt === "string" ? payload.expiresAt : "";
     if (!authorizeUrl || !sessionId) {
-      return { ok: false, error: "Invalid start response" };
+      return { ok: false, error: __vesloIndirectT("ui.indirect.invalid_start_response_8i4ysj", __vesloIndirectLocale()) };
     }
 
     let expiresAt = Date.now() + DESKTOP_AUTH_FALLBACK_TTL_MS;
@@ -870,7 +871,7 @@ export async function startDesktopBrowserAuth(intent: "signin" | "signup" = "sig
 
     return { ok: true, authorizeUrl, sessionId };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : "Network error" };
+    return { ok: false, error: err instanceof Error ? err.message : __vesloIndirectT("ui.indirect.network_error_1a8yxz", __vesloIndirectLocale()) };
   }
 }
 
@@ -881,7 +882,7 @@ export async function getDesktopBrowserAuthStatus(
   const denApiBase = getDenApiBase();
   const trimmedSessionId = sessionId.trim();
   if (!trimmedSessionId) {
-    return { ok: false, error: "Missing desktop auth transaction ID.", statusCode: null };
+    return { ok: false, error: __vesloIndirectT("ui.indirect.missing_desktop_auth_transaction_id_1jb169", __vesloIndirectLocale()), statusCode: null };
   }
 
   try {
@@ -917,7 +918,7 @@ export async function getDesktopBrowserAuthStatus(
       status !== "cancelled" &&
       status !== "exchanged"
     ) {
-      return { ok: false, error: "Invalid status response", statusCode: response.status };
+      return { ok: false, error: __vesloIndirectT("ui.indirect.invalid_status_response_j5gau1", __vesloIndirectLocale()), statusCode: response.status };
     }
 
     return {
@@ -933,7 +934,7 @@ export async function getDesktopBrowserAuthStatus(
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : "Network error",
+      error: err instanceof Error ? err.message : __vesloIndirectT("ui.indirect.network_error_1a8yxz", __vesloIndirectLocale()),
       statusCode: null,
     };
   }
@@ -989,7 +990,7 @@ export async function exchangeHandoffCode(
     const userId = payload?.user?.id;
     const orgId = payload?.org?.id;
     if (!userId || !orgId) {
-      return { ok: false, error: "Invalid exchange response" };
+      return { ok: false, error: __vesloIndirectT("ui.indirect.invalid_exchange_response_qah76s", __vesloIndirectLocale()) };
     }
 
     const state: DenAuthState = {
@@ -1025,10 +1026,10 @@ export async function exchangeHandoffCode(
     if (err instanceof Error && err.message === "Failed to fetch") {
       return {
         ok: false,
-        error: "Failed to reach the Openwork auth API. Check your network or API CORS settings.",
+        error: __vesloIndirectT("ui.indirect.failed_to_reach_the_openwork_auth_api_check_yo_ldn4z4", __vesloIndirectLocale()),
       };
     }
-    return { ok: false, error: err instanceof Error ? err.message : "Network error" };
+    return { ok: false, error: err instanceof Error ? err.message : __vesloIndirectT("ui.indirect.network_error_1a8yxz", __vesloIndirectLocale()) };
   }
 }
 

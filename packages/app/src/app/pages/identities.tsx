@@ -24,6 +24,7 @@ import type {
   VesloServerStatus,
   VesloWorkspaceFileContent,
 } from "../lib/veslo-server";
+import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 
 export type IdentitiesViewProps = {
   busy: boolean;
@@ -196,15 +197,15 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
 
   const serverReady = createMemo(() => props.vesloServerStatus === "connected" && Boolean(vesloServerClient()));
   const scopedWorkspaceReady = createMemo(() => Boolean(workspaceId()));
-  const defaultRoutingDirectory = createMemo(() => props.activeWorkspaceRoot.trim() || "Not set");
+  const defaultRoutingDirectory = createMemo(() => props.activeWorkspaceRoot.trim() || __vesloT("skills.detail_not_set", __vesloCurrentLocale()));
 
   let lastResetKey = "";
 
   const statusLabel = createMemo(() => {
-    if (healthError()) return "Unavailable";
+    if (healthError()) return __vesloT("status.unavailable", __vesloCurrentLocale());
     const snapshot = health();
-    if (!snapshot) return "Unknown";
-    return snapshot.ok ? "Running" : "Offline";
+    if (!snapshot) return __vesloT("status.unknown", __vesloCurrentLocale());
+    return snapshot.ok ? __vesloT("status.running", __vesloCurrentLocale()) : __vesloT("status.offline", __vesloCurrentLocale());
   });
 
   const isWorkerOnline = createMemo(() => {
@@ -245,13 +246,13 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     const ts = lastActivityAt();
     if (!ts) return "\u2014";
     const elapsedMs = Math.max(0, Date.now() - ts);
-    if (elapsedMs < 60_000) return "Just now";
+    if (elapsedMs < 60_000) return __vesloT("time.just_now", __vesloCurrentLocale());
     const minutes = Math.floor(elapsedMs / 60_000);
-    if (minutes < 60) return `${minutes}m ago`;
+    if (minutes < 60) return __vesloT("time.minutes_ago", __vesloCurrentLocale()).replace("{count}", String(minutes));
     const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours}h ago`;
+    if (hours < 24) return __vesloT("time.hours_ago", __vesloCurrentLocale()).replace("{count}", String(hours));
     const days = Math.floor(hours / 24);
-    return `${days}d ago`;
+    return __vesloT("time.days_ago", __vesloCurrentLocale()).replace("{count}", String(days));
   });
 
   const workspaceAgentStatus = createMemo(() => {
@@ -528,7 +529,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
         const pairingCode = typeof result.telegram?.pairingCode === "string" ? result.telegram.pairingCode.trim() : "";
         if (access === "private" && pairingCode) {
           setTelegramPairingCode(pairingCode);
-          setTelegramStatus(`Private bot saved. Pair via /pair ${pairingCode}`);
+          setTelegramStatus(__vesloT("identities.private_bot_saved_pair", __vesloCurrentLocale()).replace("{code}", pairingCode));
         } else {
           setTelegramPairingCode(null);
         }
@@ -537,15 +538,15 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
           const normalized = String(username).trim().replace(/^@+/, "");
           setTelegramBotUsername(normalized || null);
           if (access !== "private" || !pairingCode) {
-            setTelegramStatus(`Saved (@${normalized || String(username)})`);
+            setTelegramStatus(__vesloT("identities.saved_account", __vesloCurrentLocale()).replace("{account}", `@${normalized || String(username)}`));
           }
         } else {
           if (access !== "private" || !pairingCode) {
-            setTelegramStatus(result.applied === false ? "Saved (pending apply)." : "Saved.");
+            setTelegramStatus(result.applied === false ? __vesloT("identities.saved_pending_apply", __vesloCurrentLocale()) : __vesloT("identities.saved", __vesloCurrentLocale()));
           }
         }
       } else {
-        setTelegramError("Failed to save.");
+        setTelegramError(__vesloT("identities.failed_to_save", __vesloCurrentLocale()));
       }
       if (typeof result.applyError === "string" && result.applyError.trim()) {
         setTelegramError(result.applyError.trim());
@@ -576,9 +577,9 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       if (result.ok) {
         setTelegramBotUsername(null);
         setTelegramPairingCode(null);
-        setTelegramStatus(result.applied === false ? "Deleted (pending apply)." : "Deleted.");
+        setTelegramStatus(result.applied === false ? __vesloT("identities.deleted_pending_apply", __vesloCurrentLocale()) : __vesloT("identities.deleted", __vesloCurrentLocale()));
       } else {
-        setTelegramError("Failed to delete.");
+        setTelegramError(__vesloT("identities.failed_to_delete", __vesloCurrentLocale()));
       }
       if (typeof result.applyError === "string" && result.applyError.trim()) {
         setTelegramError(result.applyError.trim());
@@ -596,9 +597,9 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     if (!code) return;
     try {
       await navigator.clipboard.writeText(code);
-      setTelegramStatus("Pairing code copied.");
+      setTelegramStatus(__vesloT("identities.pairing_code_copied", __vesloCurrentLocale()));
     } catch {
-      setTelegramError("Could not copy pairing code. Copy it manually.");
+      setTelegramError(__vesloT("identities.pairing_code_copy_failed", __vesloCurrentLocale()));
     }
   };
 
@@ -620,9 +621,9 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     try {
       const result = await client.upsertOpenCodeRouterSlackIdentity(id, { botToken, appToken, enabled: slackEnabled() });
       if (result.ok) {
-        setSlackStatus(result.applied === false ? "Saved (pending apply)." : "Saved.");
+        setSlackStatus(result.applied === false ? __vesloT("identities.saved_pending_apply", __vesloCurrentLocale()) : __vesloT("identities.saved", __vesloCurrentLocale()));
       } else {
-        setSlackError("Failed to save.");
+        setSlackError(__vesloT("identities.failed_to_save", __vesloCurrentLocale()));
       }
       if (typeof result.applyError === "string" && result.applyError.trim()) {
         setSlackError(result.applyError.trim());
@@ -652,9 +653,9 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     try {
       const result = await client.deleteOpenCodeRouterSlackIdentity(id, identityId);
       if (result.ok) {
-        setSlackStatus(result.applied === false ? "Deleted (pending apply)." : "Deleted.");
+        setSlackStatus(result.applied === false ? __vesloT("identities.deleted_pending_apply", __vesloCurrentLocale()) : __vesloT("identities.deleted", __vesloCurrentLocale()));
       } else {
-        setSlackError("Failed to delete.");
+        setSlackError(__vesloT("identities.failed_to_delete", __vesloCurrentLocale()));
       }
       if (typeof result.applyError === "string" && result.applyError.trim()) {
         setSlackError(result.applyError.trim());
@@ -708,7 +709,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       {/* ---- Header ---- */}
       <div>
         <div class="flex items-center justify-between mb-1.5">
-          <h1 class="text-lg font-bold text-gray-12 tracking-tight">Messaging channels</h1>
+          <h1 class="text-lg font-bold text-gray-12 tracking-tight">{__vesloT("ui.literal.messaging_channels_m54yat", __vesloCurrentLocale())}</h1>
           <div class="flex items-center gap-2">
             <Button
               variant="outline"
@@ -717,7 +718,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
               disabled={props.busy || props.vesloReconnectBusy}
             >
               <RefreshCcw size={14} class={props.vesloReconnectBusy ? "animate-spin" : ""} />
-              <span class="ml-1.5">Repair & reconnect</span>
+              <span class="ml-1.5">{__vesloT("ui.literal.repair_reconnect_1v7561", __vesloCurrentLocale())}</span>
             </Button>
             <Button
               variant="outline"
@@ -726,16 +727,14 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
               disabled={!serverReady() || refreshing()}
             >
               <RefreshCcw size={14} class={refreshing() ? "animate-spin" : ""} />
-              <span class="ml-1.5">Refresh</span>
+              <span class="ml-1.5">{__vesloT("skills.refresh", __vesloCurrentLocale())}</span>
             </Button>
           </div>
         </div>
         <p class="text-sm text-gray-9 leading-relaxed">
-          Let people reach your worker through messaging apps. Connect a channel and
-          your worker will automatically read and respond to messages.
-        </p>
+          {__vesloT("ui.literal.let_people_reach_your_worker_through_messagi_1r205y", __vesloCurrentLocale())}</p>
         <div class="mt-1.5 text-[11px] text-gray-8 font-mono break-all">
-          Workspace scope: {scopedVesloBaseUrl().trim() || props.vesloServerUrl.trim() || "Not set"}
+          {__vesloT("ui.literal.workspace_scope_y6tll0", __vesloCurrentLocale())}{" "}{scopedVesloBaseUrl().trim() || props.vesloServerUrl.trim() || __vesloT("skills.detail_not_set", __vesloCurrentLocale())}
         </div>
         <Show when={reconnectStatus()}>
           {(value) => <div class="mt-1 text-[11px] text-gray-9">{value()}</div>}
@@ -748,9 +747,9 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       {/* ---- Not connected to server ---- */}
       <Show when={!serverReady()}>
         <div class="rounded-xl border border-gray-4 bg-gray-1 p-5">
-          <div class="text-sm font-semibold text-gray-12">Connect to an Veslo server</div>
+          <div class="text-sm font-semibold text-gray-12">{__vesloT("ui.literal.connect_to_an_veslo_server_rggskt", __vesloCurrentLocale())}</div>
           <div class="mt-1 text-xs text-gray-10">
-            Identities are available when you are connected to an Veslo host (<code class="text-[11px] font-mono bg-gray-3 px-1 py-0.5 rounded">veslo</code>).
+            {__vesloT("ui.literal.identities_are_available_when_you_are_connec_1o8l97", __vesloCurrentLocale())}<code class="text-[11px] font-mono bg-gray-3 px-1 py-0.5 rounded">veslo</code>).
           </div>
         </div>
       </Show>
@@ -758,8 +757,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       <Show when={serverReady()}>
         <Show when={!scopedWorkspaceReady()}>
           <div class="rounded-xl border border-amber-7/20 bg-amber-1/30 px-3 py-2 text-xs text-amber-12">
-            Workspace ID is required to manage identities. Reconnect with a workspace URL (for example: <code class="text-[11px]">/w/&lt;workspace-id&gt;</code>) or select a workspace mapped on this host.
-          </div>
+            {__vesloT("ui.literal.workspace_id_is_required_to_manage_identitie_xpo6ir", __vesloCurrentLocale())}{" "}<code class="text-[11px]">/w/&lt;workspace-id&gt;</code>{__vesloT("ui.literal.or_select_a_workspace_mapped_on_this_host_1b4ogq", __vesloCurrentLocale())}</div>
         </Show>
 
         <div class="flex items-center gap-2 rounded-xl border border-gray-4 bg-gray-1 p-1">
@@ -771,8 +769,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
             }`}
             onClick={() => setActiveTab("general")}
           >
-            General
-          </button>
+            {__vesloT("settings.general", __vesloCurrentLocale())}</button>
           <button
             class={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
               activeTab() === "advanced"
@@ -781,8 +778,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
             }`}
             onClick={() => setActiveTab("advanced")}
           >
-            Advanced
-          </button>
+            {__vesloT("mcp.advanced", __vesloCurrentLocale())}</button>
         </div>
 
         <Show when={activeTab() === "general"}>
@@ -800,7 +796,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                 <div class="w-2.5 h-2.5 rounded-full bg-emerald-9 animate-pulse" />
               </Show>
               <span class="text-[15px] font-semibold text-gray-12">
-                {isWorkerOnline() ? "Worker online" : healthError() ? "Worker unavailable" : "Worker offline"}
+                {isWorkerOnline() ? __vesloT("identities.worker_online", __vesloCurrentLocale()) : healthError() ? __vesloT("identities.worker_unavailable", __vesloCurrentLocale()) : __vesloT("identities.worker_offline", __vesloCurrentLocale())}
               </span>
             </div>
             <span
@@ -824,17 +820,17 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
 
           <div class="flex gap-3">
             <StatusPill
-              label="Channels"
-              value={`${connectedChannelCount()} connected`}
+              label={__vesloT("ui.literal.channels_1ju93m", __vesloCurrentLocale())}
+              value={__vesloT("identities.connected_count", __vesloCurrentLocale()).replace("{count}", String(connectedChannelCount()))}
               ok={connectedChannelCount() > 0}
             />
             <StatusPill
-              label="Messages today"
+              label={__vesloT("ui.literal.messages_today_1axjy8", __vesloCurrentLocale())}
               value={messagesToday() == null ? "\u2014" : String(messagesToday())}
               ok={(messagesToday() ?? 0) > 0}
             />
             <StatusPill
-              label="Last activity"
+              label={__vesloT("ui.literal.last_activity_1gm93c", __vesloCurrentLocale())}
               value={lastActivityLabel()}
               ok={Boolean(lastActivityAt())}
             />
@@ -844,8 +840,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
         {/* ---- Available channels ---- */}
         <div>
           <div class="text-[11px] font-semibold text-gray-9 uppercase tracking-wider mb-3">
-            Available channels
-          </div>
+            {__vesloT("ui.literal.available_channels_1rz5wy", __vesloCurrentLocale())}</div>
 
           <div class="flex flex-col gap-2.5">
 
@@ -868,13 +863,11 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                     <span class="text-[15px] font-semibold text-gray-12">Telegram</span>
                     <Show when={hasTelegramConnected()}>
                       <span class="rounded-full px-2 py-0.5 text-[10px] font-semibold bg-emerald-1/40 text-emerald-11">
-                        Connected
-                      </span>
+                        {__vesloT("dashboard.connected", __vesloCurrentLocale())}</span>
                     </Show>
                   </div>
                   <div class="text-[13px] text-gray-9 mt-0.5 leading-snug">
-                    Connect a Telegram bot in public mode (open inbox) or private mode (pairing code required).
-                  </div>
+                    {__vesloT("ui.literal.connect_a_telegram_bot_in_public_mode_open_i_abqfbs", __vesloCurrentLocale())}</div>
                 </div>
                 <ChevronRight
                   size={16}
@@ -907,7 +900,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                                 </span>
                               </div>
                               <div class="text-[11px] text-gray-9 mt-0.5 pl-3.5">
-                                {item.enabled ? "Enabled" : "Disabled"} · {item.running ? "Running" : "Stopped"} · {item.access === "private" ? "Private" : "Public"}
+                                {item.enabled ? __vesloT("mcp.enabled", __vesloCurrentLocale()) : __vesloT("mcp.disabled", __vesloCurrentLocale())} · {item.running ? __vesloT("status.running", __vesloCurrentLocale()) : __vesloT("session.run_stopped", __vesloCurrentLocale())} · {item.access === "private" ? __vesloT("identities.private", __vesloCurrentLocale()) : __vesloT("identities.public", __vesloCurrentLocale())}
                               </div>
                             </div>
                             <div class="flex items-center gap-2 flex-shrink-0">
@@ -917,8 +910,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                                 disabled={telegramSaving() || item.id === "env" || !workspaceId()}
                                 onClick={() => void deleteTelegram(item.id)}
                               >
-                                Disconnect
-                              </Button>
+                                {__vesloT("dashboard.disconnect", __vesloCurrentLocale())}</Button>
                             </div>
                           </div>
                         )}
@@ -928,7 +920,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                     {/* Connected stats summary */}
                     <div class="flex gap-2.5">
                       <div class="flex-1 rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2.5">
-                        <div class="text-[11px] text-gray-9 mb-0.5">Status</div>
+                        <div class="text-[11px] text-gray-9 mb-0.5">{__vesloT("skills.detail_status", __vesloCurrentLocale())}</div>
                         <div class="flex items-center gap-1.5">
                           <div class={`w-1.5 h-1.5 rounded-full ${
                             telegramIdentities().some((i) => i.running) ? "bg-emerald-9" : "bg-gray-8"
@@ -936,18 +928,18 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                           <span class={`text-[13px] font-semibold ${
                             telegramIdentities().some((i) => i.running) ? "text-emerald-11" : "text-gray-10"
                           }`}>
-                            {telegramIdentities().some((i) => i.running) ? "Active" : "Stopped"}
+                            {telegramIdentities().some((i) => i.running) ? __vesloT("session.active", __vesloCurrentLocale()) : __vesloT("session.run_stopped", __vesloCurrentLocale())}
                           </span>
                         </div>
                       </div>
                       <div class="flex-1 rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2.5">
-                        <div class="text-[11px] text-gray-9 mb-0.5">Identities</div>
-                        <div class="text-[13px] font-semibold text-gray-12">{telegramIdentities().length} configured</div>
+                        <div class="text-[11px] text-gray-9 mb-0.5">{__vesloT("ui.literal.identities_y4b15n", __vesloCurrentLocale())}</div>
+                        <div class="text-[13px] font-semibold text-gray-12">{telegramIdentities().length} {__vesloT("mcp.configured", __vesloCurrentLocale())}</div>
                       </div>
                       <div class="flex-1 rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2.5">
-                        <div class="text-[11px] text-gray-9 mb-0.5">Channel</div>
+                        <div class="text-[11px] text-gray-9 mb-0.5">{__vesloT("ui.literal.channel_s4ids4", __vesloCurrentLocale())}</div>
                         <div class="text-[13px] font-semibold text-gray-12">
-                          {health()?.channels.telegram ? "On" : "Off"}
+                          {health()?.channels.telegram ? __vesloT("common.on", __vesloCurrentLocale()) : __vesloT("common.off", __vesloCurrentLocale())}
                         </div>
                       </div>
                     </div>
@@ -964,31 +956,31 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                   <div class="space-y-2.5">
                     <Show when={telegramIdentities().length === 0}>
                       <div class="rounded-xl border border-gray-4 bg-gray-2/60 px-3.5 py-3 space-y-2.5">
-                        <div class="text-[12px] font-semibold text-gray-12">Quick setup</div>
+                        <div class="text-[12px] font-semibold text-gray-12">{__vesloT("ui.literal.quick_setup_c4hwox", __vesloCurrentLocale())}</div>
                         <ol class="space-y-2 text-[12px] text-gray-10 leading-relaxed">
                           <li class="flex items-start gap-2">
                             <span class="mt-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-gray-4 text-[10px] font-semibold text-gray-11">1</span>
                             <span>
-                              Open <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" class="font-medium text-gray-12 underline">@BotFather</a> and run <code class="rounded bg-gray-3 px-1 py-0.5 font-mono text-[11px]">/newbot</code>.
+                              {__vesloT("session.open", __vesloCurrentLocale())}{" "}<a href="https://t.me/BotFather" target="_blank" rel="noreferrer" class="font-medium text-gray-12 underline">@BotFather</a> {__vesloT("ui.literal.and_run_1ooekz", __vesloCurrentLocale())}{" "}<code class="rounded bg-gray-3 px-1 py-0.5 font-mono text-[11px]">/newbot</code>.
                             </span>
                           </li>
                           <li class="flex items-start gap-2">
                             <span class="mt-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-gray-4 text-[10px] font-semibold text-gray-11">2</span>
-                            <span>Copy the bot token and paste it below.</span>
+                            <span>{__vesloT("ui.literal.copy_the_bot_token_and_paste_it_below_zr2ypr", __vesloCurrentLocale())}</span>
                           </li>
                           <li class="flex items-start gap-2">
                             <span class="mt-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-gray-4 text-[10px] font-semibold text-gray-11">3</span>
-                            <span>Choose <span class="font-medium text-gray-12">Public</span> for open inbox or <span class="font-medium text-gray-12">Private</span> to require <code class="rounded bg-gray-3 px-1 py-0.5 font-mono text-[11px]">/pair &lt;code&gt;</code>.</span>
+                            <span>{__vesloT("common.choose", __vesloCurrentLocale())}{" "}<span class="font-medium text-gray-12">{__vesloT("ui.literal.public_1kufgk", __vesloCurrentLocale())}</span> {__vesloT("ui.literal.for_open_inbox_or_1jlx7i", __vesloCurrentLocale())}{" "}<span class="font-medium text-gray-12">{__vesloT("ui.literal.private_1lqvc1", __vesloCurrentLocale())}</span> {__vesloT("ui.literal.to_require_1f5tkt", __vesloCurrentLocale())}{" "}<code class="rounded bg-gray-3 px-1 py-0.5 font-mono text-[11px]">/pair &lt;code&gt;</code>.</span>
                           </li>
                         </ol>
                       </div>
                     </Show>
 
                     <div>
-                      <label class="text-[12px] text-gray-9 block mb-1">Bot token</label>
+                      <label class="text-[12px] text-gray-9 block mb-1">{__vesloT("ui.literal.bot_token_t6c4un", __vesloCurrentLocale())}</label>
                       <input
                         class="w-full rounded-lg border border-gray-4 bg-gray-1 px-3 py-2.5 text-sm text-gray-12 placeholder:text-gray-8"
-                        placeholder="Paste Telegram bot token from @BotFather"
+                        placeholder={__vesloT("ui.literal.paste_telegram_bot_token_from_botfather_eemt8o", __vesloCurrentLocale())}
                         type="password"
                         value={telegramToken()}
                         onInput={(e) => setTelegramToken(e.currentTarget.value)}
@@ -1001,12 +993,10 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                         checked={telegramEnabled()}
                         onChange={(e) => setTelegramEnabled(e.currentTarget.checked)}
                       />
-                      Enabled
-                    </label>
+                      {__vesloT("plugins.enabled_label", __vesloCurrentLocale())}</label>
 
                     <div class="rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2 text-[11px] text-gray-10 leading-relaxed">
-                      Public bot: first Telegram chat auto-links. Private bot: requires a pairing code before any messages run tools.
-                    </div>
+                      {__vesloT("ui.literal.public_bot_first_telegram_chat_auto_links_pr_1rjqu8", __vesloCurrentLocale())}</div>
 
                     <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       <button
@@ -1026,7 +1016,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                         >
                           <Link size={15} />
                         </Show>
-                        {telegramSaving() ? "Connecting..." : "Create public bot"}
+                        {telegramSaving() ? __vesloT("mcp.connecting", __vesloCurrentLocale()) : __vesloT("identities.create_public_bot", __vesloCurrentLocale())}
                       </button>
 
                       <button
@@ -1047,28 +1037,27 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                         >
                           <Shield size={15} />
                         </Show>
-                        {telegramSaving() ? "Connecting..." : "Create private bot"}
+                        {telegramSaving() ? __vesloT("mcp.connecting", __vesloCurrentLocale()) : __vesloT("identities.create_private_bot", __vesloCurrentLocale())}
                       </button>
                     </div>
 
                     <Show when={telegramPairingCode()}>
                       {(code) => (
                         <div class="rounded-xl border border-sky-7/25 bg-sky-1/40 px-3.5 py-3 space-y-2">
-                          <div class="text-[12px] font-semibold text-sky-11">Private pairing code</div>
+                          <div class="text-[12px] font-semibold text-sky-11">{__vesloT("ui.literal.private_pairing_code_1fe5oi", __vesloCurrentLocale())}</div>
                           <div class="rounded-md border border-sky-7/20 bg-sky-2/80 px-3 py-2 font-mono text-[13px] tracking-[0.08em] text-sky-12">
                             {code()}
                           </div>
                           <div class="text-[11px] text-sky-11/90 leading-relaxed">
-                            In Telegram, open the chat that should control this worker and send <code class="rounded bg-sky-3/60 px-1 py-0.5 font-mono text-[10px]">/pair {code()}</code>.
+                            {__vesloT("ui.literal.in_telegram_open_the_chat_that_should_contro_uisc8w", __vesloCurrentLocale())}{" "}<code class="rounded bg-sky-3/60 px-1 py-0.5 font-mono text-[10px]">/pair {code()}</code>.
                           </div>
                           <div class="flex items-center gap-2">
                             <Button variant="outline" class="h-7 px-2.5 text-[11px]" onClick={() => void copyTelegramPairingCode()}>
                               <Copy size={12} />
-                              <span class="ml-1">Copy code</span>
+                              <span class="ml-1">{__vesloT("ui.literal.copy_code_106qgk", __vesloCurrentLocale())}</span>
                             </Button>
                             <Button variant="outline" class="h-7 px-2.5 text-[11px]" onClick={() => setTelegramPairingCode(null)}>
-                              Hide
-                            </Button>
+                              {__vesloT("mcp.hide", __vesloCurrentLocale())}</Button>
                           </div>
                         </div>
                       )}
@@ -1083,8 +1072,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                           class="inline-flex items-center gap-2 rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2 text-[12px] font-medium text-gray-11 hover:bg-gray-2"
                         >
                           <Link size={14} />
-                          Open @{telegramBotUsername()} in Telegram
-                        </a>
+                          {__vesloT("ui.literal.open_i7bq29", __vesloCurrentLocale())}{telegramBotUsername()} {__vesloT("ui.literal.in_telegram_1ma6tx", __vesloCurrentLocale())}</a>
                       )}
                     </Show>
 
@@ -1120,13 +1108,11 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                     <span class="text-[15px] font-semibold text-gray-12">Slack</span>
                     <Show when={hasSlackConnected()}>
                       <span class="rounded-full px-2 py-0.5 text-[10px] font-semibold bg-emerald-1/40 text-emerald-11">
-                        Connected
-                      </span>
+                        {__vesloT("dashboard.connected", __vesloCurrentLocale())}</span>
                     </Show>
                   </div>
                   <div class="text-[13px] text-gray-9 mt-0.5 leading-snug">
-                    Your worker appears as a bot in Slack channels. Team members can message it directly or mention it in threads.
-                  </div>
+                    {__vesloT("ui.literal.your_worker_appears_as_a_bot_in_slack_channe_1lviqb", __vesloCurrentLocale())}</div>
                 </div>
                 <ChevronRight
                   size={16}
@@ -1159,7 +1145,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                                 </span>
                               </div>
                               <div class="text-[11px] text-gray-9 mt-0.5 pl-3.5">
-                                {item.enabled ? "Enabled" : "Disabled"} · {item.running ? "Running" : "Stopped"}
+                                {item.enabled ? __vesloT("mcp.enabled", __vesloCurrentLocale()) : __vesloT("mcp.disabled", __vesloCurrentLocale())} · {item.running ? __vesloT("status.running", __vesloCurrentLocale()) : __vesloT("session.run_stopped", __vesloCurrentLocale())}
                               </div>
                             </div>
                             <div class="flex items-center gap-2 flex-shrink-0">
@@ -1169,8 +1155,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                                 disabled={slackSaving() || item.id === "env" || !workspaceId()}
                                 onClick={() => void deleteSlack(item.id)}
                               >
-                                Disconnect
-                              </Button>
+                                {__vesloT("dashboard.disconnect", __vesloCurrentLocale())}</Button>
                             </div>
                           </div>
                         )}
@@ -1180,7 +1165,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                     {/* Connected stats summary */}
                     <div class="flex gap-2.5">
                       <div class="flex-1 rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2.5">
-                        <div class="text-[11px] text-gray-9 mb-0.5">Status</div>
+                        <div class="text-[11px] text-gray-9 mb-0.5">{__vesloT("skills.detail_status", __vesloCurrentLocale())}</div>
                         <div class="flex items-center gap-1.5">
                           <div class={`w-1.5 h-1.5 rounded-full ${
                             slackIdentities().some((i) => i.running) ? "bg-emerald-9" : "bg-gray-8"
@@ -1188,18 +1173,18 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                           <span class={`text-[13px] font-semibold ${
                             slackIdentities().some((i) => i.running) ? "text-emerald-11" : "text-gray-10"
                           }`}>
-                            {slackIdentities().some((i) => i.running) ? "Active" : "Stopped"}
+                            {slackIdentities().some((i) => i.running) ? __vesloT("session.active", __vesloCurrentLocale()) : __vesloT("session.run_stopped", __vesloCurrentLocale())}
                           </span>
                         </div>
                       </div>
                       <div class="flex-1 rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2.5">
-                        <div class="text-[11px] text-gray-9 mb-0.5">Identities</div>
-                        <div class="text-[13px] font-semibold text-gray-12">{slackIdentities().length} configured</div>
+                        <div class="text-[11px] text-gray-9 mb-0.5">{__vesloT("ui.literal.identities_y4b15n", __vesloCurrentLocale())}</div>
+                        <div class="text-[13px] font-semibold text-gray-12">{slackIdentities().length} {__vesloT("mcp.configured", __vesloCurrentLocale())}</div>
                       </div>
                       <div class="flex-1 rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2.5">
-                        <div class="text-[11px] text-gray-9 mb-0.5">Channel</div>
+                        <div class="text-[11px] text-gray-9 mb-0.5">{__vesloT("ui.literal.channel_s4ids4", __vesloCurrentLocale())}</div>
                         <div class="text-[13px] font-semibold text-gray-12">
-                          {health()?.channels.slack ? "On" : "Off"}
+                          {health()?.channels.slack ? __vesloT("common.on", __vesloCurrentLocale()) : __vesloT("common.off", __vesloCurrentLocale())}
                         </div>
                       </div>
                     </div>
@@ -1216,13 +1201,12 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                   <div class="space-y-2.5">
                     <Show when={slackIdentities().length === 0}>
                       <p class="text-[13px] text-gray-10 leading-relaxed">
-                        Connect your Slack workspace to let team members interact with this worker in channels and DMs.
-                      </p>
+                        {__vesloT("ui.literal.connect_your_slack_workspace_to_let_team_mem_yvs0gz", __vesloCurrentLocale())}</p>
                     </Show>
 
                     <div class="space-y-2">
                       <div>
-                        <label class="text-[12px] text-gray-9 block mb-1">Bot token</label>
+                        <label class="text-[12px] text-gray-9 block mb-1">{__vesloT("ui.literal.bot_token_t6c4un", __vesloCurrentLocale())}</label>
                         <input
                           class="w-full rounded-lg border border-gray-4 bg-gray-1 px-3 py-2.5 text-sm text-gray-12 placeholder:text-gray-8"
                           placeholder="xoxb-..."
@@ -1232,7 +1216,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                         />
                       </div>
                       <div>
-                        <label class="text-[12px] text-gray-9 block mb-1">App token</label>
+                        <label class="text-[12px] text-gray-9 block mb-1">{__vesloT("ui.literal.app_token_1spxkl", __vesloCurrentLocale())}</label>
                         <input
                           class="w-full rounded-lg border border-gray-4 bg-gray-1 px-3 py-2.5 text-sm text-gray-12 placeholder:text-gray-8"
                           placeholder="xapp-..."
@@ -1249,8 +1233,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                         checked={slackEnabled()}
                         onChange={(e) => setSlackEnabled(e.currentTarget.checked)}
                       />
-                      Enabled
-                    </label>
+                      {__vesloT("plugins.enabled_label", __vesloCurrentLocale())}</label>
 
                     <button
                       onClick={() => void upsertSlack()}
@@ -1270,7 +1253,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                       >
                         <Link size={15} />
                       </Show>
-                      {slackSaving() ? "Connecting..." : "Connect Slack"}
+                      {slackSaving() ? __vesloT("mcp.connecting", __vesloCurrentLocale()) : __vesloT("identities.connect_slack", __vesloCurrentLocale())}
                     </button>
 
                     <Show when={slackIdentities().length === 0}>
@@ -1295,22 +1278,18 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
         {/* ---- Message routing ---- */}
         <div>
           <div class="text-[11px] font-semibold text-gray-9 uppercase tracking-wider mb-2">
-            Message routing
-          </div>
+            {__vesloT("ui.literal.message_routing_1t4p0l", __vesloCurrentLocale())}</div>
           <p class="text-[13px] text-gray-9 leading-relaxed mb-3">
-            Control which conversations go to which workspace folder. Messages are
-            routed to the worker's default folder unless you set up rules here.
-          </p>
+            {__vesloT("ui.literal.control_which_conversations_go_to_which_work_1asxft", __vesloCurrentLocale())}</p>
 
           <div class="rounded-xl border border-gray-4 bg-gray-2/50 px-4 py-3.5 space-y-3">
             <div class="flex items-center gap-2">
               <Shield size={16} class="text-gray-9" />
-              <span class="text-[13px] font-medium text-gray-11">Default routing</span>
+              <span class="text-[13px] font-medium text-gray-11">{__vesloT("ui.literal.default_routing_tz8798", __vesloCurrentLocale())}</span>
             </div>
             <div class="flex items-center gap-2 pl-6">
               <span class="rounded-md bg-gray-4 px-2.5 py-1 text-[12px] font-medium text-gray-11">
-                All channels
-              </span>
+                {__vesloT("ui.literal.all_channels_1c6ld7", __vesloCurrentLocale())}</span>
               <ArrowRight size={14} class="text-gray-8" />
               <span class="rounded-md bg-dls-accent/10 px-2.5 py-1 text-[12px] font-medium text-dls-accent">
                 {defaultRoutingDirectory()}
@@ -1319,18 +1298,16 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
           </div>
 
           <div class="text-xs text-gray-10 mt-2.5">
-            Advanced: reply with <code class="text-[11px] font-mono bg-gray-3 px-1 py-0.5 rounded">/dir &lt;path&gt;</code> in Slack/Telegram to override the directory for a specific chat (limited to this workspace root).
-          </div>
+            {__vesloT("ui.literal.advanced_reply_with_1k3upw", __vesloCurrentLocale())}{" "}<code class="text-[11px] font-mono bg-gray-3 px-1 py-0.5 rounded">/dir &lt;path&gt;</code> {__vesloT("ui.literal.in_slack_telegram_to_override_the_directory__sv35l6", __vesloCurrentLocale())}</div>
         </div>
 
         {/* ---- Messaging agent behavior ---- */}
         <div class="rounded-xl border border-gray-4 bg-gray-1 p-4 space-y-3">
           <div class="flex items-center justify-between gap-2">
             <div>
-              <div class="text-[13px] font-semibold text-gray-12">Messaging agent behavior</div>
+              <div class="text-[13px] font-semibold text-gray-12">{__vesloT("ui.literal.messaging_agent_behavior_s0980k", __vesloCurrentLocale())}</div>
               <div class="text-[12px] text-gray-9 mt-0.5">
-                One file per workspace. Add optional first line <code class="font-mono">@agent &lt;id&gt;</code> to route via a specific OpenCode agent.
-              </div>
+                {__vesloT("ui.literal.one_file_per_workspace_add_optional_first_li_1tkbri", __vesloCurrentLocale())}{" "}<code class="font-mono">@agent &lt;id&gt;</code> {__vesloT("ui.literal.to_route_via_a_specific_opencode_agent_vozn7w", __vesloCurrentLocale())}</div>
             </div>
             <span class="rounded-md border border-gray-4 bg-gray-2/50 px-2 py-1 text-[11px] font-mono text-gray-10">
               {OPENCODE_ROUTER_AGENT_FILE_PATH}
@@ -1340,24 +1317,23 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
           <Show when={workspaceAgentStatus()}>
             {(value) => (
               <div class="rounded-lg border border-gray-4 bg-gray-2/40 px-3 py-2 text-[11px] text-gray-10">
-                Active scope: workspace · status: {value().loaded ? "loaded" : "missing"} · selected agent: {value().selected || "(none)"}
+                {__vesloT("ui.literal.active_scope_workspace_status_n825xv", __vesloCurrentLocale())}{" "}{value().loaded ? __vesloT("identities.loaded", __vesloCurrentLocale()) : __vesloT("identities.missing", __vesloCurrentLocale())} {__vesloT("ui.literal.selected_agent_1rofxr", __vesloCurrentLocale())}{" "}{value().selected || __vesloT("identities.none", __vesloCurrentLocale())}
               </div>
             )}
           </Show>
 
           <Show when={agentLoading()}>
-            <div class="text-[11px] text-gray-9">Loading agent file…</div>
+            <div class="text-[11px] text-gray-9">{__vesloT("ui.literal.loading_agent_file_153p21", __vesloCurrentLocale())}</div>
           </Show>
 
           <Show when={!agentExists() && !agentLoading()}>
             <div class="rounded-lg border border-amber-7/20 bg-amber-1/30 px-3 py-2 text-xs text-amber-12">
-              Agent file not found in this workspace yet.
-            </div>
+              {__vesloT("ui.literal.agent_file_not_found_in_this_workspace_yet_1abp66", __vesloCurrentLocale())}</div>
           </Show>
 
           <textarea
             class="min-h-[220px] w-full rounded-lg border border-gray-4 bg-gray-1 px-3 py-2.5 text-[13px] font-mono text-gray-12 placeholder:text-gray-8"
-            placeholder="Add messaging behavior instructions for opencodeRouter here..."
+            placeholder={__vesloT("ui.literal.add_messaging_behavior_instructions_for_open_1ux8vg", __vesloCurrentLocale())}
             value={agentDraft()}
             onInput={(e) => setAgentDraft(e.currentTarget.value)}
           />
@@ -1369,8 +1345,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
               onClick={() => void loadAgentFile()}
               disabled={agentLoading() || !workspaceId()}
             >
-              Reload
-            </Button>
+              {__vesloT("reload.toast_reload", __vesloCurrentLocale())}</Button>
             <Show when={!agentExists()}>
               <Button
                 variant="outline"
@@ -1378,8 +1353,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                 onClick={() => void createDefaultAgentFile()}
                 disabled={agentSaving() || !workspaceId()}
               >
-                Create default file
-              </Button>
+                {__vesloT("ui.literal.create_default_file_1c92xy", __vesloCurrentLocale())}</Button>
             </Show>
             <Button
               variant="secondary"
@@ -1387,10 +1361,10 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
               onClick={() => void saveAgentFile()}
               disabled={agentSaving() || !workspaceId() || !agentDirty()}
             >
-              {agentSaving() ? "Saving..." : "Save behavior"}
+              {agentSaving() ? __vesloT("status.saving", __vesloCurrentLocale()) : __vesloT("identities.save_behavior", __vesloCurrentLocale())}
             </Button>
             <Show when={agentDirty() && !agentSaving()}>
-              <span class="text-[11px] text-gray-9">Unsaved changes</span>
+              <span class="text-[11px] text-gray-9">{__vesloT("ui.literal.unsaved_changes_1tghr4", __vesloCurrentLocale())}</span>
             </Show>
           </div>
 
@@ -1405,15 +1379,14 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
         {/* ---- Outbound send test ---- */}
         <div class="rounded-xl border border-gray-4 bg-gray-1 p-4 space-y-3">
           <div>
-            <div class="text-[13px] font-semibold text-gray-12">Send test message</div>
+            <div class="text-[13px] font-semibold text-gray-12">{__vesloT("ui.literal.send_test_message_1sv5a0", __vesloCurrentLocale())}</div>
             <div class="text-[12px] text-gray-9 mt-0.5">
-              Validate outbound wiring. Use a peer ID for direct send, or leave peer ID empty to fan out by bindings in a directory.
-            </div>
+              {__vesloT("ui.literal.validate_outbound_wiring_use_a_peer_id_for_d_d5rf7a", __vesloCurrentLocale())}</div>
           </div>
 
           <div class="grid gap-2 sm:grid-cols-2">
             <div>
-              <label class="text-[12px] text-gray-9 block mb-1">Channel</label>
+              <label class="text-[12px] text-gray-9 block mb-1">{__vesloT("ui.literal.channel_s4ids4", __vesloCurrentLocale())}</label>
               <select
                 class="w-full rounded-lg border border-gray-4 bg-gray-1 px-3 py-2 text-sm text-gray-12"
                 value={sendChannel()}
@@ -1424,10 +1397,10 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
               </select>
             </div>
             <div>
-              <label class="text-[12px] text-gray-9 block mb-1">Peer ID (optional)</label>
+              <label class="text-[12px] text-gray-9 block mb-1">{__vesloT("ui.literal.peer_id_optional_6sqy9x", __vesloCurrentLocale())}</label>
               <input
                 class="w-full rounded-lg border border-gray-4 bg-gray-1 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-8"
-                placeholder={sendChannel() === "telegram" ? "Telegram chat id (e.g. 123456789)" : "Slack peer id (e.g. D12345678|thread_ts)"}
+                placeholder={sendChannel() === "telegram" ? __vesloT("identities.telegram_peer_placeholder", __vesloCurrentLocale()) : __vesloT("identities.slack_peer_placeholder", __vesloCurrentLocale())}
                 value={sendPeerId()}
                 onInput={(e) => setSendPeerId(e.currentTarget.value)}
               />
@@ -1436,7 +1409,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
 
           <div class="grid gap-2 sm:grid-cols-2">
             <div>
-              <label class="text-[12px] text-gray-9 block mb-1">Directory (optional)</label>
+              <label class="text-[12px] text-gray-9 block mb-1">{__vesloT("onboarding.directory", __vesloCurrentLocale())}</label>
               <input
                 class="w-full rounded-lg border border-gray-4 bg-gray-1 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-8"
                 placeholder={defaultRoutingDirectory()}
@@ -1451,16 +1424,15 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                   checked={sendAutoBind()}
                   onChange={(e) => setSendAutoBind(e.currentTarget.checked)}
                 />
-                Auto-bind peer to directory on direct send
-              </label>
+                {__vesloT("ui.literal.auto_bind_peer_to_directory_on_direct_send_1hw4n9", __vesloCurrentLocale())}</label>
             </div>
           </div>
 
           <div>
-            <label class="text-[12px] text-gray-9 block mb-1">Message</label>
+            <label class="text-[12px] text-gray-9 block mb-1">{__vesloT("ui.literal.message_1cam7i", __vesloCurrentLocale())}</label>
             <textarea
               class="min-h-[90px] w-full rounded-lg border border-gray-4 bg-gray-1 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-8"
-              placeholder="Test message content"
+              placeholder={__vesloT("ui.literal.test_message_content_1ht8v9", __vesloCurrentLocale())}
               value={sendText()}
               onInput={(e) => setSendText(e.currentTarget.value)}
             />
@@ -1473,7 +1445,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
               onClick={() => void sendTestMessage()}
               disabled={sendBusy() || !workspaceId() || !sendText().trim()}
             >
-              {sendBusy() ? "Sending..." : "Send test message"}
+              {sendBusy() ? __vesloT("session.pending_submit_sending", __vesloCurrentLocale()) : __vesloT("identities.send_test_message", __vesloCurrentLocale())}
             </Button>
             <Show when={sendStatus()}>
               {(value) => <span class="text-[11px] text-gray-9">{value()}</span>}
@@ -1487,7 +1459,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
             {(value) => (
               <div class="rounded-lg border border-gray-4 bg-gray-2/40 px-3 py-2 text-[11px] text-gray-10 font-mono space-y-1">
                 <div>
-                  sent={value().sent} attempted={value().attempted}
+                  {__vesloT("ui.literal.sent_9ddzae", __vesloCurrentLocale())}{value().sent} {__vesloT("ui.literal.attempted_b4ijx2", __vesloCurrentLocale())}{value().attempted}
                   <Show when={value().failures?.length}>
                     {(failures) => ` failures=${failures()}`}
                   </Show>

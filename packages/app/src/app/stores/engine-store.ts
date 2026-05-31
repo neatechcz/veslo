@@ -24,6 +24,7 @@ import {
   type SandboxDoctorResult,
   type WorkspaceInfo,
 } from "../lib/tauri";
+import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 
 export interface EngineStoreDeps {
   // Workspace path / info accessors
@@ -241,8 +242,8 @@ export function createEngineStore(deps: EngineStoreDeps) {
       if (!result.found) {
         deps.setError(
           deps.isWindowsPlatform()
-            ? "OpenCode CLI not found. Install OpenCode for Windows or bundle opencode.exe with Veslo, then restart. If it is installed, ensure `opencode.exe` is on PATH (try `opencode --version` in PowerShell)."
-            : "OpenCode CLI not found. Install with `brew install anomalyco/tap/opencode` or `curl -fsSL https://opencode.ai/install | bash`, then retry.",
+            ? __vesloIndirectT("ui.indirect.opencode_cli_not_found_install_opencode_for_wi_1rkib2", __vesloIndirectLocale())
+            : __vesloIndirectT("ui.indirect.opencode_cli_not_found_install_with_brew_insta_1fo689", __vesloIndirectLocale()),
         );
         return false;
       }

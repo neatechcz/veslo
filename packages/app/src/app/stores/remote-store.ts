@@ -37,6 +37,7 @@ import type {
   SandboxCreateProgressState,
   SandboxCreateProgressStep,
 } from "../context/workspace";
+import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 
 export interface RemoteStoreDeps {
   // Workspace state accessors
@@ -406,7 +407,7 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
           directory: resolvedDirectory,
         });
       } else {
-        deps.setError("Veslo server unavailable. Check the URL and token.");
+        deps.setError(__vesloIndirectT("ui.indirect.veslo_server_unavailable_check_the_url_and_tok_pthxtb", __vesloIndirectLocale()));
         return false;
       }
     } catch (error) {
@@ -596,7 +597,7 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
         directoryHint: directory || null,
       });
       if (resolved.kind !== "veslo") {
-        deps.setError("Veslo server unavailable. Check the URL and token.");
+        deps.setError(__vesloIndirectT("ui.indirect.veslo_server_unavailable_check_the_url_and_tok_pthxtb", __vesloIndirectLocale()));
         return false;
       }
       resolvedBaseUrl = resolved.opencodeBaseUrl;
@@ -634,7 +635,7 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
       if (!ok) {
         deps.updateWorkspaceConnectionState(id, {
           status: "error",
-          message: "Failed to connect to worker.",
+          message: __vesloIndirectT("ui.indirect.failed_to_connect_to_worker_bjt8ig", __vesloIndirectLocale()),
         });
         return false;
       }
@@ -736,7 +737,7 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
 
       const workspacePath = workspace.directory?.trim() || workspace.path?.trim() || "";
       if (!workspacePath) {
-        const message = "Worker folder is missing. Open Edit connection and try again.";
+        const message = __vesloIndirectT("ui.indirect.worker_folder_is_missing_open_edit_connection__1owlnp", __vesloIndirectLocale());
         deps.setError(message);
         deps.updateWorkspaceConnectionState(id, { status: "error", message });
         return false;
@@ -787,7 +788,7 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
 
       const ok = await reconnect();
       if (!ok) {
-        const message = "Worker restarted, but reconnect failed. Try again in a few seconds.";
+        const message = __vesloIndirectT("ui.indirect.worker_restarted_but_reconnect_failed_try_agai_1h6c8d", __vesloIndirectLocale());
         deps.updateWorkspaceConnectionState(id, { status: "error", message });
         deps.setError(message);
         return false;
@@ -845,11 +846,11 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
       error: null,
       logs: [],
       steps: [
-        { key: "docker", label: "Docker ready", status: "active", detail: null },
-        { key: "workspace", label: "Prepare worker", status: "pending", detail: null },
-        { key: "sandbox", label: "Start sandbox services", status: "pending", detail: null },
-        { key: "health", label: "Wait for Veslo", status: "pending", detail: null },
-        { key: "connect", label: "Connect in Veslo", status: "pending", detail: null },
+        { key: "docker", label: __vesloIndirectT("ui.indirect.docker_ready_1yjkkw", __vesloIndirectLocale()), status: "active", detail: null },
+        { key: "workspace", label: __vesloIndirectT("ui.indirect.prepare_worker_1jlaxy", __vesloIndirectLocale()), status: "pending", detail: null },
+        { key: "sandbox", label: __vesloIndirectT("ui.indirect.start_sandbox_services_p0s0ek", __vesloIndirectLocale()), status: "pending", detail: null },
+        { key: "health", label: __vesloIndirectT("ui.indirect.wait_for_veslo_vf1c10", __vesloIndirectLocale()), status: "pending", detail: null },
+        { key: "connect", label: __vesloIndirectT("ui.indirect.connect_in_veslo_1ixpuk", __vesloIndirectLocale()), status: "pending", detail: null },
       ],
     });
 
@@ -891,8 +892,8 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
       const resolvedFolder = await deps.resolveWorkspacePath(folder);
       if (!resolvedFolder) {
         deps.setError(t("app.error.choose_folder", currentLocale()));
-        setSandboxStep("workspace", { status: "error", detail: "No folder selected" });
-        setSandboxError("No folder selected");
+        setSandboxStep("workspace", { status: "error", detail: __vesloIndirectT("ui.indirect.no_folder_selected_z6mgj7", __vesloIndirectLocale()) });
+        setSandboxError(__vesloIndirectT("ui.indirect.no_folder_selected_z6mgj7", __vesloIndirectLocale()));
         return false;
       }
 
@@ -956,7 +957,7 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
             if (stage === "docker.inspect") {
               const inspectError = String(payload.payload?.error ?? "").trim();
               if (inspectError) {
-                setSandboxStep("sandbox", { status: "active", detail: "Docker inspect warning" });
+                setSandboxStep("sandbox", { status: "active", detail: __vesloIndirectT("ui.indirect.docker_inspect_warning_ddtuut", __vesloIndirectLocale()) });
                 pushSandboxCreateLog(`docker inspect warning: ${inspectError}`);
               }
             }
@@ -1020,7 +1021,7 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
         if (input?.onReady) {
           setSandboxCreatePhase("finalizing");
           setSandboxStage("Finalizing worker...");
-          setSandboxStep("connect", { status: "active", detail: "Applying setup" });
+          setSandboxStep("connect", { status: "active", detail: __vesloIndirectT("ui.indirect.applying_setup_fvqwvs", __vesloIndirectLocale()) });
           pushSandboxCreateLog("Applying final worker setup...");
           await input.onReady();
         }
@@ -1087,7 +1088,7 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
         deps.setSseConnected(false);
       }
 
-      deps.updateWorkspaceConnectionState(id, { status: "error", message: "Sandbox stopped." });
+      deps.updateWorkspaceConnectionState(id, { status: "error", message: __vesloIndirectT("ui.indirect.sandbox_stopped_lnhjw9", __vesloIndirectLocale()) });
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
       deps.setError(addOpencodeCacheHint(message));

@@ -47,7 +47,7 @@ export type ScheduledTasksViewProps = {
 };
 
 const toRelative = (value?: string | null, locale?: string) => {
-  const neverLabel = locale ? t("scheduled.never", locale as any) : "Never";
+  const neverLabel = t("scheduled.never", (locale as any) ?? currentLocale());
   if (!value) return neverLabel;
   const parsed = Date.parse(value);
   if (!Number.isFinite(parsed)) return neverLabel;

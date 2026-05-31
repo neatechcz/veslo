@@ -56,6 +56,8 @@ use commands::skills::{
 };
 use commands::updater::{updater_environment, updater_prepare_install};
 use commands::veslo_server::{veslo_server_info, veslo_server_restart};
+#[cfg(all(debug_assertions, feature = "e2e"))]
+use commands::window::e2e_position_main_window;
 use commands::window::set_window_decorations;
 use commands::workspace::{
     workspace_add_authorized_root, workspace_bootstrap, workspace_copy_into_folder,
@@ -262,6 +264,8 @@ pub fn run() {
             pending_session_drafts_put,
             pending_session_drafts_delete,
             clipboard_file_paths,
+            #[cfg(all(debug_assertions, feature = "e2e"))]
+            e2e_position_main_window,
             set_window_decorations
         ])
         .build(tauri::generate_context!())

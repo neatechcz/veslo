@@ -1,3 +1,4 @@
+import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 export function safeStringify(value: unknown) {
   const seen = new WeakSet<object>();
 
@@ -49,7 +50,7 @@ export function formatRelativeTime(timestampMs: number) {
   const delta = Date.now() - timestampMs;
 
   if (delta < 0) {
-    return "just now";
+    return __vesloIndirectT("time.just_now", __vesloIndirectLocale());
   }
 
   if (delta < 60_000) {

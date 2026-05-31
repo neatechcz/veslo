@@ -99,13 +99,8 @@ async function waitForInventoryFixture(): Promise<InventoryCard[]> {
           card.scope === "user-global" &&
           card.section === "all-workspaces"
         );
-        const hasOverrideWorkspace = overrideCards.some((card) =>
-          card.scope === "workspace" &&
-          card.workspaceId === "e2e-visual-workspace" &&
-          card.section === "workspace-specific"
-        );
 
-        return hasGlobal && hasWorkspace && hasOverrideGlobal && hasOverrideWorkspace;
+        return hasGlobal && hasWorkspace && hasOverrideGlobal;
       },
       {
         timeout: 15_000,
@@ -123,6 +118,51 @@ async function waitForInventoryFixture(): Promise<InventoryCard[]> {
   }
 
   return latestCards;
+}
+
+async function refreshSkillsInventoryFromUi(): Promise<void> {
+  const clicked = await browser.execute(() => {
+    const normalize = (value: string) => value.replace(/\s+/g, " ").trim();
+    const refreshButton = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('[data-testid="skills-page"] button'),
+    ).find((button) => normalize(button.textContent ?? "") === "Refresh");
+
+    refreshButton?.click();
+    return Boolean(refreshButton);
+  });
+
+  expect(clicked).toBe(true);
+}
+
+async function setInventoryScopeFilter(scope: "all" | "user-global" | "workspace"): Promise<void> {
+  const changed = await browser.execute((nextScope) => {
+    const scopeSelect = Array.from(document.querySelectorAll<HTMLSelectElement>('[data-testid="skills-page"] select'))
+      .find((select) =>
+        Array.from(select.options).some((option) => option.value === "user-global") &&
+        Array.from(select.options).some((option) => option.value === "workspace")
+      );
+    if (!scopeSelect) return false;
+
+    scopeSelect.value = nextScope;
+    scopeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  }, scope);
+
+  expect(changed).toBe(true);
+}
+
+async function waitForInventoryCard(
+  predicate: (card: InventoryCard) => boolean,
+  timeoutMsg: string,
+): Promise<void> {
+  await browser.waitUntil(
+    async () => (await readInventoryCards()).some(predicate),
+    {
+      timeout: 10_000,
+      interval: 250,
+      timeoutMsg,
+    },
+  );
 }
 
 async function clickInventoryCardSelector(selector: string): Promise<void> {
@@ -150,10 +190,28 @@ async function clickInventoryCardDetailButton(selector: string): Promise<void> {
 }
 
 async function closeSkillDetailIfOpen(): Promise<void> {
-  if (await $('[data-testid="skill-detail-drawer"]').isExisting()) {
-    await browser.keys('Escape');
-    await expect($('[data-testid="skill-detail-drawer"]')).not.toExist();
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (await $('[data-modal-shell-root]').isExisting()) {
+      await browser.keys('Escape');
+      await browser.pause(100);
+      continue;
+    }
+
+    if (!(await $('[data-testid="skill-detail-drawer"]').isExisting())) return;
+
+    const clicked = await browser.execute(() => {
+      const drawer = document.querySelector<HTMLElement>('[data-testid="skill-detail-drawer"]');
+      const closeButton = drawer?.querySelector<HTMLButtonElement>('button[aria-label]');
+      closeButton?.click();
+      return Boolean(closeButton);
+    });
+    if (!clicked) {
+      await browser.keys('Escape');
+    }
+    await browser.pause(100);
   }
+
+  await expect($('[data-testid="skill-detail-drawer"]')).not.toExist();
 }
 
 const runWhenIsolatedProfile = process.env.E2E_USE_EXISTING_PROFILE?.trim() === "1"
@@ -170,11 +228,33 @@ runWhenIsolatedProfile("Skills global inventory", () => {
     const page = await $('[data-testid="skills-page"]');
     await page.waitForExist({ timeout: 10_000 });
 
+    await setInventoryScopeFilter("all");
+    await refreshSkillsInventoryFromUi();
     const cards = await waitForInventoryFixture();
     const workspaceSectionText = await $('[data-testid="skills-workspace-specific-section"]').getText();
 
     expect(cards.filter((card) => card.name === "e2e-global-skill")).toHaveLength(1);
     expect(workspaceSectionText).not.toContain("e2e-global-skill");
+    expect(cards.some((card) =>
+      card.name === "e2e-override-skill" &&
+      card.scope === "workspace" &&
+      card.workspaceId === "e2e-visual-workspace"
+    )).toBe(false);
+
+    await setInventoryScopeFilter("workspace");
+    await waitForInventoryCard(
+      (card) =>
+        card.name === "e2e-override-skill" &&
+        card.scope === "workspace" &&
+        card.workspaceId === "e2e-visual-workspace" &&
+        card.section === "workspace-specific",
+      "Workspace override skill did not appear after filtering to workspace scope.",
+    );
+    await setInventoryScopeFilter("all");
+    await waitForInventoryCard(
+      (card) => card.name === "e2e-global-skill" && card.scope === "user-global",
+      "Global skill did not reappear after restoring the all-scope inventory filter.",
+    );
 
     const globalSkillSelector = '[data-testid="skill-inventory-card"][data-skill-inventory-name="e2e-global-skill"]';
     const workspaceSkillSelector = '[data-testid="skill-inventory-card"][data-skill-inventory-name="e2e-workspace-skill"]';
@@ -241,48 +321,6 @@ runWhenIsolatedProfile("Skills global inventory", () => {
     await expect($('[data-testid="skill-install-workspace-modal"]')).not.toExist();
     await expect($('[data-testid="skill-detail-drawer"]')).toExist();
 
-    await $('[data-testid="skill-detail-install-workspace-button"]').click();
-    await expect($('[data-testid="skill-install-workspace-modal"]')).toExist();
-    await $('[data-testid="skill-install-workspace-confirm"]').click();
-    try {
-      await expect($('[data-testid="skill-install-workspace-modal"]')).not.toExist();
-    } catch (error) {
-      const bodyText = await browser.execute(() => document.body.innerText).catch(() => "");
-      throw new Error(`Install-to-workspace modal stayed open. Body: ${bodyText.slice(0, 1_000)}`, { cause: error });
-    }
-    await browser.waitUntil(
-      async () => {
-        const updatedCards = await readInventoryCards();
-        return updatedCards.some((card) =>
-          card.name === "e2e-global-skill" &&
-          card.scope === "workspace" &&
-          card.workspaceId === "e2e-visual-workspace" &&
-          card.section === "workspace-specific"
-        );
-      },
-      {
-        timeout: 10_000,
-        timeoutMsg: "Installing a user skill into the workspace did not create a workspace skill row.",
-      },
-    );
-
-    await browser.keys('Escape');
-    await expect($('[data-testid="skill-detail-drawer"]')).not.toExist();
-
-    await clickInventoryCardDetailButton(workspaceSkillSelector);
-    await expect($('[data-testid="skill-detail-drawer"]')).toExist();
-    await expect($('button=Edit')).toExist();
-    await expect($('button=Copy to user skills')).toExist();
-    await expect($('button=Move to user skills')).toExist();
-    await expect($('button=Deactivate')).toExist();
-    await expect($('button=Publish to organization')).toExist();
-    await expect($('button=Request system catalog approval')).toExist();
-
-    await browser.keys('Escape');
-    await expect($('[data-testid="skill-detail-drawer"]')).not.toExist();
-    await clickInventoryCardDetailButton(globalSkillSelector);
-    await expect($('[data-testid="skill-detail-drawer"]')).toExist();
-
     await $('button=Publish to organization').click();
     await expect($('[data-testid="skill-review-dialog"]')).toExist();
     const reviewDialogMetrics = await browser.execute(() => {
@@ -315,6 +353,37 @@ runWhenIsolatedProfile("Skills global inventory", () => {
     await browser.keys('Escape');
     await expect($('[data-testid="skill-review-dialog"]')).not.toExist();
     await expect($('[data-testid="skill-detail-drawer"]')).toExist();
+
+    await $('[data-testid="skill-detail-install-workspace-button"]').click();
+    await expect($('[data-testid="skill-install-workspace-modal"]')).toExist();
+    await $('[data-testid="skill-install-workspace-confirm"]').click();
+    try {
+      await expect($('[data-testid="skill-install-workspace-modal"]')).not.toExist();
+    } catch (error) {
+      const bodyText = await browser.execute(() => document.body.innerText).catch(() => "");
+      throw new Error(`Install-to-workspace modal stayed open. Body: ${bodyText.slice(0, 1_000)}`, { cause: error });
+    }
+    await setInventoryScopeFilter("workspace");
+    await waitForInventoryCard(
+      (card) =>
+        card.name === "e2e-global-skill" &&
+        card.scope === "workspace" &&
+        card.workspaceId === "e2e-visual-workspace" &&
+        card.section === "workspace-specific",
+      "Installing a user skill into the workspace did not create a workspace skill row.",
+    );
+
+    await browser.keys('Escape');
+    await expect($('[data-testid="skill-detail-drawer"]')).not.toExist();
+
+    await clickInventoryCardDetailButton(workspaceSkillSelector);
+    await expect($('[data-testid="skill-detail-drawer"]')).toExist();
+    await expect($('button=Edit')).toExist();
+    await expect($('button=Copy to user skills')).toExist();
+    await expect($('button=Move to user skills')).toExist();
+    await expect($('button=Deactivate')).toExist();
+    await expect($('button=Publish to organization')).toExist();
+    await expect($('button=Request system catalog approval')).toExist();
 
     await browser.keys('Escape');
     await expect($('[data-testid="skill-detail-drawer"]')).not.toExist();

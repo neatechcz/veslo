@@ -9,6 +9,7 @@ import {
 import { isMacPlatform, isTauriRuntime, isWindowsPlatform } from "../utils";
 import { LeftSidebarToggleIcon, RightSidebarToggleIcon } from "./session/sidebar-toggle-icons";
 import { resolveTitlebarMenuLayout } from "./titlebar-menu-layout";
+import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 
 type TitlebarMenuTogglesProps = {
   leftActive: boolean;
@@ -41,7 +42,7 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
         ? "text-gray-12"
         : "text-gray-9 hover:text-gray-12"
     }`;
-  const leftLabel = () => props.leftLabel ?? "Toggle left menu";
+  const leftLabel = () => props.leftLabel ?? __vesloT("sidebar.toggle_left_menu", __vesloCurrentLocale());
 
   const handleTitlebarDragMouseDown = (event: MouseEvent) => {
     if (event.button !== 0) return;
@@ -94,8 +95,7 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
                 onDblClick={handleTitlebarDoubleClick}
                 class="select-none truncate text-[13px] font-medium leading-6 text-gray-12"
               >
-                Veslo by Neatech
-              </span>
+                {__vesloT("ui.literal.veslo_by_neatech_86m8cx", __vesloCurrentLocale())}</span>
             ) : null)}
           </div>
         </div>
@@ -119,8 +119,8 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
             type="button"
             class={buttonClass(props.rightActive)}
             onClick={() => props.onToggleRight()}
-            aria-label="Toggle right menu"
-            title="Toggle right menu"
+            aria-label={__vesloT("ui.literal.toggle_right_menu_1n4xog", __vesloCurrentLocale())}
+            title={__vesloT("ui.literal.toggle_right_menu_1n4xog", __vesloCurrentLocale())}
           >
             <RightSidebarToggleIcon size={18} />
           </button>
@@ -130,8 +130,8 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
                 type="button"
                 class={windowControlButtonClass}
                 onClick={() => runWindowControl("minimize window", minimizeCurrentWindow)}
-                aria-label="Minimize window"
-                title="Minimize window"
+                aria-label={__vesloT("ui.literal.minimize_window_1rr7i2", __vesloCurrentLocale())}
+                title={__vesloT("ui.literal.minimize_window_1rr7i2", __vesloCurrentLocale())}
               >
                 <Minus size={13} />
               </button>
@@ -139,8 +139,8 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
                 type="button"
                 class={windowControlButtonClass}
                 onClick={() => runWindowControl("toggle maximize", toggleMaximizeCurrentWindow)}
-                aria-label="Maximize or restore window"
-                title="Maximize or restore window"
+                aria-label={__vesloT("ui.literal.maximize_or_restore_window_5ds1ae", __vesloCurrentLocale())}
+                title={__vesloT("ui.literal.maximize_or_restore_window_5ds1ae", __vesloCurrentLocale())}
               >
                 <Square size={11} />
               </button>
@@ -148,8 +148,8 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
                 type="button"
                 class={`${windowControlButtonClass} hover:bg-red-9 hover:text-white`}
                 onClick={() => runWindowControl("close window", closeCurrentWindow)}
-                aria-label="Close window"
-                title="Close window"
+                aria-label={__vesloT("ui.literal.close_window_1vvpub", __vesloCurrentLocale())}
+                title={__vesloT("ui.literal.close_window_1vvpub", __vesloCurrentLocale())}
               >
                 <X size={14} />
               </button>

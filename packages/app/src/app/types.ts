@@ -411,18 +411,23 @@ export type HubMcpCard = {
 
 export type PluginInstallStep = {
   title: string;
+  titleKey?: string;
   description: string;
+  descriptionKey?: string;
   command?: string;
   url?: string;
   path?: string;
   note?: string;
+  noteKey?: string;
 };
 
 export type SuggestedPlugin = {
   name: string;
   packageName: string;
   description: string;
+  descriptionKey?: string;
   tags: string[];
+  tagKeys?: string[];
   aliases?: string[];
   installMode?: "simple" | "guided";
   steps?: PluginInstallStep[];

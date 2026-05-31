@@ -5,6 +5,7 @@ import { Check, ChevronRight, HelpCircle } from "lucide-solid";
 
 import Button from "./button";
 import ModalShell from "./modal-shell";
+import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 
 export type QuestionModalProps = {
     open: boolean;
@@ -138,10 +139,10 @@ export default function QuestionModal(props: QuestionModalProps) {
                         </div>
                         <div>
                             <h3 class="text-lg font-semibold text-gray-12">
-                                {currentQuestion()!.header || "Question"}
+                                {currentQuestion()!.header || __vesloT("ui.literal.question_6ikx1", __vesloCurrentLocale())}
                             </h3>
                             <div class="text-xs text-gray-11 font-medium">
-                                Question {currentIndex() + 1} of {props.questions.length}
+                                {__vesloT("ui.literal.question_6ikx1", __vesloCurrentLocale())}{" "}{currentIndex() + 1} {__vesloT("ui.literal.of_t6uqnc", __vesloCurrentLocale())}{" "}{props.questions.length}
                             </div>
                         </div>
                     </div>
@@ -186,14 +187,13 @@ export default function QuestionModal(props: QuestionModalProps) {
                     <Show when={currentQuestion()!.custom}>
                         <div class="mt-4 pt-4 border-t border-dls-border">
                             <label class="block text-xs font-semibold text-dls-secondary mb-2 uppercase tracking-wide">
-                                Or type a custom answer
-                            </label>
+                                {__vesloT("ui.literal.or_type_a_custom_answer_n9qmn0", __vesloCurrentLocale())}</label>
                             <input
                                 type="text"
                                 value={customInput()}
                                 onInput={(e) => setCustomInput(e.currentTarget.value)}
                                 class="w-full px-4 py-3 rounded-xl bg-dls-surface border border-dls-border focus:border-dls-accent focus:ring-4 focus:ring-[rgba(var(--dls-accent-rgb),0.2)] focus:outline-none text-sm text-dls-text placeholder:text-dls-secondary transition-shadow"
-                                placeholder="Type your answer here..."
+                                placeholder={__vesloT("ui.literal.type_your_answer_here_1737yz", __vesloCurrentLocale())}
                                 onKeyDown={(e) => {
                                     if (e.key === "Enter") {
                                         if (e.isComposing || e.keyCode === 229) return;
@@ -209,15 +209,15 @@ export default function QuestionModal(props: QuestionModalProps) {
                 <div class="p-6 border-t border-dls-border bg-dls-hover flex justify-between items-center">
                     <div class="text-xs text-dls-secondary flex items-center gap-2">
                         <span class="px-1.5 py-0.5 rounded border border-dls-border bg-dls-active font-mono">↑↓</span>
-                        <span>navigate</span>
+                        <span>{__vesloT("ui.literal.navigate_10b9wn", __vesloCurrentLocale())}</span>
                         <span class="px-1.5 py-0.5 rounded border border-gray-6 bg-gray-3 font-mono ml-2">↵</span>
-                        <span>select</span>
+                        <span>{__vesloT("ui.literal.select_4xe5v1", __vesloCurrentLocale())}</span>
                     </div>
 
                     <div class="flex gap-2">
                         <Show when={currentQuestion()?.multiple || currentQuestion()?.custom}>
                             <Button onClick={handleNext} disabled={!canProceed() || props.busy} class="!px-6">
-                                {isLastQuestion() ? "Submit" : "Next"}
+                                {isLastQuestion() ? __vesloT("common.submit", __vesloCurrentLocale()) : __vesloT("session.next_short", __vesloCurrentLocale())}
                                 <Show when={!isLastQuestion()}>
                                     <ChevronRight size={16} class="ml-1 -mr-1 opacity-60" />
                                 </Show>

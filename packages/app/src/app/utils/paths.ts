@@ -1,4 +1,7 @@
 import type { WorkspaceInfo } from "../lib/tauri";
+import { currentLocale, t } from "../../i18n";
+
+const tr = (key: string) => t(key, currentLocale());
 
 export function isTauriRuntime() {
   if (typeof window === "undefined") return false;
@@ -139,12 +142,12 @@ export function isSandboxWorkspace(workspace: WorkspaceInfo) {
 
 export function getWorkspaceTaskLoadErrorDisplay(workspace: WorkspaceInfo, error?: string | null) {
   const raw = error?.trim() ?? "";
-  const fallbackTitle = raw || "Failed to load tasks";
+  const fallbackTitle = raw || tr("workspace.tasks_load_failed");
   if (!raw || !isSandboxWorkspace(workspace)) {
     return {
       tone: "error" as const,
-      label: "Error",
-      message: "Failed to load tasks",
+      label: tr("status.error"),
+      message: tr("workspace.tasks_load_failed"),
       title: fallbackTitle,
     };
   }
@@ -158,16 +161,16 @@ export function getWorkspaceTaskLoadErrorDisplay(workspace: WorkspaceInfo, error
   if (!hasDockerHint && !(localHost && hasNetworkHint)) {
     return {
       tone: "error" as const,
-      label: "Error",
-      message: "Failed to load tasks",
+      label: tr("status.error"),
+      message: tr("workspace.tasks_load_failed"),
       title: fallbackTitle,
     };
   }
 
-  const message = "Sandbox is offline. Start Docker Desktop, then test connection.";
+  const message = tr("workspace.sandbox_offline_message");
   return {
     tone: "offline" as const,
-    label: "Offline",
+    label: tr("status.offline"),
     message,
     title: `${message}\n\n${raw}`,
   };

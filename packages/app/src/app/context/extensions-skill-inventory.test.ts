@@ -124,6 +124,7 @@ async function withRegistryMutationStore(
 	      updatePolicies: Array<{ policyId: string; input: unknown }>;
 	      deleteWorkspaceSkills: Array<{ workspaceId: string; name: string; options?: unknown }>;
 	      deleteGlobalSkills: Array<{ name: string; options?: unknown }>;
+        batchRemoveSkills: Array<{ input: unknown }>;
 	      restoreRemovals: string[];
       hubRefreshes: unknown[];
       inventoryReads: Array<{ projectDir: string; scope: LocalSkillListScope }>;
@@ -140,6 +141,7 @@ async function withRegistryMutationStore(
 	        updatePolicies: [] as Array<{ policyId: string; input: unknown }>,
 	        deleteWorkspaceSkills: [] as Array<{ workspaceId: string; name: string; options?: unknown }>,
 	        deleteGlobalSkills: [] as Array<{ name: string; options?: unknown }>,
+        batchRemoveSkills: [] as Array<{ input: unknown }>,
         restoreRemovals: [] as string[],
         hubRefreshes: [] as unknown[],
         inventoryReads: [] as Array<{ projectDir: string; scope: LocalSkillListScope }>,
@@ -211,6 +213,21 @@ async function withRegistryMutationStore(
 	            reloadRequired: true,
 	          };
 	        },
+        async batchRemoveSkills(input: unknown) {
+          calls.batchRemoveSkills.push({ input });
+          const items = (input as { items: Array<{ id?: string; name: string; scope: string; path?: string }> }).items;
+          return {
+            ok: true,
+            succeeded: items.length,
+            failed: 0,
+            results: items.map((item, index) => ({
+              ...item,
+              index,
+              ok: true,
+              reloadRequired: true,
+            })),
+          };
+        },
         async restoreSkillRemoval(removalId: string) {
           calls.restoreRemovals.push(removalId);
           return {
@@ -337,6 +354,7 @@ test("registry installation removal calls the Veslo server client with Den conte
       {
         installationId: "install_1",
         input: {
+          denApiBase: "https://api.veslo.test",
           denToken: "den-token",
           denOrgId: "org-1",
           denUserId: "user-1",
@@ -348,6 +366,90 @@ test("registry installation removal calls the Veslo server client with Den conte
     assert.ok(calls.hubRefreshes.length > 0);
     assert.ok(calls.inventoryReads.length > 0);
     assert.deepEqual(calls.reloads, [["skills", { type: "skill", name: "personal-helper", action: "removed" }]]);
+  });
+});
+
+test("batch skill removal calls the Veslo server client with selected targets and Den context", async () => {
+  await withRegistryMutationStore(async ({ store, calls }) => {
+    const items = buildSkillInventory({
+      globalSkills: [
+        {
+          name: "personal-helper",
+          path: "/Users/example/.opencode/skills/veslo-managed/personal-helper/SKILL.md",
+          scope: "user-global",
+          registry: {
+            installationId: "install_1",
+            versionId: "version_1",
+            source: "personal",
+            removalPolicy: "user_removable",
+          },
+        },
+      ],
+      workspaceSkillsByWorkspaceId: {
+        "ws-alpha": {
+          workspace: {
+            id: "ws-alpha",
+            label: "Alpha Label",
+            path: "/workspaces/alpha",
+          },
+          skills: [
+            {
+              name: "workspace-helper",
+              path: "/workspaces/alpha/.opencode/skills/workspace-helper/SKILL.md",
+              scope: "workspace",
+            },
+          ],
+        },
+      },
+      hubSkills: [],
+    });
+    const globalInstance = items.find((item) => item.name === "personal-helper")?.globalInstance;
+    const workspaceInstance = items.find((item) => item.name === "workspace-helper")?.workspaceInstances[0];
+    assert.ok(globalInstance);
+    assert.ok(workspaceInstance);
+
+    const result = await store.batchRemoveSkillInstances([
+      skillMutationTargetFromInstance(globalInstance),
+      skillMutationTargetFromInstance(workspaceInstance),
+    ]);
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(calls.batchRemoveSkills, [
+      {
+        input: {
+          denApiBase: "https://api.veslo.test",
+          denToken: "den-token",
+          denOrgId: "org-1",
+          denUserId: "user-1",
+          items: [
+            {
+              id: "user-global::personal-helper:/Users/example/.opencode/skills/veslo-managed/personal-helper/SKILL.md",
+              name: "personal-helper",
+              scope: "user-global",
+              path: "/Users/example/.opencode/skills/veslo-managed/personal-helper/SKILL.md",
+              reason: "user-requested",
+              registry: {
+                installationId: "install_1",
+              },
+            },
+            {
+              id: "workspace:ws-alpha:workspace-helper:/workspaces/alpha/.opencode/skills/workspace-helper/SKILL.md",
+              name: "workspace-helper",
+              scope: "workspace",
+              path: "/workspaces/alpha/.opencode/skills/workspace-helper/SKILL.md",
+              workspaceId: "ws-alpha",
+              reason: "user-requested",
+            },
+          ],
+        },
+      },
+    ]);
+    assert.ok(calls.hubRefreshes.length > 0);
+    assert.ok(calls.inventoryReads.length > 0);
+    assert.deepEqual(calls.reloads, [
+      ["skills", { type: "skill", name: "personal-helper", action: "removed" }],
+      ["skills", { type: "skill", name: "workspace-helper", action: "removed" }],
+    ]);
   });
 });
 
@@ -430,6 +532,7 @@ test("managed global materializations are removed through registry installation 
         {
           installationId: "install_global_helper",
           input: {
+            denApiBase: "https://api.veslo.test",
             denToken: "den-token",
             denOrgId: "org-1",
             denUserId: "user-1",
@@ -523,6 +626,7 @@ test("managed rollout materializations are removed through rollout policy metada
           policyId: "policy_org_helper",
           input: {
             enabled: false,
+            denApiBase: "https://api.veslo.test",
             denToken: "den-token",
             denOrgId: "org-1",
             denUserId: "user-1",
@@ -555,6 +659,7 @@ test("registry installation restore calls the Veslo server client with restore a
       {
         installationId: "install_1",
         input: {
+          denApiBase: "https://api.veslo.test",
           denToken: "den-token",
           denOrgId: "org-1",
           denUserId: "user-1",
@@ -594,6 +699,7 @@ test("organization rollout removal and restore disable and enable the registry r
         policyId: "policy_1",
         input: {
           enabled: false,
+          denApiBase: "https://api.veslo.test",
           denToken: "den-token",
           denOrgId: "org-1",
           denUserId: "user-1",
@@ -603,6 +709,7 @@ test("organization rollout removal and restore disable and enable the registry r
         policyId: "policy_1",
         input: {
           enabled: true,
+          denApiBase: "https://api.veslo.test",
           denToken: "den-token",
           denOrgId: "org-1",
           denUserId: "user-1",

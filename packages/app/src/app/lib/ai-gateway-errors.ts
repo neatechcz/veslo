@@ -1,3 +1,15 @@
+import { currentLocale, t } from "../../i18n";
+
+const tr = (key: string, replacements?: Record<string, string>): string => {
+  let value = t(key, currentLocale());
+  if (replacements) {
+    for (const [placeholder, replacement] of Object.entries(replacements)) {
+      value = value.replaceAll(`{${placeholder}}`, replacement);
+    }
+  }
+  return value;
+};
+
 const readString = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : null);
 
 const parseJsonValue = (value: string): unknown => {
@@ -65,16 +77,16 @@ export const formatManagedAiAccessError = (error: unknown): string | null => {
   const reason = detected.reason;
   const guidance = (() => {
     if (reason === "all_codex_credentials_exhausted") {
-      return "All managed Codex credentials are currently exhausted. Wait for quota to reset or ask an admin to assign a healthy credential, then retry.";
+      return tr("errors.ai_all_codex_credentials_exhausted");
     }
     if (reason === "assigned_credential_unavailable") {
-      return "Your assigned Codex credential is unavailable. Ask an admin to refresh or reassign Codex AI access, then retry.";
+      return tr("errors.ai_assigned_credential_unavailable");
     }
-    return "No eligible Codex credential is available for your account. Ask an admin to assign or refresh Codex AI access, then retry.";
+    return tr("errors.ai_no_eligible_credential");
   })();
 
-  const lines = ["AI access unavailable", guidance];
-  if (detected.provider) lines.push(`Provider: ${detected.provider}`);
-  if (reason) lines.push(`Reason: ${reason}`);
+  const lines = [tr("errors.ai_access_unavailable"), guidance];
+  if (detected.provider) lines.push(tr("errors.provider_label", { provider: detected.provider }));
+  if (reason) lines.push(tr("errors.reason_label", { reason }));
   return lines.join("\n");
 };

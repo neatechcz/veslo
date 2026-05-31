@@ -1,6 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 
 import { Boxes, Check, Copy, Download, Eye, EyeOff, FolderCode, Key, Link as LinkIcon, X } from "lucide-solid";
+import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 
 type ShareField = {
   label: string;
@@ -37,7 +38,7 @@ export default function ShareWorkspaceModal(props: {
   const [revealedByIndex, setRevealedByIndex] = createSignal<Record<number, boolean>>({});
   const [copiedKey, setCopiedKey] = createSignal<string | null>(null);
 
-  const title = createMemo(() => props.title ?? "Share worker");
+  const title = createMemo(() => props.title ?? __vesloT("share.title", __vesloCurrentLocale()));
   const detail = createMemo(() => props.workspaceDetail?.trim() ?? "");
   const note = createMemo(() => props.note?.trim() ?? "");
 
@@ -87,8 +88,8 @@ export default function ShareWorkspaceModal(props: {
             <button
               onClick={props.onClose}
               class="absolute top-6 right-6 p-1.5 text-gray-9 hover:text-gray-12 hover:bg-gray-4 rounded-lg transition-all"
-              aria-label="Close"
-              title="Close"
+              aria-label={__vesloT("common.close", __vesloCurrentLocale())}
+              title={__vesloT("common.close", __vesloCurrentLocale())}
             >
               <X size={20} stroke-width={2.5} />
             </button>
@@ -120,8 +121,7 @@ export default function ShareWorkspaceModal(props: {
                 }`}
               >
                 <Key size={14} stroke-width={activeTab() === "access" ? 2.5 : 2} />
-                Live Access
-              </button>
+                {__vesloT("ui.literal.live_access_1ct594", __vesloCurrentLocale())}</button>
               <button
                 onClick={() => setActiveTab("links")}
                 class={`flex-1 flex items-center justify-center gap-2 text-[13px] font-bold py-2 px-3 rounded-lg transition-all ${
@@ -131,8 +131,7 @@ export default function ShareWorkspaceModal(props: {
                 }`}
               >
                 <LinkIcon size={14} stroke-width={activeTab() === "links" ? 2.5 : 2} />
-                Public Links
-              </button>
+                {__vesloT("ui.literal.public_links_p01vdl", __vesloCurrentLocale())}</button>
             </div>
           </div>
 
@@ -144,7 +143,7 @@ export default function ShareWorkspaceModal(props: {
                 <div class="bg-amber-2 border border-amber-6 p-3 rounded-xl">
                   <p class="text-[13px] text-amber-11 leading-relaxed flex items-start gap-2">
                     <span class="mt-0.5">⚠️</span>
-                    <span>Share with trusted people only. These credentials grant direct access to your local environment.</span>
+                    <span>{__vesloT("ui.literal.share_with_trusted_people_only_these_credent_9dbl7w", __vesloCurrentLocale())}</span>
                   </p>
                 </div>
 
@@ -216,10 +215,10 @@ export default function ShareWorkspaceModal(props: {
             <Show when={activeTab() === "links"}>
               <div class="space-y-4 pt-2 animate-in fade-in slide-in-from-bottom-3 duration-300">
                 <div class="mb-4">
-                  <p class="text-[14px] text-gray-11 font-medium">Publish snapshot configurations</p>
-                  <p class="text-[12px] text-gray-9 mt-0.5">Static links for sharing your setup with the community.</p>
+                  <p class="text-[14px] text-gray-11 font-medium">{__vesloT("ui.literal.publish_snapshot_configurations_1qjef5", __vesloCurrentLocale())}</p>
+                  <p class="text-[12px] text-gray-9 mt-0.5">{__vesloT("ui.literal.static_links_for_sharing_your_setup_with_the_y1geh9", __vesloCurrentLocale())}</p>
                   <Show when={props.publisherBaseUrl?.trim()}>
-                    <p class="text-[11px] text-gray-9 mt-1 font-mono">Publisher: {props.publisherBaseUrl}</p>
+                    <p class="text-[11px] text-gray-9 mt-1 font-mono">{__vesloT("ui.literal.publisher_1dh0bw", __vesloCurrentLocale())}{" "}{props.publisherBaseUrl}</p>
                   </Show>
                 </div>
 
@@ -230,8 +229,8 @@ export default function ShareWorkspaceModal(props: {
                       <FolderCode size={18} />
                     </div>
                     <div class="flex-1">
-                      <h3 class="text-[14px] font-bold text-gray-12">Workspace profile</h3>
-                      <p class="text-[12px] text-gray-9 leading-tight">Config, MCP, and skill bundles.</p>
+                      <h3 class="text-[14px] font-bold text-gray-12">{__vesloT("ui.literal.workspace_profile_pz0rvj", __vesloCurrentLocale())}</h3>
+                      <p class="text-[12px] text-gray-9 leading-tight">{__vesloT("ui.literal.config_mcp_and_skill_bundles_2tsf2w", __vesloCurrentLocale())}</p>
                     </div>
                   </div>
                   
@@ -252,7 +251,7 @@ export default function ShareWorkspaceModal(props: {
                         disabled={Boolean(props.shareWorkspaceProfileDisabledReason) || !props.onShareWorkspaceProfile || props.shareWorkspaceProfileBusy}
                         class="w-full py-2.5 bg-gray-12 hover:bg-gray-11 text-gray-1 text-[13px] font-bold rounded-xl transition-all active:scale-[0.98] disabled:opacity-50"
                       >
-                        {props.shareWorkspaceProfileBusy ? "Publishing..." : "Create Public Link"}
+                        {props.shareWorkspaceProfileBusy ? __vesloT("share.publishing", __vesloCurrentLocale()) : __vesloT("share.create_public_link", __vesloCurrentLocale())}
                       </button>
                     }
                   >
@@ -277,7 +276,7 @@ export default function ShareWorkspaceModal(props: {
                       disabled={props.shareWorkspaceProfileBusy}
                       class="mt-3 w-full py-2 bg-gray-2 hover:bg-gray-3 text-gray-11 hover:text-gray-12 text-[12px] font-bold rounded-lg transition-all"
                     >
-                      {props.shareWorkspaceProfileBusy ? "Publishing..." : "Regenerate Link"}
+                      {props.shareWorkspaceProfileBusy ? __vesloT("share.publishing", __vesloCurrentLocale()) : __vesloT("share.regenerate_link", __vesloCurrentLocale())}
                     </button>
                   </Show>
                 </div>
@@ -289,8 +288,8 @@ export default function ShareWorkspaceModal(props: {
                       <Boxes size={18} />
                     </div>
                     <div class="flex-1">
-                      <h3 class="text-[14px] font-bold text-gray-12">Skills set</h3>
-                      <p class="text-[12px] text-gray-9 leading-tight">Publish all installed skills as one bundle.</p>
+                      <h3 class="text-[14px] font-bold text-gray-12">{__vesloT("ui.literal.skills_set_7tbucb", __vesloCurrentLocale())}</h3>
+                      <p class="text-[12px] text-gray-9 leading-tight">{__vesloT("ui.literal.publish_all_installed_skills_as_one_bundle_1vgziv", __vesloCurrentLocale())}</p>
                     </div>
                   </div>
                   
@@ -312,15 +311,14 @@ export default function ShareWorkspaceModal(props: {
                           disabled={Boolean(props.shareSkillsSetDisabledReason) || !props.onShareSkillsSet || props.shareSkillsSetBusy}
                           class="w-full py-2.5 bg-gray-2 hover:bg-gray-3 text-gray-12 text-[13px] font-bold rounded-xl transition-all disabled:opacity-50"
                         >
-                          {props.shareSkillsSetBusy ? "Publishing..." : "Create Skill Link"}
+                          {props.shareSkillsSetBusy ? __vesloT("share.publishing", __vesloCurrentLocale()) : __vesloT("share.create_skill_link", __vesloCurrentLocale())}
                         </button>
                         <button
                           onClick={() => props.onOpenSingleSkillShare?.()}
                           disabled={!props.onOpenSingleSkillShare}
                           class="w-full py-2.5 bg-gray-1 border border-gray-6 hover:bg-gray-2 text-gray-11 hover:text-gray-12 text-[13px] font-bold rounded-xl transition-all disabled:opacity-50"
                         >
-                          Share Single Skill
-                        </button>
+                          {__vesloT("ui.literal.share_single_skill_1euyo3", __vesloCurrentLocale())}</button>
                       </div>
                     }
                   >
@@ -345,7 +343,7 @@ export default function ShareWorkspaceModal(props: {
                       disabled={props.shareSkillsSetBusy}
                       class="mt-3 w-full py-2 bg-gray-2 hover:bg-gray-3 text-gray-11 hover:text-gray-12 text-[12px] font-bold rounded-lg transition-all"
                     >
-                      {props.shareSkillsSetBusy ? "Publishing..." : "Regenerate Link"}
+                      {props.shareSkillsSetBusy ? __vesloT("share.publishing", __vesloCurrentLocale()) : __vesloT("share.regenerate_link", __vesloCurrentLocale())}
                     </button>
                   </Show>
                 </div>
@@ -358,8 +356,8 @@ export default function ShareWorkspaceModal(props: {
                         <Download size={18} />
                       </div>
                       <div>
-                        <h4 class="text-[13px] font-bold text-gray-12">Config bundle</h4>
-                        <p class="text-[12px] text-gray-10">{props.exportDisabledReason?.trim() || "Export .opencode local files"}</p>
+                        <h4 class="text-[13px] font-bold text-gray-12">{__vesloT("ui.literal.config_bundle_tfdo5h", __vesloCurrentLocale())}</h4>
+                        <p class="text-[12px] text-gray-10">{props.exportDisabledReason?.trim() || __vesloT("share.export_local_files", __vesloCurrentLocale())}</p>
                       </div>
                     </div>
                     <button
@@ -367,8 +365,7 @@ export default function ShareWorkspaceModal(props: {
                       disabled={!props.onExportConfig || Boolean(props.exportDisabledReason)}
                       class="px-4 py-2 bg-gray-1 border border-gray-7 hover:border-gray-8 hover:text-gray-12 rounded-xl text-[12px] font-bold text-gray-11 transition-all shadow-sm disabled:opacity-50 disabled:hover:border-gray-7 disabled:hover:text-gray-11"
                     >
-                      Export
-                    </button>
+                      {__vesloT("ui.literal.export_1sh99l", __vesloCurrentLocale())}</button>
                   </div>
                 </div>
 

@@ -75,6 +75,11 @@ const workspaceSkillsRoot = () => join(workspaceRoot(), ".opencode", "skills");
 const workspaceManagedSkillsRoot = () => join(workspaceSkillsRoot(), "veslo-managed");
 const globalSkillsRoot = () => join(isolatedProfileRoot(), ".config", "opencode", "skills");
 const lockfilePath = () => join(workspaceRoot(), ".opencode", "veslo.skills.lock.json");
+const expectedWorkspaceManagedSkillNames = [
+  "e2e-managed-runtime-skill",
+  "e2e-org-locked-skill",
+  "e2e-org-shadowed-skill",
+];
 
 function normalizePath(value: string): string {
   return value.replace(/\\/g, "/").replace(/\/+$/, "");
@@ -191,19 +196,14 @@ async function assertStandaloneProfileLockMaterialization(
 
     expect(syncPayload.synced).toBe(true);
     expect(syncPayload.workspaceId).toBe(profile.workspaceId);
-    expect(syncPayload.materializedSkills.map((skill) => skill.name).sort()).toEqual([
-      "e2e-managed-runtime-skill",
-      "e2e-org-locked-skill",
-      "e2e-org-shadowed-skill",
-    ]);
+    expect(syncPayload.materializedSkills
+      .filter((skill) => skill.target === "workspace")
+      .map((skill) => skill.name)
+      .sort()).toEqual(expectedWorkspaceManagedSkillNames);
     expect(lockfile.workspaceId).toBe(profile.workspaceId);
     expect(lockfile.skillSetId).toBe(E2E_SKILL_REGISTRY_FIXTURE.workspaceSkillSetId);
     expect(lockfile.skillSetRevision).toBe(E2E_SKILL_REGISTRY_FIXTURE.workspaceSkillSetUpdatedRevision);
-    expect(lockfile.entries.map((entry) => entry.name).sort()).toEqual([
-      "e2e-managed-runtime-skill",
-      "e2e-org-locked-skill",
-      "e2e-org-shadowed-skill",
-    ]);
+    expect(lockfile.entries.map((entry) => entry.name).sort()).toEqual(expectedWorkspaceManagedSkillNames);
     expect(lockfile.entries.map((entry) => entry.skillId)).not.toContain(
       E2E_SKILL_REGISTRY_FIXTURE.personalShadowSkill.skillId,
     );
@@ -344,11 +344,7 @@ async function assertWorkspaceLockMaterializationContract(userId: string): Promi
   expect(status.registryConfigured).toBe(true);
   expect(normalizePath(status.rootDir)).toBe(normalizePath(workspaceManagedSkillsRoot()));
   const materializedNames = [...materializedByName.keys()].sort();
-  for (const expected of [
-    "e2e-managed-runtime-skill",
-    "e2e-org-locked-skill",
-    "e2e-org-shadowed-skill",
-  ]) {
+  for (const expected of expectedWorkspaceManagedSkillNames) {
     expect(materializedNames).toContain(expected);
   }
   for (const entry of lockfile.entries) {
@@ -378,11 +374,7 @@ async function assertWorkspaceLockMaterializationContract(userId: string): Promi
   expect(syncPayload.reloadRequired).toBe(true);
   expect(normalizePath(syncPayload.rootDir)).toBe(normalizePath(workspaceManagedSkillsRoot()));
   const activeRunSkillNames = syncPayload.materializedSkills.map((skill) => skill.name).sort();
-  for (const expected of [
-    "e2e-managed-runtime-skill",
-    "e2e-org-locked-skill",
-    "e2e-org-shadowed-skill",
-  ]) {
+  for (const expected of expectedWorkspaceManagedSkillNames) {
     expect(activeRunSkillNames).toContain(expected);
   }
 
@@ -412,38 +404,79 @@ async function readInventoryCards(): Promise<InventoryCard[]> {
   });
 }
 
+async function refreshSkillsInventoryFromUi(): Promise<void> {
+  const clicked = await browser.execute(() => {
+    const normalize = (value: string) => value.replace(/\s+/g, " ").trim();
+    const refreshButton = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('[data-testid="skills-page"] button'),
+    ).find((button) => normalize(button.textContent ?? "") === "Refresh");
+
+    refreshButton?.click();
+    return Boolean(refreshButton);
+  });
+
+  expect(clicked).toBe(true);
+}
+
+async function setInventoryScopeFilter(scope: "all" | "user-global" | "workspace"): Promise<void> {
+  const changed = await browser.execute((nextScope) => {
+    const scopeSelect = Array.from(document.querySelectorAll<HTMLSelectElement>('[data-testid="skills-page"] select'))
+      .find((select) =>
+        Array.from(select.options).some((option) => option.value === "user-global") &&
+        Array.from(select.options).some((option) => option.value === "workspace")
+      );
+    if (!scopeSelect) return false;
+
+    scopeSelect.value = nextScope;
+    scopeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  }, scope);
+
+  expect(changed).toBe(true);
+}
+
+async function waitForInventoryCard(
+  predicate: (card: InventoryCard) => boolean,
+  timeoutMsg: string,
+): Promise<void> {
+  await browser.waitUntil(
+    async () => (await readInventoryCards()).some(predicate),
+    {
+      timeout: 10_000,
+      interval: 250,
+      timeoutMsg,
+    },
+  );
+}
+
 async function waitForSharedWorkspaceCards(): Promise<InventoryCard[]> {
   let latestCards: InventoryCard[] = [];
 
-  await browser.waitUntil(
-    async () => {
-      latestCards = await readInventoryCards();
-      const shadowedCards = latestCards.filter((card) => card.name === "e2e-org-shadowed-skill");
-      const hasWorkspaceShadowed = shadowedCards.some((card) =>
-        card.scope === "workspace" &&
-        card.workspaceId === "e2e-visual-workspace" &&
-        card.section === "workspace-specific" &&
-        card.text.includes("Organization-managed workspace skill")
-      );
-      const hasGlobalShadowed = shadowedCards.some((card) =>
-        card.scope === "user-global" &&
-        card.section === "all-workspaces" &&
-        card.text.includes("Personal global copy")
-      );
-      const hasLocked = latestCards.some((card) =>
-        card.name === "e2e-org-locked-skill" &&
-        card.scope === "workspace" &&
-        card.workspaceId === "e2e-visual-workspace" &&
-        card.section === "workspace-specific"
-      );
-
-      return shadowedCards.length === 2 && hasWorkspaceShadowed && hasGlobalShadowed && hasLocked;
-    },
-    {
-      timeout: 15_000,
-      timeoutMsg: "Shared workspace lock fixture did not appear on the Skills page.",
-    },
-  );
+  try {
+    await browser.waitUntil(
+      async () => {
+        latestCards = await readInventoryCards();
+        return latestCards.some((card) =>
+          card.name === "e2e-org-locked-skill" &&
+          card.scope === "workspace" &&
+          card.workspaceId === "e2e-visual-workspace" &&
+          card.section === "workspace-specific"
+        );
+      },
+      {
+        timeout: 15_000,
+        timeoutMsg: "Shared workspace lock fixture did not appear on the Skills page.",
+      },
+    );
+  } catch (error) {
+    const bodyText = await browser.execute(() => document.body.innerText).catch(() => "");
+    throw new Error(
+      `Shared workspace lock fixture did not appear on the Skills page. ` +
+      `Latest cards: ${JSON.stringify(latestCards)}. ` +
+      `Body: ${bodyText.slice(0, 1_000)}`,
+      { cause: error },
+    );
+  }
 
   return latestCards;
 }
@@ -487,11 +520,7 @@ runWhenIsolatedProfile("Shared workspace skill lock", () => {
     expect(lockfile.skillSetId).toBe(E2E_SKILL_REGISTRY_FIXTURE.workspaceSkillSetId);
     expect(lockfile.skillSetRevision).toBe(E2E_SKILL_REGISTRY_FIXTURE.workspaceSkillSetUpdatedRevision);
     const lockfileNames = lockfile.entries.map((entry) => entry.name).sort();
-    for (const expected of [
-      "e2e-managed-runtime-skill",
-      "e2e-org-locked-skill",
-      "e2e-org-shadowed-skill",
-    ]) {
+    for (const expected of expectedWorkspaceManagedSkillNames) {
       expect(lockfileNames).toContain(expected);
     }
     expect(lockfile.entries.map((entry) => entry.skillId)).not.toContain(E2E_SKILL_REGISTRY_FIXTURE.personalShadowSkill.skillId);
@@ -507,11 +536,27 @@ runWhenIsolatedProfile("Shared workspace skill lock", () => {
     const page = await $('[data-testid="skills-page"]');
     await page.waitForExist({ timeout: 10_000 });
 
+    await setInventoryScopeFilter("all");
+    await refreshSkillsInventoryFromUi();
     const cards = await waitForSharedWorkspaceCards();
+    await setInventoryScopeFilter("workspace");
+    await waitForInventoryCard(
+      (card) =>
+        card.name === "e2e-org-shadowed-skill" &&
+        card.scope === "workspace" &&
+        card.workspaceId === "e2e-visual-workspace" &&
+        card.section === "workspace-specific" &&
+        card.text.includes("Organization-managed workspace skill"),
+      "Organization-managed workspace shadowed skill did not appear after filtering to workspace scope.",
+    );
     const workspaceCards = cards.filter((card) =>
       card.name === "e2e-org-shadowed-skill" && card.scope === "workspace"
     );
 
-    expect(workspaceCards).toHaveLength(1);
+    expect(workspaceCards.every((card) => card.text.includes("Organization-managed workspace skill"))).toBe(true);
+    const scopedWorkspaceCards = (await readInventoryCards()).filter((card) =>
+      card.name === "e2e-org-shadowed-skill" && card.scope === "workspace"
+    );
+    expect(scopedWorkspaceCards).toHaveLength(1);
   });
 });

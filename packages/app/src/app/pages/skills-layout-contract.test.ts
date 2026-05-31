@@ -52,13 +52,17 @@ test("skills page receives app-wide skill inventory props", () => {
 
 test("skills page wires remove and restore skill instance actions through app props", () => {
   assert.match(source, /removeSkillInstance:\s*\(target: SkillMutationTarget\) => Promise<SkillSaveResult>/);
+  assert.match(source, /batchRemoveSkillInstances:\s*\(targets: SkillMutationTarget\[\]\) => Promise<SkillSaveResult>/);
   assert.match(source, /restoreSkillInstance:\s*\(target: SkillMutationTarget\) => Promise<SkillSaveResult>/);
   assert.match(source, /deleteSkillInstance:\s*\(target: SkillMutationTarget\) => Promise<void>/);
   assert.match(dashboardSource, /removeSkillInstance:\s*\(target: SkillMutationTarget\) => Promise<SkillSaveResult>/);
+  assert.match(dashboardSource, /batchRemoveSkillInstances:\s*\(targets: SkillMutationTarget\[\]\) => Promise<SkillSaveResult>/);
   assert.match(dashboardSource, /restoreSkillInstance:\s*\(target: SkillMutationTarget\) => Promise<SkillSaveResult>/);
   assert.match(dashboardSource, /removeSkillInstance=\{props\.removeSkillInstance\}/);
+  assert.match(dashboardSource, /batchRemoveSkillInstances=\{props\.batchRemoveSkillInstances\}/);
   assert.match(dashboardSource, /restoreSkillInstance=\{props\.restoreSkillInstance\}/);
   assert.match(appSource, /\bremoveSkillInstance,\s*[\s\S]*\brestoreSkillInstance,/);
+  assert.match(appSource, /\bbatchRemoveSkillInstances,/);
   assert.match(appSource, /removeSkillInstance,\s*[\s\S]*restoreSkillInstance,/);
 });
 
@@ -408,6 +412,18 @@ test("workspace skill copy and move are local scope transfer actions, not disabl
   assert.doesNotMatch(source, /copySelectedSkillToGlobal\(false/);
   assert.doesNotMatch(source, /translate\("skills\.bulk_copy"\)[\s\S]{0,240}<Button[\s\S]{0,180}\sdisabled\s/);
   assert.doesNotMatch(source, /translate\("skills\.bulk_move"\)[\s\S]{0,240}<Button[\s\S]{0,180}\sdisabled\s/);
+});
+
+test("skills bulk remove is a delete action wired to batch backend", () => {
+  assert.match(source, /const selectedRemoveTargets = createMemo/);
+  assert.match(source, /const openSelectedBulkRemove = \(\) =>/);
+  assert.match(source, /props\.batchRemoveSkillInstances\(targets\)/);
+  assert.match(source, /data-testid="skills-bulk-remove-button"/);
+  assert.match(source, /onClick=\{openSelectedBulkRemove\}/);
+  assert.doesNotMatch(source, /translate\("skills\.bulk_remove"\)[\s\S]{0,240}<Button[\s\S]{0,180}\sdisabled\s+title=\{translate\("skills\.registry_action_pending"\)\}/);
+  assert.match(enSource, /"skills\.bulk_remove":\s*"Delete"/);
+  assert.match(csSource, /"skills\.bulk_remove":\s*"Smazat"/);
+  assert.match(zhSource, /"skills\.bulk_remove":/);
 });
 
 test("workspace install target picker is an elevated cancellable modal with constrained height", () => {

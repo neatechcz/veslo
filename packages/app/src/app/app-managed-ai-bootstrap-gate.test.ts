@@ -5,17 +5,25 @@ import test from "node:test";
 const source = readFileSync(new URL("./app.tsx", import.meta.url), "utf8");
 
 test("sendPrompt waits for managed bootstrap readiness before reading client", () => {
+  const start = source.indexOf("async function sendPrompt(");
+  const end = source.indexOf("async function abortSession", start);
+  assert.ok(start >= 0 && end > start, "sendPrompt source should be present");
+  const sendPromptSource = source.slice(start, end);
   assert.match(
-    source,
-    /async function sendPrompt\(draft\?: ComposerDraft\)[\s\S]*?await ensureManagedAiBootstrapReady\(\);\s*const c = client\(\);/s,
+    sendPromptSource,
+    /await ensureManagedAiBootstrapReady\(\);[\s\S]*?const c = client\(\);/s,
     "sendPrompt should wait for managed bootstrap readiness before grabbing the local client",
   );
 });
 
 test("createSessionAndOpen waits for managed bootstrap readiness before reading client", () => {
+  const start = source.indexOf("async function createSessionAndOpen(");
+  const end = source.indexOf("const openNewSessionWithDirectory = async () =>", start);
+  assert.ok(start >= 0 && end > start, "createSessionAndOpen source should be present");
+  const createSessionAndOpenSource = source.slice(start, end);
   assert.match(
-    source,
-    /async function createSessionAndOpen\(\)[\s\S]*?await ensureManagedAiBootstrapReady\(\);\s*const c = client\(\);/s,
+    createSessionAndOpenSource,
+    /await ensureManagedAiBootstrapReady\(\);[\s\S]*?const c = client\(\);/s,
     "createSessionAndOpen should wait for managed bootstrap readiness before grabbing the local client",
   );
 });

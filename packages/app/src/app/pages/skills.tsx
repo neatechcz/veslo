@@ -130,6 +130,7 @@ export type SkillsViewProps = {
   saveSkillInstance: (target: SkillMutationTarget, content: string) => Promise<SkillSaveResult>;
   deleteSkillInstance: (target: SkillMutationTarget) => Promise<void>;
   removeSkillInstance: (target: SkillMutationTarget) => Promise<SkillSaveResult>;
+  batchRemoveSkillInstances: (targets: SkillMutationTarget[]) => Promise<SkillSaveResult>;
   restoreSkillInstance: (target: SkillMutationTarget) => Promise<SkillSaveResult>;
   copySkillInstanceToGlobal: (target: SkillMutationTarget, options?: { deleteSource?: boolean }) => Promise<SkillSaveResult>;
   copySkillInstanceToWorkspace: (target: SkillMutationTarget, workspaceId: string) => Promise<SkillSaveResult>;
@@ -196,6 +197,8 @@ export default function SkillsView(props: SkillsViewProps) {
 
   const [uninstallTarget, setUninstallTarget] = createSignal<SkillMutationTarget | null>(null);
   const uninstallOpen = createMemo(() => uninstallTarget() != null);
+  const [bulkRemoveTargets, setBulkRemoveTargets] = createSignal<SkillMutationTarget[]>([]);
+  const bulkRemoveOpen = createMemo(() => bulkRemoveTargets().length > 0);
   const [restoreTarget, setRestoreTarget] = createSignal<SkillMutationTarget | null>(null);
   const restoreOpen = createMemo(() => restoreTarget() != null);
   const [removePending, setRemovePending] = createSignal(false);
@@ -542,6 +545,25 @@ export default function SkillsView(props: SkillsViewProps) {
       .map((row) => globalTransferTargetForInstance(row.instance))
       .filter((target): target is SkillMutationTarget => Boolean(target))
   );
+  const selectedRemoveTargets = createMemo(() =>
+    selectedInventoryRows()
+      .filter((row) => inventoryInstanceLifecycle(row.instance) === "active")
+      .map((row) => removeTargetForInstance(row.instance))
+      .filter((target): target is SkillMutationTarget => Boolean(target))
+  );
+  const bulkRemoveDisabledReason = createMemo(() => {
+    const selectedRows = selectedInventoryRows();
+    if (selectedRows.length === 0) return translate("skills.select_skill_location");
+    if (selectedRows.some((row) => inventoryInstanceLifecycle(row.instance) !== "active")) {
+      return translate("skills.bulk_removed_actions_unavailable");
+    }
+    const firstDisabledReason = selectedRows
+      .map((row) => uninstallDisabledReason({ item: row.item, instance: row.instance }))
+      .find((reason): reason is string => Boolean(reason));
+    if (firstDisabledReason) return firstDisabledReason;
+    if (selectedRemoveTargets().length !== selectedRows.length) return translate("skills.remove_location_unavailable");
+    return null;
+  });
   const globalTransferDisabledReason = createMemo(() => {
     const selectedRows = selectedInventoryRows();
     if (selectedRows.length === 0) return translate("skills.select_skill_location");
@@ -626,6 +648,21 @@ export default function SkillsView(props: SkillsViewProps) {
       source: "selection",
       targets,
     });
+  };
+
+  const openSelectedBulkRemove = () => {
+    if (props.busy || skillMutationBusy()) return;
+    const disabledReason = bulkRemoveDisabledReason();
+    if (disabledReason) {
+      setToast(disabledReason);
+      return;
+    }
+    const targets = selectedRemoveTargets();
+    if (targets.length === 0) {
+      setToast(translate("skills.remove_location_unavailable"));
+      return;
+    }
+    setBulkRemoveTargets(targets);
   };
 
   const activeWorkspaceInstalledNames = createMemo(() =>
@@ -1354,6 +1391,23 @@ export default function SkillsView(props: SkillsViewProps) {
     }
   };
 
+  const confirmBulkRemoveSkillInstances = async () => {
+    const targets = bulkRemoveTargets();
+    if (targets.length === 0 || removePending()) return;
+    setBulkRemoveTargets([]);
+    setRemovePending(true);
+    try {
+      const result = await props.batchRemoveSkillInstances(targets);
+      setToast(result.message ?? translate(result.ok ? "skills.bulk_removed" : "skills.bulk_remove_partial"));
+      if (result.ok) setSelectedInventoryIds([]);
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : translate("skills.bulk_remove_partial"));
+    } finally {
+      props.refreshSkillInventory({ force: true });
+      setRemovePending(false);
+    }
+  };
+
   const confirmRestoreSkillInstance = async () => {
     const target = restoreTarget();
     if (!target || restorePending()) return;
@@ -1723,7 +1777,14 @@ export default function SkillsView(props: SkillsViewProps) {
               <Upload size={13} />
               {translate("skills.bulk_publish")}
             </Button>
-            <Button variant="danger" class="h-8 px-2 type-ui-xs" disabled title={translate("skills.registry_action_pending")} onClick={showRegistryActionPending}>
+            <Button
+              variant="danger"
+              class="h-8 px-2 type-ui-xs"
+              data-testid="skills-bulk-remove-button"
+              title={bulkRemoveDisabledReason() ?? translate("skills.bulk_remove")}
+              disabled={skillMutationBusy() || Boolean(bulkRemoveDisabledReason())}
+              onClick={openSelectedBulkRemove}
+            >
               <Trash2 size={13} />
               {translate("skills.bulk_remove")}
             </Button>
@@ -2403,6 +2464,51 @@ export default function SkillsView(props: SkillsViewProps) {
                   spellcheck={false}
                 />
               </Show>
+            </div>
+          </div>
+        </div>
+      </Show>
+
+      <Show when={bulkRemoveOpen()}>
+        <div class="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm flex items-center justify-center p-4">
+          <div
+            data-testid="skill-bulk-remove-modal"
+            class="bg-dls-surface border border-dls-border w-full max-w-md rounded-2xl shadow-2xl overflow-hidden"
+          >
+            <div class="p-6">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <h3 class="text-lg font-semibold text-dls-text">{translate("skills.bulk_remove_title")}</h3>
+                  <p class="text-sm text-dls-secondary mt-1">
+                    {translate("skills.bulk_remove_warning", { count: String(bulkRemoveTargets().length) })}
+                  </p>
+                </div>
+              </div>
+
+              <div class="mt-4 max-h-48 overflow-y-auto rounded-xl bg-dls-hover border border-dls-border p-3 text-xs text-dls-secondary font-mono">
+                <For each={bulkRemoveTargets()}>
+                  {(target) => <div class="truncate">{target.name}</div>}
+                </For>
+              </div>
+
+              <div class="mt-6 flex justify-end gap-2">
+                <Button
+                  variant="outline"
+                  data-testid="skill-bulk-remove-cancel"
+                  onClick={() => setBulkRemoveTargets([])}
+                  disabled={skillMutationBusy()}
+                >
+                  {translate("common.cancel")}
+                </Button>
+                <Button
+                  variant="danger"
+                  data-testid="skill-bulk-remove-confirm"
+                  onClick={() => void confirmBulkRemoveSkillInstances()}
+                  disabled={skillMutationBusy()}
+                >
+                  {translate("skills.bulk_remove")}
+                </Button>
+              </div>
             </div>
           </div>
         </div>

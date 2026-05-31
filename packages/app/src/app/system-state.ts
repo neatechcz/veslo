@@ -26,6 +26,7 @@ import {
   updaterPrepareInstall,
 } from "./lib/tauri";
 import { unwrap, waitForHealthy } from "./lib/opencode";
+import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../i18n";
 
 function throttle<T extends (...args: any[]) => any>(
   fn: T,
@@ -268,7 +269,7 @@ export function createSystemState(options: {
 
     const override = options.canReloadWorkspaceEngine?.();
     if (override === false) {
-      setReloadError("Reload is unavailable for this worker.");
+      setReloadError(__vesloIndirectT("ui.indirect.reload_is_unavailable_for_this_worker_18yjgo", __vesloIndirectLocale()));
       return false;
     }
 
@@ -284,7 +285,7 @@ export function createSystemState(options: {
       if (options.reloadWorkspaceEngine) {
         const ok = await options.reloadWorkspaceEngine();
         if (ok === false) {
-          setReloadError("Failed to reload the engine.");
+          setReloadError(__vesloIndirectT("ui.indirect.failed_to_reload_the_engine_wglujt", __vesloIndirectLocale()));
           return false;
         }
       } else {

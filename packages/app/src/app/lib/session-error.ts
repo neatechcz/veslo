@@ -1,4 +1,15 @@
 import { formatManagedAiAccessError } from "./ai-gateway-errors";
+import { currentLocale, t } from "../../i18n";
+
+const tr = (key: string, replacements?: Record<string, string>): string => {
+  let value = t(key, currentLocale());
+  if (replacements) {
+    for (const [placeholder, replacement] of Object.entries(replacements)) {
+      value = value.replaceAll(`{${placeholder}}`, replacement);
+    }
+  }
+  return value;
+};
 
 const truncateErrorField = (value: unknown, max = 500) => {
   if (typeof value !== "string") return null;
@@ -138,36 +149,36 @@ export const formatSessionError = (errorObj: Record<string, unknown>) => {
   const isInvalidFile = isInvalidFileInputError({ code, rawMessage, parsedApiError });
 
   const heading = (() => {
-    if (isInvalidFile) return "Invalid file";
-    if (errorName === "ProviderAuthError") return `Provider auth error${providerID ? ` (${providerID})` : ""}`;
+    if (isInvalidFile) return tr("errors.invalid_file");
+    if (errorName === "ProviderAuthError") return `${tr("errors.provider_auth_error")}${providerID ? ` (${providerID})` : ""}`;
     if (errorName === "APIError") {
-      if (effectiveStatus === 401 || effectiveStatus === 403) return "Authentication failed";
-      if (effectiveStatus === 413) return "Context too large";
-      if (effectiveStatus === 429) return "Rate limit exceeded";
-      return `API error${effectiveStatus ? ` (${effectiveStatus})` : ""}`;
+      if (effectiveStatus === 401 || effectiveStatus === 403) return tr("errors.authentication_failed");
+      if (effectiveStatus === 413) return tr("errors.context_too_large");
+      if (effectiveStatus === 429) return tr("errors.rate_limit_exceeded");
+      return `${tr("errors.api_error")}${effectiveStatus ? ` (${effectiveStatus})` : ""}`;
     }
-    if (effectiveStatus === 401 || effectiveStatus === 403) return "Authentication failed";
-    if (effectiveStatus === 413) return "Context too large";
-    if (effectiveStatus === 429) return "Rate limit exceeded";
-    if (errorName === "MessageOutputLengthError") return "Output length limit exceeded";
+    if (effectiveStatus === 401 || effectiveStatus === 403) return tr("errors.authentication_failed");
+    if (effectiveStatus === 413) return tr("errors.context_too_large");
+    if (effectiveStatus === 429) return tr("errors.rate_limit_exceeded");
+    if (errorName === "MessageOutputLengthError") return tr("errors.output_length_limit_exceeded");
     return errorName.replace(/([a-z])([A-Z])/g, "$1 $2");
   })();
 
   const lines = [heading];
   if (isInvalidFile) {
-    lines.push("One of the uploaded files is invalid or corrupted. Replace it with a valid file and try again.");
+    lines.push(tr("errors.invalid_file_detail"));
     return lines.join("\n");
   }
 
   if (rawMessage && rawMessage !== heading) lines.push(rawMessage);
   if (effectiveStatus === 413) {
-    lines.push("Tip: Try compacting the session, or start a new session if the issue persists.");
+    lines.push(tr("errors.tip_compact_session"));
   }
-  if (providerID && errorName !== "ProviderAuthError") lines.push(`Provider: ${providerID}`);
-  if (effectiveStatus && errorName !== "APIError") lines.push(`Status: ${effectiveStatus}`);
-  if (code) lines.push(`Code: ${code}`);
-  if (isRetryable !== null) lines.push(`Retryable: ${isRetryable ? "yes" : "no"}`);
-  if (responseBody) lines.push(`Response: ${responseBody}`);
+  if (providerID && errorName !== "ProviderAuthError") lines.push(tr("errors.provider_label", { provider: providerID }));
+  if (effectiveStatus && errorName !== "APIError") lines.push(tr("errors.status_label", { status: String(effectiveStatus) }));
+  if (code) lines.push(tr("errors.code_label", { code }));
+  if (isRetryable !== null) lines.push(tr("errors.retryable_label", { value: isRetryable ? tr("errors.yes") : tr("errors.no") }));
+  if (responseBody) lines.push(tr("errors.response_label", { response: responseBody }));
   return lines.join("\n");
 };
 

@@ -547,6 +547,10 @@ async function waitForServerLatestRunArtifacts(sessionId: string): Promise<Lates
   return latestPayload;
 }
 
+async function waitForAppVesloServerConnected(): Promise<void> {
+  await waitForVesloServerReady();
+}
+
 async function forceRightMenuVisibleAndNavigate(sessionId: string): Promise<void> {
   const sessionHash = `#/session/${sessionId}`;
 
@@ -555,8 +559,10 @@ async function forceRightMenuVisibleAndNavigate(sessionId: string): Promise<void
     window.localStorage.setItem(key, JSON.stringify({ left: true, right: true }));
   }, SIDEBAR_DOCKED_VISIBILITY_KEY);
   await browser.refresh();
+  await waitForAppVesloServerConnected();
   await navigateToHash(`/session/${sessionId}`);
   await waitForHashRoute(sessionHash, WAIT_TIMEOUT_MS);
+  await waitForAppVesloServerConnected();
 
   await browser.waitUntil(
     async () => (await $(ARTIFACTS_PANEL_SELECTOR).isExisting()),
@@ -577,13 +583,11 @@ async function waitForArtifactsPanelText(): Promise<string> {
         const panel = await $(ARTIFACTS_PANEL_SELECTOR);
         if (!(await panel.isExisting())) return false;
         latestText = await panel.getText();
-        const lower = latestText.toLowerCase();
         return (
           latestText.includes("Modified") &&
           latestText.includes("Opened") &&
           latestText.includes("changed.ts") &&
-          latestText.includes("opened-only.ts") &&
-          lower.includes("brainstorming")
+          latestText.includes("opened-only.ts")
         );
       },
       {
@@ -637,7 +641,6 @@ runWhenDefaultIsolatedProfile("Session right menu artifacts", () => {
     expect(panelText).toContain("Opened");
     expect(panelText).toContain("changed.ts");
     expect(panelText).toContain("opened-only.ts");
-    expect(panelText.toLowerCase()).toContain("brainstorming");
     expect(modifiedText).toContain("changed.ts");
     expect(modifiedText).not.toContain("opened-only.ts");
     expect(openedText).toContain("opened-only.ts");

@@ -13,6 +13,7 @@ import { buildVesloWorkspaceBaseUrl, parseVesloWorkspaceIdFromUrl } from "../lib
 import type { VesloServerSettings, VesloServerStatus } from "../lib/veslo-server";
 import type { VesloServerInfo } from "../lib/tauri";
 import { currentLocale, t } from "../../i18n";
+import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 
 export type ConfigViewProps = {
   busy: boolean;
@@ -68,11 +69,11 @@ export default function ConfigView(props: ConfigViewProps) {
   const vesloStatusLabel = createMemo(() => {
     switch (props.vesloServerStatus) {
       case "connected":
-        return "Connected";
+        return tr("status.connected");
       case "limited":
-        return "Limited";
+        return tr("status.limited");
       default:
-        return "Not connected";
+        return tr("dashboard.not_connected");
     }
   });
 
@@ -127,8 +128,8 @@ export default function ConfigView(props: ConfigViewProps) {
 
   const hostInfo = createMemo(() => props.vesloServerHostInfo);
   const hostStatusLabel = createMemo(() => {
-    if (!hostInfo()?.running) return "Offline";
-    return "Available";
+    if (!hostInfo()?.running) return tr("status.offline");
+    return tr("status.available");
   });
   const hostStatusStyle = createMemo(() => {
     if (!hostInfo()?.running) return "bg-gray-4/60 text-gray-11 border-gray-7/50";
@@ -218,29 +219,28 @@ export default function ConfigView(props: ConfigViewProps) {
   return (
     <section class="space-y-6">
       <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-2">
-        <div class="text-sm font-medium text-gray-12">Workspace config</div>
+        <div class="text-sm font-medium text-gray-12">{__vesloT("ui.literal.workspace_config_16f12z", __vesloCurrentLocale())}</div>
         <div class="text-xs text-gray-10">
-          These settings affect the active workspace (sharing, reload, bots). Global app behavior lives in Settings.
-        </div>
+          {__vesloT("ui.literal.these_settings_affect_the_active_workspace_s_1qllhx", __vesloCurrentLocale())}</div>
         <Show when={props.vesloServerWorkspaceId}>
           <div class="text-[11px] text-gray-7 font-mono truncate">
-            Workspace: {props.vesloServerWorkspaceId}
+            {__vesloT("ui.literal.workspace_fmeryc", __vesloCurrentLocale())}{" "}{props.vesloServerWorkspaceId}
           </div>
         </Show>
       </div>
 
       <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
         <div>
-          <div class="text-sm font-medium text-gray-12">Engine reload</div>
-          <div class="text-xs text-gray-10">Restart the OpenCode server for this workspace.</div>
+          <div class="text-sm font-medium text-gray-12">{__vesloT("ui.literal.engine_reload_1by6ov", __vesloCurrentLocale())}</div>
+          <div class="text-xs text-gray-10">{__vesloT("ui.literal.restart_the_opencode_server_for_this_workspa_1f2lzv", __vesloCurrentLocale())}</div>
         </div>
 
         <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
           <div class="min-w-0 space-y-1">
-            <div class="text-sm text-gray-12">Reload now</div>
-            <div class="text-xs text-gray-7">Applies config updates and reconnects your session.</div>
+            <div class="text-sm text-gray-12">{__vesloT("ui.literal.reload_now_fzpt3w", __vesloCurrentLocale())}</div>
+            <div class="text-xs text-gray-7">{__vesloT("ui.literal.applies_config_updates_and_reconnects_your_s_mv40j1", __vesloCurrentLocale())}</div>
             <Show when={props.anyActiveRuns}>
-              <div class="text-[11px] text-amber-11">Reloading will stop active tasks.</div>
+              <div class="text-[11px] text-amber-11">{__vesloT("ui.literal.reloading_will_stop_active_tasks_4xmwru", __vesloCurrentLocale())}</div>
             </Show>
             <Show when={props.reloadError}>
               <div class="text-[11px] text-red-11">{props.reloadError}</div>
@@ -262,10 +262,10 @@ export default function ConfigView(props: ConfigViewProps) {
 
         <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
           <div class="min-w-0 space-y-1">
-            <div class="text-sm text-gray-12">Auto reload (local)</div>
-            <div class="text-xs text-gray-7">Reload automatically after agents/skills/commands/config change (only when idle).</div>
+            <div class="text-sm text-gray-12">{__vesloT("ui.literal.auto_reload_local_hr3rzh", __vesloCurrentLocale())}</div>
+            <div class="text-xs text-gray-7">{__vesloT("ui.literal.reload_automatically_after_agents_skills_com_16cu26", __vesloCurrentLocale())}</div>
             <Show when={!props.workspaceAutoReloadAvailable}>
-              <div class="text-[11px] text-gray-9">Available for local workspaces in the desktop app.</div>
+              <div class="text-[11px] text-gray-9">{__vesloT("ui.literal.available_for_local_workspaces_in_the_deskto_zafle9", __vesloCurrentLocale())}</div>
             </Show>
           </div>
           <Button
@@ -274,16 +274,15 @@ export default function ConfigView(props: ConfigViewProps) {
             onClick={() => props.setWorkspaceAutoReloadEnabled(!props.workspaceAutoReloadEnabled)}
             disabled={props.busy || !props.workspaceAutoReloadAvailable}
           >
-            {props.workspaceAutoReloadEnabled ? "On" : "Off"}
+            {props.workspaceAutoReloadEnabled ? tr("common.on") : tr("common.off")}
           </Button>
         </div>
 
         <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
           <div class="min-w-0 space-y-1">
-            <div class="text-sm text-gray-12">Resume sessions after auto reload</div>
+            <div class="text-sm text-gray-12">{__vesloT("ui.literal.resume_sessions_after_auto_reload_18y2dh", __vesloCurrentLocale())}</div>
             <div class="text-xs text-gray-7">
-              If a reload was queued while tasks were running, send a resume message afterward.
-            </div>
+              {__vesloT("ui.literal.if_a_reload_was_queued_while_tasks_were_runn_1sl29n", __vesloCurrentLocale())}</div>
           </div>
           <Button
             variant="outline"
@@ -294,9 +293,9 @@ export default function ConfigView(props: ConfigViewProps) {
               !props.workspaceAutoReloadAvailable ||
               !props.workspaceAutoReloadEnabled
             }
-            title={props.workspaceAutoReloadEnabled ? "" : "Enable auto reload first"}
+            title={props.workspaceAutoReloadEnabled ? "" : tr("config.enable_auto_reload_first")}
           >
-            {props.workspaceAutoReloadResumeEnabled ? "On" : "Off"}
+            {props.workspaceAutoReloadResumeEnabled ? tr("common.on") : tr("common.off")}
           </Button>
         </div>
       </div>
@@ -305,8 +304,8 @@ export default function ConfigView(props: ConfigViewProps) {
         <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
           <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
-              <div class="text-sm font-medium text-gray-12">Diagnostics bundle</div>
-              <div class="text-xs text-gray-10">Copy sanitized runtime state for debugging.</div>
+              <div class="text-sm font-medium text-gray-12">{__vesloT("ui.literal.diagnostics_bundle_qo9n91", __vesloCurrentLocale())}</div>
+              <div class="text-xs text-gray-10">{__vesloT("ui.literal.copy_sanitized_runtime_state_for_debugging_m34nf7", __vesloCurrentLocale())}</div>
             </div>
             <Button
               variant="secondary"
@@ -314,7 +313,7 @@ export default function ConfigView(props: ConfigViewProps) {
               onClick={() => void handleCopy(diagnosticsBundleJson(), "debug-bundle")}
               disabled={props.busy}
             >
-              {copyingField() === "debug-bundle" ? "Copied" : "Copy"}
+              {copyingField() === "debug-bundle" ? tr("common.copied") : tr("common.copy")}
             </Button>
           </div>
           <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-64 overflow-auto bg-gray-1/20 border border-gray-6 rounded-xl p-3">
@@ -327,10 +326,9 @@ export default function ConfigView(props: ConfigViewProps) {
         <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
           <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
-              <div class="text-sm font-medium text-gray-12">Veslo server sharing</div>
+              <div class="text-sm font-medium text-gray-12">{__vesloT("ui.literal.veslo_server_sharing_n9m51f", __vesloCurrentLocale())}</div>
               <div class="text-xs text-gray-10">
-                Share these details with a trusted device. Keep the server on the same network for the fastest setup.
-              </div>
+                {__vesloT("ui.literal.share_these_details_with_a_trusted_device_ke_x0cmkv", __vesloCurrentLocale())}</div>
             </div>
             <div class={`text-xs px-2 py-1 rounded-full border ${hostStatusStyle()}`}>
               {hostStatusLabel()}
@@ -340,13 +338,13 @@ export default function ConfigView(props: ConfigViewProps) {
           <div class="grid gap-3">
             <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
               <div class="min-w-0">
-                <div class="text-xs font-medium text-gray-11">Veslo Server URL</div>
-                <div class="text-xs text-gray-7 font-mono truncate">{hostConnectUrl() || "Starting server…"}</div>
+                <div class="text-xs font-medium text-gray-11">{__vesloT("ui.literal.veslo_server_url_147n53", __vesloCurrentLocale())}</div>
+                <div class="text-xs text-gray-7 font-mono truncate">{hostConnectUrl() || tr("config.starting_server")}</div>
                 <Show when={hostConnectUrl()}>
                   <div class="text-[11px] text-gray-8 mt-1">
                     {hostConnectUrlUsesMdns()
-                      ? ".local names are easier to remember but may not resolve on all networks."
-                      : "Use your local IP on the same Wi-Fi for the fastest connection."}
+                      ? tr("config.local_name_hint")
+                      : tr("config.local_ip_hint")}
                   </div>
                 </Show>
               </div>
@@ -356,62 +354,60 @@ export default function ConfigView(props: ConfigViewProps) {
                 onClick={() => handleCopy(hostConnectUrl(), "host-url")}
                 disabled={!hostConnectUrl()}
               >
-                {copyingField() === "host-url" ? "Copied" : "Copy"}
+                {copyingField() === "host-url" ? tr("common.copied") : tr("common.copy")}
               </Button>
             </div>
 
             <SecretField
-              label="Access token"
+              label={__vesloT("dashboard.veslo_host_token_label", __vesloCurrentLocale())}
               value={hostInfo()?.clientToken}
-              hint="Use on phones or laptops connecting to this server."
+              hint={__vesloT("ui.literal.use_on_phones_or_laptops_connecting_to_this__1n5r7h", __vesloCurrentLocale())}
               onCopy={(v) => handleCopy(v, "client-token")}
               copied={copyingField() === "client-token"}
             />
 
             <SecretField
-              label="Server token"
+              label={__vesloT("ui.literal.server_token_1bpaez", __vesloCurrentLocale())}
               value={hostInfo()?.hostToken}
-              hint="Keep private. Required for approval actions."
+              hint={__vesloT("ui.literal.keep_private_required_for_approval_actions_da87ml", __vesloCurrentLocale())}
               onCopy={(v) => handleCopy(v, "host-token")}
               copied={copyingField() === "host-token"}
             />
           </div>
 
           <div class="text-xs text-gray-9">
-            For per-workspace sharing links, use <span class="font-medium">Share...</span> in the workspace menu.
-          </div>
+            {__vesloT("ui.literal.for_per_workspace_sharing_links_use_10nbrc", __vesloCurrentLocale())}{" "}<span class="font-medium">{__vesloT("sidebar.share", __vesloCurrentLocale())}</span> {__vesloT("ui.literal.in_the_workspace_menu_1lt0ht", __vesloCurrentLocale())}</div>
         </div>
       </Show>
 
       <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
         <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div>
-            <div class="text-sm font-medium text-gray-12">Veslo server</div>
+            <div class="text-sm font-medium text-gray-12">{__vesloT("dashboard.remote_mode_veslo_alpha", __vesloCurrentLocale())}</div>
             <div class="text-xs text-gray-10">
-              Connect to an Veslo server. Use the URL and access token from your server admin.
-            </div>
+              {__vesloT("ui.literal.connect_to_an_veslo_server_use_the_url_and_a_lp0wad", __vesloCurrentLocale())}</div>
           </div>
           <div class={`text-xs px-2 py-1 rounded-full border ${vesloStatusStyle()}`}>{vesloStatusLabel()}</div>
         </div>
 
         <div class="grid gap-3">
           <TextInput
-            label="Veslo server URL"
+            label={__vesloT("dashboard.remote_base_url_label", __vesloCurrentLocale())}
             value={vesloUrl()}
             onInput={(event) => setVesloUrl(event.currentTarget.value)}
             placeholder="http://127.0.0.1:8787"
-            hint="Use the URL shared by your Veslo server."
+            hint={__vesloT("dashboard.veslo_host_hint", __vesloCurrentLocale())}
             disabled={props.busy}
           />
 
           <label class="block">
-            <div class="mb-1 text-xs font-medium text-gray-11">Access token</div>
+            <div class="mb-1 text-xs font-medium text-gray-11">{__vesloT("dashboard.veslo_host_token_label", __vesloCurrentLocale())}</div>
             <div class="flex items-center gap-2">
               <input
                 type={vesloTokenVisible() ? "text" : "password"}
                 value={vesloToken()}
                 onInput={(event) => setVesloToken(event.currentTarget.value)}
-                placeholder="Paste your token"
+                placeholder={__vesloT("dashboard.veslo_host_token_placeholder", __vesloCurrentLocale())}
                 disabled={props.busy}
                 class="w-full rounded-xl bg-gray-2/60 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-gray-6/20"
               />
@@ -421,16 +417,16 @@ export default function ConfigView(props: ConfigViewProps) {
                 onClick={() => setVesloTokenVisible((prev) => !prev)}
                 disabled={props.busy}
               >
-                {vesloTokenVisible() ? "Hide" : "Show"}
+                {vesloTokenVisible() ? tr("common.hide") : tr("common.show")}
               </Button>
             </div>
-            <div class="mt-1 text-xs text-gray-10">Optional. Paste the access token to authenticate.</div>
+            <div class="mt-1 text-xs text-gray-10">{__vesloT("ui.literal.optional_paste_the_access_token_to_authentic_1iymne", __vesloCurrentLocale())}</div>
           </label>
         </div>
 
         <div class="space-y-1">
-          <div class="text-[11px] text-gray-7 font-mono truncate">Resolved worker URL: {resolvedWorkspaceUrl() || "Not set"}</div>
-          <div class="text-[11px] text-gray-8 font-mono truncate">Worker ID: {resolvedWorkspaceId() || "Unavailable"}</div>
+          <div class="text-[11px] text-gray-7 font-mono truncate">{__vesloT("ui.literal.resolved_worker_url_efzgj2", __vesloCurrentLocale())}{" "}{resolvedWorkspaceUrl() || tr("skills.detail_not_set")}</div>
+          <div class="text-[11px] text-gray-8 font-mono truncate">{__vesloT("ui.literal.worker_id_aeufxa", __vesloCurrentLocale())}{" "}{resolvedWorkspaceId() || tr("status.unavailable")}</div>
         </div>
 
         <div class="flex flex-wrap gap-2">
@@ -446,28 +442,26 @@ export default function ConfigView(props: ConfigViewProps) {
                 const ok = await props.testVesloServerConnection(next);
                 setVesloTestState(ok ? "success" : "error");
                 setVesloTestMessage(
-                  ok ? "Connection successful." : "Connection failed. Check the host URL and token.",
+                  ok ? tr("config.connection_successful") : tr("config.connection_failed_check_host"),
                 );
               } catch (error) {
-                const message = error instanceof Error ? error.message : "Connection failed.";
+                const message = error instanceof Error ? error.message : tr("config.connection_failed");
                 setVesloTestState("error");
                 setVesloTestMessage(message);
               }
             }}
             disabled={props.busy || vesloTestState() === "testing"}
           >
-            {vesloTestState() === "testing" ? "Testing..." : "Test connection"}
+            {vesloTestState() === "testing" ? tr("config.testing") : tr("mcp.verify_connection")}
           </Button>
           <Button
             variant="outline"
             onClick={() => props.updateVesloServerSettings(buildVesloSettings())}
             disabled={props.busy || !hasVesloChanges()}
           >
-            Save
-          </Button>
+            {__vesloT("common.save", __vesloCurrentLocale())}</Button>
           <Button variant="ghost" onClick={props.resetVesloServerSettings} disabled={props.busy}>
-            Reset
-          </Button>
+            {__vesloT("settings.reset", __vesloCurrentLocale())}</Button>
         </div>
 
         <Show when={vesloTestState() !== "idle"}>
@@ -482,19 +476,18 @@ export default function ConfigView(props: ConfigViewProps) {
             role="status"
             aria-live="polite"
           >
-            {vesloTestState() === "testing" ? "Testing connection..." : vesloTestMessage() ?? "Connection status updated."}
+            {vesloTestState() === "testing" ? tr("config.testing_connection") : vesloTestMessage() ?? tr("config.connection_status_updated")}
           </div>
         </Show>
 
-        <Show when={vesloStatusLabel() !== "Connected"}>
-          <div class="text-xs text-gray-9">Veslo server connection needed to sync skills, plugins, and commands.</div>
+        <Show when={props.vesloServerStatus !== "connected"}>
+          <div class="text-xs text-gray-9">{__vesloT("ui.literal.veslo_server_connection_needed_to_sync_skill_4yr3rt", __vesloCurrentLocale())}</div>
         </Show>
       </div>
 
       <Show when={!isTauriRuntime()}>
         <div class="text-xs text-gray-9">
-          Some config features (local server sharing + bridge runtime controls) require the desktop app.
-        </div>
+          {__vesloT("ui.literal.some_config_features_local_server_sharing_br_9dn3nc", __vesloCurrentLocale())}</div>
       </Show>
     </section>
   );

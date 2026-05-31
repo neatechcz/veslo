@@ -1750,7 +1750,7 @@ export default function Composer(props: ComposerProps) {
                             </div>
                             <Show when={cmd.source && cmd.source !== "command"}>
                               <span class="text-[10px] uppercase tracking-wider text-gray-10 shrink-0">
-                                {cmd.source === "skill" ? "Skill" : cmd.source === "mcp" ? "MCP" : ""}
+                                {cmd.source === "skill" ? translate("dashboard.skills") : cmd.source === "mcp" ? "MCP" : ""}
                               </span>
                             </Show>
                           </button>

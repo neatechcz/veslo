@@ -65,6 +65,7 @@ import { createConfigStore } from "../stores/config-store";
 import { createEngineStore } from "../stores/engine-store";
 import { createRemoteStore } from "../stores/remote-store";
 import { shouldAutoBootstrapRemoteServer } from "../utils/startup-server-bootstrap";
+import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 
 export type { MigrationRepairResult } from "../stores/config-store";
 export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
@@ -529,7 +530,7 @@ export function createWorkspaceStore(options: {
       if (!hostUrl) {
         updateWorkspaceConnectionState(id, {
           status: "error",
-          message: "Veslo server URL is required.",
+          message: __vesloIndirectT("ui.indirect.veslo_server_url_is_required_63g0jb", __vesloIndirectLocale()),
         });
         return false;
       }
@@ -544,7 +545,7 @@ export function createWorkspaceStore(options: {
         if (resolved.kind !== "veslo") {
           updateWorkspaceConnectionState(id, {
             status: "error",
-            message: "Veslo server unavailable. Check the URL and token.",
+            message: __vesloIndirectT("ui.indirect.veslo_server_unavailable_check_the_url_and_tok_pthxtb", __vesloIndirectLocale()),
           });
           return false;
         }
@@ -561,7 +562,7 @@ export function createWorkspaceStore(options: {
     if (!baseUrl) {
       updateWorkspaceConnectionState(id, {
         status: "error",
-        message: "Remote base URL is required.",
+        message: __vesloIndirectT("ui.indirect.remote_base_url_is_required_1ig1w2", __vesloIndirectLocale()),
       });
       return false;
     }
@@ -595,7 +596,7 @@ export function createWorkspaceStore(options: {
           });
           updateWorkspaceConnectionState(workspaceId, {
             status: "error",
-            message: "Veslo server unavailable. Failed to prepare workspace skills.",
+            message: __vesloIndirectT("ui.indirect.veslo_server_unavailable_failed_to_prepare_wor_y4yrip", __vesloIndirectLocale()),
           });
           return false;
         }
@@ -744,10 +745,10 @@ export function createWorkspaceStore(options: {
         if (remoteType === "veslo") {
           const hostUrl = next.vesloHostUrl?.trim() ?? "";
           if (!hostUrl) {
-            options.setError("Veslo server URL is required.");
+            options.setError(__vesloIndirectT("ui.indirect.veslo_server_url_is_required_63g0jb", __vesloIndirectLocale()));
             updateWorkspaceConnectionState(id, {
               status: "error",
-              message: "Veslo server URL is required.",
+              message: __vesloIndirectT("ui.indirect.veslo_server_url_is_required_63g0jb", __vesloIndirectLocale()),
             });
             return false;
           }
@@ -781,10 +782,10 @@ export function createWorkspaceStore(options: {
               directoryHint: next.directory ?? null,
             });
             if (resolved.kind !== "veslo") {
-              options.setError("Veslo server unavailable. Check the URL and token.");
+              options.setError(__vesloIndirectT("ui.indirect.veslo_server_unavailable_check_the_url_and_tok_pthxtb", __vesloIndirectLocale()));
               updateWorkspaceConnectionState(id, {
                 status: "error",
-                message: "Veslo server unavailable. Check the URL and token.",
+                message: __vesloIndirectT("ui.indirect.veslo_server_unavailable_check_the_url_and_tok_pthxtb", __vesloIndirectLocale()),
               });
               return false;
             }
@@ -809,7 +810,7 @@ export function createWorkspaceStore(options: {
             options.setError(t("app.error.remote_base_url_required", currentLocale()));
             updateWorkspaceConnectionState(id, {
               status: "error",
-              message: "Remote base URL is required.",
+              message: __vesloIndirectT("ui.indirect.remote_base_url_is_required_1ig1w2", __vesloIndirectLocale()),
             });
             return false;
           }
@@ -835,7 +836,7 @@ export function createWorkspaceStore(options: {
           if (!ok) {
             updateWorkspaceConnectionState(id, {
               status: "error",
-              message: "Failed to connect to worker.",
+              message: __vesloIndirectT("ui.indirect.failed_to_connect_to_worker_bjt8ig", __vesloIndirectLocale()),
             });
             return false;
           }
@@ -930,7 +931,7 @@ export function createWorkspaceStore(options: {
           options.setError(t("app.error.remote_base_url_required", currentLocale()));
           updateWorkspaceConnectionState(id, {
             status: "error",
-            message: "Remote base URL is required.",
+            message: __vesloIndirectT("ui.indirect.remote_base_url_is_required_1ig1w2", __vesloIndirectLocale()),
           });
           return false;
         }
@@ -956,7 +957,7 @@ export function createWorkspaceStore(options: {
         if (!ok) {
           updateWorkspaceConnectionState(id, {
             status: "error",
-            message: "Failed to connect to worker.",
+            message: __vesloIndirectT("ui.indirect.failed_to_connect_to_worker_bjt8ig", __vesloIndirectLocale()),
           });
           return false;
         }
@@ -1151,7 +1152,7 @@ export function createWorkspaceStore(options: {
         if (!ok) {
           updateWorkspaceConnectionState(id, {
             status: "error",
-            message: "Failed to start local engine.",
+            message: __vesloIndirectT("ui.indirect.failed_to_start_local_engine_1uglec", __vesloIndirectLocale()),
           });
           return false;
         }
@@ -1252,7 +1253,7 @@ export function createWorkspaceStore(options: {
         _wsLog("[workspace:activate] STEP 6 — engineRestartFailed!", { id, ms: Date.now() - activateStart });
         updateWorkspaceConnectionState(id, {
           status: "error",
-          message: "Failed to switch worker",
+          message: __vesloIndirectT("ui.indirect.failed_to_switch_worker_ayyxrj", __vesloIndirectLocale()),
         });
         wsDebug("activate:local:engineRestartFailed", { id, ms: Date.now() - activateStart });
         return false;

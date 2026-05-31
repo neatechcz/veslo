@@ -10,6 +10,7 @@ import { validateMcpServerName } from "../mcp";
 import { t, type Language } from "../../i18n";
 import { isTauriRuntime, normalizeDirectoryPath } from "../utils";
 import { openExternalUrl } from "../lib/tauri-url";
+import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 
 const MCP_AUTH_POLL_INTERVAL_MS = 2_000;
 const MCP_AUTH_TIMEOUT_MS = 90_000;
@@ -685,7 +686,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     <CheckCircle2 size={24} class="text-green-11" />
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-gray-12">Already Connected</p>
+                    <p class="text-sm font-medium text-gray-12">{__vesloT("mcp.auth.already_connected", __vesloCurrentLocale())}</p>
                     <p class="text-xs text-gray-11">
                         {translate("mcp.auth.already_connected_description", { server: serverName() })}
                     </p>
@@ -795,7 +796,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                 </div>
                 <div class="rounded-xl border border-gray-6/70 bg-gray-2/40 px-3 py-2 flex items-center gap-3">
                   <div class="flex-1 min-w-0">
-                    <div class="text-[10px] uppercase tracking-wide text-gray-8">Authorization link</div>
+                    <div class="text-[10px] uppercase tracking-wide text-gray-8">{__vesloT("ui.literal.authorization_link_2ock0i", __vesloCurrentLocale())}</div>
                     <div class="text-[11px] text-gray-11 font-mono truncate">
                       {authorizationUrl()}
                     </div>
@@ -805,7 +806,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     class="text-xs"
                     onClick={handleCopyAuthorizationUrl}
                   >
-                    {authUrlCopied() ? "Copied" : "Copy link"}
+                    {authUrlCopied() ? translate("common.copied") : translate("common.copy_link")}
                   </Button>
                 </div>
                 <TextInput
@@ -842,7 +843,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     1
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-gray-12">Opening your browser</p>
+                    <p class="text-sm font-medium text-gray-12">{__vesloT("mcp.auth.step1_title", __vesloCurrentLocale())}</p>
                     <p class="text-xs text-gray-10 mt-1">
                         {translate("mcp.auth.step1_description", { server: serverName() })}
                     </p>
@@ -854,7 +855,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     2
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-gray-12">Authorize Veslo</p>
+                    <p class="text-sm font-medium text-gray-12">{__vesloT("mcp.auth.step2_title", __vesloCurrentLocale())}</p>
                     <p class="text-xs text-gray-10 mt-1">
                         {translate("mcp.auth.step2_description")}
                     </p>
@@ -866,7 +867,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     3
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-gray-12">Return here when you're done</p>
+                    <p class="text-sm font-medium text-gray-12">{__vesloT("mcp.auth.step3_title", __vesloCurrentLocale())}</p>
                     <p class="text-xs text-gray-10 mt-1">
                         {translate("mcp.auth.step3_description")}
                     </p>

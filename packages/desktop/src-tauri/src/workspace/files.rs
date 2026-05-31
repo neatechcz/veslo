@@ -70,8 +70,7 @@ fn seed_soul_files(opencode_dir: &Path, templates_dir: Option<&Path>) -> Result<
             .and_then(|path| fs::read_to_string(&path).ok());
 
         let content = content.as_deref().unwrap_or(default_content);
-        fs::write(&dest, content)
-            .map_err(|e| format!("Failed to write {filename}: {e}"))?;
+        fs::write(&dest, content).map_err(|e| format!("Failed to write {filename}: {e}"))?;
     }
 
     Ok(())
@@ -383,8 +382,7 @@ pub fn ensure_workspace_files(
 
     // Seed soul files into .opencode/ before anything else that reads config
     let opencode_dir = root.join(".opencode");
-    fs::create_dir_all(&opencode_dir)
-        .map_err(|e| format!("Failed to create .opencode: {e}"))?;
+    fs::create_dir_all(&opencode_dir).map_err(|e| format!("Failed to create .opencode: {e}"))?;
     seed_soul_files(&opencode_dir, templates_dir)?;
 
     let skill_root = root.join(".opencode").join("skills");
@@ -401,10 +399,7 @@ pub fn ensure_workspace_files(
     let central_packs_dir = app_data_dir
         .map(|dir| crate::workspace::internal_provision::provision_central_packs(dir))
         .transpose()?;
-    let provision = provision_internal_workspace_assets(
-        &root,
-        central_packs_dir.as_deref(),
-    )?;
+    let provision = provision_internal_workspace_assets(&root, central_packs_dir.as_deref())?;
     let provision_status = match provision.status {
         ProvisionStatus::Updated => "updated",
         ProvisionStatus::Unchanged => "unchanged",
@@ -552,9 +547,7 @@ pub fn ensure_workspace_files(
         }
         obj.insert(
             "instructions".to_string(),
-            serde_json::Value::Array(
-                merged.into_iter().map(serde_json::Value::String).collect(),
-            ),
+            serde_json::Value::Array(merged.into_iter().map(serde_json::Value::String).collect()),
         );
     }
 

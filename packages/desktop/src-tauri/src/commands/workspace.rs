@@ -11,8 +11,8 @@ use crate::types::{
 };
 use crate::workspace::files::{ensure_workspace_files, seed_soul_templates};
 use crate::workspace::state::{
-    load_workspace_state, private_workspace_root_from_data_dir, save_workspace_state, stable_workspace_id,
-    stable_workspace_id_for_remote, stable_workspace_id_for_veslo,
+    load_workspace_state, private_workspace_root_from_data_dir, save_workspace_state,
+    stable_workspace_id, stable_workspace_id_for_remote, stable_workspace_id_for_veslo,
 };
 use crate::workspace::watch::{update_workspace_watch, WorkspaceWatchState};
 use serde::{Deserialize, Serialize};
@@ -237,9 +237,12 @@ pub fn workspace_bootstrap(
         if workspace.workspace_type != WorkspaceType::Local {
             continue;
         }
-        if let Err(error) =
-            ensure_workspace_files(&workspace.path, &workspace.preset, Some(&templates_dir), Some(&data_dir))
-        {
+        if let Err(error) = ensure_workspace_files(
+            &workspace.path,
+            &workspace.preset,
+            Some(&templates_dir),
+            Some(&data_dir),
+        ) {
             eprintln!(
                 "[workspace] bootstrap provisioning failed for {}: {}",
                 workspace.path, error
@@ -1432,7 +1435,8 @@ mod tests {
             serde_json::from_slice(&redacted).expect("parse redacted config");
 
         assert_eq!(
-            parsed["provider"]["openai"]["models"]["gpt-4o-mini"]["headers"]["x-veslo-gateway-token"],
+            parsed["provider"]["openai"]["models"]["gpt-4o-mini"]["headers"]
+                ["x-veslo-gateway-token"],
             "[REDACTED]"
         );
         assert_eq!(

@@ -719,14 +719,8 @@ fn format_sandbox_start_timeout_error(
         format!("stage=openwork.healthcheck"),
         format!("elapsed_ms={elapsed_ms}"),
         format!("url={openwork_url}"),
-        format!(
-            "last_error={}",
-            last_error.unwrap_or("none")
-        ),
-        format!(
-            "container_state={}",
-            container_state.unwrap_or("unknown")
-        ),
+        format!("last_error={}", last_error.unwrap_or("none")),
+        format!("container_state={}", container_state.unwrap_or("unknown")),
     ];
 
     if let Some(probe_error) = container_probe_error {
@@ -1596,8 +1590,7 @@ exit 0
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-        let tmp =
-            std::env::temp_dir().join(format!("veslo-docker-doctor-test-{}", Uuid::new_v4()));
+        let tmp = std::env::temp_dir().join(format!("veslo-docker-doctor-test-{}", Uuid::new_v4()));
         fs::create_dir_all(&tmp).expect("create tmp dir");
 
         let fast = tmp.join("docker");

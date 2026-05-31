@@ -222,6 +222,7 @@ import type {
   UpdateHandle,
   OpencodeConnectStatus,
   ScheduledJob,
+  SuggestedPlugin,
 } from "./types";
 import {
   clearStartupPreference,
@@ -428,6 +429,9 @@ function recordSendTrace(event: string, payload?: Record<string, unknown>) {
 export default function App() {
   const cloudEnvironment = resolveVesloCloudEnvironment(import.meta.env as Record<string, string | undefined>);
   const envVesloWorkspaceId = cloudEnvironment.workspaceId ?? null;
+  const developerMode = () => false;
+  const [documentVisible, setDocumentVisible] = createSignal(true);
+  const [appFocused, setAppFocused] = createSignal(true);
 
   // Workspace switch tracing is noisy, so only emit in developer mode.
   // (Veslo already has a developer mode toggle in Settings.)
@@ -1183,9 +1187,6 @@ export default function App() {
   // is enough — subsequent patches just update the file on disk and the
   // engine picks up the new token on its next read.
   const [lastReloadedForServerToken, setLastReloadedForServerToken] = createSignal("");
-  const developerMode = () => false;
-  const [documentVisible, setDocumentVisible] = createSignal(true);
-  const [appFocused, setAppFocused] = createSignal(true);
 
   createEffect(() => {
     if (developerMode()) return;
@@ -2152,6 +2153,10 @@ export default function App() {
     }
 
     await ensureManagedAiBootstrapReady();
+    if (!(await ensureLocalRuntimeReachableForSend("sendPrompt"))) {
+      recordSendTrace("sendPrompt:blocked-runtime-unreachable");
+      return false;
+    }
 
     const c = client();
     if (!c) {
@@ -2842,9 +2847,30 @@ export default function App() {
   const BUILTIN_COMPACT_COMMAND = {
     id: "builtin:compact",
     name: "compact",
-    description: "Summarize this session to reduce context size.",
+    description: t("commands.compact_description", currentLocale()),
     source: "command" as const,
   };
+
+  const localizedSuggestedPlugins = createMemo<SuggestedPlugin[]>(() =>
+    SUGGESTED_PLUGINS.map((plugin) => ({
+      ...plugin,
+      description: plugin.descriptionKey ? t(plugin.descriptionKey, currentLocale()) : plugin.description,
+      tags: plugin.tagKeys?.map((key) => t(key, currentLocale())) ?? plugin.tags,
+      steps: plugin.steps?.map((step) => ({
+        ...step,
+        title: step.titleKey ? t(step.titleKey, currentLocale()) : step.title,
+        description: step.descriptionKey ? t(step.descriptionKey, currentLocale()) : step.description,
+        note: step.noteKey ? t(step.noteKey, currentLocale()) : step.note,
+      })),
+    })),
+  );
+
+  const localizedMcpQuickConnect = createMemo<McpDirectoryInfo[]>(() =>
+    MCP_QUICK_CONNECT.map((entry) => ({
+      ...entry,
+      description: entry.descriptionKey ? t(entry.descriptionKey, currentLocale()) : entry.description,
+    })),
+  );
 
   async function listCommands(): Promise<{ id: string; name: string; description?: string; source?: "command" | "mcp" | "skill" }[]> {
     const c = client();
@@ -3028,6 +3054,7 @@ export default function App() {
     saveSkillInstance,
     deleteSkillInstance,
     removeSkillInstance,
+    batchRemoveSkillInstances,
     restoreSkillInstance,
     copySkillInstanceToGlobal,
     copySkillInstanceToWorkspace,
@@ -3120,6 +3147,109 @@ export default function App() {
       setError(error instanceof Error ? error.message : safeStringify(error));
     }
   };
+
+  const localRuntimeHealthTimeoutMessage = "Timed out waiting for local runtime health";
+
+  const messageFromUnknownError = (error: unknown): string => {
+    if (error instanceof Error) return error.message;
+    return safeStringify(error);
+  };
+
+  const isLocalRuntimeHealthTimeoutError = (error: unknown): boolean =>
+    messageFromUnknownError(error).includes(localRuntimeHealthTimeoutMessage);
+
+  const shouldRecoverLocalRuntimeFromHealthError = (error: unknown): boolean => {
+    const message = messageFromUnknownError(error);
+    const normalized = message.toLowerCase();
+    return (
+      normalized.includes("error sending request") ||
+      normalized.includes("connection refused") ||
+      message.includes("ECONNREFUSED") ||
+      normalized.includes("failed to connect") ||
+      normalized.includes("could not connect") ||
+      normalized.includes("couldn't connect") ||
+      normalized.includes("failed to fetch") ||
+      normalized.includes("fetch failed") ||
+      normalized.includes("load failed") ||
+      normalized.includes("connection reset") ||
+      message.includes("ECONNRESET") ||
+      normalized.includes("networkerror")
+    );
+  };
+
+  const withLocalRuntimeHealthTimeout = async <T,>(promise: Promise<T>): Promise<T> => {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(
+        () => reject(new Error(localRuntimeHealthTimeoutMessage)),
+        3_000,
+      );
+    });
+    try {
+      return await Promise.race([promise, timeoutPromise]);
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    }
+  };
+
+  async function ensureLocalRuntimeReachableForSend(reason: string): Promise<boolean> {
+    if (!isTauriRuntime() || workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") {
+      return true;
+    }
+
+    const currentClient = client();
+    if (currentClient) {
+      try {
+        await withLocalRuntimeHealthTimeout(currentClient.global.health());
+        recordSendTrace(`${reason}:runtime-health-ok`);
+        return true;
+      } catch (error) {
+        const message = messageFromUnknownError(error);
+        recordSendTrace(`${reason}:runtime-health-error`, { message });
+        if (isLocalRuntimeHealthTimeoutError(error) || !shouldRecoverLocalRuntimeFromHealthError(error)) {
+          return true;
+        }
+      }
+    } else {
+      recordSendTrace(`${reason}:runtime-missing-client`);
+    }
+
+    recordSendTrace(`${reason}:runtime-recovery-start`);
+    setEngineReady(false);
+    setSseConnected(false);
+    setBusy(true);
+    setBusyLabel("status.connecting");
+    setBusyStartedAt(Date.now());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    try {
+      const started = await workspaceStore.ensureEngineForWorkspace();
+      if (!started || !client()) {
+        recordSendTrace(`${reason}:runtime-recovery-not-started`, {
+          started,
+          hasClient: Boolean(client()),
+        });
+        setBusy(false);
+        setBusyLabel(null);
+        setBusyStartedAt(null);
+        return false;
+      }
+      recordSendTrace(`${reason}:runtime-recovery-ok`, {
+        hasClient: Boolean(client()),
+      });
+      return true;
+    } catch (error) {
+      recordSendTrace(`${reason}:runtime-recovery-error`, {
+        message: messageFromUnknownError(error),
+      });
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
+      return false;
+    }
+  }
 
   const [showThinking, setShowThinking] = createSignal(false);
   const [hideTitlebar, setHideTitlebar] = createSignal(false);
@@ -3275,6 +3405,7 @@ export default function App() {
     denAuthRevision();
     const auth = readDenAuth();
     return {
+      denApiBase: auth?.denApiBase?.trim() || undefined,
       denToken: auth?.token?.trim() || undefined,
       denOrgId: auth?.orgId?.trim() || undefined,
       denUserId: auth?.user?.id?.trim() || undefined,
@@ -6240,9 +6371,9 @@ export default function App() {
       setNotionSkillInstalled(false);
       setTryNotionPromptVisible(false);
 
-      return { ok: true, message: "Reset app config defaults. Restart Veslo if any stale settings remain." };
+      return { ok: true, message: t("settings.reset_config_defaults_success", currentLocale()) };
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to reset app config defaults.";
+      const message = error instanceof Error ? error.message : t("settings.reset_config_defaults_failed", currentLocale());
       return { ok: false, message };
     }
   };
@@ -7199,7 +7330,7 @@ export default function App() {
       return;
     }
 
-    const matchingQuickConnect = MCP_QUICK_CONNECT.find((candidate) => {
+    const matchingQuickConnect = localizedMcpQuickConnect().find((candidate) => {
       const candidateSlug = candidate.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
       return candidateSlug === entry.name || candidate.name === entry.name;
     });
@@ -7420,6 +7551,12 @@ export default function App() {
     }
 
     await ensureManagedAiBootstrapReady();
+    if (!(await ensureLocalRuntimeReachableForSend("createSessionAndOpen"))) {
+      recordSendTrace("createSessionAndOpen:blocked-runtime-unreachable");
+      setError("Local runtime is not ready yet.");
+      return undefined;
+    }
+
     const c = client();
     if (!c) {
       recordSendTrace("createSessionAndOpen:blocked-no-client");
@@ -9413,6 +9550,7 @@ export default function App() {
       saveSkillInstance,
       deleteSkillInstance,
       removeSkillInstance,
+      batchRemoveSkillInstances,
       restoreSkillInstance,
       copySkillInstanceToGlobal,
       copySkillInstanceToWorkspace,
@@ -9429,7 +9567,7 @@ export default function App() {
       activePluginGuide: activePluginGuide(),
       setActivePluginGuide,
       isPluginInstalled: isPluginInstalledByName,
-      suggestedPlugins: SUGGESTED_PLUGINS,
+      suggestedPlugins: localizedSuggestedPlugins(),
       addPlugin,
       removePlugin,
       createSessionAndOpen,
@@ -9525,7 +9663,7 @@ export default function App() {
       mcpConnectingName: mcpConnectingName(),
       selectedMcp: selectedMcp(),
       setSelectedMcp,
-      quickConnect: MCP_QUICK_CONNECT,
+      quickConnect: localizedMcpQuickConnect(),
       hubMcpCards: hubMcpCards(),
       hubMcpStatus: hubMcpStatus(),
       refreshHubMcp: () => refreshHubMcp().catch(e => reportError(e, "skills.refreshHubMcp")),
@@ -10161,11 +10299,11 @@ export default function App() {
                 setEditRemoteWorkspaceId(null);
                 setEditRemoteWorkspaceError(null);
               } else {
-                setEditRemoteWorkspaceError(error() || "Connection failed. Check the URL and token.");
+                setEditRemoteWorkspaceError(error() || t("config.connection_failed_check_url_token", currentLocale()));
                 setError(null);
               }
             } catch (e) {
-              const message = e instanceof Error ? e.message : "Connection failed";
+              const message = e instanceof Error ? e.message : t("config.connection_failed", currentLocale());
               setEditRemoteWorkspaceError(message);
               setError(null);
             }

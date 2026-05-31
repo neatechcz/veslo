@@ -8,6 +8,7 @@ import {
   resolveConnectedUserLabel,
   getVesloStatusMeta,
 } from "./sidebar-status-controls.model";
+import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 
 type SidebarStatusControlsProps = {
   clientConnected: boolean;
@@ -117,8 +118,8 @@ export default function SidebarStatusControls(props: SidebarStatusControlsProps)
           type="button"
           class="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-gray-6 bg-gray-1 text-gray-10 transition-colors hover:bg-gray-2 hover:text-gray-11"
           onClick={props.onOpenSettings}
-          title="Settings"
-          aria-label="Settings"
+          title={__vesloT("dashboard.settings", __vesloCurrentLocale())}
+          aria-label={__vesloT("dashboard.settings", __vesloCurrentLocale())}
         >
           <Settings size={14} />
         </button>
@@ -126,10 +127,11 @@ export default function SidebarStatusControls(props: SidebarStatusControlsProps)
         <div class="relative" ref={(el) => (statusControlRef = el)}>
           <button
             type="button"
+            data-testid="sidebar-connection-status-button"
             class="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-gray-6 bg-gray-1 transition-colors hover:bg-gray-2"
             onClick={toggleStatusDetail}
-            title="Connection status"
-            aria-label="Connection status"
+            title={__vesloT("ui.literal.connection_status_1edemn", __vesloCurrentLocale())}
+            aria-label={__vesloT("ui.literal.connection_status_1edemn", __vesloCurrentLocale())}
           >
             <span class={`h-2 w-2 rounded-full ${unifiedStatusMeta().dot}`} />
           </button>
@@ -140,20 +142,21 @@ export default function SidebarStatusControls(props: SidebarStatusControlsProps)
               class="absolute bottom-full left-0 mb-2 z-[120] w-64 rounded-xl border border-gray-6 bg-gray-2 shadow-xl p-3 space-y-2"
             >
               <div class="text-[11px] font-medium text-gray-11 uppercase tracking-wider">
-                Service status
-              </div>
+                {__vesloT("ui.literal.service_status_1bu4g6", __vesloCurrentLocale())}</div>
               <div class="space-y-1.5">
                 <div class="flex items-center gap-1.5 text-xs text-gray-10">
                   <User size={12} class="text-gray-9" />
-                  <span>Logged in</span>
+                  <span>{__vesloT("ui.literal.logged_in_hfeve2", __vesloCurrentLocale())}</span>
                   <span class="ml-auto max-w-[12.5rem] truncate text-right text-gray-11" title={authenticatedUserLabel()}>
                     {authenticatedUserLabel()}
                   </span>
                 </div>
                 <div class="flex items-center gap-1.5 text-xs text-gray-10">
                   <Server size={12} class="text-gray-9" />
-                  <span>Server</span>
-                  <span class={`ml-auto ${vesloStatusMeta().text}`}>{vesloStatusMeta().label}</span>
+                  <span>{__vesloT("skills.stat_server", __vesloCurrentLocale())}</span>
+                  <span data-testid="sidebar-veslo-server-status" class={`ml-auto ${vesloStatusMeta().text}`}>
+                    {vesloStatusMeta().label}
+                  </span>
                 </div>
               </div>
             </div>
@@ -181,7 +184,7 @@ export default function SidebarStatusControls(props: SidebarStatusControlsProps)
               class="absolute bottom-full left-0 mb-2 z-[120] w-64 max-w-[calc(100vw-2rem)] rounded-xl border border-gray-6 bg-gray-2 shadow-xl p-2"
             >
               <div class="px-2 py-2">
-                <div class="text-[11px] font-medium uppercase tracking-wider text-gray-9">Account</div>
+                <div class="text-[11px] font-medium uppercase tracking-wider text-gray-9">{__vesloT("ui.literal.account_oyp43g", __vesloCurrentLocale())}</div>
                 <div class="mt-1 truncate text-xs text-gray-12" title={authenticatedUserLabel()}>
                   {authenticatedUserLabel()}
                 </div>
@@ -194,7 +197,7 @@ export default function SidebarStatusControls(props: SidebarStatusControlsProps)
                   onClick={handleLogoutClick}
                 >
                   <LogOut size={13} class="shrink-0" />
-                  <span>Logout</span>
+                  <span>{__vesloT("ui.literal.logout_11l94w", __vesloCurrentLocale())}</span>
                 </button>
               </Show>
               <Show when={props.onSignIn && !isLoggedIn()}>
@@ -205,7 +208,7 @@ export default function SidebarStatusControls(props: SidebarStatusControlsProps)
                   onClick={handleSignInClick}
                 >
                   <LogIn size={13} class="shrink-0" />
-                  <span>Sign in</span>
+                  <span>{__vesloT("mcp.oauth", __vesloCurrentLocale())}</span>
                 </button>
               </Show>
             </div>
