@@ -175,6 +175,8 @@ export default {
   "session.capabilities_scope_workspace": "Workspace",
   "session.capabilities_scope_global": "Global",
   "session.artifact_family_files": "Files",
+  "session.artifact_files_modified": "Modified",
+  "session.artifact_files_opened": "Opened",
   "session.artifact_family_skills": "Skills",
   "session.artifact_family_mcp": "MCP",
   "session.artifact_family_soul": "Soul",

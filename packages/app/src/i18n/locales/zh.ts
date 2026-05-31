@@ -172,6 +172,8 @@ export default {
   "session.capabilities_scope_workspace": "工作区",
   "session.capabilities_scope_global": "全局",
   "session.artifact_family_files": "文件",
+  "session.artifact_files_modified": "已修改",
+  "session.artifact_files_opened": "已打开",
   "session.artifact_family_skills": "技能",
   "session.artifact_family_mcp": "MCP",
   "session.artifact_family_soul": "Soul",
