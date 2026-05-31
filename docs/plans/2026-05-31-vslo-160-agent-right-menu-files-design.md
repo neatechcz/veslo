@@ -1,7 +1,7 @@
 # VSLO-160 Agent Right Menu Files Design
 
-**Date:** 2026-05-31  
-**Status:** Approved  
+**Date:** 2026-05-31
+**Status:** Approved
 **Issue:** VSLO-160
 
 ## Goal

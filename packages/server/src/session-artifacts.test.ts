@@ -18,7 +18,7 @@ type FixturePart =
       server?: string;
       title?: string;
       text?: string;
-      state?: { input?: Record<string, unknown> };
+      state?: { input?: Record<string, unknown>; output?: string };
     };
 
 type FixtureMessage = {
@@ -185,6 +185,52 @@ describe("deriveLatestRunArtifacts", () => {
       ["file_output", "src/app.ts"],
       ["file_output", "packages/server/src/server.ts"],
     ]);
+  });
+
+  test("derives apply_patch file outputs from patch input headers", () => {
+    const artifacts = deriveLatestRunArtifacts(
+      session(
+        userMessage("msg_1", "Patch the requested files."),
+        assistantMessage(
+          "msg_2",
+          toolPart("apply_patch", {
+            state: {
+              input: {
+                patch: [
+                  "*** Begin Patch",
+                  "*** Update File: src/patched.ts",
+                  "@@",
+                  "-export const value = 1;",
+                  "+export const value = 2;",
+                  "*** End Patch",
+                ].join("\n"),
+              },
+            },
+          }),
+          toolPart("apply_patch", {
+            state: {
+              input: {
+                patch: [
+                  "*** Begin Patch",
+                  "*** Update File: src/old-name.ts",
+                  "*** Move to: src/new-name.ts",
+                  "@@",
+                  "-export const name = 'old';",
+                  "+export const name = 'new';",
+                  "*** End Patch",
+                ].join("\n"),
+              },
+            },
+          }),
+        ),
+      ),
+    );
+
+    expect(files(artifacts).map((artifact) => [artifact.kind, artifact.path])).toEqual([
+      ["file_output", "src/patched.ts"],
+      ["file_output", "src/new-name.ts"],
+    ]);
+    expect(files(artifacts).some((artifact) => artifact.path === "src/old-name.ts")).toBe(false);
   });
 
   test("derives skill_used artifacts from explicit skill tool usage", () => {

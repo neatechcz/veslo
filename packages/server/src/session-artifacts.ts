@@ -364,9 +364,12 @@ function resolveSoulKinds(part: SessionArtifactPart, state: ToolStateLike, toolN
 
 function resolveFileOutputPaths(part: SessionArtifactPart, state: ToolStateLike, toolName: string): string[] {
   const direct = collectPathCandidates(part, state);
-  if (direct.length > 0) return direct;
-  if (toolName !== "apply_patch") return [];
-  return extractApplyPatchPaths(state.output);
+  if (toolName !== "apply_patch") return direct;
+  return uniqueStrings([
+    ...direct,
+    ...extractApplyPatchHeaderPaths(readUnknown(state.input, "patch")),
+    ...extractApplyPatchSummaryPaths(state.output),
+  ]);
 }
 
 function resolveFileOpenedPaths(part: SessionArtifactPart, state: ToolStateLike): string[] {
@@ -414,7 +417,41 @@ function collectAttachmentPaths(state: ToolStateLike): string[] {
   );
 }
 
-function extractApplyPatchPaths(output: unknown): string[] {
+function extractApplyPatchHeaderPaths(patch: unknown): string[] {
+  if (typeof patch !== "string" || !patch.trim()) return [];
+  const paths = new Set<string>();
+  let pendingMoveSource: string | null = null;
+
+  for (const line of patch.split(/\r?\n/)) {
+    const headerMatch = line.match(/^\*\*\* (Add|Update|Delete) File:\s+(.+)$/);
+    if (headerMatch) {
+      const action = headerMatch[1];
+      const path = headerMatch[2]?.trim();
+      if (path) {
+        paths.add(path);
+        pendingMoveSource = action === "Update" ? path : null;
+      }
+      continue;
+    }
+
+    const moveMatch = line.match(/^\*\*\* Move to:\s+(.+)$/);
+    if (moveMatch) {
+      const path = moveMatch[1]?.trim();
+      if (path) {
+        if (pendingMoveSource) paths.delete(pendingMoveSource);
+        paths.add(path);
+      }
+      pendingMoveSource = null;
+      continue;
+    }
+
+    if (/^\*\*\* /.test(line)) pendingMoveSource = null;
+  }
+
+  return Array.from(paths);
+}
+
+function extractApplyPatchSummaryPaths(output: unknown): string[] {
   if (typeof output !== "string" || !output.trim()) return [];
   const matches = output.matchAll(/(?:^|\n)\s*[MADR]\s+([^\n]+)/g);
   const paths: string[] = [];

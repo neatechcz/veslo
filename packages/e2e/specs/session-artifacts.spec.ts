@@ -141,7 +141,7 @@ function seedSessionArtifactSession(): string {
     { id: messageId("004-tool-glob-noise"), role: "assistant" as const, created: now + 4 },
     { id: messageId("005-tool-list-noise"), role: "assistant" as const, created: now + 5 },
     { id: messageId("006-tool-read-changed"), role: "assistant" as const, created: now + 6 },
-    { id: messageId("007-tool-edit-changed"), role: "assistant" as const, created: now + 7 },
+    { id: messageId("007-tool-patch-changed"), role: "assistant" as const, created: now + 7 },
     { id: messageId("008-tool-skill"), role: "assistant" as const, created: now + 8 },
     { id: messageId("009-tool-read-skill"), role: "assistant" as const, created: now + 9 },
     { id: messageId("010-final"), role: "assistant" as const, created: now + 10 },
@@ -225,12 +225,24 @@ function seedSessionArtifactSession(): string {
       },
     },
     {
-      id: `${messageId("007-tool-edit-changed")}-part`,
-      messageId: messageId("007-tool-edit-changed"),
+      id: `${messageId("007-tool-patch-changed")}-part`,
+      messageId: messageId("007-tool-patch-changed"),
       part: {
         type: "tool",
-        tool: "edit",
-        state: { status: "completed", input: { filePath: "src/changed.ts" } },
+        tool: "apply_patch",
+        state: {
+          status: "completed",
+          input: {
+            patch: [
+              "*** Begin Patch",
+              "*** Update File: src/changed.ts",
+              "@@",
+              "-export const changed = false;",
+              "+export const changed = true;",
+              "*** End Patch",
+            ].join("\n"),
+          },
+        },
       },
     },
     {
