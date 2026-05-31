@@ -483,6 +483,27 @@ test("unmanaged user-global removal uses the Veslo server recoverable delete rou
   });
 });
 
+test("unmanaged user-global removal normalizes directory paths before recoverable delete", async () => {
+  await withRegistryMutationStore(async ({ store, calls }) => {
+    const result = await store.removeSkillInstance({
+      name: "global-helper",
+      path: "/Users/example/.opencode/skills/global-helper",
+      scope: "user-global",
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(calls.deleteGlobalSkills, [
+      {
+        name: "global-helper",
+        options: {
+          path: "/Users/example/.opencode/skills/global-helper/SKILL.md",
+          reason: "user-requested",
+        },
+      },
+    ]);
+  });
+});
+
 test("unmanaged workspace removal uses target workspace Veslo server recoverable delete route", async () => {
   await withRegistryMutationStore(async ({ store, calls }) => {
     const result = await store.removeSkillInstance({

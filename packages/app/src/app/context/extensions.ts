@@ -1793,7 +1793,8 @@ export function createExtensionsStore(options: {
   async function removeUserGlobalFilesystemSkillInstance(target: ManagedSkillMutationTarget): Promise<SkillSaveResult> {
     const name = target.name.trim();
     const path = target.path.trim();
-    if (!name || !path) return managedSkillMutationUnavailable(translate("skills.failed_load_skill"));
+    const entryFilePath = skillEntryFilePathForMutationPath(path);
+    if (!name || !entryFilePath) return managedSkillMutationUnavailable(translate("skills.failed_load_skill"));
 
     const vesloClient = registryMutationClient("deleteGlobalSkill");
     if (!vesloClient) {
@@ -1805,10 +1806,10 @@ export function createExtensionsStore(options: {
     setSkillsStatus(null);
 
     try {
-      await vesloClient.deleteGlobalSkill(name, { path, reason: "user-requested" });
+      await vesloClient.deleteGlobalSkill(name, { path: entryFilePath, reason: "user-requested" });
       const message = translate("skills.uninstalled");
       setSkillsStatus(message);
-      await refreshAfterLocalRecoverableSkillMutation(target, "removed");
+      await refreshAfterLocalRecoverableSkillMutation({ ...target, name, path: entryFilePath }, "removed");
       return { ok: true, message };
     } catch (e) {
       const message = e instanceof Error ? e.message : translate("skills.unknown_error");
