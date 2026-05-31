@@ -351,6 +351,191 @@ test("registry installation removal calls the Veslo server client with Den conte
   });
 });
 
+test("managed global materializations are removed through registry installation metadata", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      const calls = {
+        deleteInstallations: [] as Array<{ installationId: string; input: unknown }>,
+        deleteGlobalSkills: [] as Array<{ name: string; options?: unknown }>,
+      };
+      const vesloServerClient = {
+        async listHubSkills() {
+          return { items: [] };
+        },
+        async getGlobalSkillMaterializationStatus() {
+          return {
+            scope: "personal-global",
+            status: "current",
+            registryConfigured: true,
+            rootDir: "/Users/example/.opencode/skills/veslo-managed",
+            materializedSkills: [
+              {
+                installationId: "install_global_helper",
+                skillId: "skill_global_helper",
+                name: "global-helper",
+                versionId: "version_1",
+                packageSha256: "a".repeat(64),
+                target: "personal-global",
+                skillDir: "/Users/example/.opencode/skills/veslo-managed/global-helper",
+              },
+            ],
+          };
+        },
+        async deleteRegistrySkillInstallation(installationId: string, input?: unknown) {
+          calls.deleteInstallations.push({ installationId, input });
+          return { installation: { installationId, skillId: "skill_global_helper", versionId: "version_1", enabled: false } };
+        },
+        async deleteGlobalSkill(name: string, options?: unknown) {
+          calls.deleteGlobalSkills.push({ name, options });
+          return { ok: true, name, path: `/Users/example/.opencode/skills/${name}/SKILL.md` };
+        },
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [workspaces[0]],
+        vesloServerClient: () => vesloServerClient as never,
+        vesloServerStatus: () => "connected",
+        vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+        vesloServerWorkspaceId: () => "ws-alpha",
+        listLocalSkillsScoped: async (_projectDir, scope) =>
+          scope === "global"
+            ? [
+                {
+                  name: "global-helper",
+                  path: "/Users/example/.opencode/skills/veslo-managed/global-helper",
+                },
+              ]
+            : [],
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      await store.refreshSkillInventory({ force: true });
+
+      const item = store.skillInventory().find((candidate) => candidate.name === "global-helper");
+      assert.ok(item?.globalInstance);
+      assert.equal(item.globalInstance.registry?.installationId, "install_global_helper");
+
+      const result = await store.removeSkillInstance(skillMutationTargetFromInstance(item.globalInstance));
+
+      assert.equal(result.ok, true);
+      assert.deepEqual(calls.deleteInstallations, [
+        {
+          installationId: "install_global_helper",
+          input: {
+            denToken: "den-token",
+            denOrgId: "org-1",
+            denUserId: "user-1",
+          },
+        },
+      ]);
+      assert.equal(calls.deleteGlobalSkills.length, 0);
+
+      dispose();
+    });
+  });
+});
+
+test("managed rollout materializations are removed through rollout policy metadata", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      const calls = {
+        updatePolicies: [] as Array<{ policyId: string; input: unknown }>,
+        deleteGlobalSkills: [] as Array<{ name: string; options?: unknown }>,
+      };
+      const vesloServerClient = {
+        async listHubSkills() {
+          return { items: [] };
+        },
+        async getGlobalSkillMaterializationStatus() {
+          return {
+            scope: "personal-global",
+            status: "current",
+            registryConfigured: true,
+            rootDir: "/Users/example/.opencode/skills/veslo-managed",
+            materializedSkills: [
+              {
+                installationId: "rollout:policy_org_helper",
+                skillId: "skill_org_helper",
+                name: "org-helper",
+                versionId: "version_1",
+                packageSha256: "b".repeat(64),
+                target: "personal-global",
+                skillDir: "/Users/example/.opencode/skills/veslo-managed/org-helper",
+              },
+            ],
+          };
+        },
+        async updateRegistrySkillRolloutPolicy(policyId: string, input: unknown) {
+          calls.updatePolicies.push({ policyId, input });
+          return { policy: { id: policyId, enabled: Boolean((input as { enabled?: boolean }).enabled) } };
+        },
+        async deleteGlobalSkill(name: string, options?: unknown) {
+          calls.deleteGlobalSkills.push({ name, options });
+          return { ok: true, name, path: `/Users/example/.opencode/skills/${name}/SKILL.md` };
+        },
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [workspaces[0]],
+        vesloServerClient: () => vesloServerClient as never,
+        vesloServerStatus: () => "connected",
+        vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+        vesloServerWorkspaceId: () => "ws-alpha",
+        listLocalSkillsScoped: async (_projectDir, scope) =>
+          scope === "global"
+            ? [
+                {
+                  name: "org-helper",
+                  path: "/Users/example/.opencode/skills/veslo-managed/org-helper",
+                },
+              ]
+            : [],
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      await store.refreshSkillInventory({ force: true });
+
+      const item = store.skillInventory().find((candidate) => candidate.name === "org-helper");
+      assert.ok(item?.globalInstance);
+      assert.equal(item.globalInstance.registry?.policyId, "policy_org_helper");
+
+      const result = await store.removeSkillInstance(skillMutationTargetFromInstance(item.globalInstance));
+
+      assert.equal(result.ok, true);
+      assert.deepEqual(calls.updatePolicies, [
+        {
+          policyId: "policy_org_helper",
+          input: {
+            enabled: false,
+            denToken: "den-token",
+            denOrgId: "org-1",
+            denUserId: "user-1",
+          },
+        },
+      ]);
+      assert.equal(calls.deleteGlobalSkills.length, 0);
+
+      dispose();
+    });
+  });
+});
+
 test("registry installation restore calls the Veslo server client with restore and Den context", async () => {
   await withRegistryMutationStore(async ({ store, calls }) => {
     const result = await store.restoreSkillInstance({

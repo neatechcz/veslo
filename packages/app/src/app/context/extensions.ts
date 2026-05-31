@@ -493,6 +493,123 @@ export function createExtensionsStore(options: {
       }
     };
 
+    type SkillMaterializationEntryLike = {
+      installationId?: string;
+      skillId?: string;
+      name?: string;
+      versionId?: string;
+      packageSha256?: string;
+      target?: string;
+      skillDir?: string;
+    };
+
+    type SkillMaterializationStatusLike = {
+      rootDir?: string;
+      materializedSkills?: SkillMaterializationEntryLike[];
+    };
+
+    type SkillMaterializationClient = VesloServerClient & {
+      getGlobalSkillMaterializationStatus?: () => Promise<SkillMaterializationStatusLike>;
+      getWorkspaceSkillMaterializationStatus?: (workspaceId: string) => Promise<SkillMaterializationStatusLike>;
+    };
+
+    const getSkillMaterializationClient = (): SkillMaterializationClient | null => {
+      const vesloClient = options.vesloServerClient();
+      if (options.vesloServerStatus() === "connected" && vesloClient) {
+        return vesloClient as SkillMaterializationClient;
+      }
+      return null;
+    };
+
+    const materializedSkillEntryPath = (value: string | undefined) => {
+      const normalized = String(value ?? "").trim().replace(/\\/g, "/");
+      if (!normalized) return "";
+      if (/[\/](?:SKILL\.md|AGENTS\.md)$/i.test(normalized)) return normalized;
+      return `${normalized}/SKILL.md`;
+    };
+
+    const registryMetadataFromMaterializationEntry = (
+      entry: SkillMaterializationEntryLike,
+    ): SkillInventorySkillInput["registry"] | null => {
+      const installationId = entry.installationId?.trim() ?? "";
+      if (!installationId) return null;
+      const common = {
+        ...(entry.skillId?.trim() ? { skillId: entry.skillId.trim() } : {}),
+        ...(entry.versionId?.trim() ? { versionId: entry.versionId.trim() } : {}),
+        ...(entry.packageSha256?.trim() ? { packageSha256: entry.packageSha256.trim() } : {}),
+      };
+      if (installationId.startsWith("rollout:")) {
+        const policyId = installationId.slice("rollout:".length).trim();
+        return policyId ? { ...common, policyId } : null;
+      }
+      return {
+        ...common,
+        installationId,
+        source: entry.target === "workspace" ? "workspace" : "personal",
+        removalPolicy: "user_removable",
+      };
+    };
+
+    const materializationRegistryIndex = (
+      status: SkillMaterializationStatusLike | null | undefined,
+    ): Map<string, NonNullable<SkillInventorySkillInput["registry"]>> => {
+      const index = new Map<string, NonNullable<SkillInventorySkillInput["registry"]>>();
+      const rootDir = status?.rootDir?.trim() ?? "";
+      for (const entry of status?.materializedSkills ?? []) {
+        const name = entry.name?.trim() ?? "";
+        const skillDir = entry.skillDir?.trim() || (rootDir && name ? `${rootDir}/${name}` : "");
+        const path = materializedSkillEntryPath(skillDir);
+        const registry = registryMetadataFromMaterializationEntry(entry);
+        if (path && registry) index.set(path, registry);
+      }
+      return index;
+    };
+
+    const loadGlobalMaterializationRegistryIndex = async () => {
+      const client = getSkillMaterializationClient();
+      if (typeof client?.getGlobalSkillMaterializationStatus !== "function") {
+        return new Map<string, NonNullable<SkillInventorySkillInput["registry"]>>();
+      }
+      try {
+        return materializationRegistryIndex(await client.getGlobalSkillMaterializationStatus());
+      } catch {
+        return new Map<string, NonNullable<SkillInventorySkillInput["registry"]>>();
+      }
+    };
+
+    const loadWorkspaceMaterializationRegistryIndex = async (workspaceId: string) => {
+      const client = getSkillMaterializationClient();
+      if (!workspaceId || typeof client?.getWorkspaceSkillMaterializationStatus !== "function") {
+        return new Map<string, NonNullable<SkillInventorySkillInput["registry"]>>();
+      }
+      try {
+        return materializationRegistryIndex(await client.getWorkspaceSkillMaterializationStatus(workspaceId));
+      } catch {
+        return new Map<string, NonNullable<SkillInventorySkillInput["registry"]>>();
+      }
+    };
+
+    const attachMaterializationRegistryMetadata = (
+      skills: SkillInventorySkillInput[],
+      registryByPath: Map<string, NonNullable<SkillInventorySkillInput["registry"]>>,
+    ): SkillInventorySkillInput[] => {
+      if (!registryByPath.size) return skills;
+      return skills.map((skill) => {
+        const path = materializedSkillEntryPath(skill.path);
+        const registry = registryByPath.get(path);
+        if (!registry) return skill;
+        return {
+          ...skill,
+          path,
+          registry: {
+            ...registry,
+            ...skill.registry,
+          },
+          writable: false,
+        };
+      });
+    };
+
     const getSkillInventoryContextKey = (
       workspacesForContext: ReturnType<typeof getLocalSkillInventoryWorkspaces>,
       hubContextKey: string,
@@ -592,14 +709,20 @@ export function createExtensionsStore(options: {
 
           const listScopedSkills = options.listLocalSkillsScoped ?? listLocalSkillsScopedCommand;
           const removalClient = getSkillRemovalClient();
-          const globalSkills = await listScopedSkills("", "global");
+          const globalSkills = attachMaterializationRegistryMetadata(
+            await listScopedSkills("", "global"),
+            await loadGlobalMaterializationRegistryIndex(),
+          );
           globalSkills.push(...(await listRemovedSkillInputs(removalClient, { scope: "user-global" })));
           if (refreshSkillInventoryAborted) return "aborted";
 
           const workspaceSkillsByWorkspaceId: BuildSkillInventoryInput["workspaceSkillsByWorkspaceId"] = {};
 
           for (const workspace of localWorkspaces) {
-            const skills = await listScopedSkills(workspace.path, "workspace");
+            const skills = attachMaterializationRegistryMetadata(
+              await listScopedSkills(workspace.path, "workspace"),
+              await loadWorkspaceMaterializationRegistryIndex(workspace.id),
+            );
             skills.push(...(await listRemovedSkillInputs(removalClient, {
               scope: "workspace",
               workspaceId: workspace.id,
@@ -1892,6 +2015,10 @@ export function createExtensionsStore(options: {
       } finally {
         options.setBusy(false);
       }
+    }
+
+    if (isManagedSkillMutationPath(target.path)) {
+      return managedSkillMutationUnavailable(translate("skills.registry_action_pending"));
     }
 
     if (target.scope === "workspace") {
