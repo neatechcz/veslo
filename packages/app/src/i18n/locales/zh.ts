@@ -202,6 +202,8 @@ export default {
   "session.send_now_label": "立即发送",
   "session.send_now_title": "立即引导代理",
   "session.edit_message_title": "编辑消息",
+  "session.pending_submit_sending": "正在发送...",
+  "session.pending_submit_failed": "发送失败",
   "session.permission_required": "需要权限",
   "session.permission_description": "OpenCode 正在请求权限以继续。",
   "session.permission_label": "权限",

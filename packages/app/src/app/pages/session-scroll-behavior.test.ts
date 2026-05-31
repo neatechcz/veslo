@@ -93,6 +93,20 @@ test("session renders a temporary submitted user message until the real transcri
   );
 });
 
+test("session passes pending submit status to the rendered message list", () => {
+  assert.match(
+    source,
+    /const pendingMessageStateById = createMemo<Record<string, PendingMessageState>>\(\(\) => \{\s*const submitted = optimisticSubmittedDraft\(\);[\s\S]*const state: PendingMessageState[\s\S]*return \{\s*\[submitted\.id\]: state,\s*\};\s*\}\);/s,
+    "session view should expose pending submit state keyed by the optimistic message id",
+  );
+
+  assert.match(
+    source,
+    /<MessageList[\s\S]*pendingMessageStateById=\{pendingMessageStateById\(\)\}[\s\S]*editableUserMessage=\{editableUserMessage\(\)\}/,
+    "message list should receive pending submit state alongside editability",
+  );
+});
+
 test("failed pending submitted messages become editable only through explicit action", () => {
   assert.match(
     source,

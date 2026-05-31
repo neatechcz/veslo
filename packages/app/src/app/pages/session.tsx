@@ -97,7 +97,7 @@ import { currentLocale, t } from "../../i18n";
 import browserSetupTemplate from "../data/commands/browser-setup.md?raw";
 import soulSetupTemplate from "../data/commands/give-me-a-soul.md?raw";
 
-import MessageList from "../components/session/message-list";
+import MessageList, { type PendingMessageState } from "../components/session/message-list";
 import Composer from "../components/session/composer";
 import type { ComposerSendOptions } from "../components/session/composer";
 import QueuedMessageList from "../components/session/queued-message-list";
@@ -1000,6 +1000,18 @@ export default function SessionView(props: SessionViewProps) {
     if (!submitted) return null;
     if (submitted.sessionKey !== currentSessionQueueKey()) return null;
     return pendingSubmittedDraftToMessage(submitted, props.activeWorkspaceRoot);
+  });
+
+  const pendingMessageStateById = createMemo<Record<string, PendingMessageState>>(() => {
+    const submitted = optimisticSubmittedDraft();
+    if (!submitted) return {};
+    if (submitted.sessionKey !== currentSessionQueueKey()) return {};
+    const state: PendingMessageState = submitted.error
+      ? { state: submitted.state, error: submitted.error }
+      : { state: submitted.state };
+    return {
+      [submitted.id]: state,
+    };
   });
 
   const searchActive = createMemo(() => searchOpen() && searchQuery().trim().length > 0);
@@ -4703,6 +4715,7 @@ export default function SessionView(props: SessionViewProps) {
             activeSearchMessageId={activeSearchHit()?.messageId ?? null}
             searchHighlightQuery={searchQueryDebounced().trim()}
             scrollElement={() => chatContainerEl}
+            pendingMessageStateById={pendingMessageStateById()}
             editableUserMessage={editableUserMessage()}
             onEditUserMessage={handleEditUserMessage}
             setScrollToMessageById={(handler) => {
