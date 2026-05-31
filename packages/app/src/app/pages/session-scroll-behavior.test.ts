@@ -54,8 +54,8 @@ test("session renders a temporary submitted user message until the real transcri
 
   assert.match(
     source,
-    /if \(accepted\) \{[\s\S]*setOptimisticSubmittedDraft\(null\);[\s\S]*\}/,
-    "accepted handoff should clear the optimistic placeholder so the server transcript owns display",
+    /if \(accepted && showOptimisticSubmit\) \{\s*clearMatchingPendingSubmit\(\);\s*\}/,
+    "accepted handoff should clear only the matching optimistic placeholder so the server transcript owns display",
   );
 });
 
@@ -70,6 +70,43 @@ test("failed pending submitted messages become editable only through explicit ac
     source,
     /handleEditUserMessage[\s\S]*setOptimisticSubmittedDraft\(null\);[\s\S]*props\.setComposerDraft\(pendingEditable\.draft\);/,
     "explicit edit should clear the pending timeline message and load that exact draft into Composer",
+  );
+});
+
+test("accepted handoff does not clear unrelated failed pending submitted messages", () => {
+  const handlerStart = source.indexOf("const sendPromptImmediate = async (");
+  const acceptedBranchStart = source.indexOf(
+    "if (options.expectedSessionKey && currentSessionQueueKey() !== options.expectedSessionKey)",
+    handlerStart,
+  );
+  const acceptedBranchEnd = source.indexOf("setStickToBottom(true);", acceptedBranchStart);
+  const acceptedBranch = source.slice(acceptedBranchStart, acceptedBranchEnd);
+
+  assert.ok(acceptedBranchStart > handlerStart, "send handler should guard accepted stale-navigation handoff");
+  assert.ok(acceptedBranchEnd > acceptedBranchStart, "accepted handoff branch should lead into run UI update");
+
+  assert.match(
+    source,
+    /const clearMatchingPendingSubmit = \(\) => \{\s*setOptimisticSubmittedDraft\(\(current\) =>\s*current\?\.id === pendingSubmitId && current\.sessionKey === sessionKey \? null : current,\s*\);\s*\};/,
+    "session should clear pending submit state only when it matches this send",
+  );
+
+  assert.match(
+    acceptedBranch,
+    /if \(showOptimisticSubmit\) \{\s*clearMatchingPendingSubmit\(\);\s*\}\s*return accepted;/,
+    "accepted stale-navigation handoff should only clear this send's pending submit",
+  );
+
+  assert.match(
+    acceptedBranch,
+    /if \(accepted && showOptimisticSubmit\) \{\s*clearMatchingPendingSubmit\(\);\s*\}/,
+    "accepted normal handoff should only clear optimistic sends",
+  );
+
+  assert.doesNotMatch(
+    acceptedBranch,
+    /setOptimisticSubmittedDraft\(null\);/,
+    "accepted replacement or queue-drain sends must not clear an unrelated failed pending submit",
   );
 });
 
