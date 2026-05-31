@@ -128,6 +128,54 @@ test("queued drain uses a stable session key and guards stale navigation", () =>
   );
 });
 
+test("pending draft queues remap to the real session key without replacing existing real queues", () => {
+  assert.match(
+    source,
+    /remapPendingSubmittedSession/,
+    "session view should remap optimistic pending submissions when the real session id materializes",
+  );
+
+  assert.match(
+    source,
+    /const remapPendingQueueToSession = \(pendingKey: string, sessionId: string\) => \{[\s\S]*const sessionKey = sessionQueueKeyForSessionId\(sessionId\);[\s\S]*const pendingQueue = current\[pendingKey\] \?\? \[\];[\s\S]*const existingRealQueue = current\[sessionKey\] \?\? \[\];[\s\S]*\[sessionKey\]: \[\.\.\.existingRealQueue, \.\.\.pendingQueue\],[\s\S]*\};/s,
+    "pending queue remap should append pending drafts behind any existing real-session queue",
+  );
+
+  assert.match(
+    source,
+    /setQueuePausedAfterStopBySessionKey\(\(current\) => \{[\s\S]*const pendingPaused = Boolean\(current\[pendingKey\]\);[\s\S]*return \{[\s\S]*\[sessionKey\]: pendingPaused \|\| Boolean\(current\[sessionKey\]\),[\s\S]*\};[\s\S]*\}\);/s,
+    "pending queue pause state should remap to the real-session key without clearing an existing real pause",
+  );
+});
+
+test("accepted first pending submit captures and remaps the pending queue key", () => {
+  assert.match(
+    source,
+    /const \[pendingQueueKeyAwaitingSessionId, setPendingQueueKeyAwaitingSessionId\] = createSignal<string \| null>\(null\);/,
+    "session view should retain a captured pending queue key until a real session id is available",
+  );
+
+  assert.match(
+    source,
+    /const pendingSessionKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey\(sessionKey\) \? sessionKey : null;[\s\S]*const accepted = await \(options\.replaceMessageId[\s\S]*if \(accepted && pendingSessionKeyBeforeHandoff\) \{\s*setPendingQueueKeyAwaitingSessionId\(pendingSessionKeyBeforeHandoff\);[\s\S]*const materializedSessionId = props\.selectedSessionId\?\.trim\(\);[\s\S]*if \(materializedSessionId\) \{[\s\S]*remapPendingQueueToSession\(pendingSessionKeyBeforeHandoff, materializedSessionId\);[\s\S]*setPendingQueueKeyAwaitingSessionId\(null\);[\s\S]*\}/s,
+    "sendPromptImmediate should capture the pending queue key before await and remap it after an accepted first submit",
+  );
+
+  assert.match(
+    source,
+    /createEffect\(\s*on\(\s*\(\) => props\.selectedSessionId,[\s\S]*const pendingKey = previousSessionId \? null : pendingQueueKeyAwaitingSessionId\(\) \?\? pendingSessionQueueKey\(\);[\s\S]*if \(pendingKey\) \{[\s\S]*remapPendingQueueToSession\(pendingKey, sessionId\);[\s\S]*setPendingQueueKeyAwaitingSessionId\(null\);[\s\S]*\}/s,
+    "session view should also remap pending queues when the selected session id arrives in a later reactive update",
+  );
+});
+
+test("accepted pending queue drain removes the sent item from the materialized session queue", () => {
+  assert.match(
+    source,
+    /if \(accepted\) \{\s*const acceptedSessionKey = !sessionIdForQueueKey\(sessionKey\) && props\.selectedSessionId\?\.trim\(\)\s*\? sessionQueueKeyForSessionId\(props\.selectedSessionId\)\s*: sessionKey;\s*updateQueueForSessionKey\(acceptedSessionKey, \(queue\) => removeQueuedDraft\(queue, item\.id\)\);\s*return;\s*\}/s,
+    "accepted pending queue drains should remove the sent item from the real-session queue after remap",
+  );
+});
+
 test("app prompt send accepts an explicit target session without freezing model bootstrap", () => {
   const sendStart = appSource.indexOf("async function sendPrompt");
   const targetCapture = appSource.indexOf("let sessionID = options.targetSessionId?.trim() || selectedSessionId();", sendStart);

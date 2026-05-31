@@ -5,6 +5,26 @@ import test from "node:test";
 const source = readFileSync(new URL("./session.tsx", import.meta.url), "utf8");
 const appStyles = readFileSync(new URL("../index.css", import.meta.url), "utf8");
 
+test("session view accepts active pending draft key for pending queue identity", () => {
+  assert.match(
+    source,
+    /activePendingDraftKey: string \| null;/,
+    "SessionView props should include the active pending draft key",
+  );
+
+  assert.match(
+    source,
+    /`pending-draft:\$\{props\.activePendingDraftKey\}`/,
+    "pending sessions should key queues by pending draft identity when available",
+  );
+
+  assert.match(
+    source,
+    /return `pending-workspace:\$\{props\.activeWorkspaceId \|\| "default"\}`;/,
+    "pending queue identity should fall back to workspace only when no pending draft key exists",
+  );
+});
+
 test("session send flow starts optimistic run UI before prompt handoff resolves", () => {
   const handlerStart = source.indexOf("const sendPromptImmediate = async (");
   const optimisticSet = source.indexOf("createPendingSubmittedDraft({", handlerStart);
