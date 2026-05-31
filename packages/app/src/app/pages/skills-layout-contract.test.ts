@@ -100,6 +100,14 @@ test("workspace-specific rows come from workspaceInstances without expanding glo
   assert.doesNotMatch(source, /props\.workspaces\.map\([\s\S]{0,500}globalInstance/);
 });
 
+test("default inventory view does not render global-backed skills again as workspace rows", () => {
+  assert.match(source, /item\.globalInstance\s*\?\s*\[\]\s*:\s*item\.workspaceInstances\.map/);
+});
+
+test("bulk selection only targets visible inventory rows", () => {
+  assert.match(source, /const currentInventorySelectionIds = createMemo\(\(\) =>\s*inventoryTableRows\(\)\.map\(\(row\) => skillInventoryInstanceId\(row\.instance\)\)\s*\)/);
+});
+
 test("local skill import refreshes the app-wide installed inventory", () => {
   assert.match(source, /const importLocalSkillAndRefreshInventory = \(\) =>\s*Promise\.resolve\(props\.importLocalSkill\(\)\)\s*\.finally\(\(\) => props\.refreshSkillInventory\(\{ force: true \}\)\)/);
   assert.match(source, /id: "import-local"[\s\S]*onClick: importLocalSkillAndRefreshInventory/);
@@ -327,7 +335,7 @@ test("workspace install target picker is an elevated cancellable modal with cons
 
 test("skills page wires registry inventory filters, table mode, bulk selection, and detail drawer", () => {
   assert.match(source, /filterSkillInventoryItems/);
-  assert.match(source, /selectAllSkillInventoryIdsForCurrentFilter/);
+  assert.match(source, /currentInventorySelectionIds/);
   assert.match(source, /data-testid="skills-inventory-table"/);
   assert.match(source, /data-testid="skills-bulk-toolbar"/);
   assert.doesNotMatch(source, /translate\("skills\.bulk_adopt"\)/);

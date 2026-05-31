@@ -43,7 +43,6 @@ import { skillMutationTargetFromInstance } from "../lib/skill-inventory";
 import type { SkillMutationTarget } from "../lib/skill-inventory";
 import {
   filterSkillInventoryItems,
-  selectAllSkillInventoryIdsForCurrentFilter,
   skillInventoryInstanceId,
   type SkillInventoryFilters,
   type SkillInventorySelectionId,
@@ -389,10 +388,12 @@ export default function SkillsView(props: SkillsViewProps) {
   const workspaceInventoryRows = createMemo(() =>
     filteredInstalledInventoryItems()
       .flatMap((item) =>
-        item.workspaceInstances.map((instance) => ({
-          item,
-          instance,
-        }))
+        item.globalInstance
+          ? []
+          : item.workspaceInstances.map((instance) => ({
+              item,
+              instance,
+            }))
       )
   );
 
@@ -413,7 +414,7 @@ export default function SkillsView(props: SkillsViewProps) {
   ]);
 
   const currentInventorySelectionIds = createMemo(() =>
-    selectAllSkillInventoryIdsForCurrentFilter(installedInventoryItems(), installedInventoryFilterState())
+    inventoryTableRows().map((row) => skillInventoryInstanceId(row.instance))
   );
   const selectedInventoryIdSet = createMemo(() => new Set(selectedInventoryIds()));
   const selectedInventoryCount = createMemo(() =>
