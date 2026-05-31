@@ -31,7 +31,7 @@ test("session send flow starts optimistic run UI before prompt handoff resolves"
   const startRun = source.indexOf("startRun();", optimisticSet);
   const sendCall = source.indexOf("props.sendPromptAsync(draft, targetSessionId ? { targetSessionId } : undefined)", startRun);
   const rejectedBranch = source.indexOf("if (!accepted) {", sendCall);
-  const markFailed = source.indexOf("markPendingSubmittedFailed(", rejectedBranch);
+  const markFailed = source.indexOf("markMatchingPendingSubmitFailed(errorMessage);", rejectedBranch);
   const resetRun = source.indexOf("resetRunState();", rejectedBranch);
   const failedBranchEnd = source.indexOf("setToastMessage(props.error ?? tr(\"session.connect_server_to_attach\"));", rejectedBranch);
   const failedBranch = source.slice(rejectedBranch, failedBranchEnd);
@@ -48,6 +48,20 @@ test("session send flow starts optimistic run UI before prompt handoff resolves"
     failedBranch,
     /props\.setComposerDraft\(draft\);/,
     "failed handoff should not restore the draft into Composer automatically",
+  );
+});
+
+test("failed handoff marks pending submitted message by immutable submit id", () => {
+  assert.match(
+    source,
+    /const markMatchingPendingSubmitFailed = \(errorMessage: string\) => \{\s*setOptimisticSubmittedDraft\(\(current\) =>\s*current\?\.id === pendingSubmitId \? markPendingSubmittedFailed\(current, errorMessage\) : current,\s*\);\s*\};/,
+    "failed handoff should mark the optimistic submitted draft by id so remapped session keys still fail visibly",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /markPendingSubmittedFailed[\s\S]{0,120}current\.sessionKey === sessionKey|current\.sessionKey === sessionKey[\s\S]{0,120}markPendingSubmittedFailed/,
+    "failed handoff should not require the original session key after a pending submit remap",
   );
 });
 

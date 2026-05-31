@@ -2451,7 +2451,7 @@ export default function SessionView(props: SessionViewProps) {
         setEditingTranscriptMessageId(null);
 
         if (!sessionId) return;
-        const pendingKey = previousSessionId ? null : pendingQueueKeyAwaitingSessionId() ?? pendingSessionQueueKey();
+        const pendingKey = previousSessionId ? null : pendingQueueKeyAwaitingSessionId();
         if (pendingKey) {
           remapPendingQueueToSession(pendingKey, sessionId);
           setPendingQueueKeyAwaitingSessionId(null);
@@ -3637,9 +3637,17 @@ export default function SessionView(props: SessionViewProps) {
     const showOptimisticSubmit = !options.replaceMessageId && options.reason !== "queue-drain";
     const sessionKey = expectedSessionKey ?? currentSessionQueueKey();
     const pendingSessionKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey(sessionKey) ? sessionKey : null;
+    if (pendingSessionKeyBeforeHandoff) {
+      setPendingQueueKeyAwaitingSessionId(pendingSessionKeyBeforeHandoff);
+    }
     const pendingSubmitId = `optimistic-submit:${Date.now()}:${Math.random().toString(36).slice(2)}`;
     const clearMatchingPendingSubmit = () => {
       setOptimisticSubmittedDraft((current) => (current?.id === pendingSubmitId ? null : current));
+    };
+    const markMatchingPendingSubmitFailed = (errorMessage: string) => {
+      setOptimisticSubmittedDraft((current) =>
+        current?.id === pendingSubmitId ? markPendingSubmittedFailed(current, errorMessage) : current,
+      );
     };
     if (showOptimisticSubmit) {
       setOptimisticSubmittedDraft(
@@ -3671,18 +3679,16 @@ export default function SessionView(props: SessionViewProps) {
       if (!accepted) {
         if (showOptimisticSubmit) {
           const errorMessage = props.error ?? tr("session.connect_server_to_attach");
-          setOptimisticSubmittedDraft((current) =>
-            current?.id === pendingSubmitId && current.sessionKey === sessionKey
-              ? markPendingSubmittedFailed(current, errorMessage)
-              : current,
-          );
+          markMatchingPendingSubmitFailed(errorMessage);
           resetRunState();
+        }
+        if (pendingSessionKeyBeforeHandoff) {
+          setPendingQueueKeyAwaitingSessionId(null);
         }
         setToastMessage(props.error ?? tr("session.connect_server_to_attach"));
         return false;
       }
       if (accepted && pendingSessionKeyBeforeHandoff) {
-        setPendingQueueKeyAwaitingSessionId(pendingSessionKeyBeforeHandoff);
         const materializedSessionId = props.selectedSessionId?.trim();
         if (materializedSessionId) {
           remapPendingQueueToSession(pendingSessionKeyBeforeHandoff, materializedSessionId);
@@ -3705,12 +3711,11 @@ export default function SessionView(props: SessionViewProps) {
     } catch (e) {
       if (showOptimisticSubmit) {
         const errorMessage = props.error ?? (e instanceof Error ? e.message : tr("session.connect_server_to_attach"));
-        setOptimisticSubmittedDraft((current) =>
-          current?.id === pendingSubmitId && current.sessionKey === sessionKey
-            ? markPendingSubmittedFailed(current, errorMessage)
-            : current,
-        );
+        markMatchingPendingSubmitFailed(errorMessage);
         resetRunState();
+      }
+      if (pendingSessionKeyBeforeHandoff) {
+        setPendingQueueKeyAwaitingSessionId(null);
       }
       reportError(e, "session.sendPrompt");
       setToastMessage(props.error ?? tr("session.connect_server_to_attach"));

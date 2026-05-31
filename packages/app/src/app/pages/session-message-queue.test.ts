@@ -157,14 +157,20 @@ test("accepted first pending submit captures and remaps the pending queue key", 
 
   assert.match(
     source,
-    /const pendingSessionKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey\(sessionKey\) \? sessionKey : null;[\s\S]*const accepted = await \(options\.replaceMessageId[\s\S]*if \(accepted && pendingSessionKeyBeforeHandoff\) \{\s*setPendingQueueKeyAwaitingSessionId\(pendingSessionKeyBeforeHandoff\);[\s\S]*const materializedSessionId = props\.selectedSessionId\?\.trim\(\);[\s\S]*if \(materializedSessionId\) \{[\s\S]*remapPendingQueueToSession\(pendingSessionKeyBeforeHandoff, materializedSessionId\);[\s\S]*setPendingQueueKeyAwaitingSessionId\(null\);[\s\S]*\}/s,
+    /const pendingSessionKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey\(sessionKey\) \? sessionKey : null;\s*if \(pendingSessionKeyBeforeHandoff\) \{\s*setPendingQueueKeyAwaitingSessionId\(pendingSessionKeyBeforeHandoff\);\s*\}[\s\S]*const accepted = await \(options\.replaceMessageId[\s\S]*if \(accepted && pendingSessionKeyBeforeHandoff\) \{[\s\S]*const materializedSessionId = props\.selectedSessionId\?\.trim\(\);[\s\S]*if \(materializedSessionId\) \{[\s\S]*remapPendingQueueToSession\(pendingSessionKeyBeforeHandoff, materializedSessionId\);[\s\S]*setPendingQueueKeyAwaitingSessionId\(null\);[\s\S]*\}/s,
     "sendPromptImmediate should capture the pending queue key before await and remap it after an accepted first submit",
   );
 
   assert.match(
     source,
-    /createEffect\(\s*on\(\s*\(\) => props\.selectedSessionId,[\s\S]*const pendingKey = previousSessionId \? null : pendingQueueKeyAwaitingSessionId\(\) \?\? pendingSessionQueueKey\(\);[\s\S]*if \(pendingKey\) \{[\s\S]*remapPendingQueueToSession\(pendingKey, sessionId\);[\s\S]*setPendingQueueKeyAwaitingSessionId\(null\);[\s\S]*\}/s,
+    /createEffect\(\s*on\(\s*\(\) => props\.selectedSessionId,[\s\S]*const pendingKey = previousSessionId \? null : pendingQueueKeyAwaitingSessionId\(\);[\s\S]*if \(pendingKey\) \{[\s\S]*remapPendingQueueToSession\(pendingKey, sessionId\);[\s\S]*setPendingQueueKeyAwaitingSessionId\(null\);[\s\S]*\}/s,
     "session view should also remap pending queues when the selected session id arrives in a later reactive update",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /pendingQueueKeyAwaitingSessionId\(\) \?\? pendingSessionQueueKey\(\)/,
+    "delayed session materialization should not fall back to the current active pending draft key",
   );
 });
 
