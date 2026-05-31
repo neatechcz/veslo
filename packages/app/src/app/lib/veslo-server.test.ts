@@ -1067,6 +1067,35 @@ test("skill removal helpers call local server routes with host and client auth",
         { status: 200, headers: { "content-type": "application/json" } },
       );
     }
+    if (url.pathname === "/skills/batch-remove") {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          succeeded: 1,
+          failed: 1,
+          results: [
+            {
+              id: "workspace",
+              index: 0,
+              ok: true,
+              name: "workspace-helper",
+              scope: "workspace",
+              path: "/workspace/.opencode/skills/workspace-helper",
+              removalId: "removal_workspace",
+            },
+            {
+              id: "missing",
+              index: 1,
+              ok: false,
+              code: "skill_not_found",
+              message: "Skill not found: missing-helper",
+              status: 404,
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
     return new Response(
       JSON.stringify({
         ok: true,
@@ -1090,6 +1119,24 @@ test("skill removal helpers call local server routes with host and client auth",
       path: "/Users/example/.config/opencode/skills/legacy-helper/SKILL.md",
       reason: "cleanup",
     });
+    const batch = await client.batchRemoveSkills({
+      items: [
+        {
+          id: "workspace",
+          scope: "workspace",
+          workspaceId: "workspace-a",
+          name: "workspace-helper",
+          path: "/workspace/.opencode/skills/workspace-helper/SKILL.md",
+          reason: "cleanup",
+        },
+        {
+          id: "missing",
+          scope: "workspace",
+          workspaceId: "workspace-a",
+          name: "missing-helper",
+        },
+      ],
+    });
     const removals = await client.listSkillRemovals({
       scope: "user-global",
       workspaceId: "workspace-a",
@@ -1099,11 +1146,37 @@ test("skill removal helpers call local server routes with host and client auth",
 
     assert.equal(removals.items[0]?.id, "removal_1");
     assert.equal(removals.items[0]?.path, "/Users/example/.config/opencode/skills/legacy-helper/SKILL.md");
+    assert.equal(batch.ok, false);
+    assert.equal(batch.succeeded, 1);
+    assert.equal(batch.failed, 1);
+    assert.equal(batch.results[1]?.ok, false);
     assert.deepEqual(calls.map((call) => ({ url: call.url, method: call.method, body: call.body })), [
       {
         url: "https://veslo.example/skills/user-global/legacy-helper?path=%2FUsers%2Fexample%2F.config%2Fopencode%2Fskills%2Flegacy-helper%2FSKILL.md&reason=cleanup",
         method: "DELETE",
         body: null,
+      },
+      {
+        url: "https://veslo.example/skills/batch-remove",
+        method: "POST",
+        body: JSON.stringify({
+          items: [
+            {
+              id: "workspace",
+              scope: "workspace",
+              workspaceId: "workspace-a",
+              name: "workspace-helper",
+              path: "/workspace/.opencode/skills/workspace-helper/SKILL.md",
+              reason: "cleanup",
+            },
+            {
+              id: "missing",
+              scope: "workspace",
+              workspaceId: "workspace-a",
+              name: "missing-helper",
+            },
+          ],
+        }),
       },
       {
         url: "https://veslo.example/skill-removals?scope=user-global&workspaceId=workspace-a&includeRestored=true",

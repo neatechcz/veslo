@@ -167,6 +167,15 @@ call these routes instead of deleting skill directories directly:
   Requires collaborator client auth. Removes a user skill by name and optional
   concrete path. Returns `{ ok, name, path, removalId, reloadRequired, trigger }`
   and emits skill reload events for configured workspaces.
+- `POST /skills/batch-remove`
+  Requires host auth. Accepts `{ items }` where each item is the same concrete
+  target shape the app uses for skill inventory actions: `{ id?, name, scope,
+  workspaceId?, path?, reason?, registry? }`. Workspace and user-skill items
+  perform recoverable local removals; `registry.installationId` deletes that
+  registry installation; `registry.policyId` disables that rollout policy.
+  The route does not roll back partial failures. It returns
+  `{ ok, succeeded, failed, results }`, with each result carrying either
+  removal metadata or `{ ok: false, code, message, status }`.
 - `GET /skill-removals`
   Requires collaborator-or-host access. Lists recoverable removals. Query
   parameters: `scope=workspace|user-global`, `workspaceId`, and

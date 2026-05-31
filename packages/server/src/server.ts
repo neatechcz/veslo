@@ -114,6 +114,7 @@ const FILE_SESSION_CATALOG_DEFAULT_LIMIT = 2000;
 const FILE_SESSION_CATALOG_MAX_LIMIT = 10000;
 const SESSION_TRANSCRIPT_DEFAULT_LIMIT = 140;
 const SESSION_TRANSCRIPT_MAX_LIMIT = 200;
+const SKILL_BATCH_REMOVE_MAX_ITEMS = 50;
 const AI_GATEWAY_DEFAULT_PORT = 4034;
 const AI_GATEWAY_UPSTREAM_RESPONSE_SNIPPET_MAX = 1000;
 export const REDACTED_SECRET_VALUE = "[REDACTED]";
@@ -2236,6 +2237,128 @@ const parseSkillRemovalScope = (value: string | undefined): SkillRemovalScope | 
   if (!value) return undefined;
   if (value === "workspace" || value === "user-global") return value;
   throw new ApiError(400, "invalid_scope", "Skill removal scope must be workspace or user-global");
+};
+
+type SkillBatchRemoveScope = "workspace" | "user-global" | "organization";
+
+type SkillBatchRemoveItem = {
+  id?: string;
+  index: number;
+  name: string;
+  scope: SkillBatchRemoveScope;
+  path?: string;
+  workspaceId?: string;
+  reason?: string;
+  registry?: {
+    installationId?: string;
+    policyId?: string;
+  };
+};
+
+type SkillBatchRemoveSuccess = {
+  id?: string;
+  index: number;
+  ok: true;
+  name: string;
+  scope: SkillBatchRemoveScope;
+  path?: string;
+  removalId?: string;
+  reloadRequired?: boolean;
+  registry?: {
+    installationId?: string;
+    policyId?: string;
+  };
+  trigger?: ReloadTrigger & { scope?: SkillBatchRemoveScope };
+};
+
+type SkillBatchRemoveFailure = {
+  id?: string;
+  index: number;
+  ok: false;
+  name?: string;
+  scope?: string;
+  code: string;
+  message: string;
+  status: number;
+  details?: unknown;
+};
+
+const optionalRecordString = (record: Record<string, unknown>, field: string): string | undefined => {
+  const value = record[field];
+  if (typeof value !== "string") return undefined;
+  return value.trim() || undefined;
+};
+
+const parseSkillBatchRemoveItem = (value: unknown, index: number): SkillBatchRemoveItem => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ApiError(400, "invalid_skill_batch_item", "Skill batch item must be an object");
+  }
+  const record = value as Record<string, unknown>;
+  const name = optionalRecordString(record, "name");
+  if (!name) {
+    throw new ApiError(400, "invalid_skill_batch_item", "Skill batch item name is required");
+  }
+  const rawScope = optionalRecordString(record, "scope");
+  if (rawScope !== "workspace" && rawScope !== "user-global" && rawScope !== "organization") {
+    throw new ApiError(
+      400,
+      "invalid_skill_batch_item",
+      "Skill batch item scope must be workspace, user-global, or organization",
+    );
+  }
+  const registryValue = record.registry;
+  let registry: SkillBatchRemoveItem["registry"];
+  if (registryValue !== undefined) {
+    if (!registryValue || typeof registryValue !== "object" || Array.isArray(registryValue)) {
+      throw new ApiError(400, "invalid_skill_batch_item", "Skill batch item registry must be an object");
+    }
+    const registryRecord = registryValue as Record<string, unknown>;
+    const installationId = optionalRecordString(registryRecord, "installationId");
+    const policyId = optionalRecordString(registryRecord, "policyId");
+    if (installationId && policyId) {
+      throw new ApiError(
+        400,
+        "invalid_skill_batch_item",
+        "Skill batch item must not include both registry.installationId and registry.policyId",
+      );
+    }
+    if (installationId || policyId) registry = { installationId, policyId };
+  }
+
+  return {
+    index,
+    name,
+    scope: rawScope,
+    ...(optionalRecordString(record, "id") ? { id: optionalRecordString(record, "id") } : {}),
+    ...(optionalRecordString(record, "path") ? { path: optionalRecordString(record, "path") } : {}),
+    ...(optionalRecordString(record, "workspaceId") ? { workspaceId: optionalRecordString(record, "workspaceId") } : {}),
+    ...(optionalRecordString(record, "reason") ? { reason: optionalRecordString(record, "reason") } : {}),
+    ...(registry ? { registry } : {}),
+  };
+};
+
+const skillBatchRemoveFailure = (
+  value: unknown,
+  index: number,
+  error: unknown,
+): SkillBatchRemoveFailure => {
+  const record = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const apiError = error instanceof ApiError
+    ? error
+    : new ApiError(500, "internal_error", "Unexpected server error");
+  return {
+    ...(optionalRecordString(record, "id") ? { id: optionalRecordString(record, "id") } : {}),
+    index,
+    ok: false,
+    ...(optionalRecordString(record, "name") ? { name: optionalRecordString(record, "name") } : {}),
+    ...(optionalRecordString(record, "scope") ? { scope: optionalRecordString(record, "scope") } : {}),
+    code: apiError.code,
+    message: apiError.message,
+    status: apiError.status,
+    ...(apiError.details !== undefined ? { details: apiError.details } : {}),
+  };
 };
 
 type SkillRemovalListItem = {
@@ -4804,6 +4927,173 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       ...result,
       reloadRequired: true,
       trigger: { ...reloadTrigger, scope: record.scope },
+    });
+  });
+
+  const removeSkillBatchItem = async (
+    ctx: RequestContext,
+    item: SkillBatchRemoveItem,
+  ): Promise<SkillBatchRemoveSuccess> => {
+    const installationId = item.registry?.installationId?.trim() ?? "";
+    if (installationId) {
+      requireSkillRegistryBaseUrl(config);
+      await deleteRegistrySkillInstallation({
+        ...skillRegistryRequestInput(ctx),
+        installationId,
+      });
+      const trigger = { type: "skill" as const, name: item.name, action: "removed" as const };
+      return {
+        id: item.id,
+        index: item.index,
+        ok: true,
+        name: item.name,
+        scope: item.scope,
+        registry: { installationId },
+        reloadRequired: true,
+        trigger: { ...trigger, scope: item.scope },
+      };
+    }
+
+    const policyId = item.registry?.policyId?.trim() ?? "";
+    if (policyId) {
+      requireSkillRegistryBaseUrl(config);
+      await updateRegistrySkillRolloutPolicy({
+        ...skillRegistryRequestInput(ctx),
+        policyId,
+        enabled: false,
+      });
+      const trigger = { type: "skill" as const, name: item.name, action: "removed" as const };
+      return {
+        id: item.id,
+        index: item.index,
+        ok: true,
+        name: item.name,
+        scope: item.scope,
+        registry: { policyId },
+        reloadRequired: true,
+        trigger: { ...trigger, scope: item.scope },
+      };
+    }
+
+    if (item.scope === "workspace") {
+      const workspaceId = item.workspaceId?.trim() ?? "";
+      if (!workspaceId) {
+        throw new ApiError(400, "invalid_skill_batch_item", "Workspace skill batch item requires workspaceId");
+      }
+      const workspace = await resolveWorkspace(config, workspaceId);
+      const result = item.path
+        ? await deleteSkillAtPathRecoverable(workspace.path, { name: item.name, path: item.path }, {
+            dataDir: serverDataDir,
+            workspaceId: workspace.id,
+            actor: ctx.actor ?? { type: "host" },
+            reason: item.reason,
+          })
+        : await deleteSkillRecoverable(workspace.path, item.name, {
+            dataDir: serverDataDir,
+            workspaceId: workspace.id,
+            actor: ctx.actor ?? { type: "host" },
+            reason: item.reason,
+          });
+      await recordAudit(workspace.path, {
+        id: shortId(),
+        workspaceId: workspace.id,
+        actor: ctx.actor ?? { type: "host" },
+        action: "skills.delete",
+        target: result.path,
+        summary: `Deleted skill ${item.name}`,
+        timestamp: Date.now(),
+      });
+      const reloadTrigger = {
+        type: "skill" as const,
+        name: item.name,
+        action: "removed" as const,
+        path: result.path,
+      };
+      emitReloadEvent(ctx.reloadEvents, workspace, "skills", reloadTrigger);
+      return {
+        id: item.id,
+        index: item.index,
+        ok: true,
+        name: item.name,
+        scope: item.scope,
+        path: result.path,
+        removalId: result.removalId,
+        reloadRequired: true,
+        trigger: { ...reloadTrigger, scope: item.scope },
+      };
+    }
+
+    if (item.scope === "user-global") {
+      const result = await deleteGlobalSkillRecoverable(
+        item.name,
+        { path: item.path },
+        {
+          dataDir: serverDataDir,
+          actor: ctx.actor ?? { type: "host" },
+          reason: item.reason,
+        },
+      );
+      const reloadTrigger = {
+        type: "skill" as const,
+        name: item.name,
+        action: "removed" as const,
+        path: result.path,
+      };
+      for (const configuredWorkspace of config.workspaces) {
+        try {
+          const resolved = await resolveWorkspace(config, configuredWorkspace.id);
+          emitReloadEvent(ctx.reloadEvents, resolved, "skills", reloadTrigger);
+        } catch {
+          // Skip workspaces that are no longer authorized for this server.
+        }
+      }
+      return {
+        id: item.id,
+        index: item.index,
+        ok: true,
+        name: item.name,
+        scope: item.scope,
+        path: result.path,
+        removalId: result.removalId,
+        reloadRequired: true,
+        trigger: { ...reloadTrigger, scope: item.scope },
+      };
+    }
+
+    throw new ApiError(400, "invalid_skill_batch_item", "Organization skills require registry mutation metadata");
+  };
+
+  addRoute(routes, "POST", "/skills/batch-remove", "host", async (ctx) => {
+    ensureWritable(config);
+    const body = await readJsonBody(ctx.request);
+    if (!Array.isArray(body.items)) {
+      throw new ApiError(400, "invalid_skill_batch_request", "Field items must be an array");
+    }
+    if (body.items.length > SKILL_BATCH_REMOVE_MAX_ITEMS) {
+      throw new ApiError(
+        400,
+        "invalid_skill_batch_request",
+        `Field items must contain at most ${SKILL_BATCH_REMOVE_MAX_ITEMS} entries`,
+      );
+    }
+
+    const results: Array<SkillBatchRemoveSuccess | SkillBatchRemoveFailure> = [];
+    for (const [index, rawItem] of body.items.entries()) {
+      try {
+        const item = parseSkillBatchRemoveItem(rawItem, index);
+        results.push(await removeSkillBatchItem(ctx, item));
+      } catch (error) {
+        results.push(skillBatchRemoveFailure(rawItem, index, error));
+      }
+    }
+
+    const succeeded = results.filter((result) => result.ok).length;
+    const failed = results.length - succeeded;
+    return jsonResponse({
+      ok: failed === 0,
+      succeeded,
+      failed,
+      results,
     });
   });
 

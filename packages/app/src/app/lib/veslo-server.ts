@@ -150,6 +150,60 @@ export type VesloSkillRemovalMutationResult = {
   trigger?: VesloReloadTrigger & { scope?: VesloSkillRemovalScope };
 };
 
+export type VesloSkillBatchRemoveScope = VesloSkillRemovalScope | "organization";
+
+export type VesloSkillBatchRemoveItem = {
+  id?: string;
+  name: string;
+  scope: VesloSkillBatchRemoveScope;
+  path?: string;
+  workspaceId?: string;
+  reason?: string;
+  registry?: {
+    installationId?: string;
+    policyId?: string;
+  };
+};
+
+export type VesloSkillBatchRemoveRequest = {
+  items: VesloSkillBatchRemoveItem[];
+};
+
+export type VesloSkillBatchRemoveSuccess = {
+  id?: string;
+  index: number;
+  ok: true;
+  name: string;
+  scope: VesloSkillBatchRemoveScope;
+  path?: string;
+  removalId?: string;
+  reloadRequired?: boolean;
+  registry?: {
+    installationId?: string;
+    policyId?: string;
+  };
+  trigger?: VesloReloadTrigger & { scope?: VesloSkillBatchRemoveScope };
+};
+
+export type VesloSkillBatchRemoveFailure = {
+  id?: string;
+  index: number;
+  ok: false;
+  name?: string;
+  scope?: string;
+  code: string;
+  message: string;
+  status: number;
+  details?: unknown;
+};
+
+export type VesloSkillBatchRemoveResponse = {
+  ok: boolean;
+  succeeded: number;
+  failed: number;
+  results: Array<VesloSkillBatchRemoveSuccess | VesloSkillBatchRemoveFailure>;
+};
+
 export type VesloHubSkillItem = {
   name: string;
   description: string;
@@ -2836,6 +2890,12 @@ export function createVesloServerClient(options: {
         baseUrl,
         buildDeleteGlobalSkillPath(name, options),
         { token, hostToken, method: "DELETE" },
+      ),
+    batchRemoveSkills: (input: VesloSkillBatchRemoveRequest) =>
+      requestJson<VesloSkillBatchRemoveResponse>(
+        baseUrl,
+        "/skills/batch-remove",
+        { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.skillRegistryMutation },
       ),
     listSkillRemovals: (params?: {
       scope?: VesloSkillRemovalScope;
