@@ -36,6 +36,9 @@ type SessionArtifactPart = {
   type?: string;
   tool?: string;
   path?: string;
+  file?: string;
+  filePath?: string;
+  target?: string;
   files?: string[];
   sourceName?: string;
   server?: string;
@@ -74,7 +77,7 @@ type DeriveArtifactsOptions = {
 };
 
 const FILE_OUTPUT_TOOLS = new Set(["write", "edit", "apply_patch"]);
-const FILE_DISCOVERY_TOOLS = new Set(["read", "search", "list", "glob"]);
+const FILE_OPEN_TOOLS = new Set(["read"]);
 const FILE_ARTIFACT_RANK: Record<SessionArtifactKind, number> = {
   file_discovered: 1,
   file_output: 2,
@@ -264,8 +267,8 @@ function classifyToolPart(input: {
     }
   }
 
-  if (FILE_DISCOVERY_TOOLS.has(input.toolName)) {
-    for (const path of resolveFileDiscoveredPaths(input.part, state, input.toolName)) {
+  if (FILE_OPEN_TOOLS.has(input.toolName)) {
+    for (const path of resolveFileOpenedPaths(input.part, state)) {
       const normalizedPath = normalizeArtifactPath(path);
       if (!normalizedPath || shouldDropGenericFileArtifact(normalizedPath) || isSemanticSoulPath(normalizedPath)) continue;
       items.push(
@@ -366,20 +369,11 @@ function resolveFileOutputPaths(part: SessionArtifactPart, state: ToolStateLike,
   return extractApplyPatchPaths(state.output);
 }
 
-function resolveFileDiscoveredPaths(part: SessionArtifactPart, state: ToolStateLike, toolName: string): string[] {
-  const explicitFiles = uniqueStrings([
-    ...collectStringArray(part.files),
-    ...collectStringArray(readUnknown(part.metadata, "files")),
-    ...collectStringArray(readUnknown(state.input, "files")),
-    ...collectStringArray(readUnknown(state.input, "paths")),
+function resolveFileOpenedPaths(part: SessionArtifactPart, state: ToolStateLike): string[] {
+  return uniqueStrings([
+    ...collectDirectPaths(part, state),
     ...collectAttachmentPaths(state),
   ]);
-
-  if (explicitFiles.length > 0) return explicitFiles;
-  if (toolName === "read") {
-    return collectDirectPaths(part, state);
-  }
-  return [];
 }
 
 function collectPathCandidates(part: SessionArtifactPart, state: ToolStateLike): string[] {
@@ -396,7 +390,13 @@ function collectPathCandidates(part: SessionArtifactPart, state: ToolStateLike):
 function collectDirectPaths(part: SessionArtifactPart, state: ToolStateLike): string[] {
   return uniqueStrings([
     part.path,
+    part.file,
+    part.filePath,
+    part.target,
     readString(part.metadata, "path"),
+    readString(part.metadata, "file"),
+    readString(part.metadata, "filePath"),
+    readString(part.metadata, "target"),
     readString(state.input, "path"),
     readString(state.input, "file"),
     readString(state.input, "filePath"),
