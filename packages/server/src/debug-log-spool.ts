@@ -19,11 +19,13 @@ interface DebugLogSpool {
   ackBatch(batchId: string): Promise<void>;
   currentBytes(): Promise<number>;
   dropOldest(maxCount: number): Promise<number>;
+  dropOldestUntilBelow(targetBytes: number): Promise<{ dropped: number; bytes: number }>;
 }
 
 export function createDebugLogSpool(input: { dir: string; maxBytes: number }): DebugLogSpool {
   const eventDir = join(input.dir, EVENT_DIR_NAME);
   const manifestPath = join(input.dir, MANIFEST_FILE_NAME);
+  let cachedBytes: number | null = null;
 
   async function ensureLayout(): Promise<void> {
     await ensureDir(eventDir);
@@ -39,6 +41,7 @@ export function createDebugLogSpool(input: { dir: string; maxBytes: number }): D
   async function writeManifest(manifest: DebugLogSpoolManifest): Promise<void> {
     await ensureLayout();
     await writeFile(manifestPath, JSON.stringify(manifest), "utf8");
+    cachedBytes = null;
   }
 
   async function listEventFiles(): Promise<string[]> {
@@ -57,15 +60,55 @@ export function createDebugLogSpool(input: { dir: string; maxBytes: number }): D
   }
 
   async function currentSpoolBytes(): Promise<number> {
+    if (cachedBytes !== null) return cachedBytes;
+
     let total = 0;
     for (const fileName of await listEventFiles()) {
-      const info = await stat(join(eventDir, fileName));
-      total += info.size;
+      try {
+        const info = await stat(join(eventDir, fileName));
+        total += info.size;
+      } catch {
+        continue;
+      }
     }
     if (await exists(manifestPath)) {
-      total += (await stat(manifestPath)).size;
+      try {
+        total += (await stat(manifestPath)).size;
+      } catch {
+        // The spool is best-effort; tolerate concurrent test or process cleanup.
+      }
     }
+    cachedBytes = total;
     return total;
+  }
+
+  async function removeEventFiles(fileNames: string[]): Promise<{ removed: number; removedBytes: number }> {
+    let removed = 0;
+    let removedBytes = 0;
+
+    for (const fileName of fileNames) {
+      const path = join(eventDir, fileName);
+      let size = 0;
+      try {
+        size = (await stat(path)).size;
+      } catch {
+        continue;
+      }
+      await rm(path, { force: true });
+      removed += 1;
+      removedBytes += size;
+    }
+
+    if (cachedBytes !== null && removedBytes > 0) {
+      cachedBytes = Math.max(0, cachedBytes - removedBytes);
+    }
+
+    return { removed, removedBytes };
+  }
+
+  async function leasedFileSet(): Promise<Set<string>> {
+    const manifest = await readManifest();
+    return new Set(Object.values(manifest.leases).flatMap((lease) => lease.files));
   }
 
   function pruneExpiredLeases(manifest: DebugLogSpoolManifest, now: number): DebugLogSpoolManifest {
@@ -82,9 +125,6 @@ export function createDebugLogSpool(input: { dir: string; maxBytes: number }): D
       await ensureLayout();
       const serialized = events.map((event) => serializeDebugLogEvent(event));
       const newBytes = serialized.reduce((total, raw) => total + Buffer.byteLength(raw, "utf8"), 0);
-      if ((await currentSpoolBytes()) + newBytes > input.maxBytes) {
-        throw new Error("Debug log spool is full");
-      }
 
       await Promise.all(
         serialized.map((raw, index) => {
@@ -92,6 +132,9 @@ export function createDebugLogSpool(input: { dir: string; maxBytes: number }): D
           return writeFile(join(eventDir, fileName), raw, "utf8");
         }),
       );
+      if (cachedBytes !== null) {
+        cachedBytes += newBytes;
+      }
     },
 
     async nextBatch(limits) {
@@ -159,12 +202,40 @@ export function createDebugLogSpool(input: { dir: string; maxBytes: number }): D
 
     async dropOldest(maxCount) {
       if (maxCount <= 0) return 0;
-      const manifest = await readManifest();
-      const leasedFiles = new Set(Object.values(manifest.leases).flatMap((lease) => lease.files));
+      const leasedFiles = await leasedFileSet();
       const candidates = (await listEventFiles()).filter((fileName) => !leasedFiles.has(fileName));
       const target = candidates.slice(0, maxCount);
-      await Promise.all(target.map((fileName) => rm(join(eventDir, fileName), { force: true })));
-      return target.length;
+      const { removed } = await removeEventFiles(target);
+      return removed;
+    },
+
+    async dropOldestUntilBelow(targetBytes) {
+      const target = Math.max(0, targetBytes);
+      let bytes = await currentSpoolBytes();
+      if (bytes <= target) return { dropped: 0, bytes };
+
+      const leasedFiles = await leasedFileSet();
+      const candidates = (await listEventFiles()).filter((fileName) => !leasedFiles.has(fileName));
+      const selected: string[] = [];
+      let selectedBytes = 0;
+
+      for (const fileName of candidates) {
+        if (bytes - selectedBytes <= target) break;
+        try {
+          const info = await stat(join(eventDir, fileName));
+          selected.push(fileName);
+          selectedBytes += info.size;
+        } catch {
+          selected.push(fileName);
+        }
+      }
+
+      const { removed, removedBytes } = await removeEventFiles(selected);
+      bytes = Math.max(0, bytes - removedBytes);
+      if (cachedBytes !== null) {
+        bytes = cachedBytes;
+      }
+      return { dropped: removed, bytes };
     },
   };
 }
