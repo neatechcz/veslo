@@ -7,6 +7,7 @@ type BuildSkillInstallTargetWorkspacesInput = {
   activeWorkspaceRoot: string;
   activeWorkspaceType: WorkspaceInfo["workspaceType"];
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean;
+  requireLocalFilesystemTarget?: boolean;
 };
 
 const workspaceRootForInstallTarget = (
@@ -23,6 +24,11 @@ const isPrivateSkillInstallTarget = (
   input: Pick<BuildSkillInstallTargetWorkspacesInput, "activeWorkspaceId" | "activeWorkspaceRoot" | "isPrivateWorkspacePath">,
 ) => workspace.workspaceType === "local" && input.isPrivateWorkspacePath(workspaceRootForInstallTarget(workspace, input));
 
+const hasLocalFilesystemInstallTarget = (
+  workspace: WorkspaceInfo,
+  input: Pick<BuildSkillInstallTargetWorkspacesInput, "activeWorkspaceId" | "activeWorkspaceRoot">,
+) => workspace.workspaceType === "local" && Boolean(workspaceRootForInstallTarget(workspace, input));
+
 export function buildSkillInstallTargetWorkspaces(input: BuildSkillInstallTargetWorkspacesInput): WorkspaceInfo[] {
   const activeWorkspace: WorkspaceInfo = {
     id: input.activeWorkspaceId,
@@ -38,6 +44,8 @@ export function buildSkillInstallTargetWorkspaces(input: BuildSkillInstallTarget
   return candidates.filter((workspace) => {
     if (seen.has(workspace.id)) return false;
     seen.add(workspace.id);
-    return !isPrivateSkillInstallTarget(workspace, input);
+    if (isPrivateSkillInstallTarget(workspace, input)) return false;
+    if (input.requireLocalFilesystemTarget && !hasLocalFilesystemInstallTarget(workspace, input)) return false;
+    return true;
   });
 }

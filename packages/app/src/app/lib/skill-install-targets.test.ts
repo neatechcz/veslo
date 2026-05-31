@@ -47,3 +47,22 @@ test("skill install targets do not add the active fallback when the active works
 
   assert.deepEqual(targets.map((target) => target.id), ["regular"]);
 });
+
+test("skill install targets can be restricted to local filesystem workspaces", () => {
+  const targets = buildSkillInstallTargetWorkspaces({
+    activeWorkspaceId: "regular",
+    activeWorkspaceName: "Regular",
+    activeWorkspaceRoot: "/Users/example/work/regular",
+    activeWorkspaceType: "local",
+    isPrivateWorkspacePath: () => false,
+    requireLocalFilesystemTarget: true,
+    workspaces: [
+      workspace({ id: "regular", path: "/Users/example/work/regular" }),
+      workspace({ id: "pathless", path: "" }),
+      workspace({ id: "directory-target", path: "", directory: "/Users/example/work/directory-target" }),
+      workspace({ id: "remote", workspaceType: "remote", path: "" }),
+    ],
+  });
+
+  assert.deepEqual(targets.map((target) => target.id), ["regular", "directory-target"]);
+});

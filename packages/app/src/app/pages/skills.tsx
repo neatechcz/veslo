@@ -718,6 +718,7 @@ export default function SkillsView(props: SkillsViewProps) {
       activeWorkspaceRoot: props.activeWorkspaceRoot,
       activeWorkspaceType: props.isRemoteWorkspace ? "remote" : "local",
       isPrivateWorkspacePath: props.isPrivateWorkspacePath,
+      requireLocalFilesystemTarget: true,
       workspaces: props.workspaces,
     })
   );
