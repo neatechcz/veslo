@@ -146,6 +146,7 @@ export function createWorkspaceStore(options: {
   updateVesloServerSettings: (next: VesloServerSettings) => void;
   preferServerByDefault?: () => boolean;
   vesloServerClient?: () => VesloServerClient | null;
+  ensureLocalVesloServerRunning?: () => Promise<boolean>;
   setOpencodeConnectStatus?: (status: OpencodeConnectStatus | null) => void;
   onEngineStable?: () => void;
   engineRuntime?: () => EngineRuntime;
@@ -581,19 +582,35 @@ export function createWorkspaceStore(options: {
     workspace: WorkspaceInfo,
     context?: { reason?: string },
   ) {
-    const client = options.vesloServerClient?.();
-    if (!client) return true;
-
     const workspaceId = workspace.id?.trim() ?? "";
     if (!workspaceId) return true;
-    const denAuth = readDenAuth();
-    const materializationAuth = {
-      denToken: denAuth?.token?.trim() || undefined,
-      denOrgId: denAuth?.orgId?.trim() || undefined,
-      denUserId: denAuth?.user?.id?.trim() || undefined,
-    };
 
     try {
+      if (isTauriRuntime() && workspace.workspaceType === "local") {
+        const ensured = await options.ensureLocalVesloServerRunning?.();
+        if (ensured === false) {
+          wsDebug("skills:materialization:failed:server-unavailable", {
+            workspaceId,
+            reason: context?.reason ?? null,
+          });
+          updateWorkspaceConnectionState(workspaceId, {
+            status: "error",
+            message: "Veslo server unavailable. Failed to prepare workspace skills.",
+          });
+          return false;
+        }
+      }
+
+      const client = options.vesloServerClient?.();
+      if (!client) return true;
+
+      const denAuth = readDenAuth();
+      const materializationAuth = {
+        denToken: denAuth?.token?.trim() || undefined,
+        denOrgId: denAuth?.orgId?.trim() || undefined,
+        denUserId: denAuth?.user?.id?.trim() || undefined,
+      };
+
       const status = await client.getWorkspaceSkillMaterializationStatus(workspaceId);
       if (!status.registryConfigured) {
         wsDebug("skills:materialization:skip:not-configured", {

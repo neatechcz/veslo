@@ -18,6 +18,21 @@ test("workspace store defines a server-backed skill materialization sync gate", 
   );
 });
 
+test("local materialization sync starts the managed server before using the fallback client", () => {
+  const syncStart = source.indexOf("async function syncWorkspaceSkillMaterializationBeforeRuntime(");
+  assert.notStrictEqual(syncStart, -1, "syncWorkspaceSkillMaterializationBeforeRuntime is missing");
+  const syncEnd = source.indexOf("async function activateWorkspace(", syncStart);
+  assert.notStrictEqual(syncEnd, -1, "activateWorkspace should follow the sync helper");
+  const syncSource = source.slice(syncStart, syncEnd);
+
+  const ensureIdx = syncSource.indexOf("await options.ensureLocalVesloServerRunning?.()");
+  const clientIdx = syncSource.indexOf("const client = options.vesloServerClient?.()");
+
+  assert.notStrictEqual(ensureIdx, -1, "local sync should ensure the managed Veslo server is running");
+  assert.notStrictEqual(clientIdx, -1, "local sync should read the Veslo server client");
+  assert.ok(ensureIdx < clientIdx, "managed server startup must happen before reading the fallback client");
+});
+
 test("local runtime starts are gated behind skill materialization sync", () => {
   const helperCall = "await syncWorkspaceSkillMaterializationBeforeRuntime(workspace,";
   const ensureStart = source.indexOf("async function ensureEngineForWorkspace()");
