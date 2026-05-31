@@ -57,8 +57,11 @@ Current keyboard behavior:
 Submit behavior:
 
 - a submitted draft is rendered immediately as a temporary user message while workspace/session/message handoff is pending
-- the Composer visually clears and locks that submitted draft until the handoff settles
-- if handoff fails before a real message exists, the temporary message is removed and the original draft is restored for correction
+- the Composer clears immediately and remains available for a separate new draft, including while a new session is still being materialized
+- attachment staging, pending-session creation, and message handoff continue in the backend/session layer after the Composer releases the submitted draft
+- if handoff fails before a real message exists, the temporary user message stays in the timeline with failed status instead of being restored into the Composer automatically
+- failed pending submitted messages can be changed only through the explicit edit pencil, which removes that pending timeline message and loads that exact draft into the Composer
+- the Composer is not an automatic rollback buffer for pre-real-message submit failures because the user may already be composing a different message or working in a different pending session
 - once a real message exists, later model or run failures stay in the transcript and use the normal message editing, retry, and resend flows
 
 Main source of truth:

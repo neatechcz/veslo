@@ -91,6 +91,14 @@ const openPendingDraftFromDirectorySelection = () => {
   return fn;
 };
 
+test("app passes active pending draft key into session view props", () => {
+  assert.match(
+    appSource,
+    /activePendingDraftKey: activePendingDraftKey\(\),/,
+    "session props should pass the active pending draft key into SessionView",
+  );
+});
+
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;

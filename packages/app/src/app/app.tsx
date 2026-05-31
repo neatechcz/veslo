@@ -9550,6 +9550,7 @@ export default function App() {
 
   const sessionProps = () => ({
     selectedSessionId: activeSessionId(),
+    activePendingDraftKey: activePendingDraftKey(),
     setView,
     tab: tab(),
     setTab,

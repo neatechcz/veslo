@@ -5,22 +5,72 @@ import test from "node:test";
 const source = readFileSync(new URL("./session.tsx", import.meta.url), "utf8");
 const appStyles = readFileSync(new URL("../index.css", import.meta.url), "utf8");
 
+test("session view accepts active pending draft key for pending queue identity", () => {
+  assert.match(
+    source,
+    /activePendingDraftKey: string \| null;/,
+    "SessionView props should include the active pending draft key",
+  );
+
+  assert.match(
+    source,
+    /`pending-draft:\$\{props\.activePendingDraftKey\}`/,
+    "pending sessions should key queues by pending draft identity when available",
+  );
+
+  assert.match(
+    source,
+    /return `pending-workspace:\$\{props\.activeWorkspaceId \|\| "default"\}`;/,
+    "pending queue identity should fall back to workspace only when no pending draft key exists",
+  );
+});
+
 test("session send flow starts optimistic run UI before prompt handoff resolves", () => {
   const handlerStart = source.indexOf("const sendPromptImmediate = async (");
-  const optimisticSet = source.indexOf("setOptimisticSubmittedDraft({", handlerStart);
+  const optimisticSet = source.indexOf("createPendingSubmittedDraft({", handlerStart);
   const startRun = source.indexOf("startRun();", optimisticSet);
   const sendCall = source.indexOf("props.sendPromptAsync(draft, targetSessionId ? { targetSessionId } : undefined)", startRun);
   const rejectedBranch = source.indexOf("if (!accepted) {", sendCall);
-  const restoreDraft = source.indexOf("props.setComposerDraft(draft);", rejectedBranch);
-  const clearAfterFailure = source.indexOf("setOptimisticSubmittedDraft(null);", rejectedBranch);
+  const markFailed = source.indexOf("markMatchingPendingSubmitFailed(errorMessage);", rejectedBranch);
+  const resetRun = source.indexOf("resetRunState();", rejectedBranch);
+  const failedBranchEnd = source.indexOf("setToastMessage(props.error ?? tr(\"session.connect_server_to_attach\"));", rejectedBranch);
+  const failedBranch = source.slice(rejectedBranch, failedBranchEnd);
 
   assert.notEqual(handlerStart, -1, "session send handler should exist");
-  assert.ok(optimisticSet > handlerStart, "session should capture an optimistic submitted draft during send");
+  assert.ok(optimisticSet > handlerStart, "session should create a pending submitted draft during send");
   assert.ok(startRun > optimisticSet, "session should start visible run state after the optimistic message is captured");
   assert.ok(sendCall > startRun, "session should show optimistic waiting UI before prompt handoff resolves");
   assert.ok(rejectedBranch > sendCall, "session should check whether the prompt was accepted");
-  assert.ok(restoreDraft > rejectedBranch, "failed handoff should restore the draft for correction");
-  assert.ok(clearAfterFailure > rejectedBranch, "failed handoff should remove the optimistic timeline message");
+  assert.ok(failedBranchEnd > rejectedBranch, "session should toast after a failed prompt handoff");
+  assert.ok(markFailed > rejectedBranch, "failed handoff should mark the pending timeline message as failed");
+  assert.ok(resetRun > rejectedBranch, "failed handoff should reset visible run state");
+  assert.doesNotMatch(
+    failedBranch,
+    /props\.setComposerDraft\(draft\);/,
+    "failed handoff should not restore the draft into Composer automatically",
+  );
+});
+
+test("failed handoff marks pending submitted message by immutable submit id", () => {
+  assert.match(
+    source,
+    /const markMatchingPendingSubmitFailed = \(errorMessage: string\) => \{[\s\S]*setOptimisticSubmittedDraft\(\(current\) => \{[\s\S]*current\?\.id !== pendingSubmitId[\s\S]*const failed = markPendingSubmittedFailed\(current, errorMessage\);[\s\S]*return failed;[\s\S]*\}\);[\s\S]*\};/,
+    "failed handoff should mark the optimistic submitted draft by id so remapped session keys still fail visibly",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /markPendingSubmittedFailed[\s\S]{0,120}current\.sessionKey === sessionKey|current\.sessionKey === sessionKey[\s\S]{0,120}markPendingSubmittedFailed/,
+    "failed handoff should not require the original session key after a pending submit remap",
+  );
+});
+
+test("failed pending handoff restores the pending submit to its original pending draft key after remap", () => {
+  assert.match(
+    source,
+    /const failed = markPendingSubmittedFailed\(current, errorMessage\);[\s\S]*if \(pendingSessionKeyBeforeHandoff\) \{[\s\S]*return \{ \.\.\.failed, sessionKey: pendingSessionKeyBeforeHandoff, sessionId: null \};[\s\S]*\}[\s\S]*return failed;/s,
+    "failed pending handoff should be visible on the restored pending draft route even if session materialization remapped it first",
+  );
 });
 
 test("session renders a temporary submitted user message until the real transcript takes over", () => {
@@ -34,8 +84,8 @@ test("session renders a temporary submitted user message until the real transcri
 
   assert.match(
     source,
-    /const optimisticSubmittedMessage = createMemo<MessageWithParts \| null>\(\(\) => \{/,
-    "session should derive a synthetic user message from the optimistic submitted draft",
+    /pendingSubmittedDraftToMessage\(submitted, props\.activeWorkspaceRoot\)/,
+    "session should derive a synthetic user message from the pending submitted draft model",
   );
 
   assert.match(
@@ -46,8 +96,73 @@ test("session renders a temporary submitted user message until the real transcri
 
   assert.match(
     source,
-    /if \(accepted\) \{[\s\S]*setOptimisticSubmittedDraft\(null\);[\s\S]*\}/,
-    "accepted handoff should clear the optimistic placeholder so the server transcript owns display",
+    /if \(accepted && showOptimisticSubmit\) \{\s*clearMatchingPendingSubmit\(\);\s*\}/,
+    "accepted handoff should clear only the matching optimistic placeholder so the server transcript owns display",
+  );
+});
+
+test("session passes pending submit status to the rendered message list", () => {
+  assert.match(
+    source,
+    /const pendingMessageStateById = createMemo<Record<string, PendingMessageState>>\(\(\) => \{\s*const submitted = optimisticSubmittedDraft\(\);[\s\S]*const state: PendingMessageState[\s\S]*return \{\s*\[submitted\.id\]: state,\s*\};\s*\}\);/s,
+    "session view should expose pending submit state keyed by the optimistic message id",
+  );
+
+  assert.match(
+    source,
+    /<MessageList[\s\S]*pendingMessageStateById=\{pendingMessageStateById\(\)\}[\s\S]*editableUserMessage=\{editableUserMessage\(\)\}/,
+    "message list should receive pending submit state alongside editability",
+  );
+});
+
+test("failed pending submitted messages become editable only through explicit action", () => {
+  assert.match(
+    source,
+    /pendingSubmittedDraftToEditable\(submitted\)/,
+    "failed pending submitted messages should contribute an editable draft through the model",
+  );
+
+  assert.match(
+    source,
+    /handleEditUserMessage[\s\S]*setOptimisticSubmittedDraft\(null\);[\s\S]*props\.setComposerDraft\(pendingEditable\.draft\);/,
+    "explicit edit should clear the pending timeline message and load that exact draft into Composer",
+  );
+});
+
+test("accepted handoff does not clear unrelated failed pending submitted messages", () => {
+  const handlerStart = source.indexOf("const sendPromptImmediate = async (");
+  const acceptedBranchStart = source.indexOf(
+    "if (options.expectedSessionKey && currentSessionQueueKey() !== options.expectedSessionKey)",
+    handlerStart,
+  );
+  const acceptedBranchEnd = source.indexOf("setStickToBottom(true);", acceptedBranchStart);
+  const acceptedBranch = source.slice(acceptedBranchStart, acceptedBranchEnd);
+
+  assert.ok(acceptedBranchStart > handlerStart, "send handler should guard accepted stale-navigation handoff");
+  assert.ok(acceptedBranchEnd > acceptedBranchStart, "accepted handoff branch should lead into run UI update");
+
+  assert.match(
+    source,
+    /const clearMatchingPendingSubmit = \(\) => \{\s*setOptimisticSubmittedDraft\(\(current\) => \(current\?\.id === pendingSubmitId \? null : current\)\);\s*\};/,
+    "session should clear pending submit state by immutable pending submit id so remapped session keys still clean up",
+  );
+
+  assert.match(
+    acceptedBranch,
+    /if \(showOptimisticSubmit\) \{\s*clearMatchingPendingSubmit\(\);\s*\}\s*return accepted;/,
+    "accepted stale-navigation handoff should only clear this send's pending submit",
+  );
+
+  assert.match(
+    acceptedBranch,
+    /if \(accepted && showOptimisticSubmit\) \{\s*clearMatchingPendingSubmit\(\);\s*\}/,
+    "accepted normal handoff should only clear optimistic sends",
+  );
+
+  assert.doesNotMatch(
+    acceptedBranch,
+    /setOptimisticSubmittedDraft\(null\);/,
+    "accepted replacement or queue-drain sends must not clear an unrelated failed pending submit",
   );
 });
 

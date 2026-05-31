@@ -123,8 +123,96 @@ test("queued drain uses a stable session key and guards stale navigation", () =>
 
   assert.match(
     source,
-    /if \(options\.expectedSessionKey && currentSessionQueueKey\(\) !== options\.expectedSessionKey\) \{\s*if \(showOptimisticSubmit\) \{\s*setOptimisticSubmittedDraft\(null\);\s*\}\s*return accepted;\s*\}/,
+    /if \(options\.expectedSessionKey && currentSessionQueueKey\(\) !== options\.expectedSessionKey\) \{\s*if \(showOptimisticSubmit\) \{\s*clearMatchingPendingSubmit\(\);\s*\}\s*return accepted;\s*\}/,
     "stale queue sends should not start run UI for the newly selected session",
+  );
+});
+
+test("pending draft queues remap to the real session key without replacing existing real queues", () => {
+  assert.match(
+    source,
+    /remapPendingSubmittedSession/,
+    "session view should remap optimistic pending submissions when the real session id materializes",
+  );
+
+  assert.match(
+    source,
+    /const remapPendingQueueToSession = \(pendingKey: string, sessionId: string\) => \{[\s\S]*const sessionKey = sessionQueueKeyForSessionId\(sessionId\);[\s\S]*const pendingQueue = current\[pendingKey\] \?\? \[\];[\s\S]*const existingRealQueue = current\[sessionKey\] \?\? \[\];[\s\S]*\[sessionKey\]: \[\.\.\.existingRealQueue, \.\.\.pendingQueue\],[\s\S]*\};/s,
+    "pending queue remap should append pending drafts behind any existing real-session queue",
+  );
+
+  assert.match(
+    source,
+    /setQueuePausedAfterStopBySessionKey\(\(current\) => \{[\s\S]*const pendingPaused = Boolean\(current\[pendingKey\]\);[\s\S]*return \{[\s\S]*\[sessionKey\]: pendingPaused \|\| Boolean\(current\[sessionKey\]\),[\s\S]*\};[\s\S]*\}\);/s,
+    "pending queue pause state should remap to the real-session key without clearing an existing real pause",
+  );
+});
+
+test("accepted first pending submit captures and remaps the pending queue key", () => {
+  assert.match(
+    source,
+    /const \[pendingQueueKeyAwaitingSessionId, setPendingQueueKeyAwaitingSessionId\] = createSignal<string \| null>\(null\);/,
+    "session view should retain a captured pending queue key until a real session id is available",
+  );
+
+  assert.match(
+    source,
+    /const pendingSessionKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey\(sessionKey\) \? sessionKey : null;\s*if \(pendingSessionKeyBeforeHandoff\) \{\s*setPendingQueueKeyAwaitingSessionId\(pendingSessionKeyBeforeHandoff\);\s*\}[\s\S]*const accepted = await \(options\.replaceMessageId[\s\S]*if \(accepted && pendingSessionKeyBeforeHandoff\) \{[\s\S]*const materializedSessionId = props\.selectedSessionId\?\.trim\(\);[\s\S]*if \(materializedSessionId\) \{[\s\S]*remapPendingQueueToSession\(pendingSessionKeyBeforeHandoff, materializedSessionId\);[\s\S]*setPendingQueueKeyAwaitingSessionId\(null\);[\s\S]*\}/s,
+    "sendPromptImmediate should capture the pending queue key before await and remap it after an accepted first submit",
+  );
+
+  assert.match(
+    source,
+    /createEffect\(\s*on\(\s*\(\) => props\.selectedSessionId,[\s\S]*const pendingKey = previousSessionId \? null : pendingQueueKeyAwaitingSessionId\(\);[\s\S]*if \(pendingKey\) \{[\s\S]*remapPendingQueueToSession\(pendingKey, sessionId\);[\s\S]*setPendingQueueKeyAwaitingSessionId\(null\);[\s\S]*\}/s,
+    "session view should also remap pending queues when the selected session id arrives in a later reactive update",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /pendingQueueKeyAwaitingSessionId\(\) \?\? pendingSessionQueueKey\(\)/,
+    "delayed session materialization should not fall back to the current active pending draft key",
+  );
+});
+
+test("accepted pending queue drain removes the sent item from the materialized session queue", () => {
+  assert.match(
+    source,
+    /resolveQueuedDraftSessionKey\(queuedDraftsBySessionKey\(\), originalSessionKey, draftId\);/,
+    "session view should resolve a queued draft's current key from the full queue map before falling back to the original key",
+  );
+
+  assert.match(
+    source,
+    /if \(accepted\) \{\s*const acceptedSessionKey = resolveQueueKeyForQueuedDraft\(sessionKey, item\.id\);\s*updateQueueForSessionKey\(acceptedSessionKey, \(queue\) => removeQueuedDraft\(queue, item\.id\)\);\s*return;\s*\}/s,
+    "accepted pending queue drains should remove the sent item from whichever queue currently contains it",
+  );
+});
+
+test("failed first pending submit restores remapped queued drafts to the pending key", () => {
+  assert.match(
+    source,
+    /const restoreMaterializedQueueToPending = \(pendingKey: string, sessionId: string \| null \| undefined\) => \{[\s\S]*const materializedQueue = current\[sessionKey\] \?\? \[\];[\s\S]*const existingPendingQueue = current\[pendingKey\] \?\? \[\];[\s\S]*\[pendingKey\]: \[\.\.\.existingPendingQueue, \.\.\.materializedQueue\],[\s\S]*\};/s,
+    "session view should be able to move queued follow-up drafts back from the materialized session key",
+  );
+
+  assert.match(
+    source,
+    /let materializedSessionIdToRestore: string \| null = null;[\s\S]*materializedSessionIdToRestore = current\.sessionId;[\s\S]*restoreMaterializedQueueToPending\(pendingSessionKeyBeforeHandoff, materializedSessionIdToRestore\);/s,
+    "failed pending submit should restore any remapped queued drafts before returning to the pending draft route",
+  );
+});
+
+test("rejected pending queue drain updates the remapped item key", () => {
+  assert.match(
+    source,
+    /if \(currentSessionQueueKey\(\) !== sessionKey && !sessionIdForQueueKey\(sessionKey\)\) \{\s*const queuedSessionKey = resolveQueueKeyForQueuedDraft\(sessionKey, item\.id\);\s*updateQueueForSessionKey\(queuedSessionKey, \(queue\) => markQueuedDraftQueued\(queue, item\.id\)\);\s*return;\s*\}/s,
+    "queued fallback should restore the item in whichever queue currently contains it",
+  );
+
+  assert.match(
+    source,
+    /const errorSessionKey = resolveQueueKeyForQueuedDraft\(sessionKey, item\.id\);\s*updateQueueForSessionKey\(errorSessionKey, \(queue\) =>\s*markQueuedDraftError\(queue, item\.id, props\.error \?\? tr\("session\.connect_server_to_attach"\)\),\s*\);/s,
+    "rejected queue drains should mark the remapped queued item as error instead of updating the stale pending key",
   );
 });
 
@@ -167,11 +255,19 @@ test("queued edit lifecycle restores editing items and drains idle saves", () =>
   );
 });
 
-test("edited queued send-now resumes a paused queue after accepted send", () => {
+test("edited queued send-now marks the edited item sending before awaiting handoff", () => {
   assert.match(
     source,
-    /const sessionKey = currentSessionQueueKey\(\);\s*const wasPaused = queuePausedForSessionKey\(sessionKey\);\s*const accepted = await sendPromptImmediate\(draft, \{ reason: "send-now", expectedSessionKey: sessionKey \}\);[\s\S]*updateQueueForSessionKey\(sessionKey, \(queue\) => removeQueuedDraft\(queue, editingId\)\);[\s\S]*if \(accepted && wasPaused\) \{\s*setQueuePausedForSessionKey\(sessionKey, false\);\s*\}/,
-    "edited queued send-now should unpause after an accepted immediate send",
+    /const sessionKey = currentSessionQueueKey\(\);\s*const wasPaused = queuePausedForSessionKey\(sessionKey\);\s*updateQueueForSessionKey\(sessionKey, \(queue\) =>\s*markQueuedDraftSending\(updateQueuedDraft\(queue, editingId, draft\), editingId\),\s*\);\s*if \(currentSessionQueueKey\(\) === sessionKey\) \{\s*setEditingQueuedDraftId\(null\);\s*props\.setComposerDraft\(emptyComposerDraft\(draft\.mode\)\);\s*\}\s*const accepted = await sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*restoreDraftOnFailure: false,\s*\}\);/s,
+    "edited queued send-now should persist the edited draft into a sending queue item and release the composer before awaiting handoff",
+  );
+});
+
+test("edited queued send-now marks the edited item error when handoff is rejected", () => {
+  assert.match(
+    source,
+    /const accepted = await sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*restoreDraftOnFailure: false,\s*\}\);\s*const resultSessionKey = resolveQueueKeyForQueuedDraft\(sessionKey, editingId\);\s*if \(!accepted\) \{\s*updateQueueForSessionKey\(resultSessionKey, \(queue\) =>\s*markQueuedDraftError\(queue, editingId, props\.error \?\? tr\("session\.connect_server_to_attach"\)\),\s*\);\s*return false;\s*\}\s*updateQueueForSessionKey\(resultSessionKey, \(queue\) => removeQueuedDraft\(queue, editingId\)\);[\s\S]*if \(accepted && wasPaused\) \{\s*setQueuePausedForSessionKey\(sessionKey, false\);\s*\}/s,
+    "edited queued send-now should update whichever queue contains the edited item after a pending remap",
   );
 });
 

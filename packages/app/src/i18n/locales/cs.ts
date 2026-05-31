@@ -1139,6 +1139,8 @@ export default {
   "session.connection_verified": "Připojení ověřeno",
   "session.default_agent": "Výchozí agent",
   "session.edit_message_title": "Upravit zprávu",
+  "session.pending_submit_sending": "Odesílám...",
+  "session.pending_submit_failed": "Odeslání selhalo",
   "session.delete_session_action": "Smazat relaci",
   "session.delete_session_title": "Smazat relaci?",
   "session.delete_session_unnamed": "Tím trvale smažete vybranou relaci a její zprávy.",
