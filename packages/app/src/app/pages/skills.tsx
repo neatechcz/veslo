@@ -178,7 +178,8 @@ export default function SkillsView(props: SkillsViewProps) {
 
   const installedInventoryItems = createMemo(() =>
     mergeRemoteFallbackIntoInventory(
-      props.skillInventory.filter((item) => item.status !== "hub-only"),
+      filterSkillInventoryItems(props.skillInventory, { includeDeleted: false })
+        .filter((item) => item.status !== "hub-only"),
       activeRemoteInventoryItems(),
     )
   );

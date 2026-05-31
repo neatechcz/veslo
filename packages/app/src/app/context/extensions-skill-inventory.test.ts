@@ -4,6 +4,8 @@ import test from "node:test";
 import { createRoot } from "solid-js";
 
 import type { LocalSkillCard, LocalSkillListScope, WorkspaceInfo } from "../lib/tauri";
+import { buildSkillInventory } from "../lib/skill-inventory.js";
+import { filterSkillInventoryItems } from "../lib/skill-inventory-filters.js";
 
 const { createExtensionsStore } = await import("./extensions.js");
 
@@ -111,6 +113,110 @@ const hubSkill = (name: string) => ({
     ref: "main",
     path: `skills/${name}`,
   },
+});
+
+test("skill inventory preserves removed lifecycle metadata and filters removed rows by default", () => {
+  const items = buildSkillInventory({
+    globalSkills: [
+      {
+        name: "legacy-review",
+        path: "/Users/example/.opencode/skills/legacy-review/SKILL.md",
+        scope: "organization",
+        lifecycle: "removed",
+        removedAt: "2026-05-31T10:00:00.000Z",
+        removedBy: "user-1",
+        removeReason: "cleanup",
+        registry: {
+          skillId: "skill_1",
+          installationId: "install_1",
+          policyId: "policy_1",
+          versionId: "version_1",
+          packageSha256: "sha_1",
+          source: "organization",
+          removalPolicy: "admin_removable",
+        },
+        restoreTarget: {
+          scope: "organization",
+          orgId: "org-1",
+        },
+      },
+    ],
+    workspaceSkillsByWorkspaceId: {},
+    hubSkills: [],
+  });
+
+  const [item] = items;
+  assert.equal(item?.globalInstance?.scope, "organization");
+  assert.equal(item?.globalInstance?.lifecycle, "removed");
+  assert.equal(item?.globalInstance?.removedAt, "2026-05-31T10:00:00.000Z");
+  assert.equal(item?.globalInstance?.removedBy, "user-1");
+  assert.equal(item?.globalInstance?.removeReason, "cleanup");
+  assert.equal(item?.globalInstance?.registry?.installationId, "install_1");
+  assert.equal(item?.globalInstance?.registry?.policyId, "policy_1");
+  assert.equal(item?.globalInstance?.registry?.source, "organization");
+  assert.deepEqual(item?.globalInstance?.restoreTarget, {
+    scope: "organization",
+    orgId: "org-1",
+  });
+  assert.equal(item?.globalInstance?.writable, false);
+
+  assert.equal(filterSkillInventoryItems(items, { includeDeleted: false }).length, 0);
+  assert.equal(filterSkillInventoryItems(items, { includeDeleted: true }).length, 1);
+});
+
+test("skill inventory does not report removed installs as installed when hub entries remain visible", () => {
+  const items = buildSkillInventory({
+    globalSkills: [
+      {
+        name: "legacy-global",
+        path: "/Users/example/.opencode/skills/legacy-global/SKILL.md",
+        scope: "user-global",
+        lifecycle: "removed",
+      },
+    ],
+    workspaceSkillsByWorkspaceId: {
+      "ws-alpha": {
+        workspace: { id: "ws-alpha", label: "Alpha", kind: "local" },
+        skills: [
+          {
+            name: "legacy-workspace",
+            path: "/workspaces/alpha/.opencode/skills/legacy-workspace/SKILL.md",
+            scope: "workspace",
+            lifecycle: "removed",
+          },
+        ],
+      },
+    },
+    hubSkills: [hubSkill("legacy-global"), hubSkill("legacy-workspace")],
+  });
+
+  const filtered = filterSkillInventoryItems(items, { includeDeleted: false });
+
+  assert.deepEqual(
+    filtered.map((item) => ({
+      name: item.name,
+      status: item.status,
+      hasGlobal: Boolean(item.globalInstance),
+      workspaceCount: item.workspaceInstances.length,
+      hasHub: Boolean(item.hubItem),
+    })),
+    [
+      {
+        name: "legacy-global",
+        status: "hub-only",
+        hasGlobal: false,
+        workspaceCount: 0,
+        hasHub: true,
+      },
+      {
+        name: "legacy-workspace",
+        status: "hub-only",
+        hasGlobal: false,
+        workspaceCount: 0,
+        hasHub: true,
+      },
+    ],
+  );
 });
 
 test("extensions store exposes an app-wide skill inventory from global, workspace, and hub sources", async () => {

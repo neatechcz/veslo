@@ -6,6 +6,8 @@ const source = readFileSync(new URL("./skills.tsx", import.meta.url), "utf8");
 const dashboardSource = readFileSync(new URL("./dashboard.tsx", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 const extensionsSource = readFileSync(new URL("../context/extensions.ts", import.meta.url), "utf8");
+const typesSource = readFileSync(new URL("../types.ts", import.meta.url), "utf8");
+const skillInventoryFiltersSource = readFileSync(new URL("../lib/skill-inventory-filters.ts", import.meta.url), "utf8");
 const enSource = readFileSync(new URL("../../i18n/locales/en.ts", import.meta.url), "utf8");
 const csSource = readFileSync(new URL("../../i18n/locales/cs.ts", import.meta.url), "utf8");
 const zhSource = readFileSync(new URL("../../i18n/locales/zh.ts", import.meta.url), "utf8");
@@ -49,8 +51,15 @@ test("skills page receives app-wide skill inventory props", () => {
 });
 
 test("skills page uses inventory as primary installed source", () => {
-  assert.match(source, /const installedInventoryItems = createMemo\(\(\) =>\s*mergeRemoteFallbackIntoInventory\(\s*props\.skillInventory/);
+  assert.match(source, /const installedInventoryItems = createMemo\(\(\) =>\s*mergeRemoteFallbackIntoInventory\(\s*filterSkillInventoryItems\(\s*props\.skillInventory/);
   assert.doesNotMatch(source, /\{props\.skills\.length\}/);
+});
+
+test("skills page derives installed inventory from visible active lifecycle state", () => {
+  assert.match(
+    source,
+    /const installedInventoryItems = createMemo\(\(\) =>\s*mergeRemoteFallbackIntoInventory\(\s*filterSkillInventoryItems\(\s*props\.skillInventory,\s*\{\s*includeDeleted:\s*false\s*\}\s*\)\s*\.filter\(\(item\) => item\.status !== "hub-only"\)/,
+  );
 });
 
 test("skills page separates user and workspace-specific inventory sections", () => {
@@ -123,6 +132,12 @@ test("inventory card uninstall targets writable active workspace instances", () 
   assert.match(renderInventoryCardSource, /disabled=\{props\.busy \|\| !canUninstall\(\)\}/);
   assert.match(source, /aria-label=\{uninstallTitle\(\)\}/);
   assert.match(renderInventoryCardSource, /setUninstallTarget/);
+});
+
+test("removed inventory rows reserve restore metadata for a later UI affordance", () => {
+  assert.match(typesSource, /export type SkillInventoryLifecycle = "active" \| "removed"/);
+  assert.match(typesSource, /restoreTarget\?:\s*\{/);
+  assert.match(skillInventoryFiltersSource, /metadata\.lifecycle === "removed"/);
 });
 
 test("install-from-link overwrite is gated by active workspace conflicts only", () => {

@@ -13,6 +13,12 @@ export type SkillInventorySkillInput = {
   description?: string;
   trigger?: string;
   source?: SkillInstance["source"];
+  lifecycle?: SkillInstance["lifecycle"];
+  removedAt?: SkillInstance["removedAt"];
+  removedBy?: SkillInstance["removedBy"];
+  removeReason?: SkillInstance["removeReason"];
+  registry?: SkillInstance["registry"];
+  restoreTarget?: SkillInstance["restoreTarget"];
   readable?: boolean;
   writable?: boolean;
 };
@@ -55,6 +61,8 @@ const SKILL_SOURCES = new Set<SkillInstance["source"]>([
   "unknown",
 ]);
 
+const SKILL_SCOPES = new Set<SkillInventoryScope>(["workspace", "user-global", "organization"]);
+
 const normalizeText = (value: string | undefined): string | undefined => {
   const normalized = value?.trim().replace(/\s+/g, " ");
   return normalized || undefined;
@@ -87,6 +95,14 @@ const normalizeSource = (source: SkillInventorySkillInput["source"], path: strin
   return inferSourceFromPath(path);
 };
 
+const normalizeScope = (
+  scope: SkillInventorySkillInput["scope"],
+  fallback: SkillInventoryScope,
+): SkillInventoryScope => {
+  if (scope && SKILL_SCOPES.has(scope)) return scope;
+  return fallback;
+};
+
 export const skillMutationTargetFromInstance = (instance: SkillInstance): SkillMutationTarget => ({
   name: instance.name,
   path: instance.path,
@@ -111,20 +127,28 @@ const normalizeSkillInstance = (
 
   const description = normalizeText(skill.description);
   const trigger = normalizeText(skill.trigger);
+  const scope = normalizeScope(skill.scope, options.scope);
+  const lifecycle = skill.lifecycle === "removed" ? "removed" : "active";
   const defaultWritable = !isManagedMaterializedSkillPath(path);
 
   return {
-    id: instanceId(options.scope, options.workspaceId, name, path),
+    id: instanceId(scope, scope === "workspace" ? options.workspaceId : undefined, name, path),
     name,
-    scope: options.scope,
-    workspaceId: options.workspaceId,
-    workspaceLabel: options.workspaceLabel,
+    scope,
+    workspaceId: scope === "workspace" ? options.workspaceId : undefined,
+    workspaceLabel: scope === "workspace" ? options.workspaceLabel : undefined,
     path,
     description,
     trigger,
     source: normalizeSource(skill.source, path),
+    lifecycle,
+    removedAt: skill.removedAt,
+    removedBy: skill.removedBy,
+    removeReason: skill.removeReason,
+    registry: skill.registry,
+    restoreTarget: skill.restoreTarget,
     readable: skill.readable ?? true,
-    writable: skill.writable ?? defaultWritable,
+    writable: lifecycle === "removed" ? false : skill.writable ?? defaultWritable,
   };
 };
 
