@@ -3639,9 +3639,7 @@ export default function SessionView(props: SessionViewProps) {
     const pendingSessionKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey(sessionKey) ? sessionKey : null;
     const pendingSubmitId = `optimistic-submit:${Date.now()}:${Math.random().toString(36).slice(2)}`;
     const clearMatchingPendingSubmit = () => {
-      setOptimisticSubmittedDraft((current) =>
-        current?.id === pendingSubmitId && current.sessionKey === sessionKey ? null : current,
-      );
+      setOptimisticSubmittedDraft((current) => (current?.id === pendingSubmitId ? null : current));
     };
     if (showOptimisticSubmit) {
       setOptimisticSubmittedDraft(

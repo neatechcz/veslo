@@ -107,8 +107,8 @@ test("accepted handoff does not clear unrelated failed pending submitted message
 
   assert.match(
     source,
-    /const clearMatchingPendingSubmit = \(\) => \{\s*setOptimisticSubmittedDraft\(\(current\) =>\s*current\?\.id === pendingSubmitId && current\.sessionKey === sessionKey \? null : current,\s*\);\s*\};/,
-    "session should clear pending submit state only when it matches this send",
+    /const clearMatchingPendingSubmit = \(\) => \{\s*setOptimisticSubmittedDraft\(\(current\) => \(current\?\.id === pendingSubmitId \? null : current\)\);\s*\};/,
+    "session should clear pending submit state by immutable pending submit id so remapped session keys still clean up",
   );
 
   assert.match(
