@@ -54,7 +54,7 @@ test("session send flow starts optimistic run UI before prompt handoff resolves"
 test("failed handoff marks pending submitted message by immutable submit id", () => {
   assert.match(
     source,
-    /const markMatchingPendingSubmitFailed = \(errorMessage: string\) => \{\s*setOptimisticSubmittedDraft\(\(current\) =>\s*current\?\.id === pendingSubmitId \? markPendingSubmittedFailed\(current, errorMessage\) : current,\s*\);\s*\};/,
+    /const markMatchingPendingSubmitFailed = \(errorMessage: string\) => \{[\s\S]*setOptimisticSubmittedDraft\(\(current\) => \{[\s\S]*current\?\.id !== pendingSubmitId[\s\S]*const failed = markPendingSubmittedFailed\(current, errorMessage\);[\s\S]*return failed;[\s\S]*\}\);[\s\S]*\};/,
     "failed handoff should mark the optimistic submitted draft by id so remapped session keys still fail visibly",
   );
 
@@ -62,6 +62,14 @@ test("failed handoff marks pending submitted message by immutable submit id", ()
     source,
     /markPendingSubmittedFailed[\s\S]{0,120}current\.sessionKey === sessionKey|current\.sessionKey === sessionKey[\s\S]{0,120}markPendingSubmittedFailed/,
     "failed handoff should not require the original session key after a pending submit remap",
+  );
+});
+
+test("failed pending handoff restores the pending submit to its original pending draft key after remap", () => {
+  assert.match(
+    source,
+    /const failed = markPendingSubmittedFailed\(current, errorMessage\);[\s\S]*if \(pendingSessionKeyBeforeHandoff\) \{[\s\S]*return \{ \.\.\.failed, sessionKey: pendingSessionKeyBeforeHandoff, sessionId: null \};[\s\S]*\}[\s\S]*return failed;/s,
+    "failed pending handoff should be visible on the restored pending draft route even if session materialization remapped it first",
   );
 });
 

@@ -188,6 +188,20 @@ test("accepted pending queue drain removes the sent item from the materialized s
   );
 });
 
+test("failed first pending submit restores remapped queued drafts to the pending key", () => {
+  assert.match(
+    source,
+    /const restoreMaterializedQueueToPending = \(pendingKey: string, sessionId: string \| null \| undefined\) => \{[\s\S]*const materializedQueue = current\[sessionKey\] \?\? \[\];[\s\S]*const existingPendingQueue = current\[pendingKey\] \?\? \[\];[\s\S]*\[pendingKey\]: \[\.\.\.existingPendingQueue, \.\.\.materializedQueue\],[\s\S]*\};/s,
+    "session view should be able to move queued follow-up drafts back from the materialized session key",
+  );
+
+  assert.match(
+    source,
+    /let materializedSessionIdToRestore: string \| null = null;[\s\S]*materializedSessionIdToRestore = current\.sessionId;[\s\S]*restoreMaterializedQueueToPending\(pendingSessionKeyBeforeHandoff, materializedSessionIdToRestore\);/s,
+    "failed pending submit should restore any remapped queued drafts before returning to the pending draft route",
+  );
+});
+
 test("rejected pending queue drain updates the remapped item key", () => {
   assert.match(
     source,

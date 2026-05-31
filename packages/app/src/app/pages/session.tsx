@@ -2144,6 +2144,34 @@ export default function SessionView(props: SessionViewProps) {
     );
   };
 
+  const restoreMaterializedQueueToPending = (pendingKey: string, sessionId: string | null | undefined) => {
+    const materializedSessionId = sessionId?.trim();
+    if (!pendingKey || !materializedSessionId) return;
+    const sessionKey = sessionQueueKeyForSessionId(materializedSessionId);
+    if (pendingKey === sessionKey) return;
+
+    setQueuedDraftsBySessionKey((current) => {
+      const materializedQueue = current[sessionKey] ?? [];
+      if (!materializedQueue.length) return current;
+      const existingPendingQueue = current[pendingKey] ?? [];
+      const { [sessionKey]: _removedMaterializedQueue, ...rest } = current;
+      return {
+        ...rest,
+        [pendingKey]: [...existingPendingQueue, ...materializedQueue],
+      };
+    });
+
+    setQueuePausedAfterStopBySessionKey((current) => {
+      if (!(sessionKey in current)) return current;
+      const materializedPaused = Boolean(current[sessionKey]);
+      const { [sessionKey]: _removedMaterializedPaused, ...rest } = current;
+      return {
+        ...rest,
+        [pendingKey]: materializedPaused || Boolean(current[pendingKey]),
+      };
+    });
+  };
+
   const appendDraftToCurrentQueue = (draft: ComposerDraft) => {
     updateCurrentQueue((queue) => appendQueuedDraft(queue, draft));
   };
@@ -3640,17 +3668,6 @@ export default function SessionView(props: SessionViewProps) {
       reason: options.reason ?? "normal",
     });
     if (expectedSessionKey && currentSessionQueueKey() !== expectedSessionKey && !targetSessionId) return false;
-    if (props.aiAccessBlockedReason) {
-      recordSendTrace("sendPromptImmediate:blocked-ai-access", {
-        aiAccessBlockedReason: props.aiAccessBlockedReason,
-        expectedSessionKey: expectedSessionKey ?? null,
-        targetSessionId,
-        reason: options.reason ?? "normal",
-      });
-      setToastMessage(props.aiAccessBlockedReason);
-      return false;
-    }
-
     const showOptimisticSubmit = !options.replaceMessageId && options.reason !== "queue-drain";
     const sessionKey = expectedSessionKey ?? currentSessionQueueKey();
     const pendingSessionKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey(sessionKey) ? sessionKey : null;
@@ -3662,9 +3679,19 @@ export default function SessionView(props: SessionViewProps) {
       setOptimisticSubmittedDraft((current) => (current?.id === pendingSubmitId ? null : current));
     };
     const markMatchingPendingSubmitFailed = (errorMessage: string) => {
-      setOptimisticSubmittedDraft((current) =>
-        current?.id === pendingSubmitId ? markPendingSubmittedFailed(current, errorMessage) : current,
-      );
+      let materializedSessionIdToRestore: string | null = null;
+      setOptimisticSubmittedDraft((current) => {
+        if (current?.id !== pendingSubmitId) return current;
+        const failed = markPendingSubmittedFailed(current, errorMessage);
+        if (pendingSessionKeyBeforeHandoff) {
+          materializedSessionIdToRestore = current.sessionId;
+          return { ...failed, sessionKey: pendingSessionKeyBeforeHandoff, sessionId: null };
+        }
+        return failed;
+      });
+      if (pendingSessionKeyBeforeHandoff) {
+        restoreMaterializedQueueToPending(pendingSessionKeyBeforeHandoff, materializedSessionIdToRestore);
+      }
     };
     if (showOptimisticSubmit) {
       setOptimisticSubmittedDraft(
@@ -3679,6 +3706,23 @@ export default function SessionView(props: SessionViewProps) {
       setStickToBottom(true);
       scheduleScrollToLatest("auto");
       startRun();
+    }
+    if (props.aiAccessBlockedReason) {
+      recordSendTrace("sendPromptImmediate:blocked-ai-access", {
+        aiAccessBlockedReason: props.aiAccessBlockedReason,
+        expectedSessionKey: expectedSessionKey ?? null,
+        targetSessionId,
+        reason: options.reason ?? "normal",
+      });
+      if (showOptimisticSubmit) {
+        markMatchingPendingSubmitFailed(props.aiAccessBlockedReason);
+        resetRunState();
+      }
+      if (pendingSessionKeyBeforeHandoff) {
+        setPendingQueueKeyAwaitingSessionId(null);
+      }
+      setToastMessage(props.aiAccessBlockedReason);
+      return false;
     }
 
     try {
