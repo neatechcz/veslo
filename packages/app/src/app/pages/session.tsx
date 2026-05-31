@@ -24,10 +24,6 @@ import type {
 
 import { reportError } from "../lib/error-reporter";
 import {
-  obsidianIsAvailable,
-  openInObsidian,
-  readObsidianMirrorFile,
-  writeObsidianMirrorFile,
   type EngineInfo,
   type VesloServerInfo,
   type WorkspaceInfo,
@@ -69,11 +65,9 @@ import {
   buildVesloConnectInviteUrl,
   buildVesloWorkspaceBaseUrl,
   createVesloServerClient,
-  VesloServerError,
   parseVesloWorkspaceIdFromUrl,
 } from "../lib/veslo-server";
 import type {
-  VesloFileSession,
   VesloServerClient,
   VesloServerSettings,
   VesloServerStatus,
@@ -484,7 +478,6 @@ export default function SessionView(props: SessionViewProps) {
   const [messageWindowExpanded, setMessageWindowExpanded] = createSignal(false);
   const [initialAnchorPending, setInitialAnchorPending] = createSignal(false);
 
-  const [obsidianAvailable, setObsidianAvailable] = createSignal(false);
   const [layoutRootWidth, setLayoutRootWidth] = createSignal(0);
   const [leftSidebarWidth, setLeftSidebarWidth] = createSignal(readLeftSidebarWidth());
   const [leftSidebarResizing, setLeftSidebarResizing] = createSignal(false);
@@ -745,25 +738,6 @@ export default function SessionView(props: SessionViewProps) {
     };
     window.addEventListener("keydown", onKeyDown);
     onCleanup(() => window.removeEventListener("keydown", onKeyDown));
-  });
-
-  createEffect(() => {
-    if (!isTauriRuntime()) {
-      setObsidianAvailable(false);
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        const available = await obsidianIsAvailable();
-        if (!cancelled) setObsidianAvailable(available);
-      } catch {
-        if (!cancelled) setObsidianAvailable(false);
-      }
-    })();
-    onCleanup(() => {
-      cancelled = true;
-    });
   });
 
   const workspaceLabel = (workspace: WorkspaceInfo) =>
@@ -1271,7 +1245,7 @@ export default function SessionView(props: SessionViewProps) {
 
   const runLocalFileAction = async (
     file: string,
-    mode: "open" | "reveal" | "obsidian",
+    mode: "open" | "reveal",
     action: (candidate: string) => Promise<void>,
   ) => {
     const candidates = await resolveLocalFileCandidates(file);
@@ -1331,416 +1305,6 @@ export default function SessionView(props: SessionViewProps) {
     };
   };
 
-  type RemoteMirrorTrackedFile = {
-    path: string;
-    localPath: string;
-    remoteRevision: string;
-    localFingerprint: string;
-    syncingLocal: boolean;
-  };
-
-  type RemoteFileSyncSession = VesloFileSession & { cursor: number };
-
-  const remoteMirrorTrackedFiles = new Map<string, RemoteMirrorTrackedFile>();
-  const [remoteFileSyncSession, setRemoteFileSyncSession] = createSignal<RemoteFileSyncSession | null>(null);
-  const remoteMirrorWorkspaceKey = createMemo(
-    () => props.vesloServerWorkspaceId?.trim() || props.activeWorkspaceDisplay.id?.trim() || "remote-worker",
-  );
-  let remoteMirrorSyncTimer: number | undefined;
-  let remoteMirrorSyncInFlight = false;
-  let remoteMirrorLastErrorAt = 0;
-
-  const textFingerprint = (value: string) => {
-    let hash = 2166136261;
-    for (let idx = 0; idx < value.length; idx += 1) {
-      hash ^= value.charCodeAt(idx);
-      hash = Math.imul(hash, 16777619);
-    }
-    return `${value.length}:${hash >>> 0}`;
-  };
-
-  const utf8ToBase64 = (value: string) => {
-    const bytes = new TextEncoder().encode(value);
-    let binary = "";
-    for (const byte of bytes) {
-      binary += String.fromCharCode(byte);
-    }
-    const fallbackBuffer = (globalThis as { Buffer?: { from: (input: string, encoding: string) => { toString: (encoding: string) => string } } }).Buffer;
-    if (typeof btoa !== "function") {
-      if (!fallbackBuffer) {
-        throw new Error("Base64 encoder is unavailable");
-      }
-      return fallbackBuffer.from(value, "utf8").toString("base64");
-    }
-    return btoa(binary);
-  };
-
-  const base64ToUtf8 = (value: string) => {
-    const fallbackBuffer = (globalThis as { Buffer?: { from: (input: string, encoding: string) => { toString: (encoding: string) => string } } }).Buffer;
-    if (typeof atob !== "function") {
-      if (!fallbackBuffer) {
-        throw new Error("Base64 decoder is unavailable");
-      }
-      return fallbackBuffer.from(value, "base64").toString("utf8");
-    }
-    const binary = atob(value);
-    const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
-    return new TextDecoder().decode(bytes);
-  };
-
-  const stopRemoteMirrorSyncLoop = () => {
-    if (remoteMirrorSyncTimer !== undefined) {
-      window.clearInterval(remoteMirrorSyncTimer);
-      remoteMirrorSyncTimer = undefined;
-    }
-  };
-
-  const closeRemoteFileSyncSession = async (session: RemoteFileSyncSession | null) => {
-    const client = props.vesloServerClient;
-    if (!client || !session) return;
-    try {
-      await client.closeFileSession(session.id);
-    } catch {
-      // best effort
-    }
-  };
-
-  const resetRemoteFileSync = async () => {
-    stopRemoteMirrorSyncLoop();
-    remoteMirrorSyncInFlight = false;
-    remoteMirrorTrackedFiles.clear();
-    const existing = remoteFileSyncSession();
-    setRemoteFileSyncSession(null);
-    await closeRemoteFileSyncSession(existing);
-  };
-
-  const toWorkerRelativeArtifactPath = (file: string) => {
-    const normalized = file.trim().replace(/^file:\/\//i, "").replace(/[\\/]+/g, "/");
-    if (!normalized) return "";
-
-    const root = props.activeWorkspaceRoot.trim().replace(/[\\/]+/g, "/").replace(/\/+$/, "");
-    if (root) {
-      const rootKey = root.toLowerCase();
-      const fileKey = normalized.toLowerCase();
-      if (fileKey === rootKey) return "";
-      if (fileKey.startsWith(`${rootKey}/`)) {
-        return normalized.slice(root.length + 1);
-      }
-    }
-
-    let relative = normalized.replace(/^\.\/+/, "");
-
-    if (/^[ab]\/.+\.(md|mdx|markdown)$/i.test(relative)) {
-      relative = relative.slice(2);
-    }
-
-    if (/^workspace\//i.test(relative)) {
-      relative = relative.replace(/^workspace\//i, "");
-    }
-
-    if (/^\/+workspace\//i.test(relative)) {
-      relative = relative.replace(/^\/+workspace\//i, "");
-    }
-
-    if (!relative) return "";
-    if (relative.startsWith("/") || relative.startsWith("~") || /^[a-zA-Z]:\//.test(relative)) {
-      return "";
-    }
-    if (relative.split("/").some((part) => part === "." || part === "..")) {
-      return "";
-    }
-    return relative;
-  };
-
-  const toRemoteArtifactCandidates = (file: string) => {
-    const target = toWorkerRelativeArtifactPath(file);
-    if (!target) return [] as string[];
-    const outboxPath = `.opencode/veslo/outbox/${target}`.replace(/\/+/g, "/");
-    if (
-      target.startsWith(".opencode/veslo/outbox/") ||
-      target.startsWith("./.opencode/veslo/outbox/") ||
-      outboxPath === target
-    ) {
-      return [target];
-    }
-    return [target, outboxPath];
-  };
-
-  const ensureRemoteFileSyncSession = async (): Promise<RemoteFileSyncSession> => {
-    const client = props.vesloServerClient;
-    const workspaceId = props.vesloServerWorkspaceId?.trim() ?? "";
-    if (!client || !workspaceId) {
-      throw new Error("Connect to Veslo server to sync remote files.");
-    }
-
-    const existing = remoteFileSyncSession();
-    if (existing && existing.workspaceId === workspaceId) {
-      if (Date.now() + 45_000 < existing.expiresAt) {
-        return existing;
-      }
-
-      try {
-        const renewed = await client.renewFileSession(existing.id, { ttlSeconds: 15 * 60 });
-        const next: RemoteFileSyncSession = {
-          ...renewed.session,
-          cursor: existing.cursor,
-        };
-        setRemoteFileSyncSession(next);
-        return next;
-      } catch (error) {
-        if (!(error instanceof VesloServerError) || error.code !== "file_session_not_found") {
-          throw error;
-        }
-      }
-    }
-
-    if (existing) {
-      await closeRemoteFileSyncSession(existing);
-      setRemoteFileSyncSession(null);
-    }
-
-    const created = await client.createFileSession(workspaceId, {
-      ttlSeconds: 15 * 60,
-      write: true,
-    });
-    const next: RemoteFileSyncSession = {
-      ...created.session,
-      cursor: 0,
-    };
-    setRemoteFileSyncSession(next);
-    return next;
-  };
-
-  const refreshTrackedRemoteMirrorFile = async (session: RemoteFileSyncSession, path: string) => {
-    const client = props.vesloServerClient;
-    if (!client) throw new Error("Veslo server client unavailable");
-
-    const result = await client.readFileBatch(session.id, [path]);
-    const item = result.items[0];
-    if (!item?.ok) {
-      if (item?.code === "file_not_found") {
-        remoteMirrorTrackedFiles.delete(path);
-        return null;
-      }
-      throw new Error(item?.message ?? `Unable to read ${path}`);
-    }
-
-    const content = base64ToUtf8(item.contentBase64);
-    const localPath = await writeObsidianMirrorFile(remoteMirrorWorkspaceKey(), path, content);
-    const local = await readObsidianMirrorFile(remoteMirrorWorkspaceKey(), path);
-    const fingerprint = textFingerprint(local.content ?? content);
-
-    const previous = remoteMirrorTrackedFiles.get(path);
-    remoteMirrorTrackedFiles.set(path, {
-      path,
-      localPath,
-      remoteRevision: item.revision,
-      localFingerprint: fingerprint,
-      syncingLocal: previous?.syncingLocal ?? false,
-    });
-
-    return localPath;
-  };
-
-  const createConflictPath = (path: string) => {
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const marker = `.veslo-conflict-${stamp}`;
-    const dot = path.lastIndexOf(".");
-    if (dot <= 0) {
-      return `${path}${marker}`;
-    }
-    return `${path.slice(0, dot)}${marker}${path.slice(dot)}`;
-  };
-
-  const runRemoteMirrorSyncTick = async () => {
-    if (remoteMirrorSyncInFlight) return;
-    if (remoteMirrorTrackedFiles.size === 0) {
-      stopRemoteMirrorSyncLoop();
-      return;
-    }
-
-    const client = props.vesloServerClient;
-    if (!client) {
-      stopRemoteMirrorSyncLoop();
-      return;
-    }
-
-    remoteMirrorSyncInFlight = true;
-    try {
-      let session = await ensureRemoteFileSyncSession();
-
-      const events = await client.listFileSessionEvents(session.id, { since: session.cursor });
-      if (events.cursor !== session.cursor) {
-        session = { ...session, cursor: events.cursor };
-        setRemoteFileSyncSession(session);
-      }
-
-      const refreshPaths = new Set<string>();
-      for (const event of events.items) {
-        if (event.type === "write" && remoteMirrorTrackedFiles.has(event.path)) {
-          const tracked = remoteMirrorTrackedFiles.get(event.path);
-          if (!tracked?.syncingLocal) {
-            refreshPaths.add(event.path);
-          }
-          continue;
-        }
-
-        if (event.type === "rename") {
-          const tracked = remoteMirrorTrackedFiles.get(event.path);
-          if (!tracked) continue;
-          remoteMirrorTrackedFiles.delete(event.path);
-          if (event.toPath?.trim()) {
-            const nextPath = event.toPath.trim();
-            remoteMirrorTrackedFiles.set(nextPath, {
-              ...tracked,
-              path: nextPath,
-            });
-            refreshPaths.add(nextPath);
-          }
-          continue;
-        }
-
-        if (event.type === "delete") {
-          remoteMirrorTrackedFiles.delete(event.path);
-        }
-      }
-
-      for (const path of refreshPaths) {
-        await refreshTrackedRemoteMirrorFile(session, path);
-      }
-
-      for (const [path, tracked] of remoteMirrorTrackedFiles) {
-        if (tracked.syncingLocal) continue;
-
-        const local = await readObsidianMirrorFile(remoteMirrorWorkspaceKey(), path);
-        if (!local.exists || local.content === null) continue;
-        const nextFingerprint = textFingerprint(local.content);
-        if (nextFingerprint === tracked.localFingerprint) continue;
-
-        tracked.syncingLocal = true;
-        try {
-          const write = await client.writeFileBatch(session.id, [
-            {
-              path,
-              contentBase64: utf8ToBase64(local.content),
-              ifMatchRevision: tracked.remoteRevision,
-            },
-          ]);
-          const item = write.items[0];
-          if (item?.ok) {
-            tracked.remoteRevision = item.revision;
-            tracked.localFingerprint = nextFingerprint;
-            continue;
-          }
-
-          if (!item?.ok && item?.code === "conflict") {
-            const conflictPath = createConflictPath(path);
-            await writeObsidianMirrorFile(remoteMirrorWorkspaceKey(), conflictPath, local.content);
-            await refreshTrackedRemoteMirrorFile(session, path);
-            setToastMessage(`Conflict syncing ${path}. Saved local changes to ${conflictPath}.`);
-            continue;
-          }
-
-          throw new Error(item?.message ?? `Unable to sync ${path}`);
-        } finally {
-          tracked.syncingLocal = false;
-        }
-      }
-    } catch (error) {
-      if (Date.now() - remoteMirrorLastErrorAt > 6_000) {
-        remoteMirrorLastErrorAt = Date.now();
-        const message = error instanceof Error ? error.message : "Remote file sync failed";
-        setToastMessage(message);
-      }
-    } finally {
-      remoteMirrorSyncInFlight = false;
-    }
-  };
-
-  const ensureRemoteMirrorSyncLoop = () => {
-    if (!isTauriRuntime()) return;
-    if (remoteMirrorTrackedFiles.size === 0) return;
-    if (remoteMirrorSyncTimer !== undefined) return;
-    remoteMirrorSyncTimer = window.setInterval(() => {
-      void runRemoteMirrorSyncTick();
-    }, 2500);
-    void runRemoteMirrorSyncTick();
-  };
-
-  const mirrorRemoteArtifactForObsidian = async (file: string) => {
-    const session = await ensureRemoteFileSyncSession();
-    const client = props.vesloServerClient;
-    if (!client) {
-      throw new Error("Connect to Veslo server to sync remote files.");
-    }
-
-    const candidates = toRemoteArtifactCandidates(file);
-    if (candidates.length === 0) {
-      throw new Error("Only worker-relative files can be opened in Obsidian.");
-    }
-
-    let lastError: Error | null = null;
-    for (const candidate of candidates) {
-      try {
-        const result = await client.readFileBatch(session.id, [candidate]);
-        const item = result.items[0];
-        if (!item?.ok) {
-          if (item?.code === "file_not_found") continue;
-          throw new Error(item?.message ?? `Unable to read ${candidate}`);
-        }
-
-        const content = base64ToUtf8(item.contentBase64);
-        const localPath = await writeObsidianMirrorFile(remoteMirrorWorkspaceKey(), candidate, content);
-        const local = await readObsidianMirrorFile(remoteMirrorWorkspaceKey(), candidate);
-        const fingerprint = textFingerprint(local.content ?? content);
-
-        remoteMirrorTrackedFiles.set(candidate, {
-          path: candidate,
-          localPath,
-          remoteRevision: item.revision,
-          localFingerprint: fingerprint,
-          syncingLocal: false,
-        });
-        ensureRemoteMirrorSyncLoop();
-        return localPath;
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-      }
-    }
-
-    throw lastError ?? new Error("Unable to open file in Obsidian");
-  };
-
-  createEffect(
-    on(
-      () =>
-        [
-          isTauriRuntime(),
-          props.activeWorkspaceDisplay.workspaceType,
-          props.vesloServerWorkspaceId?.trim() ?? "",
-          Boolean(props.vesloServerClient),
-        ] as const,
-      ([desktopRuntime, workspaceType, workspaceId, hasClient], previous) => {
-        const previousWorkspaceId = previous?.[2] ?? "";
-        const hasRemoteContext = desktopRuntime && workspaceType === "remote" && workspaceId.length > 0 && hasClient;
-        if (!hasRemoteContext) {
-          if (remoteFileSyncSession() || remoteMirrorTrackedFiles.size > 0 || remoteMirrorSyncTimer !== undefined) {
-            void resetRemoteFileSync();
-          }
-          return;
-        }
-
-        if (previousWorkspaceId && previousWorkspaceId !== workspaceId) {
-          void resetRemoteFileSync();
-        }
-      },
-    ),
-  );
-
-  onCleanup(() => {
-    void resetRemoteFileSync();
-  });
-
   const revealArtifact = async (file: string) => {
     if (props.activeWorkspaceDisplay.workspaceType === "remote") {
       setToastMessage(tr("session.reveal_remote_unavailable"));
@@ -1769,51 +1333,6 @@ export default function SessionView(props: SessionViewProps) {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : tr("session.unable_reveal_file");
-      setToastMessage(message);
-    }
-  };
-
-  const openArtifactInObsidian = async (file: string) => {
-    if (!/\.(md|mdx|markdown)$/i.test(file)) return;
-    if (!obsidianAvailable()) {
-      setToastMessage(tr("session.obsidian_unavailable"));
-      return;
-    }
-    if (!isTauriRuntime()) {
-      setToastMessage(tr("session.obsidian_desktop_only"));
-      return;
-    }
-
-    const isRemoteWorkspace = props.activeWorkspaceDisplay.workspaceType === "remote";
-    const preferLocalOpen = !isRemoteWorkspace || isSandboxWorkspace();
-
-    try {
-      if (preferLocalOpen) {
-        const localResult = await runLocalFileAction(file, "obsidian", async (candidate) => {
-          await openInObsidian(candidate);
-        });
-        if (localResult.ok) {
-          return;
-        }
-        if (localResult.reason === "missing-root" && !isRemoteWorkspace) {
-          setToastMessage(tr("session.pick_worker_open_files"));
-          return;
-        }
-        if (!isRemoteWorkspace) {
-          setToastMessage(localResult.reason);
-          return;
-        }
-      }
-
-      if (!isRemoteWorkspace) {
-        setToastMessage(tr("session.pick_worker_open_files"));
-        return;
-      }
-
-      const mirrored = await mirrorRemoteArtifactForObsidian(file);
-      await openInObsidian(mirrored);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : tr("session.unable_open_obsidian");
       setToastMessage(message);
     }
   };
@@ -4463,8 +3982,6 @@ export default function SessionView(props: SessionViewProps) {
         families={props.artifactFamilies}
         workspaceRoot={props.activeWorkspaceRoot}
         onRevealArtifact={revealArtifact}
-        onOpenInObsidian={openArtifactInObsidian}
-        obsidianAvailable={obsidianAvailable()}
       />
       <SessionCapabilitiesPanel
         state={props.sessionCapabilitiesStatus}

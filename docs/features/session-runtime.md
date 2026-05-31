@@ -184,6 +184,8 @@ Server-backed artifact provenance is preferred when available. Technical noise s
 
 The right menu Files family is intentionally narrow. It shows only files explicitly opened/read during the latest run and files modified by the latest run. Modified files are grouped ahead of opened files, and a file that is both opened and modified appears in the modified group. Search, glob, list, and similar discovery-only tool results do not create file rows. Skill execution should appear as the skill name in the Skills family rather than as the backing `SKILL.md` file read.
 
+File rows expose the local desktop reveal action when a file path is available. They do not expose editor-specific open shortcuts.
+
 Main model source:
 
 - `packages/app/src/app/components/session/artifact-family-model.ts`
