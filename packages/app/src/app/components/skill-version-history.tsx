@@ -65,7 +65,7 @@ export function canRestoreSkillVersion(version: SkillVersionRow) {
   return version.status === "approved" && version.isCurrent !== true;
 }
 
-export function formatSkillPackageHash(packageHash?: string | null, fallback = "No hash") {
+export function formatSkillPackageHash(packageHash?: string | null, fallback = t("skills.no_hash", currentLocale())) {
   const value = packageHash?.trim();
   if (!value) return fallback;
   if (value.length <= 28) return value;
@@ -73,14 +73,14 @@ export function formatSkillPackageHash(packageHash?: string | null, fallback = "
 }
 
 export function getSkillVersionTargetLabel(target?: SkillVersionTargetMetadata | null, labels?: SkillVersionTargetLabels) {
-  if (!target) return labels?.noTarget ?? "No target";
+  if (!target) return labels?.noTarget ?? t("skills.no_target", currentLocale());
   switch (target.scope) {
     case "global":
-      return `${labels?.global ?? "Global"}: ${target.label}`;
+      return `${labels?.global ?? t("session.capabilities_scope_global", currentLocale())}: ${target.label}`;
     case "workspace":
-      return `${labels?.workspace ?? "Workspace"}: ${target.label}`;
+      return `${labels?.workspace ?? t("session.capabilities_scope_workspace", currentLocale())}: ${target.label}`;
     case "organization":
-      return `${labels?.organization ?? "Organization"}: ${target.label}`;
+      return `${labels?.organization ?? t("skills.detail_scope_organization", currentLocale())}: ${target.label}`;
   }
 }
 

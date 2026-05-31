@@ -45,7 +45,7 @@ test("settings exposes archived tab and keeps developer tabs unavailable", () =>
   assert.doesNotMatch(generalSection, /System mode follows your OS preference automatically\./);
   assert.match(
     generalSection,
-    /<Show when=\{props\.developerMode\}>[\s\S]*>AI access<[\s\S]*managed by the platform admin/i,
+    /<Show when=\{props\.developerMode\}>[\s\S]*ui\.literal\.ai_access_1fcmzn[\s\S]*ui\.literal\.provider_and_model_assignment_is_managed_by__ekvlg6/,
   );
   assert.doesNotMatch(generalSection, /settings\.archived_sessions_label/);
 });

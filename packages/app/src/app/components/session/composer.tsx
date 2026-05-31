@@ -6,7 +6,7 @@ import { ArrowUp, File as FileIcon, Loader2, Paperclip, Square, Terminal, X, Zap
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, SlashCommandOption } from "../../types";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
 import { readClipboardFilePaths } from "../../lib/tauri";
-import { useTranslate } from "../../../i18n";
+import { currentLocale, t, useTranslate } from "../../../i18n";
 import { extractFileReferencePathsFromDataTransfer, extractFilesFromDataTransfer, isFileDragTransfer } from "../../utils/data-transfer-files";
 import { looksLikePdfDocumentPrefix } from "../../utils/pdf-signature";
 
@@ -99,7 +99,7 @@ function recordSendTrace(event: string, payload?: Record<string, unknown>) {
 const fileToDataUrl = (file: File) =>
   new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Failed to read attachment"));
+    reader.onerror = () => reject(new Error(t("session.attachment_read_failed", currentLocale())));
     reader.onload = () => {
       const result = typeof reader.result === "string" ? reader.result : "";
       resolve(result);

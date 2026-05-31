@@ -27,52 +27,53 @@ export default function ReloadWorkspaceToast(props: ReloadWorkspaceToastProps) {
     if (!props.trigger) return props.description;
     const { type, name, action } = props.trigger;
     const trimmedName = name?.trim();
-    const verb =
+    const verbKey =
       action === "removed"
-        ? "was removed"
+        ? "reload.trigger_removed"
         : action === "added"
-        ? "was added"
+        ? "reload.trigger_added"
         : action === "updated"
-        ? "was updated"
-        : "changed";
+        ? "reload.trigger_updated"
+        : "reload.trigger_changed";
+    const verb = __vesloT(verbKey, __vesloCurrentLocale());
 
     if (type === "skill") {
       return trimmedName
-        ? `Skill '${trimmedName}' ${verb}. Reload to use it.`
-        : "Skills changed. Reload to apply.";
+        ? __vesloT("reload.trigger_skill_named", __vesloCurrentLocale()).replace("{name}", trimmedName).replace("{verb}", verb)
+        : __vesloT("reload.trigger_skills_changed", __vesloCurrentLocale());
     }
 
     if (type === "plugin") {
       return trimmedName
-        ? `Plugin '${trimmedName}' ${verb}. Reload to activate.`
-        : "Plugins changed. Reload to apply.";
+        ? __vesloT("reload.trigger_plugin_named", __vesloCurrentLocale()).replace("{name}", trimmedName).replace("{verb}", verb)
+        : __vesloT("reload.trigger_plugins_changed", __vesloCurrentLocale());
     }
 
     if (type === "mcp") {
       return trimmedName
-        ? `MCP '${trimmedName}' ${verb}. Reload to connect.`
-        : "MCP config changed. Reload to apply.";
+        ? __vesloT("reload.trigger_mcp_named", __vesloCurrentLocale()).replace("{name}", trimmedName).replace("{verb}", verb)
+        : __vesloT("reload.trigger_mcp_changed", __vesloCurrentLocale());
     }
 
     if (type === "config") {
       return trimmedName
-        ? `Config '${trimmedName}' ${verb}. Reload to apply.`
-        : "Config changed. Reload to apply.";
+        ? __vesloT("reload.trigger_config_named", __vesloCurrentLocale()).replace("{name}", trimmedName).replace("{verb}", verb)
+        : __vesloT("reload.trigger_config_changed", __vesloCurrentLocale());
     }
 
     if (type === "agent") {
       return trimmedName
-        ? `Agent '${trimmedName}' ${verb}. Reload to use it.`
-        : "Agents changed. Reload to apply.";
+        ? __vesloT("reload.trigger_agent_named", __vesloCurrentLocale()).replace("{name}", trimmedName).replace("{verb}", verb)
+        : __vesloT("reload.trigger_agents_changed", __vesloCurrentLocale());
     }
 
     if (type === "command") {
       return trimmedName
-        ? `Command '${trimmedName}' ${verb}. Reload to use it.`
-        : "Commands changed. Reload to apply.";
+        ? __vesloT("reload.trigger_command_named", __vesloCurrentLocale()).replace("{name}", trimmedName).replace("{verb}", verb)
+        : __vesloT("reload.trigger_commands_changed", __vesloCurrentLocale());
     }
 
-    return "Config changed. Reload to apply.";
+    return __vesloT("reload.trigger_config_changed", __vesloCurrentLocale());
   };
 
   return (

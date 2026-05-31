@@ -282,7 +282,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     const id = workspaceId();
     if (!id) {
       resetAgentState();
-      setAgentError("Worker scope unavailable.");
+      setAgentError(__vesloT("identities.worker_scope_unavailable", __vesloCurrentLocale()));
       return;
     }
     const client = vesloServerClient();
@@ -331,7 +331,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       setAgentContent(OPENCODE_ROUTER_AGENT_FILE_TEMPLATE);
       setAgentDraft(OPENCODE_ROUTER_AGENT_FILE_TEMPLATE);
       setAgentBaseUpdatedAt(typeof result.updatedAt === "number" ? result.updatedAt : null);
-      setAgentStatus("Created default messaging agent file.");
+      setAgentStatus(__vesloT("identities.created_default_agent_file", __vesloCurrentLocale()));
     } catch (error) {
       setAgentError(formatRequestError(error));
     } finally {
@@ -359,10 +359,10 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       setAgentExists(true);
       setAgentContent(agentDraft());
       setAgentBaseUpdatedAt(typeof result.updatedAt === "number" ? result.updatedAt : null);
-      setAgentStatus("Saved messaging behavior.");
+      setAgentStatus(__vesloT("identities.saved_messaging_behavior", __vesloCurrentLocale()));
     } catch (error) {
       if (error instanceof VesloServerError && error.status === 409) {
-        setAgentError("File changed remotely. Reload and save again.");
+        setAgentError(__vesloT("identities.file_changed_remotely", __vesloCurrentLocale()));
       } else {
         setAgentError(formatRequestError(error));
       }
@@ -422,9 +422,9 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
         setTelegramBotUsername(null);
         setTelegramPairingCode(null);
         setSlackIdentities([]);
-        setHealthError("Worker scope unavailable. Reconnect using a worker URL or switch to a known worker.");
-        setTelegramIdentitiesError("Worker scope unavailable.");
-        setSlackIdentitiesError("Worker scope unavailable.");
+        setHealthError(__vesloT("identities.worker_scope_unavailable_reconnect", __vesloCurrentLocale()));
+        setTelegramIdentitiesError(__vesloT("identities.worker_scope_unavailable", __vesloCurrentLocale()));
+        setSlackIdentitiesError(__vesloT("identities.worker_scope_unavailable", __vesloCurrentLocale()));
         resetAgentState();
         setSendStatus(null);
         setSendError(null);
@@ -449,7 +449,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
           const message =
             (healthRes.json && typeof (healthRes.json as any).message === "string")
               ? String((healthRes.json as any).message)
-              : `OpenCodeRouter health unavailable (${healthRes.status})`;
+              : __vesloT("identities.router_health_unavailable", __vesloCurrentLocale()).replace("{status}", String(healthRes.status));
           setHealthError(message);
         }
       }
@@ -462,14 +462,14 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       } else {
         setTelegramIdentities([]);
         setTelegramPairingCode(null);
-        setTelegramIdentitiesError("Telegram identities unavailable.");
+        setTelegramIdentitiesError(__vesloT("identities.telegram_unavailable", __vesloCurrentLocale()));
       }
 
       if (isOpenCodeRouterIdentities(slackRes)) {
         setSlackIdentities(slackRes.items ?? []);
       } else {
         setSlackIdentities([]);
-        setSlackIdentitiesError("Slack identities unavailable.");
+        setSlackIdentitiesError(__vesloT("identities.slack_unavailable", __vesloCurrentLocale()));
       }
 
       if (!agentDirty() && !agentSaving()) {
@@ -496,13 +496,13 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
 
     const ok = await props.reconnectVesloServer();
     if (!ok) {
-      setReconnectError("Reconnect failed. Check Veslo URL/token and try again.");
+      setReconnectError(__vesloT("identities.reconnect_failed_check", __vesloCurrentLocale()));
       return;
     }
 
-    setReconnectStatus("Reconnected. Refreshing worker state...");
+    setReconnectStatus(__vesloT("identities.reconnected_refreshing", __vesloCurrentLocale()));
     await refreshAll({ force: true });
-    setReconnectStatus("Reconnected.");
+    setReconnectStatus(__vesloT("session.reconnected_toast", __vesloCurrentLocale()));
   };
 
   const upsertTelegram = async (access: "public" | "private") => {

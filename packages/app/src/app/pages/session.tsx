@@ -1298,11 +1298,11 @@ export default function SessionView(props: SessionViewProps) {
 
     const suffix =
       candidates.length > 1
-        ? ` (tried ${candidates.length} paths: workspace root and outbox fallbacks)`
+        ? ` (${t("session.file_open_tried_paths", currentLocale()).replace("{count}", String(candidates.length))})`
         : "";
     return {
       ok: false as const,
-      reason: `${lastError instanceof Error ? lastError.message : "File open failed"}${suffix}`,
+      reason: `${lastError instanceof Error ? lastError.message : t("session.file_open_failed", currentLocale())}${suffix}`,
     };
   };
 

@@ -151,12 +151,12 @@ export type SettingsViewProps = {
 
 export default function SettingsView(props: SettingsViewProps) {
   const translate = (key: string) => t(key, currentLocale());
-  const engineCustomBinPathLabel = () => props.engineCustomBinPath.trim() || "No binary selected.";
+  const engineCustomBinPathLabel = () => props.engineCustomBinPath.trim() || translate("settings.no_binary_selected");
 
   const handlePickEngineBinary = async () => {
     if (!isTauriRuntime()) return;
     try {
-      const selected = await pickFile({ title: "Select OpenCode binary" });
+      const selected = await pickFile({ title: translate("settings.select_opencode_binary") });
       const path = Array.isArray(selected) ? selected[0] : selected;
       const trimmed = (path ?? "").trim();
       if (!trimmed) return;
@@ -260,13 +260,13 @@ export default function SettingsView(props: SettingsViewProps) {
   const notionStatusLabel = () => {
     switch (props.notionStatus) {
       case "connected":
-        return "Connected";
+        return translate("status.connected");
       case "connecting":
-        return "Reload required";
+        return translate("settings.reload_required");
       case "error":
-        return "Connection failed";
+        return translate("settings.connection_failed");
       default:
-        return "Not connected";
+        return translate("dashboard.not_connected");
     }
   };
 
@@ -296,9 +296,9 @@ export default function SettingsView(props: SettingsViewProps) {
   const activeDenApiBase = createMemo(() => denApiBaseOverride() || defaultDenApiBase);
   const denApiBaseDirty = createMemo(() => denApiBaseDraft().trim() !== activeDenApiBase());
   const aiAccessStatusLabel = createMemo(() => {
-    if (props.aiAccessBusy) return "Loading";
-    if (!props.aiAccessConfigured) return "Needs admin";
-    return "Configured";
+    if (props.aiAccessBusy) return translate("status.loading");
+    if (!props.aiAccessConfigured) return translate("status.needs_admin");
+    return translate("status.configured");
   });
   const aiAccessStatusStyle = createMemo(() => {
     if (props.aiAccessBusy) return "bg-gray-4/60 text-gray-11 border-gray-7/50";
@@ -307,9 +307,9 @@ export default function SettingsView(props: SettingsViewProps) {
   });
   const aiAccessAllowedModelsSummary = createMemo(() => {
     const models = props.aiAccessAllowedModels.filter((value) => value.trim().length > 0);
-    if (!models.length) return "Only the admin default model is allowed.";
+    if (!models.length) return translate("settings.ai_only_admin_default_model");
     if (models.length === 1) return models[0]!;
-    return `${models.length} allowed models`;
+    return translate("settings.ai_allowed_models_count").replace("{count}", String(models.length));
   });
 
   const handleReconnectVesloServer = async () => {
@@ -320,13 +320,13 @@ export default function SettingsView(props: SettingsViewProps) {
     try {
       const ok = await props.reconnectVesloServer();
       if (!ok) {
-        setVesloReconnectError("Reconnect failed. Check server URL/token and try again.");
+        setVesloReconnectError(translate("settings.reconnect_failed_check"));
         return;
       }
-      setVesloReconnectStatus("Reconnected to Veslo server.");
+      setVesloReconnectStatus(translate("settings.reconnected_server"));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setVesloReconnectError(message || "Failed to reconnect Veslo server.");
+      setVesloReconnectError(message || translate("settings.reconnect_failed"));
     }
   };
 
@@ -338,13 +338,13 @@ export default function SettingsView(props: SettingsViewProps) {
     try {
       const ok = await props.restartLocalServer();
       if (!ok) {
-        setVesloRestartError("Restart failed. Check logs and try again.");
+        setVesloRestartError(translate("settings.restart_failed_check_logs"));
         return;
       }
-      setVesloRestartStatus("Restarted local server.");
+      setVesloRestartStatus(translate("settings.restarted_local_server"));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setVesloRestartError(message || "Failed to restart local server.");
+      setVesloRestartError(message || translate("settings.restart_local_server_failed"));
     } finally {
       setVesloRestartBusy(false);
     }
@@ -365,19 +365,19 @@ export default function SettingsView(props: SettingsViewProps) {
     setDenApiBaseDraft(effective);
     setDenApiBaseStatus(
       savedOverride
-        ? `Saved. Browser sign-in now uses ${effective}.`
-        : `Saved. Browser sign-in now uses the default endpoint (${effective}).`,
+        ? translate("settings.browser_signin_saved_custom").replace("{endpoint}", effective)
+        : translate("settings.browser_signin_saved_default").replace("{endpoint}", effective),
     );
   };
 
   const vesloStatusLabel = createMemo(() => {
     switch (props.vesloServerStatus) {
       case "connected":
-        return "Connected";
+        return translate("status.connected");
       case "limited":
-        return "Limited";
+        return translate("status.limited");
       default:
-        return "Not connected";
+        return translate("dashboard.not_connected");
     }
   });
 
@@ -393,8 +393,8 @@ export default function SettingsView(props: SettingsViewProps) {
   });
 
   const engineStatusLabel = createMemo(() => {
-    if (!isTauriRuntime()) return "Unavailable";
-    return props.engineInfo?.running ? "Running" : "Offline";
+    if (!isTauriRuntime()) return translate("status.unavailable");
+    return props.engineInfo?.running ? translate("status.running") : translate("status.offline");
   });
 
   const engineStatusStyle = createMemo(() => {
@@ -406,10 +406,10 @@ export default function SettingsView(props: SettingsViewProps) {
 
   const opencodeConnectStatusLabel = createMemo(() => {
     const status = props.opencodeConnectStatus?.status;
-    if (!status) return "Idle";
-    if (status === "connected") return "Connected";
-    if (status === "connecting") return "Connecting";
-    return "Failed";
+    if (!status) return translate("status.idle");
+    if (status === "connected") return translate("status.connected");
+    if (status === "connecting") return translate("status.connecting");
+    return translate("status.failed");
   });
 
   const opencodeConnectStatusStyle = createMemo(() => {
@@ -427,8 +427,8 @@ export default function SettingsView(props: SettingsViewProps) {
   });
 
   const opencodeRouterStatusLabel = createMemo(() => {
-    if (!isTauriRuntime()) return "Unavailable";
-    return props.opencodeRouterInfo?.running ? "Running" : "Offline";
+    if (!isTauriRuntime()) return translate("status.unavailable");
+    return props.opencodeRouterInfo?.running ? translate("status.running") : translate("status.offline");
   });
 
   const opencodeRouterStatusStyle = createMemo(() => {
@@ -452,7 +452,7 @@ export default function SettingsView(props: SettingsViewProps) {
     const opencodeUsername = props.engineInfo?.opencodeUsername?.trim() || undefined;
     const opencodePassword = props.engineInfo?.opencodePassword?.trim() || undefined;
     if (!workspacePath) {
-      setOpenCodeRouterRestartError("No worker path available");
+      setOpenCodeRouterRestartError(translate("settings.no_worker_path_available"));
       return;
     }
     setOpenCodeRouterRestarting(true);
@@ -513,8 +513,8 @@ export default function SettingsView(props: SettingsViewProps) {
   };
 
   const orchestratorStatusLabel = createMemo(() => {
-    if (!props.orchestratorStatus) return "Unavailable";
-    return props.orchestratorStatus.running ? "Running" : "Offline";
+    if (!props.orchestratorStatus) return translate("status.unavailable");
+    return props.orchestratorStatus.running ? translate("status.running") : translate("status.offline");
   });
 
   const orchestratorStatusStyle = createMemo(() => {
@@ -525,10 +525,10 @@ export default function SettingsView(props: SettingsViewProps) {
   });
 
   const vesloAuditStatusLabel = createMemo(() => {
-    if (!props.vesloServerWorkspaceId) return "Unavailable";
-    if (props.vesloAuditStatus === "loading") return "Loading";
-    if (props.vesloAuditStatus === "error") return "Error";
-    return "Ready";
+    if (!props.vesloServerWorkspaceId) return translate("status.unavailable");
+    if (props.vesloAuditStatus === "loading") return translate("status.loading");
+    if (props.vesloAuditStatus === "error") return translate("status.error");
+    return translate("status.ready");
   });
 
   const vesloAuditStatusStyle = createMemo(() => {
@@ -539,7 +539,7 @@ export default function SettingsView(props: SettingsViewProps) {
   });
 
   const isLocalEngineRunning = createMemo(() => Boolean(props.engineInfo?.running));
-  const startupLabel = createMemo(() => "Connect to cloud server");
+  const startupLabel = createMemo(() => translate("settings.connect_to_cloud_server"));
 
   const activeTab = createMemo<SettingsTab>(() => {
     return resolveVisibleSettingsTab(props.settingsTab, props.developerMode);
@@ -553,54 +553,54 @@ export default function SettingsView(props: SettingsViewProps) {
 
   const formatActor = (entry: VesloAuditEntry) => {
     const actor = entry.actor;
-    if (!actor) return "unknown";
-    if (actor.type === "host") return "host";
+    if (!actor) return translate("status.unknown");
+    if (actor.type === "host") return translate("settings.actor_host");
     if (actor.type === "remote") {
-      return actor.clientId ? `remote:${actor.clientId}` : "remote";
+      return actor.clientId ? `${translate("settings.actor_remote")}:${actor.clientId}` : translate("settings.actor_remote");
     }
-    return "unknown";
+    return translate("status.unknown");
   };
 
   const formatCapability = (cap?: { read?: boolean; write?: boolean; source?: string }) => {
-    if (!cap) return "Unavailable";
-    const parts = [cap.read ? "read" : null, cap.write ? "write" : null].filter(Boolean).join(" / ");
-    const label = parts || "no access";
+    if (!cap) return translate("status.unavailable");
+    const parts = [cap.read ? translate("settings.capability_read") : null, cap.write ? translate("settings.capability_write") : null].filter(Boolean).join(" / ");
+    const label = parts || translate("settings.capability_no_access");
     return cap.source ? `${label} · ${cap.source}` : label;
   };
 
   const engineStdout = () => {
-    if (!isTauriRuntime()) return "Available in the desktop app.";
-    return props.engineInfo?.lastStdout?.trim() || "No stdout captured yet.";
+    if (!isTauriRuntime()) return translate("settings.available_in_desktop_app");
+    return props.engineInfo?.lastStdout?.trim() || translate("settings.no_stdout");
   };
 
   const engineStderr = () => {
-    if (!isTauriRuntime()) return "Available in the desktop app.";
-    return props.engineInfo?.lastStderr?.trim() || "No stderr captured yet.";
+    if (!isTauriRuntime()) return translate("settings.available_in_desktop_app");
+    return props.engineInfo?.lastStderr?.trim() || translate("settings.no_stderr");
   };
 
   const vesloStdout = () => {
-    if (!props.vesloServerHostInfo) return "Logs are available on the host.";
-    return props.vesloServerHostInfo.lastStdout?.trim() || "No stdout captured yet.";
+    if (!props.vesloServerHostInfo) return translate("settings.logs_available_on_host");
+    return props.vesloServerHostInfo.lastStdout?.trim() || translate("settings.no_stdout");
   };
 
   const vesloStderr = () => {
-    if (!props.vesloServerHostInfo) return "Logs are available on the host.";
-    return props.vesloServerHostInfo.lastStderr?.trim() || "No stderr captured yet.";
+    if (!props.vesloServerHostInfo) return translate("settings.logs_available_on_host");
+    return props.vesloServerHostInfo.lastStderr?.trim() || translate("settings.no_stderr");
   };
 
   const opencodeRouterStdout = () => {
-    if (!isTauriRuntime()) return "Available in the desktop app.";
-    return props.opencodeRouterInfo?.lastStdout?.trim() || "No stdout captured yet.";
+    if (!isTauriRuntime()) return translate("settings.available_in_desktop_app");
+    return props.opencodeRouterInfo?.lastStdout?.trim() || translate("settings.no_stdout");
   };
 
   const opencodeRouterStderr = () => {
-    if (!isTauriRuntime()) return "Available in the desktop app.";
-    return props.opencodeRouterInfo?.lastStderr?.trim() || "No stderr captured yet.";
+    if (!isTauriRuntime()) return translate("settings.available_in_desktop_app");
+    return props.opencodeRouterInfo?.lastStderr?.trim() || translate("settings.no_stderr");
   };
 
   const formatOrchestratorBinary = (binary?: OrchestratorBinaryInfo | null) => {
-    if (!binary) return "Binary unavailable";
-    const version = binary.actualVersion || binary.expectedVersion || "unknown";
+    if (!binary) return translate("settings.binary_unavailable");
+    const version = binary.actualVersion || binary.expectedVersion || translate("status.unknown");
     return `${binary.source} · ${version}`;
   };
 
@@ -612,9 +612,9 @@ export default function SettingsView(props: SettingsViewProps) {
   const orchestratorBinaryPath = () => props.orchestratorStatus?.binaries?.opencode?.path ?? "—";
   const orchestratorSidecarSummary = () => {
     const info = props.orchestratorStatus?.sidecar;
-    if (!info) return "Sidecar config unavailable";
+    if (!info) return translate("settings.sidecar_config_unavailable");
     const source = info.source ?? "auto";
-    const target = info.target ?? "unknown";
+    const target = info.target ?? translate("status.unknown");
     return `${source} · ${target}`;
   };
 
@@ -752,20 +752,20 @@ export default function SettingsView(props: SettingsViewProps) {
 
   const copyRuntimeDebugReport = async () => {
     if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
-      setDebugReportStatus("Clipboard is unavailable in this environment.");
+      setDebugReportStatus(translate("settings.clipboard_unavailable"));
       return;
     }
     try {
       await navigator.clipboard.writeText(runtimeDebugReportJson());
-      setDebugReportStatus("Copied runtime report JSON.");
+      setDebugReportStatus(translate("settings.copied_runtime_report"));
     } catch (error) {
-      setDebugReportStatus(error instanceof Error ? error.message : "Failed to copy runtime report.");
+      setDebugReportStatus(error instanceof Error ? error.message : translate("settings.copy_runtime_report_failed"));
     }
   };
 
   const exportRuntimeDebugReport = () => {
     if (typeof window === "undefined" || typeof document === "undefined") {
-      setDebugReportStatus("Export is unavailable in this environment.");
+      setDebugReportStatus(translate("settings.export_unavailable"));
       return;
     }
     try {
@@ -777,9 +777,9 @@ export default function SettingsView(props: SettingsViewProps) {
       anchor.download = `veslo-debug-report-${stamp}.json`;
       anchor.click();
       window.URL.revokeObjectURL(url);
-      setDebugReportStatus("Exported runtime report JSON.");
+      setDebugReportStatus(translate("settings.exported_runtime_report"));
     } catch (error) {
-      setDebugReportStatus(error instanceof Error ? error.message : "Failed to export runtime report.");
+      setDebugReportStatus(error instanceof Error ? error.message : translate("settings.export_runtime_report_failed"));
     }
   };
 
@@ -787,7 +787,7 @@ export default function SettingsView(props: SettingsViewProps) {
     if (!isTauriRuntime() || revealConfigBusy()) return;
     const path = workspaceConfigPath();
     if (!path) {
-      setConfigActionStatus("Select an active worker before revealing config.");
+      setConfigActionStatus(translate("settings.select_worker_before_reveal_config"));
       return;
     }
     setRevealConfigBusy(true);
@@ -799,9 +799,9 @@ export default function SettingsView(props: SettingsViewProps) {
       } else {
         await revealItemInDir(path);
       }
-      setConfigActionStatus("Revealed workspace config.");
+      setConfigActionStatus(translate("settings.revealed_workspace_config"));
     } catch (error) {
-      setConfigActionStatus(error instanceof Error ? error.message : "Failed to reveal workspace config.");
+      setConfigActionStatus(error instanceof Error ? error.message : translate("settings.reveal_workspace_config_failed"));
     } finally {
       setRevealConfigBusy(false);
     }
@@ -815,7 +815,7 @@ export default function SettingsView(props: SettingsViewProps) {
       const result = await props.resetAppConfigDefaults();
       setConfigActionStatus(result.message);
     } catch (error) {
-      setConfigActionStatus(error instanceof Error ? error.message : "Failed to reset app config.");
+      setConfigActionStatus(error instanceof Error ? error.message : translate("settings.reset_app_config_failed"));
     } finally {
       setResetConfigBusy(false);
     }
@@ -829,12 +829,12 @@ export default function SettingsView(props: SettingsViewProps) {
       const report = await sandboxDebugProbe();
       setSandboxProbeResult(report);
       if (report.ready) {
-        setSandboxProbeStatus("Sandbox probe succeeded. Export the debug report for support.");
+        setSandboxProbeStatus(translate("settings.sandbox_probe_succeeded"));
       } else {
-        setSandboxProbeStatus(report.error?.trim() || "Sandbox probe completed with errors.");
+        setSandboxProbeStatus(report.error?.trim() || translate("settings.sandbox_probe_completed_errors"));
       }
     } catch (error) {
-      setSandboxProbeStatus(error instanceof Error ? error.message : "Sandbox probe failed.");
+      setSandboxProbeStatus(error instanceof Error ? error.message : translate("settings.sandbox_probe_failed"));
     } finally {
       setSandboxProbeBusy(false);
     }
@@ -886,11 +886,11 @@ export default function SettingsView(props: SettingsViewProps) {
                     <div class="grid gap-3 md:grid-cols-3">
                       <div class="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2">
                         <div class="text-[11px] uppercase tracking-wide text-gray-8">{__vesloT("ui.literal.provider_evz7q4", __vesloCurrentLocale())}</div>
-                        <div class="text-sm font-medium text-gray-12 mt-1">{props.aiAccessProviderLabel ?? "Not assigned"}</div>
+                        <div class="text-sm font-medium text-gray-12 mt-1">{props.aiAccessProviderLabel ?? translate("settings.not_assigned")}</div>
                       </div>
                       <div class="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2">
                         <div class="text-[11px] uppercase tracking-wide text-gray-8">{__vesloT("ui.literal.default_model_463spj", __vesloCurrentLocale())}</div>
-                        <div class="text-sm font-medium text-gray-12 mt-1">{props.aiAccessDefaultModelLabel ?? "Not assigned"}</div>
+                        <div class="text-sm font-medium text-gray-12 mt-1">{props.aiAccessDefaultModelLabel ?? translate("settings.not_assigned")}</div>
                       </div>
                       <div class="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2">
                         <div class="text-[11px] uppercase tracking-wide text-gray-8">{__vesloT("ui.literal.allowed_models_tnz56v", __vesloCurrentLocale())}</div>
@@ -919,7 +919,7 @@ export default function SettingsView(props: SettingsViewProps) {
                   onClick={props.toggleShowThinking}
                   disabled={props.busy}
                 >
-                  {props.showThinking ? "On" : "Off"}
+                  {props.showThinking ? translate("common.on") : translate("common.off")}
                 </Button>
               </div>
 
@@ -1179,7 +1179,7 @@ export default function SettingsView(props: SettingsViewProps) {
                   onClick={props.toggleDenKeepSignedIn}
                   disabled={props.busy}
                 >
-                  {props.denKeepSignedIn ? "On" : "Off"}
+                  {props.denKeepSignedIn ? translate("common.on") : translate("common.off")}
                 </Button>
               </div>
               <div class="pt-2 flex flex-wrap gap-2">
@@ -1190,7 +1190,7 @@ export default function SettingsView(props: SettingsViewProps) {
                   disabled={props.busy || props.vesloReconnectBusy || !props.vesloServerUrl.trim()}
                 >
                   <RefreshCcw size={14} class={`text-dls-secondary ${props.vesloReconnectBusy ? "animate-spin" : ""}`} />
-                  {props.vesloReconnectBusy ? "Reconnecting..." : "Reconnect server"}
+                  {props.vesloReconnectBusy ? translate("settings.reconnecting") : translate("settings.reconnect_server")}
                 </button>
                 <Show when={isLocalEngineRunning()}>
                   <button
@@ -1200,7 +1200,7 @@ export default function SettingsView(props: SettingsViewProps) {
                     disabled={props.busy || vesloRestartBusy()}
                   >
                     <RefreshCcw size={14} class={`text-dls-secondary ${vesloRestartBusy() ? "animate-spin" : ""}`} />
-                    {vesloRestartBusy() ? "Restarting..." : "Restart local server"}
+                    {vesloRestartBusy() ? translate("settings.restarting") : translate("settings.restart_local_server")}
                   </button>
                 </Show>
                 <Show when={isLocalEngineRunning()}>
@@ -1457,20 +1457,20 @@ export default function SettingsView(props: SettingsViewProps) {
                       disabled={!isTauriRuntime() || sandboxProbeBusy() || props.anyActiveRuns}
                       title={
                         !isTauriRuntime()
-                          ? "Sandbox probe requires desktop app"
+                          ? translate("settings.sandbox_probe_requires_desktop")
                           : props.anyActiveRuns
-                            ? "Stop active runs before probing"
+                            ? translate("settings.stop_runs_before_probe")
                             : ""
                       }
                     >
-                      {sandboxProbeBusy() ? "Running probe..." : "Run sandbox probe"}
+                      {sandboxProbeBusy() ? translate("settings.running_probe") : translate("settings.run_sandbox_probe")}
                     </Button>
                   </div>
                   <Show when={sandboxProbeResult()}>
                     {(result) => (
                       <div class="text-xs text-gray-11 space-y-1">
                         <div>{__vesloT("ui.literal.run_id_s94hx7", __vesloCurrentLocale())}{" "}<span class="font-mono">{result().runId}</span></div>
-                        <div>{__vesloT("ui.literal.result_1r950e", __vesloCurrentLocale())}{" "}{result().ready ? "ready" : "error"}</div>
+                        <div>{__vesloT("ui.literal.result_1r950e", __vesloCurrentLocale())}{" "}{result().ready ? translate("status.ready") : translate("status.error")}</div>
                         <Show when={result().error}>
                           {(err) => <div class="text-red-11">{err()}</div>}
                         </Show>
@@ -1488,26 +1488,26 @@ export default function SettingsView(props: SettingsViewProps) {
                   <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
                     <div class="text-sm font-medium text-gray-12">{__vesloT("ui.literal.workspace_config_16f12z", __vesloCurrentLocale())}</div>
                     <div class="text-xs text-gray-10">{__vesloT("ui.literal.reveal_or_reset_opencode_veslo_json_defaults_eyndom", __vesloCurrentLocale())}</div>
-                    <div class="text-[11px] text-gray-7 font-mono break-all">{workspaceConfigPath() || "No active worker."}</div>
+                    <div class="text-[11px] text-gray-7 font-mono break-all">{workspaceConfigPath() || translate("settings.no_active_worker")}</div>
                     <div class="flex flex-wrap items-center gap-2">
                       <Button
                         variant="outline"
                         class="text-xs h-8 py-0 px-3"
                         onClick={revealWorkspaceConfig}
                         disabled={!isTauriRuntime() || revealConfigBusy() || !workspaceConfigPath()}
-                        title={!isTauriRuntime() ? "Reveal config requires the desktop app" : ""}
+                        title={!isTauriRuntime() ? translate("settings.reveal_config_requires_desktop") : ""}
                       >
                         <FolderOpen size={13} class="mr-1.5" />
-                        {revealConfigBusy() ? "Opening..." : "Reveal config"}
+                        {revealConfigBusy() ? translate("dashboard.opening") : translate("settings.reveal_config")}
                       </Button>
                       <Button
                         variant="danger"
                         class="text-xs h-8 py-0 px-3"
                         onClick={resetAppConfigDefaults}
                         disabled={resetConfigBusy() || props.anyActiveRuns}
-                        title={props.anyActiveRuns ? "Stop active runs before resetting config" : ""}
+                        title={props.anyActiveRuns ? translate("settings.stop_runs_before_resetting_config") : ""}
                       >
-                        {resetConfigBusy() ? "Resetting..." : "Reset config defaults"}
+                        {resetConfigBusy() ? translate("settings.resetting") : translate("settings.reset_config_defaults")}
                       </Button>
                     </div>
                     <Show when={configActionStatus()}>
@@ -1530,9 +1530,9 @@ export default function SettingsView(props: SettingsViewProps) {
                     class="text-xs h-8 py-0 px-3 shrink-0"
                     onClick={props.repairOpencodeCache}
                     disabled={props.cacheRepairBusy || !isTauriRuntime()}
-                    title={isTauriRuntime() ? "" : "Cache repair requires the desktop app"}
+                    title={isTauriRuntime() ? "" : translate("settings.cache_repair_requires_desktop")}
                   >
-                    {props.cacheRepairBusy ? "Repairing cache" : "Repair cache"}
+                    {props.cacheRepairBusy ? translate("settings.repairing_cache") : translate("settings.repair_cache")}
                   </Button>
                 </div>
 
@@ -1552,13 +1552,13 @@ export default function SettingsView(props: SettingsViewProps) {
                     disabled={props.dockerCleanupBusy || props.anyActiveRuns || !isTauriRuntime()}
                     title={
                       !isTauriRuntime()
-                        ? "Docker cleanup requires the desktop app"
+                        ? translate("settings.docker_cleanup_requires_desktop")
                         : props.anyActiveRuns
-                          ? "Stop active runs before cleanup"
+                          ? translate("settings.stop_runs_before_cleanup")
                           : ""
                     }
                   >
-                    {props.dockerCleanupBusy ? "Removing containers..." : "Delete containers"}
+                    {props.dockerCleanupBusy ? translate("settings.removing_containers") : translate("settings.delete_containers")}
                   </Button>
                 </div>
 
@@ -1642,7 +1642,7 @@ export default function SettingsView(props: SettingsViewProps) {
                             class="text-xs h-10 px-3 shrink-0"
                             onClick={() => props.setEngineCustomBinPath("")}
                             disabled={props.busy || !props.engineCustomBinPath.trim()}
-                            title={!props.engineCustomBinPath.trim() ? "No custom path set" : "Clear"}
+                            title={!props.engineCustomBinPath.trim() ? translate("settings.no_custom_path_set") : translate("skills.clear_selection")}
                           >
                             {__vesloT("skills.clear_selection", __vesloCurrentLocale())}</Button>
                         </div>
@@ -1690,7 +1690,7 @@ export default function SettingsView(props: SettingsViewProps) {
                       class="text-xs h-8 py-0 px-3 shrink-0"
                       onClick={() => props.openResetModal("onboarding")}
                       disabled={props.busy || props.resetModalBusy || props.anyActiveRuns}
-                      title={props.anyActiveRuns ? "Stop active runs to reset" : ""}
+                      title={props.anyActiveRuns ? translate("settings.stop_active_runs_reset_hint") : ""}
                     >
                       {__vesloT("settings.reset", __vesloCurrentLocale())}</Button>
                   </div>
@@ -1705,7 +1705,7 @@ export default function SettingsView(props: SettingsViewProps) {
                       class="text-xs h-8 py-0 px-3 shrink-0"
                       onClick={() => props.openResetModal("all")}
                       disabled={props.busy || props.resetModalBusy || props.anyActiveRuns}
-                      title={props.anyActiveRuns ? "Stop active runs to reset" : ""}
+                      title={props.anyActiveRuns ? translate("settings.stop_active_runs_reset_hint") : ""}
                     >
                       {__vesloT("settings.reset", __vesloCurrentLocale())}</Button>
                   </div>
@@ -1733,7 +1733,7 @@ export default function SettingsView(props: SettingsViewProps) {
                         class="text-xs px-3 py-1.5 justify-center"
                       >
                         <RefreshCcw class={`w-3.5 h-3.5 mr-1.5 ${vesloRestartBusy() ? "animate-spin" : ""}`} />
-                        {vesloRestartBusy() ? "Restarting..." : "Restart orchestrator"}
+                        {vesloRestartBusy() ? translate("settings.restarting") : translate("settings.restart_orchestrator")}
                       </Button>
                       <Button
                         variant="secondary"
@@ -1742,7 +1742,7 @@ export default function SettingsView(props: SettingsViewProps) {
                         class="text-xs px-3 py-1.5 justify-center"
                       >
                         <RefreshCcw class={`w-3.5 h-3.5 mr-1.5 ${opencodeRestarting() ? "animate-spin" : ""}`} />
-                        {opencodeRestarting() ? "Restarting..." : "Restart OpenCode"}
+                        {opencodeRestarting() ? translate("settings.restarting") : translate("settings.restart_opencode")}
                       </Button>
                       <Button
                         variant="secondary"
@@ -1751,7 +1751,7 @@ export default function SettingsView(props: SettingsViewProps) {
                         class="text-xs px-3 py-1.5 justify-center"
                       >
                         <RefreshCcw class={`w-3.5 h-3.5 mr-1.5 ${vesloServerRestarting() ? "animate-spin" : ""}`} />
-                        {vesloServerRestarting() ? "Restarting..." : "Restart Veslo server"}
+                        {vesloServerRestarting() ? translate("settings.restarting") : translate("settings.restart_veslo_server")}
                       </Button>
                       <Button
                         variant="secondary"
@@ -1760,7 +1760,7 @@ export default function SettingsView(props: SettingsViewProps) {
                         class="text-xs px-3 py-1.5 justify-center"
                       >
                         <RefreshCcw class={`w-3.5 h-3.5 mr-1.5 ${opencodeRouterRestarting() ? "animate-spin" : ""}`} />
-                        {opencodeRouterRestarting() ? "Restarting..." : "Restart OpenCodeRouter"}
+                        {opencodeRouterRestarting() ? translate("settings.restarting") : translate("settings.restart_opencode_router")}
                       </Button>
                     </div>
                     <Show when={vesloRestartStatus()}>
@@ -1803,10 +1803,10 @@ export default function SettingsView(props: SettingsViewProps) {
                       </div>
                       <div class="space-y-1">
                         <div class="font-mono type-ui-xs text-gray-7 truncate">
-                          {props.engineInfo?.baseUrl ?? "Base URL unavailable"}
+                          {props.engineInfo?.baseUrl ?? translate("settings.base_url_unavailable")}
                         </div>
                         <div class="font-mono type-ui-xs text-gray-7 truncate">
-                          {props.engineInfo?.projectDir ?? "No project directory"}
+                          {props.engineInfo?.projectDir ?? translate("settings.no_project_directory")}
                         </div>
                         <div class="font-mono type-ui-xs text-gray-7 truncate">{__vesloT("ui.literal.pid_5yw6p4", __vesloCurrentLocale())}{" "}{props.engineInfo?.pid ?? "—"}</div>
                       </div>
@@ -1838,7 +1838,7 @@ export default function SettingsView(props: SettingsViewProps) {
                       </div>
                       <div class="space-y-1">
                         <div class="font-mono type-ui-xs text-gray-7 truncate">
-                          {props.orchestratorStatus?.dataDir ?? "Data directory unavailable"}
+                          {props.orchestratorStatus?.dataDir ?? translate("settings.data_directory_unavailable")}
                         </div>
                         <div class="font-mono type-ui-xs text-gray-7 truncate">
                           {__vesloT("ui.literal.daemon_33yrzx", __vesloCurrentLocale())}{" "}{props.orchestratorStatus?.daemon?.baseUrl ?? "—"}
@@ -1881,10 +1881,10 @@ export default function SettingsView(props: SettingsViewProps) {
                       </div>
                       <div class="space-y-1">
                         <div class="font-mono type-ui-xs text-gray-7 truncate">
-                          {props.opencodeConnectStatus?.baseUrl ?? "Base URL unavailable"}
+                          {props.opencodeConnectStatus?.baseUrl ?? translate("settings.base_url_unavailable")}
                         </div>
                         <div class="font-mono type-ui-xs text-gray-7 truncate">
-                          {props.opencodeConnectStatus?.directory ?? "No project directory"}
+                          {props.opencodeConnectStatus?.directory ?? translate("settings.no_project_directory")}
                         </div>
                         <div class="font-product type-ui-xs text-gray-7">
                           {__vesloT("ui.literal.last_attempt_n4aaie", __vesloCurrentLocale())}{" "}{opencodeConnectTimestamp() ?? "—"}
@@ -1938,7 +1938,7 @@ export default function SettingsView(props: SettingsViewProps) {
                       </div>
                       <div class="space-y-1">
                         <div class="font-mono type-ui-xs text-gray-7 truncate">
-                          {(props.vesloServerHostInfo?.baseUrl ?? props.vesloServerUrl) || "Base URL unavailable"}
+                          {(props.vesloServerHostInfo?.baseUrl ?? props.vesloServerUrl) || translate("settings.base_url_unavailable")}
                         </div>
                         <div class="font-mono type-ui-xs text-gray-7 truncate">{__vesloT("ui.literal.pid_5yw6p4", __vesloCurrentLocale())}{" "}{props.vesloServerHostInfo?.pid ?? "—"}</div>
                       </div>
@@ -1970,10 +1970,10 @@ export default function SettingsView(props: SettingsViewProps) {
                       </div>
                       <div class="space-y-1">
                         <div class="font-mono type-ui-xs text-gray-7 truncate">
-                          {props.opencodeRouterInfo?.opencodeUrl?.trim() || "OpenCode URL unavailable"}
+                          {props.opencodeRouterInfo?.opencodeUrl?.trim() || translate("settings.opencode_url_unavailable")}
                         </div>
                         <div class="font-mono type-ui-xs text-gray-7 truncate">
-                          {props.opencodeRouterInfo?.workspacePath?.trim() || "No worker directory"}
+                          {props.opencodeRouterInfo?.workspacePath?.trim() || translate("settings.no_worker_directory")}
                         </div>
                         <div class="font-mono type-ui-xs text-gray-7 truncate">
                           {__vesloT("ui.literal.health_port_19tjkf", __vesloCurrentLocale())}{" "}{props.opencodeRouterInfo?.healthPort ?? "—"}
@@ -1988,7 +1988,7 @@ export default function SettingsView(props: SettingsViewProps) {
                           class="text-xs px-3 py-1.5"
                         >
                           <RefreshCcw class={`w-3.5 h-3.5 mr-1.5 ${opencodeRouterRestarting() ? "animate-spin" : ""}`} />
-                          {opencodeRouterRestarting() ? "Restarting..." : "Restart"}
+                          {opencodeRouterRestarting() ? translate("settings.restarting") : translate("settings.restart")}
                         </Button>
                         <Show when={props.opencodeRouterInfo?.running}>
                           <Button
@@ -2036,12 +2036,12 @@ export default function SettingsView(props: SettingsViewProps) {
                       {(diag) => (
                         <div class="font-product type-ui-sm grid md:grid-cols-2 gap-2 text-gray-11">
                           <div>{__vesloT("ui.literal.started_1nkwq4", __vesloCurrentLocale())}{" "}{formatUptime(diag().uptimeMs)}</div>
-                          <div>{__vesloT("ui.literal.read_only_7asksw", __vesloCurrentLocale())}{" "}{diag().readOnly ? "true" : "false"}</div>
+                          <div>{__vesloT("ui.literal.read_only_7asksw", __vesloCurrentLocale())}{" "}{diag().readOnly ? translate("common.true") : translate("common.false")}</div>
                           <div>
                             {__vesloT("ui.literal.approval_6s3vw4", __vesloCurrentLocale())}{" "}{diag().approval.mode} ({diag().approval.timeoutMs}{__vesloT("ui.literal.ms_9kn2zs", __vesloCurrentLocale())}</div>
                           <div>{__vesloT("ui.literal.workspaces_1qpwgk", __vesloCurrentLocale())}{" "}{diag().workspaceCount}</div>
                           <div>{__vesloT("ui.literal.active_workspace_rotr1o", __vesloCurrentLocale())}{" "}{diag().activeWorkspaceId ?? "—"}</div>
-                          <div>{__vesloT("ui.literal.config_path_10ow8r", __vesloCurrentLocale())}{" "}{diag().server.configPath ?? "default"}</div>
+                          <div>{__vesloT("ui.literal.config_path_10ow8r", __vesloCurrentLocale())}{" "}{diag().server.configPath ?? translate("common.default")}</div>
                           <div>{__vesloT("ui.literal.token_source_rfu5df", __vesloCurrentLocale())}{" "}{diag().tokenSource.client}</div>
                           <div>{__vesloT("ui.literal.host_token_source_1t2g6o", __vesloCurrentLocale())}{" "}{diag().tokenSource.host}</div>
                         </div>
@@ -2053,7 +2053,7 @@ export default function SettingsView(props: SettingsViewProps) {
                     <div class="flex items-center justify-between gap-3">
                       <div class="font-product type-ui-md font-medium text-gray-12">{__vesloT("ui.literal.veslo_server_capabilities_1fu1yi", __vesloCurrentLocale())}</div>
                       <div class="font-mono type-ui-xs text-gray-8 truncate">
-                        {props.vesloServerWorkspaceId ? `Worker ${props.vesloServerWorkspaceId}` : "Worker unresolved"}
+                        {props.vesloServerWorkspaceId ? `${translate("workspace.fallback_worker")} ${props.vesloServerWorkspaceId}` : translate("settings.worker_unresolved")}
                       </div>
                     </div>
                     <Show
@@ -2067,19 +2067,22 @@ export default function SettingsView(props: SettingsViewProps) {
                           <div>{__vesloT("ui.literal.mcp_1gfg4x", __vesloCurrentLocale())}{" "}{formatCapability(caps().mcp)}</div>
                           <div>{__vesloT("ui.literal.commands_189r59", __vesloCurrentLocale())}{" "}{formatCapability(caps().commands)}</div>
                           <div>{__vesloT("ui.literal.config_1o4qqc", __vesloCurrentLocale())}{" "}{formatCapability(caps().config)}</div>
-                          <div>{__vesloT("ui.literal.proxy_opencoderouter_1oq2yh", __vesloCurrentLocale())}{" "}{caps().proxy?.opencodeRouter ? "enabled" : "disabled"}</div>
+                          <div>{__vesloT("ui.literal.proxy_opencoderouter_1oq2yh", __vesloCurrentLocale())}{" "}{caps().proxy?.opencodeRouter ? translate("mcp.enabled") : translate("mcp.disabled")}</div>
                           <div>
                             {__vesloT("ui.literal.browser_tools_wve4ga", __vesloCurrentLocale())}{" "}{(() => {
                               const browser = caps().toolProviders?.browser;
-                              if (!browser?.enabled) return "disabled";
+                              if (!browser?.enabled) return translate("mcp.disabled");
                               return `${browser.mode} · ${browser.placement}`;
                             })()}
                           </div>
                           <div>
                             {__vesloT("ui.literal.file_tools_1lpb92", __vesloCurrentLocale())}{" "}{(() => {
                               const files = caps().toolProviders?.files;
-                              if (!files) return "Unavailable";
-                              const parts = [files.injection ? "inbox on" : "inbox off", files.outbox ? "outbox on" : "outbox off"];
+                              if (!files) return translate("status.unavailable");
+                              const parts = [
+                                files.injection ? translate("settings.inbox_on") : translate("settings.inbox_off"),
+                                files.outbox ? translate("settings.outbox_on") : translate("settings.outbox_off"),
+                              ];
                               return parts.join(" · ");
                             })()}
                           </div>
@@ -2087,8 +2090,8 @@ export default function SettingsView(props: SettingsViewProps) {
                             {__vesloT("ui.literal.sandbox_a1meoq", __vesloCurrentLocale())}{" "}{(() => {
                               const sandbox = caps().sandbox;
                               return sandbox
-                                ? `${sandbox.backend} (${sandbox.enabled ? "on" : "off"})`
-                                : "Unavailable";
+                                ? `${sandbox.backend} (${sandbox.enabled ? translate("common.on") : translate("common.off")})`
+                                : translate("status.unavailable");
                             })()}
                           </div>
                         </div>

@@ -86,6 +86,9 @@ export default function SidebarStatusControls(props: SidebarStatusControlsProps)
   const authenticatedUserLabel = createMemo(() =>
     resolveConnectedUserLabel(props.authenticatedUser, persistedAuthenticatedUserLabel())
   );
+  const accountButtonLabel = createMemo(
+    () => `${__vesloT("ui.literal.logged_in_user_1rsfga", __vesloCurrentLocale())}: ${authenticatedUserLabel()}`,
+  );
   const isLoggedIn = createMemo(() => {
     denAuthRevision();
     return Boolean(props.authenticatedUser?.trim() || readDenAuth()?.token?.trim());
@@ -167,8 +170,8 @@ export default function SidebarStatusControls(props: SidebarStatusControlsProps)
           <button
             type="button"
             class="w-full min-w-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-6 bg-gray-1 px-2.5 py-1.5 text-xs text-gray-11 transition-colors hover:bg-gray-2 hover:text-gray-12"
-            title={`Logged in user: ${authenticatedUserLabel()}`}
-            aria-label={`Logged in user: ${authenticatedUserLabel()}`}
+            title={accountButtonLabel()}
+            aria-label={accountButtonLabel()}
             aria-haspopup="menu"
             aria-expanded={accountMenuOpen()}
             onClick={toggleAccountMenu}

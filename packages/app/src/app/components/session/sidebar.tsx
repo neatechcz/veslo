@@ -92,7 +92,7 @@ export default function SessionSidebar(props: SidebarProps) {
     workspace.vesloWorkspaceName?.trim() ||
     workspace.name?.trim() ||
     workspace.path?.trim() ||
-    "Worker";
+    __vesloT("workspace.fallback_worker", __vesloCurrentLocale());
 
   const workspacePathLabel = (workspace: WorkspaceInfo) => {
     if (workspace.workspaceType === "remote") {

@@ -100,11 +100,14 @@ test("titlebar menu toggles keep macOS-sized icon controls", () => {
 
 test("Windows Tauri titlebar exposes app-owned window controls", () => {
   assert.match(source, /const\s+showWindowsWindowControls\s*=\s*isTauri\s*&&\s*isWindows;/);
-  assert.match(source, /aria-label="Minimize window"/);
+  assert.match(source, /aria-label=\{__vesloT\("ui\.literal\.minimize_window_1rr7i2", __vesloCurrentLocale\(\)\)\}/);
   assert.match(source, /minimizeCurrentWindow/);
-  assert.match(source, /aria-label="Maximize or restore window"/);
+  assert.match(
+    source,
+    /aria-label=\{__vesloT\("ui\.literal\.maximize_or_restore_window_5ds1ae", __vesloCurrentLocale\(\)\)\}/,
+  );
   assert.match(source, /toggleMaximizeCurrentWindow/);
-  assert.match(source, /aria-label="Close window"/);
+  assert.match(source, /aria-label=\{__vesloT\("ui\.literal\.close_window_1vvpub", __vesloCurrentLocale\(\)\)\}/);
   assert.match(source, /closeCurrentWindow/);
   assert.match(
     source,
@@ -116,7 +119,7 @@ test("Windows Tauri titlebar exposes app-owned window controls", () => {
 test("titlebar text labels are not selectable while dragging the window", () => {
   assert.match(
     source,
-    /<span[\s\S]*class="[^"]*\bselect-none\b[^"]*"[\s\S]*>\s*Veslo by Neatech/,
+    /<span[\s\S]*class="[^"]*\bselect-none\b[^"]*"[\s\S]*>\s*\{__vesloT\("ui\.literal\.veslo_by_neatech_86m8cx", __vesloCurrentLocale\(\)\)\}/,
     "fallback app name should not be selectable in the draggable titlebar area",
   );
 
@@ -130,7 +133,7 @@ test("titlebar text labels are not selectable while dragging the window", () => 
 test("titlebar text labels participate in window dragging", () => {
   assert.match(
     source,
-    /<span[\s\S]*data-tauri-drag-region[\s\S]*onMouseDown=\{handleTitlebarDragMouseDown\}[\s\S]*class="[^"]*\bselect-none\b[^"]*"[\s\S]*>\s*Veslo by Neatech/,
+    /<span[\s\S]*data-tauri-drag-region[\s\S]*onMouseDown=\{handleTitlebarDragMouseDown\}[\s\S]*class="[^"]*\bselect-none\b[^"]*"[\s\S]*>\s*\{__vesloT\("ui\.literal\.veslo_by_neatech_86m8cx", __vesloCurrentLocale\(\)\)\}/,
     "fallback app name should be a Tauri drag region instead of blocking the titlebar drag strip",
   );
 
@@ -144,7 +147,7 @@ test("titlebar text labels participate in window dragging", () => {
 test("titlebar menu toggles let session context replace the left-side brand", () => {
   assert.match(
     source,
-    /Veslo by Neatech/,
+    /ui\.literal\.veslo_by_neatech_86m8cx/,
     "titlebar should keep the Veslo brand as the fallback label when no session-specific titlebar content is provided",
   );
 
@@ -156,7 +159,7 @@ test("titlebar menu toggles let session context replace the left-side brand", ()
 
   assert.match(
     source,
-    /<div class=\{layout\.leftOffsetClass\}>[\s\S]*<LeftSidebarToggleIcon size=\{18\} \/>[\s\S]*props\.leftContent[\s\S]*props\.showBrand !== false[\s\S]*Veslo by Neatech/,
+    /<div class=\{layout\.leftOffsetClass\}>[\s\S]*<LeftSidebarToggleIcon size=\{18\} \/>[\s\S]*props\.leftContent[\s\S]*props\.showBrand !== false[\s\S]*ui\.literal\.veslo_by_neatech_86m8cx/,
     "titlebar should render provided left-side content in the same cluster as the left toggle and only show the brand fallback when that behavior is explicitly enabled",
   );
 });
@@ -170,7 +173,7 @@ test("titlebar menu toggles support a custom left label and default to toggle te
 
   assert.match(
     source,
-    /const\s+leftLabel\s*=\s*\(\)\s*=>\s*props\.leftLabel\s*\?\?\s*["']Toggle left menu["'];/,
+    /const\s+leftLabel\s*=\s*\(\)\s*=>\s*props\.leftLabel\s*\?\?\s*__vesloT\("sidebar\.toggle_left_menu", __vesloCurrentLocale\(\)\);/,
     "titlebar should derive the left label reactively",
   );
 

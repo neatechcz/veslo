@@ -107,19 +107,19 @@ const getSmartFileName = (files: string[], file: string): string => {
 };
 
 const mcpStatusLabel = (status?: McpStatus, disabled?: boolean) => {
-  if (disabled) return "Disabled";
-  if (!status) return "Disconnected";
+  if (disabled) return __vesloT("mcp.disabled", __vesloCurrentLocale());
+  if (!status) return __vesloT("status.disconnected", __vesloCurrentLocale());
   switch (status.status) {
     case "connected":
-      return "Connected";
+      return __vesloT("status.connected", __vesloCurrentLocale());
     case "needs_auth":
-      return "Needs auth";
+      return __vesloT("mcp.needs_auth", __vesloCurrentLocale());
     case "needs_client_registration":
-      return "Register client";
+      return __vesloT("mcp.register_client", __vesloCurrentLocale());
     case "failed":
-      return "Failed";
+      return __vesloT("status.failed", __vesloCurrentLocale());
     default:
-      return "Disconnected";
+      return __vesloT("status.disconnected", __vesloCurrentLocale());
   }
 };
 
