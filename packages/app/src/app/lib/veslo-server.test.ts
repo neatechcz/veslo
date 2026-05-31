@@ -1026,6 +1026,105 @@ test("skill materialization helpers call workspace and global status and sync en
   }
 });
 
+test("skill removal helpers call local server routes with host and client auth", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; headers: Headers; body: string | null }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+      body: typeof init?.body === "string" ? init.body : null,
+    });
+    const url = new URL(String(input));
+    if (url.pathname === "/skill-removals") {
+      return new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: "removal_1",
+              name: "legacy-helper",
+              scope: "user-global",
+              path: "/Users/example/.config/opencode/skills/legacy-helper/SKILL.md",
+              reason: "cleanup",
+              status: "removed",
+              removedAt: "2026-05-31T10:00:00.000Z",
+              canRestore: true,
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (url.pathname.endsWith("/restore")) {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          path: "/Users/example/.config/opencode/skills/legacy-helper/SKILL.md",
+          reloadRequired: true,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        name: "legacy-helper",
+        path: "/Users/example/.config/opencode/skills/legacy-helper",
+        removalId: "removal_1",
+        reloadRequired: true,
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example/",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+
+    await client.deleteGlobalSkill("legacy-helper", {
+      path: "/Users/example/.config/opencode/skills/legacy-helper/SKILL.md",
+      reason: "cleanup",
+    });
+    const removals = await client.listSkillRemovals({
+      scope: "user-global",
+      workspaceId: "workspace-a",
+      includeRestored: true,
+    });
+    await client.restoreSkillRemoval("removal_1");
+
+    assert.equal(removals.items[0]?.id, "removal_1");
+    assert.equal(removals.items[0]?.path, "/Users/example/.config/opencode/skills/legacy-helper/SKILL.md");
+    assert.deepEqual(calls.map((call) => ({ url: call.url, method: call.method, body: call.body })), [
+      {
+        url: "https://veslo.example/skills/user-global/legacy-helper?path=%2FUsers%2Fexample%2F.config%2Fopencode%2Fskills%2Flegacy-helper%2FSKILL.md&reason=cleanup",
+        method: "DELETE",
+        body: null,
+      },
+      {
+        url: "https://veslo.example/skill-removals?scope=user-global&workspaceId=workspace-a&includeRestored=true",
+        method: "GET",
+        body: null,
+      },
+      {
+        url: "https://veslo.example/skill-removals/removal_1/restore",
+        method: "POST",
+        body: null,
+      },
+    ]);
+    for (const call of calls) {
+      assert.equal(call.headers.get("authorization"), "Bearer token-123");
+      assert.equal(call.headers.get("x-veslo-host-token"), "host-token-123");
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("listHubMcp forwards den auth context headers when provided", async () => {
   const previousFetch = globalThis.fetch;
   const calls: Array<{ url: string; headers: Headers }> = [];

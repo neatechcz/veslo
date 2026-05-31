@@ -131,6 +131,12 @@ Veslo server also exposes a local proxy for registry search, registry events, an
 - `PATCH /v1/workspaces/:workspaceId/skill-set`
   Requires host or owner auth. Replaces the desired registry-backed skill set for a workspace.
 
+Organization and other managed skill removals stay on these registry mutation
+surfaces. Installation-backed removals delete or restore the installation.
+Rollout-backed removals disable or re-enable the rollout policy. Locked rollout
+policies reject normal user removal, and organization-owned mutations require
+organization-owner or skill-admin rights through the registry context.
+
 Server-controlled registry package materialization is a local server responsibility:
 
 - `GET /skills/materialization`
@@ -146,6 +152,35 @@ Rollout policy resolution must enforce target exclusivity: the same effective
 skill/audience cannot be materialized as both a user skill and a workspace skill.
 If registry state contains both because of legacy data or a race, the server
 returns a conflict and avoids writing both targets.
+
+## Skill Removal and Restore
+
+Local filesystem skill removal is recoverable and server-backed. The app should
+call these routes instead of deleting skill directories directly:
+
+- `DELETE /workspace/:id/skills/:name`
+  Requires collaborator client auth plus any host approval required for the
+  target path. Removes a writable local workspace skill, including a concrete
+  skill path discovered outside the active workspace when that workspace is
+  configured and authorized. Returns `{ ok, name, path, removalId }`.
+- `DELETE /skills/user-global/:name`
+  Requires collaborator client auth. Removes a user skill by name and optional
+  concrete path. Returns `{ ok, name, path, removalId, reloadRequired, trigger }`
+  and emits skill reload events for configured workspaces.
+- `GET /skill-removals`
+  Requires collaborator-or-host access. Lists recoverable removals. Query
+  parameters: `scope=workspace|user-global`, `workspaceId`, and
+  `includeRestored=true`. Workspace listings are filtered to visible configured
+  workspaces; user-skill listings require host or owner access.
+- `POST /skill-removals/:id/restore`
+  Requires host auth. Restores a journaled local skill removal after validating
+  the journal record, authorized workspace roots for workspace removals,
+  destination conflicts, and snapshot hash. Returns `{ ok, path, reloadRequired,
+  trigger }`; workspace restores also write a `skills.restore` audit entry.
+
+The app surfaces journaled removals in the deleted/removed skills view. A local
+restore uses `restoreTarget.removalId`; a managed restore uses the registry
+installation restore or rollout-policy enable route instead.
 
 ## Workspace Scope
 

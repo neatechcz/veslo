@@ -260,7 +260,21 @@ export type HubSkillInstallTarget =
   | { scope: "global" }
   | { scope: "workspace"; workspaceId: string };
 
-export type SkillInventoryScope = "workspace" | "user-global";
+export type ManagedSkillSource = "personal" | "workspace" | "organization" | "platform";
+
+export type SkillInventoryLifecycle = "active" | "removed";
+
+export type SkillInventoryRegistryMetadata = {
+  skillId?: string;
+  installationId?: string;
+  policyId?: string;
+  versionId?: string;
+  packageSha256?: string;
+  source?: ManagedSkillSource;
+  removalPolicy?: "user_removable" | "admin_removable" | "locked";
+};
+
+export type SkillInventoryScope = "workspace" | "user-global" | "organization";
 
 export type SkillInventoryStatus = "global" | "workspace-only" | "mixed" | "hub-only";
 
@@ -281,6 +295,17 @@ export type SkillInstance = {
   description?: string;
   trigger?: string;
   source: "opencode" | "claude" | "agents" | "hub" | "unknown";
+  lifecycle?: SkillInventoryLifecycle;
+  removedAt?: string;
+  removedBy?: string;
+  removeReason?: string;
+  registry?: SkillInventoryRegistryMetadata;
+  restoreTarget?: {
+    scope: SkillInventoryScope;
+    workspaceId?: string;
+    orgId?: string;
+    removalId?: string;
+  };
   readable: boolean;
   writable: boolean;
 };
@@ -294,8 +319,6 @@ export type SkillInventoryItem = {
   hubItem?: HubSkillCard;
   status: SkillInventoryStatus;
 };
-
-export type ManagedSkillSource = "personal" | "workspace" | "organization" | "platform";
 
 export type WorkspaceSkillSetUpdatePolicy = "pinned" | "latest_user" | "latest_approved" | "release_channel";
 

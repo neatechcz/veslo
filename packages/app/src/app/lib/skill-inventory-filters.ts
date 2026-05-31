@@ -23,6 +23,8 @@ type MetadataCarrier = {
   approved?: unknown;
   deleted?: unknown;
   deletedAt?: unknown;
+  lifecycle?: unknown;
+  removedAt?: unknown;
   registryInstallation?: Partial<WorkspaceSkillRegistryInstallation> | null;
   registryInstallations?: readonly Partial<WorkspaceSkillRegistryInstallation>[];
 };
@@ -59,7 +61,9 @@ const asMetadataCarrier = (value: unknown): MetadataCarrier => {
 const isDeleted = (value: unknown): boolean => {
   const metadata = asMetadataCarrier(value);
   if (metadata.deleted === true) return true;
+  if (metadata.lifecycle === "removed") return true;
   if (typeof metadata.deletedAt === "string" && metadata.deletedAt.trim()) return true;
+  if (typeof metadata.removedAt === "string" && metadata.removedAt.trim()) return true;
   const registryInstallation = metadata.registryInstallation;
   if (!registryInstallation || typeof registryInstallation !== "object") return false;
   const registryDeletedAt = (registryInstallation as { deletedAt?: unknown }).deletedAt;
@@ -145,6 +149,18 @@ const matchesScope = (scope: SkillInventoryScope, scopes: readonly SkillInventor
 const matchesStatus = (status: SkillInventoryStatus, statuses: readonly SkillInventoryStatus[] | undefined): boolean =>
   !statuses || statuses.length === 0 || statuses.includes(status);
 
+const visibleStatusForItem = (
+  globalInstance: SkillInstance | undefined,
+  workspaceInstances: readonly SkillInstance[],
+  hubItem: SkillInventoryItem["hubItem"],
+): SkillInventoryStatus => {
+  if (globalInstance && workspaceInstances.length > 0) return "mixed";
+  if (globalInstance) return "global";
+  if (workspaceInstances.length > 0) return "workspace-only";
+  if (hubItem) return "hub-only";
+  return "hub-only";
+};
+
 const visibleGlobalInstance = (
   item: SkillInventoryItem,
   filters: SkillInventoryFilters,
@@ -199,15 +215,16 @@ export function filterSkillInventoryItems(
   const tokens = queryTokens(filters.query);
 
   return items.flatMap((item) => {
-    if (!matchesStatus(item.status, filters.statuses)) return [];
     if (!filters.includeDeleted && isDeleted(item)) return [];
 
     const textMatch = buildTextMatch(item, tokens);
     const globalInstance = visibleGlobalInstance(item, filters, textMatch);
     const workspaceInstances = visibleWorkspaceInstances(item, filters, textMatch);
     const hubItem = visibleHubItem(item, filters, textMatch);
+    const status = visibleStatusForItem(globalInstance, workspaceInstances, hubItem);
 
     if (!globalInstance && workspaceInstances.length === 0 && !hubItem) return [];
+    if (!matchesStatus(status, filters.statuses)) return [];
 
     return [
       {
@@ -215,6 +232,7 @@ export function filterSkillInventoryItems(
         globalInstance,
         workspaceInstances,
         hubItem,
+        status,
       },
     ];
   });

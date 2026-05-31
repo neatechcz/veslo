@@ -4,6 +4,8 @@ import test from "node:test";
 import { createRoot } from "solid-js";
 
 import type { LocalSkillCard, LocalSkillListScope, WorkspaceInfo } from "../lib/tauri";
+import { buildSkillInventory, skillMutationTargetFromInstance } from "../lib/skill-inventory.js";
+import { filterSkillInventoryItems } from "../lib/skill-inventory-filters.js";
 
 const { createExtensionsStore } = await import("./extensions.js");
 
@@ -113,6 +115,457 @@ const hubSkill = (name: string) => ({
   },
 });
 
+async function withRegistryMutationStore(
+  run: (context: {
+    store: any;
+	    calls: {
+	      deleteInstallations: Array<{ installationId: string; input: unknown }>;
+	      restoreInstallations: Array<{ installationId: string; input: unknown }>;
+	      updatePolicies: Array<{ policyId: string; input: unknown }>;
+	      deleteWorkspaceSkills: Array<{ workspaceId: string; name: string; options?: unknown }>;
+	      deleteGlobalSkills: Array<{ name: string; options?: unknown }>;
+	      restoreRemovals: string[];
+      hubRefreshes: unknown[];
+      inventoryReads: Array<{ projectDir: string; scope: LocalSkillListScope }>;
+      reloads: unknown[];
+    };
+    errors: string[];
+  }) => Promise<void>,
+) {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+	      const calls = {
+	        deleteInstallations: [] as Array<{ installationId: string; input: unknown }>,
+	        restoreInstallations: [] as Array<{ installationId: string; input: unknown }>,
+	        updatePolicies: [] as Array<{ policyId: string; input: unknown }>,
+	        deleteWorkspaceSkills: [] as Array<{ workspaceId: string; name: string; options?: unknown }>,
+	        deleteGlobalSkills: [] as Array<{ name: string; options?: unknown }>,
+        restoreRemovals: [] as string[],
+        hubRefreshes: [] as unknown[],
+        inventoryReads: [] as Array<{ projectDir: string; scope: LocalSkillListScope }>,
+        reloads: [] as unknown[],
+      };
+      const errors: string[] = [];
+      const vesloServerClient = {
+        async deleteRegistrySkillInstallation(installationId: string, input?: unknown) {
+          calls.deleteInstallations.push({ installationId, input });
+          return {
+            installation: {
+              installationId,
+              skillId: "skill_1",
+              versionId: "version_1",
+              enabled: false,
+              source: "personal",
+              installedAt: "2026-05-31T10:00:00.000Z",
+            },
+          };
+        },
+        async restoreRegistrySkillInstallation(installationId: string, input: unknown) {
+          calls.restoreInstallations.push({ installationId, input });
+          return {
+            installation: {
+              installationId,
+              skillId: "skill_1",
+              versionId: "version_1",
+              enabled: true,
+              source: "personal",
+              installedAt: "2026-05-31T10:00:00.000Z",
+            },
+          };
+        },
+        async updateRegistrySkillRolloutPolicy(policyId: string, input: unknown) {
+          calls.updatePolicies.push({ policyId, input });
+          return {
+            policy: {
+              id: policyId,
+              skillId: "skill_1",
+              versionId: "version_1",
+              target: "workspace",
+              audience: "selected-workspaces",
+              catalogScope: "organization",
+              orgId: "org-1",
+              enabled: Boolean((input as { enabled?: boolean }).enabled),
+              updatePolicy: "latest_approved",
+              removalPolicy: "admin_removable",
+              createdAt: "2026-05-31T10:00:00.000Z",
+            },
+          };
+        },
+	        async deleteGlobalSkill(name: string, options?: unknown) {
+	          calls.deleteGlobalSkills.push({ name, options });
+	          return {
+	            ok: true,
+	            name,
+	            path: `/Users/example/.opencode/skills/${name}`,
+	            removalId: "removal_1",
+	            reloadRequired: true,
+	          };
+	        },
+	        async deleteSkill(workspaceId: string, name: string, options?: unknown) {
+	          calls.deleteWorkspaceSkills.push({ workspaceId, name, options });
+	          return {
+	            ok: true,
+	            name,
+	            path: `/workspaces/${workspaceId}/.opencode/skills/${name}`,
+	            removalId: "workspace_removal_1",
+	            reloadRequired: true,
+	          };
+	        },
+        async restoreSkillRemoval(removalId: string) {
+          calls.restoreRemovals.push(removalId);
+          return {
+            ok: true,
+            path: "/Users/example/.opencode/skills/restored/SKILL.md",
+            reloadRequired: true,
+          };
+        },
+        async listHubSkills(input: unknown) {
+          calls.hubRefreshes.push(input);
+          return { items: [] };
+        },
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [workspaces[0]],
+        vesloServerClient: () => vesloServerClient as never,
+        vesloServerStatus: () => "connected",
+        vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+        vesloServerWorkspaceId: () => "ws-alpha",
+        listLocalSkillsScoped: async (projectDir, scope) => {
+          calls.inventoryReads.push({ projectDir, scope });
+          return [];
+        },
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: (value) => {
+          if (value) errors.push(value);
+        },
+        markReloadRequired: (...args) => {
+          calls.reloads.push(args);
+        },
+      });
+
+      try {
+        await run({ store, calls, errors });
+      } finally {
+        dispose();
+      }
+    });
+  });
+}
+
+test("skill inventory preserves removed lifecycle metadata and filters removed rows by default", () => {
+  const items = buildSkillInventory({
+    globalSkills: [
+      {
+        name: "legacy-review",
+        path: "/Users/example/.opencode/skills/legacy-review/SKILL.md",
+        scope: "organization",
+        lifecycle: "removed",
+        removedAt: "2026-05-31T10:00:00.000Z",
+        removedBy: "user-1",
+        removeReason: "cleanup",
+        registry: {
+          skillId: "skill_1",
+          installationId: "install_1",
+          policyId: "policy_1",
+          versionId: "version_1",
+          packageSha256: "sha_1",
+          source: "organization",
+          removalPolicy: "admin_removable",
+        },
+        restoreTarget: {
+          scope: "organization",
+          orgId: "org-1",
+        },
+      },
+    ],
+    workspaceSkillsByWorkspaceId: {},
+    hubSkills: [],
+  });
+
+  const [item] = items;
+  assert.equal(item?.globalInstance?.scope, "organization");
+  assert.equal(item?.globalInstance?.lifecycle, "removed");
+  assert.equal(item?.globalInstance?.removedAt, "2026-05-31T10:00:00.000Z");
+  assert.equal(item?.globalInstance?.removedBy, "user-1");
+  assert.equal(item?.globalInstance?.removeReason, "cleanup");
+  assert.equal(item?.globalInstance?.registry?.installationId, "install_1");
+  assert.equal(item?.globalInstance?.registry?.policyId, "policy_1");
+  assert.equal(item?.globalInstance?.registry?.source, "organization");
+  assert.deepEqual(item?.globalInstance?.restoreTarget, {
+    scope: "organization",
+    orgId: "org-1",
+  });
+  assert.equal(item?.globalInstance?.writable, false);
+
+  assert.equal(filterSkillInventoryItems(items, { includeDeleted: false }).length, 0);
+  assert.equal(filterSkillInventoryItems(items, { includeDeleted: true }).length, 1);
+});
+
+test("registry installation removal calls the Veslo server client with Den context and refreshes managed inventory", async () => {
+  await withRegistryMutationStore(async ({ store, calls }) => {
+    const [item] = buildSkillInventory({
+      globalSkills: [
+        {
+          name: "personal-helper",
+          path: "/Users/example/.opencode/skills/veslo-managed/personal-helper/SKILL.md",
+          scope: "user-global",
+          registry: {
+            installationId: "install_1",
+            versionId: "version_1",
+            source: "personal",
+            removalPolicy: "user_removable",
+          },
+        },
+      ],
+      workspaceSkillsByWorkspaceId: {},
+      hubSkills: [],
+    });
+    assert.ok(item?.globalInstance);
+
+    const result = await store.removeSkillInstance(skillMutationTargetFromInstance(item.globalInstance));
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(calls.deleteInstallations, [
+      {
+        installationId: "install_1",
+        input: {
+          denToken: "den-token",
+          denOrgId: "org-1",
+          denUserId: "user-1",
+        },
+      },
+    ]);
+    assert.equal(calls.restoreInstallations.length, 0);
+    assert.equal(calls.updatePolicies.length, 0);
+    assert.ok(calls.hubRefreshes.length > 0);
+    assert.ok(calls.inventoryReads.length > 0);
+    assert.deepEqual(calls.reloads, [["skills", { type: "skill", name: "personal-helper", action: "removed" }]]);
+  });
+});
+
+test("registry installation restore calls the Veslo server client with restore and Den context", async () => {
+  await withRegistryMutationStore(async ({ store, calls }) => {
+    const result = await store.restoreSkillInstance({
+      name: "personal-helper",
+      path: "/Users/example/.opencode/skills/veslo-managed/personal-helper/SKILL.md",
+      scope: "user-global",
+      registry: {
+        installationId: "install_1",
+        versionId: "version_2",
+        source: "personal",
+        removalPolicy: "user_removable",
+      },
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(calls.restoreInstallations, [
+      {
+        installationId: "install_1",
+        input: {
+          denToken: "den-token",
+          denOrgId: "org-1",
+          denUserId: "user-1",
+          ownerUserId: "user-1",
+          versionId: "version_2",
+        },
+      },
+    ]);
+    assert.equal(calls.deleteInstallations.length, 0);
+    assert.equal(calls.updatePolicies.length, 0);
+    assert.ok(calls.hubRefreshes.length > 0);
+    assert.ok(calls.inventoryReads.length > 0);
+    assert.deepEqual(calls.reloads, [["skills", { type: "skill", name: "personal-helper", action: "added" }]]);
+  });
+});
+
+test("organization rollout removal and restore disable and enable the registry rollout policy", async () => {
+  await withRegistryMutationStore(async ({ store, calls }) => {
+    const target = {
+      name: "org-helper",
+      path: "",
+      scope: "organization",
+      registry: {
+        policyId: "policy_1",
+        source: "organization",
+        removalPolicy: "admin_removable",
+      },
+    };
+
+    const removeResult = await store.removeSkillInstance(target);
+    const restoreResult = await store.restoreSkillInstance(target);
+
+    assert.equal(removeResult.ok, true);
+    assert.equal(restoreResult.ok, true);
+    assert.deepEqual(calls.updatePolicies, [
+      {
+        policyId: "policy_1",
+        input: {
+          enabled: false,
+          denToken: "den-token",
+          denOrgId: "org-1",
+          denUserId: "user-1",
+        },
+      },
+      {
+        policyId: "policy_1",
+        input: {
+          enabled: true,
+          denToken: "den-token",
+          denOrgId: "org-1",
+          denUserId: "user-1",
+        },
+      },
+    ]);
+    assert.equal(calls.deleteInstallations.length, 0);
+    assert.equal(calls.restoreInstallations.length, 0);
+    assert.deepEqual(calls.reloads, [
+      ["skills", { type: "skill", name: "org-helper", action: "removed" }],
+      ["skills", { type: "skill", name: "org-helper", action: "added" }],
+    ]);
+  });
+});
+
+test("locked registry removal policy is blocked before managed mutations", async () => {
+  await withRegistryMutationStore(async ({ store, calls, errors }) => {
+    const result = await store.removeSkillInstance({
+      name: "locked-helper",
+      path: "/Users/example/.opencode/skills/veslo-managed/locked-helper/SKILL.md",
+      scope: "user-global",
+      registry: {
+        installationId: "install_locked",
+        source: "personal",
+        removalPolicy: "locked",
+      },
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(result.message ?? "", /locked|cannot|unavailable/i);
+    assert.equal(calls.deleteInstallations.length, 0);
+    assert.equal(calls.restoreInstallations.length, 0);
+    assert.equal(calls.updatePolicies.length, 0);
+    assert.equal(calls.deleteGlobalSkills.length, 0);
+    assert.equal(calls.restoreRemovals.length, 0);
+    assert.deepEqual(errors, []);
+  });
+});
+
+test("unmanaged user-global removal uses the Veslo server recoverable delete route", async () => {
+  await withRegistryMutationStore(async ({ store, calls }) => {
+    const result = await store.removeSkillInstance({
+      name: "global-helper",
+      path: "/Users/example/.opencode/skills/global-helper/SKILL.md",
+      scope: "user-global",
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(calls.deleteGlobalSkills, [
+      {
+        name: "global-helper",
+        options: {
+          path: "/Users/example/.opencode/skills/global-helper/SKILL.md",
+          reason: "user-requested",
+        },
+      },
+    ]);
+    assert.equal(calls.deleteInstallations.length, 0);
+    assert.equal(calls.restoreInstallations.length, 0);
+    assert.equal(calls.restoreRemovals.length, 0);
+    assert.equal(calls.updatePolicies.length, 0);
+    assert.deepEqual(calls.reloads, [["skills", { type: "skill", name: "global-helper", action: "removed" }]]);
+  });
+});
+
+test("unmanaged workspace removal uses target workspace Veslo server recoverable delete route", async () => {
+  await withRegistryMutationStore(async ({ store, calls }) => {
+    const result = await store.removeSkillInstance({
+      name: "workspace-helper",
+      path: "/workspaces/beta/.opencode/skills/workspace-helper/SKILL.md",
+      scope: "workspace",
+      workspaceId: "ws-beta",
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(calls.deleteWorkspaceSkills, [
+      {
+        workspaceId: "ws-beta",
+        name: "workspace-helper",
+        options: {
+          path: "/workspaces/beta/.opencode/skills/workspace-helper/SKILL.md",
+        },
+      },
+    ]);
+    assert.equal(calls.deleteInstallations.length, 0);
+    assert.equal(calls.deleteGlobalSkills.length, 0);
+    assert.equal(calls.restoreInstallations.length, 0);
+    assert.equal(calls.restoreRemovals.length, 0);
+    assert.equal(calls.updatePolicies.length, 0);
+    assert.deepEqual(calls.reloads, []);
+  });
+});
+
+test("skill inventory does not report removed installs as installed when hub entries remain visible", () => {
+  const items = buildSkillInventory({
+    globalSkills: [
+      {
+        name: "legacy-global",
+        path: "/Users/example/.opencode/skills/legacy-global/SKILL.md",
+        scope: "user-global",
+        lifecycle: "removed",
+      },
+    ],
+    workspaceSkillsByWorkspaceId: {
+      "ws-alpha": {
+        workspace: { id: "ws-alpha", label: "Alpha", kind: "local" },
+        skills: [
+          {
+            name: "legacy-workspace",
+            path: "/workspaces/alpha/.opencode/skills/legacy-workspace/SKILL.md",
+            scope: "workspace",
+            lifecycle: "removed",
+          },
+        ],
+      },
+    },
+    hubSkills: [hubSkill("legacy-global"), hubSkill("legacy-workspace")],
+  });
+
+  const filtered = filterSkillInventoryItems(items, { includeDeleted: false });
+
+  assert.deepEqual(
+    filtered.map((item) => ({
+      name: item.name,
+      status: item.status,
+      hasGlobal: Boolean(item.globalInstance),
+      workspaceCount: item.workspaceInstances.length,
+      hasHub: Boolean(item.hubItem),
+    })),
+    [
+      {
+        name: "legacy-global",
+        status: "hub-only",
+        hasGlobal: false,
+        workspaceCount: 0,
+        hasHub: true,
+      },
+      {
+        name: "legacy-workspace",
+        status: "hub-only",
+        hasGlobal: false,
+        workspaceCount: 0,
+        hasHub: true,
+      },
+    ],
+  );
+});
+
 test("extensions store exposes an app-wide skill inventory from global, workspace, and hub sources", async () => {
   await withDenAuthStorage(async () => {
     await createRoot(async (dispose) => {
@@ -215,6 +668,125 @@ test("extensions store exposes an app-wide skill inventory from global, workspac
         assert.equal(hubSkill?.hubItem?.description, "Planning from hub");
         assert.equal(hubSkill?.hubItem?.source.path, "skills/planning");
         assert.equal(store.skillInventoryStatus(), null);
+      } finally {
+        dispose();
+      }
+    });
+  });
+});
+
+test("skill inventory includes recoverable local removal records and restores them through the Veslo server", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      const removalReads: unknown[] = [];
+      const restoreCalls: string[] = [];
+      const reloads: unknown[] = [];
+      const vesloServerClient = {
+        async listSkillRemovals(params?: unknown) {
+          removalReads.push(params);
+          const scope = (params as { scope?: string } | undefined)?.scope;
+          const workspaceId = (params as { workspaceId?: string } | undefined)?.workspaceId;
+          if (scope === "user-global") {
+            return {
+              items: [
+                {
+                  id: "rem_global",
+                  name: "legacy-global",
+                  scope: "user-global",
+                  path: "/Users/example/.config/opencode/skills/legacy-global/SKILL.md",
+                  status: "removed",
+                  removedAt: "2026-05-31T10:00:00.000Z",
+                  reason: "cleanup",
+                  canRestore: true,
+                },
+              ],
+            };
+          }
+          if (scope === "workspace" && workspaceId === "ws-alpha") {
+            return {
+              items: [
+                {
+                  id: "rem_workspace",
+                  name: "legacy-workspace",
+                  scope: "workspace",
+                  workspaceId,
+                  path: "/workspaces/alpha/.opencode/skills/legacy-workspace/SKILL.md",
+                  status: "removed",
+                  removedAt: "2026-05-31T11:00:00.000Z",
+                  canRestore: true,
+                },
+              ],
+            };
+          }
+          return { items: [] };
+        },
+        async restoreSkillRemoval(removalId: string) {
+          restoreCalls.push(removalId);
+          return {
+            ok: true,
+            path: "/Users/example/.config/opencode/skills/legacy-global/SKILL.md",
+            reloadRequired: true,
+          };
+        },
+      };
+
+      try {
+        const store = createExtensionsStore({
+          client: () => null,
+          projectDir: () => "/workspaces/alpha",
+          activeWorkspaceId: () => "ws-alpha",
+          activeWorkspaceRoot: () => "/workspaces/alpha",
+          workspaceType: () => "local",
+          workspaces: () => [workspaces[0]],
+          vesloServerClient: () => vesloServerClient as never,
+          vesloServerStatus: () => "connected",
+          vesloServerCapabilities: () => ({ hub: { skills: { read: false } } }) as never,
+          vesloServerWorkspaceId: () => "ws-alpha",
+          listLocalSkillsScoped: async () => [],
+          setBusy: () => undefined,
+          setBusyLabel: () => undefined,
+          setBusyStartedAt: () => undefined,
+          setError: () => undefined,
+          markReloadRequired: (...args) => {
+            reloads.push(args);
+          },
+        });
+
+        await store.refreshSkillInventory({ force: true });
+
+        assert.deepEqual(removalReads.slice(0, 2), [
+          { scope: "user-global" },
+          { scope: "workspace", workspaceId: "ws-alpha" },
+        ]);
+        const inventory = store.skillInventory();
+        const globalItem = inventory.find((item) => item.name === "legacy-global");
+        const workspaceItem = inventory.find((item) => item.name === "legacy-workspace");
+        assert.equal(globalItem?.globalInstance?.lifecycle, "removed");
+        assert.equal(globalItem?.globalInstance?.path, "/Users/example/.config/opencode/skills/legacy-global/SKILL.md");
+        assert.equal(globalItem?.globalInstance?.readable, false);
+        assert.equal(globalItem?.globalInstance?.writable, false);
+        assert.equal(globalItem?.globalInstance?.removedAt, "2026-05-31T10:00:00.000Z");
+        assert.equal(globalItem?.globalInstance?.removeReason, "cleanup");
+        assert.deepEqual(globalItem?.globalInstance?.restoreTarget, {
+          scope: "user-global",
+          removalId: "rem_global",
+        });
+        assert.equal(workspaceItem?.workspaceInstances[0]?.lifecycle, "removed");
+        assert.equal(workspaceItem?.workspaceInstances[0]?.path, "/workspaces/alpha/.opencode/skills/legacy-workspace/SKILL.md");
+        assert.deepEqual(workspaceItem?.workspaceInstances[0]?.restoreTarget, {
+          scope: "workspace",
+          workspaceId: "ws-alpha",
+          removalId: "rem_workspace",
+        });
+        assert.equal(filterSkillInventoryItems(inventory, { includeDeleted: false }).length, 0);
+
+        assert.ok(globalItem?.globalInstance);
+        const result = await store.restoreSkillInstance(skillMutationTargetFromInstance(globalItem.globalInstance));
+
+        assert.equal(result.ok, true);
+        assert.deepEqual(restoreCalls, ["rem_global"]);
+        assert.deepEqual(reloads, [["skills", { type: "skill", name: "legacy-global", action: "added" }]]);
+        assert.ok(removalReads.length > 2, "restore should refresh local removal inventory");
       } finally {
         dispose();
       }

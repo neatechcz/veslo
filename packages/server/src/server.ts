@@ -17,8 +17,25 @@ import type {
 import { ApprovalService } from "./approvals.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
 import { addMcp, installHubMcp, listMcp, removeMcp } from "./mcp.js";
-import { deleteSkill, deleteSkillAtPath, listSkills, readSkillAtPath, updateSkillAtPath, upsertSkill } from "./skills.js";
+import {
+  deleteGlobalSkillRecoverable,
+  deleteSkillAtPathRecoverable,
+  deleteSkillRecoverable,
+  listSkills,
+  readSkillAtPath,
+  updateSkillAtPath,
+  upsertSkill,
+  userGlobalSkillRootsForMutation,
+  workspaceSkillRootsForMutation,
+} from "./skills.js";
 import { installHubSkill } from "./skill-hub.js";
+import {
+  listSkillRemovals,
+  readSkillRemovalRecord,
+  restoreSkillRemoval,
+  type SkillRemovalRecord,
+  type SkillRemovalScope,
+} from "./skill-removal-journal.js";
 import { fetchOrgMcpCatalog, fetchOrgSkillsCatalog } from "./den-catalog.js";
 import {
   createRegistrySkill,
@@ -1192,6 +1209,13 @@ async function requireHost(request: Request, config: ServerConfig, tokens: Token
   return { type: "remote", clientId, tokenHash: hashToken(bearer), scope };
 }
 
+async function requireHostOrClient(request: Request, config: ServerConfig, tokens: TokenService): Promise<Actor> {
+  if (request.headers.get("x-veslo-host-token")) {
+    return requireHost(request, config, tokens);
+  }
+  return requireClient(request, config, tokens);
+}
+
 export function resolveArchiveOwnerKey(request: Request): string {
   const accountId = request.headers.get("x-veslo-account-id")?.trim() ?? "";
   if (!accountId) {
@@ -2208,6 +2232,38 @@ const trimmedSearchParam = (params: URLSearchParams, key: string): string | unde
   return value || undefined;
 };
 
+const parseSkillRemovalScope = (value: string | undefined): SkillRemovalScope | undefined => {
+  if (!value) return undefined;
+  if (value === "workspace" || value === "user-global") return value;
+  throw new ApiError(400, "invalid_scope", "Skill removal scope must be workspace or user-global");
+};
+
+type SkillRemovalListItem = {
+  id: string;
+  name: string;
+  scope: SkillRemovalScope;
+  workspaceId?: string;
+  path: string;
+  reason?: string;
+  status: "removed" | "restored";
+  removedAt: string;
+  restoredAt?: string;
+  canRestore: boolean;
+};
+
+const serializeSkillRemoval = (record: SkillRemovalRecord): SkillRemovalListItem => ({
+  id: record.id,
+  name: record.name,
+  scope: record.scope,
+  ...(record.workspaceId ? { workspaceId: record.workspaceId } : {}),
+  path: record.originalPath,
+  ...(record.reason ? { reason: record.reason } : {}),
+  status: record.restoredAt ? "restored" : "removed",
+  removedAt: record.removedAt ?? "",
+  ...(record.restoredAt ? { restoredAt: record.restoredAt } : {}),
+  canRestore: !record.restoredAt,
+});
+
 function requireBodyString(body: Record<string, unknown>, field: string): string {
   const value = body[field];
   if (typeof value !== "string" || value.trim() === "") {
@@ -2242,6 +2298,7 @@ function requireBodyObject(body: Record<string, unknown>, field: string): Record
 
 function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: TokenService): Route[] {
   const routes: Route[] = [];
+  const serverDataDir = resolveVesloDataDir();
   const fileSessions = new FileSessionStore();
   const sessionArchives = createSessionArchiveStore();
   const sessionTranscriptPrefetch = createSessionTranscriptPrefetchStore({
@@ -4648,6 +4705,154 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     return jsonResponse(result);
   });
 
+  addRoute(routes, "GET", "/skill-removals", "none", async (ctx) => {
+    const actor = await requireHostOrClient(ctx.request, config, ctx.tokens);
+    if (scopeRank(actor.scope ?? "viewer") < scopeRank("collaborator")) {
+      throw new ApiError(403, "forbidden", "Insufficient token scope", {
+        required: "collaborator",
+        scope: actor.scope,
+      });
+    }
+    const includeRestored = trimmedSearchParam(ctx.url.searchParams, "includeRestored") === "true";
+    const scope = parseSkillRemovalScope(trimmedSearchParam(ctx.url.searchParams, "scope")) ?? "workspace";
+    const workspaceId = trimmedSearchParam(ctx.url.searchParams, "workspaceId");
+    let items = await listSkillRemovals({
+      dataDir: serverDataDir,
+      scope,
+      includeRestored,
+    });
+    if (scope === "workspace") {
+      if (workspaceId) {
+        const workspace = await resolveWorkspace(config, workspaceId);
+        items = items.filter((record) => record.workspaceId === workspace.id);
+      } else {
+        const visibleWorkspaceIds = new Set<string>();
+        for (const workspace of config.workspaces) {
+          try {
+            const resolved = await resolveWorkspace(config, workspace.id);
+            visibleWorkspaceIds.add(resolved.id);
+          } catch {
+            // Skip workspaces that are no longer authorized for this server.
+          }
+        }
+        items = items.filter((record) => record.workspaceId && visibleWorkspaceIds.has(record.workspaceId));
+      }
+    } else if (actor.type !== "host" && actor.scope !== "owner") {
+      throw new ApiError(403, "forbidden", "Owner or host access is required for user-global skill removals");
+    }
+    return jsonResponse({ items: items.map(serializeSkillRemoval) });
+  });
+
+  addRoute(routes, "POST", "/skill-removals/:id/restore", "host", async (ctx) => {
+    ensureWritable(config);
+    const record = await readSkillRemovalRecord({ dataDir: serverDataDir, removalId: ctx.params.id });
+    let workspace: WorkspaceInfo | null = null;
+    let skillRoots: string[] | undefined;
+    if (record.scope === "workspace") {
+      if (!record.workspaceId) {
+        throw new ApiError(400, "invalid_skill_removal_record", "Workspace skill removal is missing a workspace id");
+      }
+      workspace = await resolveWorkspace(config, record.workspaceId);
+      skillRoots = await workspaceSkillRootsForMutation(workspace.path);
+    }
+    const result = await restoreSkillRemoval({
+      dataDir: serverDataDir,
+      removalId: ctx.params.id,
+      actor: ctx.actor ?? { type: "host" },
+      ...(workspace && skillRoots
+        ? {
+            workspace: {
+              id: workspace.id,
+              rootDir: workspace.path,
+              skillRoots,
+            },
+            authorizedRoots: config.authorizedRoots,
+          }
+        : record.scope === "user-global"
+          ? { userGlobalSkillRoots: userGlobalSkillRootsForMutation() }
+          : {}),
+    });
+    const reloadTrigger = {
+      type: "skill" as const,
+      name: record.name,
+      action: "added" as const,
+      path: result.path,
+    };
+    if (workspace) {
+      await recordAudit(workspace.path, {
+        id: shortId(),
+        workspaceId: workspace.id,
+        actor: ctx.actor ?? { type: "host" },
+        action: "skills.restore",
+        target: result.path,
+        summary: `Restored skill ${record.name}`,
+        timestamp: Date.now(),
+      });
+      emitReloadEvent(ctx.reloadEvents, workspace, "skills", reloadTrigger);
+    } else if (record.scope === "user-global") {
+      for (const configuredWorkspace of config.workspaces) {
+        try {
+          const resolved = await resolveWorkspace(config, configuredWorkspace.id);
+          emitReloadEvent(ctx.reloadEvents, resolved, "skills", reloadTrigger);
+        } catch {
+          // Skip workspaces that are no longer authorized for this server.
+        }
+      }
+    }
+    return jsonResponse({
+      ok: true,
+      ...result,
+      reloadRequired: true,
+      trigger: { ...reloadTrigger, scope: record.scope },
+    });
+  });
+
+  addRoute(routes, "DELETE", "/skills/user-global/:name", "none", async (ctx) => {
+    ensureWritable(config);
+    const actor = await requireHostOrClient(ctx.request, config, ctx.tokens);
+    if (scopeRank(actor.scope ?? "viewer") < scopeRank("collaborator")) {
+      throw new ApiError(403, "forbidden", "Insufficient token scope", {
+        required: "collaborator",
+        scope: actor.scope,
+      });
+    }
+    const name = String(ctx.params.name ?? "").trim();
+    if (!name) {
+      throw new ApiError(400, "invalid_skill_name", "Skill name is required");
+    }
+    const result = await deleteGlobalSkillRecoverable(
+      name,
+      { path: trimmedSearchParam(ctx.url.searchParams, "path") },
+      {
+        dataDir: serverDataDir,
+        actor,
+        reason: trimmedSearchParam(ctx.url.searchParams, "reason"),
+      },
+    );
+    const reloadTrigger = {
+      type: "skill" as const,
+      name,
+      action: "removed" as const,
+      path: result.path,
+    };
+    for (const configuredWorkspace of config.workspaces) {
+      try {
+        const resolved = await resolveWorkspace(config, configuredWorkspace.id);
+        emitReloadEvent(ctx.reloadEvents, resolved, "skills", reloadTrigger);
+      } catch {
+        // Skip workspaces that are no longer authorized for this server.
+      }
+    }
+    return jsonResponse({
+      ok: true,
+      name,
+      path: result.path,
+      removalId: result.removalId,
+      reloadRequired: true,
+      trigger: { ...reloadTrigger, scope: "user-global" },
+    });
+  });
+
   addRoute(routes, "GET", "/skills/materialization", "client", async () => {
     return jsonResponse(await buildGlobalSkillMaterializationStatus(config));
   });
@@ -5028,8 +5233,18 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       paths: [instancePath || join(workspace.path, ".opencode", "skills", name)],
     });
     const result = instancePath
-      ? await deleteSkillAtPath(workspace.path, { name, path: instancePath })
-      : await deleteSkill(workspace.path, name);
+      ? await deleteSkillAtPathRecoverable(workspace.path, { name, path: instancePath }, {
+          dataDir: serverDataDir,
+          workspaceId: workspace.id,
+          actor: ctx.actor ?? { type: "remote" },
+          reason: trimmedSearchParam(ctx.url.searchParams, "reason"),
+        })
+      : await deleteSkillRecoverable(workspace.path, name, {
+          dataDir: serverDataDir,
+          workspaceId: workspace.id,
+          actor: ctx.actor ?? { type: "remote" },
+          reason: trimmedSearchParam(ctx.url.searchParams, "reason"),
+        });
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
@@ -5045,7 +5260,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       action: "removed",
       path: result.path,
     });
-    return jsonResponse({ ok: true, name, path: result.path });
+    return jsonResponse({ ok: true, name, path: result.path, removalId: result.removalId });
   });
 
   addRoute(routes, "GET", "/workspace/:id/mcp", "client", async (ctx) => {

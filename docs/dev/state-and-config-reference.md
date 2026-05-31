@@ -255,12 +255,36 @@ Use product terminology consistently:
 - **Organization skill** means a skill owned by an organization catalog.
 - **Public skill** means a skill published for broad catalog discovery.
 - **Installed skill** means an active local or registry installation.
-  **Deactivated skill** means the installation is not active but can be
-  installed again from an available source.
+  **Removed skill** means a local skill captured in the removal journal or a
+  registry installation/policy that can be restored from registry state.
+
+## Skill Removal Journal
+
+Recoverable local skill removals are stored by Veslo server under:
+
+- `${VESLO_DATA_DIR or ~/.veslo/veslo-server}/skill-removals/records/`
+- `${VESLO_DATA_DIR or ~/.veslo/veslo-server}/skill-removals/snapshots/`
+
+Each removal record stores the removal id, skill name, scope (`workspace` or
+`user-global`), original path, actor, optional reason, snapshot hash, status,
+and removal/restore timestamps. Workspace removals also store the workspace id.
+The app-facing list route returns only recoverability metadata and does not
+expose actor tokens, root directories, original path internals, or snapshot
+hashes.
+
+Local removal is snapshot-first. Veslo server copies the skill directory into
+the journal, hashes the snapshot, writes a pending record, removes the original
+directory, and then marks the record removed. Restore verifies the record,
+authorized workspace roots where applicable, destination conflicts, and snapshot
+hash before copying the snapshot back and marking the record restored.
+
+The Skills page reads this journal through Veslo server and includes removed
+user and workspace skills in the deleted/removed skills view. Restored records
+are hidden from the default list unless explicitly requested.
 
 Avoid product copy such as "global skill", "managed skill", or "adopt". Use
 "user skill", "installed skill", "organization skill", "public skill",
-"install", "publish", and "deactivate" instead.
+"install", "publish", "remove", and "restore" instead.
 
 User skills are runtime-available skills, not organization catalog or
 admin-approved skills. Organization promotion and bulk rollout remain future
@@ -274,13 +298,13 @@ overrides.
 
 Skill edit and save flows target a concrete inventory instance by scope,
 workspace id, and path before falling back to name-based legacy commands.
-Deactivate targets only concrete installed skill locations that the app can
-mutate safely. Hub install uses an explicit target picker; current writes are
-limited to the active workspace. Installing a user skill into a workspace uses
-an explicit workspace picker and writes only to local workspace skill roots.
-Private app-created workspaces are valid inventory sources when they already
-contain skills, but they are not valid install targets and should be omitted
-from workspace install pickers.
+Remove and restore target only concrete skill locations or registry records
+that the app can mutate safely. Hub install uses an explicit target picker;
+current writes are limited to the active workspace. Installing a user skill into
+a workspace uses an explicit workspace picker and writes only to local workspace
+skill roots. Private app-created workspaces are valid inventory sources when
+they already contain skills, but they are not valid install targets and should
+be omitted from workspace install pickers.
 Bulk transfer actions are scoped by homogeneous inventory selections: selected
 user skills can be installed into a workspace, selected workspace skills can be
 copied or moved into user skills, and mixed user/workspace selections do not
@@ -327,7 +351,7 @@ materialization manifests until registry sync succeeds.
 
 Registry search can be proxied through the local Veslo server at `/v1/skills/search` so the app can reuse server-side registry auth configuration and response validation. Search indexing remains registry-owned and includes package metadata plus searchable package text/code under the registry size limit; clients may pass language context for server-side query expansion and must not implement semantic skill search locally. Registry update events can be polled through `/v1/skill-registry-events`; active workspace updates should become pending reload state, while idle workspace and user-skill updates can be materialized immediately. Registry writes use host/owner-authenticated local proxy routes for skill creation, immutable version publishing, installation create/update/delete/restore, review request create/approve/reject, and workspace skill-set replacement. Runtime mutation remains explicit: `/workspace/:id/skills/materialization/sync` and `/skills/materialization/sync-global` require host or owner auth and must not rewrite server-controlled skill files while an agent run is active.
 
-The Skills page now treats installed skills as an app-wide inventory with filterable location rows. UI filters are local presentation state. Registry-backed install and publish preparation can create the initial skill, version, and installation through the local server proxy. Registry-backed publish, approval, restore, deactivation, and workspace skill-set controls should call the local proxy only when the selected row has concrete registry identifiers for the action target, then refresh registry metadata and local inventory after success.
+The Skills page now treats installed skills as an app-wide inventory with filterable location rows. UI filters are local presentation state. Registry-backed install and publish preparation can create the initial skill, version, and installation through the local server proxy. Registry-backed publish, approval, remove, restore, and workspace skill-set controls should call the local proxy only when the selected row has concrete registry identifiers for the action target, then refresh registry metadata and local inventory after success.
 
 Registry auth is account-scoped:
 

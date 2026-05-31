@@ -1,5 +1,5 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import { Copy, MapPin, MoveRight, Send, ShieldCheck, Trash2, X } from "lucide-solid";
+import { Copy, MapPin, MoveRight, RotateCcw, Send, ShieldCheck, Trash2, X } from "lucide-solid";
 
 import Button from "./button";
 import SkillVersionHistory, {
@@ -43,6 +43,9 @@ export type SkillDetailLocation = {
   writable?: boolean;
   active?: boolean;
   source?: string | null;
+  lifecycle?: "active" | "removed";
+  restoreAvailable?: boolean;
+  restoreUnavailableReason?: string | null;
 };
 
 export type SkillAuditEntry = {
@@ -81,6 +84,7 @@ export type SkillDetailDrawerProps = {
   onCopyToWorkspaceSkill?: (input: SkillDetailActionInput) => void;
   onPublishSkill?: (input: SkillDetailActionInput) => void;
   onRequestApproval?: (input: SkillDetailActionInput) => void;
+  onRestoreSkill?: (input: SkillDetailActionInput) => void;
   onRestoreVersion?: (version: SkillVersionRow) => void;
   onDeleteSkill?: (input: SkillDetailActionInput) => void;
 };
@@ -110,6 +114,10 @@ export default function SkillDetailDrawer(props: SkillDetailDrawerProps) {
   const actionDisabled = (action: SkillDetailAction) =>
     Boolean(props.actionPending?.[action]) || Boolean(actionUnavailableReason(action));
   const actionTitle = (action: SkillDetailAction, labelKey: string) => actionUnavailableReason(action) ?? translate(labelKey);
+  const activeLocation = createMemo(() => props.locations?.find((location) => location.active) ?? null);
+  const showOverviewRestoreAction = createMemo(() =>
+    Boolean(props.onRestoreSkill && activeLocation()?.lifecycle === "removed" && activeLocation()?.restoreAvailable)
+  );
 
   const scopeLabel = (scope: SkillDetailLocation["scope"]) => {
     switch (scope) {
@@ -286,6 +294,18 @@ export default function SkillDetailDrawer(props: SkillDetailDrawerProps) {
                           {translate("skills.detail_request_system_approval")}
                         </Button>
                       </Show>
+                      <Show when={showOverviewRestoreAction()}>
+                        <Button
+                          variant="outline"
+                          class="h-9 px-3 type-ui-sm"
+                          disabled={actionDisabled("restore")}
+                          title={actionTitle("restore", "skills.restore_skill")}
+                          onClick={() => props.onRestoreSkill?.(actionInput(skill, activeLocation()))}
+                        >
+                          <RotateCcw size={14} />
+                          {translate("skills.restore_skill")}
+                        </Button>
+                      </Show>
                       <Show when={props.onDeleteSkill}>
                         <Button
                           variant="danger"
@@ -310,7 +330,12 @@ export default function SkillDetailDrawer(props: SkillDetailDrawerProps) {
                     >
                       <For each={props.locations ?? []}>
                         {(location) => (
-                          <article class="rounded-lg border border-dls-border bg-gray-2 p-3">
+                          <article
+                            class="rounded-lg border border-dls-border bg-gray-2 p-3"
+                            data-testid="skill-detail-location"
+                            data-skill-detail-location-lifecycle={location.lifecycle ?? "active"}
+                            data-skill-detail-location-scope={location.scope}
+                          >
                             <div class="flex items-start justify-between gap-3">
                               <div class="min-w-0">
                                 <div class="flex items-center gap-2">
@@ -319,11 +344,28 @@ export default function SkillDetailDrawer(props: SkillDetailDrawerProps) {
                                   <span class="rounded-full border border-dls-border px-2 py-0.5 type-ui-xs capitalize text-dls-secondary">
                                     {scopeLabel(location.scope)}
                                   </span>
+                                  <Show when={location.lifecycle === "removed"}>
+                                    <span class="rounded-full border border-amber-7/40 bg-amber-3/20 px-2 py-0.5 type-ui-xs text-amber-11">
+                                      {translate("skills.removed_status")}
+                                    </span>
+                                  </Show>
                                 </div>
                                 <p class="mt-1 truncate font-mono text-[12px] text-dls-secondary" title={location.path}>
                                   {location.path}
                                 </p>
                               </div>
+                              <Show when={props.onRestoreSkill && location.lifecycle === "removed" && location.restoreAvailable}>
+                                <Button
+                                  variant="outline"
+                                  class="h-8 shrink-0 px-2 type-ui-xs"
+                                  disabled={Boolean(location.restoreUnavailableReason)}
+                                  title={location.restoreUnavailableReason ?? translate("skills.restore_skill")}
+                                  onClick={() => props.onRestoreSkill?.(actionInput(skill, location))}
+                                >
+                                  <RotateCcw size={13} />
+                                  {translate("skills.restore_skill")}
+                                </Button>
+                              </Show>
                             </div>
                           </article>
                         )}
