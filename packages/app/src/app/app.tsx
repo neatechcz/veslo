@@ -3783,6 +3783,24 @@ export default function App() {
     }
   };
 
+  const publishRegisteredWorkspaceToSidebar = (workspaceId: string) => {
+    const id = workspaceId.trim();
+    if (!id) return;
+
+    setSidebarSessionsByWorkspaceId((prev) =>
+      Object.prototype.hasOwnProperty.call(prev, id) ? prev : { ...prev, [id]: [] },
+    );
+    setSidebarSessionStatusByWorkspaceId((prev) =>
+      Object.prototype.hasOwnProperty.call(prev, id) ? prev : { ...prev, [id]: "ready" as const },
+    );
+    setSidebarSessionErrorByWorkspaceId((prev) =>
+      Object.prototype.hasOwnProperty.call(prev, id) ? prev : { ...prev, [id]: null },
+    );
+    setSidebarSessionHasMoreByWorkspaceId((prev) =>
+      Object.prototype.hasOwnProperty.call(prev, id) ? prev : { ...prev, [id]: false },
+    );
+  };
+
   const refreshAllSidebarWorkspaceSessions = async (prioritizeWorkspaceId?: string | null) => {
     const list = workspaceStore.workspaces();
     if (!list.length) return;
@@ -7787,6 +7805,7 @@ export default function App() {
       getActiveWorkspaceId: () => workspaceStore.activeWorkspaceId(),
       pickDirectory: () => workspaceStore.pickWorkspaceFolder(),
       ensureWorkspaceForFolder: workspaceStore.ensureWorkspaceForFolder,
+      onWorkspaceRegistered: ({ workspaceId }) => publishRegisteredWorkspaceToSidebar(workspaceId),
       activateWorkspace: (workspaceId) => workspaceStore.activateWorkspace(workspaceId, { promoteToFront: true }),
       openPendingDraft: ({ workspaceId, directory }) => openDirectoryPendingDraft({ workspaceId, directory }),
     });

@@ -395,7 +395,7 @@ Current behavior:
 - browser local storage keeps the active pending draft key so the app can restore the same unpublished draft on restart
 - `Chat` is globally singleton while unpublished: reopening it returns to the existing private pending draft
 - project pending drafts are keyed by workspace plus normalized directory
-- pending drafts remain out of the sidebar until a real session is created by sending them
+- pending drafts remain out of the sidebar until a real session is created by sending them; a newly registered local directory may still appear immediately as an empty workspace-only project row in by-project mode
 
 ## Precedence Rules
 
