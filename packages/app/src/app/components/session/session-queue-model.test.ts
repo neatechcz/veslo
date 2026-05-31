@@ -11,6 +11,7 @@ import {
   markQueuedDraftSending,
   moveQueuedDraft,
   removeQueuedDraft,
+  resolveQueuedDraftSessionKey,
   updateQueuedDraft,
 } from "./session-queue-model.js";
 
@@ -42,6 +43,32 @@ test("queue model appends deterministically with caller-provided id and timestam
 
   assert.deepEqual(first, second);
   assert.equal(first[0]!.id, "draft-1");
+});
+
+test("queue model resolves a queued draft after session-key remap", () => {
+  const pendingKey = "pending-draft:new-private";
+  const remappedKey = "session-a";
+  const unrelatedKey = "session-b";
+  const remappedQueue = appendQueuedDraft([], draft("one"), 100, "queued-1");
+  const originalQueue = appendQueuedDraft([], draft("original"), 100, "queued-2");
+
+  assert.equal(
+    resolveQueuedDraftSessionKey(
+      {
+        [pendingKey]: [],
+        [unrelatedKey]: appendQueuedDraft([], draft("other"), 100, "queued-other"),
+        [remappedKey]: remappedQueue,
+      },
+      pendingKey,
+      "queued-1",
+    ),
+    remappedKey,
+  );
+  assert.equal(
+    resolveQueuedDraftSessionKey({ [pendingKey]: originalQueue, [remappedKey]: remappedQueue }, pendingKey, "queued-2"),
+    pendingKey,
+  );
+  assert.equal(resolveQueuedDraftSessionKey({ [remappedKey]: remappedQueue }, pendingKey, "missing"), pendingKey);
 });
 
 test("queue model updates drafts immutably", () => {

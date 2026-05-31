@@ -119,6 +119,7 @@ import {
   markQueuedDraftSending,
   moveQueuedDraft,
   removeQueuedDraft,
+  resolveQueuedDraftSessionKey,
   updateQueuedDraft,
   type QueuedDraft,
 } from "../components/session/session-queue-model.js";
@@ -2085,17 +2086,7 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const resolveQueueKeyForQueuedDraft = (originalSessionKey: string, draftId: string) => {
-    const originalQueue = queuedDraftsBySessionKey()[originalSessionKey] ?? [];
-    if (originalQueue.some((item) => item.id === draftId)) return originalSessionKey;
-    const selectedSessionId = props.selectedSessionId?.trim();
-    if (selectedSessionId) {
-      const selectedSessionKey = sessionQueueKeyForSessionId(selectedSessionId);
-      if (selectedSessionKey !== originalSessionKey) {
-        const selectedQueue = queuedDraftsBySessionKey()[selectedSessionKey] ?? [];
-        if (selectedQueue.some((item) => item.id === draftId)) return selectedSessionKey;
-      }
-    }
-    return originalSessionKey;
+    return resolveQueuedDraftSessionKey(queuedDraftsBySessionKey(), originalSessionKey, draftId);
   };
 
   const setQueuePausedForSessionKey = (sessionKey: string, paused: boolean) => {

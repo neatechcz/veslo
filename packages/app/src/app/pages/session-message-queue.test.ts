@@ -177,8 +177,8 @@ test("accepted first pending submit captures and remaps the pending queue key", 
 test("accepted pending queue drain removes the sent item from the materialized session queue", () => {
   assert.match(
     source,
-    /const resolveQueueKeyForQueuedDraft = \(originalSessionKey: string, draftId: string\) => \{[\s\S]*const originalQueue = queuedDraftsBySessionKey\(\)\[originalSessionKey\] \?\? \[\];[\s\S]*if \(originalQueue\.some\(\(item\) => item\.id === draftId\)\) return originalSessionKey;[\s\S]*const selectedSessionId = props\.selectedSessionId\?\.trim\(\);[\s\S]*const selectedSessionKey = sessionQueueKeyForSessionId\(selectedSessionId\);[\s\S]*if \(selectedSessionKey !== originalSessionKey\) \{[\s\S]*const selectedQueue = queuedDraftsBySessionKey\(\)\[selectedSessionKey\] \?\? \[\];[\s\S]*if \(selectedQueue\.some\(\(item\) => item\.id === draftId\)\) return selectedSessionKey;[\s\S]*return originalSessionKey;[\s\S]*\};/s,
-    "session view should resolve a queued draft's current key by item presence before falling back to the original key",
+    /resolveQueuedDraftSessionKey\(queuedDraftsBySessionKey\(\), originalSessionKey, draftId\);/,
+    "session view should resolve a queued draft's current key from the full queue map before falling back to the original key",
   );
 
   assert.match(

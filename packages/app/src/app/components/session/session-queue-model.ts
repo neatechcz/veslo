@@ -37,6 +37,19 @@ export function firstQueuedDraft(queue: QueuedDraft[]): QueuedDraft | null {
   return queue.find(isDrainEligible) ?? null;
 }
 
+export function resolveQueuedDraftSessionKey(
+  queuesBySessionKey: Record<string, QueuedDraft[]>,
+  originalSessionKey: string,
+  id: string,
+): string {
+  const originalQueue = queuesBySessionKey[originalSessionKey] ?? [];
+  if (originalQueue.some((item) => item.id === id)) return originalSessionKey;
+  const remappedEntry = Object.entries(queuesBySessionKey).find(
+    ([sessionKey, queue]) => sessionKey !== originalSessionKey && queue.some((item) => item.id === id),
+  );
+  return remappedEntry?.[0] ?? originalSessionKey;
+}
+
 export function updateQueuedDraft(
   queue: QueuedDraft[],
   id: string,
