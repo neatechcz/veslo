@@ -18,6 +18,7 @@ type FixturePart =
       server?: string;
       title?: string;
       text?: string;
+      state?: { input?: Record<string, unknown> };
     };
 
 type FixtureMessage = {
@@ -79,7 +80,7 @@ afterEach(async () => {
 });
 
 describe("deriveLatestRunArtifacts", () => {
-  test("derives file_discovered artifacts only from concrete workspace files the run touched", () => {
+  test("derives file_discovered artifacts only from concrete workspace files the run opened", () => {
     const artifacts = deriveLatestRunArtifacts(
       session(
         userMessage("msg_1", "Inspect the relevant files."),
@@ -95,9 +96,58 @@ describe("deriveLatestRunArtifacts", () => {
 
     expect(files(artifacts).map((artifact) => [artifact.kind, artifact.path])).toEqual([
       ["file_discovered", "src/app.ts"],
-      ["file_discovered", "docs/guide.md"],
-      ["file_discovered", "packages/app/src/app.tsx"],
-      ["file_discovered", "packages/server/src/server.ts"],
+    ]);
+  });
+
+  test("derives opened file artifacts only from explicit read activity", () => {
+    const artifacts = deriveLatestRunArtifacts(
+      session(
+        userMessage("msg_1", "Inspect the relevant files."),
+        assistantMessage(
+          "msg_2",
+          toolPart("read", { path: "src/opened.ts" }),
+          toolPart("search", { state: { input: { files: ["src/search-result.ts"] } } }),
+          toolPart("list", { state: { input: { paths: ["src/list-result.ts"] } } }),
+          toolPart("glob", { state: { input: { files: ["src/glob-result.ts"] } } }),
+        ),
+      ),
+    );
+
+    expect(files(artifacts).map((artifact) => [artifact.kind, artifact.path])).toEqual([
+      ["file_discovered", "src/opened.ts"],
+    ]);
+  });
+
+  test("does not derive file artifacts from search list or glob exploration", () => {
+    const artifacts = deriveLatestRunArtifacts(
+      session(
+        userMessage("msg_1", "Find likely files."),
+        assistantMessage(
+          "msg_2",
+          toolPart("search", { state: { input: { files: ["src/search-result.ts"] } } }),
+          toolPart("list", { state: { input: { paths: ["src/list-result.ts"] } } }),
+          toolPart("glob", { state: { input: { files: ["src/glob-result.ts"] } } }),
+        ),
+      ),
+    );
+
+    expect(files(artifacts)).toEqual([]);
+  });
+
+  test("modified file artifacts win over opened duplicates", () => {
+    const artifacts = deriveLatestRunArtifacts(
+      session(
+        userMessage("msg_1", "Open and update the same file."),
+        assistantMessage(
+          "msg_2",
+          toolPart("edit", { path: "src/app.ts" }),
+          toolPart("read", { path: "src/app.ts" }),
+        ),
+      ),
+    );
+
+    expect(files(artifacts).map((artifact) => [artifact.kind, artifact.path])).toEqual([
+      ["file_output", "src/app.ts"],
     ]);
   });
 
