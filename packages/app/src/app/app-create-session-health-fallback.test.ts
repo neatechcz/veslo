@@ -5,7 +5,7 @@ import test from "node:test";
 const source = readFileSync(new URL("./app.tsx", import.meta.url), "utf8");
 
 test("createSessionAndOpen does not abort session creation solely because the health preflight timed out", () => {
-  const start = source.indexOf("async function createSessionAndOpen()");
+  const start = source.indexOf("async function createSessionAndOpen(");
   const end = source.indexOf("const openNewSessionWithDirectory = async () =>");
   assert.ok(start >= 0 && end > start, "createSessionAndOpen source should be present");
 

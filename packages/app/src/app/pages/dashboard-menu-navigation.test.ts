@@ -35,6 +35,9 @@ const shouldReturnToSessionOnEscape = (
 
 const dashboardSource = readFileSync(new URL("./dashboard.tsx", import.meta.url), "utf8");
 const settingsSource = readFileSync(new URL("./settings.tsx", import.meta.url), "utf8");
+const settingsViewSource = dashboardSource.match(/<SettingsView[\s\S]*?\/>/)?.[0] ?? "";
+const settingsViewDashboardCallbackSource =
+  settingsViewSource.match(/onOpenDashboardTab=\{([\s\S]*?)\}/)?.[1] ?? "";
 const headerSourceMatch = dashboardSource.match(
   /<header class="h-14 flex items-center justify-between px-6 md:px-10 border-b border-dls-border sticky top-0 bg-dls-surface z-10">[\s\S]*?<\/header>/,
 );
@@ -304,6 +307,7 @@ test("dashboard source keeps a single left-menu handler without the legacy viewp
 });
 
 test("dashboard routes active nav re-clicks through the session return helper", () => {
+  assert.match(dashboardSource, /import DashboardTabRail/);
   assert.match(
     dashboardSource,
     /const\s+handleDashboardTabSelection\s*=\s*\(\s*nextTab:\s*DashboardTab(?:,\s*nextSettingsTab\?:\s*SettingsTab)?\s*\)\s*=>\s*\{/s,
@@ -335,12 +339,21 @@ test("dashboard routes active nav re-clicks through the session return helper", 
     /<SidebarAdvancedNav[\s\S]*currentTab=\{props\.tab\}[\s\S]*onSelect=\{\(\)\s*=>\s*handleDashboardTabSelection\(\s*["']config["']\s*\)\}/,
   );
   assert.match(
+    settingsViewDashboardCallbackSource,
+    /^(?:\s*handleDashboardTabSelection\s*|\s*\(\s*([A-Za-z_$][\w$]*)\s*\)\s*=>\s*handleDashboardTabSelection\(\s*\1\s*\)\s*)$/,
+  );
+  assert.match(
     dashboardSource,
     /onClick\s*=\s*\{\s*\(\)\s*=>\s*handleDashboardTabSelection\s*\(\s*["']skills["']\s*\)\s*\}/,
   );
   assert.match(
     dashboardSource,
     /onClick\s*=\s*\{\s*\(\)\s*=>\s*handleDashboardTabSelection\s*\(\s*["']scheduled["']\s*\)\s*\}/,
+  );
+  assert.match(dashboardSource, /const\s+showDashboardTabRail\s*=\s*createMemo\s*\(\s*\(\)\s*=>/);
+  assert.match(
+    dashboardSource,
+    /<Show when=\{showDashboardTabRail\(\)\}>[\s\S]*<DashboardTabRail[\s\S]*activeDashboardTab=\{props\.tab\}[\s\S]*activeSettingsTab=\{props\.settingsTab\}[\s\S]*onOpenSettingsTab=\{openSettings\}[\s\S]*onOpenDashboardTab=\{handleDashboardTabSelection\}[\s\S]*<\/Show>[\s\S]*<Switch>/,
   );
 });
 
@@ -411,11 +424,13 @@ test("dashboard keeps settings page state out of the shared titlebar chrome", ()
   assert.doesNotMatch(dashboardSource, /resolveSettingsTabLabel\(visibleSettingsTab\(\)\)/);
   assert.match(
     settingsSource,
-    /import\s*\{\s*resolveSettingsTabLabel,\s*resolveVisibleSettingsTab\s*\}\s*from\s+["']\.\.\/lib\/settings-tab-label["'];/,
+    /import\s*\{\s*resolveVisibleSettingsTab\s*\}\s*from\s+["']\.\.\/lib\/settings-tab-label["'];/,
   );
+  assert.match(settingsSource, /import DashboardTabRail/);
   assert.match(settingsSource, /resolveVisibleSettingsTab\(\s*props\.settingsTab,\s*props\.developerMode\s*\)/);
   assert.match(settingsSource, /<h1 class="font-product type-title-md text-gray-12">\s*\{translate\("dashboard\.settings"\)\}\s*<\/h1>/);
-  assert.match(settingsSource, /{resolveSettingsTabLabel\(tab\)}/);
+  assert.match(settingsSource, /<DashboardTabRail/);
+  assert.doesNotMatch(settingsSource, /{resolveNavItemLabel\(item\)}/);
   assert.doesNotMatch(settingsSource, /tabLabel\(tab\)/);
 });
 
@@ -445,8 +460,9 @@ test("settings tab labels include archived and keep developer tabs unavailable",
   assert.doesNotMatch(settingsTabLabelSource, /model:\s*"settings\.model"/);
   assert.match(
     settingsTabLabelSource,
-    /const visibleSettingsTabs: SettingsTab\[] = \["general", "extensions", "archived"\]/,
+    /const visibleSettingsTabs: SettingsTab\[] = \["general", "archived"\]/,
   );
+  assert.doesNotMatch(settingsTabLabelSource, /extensions:\s*"settings\.extensions"/);
 
   const enLocale = readFileSync(new URL("../../i18n/locales/en.ts", import.meta.url), "utf8");
   const csLocale = readFileSync(new URL("../../i18n/locales/cs.ts", import.meta.url), "utf8");

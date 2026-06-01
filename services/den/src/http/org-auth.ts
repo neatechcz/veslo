@@ -7,6 +7,7 @@ import { hasRequiredOrgRole, pickActiveOrganization, type OrganizationAccessSumm
 import { requireSession, type SessionContext } from "./session.js"
 
 export const ORG_HEADER_NAME = "x-veslo-org-id"
+export const DEN_ORG_HEADER_NAME = "x-veslo-den-org-id"
 
 export type OrganizationSummary = OrganizationAccessSummary
 
@@ -28,7 +29,7 @@ function normalizeString(value: unknown) {
 }
 
 export function readRequestedOrganizationId(req: express.Request) {
-  const headerValue = normalizeString(req.header(ORG_HEADER_NAME))
+  const headerValue = normalizeString(req.header(ORG_HEADER_NAME)) ?? normalizeString(req.header(DEN_ORG_HEADER_NAME))
   if (headerValue) {
     return headerValue
   }

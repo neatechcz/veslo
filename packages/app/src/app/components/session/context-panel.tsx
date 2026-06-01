@@ -6,6 +6,7 @@ import type { McpServerEntry, McpStatus, McpStatusMap, SkillCard } from "../../t
 import { stripPluginVersion } from "../../utils/plugins";
 import { splitPathSegments, toWorkspaceRelative } from "../../utils/workspace-path";
 import { isUserRelevantArtifactPath } from "./artifact-family-model";
+import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../../i18n";
 
 export type ContextPanelProps = {
   activePlugins: string[];
@@ -106,19 +107,19 @@ const getSmartFileName = (files: string[], file: string): string => {
 };
 
 const mcpStatusLabel = (status?: McpStatus, disabled?: boolean) => {
-  if (disabled) return "Disabled";
-  if (!status) return "Disconnected";
+  if (disabled) return __vesloT("mcp.disabled", __vesloCurrentLocale());
+  if (!status) return __vesloT("status.disconnected", __vesloCurrentLocale());
   switch (status.status) {
     case "connected":
-      return "Connected";
+      return __vesloT("status.connected", __vesloCurrentLocale());
     case "needs_auth":
-      return "Needs auth";
+      return __vesloT("mcp.needs_auth", __vesloCurrentLocale());
     case "needs_client_registration":
-      return "Register client";
+      return __vesloT("mcp.register_client", __vesloCurrentLocale());
     case "failed":
-      return "Failed";
+      return __vesloT("status.failed", __vesloCurrentLocale());
     default:
-      return "Disconnected";
+      return __vesloT("status.disconnected", __vesloCurrentLocale());
   }
 };
 
@@ -157,7 +158,7 @@ export default function ContextPanel(props: ContextPanelProps) {
             class="w-full px-4 py-3 flex items-center justify-between text-sm text-gray-12 font-medium"
             onClick={() => props.onToggleSection("context")}
           >
-            <span>Context</span>
+            <span>{__vesloT("session.context", __vesloCurrentLocale())}</span>
             <ChevronDown
               size={16}
               class={`transition-transform text-gray-10 ${props.expandedSections.context ? "rotate-180" : ""}`.trim()}
@@ -167,12 +168,12 @@ export default function ContextPanel(props: ContextPanelProps) {
             <div class="px-4 pb-4 pt-1 space-y-5">
               <div>
                 <div class="flex items-center justify-between text-[11px] uppercase tracking-wider text-gray-9 font-semibold mb-2">
-                  <span>Working files</span>
+                  <span>{__vesloT("session.working_files_label", __vesloCurrentLocale())}</span>
                 </div>
                 <div class="space-y-2">
                   <Show
                     when={fileRows().length}
-                    fallback={<div class="text-xs text-gray-9">None yet.</div>}
+                    fallback={<div class="text-xs text-gray-9">{__vesloT("session.none_yet_label", __vesloCurrentLocale())}</div>}
                   >
                     <For each={fileRows()}>
                       {(file) => {
@@ -208,7 +209,7 @@ export default function ContextPanel(props: ContextPanelProps) {
             class="w-full px-4 py-3 flex items-center justify-between text-sm text-gray-12 font-medium"
             onClick={() => props.onToggleSection("plugins")}
           >
-            <span>Plugins</span>
+            <span>{__vesloT("dashboard.plugins", __vesloCurrentLocale())}</span>
             <ChevronDown
               size={16}
               class={`transition-transform text-gray-10 ${props.expandedSections.plugins ? "rotate-180" : ""}`.trim()}
@@ -221,7 +222,7 @@ export default function ContextPanel(props: ContextPanelProps) {
                   when={props.activePlugins.length}
                   fallback={
                     <div class="text-xs text-gray-9">
-                      {props.activePluginStatus ?? "No plugins loaded."}
+                      {props.activePluginStatus ?? __vesloT("session.no_plugins_loaded", __vesloCurrentLocale())}
                     </div>
                   }
                 >
@@ -271,7 +272,7 @@ export default function ContextPanel(props: ContextPanelProps) {
                   when={props.mcpServers.length}
                   fallback={
                     <div class="text-xs text-gray-9">
-                      {props.mcpStatus ?? "No MCP servers loaded."}
+                      {props.mcpStatus ?? __vesloT("session.capabilities_no_mcp", __vesloCurrentLocale())}
                     </div>
                   }
                 >
@@ -308,7 +309,7 @@ export default function ContextPanel(props: ContextPanelProps) {
             class="w-full px-4 py-3 flex items-center justify-between text-sm text-gray-12 font-medium"
             onClick={() => props.onToggleSection("skills")}
           >
-            <span>Skills</span>
+            <span>{__vesloT("dashboard.skills", __vesloCurrentLocale())}</span>
             <ChevronDown
               size={16}
               class={`transition-transform text-gray-10 ${props.expandedSections.skills ? "rotate-180" : ""}`.trim()}
@@ -321,7 +322,7 @@ export default function ContextPanel(props: ContextPanelProps) {
                   when={props.skills.length}
                   fallback={
                     <div class="text-xs text-gray-9">
-                      {props.skillsStatus ?? "No skills loaded."}
+                      {props.skillsStatus ?? __vesloT("session.capabilities_no_skills", __vesloCurrentLocale())}
                     </div>
                   }
                 >
@@ -357,7 +358,7 @@ export default function ContextPanel(props: ContextPanelProps) {
             class="w-full px-4 py-3 flex items-center justify-between text-sm text-gray-12 font-medium"
             onClick={() => props.onToggleSection("authorizedFolders")}
           >
-            <span>Authorized folders</span>
+            <span>{__vesloT("ui.literal.authorized_folders_19nt4i", __vesloCurrentLocale())}</span>
             <ChevronDown
               size={16}
               class={`transition-transform text-gray-10 ${
@@ -370,7 +371,7 @@ export default function ContextPanel(props: ContextPanelProps) {
               <div class="space-y-2">
                 <Show
                   when={props.authorizedDirs.length}
-                  fallback={<div class="text-xs text-gray-9">None yet.</div>}
+                  fallback={<div class="text-xs text-gray-9">{__vesloT("session.none_yet_label", __vesloCurrentLocale())}</div>}
                 >
                   <For each={props.authorizedDirs.slice(0, 3)}>
                     {(folder) => (

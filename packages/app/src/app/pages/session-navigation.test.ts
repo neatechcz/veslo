@@ -79,6 +79,9 @@ const openPendingDraftFromDirectorySelection = () => {
           openPendingDraft: (
             target: { workspaceId: string; directory: string },
           ) => Promise<string | boolean | undefined> | string | boolean | undefined | void;
+          onWorkspaceRegistered?: (
+            target: { workspaceId: string; directory: string },
+          ) => Promise<void> | void;
         },
       ) => Promise<"cancelled" | "blocked" | "opened">;
     }
@@ -90,6 +93,14 @@ const openPendingDraftFromDirectorySelection = () => {
   );
   return fn;
 };
+
+test("app passes active pending draft key into session view props", () => {
+  assert.match(
+    appSource,
+    /activePendingDraftKey: activePendingDraftKey\(\),/,
+    "session props should pass the active pending draft key into SessionView",
+  );
+});
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -484,6 +495,41 @@ test("picker-driven pending directory draft flow keeps different projects on dif
   assert.notEqual(openedTargets[0], openedTargets[1]);
 });
 
+test("picker-driven pending directory draft flow publishes the workspace before activation", async () => {
+  const events: string[] = [];
+  let currentActive = "ws-active";
+
+  const result = await openPendingDraftFromDirectorySelection()({
+    activeWorkspaceId: currentActive,
+    getActiveWorkspaceId: () => currentActive,
+    pickDirectory: async () => "/tmp/project-visible-now",
+    ensureWorkspaceForFolder: async (folder) => {
+      events.push(`ensure:${folder}`);
+      return { id: "ws-visible-now" };
+    },
+    activateWorkspace: async (id) => {
+      events.push(`activate:${id}`);
+      currentActive = id;
+      return true;
+    },
+    openPendingDraft: async ({ workspaceId, directory }) => {
+      events.push(`open:${workspaceId}:${directory}`);
+      return "pending-visible-now";
+    },
+    onWorkspaceRegistered: ({ workspaceId, directory }) => {
+      events.push(`registered:${workspaceId}:${directory}`);
+    },
+  });
+
+  assert.equal(result, "opened");
+  assert.deepEqual(events, [
+    "ensure:/tmp/project-visible-now",
+    "registered:ws-visible-now:/tmp/project-visible-now",
+    "activate:ws-visible-now",
+    "open:ws-visible-now:/tmp/project-visible-now",
+  ]);
+});
+
 test("first New session creates one private workspace and opens a persisted pending draft", () => {
   assert.notEqual(openNewSessionSource, "", "New session flow should exist in app.tsx");
   assert.match(
@@ -585,6 +631,25 @@ test("directory picker flow opens a pending draft instead of creating a real ses
     openDirectorySessionSource,
     /createSession: \(\) => createSessionAndOpen\(\)/,
     "the picker flow should stop creating real sessions immediately",
+  );
+});
+
+test("directory picker flow publishes the registered workspace into the sidebar before continuing", () => {
+  assert.notEqual(openDirectorySessionSource, "", "Directory picker flow should exist in app.tsx");
+  assert.match(
+    appSource,
+    /const publishRegisteredWorkspaceToSidebar = \(workspaceId: string\) => \{[\s\S]*setSidebarSessionsByWorkspaceId\(\(prev\) =>[\s\S]*setSidebarSessionStatusByWorkspaceId\(\(prev\) =>[\s\S]*setSidebarSessionErrorByWorkspaceId\(\(prev\) =>[\s\S]*setSidebarSessionHasMoreByWorkspaceId\(\(prev\) =>/s,
+    "app should expose a scoped sidebar publication helper for registered workspaces",
+  );
+  assert.match(
+    appSource,
+    /const projectKey = workspace\?\.workspaceType === "local"[\s\S]*workspaceStore\.isPrivateWorkspacePath\(projectKey\)[\s\S]*promoteStoredProjectOrderKey\(projectKey\)/s,
+    "registered local workspaces should be promoted to the top of the by-project sidebar order",
+  );
+  assert.match(
+    openDirectorySessionSource,
+    /ensureWorkspaceForFolder: workspaceStore\.ensureWorkspaceForFolder,[\s\S]*onWorkspaceRegistered: \(\{ workspaceId \}\) => publishRegisteredWorkspaceToSidebar\(workspaceId\),[\s\S]*activateWorkspace: \(workspaceId\) => workspaceStore\.activateWorkspace\(workspaceId, \{ promoteToFront: true \}\),/s,
+    "the picker flow should publish the registered workspace before the existing activation continuation",
   );
 });
 

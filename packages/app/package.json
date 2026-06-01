@@ -1,7 +1,7 @@
 {
   "name": "@neatech/veslo-ui",
   "private": true,
-  "version": "2026.5.9",
+  "version": "2026.6.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -30,6 +30,7 @@
     "test:local-workspace-mode": "node scripts/local-workspace-mode.mjs",
     "test:local-ui-guards": "node scripts/local-ui-guards.mjs",
     "test:primary-localization": "node scripts/primary-flow-localization.mjs",
+    "test:ui-localization": "node scripts/ui-localization.mjs",
     "test:cloud-onboarding": "node scripts/cloud-onboarding.mjs",
     "test:cloud-ui-guards": "node scripts/cloud-ui-guards.mjs",
     "test:sidebar-flat": "pnpm exec tsx scripts/sidebar-flat-sessions.mjs",
@@ -69,6 +70,7 @@
     "jsonc-parser": "^3.2.1",
     "lucide-solid": "^0.562.0",
     "marked": "^17.0.1",
+    "minimatch": "^10.1.1",
     "solid-js": "^1.9.0"
   },
   "devDependencies": {

@@ -1,6 +1,17 @@
 import type { Part } from "@opencode-ai/sdk/v2/client";
 import type { ArtifactItem, MessageWithParts } from "../types";
 import { isVesloInternalSubagentType } from "../lib/internal-subagents";
+import { currentLocale, t } from "../../i18n";
+
+const tr = (key: string, replacements?: Record<string, string>): string => {
+  let value = t(key, currentLocale());
+  if (replacements) {
+    for (const [placeholder, replacement] of Object.entries(replacements)) {
+      value = value.replaceAll(`{${placeholder}}`, replacement);
+    }
+  }
+  return value;
+};
 
 /** Classify a tool name into a semantic category for icon selection */
 export function classifyTool(toolName: string): "read" | "edit" | "write" | "search" | "terminal" | "glob" | "task" | "skill" | "tool" {
@@ -103,57 +114,57 @@ function buildToolTitle(state: any, toolName: string): string {
 
   if (lower === "read") {
     const target = file("filePath", "path", "file");
-    return target ? `Read ${target}` : "Read file";
+    return target ? tr("tools.read_target", { target }) : tr("tools.read_file");
   }
 
   if (lower === "edit") {
     const target = file("filePath", "path", "file");
-    return target ? `Edit ${target}` : "Edit file";
+    return target ? tr("tools.edit_target", { target }) : tr("tools.edit_file");
   }
 
   if (lower === "write") {
     const target = file("filePath", "path", "file");
-    return target ? `Write ${target}` : "Write file";
+    return target ? tr("tools.write_target", { target }) : tr("tools.write_file");
   }
 
   if (lower === "apply_patch") {
-    return "Apply patch";
+    return tr("tools.apply_patch");
   }
 
   if (lower === "list" || lower === "list_files") {
     const target = file("path");
-    return target ? `List ${target}` : "List files";
+    return target ? tr("tools.list_target", { target }) : tr("tools.list_files");
   }
 
   if (lower === "grep" || lower === "glob" || lower === "search") {
     const pattern = pick("pattern", "query");
-    return pattern ? `Search ${truncateStepText(pattern, 44)}` : "Search code";
+    return pattern ? tr("tools.search_target", { target: truncateStepText(pattern, 44) }) : tr("tools.search_code");
   }
 
   if (lower === "bash") {
     const description = pick("description");
     if (description) return compactHumanStepText(description, 56);
     const command = pick("command", "cmd");
-    if (command) return truncateStepText(`Run ${command}`, 56);
-    return "Run command";
+    if (command) return truncateStepText(tr("tools.run_target", { target: command }), 56);
+    return tr("tools.run_command");
   }
 
   if (lower === "task") {
     const rawAgent = pick("subagent_type");
-    if (isVesloInternalSubagentType(rawAgent)) return "Internal processing";
+    if (isVesloInternalSubagentType(rawAgent)) return tr("tools.internal_processing");
     const agent = formatAgentLabel(rawAgent);
-    if (agent) return `${agent} task`;
-    return "Task";
+    if (agent) return tr("tools.agent_task", { agent });
+    return tr("tools.task");
   }
 
   if (lower === "webfetch") {
     const url = pick("url");
-    return url ? `Fetch ${truncateStepText(url, 44)}` : "Fetch web page";
+    return url ? tr("tools.fetch_target", { target: truncateStepText(url, 44) }) : tr("tools.fetch_web_page");
   }
 
   if (lower === "skill") {
     const name = pick("name");
-    return name ? `Load skill ${name}` : "Load skill";
+    return name ? tr("tools.load_skill_named", { name }) : tr("tools.load_skill");
   }
 
   const stateTitle = normalizeStepText(state?.title);
@@ -162,7 +173,7 @@ function buildToolTitle(state: any, toolName: string): string {
   }
 
   const fallback = normalizeStepText(toolName).replace(/[_-]+/g, " ");
-  return fallback || "Tool";
+  return fallback || tr("tools.tool");
 }
 
 /** Build a concise detail line for a tool call — avoids dumping raw output */
@@ -194,7 +205,7 @@ function buildToolDetail(state: any, toolName: string): string | undefined {
   if (lower === "task") {
     const rawAgent = pick("subagent_type");
     if (isVesloInternalSubagentType(rawAgent)) {
-      return "processing request";
+      return tr("tools.processing_request");
     }
     const description = pick("description");
     if (description) return compactHumanStepText(description, 80);
@@ -273,7 +284,7 @@ function buildToolDetail(state: any, toolName: string): string | undefined {
         // "Success. Updated the following files: M foo.ts" -> "foo.ts"
         const match = first.match(/:\s*[MADR]\s+(.+)/);
         if (match) return extractFilename(match[1].trim());
-        return "Done";
+        return tr("tools.done");
       }
       return first.length > 80 ? `${first.slice(0, 77)}...` : first;
     }
@@ -306,7 +317,7 @@ export function summarizeStep(part: Part): { title: string; detail?: string; isS
   if (part.type === "reasoning") {
     const record = part as any;
     const text = typeof record.text === "string" ? cleanReasoningText(record.text) : "";
-    if (!text) return { title: "Thinking", toolCategory: "tool" };
+    if (!text) return { title: tr("tools.thinking"), toolCategory: "tool" };
 
     const lines = text
       .split(/\r?\n/)
@@ -331,26 +342,39 @@ export function summarizeStep(part: Part): { title: string; detail?: string; isS
     }
 
     headline = headline.replace(/^thinking[:\s-]*/i, "").trim();
-    const title = `Thinking: ${truncateStepText(headline || "reviewing context", 96)}`;
+    const title = tr("tools.thinking_prefix", { text: truncateStepText(headline || tr("tools.reviewing_context"), 96) });
     return { title, detail: detail || undefined, toolCategory: "tool" };
   }
 
   if (part.type === "step-start" || part.type === "step-finish") {
     const reason = (part as any).reason;
     return {
-      title: part.type === "step-start" ? "Step started" : "Step finished",
+      title: part.type === "step-start" ? tr("tools.step_started") : tr("tools.step_finished"),
       detail: reason ? String(reason) : undefined,
       toolCategory: "tool",
     };
   }
 
-  return { title: "Step", toolCategory: "tool" };
+  return { title: tr("tools.step"), toolCategory: "tool" };
 }
 
-const ARTIFACT_PATH_PATTERN =
-  /(?:^|[\s"'`([{])((?:[a-zA-Z]:[/\\]|\.{1,2}[/\\]|~[/\\]|[/\\])[\w./\\\-]*\.[a-z][a-z0-9]{0,9}|[\w.\-]+[/\\][\w./\\\-]*\.[a-z][a-z0-9]{0,9})/gi;
-const ARTIFACT_OUTPUT_SCAN_LIMIT = 4000;
-const ARTIFACT_OUTPUT_SKIP_TOOLS = new Set(["webfetch"]);
+const APPLY_PATCH_SCAN_LIMIT = 4000;
+const LEGACY_OPEN_TOOLS = new Set(["open", "read"]);
+const LEGACY_MODIFIED_TOOLS = new Set(["apply_patch", "edit", "write"]);
+const LEGACY_INPUT_PATH_KEYS = ["filePath", "path", "file", "target"] as const;
+const LEGACY_FILE_INTERACTION_RANK: Record<NonNullable<ArtifactItem["fileInteraction"]>, number> = {
+  modified: 2,
+  opened: 1,
+};
+const LEGACY_URI_TARGET_PATTERN = /^[a-z][a-z0-9+.-]*:/i;
+const LEGACY_HOST_WITH_ROUTE_PATTERN =
+  /^(?:localhost\.?(?::\d+|[/\\?#])|(?:\d{1,3}\.){3}\d{1,3}\.?(?::\d+|[/\\?#])|(?:[a-z0-9-]+\.)+[a-z]{2,}\.?(?::\d+|[/\\?#]))/i;
+const LEGACY_BARE_HOST_PATTERN = /^(?:localhost\.?|(?:\d{1,3}\.){3}\d{1,3}\.?|(?:[a-z0-9-]+\.)+[a-z]{2,}\.?)$/i;
+const LEGACY_PROTOCOL_RELATIVE_HOST_PATTERN = /^[/\\]{2}/;
+const LEGACY_BARE_FILE_EXTENSION_PATTERN =
+  /\.(?:[cm]?[jt]sx?|jsonc?|ya?ml|toml|mdx?|md|txt|tsx?|css|scss|sass|less|html?|xml|svg|png|jpe?g|gif|webp|ico|pdf|csv|tsv|sql|rs|go|py|rb|php|java|kt|kts|swift|cs|cpp|cxx|cc|c|h|hpp|sh|bash|zsh|fish|ps1|bat|cmd|lock|env|ini|conf|config|properties|gradle|dockerfile)$/i;
+const APPLY_PATCH_SUMMARY_INTRO_PATTERN =
+  /^(?:success\.\s*)?(?:updated|created|deleted|modified|changed|added|removed) the following files:\s*(.*)$/i;
 
 // Patterns that indicate a path is a truncated system/absolute path rather than a workspace-relative path
 const TRUNCATED_SYSTEM_PATH_PATTERNS = [
@@ -394,6 +418,128 @@ type DeriveArtifactsOptions = {
   maxMessages?: number;
 };
 
+function isUrlLikeLegacyArtifactPath(value: string, options: { rejectBareHost?: boolean } = {}): boolean {
+  const trimmed = value.trim();
+  if (/^[A-Za-z]:[\\/]/.test(trimmed)) return false;
+  const isLikelyBareFile = !/[\\/]/.test(trimmed) && LEGACY_BARE_FILE_EXTENSION_PATTERN.test(trimmed);
+  return (
+    LEGACY_URI_TARGET_PATTERN.test(trimmed) ||
+    LEGACY_PROTOCOL_RELATIVE_HOST_PATTERN.test(trimmed) ||
+    LEGACY_HOST_WITH_ROUTE_PATTERN.test(trimmed) ||
+    (options.rejectBareHost === true && LEGACY_BARE_HOST_PATTERN.test(trimmed) && !isLikelyBareFile)
+  );
+}
+
+function isLegacyArtifactPathCandidate(value: string, options: { rejectBareHost?: boolean } = {}): boolean {
+  const trimmed = value.trim();
+  return (
+    trimmed.length > 0 &&
+    trimmed.length <= 500 &&
+    !/^\.{2,}$/.test(trimmed) &&
+    !isUrlLikeLegacyArtifactPath(trimmed, options)
+  );
+}
+
+function collectLegacyDirectPaths(record: any, state: any, input: Record<string, unknown>, toolName: string): string[] {
+  const directValues = [
+    ...LEGACY_INPUT_PATH_KEYS.map((key) => input[key]),
+    ...LEGACY_INPUT_PATH_KEYS.map((key) => state?.[key]),
+    ...LEGACY_INPUT_PATH_KEYS.map((key) => record?.[key]),
+  ];
+  return directValues
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => value.trim())
+    .filter((value) => isLegacyArtifactPathCandidate(value, { rejectBareHost: true }));
+}
+
+function collectApplyPatchHeaderPaths(value: unknown): string[] {
+  if (typeof value !== "string") return [];
+  const matches = new Set<string>();
+  const normalizeCandidatePath = (rawPath: string): string | null => {
+    const path = rawPath.split(/\s+->\s+/).pop()?.trim() ?? rawPath.trim();
+    return isLegacyArtifactPathCandidate(path, { rejectBareHost: true }) ? path : null;
+  };
+  const addPath = (rawPath: string) => {
+    const path = normalizeCandidatePath(rawPath);
+    if (path) matches.add(path);
+    return path;
+  };
+  let pendingMoveSource: string | null = null;
+
+  for (const line of value.split(/\r?\n/)) {
+    const patchHeaderMatch = line.match(/^\*\*\* (Add|Update|Delete) File:\s+(.+)$/);
+    if (patchHeaderMatch?.[1]) {
+      pendingMoveSource = patchHeaderMatch[1] === "Update" ? addPath(patchHeaderMatch[2] ?? "") : null;
+      continue;
+    }
+    const moveMatch = line.match(/^\*\*\* Move to:\s+(.+)$/);
+    if (moveMatch?.[1]) {
+      const movePath = normalizeCandidatePath(moveMatch[1]);
+      if (movePath) {
+        if (pendingMoveSource) matches.delete(pendingMoveSource);
+        matches.add(movePath);
+      }
+      pendingMoveSource = null;
+      continue;
+    }
+    if (/^\*\*\* /.test(line)) pendingMoveSource = null;
+  }
+
+  return Array.from(matches);
+}
+
+function collectApplyPatchSummaryPaths(value: unknown): string[] {
+  if (typeof value !== "string") return [];
+  const text = value.slice(0, APPLY_PATCH_SCAN_LIMIT);
+  const matches = new Set<string>();
+  const addPath = (rawPath: string) => {
+    const path = rawPath.split(/\s+->\s+/).pop()?.trim() ?? rawPath.trim();
+    if (isLegacyArtifactPathCandidate(path, { rejectBareHost: true })) matches.add(path);
+  };
+  let inSummaryBlock = false;
+
+  for (const line of text.split(/\r?\n/)) {
+    const introMatch = line.trimEnd().match(APPLY_PATCH_SUMMARY_INTRO_PATTERN);
+    if (introMatch) {
+      inSummaryBlock = true;
+      const inlineSummary = introMatch[1]?.trim();
+      if (inlineSummary) {
+        const inlineSummaryMatch = inlineSummary.match(/^[MADRC]\s+(.+)$/);
+        if (inlineSummaryMatch?.[1]) {
+          addPath(inlineSummaryMatch[1]);
+          continue;
+        }
+        inSummaryBlock = false;
+      }
+      continue;
+    }
+    if (!inSummaryBlock) continue;
+
+    if (!line.trim()) {
+      inSummaryBlock = false;
+      continue;
+    }
+
+    const summaryMatch = line.trimEnd().match(/^[MADRC]\s+(.+)$/);
+    if (summaryMatch?.[1]) {
+      addPath(summaryMatch[1]);
+      continue;
+    }
+
+    inSummaryBlock = false;
+  }
+
+  return Array.from(matches);
+}
+
+function shouldReplaceLegacyArtifact(
+  current: ArtifactItem | undefined,
+  interaction: NonNullable<ArtifactItem["fileInteraction"]>,
+): boolean {
+  if (!current?.fileInteraction) return true;
+  return LEGACY_FILE_INTERACTION_RANK[interaction] >= LEGACY_FILE_INTERACTION_RANK[current.fileInteraction];
+}
+
 export function deriveArtifacts(list: MessageWithParts[], options: DeriveArtifactsOptions = {}): ArtifactItem[] {
   const results = new Map<string, ArtifactItem>();
   const maxMessages =
@@ -410,47 +556,24 @@ export function deriveArtifacts(list: MessageWithParts[], options: DeriveArtifac
       const record = part as any;
       const state = record.state ?? {};
       const matches = new Set<string>();
-
-      const explicit = [
-        state.path,
-        state.file,
-        ...(Array.isArray(state.files) ? state.files : []),
-      ];
-
-      explicit.forEach((f) => {
-        if (typeof f === "string") {
-          const trimmed = f.trim();
-          if (
-            trimmed.length > 0 &&
-            trimmed.length <= 500 &&
-            trimmed.includes(".") &&
-            !/^\.{2,}$/.test(trimmed)
-          ) {
-            matches.add(trimmed);
-          }
-        }
-      });
-
       const toolName =
         typeof record.tool === "string" && record.tool.trim()
           ? record.tool.trim().toLowerCase()
           : "";
-      const titleText = typeof state.title === "string" ? state.title : "";
-      const outputText =
-        typeof state.output === "string" && !ARTIFACT_OUTPUT_SKIP_TOOLS.has(toolName)
-          ? state.output.slice(0, ARTIFACT_OUTPUT_SCAN_LIMIT)
-          : "";
+      const input = getToolInput(state);
+      const interaction: ArtifactItem["fileInteraction"] = LEGACY_MODIFIED_TOOLS.has(toolName)
+        ? "modified"
+        : LEGACY_OPEN_TOOLS.has(toolName)
+          ? "opened"
+          : undefined;
 
-      const text = [titleText, outputText]
-        .filter((v): v is string => Boolean(v))
-        .join(" ");
+      if (!interaction) return;
 
-      if (text) {
-        ARTIFACT_PATH_PATTERN.lastIndex = 0;
-        Array.from(text.matchAll(ARTIFACT_PATH_PATTERN))
-          .map((m) => m[1])
-          .filter((f) => f && f.length <= 500)
-          .forEach((f) => matches.add(f));
+      collectLegacyDirectPaths(record, state, input, toolName).forEach((path) => matches.add(path));
+
+      if (toolName === "apply_patch") {
+        collectApplyPatchHeaderPaths(input.patch).forEach((path) => matches.add(path));
+        collectApplyPatchSummaryPaths(state.output).forEach((path) => matches.add(path));
       }
 
       if (matches.size === 0) return;
@@ -462,6 +585,9 @@ export function deriveArtifacts(list: MessageWithParts[], options: DeriveArtifac
         const key = cleanedPath.toLowerCase();
         const name = cleanedPath.split("/").pop() ?? cleanedPath;
         const id = `artifact-${encodeURIComponent(cleanedPath)}`;
+        const current = results.get(key);
+
+        if (!shouldReplaceLegacyArtifact(current, interaction)) return;
 
         // Delete and re-add to move to end (most recent)
         if (results.has(key)) results.delete(key);
@@ -472,6 +598,7 @@ export function deriveArtifacts(list: MessageWithParts[], options: DeriveArtifac
           kind: "file" as const,
           size: state.size ? String(state.size) : undefined,
           messageId: messageId || undefined,
+          fileInteraction: interaction,
         });
       });
     });

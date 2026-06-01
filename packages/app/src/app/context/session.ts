@@ -42,6 +42,7 @@ import {
   shouldShowReconnected,
   shouldShowReconnecting,
 } from "./session-reconnect";
+import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 
 export type SessionStore = ReturnType<typeof createSessionStore>;
 
@@ -185,6 +186,7 @@ export function createSessionStore(options: {
    */
   engineReady?: () => boolean;
   onSessionBusyChange?: (sessionId: string, busy: boolean) => void;
+  onAssistantResponseObserved?: (sessionId: string) => void;
 }) {
 
   const notifySessionBusy = (sessionId: string, status: string) => {
@@ -468,9 +470,9 @@ export function createSessionStore(options: {
     const name = typeof record.tool === "string" ? record.tool : "";
     const lower = name.toLowerCase();
     if (lower.includes("browser") || lower.includes("chrome") || lower.includes("devtools")) {
-      return "Chrome MCP is not ready yet. Open the MCP tab, connect `Control Chrome`, then retry.";
+      return __vesloIndirectT("ui.indirect.chrome_mcp_is_not_ready_yet_open_the_mcp_tab_c_r0vewj", __vesloIndirectLocale());
     }
-    return "Try again, or switch to an agent/prompt that only uses available tools in this worker.";
+    return __vesloIndirectT("ui.indirect.try_again_or_switch_to_an_agent_prompt_that_on_1x3e0z", __vesloIndirectLocale());
   };
 
   const maybeHandleInvalidToolError = (part: Part) => {
@@ -490,7 +492,7 @@ export function createSessionStore(options: {
     }
 
     const record = part as any;
-    const tool = typeof record.tool === "string" && record.tool.trim() ? record.tool.trim() : "(unknown tool)";
+    const tool = typeof record.tool === "string" && record.tool.trim() ? record.tool.trim() : __vesloIndirectT("ui.indirect.unknown_tool_8c32ki", __vesloIndirectLocale());
     const hint = invalidToolNextStepHint(part);
     options.setError(`Invalid tool call: ${tool}.\n\n${hint}`);
   };
@@ -1414,6 +1416,9 @@ export function createSessionStore(options: {
           const info = record.info as Message;
           if (!isKnownSessionId(info.sessionID)) return;
           setStore("messages", info.sessionID, (current = []) => upsertMessageInfo(current, info));
+          if ((info as { role?: string }).role === "assistant") {
+            options.onAssistantResponseObserved?.(info.sessionID);
+          }
         }
       }
     }

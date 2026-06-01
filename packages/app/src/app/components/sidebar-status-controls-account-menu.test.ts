@@ -23,7 +23,7 @@ test("sidebar user label exposes an account menu trigger", () => {
 test("account menu renders a menu role with a logout menuitem", () => {
   assert.match(sidebarSource, /role="menu"/);
   assert.match(sidebarSource, /role="menuitem"/);
-  assert.match(sidebarSource, /<span>Logout<\/span>/);
+  assert.match(sidebarSource, /<span>\{__vesloT\("ui\.literal\.logout_11l94w", __vesloCurrentLocale\(\)\)\}<\/span>/);
 });
 
 test("logout menuitem delegates to props.onLogout", () => {

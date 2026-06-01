@@ -1,6 +1,7 @@
 import { parse } from "jsonc-parser";
 
 import type { OpencodeConfigFile } from "../lib/tauri";
+import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 
 type PluginListValue = string | string[] | null | undefined;
 
@@ -74,7 +75,7 @@ export function loadPluginsFromConfig(
     onList(next);
   } catch (e) {
     onList([]);
-    onError(e instanceof Error ? e.message : "Failed to parse opencode.json");
+    onError(e instanceof Error ? e.message : __vesloIndirectT("skills.failed_parse_opencode", __vesloIndirectLocale()));
   }
 }
 

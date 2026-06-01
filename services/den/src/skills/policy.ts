@@ -1,0 +1,346 @@
+import type {
+  SkillApprovalScope,
+  SkillInstallationStatus,
+  SkillScope,
+  SkillVersionStatus,
+} from "./schema.js"
+import { createHash } from "node:crypto"
+
+const SYSTEM_OWNER_KEY = "__system__"
+const DEFAULT_RELEASE_CHANNEL_KEY = "default"
+
+export type SkillScopeOwnerKeyInput =
+  | { scope: "user"; userId: string }
+  | { scope: "org"; orgId: string }
+  | { scope: "workspace"; orgId: string; workspaceId: string }
+  | { scope: "system" }
+
+export type SkillApprovalOwnerKeyInput =
+  | { scope: "org"; orgId: string }
+  | { scope: "system" }
+
+export function skillVersionFilePathSha256(path: string): string {
+  return sha256Hex(canonicalSkillVersionFilePath(path))
+}
+
+export function skillScopeOwnerKey(input: SkillScopeOwnerKeyInput): string {
+  switch (input.scope) {
+    case "user":
+      return `user:${encodeKeyPart(input.userId)}`
+    case "org":
+      return `org:${encodeKeyPart(input.orgId)}`
+    case "workspace":
+      return `workspace:${encodeKeyPart(input.orgId)}:${encodeKeyPart(input.workspaceId)}`
+    case "system":
+      return `system:${SYSTEM_OWNER_KEY}`
+  }
+}
+
+export function skillApprovalOwnerKey(input: SkillApprovalOwnerKeyInput): string {
+  switch (input.scope) {
+    case "org":
+      return `org:${encodeKeyPart(input.orgId)}`
+    case "system":
+      return `system:${SYSTEM_OWNER_KEY}`
+  }
+}
+
+export type SkillRolloutTargetConflictRef = {
+  skillId: string
+  catalogScope: "organization" | "platform"
+  ownerOrgId?: string | null
+  target: "user-global" | "workspace"
+  audience: string
+  userId?: string | null
+  workspaceId?: string | null
+  enabled?: boolean
+  deletedAt?: Date | string | null
+}
+
+export function rolloutPolicyOwnerKey(input: {
+  catalogScope: "organization" | "platform"
+  ownerOrgId?: string | null
+}): string {
+  if (input.catalogScope === "platform") return "platform:__platform__"
+  if (!input.ownerOrgId) throw new Error("org_id_required")
+  return `org:${encodeKeyPart(input.ownerOrgId)}`
+}
+
+export function hasRolloutTargetConflict(
+  candidate: SkillRolloutTargetConflictRef,
+  existing: readonly SkillRolloutTargetConflictRef[],
+): boolean {
+  if (candidate.enabled === false || candidate.deletedAt != null) return false
+  return existing.some((policy) => {
+    if (policy.deletedAt != null || policy.enabled === false) return false
+    if (policy.skillId !== candidate.skillId) return false
+    if (policy.catalogScope !== candidate.catalogScope) return false
+    if ((policy.ownerOrgId ?? null) !== (candidate.ownerOrgId ?? null)) return false
+    if (policy.target === candidate.target) return false
+    if (candidate.audience === "user" && policy.audience === "user") {
+      return (policy.userId ?? null) === (candidate.userId ?? null)
+    }
+    if (candidate.catalogScope === "organization") return true
+    return candidate.audience === "all-platform-users" || policy.audience === "all-platform-users"
+  })
+}
+
+export type SkillRolloutApprovalRef = {
+  scope: SkillApprovalScope
+  orgId?: string | null
+  skillId: string
+  versionId: string
+  revokedAt?: Date | string | null
+}
+
+export type SkillRolloutApprovalValidationCode =
+  | "approval_missing"
+  | "approval_scope_mismatch"
+  | "approval_org_mismatch"
+
+export function validateRolloutPolicyApproval(input: {
+  catalogScope: "organization" | "platform"
+  ownerOrgId?: string | null
+  skillId: string
+  versionId: string
+  approvals: readonly SkillRolloutApprovalRef[]
+}): SkillRegistryPolicyResult<SkillRolloutApprovalValidationCode> {
+  const candidates = input.approvals.filter((approval) =>
+    approval.revokedAt == null &&
+    approval.skillId === input.skillId &&
+    approval.versionId === input.versionId
+  )
+
+  if (input.catalogScope === "platform") {
+    if (candidates.some((approval) => approval.scope === "system" && approval.orgId == null)) {
+      return { ok: true }
+    }
+    return candidates.length > 0
+      ? { ok: false, code: "approval_scope_mismatch" }
+      : { ok: false, code: "approval_missing" }
+  }
+
+  if (!input.ownerOrgId) {
+    return { ok: false, code: "approval_org_mismatch" }
+  }
+  if (candidates.some((approval) => approval.scope === "org" && approval.orgId === input.ownerOrgId)) {
+    return { ok: true }
+  }
+  if (candidates.some((approval) => approval.scope !== "org")) {
+    return { ok: false, code: "approval_scope_mismatch" }
+  }
+  if (candidates.some((approval) => approval.scope === "org" && approval.orgId !== input.ownerOrgId)) {
+    return { ok: false, code: "approval_org_mismatch" }
+  }
+  return { ok: false, code: "approval_missing" }
+}
+
+export function skillReleaseChannelKey(releaseChannel?: string | null): string {
+  const normalized = releaseChannel?.trim()
+  return normalized ? normalized : DEFAULT_RELEASE_CHANNEL_KEY
+}
+
+function canonicalSkillVersionFilePath(path: string): string {
+  const normalized = path.replace(/\\/g, "/")
+  if (normalized.startsWith("/") || normalized === "") {
+    throw new Error("invalid_skill_file_path")
+  }
+
+  const parts = normalized.split("/")
+  if (parts.some((part) => part === "" || part === "." || part === "..")) {
+    throw new Error("invalid_skill_file_path")
+  }
+
+  return parts.join("/")
+}
+
+function encodeKeyPart(value: string): string {
+  if (value.length === 0) {
+    throw new Error("invalid_skill_registry_key_part")
+  }
+  return encodeURIComponent(value)
+}
+
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value).digest("hex")
+}
+
+export type SkillRegistryPolicyResult<TCode extends string = string> =
+  | { ok: true }
+  | { ok: false; code: TCode }
+
+export type ManagedSkillInstallationApprovalCode =
+  | "missing_approval"
+  | "version_not_approved"
+  | "approval_id_mismatch"
+  | "approval_scope_mismatch"
+  | "approval_version_mismatch"
+  | "approval_org_mismatch"
+  | "version_org_mismatch"
+  | "skill_mismatch"
+  | "approval_revoked"
+
+export type ManagedSkillInstallationRef = {
+  scope: SkillScope
+  status?: SkillInstallationStatus
+  orgId?: string | null
+  skillId: string
+  approvalId?: string | null
+  approvedVersionId?: string | null
+}
+
+export type ManagedSkillVersionRef = {
+  id: string
+  orgId?: string | null
+  skillId?: string | null
+  status: SkillVersionStatus
+}
+
+export type ManagedSkillApprovalRef = {
+  id: string
+  scope: SkillApprovalScope
+  orgId?: string | null
+  skillId: string
+  versionId: string
+  revokedAt?: Date | string | null
+}
+
+export function validateManagedSkillInstallationApproval(input: {
+  installation: ManagedSkillInstallationRef
+  version: ManagedSkillVersionRef
+  approval?: ManagedSkillApprovalRef | null
+}): SkillRegistryPolicyResult<ManagedSkillInstallationApprovalCode> {
+  const { installation, version, approval } = input
+  const status = installation.status ?? "active"
+
+  if (status !== "active" || (installation.scope !== "org" && installation.scope !== "system")) {
+    return { ok: true }
+  }
+
+  if (!installation.approvalId || !installation.approvedVersionId || !approval) {
+    return { ok: false, code: "missing_approval" }
+  }
+
+  if (version.status !== "approved") {
+    return { ok: false, code: "version_not_approved" }
+  }
+
+  if (approval.id !== installation.approvalId) {
+    return { ok: false, code: "approval_id_mismatch" }
+  }
+
+  const systemApprovalForOrgInstall = installation.scope === "org" && approval.scope === "system"
+  if (approval.scope !== installation.scope && !systemApprovalForOrgInstall) {
+    return { ok: false, code: "approval_scope_mismatch" }
+  }
+
+  if (approval.versionId !== installation.approvedVersionId || approval.versionId !== version.id) {
+    return { ok: false, code: "approval_version_mismatch" }
+  }
+
+  if (approval.skillId !== installation.skillId || (version.skillId != null && version.skillId !== installation.skillId)) {
+    return { ok: false, code: "skill_mismatch" }
+  }
+
+  if (approval.revokedAt != null) {
+    return { ok: false, code: "approval_revoked" }
+  }
+
+  if (installation.scope === "org") {
+    if (!installation.orgId || (!systemApprovalForOrgInstall && approval.orgId !== installation.orgId)) {
+      return { ok: false, code: "approval_org_mismatch" }
+    }
+    if (!systemApprovalForOrgInstall && version.orgId != null && version.orgId !== installation.orgId) {
+      return { ok: false, code: "version_org_mismatch" }
+    }
+  }
+
+  if (installation.scope === "system") {
+    if (installation.orgId != null || approval.orgId != null) {
+      return { ok: false, code: "approval_org_mismatch" }
+    }
+    if (version.orgId != null) {
+      return { ok: false, code: "version_org_mismatch" }
+    }
+  }
+
+  return { ok: true }
+}
+
+export type SkillRegistryTenantIsolationRef = {
+  entity: string
+  orgId?: string | null
+  systemScope?: boolean
+}
+
+export type SkillRegistryTenantIsolationResult =
+  | { ok: true }
+  | { ok: false; code: "missing_org" | "missing_system_scope" | "org_mismatch"; entity: string }
+
+export function validateSkillRegistryTenantIsolation(input: {
+  orgId: string | null
+  refs: readonly SkillRegistryTenantIsolationRef[]
+}): SkillRegistryTenantIsolationResult {
+  for (const ref of input.refs) {
+    if (input.orgId === null) {
+      if (ref.orgId != null) {
+        return { ok: false, code: "org_mismatch", entity: ref.entity }
+      }
+      if (ref.systemScope !== true) {
+        return { ok: false, code: "missing_system_scope", entity: ref.entity }
+      }
+      continue
+    }
+
+    if (ref.orgId == null) {
+      if (ref.systemScope === true) {
+        continue
+      }
+      return { ok: false, code: "missing_org", entity: ref.entity }
+    }
+
+    if (ref.orgId !== input.orgId) {
+      return { ok: false, code: "org_mismatch", entity: ref.entity }
+    }
+  }
+
+  return { ok: true }
+}
+
+export type SkillRegistryRetentionRole = "member" | "owner" | "platform_admin"
+
+export type SkillRegistryRetentionPolicyDecision = {
+  canHardPurge: boolean
+  canRestore: boolean
+}
+
+export function evaluateSkillRegistryRetentionPolicy(input: {
+  roles: readonly SkillRegistryRetentionRole[]
+  deletedAt?: Date | string | number | null
+  purgeAfter?: Date | string | number | null
+  now: Date | string | number
+}): SkillRegistryRetentionPolicyDecision {
+  const deletedAtTime = toTimestamp(input.deletedAt)
+  if (deletedAtTime === null) {
+    return { canHardPurge: false, canRestore: false }
+  }
+
+  const purgeAfterTime = toTimestamp(input.purgeAfter)
+  const nowTime = toTimestamp(input.now)
+  const purgeDue = purgeAfterTime !== null && nowTime !== null && purgeAfterTime <= nowTime
+  const hasAdminRole = input.roles.includes("owner") || input.roles.includes("platform_admin")
+
+  return {
+    canHardPurge: hasAdminRole && purgeDue,
+    canRestore: !purgeDue,
+  }
+}
+
+function toTimestamp(value: Date | string | number | null | undefined): number | null {
+  if (value == null) {
+    return null
+  }
+
+  const time = value instanceof Date ? value.getTime() : new Date(value).getTime()
+  return Number.isFinite(time) ? time : null
+}

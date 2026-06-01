@@ -10209,6 +10209,1197 @@
           ]
         }
       ]
+    },
+    {
+      "type": "frame",
+      "id": "a4zPc",
+      "x": 15160,
+      "y": 0,
+      "name": "Skill Publish Dialog Proposal CZ",
+      "width": 1600,
+      "height": 1100,
+      "fill": "#F5F7FA",
+      "cornerRadius": 20,
+      "stroke": {
+        "thickness": 1,
+        "fill": "#D9DEE8"
+      },
+      "layout": "vertical",
+      "gap": 28,
+      "padding": 44,
+      "children": [
+        {
+          "type": "frame",
+          "id": "EOcqU",
+          "name": "Proposal heading",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 10,
+          "children": [
+            {
+              "type": "text",
+              "id": "cFeVz",
+              "name": "Proposal title",
+              "fill": "#111827",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Návrh modálu: publikování skillu",
+              "lineHeight": 1.1,
+              "fontFamily": "Inter",
+              "fontSize": 42,
+              "fontWeight": "700"
+            },
+            {
+              "type": "text",
+              "id": "F0cJe",
+              "name": "Proposal subtitle",
+              "fill": "#4B5563",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Kontrolní krok před odesláním žádosti do organizačního nebo systémového katalogu. Priorita: jasný cíl, jasné schvalování, jasné důsledky akce.",
+              "lineHeight": 1.35,
+              "fontFamily": "Inter",
+              "fontSize": 18,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "DXh1A",
+          "name": "Desktop preview surface",
+          "width": "fill_container",
+          "height": "fill_container",
+          "fill": "#E9EEF5",
+          "cornerRadius": 18,
+          "stroke": {
+            "thickness": 1,
+            "fill": "#CBD5E1"
+          },
+          "layout": "vertical",
+          "padding": 40,
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "OYSG5",
+              "name": "Dialog - Odeslat skill ke schválení",
+              "width": 1080,
+              "fill": "#FFFFFF",
+              "cornerRadius": 10,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#D6DEE9"
+              },
+              "effect": {
+                "type": "shadow",
+                "shadowType": "outer",
+                "color": "#0F172A33",
+                "offset": {
+                  "x": 0,
+                  "y": 24
+                },
+                "blur": 50,
+                "spread": -12
+              },
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "PSEI2",
+                  "name": "Dialog header",
+                  "width": "fill_container",
+                  "stroke": {
+                    "thickness": {
+                      "bottom": 1
+                    },
+                    "fill": "#E2E8F0"
+                  },
+                  "layout": "vertical",
+                  "gap": 18,
+                  "padding": [
+                    24,
+                    28,
+                    20,
+                    28
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "C8U5Y",
+                      "name": "Header title row",
+                      "width": "fill_container",
+                      "gap": 20,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "F7QNbb",
+                          "name": "Header copy",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 8,
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "iws4f",
+                              "name": "Scope badge row",
+                              "width": "fill_container",
+                              "gap": 8,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "qqs0L",
+                                  "name": "Selected target badge",
+                                  "fill": "#EFF6FF",
+                                  "cornerRadius": 999,
+                                  "stroke": {
+                                    "thickness": 1,
+                                    "fill": "#BFDBFE"
+                                  },
+                                  "padding": [
+                                    4,
+                                    10
+                                  ],
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "VLTkq",
+                                      "name": "Scope badge text",
+                                      "fill": "#1D4ED8",
+                                      "content": "Katalog organizace",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 12,
+                                      "fontWeight": "700"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "N02wRV",
+                                  "name": "Mode label",
+                                  "fill": "#64748B",
+                                  "content": "Žádost o schválení",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 12,
+                                  "fontWeight": "700"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "BSKAO",
+                              "name": "Modal title",
+                              "fill": "#0F172A",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Odeslat skill ke schválení",
+                              "lineHeight": 1.15,
+                              "fontFamily": "Inter",
+                              "fontSize": 28,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "sCPKn",
+                              "name": "Modal description",
+                              "fill": "#475569",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Žádost vytvoří návrh pro správce organizace. Po schválení bude skill dostupný v organizačním katalogu; bez schválení zůstává jen lokálně v tomto workspace.",
+                              "lineHeight": 1.45,
+                              "fontFamily": "Inter",
+                              "fontSize": 15,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "F1thw",
+                          "name": "Close button",
+                          "width": 36,
+                          "height": 36,
+                          "fill": "#F8FAFC",
+                          "cornerRadius": 8,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#E2E8F0"
+                          },
+                          "layout": "vertical",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "tIEsW",
+                              "name": "Close icon",
+                              "fill": "#334155",
+                              "content": "×",
+                              "fontFamily": "Inter",
+                              "fontSize": 22,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "xkQDx",
+                      "name": "Summary strip",
+                      "width": "fill_container",
+                      "height": 82,
+                      "gap": 10,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "bw7w5",
+                          "name": "Summary - Skill",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "fill": "#F8FAFC",
+                          "cornerRadius": 8,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#E2E8F0"
+                          },
+                          "layout": "vertical",
+                          "gap": 4,
+                          "padding": 12,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "yfnEF",
+                              "name": "Summary skill label",
+                              "fill": "#64748B",
+                              "content": "Skill",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "UeXoW",
+                              "name": "Summary skill value",
+                              "fill": "#0F172A",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "e2e-workspace-skill",
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fkM2z",
+                          "name": "Summary - Version",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "fill": "#F8FAFC",
+                          "cornerRadius": 8,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#E2E8F0"
+                          },
+                          "layout": "vertical",
+                          "gap": 4,
+                          "padding": 12,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "SFqfo",
+                              "name": "Summary version label",
+                              "fill": "#64748B",
+                              "content": "Verze",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ZfA2r",
+                              "name": "Summary version value",
+                              "fill": "#0F172A",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "aktuální návrh",
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fkgza",
+                          "name": "Summary - Target",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "fill": "#F8FAFC",
+                          "cornerRadius": 8,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#E2E8F0"
+                          },
+                          "layout": "vertical",
+                          "gap": 4,
+                          "padding": 12,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "T7yILp",
+                              "name": "Summary target label",
+                              "fill": "#64748B",
+                              "content": "Cíl",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "etHAj",
+                              "name": "Summary target value",
+                              "fill": "#0F172A",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "organizace",
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "x1b8XE",
+                          "name": "Summary - Approver",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "fill": "#F8FAFC",
+                          "cornerRadius": 8,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#E2E8F0"
+                          },
+                          "layout": "vertical",
+                          "gap": 4,
+                          "padding": 12,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "OKs7u",
+                              "name": "Summary approver label",
+                              "fill": "#64748B",
+                              "content": "Schvaluje",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "aHeBU",
+                              "name": "Summary approver value",
+                              "fill": "#0F172A",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "správce organizace",
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "LNkpz",
+                  "name": "Service state banner",
+                  "width": "fill_container",
+                  "fill": "#FFFBEB",
+                  "stroke": {
+                    "thickness": {
+                      "bottom": 1
+                    },
+                    "fill": "#FCD34D"
+                  },
+                  "gap": 12,
+                  "padding": [
+                    14,
+                    28
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "mMv2m",
+                      "name": "Service state icon",
+                      "width": 28,
+                      "height": 28,
+                      "fill": "#FEF3C7",
+                      "cornerRadius": 999,
+                      "layout": "vertical",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "miKzz",
+                          "name": "Service icon text",
+                          "fill": "#92400E",
+                          "content": "!",
+                          "fontFamily": "Inter",
+                          "fontSize": 15,
+                          "fontWeight": "800"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "YcHtE",
+                      "name": "Service state copy",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "dZRwc",
+                          "name": "Service state title",
+                          "fill": "#92400E",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Publikační služba zatím není připojená",
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "r38Vky",
+                          "name": "Service state text",
+                          "fill": "#92400E",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Modál musí rozlišit náhled žádosti od skutečného odeslání. Jakmile bude katalogová služba dostupná, hlavní akce odešle tuto žádost ke schválení.",
+                          "lineHeight": 1.35,
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "D3rlz",
+                  "name": "Dialog body",
+                  "width": "fill_container",
+                  "height": 500,
+                  "gap": 18,
+                  "padding": [
+                    22,
+                    28
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "tGfWn",
+                      "name": "Left column - Submitted data",
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "layout": "vertical",
+                      "gap": 14,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ehCer",
+                          "name": "Card - What will be submitted",
+                          "width": "fill_container",
+                          "fill": "#F8FAFC",
+                          "cornerRadius": 8,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#D6DEE9"
+                          },
+                          "layout": "vertical",
+                          "gap": 12,
+                          "padding": 16,
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "A3Nru5",
+                              "name": "Submitted card header",
+                              "width": "fill_container",
+                              "gap": 12,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "g4GJ5",
+                                  "name": "Submitted title",
+                                  "fill": "#0F172A",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Co se odešle",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 18,
+                                  "fontWeight": "700"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "XLTPU",
+                                  "name": "Submitted state badge",
+                                  "fill": "#ECFDF5",
+                                  "cornerRadius": 999,
+                                  "stroke": {
+                                    "thickness": 1,
+                                    "fill": "#BBF7D0"
+                                  },
+                                  "padding": [
+                                    4,
+                                    9
+                                  ],
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "A6I6L",
+                                      "name": "Submitted badge text",
+                                      "fill": "#166534",
+                                      "content": "validní balíček",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 12,
+                                      "fontWeight": "700"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "hV1FR",
+                              "name": "Submitted description",
+                              "fill": "#475569",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Sekce ukazuje přesně ta data, která se pošlou do katalogu a která uvidí schvalovatel před zveřejněním.",
+                              "lineHeight": 1.4,
+                              "fontFamily": "Inter",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "KmN34",
+                              "name": "Metadata table",
+                              "clip": true,
+                              "width": "fill_container",
+                              "cornerRadius": 8,
+                              "stroke": {
+                                "thickness": 1,
+                                "fill": "#E2E8F0"
+                              },
+                              "layout": "vertical",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "TMdQr",
+                                  "name": "Row - Name",
+                                  "width": "fill_container",
+                                  "fill": "#FFFFFF",
+                                  "stroke": {
+                                    "thickness": {
+                                      "bottom": 1
+                                    },
+                                    "fill": "#E2E8F0"
+                                  },
+                                  "gap": 12,
+                                  "padding": 12,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "AwTrN",
+                                      "name": "Row name label",
+                                      "fill": "#64748B",
+                                      "textGrowth": "fixed-width",
+                                      "width": 120,
+                                      "content": "Název",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 13,
+                                      "fontWeight": "700"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "j5IF4Q",
+                                      "name": "Row name value",
+                                      "fill": "#0F172A",
+                                      "textGrowth": "fixed-width",
+                                      "width": "fill_container",
+                                      "content": "e2e-workspace-skill",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 13,
+                                      "fontWeight": "700"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "tF4GL",
+                                  "name": "Row - Description",
+                                  "width": "fill_container",
+                                  "fill": "#FFFFFF",
+                                  "stroke": {
+                                    "thickness": {
+                                      "bottom": 1
+                                    },
+                                    "fill": "#E2E8F0"
+                                  },
+                                  "gap": 12,
+                                  "padding": 12,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "YwJA1",
+                                      "name": "Row desc label",
+                                      "fill": "#64748B",
+                                      "textGrowth": "fixed-width",
+                                      "width": 120,
+                                      "content": "Popis",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 13,
+                                      "fontWeight": "700"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "dKmjF",
+                                      "name": "Row desc value",
+                                      "fill": "#0F172A",
+                                      "textGrowth": "fixed-width",
+                                      "width": "fill_container",
+                                      "content": "Krátké shrnutí účelu skillu pro katalog.",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 13,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "I1C37Z",
+                                  "name": "Row - Files",
+                                  "width": "fill_container",
+                                  "fill": "#FFFFFF",
+                                  "stroke": {
+                                    "thickness": {
+                                      "bottom": 1
+                                    },
+                                    "fill": "#E2E8F0"
+                                  },
+                                  "gap": 12,
+                                  "padding": 12,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "VF7sR",
+                                      "name": "Row files label",
+                                      "fill": "#64748B",
+                                      "textGrowth": "fixed-width",
+                                      "width": 120,
+                                      "content": "Soubory",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 13,
+                                      "fontWeight": "700"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "IZP20",
+                                      "name": "Row files value",
+                                      "fill": "#0F172A",
+                                      "textGrowth": "fixed-width",
+                                      "width": "fill_container",
+                                      "content": "SKILL.md, scripts, assets",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 13,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "O4K6q6",
+                                  "name": "Row - Scope",
+                                  "width": "fill_container",
+                                  "fill": "#FFFFFF",
+                                  "gap": 12,
+                                  "padding": 12,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "UHvnZ",
+                                      "name": "Row scope label",
+                                      "fill": "#64748B",
+                                      "textGrowth": "fixed-width",
+                                      "width": 120,
+                                      "content": "Viditelnost",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 13,
+                                      "fontWeight": "700"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "Y5tZ27",
+                                      "name": "Row scope value",
+                                      "fill": "#0F172A",
+                                      "textGrowth": "fixed-width",
+                                      "width": "fill_container",
+                                      "content": "po schválení pro celou organizaci",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 13,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "KubNw",
+                          "name": "Card - Changes",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "fill": "#FFFFFF",
+                          "cornerRadius": 8,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#D6DEE9"
+                          },
+                          "layout": "vertical",
+                          "gap": 10,
+                          "padding": 16,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "uXQo9",
+                              "name": "Changes title",
+                              "fill": "#0F172A",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Změny a kontrola obsahu",
+                              "fontFamily": "Inter",
+                              "fontSize": 18,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "S5onQ",
+                              "name": "Changes text",
+                              "fill": "#334155",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "• Metadata se publikují jako nová verze skillu.\n• Lokální výběr skillu se tím nemění.\n• Schvalovatel vidí rozdíl proti poslední publikované verzi a může žádost vrátit s komentářem.",
+                              "lineHeight": 1.55,
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "krhse",
+                      "name": "Right column - Review flow",
+                      "width": 360,
+                      "height": "fill_container",
+                      "layout": "vertical",
+                      "gap": 14,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "DzXJy",
+                          "name": "Card - Target selector",
+                          "width": "fill_container",
+                          "fill": "#F8FAFC",
+                          "cornerRadius": 8,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#D6DEE9"
+                          },
+                          "layout": "vertical",
+                          "gap": 10,
+                          "padding": 14,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "nuUmO",
+                              "name": "Target selector title",
+                              "fill": "#0F172A",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Kam se má publikovat",
+                              "fontFamily": "Inter",
+                              "fontSize": 16,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "Px6yV",
+                              "name": "Catalog segmented control",
+                              "width": "fill_container",
+                              "height": 40,
+                              "fill": "#E2E8F0",
+                              "cornerRadius": 8,
+                              "gap": 4,
+                              "padding": 4,
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "swXLX",
+                                  "name": "Option - Organization",
+                                  "width": "fill_container",
+                                  "height": "fill_container",
+                                  "fill": "#FFFFFF",
+                                  "cornerRadius": 6,
+                                  "layout": "vertical",
+                                  "justifyContent": "center",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "d7Lxa",
+                                      "name": "Org option text",
+                                      "fill": "#0F172A",
+                                      "content": "Organizace",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 13,
+                                      "fontWeight": "700"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "GjryY",
+                                  "name": "Option - System",
+                                  "width": "fill_container",
+                                  "height": "fill_container",
+                                  "fill": "#E2E8F0",
+                                  "cornerRadius": 6,
+                                  "layout": "vertical",
+                                  "justifyContent": "center",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "yRUZG",
+                                      "name": "System option text",
+                                      "fill": "#475569",
+                                      "content": "Systémový katalog",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 13,
+                                      "fontWeight": "700"
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "aS4a9",
+                          "name": "Card - Approval flow",
+                          "width": "fill_container",
+                          "fill": "#FFFFFF",
+                          "cornerRadius": 8,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#D6DEE9"
+                          },
+                          "layout": "vertical",
+                          "gap": 9,
+                          "padding": 14,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "x6QWn3",
+                              "name": "Approval flow title",
+                              "fill": "#0F172A",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Co se stane po odeslání",
+                              "fontFamily": "Inter",
+                              "fontSize": 16,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "e0fZl",
+                              "name": "Approval flow text",
+                              "fill": "#334155",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "1. Vznikne žádost v katalogu.\n2. Správce zkontroluje metadata a obsah.\n3. Schválený skill se zpřístupní cílovému katalogu.\n4. Zamítnutá žádost se vrátí s důvodem.",
+                              "lineHeight": 1.5,
+                              "fontFamily": "Inter",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "CXvgU",
+                          "name": "Card - Preconditions",
+                          "width": "fill_container",
+                          "fill": "#F8FAFC",
+                          "cornerRadius": 8,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#D6DEE9"
+                          },
+                          "layout": "vertical",
+                          "gap": 9,
+                          "padding": 14,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "qrISD",
+                              "name": "Preconditions title",
+                              "fill": "#0F172A",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Kontrola před odesláním",
+                              "fontFamily": "Inter",
+                              "fontSize": 16,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ZQi9d",
+                              "name": "Preconditions text",
+                              "fill": "#334155",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "✓ Metadata vyplněná\n✓ Balíček obsahuje SKILL.md\n✓ Nejsou nalezené konflikty názvu\n! Katalogová služba není dostupná",
+                              "lineHeight": 1.55,
+                              "fontFamily": "Inter",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "YfxxW",
+                          "name": "Card - Review note",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "fill": "#FFFFFF",
+                          "cornerRadius": 8,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#D6DEE9"
+                          },
+                          "layout": "vertical",
+                          "gap": 9,
+                          "padding": 14,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "vdo0c",
+                              "name": "Review note title",
+                              "fill": "#0F172A",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Poznámka pro schvalovatele",
+                              "fontFamily": "Inter",
+                              "fontSize": 16,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "m4oZS",
+                              "name": "Review note textarea",
+                              "width": "fill_container",
+                              "height": "fill_container",
+                              "fill": "#F8FAFC",
+                              "cornerRadius": 8,
+                              "stroke": {
+                                "thickness": 1,
+                                "fill": "#CBD5E1"
+                              },
+                              "layout": "vertical",
+                              "padding": 12,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "Ryc7W",
+                                  "name": "Review note placeholder",
+                                  "fill": "#94A3B8",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Volitelně doplň, proč má být skill dostupný v katalogu...",
+                                  "lineHeight": 1.4,
+                                  "fontFamily": "Inter",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "AUGeW",
+                  "name": "Dialog footer",
+                  "width": "fill_container",
+                  "stroke": {
+                    "thickness": {
+                      "top": 1
+                    },
+                    "fill": "#E2E8F0"
+                  },
+                  "gap": 16,
+                  "padding": [
+                    18,
+                    28,
+                    20,
+                    28
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "HnHtS",
+                      "name": "Footer status copy",
+                      "fill": "#64748B",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Po odeslání vznikne auditovatelná žádost. Bez připojeného katalogu se akce uloží jen jako návrh.",
+                      "lineHeight": 1.35,
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "MkrOl",
+                      "name": "Footer buttons",
+                      "gap": 10,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "J2tHjw",
+                          "name": "Button - Cancel",
+                          "height": 40,
+                          "fill": "#FFFFFF",
+                          "cornerRadius": 8,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#CBD5E1"
+                          },
+                          "layout": "vertical",
+                          "padding": [
+                            0,
+                            16
+                          ],
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "ruAs9",
+                              "name": "Cancel label",
+                              "fill": "#334155",
+                              "content": "Zrušit",
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "p2AC0A",
+                          "name": "Button - Save draft",
+                          "height": 40,
+                          "fill": "#F8FAFC",
+                          "cornerRadius": 8,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#CBD5E1"
+                          },
+                          "layout": "vertical",
+                          "padding": [
+                            0,
+                            16
+                          ],
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "FlwB6",
+                              "name": "Draft label",
+                              "fill": "#0F172A",
+                              "content": "Uložit návrh",
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "IW9i3",
+                          "name": "Button - Submit disabled",
+                          "height": 40,
+                          "fill": "#E2E8F0",
+                          "cornerRadius": 8,
+                          "layout": "vertical",
+                          "padding": [
+                            0,
+                            18
+                          ],
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "r2ew8",
+                              "name": "Submit disabled label",
+                              "fill": "#64748B",
+                              "content": "Odeslat ke schválení",
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
     }
   ]
 }

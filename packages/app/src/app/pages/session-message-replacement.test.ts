@@ -36,12 +36,32 @@ test("clicking a transcript edit action loads the draft and arms replacement sen
   );
   assert.match(
     sessionSource,
-    /const transcriptEditMessageId = editingTranscriptMessageId\(\);[\s\S]*if \(transcriptEditMessageId\) \{[\s\S]*const sessionKey = currentSessionQueueKey\(\);[\s\S]*const accepted = await sendPromptImmediate\(draft, \{[\s\S]*reason: "replacement",[\s\S]*expectedSessionKey: sessionKey,[\s\S]*replaceMessageId: transcriptEditMessageId,[\s\S]*\}\);[\s\S]*if \(currentSessionQueueKey\(\) === sessionKey\) \{[\s\S]*setEditingTranscriptMessageId\(null\);/,
-    "sending while a transcript edit is armed should use the replacement path and then clear edit state",
+    /const transcriptEditMessageId = editingTranscriptMessageId\(\);[\s\S]*if \(transcriptEditMessageId\) \{\s*const sessionKey = currentSessionQueueKey\(\);\s*setEditingTranscriptMessageId\(null\);\s*const accepted = await sendPromptImmediate\(draft, \{[\s\S]*reason: "replacement",[\s\S]*expectedSessionKey: sessionKey,[\s\S]*replaceMessageId: transcriptEditMessageId,[\s\S]*\}\);/,
+    "sending while a transcript edit is armed should clear edit state before handoff and use the captured replacement id",
+  );
+  assert.doesNotMatch(
+    sessionSource,
+    /const accepted = await sendPromptImmediate\(draft, \{[\s\S]*reason: "replacement"[\s\S]*\}\);[\s\S]*setEditingTranscriptMessageId\(null\);/,
+    "replacement sends should not keep edit state armed until after the handoff settles",
   );
 });
 
 test("replacement send path reverts to the original message before sending the edited draft", () => {
+  assert.match(
+    appSource,
+    /async function sendPrompt\(\s*draft\?: ComposerDraft,\s*options: \{ targetSessionId\?: string \| null; messageId\?: string \| null \} = \{\},\s*\): Promise<boolean> \{/,
+    "app send API should allow callers to preserve the backend message id for replacement sends",
+  );
+  assert.match(
+    appSource,
+    /const replacementMessageID = options\.messageId\?\.trim\(\) \|\| undefined;/,
+    "app send path should normalize the optional replacement message id once before building OpenCode requests",
+  );
+  assert.match(
+    appSource,
+    /session\.promptAsync\(\{[\s\S]*\.\.\.\(replacementMessageID \? \{ messageID: replacementMessageID \} : \{\}\),[\s\S]*sessionID,[\s\S]*model,/,
+    "prompt replacement sends should pass the original messageID so OpenCode updates that turn instead of appending a duplicate",
+  );
   assert.match(
     sessionSource,
     /replaceUserMessageAsync: \(\s*messageId: string,\s*draft: ComposerDraft,\s*options\?: \{ targetSessionId\?: string \| null \},\s*\) => Promise<boolean>;/,
@@ -54,8 +74,8 @@ test("replacement send path reverts to the original message before sending the e
   );
   assert.match(
     appSource,
-    /async function replaceUserMessage\([\s\S]*messageID: string,[\s\S]*draft: ComposerDraft,[\s\S]*options: \{ targetSessionId\?: string \| null \} = \{},[\s\S]*\): Promise<boolean> \{[\s\S]*const sessionID = \(options\.targetSessionId\?\.trim\(\) \|\| selectedSessionId\(\) \|\| ""\)\.trim\(\);[\s\S]*const previousRevertMessageID = selectedSession\(\)\?\.revert\?\.messageID \?\? null;[\s\S]*const next = await revertSession\(c, sessionID, messageID\);[\s\S]*upsertLocalSession\(next\);[\s\S]*const accepted = await sendPrompt\(draft, \{ targetSessionId: sessionID \}\);/,
-    "app replacement API should revert to the target user message and then send the edited draft",
+    /async function replaceUserMessage\([\s\S]*messageID: string,[\s\S]*draft: ComposerDraft,[\s\S]*options: \{ targetSessionId\?: string \| null \} = \{},[\s\S]*\): Promise<boolean> \{[\s\S]*const sessionID = \(options\.targetSessionId\?\.trim\(\) \|\| selectedSessionId\(\) \|\| ""\)\.trim\(\);[\s\S]*const previousRevertMessageID = selectedSession\(\)\?\.revert\?\.messageID \?\? null;[\s\S]*const next = await revertSession\(c, sessionID, messageID\);[\s\S]*upsertLocalSession\(next\);[\s\S]*const accepted = await sendPrompt\(draft, \{ targetSessionId: sessionID, messageId: messageID \}\);/,
+    "app replacement API should revert to the target user message and then send the edited draft with the original message id",
   );
   assert.match(
     appSource,

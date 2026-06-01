@@ -50,10 +50,14 @@ use commands::pending_session_drafts::{
 use commands::scheduler::{scheduler_delete_job, scheduler_list_jobs};
 use commands::session_reader::{opencode_db_read_sessions, opencode_db_read_transcript};
 use commands::skills::{
-    install_skill_template, list_local_skills, read_local_skill, uninstall_skill, write_local_skill,
+    install_global_skill_template, install_skill_template, list_local_skills,
+    list_local_skills_scoped, read_local_skill, read_local_skill_at_path, uninstall_skill,
+    uninstall_skill_at_path, write_local_skill, write_local_skill_at_path,
 };
-use commands::updater::updater_environment;
+use commands::updater::{updater_environment, updater_prepare_install};
 use commands::veslo_server::{veslo_server_info, veslo_server_restart};
+#[cfg(all(debug_assertions, feature = "e2e"))]
+use commands::window::e2e_position_main_window;
 use commands::window::set_window_decorations;
 use commands::workspace::{
     workspace_add_authorized_root, workspace_bootstrap, workspace_copy_into_folder,
@@ -91,22 +95,48 @@ fn register_debug_logs_forwarder(app_handle: &tauri::AppHandle) {
     tauri::Manager::manage(app_handle, forwarder);
 }
 
-fn stop_managed_services(app_handle: &tauri::AppHandle) {
+pub(crate) fn stop_managed_services(app_handle: &tauri::AppHandle) -> Vec<u32> {
+    let mut pids = Vec::new();
+
     if let Ok(mut engine) = app_handle.state::<EngineManager>().inner.lock() {
+        if !engine.child_exited {
+            if let Some(child) = engine.child.as_ref() {
+                pids.push(child.pid());
+            }
+        }
         EngineManager::stop_locked(&mut engine);
     }
     if let Ok(mut orchestrator) = app_handle.state::<OrchestratorManager>().inner.lock() {
+        if !orchestrator.child_exited {
+            if let Some(child) = orchestrator.child.as_ref() {
+                pids.push(child.pid());
+            }
+        }
         OrchestratorManager::stop_locked(&mut orchestrator);
     }
     if let Ok(mut veslo_server) = app_handle.state::<VesloServerManager>().inner.lock() {
+        if !veslo_server.child_exited {
+            if let Some(child) = veslo_server.child.as_ref() {
+                pids.push(child.pid());
+            }
+        }
         VesloServerManager::stop_locked(&mut veslo_server);
     }
     // VSLO-86 — clear persisted state.json on shutdown so the next boot
     // doesn't try to attach to dead port/token from this run.
     let _ = crate::veslo_server::clear_persisted_veslo_server_info(app_handle);
     if let Ok(mut opencode_router) = app_handle.state::<OpenCodeRouterManager>().inner.lock() {
+        if !opencode_router.child_exited {
+            if let Some(child) = opencode_router.child.as_ref() {
+                pids.push(child.pid());
+            }
+        }
         OpenCodeRouterManager::stop_locked(&mut opencode_router);
     }
+
+    pids.sort_unstable();
+    pids.dedup();
+    pids
 }
 
 /// Best-effort dev-mode cleanup: kill veslo-* sidecars whose process group
@@ -261,13 +291,19 @@ pub fn run() {
             opkg_install,
             import_skill,
             install_skill_template,
+            install_global_skill_template,
             list_local_skills,
+            list_local_skills_scoped,
             read_local_skill,
+            read_local_skill_at_path,
             uninstall_skill,
+            uninstall_skill_at_path,
             write_local_skill,
+            write_local_skill_at_path,
             read_opencode_config,
             write_opencode_config,
             updater_environment,
+            updater_prepare_install,
             app_build_info,
             log_ui_event,
             obsidian_is_available,
@@ -290,6 +326,8 @@ pub fn run() {
             pending_session_drafts_put,
             pending_session_drafts_delete,
             clipboard_file_paths,
+            #[cfg(all(debug_assertions, feature = "e2e"))]
+            e2e_position_main_window,
             set_window_decorations
         ])
         .build(tauri::generate_context!())

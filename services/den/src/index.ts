@@ -25,6 +25,8 @@ import {
 } from "./managed-ai/credentials/openai-oauth.js"
 import { createProxyRouter } from "./managed-ai/http/proxy.js"
 import { createUserCredentialsRouter } from "./managed-ai/http/user-credentials.js"
+import { createDbSkillRegistryStore } from "./skills/db-store.js"
+import { createSkillRegistryRouter } from "./skills/routes.js"
 import {
   createDefaultProxyDependencies,
   createDefaultRuntimeState,
@@ -34,7 +36,7 @@ import { orgsRouter } from "./http/orgs.js"
 import { orgMcpCatalogRouter } from "./http/org-mcp-catalog.js"
 import { orgSkillsCatalogRouter } from "./http/org-skills-catalog.js"
 import { workersRouter } from "./http/workers.js"
-import { createYouTrackMcpIssueClient } from "./integrations/youtrack-mcp.js"
+import { createYouTrackRestIssueClient } from "./integrations/youtrack-rest.js"
 
 const app = express()
 const MANAGED_AI_PROXY_JSON_LIMIT = "10mb"
@@ -47,18 +49,16 @@ const publicDir = path.resolve(path.dirname(currentFile), "../public")
 const feedbackProjector = createFeedbackProjector({
   projectKey: env.youtrack.projectKey,
   store: createDbFeedbackProjectorStore(db),
-  issueClient: createYouTrackMcpIssueClient({
-    command: env.youtrack.mcpCommand,
-    args: env.youtrack.mcpArgs,
-    timeoutMs: env.youtrack.mcpTimeoutMs,
-    wireProtocol: env.youtrack.mcpWireProtocol,
-    remoteUrl: env.youtrack.mcpUrl,
-    remoteToken: env.youtrack.mcpToken,
+  issueClient: createYouTrackRestIssueClient({
+    baseUrl: env.youtrack.baseUrl,
+    token: env.youtrack.token,
+    timeoutMs: env.youtrack.timeoutMs,
   }),
 })
 const feedbackRouter = createFeedbackRouter({
   projector: feedbackProjector,
 })
+const skillRegistryStore = createDbSkillRegistryStore(db)
 const debugLogStore = createDbDebugLogStore(db)
 const debugLogService = env.debugLogs.masterKey && env.debugLogs.masterKeyVersion
   ? createDebugLogService({
@@ -110,6 +110,7 @@ function handleRootRequest(req: express.Request, res: express.Response) {
 app.get("/", handleRootRequest)
 app.get("/index.html", handleRootRequest)
 app.use(express.static(publicDir, { index: false }))
+app.use("/v1", createSkillRegistryRouter({ store: skillRegistryStore }))
 
 if (managedAiRuntime) {
   app.use(

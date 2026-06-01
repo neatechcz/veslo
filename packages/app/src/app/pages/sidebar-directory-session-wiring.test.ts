@@ -102,6 +102,24 @@ test("project plus button stays enabled for pending-draft browsing mode", () => 
   );
 });
 
+test("WorkspaceSessionList refreshes project order after registered project promotion", () => {
+  assert.match(
+    workspaceSessionListSource,
+    /PROJECT_ORDER_PROMOTED_EVENT/,
+    "WorkspaceSessionList should subscribe to external project-order promotion events",
+  );
+  assert.match(
+    workspaceSessionListSource,
+    /const promoteProjectOrder = \(projectKey: string\) => \{[\s\S]*mergeVisibleOrder\([\s\S]*promoteProjectKeyInOrder\(/s,
+    "WorkspaceSessionList should materialize visible projects and promote the registered key when notified",
+  );
+  assert.match(
+    workspaceSessionListSource,
+    /window\.addEventListener\(PROJECT_ORDER_PROMOTED_EVENT, handleProjectOrderPromoted\)/,
+    "WorkspaceSessionList should listen for registered project promotions",
+  );
+});
+
 test("session wires archived-items navigation into WorkspaceSessionList", () => {
   assert.match(
     sessionSource,
@@ -171,5 +189,37 @@ test("dashboard wires paging props into WorkspaceSessionList", () => {
     dashboardSource,
     /onLoadMoreWorkspaceSessions=\{props\.loadMoreWorkspaceSidebarSessions\}/,
     "Dashboard should pass load-more callback into WorkspaceSessionList",
+  );
+});
+
+test("session view props expose unread session ids", () => {
+  assert.match(
+    sessionSource,
+    /unreadSessionIds: Record<string, true>;/,
+    "SessionViewProps should include local unread session ids for sidebar rows",
+  );
+});
+
+test("dashboard view props expose unread session ids", () => {
+  assert.match(
+    dashboardSource,
+    /unreadSessionIds: Record<string, true>;/,
+    "DashboardViewProps should include local unread session ids for sidebar rows",
+  );
+});
+
+test("session wires unread session ids into WorkspaceSessionList", () => {
+  assert.match(
+    sessionSource,
+    /unreadSessionIds=\{props\.unreadSessionIds\}/,
+    "Session should pass unread session ids into WorkspaceSessionList",
+  );
+});
+
+test("dashboard wires unread session ids into WorkspaceSessionList", () => {
+  assert.match(
+    dashboardSource,
+    /unreadSessionIds=\{props\.unreadSessionIds\}/,
+    "Dashboard should pass unread session ids into WorkspaceSessionList",
   );
 });

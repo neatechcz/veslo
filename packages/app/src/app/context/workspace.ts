@@ -28,6 +28,7 @@ import {
   buildVesloWorkspaceBaseUrl,
   createVesloServerClient,
   normalizeVesloServerUrl,
+  VesloServerError,
   type VesloServerClient,
   type VesloServerSettings,
   type VesloWorkspaceInfo,
@@ -65,6 +66,7 @@ import { createConfigStore } from "../stores/config-store";
 import { createEngineStore } from "../stores/engine-store";
 import { createRemoteStore } from "../stores/remote-store";
 import { shouldAutoBootstrapRemoteServer } from "../utils/startup-server-bootstrap";
+import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 
 export type { MigrationRepairResult } from "../stores/config-store";
 export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
@@ -144,6 +146,7 @@ export function createWorkspaceStore(options: {
     engineUrl?: string | null;
     clientToken?: string | null;
   } | null;
+  ensureLocalVesloServerRunning?: () => Promise<boolean>;
   setOpencodeConnectStatus?: (status: OpencodeConnectStatus | null) => void;
   onEngineStable?: () => void;
   engineRuntime?: () => EngineRuntime;
@@ -655,7 +658,7 @@ export function createWorkspaceStore(options: {
       if (!hostUrl) {
         updateWorkspaceConnectionState(id, {
           status: "error",
-          message: "Veslo server URL is required.",
+          message: __vesloIndirectT("ui.indirect.veslo_server_url_is_required_63g0jb", __vesloIndirectLocale()),
         });
         return false;
       }
@@ -670,7 +673,7 @@ export function createWorkspaceStore(options: {
         if (resolved.kind !== "veslo") {
           updateWorkspaceConnectionState(id, {
             status: "error",
-            message: "Veslo server unavailable. Check the URL and token.",
+            message: __vesloIndirectT("ui.indirect.veslo_server_unavailable_check_the_url_and_tok_pthxtb", __vesloIndirectLocale()),
           });
           return false;
         }
@@ -687,7 +690,7 @@ export function createWorkspaceStore(options: {
     if (!baseUrl) {
       updateWorkspaceConnectionState(id, {
         status: "error",
-        message: "Remote base URL is required.",
+        message: __vesloIndirectT("ui.indirect.remote_base_url_is_required_1ig1w2", __vesloIndirectLocale()),
       });
       return false;
     }
@@ -700,6 +703,101 @@ export function createWorkspaceStore(options: {
     } catch (error) {
       const message = error instanceof Error ? error.message : safeStringify(error);
       updateWorkspaceConnectionState(id, { status: "error", message });
+      return false;
+    }
+  }
+
+  async function syncWorkspaceSkillMaterializationBeforeRuntime(
+    workspace: WorkspaceInfo,
+    context?: { reason?: string },
+  ) {
+    const workspaceId = workspace.id?.trim() ?? "";
+    if (!workspaceId) return true;
+
+    try {
+      if (isTauriRuntime() && workspace.workspaceType === "local") {
+        const ensured = await options.ensureLocalVesloServerRunning?.();
+        if (ensured === false) {
+          wsDebug("skills:materialization:failed:server-unavailable", {
+            workspaceId,
+            reason: context?.reason ?? null,
+          });
+          updateWorkspaceConnectionState(workspaceId, {
+            status: "error",
+            message: __vesloIndirectT("ui.indirect.veslo_server_unavailable_failed_to_prepare_wor_y4yrip", __vesloIndirectLocale()),
+          });
+          return false;
+        }
+      }
+
+      const client = options.vesloServerClient?.();
+      if (!client) return true;
+
+      const denAuth = readDenAuth();
+      const materializationAuth = {
+        denApiBase: denAuth?.denApiBase?.trim() || undefined,
+        denToken: denAuth?.token?.trim() || undefined,
+        denOrgId: denAuth?.orgId?.trim() || undefined,
+        denUserId: denAuth?.user?.id?.trim() || undefined,
+      };
+
+      const status = await client.getWorkspaceSkillMaterializationStatus(workspaceId);
+      if (!status.registryConfigured) {
+        wsDebug("skills:materialization:skip:not-configured", {
+          workspaceId,
+          reason: context?.reason ?? null,
+        });
+        return true;
+      }
+
+      const activeRun = Boolean(workspaceBusy()[workspace.id]);
+      if (activeRun) {
+        await client.syncWorkspaceSkillMaterialization(workspaceId, { ...materializationAuth, activeRun: true });
+        wsDebug("skills:materialization:pending:active-run", {
+          workspaceId,
+          reason: context?.reason ?? null,
+        });
+        return true;
+      }
+
+      if (status.status === "current" && status.reloadRequired !== true) {
+        wsDebug("skills:materialization:skip:current", {
+          workspaceId,
+          reason: context?.reason ?? null,
+        });
+        return true;
+      }
+
+      const result = await client.syncWorkspaceSkillMaterialization(workspaceId, materializationAuth);
+      wsDebug("skills:materialization:synced", {
+        workspaceId,
+        reason: context?.reason ?? null,
+        status: result.status,
+        synced: result.synced,
+        reloadRequired: result.reloadRequired ?? false,
+        materializedCount: result.materializedSkills.length,
+        removedCount: result.removedSkillNames?.length ?? 0,
+      });
+      if (result.synced || result.reloadRequired === true) {
+        options.refreshSkills({ force: true }).catch(e => reportError(e, "workspace.refreshSkills"));
+      }
+      return true;
+    } catch (error) {
+      if (error instanceof VesloServerError && error.status === 404) {
+        wsDebug("skills:materialization:skip:unsupported-server", {
+          workspaceId,
+          reason: context?.reason ?? null,
+        });
+        return true;
+      }
+      const message = error instanceof Error ? error.message : safeStringify(error);
+      wsDebug("skills:materialization:failed", {
+        workspaceId,
+        reason: context?.reason ?? null,
+        message,
+      });
+      options.setError(addOpencodeCacheHint(message));
+      updateWorkspaceConnectionState(workspaceId, { status: "error", message });
       return false;
     }
   }
@@ -776,10 +874,10 @@ export function createWorkspaceStore(options: {
         if (remoteType === "veslo") {
           const hostUrl = next.vesloHostUrl?.trim() ?? "";
           if (!hostUrl) {
-            options.setError("Veslo server URL is required.");
+            options.setError(__vesloIndirectT("ui.indirect.veslo_server_url_is_required_63g0jb", __vesloIndirectLocale()));
             updateWorkspaceConnectionState(id, {
               status: "error",
-              message: "Veslo server URL is required.",
+              message: __vesloIndirectT("ui.indirect.veslo_server_url_is_required_63g0jb", __vesloIndirectLocale()),
             });
             return false;
           }
@@ -813,10 +911,10 @@ export function createWorkspaceStore(options: {
               directoryHint: next.directory ?? null,
             });
             if (resolved.kind !== "veslo") {
-              options.setError("Veslo server unavailable. Check the URL and token.");
+              options.setError(__vesloIndirectT("ui.indirect.veslo_server_unavailable_check_the_url_and_tok_pthxtb", __vesloIndirectLocale()));
               updateWorkspaceConnectionState(id, {
                 status: "error",
-                message: "Veslo server unavailable. Check the URL and token.",
+                message: __vesloIndirectT("ui.indirect.veslo_server_unavailable_check_the_url_and_tok_pthxtb", __vesloIndirectLocale()),
               });
               return false;
             }
@@ -841,7 +939,7 @@ export function createWorkspaceStore(options: {
             options.setError(t("app.error.remote_base_url_required", currentLocale()));
             updateWorkspaceConnectionState(id, {
               status: "error",
-              message: "Remote base URL is required.",
+              message: __vesloIndirectT("ui.indirect.remote_base_url_is_required_1ig1w2", __vesloIndirectLocale()),
             });
             return false;
           }
@@ -867,7 +965,7 @@ export function createWorkspaceStore(options: {
           if (!ok) {
             updateWorkspaceConnectionState(id, {
               status: "error",
-              message: "Failed to connect to worker.",
+              message: __vesloIndirectT("ui.indirect.failed_to_connect_to_worker_bjt8ig", __vesloIndirectLocale()),
             });
             return false;
           }
@@ -962,7 +1060,7 @@ export function createWorkspaceStore(options: {
           options.setError(t("app.error.remote_base_url_required", currentLocale()));
           updateWorkspaceConnectionState(id, {
             status: "error",
-            message: "Remote base URL is required.",
+            message: __vesloIndirectT("ui.indirect.remote_base_url_is_required_1ig1w2", __vesloIndirectLocale()),
           });
           return false;
         }
@@ -988,7 +1086,7 @@ export function createWorkspaceStore(options: {
         if (!ok) {
           updateWorkspaceConnectionState(id, {
             status: "error",
-            message: "Failed to connect to worker.",
+            message: __vesloIndirectT("ui.indirect.failed_to_connect_to_worker_bjt8ig", __vesloIndirectLocale()),
           });
           return false;
         }
@@ -1183,7 +1281,7 @@ export function createWorkspaceStore(options: {
         if (!ok) {
           updateWorkspaceConnectionState(id, {
             status: "error",
-            message: "Failed to start local engine.",
+            message: __vesloIndirectT("ui.indirect.failed_to_start_local_engine_1uglec", __vesloIndirectLocale()),
           });
           return false;
         }
@@ -1270,6 +1368,13 @@ export function createWorkspaceStore(options: {
       options.setBusyStartedAt(Date.now());
 
       try {
+        const skillsReady = await syncWorkspaceSkillMaterializationBeforeRuntime(next, {
+          reason: "workspace-restart",
+        });
+        if (!skillsReady) {
+          engineRestartFailed = true;
+          return false;
+        }
         const runtime = resolveEngineRuntime();
         _wsLog("[workspace:activate] STEP 5 — runtime =", runtime);
         _wsLog("[workspace:activate] STEP 5.1 — localRuntimeLifecycle.restartWorkspaceRuntime...", {
@@ -1302,7 +1407,7 @@ export function createWorkspaceStore(options: {
         _wsLog("[workspace:activate] STEP 6 — engineRestartFailed!", { id, ms: Date.now() - activateStart });
         updateWorkspaceConnectionState(id, {
           status: "error",
-          message: "Failed to switch worker",
+          message: __vesloIndirectT("ui.indirect.failed_to_switch_worker_ayyxrj", __vesloIndirectLocale()),
         });
         wsDebug("activate:local:engineRestartFailed", { id, ms: Date.now() - activateStart });
         return false;
@@ -2787,6 +2892,11 @@ export function createWorkspaceStore(options: {
       clearWorkspaceBusyAllExcept(workspace.id);
 
       try {
+        const skillsReady = await syncWorkspaceSkillMaterializationBeforeRuntime(workspace, {
+          reason: "browse-attach",
+        });
+        if (!skillsReady) return false;
+
         let ok = false;
         try {
           const runtime = resolveEngineRuntime();

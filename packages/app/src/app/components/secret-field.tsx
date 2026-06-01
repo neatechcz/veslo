@@ -1,6 +1,7 @@
 import { Show, createSignal } from "solid-js";
 
 import Button from "./button";
+import { currentLocale, t } from "../../i18n";
 
 export type SecretFieldProps = {
   label: string;
@@ -37,7 +38,7 @@ export default function SecretField(props: SecretFieldProps) {
           onClick={() => setVisible((prev) => !prev)}
           disabled={!hasValue()}
         >
-          {visible() ? "Hide" : "Show"}
+          {visible() ? t("common.hide", currentLocale()) : t("common.show", currentLocale())}
         </Button>
         <Show when={props.onCopy}>
           <Button
@@ -46,7 +47,7 @@ export default function SecretField(props: SecretFieldProps) {
             onClick={() => props.onCopy?.(props.value ?? "")}
             disabled={!hasValue()}
           >
-            {props.copied ? (props.copiedLabel ?? "Copied") : (props.copyLabel ?? "Copy")}
+            {props.copied ? (props.copiedLabel ?? t("common.copied", currentLocale())) : (props.copyLabel ?? t("common.copy", currentLocale()))}
           </Button>
         </Show>
       </div>

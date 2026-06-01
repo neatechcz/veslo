@@ -50,6 +50,21 @@ export const reorderProjectKeys = (
   return next;
 };
 
+export const promoteProjectKeyInOrder = (storedOrder: string[], projectKey: string): string[] => {
+  const promotedKey = projectKey.trim();
+  if (!promotedKey) return storedOrder.map((rawKey) => rawKey.trim()).filter(Boolean);
+
+  const next = [promotedKey];
+  const used = new Set(next);
+  for (const rawKey of storedOrder) {
+    const key = rawKey.trim();
+    if (!key || used.has(key)) continue;
+    used.add(key);
+    next.push(key);
+  }
+  return next;
+};
+
 export const mergeVisibleOrder = (storedOrder: string[], visibleOrderedKeys: string[]): string[] => {
   const normalizedVisible = [] as string[];
   const visibleSet = new Set<string>();

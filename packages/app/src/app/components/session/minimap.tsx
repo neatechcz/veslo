@@ -1,5 +1,6 @@
 import { For, createEffect, createSignal, onCleanup, onMount } from "solid-js";
 import type { MessageWithParts } from "../../types";
+import { currentLocale, t } from "../../../i18n";
 
 export type MinimapProps = {
   containerRef: () => HTMLDivElement | undefined;
@@ -91,11 +92,12 @@ export default function Minimap(props: MinimapProps) {
         {(line, idx) => {
           const isActive = () => line.id === activeId();
           const isUser = line.role === "user";
+          const roleLabel = () => isUser ? t("session.role_user", currentLocale()) : t("session.role_agent", currentLocale());
           
           return (
             <button
               type="button"
-              aria-label={`${isUser ? "User" : "Agent"} message ${idx() + 1}`}
+              aria-label={`${roleLabel()} ${t("session.message_label", currentLocale())} ${idx() + 1}`}
               aria-current={isActive() ? "true" : undefined}
               class={`absolute left-1/2 -translate-x-1/2 rounded-full transition-all duration-300 ease-out cursor-pointer appearance-none border-none p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-12/70
                 ${
@@ -107,7 +109,7 @@ export default function Minimap(props: MinimapProps) {
               style={{
                 top: `${line.top}px`,
               }}
-              title={isUser ? "User" : "Agent"}
+              title={roleLabel()}
               onClick={(e) => {
                 e.stopPropagation();
                 const container = props.containerRef();

@@ -5,7 +5,6 @@ const MORE_ACTIONS_MENU_ID = 'sidebar-more-actions-menu';
 const SIDEBAR_VIEW_MODE_KEY = 'veslo.sidebar-session-view.v1';
 
 type LocaleCopy = {
-  chat: string;
   addDirectoryProject: string;
   moreActions: string;
   archivedItems: string;
@@ -19,7 +18,6 @@ type LocaleCopy = {
 
 const UI_COPY: Record<'en' | 'cs' | 'zh', LocaleCopy> = {
   en: {
-    chat: 'Chat',
     addDirectoryProject: 'Add directory / project',
     moreActions: 'More actions',
     archivedItems: 'Archived items',
@@ -31,7 +29,6 @@ const UI_COPY: Record<'en' | 'cs' | 'zh', LocaleCopy> = {
     archivedSection: 'Archived sessions',
   },
   cs: {
-    chat: 'Chat',
     addDirectoryProject: 'Přidat adresář / projekt',
     moreActions: 'Další akce',
     archivedItems: 'Archivované položky',
@@ -43,7 +40,6 @@ const UI_COPY: Record<'en' | 'cs' | 'zh', LocaleCopy> = {
     archivedSection: 'Archivované relace',
   },
   zh: {
-    chat: '聊天',
     addDirectoryProject: '添加目录 / 项目',
     moreActions: '更多操作',
     archivedItems: '已归档项目',
@@ -168,18 +164,17 @@ describe('Sidebar overflow actions', () => {
 
     await browser.waitUntil(
       async () => {
-        const labels = await readTopRailLabels([copy.chat, copy.addDirectoryProject, copy.moreActions]);
+        const labels = await readTopRailLabels([copy.addDirectoryProject, copy.moreActions]);
         return (
-          labels.length === 3 &&
-          labels[0] === copy.chat &&
-          labels[1] === copy.addDirectoryProject &&
-          labels[2] === copy.moreActions
+          labels.length === 2 &&
+          labels[0] === copy.addDirectoryProject &&
+          labels[1] === copy.moreActions
         );
       },
       {
         timeout: 10000,
         interval: 250,
-        timeoutMsg: 'Top rail did not expose the approved three-button model.',
+        timeoutMsg: 'Top rail did not expose the approved primary action model.',
       },
     );
 

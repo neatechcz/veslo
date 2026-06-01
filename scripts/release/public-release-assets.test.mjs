@@ -95,3 +95,17 @@ test("manual release shipping script points to the public updates repo", () => {
   assert.match(shipScript, /DEFAULT_PUBLIC_RELEASE_REPO/);
   assert.match(shipScript, /Public release:/);
 });
+
+test("owned-server deployment docs define the desktop updater hosting boundary", () => {
+  const docsPath = resolve(import.meta.dirname, "../../docs/dev/cloud-deployments.md");
+  const workflowPath = resolve(import.meta.dirname, "../../.github/workflows/release-macos-aarch64.yml");
+  const docs = readFileSync(docsPath, "utf8");
+  const workflow = readFileSync(workflowPath, "utf8");
+
+  assert.match(docs, /not served by the owned-server stack/i);
+  assert.match(docs, /static public GitHub release assets/i);
+  assert.match(docs, /GitHub-hosted Windows runner/i);
+  assert.match(docs, /dedicated Windows self-hosted runner/i);
+  assert.match(workflow, /windows-2022/);
+  assert.match(workflow, /ubuntu-latest/);
+});

@@ -1,6 +1,9 @@
 import type { WorkspaceInfo } from "../../lib/tauri";
 import type { WorkspaceSessionGroup } from "../../types";
 import { normalizeDirectoryPath } from "../../utils";
+import { currentLocale, t } from "../../../i18n";
+
+const tr = (key: string) => t(key, currentLocale());
 
 export type FlatSessionRow = {
   rowKey: string;
@@ -158,7 +161,7 @@ const DAY_MS = 24 * HOUR_MS;
 export const formatSessionRelativeAge = (timestampMs: number, nowMs = Date.now()) => {
   const delta = nowMs - timestampMs;
 
-  if (delta < 0) return "just now";
+  if (delta < 0) return tr("time.just_now");
   if (delta < MINUTE_MS) return `${Math.max(1, Math.round(delta / SECOND_MS))}s`;
   if (delta < HOUR_MS) return `${Math.max(1, Math.round(delta / MINUTE_MS))}m`;
   if (delta < DAY_MS) return `${Math.max(1, Math.round(delta / HOUR_MS))}h`;
@@ -480,13 +483,29 @@ const buildHierarchicalRows = (
 
   const emittedSessionIds = new Set<string>();
   const ordered: FlatSessionRow[] = [];
+  const applyPrivateRootContext = (row: FlatSessionRow, rootRow: FlatSessionRow): FlatSessionRow => {
+    if (!rootRow.isPrivateProject || rootRow.session.id === row.session.id) return row;
+    return {
+      ...row,
+      rowKey: `${rootRow.workspace.id}:${row.session.id}`,
+      workspace: rootRow.workspace,
+      status: rootRow.status,
+      error: rootRow.error,
+      projectRoot: rootRow.projectRoot,
+      projectLabel: rootRow.projectLabel,
+      projectTitle: rootRow.projectTitle,
+      isPrivateProject: true,
+    };
+  };
   const appendRow = (row: FlatSessionRow) => {
     if (emittedSessionIds.has(row.session.id)) return;
     emittedSessionIds.add(row.session.id);
 
     const info = resolveHierarchy(row.session.id);
+    const rootRow = rowBySessionId.get(info.rootSessionId) ?? row;
+    const contextualRow = applyPrivateRootContext(row, rootRow);
     ordered.push({
-      ...row,
+      ...contextualRow,
       rootSessionId: info.rootSessionId,
       nestingLevel: info.nestingLevel,
       isSubagent: info.nestingLevel > 0,
@@ -548,10 +567,20 @@ export const filterVisibleProjectGroups = (
   shouldShowSessionRow: (row: FlatSessionRow) => boolean,
 ): ProjectSessionGroup[] =>
   projectGroups
-    .map((group) => ({
-      ...group,
-      sessions: group.sessions.filter((row) => shouldShowSessionRow(row)),
-    }))
+    .map((group) => {
+      const sessions = group.sessions.filter((row) => shouldShowSessionRow(row));
+      const becameEmptyLocalProject =
+        group.sessions.length > 0 &&
+        sessions.length === 0 &&
+        group.workspace.workspaceType === "local" &&
+        !group.isPrivateProject;
+
+      return {
+        ...group,
+        sessions,
+        isWorkspaceOnlyProject: group.isWorkspaceOnlyProject || becameEmptyLocalProject,
+      };
+    })
     .filter((group) => group.sessions.length > 0 || group.isWorkspaceOnlyProject);
 
 export const buildRecentRows = (

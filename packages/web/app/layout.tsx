@@ -5,7 +5,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Veslo Cloud",
   description:
-    "Launch Veslo cloud workers, handle Polar paywall flows, and operate Den from app.veslo.neatech.com."
+    "Launch Veslo cloud workers, handle Polar paywall flows, and operate Den from app.veslo.work."
 };
 
 const posthogKey =

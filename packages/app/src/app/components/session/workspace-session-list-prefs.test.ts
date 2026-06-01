@@ -11,6 +11,8 @@ import {
   DEFAULT_SIDEBAR_VIEW_MODE,
   SIDEBAR_CHAT_COLLAPSED_KEY,
   SIDEBAR_CHAT_HEIGHT_KEY,
+  SIDEBAR_PROJECT_ORDER_KEY,
+  promoteStoredProjectOrderKey,
   readExpandedParentSessionIds,
   readChatSidebarCollapsed,
   readChatSidebarHeight,
@@ -114,6 +116,20 @@ test("writeProjectOrder persists normalized string array", () => {
   assert.equal(
     storage.snapshot()["veslo.sidebar-project-order.v1"],
     JSON.stringify(["project:a", "project:b"]),
+  );
+});
+
+test("promoteStoredProjectOrderKey persists a registered project at the front", () => {
+  const storage = createMemoryStorage({
+    [SIDEBAR_PROJECT_ORDER_KEY]: JSON.stringify(["project:a", "project:b", "project:c"]),
+  });
+
+  const next = promoteStoredProjectOrderKey(" project:b ", storage);
+
+  assert.deepEqual(next, ["project:b", "project:a", "project:c"]);
+  assert.equal(
+    storage.snapshot()[SIDEBAR_PROJECT_ORDER_KEY],
+    JSON.stringify(["project:b", "project:a", "project:c"]),
   );
 });
 

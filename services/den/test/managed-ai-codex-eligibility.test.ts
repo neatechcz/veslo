@@ -192,3 +192,16 @@ test("unavailable status with codex probe failed fallback is eligible", () => {
     reason: null,
   })
 })
+
+test("unavailable status with temporary cleanup ENOTEMPTY is eligible", () => {
+  const eligibility = evaluateCodexCredentialEligibility(
+    unavailableStatus("ENOTEMPTY: directory not empty, rmdir '/tmp/veslo-codex-status-home-x/.tmp/plugins-clone-y'"),
+    NOW,
+  )
+
+  assert.deepEqual(eligibility, {
+    eligible: true,
+    state: "eligible",
+    reason: null,
+  })
+})

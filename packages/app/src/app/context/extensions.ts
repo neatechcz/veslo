@@ -9,13 +9,16 @@ import type {
   HubMcpCard,
   HubMcpItem,
   HubSkillCard,
+  HubSkillInstallTarget,
   PluginScope,
   ReloadReason,
   ReloadTrigger,
   SkillCard,
+  SkillInstance,
+  SkillInventoryItem,
+  SkillSaveResult,
 } from "../types";
 import { addOpencodeCacheHint, isTauriRuntime } from "../utils";
-import skillCreatorTemplate from "../data/skill-creator.md?raw";
 import {
   isPluginInstalled,
   loadPluginsFromConfig as loadPluginsFromConfigHelpers,
@@ -23,25 +26,82 @@ import {
   stripPluginVersion,
 } from "../utils/plugins";
 import {
+  buildSkillInventory,
+  type BuildSkillInventoryInput,
+  type SkillInventorySkillInput,
+  type SkillMutationTarget,
+} from "../lib/skill-inventory";
+import {
   importSkill,
+  installGlobalSkillTemplate,
   installSkillTemplate,
   listLocalSkills,
+  listLocalSkillsScoped as listLocalSkillsScopedCommand,
   readLocalSkill,
+  readLocalSkillAtPath,
   uninstallSkill as uninstallSkillCommand,
+  uninstallSkillAtPath,
   writeLocalSkill,
+  writeLocalSkillAtPath,
   pickDirectory,
   readOpencodeConfig,
   writeOpencodeConfig,
+  type LocalSkillCard,
+  type LocalSkillListScope,
   type OpencodeConfigFile,
+  type WorkspaceInfo,
 } from "../lib/tauri";
 import type {
   VesloServerCapabilities,
   VesloServerClient,
+  VesloSkillMaterializationRequestOptions,
+  VesloSkillRemovalItem,
+  VesloSkillRemovalScope,
   VesloServerStatus,
 } from "../lib/veslo-server";
 import { readDenAuth } from "../lib/den-auth";
+import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 
 export type ExtensionsStore = ReturnType<typeof createExtensionsStore>;
+type ListLocalSkillsScoped = (projectDir: string, scope: LocalSkillListScope) => Promise<LocalSkillCard[]>;
+type SkillInventoryRefreshResult = "published" | "stale" | "failed" | "aborted";
+type LocalSkillInventoryWorkspace = { id: string; label: string; path: string };
+type ManagedSkillMutationTarget = SkillMutationTarget & {
+  registry?: SkillInstance["registry"];
+  restoreTarget?: SkillInstance["restoreTarget"];
+};
+
+const vesloServerClientIdentities = new WeakMap<object, string>();
+let nextVesloServerClientIdentity = 1;
+
+function resolveVesloServerClientIdentity(client: VesloServerClient | null) {
+  if (!client || (typeof client !== "object" && typeof client !== "function")) return "none";
+  const key = client as object;
+  const existing = vesloServerClientIdentities.get(key);
+  if (existing) return existing;
+  const next = `client-${nextVesloServerClientIdentity}`;
+  nextVesloServerClientIdentity += 1;
+  vesloServerClientIdentities.set(key, next);
+  return next;
+}
+
+function fingerprintSensitiveValue(value: string) {
+  const normalized = value.trim();
+  if (!normalized) return "none";
+
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < normalized.length; index += 1) {
+    hash ^= normalized.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+
+  return `${normalized.length}:${(hash >>> 0).toString(36)}`;
+}
+
+async function loadSkillCreatorTemplate() {
+  const mod = await import("../data/skill-creator.md?raw");
+  return mod.default;
+}
 
 import type { WorkspaceRouting } from "./workspace-routing";
 
@@ -49,12 +109,16 @@ export function createExtensionsStore(options: {
   client: () => Client | null;
   routing: WorkspaceRouting;
   projectDir: () => string;
+  activeWorkspaceId: () => string;
   activeWorkspaceRoot: () => string;
   workspaceType: () => "local" | "remote";
+  workspaces?: () => WorkspaceInfo[];
+  extraSkillInventoryWorkspaces?: () => LocalSkillInventoryWorkspace[];
   vesloServerClient: () => VesloServerClient | null;
   vesloServerStatus: () => VesloServerStatus;
   vesloServerCapabilities: () => VesloServerCapabilities | null;
   vesloServerWorkspaceId: () => string | null;
+  listLocalSkillsScoped?: ListLocalSkillsScoped;
   setBusy: (value: boolean) => void;
   setBusyLabel: (value: string | null) => void;
   setBusyStartedAt: (value: number | null) => void;
@@ -67,6 +131,9 @@ export function createExtensionsStore(options: {
 
   const [skills, setSkills] = createSignal<SkillCard[]>([]);
   const [skillsStatus, setSkillsStatus] = createSignal<string | null>(null);
+
+  const [skillInventory, setSkillInventory] = createSignal<SkillInventoryItem[]>([]);
+  const [skillInventoryStatus, setSkillInventoryStatus] = createSignal<string | null>(null);
 
   const [hubSkills, setHubSkills] = createSignal<HubSkillCard[]>([]);
   const [hubSkillsStatus, setHubSkillsStatus] = createSignal<string | null>(null);
@@ -88,20 +155,39 @@ export function createExtensionsStore(options: {
 
   // Track in-flight requests to prevent duplicate calls
   let refreshSkillsInFlight = false;
+  let refreshSkillInventoryInFlight = false;
+  let refreshSkillInventoryPromise: Promise<SkillInventoryRefreshResult> | null = null;
+  let refreshSkillInventoryInFlightContextKey = "";
   let refreshPluginsInFlight = false;
   let refreshHubSkillsInFlight = false;
+  let refreshHubSkillsPromise: Promise<void> | null = null;
+  let refreshHubSkillsInFlightContextKey = "";
   let refreshSkillsAborted = false;
+  let refreshSkillInventoryAborted = false;
   let refreshPluginsAborted = false;
   let refreshHubSkillsAborted = false;
   let refreshHubMcpInFlight = false;
   let refreshHubMcpAborted = false;
   let skillsLoaded = false;
   let hubSkillsLoaded = false;
+  let skillInventoryLoaded = false;
   let hubMcpLoaded = false;
   let skillsRoot = "";
+  let skillInventoryContextKey = "";
   let hubSkillsRoot = "";
+  let hubSkillsContextKey = "";
+  let hubSkillsRevision = 0;
+  let localSkillsRevision = 0;
   let hubMcpRoot = "";
   let hubMcpContextKey = "";
+
+  const markHubSkillsSourceChanged = () => {
+    hubSkillsRevision += 1;
+  };
+
+  const markLocalSkillsSourceChanged = () => {
+    localSkillsRevision += 1;
+  };
 
   async function refreshHubMcp(optionsOverride?: { force?: boolean }) {
     const root = options.activeWorkspaceRoot().trim();
@@ -179,13 +265,13 @@ export function createExtensionsStore(options: {
     } catch (e) {
       if (refreshHubMcpAborted) return;
       setHubMcpCards([]);
-      setHubMcpStatus(e instanceof Error ? e.message : "Failed to load hub MCP.");
+      setHubMcpStatus(e instanceof Error ? e.message : __vesloIndirectT("ui.indirect.failed_to_load_hub_mcp_1s9f65", __vesloIndirectLocale()));
     } finally {
       refreshHubMcpInFlight = false;
     }
   }
 
-  async function refreshHubSkills(optionsOverride?: { force?: boolean }) {
+  const resolveHubSkillsRefreshContext = () => {
     const root = options.activeWorkspaceRoot().trim();
     const vesloClient = options.vesloServerClient();
     const vesloCapabilities = options.vesloServerCapabilities();
@@ -194,73 +280,545 @@ export function createExtensionsStore(options: {
       vesloClient &&
       vesloCapabilities?.hub?.skills?.read &&
       typeof (vesloClient as any).listHubSkills === "function";
+    const denAuth = readDenAuth();
+    const denToken = denAuth?.token?.trim() ?? "";
+    const denOrgId = denAuth?.orgId?.trim() ?? "";
+    const denApiBase = denAuth?.denApiBase?.trim() ?? "";
+    const denUserId = denAuth?.user?.id?.trim() ?? "";
+    const vesloServerClientIdentity = canUseVesloServer ? resolveVesloServerClientIdentity(vesloClient) : "none";
+    const contextKey = JSON.stringify({
+      root,
+      canUseVesloServer,
+      vesloServerClientIdentity,
+      denApiBase,
+      denOrgId,
+      denUserId,
+      denTokenFingerprint: fingerprintSensitiveValue(denToken),
+      hasDenToken: denToken.length > 0,
+    });
 
-    if (root !== hubSkillsRoot) {
+    return {
+      root,
+      vesloClient,
+      canUseVesloServer,
+      denToken,
+      denOrgId,
+      contextKey,
+    };
+  };
+
+  async function refreshHubSkills(optionsOverride?: { force?: boolean }) {
+    const { root, vesloClient, canUseVesloServer, denToken, denOrgId, contextKey } =
+      resolveHubSkillsRefreshContext();
+
+    if (root !== hubSkillsRoot || contextKey !== hubSkillsContextKey) {
       hubSkillsLoaded = false;
     }
 
+    if (refreshHubSkillsInFlight) {
+      await refreshHubSkillsPromise;
+      const latestContext = resolveHubSkillsRefreshContext();
+      if (hubSkillsContextKey !== latestContext.contextKey) {
+        await refreshHubSkills(optionsOverride);
+      }
+      return;
+    }
     if (!optionsOverride?.force && hubSkillsLoaded) return;
-    if (refreshHubSkillsInFlight) return;
 
     refreshHubSkillsInFlight = true;
+    refreshHubSkillsInFlightContextKey = contextKey;
     refreshHubSkillsAborted = false;
+    refreshHubSkillsPromise = (async () => {
+      try {
+        setHubSkillsStatus(null);
+        const orgCatalogPlaceholder = translate("skills.org_catalog_placeholder");
 
-    try {
-      setHubSkillsStatus(null);
-      const orgCatalogPlaceholder = translate("skills.org_catalog_placeholder");
+        if (canUseVesloServer) {
+          if (!denToken || !denOrgId) {
+            setHubSkills([]);
+            setHubSkillsStatus(orgCatalogPlaceholder);
+            hubSkillsLoaded = true;
+            hubSkillsRoot = root;
+            hubSkillsContextKey = contextKey;
+            markHubSkillsSourceChanged();
+            return;
+          }
 
-      if (canUseVesloServer) {
-        const denAuth = readDenAuth();
-        const denToken = denAuth?.token?.trim() ?? "";
-        const denOrgId = denAuth?.orgId?.trim() ?? "";
-
-        if (!denToken || !denOrgId) {
-          setHubSkills([]);
-          setHubSkillsStatus(orgCatalogPlaceholder);
+          const response = await (vesloClient as any).listHubSkills({
+            denToken,
+            denOrgId,
+          });
+          if (refreshHubSkillsAborted) return;
+          const next: HubSkillCard[] = Array.isArray(response?.items)
+            ? response.items.map((entry: any) => ({
+                name: String(entry.name ?? ""),
+                description: typeof entry.description === "string" ? entry.description : undefined,
+                trigger: typeof entry.trigger === "string" ? entry.trigger : undefined,
+                source: entry.source,
+              }))
+            : [];
+          setHubSkills(next);
+          if (!next.length) setHubSkillsStatus(orgCatalogPlaceholder);
           hubSkillsLoaded = true;
           hubSkillsRoot = root;
+          hubSkillsContextKey = contextKey;
+          markHubSkillsSourceChanged();
+          void refreshHubMcp({ force: true });
           return;
         }
 
-        const response = await (vesloClient as any).listHubSkills({
-          denToken,
-          denOrgId,
-        });
         if (refreshHubSkillsAborted) return;
-        const next: HubSkillCard[] = Array.isArray(response?.items)
-          ? response.items.map((entry: any) => ({
-              name: String(entry.name ?? ""),
-              description: typeof entry.description === "string" ? entry.description : undefined,
-              trigger: typeof entry.trigger === "string" ? entry.trigger : undefined,
-              source: entry.source,
-            }))
-          : [];
-        setHubSkills(next);
-        if (!next.length) setHubSkillsStatus(orgCatalogPlaceholder);
+        setHubSkills([]);
+        setHubSkillsStatus(orgCatalogPlaceholder);
         hubSkillsLoaded = true;
         hubSkillsRoot = root;
+        hubSkillsContextKey = contextKey;
+        markHubSkillsSourceChanged();
         void refreshHubMcp({ force: true });
-        return;
+      } catch (e) {
+        if (refreshHubSkillsAborted) return;
+        hubSkillsLoaded = false;
+        setHubSkills([]);
+        hubSkillsRoot = root;
+        hubSkillsContextKey = contextKey;
+        markHubSkillsSourceChanged();
+        setHubSkillsStatus(e instanceof Error ? e.message : __vesloIndirectT("ui.indirect.failed_to_load_hub_skills_1u0vcu", __vesloIndirectLocale()));
+      } finally {
+        refreshHubSkillsInFlight = false;
+        refreshHubSkillsInFlightContextKey = "";
+        refreshHubSkillsPromise = null;
+      }
+    })();
+
+    await refreshHubSkillsPromise;
+  }
+
+  const localWorkspaceLabel = (workspace: WorkspaceInfo) =>
+    workspace.displayName?.trim() ||
+    workspace.vesloWorkspaceName?.trim() ||
+    workspace.name?.trim() ||
+    workspace.path?.trim() ||
+    workspace.id;
+
+  async function refreshSkillInventory(optionsOverride?: { force?: boolean }) {
+    let forceRefresh = optionsOverride?.force === true;
+
+    const normalizeLocalSkillInventoryWorkspace = (workspace: LocalSkillInventoryWorkspace) => ({
+      id: workspace.id.trim(),
+      label: workspace.label.trim(),
+      path: workspace.path.trim(),
+    });
+
+    const getLocalSkillInventoryWorkspaces = () => {
+      const configured = (options.workspaces?.() ?? [])
+        .filter((workspace) => workspace.workspaceType === "local")
+        .map((workspace) => ({
+          id: workspace.id.trim(),
+          label: localWorkspaceLabel(workspace),
+          path: workspace.path.trim(),
+        }))
+        .filter((workspace) => workspace.id && workspace.path);
+      const extras = (options.extraSkillInventoryWorkspaces?.() ?? [])
+        .map(normalizeLocalSkillInventoryWorkspace)
+        .filter((workspace) => workspace.id && workspace.path);
+      const seenIds = new Set<string>();
+      const seenPaths = new Set<string>();
+      const result: LocalSkillInventoryWorkspace[] = [];
+      for (const workspace of [...configured, ...extras]) {
+        const pathKey = workspace.path.replace(/[/\\]+$/, "");
+        if (seenIds.has(workspace.id) || seenPaths.has(pathKey)) continue;
+        seenIds.add(workspace.id);
+        seenPaths.add(pathKey);
+        result.push(workspace);
+      }
+      return result;
+    };
+
+    const getSkillRemovalClient = () => {
+      const vesloClient = options.vesloServerClient();
+      if (
+        options.vesloServerStatus() === "connected" &&
+        vesloClient &&
+        typeof (vesloClient as Record<string, unknown>).listSkillRemovals === "function"
+      ) {
+        return vesloClient as VesloServerClient & {
+          listSkillRemovals: (params?: {
+            scope?: VesloSkillRemovalScope;
+            workspaceId?: string;
+            includeRestored?: boolean;
+          }) => Promise<{ items: VesloSkillRemovalItem[] }>;
+        };
+      }
+      return null;
+    };
+
+    const removedSkillInputFromRecord = (
+      record: VesloSkillRemovalItem,
+      fallback: { scope: VesloSkillRemovalScope; workspaceId?: string },
+    ): SkillInventorySkillInput | null => {
+      const id = record.id?.trim() ?? "";
+      const name = record.name?.trim() ?? "";
+      const scope = record.scope === "workspace" || record.scope === "user-global"
+        ? record.scope
+        : fallback.scope;
+      if (!id || !name || record.status === "restored") return null;
+      const path = record.path?.trim() || `veslo-removal:${id}`;
+      return {
+        name,
+        path,
+        scope,
+        source: "unknown",
+        lifecycle: "removed",
+        removedAt: record.removedAt,
+        removeReason: record.reason,
+        restoreTarget: {
+          scope,
+          ...(scope === "workspace" ? { workspaceId: record.workspaceId?.trim() || fallback.workspaceId } : {}),
+          removalId: id,
+        },
+        readable: false,
+        writable: false,
+      };
+    };
+
+    const listRemovedSkillInputs = async (
+      client: ReturnType<typeof getSkillRemovalClient>,
+      params: { scope: VesloSkillRemovalScope; workspaceId?: string },
+    ): Promise<SkillInventorySkillInput[]> => {
+      if (!client) return [];
+      try {
+        const response = await client.listSkillRemovals(params);
+        return Array.isArray(response.items)
+          ? response.items
+              .map((record) => removedSkillInputFromRecord(record, params))
+              .filter((record): record is SkillInventorySkillInput => Boolean(record))
+          : [];
+      } catch {
+        return [];
+      }
+    };
+
+    type SkillMaterializationEntryLike = {
+      installationId?: string;
+      skillId?: string;
+      name?: string;
+      versionId?: string;
+      packageSha256?: string;
+      target?: string;
+      skillDir?: string;
+    };
+
+    type SkillMaterializationStatusLike = {
+      rootDir?: string;
+      materializedSkills?: SkillMaterializationEntryLike[];
+    };
+
+    type SkillMaterializationClient = VesloServerClient & {
+      getGlobalSkillMaterializationStatus?: () => Promise<SkillMaterializationStatusLike>;
+      getWorkspaceSkillMaterializationStatus?: (workspaceId: string) => Promise<SkillMaterializationStatusLike>;
+      syncGlobalSkillMaterialization?: (options?: VesloSkillMaterializationRequestOptions) => Promise<unknown>;
+      syncWorkspaceSkillMaterialization?: (
+        workspaceId: string,
+        options?: VesloSkillMaterializationRequestOptions,
+      ) => Promise<unknown>;
+    };
+
+    const getSkillMaterializationClient = (): SkillMaterializationClient | null => {
+      const vesloClient = options.vesloServerClient();
+      if (options.vesloServerStatus() === "connected" && vesloClient) {
+        return vesloClient as SkillMaterializationClient;
+      }
+      return null;
+    };
+
+    const materializedSkillEntryPath = (value: string | undefined) => {
+      const normalized = String(value ?? "").trim().replace(/\\/g, "/");
+      if (!normalized) return "";
+      if (/[\/](?:SKILL\.md|AGENTS\.md)$/i.test(normalized)) return normalized;
+      return `${normalized}/SKILL.md`;
+    };
+
+    const registryMetadataFromMaterializationEntry = (
+      entry: SkillMaterializationEntryLike,
+    ): SkillInventorySkillInput["registry"] | null => {
+      const installationId = entry.installationId?.trim() ?? "";
+      if (!installationId) return null;
+      const common = {
+        ...(entry.skillId?.trim() ? { skillId: entry.skillId.trim() } : {}),
+        ...(entry.versionId?.trim() ? { versionId: entry.versionId.trim() } : {}),
+        ...(entry.packageSha256?.trim() ? { packageSha256: entry.packageSha256.trim() } : {}),
+      };
+      if (installationId.startsWith("rollout:")) {
+        const policyId = installationId.slice("rollout:".length).trim();
+        return policyId ? { ...common, policyId } : null;
+      }
+      return {
+        ...common,
+        installationId,
+        source: entry.target === "workspace" ? "workspace" : "personal",
+        removalPolicy: "user_removable",
+      };
+    };
+
+    const materializationRegistryIndex = (
+      status: SkillMaterializationStatusLike | null | undefined,
+    ): Map<string, NonNullable<SkillInventorySkillInput["registry"]>> => {
+      const index = new Map<string, NonNullable<SkillInventorySkillInput["registry"]>>();
+      const rootDir = status?.rootDir?.trim() ?? "";
+      for (const entry of status?.materializedSkills ?? []) {
+        const name = entry.name?.trim() ?? "";
+        const skillDir = entry.skillDir?.trim() || (rootDir && name ? `${rootDir}/${name}` : "");
+        const path = materializedSkillEntryPath(skillDir);
+        const registry = registryMetadataFromMaterializationEntry(entry);
+        if (path && registry) index.set(path, registry);
+      }
+      return index;
+    };
+
+    const loadGlobalMaterializationRegistryIndex = async () => {
+      const client = getSkillMaterializationClient();
+      if (typeof client?.getGlobalSkillMaterializationStatus !== "function") {
+        return new Map<string, NonNullable<SkillInventorySkillInput["registry"]>>();
+      }
+      try {
+        return materializationRegistryIndex(await client.getGlobalSkillMaterializationStatus());
+      } catch {
+        return new Map<string, NonNullable<SkillInventorySkillInput["registry"]>>();
+      }
+    };
+
+    const loadWorkspaceMaterializationRegistryIndex = async (workspaceId: string) => {
+      const client = getSkillMaterializationClient();
+      if (!workspaceId || typeof client?.getWorkspaceSkillMaterializationStatus !== "function") {
+        return new Map<string, NonNullable<SkillInventorySkillInput["registry"]>>();
+      }
+      try {
+        return materializationRegistryIndex(await client.getWorkspaceSkillMaterializationStatus(workspaceId));
+      } catch {
+        return new Map<string, NonNullable<SkillInventorySkillInput["registry"]>>();
+      }
+    };
+
+    const attachMaterializationRegistryMetadata = (
+      skills: SkillInventorySkillInput[],
+      registryByPath: Map<string, NonNullable<SkillInventorySkillInput["registry"]>>,
+    ): SkillInventorySkillInput[] => {
+      if (!registryByPath.size) return skills;
+      return skills.map((skill) => {
+        const path = materializedSkillEntryPath(skill.path);
+        const registry = registryByPath.get(path);
+        if (!registry) return skill;
+        return {
+          ...skill,
+          path,
+          registry: {
+            ...registry,
+            ...skill.registry,
+          },
+          writable: false,
+        };
+      });
+    };
+
+    const getSkillInventoryContextKey = (
+      workspacesForContext: ReturnType<typeof getLocalSkillInventoryWorkspaces>,
+      hubContextKey: string,
+      revisions = {
+        hubSkillsRevision,
+        localSkillsRevision,
+      },
+    ) =>
+      JSON.stringify({
+        hub: {
+          contextKey: hubContextKey,
+          revision: revisions.hubSkillsRevision,
+        },
+        localRevision: revisions.localSkillsRevision,
+        workspaces: workspacesForContext.map((workspace) => ({
+          id: workspace.id,
+          label: workspace.label,
+          path: workspace.path,
+        })),
+      });
+
+    const getSkillInventoryRefreshContextKey = (
+      workspacesForContext: ReturnType<typeof getLocalSkillInventoryWorkspaces>,
+      hubContextKey: string,
+      localRevision = localSkillsRevision,
+    ) =>
+      JSON.stringify({
+        hub: {
+          contextKey: hubContextKey,
+        },
+        localRevision,
+        workspaces: workspacesForContext.map((workspace) => ({
+          id: workspace.id,
+          label: workspace.label,
+          path: workspace.path,
+        })),
+      });
+
+    const getCurrentSkillInventoryContextKey = () => {
+      const localWorkspaces = getLocalSkillInventoryWorkspaces();
+      const hubContext = resolveHubSkillsRefreshContext();
+      return getSkillInventoryContextKey(localWorkspaces, hubContext.contextKey);
+    };
+
+    const getCurrentSkillInventoryRefreshContextKey = () => {
+      const localWorkspaces = getLocalSkillInventoryWorkspaces();
+      const hubContext = resolveHubSkillsRefreshContext();
+      return getSkillInventoryRefreshContextKey(localWorkspaces, hubContext.contextKey);
+    };
+
+    for (;;) {
+      if (refreshSkillInventoryInFlight) {
+        const inFlightContextKey = refreshSkillInventoryInFlightContextKey;
+        const inFlightRefresh = refreshSkillInventoryPromise;
+        const result = inFlightRefresh ? await inFlightRefresh : "stale";
+        forceRefresh = false;
+        if (result === "failed" || result === "aborted") {
+          if (inFlightContextKey && getCurrentSkillInventoryRefreshContextKey() !== inFlightContextKey) continue;
+          return;
+        }
+        if (result === "published" && getCurrentSkillInventoryContextKey() === skillInventoryContextKey) return;
+        continue;
       }
 
-      if (refreshHubSkillsAborted) return;
-      setHubSkills([]);
-      setHubSkillsStatus(orgCatalogPlaceholder);
-      hubSkillsLoaded = true;
-      hubSkillsRoot = root;
-      void refreshHubMcp({ force: true });
-    } catch (e) {
-      if (refreshHubSkillsAborted) return;
-      setHubSkills([]);
-      setHubSkillsStatus(e instanceof Error ? e.message : "Failed to load hub skills.");
-    } finally {
-      refreshHubSkillsInFlight = false;
+      const localWorkspaces = getLocalSkillInventoryWorkspaces();
+      const hubContext = resolveHubSkillsRefreshContext();
+      const nextContextKey = getSkillInventoryContextKey(localWorkspaces, hubContext.contextKey);
+      const nextRefreshContextKey = getSkillInventoryRefreshContextKey(localWorkspaces, hubContext.contextKey);
+      const hubRefreshInFlightForCurrentContext =
+        refreshHubSkillsInFlight && refreshHubSkillsInFlightContextKey === hubContext.contextKey;
+
+      if (nextContextKey !== skillInventoryContextKey) {
+        skillInventoryLoaded = false;
+      }
+
+      if (!forceRefresh && skillInventoryLoaded && !hubRefreshInFlightForCurrentContext) return;
+
+      const refreshOptions = forceRefresh ? { force: true } : undefined;
+      refreshSkillInventoryInFlight = true;
+      refreshSkillInventoryInFlightContextKey = nextRefreshContextKey;
+      refreshSkillInventoryAborted = false;
+      refreshSkillInventoryPromise = (async (): Promise<SkillInventoryRefreshResult> => {
+        try {
+          setSkillInventoryStatus(null);
+          await refreshHubSkills(refreshOptions);
+          if (refreshSkillInventoryAborted) return "aborted";
+
+          const refreshedHubContext = resolveHubSkillsRefreshContext();
+          if (hubSkillsContextKey !== refreshedHubContext.contextKey) {
+            await refreshHubSkills({ force: true });
+            if (refreshSkillInventoryAborted) return "aborted";
+          }
+
+          const inventoryHubContext = resolveHubSkillsRefreshContext();
+          const hasMatchingHubSkills = hubSkillsLoaded && hubSkillsContextKey === inventoryHubContext.contextKey;
+          const inventoryContextAtStart = getSkillInventoryContextKey(localWorkspaces, inventoryHubContext.contextKey);
+
+          const listScopedSkills = options.listLocalSkillsScoped ?? listLocalSkillsScopedCommand;
+          const removalClient = getSkillRemovalClient();
+          const globalSkills = attachMaterializationRegistryMetadata(
+            await listScopedSkills("", "global"),
+            await loadGlobalMaterializationRegistryIndex(),
+          );
+          globalSkills.push(...(await listRemovedSkillInputs(removalClient, { scope: "user-global" })));
+          if (refreshSkillInventoryAborted) return "aborted";
+
+          const workspaceSkillsByWorkspaceId: BuildSkillInventoryInput["workspaceSkillsByWorkspaceId"] = {};
+
+          for (const workspace of localWorkspaces) {
+            const skills = attachMaterializationRegistryMetadata(
+              await listScopedSkills(workspace.path, "workspace"),
+              await loadWorkspaceMaterializationRegistryIndex(workspace.id),
+            );
+            skills.push(...(await listRemovedSkillInputs(removalClient, {
+              scope: "workspace",
+              workspaceId: workspace.id,
+            })));
+            if (refreshSkillInventoryAborted) return "aborted";
+            workspaceSkillsByWorkspaceId[workspace.id] = {
+              workspace: {
+                id: workspace.id,
+                label: workspace.label,
+                path: workspace.path,
+                kind: "local",
+              },
+              skills,
+            };
+          }
+
+          const currentHubContext = resolveHubSkillsRefreshContext();
+          const currentContextKey = getSkillInventoryContextKey(
+            getLocalSkillInventoryWorkspaces(),
+            currentHubContext.contextKey,
+          );
+          if (currentContextKey !== inventoryContextAtStart) {
+            skillInventoryLoaded = false;
+            return "stale";
+          }
+
+          const next = buildSkillInventory({
+            globalSkills,
+            workspaceSkillsByWorkspaceId,
+            hubSkills: hasMatchingHubSkills ? hubSkills() : [],
+          });
+          if (refreshSkillInventoryAborted) return "aborted";
+
+          setSkillInventory(next);
+          if (!next.length) {
+            setSkillInventoryStatus(translate("skills.no_skills_found"));
+          } else if (!hasMatchingHubSkills && hubSkillsStatus()) {
+            setSkillInventoryStatus(hubSkillsStatus());
+          }
+          skillInventoryLoaded = hasMatchingHubSkills;
+          skillInventoryContextKey = inventoryContextAtStart;
+          return "published";
+        } catch (e) {
+          if (refreshSkillInventoryAborted) return "aborted";
+          skillInventoryLoaded = false;
+          setSkillInventory([]);
+          setSkillInventoryStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
+          return "failed";
+        } finally {
+          refreshSkillInventoryInFlight = false;
+          refreshSkillInventoryInFlightContextKey = "";
+          refreshSkillInventoryPromise = null;
+        }
+      })();
+
+      const result = await refreshSkillInventoryPromise;
+      forceRefresh = false;
+      if (result === "failed" || result === "aborted") {
+        if (getCurrentSkillInventoryRefreshContextKey() !== nextRefreshContextKey) continue;
+        return;
+      }
+      if (result === "published") return;
+      continue;
     }
   }
 
-  async function installHubSkill(name: string): Promise<{ ok: boolean; message: string }> {
+  async function invalidateSkillRegistryInventory() {
+    markHubSkillsSourceChanged();
+    markLocalSkillsSourceChanged();
+    skillInventoryLoaded = false;
+    await refreshSkillInventory({ force: true });
+  }
+
+  async function installHubSkill(name: string, target: HubSkillInstallTarget): Promise<{ ok: boolean; message: string }> {
     const trimmed = name.trim();
-    if (!trimmed) return { ok: false, message: "Skill name is required." };
+    if (!trimmed) return { ok: false, message: __vesloIndirectT("ui.indirect.skill_name_is_required_5te74i", __vesloIndirectLocale()) };
+    if (!target) return { ok: false, message: translate("skills.install_target_required") };
+    if (target.scope === "global") {
+      return { ok: false, message: translate("skills.install_target_global_unavailable") };
+    }
+
+    const targetWorkspaceId = target.workspaceId.trim();
+    if (!targetWorkspaceId) return { ok: false, message: translate("skills.install_target_required") };
+    if (targetWorkspaceId !== options.activeWorkspaceId().trim()) {
+      return { ok: false, message: translate("skills.install_target_switch_workspace") };
+    }
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const vesloClient = options.vesloServerClient();
@@ -275,9 +833,9 @@ export function createExtensionsStore(options: {
 
     if (!canUseVesloServer) {
       if (isRemoteWorkspace) {
-        return { ok: false, message: "Veslo server unavailable. Connect to install skills." };
+        return { ok: false, message: __vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_install_sk_7q26rj", __vesloIndirectLocale()) };
       }
-      return { ok: false, message: "Hub install requires Veslo server." };
+      return { ok: false, message: __vesloIndirectT("ui.indirect.hub_install_requires_veslo_server_yn3vz5", __vesloIndirectLocale()) };
     }
 
     options.setBusy(true);
@@ -289,7 +847,7 @@ export function createExtensionsStore(options: {
       await refreshSkills({ force: true });
       await refreshHubSkills({ force: true });
       if (!result?.ok) {
-        return { ok: false, message: "Install failed." };
+        return { ok: false, message: __vesloIndirectT("ui.indirect.install_failed_1etsn4", __vesloIndirectLocale()) };
       }
       return { ok: true, message: `Installed ${trimmed}.` };
     } catch (e) {
@@ -303,7 +861,7 @@ export function createExtensionsStore(options: {
 
   async function installHubMcp(name: string): Promise<{ ok: boolean; message: string; entry?: HubMcpCard }> {
     const trimmed = name.trim();
-    if (!trimmed) return { ok: false, message: "MCP name is required." };
+    if (!trimmed) return { ok: false, message: __vesloIndirectT("ui.indirect.mcp_name_is_required_1eoxeh", __vesloIndirectLocale()) };
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const vesloClient = options.vesloServerClient();
@@ -318,9 +876,9 @@ export function createExtensionsStore(options: {
 
     if (!canUseVesloServer) {
       if (isRemoteWorkspace) {
-        return { ok: false, message: "Veslo server unavailable. Connect to install MCP." };
+        return { ok: false, message: __vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_install_mc_wnm5lf", __vesloIndirectLocale()) };
       }
-      return { ok: false, message: "Hub install requires Veslo server." };
+      return { ok: false, message: __vesloIndirectT("ui.indirect.hub_install_requires_veslo_server_yn3vz5", __vesloIndirectLocale()) };
     }
 
     options.setBusy(true);
@@ -333,7 +891,7 @@ export function createExtensionsStore(options: {
       const denToken = denAuth?.token?.trim() ?? "";
       const denOrgId = denAuth?.orgId?.trim() ?? "";
       if (!denToken || !denOrgId) {
-        return { ok: false, message: "Missing Den auth context." };
+        return { ok: false, message: __vesloIndirectT("ui.indirect.missing_den_auth_context_1l81wa", __vesloIndirectLocale()) };
       }
 
       const result = await (vesloClient as any).installHubMcp(vesloWorkspaceId, trimmed, {
@@ -342,7 +900,7 @@ export function createExtensionsStore(options: {
       });
       await refreshHubMcp({ force: true });
       if (!result?.ok) {
-        return { ok: false, message: "Install failed." };
+        return { ok: false, message: __vesloIndirectT("ui.indirect.install_failed_1etsn4", __vesloIndirectLocale()) };
       }
       return { ok: true, message: `Installed ${trimmed}.`, ...(selectedEntry ? { entry: selectedEntry } : {}) };
     } catch (e) {
@@ -376,6 +934,7 @@ export function createExtensionsStore(options: {
 
     if (!root) {
       setSkills([]);
+      markLocalSkillsSourceChanged();
       setSkillsStatus(translate("skills.pick_workspace_first"));
       return;
     }
@@ -412,6 +971,7 @@ export function createExtensionsStore(options: {
             }))
           : [];
         setSkills(next);
+        markLocalSkillsSourceChanged();
         if (!next.length) {
           setSkillsStatus(translate("skills.no_skills_found"));
         }
@@ -420,6 +980,7 @@ export function createExtensionsStore(options: {
       } catch (e) {
         if (refreshSkillsAborted) return;
         setSkills([]);
+        markLocalSkillsSourceChanged();
         setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
       } finally {
         refreshSkillsInFlight = false;
@@ -430,7 +991,7 @@ export function createExtensionsStore(options: {
 
     // Host/Tauri mode fallback: read directly from `.opencode/skills` or `.claude/skills`
     // so the UI still works even if the OpenCode engine is stopped or unreachable.
-    if (isLocalWorkspace && isTauriRuntime()) {
+    if (root && isLocalWorkspace && isTauriRuntime()) {
       if (root !== skillsRoot) {
         skillsLoaded = false;
       }
@@ -461,6 +1022,7 @@ export function createExtensionsStore(options: {
           : [];
 
         setSkills(next);
+        markLocalSkillsSourceChanged();
         if (!next.length) {
           setSkillsStatus(translate("skills.no_skills_found"));
         }
@@ -469,6 +1031,7 @@ export function createExtensionsStore(options: {
       } catch (e) {
         if (refreshSkillsAborted) return;
         setSkills([]);
+        markLocalSkillsSourceChanged();
         setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
       } finally {
         refreshSkillsInFlight = false;
@@ -480,7 +1043,8 @@ export function createExtensionsStore(options: {
     const c = options.routing.active();
     if (!c) {
       setSkills([]);
-      setSkillsStatus("Veslo server unavailable. Connect to load skills.");
+      markLocalSkillsSourceChanged();
+      setSkillsStatus(__vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_load_skill_1whzfl", __vesloIndirectLocale()));
       return;
     }
 
@@ -533,6 +1097,7 @@ export function createExtensionsStore(options: {
         : [];
 
       setSkills(next);
+      markLocalSkillsSourceChanged();
       if (!next.length) {
         setSkillsStatus(translate("skills.no_skills_found"));
       }
@@ -541,6 +1106,7 @@ export function createExtensionsStore(options: {
     } catch (e) {
       if (refreshSkillsAborted) return;
       setSkills([]);
+      markLocalSkillsSourceChanged();
       setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
     } finally {
       refreshSkillsInFlight = false;
@@ -571,9 +1137,9 @@ export function createExtensionsStore(options: {
     const targetDir = options.projectDir().trim();
 
     if (scope !== "project" && !isLocalWorkspace) {
-      setPluginStatus("Global plugins are only available for local workers.");
+      setPluginStatus(__vesloIndirectT("ui.indirect.global_plugins_are_only_available_for_local_wo_1cc1zl", __vesloIndirectLocale()));
       setPluginList([]);
-      setSidebarPluginStatus("Global plugins require a local worker.");
+      setSidebarPluginStatus(__vesloIndirectT("ui.indirect.global_plugins_require_a_local_worker_1pmhql", __vesloIndirectLocale()));
       setSidebarPluginList([]);
       refreshPluginsInFlight = false;
       return;
@@ -598,14 +1164,14 @@ export function createExtensionsStore(options: {
         setSidebarPluginList(list);
 
         if (!list.length) {
-          setPluginStatus("No plugins configured yet.");
+          setPluginStatus(__vesloIndirectT("plugins.no_plugins_yet", __vesloIndirectLocale()));
         }
       } catch (e) {
         if (refreshPluginsAborted) return;
         setPluginList([]);
-        setSidebarPluginStatus("Failed to load plugins.");
+        setSidebarPluginStatus(__vesloIndirectT("ui.indirect.failed_to_load_plugins_i1skhr", __vesloIndirectLocale()));
         setSidebarPluginList([]);
-        setPluginStatus(e instanceof Error ? e.message : "Failed to load plugins.");
+        setPluginStatus(e instanceof Error ? e.message : __vesloIndirectT("ui.indirect.failed_to_load_plugins_i1skhr", __vesloIndirectLocale()));
       } finally {
         refreshPluginsInFlight = false;
       }
@@ -623,9 +1189,9 @@ export function createExtensionsStore(options: {
     }
 
     if (!isLocalWorkspace && !canUseVesloServer) {
-      setPluginStatus("Veslo server unavailable. Connect to manage plugins.");
+      setPluginStatus(__vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_manage_plu_1vx4p1", __vesloIndirectLocale()));
       setPluginList([]);
-      setSidebarPluginStatus("Connect an Veslo server to load plugins.");
+      setSidebarPluginStatus(__vesloIndirectT("ui.indirect.connect_an_veslo_server_to_load_plugins_g3md41", __vesloIndirectLocale()));
       setSidebarPluginList([]);
       refreshPluginsInFlight = false;
       return;
@@ -707,7 +1273,7 @@ export function createExtensionsStore(options: {
     }
 
     if (pluginScope() !== "project" && !isLocalWorkspace) {
-      setPluginStatus("Global plugins are only available for local workers.");
+      setPluginStatus(__vesloIndirectT("ui.indirect.global_plugins_are_only_available_for_local_wo_1cc1zl", __vesloIndirectLocale()));
       return;
     }
 
@@ -720,7 +1286,7 @@ export function createExtensionsStore(options: {
         }
         await refreshPlugins("project");
       } catch (e) {
-        setPluginStatus(e instanceof Error ? e.message : "Failed to add plugin.");
+        setPluginStatus(e instanceof Error ? e.message : __vesloIndirectT("ui.indirect.failed_to_add_plugin_p52vxh", __vesloIndirectLocale()));
       }
       return;
     }
@@ -731,7 +1297,7 @@ export function createExtensionsStore(options: {
     }
 
     if (!isLocalWorkspace && !canUseVesloServer) {
-      setPluginStatus("Veslo server unavailable. Connect to manage plugins.");
+      setPluginStatus(__vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_manage_plu_1vx4p1", __vesloIndirectLocale()));
       return;
     }
 
@@ -804,7 +1370,7 @@ export function createExtensionsStore(options: {
       vesloCapabilities?.plugins?.write;
 
     if (pluginScope() !== "project" && !isLocalWorkspace) {
-      setPluginStatus("Global plugins are only available for local workers.");
+      setPluginStatus(__vesloIndirectT("ui.indirect.global_plugins_are_only_available_for_local_wo_1cc1zl", __vesloIndirectLocale()));
       return;
     }
 
@@ -814,7 +1380,7 @@ export function createExtensionsStore(options: {
         await vesloClient.removePlugin(vesloWorkspaceId, name);
         await refreshPlugins("project");
       } catch (e) {
-        setPluginStatus(e instanceof Error ? e.message : "Failed to remove plugin.");
+        setPluginStatus(e instanceof Error ? e.message : __vesloIndirectT("ui.indirect.failed_to_remove_plugin_1fuges", __vesloIndirectLocale()));
       }
       return;
     }
@@ -825,7 +1391,7 @@ export function createExtensionsStore(options: {
     }
 
     if (!isLocalWorkspace && !canUseVesloServer) {
-      setPluginStatus("Veslo server unavailable. Connect to manage plugins.");
+      setPluginStatus(__vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_manage_plu_1vx4p1", __vesloIndirectLocale()));
       return;
     }
 
@@ -842,7 +1408,7 @@ export function createExtensionsStore(options: {
       const config = await readOpencodeConfig(scope, targetDir);
       const raw = config.content ?? "";
       if (!raw.trim()) {
-        setPluginStatus("No plugins configured yet.");
+        setPluginStatus(__vesloIndirectT("plugins.no_plugins_yet", __vesloIndirectLocale()));
         return;
       }
 
@@ -850,7 +1416,7 @@ export function createExtensionsStore(options: {
       const desired = stripPluginVersion(name).toLowerCase();
       const next = plugins.filter((entry) => stripPluginVersion(entry).toLowerCase() !== desired);
       if (next.length === plugins.length) {
-        setPluginStatus("Plugin not found.");
+        setPluginStatus(__vesloIndirectT("ui.indirect.plugin_not_found_1yk6mg", __vesloIndirectLocale()));
         return;
       }
 
@@ -938,6 +1504,7 @@ export function createExtensionsStore(options: {
       setSkillsStatus(translate("skills.installing_skill_creator"));
 
       try {
+        const skillCreatorTemplate = await loadSkillCreatorTemplate();
         await vesloClient.upsertSkill(vesloWorkspaceId, {
           name: "skill-creator",
           content: skillCreatorTemplate,
@@ -961,7 +1528,7 @@ export function createExtensionsStore(options: {
 
     // Remote workspace without server
     if (isRemoteWorkspace) {
-      const message = "Veslo server unavailable. Connect to install skills.";
+      const message = __vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_install_sk_7q26rj", __vesloIndirectLocale());
       setSkillsStatus(message);
       return { ok: false, message };
     }
@@ -973,24 +1540,20 @@ export function createExtensionsStore(options: {
     }
 
     if (!isLocalWorkspace) {
-      const message = "Local workers are required to install skills.";
+      const message = __vesloIndirectT("ui.indirect.local_workers_are_required_to_install_skills_1v84gi", __vesloIndirectLocale());
       options.setError(message);
       setSkillsStatus(message);
       return { ok: false, message };
     }
 
     const targetDir = options.activeWorkspaceRoot().trim();
-    if (!targetDir) {
-      const message = translate("skills.pick_workspace_first");
-      setSkillsStatus(message);
-      return { ok: false, message };
-    }
 
     options.setBusy(true);
     options.setError(null);
     setSkillsStatus(translate("skills.installing_skill_creator"));
 
     try {
+      const skillCreatorTemplate = await loadSkillCreatorTemplate();
       const result = await installSkillTemplate(targetDir, "skill-creator", skillCreatorTemplate, { overwrite: false });
 
       if (!result.ok && /already exists/i.test(result.stderr)) {
@@ -1032,7 +1595,7 @@ export function createExtensionsStore(options: {
 
     const root = options.activeWorkspaceRoot().trim();
     if (!root) {
-      setSkillsStatus(translate("skills.pick_workspace_first"));
+      setSkillsStatus(null);
       return;
     }
 
@@ -1073,10 +1636,6 @@ export function createExtensionsStore(options: {
     }
 
     const root = options.activeWorkspaceRoot().trim();
-    if (!root) {
-      setSkillsStatus(translate("skills.pick_workspace_first"));
-      return;
-    }
 
     const trimmed = name.trim();
     if (!trimmed) {
@@ -1105,15 +1664,11 @@ export function createExtensionsStore(options: {
     }
   }
 
-  async function readSkill(name: string): Promise<{ name: string; path: string; content: string } | null> {
+  async function readSkill(name: string, instancePath?: string): Promise<{ name: string; path: string; content: string } | null> {
     const trimmed = name.trim();
     if (!trimmed) return null;
 
     const root = options.activeWorkspaceRoot().trim();
-    if (!root) {
-      setSkillsStatus(translate("skills.pick_workspace_first"));
-      return null;
-    }
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
@@ -1133,7 +1688,7 @@ export function createExtensionsStore(options: {
         const result = await (vesloClient as VesloServerClient & { getSkill: any }).getSkill(
           vesloWorkspaceId,
           trimmed,
-          { includeGlobal: isLocalWorkspace },
+          { includeGlobal: isLocalWorkspace, ...(instancePath?.trim() ? { path: instancePath.trim() } : {}) },
         );
         return {
           name: result.item.name,
@@ -1147,7 +1702,7 @@ export function createExtensionsStore(options: {
     }
 
     if (isRemoteWorkspace) {
-      setSkillsStatus("Veslo server unavailable. Connect to view skills.");
+      setSkillsStatus(__vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_view_skill_1fomxi", __vesloIndirectLocale()));
       return null;
     }
 
@@ -1157,13 +1712,16 @@ export function createExtensionsStore(options: {
     }
 
     if (!isLocalWorkspace) {
-      setSkillsStatus("Local workers are required to view skills.");
+      setSkillsStatus(__vesloIndirectT("ui.indirect.local_workers_are_required_to_view_skills_sfpklk", __vesloIndirectLocale()));
       return null;
     }
 
     try {
       setSkillsStatus(null);
-      const result = await readLocalSkill(root, trimmed);
+      const localInstancePath = instancePath?.trim() ? skillEntryFilePathForMutationPath(instancePath) : undefined;
+      const result = instancePath?.trim()
+        ? await readLocalSkillAtPath(root, trimmed, localInstancePath!)
+        : await readLocalSkill(root, trimmed);
       return { name: trimmed, path: result.path, content: result.content };
     } catch (e) {
       setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
@@ -1171,14 +1729,762 @@ export function createExtensionsStore(options: {
     }
   }
 
-  async function saveSkill(input: { name: string; content: string; description?: string }) {
+  const normalizeSkillMutationPath = (value: string | undefined) =>
+    String(value ?? "").trim().replace(/\\/g, "/");
+
+  const skillEntryFilePathForMutationPath = (value: string | undefined) => {
+    const normalized = normalizeSkillMutationPath(value);
+    if (!normalized) return "";
+    if (/[\/](?:SKILL\.md|AGENTS\.md)$/i.test(normalized)) return normalized;
+    return `${normalized}/SKILL.md`;
+  };
+
+  const isManagedSkillMutationPath = (value: string | undefined) =>
+    normalizeSkillMutationPath(value).includes("/.opencode/skills/veslo-managed/");
+
+  const activeSkillForMutationTarget = (target: SkillMutationTarget):
+    | { skill: SkillCard; normalizedPath: string; entryFilePath: string }
+    | { message: string } => {
+    const name = target.name.trim();
+    const normalizedPath = normalizeSkillMutationPath(target.path);
+    if (!name || !normalizedPath) {
+      return { message: translate("skills.failed_load_skill") };
+    }
+    if (target.scope !== "workspace") {
+      return { message: translate("skills.uninstall_scope_ambiguous") };
+    }
+    const targetWorkspaceId = target.workspaceId?.trim();
+    if (targetWorkspaceId && targetWorkspaceId !== options.activeWorkspaceId().trim()) {
+      return { message: translate("skills.uninstall_not_active_workspace") };
+    }
+
+    const skill = skills().find((candidate) =>
+      candidate.name === name && normalizeSkillMutationPath(candidate.path) === normalizedPath
+    );
+    if (!skill) {
+      return { message: translate("skills.failed_load_skill") };
+    }
+    return { skill, normalizedPath, entryFilePath: skillEntryFilePathForMutationPath(skill.path) };
+  };
+
+  async function readSkillInstance(target: SkillMutationTarget): Promise<{ name: string; path: string; content: string } | null> {
+    const resolved = activeSkillForMutationTarget(target);
+    if ("message" in resolved) {
+      setSkillsStatus(resolved.message);
+      return null;
+    }
+
+    const result = await readSkill(resolved.skill.name, resolved.skill.path);
+    if (!result) return null;
+    if (skillEntryFilePathForMutationPath(result.path) !== resolved.entryFilePath) {
+      setSkillsStatus(translate("skills.failed_load_skill"));
+      return null;
+    }
+    return {
+      name: resolved.skill.name,
+      path: resolved.entryFilePath,
+      content: result.content,
+    };
+  }
+
+  async function saveSkillInstance(target: SkillMutationTarget, content: string): Promise<SkillSaveResult> {
+    const resolved = activeSkillForMutationTarget(target);
+    if ("message" in resolved) {
+      setSkillsStatus(resolved.message);
+      return { ok: false, message: resolved.message };
+    }
+
+    const current = await readSkill(resolved.skill.name, resolved.skill.path);
+    if (!current || skillEntryFilePathForMutationPath(current.path) !== resolved.entryFilePath) {
+      const message = translate("skills.failed_save_skill");
+      setSkillsStatus(message);
+      return { ok: false, message };
+    }
+
+    if (isManagedSkillMutationPath(resolved.skill.path)) {
+      const message = translate("skills.registry_action_pending");
+      setSkillsStatus(message);
+      return { ok: false, message };
+    }
+
+    return saveSkill({
+      name: resolved.skill.name,
+      path: resolved.skill.path,
+      content,
+      description: resolved.skill.description,
+    });
+  }
+
+  const managedSkillMutationUnavailable = (message: string): SkillSaveResult => {
+    setSkillsStatus(message);
+    return { ok: false, message };
+  };
+
+  const resolveDenRegistryContext = () => {
+    const denAuth = readDenAuth();
+    return {
+      denApiBase: denAuth?.denApiBase?.trim() ?? "",
+      denToken: denAuth?.token?.trim() ?? "",
+      denOrgId: denAuth?.orgId?.trim() ?? "",
+      denUserId: denAuth?.user?.id?.trim() ?? "",
+    };
+  };
+
+  const requireDenRegistryContext = (): SkillSaveResult | null => {
+    const { denToken, denOrgId, denUserId } = resolveDenRegistryContext();
+    if (denToken && denOrgId && denUserId) return null;
+    return managedSkillMutationUnavailable(translate("skills.managed_den_context_required"));
+  };
+
+  const registryMutationClient = <TMethod extends string>(
+    method: TMethod,
+  ): (VesloServerClient & Record<TMethod, (...args: unknown[]) => Promise<unknown>>) | null => {
+    const vesloClient = options.vesloServerClient();
+    if (
+      options.vesloServerStatus() === "connected" &&
+      vesloClient &&
+      typeof (vesloClient as Record<string, unknown>)[method] === "function"
+    ) {
+      return vesloClient as VesloServerClient & Record<TMethod, (...args: unknown[]) => Promise<unknown>>;
+    }
+    return null;
+  };
+
+  const managedSkillMaterializationClient = (): (VesloServerClient & {
+    syncGlobalSkillMaterialization?: (options?: VesloSkillMaterializationRequestOptions) => Promise<unknown>;
+    syncWorkspaceSkillMaterialization?: (
+      workspaceId: string,
+      options?: VesloSkillMaterializationRequestOptions,
+    ) => Promise<unknown>;
+  }) | null => {
+    const vesloClient = options.vesloServerClient();
+    if (options.vesloServerStatus() === "connected" && vesloClient) {
+      return vesloClient;
+    }
+    return null;
+  };
+
+  const managedSkillTargetAffectsActiveRuntime = (target: ManagedSkillMutationTarget) => {
+    if (target.scope === "user-global") return true;
+    if (target.scope !== "workspace" && target.scope !== "organization") return false;
+    const targetWorkspaceId = target.workspaceId?.trim() || target.restoreTarget?.workspaceId?.trim() || "";
+    if (!targetWorkspaceId) return target.scope === "workspace" || target.scope === "organization";
+    const activeWorkspaceId = options.activeWorkspaceId().trim();
+    const vesloWorkspaceId = options.vesloServerWorkspaceId()?.trim() ?? "";
+    return targetWorkspaceId === activeWorkspaceId || Boolean(vesloWorkspaceId && targetWorkspaceId === vesloWorkspaceId);
+  };
+
+  const syncMaterializationAfterManagedSkillMutation = async (target: ManagedSkillMutationTarget) => {
+    const client = managedSkillMaterializationClient();
+    if (!client) return;
+
+    const scope = target.restoreTarget?.scope ?? target.scope;
+    const workspaceId =
+      target.restoreTarget?.workspaceId?.trim() ||
+      target.workspaceId?.trim() ||
+      (scope === "workspace"
+        ? options.vesloServerWorkspaceId()?.trim() || options.activeWorkspaceId().trim()
+        : "");
+    const syncOptions = resolveDenRegistryContext();
+
+    if (
+      (scope === "user-global" || (scope === "organization" && !workspaceId)) &&
+      typeof client.syncGlobalSkillMaterialization === "function"
+    ) {
+      await client.syncGlobalSkillMaterialization(syncOptions);
+    }
+
+    if (
+      workspaceId &&
+      (scope === "workspace" || scope === "organization") &&
+      typeof client.syncWorkspaceSkillMaterialization === "function"
+    ) {
+      await client.syncWorkspaceSkillMaterialization(workspaceId, syncOptions);
+    }
+  };
+
+  const refreshAfterManagedSkillMutation = async (
+    target: ManagedSkillMutationTarget,
+    action: NonNullable<ReloadTrigger["action"]>,
+  ) => {
+    if (managedSkillTargetAffectsActiveRuntime(target)) {
+      options.markReloadRequired?.("skills", { type: "skill", name: target.name.trim(), action });
+    }
+    await syncMaterializationAfterManagedSkillMutation(target);
+    await refreshHubSkills({ force: true });
+    await refreshSkillInventory({ force: true });
+  };
+
+  const refreshAfterLocalRecoverableSkillMutation = async (
+    target: ManagedSkillMutationTarget,
+    action: NonNullable<ReloadTrigger["action"]>,
+  ) => {
+    if (managedSkillTargetAffectsActiveRuntime(target)) {
+      options.markReloadRequired?.("skills", { type: "skill", name: target.name.trim(), action });
+    }
+    await refreshSkills({ force: true });
+    await refreshSkillInventory({ force: true });
+  };
+
+  async function removeWorkspaceFilesystemSkillInstance(target: SkillMutationTarget): Promise<SkillSaveResult> {
+    const name = target.name.trim();
+    const path = target.path.trim();
+    if (!name || !path) {
+      return managedSkillMutationUnavailable(translate("skills.failed_load_skill"));
+    }
+    if (target.scope !== "workspace") {
+      return managedSkillMutationUnavailable(translate("skills.uninstall_scope_ambiguous"));
+    }
+    if (isManagedSkillMutationPath(path)) {
+      return managedSkillMutationUnavailable(translate("skills.registry_action_pending"));
+    }
+
+    const vesloClient = registryMutationClient("deleteSkill");
+    const workspaceId =
+      target.workspaceId?.trim() ||
+      options.vesloServerWorkspaceId()?.trim() ||
+      options.activeWorkspaceId().trim();
+    if (!vesloClient || !workspaceId) {
+      return managedSkillMutationUnavailable(translate("skills.recoverable_remove_server_required"));
+    }
+
+    options.setBusy(true);
+    options.setError(null);
+    setSkillsStatus(null);
+
+    try {
+      await vesloClient.deleteSkill(workspaceId, name, { path: skillEntryFilePathForMutationPath(path) });
+      const message = translate("skills.uninstalled");
+      setSkillsStatus(message);
+      await refreshAfterLocalRecoverableSkillMutation({ ...target, name, path, workspaceId }, "removed");
+      return { ok: true, message };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      const hintedMessage = addOpencodeCacheHint(message);
+      options.setError(hintedMessage);
+      return { ok: false, message: hintedMessage };
+    } finally {
+      options.setBusy(false);
+    }
+  }
+
+  async function removeUserGlobalFilesystemSkillInstance(target: ManagedSkillMutationTarget): Promise<SkillSaveResult> {
+    const name = target.name.trim();
+    const path = target.path.trim();
+    const entryFilePath = skillEntryFilePathForMutationPath(path);
+    if (!name || !entryFilePath) return managedSkillMutationUnavailable(translate("skills.failed_load_skill"));
+
+    const vesloClient = registryMutationClient("deleteGlobalSkill");
+    if (!vesloClient) {
+      return managedSkillMutationUnavailable(translate("skills.user_global_recoverable_remove_unavailable"));
+    }
+
+    options.setBusy(true);
+    options.setError(null);
+    setSkillsStatus(null);
+
+    try {
+      await vesloClient.deleteGlobalSkill(name, { path: entryFilePath, reason: "user-requested" });
+      const message = translate("skills.uninstalled");
+      setSkillsStatus(message);
+      await refreshAfterLocalRecoverableSkillMutation({ ...target, name, path: entryFilePath }, "removed");
+      return { ok: true, message };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      const hintedMessage = addOpencodeCacheHint(message);
+      options.setError(hintedMessage);
+      return { ok: false, message: hintedMessage };
+    } finally {
+      options.setBusy(false);
+    }
+  }
+
+  async function removeSkillInstance(target: ManagedSkillMutationTarget): Promise<SkillSaveResult> {
+    const name = target.name.trim();
+    if (!name) return managedSkillMutationUnavailable(translate("skills.failed_load_skill"));
+
+    const registry = target.registry;
+    if (registry?.removalPolicy === "locked") {
+      return managedSkillMutationUnavailable(translate("skills.managed_remove_locked"));
+    }
+
+    const installationId = registry?.installationId?.trim() ?? "";
+    const policyId = registry?.policyId?.trim() ?? "";
+
+    if (installationId) {
+      const missingContext = requireDenRegistryContext();
+      if (missingContext) return missingContext;
+
+      const vesloClient = registryMutationClient("deleteRegistrySkillInstallation");
+      if (!vesloClient) {
+        return managedSkillMutationUnavailable(translate("skills.managed_remove_server_required"));
+      }
+
+      options.setBusy(true);
+      options.setError(null);
+      setSkillsStatus(null);
+
+      try {
+        await vesloClient.deleteRegistrySkillInstallation(installationId, resolveDenRegistryContext());
+        const message = translate("skills.uninstalled");
+        setSkillsStatus(message);
+        await refreshAfterManagedSkillMutation(target, "removed");
+        return { ok: true, message };
+      } catch (e) {
+        const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+        const hintedMessage = addOpencodeCacheHint(message);
+        options.setError(hintedMessage);
+        return { ok: false, message: hintedMessage };
+      } finally {
+        options.setBusy(false);
+      }
+    }
+
+    if (policyId) {
+      const missingContext = requireDenRegistryContext();
+      if (missingContext) return missingContext;
+
+      const vesloClient = registryMutationClient("updateRegistrySkillRolloutPolicy");
+      if (!vesloClient) {
+        return managedSkillMutationUnavailable(translate("skills.managed_rollout_server_required"));
+      }
+
+      options.setBusy(true);
+      options.setError(null);
+      setSkillsStatus(null);
+
+      try {
+        await vesloClient.updateRegistrySkillRolloutPolicy(policyId, {
+          enabled: false,
+          ...resolveDenRegistryContext(),
+        });
+        const message = translate("skills.uninstalled");
+        setSkillsStatus(message);
+        await refreshAfterManagedSkillMutation(target, "removed");
+        return { ok: true, message };
+      } catch (e) {
+        const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+        const hintedMessage = addOpencodeCacheHint(message);
+        options.setError(hintedMessage);
+        return { ok: false, message: hintedMessage };
+      } finally {
+        options.setBusy(false);
+      }
+    }
+
+    if (isManagedSkillMutationPath(target.path)) {
+      return managedSkillMutationUnavailable(translate("skills.registry_action_pending"));
+    }
+
+    if (target.scope === "workspace") {
+      return removeWorkspaceFilesystemSkillInstance(target);
+    }
+
+    if (target.scope === "user-global") {
+      return removeUserGlobalFilesystemSkillInstance(target);
+    }
+
+    return managedSkillMutationUnavailable(translate("skills.remove_location_unavailable"));
+  }
+
+  async function batchRemoveSkillInstances(targets: ManagedSkillMutationTarget[]): Promise<SkillSaveResult> {
+    const validTargets = targets.map((target) => ({
+      ...target,
+      name: target.name.trim(),
+      path: skillEntryFilePathForMutationPath(target.path),
+      workspaceId: target.workspaceId?.trim() || undefined,
+      registry: target.registry
+        ? {
+            ...target.registry,
+            installationId: target.registry.installationId?.trim(),
+            policyId: target.registry.policyId?.trim(),
+          }
+        : undefined,
+    }));
+    if (validTargets.length === 0 || validTargets.some((target) => !target.name)) {
+      return managedSkillMutationUnavailable(translate("skills.remove_location_unavailable"));
+    }
+    if (validTargets.some((target) => target.registry?.removalPolicy === "locked")) {
+      return managedSkillMutationUnavailable(translate("skills.managed_remove_locked"));
+    }
+
+    const vesloClient = registryMutationClient("batchRemoveSkills");
+    if (!vesloClient) {
+      return managedSkillMutationUnavailable(translate("skills.recoverable_remove_server_required"));
+    }
+
+    options.setBusy(true);
+    options.setError(null);
+    setSkillsStatus(null);
+
+    try {
+      const response = await vesloClient.batchRemoveSkills({
+        ...resolveDenRegistryContext(),
+        items: validTargets.map((target, index) => {
+          const installationId = target.registry?.installationId?.trim() ?? "";
+          const policyId = target.registry?.policyId?.trim() ?? "";
+          return {
+            id: `${target.scope}:${target.workspaceId ?? ""}:${target.name}:${target.path || index}`,
+            name: target.name,
+            scope: target.scope,
+            ...(target.path ? { path: target.path } : {}),
+            ...(target.workspaceId ? { workspaceId: target.workspaceId } : {}),
+            reason: "user-requested",
+            ...(installationId || policyId
+              ? {
+                  registry: {
+                    ...(installationId ? { installationId } : {}),
+                    ...(policyId ? { policyId } : {}),
+                  },
+                }
+              : {}),
+          };
+        }),
+      });
+      const baseMessage = response.ok
+        ? translate("skills.bulk_removed")
+        : translate("skills.bulk_remove_partial");
+      const firstFailure = response.results.find((result) => !result.ok);
+      const message = !response.ok && firstFailure && "message" in firstFailure
+        ? `${baseMessage} ${firstFailure.message}`
+        : baseMessage;
+      setSkillsStatus(message);
+      if (!response.ok) options.setError(addOpencodeCacheHint(message));
+      for (const target of validTargets) {
+        if (managedSkillTargetAffectsActiveRuntime(target)) {
+          options.markReloadRequired?.("skills", { type: "skill", name: target.name, action: "removed" });
+        }
+      }
+      await refreshHubSkills({ force: true });
+      await refreshSkills({ force: true });
+      await refreshSkillInventory({ force: true });
+      return { ok: response.ok, message };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      const hintedMessage = addOpencodeCacheHint(message);
+      options.setError(hintedMessage);
+      return { ok: false, message: hintedMessage };
+    } finally {
+      options.setBusy(false);
+    }
+  }
+
+  async function restoreSkillInstance(target: ManagedSkillMutationTarget): Promise<SkillSaveResult> {
+    const name = target.name.trim();
+    if (!name) return managedSkillMutationUnavailable(translate("skills.failed_load_skill"));
+
+    const registry = target.registry;
+    if (registry?.removalPolicy === "locked") {
+      return managedSkillMutationUnavailable(translate("skills.managed_restore_locked"));
+    }
+
+    const installationId = registry?.installationId?.trim() ?? "";
+    const policyId = registry?.policyId?.trim() ?? "";
+    const removalId = target.restoreTarget?.removalId?.trim() ?? "";
+
+    if (removalId) {
+      const vesloClient = registryMutationClient("restoreSkillRemoval");
+      if (!vesloClient) {
+        return managedSkillMutationUnavailable(translate("skills.restore_location_unavailable"));
+      }
+
+      options.setBusy(true);
+      options.setError(null);
+      setSkillsStatus(null);
+
+      try {
+        await vesloClient.restoreSkillRemoval(removalId);
+        const message = translate("skills.restored");
+        setSkillsStatus(message);
+        await refreshAfterLocalRecoverableSkillMutation(target, "added");
+        return { ok: true, message };
+      } catch (e) {
+        const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+        const hintedMessage = addOpencodeCacheHint(message);
+        options.setError(hintedMessage);
+        return { ok: false, message: hintedMessage };
+      } finally {
+        options.setBusy(false);
+      }
+    }
+
+    if (installationId) {
+      const missingContext = requireDenRegistryContext();
+      if (missingContext) return missingContext;
+
+      const vesloClient = registryMutationClient("restoreRegistrySkillInstallation");
+      if (!vesloClient) {
+        return managedSkillMutationUnavailable(translate("skills.managed_restore_server_required"));
+      }
+
+      const denContext = resolveDenRegistryContext();
+      const registryMetadata = registry ?? {};
+      const restoreScope = target.restoreTarget?.scope ?? target.scope;
+      const restoreWorkspaceId = target.restoreTarget?.workspaceId?.trim() || target.workspaceId?.trim() || undefined;
+      const restoreOrgId =
+        target.restoreTarget?.orgId?.trim() || (restoreScope === "organization" ? denContext.denOrgId : undefined);
+      const restoreOwnerUserId =
+        restoreScope === "user-global" || registryMetadata.source === "personal" ? denContext.denUserId : undefined;
+      const versionId = registryMetadata.versionId?.trim() || undefined;
+
+      options.setBusy(true);
+      options.setError(null);
+      setSkillsStatus(null);
+
+      try {
+        await vesloClient.restoreRegistrySkillInstallation(installationId, {
+          ...denContext,
+          ...(restoreOrgId ? { orgId: restoreOrgId } : {}),
+          ...(restoreOwnerUserId ? { ownerUserId: restoreOwnerUserId } : {}),
+          ...(restoreWorkspaceId ? { workspaceId: restoreWorkspaceId } : {}),
+          ...(versionId ? { versionId } : {}),
+        });
+        const message = translate("skills.restored");
+        setSkillsStatus(message);
+        await refreshAfterManagedSkillMutation(target, "added");
+        return { ok: true, message };
+      } catch (e) {
+        const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+        const hintedMessage = addOpencodeCacheHint(message);
+        options.setError(hintedMessage);
+        return { ok: false, message: hintedMessage };
+      } finally {
+        options.setBusy(false);
+      }
+    }
+
+    if (policyId) {
+      const missingContext = requireDenRegistryContext();
+      if (missingContext) return missingContext;
+
+      const vesloClient = registryMutationClient("updateRegistrySkillRolloutPolicy");
+      if (!vesloClient) {
+        return managedSkillMutationUnavailable(translate("skills.managed_rollout_server_required"));
+      }
+
+      options.setBusy(true);
+      options.setError(null);
+      setSkillsStatus(null);
+
+      try {
+        await vesloClient.updateRegistrySkillRolloutPolicy(policyId, {
+          enabled: true,
+          ...resolveDenRegistryContext(),
+        });
+        const message = translate("skills.restored");
+        setSkillsStatus(message);
+        await refreshAfterManagedSkillMutation(target, "added");
+        return { ok: true, message };
+      } catch (e) {
+        const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+        const hintedMessage = addOpencodeCacheHint(message);
+        options.setError(hintedMessage);
+        return { ok: false, message: hintedMessage };
+      } finally {
+        options.setBusy(false);
+      }
+    }
+
+    return managedSkillMutationUnavailable(translate("skills.restore_location_unavailable"));
+  }
+
+  async function deleteSkillInstance(target: SkillMutationTarget): Promise<void> {
+    await removeSkillInstance(target);
+  }
+
+  async function copySkillInstanceToGlobal(
+    target: SkillMutationTarget,
+    optionsOverride?: { deleteSource?: boolean },
+  ): Promise<SkillSaveResult> {
+    const name = target.name.trim();
+    const entryFilePath = skillEntryFilePathForMutationPath(target.path);
+    if (!name || !entryFilePath) {
+      const message = translate("skills.failed_load_skill");
+      setSkillsStatus(message);
+      return { ok: false, message };
+    }
+    if (target.scope !== "workspace") {
+      const message = translate("skills.copy_to_global_unavailable");
+      setSkillsStatus(message);
+      return { ok: false, message };
+    }
+
+    if (isManagedSkillMutationPath(target.path)) {
+      const message = translate("skills.registry_action_pending");
+      setSkillsStatus(message);
+      return { ok: false, message };
+    }
+
+    if (!isTauriRuntime()) {
+      const message = translate("skills.desktop_required");
+      setSkillsStatus(message);
+      return { ok: false, message };
+    }
+
+    const targetWorkspaceId = target.workspaceId?.trim() ?? "";
+    const isActiveWorkspaceTarget = !targetWorkspaceId || targetWorkspaceId === options.activeWorkspaceId().trim();
+    const configuredWorkspace = targetWorkspaceId
+      ? (options.workspaces?.() ?? []).find((workspace) => workspace.id === targetWorkspaceId) ?? null
+      : null;
+    const sourceWorkspaceType = isActiveWorkspaceTarget
+      ? options.workspaceType()
+      : configuredWorkspace?.workspaceType ?? null;
+    const sourceRoot = isActiveWorkspaceTarget
+      ? options.activeWorkspaceRoot().trim()
+      : configuredWorkspace?.path?.trim() || configuredWorkspace?.directory?.trim() || "";
+
+    if (sourceWorkspaceType !== "local" || !sourceRoot) {
+      const message = translate("skills.copy_to_global_workspace_local_required");
+      setSkillsStatus(message);
+      return { ok: false, message };
+    }
+
+    // Cross-location transfers are retarget operations: one active source per skill.
+    const deleteSource = true;
+    options.setBusy(true);
+    options.setError(null);
+    setSkillsStatus(null);
+
+    try {
+      const current = await readLocalSkillAtPath(sourceRoot, name, entryFilePath);
+      if (!current || skillEntryFilePathForMutationPath(current.path) !== entryFilePath) {
+        const message = translate("skills.failed_load_skill");
+        setSkillsStatus(message);
+        return { ok: false, message };
+      }
+
+      const installResult = await installGlobalSkillTemplate(name, current.content, { overwrite: false });
+      if (!installResult.ok) {
+        const message = installResult.stderr || installResult.stdout || translate("skills.failed_save_skill");
+        setSkillsStatus(message);
+        return { ok: false, message };
+      }
+
+      if (deleteSource) {
+        const deleteResult = await uninstallSkillAtPath(sourceRoot, name, entryFilePath);
+        if (!deleteResult.ok) {
+          throw new Error(deleteResult.stderr || deleteResult.stdout || translate("skills.uninstall_failed"));
+        }
+      }
+
+      const message = translate(deleteSource ? "skills.moved_to_global" : "skills.copied_to_global");
+      setSkillsStatus(message);
+      if (isActiveWorkspaceTarget) {
+        options.markReloadRequired?.("skills", {
+          type: "skill",
+          name,
+          action: deleteSource ? "updated" : "added",
+        });
+        await refreshSkills({ force: true });
+      }
+      await refreshSkillInventory({ force: true });
+      return { ok: true, message };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      const hintedMessage = addOpencodeCacheHint(message);
+      options.setError(hintedMessage);
+      return { ok: false, message: hintedMessage };
+    } finally {
+      options.setBusy(false);
+    }
+  }
+
+  async function copySkillInstanceToWorkspace(
+    target: SkillMutationTarget,
+    workspaceId: string,
+  ): Promise<SkillSaveResult> {
+    const trimmed = target.name.trim();
+    const normalizedPath = normalizeSkillMutationPath(target.path);
+    const entryFilePath = skillEntryFilePathForMutationPath(target.path);
+    if (!trimmed || !normalizedPath || !entryFilePath) {
+      const message = translate("skills.failed_load_skill");
+      setSkillsStatus(message);
+      return { ok: false, message };
+    }
+    if (target.scope !== "user-global") {
+      const message = translate("skills.copy_to_workspace_unavailable");
+      setSkillsStatus(message);
+      return { ok: false, message };
+    }
+    if (!isTauriRuntime()) {
+      const message = translate("skills.desktop_required");
+      setSkillsStatus(message);
+      return { ok: false, message };
+    }
+
+    const targetWorkspaceId = workspaceId.trim();
+    if (!targetWorkspaceId) {
+      const message = translate("skills.install_workspace_target_required");
+      setSkillsStatus(message);
+      return { ok: false, message };
+    }
+
+    const configuredWorkspace = (options.workspaces?.() ?? []).find((workspace) => workspace.id === targetWorkspaceId) ?? null;
+    const isActiveWorkspace = targetWorkspaceId === options.activeWorkspaceId().trim();
+    const targetWorkspaceType = configuredWorkspace?.workspaceType ?? (isActiveWorkspace ? options.workspaceType() : null);
+    const targetDir = (
+      configuredWorkspace?.path?.trim() ||
+      configuredWorkspace?.directory?.trim() ||
+      (isActiveWorkspace ? options.activeWorkspaceRoot().trim() : "")
+    );
+
+    if (targetWorkspaceType !== "local" || !targetDir) {
+      const message = translate("skills.install_workspace_target_local_required");
+      setSkillsStatus(message);
+      return { ok: false, message };
+    }
+
+    options.setBusy(true);
+    options.setError(null);
+    setSkillsStatus(null);
+
+    try {
+      const current = await readLocalSkillAtPath(targetDir, trimmed, entryFilePath);
+      if (normalizeSkillMutationPath(current.path) !== entryFilePath) {
+        const message = translate("skills.failed_load_skill");
+        setSkillsStatus(message);
+        return { ok: false, message };
+      }
+
+      const installResult = await installSkillTemplate(targetDir, trimmed, current.content, { overwrite: false });
+      if (!installResult.ok) {
+        const message = installResult.stderr || installResult.stdout || translate("skills.failed_save_skill");
+        setSkillsStatus(message);
+        return { ok: false, message };
+      }
+
+      const deleteResult = await uninstallSkillAtPath(targetDir, trimmed, entryFilePath);
+      if (!deleteResult.ok) {
+        throw new Error(deleteResult.stderr || deleteResult.stdout || translate("skills.uninstall_failed"));
+      }
+
+      const message = translate("skills.copied_to_workspace");
+      setSkillsStatus(message);
+      if (isActiveWorkspace) {
+        options.markReloadRequired?.("skills", { type: "skill", name: trimmed, action: "added" });
+        await refreshSkills({ force: true });
+      }
+      await refreshSkillInventory({ force: true });
+      return { ok: true, message };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      const hintedMessage = addOpencodeCacheHint(message);
+      options.setError(hintedMessage);
+      return { ok: false, message: hintedMessage };
+    } finally {
+      options.setBusy(false);
+    }
+  }
+
+  async function saveSkill(input: { name: string; path?: string; content: string; description?: string }): Promise<SkillSaveResult> {
     const trimmed = input.name.trim();
-    if (!trimmed) return;
+    if (!trimmed) return { ok: false, message: translate("skills.bundle_missing_name") };
 
     const root = options.activeWorkspaceRoot().trim();
     if (!root) {
-      setSkillsStatus(translate("skills.pick_workspace_first"));
-      return;
+      const message = translate("skills.pick_workspace_first");
+      setSkillsStatus(message);
+      return { ok: false, message };
     }
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
@@ -1199,51 +2505,68 @@ export function createExtensionsStore(options: {
       try {
         await vesloClient.upsertSkill(vesloWorkspaceId, {
           name: trimmed,
+          ...(input.path?.trim() ? { path: input.path.trim() } : {}),
           content: input.content,
           description: input.description,
         });
         options.markReloadRequired?.("skills", { type: "skill", name: trimmed, action: "updated" });
         await refreshSkills({ force: true });
-        setSkillsStatus("Saved.");
+        const message = __vesloIndirectT("ui.indirect.saved_1caget", __vesloIndirectLocale());
+        setSkillsStatus(message);
+        return { ok: true, message };
       } catch (e) {
         const message = e instanceof Error ? e.message : translate("skills.unknown_error");
-        options.setError(addOpencodeCacheHint(message));
+        const hintedMessage = addOpencodeCacheHint(message);
+        options.setError(hintedMessage);
+        return { ok: false, message: hintedMessage };
       } finally {
         options.setBusy(false);
       }
-      return;
     }
 
     if (isRemoteWorkspace) {
-      setSkillsStatus("Veslo server unavailable. Connect to edit skills.");
-      return;
+      const message = __vesloIndirectT("ui.indirect.veslo_server_unavailable_connect_to_edit_skill_f47jbk", __vesloIndirectLocale());
+      setSkillsStatus(message);
+      return { ok: false, message };
     }
 
     if (!isTauriRuntime()) {
-      setSkillsStatus(translate("skills.desktop_required"));
-      return;
+      const message = translate("skills.desktop_required");
+      setSkillsStatus(message);
+      return { ok: false, message };
     }
 
     if (!isLocalWorkspace) {
-      setSkillsStatus("Local workers are required to edit skills.");
-      return;
+      const message = __vesloIndirectT("ui.indirect.local_workers_are_required_to_edit_skills_uvlvll", __vesloIndirectLocale());
+      setSkillsStatus(message);
+      return { ok: false, message };
     }
 
     options.setBusy(true);
     options.setError(null);
     setSkillsStatus(null);
     try {
-      const result = await writeLocalSkill(root, trimmed, input.content);
+      const localInstancePath = input.path?.trim() ? skillEntryFilePathForMutationPath(input.path) : undefined;
+      const result = localInstancePath
+        ? await writeLocalSkillAtPath(root, trimmed, localInstancePath, input.content)
+        : await writeLocalSkill(root, trimmed, input.content);
+      const message = result.stderr || result.stdout || translate("skills.unknown_error");
       if (!result.ok) {
-        setSkillsStatus(result.stderr || result.stdout || translate("skills.unknown_error"));
+        setSkillsStatus(message);
+        await refreshSkills({ force: true });
+        return { ok: false, message };
       } else {
-        setSkillsStatus(result.stdout || "Saved.");
+        const successMessage = result.stdout || __vesloIndirectT("ui.indirect.saved_1caget", __vesloIndirectLocale());
+        setSkillsStatus(successMessage);
         options.markReloadRequired?.("skills", { type: "skill", name: trimmed, action: "updated" });
+        await refreshSkills({ force: true });
+        return { ok: true, message: successMessage };
       }
-      await refreshSkills({ force: true });
     } catch (e) {
       const message = e instanceof Error ? e.message : translate("skills.unknown_error");
-      options.setError(addOpencodeCacheHint(message));
+      const hintedMessage = addOpencodeCacheHint(message);
+      options.setError(hintedMessage);
+      return { ok: false, message: hintedMessage };
     } finally {
       options.setBusy(false);
     }
@@ -1251,6 +2574,7 @@ export function createExtensionsStore(options: {
 
   function abortRefreshes() {
     refreshSkillsAborted = true;
+    refreshSkillInventoryAborted = true;
     refreshPluginsAborted = true;
     refreshHubSkillsAborted = true;
     refreshHubMcpAborted = true;
@@ -1259,6 +2583,8 @@ export function createExtensionsStore(options: {
   return {
     skills,
     skillsStatus,
+    skillInventory,
+    skillInventoryStatus,
     hubSkills,
     hubSkillsStatus,
     hubMcpCards,
@@ -1277,6 +2603,8 @@ export function createExtensionsStore(options: {
     sidebarPluginStatus,
     isPluginInstalledByName,
     refreshSkills,
+    refreshSkillInventory,
+    invalidateSkillRegistryInventory,
     refreshHubSkills,
     refreshHubMcp,
     refreshPlugins,
@@ -1289,6 +2617,14 @@ export function createExtensionsStore(options: {
     uninstallSkill,
     readSkill,
     saveSkill,
+    readSkillInstance,
+    saveSkillInstance,
+    deleteSkillInstance,
+    removeSkillInstance,
+    batchRemoveSkillInstances,
+    restoreSkillInstance,
+    copySkillInstanceToGlobal,
+    copySkillInstanceToWorkspace,
     installHubMcp,
     abortRefreshes,
   };

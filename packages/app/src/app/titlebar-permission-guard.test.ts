@@ -31,4 +31,22 @@ test("default Tauri capability includes title bar style permission", () => {
     1,
     "set title permission should appear exactly once so session can clear native title text",
   );
+  assert.equal(
+    capability.permissions?.filter((permission) => permission === "core:window:allow-minimize")
+      .length,
+    1,
+    "minimize permission should appear exactly once for Windows app-owned titlebar controls",
+  );
+  assert.equal(
+    capability.permissions?.filter((permission) => permission === "core:window:allow-toggle-maximize")
+      .length,
+    1,
+    "toggle maximize permission should appear exactly once for Windows app-owned titlebar controls",
+  );
+  assert.equal(
+    capability.permissions?.filter((permission) => permission === "core:window:allow-close")
+      .length,
+    1,
+    "close permission should appear exactly once for Windows app-owned titlebar controls",
+  );
 });

@@ -11,7 +11,10 @@ import type {
   SidebarSubagentDecoration,
   HubMcpCard,
   HubSkillCard,
+  HubSkillInstallTarget,
   SkillCard,
+  SkillInventoryItem,
+  SkillSaveResult,
   StartupPreference,
   LoadedSessionPrefetchInterestChangeHandler,
   WorkspaceConnectionState,
@@ -52,8 +55,10 @@ import {
 } from "../lib/tauri";
 import { acquireBlankNativeWindowTitleLease } from "../lib/native-window-title-lease";
 import { DEFAULT_VESLO_PUBLISHER_BASE_URL, publishVesloBundleJson } from "../lib/publisher";
+import type { SkillMutationTarget } from "../lib/skill-inventory";
 
 import Button from "../components/button";
+import DashboardTabRail, { shouldShowDashboardTabRail } from "../components/dashboard-tab-rail";
 import ExtensionsView from "./extensions";
 import ScheduledTasksView from "./scheduled";
 import SoulView from "./soul";
@@ -94,6 +99,7 @@ import {
 } from "lucide-solid";
 import { currentLocale, t } from "../../i18n";
 import type { Language } from "../../i18n";
+import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 
 export type DashboardViewProps = {
   tab: DashboardTab;
@@ -165,6 +171,7 @@ export type DashboardViewProps = {
   exportWorkspaceConfig: (workspaceId?: string) => void;
   exportWorkspaceBusy: boolean;
   workspaceSessionGroups: WorkspaceSessionGroup[];
+  unreadSessionIds: Record<string, true>;
   workspaceSessionPagingById: Record<string, { hasMore: boolean; loadingMore: boolean }>;
   subagentDecorationsBySessionId: Record<string, SidebarSubagentDecoration>;
   archivedSessionIds: string[];
@@ -197,11 +204,14 @@ export type DashboardViewProps = {
   activeWorkspaceRoot: string;
   isRemoteWorkspace: boolean;
   refreshSkills: (options?: { force?: boolean }) => void;
+  refreshSkillInventory: (options?: { force?: boolean }) => void;
   refreshHubSkills: (options?: { force?: boolean }) => void;
   refreshPlugins: (scopeOverride?: PluginScope) => void;
   refreshMcpServers: () => void;
   skills: SkillCard[];
   skillsStatus: string | null;
+  skillInventory: SkillInventoryItem[];
+  skillInventoryStatus: string | null;
   hubSkills: HubSkillCard[];
   hubSkillsStatus: string | null;
   hubMcpCards: HubMcpCard[];
@@ -211,13 +221,21 @@ export type DashboardViewProps = {
   canUseDesktopTools: boolean;
   importLocalSkill: () => void;
   installSkillCreator: () => Promise<{ ok: boolean; message: string }>;
-  installHubSkill: (name: string) => Promise<{ ok: boolean; message: string }>;
+  installHubSkill: (name: string, target: HubSkillInstallTarget) => Promise<{ ok: boolean; message: string }>;
   refreshHubMcp: () => void;
   installHubMcp: (name: string) => Promise<{ ok: boolean; message: string }>;
   revealSkillsFolder: () => void;
   uninstallSkill: (name: string) => void;
   readSkill: (name: string) => Promise<{ name: string; path: string; content: string } | null>;
-  saveSkill: (input: { name: string; content: string; description?: string }) => void;
+  saveSkill: (input: { name: string; path?: string; content: string; description?: string }) => Promise<SkillSaveResult>;
+  readSkillInstance: (target: SkillMutationTarget) => Promise<{ name: string; path: string; content: string } | null>;
+  saveSkillInstance: (target: SkillMutationTarget, content: string) => Promise<SkillSaveResult>;
+  deleteSkillInstance: (target: SkillMutationTarget) => Promise<void>;
+  removeSkillInstance: (target: SkillMutationTarget) => Promise<SkillSaveResult>;
+  batchRemoveSkillInstances: (targets: SkillMutationTarget[]) => Promise<SkillSaveResult>;
+  restoreSkillInstance: (target: SkillMutationTarget) => Promise<SkillSaveResult>;
+  copySkillInstanceToGlobal: (target: SkillMutationTarget, options?: { deleteSource?: boolean }) => Promise<SkillSaveResult>;
+  copySkillInstanceToWorkspace: (target: SkillMutationTarget, workspaceId: string) => Promise<SkillSaveResult>;
   pluginsAccessHint?: string | null;
   canEditPlugins: boolean;
   canUseGlobalPluginScope: boolean;
@@ -457,9 +475,15 @@ export default function DashboardView(props: DashboardViewProps) {
     workspace.vesloWorkspaceName?.trim() ||
     workspace.name?.trim() ||
     workspace.path?.trim() ||
-    "Worker";
+    t("workspace.fallback_worker", currentLocale());
   const workspaceKindLabel = (workspace: WorkspaceInfo) =>
-    workspace.workspaceType === "remote" ? "Remote" : "Local";
+    workspace.workspaceType === "remote"
+      ? workspace.sandboxBackend === "docker" ||
+        Boolean(workspace.sandboxRunId?.trim()) ||
+        Boolean(workspace.sandboxContainerName?.trim())
+        ? t("sidebar.workspace_kind_sandbox", currentLocale())
+        : t("sidebar.workspace_kind_remote", currentLocale())
+      : t("sidebar.workspace_kind_local", currentLocale());
 
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
     void openSessionWithWorkspaceActivation({
@@ -598,7 +622,11 @@ export default function DashboardView(props: DashboardViewProps) {
     const doRefresh = async () => {
       try {
         if (currentTab === "skills" && !cancelled) {
-          await props.refreshSkills();
+          await Promise.all([
+            props.refreshSkillInventory(),
+            props.refreshHubSkills(),
+            props.refreshSkills(),
+          ]);
         }
         if ((currentTab === "plugins" || currentTab === "mcp") && !cancelled) {
           await Promise.all([props.refreshPlugins(), props.refreshMcpServers()]);
@@ -664,6 +692,8 @@ export default function DashboardView(props: DashboardViewProps) {
     props.setSettingsTab(tab);
     props.setTab("settings");
   };
+
+  const showDashboardTabRail = createMemo(() => shouldShowDashboardTabRail(props.tab));
 
   const handleSettingsButtonClick = () => {
     handleDashboardTabSelection("settings", "general");
@@ -810,30 +840,30 @@ export default function DashboardView(props: DashboardViewProps) {
       });
       return [
         {
-          label: "Veslo invite link",
+          label: t("share.invite_link_label", currentLocale()),
           value: inviteUrl,
           secret: true,
-          placeholder: !isTauriRuntime() ? "Desktop app required" : "Starting server...",
-          hint: "One link that prefills worker URL and token.",
+          placeholder: !isTauriRuntime() ? t("app.error.tauri_required", currentLocale()) : t("config.starting_server", currentLocale()),
+          hint: t("share.invite_link_hint", currentLocale()),
         },
         {
-          label: "Veslo worker URL",
+          label: t("share.worker_url_label", currentLocale()),
           value: url,
-          placeholder: !isTauriRuntime() ? "Desktop app required" : "Starting server...",
+          placeholder: !isTauriRuntime() ? t("app.error.tauri_required", currentLocale()) : t("config.starting_server", currentLocale()),
           hint: mountedUrl
-            ? "Use on phones or laptops connecting to this worker."
+            ? t("share.use_connecting_to_worker", currentLocale())
             : hostUrl
-              ? "Worker URL is resolving; host URL shown as fallback."
+              ? t("share.worker_url_resolving", currentLocale())
               : undefined,
         },
         {
-          label: "Access token",
+          label: t("dashboard.veslo_host_token_label", currentLocale()),
           value: token,
           secret: true,
-          placeholder: isTauriRuntime() ? "-" : "Desktop app required",
+          placeholder: isTauriRuntime() ? "-" : t("app.error.tauri_required", currentLocale()),
           hint: mountedUrl
-            ? "Use on phones or laptops connecting to this worker."
-            : "Use on phones or laptops connecting to this host.",
+            ? t("share.use_connecting_to_worker", currentLocale())
+            : t("share.use_connecting_to_host", currentLocale()),
         },
       ];
     }
@@ -851,21 +881,21 @@ export default function DashboardView(props: DashboardViewProps) {
       });
       return [
         {
-          label: "Veslo invite link",
+          label: t("share.invite_link_label", currentLocale()),
           value: inviteUrl,
           secret: true,
-          hint: "One link that prefills worker URL and token.",
+          hint: t("share.invite_link_hint", currentLocale()),
         },
         {
-          label: "Veslo worker URL",
+          label: t("share.worker_url_label", currentLocale()),
           value: url,
         },
         {
-          label: "Access token",
+          label: t("dashboard.veslo_host_token_label", currentLocale()),
           value: token,
           secret: true,
-          placeholder: token ? undefined : "Set token in Advanced",
-          hint: "This token grants access to the worker on that host.",
+          placeholder: token ? undefined : t("share.set_token_in_advanced", currentLocale()),
+          hint: t("share.token_grants_access", currentLocale()),
         },
       ];
     }
@@ -874,11 +904,11 @@ export default function DashboardView(props: DashboardViewProps) {
     const directory = ws.directory?.trim() || "";
     return [
       {
-        label: "OpenCode base URL",
+        label: t("share.opencode_base_url_label", currentLocale()),
         value: baseUrl,
       },
       {
-        label: "Directory",
+        label: t("onboarding.directory", currentLocale()),
         value: directory,
         placeholder: "(auto)",
       },
@@ -889,28 +919,28 @@ export default function DashboardView(props: DashboardViewProps) {
     const ws = shareWorkspace();
     if (!ws) return null;
     if (ws.workspaceType === "local" && props.engineInfo?.runtime === "direct") {
-      return "Engine runtime is set to Direct. Switching local workers can restart the host and disconnect clients. The token may change after a restart.";
+      return t("share.direct_runtime_note", currentLocale());
     }
     return null;
   });
 
   const shareServiceDisabledReason = createMemo(() => {
     const ws = shareWorkspace();
-    if (!ws) return "Select a worker first.";
+    if (!ws) return t("share.select_worker_first", currentLocale());
     if (ws.workspaceType === "remote" && ws.remoteType !== "veslo") {
-      return "Share service links are available for Veslo workers.";
+      return t("share.veslo_workers_only", currentLocale());
     }
     if (ws.workspaceType !== "remote") {
       const baseUrl = props.vesloServerHostInfo?.baseUrl?.trim() ?? "";
       const token = props.vesloServerHostInfo?.clientToken?.trim() ?? "";
       if (!baseUrl || !token) {
-        return "Local Veslo host is not ready yet.";
+        return t("share.local_host_not_ready", currentLocale());
       }
     } else {
       const hostUrl = ws.vesloHostUrl?.trim() || ws.baseUrl?.trim() || "";
       const token = ws.vesloToken?.trim() || props.vesloServerSettings.token?.trim() || "";
-      if (!hostUrl) return "Missing Veslo host URL.";
-      if (!token) return "Missing Veslo token.";
+      if (!hostUrl) return t("share.missing_host_url", currentLocale());
+      if (!token) return t("share.missing_token", currentLocale());
     }
     return null;
   });
@@ -922,14 +952,14 @@ export default function DashboardView(props: DashboardViewProps) {
   }> => {
     const ws = shareWorkspace();
     if (!ws) {
-      throw new Error("Select a worker first.");
+      throw new Error(t("share.select_worker_first", currentLocale()));
     }
 
     if (ws.workspaceType !== "remote") {
       const baseUrl = props.vesloServerHostInfo?.baseUrl?.trim() ?? "";
       const token = props.vesloServerHostInfo?.clientToken?.trim() ?? "";
       if (!baseUrl || !token) {
-        throw new Error("Local Veslo host is not ready yet.");
+        throw new Error(t("share.local_host_not_ready", currentLocale()));
       }
       const client = createVesloServerClient({ baseUrl, token });
 
@@ -944,20 +974,20 @@ export default function DashboardView(props: DashboardViewProps) {
       }
 
       if (!workspaceId) {
-        throw new Error("Could not resolve this worker on the local Veslo host.");
+        throw new Error(t("share.resolve_local_worker_failed", currentLocale()));
       }
 
       return { client, workspaceId, workspace: ws };
     }
 
     if (ws.remoteType !== "veslo") {
-      throw new Error("Share service links are available for Veslo workers.");
+      throw new Error(t("share.veslo_workers_only", currentLocale()));
     }
 
     const hostUrl = ws.vesloHostUrl?.trim() || ws.baseUrl?.trim() || "";
     const token = ws.vesloToken?.trim() || props.vesloServerSettings.token?.trim() || "";
     if (!hostUrl || !token) {
-      throw new Error("Veslo host URL and token are required.");
+      throw new Error(t("share.host_url_token_required", currentLocale()));
     }
 
     const client = createVesloServerClient({ baseUrl: hostUrl, token });
@@ -984,7 +1014,7 @@ export default function DashboardView(props: DashboardViewProps) {
     }
 
     if (!workspaceId) {
-      throw new Error("Could not resolve this worker on the Veslo host.");
+      throw new Error(t("share.resolve_remote_worker_failed", currentLocale()));
     }
 
     return { client, workspaceId, workspace: ws };
@@ -1003,7 +1033,7 @@ export default function DashboardView(props: DashboardViewProps) {
         schemaVersion: 1,
         type: "workspace-profile",
         name: `${workspaceLabel(workspace)} profile`,
-        description: "Full Veslo workspace profile with config, MCP setup, commands, and skills.",
+        description: t("share.workspace_profile_description", currentLocale()),
         workspace: exported,
       };
 
@@ -1020,7 +1050,7 @@ export default function DashboardView(props: DashboardViewProps) {
         // ignore
       }
     } catch (error) {
-      setShareWorkspaceProfileError(error instanceof Error ? error.message : "Failed to publish workspace profile");
+      setShareWorkspaceProfileError(error instanceof Error ? error.message : t("share.publish_workspace_failed", currentLocale()));
     } finally {
       setShareWorkspaceProfileBusy(false);
     }
@@ -1037,14 +1067,14 @@ export default function DashboardView(props: DashboardViewProps) {
       const exported = await client.exportWorkspace(workspaceId);
       const skills = Array.isArray(exported.skills) ? exported.skills : [];
       if (!skills.length) {
-        throw new Error("No skills found in this workspace.");
+        throw new Error(t("share.no_skills_found", currentLocale()));
       }
 
       const payload: SkillsSetBundleV1 = {
         schemaVersion: 1,
         type: "skills-set",
         name: `${workspaceLabel(workspace)} skills`,
-        description: "Complete skills set from an Veslo workspace.",
+        description: t("share.skills_set_description", currentLocale()),
         skills: skills.map((skill) => ({
           name: skill.name,
           description: skill.description,
@@ -1070,7 +1100,7 @@ export default function DashboardView(props: DashboardViewProps) {
         // ignore
       }
     } catch (error) {
-      setShareSkillsSetError(error instanceof Error ? error.message : "Failed to publish skills set");
+      setShareSkillsSetError(error instanceof Error ? error.message : t("share.publish_skills_failed", currentLocale()));
     } finally {
       setShareSkillsSetBusy(false);
     }
@@ -1078,10 +1108,10 @@ export default function DashboardView(props: DashboardViewProps) {
 
   const exportDisabledReason = createMemo(() => {
     const ws = shareWorkspace();
-    if (!ws) return "Export is available for local workers in the desktop app.";
-    if (ws.workspaceType === "remote") return "Export is only supported for local workers.";
-    if (!isTauriRuntime()) return "Export is available in the desktop app.";
-    if (props.exportWorkspaceBusy) return "Export is already running.";
+    if (!ws) return t("share.export_local_desktop", currentLocale());
+    if (ws.workspaceType === "remote") return t("share.export_local_only", currentLocale());
+    if (!isTauriRuntime()) return t("share.export_desktop_only", currentLocale());
+    if (props.exportWorkspaceBusy) return t("share.export_running", currentLocale());
     return null;
   });
 
@@ -1218,7 +1248,7 @@ export default function DashboardView(props: DashboardViewProps) {
     }),
   );
   const leftMenuLabel = createMemo(() =>
-    leftMenuAction().kind === "return-to-session" ? "Return to session" : "Toggle left menu",
+    leftMenuAction().kind === "return-to-session" ? t("session.return_to_session", currentLocale()) : t("sidebar.toggle_left_menu", currentLocale()),
   );
   const leftMenuActive = createMemo(() =>
     leftMenuAction().kind === "return-to-session" ? false : leftSidebarVisible(),
@@ -1357,6 +1387,7 @@ export default function DashboardView(props: DashboardViewProps) {
               workspaceSessionGroups={props.workspaceSessionGroups}
               workspaceSessionPagingById={props.workspaceSessionPagingById}
               subagentDecorationsBySessionId={props.subagentDecorationsBySessionId}
+              unreadSessionIds={props.unreadSessionIds}
               archivedSessionIds={props.archivedSessionIds}
               activeWorkspaceId={props.activeWorkspaceId}
               selectedSessionId={props.selectedSessionId}
@@ -1410,7 +1441,7 @@ export default function DashboardView(props: DashboardViewProps) {
             class="absolute inset-y-0 right-0 w-2 cursor-col-resize"
             role="separator"
             aria-orientation="vertical"
-            aria-label="Resize left sidebar"
+            aria-label={__vesloT("ui.literal.resize_left_sidebar_1nybbn", __vesloCurrentLocale())}
             onPointerDown={startLeftSidebarResize}
           />
         </aside>
@@ -1453,8 +1484,7 @@ export default function DashboardView(props: DashboardViewProps) {
             <Show when={props.activeSoulStatus?.enabled}>
               <div class="font-product type-ui-xs inline-flex items-center gap-1 rounded-full border border-rose-7/40 bg-rose-3/40 px-2 py-1 text-rose-11">
                 <HeartPulse size={11} />
-                Soul on
-              </div>
+                {__vesloT("soul.status_on", __vesloCurrentLocale())}</div>
             </Show>
             <Show when={props.tab !== "settings"}>
               <h1 class="font-product type-title-sm">{title()}</h1>
@@ -1491,6 +1521,15 @@ export default function DashboardView(props: DashboardViewProps) {
         </header>
 
         <div class="p-6 md:p-10 max-w-5xl mx-auto space-y-10">
+          <Show when={showDashboardTabRail()}>
+            <DashboardTabRail
+              activeDashboardTab={props.tab}
+              activeSettingsTab={props.settingsTab}
+              onOpenSettingsTab={openSettings}
+              onOpenDashboardTab={handleDashboardTabSelection}
+            />
+          </Show>
+
           <Switch>
             <Match when={props.tab === "scheduled"}>
               <ScheduledTasksView
@@ -1532,16 +1571,24 @@ export default function DashboardView(props: DashboardViewProps) {
             <Match when={props.tab === "skills"}>
               <SkillsView
                 workspaceName={props.activeWorkspaceDisplay.name}
+                activeWorkspaceId={props.activeWorkspaceId}
+                activeWorkspaceRoot={props.activeWorkspaceRoot}
+                isRemoteWorkspace={props.isRemoteWorkspace}
+                isPrivateWorkspacePath={props.isPrivateWorkspacePath}
                 busy={props.busy}
                 canInstallSkillCreator={props.canInstallSkillCreator}
                 canUseDesktopTools={props.canUseDesktopTools}
                 accessHint={props.skillsAccessHint}
                 refreshSkills={props.refreshSkills}
+                refreshSkillInventory={props.refreshSkillInventory}
                 refreshHubSkills={props.refreshHubSkills}
                 skills={props.skills}
                 skillsStatus={props.skillsStatus}
+                skillInventory={props.skillInventory}
+                skillInventoryStatus={props.skillInventoryStatus}
                 hubSkills={props.hubSkills}
                 hubSkillsStatus={props.hubSkillsStatus}
+                workspaces={props.workspaces}
                 importLocalSkill={props.importLocalSkill}
                 installSkillCreator={props.installSkillCreator}
                 installHubSkill={props.installHubSkill}
@@ -1549,6 +1596,14 @@ export default function DashboardView(props: DashboardViewProps) {
                 uninstallSkill={props.uninstallSkill}
                 readSkill={props.readSkill}
                 saveSkill={props.saveSkill}
+                readSkillInstance={props.readSkillInstance}
+                saveSkillInstance={props.saveSkillInstance}
+                deleteSkillInstance={props.deleteSkillInstance}
+                removeSkillInstance={props.removeSkillInstance}
+                batchRemoveSkillInstances={props.batchRemoveSkillInstances}
+                restoreSkillInstance={props.restoreSkillInstance}
+                copySkillInstanceToGlobal={props.copySkillInstanceToGlobal}
+                copySkillInstanceToWorkspace={props.copySkillInstanceToWorkspace}
                 createSessionAndOpen={props.createSessionAndOpen}
                 setPrompt={props.setPrompt}
               />
@@ -1616,6 +1671,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   busy={props.busy}
                   settingsTab={props.settingsTab}
                   setSettingsTab={props.setSettingsTab}
+                  onOpenDashboardTab={(nextTab) => handleDashboardTabSelection(nextTab)}
                   vesloServerStatus={props.vesloServerStatus}
                   vesloServerUrl={props.vesloServerUrl}
                   vesloReconnectBusy={props.vesloReconnectBusy}
@@ -1706,7 +1762,6 @@ export default function DashboardView(props: DashboardViewProps) {
                   connectNotion={props.connectNotion}
                   sessionArchives={props.sessionArchives}
                   onUnarchiveSession={props.onUnarchiveArchivedSession}
-                  workspaces={props.workspaces}
                 />
 
             </Match>
@@ -1725,7 +1780,7 @@ export default function DashboardView(props: DashboardViewProps) {
                     onClick={props.repairOpencodeCache}
                     disabled={props.cacheRepairBusy || !props.developerMode}
                   >
-                    {props.cacheRepairBusy ? "Repairing cache" : "Repair cache"}
+                    {props.cacheRepairBusy ? __vesloT("dashboard.repairing_cache", __vesloCurrentLocale()) : __vesloT("dashboard.repair_cache", __vesloCurrentLocale())}
                   </Button>
                   <Button
                     variant="outline"
@@ -1733,8 +1788,7 @@ export default function DashboardView(props: DashboardViewProps) {
                     onClick={props.stopHost}
                     disabled={props.busy}
                   >
-                    Retry
-                  </Button>
+                    {__vesloT("dashboard.retry", __vesloCurrentLocale())}</Button>
                   <Show when={props.cacheRepairResult}>
                     <span class="text-xs text-red-12/80">
                       {props.cacheRepairResult}

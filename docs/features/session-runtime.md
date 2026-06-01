@@ -19,6 +19,22 @@ Key sub-surfaces:
 
 Dashboard and menu-style surfaces preserve a return path to session work. When the user opens a dashboard/menu tab from a session and clicks the left menu button again, Veslo returns to the active session. If the live selection is currently empty, the app falls back to the active workspace's persisted last selected session. When neither id is available, Veslo closes the dashboard/menu surface to bare `/session`, which is the draft-ready new-session screen without a directory. Re-selecting the active dashboard destination, including Settings from the header or left sidebar status controls, follows the same close-to-session behavior.
 
+## Desktop Context Menu
+
+The desktop app must not expose the webview's default browser context menu or web inspector entry points. Unhandled right-clicks are cancelled globally. If the user has selected text, Veslo shows a small app-owned context menu with only Copy. If a surface already handles `contextmenu` for its own menu, that surface remains authoritative and the global copy menu does not replace it. App-owned right-click menus are viewport-fixed, top-layer controls that clamp inside the visible window instead of being clipped by sidebar scroll containers.
+
+## Unread Session Indication
+
+The left session menu marks a session title in bold when an assistant response arrives while the user is not actively reading that session. Active reading means the session is selected and the app window has focus.
+
+Opening the session clears its unread indication. If the app regains focus while that session is already selected, the unread indication is also cleared. The indicator is local UI state for the current app run and is not persisted or synced.
+
+## Session Titles
+
+When a pending draft is first sent and a real OpenCode session must be created, Veslo uses the trimmed composer text as the session's initial backend title. The title comes from the text the user entered in the composer, not from internally resolved prompt text. If the first send has no text, such as an attachment-only send, the backend default title can remain in place.
+
+Later backend session title updates remain authoritative. The app accepts `session.updated` events into the session store and sidebar, so an explicit rename or backend title update can replace the prompt-derived initial title when the backend emits it.
+
 ## Composer
 
 The composer supports:
@@ -41,8 +57,11 @@ Current keyboard behavior:
 Submit behavior:
 
 - a submitted draft is rendered immediately as a temporary user message while workspace/session/message handoff is pending
-- the Composer visually clears and locks that submitted draft until the handoff settles
-- if handoff fails before a real message exists, the temporary message is removed and the original draft is restored for correction
+- the Composer clears immediately and remains available for a separate new draft, including while a new session is still being materialized
+- attachment staging, pending-session creation, and message handoff continue in the backend/session layer after the Composer releases the submitted draft
+- if handoff fails before a real message exists, the temporary user message stays in the timeline with failed status instead of being restored into the Composer automatically
+- failed pending submitted messages can be changed only through the explicit edit pencil, which removes that pending timeline message and loads that exact draft into the Composer
+- the Composer is not an automatic rollback buffer for pre-real-message submit failures because the user may already be composing a different message or working in a different pending session
 - once a real message exists, later model or run failures stay in the transcript and use the normal message editing, retry, and resend flows
 
 Main source of truth:
@@ -71,6 +90,14 @@ Clicking the pencil loads the reconstructed user draft into the composer and arm
 
 When the user is already at the latest message, new user posts and streamed assistant output keep the message list pinned to the bottom. Auto-scroll may be throttled for render performance, but the final pending scroll must still run while the bottom pin intent remains active. If the user scrolls away from the latest message, Veslo stops auto-pinning and shows the jump-to-latest control instead of forcing the viewport downward.
 
+## Message Progress Grouping
+
+Assistant activity between a user message and the final assistant answer is treated as progress for that user turn. While a run is still streaming, the newest visible assistant text can stay live because the UI cannot yet know whether it is the final answer. Once the turn has a later final assistant text, earlier actions and intermediate assistant comments are collapsed into one expandable progress group before the final answer.
+
+The collapsed group summarizes both action rows and intermediate comments. Expanding it preserves original order and shows non-final assistant text comments directly as normal assistant-visible text without card framing. Tool/action rows, subagent rows, and verification rows stay as nested collapsed progress items so the user can expand only the detail they want to inspect. Intermediate comments are normal assistant-visible text, not model thinking.
+
+`showThinking=false` hides model reasoning content and reasoning technical details only. It must not hide progress actions, non-final assistant comments, tool summaries, or other non-reasoning progress details that regular users need in order to understand what happened during the run.
+
 ## Pending Drafts
 
 Unstarted sessions are modeled as pending drafts.
@@ -78,7 +105,7 @@ Unstarted sessions are modeled as pending drafts.
 Current behavior:
 
 - pending drafts are durable local state
-- pending drafts do not appear in the sidebar until the user presses `Run`
+- pending drafts do not appear in the sidebar until the user presses `Run`; when the pending draft is for a newly registered local directory, the directory itself can appear immediately as an empty project/workspace row in by-project mode
 - `Chat` reopens the one existing unpublished private draft instead of creating another unpublished private workspace
 - project `+` actions reopen the pending draft for that project directory when one already exists
 - a real OpenCode session is materialized only when the pending draft is sent successfully
@@ -94,8 +121,10 @@ Current behavior:
 - unsent private drafts hide generated private workspace paths so the state label is not mistaken for a directory
 - existing chats with messages show the directory or remote workspace context without the `Chat` prefix, except private chat sessions use the chat title instead of the generated private workspace path
 - in by-project sidebar mode, private workspace sessions are grouped into a bottom `Chats` section; recent mode keeps them mixed with all other conversations by activity
+- subagents launched from private chat sessions stay nested under their parent chat and inherit that parent chat's sidebar context, so they do not surface as separate project/workspace rows
 - long local paths can be abbreviated in the titlebar, but the full path remains available as the location tooltip
 - titlebar labels are non-selectable and participate in the Tauri drag region so the window can be moved from the text itself
+- desktop titlebar chrome is platform-aware: macOS keeps the native overlay behavior, while Windows uses the app-owned titlebar rail so shared navigation, context, feedback, and window controls occupy the top caption area
 
 ## Global Model and Thinking Behavior
 
@@ -121,6 +150,8 @@ Standalone AI Gateway admin can soft-delete unusable credentials from the creden
 In desktop local workspaces, the app can read managed-AI access policy from DEN or standalone AI Gateway, but generated OpenCode provider config must still route through the active local Veslo server. Remote DEN/Veslo URLs are not valid provider `baseURL` targets for local-first desktop execution.
 
 For `codex_oauth`, local OpenCode remains the agent runtime. OpenCode sends tool-capable OpenAI-compatible chat-completions requests through the local Veslo server to the managed gateway; the gateway resolves the server-side Codex OAuth credential, calls the ChatGPT Codex Responses endpoint, translates the Responses stream back to OpenAI-compatible JSON/SSE, and returns it without running `codex exec` for local desktop sessions. Codex OAuth secrets stay server-side, while local config contains only Veslo-scoped proxy tokens.
+
+If the managed gateway reports that no eligible Codex credential is available, the desktop session must stop the active run and surface an explicit AI access error in the session UI. This is a terminal send failure until an admin refreshes or reassigns Codex access; it must not leave the session in an indefinite thinking/responding state.
 
 The local Veslo server normalizes managed-AI proxy compression at the gateway boundary. It requests identity encoding from the managed service and does not forward stale `Content-Encoding` headers on streamed responses, because the local fetch runtime may already have decoded the upstream body before the response reaches OpenCode.
 
@@ -151,13 +182,25 @@ Artifacts are modeled as run-scoped families:
 
 Server-backed artifact provenance is preferred when available. Technical noise such as `AGENTS.md`, `SKILL.md`, and `.opencode/**` should not appear as generic file artifacts unless they are the actual user-facing target.
 
+The right menu Files family is intentionally narrow. It shows only files explicitly opened/read during the latest run and files modified by the latest run. Modified files are grouped ahead of opened files, and a file that is both opened and modified appears in the modified group. Search, glob, list, and similar discovery-only tool results do not create file rows. Skill execution should appear as the skill name in the Skills family rather than as the backing `SKILL.md` file read.
+
+File rows expose the local desktop reveal action when a file path is available. They do not expose editor-specific open shortcuts.
+
 Main model source:
 
 - `packages/app/src/app/components/session/artifact-family-model.ts`
 
+## Right Menu Capabilities
+
+The session right menu shows a read-only summary of Skills and MCP servers available to the selected chat's workspace directory. This summary is scoped by the selected chat directory, not by the currently active runtime workspace. It includes installed workspace capabilities plus globally inherited capabilities and excludes Hub-only catalog items.
+
 ## Archive and Restore
 
 Session archive behavior removes sessions from the active primary list and exposes archived items through Settings.
+
+Archiving the last visible session must not hide a local non-private workspace. The sidebar keeps the empty workspace visible as a workspace-only project so the user can create a new session, open workspace actions, or re-add the same directory without the app appearing to do nothing. This applies in by-project mode and as a Recent-mode fallback when no recent rows remain visible.
+
+Adding a local directory follows the same empty-workspace visibility rule. The directory is published to the sidebar as soon as it is registered, before the existing pending-draft activation/opening flow continues, so by-project mode shows the new project immediately at the top without requiring a real session to exist first.
 
 In local desktop mode, archive state can be persisted through the local Veslo server without a cloud sign-in by using a local desktop archive owner key. Remote/cloud archive state still requires a stable signed-in account identity so records do not mix across users.
 

@@ -2,6 +2,7 @@ use serde::Serialize;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use crate::paths::{candidate_xdg_config_dirs, home_dir};
 use crate::types::ExecResult;
@@ -30,6 +31,16 @@ fn ensure_project_skill_root(project_dir: &str) -> Result<PathBuf, String> {
     fs::create_dir_all(&modern)
         .map_err(|e| format!("Failed to create {}: {e}", modern.display()))?;
     Ok(modern)
+}
+
+fn ensure_global_skill_root() -> Result<PathBuf, String> {
+    let Some(config_root) = candidate_xdg_config_dirs().into_iter().next() else {
+        return Err("Home directory is required to install global skills".to_string());
+    };
+    let skill_root = config_root.join("opencode").join("skills");
+    fs::create_dir_all(&skill_root)
+        .map_err(|e| format!("Failed to create {}: {e}", skill_root.display()))?;
+    Ok(skill_root)
 }
 
 fn collect_project_skill_roots(project_dir: &Path) -> Vec<PathBuf> {
@@ -91,17 +102,27 @@ fn collect_global_skill_roots() -> Vec<PathBuf> {
     roots
 }
 
-fn collect_skill_roots(project_dir: &str) -> Result<Vec<PathBuf>, String> {
-    let project_dir = project_dir.trim();
-    if project_dir.is_empty() {
-        return Err("projectDir is required".to_string());
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SkillListScope {
+    Workspace,
+    Global,
+    Effective,
+}
+
+impl FromStr for SkillListScope {
+    type Err = String;
+
+    fn from_str(scope: &str) -> Result<Self, Self::Err> {
+        match scope {
+            "workspace" => Ok(Self::Workspace),
+            "global" => Ok(Self::Global),
+            "effective" => Ok(Self::Effective),
+            _ => Err("scope must be workspace, global, or effective".to_string()),
+        }
     }
+}
 
-    let mut roots = Vec::new();
-    let project_path = PathBuf::from(project_dir);
-    roots.extend(collect_project_skill_roots(&project_path));
-    roots.extend(collect_global_skill_roots());
-
+fn dedupe_paths(roots: Vec<PathBuf>) -> Result<Vec<PathBuf>, String> {
     let mut seen = HashSet::new();
     let mut unique = Vec::new();
     for root in roots {
@@ -112,6 +133,43 @@ fn collect_skill_roots(project_dir: &str) -> Result<Vec<PathBuf>, String> {
     }
 
     Ok(unique)
+}
+
+fn select_skill_roots_for_scope(
+    project_roots: Vec<PathBuf>,
+    global_roots: Vec<PathBuf>,
+    scope: SkillListScope,
+) -> Result<Vec<PathBuf>, String> {
+    let mut roots = Vec::new();
+    if matches!(scope, SkillListScope::Workspace | SkillListScope::Effective) {
+        roots.extend(project_roots);
+    }
+    if matches!(scope, SkillListScope::Global | SkillListScope::Effective) {
+        roots.extend(global_roots);
+    }
+
+    dedupe_paths(roots)
+}
+
+fn collect_skill_roots(project_dir: &str, scope: SkillListScope) -> Result<Vec<PathBuf>, String> {
+    let project_dir = project_dir.trim();
+    if project_dir.is_empty() && scope != SkillListScope::Global {
+        return Err("projectDir is required".to_string());
+    }
+
+    let project_roots = if matches!(scope, SkillListScope::Workspace | SkillListScope::Effective) {
+        let project_path = PathBuf::from(project_dir);
+        collect_project_skill_roots(&project_path)
+    } else {
+        Vec::new()
+    };
+    let global_roots = if matches!(scope, SkillListScope::Global | SkillListScope::Effective) {
+        collect_global_skill_roots()
+    } else {
+        Vec::new()
+    };
+
+    select_skill_roots_for_scope(project_roots, global_roots, scope)
 }
 
 fn validate_skill_name(name: &str) -> Result<String, String> {
@@ -241,6 +299,85 @@ fn collect_skill_dirs_by_name(root: &Path, name: &str) -> Vec<PathBuf> {
     out
 }
 
+fn is_path_inside(parent: &Path, child: &Path) -> bool {
+    child.starts_with(parent)
+}
+
+fn resolve_skill_file_at_path(
+    project_dir: &str,
+    name: &str,
+    path: &str,
+    allow_managed: bool,
+) -> Result<PathBuf, String> {
+    let project_dir = project_dir.trim();
+    if project_dir.is_empty() {
+        return Err("projectDir is required".to_string());
+    }
+
+    let name = validate_skill_name(name)?;
+    let candidate = PathBuf::from(path.trim());
+    if candidate.file_name().and_then(|s| s.to_str()) != Some("SKILL.md") {
+        return Err("skill path must point to SKILL.md".to_string());
+    }
+    if candidate
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|s| s.to_str())
+        != Some(name.as_str())
+    {
+        return Err("skill path must match skill name".to_string());
+    }
+    if !candidate.is_file() {
+        return Err("Skill not found".to_string());
+    }
+
+    let canonical_candidate = fs::canonicalize(&candidate)
+        .map_err(|e| format!("Failed to resolve {}: {e}", candidate.display()))?;
+    let roots = collect_skill_roots(project_dir, SkillListScope::Effective)?;
+    for root in roots {
+        let Ok(canonical_root) = fs::canonicalize(&root) else {
+            continue;
+        };
+        if !is_path_inside(&canonical_root, &canonical_candidate) {
+            continue;
+        }
+        if !allow_managed {
+            if let Ok(relative) = canonical_candidate.strip_prefix(&canonical_root) {
+                let mut parts = relative.components();
+                if parts.next().and_then(|part| part.as_os_str().to_str()) == Some("veslo-managed")
+                {
+                    return Err(
+                        "Managed materialized skills must be edited through the registry"
+                            .to_string(),
+                    );
+                }
+            }
+        }
+        return Ok(canonical_candidate);
+    }
+
+    Err("skill path must be inside a configured skill root".to_string())
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalSkillRegistryMetadata {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub installation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub removal_policy: Option<String>,
+}
+
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalSkillCard {
@@ -248,6 +385,8 @@ pub struct LocalSkillCard {
     pub path: String,
     pub description: Option<String>,
     pub trigger: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registry: Option<LocalSkillRegistryMetadata>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -377,9 +516,137 @@ fn extract_description(raw: &str) -> Option<String> {
     None
 }
 
+fn marker_string(value: &serde_json::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(|candidate| candidate.as_str())
+        .map(str::trim)
+        .filter(|candidate| !candidate.is_empty())
+        .map(ToString::to_string)
+}
+
+fn registry_metadata_from_managed_marker(skill_dir: &Path) -> Option<LocalSkillRegistryMetadata> {
+    let raw = fs::read_to_string(skill_dir.join(".veslo-managed.json")).ok()?;
+    let marker: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let marker_installation_id = marker_string(&marker, "installationId")?;
+
+    let (installation_id, policy_id, source, removal_policy) =
+        if let Some(policy_id) = marker_installation_id.strip_prefix("rollout:") {
+            let policy_id = policy_id.trim().to_string();
+            if policy_id.is_empty() {
+                return None;
+            }
+            (None, Some(policy_id), None, None)
+        } else {
+            let source = match marker_string(&marker, "target").as_deref() {
+                Some("workspace") => Some("workspace".to_string()),
+                Some("personal-global") => Some("personal".to_string()),
+                _ => None,
+            };
+            (
+                Some(marker_installation_id),
+                None,
+                source,
+                Some("user_removable".to_string()),
+            )
+        };
+
+    Some(LocalSkillRegistryMetadata {
+        skill_id: marker_string(&marker, "skillId"),
+        installation_id,
+        policy_id,
+        version_id: marker_string(&marker, "versionId"),
+        package_sha256: marker_string(&marker, "packageSha256"),
+        source,
+        removal_policy,
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::extract_description;
+    use super::{
+        collect_skill_roots, extract_description, registry_metadata_from_managed_marker,
+        select_skill_roots_for_scope, SkillListScope,
+    };
+    use std::fs;
+    use std::path::PathBuf;
+    use std::str::FromStr;
+
+    fn root(path: &str) -> PathBuf {
+        PathBuf::from(path)
+    }
+
+    #[test]
+    fn skill_list_scope_workspace_excludes_global_roots_and_requires_project_dir() {
+        assert_eq!(
+            SkillListScope::from_str("workspace").unwrap(),
+            SkillListScope::Workspace
+        );
+
+        let project_roots = vec![root("/workspace/.opencode/skills")];
+        let global_roots = vec![root("/home/user/.config/opencode/skills")];
+
+        assert_eq!(
+            select_skill_roots_for_scope(
+                project_roots.clone(),
+                global_roots,
+                SkillListScope::Workspace
+            )
+            .unwrap(),
+            project_roots
+        );
+        assert_eq!(
+            collect_skill_roots("", SkillListScope::Workspace).unwrap_err(),
+            "projectDir is required"
+        );
+    }
+
+    #[test]
+    fn skill_list_scope_global_excludes_project_roots_and_allows_empty_project_dir() {
+        assert_eq!(
+            SkillListScope::from_str("global").unwrap(),
+            SkillListScope::Global
+        );
+
+        let project_roots = vec![root("/workspace/.opencode/skills")];
+        let global_roots = vec![root("/home/user/.config/opencode/skills")];
+
+        assert_eq!(
+            select_skill_roots_for_scope(
+                project_roots,
+                global_roots.clone(),
+                SkillListScope::Global,
+            )
+            .unwrap(),
+            global_roots
+        );
+        assert!(collect_skill_roots("", SkillListScope::Global).is_ok());
+    }
+
+    #[test]
+    fn skill_list_scope_effective_includes_project_and_global_roots_and_requires_project_dir() {
+        assert_eq!(
+            SkillListScope::from_str("effective").unwrap(),
+            SkillListScope::Effective
+        );
+
+        let project_roots = vec![root("/workspace/.opencode/skills")];
+        let global_roots = vec![root("/home/user/.config/opencode/skills")];
+
+        assert_eq!(
+            select_skill_roots_for_scope(
+                project_roots.clone(),
+                global_roots.clone(),
+                SkillListScope::Effective
+            )
+            .unwrap(),
+            vec![project_roots[0].clone(), global_roots[0].clone()]
+        );
+        assert_eq!(
+            collect_skill_roots("", SkillListScope::Effective).unwrap_err(),
+            "projectDir is required"
+        );
+    }
 
     #[test]
     fn extract_description_truncates_multibyte_text_without_panicking() {
@@ -400,6 +667,63 @@ mod tests {
 
         assert_eq!(description, "Short description");
     }
+
+    #[test]
+    fn managed_marker_exposes_installation_metadata_for_inventory() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let skill_dir = temp.path().join("managed-tool");
+        fs::create_dir_all(&skill_dir).expect("create skill dir");
+        fs::write(
+            skill_dir.join(".veslo-managed.json"),
+            r#"{
+              "installationId": "install_workspace_tool",
+              "skillId": "skill_workspace_tool",
+              "versionId": "version_1",
+              "packageSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "target": "workspace"
+            }"#,
+        )
+        .expect("write managed marker");
+
+        let metadata =
+            registry_metadata_from_managed_marker(&skill_dir).expect("registry metadata");
+
+        assert_eq!(
+            metadata.installation_id.as_deref(),
+            Some("install_workspace_tool")
+        );
+        assert_eq!(metadata.policy_id.as_deref(), None);
+        assert_eq!(metadata.skill_id.as_deref(), Some("skill_workspace_tool"));
+        assert_eq!(metadata.version_id.as_deref(), Some("version_1"));
+        assert_eq!(metadata.source.as_deref(), Some("workspace"));
+        assert_eq!(metadata.removal_policy.as_deref(), Some("user_removable"));
+    }
+
+    #[test]
+    fn managed_marker_maps_rollout_installation_to_policy_metadata() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let skill_dir = temp.path().join("managed-tool");
+        fs::create_dir_all(&skill_dir).expect("create skill dir");
+        fs::write(
+            skill_dir.join(".veslo-managed.json"),
+            r#"{
+              "installationId": "rollout:policy_workspace_tool",
+              "skillId": "skill_workspace_tool",
+              "versionId": "version_1",
+              "packageSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "target": "workspace"
+            }"#,
+        )
+        .expect("write managed marker");
+
+        let metadata =
+            registry_metadata_from_managed_marker(&skill_dir).expect("registry metadata");
+
+        assert_eq!(metadata.installation_id.as_deref(), None);
+        assert_eq!(metadata.policy_id.as_deref(), Some("policy_workspace_tool"));
+        assert_eq!(metadata.source.as_deref(), None);
+        assert_eq!(metadata.removal_policy.as_deref(), None);
+    }
 }
 
 #[tauri::command]
@@ -412,7 +736,21 @@ pub fn list_local_skills(
     let project_dir = project_dir_buf.to_string_lossy();
     let project_dir = project_dir.as_ref();
 
-    let skill_roots = collect_skill_roots(project_dir)?;
+    let skill_roots = collect_skill_roots(project_dir, SkillListScope::Effective)?;
+    list_skill_cards_from_roots(skill_roots)
+}
+
+#[tauri::command]
+pub fn list_local_skills_scoped(
+    project_dir: String,
+    scope: String,
+) -> Result<Vec<LocalSkillCard>, String> {
+    let scope = SkillListScope::from_str(scope.trim())?;
+    let skill_roots = collect_skill_roots(project_dir.trim(), scope)?;
+    list_skill_cards_from_roots(skill_roots)
+}
+
+fn list_skill_cards_from_roots(skill_roots: Vec<PathBuf>) -> Result<Vec<LocalSkillCard>, String> {
     let mut found: Vec<PathBuf> = Vec::new();
     let mut seen = HashSet::new();
     for root in skill_roots {
@@ -435,6 +773,7 @@ pub fn list_local_skills(
             path: path.to_string_lossy().to_string(),
             description,
             trigger,
+            registry: registry_metadata_from_managed_marker(&path),
         });
     }
 
@@ -454,7 +793,7 @@ pub fn read_local_skill(
     let project_dir = project_dir.as_ref();
 
     let name = validate_skill_name(&name)?;
-    let roots = collect_skill_roots(project_dir)?;
+    let roots = collect_skill_roots(project_dir, SkillListScope::Effective)?;
 
     for root in roots {
         let Some(path) = find_skill_file_in_root(&root, &name) else {
@@ -472,6 +811,21 @@ pub fn read_local_skill(
 }
 
 #[tauri::command]
+pub fn read_local_skill_at_path(
+    project_dir: String,
+    name: String,
+    path: String,
+) -> Result<LocalSkillContent, String> {
+    let path = resolve_skill_file_at_path(&project_dir, &name, &path, true)?;
+    let raw =
+        fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    Ok(LocalSkillContent {
+        path: path.to_string_lossy().to_string(),
+        content: raw,
+    })
+}
+
+#[tauri::command]
 pub fn write_local_skill(
     app: tauri::AppHandle,
     project_dir: String,
@@ -484,7 +838,7 @@ pub fn write_local_skill(
     let project_dir = project_dir.as_ref();
 
     let name = validate_skill_name(&name)?;
-    let roots = collect_skill_roots(project_dir)?;
+    let roots = collect_skill_roots(project_dir, SkillListScope::Effective)?;
     let mut target: Option<PathBuf> = None;
 
     for root in roots {
@@ -514,6 +868,52 @@ pub fn write_local_skill(
         ok: true,
         status: 0,
         stdout: format!("Saved skill {}", name),
+        stderr: String::new(),
+    })
+}
+
+#[tauri::command]
+pub fn write_local_skill_at_path(
+    project_dir: String,
+    name: String,
+    path: String,
+    content: String,
+) -> Result<ExecResult, String> {
+    let path = resolve_skill_file_at_path(&project_dir, &name, &path, false)?;
+    let name = validate_skill_name(&name)?;
+    let next = if content.ends_with('\n') {
+        content
+    } else {
+        format!("{}\n", content)
+    };
+    fs::write(&path, next).map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
+
+    Ok(ExecResult {
+        ok: true,
+        status: 0,
+        stdout: format!("Saved skill {}", name),
+        stderr: String::new(),
+    })
+}
+
+#[tauri::command]
+pub fn uninstall_skill_at_path(
+    project_dir: String,
+    name: String,
+    path: String,
+) -> Result<ExecResult, String> {
+    let path = resolve_skill_file_at_path(&project_dir, &name, &path, false)?;
+    let name = validate_skill_name(&name)?;
+    let Some(skill_dir) = path.parent() else {
+        return Err("Skill path must have a parent directory".to_string());
+    };
+    fs::remove_dir_all(skill_dir)
+        .map_err(|e| format!("Failed to remove {}: {e}", skill_dir.display()))?;
+
+    Ok(ExecResult {
+        ok: true,
+        status: 0,
+        stdout: format!("Removed skill {}", name),
         stderr: String::new(),
     })
 }
@@ -565,6 +965,45 @@ pub fn install_skill_template(
     })
 }
 
+pub fn install_global_skill_template(
+    name: String,
+    content: String,
+    overwrite: bool,
+) -> Result<ExecResult, String> {
+    let name = validate_skill_name(&name)?;
+    let skill_root = ensure_global_skill_root()?;
+    let dest = skill_root.join(&name);
+
+    if dest.exists() {
+        if overwrite {
+            fs::remove_dir_all(&dest).map_err(|e| {
+                format!(
+                    "Failed to remove existing skill dir {}: {e}",
+                    dest.display()
+                )
+            })?;
+        } else {
+            return Ok(ExecResult {
+                ok: false,
+                status: 1,
+                stdout: String::new(),
+                stderr: format!("Skill already exists at {}", dest.display()),
+            });
+        }
+    }
+
+    fs::create_dir_all(&dest).map_err(|e| format!("Failed to create {}: {e}", dest.display()))?;
+    fs::write(dest.join("SKILL.md"), content)
+        .map_err(|e| format!("Failed to write SKILL.md: {e}"))?;
+
+    Ok(ExecResult {
+        ok: true,
+        status: 0,
+        stdout: format!("Installed global skill to {}", dest.display()),
+        stderr: String::new(),
+    })
+}
+
 #[tauri::command]
 pub fn uninstall_skill(
     app: tauri::AppHandle,
@@ -577,7 +1016,7 @@ pub fn uninstall_skill(
     let project_dir = project_dir.as_ref();
 
     let name = validate_skill_name(&name)?;
-    let skill_roots = collect_skill_roots(project_dir)?;
+    let skill_roots = collect_skill_roots(project_dir, SkillListScope::Effective)?;
     let mut removed = false;
 
     for root in skill_roots {

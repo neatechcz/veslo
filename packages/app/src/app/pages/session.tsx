@@ -24,10 +24,6 @@ import type {
 
 import { reportError } from "../lib/error-reporter";
 import {
-  obsidianIsAvailable,
-  openInObsidian,
-  readObsidianMirrorFile,
-  writeObsidianMirrorFile,
   type EngineInfo,
   type VesloServerInfo,
   type WorkspaceInfo,
@@ -69,11 +65,9 @@ import {
   buildVesloConnectInviteUrl,
   buildVesloWorkspaceBaseUrl,
   createVesloServerClient,
-  VesloServerError,
   parseVesloWorkspaceIdFromUrl,
 } from "../lib/veslo-server";
 import type {
-  VesloFileSession,
   VesloServerClient,
   VesloServerSettings,
   VesloServerStatus,
@@ -97,11 +91,19 @@ import { currentLocale, t } from "../../i18n";
 import browserSetupTemplate from "../data/commands/browser-setup.md?raw";
 import soulSetupTemplate from "../data/commands/give-me-a-soul.md?raw";
 
-import MessageList from "../components/session/message-list";
+import MessageList, { type PendingMessageState } from "../components/session/message-list";
 import Composer from "../components/session/composer";
 import type { ComposerSendOptions } from "../components/session/composer";
 import QueuedMessageList from "../components/session/queued-message-list";
 import { getEditableUserMessageDraft, type EditableUserMessageDraft } from "../components/session/message-editability";
+import {
+  createPendingSubmittedDraft,
+  markPendingSubmittedFailed,
+  pendingSubmittedDraftToEditable,
+  pendingSubmittedDraftToMessage,
+  remapPendingSubmittedSession,
+  type PendingSubmittedDraft,
+} from "../components/session/pending-submit-model";
 import {
   appendQueuedDraft,
   firstQueuedDraft,
@@ -111,6 +113,7 @@ import {
   markQueuedDraftSending,
   moveQueuedDraft,
   removeQueuedDraft,
+  resolveQueuedDraftSessionKey,
   updateQueuedDraft,
   type QueuedDraft,
 } from "../components/session/session-queue-model.js";
@@ -134,9 +137,12 @@ import FlyoutItem from "../components/flyout-item";
 import QuestionModal from "../components/question-modal";
 import ArtifactsPanel from "../components/session/artifacts-panel";
 import type { ArtifactFamily } from "../components/session/artifact-family-model";
+import SessionCapabilitiesPanel from "../components/session/session-capabilities-panel";
+import type { SessionCapabilitiesSnapshot } from "../lib/session-capabilities";
 import { openSessionWithWorkspaceActivation } from "./session-navigation";
 import { availableChatWidthForLayout, reconcileSidebarLayoutForRootWidth } from "./session-layout-width";
 import { resolveSessionTitlebarContext } from "./session-titlebar-context";
+import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 
 function recordSendTrace(event: string, payload?: Record<string, unknown>) {
   if (typeof window === "undefined") return;
@@ -160,6 +166,7 @@ function recordSendTrace(event: string, payload?: Record<string, unknown>) {
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
+  activePendingDraftKey: string | null;
   setView: (view: View, sessionId?: string) => void;
   tab: DashboardTab;
   setTab: (tab: DashboardTab) => void;
@@ -239,6 +246,7 @@ export type SessionViewProps = {
   newTaskDisabled: boolean;
   pendingPermissionCountByWs?: Record<string, number>;
   workspaceSessionGroups: WorkspaceSessionGroup[];
+  unreadSessionIds: Record<string, true>;
   workspaceSessionPagingById: Record<string, { hasMore: boolean; loadingMore: boolean }>;
   subagentDecorationsBySessionId: Record<string, SidebarSubagentDecoration>;
   archivedSessionIds: string[];
@@ -270,6 +278,9 @@ export type SessionViewProps = {
   ) => SidebarSectionState;
   artifacts: ArtifactItem[];
   artifactFamilies: ArtifactFamily[];
+  sessionCapabilities: SessionCapabilitiesSnapshot | null;
+  sessionCapabilitiesStatus: "idle" | "loading" | "ready" | "error";
+  sessionCapabilitiesError: string | null;
   workingFiles: string[];
   authorizedDirs: string[];
   activePlugins: string[];
@@ -470,7 +481,6 @@ export default function SessionView(props: SessionViewProps) {
   const [messageWindowExpanded, setMessageWindowExpanded] = createSignal(false);
   const [initialAnchorPending, setInitialAnchorPending] = createSignal(false);
 
-  const [obsidianAvailable, setObsidianAvailable] = createSignal(false);
   const [layoutRootWidth, setLayoutRootWidth] = createSignal(0);
   const [leftSidebarWidth, setLeftSidebarWidth] = createSignal(readLeftSidebarWidth());
   const [leftSidebarResizing, setLeftSidebarResizing] = createSignal(false);
@@ -515,7 +525,7 @@ export default function SessionView(props: SessionViewProps) {
         <Show when={stateLabel}>
           {(label) => (
             <span
-              class="inline-flex shrink-0 items-center rounded-md border border-gray-6/70 bg-gray-2 px-1.5 text-[11px] font-medium leading-5 text-gray-11"
+              class="inline-block min-w-0 max-w-[14rem] truncate rounded-md border border-gray-6/70 bg-gray-2 px-1.5 align-middle text-[11px] font-medium leading-5 text-gray-11"
               title={label()}
             >
               {label()}
@@ -733,25 +743,6 @@ export default function SessionView(props: SessionViewProps) {
     onCleanup(() => window.removeEventListener("keydown", onKeyDown));
   });
 
-  createEffect(() => {
-    if (!isTauriRuntime()) {
-      setObsidianAvailable(false);
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        const available = await obsidianIsAvailable();
-        if (!cancelled) setObsidianAvailable(available);
-      } catch {
-        if (!cancelled) setObsidianAvailable(false);
-      }
-    })();
-    onCleanup(() => {
-      cancelled = true;
-    });
-  });
-
   const workspaceLabel = (workspace: WorkspaceInfo) =>
     workspace.displayName?.trim() ||
     workspace.vesloWorkspaceName?.trim() ||
@@ -965,62 +956,38 @@ export default function SessionView(props: SessionViewProps) {
     return `${index + 1}/${size}`;
   });
 
-  type OptimisticSubmittedDraft = {
-    id: string;
-    createdAt: number;
-    sessionId: string | null;
-    draft: ComposerDraft;
+  const pendingSessionQueueKey = () => {
+    const pendingDraftKey = props.activePendingDraftKey?.trim();
+    if (pendingDraftKey) return `pending-draft:${props.activePendingDraftKey}`;
+    return `pending-workspace:${props.activeWorkspaceId || "default"}`;
   };
-  const [optimisticSubmittedDraft, setOptimisticSubmittedDraft] = createSignal<OptimisticSubmittedDraft | null>(null);
+  const sessionQueueKeyForSessionId = (sessionId: string | null | undefined) =>
+    sessionId?.trim() || pendingSessionQueueKey();
+  const sessionIdForQueueKey = (sessionKey: string) =>
+    sessionKey.startsWith("pending:") ||
+    sessionKey.startsWith("pending-draft:") ||
+    sessionKey.startsWith("pending-workspace:")
+      ? null
+      : sessionKey;
+  const currentSessionQueueKey = createMemo(() => sessionQueueKeyForSessionId(props.selectedSessionId));
+  const [optimisticSubmittedDraft, setOptimisticSubmittedDraft] = createSignal<PendingSubmittedDraft | null>(null);
 
   const optimisticSubmittedMessage = createMemo<MessageWithParts | null>(() => {
     const submitted = optimisticSubmittedDraft();
     if (!submitted) return null;
+    if (submitted.sessionKey !== currentSessionQueueKey()) return null;
+    return pendingSubmittedDraftToMessage(submitted, props.activeWorkspaceRoot);
+  });
 
-    const sessionID = submitted.sessionId ?? props.selectedSessionId ?? "";
-    const text = (submitted.draft.resolvedText ?? submitted.draft.text).trim();
-    const parts: Part[] = [];
-    if (text) {
-      parts.push({
-        id: `${submitted.id}:text`,
-        sessionID,
-        messageID: submitted.id,
-        type: "text",
-        text,
-      } as Part);
-    }
-    submitted.draft.attachments.forEach((attachment, index) => {
-      parts.push({
-        id: `${submitted.id}:attachment:${index}`,
-        sessionID,
-        messageID: submitted.id,
-        type: "file",
-        url: attachment.dataUrl,
-        filename: attachment.name,
-        mime: attachment.mimeType,
-      } as Part);
-    });
-
+  const pendingMessageStateById = createMemo<Record<string, PendingMessageState>>(() => {
+    const submitted = optimisticSubmittedDraft();
+    if (!submitted) return {};
+    if (submitted.sessionKey !== currentSessionQueueKey()) return {};
+    const state: PendingMessageState = submitted.error
+      ? { state: submitted.state, error: submitted.error }
+      : { state: submitted.state };
     return {
-      info: {
-        id: submitted.id,
-        sessionID,
-        role: "user",
-        time: { created: submitted.createdAt },
-        parentID: "",
-        model: "",
-        modelID: "",
-        providerID: "",
-        mode: submitted.draft.mode,
-        agent: "",
-        path: {
-          cwd: props.activeWorkspaceRoot,
-          root: props.activeWorkspaceRoot,
-        },
-        cost: 0,
-        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-      } as unknown as MessageWithParts["info"],
-      parts,
+      [submitted.id]: state,
     };
   });
 
@@ -1281,7 +1248,7 @@ export default function SessionView(props: SessionViewProps) {
 
   const runLocalFileAction = async (
     file: string,
-    mode: "open" | "reveal" | "obsidian",
+    mode: "open" | "reveal",
     action: (candidate: string) => Promise<void>,
   ) => {
     const candidates = await resolveLocalFileCandidates(file);
@@ -1333,423 +1300,13 @@ export default function SessionView(props: SessionViewProps) {
 
     const suffix =
       candidates.length > 1
-        ? ` (tried ${candidates.length} paths: workspace root and outbox fallbacks)`
+        ? ` (${t("session.file_open_tried_paths", currentLocale()).replace("{count}", String(candidates.length))})`
         : "";
     return {
       ok: false as const,
-      reason: `${lastError instanceof Error ? lastError.message : "File open failed"}${suffix}`,
+      reason: `${lastError instanceof Error ? lastError.message : t("session.file_open_failed", currentLocale())}${suffix}`,
     };
   };
-
-  type RemoteMirrorTrackedFile = {
-    path: string;
-    localPath: string;
-    remoteRevision: string;
-    localFingerprint: string;
-    syncingLocal: boolean;
-  };
-
-  type RemoteFileSyncSession = VesloFileSession & { cursor: number };
-
-  const remoteMirrorTrackedFiles = new Map<string, RemoteMirrorTrackedFile>();
-  const [remoteFileSyncSession, setRemoteFileSyncSession] = createSignal<RemoteFileSyncSession | null>(null);
-  const remoteMirrorWorkspaceKey = createMemo(
-    () => props.vesloServerWorkspaceId?.trim() || props.activeWorkspaceDisplay.id?.trim() || "remote-worker",
-  );
-  let remoteMirrorSyncTimer: number | undefined;
-  let remoteMirrorSyncInFlight = false;
-  let remoteMirrorLastErrorAt = 0;
-
-  const textFingerprint = (value: string) => {
-    let hash = 2166136261;
-    for (let idx = 0; idx < value.length; idx += 1) {
-      hash ^= value.charCodeAt(idx);
-      hash = Math.imul(hash, 16777619);
-    }
-    return `${value.length}:${hash >>> 0}`;
-  };
-
-  const utf8ToBase64 = (value: string) => {
-    const bytes = new TextEncoder().encode(value);
-    let binary = "";
-    for (const byte of bytes) {
-      binary += String.fromCharCode(byte);
-    }
-    const fallbackBuffer = (globalThis as { Buffer?: { from: (input: string, encoding: string) => { toString: (encoding: string) => string } } }).Buffer;
-    if (typeof btoa !== "function") {
-      if (!fallbackBuffer) {
-        throw new Error("Base64 encoder is unavailable");
-      }
-      return fallbackBuffer.from(value, "utf8").toString("base64");
-    }
-    return btoa(binary);
-  };
-
-  const base64ToUtf8 = (value: string) => {
-    const fallbackBuffer = (globalThis as { Buffer?: { from: (input: string, encoding: string) => { toString: (encoding: string) => string } } }).Buffer;
-    if (typeof atob !== "function") {
-      if (!fallbackBuffer) {
-        throw new Error("Base64 decoder is unavailable");
-      }
-      return fallbackBuffer.from(value, "base64").toString("utf8");
-    }
-    const binary = atob(value);
-    const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
-    return new TextDecoder().decode(bytes);
-  };
-
-  const stopRemoteMirrorSyncLoop = () => {
-    if (remoteMirrorSyncTimer !== undefined) {
-      window.clearInterval(remoteMirrorSyncTimer);
-      remoteMirrorSyncTimer = undefined;
-    }
-  };
-
-  const closeRemoteFileSyncSession = async (session: RemoteFileSyncSession | null) => {
-    const client = props.vesloServerClient;
-    if (!client || !session) return;
-    try {
-      await client.closeFileSession(session.id);
-    } catch {
-      // best effort
-    }
-  };
-
-  const resetRemoteFileSync = async () => {
-    stopRemoteMirrorSyncLoop();
-    remoteMirrorSyncInFlight = false;
-    remoteMirrorTrackedFiles.clear();
-    const existing = remoteFileSyncSession();
-    setRemoteFileSyncSession(null);
-    await closeRemoteFileSyncSession(existing);
-  };
-
-  const toWorkerRelativeArtifactPath = (file: string) => {
-    const normalized = file.trim().replace(/^file:\/\//i, "").replace(/[\\/]+/g, "/");
-    if (!normalized) return "";
-
-    const root = props.activeWorkspaceRoot.trim().replace(/[\\/]+/g, "/").replace(/\/+$/, "");
-    if (root) {
-      const rootKey = root.toLowerCase();
-      const fileKey = normalized.toLowerCase();
-      if (fileKey === rootKey) return "";
-      if (fileKey.startsWith(`${rootKey}/`)) {
-        return normalized.slice(root.length + 1);
-      }
-    }
-
-    let relative = normalized.replace(/^\.\/+/, "");
-
-    if (/^[ab]\/.+\.(md|mdx|markdown)$/i.test(relative)) {
-      relative = relative.slice(2);
-    }
-
-    if (/^workspace\//i.test(relative)) {
-      relative = relative.replace(/^workspace\//i, "");
-    }
-
-    if (/^\/+workspace\//i.test(relative)) {
-      relative = relative.replace(/^\/+workspace\//i, "");
-    }
-
-    if (!relative) return "";
-    if (relative.startsWith("/") || relative.startsWith("~") || /^[a-zA-Z]:\//.test(relative)) {
-      return "";
-    }
-    if (relative.split("/").some((part) => part === "." || part === "..")) {
-      return "";
-    }
-    return relative;
-  };
-
-  const toRemoteArtifactCandidates = (file: string) => {
-    const target = toWorkerRelativeArtifactPath(file);
-    if (!target) return [] as string[];
-    const outboxPath = `.opencode/veslo/outbox/${target}`.replace(/\/+/g, "/");
-    if (
-      target.startsWith(".opencode/veslo/outbox/") ||
-      target.startsWith("./.opencode/veslo/outbox/") ||
-      outboxPath === target
-    ) {
-      return [target];
-    }
-    return [target, outboxPath];
-  };
-
-  const ensureRemoteFileSyncSession = async (): Promise<RemoteFileSyncSession> => {
-    const client = props.vesloServerClient;
-    const workspaceId = props.vesloServerWorkspaceId?.trim() ?? "";
-    if (!client || !workspaceId) {
-      throw new Error("Connect to Veslo server to sync remote files.");
-    }
-
-    const existing = remoteFileSyncSession();
-    if (existing && existing.workspaceId === workspaceId) {
-      if (Date.now() + 45_000 < existing.expiresAt) {
-        return existing;
-      }
-
-      try {
-        const renewed = await client.renewFileSession(existing.id, { ttlSeconds: 15 * 60 });
-        const next: RemoteFileSyncSession = {
-          ...renewed.session,
-          cursor: existing.cursor,
-        };
-        setRemoteFileSyncSession(next);
-        return next;
-      } catch (error) {
-        if (!(error instanceof VesloServerError) || error.code !== "file_session_not_found") {
-          throw error;
-        }
-      }
-    }
-
-    if (existing) {
-      await closeRemoteFileSyncSession(existing);
-      setRemoteFileSyncSession(null);
-    }
-
-    const created = await client.createFileSession(workspaceId, {
-      ttlSeconds: 15 * 60,
-      write: true,
-    });
-    const next: RemoteFileSyncSession = {
-      ...created.session,
-      cursor: 0,
-    };
-    setRemoteFileSyncSession(next);
-    return next;
-  };
-
-  const refreshTrackedRemoteMirrorFile = async (session: RemoteFileSyncSession, path: string) => {
-    const client = props.vesloServerClient;
-    if (!client) throw new Error("Veslo server client unavailable");
-
-    const result = await client.readFileBatch(session.id, [path]);
-    const item = result.items[0];
-    if (!item?.ok) {
-      if (item?.code === "file_not_found") {
-        remoteMirrorTrackedFiles.delete(path);
-        return null;
-      }
-      throw new Error(item?.message ?? `Unable to read ${path}`);
-    }
-
-    const content = base64ToUtf8(item.contentBase64);
-    const localPath = await writeObsidianMirrorFile(remoteMirrorWorkspaceKey(), path, content);
-    const local = await readObsidianMirrorFile(remoteMirrorWorkspaceKey(), path);
-    const fingerprint = textFingerprint(local.content ?? content);
-
-    const previous = remoteMirrorTrackedFiles.get(path);
-    remoteMirrorTrackedFiles.set(path, {
-      path,
-      localPath,
-      remoteRevision: item.revision,
-      localFingerprint: fingerprint,
-      syncingLocal: previous?.syncingLocal ?? false,
-    });
-
-    return localPath;
-  };
-
-  const createConflictPath = (path: string) => {
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const marker = `.veslo-conflict-${stamp}`;
-    const dot = path.lastIndexOf(".");
-    if (dot <= 0) {
-      return `${path}${marker}`;
-    }
-    return `${path.slice(0, dot)}${marker}${path.slice(dot)}`;
-  };
-
-  const runRemoteMirrorSyncTick = async () => {
-    if (remoteMirrorSyncInFlight) return;
-    if (remoteMirrorTrackedFiles.size === 0) {
-      stopRemoteMirrorSyncLoop();
-      return;
-    }
-
-    const client = props.vesloServerClient;
-    if (!client) {
-      stopRemoteMirrorSyncLoop();
-      return;
-    }
-
-    remoteMirrorSyncInFlight = true;
-    try {
-      let session = await ensureRemoteFileSyncSession();
-
-      const events = await client.listFileSessionEvents(session.id, { since: session.cursor });
-      if (events.cursor !== session.cursor) {
-        session = { ...session, cursor: events.cursor };
-        setRemoteFileSyncSession(session);
-      }
-
-      const refreshPaths = new Set<string>();
-      for (const event of events.items) {
-        if (event.type === "write" && remoteMirrorTrackedFiles.has(event.path)) {
-          const tracked = remoteMirrorTrackedFiles.get(event.path);
-          if (!tracked?.syncingLocal) {
-            refreshPaths.add(event.path);
-          }
-          continue;
-        }
-
-        if (event.type === "rename") {
-          const tracked = remoteMirrorTrackedFiles.get(event.path);
-          if (!tracked) continue;
-          remoteMirrorTrackedFiles.delete(event.path);
-          if (event.toPath?.trim()) {
-            const nextPath = event.toPath.trim();
-            remoteMirrorTrackedFiles.set(nextPath, {
-              ...tracked,
-              path: nextPath,
-            });
-            refreshPaths.add(nextPath);
-          }
-          continue;
-        }
-
-        if (event.type === "delete") {
-          remoteMirrorTrackedFiles.delete(event.path);
-        }
-      }
-
-      for (const path of refreshPaths) {
-        await refreshTrackedRemoteMirrorFile(session, path);
-      }
-
-      for (const [path, tracked] of remoteMirrorTrackedFiles) {
-        if (tracked.syncingLocal) continue;
-
-        const local = await readObsidianMirrorFile(remoteMirrorWorkspaceKey(), path);
-        if (!local.exists || local.content === null) continue;
-        const nextFingerprint = textFingerprint(local.content);
-        if (nextFingerprint === tracked.localFingerprint) continue;
-
-        tracked.syncingLocal = true;
-        try {
-          const write = await client.writeFileBatch(session.id, [
-            {
-              path,
-              contentBase64: utf8ToBase64(local.content),
-              ifMatchRevision: tracked.remoteRevision,
-            },
-          ]);
-          const item = write.items[0];
-          if (item?.ok) {
-            tracked.remoteRevision = item.revision;
-            tracked.localFingerprint = nextFingerprint;
-            continue;
-          }
-
-          if (!item?.ok && item?.code === "conflict") {
-            const conflictPath = createConflictPath(path);
-            await writeObsidianMirrorFile(remoteMirrorWorkspaceKey(), conflictPath, local.content);
-            await refreshTrackedRemoteMirrorFile(session, path);
-            setToastMessage(`Conflict syncing ${path}. Saved local changes to ${conflictPath}.`);
-            continue;
-          }
-
-          throw new Error(item?.message ?? `Unable to sync ${path}`);
-        } finally {
-          tracked.syncingLocal = false;
-        }
-      }
-    } catch (error) {
-      if (Date.now() - remoteMirrorLastErrorAt > 6_000) {
-        remoteMirrorLastErrorAt = Date.now();
-        const message = error instanceof Error ? error.message : "Remote file sync failed";
-        setToastMessage(message);
-      }
-    } finally {
-      remoteMirrorSyncInFlight = false;
-    }
-  };
-
-  const ensureRemoteMirrorSyncLoop = () => {
-    if (!isTauriRuntime()) return;
-    if (remoteMirrorTrackedFiles.size === 0) return;
-    if (remoteMirrorSyncTimer !== undefined) return;
-    remoteMirrorSyncTimer = window.setInterval(() => {
-      void runRemoteMirrorSyncTick();
-    }, 2500);
-    void runRemoteMirrorSyncTick();
-  };
-
-  const mirrorRemoteArtifactForObsidian = async (file: string) => {
-    const session = await ensureRemoteFileSyncSession();
-    const client = props.vesloServerClient;
-    if (!client) {
-      throw new Error("Connect to Veslo server to sync remote files.");
-    }
-
-    const candidates = toRemoteArtifactCandidates(file);
-    if (candidates.length === 0) {
-      throw new Error("Only worker-relative files can be opened in Obsidian.");
-    }
-
-    let lastError: Error | null = null;
-    for (const candidate of candidates) {
-      try {
-        const result = await client.readFileBatch(session.id, [candidate]);
-        const item = result.items[0];
-        if (!item?.ok) {
-          if (item?.code === "file_not_found") continue;
-          throw new Error(item?.message ?? `Unable to read ${candidate}`);
-        }
-
-        const content = base64ToUtf8(item.contentBase64);
-        const localPath = await writeObsidianMirrorFile(remoteMirrorWorkspaceKey(), candidate, content);
-        const local = await readObsidianMirrorFile(remoteMirrorWorkspaceKey(), candidate);
-        const fingerprint = textFingerprint(local.content ?? content);
-
-        remoteMirrorTrackedFiles.set(candidate, {
-          path: candidate,
-          localPath,
-          remoteRevision: item.revision,
-          localFingerprint: fingerprint,
-          syncingLocal: false,
-        });
-        ensureRemoteMirrorSyncLoop();
-        return localPath;
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-      }
-    }
-
-    throw lastError ?? new Error("Unable to open file in Obsidian");
-  };
-
-  createEffect(
-    on(
-      () =>
-        [
-          isTauriRuntime(),
-          props.activeWorkspaceDisplay.workspaceType,
-          props.vesloServerWorkspaceId?.trim() ?? "",
-          Boolean(props.vesloServerClient),
-        ] as const,
-      ([desktopRuntime, workspaceType, workspaceId, hasClient], previous) => {
-        const previousWorkspaceId = previous?.[2] ?? "";
-        const hasRemoteContext = desktopRuntime && workspaceType === "remote" && workspaceId.length > 0 && hasClient;
-        if (!hasRemoteContext) {
-          if (remoteFileSyncSession() || remoteMirrorTrackedFiles.size > 0 || remoteMirrorSyncTimer !== undefined) {
-            void resetRemoteFileSync();
-          }
-          return;
-        }
-
-        if (previousWorkspaceId && previousWorkspaceId !== workspaceId) {
-          void resetRemoteFileSync();
-        }
-      },
-    ),
-  );
-
-  onCleanup(() => {
-    void resetRemoteFileSync();
-  });
 
   const revealArtifact = async (file: string) => {
     if (props.activeWorkspaceDisplay.workspaceType === "remote") {
@@ -1779,51 +1336,6 @@ export default function SessionView(props: SessionViewProps) {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : tr("session.unable_reveal_file");
-      setToastMessage(message);
-    }
-  };
-
-  const openArtifactInObsidian = async (file: string) => {
-    if (!/\.(md|mdx|markdown)$/i.test(file)) return;
-    if (!obsidianAvailable()) {
-      setToastMessage(tr("session.obsidian_unavailable"));
-      return;
-    }
-    if (!isTauriRuntime()) {
-      setToastMessage(tr("session.obsidian_desktop_only"));
-      return;
-    }
-
-    const isRemoteWorkspace = props.activeWorkspaceDisplay.workspaceType === "remote";
-    const preferLocalOpen = !isRemoteWorkspace;
-
-    try {
-      if (preferLocalOpen) {
-        const localResult = await runLocalFileAction(file, "obsidian", async (candidate) => {
-          await openInObsidian(candidate);
-        });
-        if (localResult.ok) {
-          return;
-        }
-        if (localResult.reason === "missing-root" && !isRemoteWorkspace) {
-          setToastMessage(tr("session.pick_worker_open_files"));
-          return;
-        }
-        if (!isRemoteWorkspace) {
-          setToastMessage(localResult.reason);
-          return;
-        }
-      }
-
-      if (!isRemoteWorkspace) {
-        setToastMessage(tr("session.pick_worker_open_files"));
-        return;
-      }
-
-      const mirrored = await mirrorRemoteArtifactForObsidian(file);
-      await openInObsidian(mirrored);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : tr("session.unable_open_obsidian");
       setToastMessage(message);
     }
   };
@@ -2067,19 +1579,21 @@ export default function SessionView(props: SessionViewProps) {
     assistantId: null,
     partCount: 0,
   });
+  const resetRunState = () => {
+    setRunStartedAt(null);
+    setRunHasBegun(false);
+    setRunLastProgressAt(null);
+    setRunBaseline({ assistantId: null, partCount: 0 });
+  };
   const [queuedDraftsBySessionKey, setQueuedDraftsBySessionKey] = createSignal<Record<string, QueuedDraft[]>>({});
   const [queuePausedAfterStopBySessionKey, setQueuePausedAfterStopBySessionKey] = createSignal<Record<string, boolean>>({});
+  const [pendingQueueKeyAwaitingSessionId, setPendingQueueKeyAwaitingSessionId] = createSignal<string | null>(null);
   const [editingQueuedDraftId, setEditingQueuedDraftId] = createSignal<string | null>(null);
   const [editingTranscriptMessageId, setEditingTranscriptMessageId] = createSignal<string | null>(null);
   const [abortBusy, setAbortBusy] = createSignal(false);
   const [todoExpanded, setTodoExpanded] = createSignal(false);
   let queueDrainAttemptInFlight = false;
 
-  const sessionQueueKeyForSessionId = (sessionId: string | null | undefined) =>
-    sessionId ?? `pending:${props.activeWorkspaceId || "default"}`;
-  const sessionIdForQueueKey = (sessionKey: string) =>
-    sessionKey.startsWith("pending:") ? null : sessionKey;
-  const currentSessionQueueKey = createMemo(() => sessionQueueKeyForSessionId(props.selectedSessionId));
   const queuedDrafts = createMemo(() => queuedDraftsBySessionKey()[currentSessionQueueKey()] ?? []);
   const queuePaused = createMemo(() => Boolean(queuePausedAfterStopBySessionKey()[currentSessionQueueKey()]));
   const queuePausedForSessionKey = (sessionKey: string) =>
@@ -2105,6 +1619,10 @@ export default function SessionView(props: SessionViewProps) {
     updateQueueForSessionKey(currentSessionQueueKey(), updater);
   };
 
+  const resolveQueueKeyForQueuedDraft = (originalSessionKey: string, draftId: string) => {
+    return resolveQueuedDraftSessionKey(queuedDraftsBySessionKey(), originalSessionKey, draftId);
+  };
+
   const setQueuePausedForSessionKey = (sessionKey: string, paused: boolean) => {
     setQueuePausedAfterStopBySessionKey((current) => {
       if (Boolean(current[sessionKey]) === paused) return current;
@@ -2114,6 +1632,66 @@ export default function SessionView(props: SessionViewProps) {
 
   const setQueuePausedForCurrentSession = (paused: boolean) => {
     setQueuePausedForSessionKey(currentSessionQueueKey(), paused);
+  };
+
+  const remapPendingQueueToSession = (pendingKey: string, sessionId: string) => {
+    const sessionKey = sessionQueueKeyForSessionId(sessionId);
+    if (!pendingKey || pendingKey === sessionKey) return;
+
+    setQueuedDraftsBySessionKey((current) => {
+      const pendingQueue = current[pendingKey] ?? [];
+      if (!pendingQueue.length) return current;
+      const existingRealQueue = current[sessionKey] ?? [];
+      const { [pendingKey]: _removedPendingQueue, ...rest } = current;
+      return {
+        ...rest,
+        [sessionKey]: [...existingRealQueue, ...pendingQueue],
+      };
+    });
+
+    setQueuePausedAfterStopBySessionKey((current) => {
+      if (!(pendingKey in current)) return current;
+      const pendingPaused = Boolean(current[pendingKey]);
+      const { [pendingKey]: _removedPendingPaused, ...rest } = current;
+      return {
+        ...rest,
+        [sessionKey]: pendingPaused || Boolean(current[sessionKey]),
+      };
+    });
+
+    setOptimisticSubmittedDraft((current) =>
+      current?.sessionKey === pendingKey
+        ? { ...remapPendingSubmittedSession(current, sessionId), sessionKey }
+        : current,
+    );
+  };
+
+  const restoreMaterializedQueueToPending = (pendingKey: string, sessionId: string | null | undefined) => {
+    const materializedSessionId = sessionId?.trim();
+    if (!pendingKey || !materializedSessionId) return;
+    const sessionKey = sessionQueueKeyForSessionId(materializedSessionId);
+    if (pendingKey === sessionKey) return;
+
+    setQueuedDraftsBySessionKey((current) => {
+      const materializedQueue = current[sessionKey] ?? [];
+      if (!materializedQueue.length) return current;
+      const existingPendingQueue = current[pendingKey] ?? [];
+      const { [sessionKey]: _removedMaterializedQueue, ...rest } = current;
+      return {
+        ...rest,
+        [pendingKey]: [...existingPendingQueue, ...materializedQueue],
+      };
+    });
+
+    setQueuePausedAfterStopBySessionKey((current) => {
+      if (!(sessionKey in current)) return current;
+      const materializedPaused = Boolean(current[sessionKey]);
+      const { [sessionKey]: _removedMaterializedPaused, ...rest } = current;
+      return {
+        ...rest,
+        [pendingKey]: materializedPaused || Boolean(current[pendingKey]),
+      };
+    });
   };
 
   const appendDraftToCurrentQueue = (draft: ComposerDraft) => {
@@ -2188,14 +1766,34 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const showRunIndicator = createMemo(() => runPhase() !== "idle");
-  const editableUserMessage = createMemo(() =>
-    getEditableUserMessageDraft({
-      messages: props.messages,
-      sessionIdle: !showRunIndicator(),
-      queueEmpty: queuedDrafts().length === 0,
-      composerEmpty: isComposerDraftEmpty(props.composerDraft),
-    }),
-  );
+  const createTranscriptEditableUserMessage = () => {
+    const editableUserMessage = createMemo(() =>
+      getEditableUserMessageDraft({
+        messages: props.messages,
+        sessionIdle: !showRunIndicator(),
+        queueEmpty: queuedDrafts().length === 0,
+        composerEmpty: isComposerDraftEmpty(props.composerDraft),
+      }),
+    );
+    return editableUserMessage;
+  };
+  const transcriptEditableUserMessage = createTranscriptEditableUserMessage();
+  const editableUserMessage = createMemo(() => {
+    const submitted = optimisticSubmittedDraft();
+    const sessionIdle = !showRunIndicator();
+    const queueEmpty = queuedDrafts().length === 0;
+    const composerEmpty = isComposerDraftEmpty(props.composerDraft);
+    if (
+      submitted?.sessionKey === currentSessionQueueKey() &&
+      sessionIdle &&
+      queueEmpty &&
+      composerEmpty
+    ) {
+      const editable = pendingSubmittedDraftToEditable(submitted);
+      if (editable) return editable;
+    }
+    return transcriptEditableUserMessage();
+  });
 
   const latestRunPart = createMemo<Part | null>(() => {
     if (!showRunIndicator()) return null;
@@ -2410,10 +2008,7 @@ export default function SessionView(props: SessionViewProps) {
 
         // Reset run state when switching sessions so a stuck error from a
         // previous session doesn't bleed into the new one.
-        setRunStartedAt(null);
-        setRunHasBegun(false);
-        setRunLastProgressAt(null);
-        setRunBaseline({ assistantId: null, partCount: 0 });
+        resetRunState();
         const previousEditingQueuedDraftId = editingQueuedDraftId();
         restoreEditingQueuedDraft(sessionQueueKeyForSessionId(previousSessionId), previousEditingQueuedDraftId);
         if (previousEditingQueuedDraftId) {
@@ -2423,6 +2018,11 @@ export default function SessionView(props: SessionViewProps) {
         setEditingTranscriptMessageId(null);
 
         if (!sessionId) return;
+        const pendingKey = previousSessionId ? null : pendingQueueKeyAwaitingSessionId();
+        if (pendingKey) {
+          remapPendingQueueToSession(pendingKey, sessionId);
+          setPendingQueueKeyAwaitingSessionId(null);
+        }
         const sessionKey = sessionQueueKeyForSessionId(sessionId);
         if (props.sessionStatusById[sessionId] === "idle" && !queuePausedForSessionKey(sessionKey)) {
           void drainNextQueuedDraft("queue-drain", sessionKey);
@@ -2649,10 +2249,7 @@ export default function SessionView(props: SessionViewProps) {
   createEffect(() => {
     if (!runStartedAt()) return;
     if (props.sessionStatus === "idle" && (runHasBegun() || responseStarted())) {
-      setRunStartedAt(null);
-      setRunHasBegun(false);
-      setRunLastProgressAt(null);
-      setRunBaseline({ assistantId: null, partCount: 0 });
+      resetRunState();
     }
   });
 
@@ -2666,10 +2263,7 @@ export default function SessionView(props: SessionViewProps) {
     if (runHasBegun() || responseStarted()) return;
     const timer = setTimeout(() => {
       if (runStartedAt() && props.sessionStatus === "idle" && !runHasBegun() && !responseStarted()) {
-        setRunStartedAt(null);
-        setRunHasBegun(false);
-        setRunLastProgressAt(null);
-        setRunBaseline({ assistantId: null, partCount: 0 });
+        resetRunState();
       }
     }, 2_000);
     onCleanup(() => clearTimeout(timer));
@@ -2794,10 +2388,7 @@ export default function SessionView(props: SessionViewProps) {
     // If the run is already in error state (e.g. model failed before responding),
     // the session is already idle server-side. Just dismiss the stuck indicator locally.
     if (runPhase() === "error") {
-      setRunStartedAt(null);
-      setRunHasBegun(false);
-      setRunLastProgressAt(null);
-      setRunBaseline({ assistantId: null, partCount: 0 });
+      resetRunState();
       return;
     }
 
@@ -3304,30 +2895,30 @@ export default function SessionView(props: SessionViewProps) {
       });
       return [
         {
-          label: "Veslo invite link",
+          label: t("share.invite_link_label", currentLocale()),
           value: inviteUrl,
           secret: true,
-          placeholder: !isTauriRuntime() ? "Desktop app required" : "Starting server...",
-          hint: "One link that prefills worker URL and token.",
+          placeholder: !isTauriRuntime() ? t("app.error.tauri_required", currentLocale()) : t("config.starting_server", currentLocale()),
+          hint: t("share.invite_link_hint", currentLocale()),
         },
         {
-          label: "Veslo worker URL",
+          label: t("share.worker_url_label", currentLocale()),
           value: url,
-          placeholder: !isTauriRuntime() ? "Desktop app required" : "Starting server...",
+          placeholder: !isTauriRuntime() ? t("app.error.tauri_required", currentLocale()) : t("config.starting_server", currentLocale()),
           hint: mountedUrl
-            ? "Use on phones or laptops connecting to this worker."
+            ? t("share.use_connecting_to_worker", currentLocale())
             : hostUrl
-              ? "Worker URL is resolving; host URL shown as fallback."
+              ? t("share.worker_url_resolving", currentLocale())
               : undefined,
         },
         {
-          label: "Access token",
+          label: t("dashboard.veslo_host_token_label", currentLocale()),
           value: token,
           secret: true,
-          placeholder: isTauriRuntime() ? "-" : "Desktop app required",
+          placeholder: isTauriRuntime() ? "-" : t("app.error.tauri_required", currentLocale()),
           hint: mountedUrl
-            ? "Use on phones or laptops connecting to this worker."
-            : "Use on phones or laptops connecting to this host.",
+            ? t("share.use_connecting_to_worker", currentLocale())
+            : t("share.use_connecting_to_host", currentLocale()),
         },
       ];
     }
@@ -3345,21 +2936,21 @@ export default function SessionView(props: SessionViewProps) {
       });
       return [
         {
-          label: "Veslo invite link",
+          label: t("share.invite_link_label", currentLocale()),
           value: inviteUrl,
           secret: true,
-          hint: "One link that prefills worker URL and token.",
+          hint: t("share.invite_link_hint", currentLocale()),
         },
         {
-          label: "Veslo worker URL",
+          label: t("share.worker_url_label", currentLocale()),
           value: url,
         },
         {
-          label: "Access token",
+          label: t("dashboard.veslo_host_token_label", currentLocale()),
           value: token,
           secret: true,
-          placeholder: token ? undefined : "Set token in workspace settings",
-          hint: "This token grants access to the worker on that host.",
+          placeholder: token ? undefined : t("share.set_token_in_workspace_settings", currentLocale()),
+          hint: t("share.token_grants_access", currentLocale()),
         },
       ];
     }
@@ -3368,11 +2959,11 @@ export default function SessionView(props: SessionViewProps) {
     const directory = ws.directory?.trim() || "";
     return [
       {
-        label: "OpenCode base URL",
+        label: t("share.opencode_base_url_label", currentLocale()),
         value: baseUrl,
       },
       {
-        label: "Directory",
+        label: t("onboarding.directory", currentLocale()),
         value: directory,
         placeholder: "(auto)",
       },
@@ -3383,28 +2974,28 @@ export default function SessionView(props: SessionViewProps) {
     const ws = shareWorkspace();
     if (!ws) return null;
     if (ws.workspaceType === "local" && props.engineInfo?.runtime === "direct") {
-      return "Engine runtime is set to Direct. Switching local workers can restart the host and disconnect clients. The token may change after a restart.";
+      return t("share.direct_runtime_note", currentLocale());
     }
     return null;
   });
 
   const shareServiceDisabledReason = createMemo(() => {
     const ws = shareWorkspace();
-    if (!ws) return "Select a worker first.";
+    if (!ws) return t("share.select_worker_first", currentLocale());
     if (ws.workspaceType === "remote" && ws.remoteType !== "veslo") {
-      return "Share service links are available for Veslo workers.";
+      return t("share.veslo_workers_only", currentLocale());
     }
     if (ws.workspaceType !== "remote") {
       const baseUrl = props.vesloServerHostInfo?.baseUrl?.trim() ?? "";
       const token = props.vesloServerHostInfo?.clientToken?.trim() ?? "";
       if (!baseUrl || !token) {
-        return "Local Veslo host is not ready yet.";
+        return t("share.local_host_not_ready", currentLocale());
       }
     } else {
       const hostUrl = ws.vesloHostUrl?.trim() || ws.baseUrl?.trim() || "";
       const token = ws.vesloToken?.trim() || props.vesloServerSettings.token?.trim() || "";
-      if (!hostUrl) return "Missing Veslo host URL.";
-      if (!token) return "Missing Veslo token.";
+      if (!hostUrl) return t("share.missing_host_url", currentLocale());
+      if (!token) return t("share.missing_token", currentLocale());
     }
     return null;
   });
@@ -3416,14 +3007,14 @@ export default function SessionView(props: SessionViewProps) {
   }> => {
     const ws = shareWorkspace();
     if (!ws) {
-      throw new Error("Select a worker first.");
+      throw new Error(t("share.select_worker_first", currentLocale()));
     }
 
     if (ws.workspaceType !== "remote") {
       const baseUrl = props.vesloServerHostInfo?.baseUrl?.trim() ?? "";
       const token = props.vesloServerHostInfo?.clientToken?.trim() ?? "";
       if (!baseUrl || !token) {
-        throw new Error("Local Veslo host is not ready yet.");
+        throw new Error(t("share.local_host_not_ready", currentLocale()));
       }
       const client = createVesloServerClient({ baseUrl, token });
 
@@ -3438,20 +3029,20 @@ export default function SessionView(props: SessionViewProps) {
       }
 
       if (!workspaceId) {
-        throw new Error("Could not resolve this worker on the local Veslo host.");
+        throw new Error(t("share.resolve_local_worker_failed", currentLocale()));
       }
 
       return { client, workspaceId, workspace: ws };
     }
 
     if (ws.remoteType !== "veslo") {
-      throw new Error("Share service links are available for Veslo workers.");
+      throw new Error(t("share.veslo_workers_only", currentLocale()));
     }
 
     const hostUrl = ws.vesloHostUrl?.trim() || ws.baseUrl?.trim() || "";
     const token = ws.vesloToken?.trim() || props.vesloServerSettings.token?.trim() || "";
     if (!hostUrl || !token) {
-      throw new Error("Veslo host URL and token are required.");
+      throw new Error(t("share.host_url_token_required", currentLocale()));
     }
 
     const client = createVesloServerClient({ baseUrl: hostUrl, token });
@@ -3478,7 +3069,7 @@ export default function SessionView(props: SessionViewProps) {
     }
 
     if (!workspaceId) {
-      throw new Error("Could not resolve this worker on the Veslo host.");
+      throw new Error(t("share.resolve_remote_worker_failed", currentLocale()));
     }
 
     return { client, workspaceId, workspace: ws };
@@ -3497,7 +3088,7 @@ export default function SessionView(props: SessionViewProps) {
         schemaVersion: 1,
         type: "workspace-profile",
         name: `${workspaceLabel(workspace)} profile`,
-        description: "Full Veslo workspace profile with config, MCP setup, commands, and skills.",
+        description: t("share.workspace_profile_description", currentLocale()),
         workspace: exported,
       };
 
@@ -3514,7 +3105,7 @@ export default function SessionView(props: SessionViewProps) {
         // ignore
       }
     } catch (error) {
-      setShareWorkspaceProfileError(error instanceof Error ? error.message : "Failed to publish workspace profile");
+      setShareWorkspaceProfileError(error instanceof Error ? error.message : t("share.publish_workspace_failed", currentLocale()));
     } finally {
       setShareWorkspaceProfileBusy(false);
     }
@@ -3531,14 +3122,14 @@ export default function SessionView(props: SessionViewProps) {
       const exported = await client.exportWorkspace(workspaceId);
       const skills = Array.isArray(exported.skills) ? exported.skills : [];
       if (!skills.length) {
-        throw new Error("No skills found in this workspace.");
+        throw new Error(t("share.no_skills_found", currentLocale()));
       }
 
       const payload: SkillsSetBundleV1 = {
         schemaVersion: 1,
         type: "skills-set",
         name: `${workspaceLabel(workspace)} skills`,
-        description: "Complete skills set from an Veslo workspace.",
+        description: t("share.skills_set_description", currentLocale()),
         skills: skills.map((skill) => ({
           name: skill.name,
           description: skill.description,
@@ -3564,7 +3155,7 @@ export default function SessionView(props: SessionViewProps) {
         // ignore
       }
     } catch (error) {
-      setShareSkillsSetError(error instanceof Error ? error.message : "Failed to publish skills set");
+      setShareSkillsSetError(error instanceof Error ? error.message : t("share.publish_skills_failed", currentLocale()));
     } finally {
       setShareSkillsSetBusy(false);
     }
@@ -3572,10 +3163,10 @@ export default function SessionView(props: SessionViewProps) {
 
   const exportDisabledReason = createMemo(() => {
     const ws = shareWorkspace();
-    if (!ws) return "Export is available for local workers in the desktop app.";
-    if (ws.workspaceType === "remote") return "Export is only supported for local workers.";
-    if (!isTauriRuntime()) return "Export is available in the desktop app.";
-    if (props.exportWorkspaceBusy) return "Export is already running.";
+    if (!ws) return t("share.export_local_desktop", currentLocale());
+    if (ws.workspaceType === "remote") return t("share.export_local_only", currentLocale());
+    if (!isTauriRuntime()) return t("share.export_desktop_only", currentLocale());
+    if (props.exportWorkspaceBusy) return t("share.export_running", currentLocale());
     return null;
   });
 
@@ -3585,6 +3176,7 @@ export default function SessionView(props: SessionViewProps) {
       reason?: "normal" | "queue-drain" | "send-now" | "replacement";
       expectedSessionKey?: string;
       replaceMessageId?: string;
+      restoreDraftOnFailure?: boolean;
     } = {},
   ) => {
     const expectedSessionKey = options.expectedSessionKey;
@@ -3598,6 +3190,45 @@ export default function SessionView(props: SessionViewProps) {
       reason: options.reason ?? "normal",
     });
     if (expectedSessionKey && currentSessionQueueKey() !== expectedSessionKey && !targetSessionId) return false;
+    const showOptimisticSubmit = !options.replaceMessageId && options.reason !== "queue-drain";
+    const sessionKey = expectedSessionKey ?? currentSessionQueueKey();
+    const pendingSessionKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey(sessionKey) ? sessionKey : null;
+    if (pendingSessionKeyBeforeHandoff) {
+      setPendingQueueKeyAwaitingSessionId(pendingSessionKeyBeforeHandoff);
+    }
+    const pendingSubmitId = `optimistic-submit:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+    const clearMatchingPendingSubmit = () => {
+      setOptimisticSubmittedDraft((current) => (current?.id === pendingSubmitId ? null : current));
+    };
+    const markMatchingPendingSubmitFailed = (errorMessage: string) => {
+      let materializedSessionIdToRestore: string | null = null;
+      setOptimisticSubmittedDraft((current) => {
+        if (current?.id !== pendingSubmitId) return current;
+        const failed = markPendingSubmittedFailed(current, errorMessage);
+        if (pendingSessionKeyBeforeHandoff) {
+          materializedSessionIdToRestore = current.sessionId;
+          return { ...failed, sessionKey: pendingSessionKeyBeforeHandoff, sessionId: null };
+        }
+        return failed;
+      });
+      if (pendingSessionKeyBeforeHandoff) {
+        restoreMaterializedQueueToPending(pendingSessionKeyBeforeHandoff, materializedSessionIdToRestore);
+      }
+    };
+    if (showOptimisticSubmit) {
+      setOptimisticSubmittedDraft(
+        createPendingSubmittedDraft({
+          id: pendingSubmitId,
+          sessionKey,
+          createdAt: Date.now(),
+          sessionId: targetSessionId ?? props.selectedSessionId,
+          draft,
+        }),
+      );
+      setStickToBottom(true);
+      scheduleScrollToLatest("auto");
+      startRun();
+    }
     if (props.aiAccessBlockedReason) {
       recordSendTrace("sendPromptImmediate:blocked-ai-access", {
         aiAccessBlockedReason: props.aiAccessBlockedReason,
@@ -3605,21 +3236,15 @@ export default function SessionView(props: SessionViewProps) {
         targetSessionId,
         reason: options.reason ?? "normal",
       });
+      if (showOptimisticSubmit) {
+        markMatchingPendingSubmitFailed(props.aiAccessBlockedReason);
+        resetRunState();
+      }
+      if (pendingSessionKeyBeforeHandoff) {
+        setPendingQueueKeyAwaitingSessionId(null);
+      }
       setToastMessage(props.aiAccessBlockedReason);
       return false;
-    }
-
-    const showOptimisticSubmit = !options.replaceMessageId && options.reason !== "queue-drain";
-    if (showOptimisticSubmit) {
-      setOptimisticSubmittedDraft({
-        id: `optimistic-submit:${Date.now()}:${Math.random().toString(36).slice(2)}`,
-        createdAt: Date.now(),
-        sessionId: targetSessionId ?? props.selectedSessionId,
-        draft,
-      });
-      setStickToBottom(true);
-      scheduleScrollToLatest("auto");
-      startRun();
     }
 
     try {
@@ -3636,20 +3261,31 @@ export default function SessionView(props: SessionViewProps) {
       });
       if (!accepted) {
         if (showOptimisticSubmit) {
-          props.setComposerDraft(draft);
-          setOptimisticSubmittedDraft(null);
+          const errorMessage = props.error ?? tr("session.connect_server_to_attach");
+          markMatchingPendingSubmitFailed(errorMessage);
+          resetRunState();
+        }
+        if (pendingSessionKeyBeforeHandoff) {
+          setPendingQueueKeyAwaitingSessionId(null);
         }
         setToastMessage(props.error ?? tr("session.connect_server_to_attach"));
         return false;
       }
+      if (accepted && pendingSessionKeyBeforeHandoff) {
+        const materializedSessionId = props.selectedSessionId?.trim();
+        if (materializedSessionId) {
+          remapPendingQueueToSession(pendingSessionKeyBeforeHandoff, materializedSessionId);
+          setPendingQueueKeyAwaitingSessionId(null);
+        }
+      }
       if (options.expectedSessionKey && currentSessionQueueKey() !== options.expectedSessionKey) {
         if (showOptimisticSubmit) {
-          setOptimisticSubmittedDraft(null);
+          clearMatchingPendingSubmit();
         }
         return accepted;
       }
-      if (accepted) {
-        setOptimisticSubmittedDraft(null);
+      if (accepted && showOptimisticSubmit) {
+        clearMatchingPendingSubmit();
       }
       setStickToBottom(true);
       scheduleScrollToLatest("auto");
@@ -3657,8 +3293,12 @@ export default function SessionView(props: SessionViewProps) {
       return true;
     } catch (e) {
       if (showOptimisticSubmit) {
-        props.setComposerDraft(draft);
-        setOptimisticSubmittedDraft(null);
+        const errorMessage = props.error ?? (e instanceof Error ? e.message : tr("session.connect_server_to_attach"));
+        markMatchingPendingSubmitFailed(errorMessage);
+        resetRunState();
+      }
+      if (pendingSessionKeyBeforeHandoff) {
+        setPendingQueueKeyAwaitingSessionId(null);
       }
       reportError(e, "session.sendPrompt");
       setToastMessage(props.error ?? tr("session.connect_server_to_attach"));
@@ -3680,20 +3320,24 @@ export default function SessionView(props: SessionViewProps) {
     updateQueueForSessionKey(sessionKey, (queue) => markQueuedDraftSending(queue, item.id));
     try {
       if (currentSessionQueueKey() !== sessionKey && !sessionIdForQueueKey(sessionKey)) {
-        updateQueueForSessionKey(sessionKey, (queue) => markQueuedDraftQueued(queue, item.id));
+        const queuedSessionKey = resolveQueueKeyForQueuedDraft(sessionKey, item.id);
+        updateQueueForSessionKey(queuedSessionKey, (queue) => markQueuedDraftQueued(queue, item.id));
         return;
       }
 
       const accepted = await sendPromptImmediate(item.draft, { reason, expectedSessionKey: sessionKey });
       if (accepted) {
-        updateQueueForSessionKey(sessionKey, (queue) => removeQueuedDraft(queue, item.id));
+        const acceptedSessionKey = resolveQueueKeyForQueuedDraft(sessionKey, item.id);
+        updateQueueForSessionKey(acceptedSessionKey, (queue) => removeQueuedDraft(queue, item.id));
         return;
       }
       if (currentSessionQueueKey() !== sessionKey && !sessionIdForQueueKey(sessionKey)) {
-        updateQueueForSessionKey(sessionKey, (queue) => markQueuedDraftQueued(queue, item.id));
+        const queuedSessionKey = resolveQueueKeyForQueuedDraft(sessionKey, item.id);
+        updateQueueForSessionKey(queuedSessionKey, (queue) => markQueuedDraftQueued(queue, item.id));
         return;
       }
-      updateQueueForSessionKey(sessionKey, (queue) =>
+      const errorSessionKey = resolveQueueKeyForQueuedDraft(sessionKey, item.id);
+      updateQueueForSessionKey(errorSessionKey, (queue) =>
         markQueuedDraftError(queue, item.id, props.error ?? tr("session.connect_server_to_attach")),
       );
     } finally {
@@ -3728,6 +3372,15 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const handleEditUserMessage = (editable: EditableUserMessageDraft) => {
+    const submitted = optimisticSubmittedDraft();
+    const pendingEditable =
+      submitted?.sessionKey === currentSessionQueueKey() ? pendingSubmittedDraftToEditable(submitted) : null;
+    if (pendingEditable?.messageId === editable.messageId) {
+      setOptimisticSubmittedDraft(null);
+      setEditingTranscriptMessageId(null);
+      props.setComposerDraft(pendingEditable.draft);
+      return;
+    }
     if (editableUserMessage()?.messageId !== editable.messageId) return;
     setEditingTranscriptMessageId(editable.messageId);
     props.setComposerDraft(editable.draft);
@@ -3758,13 +3411,26 @@ export default function SessionView(props: SessionViewProps) {
 
       const sessionKey = currentSessionQueueKey();
       const wasPaused = queuePausedForSessionKey(sessionKey);
-      const accepted = await sendPromptImmediate(draft, { reason: "send-now", expectedSessionKey: sessionKey });
-      if (!accepted) return false;
-      updateQueueForSessionKey(sessionKey, (queue) => removeQueuedDraft(queue, editingId));
+      updateQueueForSessionKey(sessionKey, (queue) =>
+        markQueuedDraftSending(updateQueuedDraft(queue, editingId, draft), editingId),
+      );
       if (currentSessionQueueKey() === sessionKey) {
         setEditingQueuedDraftId(null);
         props.setComposerDraft(emptyComposerDraft(draft.mode));
       }
+      const accepted = await sendPromptImmediate(draft, {
+        reason: "send-now",
+        expectedSessionKey: sessionKey,
+        restoreDraftOnFailure: false,
+      });
+      const resultSessionKey = resolveQueueKeyForQueuedDraft(sessionKey, editingId);
+      if (!accepted) {
+        updateQueueForSessionKey(resultSessionKey, (queue) =>
+          markQueuedDraftError(queue, editingId, props.error ?? tr("session.connect_server_to_attach")),
+        );
+        return false;
+      }
+      updateQueueForSessionKey(resultSessionKey, (queue) => removeQueuedDraft(queue, editingId));
       if (accepted && wasPaused) {
         setQueuePausedForSessionKey(sessionKey, false);
       }
@@ -3774,15 +3440,13 @@ export default function SessionView(props: SessionViewProps) {
     const transcriptEditMessageId = editingTranscriptMessageId();
     if (transcriptEditMessageId) {
       const sessionKey = currentSessionQueueKey();
+      setEditingTranscriptMessageId(null);
       const accepted = await sendPromptImmediate(draft, {
         reason: "replacement",
         expectedSessionKey: sessionKey,
         replaceMessageId: transcriptEditMessageId,
       });
       if (!accepted) return false;
-      if (currentSessionQueueKey() === sessionKey) {
-        setEditingTranscriptMessageId(null);
-      }
       return true;
     }
 
@@ -4243,6 +3907,7 @@ export default function SessionView(props: SessionViewProps) {
             workspaceSessionGroups={props.workspaceSessionGroups}
             workspaceSessionPagingById={props.workspaceSessionPagingById}
             subagentDecorationsBySessionId={props.subagentDecorationsBySessionId}
+            unreadSessionIds={props.unreadSessionIds}
             archivedSessionIds={props.archivedSessionIds}
             activeWorkspaceId={props.activeWorkspaceId}
             selectedSessionId={props.selectedSessionId}
@@ -4321,8 +3986,12 @@ export default function SessionView(props: SessionViewProps) {
         families={props.artifactFamilies}
         workspaceRoot={props.activeWorkspaceRoot}
         onRevealArtifact={revealArtifact}
-        onOpenInObsidian={openArtifactInObsidian}
-        obsidianAvailable={obsidianAvailable()}
+      />
+      <SessionCapabilitiesPanel
+        state={props.sessionCapabilitiesStatus}
+        skills={props.sessionCapabilities?.skills ?? []}
+        mcp={props.sessionCapabilities?.mcp ?? []}
+        error={props.sessionCapabilitiesError}
       />
     </div>
   );
@@ -4369,7 +4038,7 @@ export default function SessionView(props: SessionViewProps) {
             class="absolute inset-y-0 right-0 w-2 cursor-col-resize"
             role="separator"
             aria-orientation="vertical"
-            aria-label="Resize left sidebar"
+            aria-label={__vesloT("ui.literal.resize_left_sidebar_1nybbn", __vesloCurrentLocale())}
             onPointerDown={startLeftSidebarResize}
           />
         </aside>
@@ -4611,6 +4280,7 @@ export default function SessionView(props: SessionViewProps) {
             activeSearchMessageId={activeSearchHit()?.messageId ?? null}
             searchHighlightQuery={searchQueryDebounced().trim()}
             scrollElement={() => chatContainerEl}
+            pendingMessageStateById={pendingMessageStateById()}
             editableUserMessage={editableUserMessage()}
             onEditUserMessage={handleEditUserMessage}
             setScrollToMessageById={(handler) => {
@@ -4820,7 +4490,7 @@ export default function SessionView(props: SessionViewProps) {
             class="absolute inset-y-0 right-0 w-2 cursor-col-resize"
             role="separator"
             aria-orientation="vertical"
-            aria-label="Resize left sidebar"
+            aria-label={__vesloT("ui.literal.resize_left_sidebar_1nybbn", __vesloCurrentLocale())}
             onPointerDown={startLeftSidebarResize}
           />
         </aside>

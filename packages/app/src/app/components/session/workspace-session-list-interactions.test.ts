@@ -426,7 +426,7 @@ test("session rows use archive action and open submenu on right-click", () => {
 
   assert.match(
     source,
-    /setWorkspaceMenuTarget\(\{\s*workspaceId,\s*anchorKey,\s*source: ["']session["'],?\s*\}\);/,
+    /setWorkspaceMenuTarget\(\{\s*workspaceId,\s*anchorKey,\s*source: ["']session["'],\s*x: event\.clientX,\s*y: event\.clientY,?\s*\}\);/,
     "right-clicking a session row should mark the workspace menu as session-originated",
   );
 
@@ -462,7 +462,7 @@ test("session rows use archive action and open submenu on right-click", () => {
 
   assert.match(
     source,
-    /<Show when=\{workspaceMenuTarget\(\)\?\.source !== ["']session["']\}>[\s\S]*tr\(["']sidebar\.remove_workspace["']\)[\s\S]*<\/Show>/,
+    /<Show when=\{target\(\)\.source !== ["']session["']\}>[\s\S]*tr\(["']sidebar\.remove_workspace["']\)[\s\S]*<\/Show>/,
     "session-originated menus should not render the destructive remove-workspace action",
   );
 
@@ -542,6 +542,38 @@ test("session rows use archive action and open submenu on right-click", () => {
     source,
     /tr\("sidebar\.archive_confirm"\)/,
     "inline archive confirmation should use localized confirm label",
+  );
+});
+
+test("workspace context menu is fixed and viewport clamped so scroll containers cannot clip it", () => {
+  assert.match(
+    source,
+    /type WorkspaceMenuTarget = \{[\s\S]*x: number;[\s\S]*y: number;[\s\S]*\};/,
+    "workspace menu state should store viewport click coordinates instead of relying on row-relative placement",
+  );
+
+  assert.match(
+    source,
+    /setWorkspaceMenuTarget\(\{\s*workspaceId,\s*anchorKey,\s*source: ["']session["'],\s*x: event\.clientX,\s*y: event\.clientY,?\s*\}\);/,
+    "right-clicked session rows should open the menu at the pointer coordinates",
+  );
+
+  assert.match(
+    source,
+    /const workspaceMenuStyle = createMemo\(\(\) => \{[\s\S]*Math\.min\(Math\.max\(VIEWPORT_PADDING, target\.x\), maxX\)[\s\S]*Math\.min\(Math\.max\(VIEWPORT_PADDING, target\.y\), maxY\)/,
+    "workspace menu should clamp both axes inside the viewport",
+  );
+
+  assert.match(
+    source,
+    /data-testid=["']session-workspace-context-menu["'][\s\S]*class=["']fixed z-\[100\]/,
+    "workspace menu should render as a fixed top-priority layer",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /class=["']absolute right-0 top-\[calc\(100%\+4px\)\] z-20/,
+    "workspace menu must not be row-absolute inside the scrollable sidebar",
   );
 });
 

@@ -3,6 +3,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onMou
 import { formatBytes, formatRelativeTime, isTauriRuntime, isWindowsPlatform } from "../utils";
 
 import Button from "../components/button";
+import DashboardTabRail, { type DashboardTabRailDashboardTab } from "../components/dashboard-tab-rail";
 import { CircleAlert, Copy, Download, FolderOpen, Loader2, PlugZap, RefreshCcw, Smartphone, X } from "lucide-solid";
 import type { OpencodeConnectStatus, SessionArchiveItem, SettingsTab, StartupPreference } from "../types";
 import type {
@@ -19,9 +20,7 @@ import type {
   VesloServerInfo,
   AppBuildInfo,
   OpenCodeRouterInfo,
-  WorkspaceInfo,
 } from "../lib/tauri";
-import ExtensionsOverview from "./extensions-overview";
 import {
   appBuildInfo,
   engineRestart,
@@ -37,10 +36,11 @@ import {
   readDenApiBaseOverride,
   writeDenApiBaseOverride,
 } from "../lib/den-auth";
-import { resolveSettingsTabLabel, resolveVisibleSettingsTab } from "../lib/settings-tab-label";
+import { resolveVisibleSettingsTab } from "../lib/settings-tab-label";
 import { currentLocale, LANGUAGE_OPTIONS, t, type Language } from "../../i18n";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 import { MODEL_VARIANT_OPTIONS } from "../lib/model-variant";
+import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 
 export type SettingsViewProps = {
   startupPreference: StartupPreference | null;
@@ -49,6 +49,7 @@ export type SettingsViewProps = {
   busy: boolean;
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
+  onOpenDashboardTab?: (tab: DashboardTabRailDashboardTab) => void;
   vesloServerStatus: VesloServerStatus;
   vesloServerUrl: string;
   vesloReconnectBusy: boolean;
@@ -148,17 +149,16 @@ export type SettingsViewProps = {
   engineDoctorVersion: string | null;
   sessionArchives?: SessionArchiveItem[];
   onUnarchiveSession?: (sessionId: string) => Promise<void> | void;
-  workspaces: WorkspaceInfo[];
 };
 
 export default function SettingsView(props: SettingsViewProps) {
   const translate = (key: string) => t(key, currentLocale());
-  const engineCustomBinPathLabel = () => props.engineCustomBinPath.trim() || "No binary selected.";
+  const engineCustomBinPathLabel = () => props.engineCustomBinPath.trim() || translate("settings.no_binary_selected");
 
   const handlePickEngineBinary = async () => {
     if (!isTauriRuntime()) return;
     try {
-      const selected = await pickFile({ title: "Select OpenCode binary" });
+      const selected = await pickFile({ title: translate("settings.select_opencode_binary") });
       const path = Array.isArray(selected) ? selected[0] : selected;
       const trimmed = (path ?? "").trim();
       if (!trimmed) return;
@@ -262,13 +262,13 @@ export default function SettingsView(props: SettingsViewProps) {
   const notionStatusLabel = () => {
     switch (props.notionStatus) {
       case "connected":
-        return "Connected";
+        return translate("status.connected");
       case "connecting":
-        return "Reload required";
+        return translate("settings.reload_required");
       case "error":
-        return "Connection failed";
+        return translate("settings.connection_failed");
       default:
-        return "Not connected";
+        return translate("dashboard.not_connected");
     }
   };
 
@@ -298,9 +298,9 @@ export default function SettingsView(props: SettingsViewProps) {
   const activeDenApiBase = createMemo(() => denApiBaseOverride() || defaultDenApiBase);
   const denApiBaseDirty = createMemo(() => denApiBaseDraft().trim() !== activeDenApiBase());
   const aiAccessStatusLabel = createMemo(() => {
-    if (props.aiAccessBusy) return "Loading";
-    if (!props.aiAccessConfigured) return "Needs admin";
-    return "Configured";
+    if (props.aiAccessBusy) return translate("status.loading");
+    if (!props.aiAccessConfigured) return translate("status.needs_admin");
+    return translate("status.configured");
   });
   const aiAccessStatusStyle = createMemo(() => {
     if (props.aiAccessBusy) return "bg-gray-4/60 text-gray-11 border-gray-7/50";
@@ -309,9 +309,9 @@ export default function SettingsView(props: SettingsViewProps) {
   });
   const aiAccessAllowedModelsSummary = createMemo(() => {
     const models = props.aiAccessAllowedModels.filter((value) => value.trim().length > 0);
-    if (!models.length) return "Only the admin default model is allowed.";
+    if (!models.length) return translate("settings.ai_only_admin_default_model");
     if (models.length === 1) return models[0]!;
-    return `${models.length} allowed models`;
+    return translate("settings.ai_allowed_models_count").replace("{count}", String(models.length));
   });
 
   const handleReconnectVesloServer = async () => {
@@ -322,13 +322,13 @@ export default function SettingsView(props: SettingsViewProps) {
     try {
       const ok = await props.reconnectVesloServer();
       if (!ok) {
-        setVesloReconnectError("Reconnect failed. Check server URL/token and try again.");
+        setVesloReconnectError(translate("settings.reconnect_failed_check"));
         return;
       }
-      setVesloReconnectStatus("Reconnected to Veslo server.");
+      setVesloReconnectStatus(translate("settings.reconnected_server"));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setVesloReconnectError(message || "Failed to reconnect Veslo server.");
+      setVesloReconnectError(message || translate("settings.reconnect_failed"));
     }
   };
 
@@ -340,13 +340,13 @@ export default function SettingsView(props: SettingsViewProps) {
     try {
       const ok = await props.restartLocalServer();
       if (!ok) {
-        setVesloRestartError("Restart failed. Check logs and try again.");
+        setVesloRestartError(translate("settings.restart_failed_check_logs"));
         return;
       }
-      setVesloRestartStatus("Restarted local server.");
+      setVesloRestartStatus(translate("settings.restarted_local_server"));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setVesloRestartError(message || "Failed to restart local server.");
+      setVesloRestartError(message || translate("settings.restart_local_server_failed"));
     } finally {
       setVesloRestartBusy(false);
     }
@@ -367,19 +367,19 @@ export default function SettingsView(props: SettingsViewProps) {
     setDenApiBaseDraft(effective);
     setDenApiBaseStatus(
       savedOverride
-        ? `Saved. Browser sign-in now uses ${effective}.`
-        : `Saved. Browser sign-in now uses the default endpoint (${effective}).`,
+        ? translate("settings.browser_signin_saved_custom").replace("{endpoint}", effective)
+        : translate("settings.browser_signin_saved_default").replace("{endpoint}", effective),
     );
   };
 
   const vesloStatusLabel = createMemo(() => {
     switch (props.vesloServerStatus) {
       case "connected":
-        return "Connected";
+        return translate("status.connected");
       case "limited":
-        return "Limited";
+        return translate("status.limited");
       default:
-        return "Not connected";
+        return translate("dashboard.not_connected");
     }
   });
 
@@ -395,8 +395,8 @@ export default function SettingsView(props: SettingsViewProps) {
   });
 
   const engineStatusLabel = createMemo(() => {
-    if (!isTauriRuntime()) return "Unavailable";
-    return props.engineInfo?.running ? "Running" : "Offline";
+    if (!isTauriRuntime()) return translate("status.unavailable");
+    return props.engineInfo?.running ? translate("status.running") : translate("status.offline");
   });
 
   const engineStatusStyle = createMemo(() => {
@@ -408,10 +408,10 @@ export default function SettingsView(props: SettingsViewProps) {
 
   const opencodeConnectStatusLabel = createMemo(() => {
     const status = props.opencodeConnectStatus?.status;
-    if (!status) return "Idle";
-    if (status === "connected") return "Connected";
-    if (status === "connecting") return "Connecting";
-    return "Failed";
+    if (!status) return translate("status.idle");
+    if (status === "connected") return translate("status.connected");
+    if (status === "connecting") return translate("status.connecting");
+    return translate("status.failed");
   });
 
   const opencodeConnectStatusStyle = createMemo(() => {
@@ -429,8 +429,8 @@ export default function SettingsView(props: SettingsViewProps) {
   });
 
   const opencodeRouterStatusLabel = createMemo(() => {
-    if (!isTauriRuntime()) return "Unavailable";
-    return props.opencodeRouterInfo?.running ? "Running" : "Offline";
+    if (!isTauriRuntime()) return translate("status.unavailable");
+    return props.opencodeRouterInfo?.running ? translate("status.running") : translate("status.offline");
   });
 
   const opencodeRouterStatusStyle = createMemo(() => {
@@ -454,7 +454,7 @@ export default function SettingsView(props: SettingsViewProps) {
     const opencodeUsername = props.engineInfo?.opencodeUsername?.trim() || undefined;
     const opencodePassword = props.engineInfo?.opencodePassword?.trim() || undefined;
     if (!workspacePath) {
-      setOpenCodeRouterRestartError("No worker path available");
+      setOpenCodeRouterRestartError(translate("settings.no_worker_path_available"));
       return;
     }
     setOpenCodeRouterRestarting(true);
@@ -515,8 +515,8 @@ export default function SettingsView(props: SettingsViewProps) {
   };
 
   const orchestratorStatusLabel = createMemo(() => {
-    if (!props.orchestratorStatus) return "Unavailable";
-    return props.orchestratorStatus.running ? "Running" : "Offline";
+    if (!props.orchestratorStatus) return translate("status.unavailable");
+    return props.orchestratorStatus.running ? translate("status.running") : translate("status.offline");
   });
 
   const orchestratorStatusStyle = createMemo(() => {
@@ -527,10 +527,10 @@ export default function SettingsView(props: SettingsViewProps) {
   });
 
   const vesloAuditStatusLabel = createMemo(() => {
-    if (!props.vesloServerWorkspaceId) return "Unavailable";
-    if (props.vesloAuditStatus === "loading") return "Loading";
-    if (props.vesloAuditStatus === "error") return "Error";
-    return "Ready";
+    if (!props.vesloServerWorkspaceId) return translate("status.unavailable");
+    if (props.vesloAuditStatus === "loading") return translate("status.loading");
+    if (props.vesloAuditStatus === "error") return translate("status.error");
+    return translate("status.ready");
   });
 
   const vesloAuditStatusStyle = createMemo(() => {
@@ -541,12 +541,7 @@ export default function SettingsView(props: SettingsViewProps) {
   });
 
   const isLocalEngineRunning = createMemo(() => Boolean(props.engineInfo?.running));
-  const startupLabel = createMemo(() => "Connect to cloud server");
-
-  const availableTabs = createMemo<SettingsTab[]>(() => {
-    const tabs: SettingsTab[] = ["general", "extensions", "archived", "advanced"];
-    return tabs;
-  });
+  const startupLabel = createMemo(() => translate("settings.connect_to_cloud_server"));
 
   const activeTab = createMemo<SettingsTab>(() => {
     return resolveVisibleSettingsTab(props.settingsTab, props.developerMode);
@@ -560,54 +555,54 @@ export default function SettingsView(props: SettingsViewProps) {
 
   const formatActor = (entry: VesloAuditEntry) => {
     const actor = entry.actor;
-    if (!actor) return "unknown";
-    if (actor.type === "host") return "host";
+    if (!actor) return translate("status.unknown");
+    if (actor.type === "host") return translate("settings.actor_host");
     if (actor.type === "remote") {
-      return actor.clientId ? `remote:${actor.clientId}` : "remote";
+      return actor.clientId ? `${translate("settings.actor_remote")}:${actor.clientId}` : translate("settings.actor_remote");
     }
-    return "unknown";
+    return translate("status.unknown");
   };
 
   const formatCapability = (cap?: { read?: boolean; write?: boolean; source?: string }) => {
-    if (!cap) return "Unavailable";
-    const parts = [cap.read ? "read" : null, cap.write ? "write" : null].filter(Boolean).join(" / ");
-    const label = parts || "no access";
+    if (!cap) return translate("status.unavailable");
+    const parts = [cap.read ? translate("settings.capability_read") : null, cap.write ? translate("settings.capability_write") : null].filter(Boolean).join(" / ");
+    const label = parts || translate("settings.capability_no_access");
     return cap.source ? `${label} · ${cap.source}` : label;
   };
 
   const engineStdout = () => {
-    if (!isTauriRuntime()) return "Available in the desktop app.";
-    return props.engineInfo?.lastStdout?.trim() || "No stdout captured yet.";
+    if (!isTauriRuntime()) return translate("settings.available_in_desktop_app");
+    return props.engineInfo?.lastStdout?.trim() || translate("settings.no_stdout");
   };
 
   const engineStderr = () => {
-    if (!isTauriRuntime()) return "Available in the desktop app.";
-    return props.engineInfo?.lastStderr?.trim() || "No stderr captured yet.";
+    if (!isTauriRuntime()) return translate("settings.available_in_desktop_app");
+    return props.engineInfo?.lastStderr?.trim() || translate("settings.no_stderr");
   };
 
   const vesloStdout = () => {
-    if (!props.vesloServerHostInfo) return "Logs are available on the host.";
-    return props.vesloServerHostInfo.lastStdout?.trim() || "No stdout captured yet.";
+    if (!props.vesloServerHostInfo) return translate("settings.logs_available_on_host");
+    return props.vesloServerHostInfo.lastStdout?.trim() || translate("settings.no_stdout");
   };
 
   const vesloStderr = () => {
-    if (!props.vesloServerHostInfo) return "Logs are available on the host.";
-    return props.vesloServerHostInfo.lastStderr?.trim() || "No stderr captured yet.";
+    if (!props.vesloServerHostInfo) return translate("settings.logs_available_on_host");
+    return props.vesloServerHostInfo.lastStderr?.trim() || translate("settings.no_stderr");
   };
 
   const opencodeRouterStdout = () => {
-    if (!isTauriRuntime()) return "Available in the desktop app.";
-    return props.opencodeRouterInfo?.lastStdout?.trim() || "No stdout captured yet.";
+    if (!isTauriRuntime()) return translate("settings.available_in_desktop_app");
+    return props.opencodeRouterInfo?.lastStdout?.trim() || translate("settings.no_stdout");
   };
 
   const opencodeRouterStderr = () => {
-    if (!isTauriRuntime()) return "Available in the desktop app.";
-    return props.opencodeRouterInfo?.lastStderr?.trim() || "No stderr captured yet.";
+    if (!isTauriRuntime()) return translate("settings.available_in_desktop_app");
+    return props.opencodeRouterInfo?.lastStderr?.trim() || translate("settings.no_stderr");
   };
 
   const formatOrchestratorBinary = (binary?: OrchestratorBinaryInfo | null) => {
-    if (!binary) return "Binary unavailable";
-    const version = binary.actualVersion || binary.expectedVersion || "unknown";
+    if (!binary) return translate("settings.binary_unavailable");
+    const version = binary.actualVersion || binary.expectedVersion || translate("status.unknown");
     return `${binary.source} · ${version}`;
   };
 
@@ -619,9 +614,9 @@ export default function SettingsView(props: SettingsViewProps) {
   const orchestratorBinaryPath = () => props.orchestratorStatus?.binaries?.opencode?.path ?? "—";
   const orchestratorSidecarSummary = () => {
     const info = props.orchestratorStatus?.sidecar;
-    if (!info) return "Sidecar config unavailable";
+    if (!info) return translate("settings.sidecar_config_unavailable");
     const source = info.source ?? "auto";
-    const target = info.target ?? "unknown";
+    const target = info.target ?? translate("status.unknown");
     return `${source} · ${target}`;
   };
 
@@ -736,20 +731,20 @@ export default function SettingsView(props: SettingsViewProps) {
 
   const copyRuntimeDebugReport = async () => {
     if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
-      setDebugReportStatus("Clipboard is unavailable in this environment.");
+      setDebugReportStatus(translate("settings.clipboard_unavailable"));
       return;
     }
     try {
       await navigator.clipboard.writeText(runtimeDebugReportJson());
-      setDebugReportStatus("Copied runtime report JSON.");
+      setDebugReportStatus(translate("settings.copied_runtime_report"));
     } catch (error) {
-      setDebugReportStatus(error instanceof Error ? error.message : "Failed to copy runtime report.");
+      setDebugReportStatus(error instanceof Error ? error.message : translate("settings.copy_runtime_report_failed"));
     }
   };
 
   const exportRuntimeDebugReport = () => {
     if (typeof window === "undefined" || typeof document === "undefined") {
-      setDebugReportStatus("Export is unavailable in this environment.");
+      setDebugReportStatus(translate("settings.export_unavailable"));
       return;
     }
     try {
@@ -761,9 +756,9 @@ export default function SettingsView(props: SettingsViewProps) {
       anchor.download = `veslo-debug-report-${stamp}.json`;
       anchor.click();
       window.URL.revokeObjectURL(url);
-      setDebugReportStatus("Exported runtime report JSON.");
+      setDebugReportStatus(translate("settings.exported_runtime_report"));
     } catch (error) {
-      setDebugReportStatus(error instanceof Error ? error.message : "Failed to export runtime report.");
+      setDebugReportStatus(error instanceof Error ? error.message : translate("settings.export_runtime_report_failed"));
     }
   };
 
@@ -771,7 +766,7 @@ export default function SettingsView(props: SettingsViewProps) {
     if (!isTauriRuntime() || revealConfigBusy()) return;
     const path = workspaceConfigPath();
     if (!path) {
-      setConfigActionStatus("Select an active worker before revealing config.");
+      setConfigActionStatus(translate("settings.select_worker_before_reveal_config"));
       return;
     }
     setRevealConfigBusy(true);
@@ -783,9 +778,9 @@ export default function SettingsView(props: SettingsViewProps) {
       } else {
         await revealItemInDir(path);
       }
-      setConfigActionStatus("Revealed workspace config.");
+      setConfigActionStatus(translate("settings.revealed_workspace_config"));
     } catch (error) {
-      setConfigActionStatus(error instanceof Error ? error.message : "Failed to reveal workspace config.");
+      setConfigActionStatus(error instanceof Error ? error.message : translate("settings.reveal_workspace_config_failed"));
     } finally {
       setRevealConfigBusy(false);
     }
@@ -799,7 +794,7 @@ export default function SettingsView(props: SettingsViewProps) {
       const result = await props.resetAppConfigDefaults();
       setConfigActionStatus(result.message);
     } catch (error) {
-      setConfigActionStatus(error instanceof Error ? error.message : "Failed to reset app config.");
+      setConfigActionStatus(error instanceof Error ? error.message : translate("settings.reset_app_config_failed"));
     } finally {
       setResetConfigBusy(false);
     }
@@ -816,22 +811,12 @@ export default function SettingsView(props: SettingsViewProps) {
     <section class="space-y-6">
       <div class="space-y-4">
         <h1 class="font-product type-title-md text-gray-12">{translate("dashboard.settings")}</h1>
-        <div class="flex flex-wrap gap-2 rounded-2xl border border-gray-6/40 bg-gray-1/40 px-3 py-2">
-          <For each={availableTabs()}>
-            {(tab) => (
-              <button
-                class={`px-3 py-2 rounded-xl text-xs font-medium border transition-colors ${
-                  activeTab() === tab
-                    ? "bg-gray-12/10 text-white border-gray-6/30"
-                    : "text-gray-10 border-gray-6/50 hover:text-gray-12 hover:bg-gray-2/40"
-                }`}
-                onClick={() => props.setSettingsTab(tab)}
-              >
-                {resolveSettingsTabLabel(tab)}
-              </button>
-            )}
-          </For>
-        </div>
+        <DashboardTabRail
+          activeDashboardTab="settings"
+          activeSettingsTab={activeTab()}
+          onOpenSettingsTab={props.setSettingsTab}
+          onOpenDashboardTab={(tab) => props.onOpenDashboardTab?.(tab)}
+        />
       </div>
 
       <Switch>
@@ -843,9 +828,9 @@ export default function SettingsView(props: SettingsViewProps) {
                   <div>
                     <div class="flex items-center gap-2">
                       <PlugZap size={16} class="text-gray-11" />
-                      <div class="text-sm font-medium text-gray-12">AI access</div>
+                      <div class="text-sm font-medium text-gray-12">{__vesloT("ui.literal.ai_access_1fcmzn", __vesloCurrentLocale())}</div>
                     </div>
-                    <div class="text-xs text-gray-9 mt-1">Provider and model assignment is managed by the platform admin.</div>
+                    <div class="text-xs text-gray-9 mt-1">{__vesloT("ui.literal.provider_and_model_assignment_is_managed_by__ekvlg6", __vesloCurrentLocale())}</div>
                   </div>
                   <div class={`text-xs px-2 py-1 rounded-full border ${aiAccessStatusStyle()}`}>
                     {aiAccessStatusLabel()}
@@ -856,19 +841,19 @@ export default function SettingsView(props: SettingsViewProps) {
                   <div class="text-xs text-gray-10">{props.aiAccessMessage}</div>
                   <Show
                     when={props.aiAccessConfigured}
-                    fallback={<div class="text-[11px] text-gray-8">Users can sign in, but prompts stay blocked until an admin assigns access.</div>}
+                    fallback={<div class="text-[11px] text-gray-8">{__vesloT("ui.literal.users_can_sign_in_but_prompts_stay_blocked_u_e6wyhu", __vesloCurrentLocale())}</div>}
                   >
                     <div class="grid gap-3 md:grid-cols-3">
                       <div class="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2">
-                        <div class="text-[11px] uppercase tracking-wide text-gray-8">Provider</div>
-                        <div class="text-sm font-medium text-gray-12 mt-1">{props.aiAccessProviderLabel ?? "Not assigned"}</div>
+                        <div class="text-[11px] uppercase tracking-wide text-gray-8">{__vesloT("ui.literal.provider_evz7q4", __vesloCurrentLocale())}</div>
+                        <div class="text-sm font-medium text-gray-12 mt-1">{props.aiAccessProviderLabel ?? translate("settings.not_assigned")}</div>
                       </div>
                       <div class="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2">
-                        <div class="text-[11px] uppercase tracking-wide text-gray-8">Default model</div>
-                        <div class="text-sm font-medium text-gray-12 mt-1">{props.aiAccessDefaultModelLabel ?? "Not assigned"}</div>
+                        <div class="text-[11px] uppercase tracking-wide text-gray-8">{__vesloT("ui.literal.default_model_463spj", __vesloCurrentLocale())}</div>
+                        <div class="text-sm font-medium text-gray-12 mt-1">{props.aiAccessDefaultModelLabel ?? translate("settings.not_assigned")}</div>
                       </div>
                       <div class="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2">
-                        <div class="text-[11px] uppercase tracking-wide text-gray-8">Allowed models</div>
+                        <div class="text-[11px] uppercase tracking-wide text-gray-8">{__vesloT("ui.literal.allowed_models_tnz56v", __vesloCurrentLocale())}</div>
                         <div class="text-sm font-medium text-gray-12 mt-1">{aiAccessAllowedModelsSummary()}</div>
                       </div>
                     </div>
@@ -879,8 +864,8 @@ export default function SettingsView(props: SettingsViewProps) {
 
             <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
               <div>
-                <div class="text-sm font-medium text-gray-12">Run preferences</div>
-                <div class="text-xs text-gray-10">User-level display and thinking controls still apply to runs.</div>
+                <div class="text-sm font-medium text-gray-12">{__vesloT("ui.literal.run_preferences_1vi96h", __vesloCurrentLocale())}</div>
+                <div class="text-xs text-gray-10">{__vesloT("ui.literal.user_level_display_and_thinking_controls_sti_otxozr", __vesloCurrentLocale())}</div>
               </div>
 
               <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
@@ -894,28 +879,27 @@ export default function SettingsView(props: SettingsViewProps) {
                   onClick={props.toggleShowThinking}
                   disabled={props.busy}
                 >
-                  {props.showThinking ? "On" : "Off"}
+                  {props.showThinking ? translate("common.on") : translate("common.off")}
                 </Button>
               </div>
 
               <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
                 <div class="min-w-0">
-                  <div class="text-sm text-gray-12">Auto context compaction</div>
-                  <div class="text-xs text-gray-7">Automatically compact after a run completes.</div>
+                  <div class="text-sm text-gray-12">{__vesloT("ui.literal.auto_context_compaction_yefaae", __vesloCurrentLocale())}</div>
+                  <div class="text-xs text-gray-7">{__vesloT("ui.literal.automatically_compact_after_a_run_completes_1cibgg", __vesloCurrentLocale())}</div>
                 </div>
                 <Button
                   variant="outline"
                   class="text-xs h-8 py-0 px-3 shrink-0"
                   disabled
                 >
-                  Always on
-                </Button>
+                  {__vesloT("ui.literal.always_on_t4uqph", __vesloCurrentLocale())}</Button>
               </div>
 
               <div class="bg-gray-1 p-3 rounded-xl border border-gray-6 space-y-2">
                 <div>
                   <div class="text-sm text-gray-12">{translate("session.thinking_effort")}</div>
-                  <div class="text-xs text-gray-7">Default thinking mode for new sessions.</div>
+                  <div class="text-xs text-gray-7">{__vesloT("ui.literal.default_thinking_mode_for_new_sessions_1tbk20", __vesloCurrentLocale())}</div>
                 </div>
                 <div class="flex gap-1.5 flex-wrap">
                   <For each={MODEL_VARIANT_OPTIONS}>
@@ -1038,10 +1022,6 @@ export default function SettingsView(props: SettingsViewProps) {
           </div>
         </Match>
 
-        <Match when={activeTab() === "extensions"}>
-          <ExtensionsOverview workspaces={props.workspaces} />
-        </Match>
-
         <Match when={activeTab() === "archived"}>
           <div class="space-y-6">
             <Show when={props.sessionArchives !== undefined}>
@@ -1052,8 +1032,7 @@ export default function SettingsView(props: SettingsViewProps) {
                       <RefreshCcw size={16} class="text-gray-11" />
                       <div class="text-sm font-medium text-gray-12">{translate("settings.archived_sessions_label")}</div>
                       <span class="rounded-full border border-gray-6/60 bg-gray-3/40 px-2 py-0.5 text-[10px] uppercase tracking-wide text-gray-10">
-                        This workspace
-                      </span>
+                        {__vesloT("ui.literal.this_workspace_12yvwg", __vesloCurrentLocale())}</span>
                     </div>
                     <div class="text-xs text-gray-9 mt-1">{translate("settings.archived_sessions_description")}</div>
                   </div>
@@ -1111,14 +1090,13 @@ export default function SettingsView(props: SettingsViewProps) {
         <Match when={activeTab() === "advanced"}>
           <div class="space-y-6">
             <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-3">
-              <div class="text-sm font-medium text-gray-12">Connection</div>
+              <div class="text-sm font-medium text-gray-12">{__vesloT("dashboard.connection", __vesloCurrentLocale())}</div>
               <div class="text-xs text-gray-9">{props.headerStatus}</div>
               <div class="text-xs text-gray-8 font-mono break-all">{props.baseUrl}</div>
               <div class="space-y-2 rounded-xl border border-gray-6/70 bg-gray-1/50 p-3">
-                <div class="text-xs text-gray-11">Browser sign-in endpoint</div>
+                <div class="text-xs text-gray-11">{__vesloT("ui.literal.browser_sign_in_endpoint_12m8wo", __vesloCurrentLocale())}</div>
                 <div class="text-[11px] text-gray-8">
-                  Used by the desktop sign-in flow and handoff exchange. Leave blank and Save to use the default.
-                </div>
+                  {__vesloT("ui.literal.used_by_the_desktop_sign_in_flow_and_handoff_18syli", __vesloCurrentLocale())}</div>
                 <div class="flex flex-col gap-2 md:flex-row md:items-center">
                   <input
                     type="text"
@@ -1138,11 +1116,10 @@ export default function SettingsView(props: SettingsViewProps) {
                     onClick={handleSaveDenApiBase}
                     disabled={props.busy || !denApiBaseDirty()}
                   >
-                    Save
-                  </Button>
+                    {__vesloT("common.save", __vesloCurrentLocale())}</Button>
                 </div>
                 <div class="text-[11px] text-gray-8">
-                  Active endpoint: <span class="font-mono break-all text-gray-10">{activeDenApiBase()}</span>
+                  {__vesloT("ui.literal.active_endpoint_q0vu8a", __vesloCurrentLocale())}{" "}<span class="font-mono break-all text-gray-10">{activeDenApiBase()}</span>
                 </div>
                 <Show when={denApiBaseStatus()}>
                   {(value) => <div class="text-xs text-gray-10">{value()}</div>}
@@ -1153,8 +1130,8 @@ export default function SettingsView(props: SettingsViewProps) {
               </div>
               <div class="flex items-center justify-between rounded-xl border border-gray-6/70 bg-gray-1/50 p-3 gap-3">
                 <div class="min-w-0">
-                  <div class="text-xs text-gray-11">Keep me signed in</div>
-                  <div class="text-[11px] text-gray-8">If off, Veslo asks for sign-in on each launch.</div>
+                  <div class="text-xs text-gray-11">{__vesloT("ui.literal.keep_me_signed_in_nj7h25", __vesloCurrentLocale())}</div>
+                  <div class="text-[11px] text-gray-8">{__vesloT("ui.literal.if_off_veslo_asks_for_sign_in_on_each_launch_11rkho", __vesloCurrentLocale())}</div>
                 </div>
                 <Button
                   variant="outline"
@@ -1162,7 +1139,7 @@ export default function SettingsView(props: SettingsViewProps) {
                   onClick={props.toggleDenKeepSignedIn}
                   disabled={props.busy}
                 >
-                  {props.denKeepSignedIn ? "On" : "Off"}
+                  {props.denKeepSignedIn ? translate("common.on") : translate("common.off")}
                 </Button>
               </div>
               <div class="pt-2 flex flex-wrap gap-2">
@@ -1173,7 +1150,7 @@ export default function SettingsView(props: SettingsViewProps) {
                   disabled={props.busy || props.vesloReconnectBusy || !props.vesloServerUrl.trim()}
                 >
                   <RefreshCcw size={14} class={`text-dls-secondary ${props.vesloReconnectBusy ? "animate-spin" : ""}`} />
-                  {props.vesloReconnectBusy ? "Reconnecting..." : "Reconnect server"}
+                  {props.vesloReconnectBusy ? translate("settings.reconnecting") : translate("settings.reconnect_server")}
                 </button>
                 <Show when={isLocalEngineRunning()}>
                   <button
@@ -1183,7 +1160,7 @@ export default function SettingsView(props: SettingsViewProps) {
                     disabled={props.busy || vesloRestartBusy()}
                   >
                     <RefreshCcw size={14} class={`text-dls-secondary ${vesloRestartBusy() ? "animate-spin" : ""}`} />
-                    {vesloRestartBusy() ? "Restarting..." : "Restart local server"}
+                    {vesloRestartBusy() ? translate("settings.restarting") : translate("settings.restart_local_server")}
                   </button>
                 </Show>
                 <Show when={isLocalEngineRunning()}>
@@ -1194,8 +1171,7 @@ export default function SettingsView(props: SettingsViewProps) {
                     disabled={props.busy}
                   >
                     <CircleAlert size={14} />
-                    Stop local server
-                  </button>
+                    {__vesloT("ui.literal.stop_local_server_gfmy19", __vesloCurrentLocale())}</button>
                 </Show>
                 <Show when={!isLocalEngineRunning() && props.vesloServerStatus === "connected"}>
                   <button
@@ -1204,8 +1180,7 @@ export default function SettingsView(props: SettingsViewProps) {
                     onClick={props.stopHost}
                     disabled={props.busy}
                   >
-                    Disconnect server
-                  </button>
+                    {__vesloT("ui.literal.disconnect_server_1xj61t", __vesloCurrentLocale())}</button>
                 </Show>
               </div>
               <Show when={vesloReconnectStatus()}>
@@ -1441,33 +1416,31 @@ export default function SettingsView(props: SettingsViewProps) {
         <Match when={activeTab() === "debug"}>
           <Show when={props.developerMode}>
             <section>
-              <h3 class="text-sm font-medium text-gray-11 uppercase tracking-wider mb-4">Developer</h3>
+              <h3 class="text-sm font-medium text-gray-11 uppercase tracking-wider mb-4">{__vesloT("ui.literal.developer_elt1il", __vesloCurrentLocale())}</h3>
 
               <div class="space-y-4">
                 <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
                   <div class="flex items-start justify-between gap-3">
                     <div>
-                      <div class="text-sm font-medium text-gray-12">Runtime debug report</div>
-                      <div class="text-xs text-gray-10">Readable diagnostics snapshot with one-click export.</div>
+                      <div class="text-sm font-medium text-gray-12">{__vesloT("ui.literal.runtime_debug_report_g4jh4m", __vesloCurrentLocale())}</div>
+                      <div class="text-xs text-gray-10">{__vesloT("ui.literal.readable_diagnostics_snapshot_with_one_click_qr6oa4", __vesloCurrentLocale())}</div>
                     </div>
                     <div class="flex items-center gap-2 shrink-0">
                       <Button variant="outline" class="text-xs h-8 py-0 px-3" onClick={copyRuntimeDebugReport}>
                         <Copy size={13} class="mr-1.5" />
-                        Copy JSON
-                      </Button>
+                        {__vesloT("ui.literal.copy_json_1rp9ci", __vesloCurrentLocale())}</Button>
                       <Button variant="secondary" class="text-xs h-8 py-0 px-3" onClick={exportRuntimeDebugReport}>
                         <Download size={13} class="mr-1.5" />
-                        Export
-                      </Button>
+                        {__vesloT("ui.literal.export_1sh99l", __vesloCurrentLocale())}</Button>
                     </div>
                   </div>
                   <div class="grid gap-2 md:grid-cols-2 text-xs text-gray-11">
-                    <div>Desktop app: {appVersionLabel()}</div>
-                    <div>Commit: {appCommitLabel()}</div>
-                    <div>Orchestrator: {orchestratorVersionLabel()}</div>
-                    <div>OpenCode: {opencodeVersionLabel()}</div>
-                    <div>Veslo server: {vesloServerVersionLabel()}</div>
-                    <div>OpenCodeRouter: {opencodeRouterVersionLabel()}</div>
+                    <div>{__vesloT("ui.literal.desktop_app_188n2e", __vesloCurrentLocale())}{" "}{appVersionLabel()}</div>
+                    <div>{__vesloT("ui.literal.commit_fy9fpu", __vesloCurrentLocale())}{" "}{appCommitLabel()}</div>
+                    <div>{__vesloT("ui.literal.orchestrator_kmt3t5", __vesloCurrentLocale())}{" "}{orchestratorVersionLabel()}</div>
+                    <div>{__vesloT("ui.literal.opencode_v0epke", __vesloCurrentLocale())}{" "}{opencodeVersionLabel()}</div>
+                    <div>{__vesloT("ui.literal.veslo_server_1df7hz", __vesloCurrentLocale())}{" "}{vesloServerVersionLabel()}</div>
+                    <div>{__vesloT("ui.literal.opencoderouter_1abm12", __vesloCurrentLocale())}{" "}{opencodeRouterVersionLabel()}</div>
                   </div>
                   <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-64 overflow-auto bg-gray-1 border border-gray-6 rounded-lg p-3">
                     {runtimeDebugReportJson()}
@@ -1477,30 +1450,31 @@ export default function SettingsView(props: SettingsViewProps) {
                   </Show>
                 </div>
 
+
                 <Show when={!CLOUD_ONLY_MODE}>
                   <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
-                    <div class="text-sm font-medium text-gray-12">Workspace config</div>
-                    <div class="text-xs text-gray-10">Reveal or reset `.opencode/veslo.json` defaults for this app workspace.</div>
-                    <div class="text-[11px] text-gray-7 font-mono break-all">{workspaceConfigPath() || "No active worker."}</div>
+                    <div class="text-sm font-medium text-gray-12">{__vesloT("ui.literal.workspace_config_16f12z", __vesloCurrentLocale())}</div>
+                    <div class="text-xs text-gray-10">{__vesloT("ui.literal.reveal_or_reset_opencode_veslo_json_defaults_eyndom", __vesloCurrentLocale())}</div>
+                    <div class="text-[11px] text-gray-7 font-mono break-all">{workspaceConfigPath() || translate("settings.no_active_worker")}</div>
                     <div class="flex flex-wrap items-center gap-2">
                       <Button
                         variant="outline"
                         class="text-xs h-8 py-0 px-3"
                         onClick={revealWorkspaceConfig}
                         disabled={!isTauriRuntime() || revealConfigBusy() || !workspaceConfigPath()}
-                        title={!isTauriRuntime() ? "Reveal config requires the desktop app" : ""}
+                        title={!isTauriRuntime() ? translate("settings.reveal_config_requires_desktop") : ""}
                       >
                         <FolderOpen size={13} class="mr-1.5" />
-                        {revealConfigBusy() ? "Opening..." : "Reveal config"}
+                        {revealConfigBusy() ? translate("dashboard.opening") : translate("settings.reveal_config")}
                       </Button>
                       <Button
                         variant="danger"
                         class="text-xs h-8 py-0 px-3"
                         onClick={resetAppConfigDefaults}
                         disabled={resetConfigBusy() || props.anyActiveRuns}
-                        title={props.anyActiveRuns ? "Stop active runs before resetting config" : ""}
+                        title={props.anyActiveRuns ? translate("settings.stop_runs_before_resetting_config") : ""}
                       >
-                        {resetConfigBusy() ? "Resetting..." : "Reset config defaults"}
+                        {resetConfigBusy() ? translate("settings.resetting") : translate("settings.reset_config_defaults")}
                       </Button>
                     </div>
                     <Show when={configActionStatus()}>
@@ -1511,10 +1485,9 @@ export default function SettingsView(props: SettingsViewProps) {
 
                 <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                   <div class="min-w-0">
-                    <div class="text-sm text-gray-12">OpenCode cache</div>
+                    <div class="text-sm text-gray-12">{__vesloT("settings.opencode_cache", __vesloCurrentLocale())}</div>
                     <div class="text-xs text-gray-7">
-                      Repairs cached data used to start the engine. Safe to run.
-                    </div>
+                      {__vesloT("settings.opencode_cache_description", __vesloCurrentLocale())}</div>
                     <Show when={props.cacheRepairResult}>
                       <div class="text-xs text-gray-11 mt-2">{props.cacheRepairResult}</div>
                     </Show>
@@ -1524,18 +1497,17 @@ export default function SettingsView(props: SettingsViewProps) {
                     class="text-xs h-8 py-0 px-3 shrink-0"
                     onClick={props.repairOpencodeCache}
                     disabled={props.cacheRepairBusy || !isTauriRuntime()}
-                    title={isTauriRuntime() ? "" : "Cache repair requires the desktop app"}
+                    title={isTauriRuntime() ? "" : translate("settings.cache_repair_requires_desktop")}
                   >
-                    {props.cacheRepairBusy ? "Repairing cache" : "Repair cache"}
+                    {props.cacheRepairBusy ? translate("settings.repairing_cache") : translate("settings.repair_cache")}
                   </Button>
                 </div>
 
                 <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                   <div class="min-w-0">
-                    <div class="text-sm text-gray-12">Legacy Docker containers</div>
+                    <div class="text-sm text-gray-12">{__vesloT("ui.literal.veslo_docker_containers_pb5rho", __vesloCurrentLocale())}</div>
                     <div class="text-xs text-gray-7">
-                      Force-remove old Docker containers launched by earlier Veslo sandbox and local dev flows.
-                    </div>
+                      {__vesloT("ui.literal.force_remove_docker_containers_launched_by_v_1drkh2", __vesloCurrentLocale())}</div>
                     <Show when={props.dockerCleanupResult}>
                       <div class="text-xs text-gray-11 mt-2">{props.dockerCleanupResult}</div>
                     </Show>
@@ -1547,18 +1519,18 @@ export default function SettingsView(props: SettingsViewProps) {
                     disabled={props.dockerCleanupBusy || props.anyActiveRuns || !isTauriRuntime()}
                     title={
                       !isTauriRuntime()
-                        ? "Docker cleanup requires the desktop app"
+                        ? translate("settings.docker_cleanup_requires_desktop")
                         : props.anyActiveRuns
-                          ? "Stop active runs before cleanup"
+                          ? translate("settings.stop_runs_before_cleanup")
                           : ""
                     }
                   >
-                    {props.dockerCleanupBusy ? "Removing containers..." : "Delete containers"}
+                    {props.dockerCleanupBusy ? translate("settings.removing_containers") : translate("settings.delete_containers")}
                   </Button>
                 </div>
 
                 <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
-                  <div class="text-sm font-medium text-gray-12">Startup</div>
+                  <div class="text-sm font-medium text-gray-12">{__vesloT("settings.startup", __vesloCurrentLocale())}</div>
 
                   <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6">
                     <div class="flex items-center gap-3">
@@ -1573,57 +1545,51 @@ export default function SettingsView(props: SettingsViewProps) {
                       onClick={props.reconnectVesloServer}
                       disabled={props.busy}
                     >
-                      Reconnect
-                    </Button>
+                      {__vesloT("ui.literal.reconnect_1lh8zk", __vesloCurrentLocale())}</Button>
                   </div>
 
                   <p class="text-xs text-gray-7">
-                    This build is cloud-only. Local host mode is disabled.
-                  </p>
+                    {__vesloT("ui.literal.this_build_is_cloud_only_local_host_mode_is__1nekpu", __vesloCurrentLocale())}</p>
                 </div>
 
                 <Show when={isTauriRuntime() && props.developerMode && !CLOUD_ONLY_MODE}>
                   <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
                     <div>
-                      <div class="text-sm font-medium text-gray-12">Engine</div>
-                      <div class="text-xs text-gray-10">Choose how OpenCode runs locally.</div>
+                      <div class="text-sm font-medium text-gray-12">{__vesloT("ui.literal.engine_1ovbg4", __vesloCurrentLocale())}</div>
+                      <div class="text-xs text-gray-10">{__vesloT("ui.literal.choose_how_opencode_runs_locally_kx86rr", __vesloCurrentLocale())}</div>
                     </div>
 
                     <div class="space-y-3">
-                      <div class="text-xs text-gray-10">Engine source</div>
+                      <div class="text-xs text-gray-10">{__vesloT("settings.engine_source", __vesloCurrentLocale())}</div>
                       <div class={props.developerMode ? "grid grid-cols-3 gap-2" : "grid grid-cols-2 gap-2"}>
                         <Button
                           variant={props.engineSource === "sidecar" ? "secondary" : "outline"}
                           onClick={() => props.setEngineSource("sidecar")}
                           disabled={props.busy}
                         >
-                          Bundled (recommended)
-                        </Button>
+                          {__vesloT("ui.literal.bundled_recommended_yyqq91", __vesloCurrentLocale())}</Button>
                         <Button
                           variant={props.engineSource === "path" ? "secondary" : "outline"}
                           onClick={() => props.setEngineSource("path")}
                           disabled={props.busy}
                         >
-                          System install (PATH)
-                        </Button>
+                          {__vesloT("ui.literal.system_install_path_8clptf", __vesloCurrentLocale())}</Button>
                         <Show when={props.developerMode}>
                           <Button
                             variant={props.engineSource === "custom" ? "secondary" : "outline"}
                             onClick={() => props.setEngineSource("custom")}
                             disabled={props.busy}
                           >
-                            Custom binary
-                          </Button>
+                            {__vesloT("ui.literal.custom_binary_1h1lhu", __vesloCurrentLocale())}</Button>
                         </Show>
                       </div>
                       <div class="text-[11px] text-gray-7">
-                        Bundled engine is the most reliable option. Use System install only if you manage OpenCode yourself.
-                      </div>
+                        {__vesloT("ui.literal.bundled_engine_is_the_most_reliable_option_u_xcb0hs", __vesloCurrentLocale())}</div>
                     </div>
 
                     <Show when={props.developerMode && props.engineSource === "custom"}>
                       <div class="space-y-2">
-                        <div class="text-xs text-gray-10">Custom OpenCode binary</div>
+                        <div class="text-xs text-gray-10">{__vesloT("ui.literal.custom_opencode_binary_1ectwk", __vesloCurrentLocale())}</div>
                         <div class="flex items-center gap-2">
                           <div
                             class="flex-1 min-w-0 text-[11px] text-gray-7 font-mono truncate bg-gray-1 p-3 rounded-xl border border-gray-6"
@@ -1637,44 +1603,39 @@ export default function SettingsView(props: SettingsViewProps) {
                             onClick={handlePickEngineBinary}
                             disabled={props.busy}
                           >
-                            Choose
-                          </Button>
+                            {__vesloT("common.choose", __vesloCurrentLocale())}</Button>
                           <Button
                             variant="outline"
                             class="text-xs h-10 px-3 shrink-0"
                             onClick={() => props.setEngineCustomBinPath("")}
                             disabled={props.busy || !props.engineCustomBinPath.trim()}
-                            title={!props.engineCustomBinPath.trim() ? "No custom path set" : "Clear"}
+                            title={!props.engineCustomBinPath.trim() ? translate("settings.no_custom_path_set") : translate("skills.clear_selection")}
                           >
-                            Clear
-                          </Button>
+                            {__vesloT("skills.clear_selection", __vesloCurrentLocale())}</Button>
                         </div>
                         <div class="text-[11px] text-gray-7">
-                          Use this to point Veslo at a local OpenCode build (e.g. your fork). Applies next time the engine starts or reloads.
-                        </div>
+                          {__vesloT("ui.literal.use_this_to_point_veslo_at_a_local_opencode__t3m97b", __vesloCurrentLocale())}</div>
                       </div>
                     </Show>
 
                     <Show when={props.developerMode}>
                       <div class="space-y-3">
-                        <div class="text-xs text-gray-10">Engine runtime</div>
+                        <div class="text-xs text-gray-10">{__vesloT("ui.literal.engine_runtime_d5h13b", __vesloCurrentLocale())}</div>
                         <div class="grid grid-cols-2 gap-2">
                           <Button
                             variant={props.engineRuntime === "direct" ? "secondary" : "outline"}
                             onClick={() => props.setEngineRuntime("direct")}
                             disabled={props.busy}
                           >
-                            Direct (OpenCode)
-                          </Button>
+                            {__vesloT("ui.literal.direct_opencode_1bn4g6", __vesloCurrentLocale())}</Button>
                           <Button
                             variant={props.engineRuntime === "veslo-orchestrator" ? "secondary" : "outline"}
                             onClick={() => props.setEngineRuntime("veslo-orchestrator")}
                             disabled={props.busy}
                           >
-                            Veslo Orchestrator
-                          </Button>
+                            {__vesloT("ui.literal.veslo_orchestrator_1xzyr6", __vesloCurrentLocale())}</Button>
                         </div>
-                        <div class="text-[11px] text-gray-7">Applies the next time the engine starts or reloads.</div>
+                        <div class="text-[11px] text-gray-7">{__vesloT("ui.literal.applies_the_next_time_the_engine_starts_or_r_nuk2g1", __vesloCurrentLocale())}</div>
                       </div>
                     </Show>
                   </div>
@@ -1682,57 +1643,54 @@ export default function SettingsView(props: SettingsViewProps) {
 
                 <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
                   <div>
-                    <div class="text-sm font-medium text-gray-12">Reset & Recovery</div>
-                    <div class="text-xs text-gray-10">Clear data or restart the setup flow.</div>
+                    <div class="text-sm font-medium text-gray-12">{__vesloT("ui.literal.reset_recovery_6bi5e9", __vesloCurrentLocale())}</div>
+                    <div class="text-xs text-gray-10">{__vesloT("ui.literal.clear_data_or_restart_the_setup_flow_ttu3fs", __vesloCurrentLocale())}</div>
                   </div>
 
                   <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
                     <div class="min-w-0">
-                      <div class="text-sm text-gray-12">Reset onboarding</div>
-                      <div class="text-xs text-gray-7">Clears Veslo preferences and restarts the app.</div>
+                      <div class="text-sm text-gray-12">{__vesloT("settings.reset_onboarding", __vesloCurrentLocale())}</div>
+                      <div class="text-xs text-gray-7">{__vesloT("settings.reset_onboarding_description", __vesloCurrentLocale())}</div>
                     </div>
                     <Button
                       variant="outline"
                       class="text-xs h-8 py-0 px-3 shrink-0"
                       onClick={() => props.openResetModal("onboarding")}
                       disabled={props.busy || props.resetModalBusy || props.anyActiveRuns}
-                      title={props.anyActiveRuns ? "Stop active runs to reset" : ""}
+                      title={props.anyActiveRuns ? translate("settings.stop_active_runs_reset_hint") : ""}
                     >
-                      Reset
-                    </Button>
+                      {__vesloT("settings.reset", __vesloCurrentLocale())}</Button>
                   </div>
 
                   <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
                     <div class="min-w-0">
-                      <div class="text-sm text-gray-12">Reset app data</div>
-                      <div class="text-xs text-gray-7">More aggressive. Clears Veslo cache + app data.</div>
+                      <div class="text-sm text-gray-12">{__vesloT("settings.reset_app_data", __vesloCurrentLocale())}</div>
+                      <div class="text-xs text-gray-7">{__vesloT("settings.reset_app_data_description", __vesloCurrentLocale())}</div>
                     </div>
                     <Button
                       variant="danger"
                       class="text-xs h-8 py-0 px-3 shrink-0"
                       onClick={() => props.openResetModal("all")}
                       disabled={props.busy || props.resetModalBusy || props.anyActiveRuns}
-                      title={props.anyActiveRuns ? "Stop active runs to reset" : ""}
+                      title={props.anyActiveRuns ? translate("settings.stop_active_runs_reset_hint") : ""}
                     >
-                      Reset
-                    </Button>
+                      {__vesloT("settings.reset", __vesloCurrentLocale())}</Button>
                   </div>
 
                   <div class="text-xs text-gray-7">
-                    Requires typing <span class="font-mono text-gray-11">RESET</span> and will restart the app.
-                  </div>
+                    {__vesloT("settings.requires_typing", __vesloCurrentLocale())}{" "}<span class="font-mono text-gray-11">RESET</span> {__vesloT("settings.will_restart", __vesloCurrentLocale())}</div>
                 </div>
 
                 <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
                   <div>
-                    <div class="text-sm font-medium text-gray-12">Devtools</div>
-                    <div class="text-xs text-gray-10">Sidecar health, capabilities, and audit trail.</div>
+                    <div class="text-sm font-medium text-gray-12">{__vesloT("ui.literal.devtools_icfg5r", __vesloCurrentLocale())}</div>
+                    <div class="text-xs text-gray-10">{__vesloT("ui.literal.sidecar_health_capabilities_and_audit_trail_1amrzr", __vesloCurrentLocale())}</div>
                   </div>
 
                   <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                     <div>
-                      <div class="text-sm font-medium text-gray-12">Service restarts</div>
-                      <div class="text-xs text-gray-10">Restart specific host services without leaving this screen.</div>
+                      <div class="text-sm font-medium text-gray-12">{__vesloT("ui.literal.service_restarts_jkcomk", __vesloCurrentLocale())}</div>
+                      <div class="text-xs text-gray-10">{__vesloT("ui.literal.restart_specific_host_services_without_leavi_k8g0ek", __vesloCurrentLocale())}</div>
                     </div>
                     <div class="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
                       <Button
@@ -1742,7 +1700,7 @@ export default function SettingsView(props: SettingsViewProps) {
                         class="text-xs px-3 py-1.5 justify-center"
                       >
                         <RefreshCcw class={`w-3.5 h-3.5 mr-1.5 ${vesloRestartBusy() ? "animate-spin" : ""}`} />
-                        {vesloRestartBusy() ? "Restarting..." : "Restart orchestrator"}
+                        {vesloRestartBusy() ? translate("settings.restarting") : translate("settings.restart_orchestrator")}
                       </Button>
                       <Button
                         variant="secondary"
@@ -1751,7 +1709,7 @@ export default function SettingsView(props: SettingsViewProps) {
                         class="text-xs px-3 py-1.5 justify-center"
                       >
                         <RefreshCcw class={`w-3.5 h-3.5 mr-1.5 ${opencodeRestarting() ? "animate-spin" : ""}`} />
-                        {opencodeRestarting() ? "Restarting..." : "Restart OpenCode"}
+                        {opencodeRestarting() ? translate("settings.restarting") : translate("settings.restart_opencode")}
                       </Button>
                       <Button
                         variant="secondary"
@@ -1760,7 +1718,7 @@ export default function SettingsView(props: SettingsViewProps) {
                         class="text-xs px-3 py-1.5 justify-center"
                       >
                         <RefreshCcw class={`w-3.5 h-3.5 mr-1.5 ${vesloServerRestarting() ? "animate-spin" : ""}`} />
-                        {vesloServerRestarting() ? "Restarting..." : "Restart Veslo server"}
+                        {vesloServerRestarting() ? translate("settings.restarting") : translate("settings.restart_veslo_server")}
                       </Button>
                       <Button
                         variant="secondary"
@@ -1769,7 +1727,7 @@ export default function SettingsView(props: SettingsViewProps) {
                         class="text-xs px-3 py-1.5 justify-center"
                       >
                         <RefreshCcw class={`w-3.5 h-3.5 mr-1.5 ${opencodeRouterRestarting() ? "animate-spin" : ""}`} />
-                        {opencodeRouterRestarting() ? "Restarting..." : "Restart OpenCodeRouter"}
+                        {opencodeRouterRestarting() ? translate("settings.restarting") : translate("settings.restart_opencode_router")}
                       </Button>
                     </div>
                     <Show when={vesloRestartStatus()}>
@@ -1785,26 +1743,26 @@ export default function SettingsView(props: SettingsViewProps) {
                   <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                     <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                       <div>
-                        <div class="text-sm font-medium text-gray-12">Versions</div>
-                        <div class="text-xs text-gray-10">Sidecar + desktop build info.</div>
+                        <div class="text-sm font-medium text-gray-12">{__vesloT("skills.detail_tab_versions", __vesloCurrentLocale())}</div>
+                        <div class="text-xs text-gray-10">{__vesloT("ui.literal.sidecar_desktop_build_info_6zin83", __vesloCurrentLocale())}</div>
                       </div>
                         <div class="space-y-1">
-                          <div class="text-[11px] text-gray-7 font-mono truncate">Desktop app: {appVersionLabel()}</div>
-                          <div class="text-[11px] text-gray-7 font-mono truncate">Commit: {appCommitLabel()}</div>
-                          <div class="text-[11px] text-gray-7 font-mono truncate">Orchestrator: {orchestratorVersionLabel()}</div>
-                          <div class="text-[11px] text-gray-7 font-mono truncate">OpenCode: {opencodeVersionLabel()}</div>
+                          <div class="text-[11px] text-gray-7 font-mono truncate">{__vesloT("ui.literal.desktop_app_188n2e", __vesloCurrentLocale())}{" "}{appVersionLabel()}</div>
+                          <div class="text-[11px] text-gray-7 font-mono truncate">{__vesloT("ui.literal.commit_fy9fpu", __vesloCurrentLocale())}{" "}{appCommitLabel()}</div>
+                          <div class="text-[11px] text-gray-7 font-mono truncate">{__vesloT("ui.literal.orchestrator_kmt3t5", __vesloCurrentLocale())}{" "}{orchestratorVersionLabel()}</div>
+                          <div class="text-[11px] text-gray-7 font-mono truncate">{__vesloT("ui.literal.opencode_v0epke", __vesloCurrentLocale())}{" "}{opencodeVersionLabel()}</div>
                           <div class="text-[11px] text-gray-7 font-mono truncate">
-                            Veslo server: {vesloServerVersionLabel()}
+                            {__vesloT("ui.literal.veslo_server_1df7hz", __vesloCurrentLocale())}{" "}{vesloServerVersionLabel()}
                           </div>
-                          <div class="text-[11px] text-gray-7 font-mono truncate">OpenCodeRouter: {opencodeRouterVersionLabel()}</div>
+                          <div class="text-[11px] text-gray-7 font-mono truncate">{__vesloT("ui.literal.opencoderouter_1abm12", __vesloCurrentLocale())}{" "}{opencodeRouterVersionLabel()}</div>
                         </div>
                     </div>
 
                     <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                       <div class="flex items-center justify-between gap-3">
                         <div>
-                          <div class="text-sm font-medium text-gray-12">OpenCode engine</div>
-                          <div class="text-xs text-gray-10">Local execution sidecar.</div>
+                          <div class="text-sm font-medium text-gray-12">{__vesloT("onboarding.opencode_engine", __vesloCurrentLocale())}</div>
+                          <div class="text-xs text-gray-10">{__vesloT("ui.literal.local_execution_sidecar_19q64h", __vesloCurrentLocale())}</div>
                         </div>
                         <div class={`text-xs px-2 py-1 rounded-full border ${engineStatusStyle()}`}>
                           {engineStatusLabel()}
@@ -1812,22 +1770,22 @@ export default function SettingsView(props: SettingsViewProps) {
                       </div>
                       <div class="space-y-1">
                         <div class="font-mono type-ui-xs text-gray-7 truncate">
-                          {props.engineInfo?.baseUrl ?? "Base URL unavailable"}
+                          {props.engineInfo?.baseUrl ?? translate("settings.base_url_unavailable")}
                         </div>
                         <div class="font-mono type-ui-xs text-gray-7 truncate">
-                          {props.engineInfo?.projectDir ?? "No project directory"}
+                          {props.engineInfo?.projectDir ?? translate("settings.no_project_directory")}
                         </div>
-                        <div class="font-mono type-ui-xs text-gray-7 truncate">PID: {props.engineInfo?.pid ?? "—"}</div>
+                        <div class="font-mono type-ui-xs text-gray-7 truncate">{__vesloT("ui.literal.pid_5yw6p4", __vesloCurrentLocale())}{" "}{props.engineInfo?.pid ?? "—"}</div>
                       </div>
                       <div class="grid gap-2">
                         <div>
-                          <div class="font-product type-ui-xs text-gray-9 mb-1">Last stdout</div>
+                          <div class="font-product type-ui-xs text-gray-9 mb-1">{__vesloT("ui.literal.last_stdout_66o4p0", __vesloCurrentLocale())}</div>
                           <pre class="font-mono type-ui-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
                             {engineStdout()}
                           </pre>
                         </div>
                         <div>
-                          <div class="font-product type-ui-xs text-gray-9 mb-1">Last stderr</div>
+                          <div class="font-product type-ui-xs text-gray-9 mb-1">{__vesloT("ui.literal.last_stderr_1kmdvm", __vesloCurrentLocale())}</div>
                           <pre class="font-mono type-ui-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
                             {engineStderr()}
                           </pre>
@@ -1838,8 +1796,8 @@ export default function SettingsView(props: SettingsViewProps) {
                     <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                       <div class="flex items-center justify-between gap-3">
                         <div>
-                          <div class="font-product type-ui-md font-medium text-gray-12">Orchestrator daemon</div>
-                          <div class="font-reading type-ui-sm text-gray-10">Workspace orchestration layer.</div>
+                          <div class="font-product type-ui-md font-medium text-gray-12">{__vesloT("ui.literal.orchestrator_daemon_14ptku", __vesloCurrentLocale())}</div>
+                          <div class="font-reading type-ui-sm text-gray-10">{__vesloT("ui.literal.workspace_orchestration_layer_5wr94c", __vesloCurrentLocale())}</div>
                         </div>
                         <div class={`font-product type-ui-xs px-2 py-1 rounded-full border ${orchestratorStatusStyle()}`}>
                           {orchestratorStatusLabel()}
@@ -1847,30 +1805,30 @@ export default function SettingsView(props: SettingsViewProps) {
                       </div>
                       <div class="space-y-1">
                         <div class="font-mono type-ui-xs text-gray-7 truncate">
-                          {props.orchestratorStatus?.dataDir ?? "Data directory unavailable"}
+                          {props.orchestratorStatus?.dataDir ?? translate("settings.data_directory_unavailable")}
                         </div>
                         <div class="font-mono type-ui-xs text-gray-7 truncate">
-                          Daemon: {props.orchestratorStatus?.daemon?.baseUrl ?? "—"}
+                          {__vesloT("ui.literal.daemon_33yrzx", __vesloCurrentLocale())}{" "}{props.orchestratorStatus?.daemon?.baseUrl ?? "—"}
                         </div>
                         <div class="font-mono type-ui-xs text-gray-7 truncate">
-                          OpenCode: {props.orchestratorStatus?.opencode?.baseUrl ?? "—"}
+                          {__vesloT("ui.literal.opencode_v0epke", __vesloCurrentLocale())}{" "}{props.orchestratorStatus?.opencode?.baseUrl ?? "—"}
                         </div>
                         <div class="font-mono type-ui-xs text-gray-7 truncate">
-                          Version: {props.orchestratorStatus?.cliVersion ?? "—"}
+                          {__vesloT("ui.literal.version_1f269h", __vesloCurrentLocale())}{" "}{props.orchestratorStatus?.cliVersion ?? "—"}
                         </div>
                         <div class="font-mono type-ui-xs text-gray-7 truncate">
-                          Sidecar: {orchestratorSidecarSummary()}
+                          {__vesloT("ui.literal.sidecar_t6w1se", __vesloCurrentLocale())}{" "}{orchestratorSidecarSummary()}
                         </div>
                         <div class="font-mono type-ui-xs text-gray-7 truncate" title={orchestratorBinaryPath()}>
-                          Opencode binary: {formatOrchestratorBinary(props.orchestratorStatus?.binaries?.opencode ?? null)}
+                          {__vesloT("ui.literal.opencode_binary_byu0fh", __vesloCurrentLocale())}{" "}{formatOrchestratorBinary(props.orchestratorStatus?.binaries?.opencode ?? null)}
                         </div>
                         <div class="font-mono type-ui-xs text-gray-7 truncate">
-                          Active workspace: {props.orchestratorStatus?.activeId ?? "—"}
+                          {__vesloT("ui.literal.active_workspace_rotr1o", __vesloCurrentLocale())}{" "}{props.orchestratorStatus?.activeId ?? "—"}
                         </div>
                       </div>
                       <Show when={props.orchestratorStatus?.lastError}>
                         <div>
-                          <div class="font-product type-ui-xs text-gray-9 mb-1">Last error</div>
+                          <div class="font-product type-ui-xs text-gray-9 mb-1">{__vesloT("ui.literal.last_error_1a7xgo", __vesloCurrentLocale())}</div>
                           <pre class="font-mono type-ui-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
                             {props.orchestratorStatus?.lastError}
                           </pre>
@@ -1881,8 +1839,8 @@ export default function SettingsView(props: SettingsViewProps) {
                     <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                       <div class="flex items-center justify-between gap-3">
                         <div>
-                          <div class="font-product type-ui-md font-medium text-gray-12">OpenCode SDK</div>
-                          <div class="font-reading type-ui-sm text-gray-10">UI connection diagnostics.</div>
+                          <div class="font-product type-ui-md font-medium text-gray-12">{__vesloT("ui.literal.opencode_sdk_15j9h3", __vesloCurrentLocale())}</div>
+                          <div class="font-reading type-ui-sm text-gray-10">{__vesloT("ui.literal.ui_connection_diagnostics_a5vi6x", __vesloCurrentLocale())}</div>
                         </div>
                         <div class={`font-product type-ui-xs px-2 py-1 rounded-full border ${opencodeConnectStatusStyle()}`}>
                           {opencodeConnectStatusLabel()}
@@ -1890,36 +1848,36 @@ export default function SettingsView(props: SettingsViewProps) {
                       </div>
                       <div class="space-y-1">
                         <div class="font-mono type-ui-xs text-gray-7 truncate">
-                          {props.opencodeConnectStatus?.baseUrl ?? "Base URL unavailable"}
+                          {props.opencodeConnectStatus?.baseUrl ?? translate("settings.base_url_unavailable")}
                         </div>
                         <div class="font-mono type-ui-xs text-gray-7 truncate">
-                          {props.opencodeConnectStatus?.directory ?? "No project directory"}
+                          {props.opencodeConnectStatus?.directory ?? translate("settings.no_project_directory")}
                         </div>
                         <div class="font-product type-ui-xs text-gray-7">
-                          Last attempt: {opencodeConnectTimestamp() ?? "—"}
+                          {__vesloT("ui.literal.last_attempt_n4aaie", __vesloCurrentLocale())}{" "}{opencodeConnectTimestamp() ?? "—"}
                         </div>
                         <Show when={props.opencodeConnectStatus?.reason}>
-                          <div class="font-product type-ui-xs text-gray-7">Reason: {props.opencodeConnectStatus?.reason}</div>
+                          <div class="font-product type-ui-xs text-gray-7">{__vesloT("ui.literal.reason_19diqi", __vesloCurrentLocale())}{" "}{props.opencodeConnectStatus?.reason}</div>
                         </Show>
                         <Show when={props.opencodeConnectStatus?.metrics}>
                           {(metrics) => (
                             <div class="font-product type-ui-xs pt-1 space-y-1 text-gray-7">
                               <Show when={metrics().healthyMs != null}>
-                                <div>Healthy: {Math.round(metrics().healthyMs as number)}ms</div>
+                                <div>{__vesloT("ui.literal.healthy_944m4o", __vesloCurrentLocale())}{" "}{Math.round(metrics().healthyMs as number)}ms</div>
                               </Show>
                               <Show when={metrics().loadSessionsMs != null}>
-                                <div>Load sessions: {Math.round(metrics().loadSessionsMs as number)}ms</div>
+                                <div>{__vesloT("ui.literal.load_sessions_1yff8f", __vesloCurrentLocale())}{" "}{Math.round(metrics().loadSessionsMs as number)}ms</div>
                               </Show>
                               <Show when={metrics().pendingPermissionsMs != null}>
                                 <div>
-                                  Pending permissions: {Math.round(metrics().pendingPermissionsMs as number)}ms
+                                  {__vesloT("ui.literal.pending_permissions_13wfyd", __vesloCurrentLocale())}{" "}{Math.round(metrics().pendingPermissionsMs as number)}ms
                                 </div>
                               </Show>
                               <Show when={metrics().providersMs != null}>
-                                <div>Providers: {Math.round(metrics().providersMs as number)}ms</div>
+                                <div>{__vesloT("ui.literal.providers_b9u37p", __vesloCurrentLocale())}{" "}{Math.round(metrics().providersMs as number)}ms</div>
                               </Show>
                               <Show when={metrics().totalMs != null}>
-                                <div>Total: {Math.round(metrics().totalMs as number)}ms</div>
+                                <div>{__vesloT("ui.literal.total_293rad", __vesloCurrentLocale())}{" "}{Math.round(metrics().totalMs as number)}ms</div>
                               </Show>
                             </div>
                           )}
@@ -1927,7 +1885,7 @@ export default function SettingsView(props: SettingsViewProps) {
                       </div>
                       <Show when={props.opencodeConnectStatus?.error}>
                         <div>
-                          <div class="font-product type-ui-xs text-gray-9 mb-1">Last error</div>
+                          <div class="font-product type-ui-xs text-gray-9 mb-1">{__vesloT("ui.literal.last_error_1a7xgo", __vesloCurrentLocale())}</div>
                           <pre class="font-mono type-ui-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
                             {props.opencodeConnectStatus?.error}
                           </pre>
@@ -1938,8 +1896,8 @@ export default function SettingsView(props: SettingsViewProps) {
                     <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                       <div class="flex items-center justify-between gap-3">
                         <div>
-                          <div class="font-product type-ui-md font-medium text-gray-12">Veslo server</div>
-                          <div class="font-reading type-ui-sm text-gray-10">Config and approvals sidecar.</div>
+                          <div class="font-product type-ui-md font-medium text-gray-12">{__vesloT("dashboard.remote_mode_veslo_alpha", __vesloCurrentLocale())}</div>
+                          <div class="font-reading type-ui-sm text-gray-10">{__vesloT("ui.literal.config_and_approvals_sidecar_18tj5t", __vesloCurrentLocale())}</div>
                         </div>
                         <div class={`font-product type-ui-xs px-2 py-1 rounded-full border ${vesloStatusStyle()}`}>
                           {vesloStatusLabel()}
@@ -1947,19 +1905,19 @@ export default function SettingsView(props: SettingsViewProps) {
                       </div>
                       <div class="space-y-1">
                         <div class="font-mono type-ui-xs text-gray-7 truncate">
-                          {(props.vesloServerHostInfo?.baseUrl ?? props.vesloServerUrl) || "Base URL unavailable"}
+                          {(props.vesloServerHostInfo?.baseUrl ?? props.vesloServerUrl) || translate("settings.base_url_unavailable")}
                         </div>
-                        <div class="font-mono type-ui-xs text-gray-7 truncate">PID: {props.vesloServerHostInfo?.pid ?? "—"}</div>
+                        <div class="font-mono type-ui-xs text-gray-7 truncate">{__vesloT("ui.literal.pid_5yw6p4", __vesloCurrentLocale())}{" "}{props.vesloServerHostInfo?.pid ?? "—"}</div>
                       </div>
                       <div class="grid gap-2">
                         <div>
-                          <div class="font-product type-ui-xs text-gray-9 mb-1">Last stdout</div>
+                          <div class="font-product type-ui-xs text-gray-9 mb-1">{__vesloT("ui.literal.last_stdout_66o4p0", __vesloCurrentLocale())}</div>
                           <pre class="font-mono type-ui-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
                             {vesloStdout()}
                           </pre>
                         </div>
                         <div>
-                          <div class="font-product type-ui-xs text-gray-9 mb-1">Last stderr</div>
+                          <div class="font-product type-ui-xs text-gray-9 mb-1">{__vesloT("ui.literal.last_stderr_1kmdvm", __vesloCurrentLocale())}</div>
                           <pre class="font-mono type-ui-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
                             {vesloStderr()}
                           </pre>
@@ -1970,8 +1928,8 @@ export default function SettingsView(props: SettingsViewProps) {
                     <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                       <div class="flex items-center justify-between gap-3">
                         <div>
-                          <div class="font-product type-ui-md font-medium text-gray-12">OpenCodeRouter sidecar</div>
-                          <div class="font-reading type-ui-sm text-gray-10">Bridge runtime (currently hidden from end-user UI).</div>
+                          <div class="font-product type-ui-md font-medium text-gray-12">{__vesloT("ui.literal.opencoderouter_sidecar_gritgy", __vesloCurrentLocale())}</div>
+                          <div class="font-reading type-ui-sm text-gray-10">{__vesloT("ui.literal.bridge_runtime_currently_hidden_from_end_use_1ak2dr", __vesloCurrentLocale())}</div>
                         </div>
                         <div class={`font-product type-ui-xs px-2 py-1 rounded-full border ${opencodeRouterStatusStyle()}`}>
                           {opencodeRouterStatusLabel()}
@@ -1979,15 +1937,15 @@ export default function SettingsView(props: SettingsViewProps) {
                       </div>
                       <div class="space-y-1">
                         <div class="font-mono type-ui-xs text-gray-7 truncate">
-                          {props.opencodeRouterInfo?.opencodeUrl?.trim() || "OpenCode URL unavailable"}
+                          {props.opencodeRouterInfo?.opencodeUrl?.trim() || translate("settings.opencode_url_unavailable")}
                         </div>
                         <div class="font-mono type-ui-xs text-gray-7 truncate">
-                          {props.opencodeRouterInfo?.workspacePath?.trim() || "No worker directory"}
+                          {props.opencodeRouterInfo?.workspacePath?.trim() || translate("settings.no_worker_directory")}
                         </div>
                         <div class="font-mono type-ui-xs text-gray-7 truncate">
-                          Health port: {props.opencodeRouterInfo?.healthPort ?? "—"}
+                          {__vesloT("ui.literal.health_port_19tjkf", __vesloCurrentLocale())}{" "}{props.opencodeRouterInfo?.healthPort ?? "—"}
                         </div>
-                        <div class="font-mono type-ui-xs text-gray-7 truncate">PID: {props.opencodeRouterInfo?.pid ?? "—"}</div>
+                        <div class="font-mono type-ui-xs text-gray-7 truncate">{__vesloT("ui.literal.pid_5yw6p4", __vesloCurrentLocale())}{" "}{props.opencodeRouterInfo?.pid ?? "—"}</div>
                       </div>
                       <div class="flex items-center gap-2">
                         <Button
@@ -1997,7 +1955,7 @@ export default function SettingsView(props: SettingsViewProps) {
                           class="text-xs px-3 py-1.5"
                         >
                           <RefreshCcw class={`w-3.5 h-3.5 mr-1.5 ${opencodeRouterRestarting() ? "animate-spin" : ""}`} />
-                          {opencodeRouterRestarting() ? "Restarting..." : "Restart"}
+                          {opencodeRouterRestarting() ? translate("settings.restarting") : translate("settings.restart")}
                         </Button>
                         <Show when={props.opencodeRouterInfo?.running}>
                           <Button
@@ -2006,8 +1964,7 @@ export default function SettingsView(props: SettingsViewProps) {
                             disabled={opencodeRouterRestarting()}
                             class="text-xs px-3 py-1.5"
                           >
-                            Stop
-                          </Button>
+                            {__vesloT("session.stop_label", __vesloCurrentLocale())}</Button>
                         </Show>
                       </div>
                       <Show when={opencodeRouterRestartError()}>
@@ -2017,13 +1974,13 @@ export default function SettingsView(props: SettingsViewProps) {
                       </Show>
                       <div class="grid gap-2">
                         <div>
-                          <div class="font-product type-ui-xs text-gray-9 mb-1">Last stdout</div>
+                          <div class="font-product type-ui-xs text-gray-9 mb-1">{__vesloT("ui.literal.last_stdout_66o4p0", __vesloCurrentLocale())}</div>
                           <pre class="font-mono type-ui-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
                             {opencodeRouterStdout()}
                           </pre>
                         </div>
                         <div>
-                          <div class="font-product type-ui-xs text-gray-9 mb-1">Last stderr</div>
+                          <div class="font-product type-ui-xs text-gray-9 mb-1">{__vesloT("ui.literal.last_stderr_1kmdvm", __vesloCurrentLocale())}</div>
                           <pre class="font-mono type-ui-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
                             {opencodeRouterStderr()}
                           </pre>
@@ -2034,27 +1991,26 @@ export default function SettingsView(props: SettingsViewProps) {
 
                   <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                     <div class="flex items-center justify-between gap-3">
-                      <div class="font-product type-ui-md font-medium text-gray-12">Veslo server diagnostics</div>
+                      <div class="font-product type-ui-md font-medium text-gray-12">{__vesloT("ui.literal.veslo_server_diagnostics_14kjjk", __vesloCurrentLocale())}</div>
                       <div class="font-mono type-ui-xs text-gray-8 truncate">
                         {props.vesloServerDiagnostics?.version ?? "—"}
                       </div>
                     </div>
                     <Show
                       when={props.vesloServerDiagnostics}
-                      fallback={<div class="font-product type-ui-sm text-gray-9">Diagnostics unavailable.</div>}
+                      fallback={<div class="font-product type-ui-sm text-gray-9">{__vesloT("ui.literal.diagnostics_unavailable_j6iv91", __vesloCurrentLocale())}</div>}
                     >
                       {(diag) => (
                         <div class="font-product type-ui-sm grid md:grid-cols-2 gap-2 text-gray-11">
-                          <div>Started: {formatUptime(diag().uptimeMs)}</div>
-                          <div>Read-only: {diag().readOnly ? "true" : "false"}</div>
+                          <div>{__vesloT("ui.literal.started_1nkwq4", __vesloCurrentLocale())}{" "}{formatUptime(diag().uptimeMs)}</div>
+                          <div>{__vesloT("ui.literal.read_only_7asksw", __vesloCurrentLocale())}{" "}{diag().readOnly ? translate("common.true") : translate("common.false")}</div>
                           <div>
-                            Approval: {diag().approval.mode} ({diag().approval.timeoutMs}ms)
-                          </div>
-                          <div>Workspaces: {diag().workspaceCount}</div>
-                          <div>Active workspace: {diag().activeWorkspaceId ?? "—"}</div>
-                          <div>Config path: {diag().server.configPath ?? "default"}</div>
-                          <div>Token source: {diag().tokenSource.client}</div>
-                          <div>Host token source: {diag().tokenSource.host}</div>
+                            {__vesloT("ui.literal.approval_6s3vw4", __vesloCurrentLocale())}{" "}{diag().approval.mode} ({diag().approval.timeoutMs}{__vesloT("ui.literal.ms_9kn2zs", __vesloCurrentLocale())}</div>
+                          <div>{__vesloT("ui.literal.workspaces_1qpwgk", __vesloCurrentLocale())}{" "}{diag().workspaceCount}</div>
+                          <div>{__vesloT("ui.literal.active_workspace_rotr1o", __vesloCurrentLocale())}{" "}{diag().activeWorkspaceId ?? "—"}</div>
+                          <div>{__vesloT("ui.literal.config_path_10ow8r", __vesloCurrentLocale())}{" "}{diag().server.configPath ?? translate("common.default")}</div>
+                          <div>{__vesloT("ui.literal.token_source_rfu5df", __vesloCurrentLocale())}{" "}{diag().tokenSource.client}</div>
+                          <div>{__vesloT("ui.literal.host_token_source_1t2g6o", __vesloCurrentLocale())}{" "}{diag().tokenSource.host}</div>
                         </div>
                       )}
                     </Show>
@@ -2062,44 +2018,47 @@ export default function SettingsView(props: SettingsViewProps) {
 
                   <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                     <div class="flex items-center justify-between gap-3">
-                      <div class="font-product type-ui-md font-medium text-gray-12">Veslo server capabilities</div>
+                      <div class="font-product type-ui-md font-medium text-gray-12">{__vesloT("ui.literal.veslo_server_capabilities_1fu1yi", __vesloCurrentLocale())}</div>
                       <div class="font-mono type-ui-xs text-gray-8 truncate">
-                        {props.vesloServerWorkspaceId ? `Worker ${props.vesloServerWorkspaceId}` : "Worker unresolved"}
+                        {props.vesloServerWorkspaceId ? `${translate("workspace.fallback_worker")} ${props.vesloServerWorkspaceId}` : translate("settings.worker_unresolved")}
                       </div>
                     </div>
                     <Show
                       when={props.vesloServerCapabilities}
-                      fallback={<div class="font-product type-ui-sm text-gray-9">Capabilities unavailable. Connect with a client token.</div>}
+                      fallback={<div class="font-product type-ui-sm text-gray-9">{__vesloT("ui.literal.capabilities_unavailable_connect_with_a_clie_1d5uu2", __vesloCurrentLocale())}</div>}
                     >
                       {(caps) => (
                         <div class="font-product type-ui-sm grid md:grid-cols-2 gap-2 text-gray-11">
-                          <div>Skills: {formatCapability(caps().skills)}</div>
-                          <div>Plugins: {formatCapability(caps().plugins)}</div>
-                          <div>MCP: {formatCapability(caps().mcp)}</div>
-                          <div>Commands: {formatCapability(caps().commands)}</div>
-                          <div>Config: {formatCapability(caps().config)}</div>
-                          <div>Proxy (OpenCodeRouter): {caps().proxy?.opencodeRouter ? "enabled" : "disabled"}</div>
+                          <div>{__vesloT("ui.literal.skills_pwxsnz", __vesloCurrentLocale())}{" "}{formatCapability(caps().skills)}</div>
+                          <div>{__vesloT("ui.literal.plugins_107x7q", __vesloCurrentLocale())}{" "}{formatCapability(caps().plugins)}</div>
+                          <div>{__vesloT("ui.literal.mcp_1gfg4x", __vesloCurrentLocale())}{" "}{formatCapability(caps().mcp)}</div>
+                          <div>{__vesloT("ui.literal.commands_189r59", __vesloCurrentLocale())}{" "}{formatCapability(caps().commands)}</div>
+                          <div>{__vesloT("ui.literal.config_1o4qqc", __vesloCurrentLocale())}{" "}{formatCapability(caps().config)}</div>
+                          <div>{__vesloT("ui.literal.proxy_opencoderouter_1oq2yh", __vesloCurrentLocale())}{" "}{caps().proxy?.opencodeRouter ? translate("mcp.enabled") : translate("mcp.disabled")}</div>
                           <div>
-                            Browser tools: {(() => {
+                            {__vesloT("ui.literal.browser_tools_wve4ga", __vesloCurrentLocale())}{" "}{(() => {
                               const browser = caps().toolProviders?.browser;
-                              if (!browser?.enabled) return "disabled";
+                              if (!browser?.enabled) return translate("mcp.disabled");
                               return `${browser.mode} · ${browser.placement}`;
                             })()}
                           </div>
                           <div>
-                            File tools: {(() => {
+                            {__vesloT("ui.literal.file_tools_1lpb92", __vesloCurrentLocale())}{" "}{(() => {
                               const files = caps().toolProviders?.files;
-                              if (!files) return "Unavailable";
-                              const parts = [files.injection ? "inbox on" : "inbox off", files.outbox ? "outbox on" : "outbox off"];
+                              if (!files) return translate("status.unavailable");
+                              const parts = [
+                                files.injection ? translate("settings.inbox_on") : translate("settings.inbox_off"),
+                                files.outbox ? translate("settings.outbox_on") : translate("settings.outbox_off"),
+                              ];
                               return parts.join(" · ");
                             })()}
                           </div>
                           <div>
-                            Sandbox: {(() => {
+                            {__vesloT("ui.literal.sandbox_a1meoq", __vesloCurrentLocale())}{" "}{(() => {
                               const sandbox = caps().sandbox;
                               return sandbox
-                                ? `${sandbox.backend} (${sandbox.enabled ? "on" : "off"})`
-                                : "Unavailable";
+                                ? `${sandbox.backend} (${sandbox.enabled ? translate("common.on") : translate("common.off")})`
+                                : translate("status.unavailable");
                             })()}
                           </div>
                         </div>
@@ -2109,13 +2068,13 @@ export default function SettingsView(props: SettingsViewProps) {
 
                   <div class="grid md:grid-cols-2 gap-4">
                     <div class="bg-gray-1 border border-gray-6 rounded-xl p-4">
-                      <div class="text-xs text-gray-10 mb-2">Pending permissions</div>
+                      <div class="text-xs text-gray-10 mb-2">{__vesloT("settings.pending_permissions", __vesloCurrentLocale())}</div>
                       <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-64 overflow-auto">
                         {props.safeStringify(props.pendingPermissions)}
                       </pre>
                     </div>
                     <div class="bg-gray-1 border border-gray-6 rounded-xl p-4">
-                      <div class="text-xs text-gray-10 mb-2">Recent events</div>
+                      <div class="text-xs text-gray-10 mb-2">{__vesloT("settings.recent_events", __vesloCurrentLocale())}</div>
                       <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-64 overflow-auto">
                         {props.safeStringify(props.events)}
                       </pre>
@@ -2124,15 +2083,14 @@ export default function SettingsView(props: SettingsViewProps) {
 
                   <div class="bg-gray-1 border border-gray-6 rounded-xl p-4">
                     <div class="flex items-center justify-between gap-3 mb-2">
-                      <div class="text-xs text-gray-10">Workspace debug events</div>
+                      <div class="text-xs text-gray-10">{__vesloT("ui.literal.workspace_debug_events_g2kpm2", __vesloCurrentLocale())}</div>
                       <Button
                         variant="outline"
                         class="text-xs h-7 py-0 px-2 shrink-0"
                         onClick={props.clearWorkspaceDebugEvents}
                         disabled={props.busy}
                       >
-                        Clear
-                      </Button>
+                        {__vesloT("skills.clear_selection", __vesloCurrentLocale())}</Button>
                     </div>
                     <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-64 overflow-auto">
                       {props.safeStringify(props.workspaceDebugEvents)}
@@ -2141,7 +2099,7 @@ export default function SettingsView(props: SettingsViewProps) {
 
                   <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                     <div class="flex items-center justify-between gap-3">
-                      <div class="text-sm font-medium text-gray-12">Audit log</div>
+                      <div class="text-sm font-medium text-gray-12">{__vesloT("ui.literal.audit_log_1kguyf", __vesloCurrentLocale())}</div>
                       <div class={`text-xs px-2 py-1 rounded-full border ${vesloAuditStatusStyle()}`}>
                         {vesloAuditStatusLabel()}
                       </div>
@@ -2151,7 +2109,7 @@ export default function SettingsView(props: SettingsViewProps) {
                     </Show>
                     <Show
                       when={props.vesloAuditEntries.length > 0}
-                      fallback={<div class="text-xs text-gray-9">No audit entries yet.</div>}
+                      fallback={<div class="text-xs text-gray-9">{__vesloT("ui.literal.no_audit_entries_yet_m8w4dn", __vesloCurrentLocale())}</div>}
                     >
                       <div class="divide-y divide-gray-6/50">
                         <For each={props.vesloAuditEntries}>

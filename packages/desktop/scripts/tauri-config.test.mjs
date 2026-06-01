@@ -36,3 +36,14 @@ test("desktop window keeps a 390px minimum width for phone-standard layouts", ()
     );
   }
 });
+
+test("Windows updater MSI installs write a verbose diagnostic log", () => {
+  const config = JSON.parse(readFileSync(tauriConfigPath, "utf8"));
+  const installerArgs = config?.plugins?.updater?.windows?.installerArgs;
+
+  assert.deepEqual(
+    installerArgs,
+    ["/l*v", "C:\\ProgramData\\veslo-updater-msi.log"],
+    "Windows updater should pass verbose MSI logging args so failed in-app updates leave diagnostics",
+  );
+});

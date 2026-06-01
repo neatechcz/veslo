@@ -166,7 +166,7 @@ function buildDisabledProjectorError(projectKey: string | null) {
   if (!projectKey || projectKey.trim().length === 0) {
     return "YouTrack projector project key is not configured."
   }
-  return "YouTrack MCP transport is not configured."
+  return "YouTrack REST API is not configured."
 }
 
 export function createDbFeedbackProjectorStore(database = db): FeedbackProjectorStore {

@@ -147,6 +147,7 @@ Pipeline behavior:
 - `enabled` is derived as `Boolean(ingestUrl && ingestToken)`. Without both vars the spool keeps collecting and retention prunes the oldest entries; nothing is sent over the network. Flip the two vars and the pipeline starts uploading on the next tick — no restart required for the upload to start, but the running process must be restarted to pick up new env values.
 - Spool location: `${VESLO_DATA_DIR or ~/.veslo/veslo-server}/debug-log-spool/events/`. One JSON file per event today (file-per-event format owned by `debug-log-spool.ts`); switching to JSONL append-only is tracked separately as a follow-up.
 - Upload retry policy lives in `debug-log-uploader.ts` (3 attempts, 250 ms initial, 2× multiplier, capped at 2 s). Failed batches stay leased in the manifest and the next flush tick re-leases them after the lease TTL.
+- Retention is enforced asynchronously after appends. The spool can temporarily exceed `VESLO_LOG_SPOOL_MAX_BYTES`, but `/debug-logs` ingest stays off the cleanup hot path and bulk-prunes old unleased events back toward the low-water mark.
 - Process signals: `startServer` registers SIGINT/SIGTERM handlers that drain the pipeline (final flush) before exit.
 
 ## Den Debug Log Ingest
@@ -182,6 +183,8 @@ Managed-AI inference routing is configured separately from signed-in app identit
 Desktop local workspaces separate the managed-AI access-policy source from the OpenCode provider routing target. The app may load the user's policy and gateway token from DEN or standalone AI Gateway, but the generated provider `baseURL` in `opencode.json` points at the active local Veslo server so prompts keep flowing through the local-first runtime.
 
 When the local Veslo server proxies managed-AI requests, successful JSON and streamed provider responses are passed through. Upstream non-2xx failures are normalized to a local `502` JSON error so a managed-AI gateway/provider block is not reported as local server authentication failure. The error details include a generated request id, provider/model/session/user/org context when available, upstream status/request id/content type, and a short sanitized upstream response snippet.
+
+The desktop app recognizes managed Codex credential exhaustion or missing eligible binding inside these normalized errors and formats it as an actionable AI access failure. Prompt sends that hit this condition set the session run state to failed and insert the error into the transcript instead of leaving OpenCode's empty assistant turn looking like an active run.
 
 DEN managed-AI uses `MANAGED_AI_DATABASE_URL`. Standalone AI Gateway uses `AI_GATEWAY_DATABASE_URL`. Their assignment, credential, eligibility, and usage views match only when those services are intentionally pointed at the same managed-AI backing database and compatible config.
 
@@ -235,6 +238,133 @@ Use this surface for:
 
 Veslo pages that mutate plugins or MCP are usually editing this config, not `.opencode/veslo.json`.
 
+## Skills Inventory
+
+The Skills page builds an app-wide inventory from three sources:
+
+- user skills from user-level OpenCode-compatible skill roots
+- workspace-local skills discovered per readable local workspace
+- Hub skills from the existing prepared catalog flow
+
+Use product terminology consistently:
+
+- **User skill** means a skill installed for the current user and available
+  across workspaces. Code and registry payloads may still call this
+  `user-global` or `personal-global`; those are implementation scopes, not
+  product labels.
+- **Workspace skill** means a skill installed in one workspace.
+- **Organization skill** means a skill owned by an organization catalog.
+- **Public skill** means a skill published for broad catalog discovery.
+- **Installed skill** means an active local or registry installation.
+  **Removed skill** means a local skill captured in the removal journal or a
+  registry installation/policy that can be restored from registry state.
+
+## Skill Removal Journal
+
+Recoverable local skill removals are stored by Veslo server under:
+
+- `${VESLO_DATA_DIR or ~/.veslo/veslo-server}/skill-removals/records/`
+- `${VESLO_DATA_DIR or ~/.veslo/veslo-server}/skill-removals/snapshots/`
+
+Each removal record stores the removal id, skill name, scope (`workspace` or
+`user-global`), original path, actor, optional reason, snapshot hash, status,
+and removal/restore timestamps. Workspace removals also store the workspace id.
+The app-facing list route returns only recoverability metadata and does not
+expose actor tokens, root directories, original path internals, or snapshot
+hashes.
+
+Local removal is snapshot-first. Veslo server copies the skill directory into
+the journal, hashes the snapshot, writes a pending record, removes the original
+directory, and then marks the record removed. Restore verifies the record,
+authorized workspace roots where applicable, destination conflicts, and snapshot
+hash before copying the snapshot back and marking the record restored.
+
+The Skills page reads this journal through Veslo server and includes removed
+user and workspace skills in the deleted/removed skills view. Restored records
+are hidden from the default list unless explicitly requested.
+
+Avoid product copy such as "global skill", "managed skill", or "adopt". Use
+"user skill", "installed skill", "organization skill", "public skill",
+"install", "publish", "remove", and "restore" instead.
+
+User skills are runtime-available skills, not organization catalog or
+admin-approved skills. Organization promotion and bulk rollout remain future
+work until the Den/admin backend owns those concepts.
+
+For inventory correctness, user skill roots and workspace skill roots are read
+separately. Runtime-effective discovery may still include both scopes for active
+workspace behavior, but the inventory must not expand user skills under every
+workspace. Workspace rows represent only real workspace-local instances or
+overrides.
+
+Skill edit and save flows target a concrete inventory instance by scope,
+workspace id, and path before falling back to name-based legacy commands.
+Remove and restore target only concrete skill locations or registry records
+that the app can mutate safely. Hub install uses an explicit target picker;
+current writes are limited to the active workspace. Installing a user skill into
+a workspace uses an explicit workspace picker and writes only to local workspace
+skill roots. Private app-created workspaces are valid inventory sources when
+they already contain skills, but they are not valid install targets and should
+be omitted from workspace install pickers.
+Bulk transfer actions are scoped by homogeneous inventory selections: selected
+user skills can be installed into a workspace, selected workspace skills can be
+copied or moved into user skills, and mixed user/workspace selections do not
+expose transfer actions.
+
+## Skill Registry State
+
+The cloud skill registry introduces distribution state separate from runtime skill files. Registry state is cloud-owned and should not be inferred from local `.opencode/skills/` folders alone.
+
+Registry-owned state:
+
+- skill records, slugs, descriptions, tags, visibility, and review status
+- immutable package versions and package digests
+- personal, workspace, and organization installation records
+- rollout policies for organization and platform distribution
+- workspace desired skill sets
+- review requests, reviewer decisions, and restore history
+
+Local Veslo state:
+
+- downloaded package archives before install
+- cached package archives under `${VESLO_DATA_DIR or ~/.veslo/veslo-server}/skill-package-cache/`, keyed by package SHA-256 and verified before use
+- unpacked runtime skill directories controlled by the local Veslo server
+- server-controlled workspace skill materializations under `.opencode/skills/veslo-managed/`, with a root manifest and per-skill ownership markers
+- pre-change backups for server-controlled materialization replacement/removal under the Veslo data directory
+- workspace activation or reload state after a skill set changes
+- any temporary install progress, errors, or selected install target in the app UI
+
+The local server validates registry responses before using them. Validators accept only the response fields needed by the app/server contract and delegate package manifest checks to the skill package model. They are not a backend implementation and do not replace registry-side authorization, review workflow, package storage, rollout policy enforcement, or audit enforcement.
+
+Rollout policies keep catalog source separate from install target. An
+organization or public skill can be targeted either as a user skill or as a
+workspace skill, but the same effective skill/audience cannot have both target
+types active at once. Target changes are retarget or move operations. Policy
+removal can be `user_removable`, `admin_removable`, or `locked`; locked policies
+are reserved for future required system skills and must be treated as
+non-removable by normal users.
+
+Registry-backed rollout policy changes are durable distribution state. Event
+polling should invalidate visible skill inventory, mark active workspaces as
+pending reload, and allow idle user-skill or workspace materialization to sync
+through the local server. Offline clients keep using the last local lockfile and
+materialization manifests until registry sync succeeds.
+
+Registry search can be proxied through the local Veslo server at `/v1/skills/search` so the app can reuse server-side registry auth configuration and response validation. Search indexing remains registry-owned and includes package metadata plus searchable package text/code under the registry size limit; clients may pass language context for server-side query expansion and must not implement semantic skill search locally. Registry update events can be polled through `/v1/skill-registry-events`; active workspace updates should become pending reload state, while idle workspace and user-skill updates can be materialized immediately. Registry writes use host/owner-authenticated local proxy routes for skill creation, immutable version publishing, installation create/update/delete/restore, review request create/approve/reject, and workspace skill-set replacement. Runtime mutation remains explicit: `/workspace/:id/skills/materialization/sync` and `/skills/materialization/sync-global` require host or owner auth and must not rewrite server-controlled skill files while an agent run is active.
+
+The Skills page now treats installed skills as an app-wide inventory with filterable location rows. UI filters are local presentation state. Registry-backed install and publish preparation can create the initial skill, version, and installation through the local server proxy. Registry-backed publish, approval, remove, restore, and workspace skill-set controls should call the local proxy only when the selected row has concrete registry identifiers for the action target, then refresh registry metadata and local inventory after success.
+
+Registry auth is account-scoped:
+
+- personal user: owns personal skills and personal installs
+- workspace collaborator/admin: reads workspace skill sets; admins manage workspace installs
+- org skill admin: manages organization skills, reviews, and org installs
+- platform admin: manages platform skills and cross-tenant moderation
+
+Registry-backed workspace skill-set changes are durable behavior. If the local app applies a changed workspace skill set, it should trigger the same server-backed install and reload semantics used for other skill mutations rather than writing only through the UI.
+
+Desktop-launched local Veslo server instances preserve the app workspace id when registering local workspace roots. Standalone `veslo-server` still generates a stable path-hash id unless a config workspace `id` or matching `--workspace-id` is provided.
+
 ## Import and Export
 
 Workspace config export/import is handled by `packages/app/src/app/stores/config-store.ts` and Tauri commands.
@@ -265,7 +395,7 @@ Current behavior:
 - browser local storage keeps the active pending draft key so the app can restore the same unpublished draft on restart
 - `Chat` is globally singleton while unpublished: reopening it returns to the existing private pending draft
 - project pending drafts are keyed by workspace plus normalized directory
-- pending drafts remain out of the sidebar until a real session is created by sending them
+- pending drafts remain out of the sidebar until a real session is created by sending them; a newly registered local directory may still appear immediately as the top empty workspace-only project row in by-project mode
 
 ## Precedence Rules
 

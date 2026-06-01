@@ -10,6 +10,7 @@ import TextInput from "../components/text-input";
 import { isTauriRuntime, isWindowsPlatform } from "../utils/index";
 import { currentLocale, LANGUAGE_OPTIONS, t, type Language } from "../../i18n";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
+import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 
 export type OnboardingViewProps = {
   startupPreference: StartupPreference | null;
@@ -237,10 +238,9 @@ export default function OnboardingView(props: OnboardingViewProps) {
               <div class="flex items-center justify-center">
                 <VesloLogo size={48} />
               </div>
-              <h2 class="text-2xl font-bold tracking-tight">Sign in to Veslo</h2>
+              <h2 class="text-2xl font-bold tracking-tight">{__vesloT("ui.literal.sign_in_to_veslo_jyklev", __vesloCurrentLocale())}</h2>
               <p class="text-gray-11 text-sm leading-relaxed">
-                Sign in with your account to continue setup. Email verification and password recovery happen in the browser.
-              </p>
+                {__vesloT("ui.literal.sign_in_with_your_account_to_continue_setup__e22ry2", __vesloCurrentLocale())}</p>
             </div>
 
             <div class="space-y-4">
@@ -252,8 +252,8 @@ export default function OnboardingView(props: OnboardingViewProps) {
                   onChange={(event) => props.onKeepSignedInChange(event.currentTarget.checked)}
                 />
                 <span>
-                  <span class="font-product type-ui-md font-medium text-gray-12">Keep me signed in</span>
-                  <span class="font-reading type-ui-sm block text-gray-9">Turn off to require sign in each time you launch Veslo.</span>
+                  <span class="font-product type-ui-md font-medium text-gray-12">{__vesloT("ui.literal.keep_me_signed_in_nj7h25", __vesloCurrentLocale())}</span>
+                  <span class="font-reading type-ui-sm block text-gray-9">{__vesloT("ui.literal.turn_off_to_require_sign_in_each_time_you_la_n69dq0", __vesloCurrentLocale())}</span>
                 </span>
               </label>
 
@@ -262,7 +262,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
                 onClick={() => props.onSignInWithBrowser()}
                 disabled={props.authExchangeBusy}
               >
-                {props.authExchangeBusy ? "Waiting for sign in..." : "Sign in with Browser"}
+                {props.authExchangeBusy ? __vesloT("onboarding.waiting_for_sign_in", __vesloCurrentLocale()) : __vesloT("onboarding.sign_in_with_browser", __vesloCurrentLocale())}
               </Button>
 
               <Show when={props.authExchangeBusy}>
@@ -271,8 +271,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
                   class="w-full"
                   onClick={() => props.onResumeBrowserSignIn()}
                 >
-                  I already signed in
-                </Button>
+                  {__vesloT("ui.literal.i_already_signed_in_g0yb5r", __vesloCurrentLocale())}</Button>
               </Show>
             </div>
 
@@ -351,9 +350,9 @@ export default function OnboardingView(props: OnboardingViewProps) {
               <div class="rounded-2xl border border-gray-6 bg-gray-1/50 px-4 py-3">
                 <div class="flex items-center justify-between gap-4">
                   <div class="min-w-0">
-                    <div class="font-product type-ui-xs font-semibold text-gray-10 uppercase tracking-wider">Import</div>
-                    <div class="font-product type-ui-md mt-1 text-gray-12">Use an existing workspace config.</div>
-                    <div class="font-reading type-ui-sm text-gray-10">Imports `.opencode` and `opencode.json` only.</div>
+                    <div class="font-product type-ui-xs font-semibold text-gray-10 uppercase tracking-wider">{__vesloT("skills.import", __vesloCurrentLocale())}</div>
+                    <div class="font-product type-ui-md mt-1 text-gray-12">{__vesloT("ui.literal.use_an_existing_workspace_config_lehhex", __vesloCurrentLocale())}</div>
+                    <div class="font-reading type-ui-sm text-gray-10">{__vesloT("ui.literal.imports_opencode_and_opencode_json_only_1m9ya6", __vesloCurrentLocale())}</div>
                   </div>
                   <Button
                     variant="secondary"
@@ -361,8 +360,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
                     onClick={props.onImportWorkspaceConfig}
                     disabled={props.importingWorkspaceConfig || props.busy}
                   >
-                    Import config
-                  </Button>
+                    {__vesloT("sidebar.import_config", __vesloCurrentLocale())}</Button>
                 </div>
               </div>
 

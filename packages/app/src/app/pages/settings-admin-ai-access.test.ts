@@ -8,7 +8,7 @@ const generalSection = source.match(/<Match when=\{activeTab\(\) === "general"\}
 test("settings shows admin-managed ai access only in developer mode", () => {
   assert.match(
     generalSection,
-    /<Show when=\{props\.developerMode\}>[\s\S]*>AI access<[\s\S]*managed by the platform admin/i,
+    /<Show when=\{props\.developerMode\}>[\s\S]*ui\.literal\.ai_access_1fcmzn[\s\S]*ui\.literal\.provider_and_model_assignment_is_managed_by__ekvlg6/,
   );
   assert.doesNotMatch(source, /Connect provider/);
   assert.doesNotMatch(source, /activeTab\(\)\s*===\s*"model"/);

@@ -383,3 +383,77 @@ test("server-backed managed config comparison treats redacted gateway tokens as 
     true,
   );
 });
+
+test("server-backed managed config comparison requires a patch when the local server token is redacted", () => {
+  const desired = applyGatewayProviderRouting(
+    JSON.stringify({
+      model: "codex_oauth/gpt-5.4",
+      provider: {
+        codex_oauth: {
+          options: {
+            baseURL: "http://127.0.0.1:4318/ai-gateway/providers/codex_oauth/v1",
+          },
+          models: {
+            "gpt-5.4": {
+              headers: {
+                "x-veslo-gateway-token": "[REDACTED]",
+                "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
+              },
+            },
+          },
+        },
+      },
+    }),
+    {
+      providerId: "codex_oauth",
+      serverBaseUrl: "http://127.0.0.1:4318",
+      serverClientToken: "new-local-client-token",
+      gatewayAccessToken: "gateway-access-token",
+      models: ["gpt-5.4"],
+    },
+  );
+
+  const redactedCurrent = desired.replace("new-local-client-token", "[REDACTED]");
+
+  assert.equal(
+    managedConfigContentsMatchForServerPatch(redactedCurrent, desired),
+    false,
+  );
+});
+
+test("server-backed managed config comparison requires a patch when model authorization is redacted", () => {
+  const desired = applyGatewayProviderRouting(
+    JSON.stringify({
+      model: "openai/gpt-5.4",
+      provider: {
+        openai: {
+          options: {
+            baseURL: "http://127.0.0.1:4318/ai-gateway/providers/openai/v1",
+          },
+          models: {
+            "gpt-5.4": {
+              headers: {
+                "x-veslo-gateway-token": "[REDACTED]",
+                "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
+              },
+            },
+          },
+        },
+      },
+    }),
+    {
+      providerId: "openai",
+      serverBaseUrl: "http://127.0.0.1:4318",
+      serverClientToken: "new-local-client-token",
+      gatewayAccessToken: "gateway-access-token",
+      models: ["gpt-5.4"],
+    },
+  );
+
+  const redactedCurrent = desired.replace("Bearer new-local-client-token", "[REDACTED]");
+
+  assert.equal(
+    managedConfigContentsMatchForServerPatch(redactedCurrent, desired),
+    false,
+  );
+});

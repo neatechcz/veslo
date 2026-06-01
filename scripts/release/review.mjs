@@ -32,6 +32,7 @@ const versions = {
   desktop: desktopPkg.version ?? null,
   tauri: tauriConfig.version ?? null,
   windowsMsi: tauriConfig.bundle?.windows?.wix?.version ?? null,
+  windowsMsiUpgradeCode: tauriConfig.bundle?.windows?.wix?.upgradeCode ?? null,
   cargo: cargoVersion ?? null,
   server: serverPkg.version ?? null,
   orchestrator: orchestratorPkg.version ?? null,
@@ -111,6 +112,11 @@ if (versions.app) {
     `${versions.windowsMsi ?? "?"} vs ${expectedWindowsMsi}`,
   );
 }
+addCheck(
+  "Windows MSI upgrade code is pinned",
+  typeof versions.windowsMsiUpgradeCode === "string" && versions.windowsMsiUpgradeCode.trim().length > 0,
+  versions.windowsMsiUpgradeCode ?? "?",
+);
 addCheck(
   "OpenCodeRouter version pinned in desktop",
   versions.opencodeRouter && versions.opencodeRouterVersionPinned && versions.opencodeRouter === versions.opencodeRouterVersionPinned,

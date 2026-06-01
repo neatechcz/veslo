@@ -1,6 +1,21 @@
+import { formatManagedAiAccessError } from "./ai-gateway-errors";
 import { safeStringify } from "../utils";
+import { currentLocale, t } from "../../i18n";
+
+const tr = (key: string, replacements?: Record<string, string>): string => {
+  let value = t(key, currentLocale());
+  if (replacements) {
+    for (const [placeholder, replacement] of Object.entries(replacements)) {
+      value = value.replaceAll(`{${placeholder}}`, replacement);
+    }
+  }
+  return value;
+};
 
 export const describeRequestError = (error: unknown, fallback: string): string => {
+  const managedAiAccessError = formatManagedAiAccessError(error);
+  if (managedAiAccessError) return managedAiAccessError;
+
   const readString = (value: unknown, max = 700) => {
     if (typeof value !== "string") return null;
     const trimmed = value.trim();
@@ -52,18 +67,18 @@ export const describeRequestError = (error: unknown, fallback: string): string =
 
   const generic = raw && /^unknown\s+error$/i.test(raw);
   const heading = (() => {
-    if (status === 401 || status === 403) return "Authentication failed";
-    if (status === 429) return "Rate limit exceeded";
-    if (provider) return `Provider error (${provider})`;
+    if (status === 401 || status === 403) return tr("errors.authentication_failed");
+    if (status === 429) return tr("errors.rate_limit_exceeded");
+    if (provider) return tr("errors.provider_error", { provider });
     return fallback;
   })();
 
   const lines = [heading];
   if (raw && !generic && raw !== heading) lines.push(raw);
-  if (status && !heading.includes(String(status))) lines.push(`Status: ${status}`);
-  if (provider && !heading.includes(provider)) lines.push(`Provider: ${provider}`);
-  if (code) lines.push(`Code: ${code}`);
-  if (response) lines.push(`Response: ${response}`);
+  if (status && !heading.includes(String(status))) lines.push(tr("errors.status_label", { status: String(status) }));
+  if (provider && !heading.includes(provider)) lines.push(tr("errors.provider_label", { provider }));
+  if (code) lines.push(tr("errors.code_label", { code }));
+  if (response) lines.push(tr("errors.response_label", { response }));
   if (lines.length > 1) return lines.join("\n");
 
   if (raw && !generic) return raw;
@@ -77,5 +92,5 @@ export const describeRequestError = (error: unknown, fallback: string): string =
 export const assertNoClientError = (result: unknown): void => {
   const maybe = result as { error?: unknown } | null | undefined;
   if (!maybe || maybe.error === undefined) return;
-  throw new Error(describeRequestError(maybe.error, "Request failed"));
+  throw new Error(describeRequestError(maybe.error, tr("errors.request_failed")));
 };

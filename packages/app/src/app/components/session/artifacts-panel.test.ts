@@ -28,10 +28,113 @@ test("artifact file rows stack filename, tags, then directory", () => {
   );
 });
 
+test("artifacts panel renders localized modified and opened file groups", () => {
+  assert.match(
+    source,
+    /data-testid=\{props\.testId\}/,
+    "file groups should render their stable test id",
+  );
+  assert.match(
+    source,
+    /testId="session-artifact-files-modified"/,
+    "modified file group should expose a stable test id",
+  );
+  assert.match(
+    source,
+    /testId="session-artifact-files-opened"/,
+    "opened file group should expose a stable test id",
+  );
+  assert.match(
+    source,
+    /tr\("session\.artifact_files_modified"\)/,
+    "modified file group heading should be localized",
+  );
+  assert.match(
+    source,
+    /tr\("session\.artifact_files_opened"\)/,
+    "opened file group heading should be localized",
+  );
+});
+
+test("file artifact rows use file interaction status labels", () => {
+  assert.match(
+    source,
+    /fileStatusLabel/,
+    "file artifact rows should use a dedicated status label helper",
+  );
+  assert.match(
+    source,
+    /item\.fileInteraction === "modified"/,
+    "modified files should use the modified interaction label",
+  );
+  assert.match(
+    source,
+    /item\.fileInteraction === "opened"/,
+    "opened files should use the opened interaction label",
+  );
+});
+
+test("artifact file rows do not expose an Obsidian action", () => {
+  assert.doesNotMatch(source, /Obsidian/, "artifacts panel should not render an Obsidian button");
+  assert.doesNotMatch(
+    source,
+    /session\.open_in_obsidian/,
+    "artifacts panel should not reference the Obsidian i18n label",
+  );
+  assert.doesNotMatch(
+    source,
+    /onOpenInObsidian|obsidianAvailable/,
+    "artifacts panel props should not expose Obsidian action plumbing",
+  );
+});
+
+test("file groups fall back to file artifact kind when interaction metadata is absent", () => {
+  assert.match(
+    source,
+    /fileGroupInteraction/,
+    "file grouping should use a helper that can handle missing optional metadata",
+  );
+  assert.match(
+    source,
+    /item\.kind === "file_output"/,
+    "legacy file output rows without fileInteraction should still render as modified",
+  );
+  assert.match(
+    source,
+    /item\.kind === "file_discovered"/,
+    "legacy discovered file rows without fileInteraction should still render as opened",
+  );
+  assert.match(
+    source,
+    /modifiedFiles = \(\) => family\.items\.filter\(\(item\) => fileGroupInteraction\(item\) === "modified"\)/,
+    "modified group should use the fallback-aware interaction helper",
+  );
+  assert.match(
+    source,
+    /openedFiles = \(\) => family\.items\.filter\(\(item\) => fileGroupInteraction\(item\) === "opened"\)/,
+    "opened group should use the fallback-aware interaction helper",
+  );
+});
+
 test("artifacts panel uses i18n keys instead of hardcoded English labels", () => {
   assert.match(source, /tr\("session\.artifacts"\)/, "artifacts heading should be localized");
   assert.match(source, /tr\("session\.no_artifacts"\)/, "empty-state message should be localized");
   assert.match(source, /tr\("session\.reveal"\)/, "reveal button should be localized");
   assert.match(source, /tr\("session\.artifact_status_updated"\)/, "updated status should be localized");
   assert.match(source, /tr\("session\.artifact_family_files"\)/, "Files family label should be localized");
+  assert.match(source, /tr\("session\.artifact_files_modified"\)/, "Modified file group should be localized");
+  assert.match(source, /tr\("session\.artifact_files_opened"\)/, "Opened file group should be localized");
+});
+
+test("artifacts panel resolves labels against the current locale", () => {
+  assert.match(
+    source,
+    /currentLocale/,
+    "artifacts panel should use the current locale instead of relying on default translation resolution",
+  );
+  assert.match(
+    source,
+    /t\(key,\s*currentLocale\(\)\)/,
+    "artifacts panel translation helper should pass the current locale explicitly",
+  );
 });

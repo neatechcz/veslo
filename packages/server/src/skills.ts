@@ -1,6 +1,6 @@
 import { readdir, readFile, writeFile, mkdir, rm } from "node:fs/promises";
 import type { Dirent } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
 import type { SkillItem } from "./types.js";
 import { parseFrontmatter, buildFrontmatter } from "./frontmatter.js";
@@ -8,6 +8,24 @@ import { exists } from "./utils.js";
 import { validateDescription, validateSkillName } from "./validators.js";
 import { ApiError } from "./errors.js";
 import { projectSkillsDir } from "./workspace-files.js";
+import { removeSkillWithSnapshot } from "./skill-removal-journal.js";
+import type { Actor } from "./types.js";
+import {
+  extractTriggerFromSkillBody,
+  parseSkillMarkdownMetadata,
+  type SkillMarkdownMetadata,
+} from "./skill-metadata.js";
+
+export const SKILL_ENTRYPOINT = "SKILL.md";
+
+export interface SkillRemovalJournalContext {
+  dataDir?: string;
+  workspaceId?: string;
+  actor: Actor;
+  reason?: string;
+}
+
+const userHomeDir = (): string => process.env.HOME?.trim() || homedir();
 
 async function findWorkspaceRoots(workspaceRoot: string): Promise<string[]> {
   const roots: string[] = [];
@@ -23,56 +41,7 @@ async function findWorkspaceRoots(workspaceRoot: string): Promise<string[]> {
   return roots;
 }
 
-const extractTriggerFromBody = (body: string) => {
-  const lines = body.split(/\r?\n/);
-  let inWhenSection = false;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-
-    if (/^#{1,6}\s+/.test(trimmed)) {
-      const heading = trimmed.replace(/^#{1,6}\s+/, "").trim();
-      inWhenSection = /^when to use$/i.test(heading);
-      continue;
-    }
-
-    if (!inWhenSection) continue;
-
-    const cleaned = trimmed
-      .replace(/^[-*+]\s+/, "")
-      .replace(/^\d+[.)]\s+/, "")
-      .trim();
-
-    if (cleaned) return cleaned;
-  }
-
-  return "";
-};
-
-const parseBoolean = (value: unknown): boolean | undefined => {
-  if (typeof value === "boolean") return value;
-  if (typeof value !== "string") return undefined;
-  const normalized = value.trim().toLowerCase();
-  if (["true", "1", "yes"].includes(normalized)) return true;
-  if (["false", "0", "no"].includes(normalized)) return false;
-  return undefined;
-};
-
-const parseStringList = (value: unknown): string[] | undefined => {
-  if (Array.isArray(value)) {
-    const items = value
-      .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
-      .filter(Boolean);
-    return items.length ? items : undefined;
-  }
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) return undefined;
-    return [trimmed];
-  }
-  return undefined;
-};
+export const extractTriggerFromBody = extractTriggerFromSkillBody;
 
 async function parseSkillEntry(
   skillPath: string,
@@ -85,53 +54,27 @@ async function parseSkillEntry(
   } catch {
     return null;
   }
-  let parsed: { data: Record<string, unknown>; body: string };
+  let metadata: SkillMarkdownMetadata;
   try {
-    parsed = parseFrontmatter(content);
+    metadata = parseSkillMarkdownMetadata(content, {
+      expectedName: entryName,
+      fallbackName: entryName,
+      requireDescription: true,
+    });
   } catch {
     return null;
   }
-  const { data, body } = parsed;
-  const name = typeof data.name === "string" ? data.name : entryName;
-  const description = typeof data.description === "string" ? data.description : "";
-  const disableModelInvocation =
-    parseBoolean(data["disable-model-invocation"]) ??
-    parseBoolean(data.disableModelInvocation);
-  const userInvocable =
-    parseBoolean(data["user-invocable"]) ??
-    parseBoolean(data.userInvocable);
-  const aliases = parseStringList(data.aliases);
-  const paths = parseStringList(data.paths);
-  const whenToUse =
-    typeof data.when_to_use === "string"
-      ? data.when_to_use
-      : typeof data.whenToUse === "string"
-        ? data.whenToUse
-        : undefined;
-  const trigger =
-    typeof data.trigger === "string"
-      ? data.trigger
-      : typeof data.when === "string"
-        ? data.when
-        : extractTriggerFromBody(body);
-  try {
-    validateSkillName(name);
-    validateDescription(description);
-  } catch {
-    return null;
-  }
-  if (name !== entryName) return null;
   return {
-    name,
-    description,
+    name: metadata.name,
+    description: metadata.description ?? "",
     path: skillPath,
     scope,
-    trigger: trigger.trim() || undefined,
-    disableModelInvocation,
-    userInvocable,
-    aliases,
-    whenToUse,
-    paths,
+    trigger: metadata.trigger,
+    disableModelInvocation: metadata.disableModelInvocation,
+    userInvocable: metadata.userInvocable,
+    aliases: metadata.aliases,
+    whenToUse: metadata.whenToUse,
+    paths: metadata.paths,
   };
 }
 
@@ -186,10 +129,11 @@ export async function listSkills(workspaceRoot: string, includeGlobal: boolean):
   }
 
   if (includeGlobal) {
-    const globalOpenCode = join(homedir(), ".config", "opencode", "skills");
-    const globalClaude = join(homedir(), ".claude", "skills");
-    const globalAgents = join(homedir(), ".agents", "skills");
-    const globalAgentLegacy = join(homedir(), ".agent", "skills");
+    const homeDir = userHomeDir();
+    const globalOpenCode = join(homeDir, ".config", "opencode", "skills");
+    const globalClaude = join(homeDir, ".claude", "skills");
+    const globalAgents = join(homeDir, ".agents", "skills");
+    const globalAgentLegacy = join(homeDir, ".agent", "skills");
     items.push(...(await listSkillsInDir(globalOpenCode, "global")));
     items.push(...(await listSkillsInDir(globalClaude, "global")));
     items.push(...(await listSkillsInDir(globalAgents, "global")));
@@ -204,10 +148,12 @@ export async function listSkills(workspaceRoot: string, includeGlobal: boolean):
   });
 }
 
-export async function upsertSkill(
-  workspaceRoot: string,
-  payload: { name: string; content: string; description?: string },
-): Promise<{ path: string; action: "added" | "updated" }> {
+const isPathInside = (parent: string, child: string): boolean => {
+  const rel = relative(parent, child);
+  return rel === "" || (Boolean(rel) && !rel.startsWith("..") && !isAbsolute(rel));
+};
+
+const prepareSkillContent = (payload: { name: string; content: string; description?: string }): string => {
   const name = payload.name.trim();
   validateSkillName(name);
   if (!payload.content) {
@@ -236,13 +182,129 @@ export async function upsertSkill(
     content = frontmatter + payload.content.replace(/^\n/, "");
   }
 
+  return content.endsWith("\n") ? content : content + "\n";
+};
+
+export const workspaceSkillRootsForMutation = async (workspaceRoot: string): Promise<string[]> => {
+  const roots = await findWorkspaceRoots(workspaceRoot);
+  return roots.flatMap((root) => [
+    join(root, ".opencode", "skills"),
+    join(root, ".claude", "skills"),
+  ]);
+};
+
+export const userGlobalSkillRootsForMutation = (): string[] => [
+  join(userHomeDir(), ".config", "opencode", "skills"),
+  join(userHomeDir(), ".claude", "skills"),
+  join(userHomeDir(), ".agents", "skills"),
+  join(userHomeDir(), ".agent", "skills"),
+];
+
+async function resolveExistingWorkspaceSkillTarget(
+  workspaceRoot: string,
+  name: string,
+  instancePath: string,
+  options: { allowManaged?: boolean } = {},
+): Promise<{ skillPath: string; skillRoot: string }> {
+  validateSkillName(name);
+  const target = resolve(instancePath.trim());
+  if (basename(target) !== SKILL_ENTRYPOINT) {
+    throw new ApiError(400, "invalid_skill_path", "Skill instance path must point to SKILL.md");
+  }
+  if (basename(dirname(target)) !== name) {
+    throw new ApiError(400, "invalid_skill_path", "Skill instance path must match payload name");
+  }
+  const roots = await workspaceSkillRootsForMutation(workspaceRoot);
+  const owningRoot = roots.map((root) => resolve(root)).find((root) => isPathInside(root, target));
+  if (!owningRoot) {
+    throw new ApiError(400, "invalid_skill_path", "Skill instance path must be inside a workspace skill root");
+  }
+  const relativeToRoot = relative(owningRoot, target).replace(/\\/g, "/");
+  if (!options.allowManaged && (relativeToRoot === `veslo-managed/${name}/${SKILL_ENTRYPOINT}` || relativeToRoot.startsWith("veslo-managed/"))) {
+    throw new ApiError(409, "managed_skill_read_only", "Managed materialized skills must be edited through the registry");
+  }
+  if (!(await exists(target))) {
+    throw new ApiError(404, "skill_not_found", `Skill not found: ${name}`);
+  }
+  return { skillPath: target, skillRoot: owningRoot };
+}
+
+async function resolveExistingUserGlobalSkillTarget(
+  name: string,
+  instancePath?: string,
+): Promise<{ skillPath: string; skillRoot: string }> {
+  validateSkillName(name);
+  const roots = userGlobalSkillRootsForMutation().map((root) => resolve(root));
+  const target = instancePath?.trim()
+    ? resolve(instancePath.trim())
+    : join(roots[0], name, SKILL_ENTRYPOINT);
+  if (basename(target) !== SKILL_ENTRYPOINT) {
+    throw new ApiError(400, "invalid_skill_path", "Skill instance path must point to SKILL.md");
+  }
+  if (basename(dirname(target)) !== name) {
+    throw new ApiError(400, "invalid_skill_path", "Skill instance path must match payload name");
+  }
+  const owningRoot = roots.find((root) => isPathInside(root, target));
+  if (!owningRoot) {
+    throw new ApiError(400, "invalid_skill_path", "Skill instance path must be inside a user-global skill root");
+  }
+  const relativeToRoot = relative(owningRoot, target).replace(/\\/g, "/");
+  if (relativeToRoot === `veslo-managed/${name}/${SKILL_ENTRYPOINT}` || relativeToRoot.startsWith("veslo-managed/")) {
+    throw new ApiError(409, "managed_skill_read_only", "Managed materialized skills must be edited through the registry");
+  }
+  if (!(await exists(target))) {
+    throw new ApiError(404, "skill_not_found", `Skill not found: ${name}`);
+  }
+  return { skillPath: target, skillRoot: owningRoot };
+}
+
+async function resolveExistingWorkspaceSkillPath(
+  workspaceRoot: string,
+  name: string,
+  instancePath: string,
+  options: { allowManaged?: boolean } = {},
+): Promise<string> {
+  return (await resolveExistingWorkspaceSkillTarget(workspaceRoot, name, instancePath, options)).skillPath;
+}
+
+export async function upsertSkill(
+  workspaceRoot: string,
+  payload: { name: string; content: string; description?: string },
+): Promise<{ path: string; action: "added" | "updated" }> {
+  const name = payload.name.trim();
+  const content = prepareSkillContent({ ...payload, name });
+
   const baseDir = projectSkillsDir(workspaceRoot);
   const skillDir = join(baseDir, name);
   await mkdir(skillDir, { recursive: true });
   const skillPath = join(skillDir, "SKILL.md");
   const existed = await exists(skillPath);
-  await writeFile(skillPath, content.endsWith("\n") ? content : content + "\n", "utf8");
+  await writeFile(skillPath, content, "utf8");
   return { path: skillPath, action: existed ? "updated" : "added" };
+}
+
+export async function updateSkillAtPath(
+  workspaceRoot: string,
+  payload: { name: string; path: string; content: string; description?: string },
+): Promise<{ path: string; action: "updated" }> {
+  const name = payload.name.trim();
+  const skillPath = await resolveExistingWorkspaceSkillPath(workspaceRoot, name, payload.path);
+  const content = prepareSkillContent({ name, content: payload.content, description: payload.description });
+  await writeFile(skillPath, content, "utf8");
+  return { path: skillPath, action: "updated" };
+}
+
+export async function readSkillAtPath(
+  workspaceRoot: string,
+  payload: { name: string; path: string },
+): Promise<{ path: string; content: string }> {
+  const skillPath = await resolveExistingWorkspaceSkillPath(workspaceRoot, payload.name.trim(), payload.path, {
+    allowManaged: true,
+  });
+  return {
+    path: skillPath,
+    content: await readFile(skillPath, "utf8"),
+  };
 }
 
 export async function deleteSkill(workspaceRoot: string, name: string): Promise<{ path: string }> {
@@ -256,4 +318,82 @@ export async function deleteSkill(workspaceRoot: string, name: string): Promise<
   }
   await rm(skillDir, { recursive: true, force: true });
   return { path: skillDir };
+}
+
+export async function deleteSkillRecoverable(
+  workspaceRoot: string,
+  name: string,
+  journal: SkillRemovalJournalContext,
+): Promise<{ path: string; removalId: string }> {
+  const trimmed = name.trim();
+  validateSkillName(trimmed);
+  const baseDir = projectSkillsDir(workspaceRoot);
+  const skillDir = join(baseDir, trimmed);
+  const skillPath = join(skillDir, SKILL_ENTRYPOINT);
+  if (!(await exists(skillPath))) {
+    throw new ApiError(404, "skill_not_found", `Skill not found: ${trimmed}`);
+  }
+  const record = await removeSkillWithSnapshot({
+    dataDir: journal.dataDir,
+    actor: journal.actor,
+    reason: journal.reason,
+    source: {
+      scope: "workspace",
+      workspaceId: journal.workspaceId,
+      rootDir: baseDir,
+      skillPath,
+    },
+  });
+  return { path: record.originalDir, removalId: record.id };
+}
+
+export async function deleteGlobalSkillRecoverable(
+  name: string,
+  options: { path?: string } | undefined,
+  journal: SkillRemovalJournalContext,
+): Promise<{ path: string; removalId: string }> {
+  const trimmed = name.trim();
+  validateSkillName(trimmed);
+  const target = await resolveExistingUserGlobalSkillTarget(trimmed, options?.path);
+  const record = await removeSkillWithSnapshot({
+    dataDir: journal.dataDir,
+    actor: journal.actor,
+    reason: journal.reason,
+    source: {
+      scope: "user-global",
+      rootDir: target.skillRoot,
+      skillPath: target.skillPath,
+    },
+  });
+  return { path: record.originalDir, removalId: record.id };
+}
+
+export async function deleteSkillAtPath(
+  workspaceRoot: string,
+  payload: { name: string; path: string },
+): Promise<{ path: string }> {
+  const skillPath = await resolveExistingWorkspaceSkillPath(workspaceRoot, payload.name.trim(), payload.path);
+  const skillDir = dirname(skillPath);
+  await rm(skillDir, { recursive: true, force: true });
+  return { path: skillDir };
+}
+
+export async function deleteSkillAtPathRecoverable(
+  workspaceRoot: string,
+  payload: { name: string; path: string },
+  journal: SkillRemovalJournalContext,
+): Promise<{ path: string; removalId: string }> {
+  const target = await resolveExistingWorkspaceSkillTarget(workspaceRoot, payload.name.trim(), payload.path);
+  const record = await removeSkillWithSnapshot({
+    dataDir: journal.dataDir,
+    actor: journal.actor,
+    reason: journal.reason,
+    source: {
+      scope: "workspace",
+      workspaceId: journal.workspaceId,
+      rootDir: target.skillRoot,
+      skillPath: target.skillPath,
+    },
+  });
+  return { path: record.originalDir, removalId: record.id };
 }

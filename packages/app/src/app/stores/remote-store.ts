@@ -22,6 +22,7 @@ import {
   workspaceUpdateRemote,
   type WorkspaceInfo,
 } from "../lib/tauri";
+import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 
 export interface RemoteStoreDeps {
   // Workspace state accessors
@@ -316,7 +317,7 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
         resolvedHostUrl = resolved.hostUrl;
         resolvedAuth = resolved.auth;
       } else {
-        deps.setError("Veslo server unavailable. Check the URL and token.");
+        deps.setError(__vesloIndirectT("ui.indirect.veslo_server_unavailable_check_the_url_and_tok_pthxtb", __vesloIndirectLocale()));
         return false;
       }
     } catch (error) {
@@ -500,7 +501,7 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
         directoryHint: directory || null,
       });
       if (resolved.kind !== "veslo") {
-        deps.setError("Veslo server unavailable. Check the URL and token.");
+        deps.setError(__vesloIndirectT("ui.indirect.veslo_server_unavailable_check_the_url_and_tok_pthxtb", __vesloIndirectLocale()));
         return false;
       }
       resolvedBaseUrl = resolved.opencodeBaseUrl;
@@ -538,7 +539,7 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
       if (!ok) {
         deps.updateWorkspaceConnectionState(id, {
           status: "error",
-          message: "Failed to connect to worker.",
+          message: __vesloIndirectT("ui.indirect.failed_to_connect_to_worker_bjt8ig", __vesloIndirectLocale()),
         });
         return false;
       }

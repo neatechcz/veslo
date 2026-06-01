@@ -92,6 +92,20 @@
       "when": 1778322549000,
       "tag": "0012_debug_logs",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "5",
+      "when": 1779807600000,
+      "tag": "0013_skill_registry",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "5",
+      "when": 1780099200000,
+      "tag": "0014_skill_rollout_policies",
+      "breakpoints": true
     }
   ]
 }

@@ -3,13 +3,29 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve, dirname, win32, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { prepareDesktopAuthSeed } from './desktop-auth-seed.js';
+import {
+  E2E_SKILL_REGISTRY_ORG_ID,
+  E2E_SKILL_REGISTRY_TOKEN,
+  E2E_SKILL_REGISTRY_USER_ID,
+  startSkillRegistryFixture,
+  stopSkillRegistryFixture,
+} from './skill-registry-fixture.js';
+import {
+  E2E_MANAGED_AI_ORG_ID,
+  E2E_MANAGED_AI_TOKEN,
+  E2E_MANAGED_AI_USER_ID,
+  startManagedAiGatewayFixture,
+  stopManagedAiGatewayFixture,
+  type ManagedAiGatewayFixture,
+} from './managed-ai-gateway-fixture.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const DEFAULT_WEBDRIVER_PORT = 4445;
+const DEFAULT_LAUNCH_TIMEOUT = 120_000;
 const WEBDRIVER_PORT = resolveWebDriverPort();
-const LAUNCH_TIMEOUT = parseInt(process.env.E2E_LAUNCH_TIMEOUT ?? '30000', 10);
+const LAUNCH_TIMEOUT = resolveLaunchTimeout();
 const POLL_INTERVAL = 250;
 const REAL_PROFILE_ENV = process.env.E2E_USE_EXISTING_PROFILE?.trim() === '1';
 const CUSTOM_BINARY_PATH = process.env.E2E_TAURI_BINARY?.trim() ?? '';
@@ -24,6 +40,7 @@ const APP_IDENTIFIERS = [
 
 let appProcess: ChildProcess | null = null;
 let appProcessOwnedByHarness = false;
+let managedAiGatewayFixture: ManagedAiGatewayFixture | null = null;
 
 type TerminateAppProcessOptions = {
   platform?: NodeJS.Platform;
@@ -53,6 +70,18 @@ export function resolveWebDriverPort(env: Record<string, string | undefined> = p
   }
 
   return port;
+}
+
+export function resolveLaunchTimeout(env: Record<string, string | undefined> = process.env): number {
+  const raw = env.E2E_LAUNCH_TIMEOUT?.trim();
+  if (!raw) return DEFAULT_LAUNCH_TIMEOUT;
+
+  const timeout = Number(raw);
+  if (!Number.isInteger(timeout) || timeout < 1) {
+    throw new Error(`Invalid E2E_LAUNCH_TIMEOUT: ${raw}`);
+  }
+
+  return timeout;
 }
 
 async function fetchWebDriverStatus(port: number, timeoutMs: number): Promise<Response> {
@@ -267,6 +296,32 @@ export function seedDefaultWorkspaceState(root: string, env: NodeJS.ProcessEnv):
   }
 }
 
+function shouldUseManagedAiGatewayFixture(): boolean {
+  return process.env.E2E_MANAGED_AI_GATEWAY_FIXTURE?.trim() === '1';
+}
+
+async function startManagedAiGatewayFixtureIfRequested(): Promise<ManagedAiGatewayFixture | null> {
+  if (!shouldUseManagedAiGatewayFixture()) {
+    return null;
+  }
+  if (managedAiGatewayFixture) {
+    return managedAiGatewayFixture;
+  }
+
+  managedAiGatewayFixture = await startManagedAiGatewayFixture();
+  process.env.E2E_MANAGED_AI_GATEWAY_BASE_URL = managedAiGatewayFixture.baseUrl;
+  process.env.VESLO_E2E_EXPECTED_MANAGED_AI_PROVIDER ||= 'codex_oauth';
+  process.env.VESLO_E2E_EXPECTED_MANAGED_AI_MODEL ||= 'gpt-5.4';
+  console.log(`[e2e] Managed AI gateway fixture: ${managedAiGatewayFixture.baseUrl}`);
+  return managedAiGatewayFixture;
+}
+
+async function stopManagedAiGatewayFixtureIfRunning(): Promise<void> {
+  const fixture = managedAiGatewayFixture;
+  managedAiGatewayFixture = null;
+  await stopManagedAiGatewayFixture(fixture);
+}
+
 export async function ensureWebDriverReady(
   port: number = WEBDRIVER_PORT,
   timeout: number = Math.max(POLL_INTERVAL, Math.min(5_000, LAUNCH_TIMEOUT)),
@@ -276,6 +331,11 @@ export async function ensureWebDriverReady(
 
 export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
   if (await hasReadyWebDriverServer(port)) {
+    if (shouldUseManagedAiGatewayFixture()) {
+      throw new Error(
+        `Refusing to reuse an existing WebDriver server on port ${port} while E2E_MANAGED_AI_GATEWAY_FIXTURE=1. Stop the existing desktop app before running the managed AI fixture spec.`,
+      );
+    }
     console.log(`[e2e] Reusing existing WebDriver server on port ${port}.`);
     appProcess = null;
     appProcessOwnedByHarness = false;
@@ -285,15 +345,48 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
   const binaryPath = resolveBinaryPath();
   console.log(`[e2e] Launching Tauri binary: ${binaryPath}`);
   console.log(`[e2e] WebDriver port: ${port}`);
+  const skillRegistryFixtureBaseUrl = process.env.E2E_SKILL_REGISTRY_FIXTURE?.trim() === '0'
+    ? null
+    : await startSkillRegistryFixture();
+  const managedAiGatewayFixtureBaseUrl = (await startManagedAiGatewayFixtureIfRequested())?.baseUrl ?? null;
+  const exposeSkillRegistryServerEnv = process.env.E2E_SKILL_REGISTRY_SERVER_ENV?.trim() !== '0';
+  const seedDenAuthFromSkillRegistryFixture =
+    process.env.E2E_SKILL_REGISTRY_AUTH_BASE?.trim() === 'fixture' && Boolean(skillRegistryFixtureBaseUrl);
+  const seedEnv = managedAiGatewayFixtureBaseUrl
+    ? {
+        ...process.env,
+        E2E_DEN_AUTH_JSON: JSON.stringify({
+          denApiBase: managedAiGatewayFixtureBaseUrl,
+          token: E2E_MANAGED_AI_TOKEN,
+          orgId: E2E_MANAGED_AI_ORG_ID,
+          user: { id: E2E_MANAGED_AI_USER_ID, email: 'veslo-managed-ai-e2e@example.test' },
+          org: { id: E2E_MANAGED_AI_ORG_ID, slug: 'veslo-managed-ai-e2e' },
+        }),
+      }
+    : seedDenAuthFromSkillRegistryFixture
+    ? {
+        ...process.env,
+        E2E_DEN_AUTH_JSON: JSON.stringify({
+          denApiBase: skillRegistryFixtureBaseUrl,
+          token: E2E_SKILL_REGISTRY_TOKEN,
+          orgId: E2E_SKILL_REGISTRY_ORG_ID,
+          user: { id: `${E2E_SKILL_REGISTRY_USER_ID}_fixture`, email: 'veslo-registry-e2e@example.test' },
+          org: { id: E2E_SKILL_REGISTRY_ORG_ID, slug: 'veslo-e2e' },
+        }),
+      }
+    : process.env;
+  if (skillRegistryFixtureBaseUrl) {
+    console.log(`[e2e] Skill registry fixture: ${skillRegistryFixtureBaseUrl}`);
+  }
 
   const tmpDir = join(resolveDesktopRoot(), '..', 'e2e', '.tmp-opencode-home');
   let env: NodeJS.ProcessEnv;
 
   if (CUSTOM_OPENCODE_HOME) {
-    const snapshotPath = prepareDesktopAuthSeed(CUSTOM_OPENCODE_HOME, process.env, {
+    const snapshotPath = prepareDesktopAuthSeed(CUSTOM_OPENCODE_HOME, seedEnv, {
       preserveExisting: true,
     });
-    env = createAppLaunchEnv(process.env, {
+    env = createAppLaunchEnv(seedEnv, {
       port,
       opencodeHome: CUSTOM_OPENCODE_HOME,
       snapshotPath,
@@ -303,8 +396,8 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
   } else if (!REAL_PROFILE_ENV) {
     rmSync(ISOLATED_PROFILE_ROOT, { recursive: true, force: true });
     rmSync(tmpDir, { recursive: true, force: true });
-    const snapshotPath = prepareDesktopAuthSeed(tmpDir);
-    env = createAppLaunchEnv(process.env, {
+    const snapshotPath = prepareDesktopAuthSeed(tmpDir, seedEnv);
+    env = createAppLaunchEnv(seedEnv, {
       port,
       opencodeHome: tmpDir,
       snapshotPath,
@@ -330,7 +423,21 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
   }
 
   appProcess = spawn(binaryPath, [], {
-    env,
+    env: {
+      ...env,
+      ...(skillRegistryFixtureBaseUrl && exposeSkillRegistryServerEnv
+        ? {
+            VESLO_SKILL_REGISTRY_BASE_URL: skillRegistryFixtureBaseUrl,
+            VESLO_SKILL_REGISTRY_TOKEN: 'veslo-e2e-registry-token',
+          }
+        : {}),
+      ...(managedAiGatewayFixtureBaseUrl
+        ? {
+            VESLO_MANAGED_AI_BASE_URL: managedAiGatewayFixtureBaseUrl,
+            VESLO_AI_GATEWAY_BASE_URL: managedAiGatewayFixtureBaseUrl,
+          }
+        : {}),
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   appProcessOwnedByHarness = true;
@@ -342,8 +449,8 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
     process.stderr.write(`[app:stderr] ${data}`);
   });
 
-  appProcess.on('exit', (code) => {
-    console.log(`[e2e] App process exited with code ${code}`);
+  appProcess.on('exit', (code, signal) => {
+    console.log(`[e2e] App process exited with code ${code}${signal ? ` signal ${signal}` : ''}`);
     appProcess = null;
     appProcessOwnedByHarness = false;
   });
@@ -354,6 +461,8 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
     console.log(`[e2e] WebDriver server is ready.`);
   } catch (error) {
     if (!appProcess) {
+      await stopManagedAiGatewayFixtureIfRunning();
+      await stopSkillRegistryFixture();
       throw new Error(
         `Spawned Tauri app exited before WebDriver became ready. ` +
         `If Veslo is already running, run it with the e2e WebDriver build or stop it before launching tests.`,
@@ -366,6 +475,8 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
 
 export async function stopApp(): Promise<void> {
   if (!appProcessOwnedByHarness || !appProcess) {
+    await stopManagedAiGatewayFixtureIfRunning();
+    await stopSkillRegistryFixture();
     return;
   }
   const processToStop = appProcess;
@@ -379,6 +490,8 @@ export async function stopApp(): Promise<void> {
   if (!result.exited) {
     console.warn(`[e2e] App process PID ${processToStop.pid} did not exit after termination request.`);
   }
+  await stopManagedAiGatewayFixtureIfRunning();
+  await stopSkillRegistryFixture();
 }
 
 /** Utility for HashRouter-based URL assertions (just the fragment). */

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import { parseCliArgs, resolveServerConfig } from "./config.js";
 
-const ENV_KEYS = ["VESLO_DEN_API_BASE"] as const;
+const ENV_KEYS = ["VESLO_DEN_API_BASE", "VESLO_SKILL_REGISTRY_BASE_URL", "VESLO_SKILL_REGISTRY_TOKEN"] as const;
 const snapshot = new Map<string, string | undefined>();
 const tempDirs: string[] = [];
 
@@ -63,5 +63,54 @@ describe("den api base config", () => {
     const config = await resolveServerConfig(parseCliArgs(["--config", configPath]));
 
     expect(config.denApiBase).toBe("https://file-only-den.example");
+  });
+
+  test("resolveServerConfig prefers explicit skill registry env base over file and den fallback", async () => {
+    for (const key of ENV_KEYS) snapshot.set(key, process.env[key]);
+
+    const configDir = await mkdtemp(join(tmpdir(), "veslo-server-config-"));
+    tempDirs.push(configDir);
+    const configPath = join(configDir, "server.json");
+
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        denApiBase: "https://file-den.example/",
+        skillRegistryBaseUrl: "https://file-registry.example/",
+      }),
+      "utf8",
+    );
+    process.env.VESLO_DEN_API_BASE = "https://env-den.example/";
+    process.env.VESLO_SKILL_REGISTRY_BASE_URL = "https://env-registry.example///";
+
+    const config = await resolveServerConfig(parseCliArgs(["--config", configPath]));
+
+    expect(config.skillRegistryBaseUrl).toBe("https://env-registry.example");
+  });
+
+  test("resolveServerConfig falls back from file skill registry base to den api base", async () => {
+    for (const key of ENV_KEYS) snapshot.set(key, process.env[key]);
+
+    const configDir = await mkdtemp(join(tmpdir(), "veslo-server-config-"));
+    tempDirs.push(configDir);
+    const configPath = join(configDir, "server.json");
+
+    await writeFile(configPath, JSON.stringify({ denApiBase: "https://file-den.example/" }), "utf8");
+    delete process.env.VESLO_DEN_API_BASE;
+    delete process.env.VESLO_SKILL_REGISTRY_BASE_URL;
+
+    const config = await resolveServerConfig(parseCliArgs(["--config", configPath]));
+
+    expect(config.skillRegistryBaseUrl).toBe("https://file-den.example");
+  });
+
+  test("resolveServerConfig reads skill registry token from env only", async () => {
+    for (const key of ENV_KEYS) snapshot.set(key, process.env[key]);
+
+    process.env.VESLO_SKILL_REGISTRY_TOKEN = " registry-token ";
+
+    const config = await resolveServerConfig(parseCliArgs([]));
+
+    expect(config.skillRegistryToken).toBe("registry-token");
   });
 });

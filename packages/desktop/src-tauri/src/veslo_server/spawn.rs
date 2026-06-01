@@ -127,6 +127,7 @@ pub fn build_veslo_args(
     host: &str,
     port: u16,
     workspace_paths: &[String],
+    workspace_ids: &[Option<String>],
     token: &str,
     host_token: &str,
     opencode_base_url: Option<&str>,
@@ -152,10 +153,16 @@ pub fn build_veslo_args(
         "auto".to_string(),
     ];
 
-    for workspace_path in workspace_paths {
+    for (index, workspace_path) in workspace_paths.iter().enumerate() {
         if !workspace_path.trim().is_empty() {
             args.push("--workspace".to_string());
             args.push(workspace_path.to_string());
+            if let Some(workspace_id) = workspace_ids.get(index).and_then(|id| id.as_ref()) {
+                if !workspace_id.trim().is_empty() {
+                    args.push("--workspace-id".to_string());
+                    args.push(workspace_id.to_string());
+                }
+            }
         }
     }
 
@@ -205,6 +212,7 @@ pub fn spawn_veslo_server(
     host: &str,
     port: u16,
     workspace_paths: &[String],
+    workspace_ids: &[Option<String>],
     token: &str,
     host_token: &str,
     opencode_base_url: Option<&str>,
@@ -217,6 +225,7 @@ pub fn spawn_veslo_server(
         host,
         port,
         workspace_paths,
+        workspace_ids,
         token,
         host_token,
         opencode_base_url,
@@ -298,6 +307,27 @@ mod tests {
             "0.0.0.0".to_string(),
         ];
         assert_eq!(build_veslo_server_dev_watch_args(args), expected);
+    }
+
+    #[test]
+    fn build_args_pairs_workspace_ids_with_workspace_paths() {
+        let args = build_veslo_args(
+            "0.0.0.0",
+            8787,
+            &["/tmp/workspace-a".to_string()],
+            &[Some("app-workspace-a".to_string())],
+            "client-token",
+            "host-token",
+            None,
+            None,
+        );
+
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--workspace", "/tmp/workspace-a"]));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--workspace-id", "app-workspace-a"]));
     }
 
     #[test]

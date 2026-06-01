@@ -6,7 +6,7 @@ type LocationSnapshot = {
   hash: string;
 };
 
-async function waitForAppShellReady(timeout = 15000): Promise<void> {
+async function waitForAppShellReady(timeout = 30000): Promise<void> {
   await browser.waitUntil(
     async () => {
       const root = await $('#root');

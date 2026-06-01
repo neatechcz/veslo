@@ -8,3 +8,17 @@ test("web Den proxy defaults to the owned server API", () => {
   assert.match(routeSource, /const DEFAULT_API_BASE = "https:\/\/api\.veslo\.work";/);
   assert.match(routeSource, /const DEFAULT_AUTH_ORIGIN = "https:\/\/api\.veslo\.work";/);
 });
+
+test("web auth callbacks default to the owned web app", () => {
+  const authUrlSource = readFileSync(new URL("auth-urls.ts", import.meta.url), "utf8");
+
+  assert.match(authUrlSource, /https:\/\/app\.veslo\.work/);
+  assert.doesNotMatch(authUrlSource, /app\.veslo\.neatech\.com/);
+});
+
+test("web metadata references the owned web app", () => {
+  const layoutSource = readFileSync(new URL("../app/layout.tsx", import.meta.url), "utf8");
+
+  assert.match(layoutSource, /app\.veslo\.work/);
+  assert.doesNotMatch(layoutSource, /app\.veslo\.neatech\.com/);
+});

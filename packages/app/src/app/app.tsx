@@ -103,18 +103,21 @@ import {
   initialSidebarSessionLimit,
   nextSidebarSessionLimit,
 } from "./pages/sidebar-session-pagination";
+import { promoteStoredProjectOrderKey } from "./components/session/workspace-session-list-prefs";
 import { shouldFallbackFromSessionRoute } from "./lib/session-route-selection-guard";
 import { shouldSyncSidebarFromSessionStore } from "./lib/sidebar-session-sync-guard";
 import { partitionVesloUtilitySessions } from "./lib/veslo-utility-session";
 import ResetModal from "./components/reset-modal";
 import ConfirmModal from "./components/confirm-modal";
 import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
+import DesktopContextMenu from "./components/desktop-context-menu";
 import VesloLogo from "./components/veslo-logo";
 import CreateRemoteWorkspaceModal from "./components/create-remote-workspace-modal";
 import CreateWorkspaceModal from "./components/create-workspace-modal";
 import FeedbackModal, { type FeedbackFormValues } from "./components/feedback-modal";
 import RenameWorkspaceModal from "./components/rename-workspace-modal";
 import McpAuthModal from "./components/mcp-auth-modal";
+import { resolveNativeWindowDecorationsVisible } from "./components/titlebar-menu-layout";
 import OnboardingView from "./pages/onboarding";
 import DashboardView from "./pages/dashboard";
 import SessionView from "./pages/session";
@@ -150,6 +153,7 @@ import {
 } from "./lib/opencode-session";
 import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-log";
 import { createSkillReloadGuard } from "./lib/skill-reload-guard";
+import { createSkillRegistryEventsListener } from "./lib/skill-registry-events";
 import {
   submitFeedbackReport,
   type FeedbackRuntimeContext,
@@ -171,7 +175,24 @@ import {
   VARIANT_PREF_KEY,
   type McpDirectoryInfo,
 } from "./constants";
-import { parseMcpServersFromContent, quickConnectEntryKey, removeMcpFromConfig, validateMcpServerName } from "./mcp";
+import {
+  canRemoveMcpFromProjectConfig,
+  quickConnectEntryKey,
+  readEffectiveMcpServerEntries,
+  removeMcpFromConfig,
+  validateMcpServerName,
+} from "./mcp";
+import { buildSkillInventory, type BuildSkillInventoryInput } from "./lib/skill-inventory";
+import {
+  buildSessionMcpRows,
+  buildSessionSkillRows,
+  createSessionCapabilitiesCache,
+  filterSessionSkillInventoryByScope,
+  normalizeSessionCapabilityDirectory,
+  resolveSessionCapabilitySessionSource,
+  type SessionCapabilitiesScope,
+  type SessionCapabilitiesSnapshot,
+} from "./lib/session-capabilities";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "./types";
 import type {
   Client,
@@ -204,6 +225,7 @@ import type {
   UpdateHandle,
   OpencodeConnectStatus,
   ScheduledJob,
+  SuggestedPlugin,
 } from "./types";
 import {
   clearStartupPreference,
@@ -304,6 +326,7 @@ import {
   type PendingSessionDraftSummary,
   type VesloServerInfo,
   type OpenCodeRouterInfo,
+  type WorkspaceInfo,
 } from "./lib/tauri";
 import {
   FONT_ZOOM_STEP,
@@ -350,6 +373,12 @@ import {
   type StagedSessionAttachment,
 } from "./lib/attachment-prompt-routing";
 import { resolveArtifactFamilies } from "./components/session/artifact-family-model";
+import {
+  clearUnreadSession,
+  markUnreadAfterAssistantResponse,
+  pruneUnreadSessions,
+  type UnreadSessionMap,
+} from "./components/session/session-unread-model";
 import {
   AI_ACCESS_ADMIN_MANAGED_MESSAGE,
   AI_ACCESS_LOADING_MESSAGE,
@@ -411,6 +440,9 @@ function recordSendTrace(event: string, payload?: Record<string, unknown>) {
 export default function App() {
   const cloudEnvironment = resolveVesloCloudEnvironment(import.meta.env as Record<string, string | undefined>);
   const envVesloWorkspaceId = cloudEnvironment.workspaceId ?? null;
+  const developerMode = () => false;
+  const [documentVisible, setDocumentVisible] = createSignal(true);
+  const [appFocused, setAppFocused] = createSignal(true);
 
   // Workspace switch tracing is noisy, so only emit in developer mode.
   // (Veslo already has a developer mode toggle in Settings.)
@@ -790,6 +822,24 @@ export default function App() {
     update();
     document.addEventListener("visibilitychange", update);
     onCleanup(() => document.removeEventListener("visibilitychange", update));
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+
+    const updateAppFocused = () => {
+      setAppFocused(document.visibilityState !== "hidden" && document.hasFocus());
+    };
+
+    updateAppFocused();
+    window.addEventListener("focus", updateAppFocused);
+    window.addEventListener("blur", updateAppFocused);
+    document.addEventListener("visibilitychange", updateAppFocused);
+    onCleanup(() => {
+      window.removeEventListener("focus", updateAppFocused);
+      window.removeEventListener("blur", updateAppFocused);
+      document.removeEventListener("visibilitychange", updateAppFocused);
+    });
   });
 
 
@@ -1188,8 +1238,6 @@ export default function App() {
   // is enough — subsequent patches just update the file on disk and the
   // engine picks up the new token on its next read.
   const [lastReloadedForServerToken, setLastReloadedForServerToken] = createSignal("");
-  const developerMode = () => false;
-  const [documentVisible, setDocumentVisible] = createSignal(true);
 
   createEffect(() => {
     if (developerMode()) return;
@@ -1202,6 +1250,7 @@ export default function App() {
   const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(
     null
   );
+  const [unreadSessionIds, setUnreadSessionIds] = createSignal<UnreadSessionMap>({});
   const SESSION_BY_WORKSPACE_KEY = "veslo.workspace-last-session.v1";
   const ACTIVE_PENDING_DRAFT_KEY = "veslo.active-pending-draft.v1";
   const CONSUMED_PENDING_DRAFT_IDS_KEY = "veslo.consumed-pending-draft-ids.v1";
@@ -1384,6 +1433,26 @@ export default function App() {
     if ((session.directory ?? "").trim() === override) return session;
     return { ...session, directory: override } as T;
   };
+  const BACKEND_PLACEHOLDER_SESSION_TITLE_PATTERN = /^New session(?:\s*[-–—]\s*.+)?$/i;
+  const isBackendPlaceholderSessionTitle = (title?: string | null) => {
+    const normalized = title?.trim() ?? "";
+    return !normalized || BACKEND_PLACEHOLDER_SESSION_TITLE_PATTERN.test(normalized);
+  };
+  const [pendingInitialSessionTitleById, setPendingInitialSessionTitleById] = createSignal<
+    Record<string, string>
+  >({});
+  const registerPendingInitialSessionTitle = (sessionId: string, title: string) => {
+    const id = sessionId.trim();
+    const cleanTitle = title.trim();
+    if (!id || !cleanTitle) return;
+    setPendingInitialSessionTitleById((current) => ({ ...current, [id]: cleanTitle }));
+  };
+  const applyPendingInitialSessionTitle = <T extends Session | SidebarSessionItem>(session: T): T => {
+    const pendingTitle = pendingInitialSessionTitleById()[session.id]?.trim() ?? "";
+    if (!pendingTitle || !isBackendPlaceholderSessionTitle(session.title)) return session;
+    if (session.title === pendingTitle) return session;
+    return { ...session, title: pendingTitle } as T;
+  };
   const [sessionModelOverrideById, setSessionModelOverrideById] = createSignal<
     Record<string, ModelRef>
   >({});
@@ -1436,6 +1505,15 @@ export default function App() {
       onHotReloadAppliedHandler?.();
     },
     onSessionLoadComplete: () => setPendingSessionLoad(null),
+    onAssistantResponseObserved: (sessionId) => {
+      setUnreadSessionIds((current) =>
+        markUnreadAfterAssistantResponse(current, {
+          responseSessionId: sessionId,
+          selectedSessionId: selectedSessionId(),
+          appFocused: appFocused(),
+        }),
+      );
+    },
     loadOfflineTranscript: async (sessionId, limit) => {
       if (!isTauriRuntime()) return null;
       const workspaceRoot = workspaceStore.activeWorkspaceRoot().trim();
@@ -1494,6 +1572,38 @@ export default function App() {
     hydrateTranscriptSnapshot,
     hasWarmTranscript,
   } = sessionStore;
+
+  createEffect(() => {
+    const pending = pendingInitialSessionTitleById();
+    const currentSessions = sessions();
+    let changed = false;
+    const next = { ...pending };
+    for (const session of currentSessions) {
+      if (!pending[session.id]) continue;
+      if (isBackendPlaceholderSessionTitle(session.title)) continue;
+      delete next[session.id];
+      changed = true;
+    }
+    if (changed) setPendingInitialSessionTitleById(next);
+  });
+
+  const selectedSessionDisplayTitle = createMemo(() => {
+    const session = selectedSession();
+    return session ? applyPendingInitialSessionTitle(session).title ?? null : null;
+  });
+
+  createEffect(() => {
+    const id = selectedSessionId();
+    if (!id) return;
+    setUnreadSessionIds((current) => clearUnreadSession(current, id));
+  });
+
+  createEffect(() => {
+    if (!appFocused()) return;
+    const id = selectedSessionId();
+    if (!id) return;
+    setUnreadSessionIds((current) => clearUnreadSession(current, id));
+  });
 
   const hydratedVesloServerClient = createMemo<VesloServerClient | null>(() => {
     const client = vesloServerClient();
@@ -2027,7 +2137,7 @@ export default function App() {
 
   async function sendPrompt(
     draft?: ComposerDraft,
-    options: { targetSessionId?: string | null } = {},
+    options: { targetSessionId?: string | null; messageId?: string | null } = {},
   ): Promise<boolean> {
     recordSendTrace("sendPrompt:start", {
       engineReady: engineReady(),
@@ -2038,6 +2148,7 @@ export default function App() {
       busyLabel: busyLabel(),
     });
     let sessionID = options.targetSessionId?.trim() || selectedSessionId();
+    const replacementMessageID = options.messageId?.trim() || undefined;
     const hasExplicitDraft = Boolean(draft);
     const fallbackDraft = composerDraft();
     const fallbackText = fallbackDraft.text.trim();
@@ -2052,6 +2163,7 @@ export default function App() {
     };
     resolvedDraft = await maybeResolveSkillCommand(resolvedDraft);
 
+    const initialSessionTitle = resolvedDraft.text.trim();
     const initialContent = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
     if (!initialContent && !resolvedDraft.attachments.length) {
       recordSendTrace("sendPrompt:blocked-empty");
@@ -2089,7 +2201,17 @@ export default function App() {
       }
     }
 
-    await ensureManagedAiBootstrapReady();
+    if (!(await ensureManagedAiBootstrapReady())) {
+      recordSendTrace("sendPrompt:blocked-managed-ai-bootstrap");
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
+      return false;
+    }
+    if (!(await ensureLocalRuntimeReachableForSend("sendPrompt"))) {
+      recordSendTrace("sendPrompt:blocked-runtime-unreachable");
+      return false;
+    }
 
     const c = routedClient();
     if (!c) {
@@ -2117,7 +2239,7 @@ export default function App() {
     })();
     if (!sessionID) {
       recordSendTrace("sendPrompt:create-session-needed");
-      sessionID = (await createSessionAndOpen()) ?? selectedSessionId();
+      sessionID = (await createSessionAndOpen(initialSessionTitle)) ?? selectedSessionId();
     }
     if (!sessionID) {
       recordSendTrace("sendPrompt:blocked-no-session");
@@ -2220,7 +2342,7 @@ export default function App() {
         }
 
         // Slash command: route through session.command() API
-        commandMessageIDToClear = createClientMessageID();
+        commandMessageIDToClear = replacementMessageID ?? createClientMessageID();
         sessionStore.setCommandDisplay(commandMessageIDToClear, command.name, command.arguments);
         const modelString = `${model.providerID}/${model.modelID}`;
         const files = buildCommandFileParts(resolvedDraft);
@@ -2244,6 +2366,7 @@ export default function App() {
 
       } else {
         const result = await c.session.promptAsync({
+          ...(replacementMessageID ? { messageID: replacementMessageID } : {}),
           sessionID,
           model,
           agent: agent ?? undefined,
@@ -2315,6 +2438,7 @@ export default function App() {
         sessionID,
         message,
       });
+      setError(addOpencodeCacheHint(message));
       sessionStore.appendSessionErrorTurn(sessionID, addOpencodeCacheHint(message));
       return false;
     } finally {
@@ -2600,7 +2724,7 @@ export default function App() {
     const next = await revertSession(c, sessionID, messageID);
     upsertLocalSession(next);
 
-    const accepted = await sendPrompt(draft, { targetSessionId: sessionID });
+    const accepted = await sendPrompt(draft, { targetSessionId: sessionID, messageId: messageID });
     if (!accepted) {
       try {
         const restored = previousRevertMessageID
@@ -2792,9 +2916,30 @@ export default function App() {
   const BUILTIN_COMPACT_COMMAND = {
     id: "builtin:compact",
     name: "compact",
-    description: "Summarize this session to reduce context size.",
+    description: t("commands.compact_description", currentLocale()),
     source: "command" as const,
   };
+
+  const localizedSuggestedPlugins = createMemo<SuggestedPlugin[]>(() =>
+    SUGGESTED_PLUGINS.map((plugin) => ({
+      ...plugin,
+      description: plugin.descriptionKey ? t(plugin.descriptionKey, currentLocale()) : plugin.description,
+      tags: plugin.tagKeys?.map((key) => t(key, currentLocale())) ?? plugin.tags,
+      steps: plugin.steps?.map((step) => ({
+        ...step,
+        title: step.titleKey ? t(step.titleKey, currentLocale()) : step.title,
+        description: step.descriptionKey ? t(step.descriptionKey, currentLocale()) : step.description,
+        note: step.noteKey ? t(step.noteKey, currentLocale()) : step.note,
+      })),
+    })),
+  );
+
+  const localizedMcpQuickConnect = createMemo<McpDirectoryInfo[]>(() =>
+    MCP_QUICK_CONNECT.map((entry) => ({
+      ...entry,
+      description: entry.descriptionKey ? t(entry.descriptionKey, currentLocale()) : entry.description,
+    })),
+  );
 
   async function listCommands(): Promise<{ id: string; name: string; description?: string; source?: "command" | "mcp" | "skill" }[]> {
     const c = routedClient();
@@ -2905,13 +3050,17 @@ export default function App() {
   const [mcpAuthModalOpen, setMcpAuthModalOpen] = createSignal(false);
   const [mcpAuthEntry, setMcpAuthEntry] = createSignal<McpDirectoryInfo | null>(null);
   const [mcpAuthNeedsReload, setMcpAuthNeedsReload] = createSignal(false);
+  let resolveSessionCapabilitySkillInventoryWorkspaces: () => { id: string; label: string; path: string }[] = () => [];
 
   const extensionsStore = createExtensionsStore({
     client,
     routing: workspaceRouting,
     projectDir: () => workspaceProjectDir(),
+    activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
     activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
     workspaceType: () => workspaceStore.activeWorkspaceDisplay().workspaceType,
+    workspaces: () => workspaceStore.workspaces(),
+    extraSkillInventoryWorkspaces: () => resolveSessionCapabilitySkillInventoryWorkspaces(),
     vesloServerClient,
     vesloServerStatus,
     vesloServerCapabilities,
@@ -2937,6 +3086,8 @@ export default function App() {
   const {
     skills,
     skillsStatus,
+    skillInventory,
+    skillInventoryStatus,
     hubSkills,
     hubSkillsStatus,
     hubMcpCards,
@@ -2955,6 +3106,7 @@ export default function App() {
     sidebarPluginStatus,
     isPluginInstalledByName,
     refreshSkills,
+    refreshSkillInventory,
     refreshHubSkills,
     refreshHubMcp,
     refreshPlugins,
@@ -2968,6 +3120,14 @@ export default function App() {
     uninstallSkill,
     readSkill,
     saveSkill,
+    readSkillInstance,
+    saveSkillInstance,
+    deleteSkillInstance,
+    removeSkillInstance,
+    batchRemoveSkillInstances,
+    restoreSkillInstance,
+    copySkillInstanceToGlobal,
+    copySkillInstanceToWorkspace,
     abortRefreshes,
   } = extensionsStore;
 
@@ -3046,7 +3206,7 @@ export default function App() {
     };
   };
 
-  const ensureManagedAiBootstrapReady = async () => {
+  const ensureManagedAiBootstrapReady = async (): Promise<boolean> => {
     try {
       await waitForManagedAiBootstrapReady({
         hasManagedProfile: Boolean(managedAiAccess()) || managedAiBootstrapBusy(),
@@ -3054,10 +3214,115 @@ export default function App() {
         isReloadBusy: reloadBusy,
         hasClient: () => Boolean(routedClient()),
       });
+      return true;
     } catch (error) {
       setError(error instanceof Error ? error.message : safeStringify(error));
+      return false;
     }
   };
+
+  const localRuntimeHealthTimeoutMessage = "Timed out waiting for local runtime health";
+
+  const messageFromUnknownError = (error: unknown): string => {
+    if (error instanceof Error) return error.message;
+    return safeStringify(error);
+  };
+
+  const isLocalRuntimeHealthTimeoutError = (error: unknown): boolean =>
+    messageFromUnknownError(error).includes(localRuntimeHealthTimeoutMessage);
+
+  const shouldRecoverLocalRuntimeFromHealthError = (error: unknown): boolean => {
+    const message = messageFromUnknownError(error);
+    const normalized = message.toLowerCase();
+    return (
+      normalized.includes("error sending request") ||
+      normalized.includes("connection refused") ||
+      message.includes("ECONNREFUSED") ||
+      normalized.includes("failed to connect") ||
+      normalized.includes("could not connect") ||
+      normalized.includes("couldn't connect") ||
+      normalized.includes("failed to fetch") ||
+      normalized.includes("fetch failed") ||
+      normalized.includes("load failed") ||
+      normalized.includes("connection reset") ||
+      message.includes("ECONNRESET") ||
+      normalized.includes("networkerror")
+    );
+  };
+
+  const withLocalRuntimeHealthTimeout = async <T,>(promise: Promise<T>): Promise<T> => {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(
+        () => reject(new Error(localRuntimeHealthTimeoutMessage)),
+        3_000,
+      );
+    });
+    try {
+      return await Promise.race([promise, timeoutPromise]);
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    }
+  };
+
+  async function ensureLocalRuntimeReachableForSend(reason: string): Promise<boolean> {
+    if (!isTauriRuntime() || workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") {
+      return true;
+    }
+
+    const currentClient = client();
+    if (currentClient) {
+      try {
+        await withLocalRuntimeHealthTimeout(currentClient.global.health());
+        recordSendTrace(`${reason}:runtime-health-ok`);
+        return true;
+      } catch (error) {
+        const message = messageFromUnknownError(error);
+        recordSendTrace(`${reason}:runtime-health-error`, { message });
+        if (isLocalRuntimeHealthTimeoutError(error) || !shouldRecoverLocalRuntimeFromHealthError(error)) {
+          return true;
+        }
+      }
+    } else {
+      recordSendTrace(`${reason}:runtime-missing-client`);
+    }
+
+    recordSendTrace(`${reason}:runtime-recovery-start`);
+    setEngineReady(false);
+    setSseConnected(false);
+    setBusy(true);
+    setBusyLabel("status.connecting");
+    setBusyStartedAt(Date.now());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    try {
+      const started = await workspaceStore.ensureEngineForWorkspace();
+      if (!started || !client()) {
+        recordSendTrace(`${reason}:runtime-recovery-not-started`, {
+          started,
+          hasClient: Boolean(client()),
+        });
+        setBusy(false);
+        setBusyLabel(null);
+        setBusyStartedAt(null);
+        return false;
+      }
+      recordSendTrace(`${reason}:runtime-recovery-ok`, {
+        hasClient: Boolean(client()),
+      });
+      return true;
+    } catch (error) {
+      recordSendTrace(`${reason}:runtime-recovery-error`, {
+        message: messageFromUnknownError(error),
+      });
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
+      return false;
+    }
+  }
 
   const [showThinking, setShowThinking] = createSignal(false);
   const [hideTitlebar, setHideTitlebar] = createSignal(false);
@@ -3127,6 +3392,7 @@ export default function App() {
     preferServerByDefault: () => Boolean(cloudEnvironment.vesloUrl),
     vesloServerClient,
     vesloServerHostInfo: () => vesloServerHostInfo(),
+    ensureLocalVesloServerRunning: () => ensureLocalVesloServerRunning({ ignoreStartupPreference: true }),
     onEngineStable: () => {
       setEngineReady(true);
       void ensureLocalVesloServerRunning().catch((error) => {
@@ -3144,7 +3410,9 @@ export default function App() {
       setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [workspaceId]: "loading" as const }));
       const { readSessionsFromDb, dbSessionRowToSidebarItem } = await import("./lib/db-reader");
       const rows = await readSessionsFromDb(directory);
-      const { visible: items } = partitionVesloUtilitySessions(rows.map(dbSessionRowToSidebarItem));
+      const { visible: items } = partitionVesloUtilitySessions(
+        rows.map(dbSessionRowToSidebarItem).map(applyPendingInitialSessionTitle),
+      );
       setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [workspaceId]: items }));
       setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [workspaceId]: "ready" as const }));
     },
@@ -3222,6 +3490,200 @@ export default function App() {
       setError(addOpencodeCacheHint(message));
       reportError(error, "veslo-server.ensure.effect");
     });
+  });
+
+  type PendingSkillRegistryReplay = {
+    eventId: string;
+  };
+
+  const skillRegistryReloadTriggerForEvent = (event: {
+    skillId?: string | null;
+    installationId?: string | null;
+  }): ReloadTrigger => ({
+    type: "skill",
+    action: "updated",
+    name: event.skillId ?? event.installationId ?? undefined,
+  });
+
+  const shouldRefreshAfterSkillRegistryMaterialization = (result: {
+    synced?: boolean;
+    reloadRequired?: boolean;
+  }) => result.synced === true || result.reloadRequired === true;
+
+  const refreshAfterSkillRegistryMaterialization = async (result: {
+    synced?: boolean;
+    reloadRequired?: boolean;
+  }) => {
+    if (!shouldRefreshAfterSkillRegistryMaterialization(result)) return;
+    await refreshSkills({ force: true });
+    await extensionsStore.invalidateSkillRegistryInventory();
+  };
+
+  const skillRegistryMaterializationAuthContext = () => {
+    denAuthRevision();
+    const auth = readDenAuth();
+    return {
+      denApiBase: auth?.denApiBase?.trim() || undefined,
+      denToken: auth?.token?.trim() || undefined,
+      denOrgId: auth?.orgId?.trim() || undefined,
+      denUserId: auth?.user?.id?.trim() || undefined,
+    };
+  };
+
+  const [pendingSkillRegistryWorkspaceReplays, setPendingSkillRegistryWorkspaceReplays] = createSignal<
+    Record<string, PendingSkillRegistryReplay>
+  >({});
+  const [pendingGlobalSkillRegistryReplay, setPendingGlobalSkillRegistryReplay] =
+    createSignal<PendingSkillRegistryReplay | null>(null);
+  const skillRegistryWorkspaceReplayInFlight = new Set<string>();
+  let skillRegistryGlobalReplayInFlight = false;
+
+  const queuePendingSkillRegistryWorkspaceReplay = (workspaceId: string, eventId: string) => {
+    const id = workspaceId.trim();
+    if (!id) return;
+    setPendingSkillRegistryWorkspaceReplays((current) => ({
+      ...current,
+      [id]: { eventId },
+    }));
+  };
+
+  const clearPendingSkillRegistryWorkspaceReplay = (workspaceId: string, eventId: string) => {
+    setPendingSkillRegistryWorkspaceReplays((current) => {
+      if (current[workspaceId]?.eventId !== eventId) return current;
+      const next = { ...current };
+      delete next[workspaceId];
+      return next;
+    });
+  };
+
+  const replayPendingSkillRegistryWorkspaceUpdate = (
+    client: VesloServerClient,
+    workspaceId: string,
+    pending: PendingSkillRegistryReplay,
+  ) => {
+    if (skillRegistryWorkspaceReplayInFlight.has(workspaceId)) return;
+    skillRegistryWorkspaceReplayInFlight.add(workspaceId);
+    void (async () => {
+      try {
+        const result = await client.syncWorkspaceSkillMaterialization(
+          workspaceId,
+          skillRegistryMaterializationAuthContext(),
+        );
+        await refreshAfterSkillRegistryMaterialization(result);
+        clearPendingSkillRegistryWorkspaceReplay(workspaceId, pending.eventId);
+      } catch (error) {
+        reportError(error, "skills.registry.workspace.replay");
+      } finally {
+        skillRegistryWorkspaceReplayInFlight.delete(workspaceId);
+      }
+    })();
+  };
+
+  const replayPendingGlobalSkillRegistryUpdate = (client: VesloServerClient, pending: PendingSkillRegistryReplay) => {
+    if (skillRegistryGlobalReplayInFlight) return;
+    skillRegistryGlobalReplayInFlight = true;
+    void (async () => {
+      try {
+        const result = await client.syncGlobalSkillMaterialization(skillRegistryMaterializationAuthContext());
+        await refreshAfterSkillRegistryMaterialization(result);
+        setPendingGlobalSkillRegistryReplay((current) =>
+          current?.eventId === pending.eventId ? null : current,
+        );
+      } catch (error) {
+        reportError(error, "skills.registry.global.replay");
+      } finally {
+        skillRegistryGlobalReplayInFlight = false;
+      }
+    })();
+  };
+
+  createEffect(() => {
+    const client = vesloServerClient();
+    const status = vesloServerStatus();
+    const busyWorkspaces = workspaceStore.workspaceBusy();
+    const workspaceReplays = pendingSkillRegistryWorkspaceReplays();
+    const globalReplay = pendingGlobalSkillRegistryReplay();
+    skillRegistryMaterializationAuthContext();
+    if (!client || status !== "connected") return;
+
+    for (const [workspaceId, pending] of Object.entries(workspaceReplays)) {
+      if (busyWorkspaces[workspaceId]) continue;
+      replayPendingSkillRegistryWorkspaceUpdate(client, workspaceId, pending);
+    }
+
+    const hasActiveRun = Object.values(workspaceStore.workspaceBusy()).some(Boolean);
+    if (globalReplay && !hasActiveRun) {
+      replayPendingGlobalSkillRegistryUpdate(client, globalReplay);
+    }
+  });
+
+  let skillRegistryEventsKey = "";
+  createEffect(() => {
+    denAuthRevision();
+    const client = vesloServerClient();
+    const auth = readDenAuth();
+    const orgId = auth?.orgId?.trim() ?? "";
+    const baseUrl = client?.baseUrl?.trim() ?? "";
+    const workspaceId = workspaceStore.activeWorkspaceId().trim();
+    const token = client?.token?.trim() ?? "";
+    const status = vesloServerStatus();
+    const nextKey = JSON.stringify({ baseUrl, orgId, token: token ? "set" : "none", workspaceId, status });
+    if (nextKey === skillRegistryEventsKey) return;
+    skillRegistryEventsKey = nextKey;
+
+    if (!client || status !== "connected") return;
+
+    const listener = createSkillRegistryEventsListener({
+      registryBaseUrl: client.baseUrl,
+      token: client.token,
+      orgId,
+      workspaceId: workspaceId || undefined,
+      getActiveWorkspaceId: () => workspaceStore.activeWorkspaceId(),
+      onInventoryInvalidated: () =>
+        extensionsStore.invalidateSkillRegistryInventory().catch(e => reportError(e, "skills.registry.invalidate")),
+      onWorkspaceUpdatePending: async (update) => {
+        const trigger = skillRegistryReloadTriggerForEvent(update.event);
+        if (workspaceStore.workspaceBusy()[update.workspaceId]) {
+          await client.syncWorkspaceSkillMaterialization(update.workspaceId, {
+            ...skillRegistryMaterializationAuthContext(),
+            activeRun: true,
+          });
+          markReloadRequired("skills", trigger);
+          queuePendingSkillRegistryWorkspaceReplay(update.workspaceId, update.event.id);
+          return;
+        }
+        const result = await client.syncWorkspaceSkillMaterialization(
+          update.workspaceId,
+          skillRegistryMaterializationAuthContext(),
+        );
+        await refreshAfterSkillRegistryMaterialization(result);
+      },
+      onIdleWorkspaceUpdate: async (update) => {
+        const result = await client.syncWorkspaceSkillMaterialization(
+          update.workspaceId,
+          skillRegistryMaterializationAuthContext(),
+        );
+        await refreshAfterSkillRegistryMaterialization(result);
+      },
+      onGlobalUpdate: async (update) => {
+        const hasActiveRun = Object.values(workspaceStore.workspaceBusy()).some(Boolean);
+        if (hasActiveRun) {
+          await client.syncGlobalSkillMaterialization({
+            ...skillRegistryMaterializationAuthContext(),
+            activeRun: true,
+          });
+          markReloadRequired("skills", skillRegistryReloadTriggerForEvent(update.event));
+          setPendingGlobalSkillRegistryReplay({ eventId: update.event.id });
+          return;
+        }
+        const result = await client.syncGlobalSkillMaterialization(skillRegistryMaterializationAuthContext());
+        await refreshAfterSkillRegistryMaterialization(result);
+      },
+      onError: (error) => reportError(error, "skills.registry.events"),
+    });
+
+    listener.start();
+    onCleanup(() => listener.stop());
   });
 
   const activeArtifactFamilies = createMemo(() =>
@@ -3418,7 +3880,9 @@ export default function App() {
           if (wsDirectory) {
             const { readSessionsFromDb, dbSessionRowToSidebarItem } = await import("./lib/db-reader");
             const rows = await readSessionsFromDb(wsDirectory);
-            const { visible: items } = partitionVesloUtilitySessions(rows.map(dbSessionRowToSidebarItem));
+            const { visible: items } = partitionVesloUtilitySessions(
+              rows.map(dbSessionRowToSidebarItem).map(applyPendingInitialSessionTitle),
+            );
             setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [id]: items }));
             setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" as const }));
             setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
@@ -3548,14 +4012,17 @@ export default function App() {
       }
 
       const visible = expandSidebarSessionSliceWithAncestors(visibleSessions, requestLimit);
-      const items: SidebarSessionItem[] = visible.map((session) => ({
-        id: session.id,
-        title: session.title,
-        slug: session.slug,
-        parentID: session.parentID,
-        time: session.time,
-        directory: session.directory,
-      }));
+      const items: SidebarSessionItem[] = visible.map((session) => {
+        const displaySession = applyPendingInitialSessionTitle(session);
+        return {
+          id: displaySession.id,
+          title: displaySession.title,
+          slug: displaySession.slug,
+          parentID: displaySession.parentID,
+          time: displaySession.time,
+          directory: displaySession.directory,
+        };
+      });
 
       setSidebarSessionsByWorkspaceId((prev) => ({
         ...prev,
@@ -3594,6 +4061,32 @@ export default function App() {
       await refreshSidebarWorkspaceSessions(id);
     } finally {
       setSidebarSessionLoadingMoreByWorkspaceId((prev) => ({ ...prev, [id]: false }));
+    }
+  };
+
+  const publishRegisteredWorkspaceToSidebar = (workspaceId: string) => {
+    const id = workspaceId.trim();
+    if (!id) return;
+
+    setSidebarSessionsByWorkspaceId((prev) =>
+      Object.prototype.hasOwnProperty.call(prev, id) ? prev : { ...prev, [id]: [] },
+    );
+    setSidebarSessionStatusByWorkspaceId((prev) =>
+      Object.prototype.hasOwnProperty.call(prev, id) ? prev : { ...prev, [id]: "ready" as const },
+    );
+    setSidebarSessionErrorByWorkspaceId((prev) =>
+      Object.prototype.hasOwnProperty.call(prev, id) ? prev : { ...prev, [id]: null },
+    );
+    setSidebarSessionHasMoreByWorkspaceId((prev) =>
+      Object.prototype.hasOwnProperty.call(prev, id) ? prev : { ...prev, [id]: false },
+    );
+
+    const workspace = workspaceStore.workspaces().find((entry) => entry.id === id) ?? null;
+    const projectKey = workspace?.workspaceType === "local"
+      ? normalizeDirectoryPath(workspace.path?.trim() || workspace.directory?.trim() || "")
+      : "";
+    if (projectKey && !workspaceStore.isPrivateWorkspacePath(projectKey)) {
+      promoteStoredProjectOrderKey(projectKey);
     }
   };
 
@@ -3743,14 +4236,17 @@ export default function App() {
       const visibleRows = expandSidebarSessionSliceWithAncestors(visibleSessions, requestLimit);
       setSidebarSessionsByWorkspaceId((prev) => ({
         ...prev,
-        [wsId]: visibleRows.map((s) => ({
-          id: s.id,
-          title: s.title,
-          slug: s.slug,
-          parentID: s.parentID,
-          time: s.time,
-          directory: s.directory,
-        })),
+        [wsId]: visibleRows.map((s) => {
+          const displaySession = applyPendingInitialSessionTitle(s);
+          return {
+            id: displaySession.id,
+            title: displaySession.title,
+            slug: displaySession.slug,
+            parentID: displaySession.parentID,
+            time: displaySession.time,
+            directory: displaySession.directory,
+          };
+        }),
       }));
       setSidebarSessionHasMoreByWorkspaceId((prev) => ({
         ...prev,
@@ -3813,6 +4309,13 @@ export default function App() {
         error: errorById[workspace.id] ?? null,
       };
     });
+  });
+
+  createEffect(() => {
+    const liveIds = new Set(
+      sidebarWorkspaceGroups().flatMap((group) => group.sessions.map((session) => session.id)),
+    );
+    setUnreadSessionIds((current) => pruneUnreadSessions(current, liveIds));
   });
 
   const workspaceSessionPagingById = createMemo<Record<string, { hasMore: boolean; loadingMore: boolean }>>(() => {
@@ -4731,6 +5234,316 @@ export default function App() {
   );
   const devtoolsCapabilities = createMemo(() => vesloServerCapabilities());
   const resolvedDevtoolsWorkspaceId = createMemo(() => devtoolsWorkspaceId() ?? vesloServerWorkspaceId());
+
+  type SessionCapabilitiesLoadStatus = "idle" | "loading" | "ready" | "error";
+
+  const [sessionCapabilitiesSnapshot, setSessionCapabilitiesSnapshot] =
+    createSignal<SessionCapabilitiesSnapshot | null>(null);
+  const [sessionCapabilitiesStatus, setSessionCapabilitiesStatus] =
+    createSignal<SessionCapabilitiesLoadStatus>("idle");
+  const [sessionCapabilitiesError, setSessionCapabilitiesError] = createSignal<string | null>(null);
+
+  const normalizeCapabilityDirectoryForMatch = (value?: string | null) =>
+    normalizeSessionCapabilityDirectory(normalizeDirectoryPath(value ?? ""));
+
+  const workspaceLabelForSessionCapabilities = (workspace: WorkspaceInfo | null | undefined, fallback: string) =>
+    workspace?.displayName?.trim() ||
+    workspace?.name?.trim() ||
+    workspace?.vesloWorkspaceName?.trim() ||
+    workspace?.id ||
+    fallback;
+
+  const findWorkspaceForSessionCapabilityDirectory = (directory: string): WorkspaceInfo | null => {
+    const normalizedDirectory = normalizeCapabilityDirectoryForMatch(directory);
+    if (!normalizedDirectory) return null;
+
+    return (
+      workspaceStore
+        .workspaces()
+        .find((workspace) =>
+          [workspace.path, workspace.directory]
+            .map((candidate) => normalizeCapabilityDirectoryForMatch(candidate))
+            .some((candidate) => candidate === normalizedDirectory),
+        ) ?? null
+    );
+  };
+
+  const selectedSessionCapabilitySource = createMemo(() =>
+    resolveSessionCapabilitySessionSource({
+      selectedSessionId: selectedSessionId(),
+      selectedSession: selectedSession(),
+      workspaceGroups: sidebarWorkspaceGroups(),
+      resolveDirectory: (session) => resolveSessionDirectory({ id: session.id, directory: session.directory ?? "" }),
+    }),
+  );
+
+  const selectedSessionCapabilityDirectory = createMemo(() => {
+    const session = selectedSessionCapabilitySource()?.session;
+    return session
+      ? normalizeSessionCapabilityDirectory(resolveSessionDirectory({ id: session.id, directory: session.directory ?? "" }))
+      : "";
+  });
+
+  const selectedSessionCapabilityWorkspace = createMemo(() =>
+    selectedSessionCapabilitySource()?.workspace ??
+    findWorkspaceForSessionCapabilityDirectory(selectedSessionCapabilityDirectory()),
+  );
+
+  const selectedSessionCapabilitiesScope = createMemo<SessionCapabilitiesScope | null>(() => {
+    const session = selectedSessionCapabilitySource()?.session;
+    if (!session) return null;
+
+    const directory = selectedSessionCapabilityDirectory();
+    const workspace = selectedSessionCapabilityWorkspace();
+    return {
+      directory,
+      workspaceId: workspace?.id,
+      workspaceLabel: workspaceLabelForSessionCapabilities(workspace, directory),
+      workspaceType: workspace?.workspaceType,
+    };
+  });
+
+  resolveSessionCapabilitySkillInventoryWorkspaces = () => {
+    const directory = selectedSessionCapabilityDirectory();
+    if (!directory) return [];
+    const workspace = selectedSessionCapabilityWorkspace();
+    if (workspace?.workspaceType === "remote") return [];
+    return [{
+      id: workspace?.id || `session:${directory}`,
+      label: workspaceLabelForSessionCapabilities(workspace, directory),
+      path: directory,
+    }];
+  };
+
+  const filterSessionMcpStatuses = (status: McpStatusMap, entries: McpServerEntry[]) => {
+    const configured = new Set(entries.map((entry) => entry.name));
+    return Object.fromEntries(Object.entries(status).filter(([name]) => configured.has(name))) as McpStatusMap;
+  };
+
+  const matchingRuntimeClientForSessionCapabilities = (directory: string, workspace: WorkspaceInfo | null) => {
+    const runtimeClient = client();
+    if (!runtimeClient) return null;
+
+    const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
+    if (workspace?.id && activeWorkspaceId && workspace.id !== activeWorkspaceId) return null;
+
+    if (workspace?.id && workspace.id === activeWorkspaceId) return runtimeClient;
+
+    const active = workspaceStore.activeWorkspaceDisplay();
+    const normalizedDirectory = normalizeCapabilityDirectoryForMatch(directory);
+    const activeCandidates = [
+      active.path,
+      active.directory,
+      workspaceStore.activeWorkspaceRoot(),
+      workspaceProjectDir(),
+    ].map((candidate) => normalizeCapabilityDirectoryForMatch(candidate));
+    return activeCandidates.includes(normalizedDirectory) ? runtimeClient : null;
+  };
+
+  const runtimeMatchContextForSessionCapabilities = () => {
+    const active = workspaceStore.activeWorkspaceDisplay();
+    return {
+      activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
+      activeWorkspacePath: normalizeCapabilityDirectoryForMatch(active.path),
+      activeWorkspaceDirectory: normalizeCapabilityDirectoryForMatch(active.directory),
+      activeWorkspaceRoot: normalizeCapabilityDirectoryForMatch(workspaceStore.activeWorkspaceRoot()),
+      workspaceProjectDir: normalizeCapabilityDirectoryForMatch(workspaceProjectDir()),
+    };
+  };
+
+  const loadSessionMcpStatuses = async (
+    directory: string,
+    entries: McpServerEntry[],
+    workspace: WorkspaceInfo | null,
+  ): Promise<McpStatusMap> => {
+    if (!entries.length) return {};
+    const runtimeClient = matchingRuntimeClientForSessionCapabilities(directory, workspace);
+    if (!runtimeClient) return {};
+
+    try {
+      const status = unwrap(await runtimeClient.mcp.status({ directory }));
+      return filterSessionMcpStatuses(status as McpStatusMap, entries);
+    } catch {
+      return {};
+    }
+  };
+
+  const remoteWorkspaceContextForSessionCapabilities = (workspace: WorkspaceInfo | null) => {
+    if (!workspace || workspace.workspaceType !== "remote" || workspace.remoteType !== "veslo") return null;
+    const vesloClient = vesloServerClient();
+    if (vesloServerStatus() !== "connected" || !vesloClient) return null;
+
+    const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
+    const selectedHost = normalizeVesloServerUrl(workspace.vesloHostUrl ?? "") ?? "";
+    const connectedHost = normalizeVesloServerUrl(vesloServerBaseUrl()) ?? "";
+    if (selectedHost && connectedHost && selectedHost !== connectedHost && workspace.id !== activeWorkspaceId) {
+      return null;
+    }
+
+    const inferredWorkspaceId =
+      workspace.vesloWorkspaceId?.trim() ||
+      parseVesloWorkspaceIdFromUrl(workspace.vesloHostUrl ?? "") ||
+      parseVesloWorkspaceIdFromUrl(workspace.baseUrl ?? "") ||
+      (workspace.id === activeWorkspaceId ? vesloServerWorkspaceId()?.trim() ?? "" : "");
+    if (!inferredWorkspaceId) return null;
+
+    return { vesloClient, workspaceId: inferredWorkspaceId };
+  };
+
+  const loadLocalSessionCapabilities = async (
+    scope: SessionCapabilitiesScope,
+    workspace: WorkspaceInfo | null,
+  ): Promise<Omit<SessionCapabilitiesSnapshot, "loadedAt">> => {
+    const directory = scope.directory;
+    const [mcpEntries] = await Promise.all([
+      readEffectiveMcpServerEntries(directory),
+      refreshSkillInventory(),
+    ]);
+    const inventory = filterSessionSkillInventoryByScope(skillInventory(), {
+      directory,
+      workspaceId: scope.workspaceId,
+    });
+    const statuses = await loadSessionMcpStatuses(directory, mcpEntries, workspace);
+    return {
+      directory,
+      skills: buildSessionSkillRows(inventory),
+      mcp: buildSessionMcpRows(mcpEntries, statuses),
+    };
+  };
+
+  const loadRemoteSessionCapabilities = async (
+    scope: SessionCapabilitiesScope,
+    workspace: WorkspaceInfo,
+  ): Promise<Omit<SessionCapabilitiesSnapshot, "loadedAt">> => {
+    const directory = scope.directory;
+    const remoteContext = remoteWorkspaceContextForSessionCapabilities(workspace);
+    if (!remoteContext) {
+      return { directory, skills: [], mcp: [] };
+    }
+
+    const [skillsResponse, mcpResponse] = await Promise.all([
+      remoteContext.vesloClient.listSkills(remoteContext.workspaceId, { includeGlobal: true }),
+      remoteContext.vesloClient.listMcp(remoteContext.workspaceId),
+    ]);
+    const skillItems = Array.isArray(skillsResponse.items) ? skillsResponse.items : [];
+    const workspaceId = scope.workspaceId || workspace.id || directory;
+    const workspaceLabel = scope.workspaceLabel || workspaceLabelForSessionCapabilities(workspace, directory);
+    const workspaceSkillsByWorkspaceId: BuildSkillInventoryInput["workspaceSkillsByWorkspaceId"] = {
+      [workspaceId]: {
+        workspace: {
+          id: workspaceId,
+          label: workspaceLabel,
+          path: directory,
+          kind: "remote",
+        },
+        skills: skillItems
+          .filter((entry) => entry.scope !== "global")
+          .map((entry) => ({
+            name: entry.name,
+            path: entry.path,
+            description: entry.description,
+            trigger: entry.trigger,
+          })),
+      },
+    };
+    const inventory = buildSkillInventory({
+      globalSkills: skillItems
+        .filter((entry) => entry.scope === "global")
+        .map((entry) => ({
+          name: entry.name,
+          path: entry.path,
+          description: entry.description,
+          trigger: entry.trigger,
+        })),
+      workspaceSkillsByWorkspaceId,
+      hubSkills: [],
+    });
+    const mcpEntries: McpServerEntry[] = (Array.isArray(mcpResponse.items) ? mcpResponse.items : []).map((entry) => ({
+      name: entry.name,
+      config: entry.config as McpServerEntry["config"],
+      source: entry.source,
+      disabledByTools: entry.disabledByTools,
+    }));
+    const statuses = await loadSessionMcpStatuses(directory, mcpEntries, workspace);
+    return {
+      directory,
+      skills: buildSessionSkillRows(inventory),
+      mcp: buildSessionMcpRows(mcpEntries, statuses),
+    };
+  };
+
+  const sessionCapabilitiesCache = createSessionCapabilitiesCache(async (scope) => {
+    const workspace = findWorkspaceForSessionCapabilityDirectory(scope.directory);
+    if (workspace?.workspaceType === "remote") {
+      return loadRemoteSessionCapabilities(scope, workspace);
+    }
+    return loadLocalSessionCapabilities(scope, workspace);
+  });
+  const sessionCapabilitiesLoadContextByDirectory = new Map<string, string>();
+  let sessionCapabilitiesRequestVersion = 0;
+
+  const sessionSkillInventoryContextForCapabilities = (scope: SessionCapabilitiesScope) =>
+    filterSessionSkillInventoryByScope(skillInventory(), scope)
+      .flatMap((item) => [
+        item.globalInstance?.id ?? "",
+        ...item.workspaceInstances.map((instance) => instance.id),
+      ])
+      .filter(Boolean)
+      .join("|");
+
+  createEffect(() => {
+    const scope = selectedSessionCapabilitiesScope();
+    const workspace = selectedSessionCapabilityWorkspace();
+    const serverCapabilities = resolvedVesloCapabilities();
+    const loadContext = scope
+      ? JSON.stringify({
+          directory: scope.directory,
+          workspaceId: scope.workspaceId ?? "",
+          workspaceType: scope.workspaceType ?? "",
+          remoteStatus: vesloServerStatus(),
+          remoteBaseUrl: vesloServerBaseUrl(),
+          remoteWorkspaceId: vesloServerWorkspaceId() ?? "",
+          hasRemoteClient: Boolean(vesloServerClient()),
+          remoteSkillsRead: Boolean(serverCapabilities?.skills?.read),
+          remoteMcpRead: Boolean(serverCapabilities?.mcp?.read),
+          runtimeBaseUrl: baseUrl().trim(),
+          runtimeVersion: connectedVersion() ?? "",
+          hasRuntimeClient: Boolean(client()),
+          runtimeMatch: runtimeMatchContextForSessionCapabilities(),
+          matchedWorkspaceId: workspace?.id ?? "",
+          skillInventory: sessionSkillInventoryContextForCapabilities(scope),
+        })
+      : "";
+
+    const requestVersion = ++sessionCapabilitiesRequestVersion;
+    if (!scope) {
+      setSessionCapabilitiesSnapshot(null);
+      setSessionCapabilitiesStatus("idle");
+      setSessionCapabilitiesError(null);
+      return;
+    }
+
+    setSessionCapabilitiesStatus("loading");
+    setSessionCapabilitiesError(null);
+
+    const previousContext = scope.directory ? sessionCapabilitiesLoadContextByDirectory.get(scope.directory) : undefined;
+    const force = previousContext !== undefined && previousContext !== loadContext;
+    void sessionCapabilitiesCache
+      .load(scope, { force })
+      .then((snapshot) => {
+        if (requestVersion !== sessionCapabilitiesRequestVersion) return;
+        sessionCapabilitiesLoadContextByDirectory.set(snapshot.directory, loadContext);
+        setSessionCapabilitiesSnapshot(snapshot);
+        setSessionCapabilitiesStatus("ready");
+        setSessionCapabilitiesError(null);
+      })
+      .catch((error) => {
+        if (requestVersion !== sessionCapabilitiesRequestVersion) return;
+        setSessionCapabilitiesSnapshot(null);
+        setSessionCapabilitiesStatus("error");
+        setSessionCapabilitiesError(error instanceof Error ? error.message : safeStringify(error));
+      });
+  });
 
   function updateVesloServerSettings(next: VesloServerSettings) {
     const stored = writeVesloServerSettings(next);
@@ -5717,9 +6530,9 @@ export default function App() {
       setNotionSkillInstalled(false);
       setTryNotionPromptVisible(false);
 
-      return { ok: true, message: "Reset app config defaults. Restart Veslo if any stale settings remain." };
+      return { ok: true, message: t("settings.reset_config_defaults_success", currentLocale()) };
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to reset app config defaults.";
+      const message = error instanceof Error ? error.message : t("settings.reset_config_defaults_failed", currentLocale());
       return { ok: false, message };
     }
   };
@@ -6332,6 +7145,8 @@ export default function App() {
         const next = response.items.map((entry) => ({
           name: entry.name,
           config: entry.config as McpServerEntry["config"],
+          source: entry.source,
+          disabledByTools: entry.disabledByTools,
         }));
         setMcpServers(next);
         setMcpLastUpdatedAt(Date.now());
@@ -6366,6 +7181,8 @@ export default function App() {
         const next = response.items.map((entry) => ({
           name: entry.name,
           config: entry.config as McpServerEntry["config"],
+          source: entry.source,
+          disabledByTools: entry.disabledByTools,
         }));
         setMcpServers(next);
         setMcpLastUpdatedAt(Date.now());
@@ -6409,15 +7226,7 @@ export default function App() {
 
     try {
       setMcpStatus(null);
-      const config = await readOpencodeConfig("project", projectDir);
-      if (!config.exists || !config.content) {
-        setMcpServers([]);
-        setMcpStatuses({});
-        setMcpStatus("No opencode.json found yet. Create one by connecting an MCP.");
-        return;
-      }
-
-      const next = parseMcpServersFromContent(config.content);
+      const next = await readEffectiveMcpServerEntries(projectDir);
       setMcpServers(next);
       setMcpLastUpdatedAt(Date.now());
 
@@ -6680,7 +7489,7 @@ export default function App() {
       return;
     }
 
-    const matchingQuickConnect = MCP_QUICK_CONNECT.find((candidate) => {
+    const matchingQuickConnect = localizedMcpQuickConnect().find((candidate) => {
       const candidateSlug = candidate.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
       return candidateSlug === entry.name || candidate.name === entry.name;
     });
@@ -6847,6 +7656,16 @@ export default function App() {
         vesloWorkspaceId &&
         resolvedVesloCapabilities()?.mcp?.write;
 
+      const entry = mcpServers().find((server) => server.name === name);
+      if (!entry) {
+        setMcpStatus("This MCP is no longer available. Refresh and try again.");
+        return;
+      }
+      if (!canRemoveMcpFromProjectConfig(entry)) {
+        setMcpStatus("This MCP comes from your global OpenCode config and cannot be removed from this workspace.");
+        return;
+      }
+
       if (canUseVesloServer && vesloClient && vesloWorkspaceId) {
         await vesloClient.removeMcp(vesloWorkspaceId, name);
       } else {
@@ -6868,7 +7687,7 @@ export default function App() {
     }
   }
 
-  async function createSessionAndOpen() {
+  async function createSessionAndOpen(initialTitle = "") {
     recordSendTrace("createSessionAndOpen:start", {
       connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
       activeWorkspaceId: workspaceStore.activeWorkspaceId(),
@@ -6890,8 +7709,17 @@ export default function App() {
       return undefined;
     }
 
-    await ensureManagedAiBootstrapReady();
-    const c = routedClient();
+    if (!(await ensureManagedAiBootstrapReady())) {
+      recordSendTrace("createSessionAndOpen:blocked-managed-ai-bootstrap");
+      return undefined;
+    }
+    if (!(await ensureLocalRuntimeReachableForSend("createSessionAndOpen"))) {
+      recordSendTrace("createSessionAndOpen:blocked-runtime-unreachable");
+      setError("Local runtime is not ready yet.");
+      return undefined;
+    }
+
+    const c = client();
     if (!c) {
       recordSendTrace("createSessionAndOpen:blocked-no-client");
       setError("Local runtime is not ready yet.");
@@ -6984,11 +7812,13 @@ export default function App() {
         console.warn("[createSessionAndOpen] health preflight failed; continuing to session.create", healthErr);
       }
 
+      const initialSessionTitle = initialTitle.trim();
       let rawResult: Awaited<ReturnType<typeof c.session.create>>;
       try {
         mark("session:create:start");
         rawResult = await c.session.create({
           directory: sessionDirectory,
+          title: initialSessionTitle || undefined,
         });
         recordSendTrace("createSessionAndOpen:create-ok", {
           sessionDirectory,
@@ -7005,6 +7835,10 @@ export default function App() {
       }
 
       const session = unwrap(rawResult);
+      if (initialSessionTitle) {
+        registerPendingInitialSessionTitle(session.id, initialSessionTitle);
+      }
+      const displaySession = applyPendingInitialSessionTitle(session);
       // Immediately select and show the new session before background list refresh.
       setBusyLabel("status.loading_session");
       mark("session:select:start", { sessionID: session.id });
@@ -7020,12 +7854,12 @@ export default function App() {
       }
 
       const newItem: SidebarSessionItem = {
-        id: session.id,
-        title: session.title,
-        slug: session.slug,
-        parentID: session.parentID,
-        time: session.time,
-        directory: session.directory,
+        id: displaySession.id,
+        title: displaySession.title,
+        slug: displaySession.slug,
+        parentID: displaySession.parentID,
+        time: displaySession.time,
+        directory: displaySession.directory,
       };
       const wsId = (workspaceStore.connectingWorkspaceId() ?? workspaceStore.activeWorkspaceId()).trim();
       if (wsId) {
@@ -7282,6 +8116,7 @@ export default function App() {
       getActiveWorkspaceId: () => workspaceStore.activeWorkspaceId(),
       pickDirectory: () => workspaceStore.pickWorkspaceFolder(),
       ensureWorkspaceForFolder: workspaceStore.ensureWorkspaceForFolder,
+      onWorkspaceRegistered: ({ workspaceId }) => publishRegisteredWorkspaceToSidebar(workspaceId),
       activateWorkspace: (workspaceId) => workspaceStore.activateWorkspace(workspaceId, { promoteToFront: true }),
       openPendingDraft: ({ workspaceId, directory }) => openDirectoryPendingDraft({ workspaceId, directory }),
     });
@@ -8515,7 +9350,13 @@ export default function App() {
     }
     // Apply to window decorations (only in Tauri desktop environment)
     if (isTauriRuntime()) {
-      setWindowDecorations(!hide).catch(e => reportError(e, "titlebar.setDecorations"));
+      setWindowDecorations(
+        resolveNativeWindowDecorationsVisible({
+          tauri: true,
+          windows: isWindowsPlatform(),
+          hideTitlebar: hide,
+        }),
+      ).catch(e => reportError(e, "titlebar.setDecorations"));
     }
   });
 
@@ -8969,6 +9810,7 @@ export default function App() {
       createWorkspaceFlow: workspaceStore.createWorkspaceFlow,
       pickWorkspaceFolder: workspaceStore.pickWorkspaceFolder,
       workspaceSessionGroups: sidebarWorkspaceGroups(),
+      unreadSessionIds: unreadSessionIds(),
       workspaceSessionPagingById: workspaceSessionPagingById(),
       subagentDecorationsBySessionId: subagentDecorationsBySessionId(),
       archivedSessionIds: archivedSessionIds(),
@@ -9010,11 +9852,15 @@ export default function App() {
       activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
       isRemoteWorkspace: workspaceStore.activeWorkspaceDisplay().workspaceType === "remote",
       refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(e => reportError(e, "skills.refresh")),
+      refreshSkillInventory: (options?: { force?: boolean }) =>
+        refreshSkillInventory(options).catch(e => reportError(e, "skills.refreshInventory")),
       refreshHubSkills: (options?: { force?: boolean }) => refreshHubSkills(options).catch(e => reportError(e, "skills.refreshHub")),
       refreshPlugins: (scopeOverride?: PluginScope) =>
         refreshPlugins(scopeOverride).catch(e => reportError(e, "plugins.refresh")),
       skills: skills(),
       skillsStatus: skillsStatus(),
+      skillInventory: skillInventory(),
+      skillInventoryStatus: skillInventoryStatus(),
       hubSkills: hubSkills(),
       hubSkillsStatus: hubSkillsStatus(),
       skillsAccessHint,
@@ -9027,6 +9873,14 @@ export default function App() {
       uninstallSkill,
       readSkill,
       saveSkill,
+      readSkillInstance,
+      saveSkillInstance,
+      deleteSkillInstance,
+      removeSkillInstance,
+      batchRemoveSkillInstances,
+      restoreSkillInstance,
+      copySkillInstanceToGlobal,
+      copySkillInstanceToWorkspace,
       pluginsAccessHint,
       canEditPlugins,
       canUseGlobalPluginScope,
@@ -9040,7 +9894,7 @@ export default function App() {
       activePluginGuide: activePluginGuide(),
       setActivePluginGuide,
       isPluginInstalled: isPluginInstalledByName,
-      suggestedPlugins: SUGGESTED_PLUGINS,
+      suggestedPlugins: localizedSuggestedPlugins(),
       addPlugin,
       removePlugin,
       createSessionAndOpen,
@@ -9139,7 +9993,7 @@ export default function App() {
       mcpConnectingName: mcpConnectingName(),
       selectedMcp: selectedMcp(),
       setSelectedMcp,
-      quickConnect: MCP_QUICK_CONNECT,
+      quickConnect: localizedMcpQuickConnect(),
       hubMcpCards: hubMcpCards(),
       hubMcpStatus: hubMcpStatus(),
       refreshHubMcp: () => refreshHubMcp().catch(e => reportError(e, "skills.refreshHubMcp")),
@@ -9183,6 +10037,7 @@ export default function App() {
 
   const sessionProps = () => ({
     selectedSessionId: activeSessionId(),
+    activePendingDraftKey: activePendingDraftKey(),
     setView,
     tab: tab(),
     setTab,
@@ -9265,6 +10120,9 @@ export default function App() {
     mcpStatus: mcpStatus(),
     skills: skills(),
     skillsStatus: skillsStatus(),
+    sessionCapabilities: sessionCapabilitiesSnapshot(),
+    sessionCapabilitiesStatus: sessionCapabilitiesStatus(),
+    sessionCapabilitiesError: sessionCapabilitiesError(),
     showSkillReloadBanner: reloadRequired() && reloadTrigger()?.type === "skill",
     reloadBannerTitle: reloadCopy().title,
     reloadBannerBody: reloadCopy().body,
@@ -9290,6 +10148,7 @@ export default function App() {
     newTaskDisabled: newTaskDisabled(),
     pendingPermissionCountByWs: sessionStore.pendingPermissionCountByWs(),
     workspaceSessionGroups: sidebarWorkspaceGroups(),
+    unreadSessionIds: unreadSessionIds(),
     workspaceSessionPagingById: workspaceSessionPagingById(),
     subagentDecorationsBySessionId: subagentDecorationsBySessionId(),
     archivedSessionIds: archivedSessionIds(),
@@ -9310,7 +10169,7 @@ export default function App() {
     selectSession: selectSession,
     pendingSessionLoad: pendingSessionLoad(),
     setPendingSessionLoad,
-    selectedSessionTitle: selectedSession()?.title ?? null,
+    selectedSessionTitle: selectedSessionDisplayTitle(),
     messages: visibleMessages(),
     todos: activeTodos(),
     busyLabel: busyLabel(),
@@ -9594,6 +10453,8 @@ export default function App() {
         </Match>
       </Switch>
 
+      <DesktopContextMenu />
+
       <WorkspaceSwitchOverlay
         open={workspaceSwitchOpen()}
         workspace={workspaceSwitchWorkspace()}
@@ -9706,11 +10567,11 @@ export default function App() {
                 setEditRemoteWorkspaceId(null);
                 setEditRemoteWorkspaceError(null);
               } else {
-                setEditRemoteWorkspaceError(error() || "Connection failed. Check the URL and token.");
+                setEditRemoteWorkspaceError(error() || t("config.connection_failed_check_url_token", currentLocale()));
                 setError(null);
               }
             } catch (e) {
-              const message = e instanceof Error ? e.message : "Connection failed";
+              const message = e instanceof Error ? e.message : t("config.connection_failed", currentLocale());
               setEditRemoteWorkspaceError(message);
               setError(null);
             }

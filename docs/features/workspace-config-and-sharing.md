@@ -62,7 +62,7 @@ Legacy `ow_*` params are still parsed for compatibility.
 
 ## Public Link Sharing
 
-The share modal also supports public bundle links through the publisher service.
+The share modal also supports public bundle links through the publisher service. The app default still points at the separate share service; it is not part of the owned-server stack until an owned `share.veslo.work` publisher is deployed.
 
 Current bundle types:
 

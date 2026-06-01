@@ -33,7 +33,7 @@ test("send flow snapshots pending draft context before materializing a real sess
   const sessionTarget = appSource.indexOf("let sessionID = options.targetSessionId?.trim() || selectedSessionId();", sendStart);
   const pendingSnapshot = appSource.indexOf("const pendingDraftSendState = (() => {", sessionTarget);
   const pendingKey = appSource.indexOf("const pendingDraftKey = (activePendingDraftKey() ?? \"\").trim();", pendingSnapshot);
-  const sessionCreate = appSource.indexOf("sessionID = (await createSessionAndOpen()) ?? selectedSessionId();", pendingSnapshot);
+  const sessionCreate = appSource.indexOf("sessionID = (await createSessionAndOpen(initialSessionTitle)) ?? selectedSessionId();", pendingSnapshot);
 
   assert.notEqual(sendStart, -1, "sendPrompt should exist");
   assert.ok(sessionTarget > sendStart, "send flow should resolve the target session before pending draft snapshot");
@@ -56,55 +56,49 @@ test("composer keeps dropped files as attachment chips", () => {
   );
 });
 
-test("composer exposes send result so failed handoff can restore the submitted draft", () => {
+test("composer exposes send result so the parent can handle failed handoff state", () => {
   assert.match(
     composerSource,
     /onSend: \(draft: ComposerDraft, options\?: ComposerSendOptions\) => Promise<boolean>;/,
-    "composer onSend contract should expose send success/failure",
+    "composer onSend contract should keep exposing send success/failure",
   );
 });
 
-test("composer locks and visually clears the submitted draft while send handoff is pending", () => {
+test("composer clears the submitted draft and releases the editor before send handoff settles", () => {
   assert.match(
     composerSource,
-    /const submitLocked = createMemo\(\(\) => sending\(\)\);/,
-    "composer should derive submit locking from its scoped send state",
+    /const sendDisabled = createMemo\(\(\) => !hasDraftContent\(\) \|\| \(props\.busy && !props\.isStreaming\)\);/,
+    "global busy should only disable send outside streaming/run-indicator mode",
   );
 
   assert.match(
     composerSource,
-    /const sendDisabled = createMemo\(\(\) => !hasDraftContent\(\) \|\| props\.busy \|\| submitLocked\(\)\);/,
-    "send disabled state should include the local submit lock",
+    /if \(options\.sendNow && sendNowPending\(\)\) return;/,
+    "send-now debounce should remain before the submitted draft is cleared",
   );
 
   assert.match(
     composerSource,
-    /contentEditable=\{!submitLocked\(\)\}[\s\S]*aria-disabled=\{submitLocked\(\) \? "true" : "false"\}/,
-    "the editor should become non-editable and expose disabled state while the submitted draft is locked",
+    /if \(text\.startsWith\("\/"\)\) \{[\s\S]*draft\.command = \{ name: commandName, arguments: argTokens\.join\(" "\) \};[\s\S]*\}\s*\}\s*recordHistory\(draft\);\s*const submittedDraft = draft;/,
+    "slash command detection and history recording should still happen before snapshot handoff",
   );
 
   assert.match(
     composerSource,
-    /const restoreSubmittedDraft = \(draft: ComposerDraft\) => \{[\s\S]*props\.onDraftChange\(draft\);[\s\S]*\};/,
-    "failed handoff should restore the original draft instead of leaving the cleared composer",
+    /const submittedDraft = draft;[\s\S]*setSending\(true\);[\s\S]*setMentionOpen\(false\);\s*setMentionQuery\(""\);\s*setSlashOpen\(false\);\s*setSlashQuery\(""\);[\s\S]*setAttachments\(\[\]\);[\s\S]*setEditorText\(""\);[\s\S]*props\.onDraftChange\(\{[\s\S]*mode: submittedDraft\.mode,[\s\S]*parts: \[\],[\s\S]*attachments: \[\],[\s\S]*text: "",[\s\S]*resolvedText: "",[\s\S]*\}\);/,
+    "composer should clear the editor and immediately emit an empty draft after snapshotting the submitted draft",
   );
 
   assert.match(
     composerSource,
-    /const submittedDraft = draft;[\s\S]*setSending\(true\);[\s\S]*setAttachments\(\[\]\);[\s\S]*setEditorText\(""\);[\s\S]*sent = await props\.onSend\(submittedDraft, options\);[\s\S]*if \(!sent\) \{[\s\S]*restoreSubmittedDraft\(submittedDraft\);[\s\S]*setSending\(false\);[\s\S]*return;[\s\S]*\}/s,
-    "composer should clear visually during handoff, then restore on rejected handoff",
+    /const sendPromise = props\.onSend\(submittedDraft, options\);[\s\S]*setSending\(false\);[\s\S]*sent = await sendPromise;/,
+    "local sending should be released before awaiting the handoff promise",
   );
 
-  assert.match(
+  assert.doesNotMatch(
     composerSource,
-    /const handleEditorInput = \(\) => \{\s*if \(submitLocked\(\)\) return;/,
-    "locked submitted drafts should ignore editor input events",
-  );
-
-  assert.match(
-    composerSource,
-    /const handlePaste = \(event: ClipboardEvent\) => \{\s*if \(submitLocked\(\)\) \{\s*event\.preventDefault\(\);[\s\S]*return;[\s\S]*\}/,
-    "locked submitted drafts should reject paste mutations",
+    /restoreSubmittedDraft\(submittedDraft\)/,
+    "failed handoff should not restore the submitted draft into the composer",
   );
 });
 

@@ -16,7 +16,6 @@ interface PipelineLogger {
 
 const SPOOL_RETENTION_HIGH_RATIO = 0.9;
 const SPOOL_RETENTION_LOW_RATIO = 0.7;
-const SPOOL_RETENTION_DROP_BATCH = 64;
 
 export function createDebugLogPipeline(input: {
   config: DebugLogConfig;
@@ -50,13 +49,9 @@ export function createDebugLogPipeline(input: {
       const low = config.spoolMaxBytes * SPOOL_RETENTION_LOW_RATIO;
       let bytes = await spool.currentBytes();
       if (bytes < high) return;
-      let droppedTotal = 0;
-      while (bytes > low) {
-        const dropped = await spool.dropOldest(SPOOL_RETENTION_DROP_BATCH);
-        if (dropped === 0) break;
-        droppedTotal += dropped;
-        bytes = await spool.currentBytes();
-      }
+      const result = await spool.dropOldestUntilBelow(low);
+      const droppedTotal = result.dropped;
+      bytes = result.bytes;
       if (droppedTotal > 0 && logger) {
         logger.log("warn", "debug log spool retention dropped events", {
           droppedCount: droppedTotal,
@@ -73,24 +68,17 @@ export function createDebugLogPipeline(input: {
 
   async function appendInternal(events: DebugLogEvent[]): Promise<void> {
     if (events.length === 0) return;
-    await enforceRetention();
     try {
       await spool.append(events);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message === "Debug log spool is full") {
-        // Retention couldn't free enough — drop a chunk and try once more.
-        await spool.dropOldest(Math.max(SPOOL_RETENTION_DROP_BATCH, events.length));
-        await spool.append(events);
+      void enforceRetention().catch((error) => {
         if (logger) {
-          logger.log("warn", "debug log spool forced drop on append", {
-            droppedCount: SPOOL_RETENTION_DROP_BATCH,
-            appendCount: events.length,
+          logger.log("error", "debug log pipeline retention error", {
+            error: error instanceof Error ? error.message : String(error),
           });
         }
-      } else {
-        throw error;
-      }
+      });
+    } catch (error) {
+      throw error;
     }
   }
 
@@ -173,6 +161,9 @@ export function createDebugLogPipeline(input: {
       }
       if (flushInFlight) {
         await flushInFlight.catch(() => undefined);
+      }
+      if (retentionInFlight) {
+        await retentionInFlight.catch(() => undefined);
       }
       // Final best-effort flush.
       if (uploader) {

@@ -3,6 +3,7 @@ import { AlertTriangle, RefreshCcw, X } from "lucide-solid";
 
 import Button from "./button";
 import type { ReloadTrigger } from "../types";
+import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 
 export type ReloadWorkspaceToastProps = {
   open: boolean;
@@ -26,52 +27,53 @@ export default function ReloadWorkspaceToast(props: ReloadWorkspaceToastProps) {
     if (!props.trigger) return props.description;
     const { type, name, action } = props.trigger;
     const trimmedName = name?.trim();
-    const verb =
+    const verbKey =
       action === "removed"
-        ? "was removed"
+        ? "reload.trigger_removed"
         : action === "added"
-        ? "was added"
+        ? "reload.trigger_added"
         : action === "updated"
-        ? "was updated"
-        : "changed";
+        ? "reload.trigger_updated"
+        : "reload.trigger_changed";
+    const verb = __vesloT(verbKey, __vesloCurrentLocale());
 
     if (type === "skill") {
       return trimmedName
-        ? `Skill '${trimmedName}' ${verb}. Reload to use it.`
-        : "Skills changed. Reload to apply.";
+        ? __vesloT("reload.trigger_skill_named", __vesloCurrentLocale()).replace("{name}", trimmedName).replace("{verb}", verb)
+        : __vesloT("reload.trigger_skills_changed", __vesloCurrentLocale());
     }
 
     if (type === "plugin") {
       return trimmedName
-        ? `Plugin '${trimmedName}' ${verb}. Reload to activate.`
-        : "Plugins changed. Reload to apply.";
+        ? __vesloT("reload.trigger_plugin_named", __vesloCurrentLocale()).replace("{name}", trimmedName).replace("{verb}", verb)
+        : __vesloT("reload.trigger_plugins_changed", __vesloCurrentLocale());
     }
 
     if (type === "mcp") {
       return trimmedName
-        ? `MCP '${trimmedName}' ${verb}. Reload to connect.`
-        : "MCP config changed. Reload to apply.";
+        ? __vesloT("reload.trigger_mcp_named", __vesloCurrentLocale()).replace("{name}", trimmedName).replace("{verb}", verb)
+        : __vesloT("reload.trigger_mcp_changed", __vesloCurrentLocale());
     }
 
     if (type === "config") {
       return trimmedName
-        ? `Config '${trimmedName}' ${verb}. Reload to apply.`
-        : "Config changed. Reload to apply.";
+        ? __vesloT("reload.trigger_config_named", __vesloCurrentLocale()).replace("{name}", trimmedName).replace("{verb}", verb)
+        : __vesloT("reload.trigger_config_changed", __vesloCurrentLocale());
     }
 
     if (type === "agent") {
       return trimmedName
-        ? `Agent '${trimmedName}' ${verb}. Reload to use it.`
-        : "Agents changed. Reload to apply.";
+        ? __vesloT("reload.trigger_agent_named", __vesloCurrentLocale()).replace("{name}", trimmedName).replace("{verb}", verb)
+        : __vesloT("reload.trigger_agents_changed", __vesloCurrentLocale());
     }
 
     if (type === "command") {
       return trimmedName
-        ? `Command '${trimmedName}' ${verb}. Reload to use it.`
-        : "Commands changed. Reload to apply.";
+        ? __vesloT("reload.trigger_command_named", __vesloCurrentLocale()).replace("{name}", trimmedName).replace("{verb}", verb)
+        : __vesloT("reload.trigger_commands_changed", __vesloCurrentLocale());
     }
 
-    return "Config changed. Reload to apply.";
+    return __vesloT("reload.trigger_config_changed", __vesloCurrentLocale());
   };
 
   return (
@@ -100,8 +102,7 @@ export default function ReloadWorkspaceToast(props: ReloadWorkspaceToastProps) {
               </span>
               <Show when={props.hasActiveRuns}>
                 <span class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider bg-amber-4 text-amber-11">
-                  Active Tasks
-                </span>
+                  {__vesloT("ui.literal.active_tasks_1umt96", __vesloCurrentLocale())}</span>
               </Show>
             </div>
             
@@ -109,7 +110,7 @@ export default function ReloadWorkspaceToast(props: ReloadWorkspaceToastProps) {
               <div class="text-xs text-gray-10 leading-snug mt-0.5 space-y-1">
                 <div>
                   {props.hasActiveRuns 
-                    ? <span class="text-amber-11 font-medium">Reloading will stop active tasks.</span>
+                    ? <span class="text-amber-11 font-medium">{__vesloT("ui.literal.reloading_will_stop_active_tasks_4xmwru", __vesloCurrentLocale())}</span>
                     : props.error 
                     ? <span class="text-red-9 font-medium">{props.error}</span>
                     : getDescription()
@@ -119,7 +120,7 @@ export default function ReloadWorkspaceToast(props: ReloadWorkspaceToastProps) {
                   <div class="text-amber-11">{props.warning}</div>
                 </Show>
                 <Show when={props.blockedReason}>
-                  <div class="text-gray-9">Blocked: {props.blockedReason}</div>
+                  <div class="text-gray-9">{__vesloT("ui.literal.blocked_zi7yob", __vesloCurrentLocale())}{" "}{props.blockedReason}</div>
                 </Show>
               </div>
             </Show>

@@ -1,5 +1,5 @@
 import { expect } from '@wdio/globals';
-import { navigateToHash } from '../helpers/app-launcher.js';
+import { currentHashRoute, navigateToHash, waitForHashRoute } from '../helpers/app-launcher.js';
 // @ts-expect-error -- shared app test utilities are JS-only in this workspace.
 import { makeClient, waitForHealthy } from '../../app/scripts/_util.mjs';
 
@@ -79,6 +79,13 @@ type EngineInfo = {
   runtime?: string | null;
   opencodeUsername?: string | null;
   opencodePassword?: string | null;
+};
+
+type ManagedAiFixtureRequest = {
+  pathname?: string | null;
+  sessionId?: string | null;
+  model?: string | null;
+  promptText?: string | null;
 };
 
 async function tauriInvoke<T>(command: string, payload: Record<string, unknown> = {}): Promise<T> {
@@ -226,6 +233,10 @@ async function completeFirstRunOnboardingIfVisible(timeout = 120000): Promise<vo
 async function waitForExpectedManagedAiAssignment(timeout = 120000): Promise<void> {
   const expectedProvider = readOptionalEnv('VESLO_E2E_EXPECTED_MANAGED_AI_PROVIDER');
   const expectedModel = readOptionalEnv('VESLO_E2E_EXPECTED_MANAGED_AI_MODEL');
+
+  if (readOptionalEnv('E2E_MANAGED_AI_GATEWAY_BASE_URL')) {
+    return;
+  }
 
   if (!expectedProvider && !expectedModel) {
     return;
@@ -620,7 +631,18 @@ async function setComposerText(text: string): Promise<void> {
 async function clickSend(): Promise<void> {
   const textbox = await waitForComposer();
   await textbox.click();
-  const sendButtons = await $$('button[title="Send"], button[title="Odeslat"]');
+  const sendButtons = await $$([
+    'button[title="Send"]',
+    'button[aria-label="Send"]',
+    'button[title="Odeslat"]',
+    'button[aria-label="Odeslat"]',
+    'button[title="Queue message"]',
+    'button[aria-label="Queue message"]',
+    'button[title="Zařadit zprávu"]',
+    'button[aria-label="Zařadit zprávu"]',
+    'button[title="加入队列"]',
+    'button[aria-label="加入队列"]',
+  ].join(', '));
   let sendButton: WebdriverIO.Element | null = null;
   for (const candidate of sendButtons) {
     if (await candidate.isDisplayed().catch(() => false)) {
@@ -654,8 +676,108 @@ async function clickSend(): Promise<void> {
   console.log(`[den-managed-ai-roundtrip] after send=${JSON.stringify(after)}`);
 }
 
+async function waitForNewAssistantResponse(
+  baselineAssistantMessages: string[],
+  token: string,
+  timeout = 120000,
+): Promise<string> {
+  let assistantResponse = '';
+  await browser.waitUntil(
+    async () => {
+      const assistantMessages = await readMessageTexts('assistant');
+      const newMessages = assistantMessages.slice(baselineAssistantMessages.length);
+      assistantResponse =
+        newMessages.find((message) => {
+          const normalized = normalizeSearchText(message);
+          return (
+            message.length > 0 &&
+            !normalized.includes('server unavailable') &&
+            !normalized.includes('failed to') &&
+            !normalized.includes('gateway error')
+          );
+        }) ?? '';
+      return assistantResponse.length > 0;
+    },
+    {
+      timeout,
+      interval: 1000,
+      timeoutMsg: `Managed AI did not render a new assistant response for token ${token} within ${timeout}ms`,
+    },
+  );
+  return assistantResponse;
+}
+
+async function sendPromptAndWaitForAssistant(prompt: string, token: string): Promise<string> {
+  const baselineAssistantMessages = await readMessageTexts('assistant');
+  await setComposerText(prompt);
+  await clickSend();
+  return waitForNewAssistantResponse(baselineAssistantMessages, token);
+}
+
+function extractSessionIdFromHash(hash: string): string {
+  const match = hash.match(/^#\/session\/([^/?#]+)/);
+  if (!match?.[1]) {
+    throw new Error(`Expected a selected session route after managed AI send, got ${hash || '(empty hash)'}`);
+  }
+  return decodeURIComponent(match[1]);
+}
+
+async function waitForSelectedSessionHash(timeout = 30000): Promise<string> {
+  await browser.waitUntil(
+    async () => (await currentHashRoute()).startsWith('#/session/'),
+    {
+      timeout,
+      interval: 250,
+      timeoutMsg: `A newly sent prompt did not select a session route within ${timeout}ms`,
+    },
+  );
+  return currentHashRoute();
+}
+
+async function readManagedAiFixtureRequests(): Promise<ManagedAiFixtureRequest[] | null> {
+  const baseUrl = readOptionalEnv('E2E_MANAGED_AI_GATEWAY_BASE_URL');
+  if (!baseUrl) {
+    return null;
+  }
+  const response = await fetch(`${baseUrl.replace(/\/+$/, '')}/__e2e/requests`);
+  if (!response.ok) {
+    throw new Error(`Failed to read managed AI fixture requests: ${response.status} ${response.statusText}`);
+  }
+  const payload = await response.json() as { requests?: ManagedAiFixtureRequest[] };
+  return Array.isArray(payload.requests) ? payload.requests : [];
+}
+
+async function expectManagedAiFixtureObservedSession(tokens: string[], sessionId: string): Promise<void> {
+  if (!readOptionalEnv('E2E_MANAGED_AI_GATEWAY_BASE_URL')) {
+    return;
+  }
+
+  let matchingRequests: ManagedAiFixtureRequest[] = [];
+  await browser.waitUntil(
+    async () => {
+      const requests = await readManagedAiFixtureRequests();
+      matchingRequests = (requests ?? []).filter((request) =>
+        request.pathname === '/providers/codex_oauth/v1/chat/completions' &&
+        tokens.some((token) => request.promptText?.includes(token)),
+      );
+      return tokens.every((token) =>
+        matchingRequests.some((request) => request.promptText?.includes(token)),
+      );
+    },
+    {
+      timeout: 30000,
+      interval: 500,
+      timeoutMsg: `Managed AI fixture did not observe both new-chat and existing-chat requests while UI stayed on session ${sessionId}. Observed=${JSON.stringify(matchingRequests)}`,
+    },
+  );
+
+  expect(matchingRequests.length).toBeGreaterThanOrEqual(tokens.length);
+  expect(matchingRequests.every((request) => typeof request.sessionId === 'string' && request.sessionId.length > 0)).toBe(true);
+  expect(matchingRequests.every((request) => request.model === 'gpt-5.4')).toBe(true);
+}
+
 describe('DEN-managed AI roundtrip', () => {
-  it('should send a managed prompt and render the hosted provider response', async function () {
+  it('should answer in a newly created managed chat and again after reopening the existing chat', async function () {
     this.timeout(720000);
 
     await waitForAppShellReady();
@@ -681,37 +803,27 @@ describe('DEN-managed AI roundtrip', () => {
     await installFetchProbe();
 
     const expectedProvider = readOptionalEnv('VESLO_E2E_EXPECTED_MANAGED_AI_PROVIDER') ?? 'managed-ai';
-    const token = `${expectedProvider.replace(/[^a-z0-9_-]/gi, '-').toLowerCase()}-${Date.now()}`;
-    const prompt = `Live Veslo desktop E2E check ${token}. Reply with one short sentence.`;
-    const baselineAssistantMessages = await readMessageTexts('assistant');
+    const tokenBase = `${expectedProvider.replace(/[^a-z0-9_-]/gi, '-').toLowerCase()}-${Date.now()}`;
+    const newChatToken = `${tokenBase}-new`;
+    const existingChatToken = `${tokenBase}-existing`;
+    const newChatPrompt = `Live Veslo desktop E2E new chat check ${newChatToken}. Reply with one short sentence.`;
+    const existingChatPrompt = `Live Veslo desktop E2E existing chat check ${existingChatToken}. Reply with one short sentence.`;
 
-    await setComposerText(prompt);
-    await clickSend();
-
-    let assistantResponse = '';
+    let newChatAssistantResponse = '';
+    let existingChatAssistantResponse = '';
+    let sessionId = '';
     try {
-      await browser.waitUntil(
-        async () => {
-          const assistantMessages = await readMessageTexts('assistant');
-          const newMessages = assistantMessages.slice(baselineAssistantMessages.length);
-          assistantResponse =
-            newMessages.find((message) => {
-              const normalized = normalizeSearchText(message);
-              return (
-                message.length > 0 &&
-                !normalized.includes('server unavailable') &&
-                !normalized.includes('failed to') &&
-                !normalized.includes('gateway error')
-              );
-            }) ?? '';
-          return assistantResponse.length > 0;
-        },
-        {
-          timeout: 120000,
-          interval: 1000,
-          timeoutMsg: `Managed AI did not render a new assistant response for token ${token} within 120000ms`,
-        },
-      );
+      newChatAssistantResponse = await sendPromptAndWaitForAssistant(newChatPrompt, newChatToken);
+      const sessionHash = await waitForSelectedSessionHash();
+      sessionId = extractSessionIdFromHash(sessionHash);
+
+      await navigateToHash('/dashboard/settings');
+      await navigateToHash(`/session/${sessionId}`);
+      await waitForHashRoute(`#/session/${sessionId}`, 30000);
+      await waitForComposer();
+
+      existingChatAssistantResponse = await sendPromptAndWaitForAssistant(existingChatPrompt, existingChatToken);
+      await expectManagedAiFixtureObservedSession([newChatToken, existingChatToken], sessionId);
     } catch (error) {
       const text = await readRootText().catch(() => '');
       const taskErrorDisplays = await readTaskErrorDisplays().catch(() => []);
@@ -761,6 +873,7 @@ describe('DEN-managed AI roundtrip', () => {
             baseUrl: vesloServerInfo.baseUrl ?? null,
           }
         : null;
+      const managedAiFixtureRequests = await readManagedAiFixtureRequests().catch(() => null);
       const interestingFetchLogs = Array.isArray(fetchLogs)
         ? fetchLogs.filter((entry) => {
             if (!entry || typeof entry !== 'object') return false;
@@ -774,7 +887,8 @@ describe('DEN-managed AI roundtrip', () => {
             );
           })
         : [];
-      console.log(`[den-managed-ai-roundtrip] final token occurrences=${countOccurrences(text, token)}`);
+      console.log(`[den-managed-ai-roundtrip] final new-chat token occurrences=${countOccurrences(text, newChatToken)}`);
+      console.log(`[den-managed-ai-roundtrip] final existing-chat token occurrences=${countOccurrences(text, existingChatToken)}`);
       console.log(`[den-managed-ai-roundtrip] final visible text=${compactLogText(text)}`);
       console.log(`[den-managed-ai-roundtrip] browser state=${JSON.stringify(browserState)}`);
       console.log(`[den-managed-ai-roundtrip] task error displays=${JSON.stringify(taskErrorDisplays)}`);
@@ -782,6 +896,7 @@ describe('DEN-managed AI roundtrip', () => {
       console.log(`[den-managed-ai-roundtrip] veslo server info=${JSON.stringify(safeVesloServerInfo)}`);
       console.log(`[den-managed-ai-roundtrip] veslo server state probe=${compactLogText(JSON.stringify(vesloServerStateProbe))}`);
       console.log(`[den-managed-ai-roundtrip] raw session api probe=${JSON.stringify(rawSessionApiProbe)}`);
+      console.log(`[den-managed-ai-roundtrip] managed AI fixture requests=${compactLogText(JSON.stringify(managedAiFixtureRequests))}`);
       console.log(`[den-managed-ai-roundtrip] fetch logs=${compactLogText(JSON.stringify(interestingFetchLogs))}`);
       console.log(`[den-managed-ai-roundtrip] send trace=${compactLogText(JSON.stringify(sendTrace))}`);
       console.log(`[den-managed-ai-roundtrip] workspace activate log=${compactLogText(workspaceActivateLog)}`);
@@ -791,13 +906,19 @@ describe('DEN-managed AI roundtrip', () => {
 
     const text = await readRootText();
     const userMessages = await readMessageTexts('user');
-    const assistantResponseLower = assistantResponse.toLowerCase();
-    console.log(`[den-managed-ai-roundtrip] assistant response=${compactLogText(assistantResponse)}`);
-    expect(userMessages.some((message) => message.includes(token))).toBe(true);
-    expect(assistantResponse.length).toBeGreaterThan(0);
-    expect(assistantResponseLower).not.toContain('authentication failed');
-    expect(assistantResponseLower).not.toContain('invalid bearer token');
-    expect(assistantResponseLower).not.toContain('unauthorized');
+    const assistantResponses = [newChatAssistantResponse, existingChatAssistantResponse];
+    console.log(`[den-managed-ai-roundtrip] new chat assistant response=${compactLogText(newChatAssistantResponse)}`);
+    console.log(`[den-managed-ai-roundtrip] existing chat assistant response=${compactLogText(existingChatAssistantResponse)}`);
+    expect(sessionId.length).toBeGreaterThan(0);
+    expect(userMessages.some((message) => message.includes(newChatToken))).toBe(true);
+    expect(userMessages.some((message) => message.includes(existingChatToken))).toBe(true);
+    for (const assistantResponse of assistantResponses) {
+      const assistantResponseLower = assistantResponse.toLowerCase();
+      expect(assistantResponse.length).toBeGreaterThan(0);
+      expect(assistantResponseLower).not.toContain('authentication failed');
+      expect(assistantResponseLower).not.toContain('invalid bearer token');
+      expect(assistantResponseLower).not.toContain('unauthorized');
+    }
     expect(text.toLowerCase()).not.toContain('server unavailable');
     expect(text.toLowerCase()).not.toContain('gateway error');
   });

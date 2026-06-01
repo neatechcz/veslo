@@ -47,6 +47,9 @@ export type OpenPendingDraftFromDirectorySelectionInput = {
   openPendingDraft: (
     target: { workspaceId: string; directory: string },
   ) => Promise<string | boolean | undefined> | string | boolean | undefined | void;
+  onWorkspaceRegistered?: (
+    target: { workspaceId: string; directory: string },
+  ) => Promise<void> | void;
 };
 
 export type CreateSessionFromDirectorySelectionResult = "cancelled" | "blocked" | "created";
@@ -195,6 +198,7 @@ export async function openPendingDraftFromDirectorySelection(
   const workspace = await Promise.resolve(input.ensureWorkspaceForFolder(selectedDirectory));
   const workspaceId = workspace?.id?.trim() ?? "";
   if (!workspaceId) return "blocked";
+  await Promise.resolve(input.onWorkspaceRegistered?.({ workspaceId, directory: selectedDirectory }));
 
   const opened = await openPendingDraftWithWorkspaceActivation({
     activeWorkspaceId: activeWorkspaceIdBeforeEnsure,

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("./settings.tsx", import.meta.url), "utf8");
+const dashboardTabRailSource = readFileSync(new URL("../components/dashboard-tab-rail.tsx", import.meta.url), "utf8");
 const generalSection = source.match(/<Match when=\{activeTab\(\) === "general"\}>[\s\S]*?<\/Match>/)?.[0] ?? "";
 const archivedSection = source.match(/<Match when=\{activeTab\(\) === "archived"\}>[\s\S]*?<\/Match>/)?.[0] ?? "";
 
@@ -22,8 +23,13 @@ test("settings renders archived sessions inside the archived tab only", () => {
   assert.doesNotMatch(generalMatch[0], /settings\.archived_sessions_label/);
 });
 
-test("settings tab list exposes general, extensions, and archived", () => {
-  assert.match(source, /const tabs: SettingsTab\[] = \["general", "extensions", "archived"\]/);
+test("settings tab list exposes general and archived only", () => {
+  assert.match(dashboardTabRailSource, /\{\s*kind:\s*"settings",\s*tab:\s*"general"\s*\}/);
+  assert.match(dashboardTabRailSource, /\{\s*kind:\s*"settings",\s*tab:\s*"archived"\s*\}/);
+  assert.doesNotMatch(dashboardTabRailSource, /\{\s*kind:\s*"settings",\s*tab:\s*"extensions"\s*\}/);
+  assert.doesNotMatch(dashboardTabRailSource, /\{\s*kind:\s*"settings",\s*tab:\s*"advanced"\s*\}/);
+  assert.doesNotMatch(dashboardTabRailSource, /\{\s*kind:\s*"settings",\s*tab:\s*"debug"\s*\}/);
+  assert.doesNotMatch(source, /<Match when=\{activeTab\(\) === "extensions"\}>/);
   assert.doesNotMatch(source, /if \(props\.developerMode\) tabs\.push\("advanced", "debug"\);/);
 });
 
@@ -32,10 +38,10 @@ test("settings keeps appearance in general and developer-gates admin-managed ai 
   assert.doesNotMatch(generalSection, /System mode follows your OS preference automatically\./);
   assert.match(
     generalSection,
-    /<Show when=\{props\.developerMode\}>[\s\S]*>AI access<[\s\S]*managed by the platform admin/i,
+    /<Show when=\{props\.developerMode\}>[\s\S]*ui\.literal\.ai_access_1fcmzn[\s\S]*ui\.literal\.provider_and_model_assignment_is_managed_by__ekvlg6/,
   );
   assert.doesNotMatch(source, /<Match when=\{activeTab\(\) === "model"\}>/);
-  assert.doesNotMatch(archivedSection, />AI access</);
+  assert.doesNotMatch(archivedSection, /ui\.literal\.ai_access_1fcmzn/);
 });
 
 test("settings exposes unavailable-on-this-device copy for archived sessions", () => {

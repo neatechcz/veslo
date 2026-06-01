@@ -35,7 +35,7 @@ export default async function Den() {
 
           <div className="mb-12 mt-10 flex flex-wrap items-center gap-3">
             <a
-              href="https://app.veslo.neatech.com"
+              href="https://app.veslo.work"
               className="doc-button"
               rel="noreferrer"
               target="_blank"

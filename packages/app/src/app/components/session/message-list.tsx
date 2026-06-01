@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
-import { Bot, Check, ChevronDown, ChevronRight, CircleAlert, Copy, Eye, File, FileEdit, FolderSearch, Pencil, Search, Sparkles, Terminal } from "lucide-solid";
+import { Bot, Check, ChevronDown, ChevronRight, CircleAlert, Copy, Eye, File, FileEdit, FolderSearch, Loader2, Pencil, Search, Sparkles, Terminal } from "lucide-solid";
 import { createVirtualizer } from "@tanstack/solid-virtual";
 
 import {
@@ -11,7 +11,7 @@ import {
   type SidebarSubagentDecoration,
   type StepGroupMode,
 } from "../../types";
-import { compactHumanStepText, containsPathLikeText, groupMessageParts, isUserVisiblePart, summarizeStep } from "../../utils";
+import { compactHumanStepText, containsPathLikeText, summarizeStep } from "../../utils";
 import PartView from "../part-view";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
 import { getTaskPartSubagentInfo, isVesloInternalSubagentType } from "../../lib/internal-subagents";
@@ -24,6 +24,19 @@ import {
   type TimelineDetailState,
 } from "./timeline-detail-state.js";
 import type { EditableUserMessageDraft } from "./message-editability";
+import {
+  buildProgressRenderBlocks,
+  type ProgressCommentItem,
+  type ProgressGroupItem,
+  type ProgressRenderBlock,
+  type ProgressStepItem,
+} from "./progress-grouping-model.js";
+import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../../i18n";
+
+export type PendingMessageState = {
+  state: "sending" | "error";
+  error?: string;
+};
 
 export type MessageListProps = {
   messages: MessageWithParts[];
@@ -44,15 +57,8 @@ export type MessageListProps = {
   subagentDecorationsBySessionId?: Record<string, SidebarSubagentDecoration>;
   editableUserMessage?: EditableUserMessageDraft | null;
   onEditUserMessage?: (editable: EditableUserMessageDraft) => void;
+  pendingMessageStateById?: Record<string, PendingMessageState>;
   footer?: JSX.Element;
-};
-
-type StepClusterBlock = {
-  kind: "steps-cluster";
-  id: string;
-  stepGroups: StepTimelineGroup[];
-  messageIds: string[];
-  isUser: boolean;
 };
 
 type StepTimelineGroup = {
@@ -61,16 +67,7 @@ type StepTimelineGroup = {
   mode: StepGroupMode;
 };
 
-type MessageBlock = {
-  kind: "message";
-  message: MessageWithParts;
-  renderableParts: Part[];
-  groups: MessageGroup[];
-  isUser: boolean;
-  messageId: string;
-};
-
-type MessageBlockItem = MessageBlock | StepClusterBlock;
+type MessageBlockItem = ProgressRenderBlock;
 
 const VIRTUALIZATION_THRESHOLD = 500;
 const VIRTUAL_OVERSCAN = 4;
@@ -518,44 +515,30 @@ export default function MessageList(props: MessageListProps) {
     });
   };
 
+  const toggleProgressGroup = (id: string, items: ProgressGroupItem[]) => {
+    props.setExpandedStepIds((current) => {
+      const next = new Set(current);
+      const wasExpanded = next.has(id);
+      next.delete(id);
+      items.forEach((item) => {
+        if (item.kind === "steps") next.delete(item.id);
+      });
+      if (!wasExpanded) next.add(id);
+      return next;
+    });
+  };
+
   const isStepsExpanded = (id: string, relatedIds: string[] = []) =>
     props.expandedStepIds.has(id) ||
     relatedIds.some((relatedId) => props.expandedStepIds.has(relatedId));
 
-  const renderablePartsForMessage = (message: MessageWithParts) =>
-    message.parts.filter((part) => {
-      if (!props.developerMode && !isUserVisiblePart(part)) {
-        return false;
-      }
-
-      if (part.type === "step-start" || part.type === "step-finish") {
-        return false;
-      }
-
-      if (part.type === "reasoning") {
-        return props.showThinking;
-      }
-
-      if (part.type === "text" || part.type === "tool" || part.type === "agent" || part.type === "file") {
-        return true;
-      }
-
-      return props.developerMode;
-    });
-
   const messageBlocks = createMemo<MessageBlockItem[]>(() => {
     const startedAt = perfNow();
-    const blocks: MessageBlockItem[] = [];
     const nextMessagePartCountById = new Map<string, number>();
     let changedMessageCount = 0;
     let addedMessageCount = 0;
-    let toolPartCount = 0;
-    let stepGroupCount = 0;
 
     props.messages.forEach((message, index) => {
-      const renderableParts = renderablePartsForMessage(message);
-      if (!renderableParts.length) return;
-
       const messageId = String((message.info as any).id ?? "");
       const idKey = messageId || `idx:${index}`;
       const totalParts = message.parts.length;
@@ -566,44 +549,27 @@ export default function MessageList(props: MessageListProps) {
       } else if (previousPartCount !== totalParts) {
         changedMessageCount += 1;
       }
-
-      toolPartCount += renderableParts.reduce((count, part) => (part.type === "tool" ? count + 1 : count), 0);
-      const groupId = String((message.info as any).id ?? "message");
-      const groups = groupMessageParts(renderableParts, groupId, { showThinking: props.showThinking });
-      const isUser = (message.info as any).role === "user";
-      const isStepsOnly = groups.length > 0 && groups.every((group) => group.kind === "steps");
-      const stepGroups = isStepsOnly
-        ? (groups as { kind: "steps"; id: string; parts: Part[]; segment: "execution"; mode: StepGroupMode }[])
-        : [];
-      stepGroupCount += groups.reduce((count, group) => (group.kind === "steps" ? count + 1 : count), 0);
-
-      if (isStepsOnly) {
-        const nextBlock: StepClusterBlock = {
-          kind: "steps-cluster",
-          id: stepGroups[0].id,
-          stepGroups: stepGroups.map((group) => ({ id: group.id, parts: group.parts, mode: group.mode })),
-          messageIds: [messageId],
-          isUser,
-        };
-        const previousBlock = blocks[blocks.length - 1];
-        if (previousBlock?.kind === "steps-cluster" && previousBlock.isUser === isUser) {
-          previousBlock.stepGroups.push(...nextBlock.stepGroups);
-          previousBlock.messageIds.push(...nextBlock.messageIds.filter(Boolean));
-          return;
-        }
-        blocks.push(nextBlock);
-        return;
-      }
-
-      blocks.push({
-        kind: "message",
-        message,
-        renderableParts,
-        groups,
-        isUser,
-        messageId,
-      });
     });
+
+    const blocks = buildProgressRenderBlocks({
+      messages: props.messages,
+      isStreaming: Boolean(props.isStreaming),
+      developerMode: props.developerMode,
+      showThinking: props.showThinking,
+    });
+
+    const toolPartCount = blocks.reduce((count, block) => {
+      if (block.kind === "message") {
+        return count + block.renderableParts.filter((part) => part.type === "tool").length;
+      }
+      return count + block.items.reduce((itemCount, item) => itemCount + (item.kind === "steps" ? item.parts.filter((part) => part.type === "tool").length : 0), 0);
+    }, 0);
+    const stepGroupCount = blocks.reduce((count, block) => {
+      if (block.kind === "message") {
+        return count + block.groups.filter((group) => group.kind === "steps").length;
+      }
+      return count + block.items.filter((item) => item.kind === "steps").length;
+    }, 0);
 
     let removedMessageCount = 0;
     previousMessagePartCountById.forEach((_partCount, id) => {
@@ -651,7 +617,7 @@ export default function MessageList(props: MessageListProps) {
   const blockIndexByMessageId = createMemo(() => {
     const next = new Map<string, number>();
     messageBlocks().forEach((block, index) => {
-      if (block.kind === "steps-cluster") {
+      if (block.kind === "progress-group") {
         block.messageIds.forEach((id) => {
           if (id) next.set(id, index);
         });
@@ -678,8 +644,8 @@ export default function MessageList(props: MessageListProps) {
     getItemKey: (index) => {
       const block = messageBlocks()[index];
       if (!block) return `block-${index}`;
-      if (block.kind === "steps-cluster") {
-        return `steps-${block.messageIds.join(",")}`;
+      if (block.kind === "progress-group") {
+        return `progress-${block.messageIds.join(",")}`;
       }
       return `message-${block.messageId}`;
     },
@@ -756,17 +722,57 @@ export default function MessageList(props: MessageListProps) {
     props.setScrollToMessageById?.(null);
   });
 
+  const canShowTimelineTechnicalDetail = (entry: { part?: Part; row: TimelineRowModel }) =>
+    Boolean(entry.row.technicalDetail) && (entry.part?.type !== "reasoning" || props.showThinking);
+
+  const ProgressComment = (commentProps: { item: ProgressCommentItem }) => (
+    <div data-testid="session-progress-comment" class="font-reading type-reading-md text-gray-12 antialiased">
+      <PartView
+        part={commentProps.item.part}
+        developerMode={props.developerMode}
+        showThinking={props.showThinking}
+        workspaceRoot={props.workspaceRoot}
+        tone="light"
+        renderMarkdown={true}
+        highlightQuery={props.searchHighlightQuery}
+      />
+    </div>
+  );
+
+  const ProgressStepGroup = (stepProps: { item: ProgressStepItem }) => (
+    <div data-testid="session-progress-step-group">
+      <StepsContainer
+        id={stepProps.item.id}
+        stepGroups={[{ id: stepProps.item.id, parts: stepProps.item.parts, mode: stepProps.item.mode }]}
+        isUser={false}
+        isInline={true}
+        isProgressChild={true}
+      />
+    </div>
+  );
+
   /** Expandable steps container */
   const StepsContainer = (containerProps: {
     id: string;
     relatedIds?: string[];
     stepGroups: StepTimelineGroup[];
+    progressItems?: ProgressGroupItem[];
     isUser: boolean;
     isInline?: boolean;
+    isProgressChild?: boolean;
   }) => {
     const relatedIds = () =>
       containerProps.relatedIds ?? containerProps.stepGroups.map((group) => group.id).filter((id) => id !== containerProps.id);
-    const expanded = () => isStepsExpanded(containerProps.id, relatedIds());
+    const progressItems = () => containerProps.progressItems ?? null;
+    const expanded = () => progressItems() ? props.expandedStepIds.has(containerProps.id) : isStepsExpanded(containerProps.id, relatedIds());
+    const toggleContainer = () => {
+      const items = progressItems();
+      if (items) {
+        toggleProgressGroup(containerProps.id, items);
+        return;
+      }
+      toggleSteps(containerProps.id, relatedIds());
+    };
     const latestStep = () => latestStepPart(containerProps.stepGroups);
     const allStepParts = () => containerProps.stepGroups.flatMap((group) => group.parts);
 
@@ -815,50 +821,50 @@ export default function MessageList(props: MessageListProps) {
         const description = pick("description");
         if (description) return compactHumanStepText(description, 42);
         const command = pick("command", "cmd");
-        return command ? compactText(`Run ${command}`, 48) : "Run command";
+        return command ? compactText(t("tools.run_target", currentLocale()).replace("{target}", command), 48) : t("tools.run_command", currentLocale());
       }
 
       if (tool === "read") {
         const file = target("filePath", "path", "file");
-        return file ? `Read ${file}` : "Read file";
+        return file ? t("tools.read_target", currentLocale()).replace("{target}", file) : t("tools.read_file", currentLocale());
       }
 
       if (tool === "edit") {
         const file = target("filePath", "path", "file");
-        return file ? `Edit ${file}` : "Edit file";
+        return file ? t("tools.edit_target", currentLocale()).replace("{target}", file) : t("tools.edit_file", currentLocale());
       }
 
       if (tool === "write" || tool === "apply_patch") {
         const file = target("filePath", "path", "file");
-        return file ? `Update ${file}` : "Update file";
+        return file ? t("tools.write_target", currentLocale()).replace("{target}", file) : t("tools.write_file", currentLocale());
       }
 
       if (tool === "grep" || tool === "glob" || tool === "search") {
         const pattern = pick("pattern", "query");
-        return pattern ? `Search ${compactText(pattern, 36)}` : "Search code";
+        return pattern ? t("tools.search_target", currentLocale()).replace("{target}", compactText(pattern, 36)) : t("tools.search_code", currentLocale());
       }
 
       if (tool === "list" || tool === "list_files") {
         const path = target("path");
-        return path ? `List ${path}` : "List files";
+        return path ? t("tools.list_target", currentLocale()).replace("{target}", path) : t("tools.list_files", currentLocale());
       }
 
       if (tool === "task") {
         const agent = pick("subagent_type");
-        if (isVesloInternalSubagentType(agent)) return "Internal processing";
+        if (isVesloInternalSubagentType(agent)) return t("tools.internal_processing", currentLocale());
         const description = pick("description");
         if (description) return compactHumanStepText(description, 42);
-        return agent ? `Delegate ${agent}` : "Delegate task";
+        return agent ? t("tools.delegate_target", currentLocale()).replace("{target}", agent) : t("tools.delegate_task", currentLocale());
       }
 
       if (tool === "webfetch") {
         const url = pick("url");
-        return url ? `Fetch ${compactText(url, 36)}` : "Fetch web page";
+        return url ? t("tools.fetch_target", currentLocale()).replace("{target}", compactText(url, 36)) : t("tools.fetch_web_page", currentLocale());
       }
 
       if (tool === "skill") {
         const name = pick("name");
-        return name ? `Load skill ${name}` : "Load skill";
+        return name ? t("tools.load_skill_named", currentLocale()).replace("{name}", name) : t("tools.load_skill", currentLocale());
       }
 
       return "";
@@ -866,7 +872,7 @@ export default function MessageList(props: MessageListProps) {
 
     const latestStepLabel = () => {
       const step = latestStep();
-      if (!step) return "Last step";
+      if (!step) return t("session.last_step", currentLocale());
 
       const fromTool = toolHeadline(step);
       if (fromTool) return compactText(fromTool, 42, { preservePaths: true });
@@ -887,7 +893,7 @@ export default function MessageList(props: MessageListProps) {
       if (title && !generic) return title;
       if (detail) return detail;
       if (title) return title;
-      return "Last step";
+      return t("session.last_step", currentLocale());
     };
 
     const timelineModel = createMemo(() =>
@@ -981,7 +987,20 @@ export default function MessageList(props: MessageListProps) {
     });
 
     const hasRunning = () => timelineSections().some((section) => section.status === "running");
-    const collapsedSummary = () => localizedTimelineSummary(timelineSections()) || latestStepLabel() || tr("session.timeline_execution");
+    const commentCount = () => progressItems()?.filter((item) => item.kind === "comment").length ?? 0;
+    const commentSummary = () => {
+      const count = commentCount();
+      return count > 0 ? plural(count, "session.timeline_summary_comment_one", "session.timeline_summary_comment_other") : "";
+    };
+    const collapsedSummary = () => {
+      const timelineSummary = localizedTimelineSummary(timelineSections());
+      if (containerProps.isProgressChild) {
+        return latestStepLabel() || timelineSummary || tr("session.timeline_execution");
+      }
+      return [commentSummary(), timelineSummary].filter(Boolean).join(" · ") ||
+        latestStepLabel() ||
+        tr("session.timeline_execution");
+    };
     const collapsedMeta = () => {
       const labels = Array.from(new Set(timelineSections().map((section) => localizedSectionTitle(section)).filter(Boolean)));
       const duration = formatTimelineDuration(allStepParts());
@@ -1042,7 +1061,7 @@ export default function MessageList(props: MessageListProps) {
               ? "border-gray-6 bg-gray-2/60 text-gray-10 hover:text-gray-11"
               : "border-gray-6/70 bg-gray-2/35 text-gray-10 hover:text-gray-12"
           }`}
-          onClick={() => toggleSteps(containerProps.id, relatedIds())}
+          onClick={toggleContainer}
         >
           <ChevronRight
             size={14}
@@ -1062,20 +1081,62 @@ export default function MessageList(props: MessageListProps) {
         </button>
 
         <Show when={expanded()}>
-          <div class="mt-2 space-y-2">
-            <For each={timelineSections()}>
-              {(section) => (
-                <section class="rounded-[18px] border border-gray-6/60 bg-gray-2/35">
-                  <Show
-                    when={!singleSectionMode()}
-                    fallback={(
-                      <div class="flex items-center gap-2 px-3 py-2">
+          <Show when={progressItems()}>
+            {(items) => (
+              <div class="mt-2 space-y-2">
+                <For each={items()}>
+                  {(item) => item.kind === "comment" ? <ProgressComment item={item} /> : <ProgressStepGroup item={item} />}
+                </For>
+              </div>
+            )}
+          </Show>
+          <Show when={!progressItems()}>
+            <div class="mt-2 space-y-2">
+              <For each={timelineSections()}>
+                {(section) => (
+                  <section class="rounded-[18px] border border-gray-6/60 bg-gray-2/35">
+                    <Show
+                      when={!singleSectionMode()}
+                      fallback={(
+                        <div class="flex items-center gap-2 px-3 py-2">
+                          <div class={`shrink-0 rounded-full p-1.5 ${iconAccentClass(sectionDisplayCategory(section))}`}>
+                            <ToolIcon category={sectionDisplayCategory(section)} size={13} />
+                          </div>
+                          <div class="min-w-0 flex-1">
+                            <div class="flex items-center gap-2">
+                              <span class="truncate text-[13px] font-medium text-gray-12">{localizedSectionTitle(section)}</span>
+                            </div>
+                          </div>
+                          <Show when={section.status}>
+                            {(status) => (
+                              <span class={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusChipClass(status())}`}>
+                                {timelineStatusLabel(status())}
+                              </span>
+                            )}
+                          </Show>
+                        </div>
+                      )}
+                    >
+                      <button
+                        type="button"
+                        class="flex w-full items-center gap-2 px-3 py-2 text-left"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setTimelineDetailState((current) => toggleTimelineSection(current, section.id));
+                        }}
+                      >
+                        <ChevronRight
+                          size={14}
+                          class={`shrink-0 transition-transform duration-200 ${sectionExpanded(section.id) ? "rotate-90" : ""}`}
+                        />
                         <div class={`shrink-0 rounded-full p-1.5 ${iconAccentClass(sectionDisplayCategory(section))}`}>
                           <ToolIcon category={sectionDisplayCategory(section)} size={13} />
                         </div>
                         <div class="min-w-0 flex-1">
                           <div class="flex items-center gap-2">
                             <span class="truncate text-[13px] font-medium text-gray-12">{localizedSectionTitle(section)}</span>
+                            <span class="truncate text-[11px] text-gray-9">{localizedSectionSummary(section)}</span>
                           </div>
                         </div>
                         <Show when={section.status}>
@@ -1085,243 +1146,217 @@ export default function MessageList(props: MessageListProps) {
                             </span>
                           )}
                         </Show>
-                      </div>
-                    )}
-                  >
-                    <button
-                      type="button"
-                      class="flex w-full items-center gap-2 px-3 py-2 text-left"
-                      onClick={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        setTimelineDetailState((current) => toggleTimelineSection(current, section.id));
-                      }}
-                    >
-                      <ChevronRight
-                        size={14}
-                        class={`shrink-0 transition-transform duration-200 ${sectionExpanded(section.id) ? "rotate-90" : ""}`}
-                      />
-                      <div class={`shrink-0 rounded-full p-1.5 ${iconAccentClass(sectionDisplayCategory(section))}`}>
-                        <ToolIcon category={sectionDisplayCategory(section)} size={13} />
-                      </div>
-                      <div class="min-w-0 flex-1">
-                        <div class="flex items-center gap-2">
-                          <span class="truncate text-[13px] font-medium text-gray-12">{localizedSectionTitle(section)}</span>
-                          <span class="truncate text-[11px] text-gray-9">{localizedSectionSummary(section)}</span>
-                        </div>
-                      </div>
-                      <Show when={section.status}>
-                        {(status) => (
-                          <span class={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusChipClass(status())}`}>
-                            {timelineStatusLabel(status())}
-                          </span>
-                        )}
-                      </Show>
-                    </button>
-                  </Show>
+                      </button>
+                    </Show>
 
-                  <Show when={singleSectionMode() || sectionExpanded(section.id)}>
-                    <div class="border-t border-gray-6/50 px-3 pb-2">
-                      <For each={section.rows}>
-                        {(entry, rowIndex) => (
-                          <div class={rowIndex() === 0 ? "pt-2" : "border-t border-gray-6/40 py-2"}>
-                            {(() => {
-                              const row = displayedTimelineRow(entry);
-                              return (
-                                <div class="flex items-start gap-2">
-                              <div class={`mt-0.5 shrink-0 rounded-full p-1.5 ${iconAccentClass(row.rowType)}`}>
-                                <ToolIcon category={row.rowType} size={13} />
-                              </div>
-                              <div class="min-w-0 flex-1">
-                                <div class="flex items-start gap-2">
-                                  <div class="min-w-0 flex-1">
-                                    <div class="text-[13px] font-medium leading-5 text-gray-12">
-                                      <Show when={taskDecoration(entry.task)}>
-                                        {(decoration) => (
-                                          <span
-                                            class="mr-1.5 inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] align-middle"
-                                            style={{
-                                              color: decoration().color,
-                                              "border-color": `${decoration().color}66`,
-                                              "background-color": `${decoration().color}1a`,
-                                            }}
-                                            title={decoration().label}
-                                          >
-                                            {decoration().label}
-                                          </span>
-                                        )}
-                                      </Show>
-                                      {row.primary}
+                    <Show when={singleSectionMode() || sectionExpanded(section.id)}>
+                      <div class="border-t border-gray-6/50 px-3 pb-2">
+                        <For each={section.rows}>
+                          {(entry, rowIndex) => (
+                            <div
+                              class={rowIndex() === 0 ? "pt-2" : "border-t border-gray-6/40 py-2"}
+                              data-testid={containerProps.isProgressChild ? "session-progress-row" : undefined}
+                            >
+                              {(() => {
+                                const row = displayedTimelineRow(entry);
+                                return (
+                                  <div class="flex items-start gap-2">
+                                    <div class={`mt-0.5 shrink-0 rounded-full p-1.5 ${iconAccentClass(row.rowType)}`}>
+                                      <ToolIcon category={row.rowType} size={13} />
                                     </div>
-                                    <Show when={row.secondary}>
-                                      <div class="mt-0.5 text-[12px] leading-5 text-gray-10 break-words">
-                                        {row.secondary}
+                                    <div class="min-w-0 flex-1">
+                                      <div class="flex items-start gap-2">
+                                        <div class="min-w-0 flex-1">
+                                          <div class="text-[13px] font-medium leading-5 text-gray-12">
+                                            <Show when={taskDecoration(entry.task)}>
+                                              {(decoration) => (
+                                                <span
+                                                  class="mr-1.5 inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] align-middle"
+                                                  style={{
+                                                    color: decoration().color,
+                                                    "border-color": `${decoration().color}66`,
+                                                    "background-color": `${decoration().color}1a`,
+                                                  }}
+                                                  title={decoration().label}
+                                                >
+                                                  {decoration().label}
+                                                </span>
+                                              )}
+                                            </Show>
+                                            {row.primary}
+                                          </div>
+                                          <Show when={row.secondary}>
+                                            <div class="mt-0.5 text-[12px] leading-5 text-gray-10 break-words">
+                                              {row.secondary}
+                                            </div>
+                                          </Show>
+                                        </div>
+                                        <Show when={row.status}>
+                                          {(status) => (
+                                            <span class={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusChipClass(status())}`}>
+                                              {timelineStatusLabel(status())}
+                                            </span>
+                                          )}
+                                        </Show>
                                       </div>
-                                    </Show>
+
+                                      <div class="mt-1 flex flex-wrap items-center gap-2">
+                                        <Show when={row.rowType === "skill"}>
+                                          <span class="inline-flex items-center rounded-full bg-purple-3/80 px-2 py-0.5 text-[10px] font-medium text-purple-11">
+                                            {tr("session.timeline_badge_skill")}
+                                          </span>
+                                        </Show>
+                                        <Show when={entry.task.isTask && !entry.task.isInternal}>
+                                          <span class="inline-flex items-center rounded-full bg-blue-3/80 px-2 py-0.5 text-[10px] font-medium text-blue-11">
+                                            {tr("session.timeline_badge_subagent")}
+                                          </span>
+                                        </Show>
+                                        <Show when={entry.task.agentType}>
+                                          {(agentType) => <span class="text-[11px] text-gray-9">{agentType()} {__vesloT("ui.literal.agent_m65q5i", __vesloCurrentLocale())}</span>}
+                                        </Show>
+                                        <Show when={entry.task.isInternal}>
+                                          <span class="text-[11px] text-gray-9">{tr("session.timeline_internal_processing")}</span>
+                                        </Show>
+                                        <Show when={Boolean(entry.task.sessionId && props.openSessionById && !entry.task.isInternal)}>
+                                          <button
+                                            type="button"
+                                            class="text-[11px] text-blue-11 hover:text-blue-10 underline underline-offset-2"
+                                            onClick={(event) => {
+                                              event.preventDefault();
+                                              event.stopPropagation();
+                                              const sessionId = entry.task.sessionId;
+                                              if (!sessionId) return;
+                                              props.openSessionById?.(sessionId);
+                                            }}
+                                          >
+                                            {tr("session.open")}
+                                          </button>
+                                        </Show>
+                                      </div>
+
+                                      <Show when={canShowTimelineTechnicalDetail(entry)}>
+                                        <details class="mt-2">
+                                          <summary class="font-product type-ui-xs inline-flex cursor-pointer list-none items-center gap-1 text-gray-10 hover:text-gray-11">
+                                            <ChevronDown size={12} class="shrink-0" />
+                                            {tr("session.timeline_technical_detail")}
+                                          </summary>
+                                          <pre class="font-mono type-ui-xs mt-1 whitespace-pre-wrap break-all rounded-xl bg-gray-2 px-2 py-1 text-gray-10">
+                                            <code>{row.technicalDetail}</code>
+                                          </pre>
+                                        </details>
+                                      </Show>
+                                    </div>
                                   </div>
-                                  <Show when={row.status}>
-                                    {(status) => (
-                                      <span class={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusChipClass(status())}`}>
-                                        {timelineStatusLabel(status())}
-                                      </span>
-                                    )}
-                                  </Show>
-                                </div>
-
-                                <div class="mt-1 flex flex-wrap items-center gap-2">
-                                  <Show when={row.rowType === "skill"}>
-                                    <span class="inline-flex items-center rounded-full bg-purple-3/80 px-2 py-0.5 text-[10px] font-medium text-purple-11">
-                                      {tr("session.timeline_badge_skill")}
-                                    </span>
-                                  </Show>
-                                  <Show when={entry.task.isTask && !entry.task.isInternal}>
-                                    <span class="inline-flex items-center rounded-full bg-blue-3/80 px-2 py-0.5 text-[10px] font-medium text-blue-11">
-                                      {tr("session.timeline_badge_subagent")}
-                                    </span>
-                                  </Show>
-                                  <Show when={entry.task.agentType}>
-                                    {(agentType) => <span class="text-[11px] text-gray-9">{agentType()} agent</span>}
-                                  </Show>
-                                  <Show when={entry.task.isInternal}>
-                                    <span class="text-[11px] text-gray-9">{tr("session.timeline_internal_processing")}</span>
-                                  </Show>
-                                  <Show when={Boolean(entry.task.sessionId && props.openSessionById && !entry.task.isInternal)}>
-                                    <button
-                                      type="button"
-                                      class="text-[11px] text-blue-11 hover:text-blue-10 underline underline-offset-2"
-                                      onClick={(event) => {
-                                        event.preventDefault();
-                                        event.stopPropagation();
-                                        const sessionId = entry.task.sessionId;
-                                        if (!sessionId) return;
-                                        props.openSessionById?.(sessionId);
-                                      }}
-                                    >
-                                      {tr("session.open")}
-                                    </button>
-                                  </Show>
-                                </div>
-
-                                <Show when={props.showThinking && row.technicalDetail}>
-                                  <details class="mt-2">
-                                    <summary class="font-product type-ui-xs inline-flex cursor-pointer list-none items-center gap-1 text-gray-10 hover:text-gray-11">
-                                      <ChevronDown size={12} class="shrink-0" />
-                                      {tr("session.timeline_technical_detail")}
-                                    </summary>
-                                    <pre class="font-mono type-ui-xs mt-1 whitespace-pre-wrap break-all rounded-xl bg-gray-2 px-2 py-1 text-gray-10">
-                                      <code>{row.technicalDetail}</code>
-                                    </pre>
-                                  </details>
-                                </Show>
-                              </div>
-                                </div>
-                              );
-                            })()}
-                          </div>
-                        )}
-                      </For>
-                    </div>
-                  </Show>
-                </section>
-              )}
-            </For>
-            <Show when={hasRunning()}>
-              <div class="h-2" />
-            </Show>
-          </div>
+                                );
+                              })()}
+                            </div>
+                          )}
+                        </For>
+                      </div>
+                    </Show>
+                  </section>
+                )}
+              </For>
+              <Show when={hasRunning()}>
+                <div class="h-2" />
+              </Show>
+            </div>
+          </Show>
         </Show>
       </div>
     );
   };
 
   const renderBlock = (block: MessageBlockItem, blockIndex: number) => {
-          const blockMessageIds = block.kind === "steps-cluster" ? block.messageIds : [block.messageId];
-          const hasSearchMatch = blockMessageIds.some((id) => props.searchMatchMessageIds?.has(id));
-          const hasActiveSearchMatch = blockMessageIds.some((id) => id === props.activeSearchMessageId);
-          const searchOutlineClass = hasActiveSearchMatch
-            ? "outline outline-2 outline-amber-8/70 outline-offset-2 rounded-2xl"
-            : hasSearchMatch
-              ? "outline outline-1 outline-amber-7/50 outline-offset-1 rounded-2xl"
-              : "";
+    const blockMessageIds = block.kind === "progress-group" ? block.messageIds : [block.messageId];
+    const hasSearchMatch = blockMessageIds.some((id) => props.searchMatchMessageIds?.has(id));
+    const hasActiveSearchMatch = blockMessageIds.some((id) => id === props.activeSearchMessageId);
+    const searchOutlineClass = hasActiveSearchMatch
+      ? "outline outline-2 outline-amber-8/70 outline-offset-2 rounded-2xl"
+      : hasSearchMatch
+        ? "outline outline-1 outline-amber-7/50 outline-offset-1 rounded-2xl"
+        : "";
 
-          if (block.kind === "steps-cluster") {
-            return (
-              <div
-                class={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
-                data-message-role={block.isUser ? "user" : "assistant"}
-                data-message-id={block.messageIds[0] ?? ""}
-                style={blockPerfStyle(blockIndex)}
-              >
-                <div
-                  class={`w-full relative ${
-                    block.isUser
-                      ? "font-reading type-reading-md max-w-[80%] px-5 py-3 rounded-[24px] bg-gray-3 text-gray-12"
-                      : "font-reading type-reading-md max-w-[960px] text-gray-12 group"
-                  } ${searchOutlineClass}`}
-                >
-                  <StepsContainer
-                    id={block.id}
-                    relatedIds={block.stepGroups.map((stepGroup) => stepGroup.id).filter((stepId) => stepId !== block.id)}
-                    stepGroups={block.stepGroups}
-                    isUser={block.isUser}
-                  />
-                </div>
-              </div>
-            );
-          }
+    if (block.kind === "progress-group") {
+      const stepGroups = block.items
+        .filter((item): item is Extract<ProgressGroupItem, { kind: "steps" }> => item.kind === "steps")
+        .map((item) => ({ id: item.id, parts: item.parts, mode: item.mode }));
+      return (
+        <div
+          class="flex group justify-start"
+          data-message-role="assistant"
+          data-message-id={block.messageIds[0] ?? ""}
+          style={blockPerfStyle(blockIndex)}
+        >
+          <div
+            class={`w-full relative max-w-[960px] text-gray-12 group ${searchOutlineClass}`}
+            data-testid="session-progress-group"
+          >
+            <StepsContainer
+              id={block.id}
+              relatedIds={stepGroups.map((stepGroup) => stepGroup.id).filter((stepId) => stepId !== block.id)}
+              stepGroups={stepGroups}
+              progressItems={block.items}
+              isUser={false}
+            />
+          </div>
+        </div>
+      );
+    }
 
-          const groupSpacing = block.isUser ? "mb-3" : "mb-4";
-          const isSyntheticSessionError =
-            !block.isUser && block.messageId.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX);
-          const textGroups = () =>
-            block.groups.filter(
-              (group): group is { kind: "text"; part: Part; segment: "intent" | "result" } => group.kind === "text",
-            );
-          const inlineStepGroups = () =>
-            block.groups
-              .filter((group) => group.kind === "steps")
-              .map((group) => {
-                const stepGroup = group as {
-                  kind: "steps";
-                  id: string;
-                  parts: Part[];
-                  segment: "execution";
-                  mode: StepGroupMode;
-                };
-                return { id: stepGroup.id, parts: stepGroup.parts, mode: stepGroup.mode };
-              });
-          const editableMessage = () =>
-            props.editableUserMessage?.messageId === block.messageId ? props.editableUserMessage : null;
+    const groupSpacing = block.isUser ? "mb-3" : "mb-4";
+    const isSyntheticSessionError =
+      !block.isUser && block.messageId.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX);
+    const textGroups = () =>
+      block.groups.filter(
+        (group): group is { kind: "text"; part: Part; segment: "intent" | "result" } => group.kind === "text",
+      );
+    const inlineStepGroups = () =>
+      block.groups
+        .filter((group) => group.kind === "steps")
+        .map((group) => {
+          const stepGroup = group as {
+            kind: "steps";
+            id: string;
+            parts: Part[];
+            segment: "execution";
+            mode: StepGroupMode;
+          };
+          return { id: stepGroup.id, parts: stepGroup.parts, mode: stepGroup.mode };
+        });
+    const editableMessage = () =>
+      props.editableUserMessage?.messageId === block.messageId ? props.editableUserMessage : null;
+    const pendingMessageState = () => props.pendingMessageStateById?.[block.messageId] ?? null;
 
-          if (isSyntheticSessionError) {
-            const messageText = block.renderableParts
-              .map((part) => partToText(part))
-              .join(" ")
-              .replace(/\s*\n+\s*/g, " ")
-              .replace(/\s{2,}/g, " ")
-              .trim();
+    if (isSyntheticSessionError) {
+      const messageText = block.renderableParts
+        .map((part) => partToText(part))
+        .join(" ")
+        .replace(/\s*\n+\s*/g, " ")
+        .replace(/\s{2,}/g, " ")
+        .trim();
 
-            return (
-              <div
-                class="flex group justify-start"
-                data-message-role="assistant"
-                data-message-id={block.messageId}
-                style={blockPerfStyle(blockIndex)}
-              >
-                <div class={`w-full relative max-w-[960px] ${searchOutlineClass}`}>
-                  <div
-                    class="font-reading type-reading-md inline-flex max-w-full items-start gap-2 rounded-[18px] border border-red-7/20 bg-red-1/35 px-3 py-2 text-red-12 shadow-sm"
-                    role="alert"
-                  >
-                    <CircleAlert size={14} class="mt-0.5 shrink-0" />
-                    <div class="min-w-0 break-words">{messageText}</div>
-                  </div>
-                </div>
-              </div>
-            );
-          }
+      return (
+        <div
+          class="flex group justify-start"
+          data-message-role="assistant"
+          data-message-id={block.messageId}
+          style={blockPerfStyle(blockIndex)}
+        >
+          <div class={`w-full relative max-w-[960px] ${searchOutlineClass}`}>
+            <div
+              class="font-reading type-reading-md inline-flex max-w-full items-start gap-2 rounded-[18px] border border-red-7/20 bg-red-1/35 px-3 py-2 text-red-12 shadow-sm"
+              role="alert"
+            >
+              <CircleAlert size={14} class="mt-0.5 shrink-0" />
+              <div class="min-w-0 break-words">{messageText}</div>
+            </div>
+          </div>
+        </div>
+      );
+    }
 
-          return (
+    return (
             <div
               class={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
               data-message-role={block.isUser ? "user" : "assistant"}
@@ -1393,6 +1428,24 @@ export default function MessageList(props: MessageListProps) {
                     isInline={true}
                   />
                 </Show>
+                <Show when={block.isUser && pendingMessageState()}>
+                  {(pending) => (
+                    <div
+                      class={`mt-2 flex items-center gap-1.5 font-product type-ui-xs ${pending().state === "error" ? "text-red-11" : "text-gray-10"}`}
+                      title={pending().error ?? undefined}
+                      role="status"
+                    >
+                      <Show when={pending().state === "sending"} fallback={<CircleAlert size={12} />}>
+                        <Loader2 size={12} class="animate-spin" />
+                      </Show>
+                      <span>
+                        {pending().state === "sending"
+                          ? tr("session.pending_submit_sending")
+                          : tr("session.pending_submit_failed")}
+                      </span>
+                    </div>
+                  )}
+                </Show>
                 <div class="absolute bottom-2 right-2 flex justify-end gap-1 opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto transition-opacity select-none">
                   <Show when={editableMessage()}>
                     {(editable) => (
@@ -1408,7 +1461,7 @@ export default function MessageList(props: MessageListProps) {
                   </Show>
                   <button
                     class="text-dls-secondary hover:text-dls-text p-1 rounded hover:bg-dls-hover transition-colors"
-                    title="Copy message"
+                    title={__vesloT("ui.literal.copy_message_1b3i55", __vesloCurrentLocale())}
                     onClick={() => {
                       const text = block.renderableParts
                         .map((part) => partToText(part))

@@ -19,6 +19,7 @@ import {
   type EngineInfo,
   type WorkspaceInfo,
 } from "../lib/tauri";
+import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 
 export type MigrationRepairResult = {
   ok: boolean;
@@ -102,7 +103,7 @@ export function createConfigStore(deps: ConfigStoreDeps) {
       const defaultPath = fileName;
 
       const outputPath = await saveFile({
-        title: "Export worker config",
+        title: __vesloIndirectT("ui.indirect.export_worker_config_100o4i", __vesloIndirectLocale()),
         defaultPath,
         filters: [{ name: "Veslo Worker", extensions: ["veslo-workspace", "zip"] }],
       });
@@ -135,7 +136,7 @@ export function createConfigStore(deps: ConfigStoreDeps) {
 
     try {
       const selection = await pickFile({
-        title: "Import worker config",
+        title: __vesloIndirectT("ui.indirect.import_worker_config_m0di80", __vesloIndirectLocale()),
         filters: [{ name: "Veslo Worker", extensions: ["veslo-workspace", "zip"] }],
       });
       const filePath =
@@ -143,7 +144,7 @@ export function createConfigStore(deps: ConfigStoreDeps) {
       if (!filePath) return;
 
       const target = await pickDirectory({
-        title: "Choose a worker folder",
+        title: __vesloIndirectT("ui.indirect.choose_a_worker_folder_1xk755", __vesloIndirectLocale()),
       });
       const folder =
         typeof target === "string" ? target : Array.isArray(target) ? target[0] : null;

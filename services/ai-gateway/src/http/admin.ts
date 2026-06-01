@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import express, { Router } from "express";
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -236,6 +236,20 @@ type DenAdminApi = {
   disableUser(token: string, userId: string): Promise<AdminUserRecord>;
   enableUser(token: string, userId: string): Promise<AdminUserRecord>;
   deleteUser(token: string, userId: string): Promise<void>;
+};
+
+const ADMIN_AUTH_COOKIE_NAME = "veslo.ai-gateway.admin.token";
+const ADMIN_PENDING_AUTH_COOKIE_NAME = "veslo.ai-gateway.admin.browser-auth";
+const ADMIN_AUTH_COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
+const ADMIN_PENDING_AUTH_COOKIE_MAX_AGE_SECONDS = 10 * 60;
+const ADMIN_AUTH_RANDOM_BYTES = 32;
+
+type PendingAdminBrowserAuth = {
+  sessionId: string;
+  state: string;
+  codeVerifier: string;
+  returnTo: string;
+  createdAt: string;
 };
 
 type AdminCredentialReadRepository = {
@@ -1814,6 +1828,155 @@ function readBearerToken(req: express.Request) {
   return token || null;
 }
 
+function readCookie(req: express.Request, name: string): string | null {
+  const header = req.header("cookie") ?? "";
+  const pairs = header.split(";");
+  for (const pair of pairs) {
+    const separatorIndex = pair.indexOf("=");
+    if (separatorIndex === -1) continue;
+    const cookieName = pair.slice(0, separatorIndex).trim();
+    if (cookieName !== name) continue;
+    const rawValue = pair.slice(separatorIndex + 1).trim();
+    try {
+      return decodeURIComponent(rawValue);
+    } catch {
+      return rawValue;
+    }
+  }
+  return null;
+}
+
+function readAdminAuthToken(req: express.Request): string | null {
+  return readBearerToken(req) ?? readCookie(req, ADMIN_AUTH_COOKIE_NAME);
+}
+
+function isHttpsRequest(req: express.Request): boolean {
+  const forwardedProto = req.header("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
+  return forwardedProto === "https" || req.secure;
+}
+
+function serializeAdminCookie(
+  req: express.Request,
+  name: string,
+  value: string,
+  maxAgeSeconds: number,
+): string {
+  const parts = [
+    `${name}=${encodeURIComponent(value)}`,
+    "Path=/admin",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${Math.max(0, Math.floor(maxAgeSeconds))}`,
+  ];
+  if (isHttpsRequest(req)) {
+    parts.push("Secure");
+  }
+  return parts.join("; ");
+}
+
+function serializeAdminCookieClear(req: express.Request, name: string): string {
+  return serializeAdminCookie(req, name, "", 0);
+}
+
+function encodePendingAdminBrowserAuth(value: PendingAdminBrowserAuth): string {
+  return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+}
+
+function decodePendingAdminBrowserAuth(value: string | null): PendingAdminBrowserAuth | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Partial<PendingAdminBrowserAuth>;
+    if (
+      typeof parsed.sessionId !== "string" ||
+      typeof parsed.state !== "string" ||
+      typeof parsed.codeVerifier !== "string" ||
+      typeof parsed.returnTo !== "string" ||
+      typeof parsed.createdAt !== "string"
+    ) {
+      return null;
+    }
+    return {
+      sessionId: parsed.sessionId,
+      state: parsed.state,
+      codeVerifier: parsed.codeVerifier,
+      returnTo: parsed.returnTo,
+      createdAt: parsed.createdAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function randomBase64Url(byteLength = ADMIN_AUTH_RANDOM_BYTES): string {
+  return randomBytes(byteLength).toString("base64url");
+}
+
+function createPkceS256Challenge(codeVerifier: string): string {
+  return createHash("sha256").update(codeVerifier).digest("base64url");
+}
+
+function requestOrigin(req: express.Request): string {
+  const forwardedProto = req.header("x-forwarded-proto")?.split(",")[0]?.trim();
+  const protocol = forwardedProto || req.protocol || (req.secure ? "https" : "http");
+  const forwardedHost = req.header("x-forwarded-host")?.split(",")[0]?.trim();
+  const host = forwardedHost || req.header("host") || "127.0.0.1";
+  return `${protocol}://${host}`;
+}
+
+function safeAdminPathname(pathname: string): string {
+  return pathname === "/admin" || pathname.startsWith("/admin/") ? pathname : "/admin";
+}
+
+function safeAdminReturnPath(req: express.Request): string {
+  const parsed = new URL(req.originalUrl || req.url || "/admin", "http://admin.local");
+  parsed.searchParams.delete("code");
+  parsed.searchParams.delete("sessionId");
+  parsed.searchParams.delete("transactionId");
+  parsed.searchParams.delete("state");
+  const pathname = safeAdminPathname(parsed.pathname);
+  return `${pathname}${parsed.search}`;
+}
+
+function adminRedirectUri(req: express.Request): string {
+  return `${requestOrigin(req)}${safeAdminPathname(req.path)}`;
+}
+
+function withAuthView(authorizeUrl: string): string {
+  try {
+    const parsed = new URL(authorizeUrl);
+    if (!parsed.searchParams.get("view")) {
+      parsed.searchParams.set("view", "auth");
+    }
+    return parsed.toString();
+  } catch {
+    return authorizeUrl;
+  }
+}
+
+function readAdminAuthCallback(req: express.Request): { code: string; sessionId: string } | null {
+  const code = typeof req.query.code === "string" ? req.query.code.trim() : "";
+  const sessionId =
+    typeof req.query.sessionId === "string" && req.query.sessionId.trim()
+      ? req.query.sessionId.trim()
+      : typeof req.query.transactionId === "string" && req.query.transactionId.trim()
+        ? req.query.transactionId.trim()
+        : "";
+  return code ? { code, sessionId } : null;
+}
+
+function adminAssetRequest(pathname: string): boolean {
+  return pathname === "/admin/app.js" || pathname === "/admin/app.css";
+}
+
+function errorStatus(error: unknown): number | null {
+  return error && typeof error === "object" && typeof (error as { status?: unknown }).status === "number"
+    ? (error as { status: number }).status
+    : null;
+}
+
 function adminShellHtml() {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -1919,6 +2082,10 @@ export function createAdminRouter(adminService: AdminService) {
         state,
         codeVerifier,
       });
+      res.append(
+        "Set-Cookie",
+        serializeAdminCookie(req, ADMIN_AUTH_COOKIE_NAME, payload.token, ADMIN_AUTH_COOKIE_MAX_AGE_SECONDS),
+      );
       res.json(payload);
     } catch (error) {
       if (mapHttpError(error, res)) {
@@ -1928,13 +2095,18 @@ export function createAdminRouter(adminService: AdminService) {
     }
   });
 
+  router.post("/admin/api/auth/sign-out", (req, res) => {
+    res.append("Set-Cookie", serializeAdminCookieClear(req, ADMIN_AUTH_COOKIE_NAME));
+    res.status(204).end();
+  });
+
   router.use("/admin/api", async (req, res, next) => {
     if (req.path.startsWith("/auth/browser/")) {
       next();
       return;
     }
 
-    const token = readBearerToken(req);
+    const token = readAdminAuthToken(req);
     if (!token) {
       res.status(401).json({ error: "unauthorized" });
       return;
@@ -2266,8 +2438,6 @@ export function createAdminRouter(adminService: AdminService) {
     }
   });
 
-  router.use("/admin", express.static(publicDir, { index: false }));
-
   const sendAdminShell = (_req: express.Request, res: express.Response) => {
     if (existsSync(indexPath)) {
       res.sendFile(indexPath);
@@ -2276,14 +2446,128 @@ export function createAdminRouter(adminService: AdminService) {
     res.type("html").send(adminShellHtml());
   };
 
-  router.get("/admin", sendAdminShell);
+  const redirectToAdminLogin = async (req: express.Request, res: express.Response) => {
+    const state = randomBase64Url();
+    const codeVerifier = randomBase64Url();
+    const codeChallenge = createPkceS256Challenge(codeVerifier);
+    const payload = await adminService.startBrowserAuth({
+      intent: "signin",
+      redirectUri: adminRedirectUri(req),
+      state,
+      codeChallenge,
+    });
+    const pending: PendingAdminBrowserAuth = {
+      sessionId: payload.sessionId,
+      state,
+      codeVerifier,
+      returnTo: safeAdminReturnPath(req),
+      createdAt: new Date().toISOString(),
+    };
+    res.append(
+      "Set-Cookie",
+      serializeAdminCookie(
+        req,
+        ADMIN_PENDING_AUTH_COOKIE_NAME,
+        encodePendingAdminBrowserAuth(pending),
+        ADMIN_PENDING_AUTH_COOKIE_MAX_AGE_SECONDS,
+      ),
+    );
+    res.redirect(302, withAuthView(payload.authorizeUrl));
+  };
+
+  const completeAdminBrowserAuthCallback = async (
+    req: express.Request,
+    res: express.Response,
+    callback: { code: string; sessionId: string },
+  ) => {
+    const pending = decodePendingAdminBrowserAuth(readCookie(req, ADMIN_PENDING_AUTH_COOKIE_NAME));
+    if (!pending || (callback.sessionId && pending.sessionId !== callback.sessionId)) {
+      res.append("Set-Cookie", serializeAdminCookieClear(req, ADMIN_PENDING_AUTH_COOKIE_NAME));
+      await redirectToAdminLogin(req, res);
+      return;
+    }
+
+    try {
+      const payload = await adminService.exchangeBrowserAuth({
+        code: callback.code,
+        sessionId: callback.sessionId || pending.sessionId,
+        state: pending.state,
+        codeVerifier: pending.codeVerifier,
+      });
+      res.append(
+        "Set-Cookie",
+        serializeAdminCookie(req, ADMIN_AUTH_COOKIE_NAME, payload.token, ADMIN_AUTH_COOKIE_MAX_AGE_SECONDS),
+      );
+      res.append("Set-Cookie", serializeAdminCookieClear(req, ADMIN_PENDING_AUTH_COOKIE_NAME));
+      res.redirect(302, pending.returnTo || "/admin");
+    } catch (error) {
+      res.append("Set-Cookie", serializeAdminCookieClear(req, ADMIN_PENDING_AUTH_COOKIE_NAME));
+      if (errorStatus(error) === 403) {
+        res.status(403).type("text").send("You do not have admin access.");
+        return;
+      }
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).type("text").send("Unable to complete admin sign in.");
+    }
+  };
+
+  const sendProtectedAdminShell = async (
+    req: express.Request,
+    res: express.Response,
+    next: express.NextFunction,
+  ) => {
+    try {
+      const callback = readAdminAuthCallback(req);
+      if (callback) {
+        await completeAdminBrowserAuthCallback(req, res, callback);
+        return;
+      }
+
+      const token = readAdminAuthToken(req);
+      if (!token) {
+        await redirectToAdminLogin(req, res);
+        return;
+      }
+
+      try {
+        res.locals.adminToken = token;
+        res.locals.adminSession = await adminService.getSession(token);
+        sendAdminShell(req, res);
+      } catch (error) {
+        res.append("Set-Cookie", serializeAdminCookieClear(req, ADMIN_AUTH_COOKIE_NAME));
+        const status = errorStatus(error);
+        if (status === 401) {
+          await redirectToAdminLogin(req, res);
+          return;
+        }
+        if (status === 403) {
+          res.status(403).type("text").send("You do not have admin access.");
+          return;
+        }
+        throw error;
+      }
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  router.get("/admin", sendProtectedAdminShell);
+  router.get("/admin/", sendProtectedAdminShell);
   router.get("/admin/*", (req, res, next) => {
     if (req.path.startsWith("/admin/api/")) {
       next();
       return;
     }
-    sendAdminShell(req, res);
+    if (adminAssetRequest(req.path)) {
+      next();
+      return;
+    }
+    void sendProtectedAdminShell(req, res, next);
   });
+
+  router.use("/admin", express.static(publicDir, { index: false }));
 
   return router;
 }

@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { isTauriRuntime } from "../utils";
 import { validateMcpServerName } from "../mcp";
-import type { ComposerAttachment, ComposerDraft, ComposerPart } from "../types";
+import type { ComposerAttachment, ComposerDraft, ComposerPart, SkillInventoryRegistryMetadata } from "../types";
 
 export type EngineInfo = {
   running: boolean;
@@ -827,11 +827,24 @@ export async function installSkillTemplate(
   });
 }
 
+export async function installGlobalSkillTemplate(
+  name: string,
+  content: string,
+  options?: { overwrite?: boolean },
+): Promise<ExecResult> {
+  return invoke<ExecResult>("install_global_skill_template", {
+    name,
+    content,
+    overwrite: options?.overwrite ?? false,
+  });
+}
+
 export type LocalSkillCard = {
   name: string;
   path: string;
   description?: string;
   trigger?: string;
+  registry?: SkillInventoryRegistryMetadata;
 };
 
 export type LocalSkillContent = {
@@ -839,20 +852,41 @@ export type LocalSkillContent = {
   content: string;
 };
 
+export type LocalSkillListScope = "workspace" | "global" | "effective";
+
 export async function listLocalSkills(projectDir: string): Promise<LocalSkillCard[]> {
   return invoke<LocalSkillCard[]>("list_local_skills", { projectDir });
+}
+
+export async function listLocalSkillsScoped(
+  projectDir: string,
+  scope: LocalSkillListScope,
+): Promise<LocalSkillCard[]> {
+  return invoke<LocalSkillCard[]>("list_local_skills_scoped", { projectDir, scope });
 }
 
 export async function readLocalSkill(projectDir: string, name: string): Promise<LocalSkillContent> {
   return invoke<LocalSkillContent>("read_local_skill", { projectDir, name });
 }
 
+export async function readLocalSkillAtPath(projectDir: string, name: string, path: string): Promise<LocalSkillContent> {
+  return invoke<LocalSkillContent>("read_local_skill_at_path", { projectDir, name, path });
+}
+
 export async function writeLocalSkill(projectDir: string, name: string, content: string): Promise<ExecResult> {
   return invoke<ExecResult>("write_local_skill", { projectDir, name, content });
 }
 
+export async function writeLocalSkillAtPath(projectDir: string, name: string, path: string, content: string): Promise<ExecResult> {
+  return invoke<ExecResult>("write_local_skill_at_path", { projectDir, name, path, content });
+}
+
 export async function uninstallSkill(projectDir: string, name: string): Promise<ExecResult> {
   return invoke<ExecResult>("uninstall_skill", { projectDir, name });
+}
+
+export async function uninstallSkillAtPath(projectDir: string, name: string, path: string): Promise<ExecResult> {
+  return invoke<ExecResult>("uninstall_skill_at_path", { projectDir, name, path });
 }
 
 export type OpencodeConfigFile = {
@@ -870,6 +904,10 @@ export type UpdaterEnvironment = {
 
 export async function updaterEnvironment(): Promise<UpdaterEnvironment> {
   return invoke<UpdaterEnvironment>("updater_environment");
+}
+
+export async function updaterPrepareInstall(): Promise<void> {
+  return invoke<void>("updater_prepare_install");
 }
 
 export async function readOpencodeConfig(
@@ -1174,6 +1212,39 @@ export async function setWindowTitle(title: string): Promise<void> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`[tauri.setWindowTitle] Failed to set window title "${title}": ${message}`);
+  }
+}
+
+export async function minimizeCurrentWindow(): Promise<void> {
+  if (!isTauriRuntime()) return;
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  try {
+    await getCurrentWindow().minimize();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[tauri.minimizeCurrentWindow] Failed to minimize window: ${message}`);
+  }
+}
+
+export async function toggleMaximizeCurrentWindow(): Promise<void> {
+  if (!isTauriRuntime()) return;
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  try {
+    await getCurrentWindow().toggleMaximize();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[tauri.toggleMaximizeCurrentWindow] Failed to toggle maximize: ${message}`);
+  }
+}
+
+export async function closeCurrentWindow(): Promise<void> {
+  if (!isTauriRuntime()) return;
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  try {
+    await getCurrentWindow().close();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[tauri.closeCurrentWindow] Failed to close window: ${message}`);
   }
 }
 

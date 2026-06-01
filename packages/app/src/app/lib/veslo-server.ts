@@ -132,6 +132,92 @@ export type VesloSkillResolveResult = {
   candidates: VesloSkillResolveCandidate[];
 };
 
+export type VesloSkillRemovalScope = "workspace" | "user-global";
+
+export type VesloSkillRemovalItem = {
+  id: string;
+  name: string;
+  scope: VesloSkillRemovalScope;
+  workspaceId?: string;
+  path: string;
+  reason?: string;
+  status: "removed" | "restored";
+  removedAt: string;
+  restoredAt?: string;
+  canRestore: boolean;
+};
+
+export type VesloSkillRemovalsResponse = {
+  items: VesloSkillRemovalItem[];
+};
+
+export type VesloSkillRemovalMutationResult = {
+  ok: true;
+  name?: string;
+  path: string;
+  removalId?: string;
+  reloadRequired?: boolean;
+  trigger?: VesloReloadTrigger & { scope?: VesloSkillRemovalScope };
+};
+
+export type VesloSkillBatchRemoveScope = VesloSkillRemovalScope | "organization";
+
+export type VesloSkillBatchRemoveItem = {
+  id?: string;
+  name: string;
+  scope: VesloSkillBatchRemoveScope;
+  path?: string;
+  workspaceId?: string;
+  reason?: string;
+  registry?: {
+    installationId?: string;
+    policyId?: string;
+  };
+};
+
+export type VesloSkillBatchRemoveRequest = {
+  items: VesloSkillBatchRemoveItem[];
+  denApiBase?: string;
+  denToken?: string;
+  denOrgId?: string;
+  denUserId?: string;
+};
+
+export type VesloSkillBatchRemoveSuccess = {
+  id?: string;
+  index: number;
+  ok: true;
+  name: string;
+  scope: VesloSkillBatchRemoveScope;
+  path?: string;
+  removalId?: string;
+  reloadRequired?: boolean;
+  registry?: {
+    installationId?: string;
+    policyId?: string;
+  };
+  trigger?: VesloReloadTrigger & { scope?: VesloSkillBatchRemoveScope };
+};
+
+export type VesloSkillBatchRemoveFailure = {
+  id?: string;
+  index: number;
+  ok: false;
+  name?: string;
+  scope?: string;
+  code: string;
+  message: string;
+  status: number;
+  details?: unknown;
+};
+
+export type VesloSkillBatchRemoveResponse = {
+  ok: boolean;
+  succeeded: number;
+  failed: number;
+  results: Array<VesloSkillBatchRemoveSuccess | VesloSkillBatchRemoveFailure>;
+};
+
 export type VesloHubSkillItem = {
   name: string;
   description: string;
@@ -158,6 +244,304 @@ export type VesloHubMcpItem = {
     scope: "org";
     orgId: string;
   };
+};
+
+export type VesloSkillRegistryOwnerScope = "user" | "workspace" | "org" | "system";
+export type VesloSkillRegistryVisibility = "personal" | "workspace" | "organization" | "platform";
+export type VesloSkillRegistryReviewStatus = "draft" | "pending_review" | "approved" | "rejected";
+export type VesloSkillRegistryUpdatePolicy = "pinned" | "latest_user" | "latest_approved" | "release_channel";
+export type VesloSkillRegistryRolloutTarget = "user-global" | "workspace";
+export type VesloSkillRegistryRolloutAudience =
+  | "user"
+  | "selected-workspaces"
+  | "all-org-users"
+  | "all-platform-users";
+export type VesloSkillRegistryRolloutCatalogScope = "organization" | "platform";
+export type VesloSkillRegistryRolloutRemovalPolicy = "user_removable" | "admin_removable" | "locked";
+
+export type VesloSkillRegistryVersionSummary = {
+  id: string;
+  version: string;
+  packageSha256: string;
+  createdAt: string;
+};
+
+export type VesloSkillRegistrySearchSkill = {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string;
+  tags?: string[];
+  visibility: VesloSkillRegistryVisibility;
+  reviewStatus: VesloSkillRegistryReviewStatus;
+  createdAt: string;
+  updatedAt: string;
+  latestVersion?: VesloSkillRegistryVersionSummary;
+  score?: number;
+  matchedFields?: string[];
+};
+
+export type VesloSkillRegistrySearchResponse = {
+  query: string;
+  skills: VesloSkillRegistrySearchSkill[];
+  nextCursor?: string | null;
+};
+
+export type VesloSkillRegistrySkillResponse = {
+  skill: VesloSkillRegistrySearchSkill;
+};
+
+export type VesloSkillRegistryVersionResponse = {
+  version: VesloSkillRegistryVersionSummary;
+};
+
+export type VesloSkillRegistryVersionsResponse = {
+  versions: VesloSkillRegistryVersionSummary[];
+  nextCursor?: string | null;
+};
+
+export type VesloSkillRegistryInstallation = {
+  installationId: string;
+  skillId: string;
+  versionId: string;
+  enabled: boolean;
+  source: "personal" | "workspace" | "organization" | "platform";
+  installedAt: string;
+  updatedAt?: string;
+  name?: string;
+  packageSha256?: string;
+  ownerUserId?: string | null;
+  orgId?: string | null;
+  workspaceId?: string | null;
+  approved?: boolean;
+  desiredVersionId?: string | null;
+  desiredPackageSha256?: string | null;
+};
+
+export type VesloSkillRegistryInstallationResponse = {
+  installation: VesloSkillRegistryInstallation;
+};
+
+export type VesloSkillRegistryReviewRequestResponse = {
+  requestId: string;
+  skillId: string;
+  status: Extract<VesloSkillRegistryReviewStatus, "pending_review" | "approved" | "rejected">;
+  createdAt: string;
+  updatedAt?: string;
+};
+
+export type VesloSkillRegistryWorkspaceSkillSetResponse = {
+  workspaceId: string;
+  skillSetId?: string;
+  revision?: string;
+  skills: VesloSkillRegistryInstallation[];
+};
+
+export type VesloSkillRegistryRolloutPolicy = {
+  id: string;
+  skillId: string;
+  versionId: string | null;
+  target: VesloSkillRegistryRolloutTarget;
+  audience: VesloSkillRegistryRolloutAudience;
+  catalogScope: VesloSkillRegistryRolloutCatalogScope;
+  orgId?: string | null;
+  userId?: string | null;
+  workspaceId?: string | null;
+  enabled: boolean;
+  updatePolicy: VesloSkillRegistryUpdatePolicy;
+  releaseChannel?: string | null;
+  removalPolicy: VesloSkillRegistryRolloutRemovalPolicy;
+  createdAt: string;
+  updatedAt?: string;
+};
+
+export type VesloSkillRegistryRolloutPolicyResponse = {
+  policy: VesloSkillRegistryRolloutPolicy;
+};
+
+export type VesloSkillRegistryRolloutPoliciesResponse = {
+  policies: VesloSkillRegistryRolloutPolicy[];
+  nextCursor?: string | null;
+};
+
+export type VesloSkillRegistrySearchParams = {
+  q: string;
+  workspaceId?: string;
+  scope?: VesloSkillRegistryOwnerScope;
+  owner?: VesloSkillRegistryOwnerScope;
+  ownerScope?: VesloSkillRegistryOwnerScope;
+  approvalStatus?: VesloSkillRegistryReviewStatus;
+  reviewStatus?: VesloSkillRegistryReviewStatus;
+  includeDeleted?: boolean;
+  language?: string;
+  cursor?: string;
+  limit?: number;
+};
+
+export type VesloSkillRegistryCreateSkillInput = VesloSkillRegistryAuthContext & {
+  scope: VesloSkillRegistryOwnerScope;
+  name: string;
+  displayName?: string;
+  description?: string;
+  orgId?: string;
+  workspaceId?: string;
+};
+
+export type VesloSkillRegistryCreateVersionInput = VesloSkillRegistryAuthContext & {
+  package: Record<string, unknown>;
+};
+
+export type VesloSkillRegistryCreateInstallationInput = VesloSkillRegistryAuthContext & {
+  scope: VesloSkillRegistryOwnerScope;
+  skillId: string;
+  versionId: string;
+  orgId?: string;
+  ownerUserId?: string;
+  workspaceId?: string;
+  updatePolicy?: VesloSkillRegistryUpdatePolicy | string;
+  releaseChannel?: string;
+};
+
+export type VesloSkillRegistryListRolloutPoliciesInput = VesloSkillRegistryAuthContext & {
+  cursor?: string;
+  limit?: number;
+  target?: VesloSkillRegistryRolloutTarget;
+  audience?: VesloSkillRegistryRolloutAudience;
+  workspaceId?: string;
+};
+
+export type VesloSkillRegistryCreateRolloutPolicyInput = VesloSkillRegistryAuthContext & {
+  skillId: string;
+  versionId?: string | null;
+  target: VesloSkillRegistryRolloutTarget;
+  audience: VesloSkillRegistryRolloutAudience;
+  catalogScope: VesloSkillRegistryRolloutCatalogScope;
+  orgId?: string | null;
+  userId?: string | null;
+  workspaceId?: string | null;
+  enabled?: boolean;
+  updatePolicy: VesloSkillRegistryUpdatePolicy;
+  releaseChannel?: string | null;
+  removalPolicy: VesloSkillRegistryRolloutRemovalPolicy;
+};
+
+export type VesloSkillRegistryListVersionsInput = VesloSkillRegistryAuthContext & {
+  cursor?: string;
+  limit?: number;
+};
+
+export type VesloSkillRegistryUpdateInstallationInput = VesloSkillRegistryAuthContext & {
+  enabled?: boolean;
+  versionId?: string | null;
+  updatePolicy?: VesloSkillRegistryUpdatePolicy | string;
+  releaseChannel?: string | null;
+};
+
+export type VesloSkillRegistryUpdateRolloutPolicyInput = VesloSkillRegistryAuthContext & {
+  skillId?: string;
+  versionId?: string | null;
+  target?: VesloSkillRegistryRolloutTarget;
+  audience?: VesloSkillRegistryRolloutAudience;
+  catalogScope?: VesloSkillRegistryRolloutCatalogScope;
+  orgId?: string | null;
+  userId?: string | null;
+  workspaceId?: string | null;
+  enabled?: boolean;
+  updatePolicy?: VesloSkillRegistryUpdatePolicy;
+  releaseChannel?: string | null;
+  removalPolicy?: VesloSkillRegistryRolloutRemovalPolicy;
+};
+
+export type VesloSkillRegistryRestoreInstallationInput = VesloSkillRegistryAuthContext & {
+  orgId?: string | null;
+  ownerUserId?: string | null;
+  workspaceId?: string | null;
+  versionId?: string | null;
+};
+
+export type VesloSkillRegistryCreateReviewRequestInput = VesloSkillRegistryAuthContext & {
+  scope: Extract<VesloSkillRegistryOwnerScope, "org" | "system">;
+  versionId: string;
+  orgId?: string;
+  reason?: string;
+  releaseChannel?: string;
+};
+
+export type VesloSkillRegistryReplaceWorkspaceSkillSetInput = VesloSkillRegistryAuthContext & {
+  orgId?: string;
+  releaseChannel?: string;
+  skills: Array<{
+    installationId: string;
+    desiredVersionId?: string | null;
+    releaseChannel?: string | null;
+  }>;
+};
+
+export type VesloSkillRegistryReviewDecisionInput = VesloSkillRegistryAuthContext & {
+  reviewerNote?: string;
+  releaseChannel?: string;
+};
+
+export type VesloSkillMaterializationEntry = {
+  installationId?: string;
+  skillId?: string;
+  name: string;
+  versionId?: string;
+  packageSha256: string;
+  target?: "workspace" | "personal-global";
+  skillDir?: string;
+  materializedAt?: string;
+};
+
+export type VesloSkillMaterializationConflict = {
+  code: "personal-global-shadowed" | "unmanaged-local-shadowed" | "target-conflict" | string;
+  name: string;
+  message: string;
+  blockingInstallationId?: string;
+  blockedInstallationId?: string;
+  localPath?: string;
+};
+
+export type VesloSkillMaterializationStatus = {
+  workspaceId: string;
+  status: "not-configured" | "pending" | "current" | "synced" | string;
+  registryConfigured: boolean;
+  rootDir?: string;
+  materializedSkills: VesloSkillMaterializationEntry[];
+  conflicts?: VesloSkillMaterializationConflict[];
+  reloadRequired?: boolean;
+  synced?: boolean;
+};
+
+export type VesloGlobalSkillMaterializationStatus = Omit<VesloSkillMaterializationStatus, "workspaceId"> & {
+  scope: "personal-global";
+};
+
+export type VesloSkillMaterializationSyncOptions = {
+  activeRun?: boolean;
+};
+
+export type VesloSkillRegistryAuthContext = {
+  denApiBase?: string;
+  denToken?: string;
+  denOrgId?: string;
+  denUserId?: string;
+};
+
+export type VesloSkillMaterializationRequestOptions =
+  VesloSkillMaterializationSyncOptions & VesloSkillRegistryAuthContext;
+
+export type VesloSkillMaterializationSyncResult = VesloSkillMaterializationStatus & {
+  synced: boolean;
+  removedSkillNames?: string[];
+  backupDirs?: string[];
+  globalRootDir?: string;
+};
+
+export type VesloGlobalSkillMaterializationSyncResult = VesloGlobalSkillMaterializationStatus & {
+  synced: boolean;
+  removedSkillNames?: string[];
+  backupDirs?: string[];
 };
 
 export type VesloWorkspaceFileContent = {
@@ -842,7 +1226,7 @@ export function buildVesloWorkspaceBaseUrl(hostUrl: string, workspaceId?: string
   }
 }
 
-export const DEFAULT_VESLO_CONNECT_APP_URL = "https://app.veslo.neatech.com";
+export const DEFAULT_VESLO_CONNECT_APP_URL = "https://app.veslo.work";
 
 const VESLO_INVITE_PARAM_URL = "veslo_url";
 const VESLO_INVITE_PARAM_TOKEN = "veslo_token";
@@ -1243,6 +1627,226 @@ export class VesloServerError extends Error {
   }
 }
 
+const SKILL_REGISTRY_ISO_INSTANT_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const SKILL_REGISTRY_SHA256_PATTERN = /^[a-f0-9]{64}$/i;
+const SKILL_REGISTRY_VISIBILITY_VALUES: readonly VesloSkillRegistryVisibility[] = [
+  "personal",
+  "workspace",
+  "organization",
+  "platform",
+];
+const SKILL_REGISTRY_REVIEW_STATUS_VALUES: readonly VesloSkillRegistryReviewStatus[] = [
+  "draft",
+  "pending_review",
+  "approved",
+  "rejected",
+];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function requireRegistryRecord(value: unknown, field: string): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new Error(`${field} must be an object`);
+  }
+  return value;
+}
+
+function requireRegistryString(value: unknown, field: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${field} must be a non-empty string`);
+  }
+  return value.trim();
+}
+
+function requireRegistryQuery(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new Error("query must be a string");
+  }
+  return value.trim();
+}
+
+function optionalRegistryString(value: unknown, field: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") {
+    throw new Error(`${field} must be a string`);
+  }
+  return value.trim() || undefined;
+}
+
+function requireRegistryIsoInstant(value: unknown, field: string): string {
+  const normalized = requireRegistryString(value, field);
+  if (!SKILL_REGISTRY_ISO_INSTANT_PATTERN.test(normalized)) {
+    throw new Error(`${field} must be a UTC ISO instant`);
+  }
+  return normalized;
+}
+
+function requireRegistrySha256(value: unknown, field: string): string {
+  const normalized = requireRegistryString(value, field).toLowerCase();
+  if (!SKILL_REGISTRY_SHA256_PATTERN.test(normalized)) {
+    throw new Error(`${field} must be a SHA-256 digest`);
+  }
+  return normalized;
+}
+
+function requireRegistryEnum<T extends string>(value: unknown, field: string, allowed: readonly T[]): T {
+  if (typeof value !== "string" || !allowed.includes(value as T)) {
+    throw new Error(`${field} must be one of: ${allowed.join(", ")}`);
+  }
+  return value as T;
+}
+
+function optionalRegistryStringArray(value: unknown, field: string): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error(`${field} must be an array`);
+  }
+  return value.map((item, index) => requireRegistryString(item, `${field}[${index}]`));
+}
+
+function optionalRegistryScore(value: unknown, field: string): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${field} must be a finite number`);
+  }
+  return value;
+}
+
+function validateSkillRegistryVersionSummary(value: unknown, field: string): VesloSkillRegistryVersionSummary {
+  const record = requireRegistryRecord(value, field);
+  return {
+    id: requireRegistryString(record.id, `${field}.id`),
+    version: requireRegistryString(record.version, `${field}.version`),
+    packageSha256: requireRegistrySha256(record.packageSha256, `${field}.packageSha256`),
+    createdAt: requireRegistryIsoInstant(record.createdAt, `${field}.createdAt`),
+  };
+}
+
+function validateSkillRegistrySearchSkill(value: unknown, field: string): VesloSkillRegistrySearchSkill {
+  const record = requireRegistryRecord(value, field);
+  const description = optionalRegistryString(record.description, `${field}.description`);
+  const tags = optionalRegistryStringArray(record.tags, `${field}.tags`);
+  const latestVersion =
+    record.latestVersion === undefined || record.latestVersion === null
+      ? undefined
+      : validateSkillRegistryVersionSummary(record.latestVersion, `${field}.latestVersion`);
+  const score = optionalRegistryScore(record.score, `${field}.score`);
+  const matchedFields = optionalRegistryStringArray(record.matchedFields, `${field}.matchedFields`);
+
+  const skill: VesloSkillRegistrySearchSkill = {
+    id: requireRegistryString(record.id, `${field}.id`),
+    slug: requireRegistryString(record.slug, `${field}.slug`),
+    name: requireRegistryString(record.name, `${field}.name`),
+    visibility: requireRegistryEnum(record.visibility, `${field}.visibility`, SKILL_REGISTRY_VISIBILITY_VALUES),
+    reviewStatus: requireRegistryEnum(record.reviewStatus, `${field}.reviewStatus`, SKILL_REGISTRY_REVIEW_STATUS_VALUES),
+    createdAt: requireRegistryIsoInstant(record.createdAt, `${field}.createdAt`),
+    updatedAt: requireRegistryIsoInstant(record.updatedAt, `${field}.updatedAt`),
+  };
+  if (description) skill.description = description;
+  if (tags) skill.tags = tags;
+  if (latestVersion) skill.latestVersion = latestVersion;
+  if (score !== undefined) skill.score = score;
+  if (matchedFields) skill.matchedFields = matchedFields;
+  return skill;
+}
+
+function validateSkillRegistrySearchResponse(value: unknown): VesloSkillRegistrySearchResponse {
+  try {
+    const record = requireRegistryRecord(value, "skill registry search response");
+    if (!Array.isArray(record.skills)) {
+      throw new Error("skills must be an array");
+    }
+    const nextCursor =
+      record.nextCursor === undefined || record.nextCursor === null
+        ? record.nextCursor
+        : requireRegistryString(record.nextCursor, "nextCursor");
+    const response: VesloSkillRegistrySearchResponse = {
+      query: requireRegistryQuery(record.query),
+      skills: record.skills.map((skill, index) => validateSkillRegistrySearchSkill(skill, `skills[${index}]`)),
+    };
+    if (nextCursor !== undefined) response.nextCursor = nextCursor;
+    return response;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Invalid skill registry search response";
+    throw new VesloServerError(502, "skill_registry_invalid_payload", "Skill registry returned an invalid search payload", {
+      reason,
+    });
+  }
+}
+
+function setTrimmedSearchParam(search: URLSearchParams, key: string, value?: string | null) {
+  const normalized = value?.trim() ?? "";
+  if (normalized) search.set(key, normalized);
+}
+
+function buildSkillRegistrySearchPath(params: VesloSkillRegistrySearchParams) {
+  const search = new URLSearchParams();
+  setTrimmedSearchParam(search, "q", params.q);
+  setTrimmedSearchParam(search, "workspaceId", params.workspaceId);
+  const ownerScope = params.ownerScope ?? params.owner ?? params.scope;
+  if (ownerScope) search.set("ownerScope", ownerScope);
+  const reviewStatus = params.reviewStatus ?? params.approvalStatus;
+  if (reviewStatus) search.set("reviewStatus", reviewStatus);
+  if (typeof params.includeDeleted === "boolean") {
+    search.set("includeDeleted", params.includeDeleted ? "true" : "false");
+  }
+  setTrimmedSearchParam(search, "language", params.language);
+  setTrimmedSearchParam(search, "cursor", params.cursor);
+  if (typeof params.limit === "number" && Number.isSafeInteger(params.limit) && params.limit > 0) {
+    search.set("limit", String(params.limit));
+  }
+  const suffix = search.toString();
+  return `/v1/skills/search${suffix ? `?${suffix}` : ""}`;
+}
+
+function buildSkillRegistryVersionsPath(skillId: string, params?: VesloSkillRegistryListVersionsInput) {
+  const search = new URLSearchParams();
+  setTrimmedSearchParam(search, "cursor", params?.cursor);
+  if (typeof params?.limit === "number" && Number.isSafeInteger(params.limit) && params.limit > 0) {
+    search.set("limit", String(params.limit));
+  }
+  const suffix = search.toString();
+  return `/v1/skills/${encodeURIComponent(skillId)}/versions${suffix ? `?${suffix}` : ""}`;
+}
+
+function buildSkillRegistryRolloutPoliciesPath(params?: VesloSkillRegistryListRolloutPoliciesInput) {
+  const search = new URLSearchParams();
+  setTrimmedSearchParam(search, "cursor", params?.cursor);
+  if (typeof params?.limit === "number" && Number.isSafeInteger(params.limit) && params.limit > 0) {
+    search.set("limit", String(params.limit));
+  }
+  if (params?.target) search.set("target", params.target);
+  if (params?.audience) search.set("audience", params.audience);
+  setTrimmedSearchParam(search, "workspaceId", params?.workspaceId);
+  const suffix = search.toString();
+  return `/v1/skill-rollout-policies${suffix ? `?${suffix}` : ""}`;
+}
+
+function buildSkillRemovalsPath(params?: {
+  scope?: VesloSkillRemovalScope;
+  workspaceId?: string;
+  includeRestored?: boolean;
+}) {
+  const search = new URLSearchParams();
+  if (params?.scope) search.set("scope", params.scope);
+  setTrimmedSearchParam(search, "workspaceId", params?.workspaceId);
+  if (typeof params?.includeRestored === "boolean") {
+    search.set("includeRestored", params.includeRestored ? "true" : "false");
+  }
+  const suffix = search.toString();
+  return `/skill-removals${suffix ? `?${suffix}` : ""}`;
+}
+
+function buildDeleteGlobalSkillPath(name: string, options?: { path?: string; reason?: string }) {
+  const search = new URLSearchParams();
+  setTrimmedSearchParam(search, "path", options?.path);
+  setTrimmedSearchParam(search, "reason", options?.reason);
+  const suffix = search.toString();
+  return `/skills/user-global/${encodeURIComponent(name)}${suffix ? `?${suffix}` : ""}`;
+}
+
 function buildHeaders(
   token?: string,
   hostToken?: string,
@@ -1287,6 +1891,24 @@ function buildGatewayCallerHeaders(userToken: string) {
   return {
     "X-Veslo-Gateway-Authorization": normalizeBearerToken(userToken, "userToken"),
   };
+}
+
+function buildDenContextHeaders(options?: VesloSkillRegistryAuthContext): Record<string, string> | undefined {
+  const denApiBase = options?.denApiBase?.trim() ?? "";
+  const denToken = options?.denToken?.trim() ?? "";
+  const denOrgId = options?.denOrgId?.trim() ?? "";
+  const denUserId = options?.denUserId?.trim() ?? "";
+  const headers = {
+    ...(denApiBase ? { "x-veslo-den-api-base": denApiBase } : {}),
+    ...(denToken ? { "x-veslo-den-token": denToken } : {}),
+    ...(denOrgId ? { "x-veslo-den-org-id": denOrgId } : {}),
+    ...(denUserId ? { "x-veslo-den-user-id": denUserId } : {}),
+  };
+  return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
+function skillMaterializationSyncBody(options?: VesloSkillMaterializationRequestOptions): VesloSkillMaterializationSyncOptions | undefined {
+  return options?.activeRun === true ? { activeRun: true } : undefined;
 }
 
 export async function requestManagedAiAccessBundle(baseUrl: string, userToken: string) {
@@ -1473,6 +2095,9 @@ export function createVesloServerClient(options: {
     workspaceProvision: 20_000,
     aiAccess: 30_000,
     binary: 60_000,
+    skillRegistrySearch: 10_000,
+    skillRegistryMutation: 30_000,
+    skillMaterialization: 30_000,
   };
 
   return {
@@ -1897,6 +2522,315 @@ export function createVesloServerClient(options: {
           body: payload,
         },
       ),
+    searchRegistrySkills: async (params: VesloSkillRegistrySearchParams) => {
+      const payload = await requestJson<unknown>(baseUrl, buildSkillRegistrySearchPath(params), {
+        token,
+        hostToken,
+        timeoutMs: timeouts.skillRegistrySearch,
+      });
+      return validateSkillRegistrySearchResponse(payload);
+    },
+    createRegistrySkill: (input: VesloSkillRegistryCreateSkillInput) =>
+      requestJson<VesloSkillRegistrySkillResponse>(baseUrl, "/v1/skills", {
+        token,
+        hostToken,
+        method: "POST",
+        body: {
+          scope: input.scope,
+          name: input.name,
+          displayName: input.displayName,
+          description: input.description,
+          orgId: input.orgId,
+          workspaceId: input.workspaceId,
+        },
+        extraHeaders: buildDenContextHeaders(input),
+        timeoutMs: timeouts.skillRegistryMutation,
+      }),
+    createRegistrySkillVersion: (skillId: string, input: VesloSkillRegistryCreateVersionInput) =>
+      requestJson<VesloSkillRegistryVersionResponse>(
+        baseUrl,
+        `/v1/skills/${encodeURIComponent(skillId)}/versions`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: { package: input.package },
+          extraHeaders: buildDenContextHeaders(input),
+          timeoutMs: timeouts.skillRegistryMutation,
+        },
+      ),
+    createRegistrySkillInstallation: (input: VesloSkillRegistryCreateInstallationInput) =>
+      requestJson<VesloSkillRegistryInstallationResponse>(baseUrl, "/v1/skill-installations", {
+        token,
+        hostToken,
+        method: "POST",
+        body: {
+          scope: input.scope,
+          skillId: input.skillId,
+          versionId: input.versionId,
+          orgId: input.orgId,
+          ownerUserId: input.ownerUserId,
+          workspaceId: input.workspaceId,
+          updatePolicy: input.updatePolicy,
+          releaseChannel: input.releaseChannel,
+        },
+        extraHeaders: buildDenContextHeaders(input),
+        timeoutMs: timeouts.skillRegistryMutation,
+      }),
+    listRegistrySkillVersions: (skillId: string, input?: VesloSkillRegistryListVersionsInput) =>
+      requestJson<VesloSkillRegistryVersionsResponse>(baseUrl, buildSkillRegistryVersionsPath(skillId, input), {
+        token,
+        hostToken,
+        extraHeaders: buildDenContextHeaders(input),
+        timeoutMs: timeouts.skillRegistrySearch,
+      }),
+    updateRegistrySkillInstallation: (
+      installationId: string,
+      input: VesloSkillRegistryUpdateInstallationInput,
+    ) =>
+      requestJson<VesloSkillRegistryInstallationResponse>(
+        baseUrl,
+        `/v1/skill-installations/${encodeURIComponent(installationId)}`,
+        {
+          token,
+          hostToken,
+          method: "PATCH",
+          body: {
+            enabled: input.enabled,
+            versionId: input.versionId,
+            updatePolicy: input.updatePolicy,
+            releaseChannel: input.releaseChannel,
+          },
+          extraHeaders: buildDenContextHeaders(input),
+          timeoutMs: timeouts.skillRegistryMutation,
+        },
+      ),
+    deleteRegistrySkillInstallation: (installationId: string, input?: VesloSkillRegistryAuthContext) =>
+      requestJson<VesloSkillRegistryInstallationResponse>(
+        baseUrl,
+        `/v1/skill-installations/${encodeURIComponent(installationId)}`,
+        {
+          token,
+          hostToken,
+          method: "DELETE",
+          extraHeaders: buildDenContextHeaders(input),
+          timeoutMs: timeouts.skillRegistryMutation,
+        },
+      ),
+    restoreRegistrySkillInstallation: (
+      installationId: string,
+      input: VesloSkillRegistryRestoreInstallationInput,
+    ) =>
+      requestJson<VesloSkillRegistryInstallationResponse>(
+        baseUrl,
+        `/v1/skill-installations/${encodeURIComponent(installationId)}/restore`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: {
+            orgId: input.orgId,
+            ownerUserId: input.ownerUserId,
+            workspaceId: input.workspaceId,
+            versionId: input.versionId,
+          },
+          extraHeaders: buildDenContextHeaders(input),
+          timeoutMs: timeouts.skillRegistryMutation,
+        },
+      ),
+    createRegistrySkillReviewRequest: (skillId: string, input: VesloSkillRegistryCreateReviewRequestInput) =>
+      requestJson<VesloSkillRegistryReviewRequestResponse>(
+        baseUrl,
+        `/v1/skills/${encodeURIComponent(skillId)}/review-requests`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: {
+            scope: input.scope,
+            versionId: input.versionId,
+            orgId: input.orgId,
+            reason: input.reason,
+            releaseChannel: input.releaseChannel,
+          },
+          extraHeaders: buildDenContextHeaders(input),
+          timeoutMs: timeouts.skillRegistryMutation,
+        },
+      ),
+    replaceRegistryWorkspaceSkillSet: (
+      workspaceId: string,
+      input: VesloSkillRegistryReplaceWorkspaceSkillSetInput,
+    ) =>
+      requestJson<VesloSkillRegistryWorkspaceSkillSetResponse>(
+        baseUrl,
+        `/v1/workspaces/${encodeURIComponent(workspaceId)}/skill-set`,
+        {
+          token,
+          hostToken,
+          method: "PATCH",
+          body: {
+            orgId: input.orgId,
+            releaseChannel: input.releaseChannel,
+            skills: input.skills,
+          },
+          extraHeaders: buildDenContextHeaders(input),
+          timeoutMs: timeouts.skillRegistryMutation,
+        },
+      ),
+    approveRegistrySkillReviewRequest: (requestId: string, input: VesloSkillRegistryReviewDecisionInput) =>
+      requestJson<VesloSkillRegistryReviewRequestResponse>(
+        baseUrl,
+        `/v1/skill-review-requests/${encodeURIComponent(requestId)}/approve`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: {
+            reviewerNote: input.reviewerNote,
+            releaseChannel: input.releaseChannel,
+          },
+          extraHeaders: buildDenContextHeaders(input),
+          timeoutMs: timeouts.skillRegistryMutation,
+        },
+      ),
+    rejectRegistrySkillReviewRequest: (requestId: string, input: VesloSkillRegistryReviewDecisionInput) =>
+      requestJson<VesloSkillRegistryReviewRequestResponse>(
+        baseUrl,
+        `/v1/skill-review-requests/${encodeURIComponent(requestId)}/reject`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: {
+            reviewerNote: input.reviewerNote,
+          },
+          extraHeaders: buildDenContextHeaders(input),
+          timeoutMs: timeouts.skillRegistryMutation,
+        },
+      ),
+    listRegistrySkillRolloutPolicies: (input?: VesloSkillRegistryListRolloutPoliciesInput) =>
+      requestJson<VesloSkillRegistryRolloutPoliciesResponse>(
+        baseUrl,
+        buildSkillRegistryRolloutPoliciesPath(input),
+        {
+          token,
+          hostToken,
+          extraHeaders: buildDenContextHeaders(input),
+          timeoutMs: timeouts.skillRegistrySearch,
+        },
+      ),
+    createRegistrySkillRolloutPolicy: (input: VesloSkillRegistryCreateRolloutPolicyInput) =>
+      requestJson<VesloSkillRegistryRolloutPolicyResponse>(baseUrl, "/v1/skill-rollout-policies", {
+        token,
+        hostToken,
+        method: "POST",
+        body: {
+          skillId: input.skillId,
+          versionId: input.versionId,
+          target: input.target,
+          audience: input.audience,
+          catalogScope: input.catalogScope,
+          orgId: input.orgId,
+          userId: input.userId,
+          workspaceId: input.workspaceId,
+          enabled: input.enabled,
+          updatePolicy: input.updatePolicy,
+          releaseChannel: input.releaseChannel,
+          removalPolicy: input.removalPolicy,
+        },
+        extraHeaders: buildDenContextHeaders(input),
+        timeoutMs: timeouts.skillRegistryMutation,
+      }),
+    updateRegistrySkillRolloutPolicy: (
+      policyId: string,
+      input: VesloSkillRegistryUpdateRolloutPolicyInput,
+    ) =>
+      requestJson<VesloSkillRegistryRolloutPolicyResponse>(
+        baseUrl,
+        `/v1/skill-rollout-policies/${encodeURIComponent(policyId)}`,
+        {
+          token,
+          hostToken,
+          method: "PATCH",
+          body: {
+            skillId: input.skillId,
+            versionId: input.versionId,
+            target: input.target,
+            audience: input.audience,
+            catalogScope: input.catalogScope,
+            orgId: input.orgId,
+            userId: input.userId,
+            workspaceId: input.workspaceId,
+            enabled: input.enabled,
+            updatePolicy: input.updatePolicy,
+            releaseChannel: input.releaseChannel,
+            removalPolicy: input.removalPolicy,
+          },
+          extraHeaders: buildDenContextHeaders(input),
+          timeoutMs: timeouts.skillRegistryMutation,
+        },
+      ),
+    deleteRegistrySkillRolloutPolicy: (policyId: string, input?: VesloSkillRegistryAuthContext) =>
+      requestJson<VesloSkillRegistryRolloutPolicyResponse>(
+        baseUrl,
+        `/v1/skill-rollout-policies/${encodeURIComponent(policyId)}`,
+        {
+          token,
+          hostToken,
+          method: "DELETE",
+          extraHeaders: buildDenContextHeaders(input),
+          timeoutMs: timeouts.skillRegistryMutation,
+        },
+      ),
+    getGlobalSkillMaterializationStatus: () =>
+      requestJson<VesloGlobalSkillMaterializationStatus>(
+        baseUrl,
+        "/skills/materialization",
+        {
+          token,
+          hostToken,
+          timeoutMs: timeouts.skillMaterialization,
+        },
+      ),
+    syncGlobalSkillMaterialization: (options?: VesloSkillMaterializationRequestOptions) =>
+      requestJson<VesloGlobalSkillMaterializationSyncResult>(
+        baseUrl,
+        "/skills/materialization/sync-global",
+        {
+          method: "POST",
+          token,
+          hostToken,
+          body: skillMaterializationSyncBody(options),
+          extraHeaders: buildDenContextHeaders(options),
+          timeoutMs: timeouts.skillMaterialization,
+        },
+      ),
+    getWorkspaceSkillMaterializationStatus: (workspaceId: string) =>
+      requestJson<VesloSkillMaterializationStatus>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/skills/materialization`,
+        {
+          token,
+          hostToken,
+          timeoutMs: timeouts.skillMaterialization,
+        },
+      ),
+    syncWorkspaceSkillMaterialization: (
+      workspaceId: string,
+      options?: VesloSkillMaterializationRequestOptions,
+    ) =>
+      requestJson<VesloSkillMaterializationSyncResult>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/skills/materialization/sync`,
+        {
+          method: "POST",
+          token,
+          hostToken,
+          body: skillMaterializationSyncBody(options),
+          extraHeaders: buildDenContextHeaders(options),
+          timeoutMs: timeouts.skillMaterialization,
+        },
+      ),
     listHubSkills: (options?: { denToken?: string; denOrgId?: string }) => {
       const denToken = options?.denToken?.trim() ?? "";
       const denOrgId = options?.denOrgId?.trim() ?? "";
@@ -1966,21 +2900,71 @@ export function createVesloServerClient(options: {
         },
       );
     },
-    getSkill: (workspaceId: string, name: string, options?: { includeGlobal?: boolean }) => {
-      const query = options?.includeGlobal ? "?includeGlobal=true" : "";
+    getSkill: (workspaceId: string, name: string, options?: { includeGlobal?: boolean; path?: string }) => {
+      const queryParams = new URLSearchParams();
+      if (options?.includeGlobal) queryParams.set("includeGlobal", "true");
+      if (options?.path?.trim()) queryParams.set("path", options.path.trim());
+      const query = queryParams.toString();
       return requestJson<VesloSkillContent>(
         baseUrl,
-        `/workspace/${workspaceId}/skills/${encodeURIComponent(name)}${query}`,
+        `/workspace/${workspaceId}/skills/${encodeURIComponent(name)}${query ? `?${query}` : ""}`,
         { token, hostToken },
       );
     },
-    upsertSkill: (workspaceId: string, payload: { name: string; content: string; description?: string }) =>
+    upsertSkill: (workspaceId: string, payload: { name: string; path?: string; content: string; description?: string }) =>
       requestJson<VesloSkillItem>(baseUrl, `/workspace/${workspaceId}/skills`, {
         token,
         hostToken,
         method: "POST",
         body: payload,
       }),
+    deleteSkill: (workspaceId: string, name: string, options?: { path?: string }) => {
+      const queryParams = new URLSearchParams();
+      if (options?.path?.trim()) queryParams.set("path", options.path.trim());
+      const query = queryParams.toString();
+      return requestJson<{ ok: true; name: string; path: string }>(
+        baseUrl,
+        `/workspace/${workspaceId}/skills/${encodeURIComponent(name)}${query ? `?${query}` : ""}`,
+        { token, hostToken, method: "DELETE" },
+      );
+    },
+    deleteGlobalSkill: (name: string, options?: { path?: string; reason?: string }) =>
+      requestJson<VesloSkillRemovalMutationResult>(
+        baseUrl,
+        buildDeleteGlobalSkillPath(name, options),
+        { token, hostToken, method: "DELETE" },
+      ),
+    batchRemoveSkills: (input: VesloSkillBatchRemoveRequest) => {
+      const { denApiBase, denToken, denOrgId, denUserId, ...body } = input;
+      return requestJson<VesloSkillBatchRemoveResponse>(
+        baseUrl,
+        "/skills/batch-remove",
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body,
+          extraHeaders: buildDenContextHeaders({ denApiBase, denToken, denOrgId, denUserId }),
+          timeoutMs: timeouts.skillRegistryMutation,
+        },
+      );
+    },
+    listSkillRemovals: (params?: {
+      scope?: VesloSkillRemovalScope;
+      workspaceId?: string;
+      includeRestored?: boolean;
+    }) =>
+      requestJson<VesloSkillRemovalsResponse>(
+        baseUrl,
+        buildSkillRemovalsPath(params),
+        { token, hostToken },
+      ),
+    restoreSkillRemoval: (removalId: string) =>
+      requestJson<VesloSkillRemovalMutationResult>(
+        baseUrl,
+        `/skill-removals/${encodeURIComponent(removalId)}/restore`,
+        { token, hostToken, method: "POST" },
+      ),
     listMcp: (workspaceId: string) =>
       requestJson<{ items: VesloMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp`, { token, hostToken }),
     addMcp: (workspaceId: string, payload: { name: string; config: Record<string, unknown> }) =>

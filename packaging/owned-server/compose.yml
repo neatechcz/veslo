@@ -12,6 +12,7 @@ services:
   den-db:
     image: mysql:8.4
     restart: unless-stopped
+    command: ["--log-bin-trust-function-creators=1"]
     environment:
       MYSQL_DATABASE: ${DEN_DB_NAME:-den}
       MYSQL_USER: ${DEN_DB_USER:-den}
@@ -29,6 +30,7 @@ services:
   ai-gateway-db:
     image: mysql:8.4
     restart: unless-stopped
+    command: ["--log-bin-trust-function-creators=1"]
     environment:
       MYSQL_DATABASE: ${AI_GATEWAY_DB_NAME:-veslo_ai_gateway}
       MYSQL_USER: ${AI_GATEWAY_DB_USER:-gateway}
@@ -148,12 +150,9 @@ services:
       POLAR_SUCCESS_URL: ${POLAR_SUCCESS_URL:-}
       POLAR_RETURN_URL: ${POLAR_RETURN_URL:-}
       YOUTRACK_PROJECT_KEY: ${YOUTRACK_PROJECT_KEY:-VSLO}
-      YOUTRACK_MCP_COMMAND: ${YOUTRACK_MCP_COMMAND:-}
-      YOUTRACK_MCP_ARGS: ${YOUTRACK_MCP_ARGS:-}
-      YOUTRACK_MCP_TIMEOUT_MS: ${YOUTRACK_MCP_TIMEOUT_MS:-20000}
-      YOUTRACK_MCP_WIRE_PROTOCOL: ${YOUTRACK_MCP_WIRE_PROTOCOL:-content-length}
-      YOUTRACK_MCP_URL: ${YOUTRACK_MCP_URL:-}
-      YOUTRACK_MCP_TOKEN: ${YOUTRACK_MCP_TOKEN:-}
+      YOUTRACK_URL: ${YOUTRACK_URL:-}
+      YOUTRACK_TOKEN: ${YOUTRACK_TOKEN:-}
+      YOUTRACK_TIMEOUT_MS: ${YOUTRACK_TIMEOUT_MS:-20000}
       DEN_LOG_INGEST_TOKEN: ${DEN_LOG_INGEST_TOKEN:-}
       DEN_LOG_MASTER_KEY: ${DEN_LOG_MASTER_KEY:-}
       DEN_LOG_MASTER_KEY_VERSION: ${DEN_LOG_MASTER_KEY_VERSION:-}

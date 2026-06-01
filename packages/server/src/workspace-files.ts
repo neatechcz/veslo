@@ -17,6 +17,10 @@ export function projectSkillsDir(workspaceRoot: string): string {
   return join(workspaceRoot, ".opencode", "skills");
 }
 
+export function workspaceSkillLockfilePath(workspaceRoot: string): string {
+  return join(workspaceRoot, ".opencode", "veslo.skills.lock.json");
+}
+
 export function projectCommandsDir(workspaceRoot: string): string {
   return join(workspaceRoot, ".opencode", "commands");
 }

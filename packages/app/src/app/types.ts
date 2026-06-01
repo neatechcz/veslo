@@ -157,6 +157,7 @@ export type ArtifactItem = {
   kind: "file" | "text";
   size?: string;
   messageId?: string;
+  fileInteraction?: "modified" | "opened";
 };
 
 export type OpencodeEvent = {
@@ -181,7 +182,7 @@ export type DashboardTab =
   | "config"
   | "settings";
 
-export type SettingsTab = "general" | "extensions" | "archived" | "advanced" | "debug";
+export type SettingsTab = "general" | "archived" | "advanced" | "debug";
 
 export type WorkspacePreset = "starter" | "automation" | "minimal";
 
@@ -216,6 +217,34 @@ export type SkillCard = {
   trigger?: string;
 };
 
+export type SkillSaveResult = {
+  ok: boolean;
+  message?: string;
+};
+
+export type SkillPackageFile = {
+  path: string;
+  sha256: string;
+  sizeBytes: number;
+  mediaType: string;
+  executable?: boolean;
+  text?: string;
+};
+
+export type SkillPackageManifest = {
+  schemaVersion: 1;
+  entrypoint: "SKILL.md";
+  files: SkillPackageFile[];
+  packageSha256: string;
+  metadata: {
+    name: string;
+    description?: string;
+    trigger?: string;
+    tags?: string[];
+    language?: string;
+  };
+};
+
 export type HubSkillCard = {
   name: string;
   description?: string;
@@ -226,6 +255,132 @@ export type HubSkillCard = {
     ref: string;
     path: string;
   };
+};
+
+export type HubSkillInstallTarget =
+  | { scope: "global" }
+  | { scope: "workspace"; workspaceId: string };
+
+export type ManagedSkillSource = "personal" | "workspace" | "organization" | "platform";
+
+export type SkillInventoryLifecycle = "active" | "removed";
+
+export type SkillInventoryRegistryMetadata = {
+  skillId?: string;
+  installationId?: string;
+  policyId?: string;
+  versionId?: string;
+  packageSha256?: string;
+  source?: ManagedSkillSource;
+  removalPolicy?: "user_removable" | "admin_removable" | "locked";
+};
+
+export type SkillInventoryScope = "workspace" | "user-global" | "organization";
+
+export type SkillInventoryStatus = "global" | "workspace-only" | "mixed" | "hub-only";
+
+export type SkillInventoryWorkspace = {
+  id: string;
+  label: string;
+  path?: string;
+  kind: "local" | "remote";
+};
+
+export type SkillInstance = {
+  id: string;
+  name: string;
+  scope: SkillInventoryScope;
+  workspaceId?: string;
+  workspaceLabel?: string;
+  path: string;
+  description?: string;
+  trigger?: string;
+  source: "opencode" | "claude" | "agents" | "hub" | "unknown";
+  lifecycle?: SkillInventoryLifecycle;
+  removedAt?: string;
+  removedBy?: string;
+  removeReason?: string;
+  registry?: SkillInventoryRegistryMetadata;
+  restoreTarget?: {
+    scope: SkillInventoryScope;
+    workspaceId?: string;
+    orgId?: string;
+    removalId?: string;
+  };
+  readable: boolean;
+  writable: boolean;
+};
+
+export type SkillInventoryItem = {
+  name: string;
+  description?: string;
+  trigger?: string;
+  globalInstance?: SkillInstance;
+  workspaceInstances: SkillInstance[];
+  hubItem?: HubSkillCard;
+  status: SkillInventoryStatus;
+};
+
+export type WorkspaceSkillSetUpdatePolicy = "pinned" | "latest_user" | "latest_approved" | "release_channel";
+
+export type WorkspaceSkillRegistryInstallation = {
+  installationId: string;
+  skillId: string;
+  name: string;
+  versionId: string;
+  packageSha256: string;
+  enabled: boolean;
+  source: ManagedSkillSource;
+  installedAt: string;
+  ownerUserId?: string | null;
+  orgId?: string | null;
+  workspaceId?: string | null;
+  approved?: boolean;
+  updatePolicy?: WorkspaceSkillSetUpdatePolicy;
+  releaseChannel?: string | null;
+  desiredVersionId?: string | null;
+  desiredPackageSha256?: string | null;
+};
+
+export type ResolvedWorkspaceSkill = {
+  installationId: string;
+  skillId: string;
+  name: string;
+  versionId: string;
+  packageSha256: string;
+  source: ManagedSkillSource;
+  target: "workspace" | "personal-global";
+};
+
+export type WorkspaceSkillMaterialization = {
+  installationId: string;
+  skillId: string;
+  name: string;
+  versionId: string;
+  packageSha256: string;
+  target: "workspace" | "personal-global";
+};
+
+export type WorkspaceSkillConflict = {
+  code: "personal-global-shadowed" | "unmanaged-local-shadowed";
+  name: string;
+  message: string;
+  blockingInstallationId?: string;
+  blockedInstallationId?: string;
+  localPath?: string;
+};
+
+export type WorkspaceSkillSetResolution = {
+  effectiveManagedSkills: ResolvedWorkspaceSkill[];
+  requiredMaterializations: WorkspaceSkillMaterialization[];
+  conflicts: WorkspaceSkillConflict[];
+  blockedInstallations: Array<{
+    installationId: string;
+    skillId: string;
+    name: string;
+    reason: "disabled" | "not-approved" | "out-of-scope" | "shadowed";
+  }>;
+  reloadRequired: boolean;
 };
 
 export type HubMcpItem = {
@@ -256,18 +411,23 @@ export type HubMcpCard = {
 
 export type PluginInstallStep = {
   title: string;
+  titleKey?: string;
   description: string;
+  descriptionKey?: string;
   command?: string;
   url?: string;
   path?: string;
   note?: string;
+  noteKey?: string;
 };
 
 export type SuggestedPlugin = {
   name: string;
   packageName: string;
   description: string;
+  descriptionKey?: string;
   tags: string[];
+  tagKeys?: string[];
   aliases?: string[];
   installMode?: "simple" | "guided";
   steps?: PluginInstallStep[];
@@ -289,6 +449,8 @@ export type McpServerConfig = {
 export type McpServerEntry = {
   name: string;
   config: McpServerConfig;
+  source?: "config.project" | "config.global" | "config.remote";
+  disabledByTools?: boolean;
 };
 
 export type McpStatus =

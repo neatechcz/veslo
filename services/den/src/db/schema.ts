@@ -436,3 +436,5 @@ export const AuditEventTable = mysqlTable(
   },
   (table) => [index("audit_event_org_id").on(table.org_id), index("audit_event_worker_id").on(table.worker_id)],
 )
+
+export * from "../skills/schema.js"

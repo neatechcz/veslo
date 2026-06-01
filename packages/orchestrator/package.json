@@ -1,6 +1,6 @@
 {
   "name": "veslo-orchestrator",
-  "version": "2026.5.9",
+  "version": "2026.6.0",
   "opencodeVersion": "1.14.29",
   "description": "Veslo host orchestrator for opencode + Veslo server + veslo-code-router",
   "private": true,
@@ -50,8 +50,8 @@
     "@opentui/core": "0.1.77",
     "@opentui/solid": "0.1.77",
     "solid-js": "1.9.9",
-    "veslo-code-router": "2026.5.9",
-    "veslo-server": "2026.5.9"
+    "veslo-code-router": "2026.6.0",
+    "veslo-server": "2026.6.0"
   },
   "devDependencies": {
     "@opentui/core-darwin-arm64": "0.1.77",

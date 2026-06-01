@@ -4,6 +4,7 @@ import { useOutsideClick } from "./use-outside-click";
 
 import type { TodoItem, WorkspaceConnectionState } from "../../types";
 import type { WorkspaceInfo } from "../../lib/tauri";
+import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../../i18n";
 
 type SessionSummary = {
   id: string;
@@ -91,7 +92,7 @@ export default function SessionSidebar(props: SidebarProps) {
     workspace.vesloWorkspaceName?.trim() ||
     workspace.name?.trim() ||
     workspace.path?.trim() ||
-    "Worker";
+    __vesloT("workspace.fallback_worker", __vesloCurrentLocale());
 
   const workspacePathLabel = (workspace: WorkspaceInfo) => {
     if (workspace.workspaceType === "remote") {
@@ -276,22 +277,20 @@ export default function SessionSidebar(props: SidebarProps) {
           disabled={props.newTaskDisabled}
         >
           <Plus size={16} />
-          New task
-        </button>
+          {__vesloT("session.new_task", __vesloCurrentLocale())}</button>
       </div>
 
       <div class="flex-1 overflow-y-auto px-4 py-4 space-y-6">
         <div>
           <div class="flex items-center justify-between px-2 mb-2">
-            <div class="font-product type-ui-xs text-gray-10 font-semibold uppercase tracking-wider">Workspaces</div>
+            <div class="font-product type-ui-xs text-gray-10 font-semibold uppercase tracking-wider">{__vesloT("ui.literal.workspaces_1uyb1o", __vesloCurrentLocale())}</div>
           </div>
           <div class="space-y-4">
             <Show
               when={props.workspaceGroups.length > 0}
               fallback={
                 <div class="font-product type-ui-sm px-3 py-2 rounded-lg border border-dashed border-gray-6 text-gray-9">
-                  No workspaces in this session yet. Add one to get started.
-                </div>
+                  {__vesloT("ui.literal.no_workspaces_in_this_session_yet_add_one_to_1n3wi0", __vesloCurrentLocale())}</div>
               }
             >
               <For each={props.workspaceGroups}>
@@ -300,6 +299,11 @@ export default function SessionSidebar(props: SidebarProps) {
                   const isConnecting = () => props.connectingWorkspaceId === group.workspace.id;
                   const pathLabel = () => workspacePathLabel(group.workspace);
                   const detailLabel = () => workspaceDetailLabel(group.workspace);
+                  const isSandboxWorkspace = () =>
+                    group.workspace.workspaceType === "remote" &&
+                    (group.workspace.sandboxBackend === "docker" ||
+                      Boolean(group.workspace.sandboxRunId?.trim()) ||
+                      Boolean(group.workspace.sandboxContainerName?.trim()));
                   const sessions = () => group.sessions;
                   const connectionState = () => props.workspaceConnectionStateById[group.workspace.id];
                   const connectionStatus = () => connectionState()?.status ?? "idle";
@@ -361,7 +365,7 @@ export default function SessionSidebar(props: SidebarProps) {
                                 </span>
                                 <Show when={group.workspace.workspaceType === "remote"}>
                                   <span class="font-product type-ui-xs uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-gray-3 text-gray-11">
-                                    Remote
+                                    {isSandboxWorkspace() ? __vesloT("sidebar.workspace_kind_sandbox", __vesloCurrentLocale()) : __vesloT("sidebar.workspace_kind_remote", __vesloCurrentLocale())}
                                   </span>
                                 </Show>
                               </div>
@@ -378,11 +382,11 @@ export default function SessionSidebar(props: SidebarProps) {
                               </Show>
                               <Show when={!isConnecting() && connectionStatus() !== "connecting"}>
                                 <Show when={connectionStatus() === "error"}>
-                                  <span class="text-red-11 font-medium">Needs attention</span>
+                                  <span class="text-red-11 font-medium">{__vesloT("ui.literal.needs_attention_pwuroc", __vesloCurrentLocale())}</span>
                                 </Show>
                                 <Show when={connectionStatus() !== "error"}>
-                                  <Show when={isActive()} fallback={<span class="text-gray-9">Switch</span>}>
-                                    <span class="text-green-11 font-medium">Active</span>
+                                  <Show when={isActive()} fallback={<span class="text-gray-9">{__vesloT("settings.switch_mode", __vesloCurrentLocale())}</span>}>
+                                    <span class="text-green-11 font-medium">{__vesloT("session.artifact_status_active", __vesloCurrentLocale())}</span>
                                   </Show>
                                 </Show>
                               </Show>
@@ -394,7 +398,7 @@ export default function SessionSidebar(props: SidebarProps) {
                             type="button"
                             class="p-1 rounded-md text-gray-9 hover:text-gray-12 hover:bg-gray-2"
                             onClick={() => toggleWorkspaceCollapse(group.workspace.id)}
-                            title={collapsed() ? "Expand" : "Collapse"}
+                            title={collapsed() ? __vesloT("common.expand", __vesloCurrentLocale()) : __vesloT("common.collapse", __vesloCurrentLocale())}
                           >
                             <ChevronDown
                               size={14}
@@ -404,7 +408,7 @@ export default function SessionSidebar(props: SidebarProps) {
                           <button
                             type="button"
                             class="p-1 rounded-md text-gray-9 hover:text-gray-12 hover:bg-gray-2 cursor-grab"
-                            title="Drag to reorder"
+                            title={__vesloT("ui.literal.drag_to_reorder_1y63d8", __vesloCurrentLocale())}
                             draggable
                             onDragStart={(event) => handleDragStart(event, group.workspace.id)}
                             onDragEnd={handleDragEnd}
@@ -429,8 +433,7 @@ export default function SessionSidebar(props: SidebarProps) {
                                 disabled={isActivelyConnecting()}
                               >
                                 <Settings size={12} />
-                                Edit connection
-                              </button>
+                                {__vesloT("sidebar.edit_connection", __vesloCurrentLocale())}</button>
                               <button
                                 type="button"
                                 class="font-product type-ui-xs inline-flex items-center gap-1.5 rounded-md border border-gray-6 px-2 py-1 text-gray-10 hover:text-gray-12 hover:border-gray-7 hover:bg-gray-2 transition-colors"
@@ -438,8 +441,17 @@ export default function SessionSidebar(props: SidebarProps) {
                                 disabled={isActivelyConnecting()}
                               >
                                 <RefreshCcw size={12} class={connectionStatus() === "connecting" ? "animate-spin" : ""} />
-                                Test connection
-                              </button>
+                                {__vesloT("mcp.verify_connection", __vesloCurrentLocale())}</button>
+                            </Show>
+                            <Show when={group.workspace.sandboxContainerName?.trim() && props.onStopSandbox}>
+                              <button
+                                type="button"
+                                class="font-product type-ui-xs inline-flex items-center gap-1.5 rounded-md border border-gray-6 px-2 py-1 text-gray-10 hover:text-gray-12 hover:border-gray-7 hover:bg-gray-2 transition-colors"
+                                onClick={() => props.onStopSandbox?.(group.workspace.id)}
+                                disabled={isActivelyConnecting()}
+                              >
+                                <Square size={12} />
+                                {__vesloT("ui.literal.stop_sandbox_1fq7ye", __vesloCurrentLocale())}</button>
                             </Show>
                             <button
                               type="button"
@@ -448,15 +460,13 @@ export default function SessionSidebar(props: SidebarProps) {
                               disabled={isActivelyConnecting()}
                             >
                               <Trash2 size={12} />
-                              Remove
-                            </button>
+                              {__vesloT("mcp.remove_app", __vesloCurrentLocale())}</button>
                           </div>
                           <Show
                             when={sessions().length > 0}
                             fallback={
                               <div class="px-3 py-2 rounded-lg border border-dashed border-gray-6 text-xs text-gray-9">
-                                No sessions yet.
-                              </div>
+                                {__vesloT("dashboard.no_sessions", __vesloCurrentLocale())}</div>
                             }
                           >
                             <For each={visibleSessions()}>
@@ -512,8 +522,8 @@ export default function SessionSidebar(props: SidebarProps) {
                                 onClick={() => toggleShowAllSessions(group.workspace.id)}
                               >
                                 {showingAll()
-                                  ? "Show fewer"
-                                  : `Show ${sessions().length - MAX_SESSIONS_PREVIEW} more`}
+                                  ? __vesloT("common.show_less", __vesloCurrentLocale())
+                                  : __vesloT("sidebar.show_more_sessions", __vesloCurrentLocale()).replace("{count}", String(sessions().length - MAX_SESSIONS_PREVIEW))}
                               </button>
                             </Show>
                           </Show>
@@ -534,8 +544,7 @@ export default function SessionSidebar(props: SidebarProps) {
                 onDrop={(event) => handleDrop(event, null)}
               >
                 <Plus size={14} />
-                Add new workspace
-              </button>
+                {__vesloT("ui.literal.add_new_workspace_18m09b", __vesloCurrentLocale())}</button>
               <Show when={addWorkspaceMenuOpen()}>
                 <div class="mt-2 rounded-lg border border-gray-6 bg-gray-1 shadow-lg overflow-hidden">
                   <button
@@ -547,8 +556,7 @@ export default function SessionSidebar(props: SidebarProps) {
                     }}
                   >
                     <Plus size={12} />
-                    New worker
-                  </button>
+                    {__vesloT("sidebar.new_worker", __vesloCurrentLocale())}</button>
                   <Show when={props.showRemoteActions !== false}>
                     <button
                       type="button"
@@ -559,8 +567,7 @@ export default function SessionSidebar(props: SidebarProps) {
                       }}
                     >
                       <Plus size={12} />
-                      Connect remote
-                    </button>
+                      {__vesloT("sidebar.connect_remote", __vesloCurrentLocale())}</button>
                   </Show>
                   <button
                     type="button"
@@ -572,8 +579,7 @@ export default function SessionSidebar(props: SidebarProps) {
                     }}
                   >
                     <Plus size={12} />
-                    Import config
-                  </button>
+                    {__vesloT("sidebar.import_config", __vesloCurrentLocale())}</button>
                 </div>
               </Show>
             </div>
@@ -587,7 +593,7 @@ export default function SessionSidebar(props: SidebarProps) {
                 class="font-product type-ui-md w-full px-4 py-3 flex items-center justify-between text-gray-12 font-medium"
                 onClick={() => props.onToggleSection("progress")}
               >
-                <span>Progress</span>
+                <span>{__vesloT("session.progress", __vesloCurrentLocale())}</span>
                 <ChevronDown
                   size={16}
                   class={`transition-transform text-gray-10 ${
@@ -646,8 +652,7 @@ export default function SessionSidebar(props: SidebarProps) {
                   closeContextMenu();
                 }}
               >
-                New task
-              </button>
+                {__vesloT("session.new_task", __vesloCurrentLocale())}</button>
               <button
                 class="w-full text-left px-3 py-2 text-sm rounded-lg text-red-11 hover:bg-red-1/40 transition-colors"
                 role="menuitem"
@@ -656,8 +661,7 @@ export default function SessionSidebar(props: SidebarProps) {
                   closeContextMenu();
                 }}
               >
-                Delete session
-              </button>
+                {__vesloT("session.delete_session_action", __vesloCurrentLocale())}</button>
             </div>
           </div>
         )}

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -517,6 +517,75 @@ test("CachedCodexCredentialStatusProvider persists auth JSON written by the Code
   }
 });
 
+test("CachedCodexCredentialStatusProvider keeps successful probe status when temporary cleanup fails", async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "veslo-codex-status-cleanup-test-"));
+  const commandPath = path.join(rootDir, "fake-codex.cjs");
+  const authJson = JSON.stringify({
+    auth_mode: "chatgpt",
+    tokens: {
+      refresh_token: "refresh-token",
+      account_id: "acct",
+    },
+  });
+
+  await writeFile(
+    commandPath,
+    [
+      "#!/usr/bin/env node",
+      'const { chmodSync, mkdirSync, writeFileSync } = require("node:fs");',
+      'const path = require("node:path");',
+      'const sessionDir = path.join(process.env.CODEX_HOME, "sessions", "2026", "04", "26");',
+      "mkdirSync(sessionDir, { recursive: true });",
+      "const event = {",
+      '  timestamp: "2026-04-26T12:00:00.000Z",',
+      '  type: "event_msg",',
+      "  payload: {",
+      '    type: "token_count",',
+      "    info: {",
+      "      rate_limits: {",
+      "        primary: { used_percent: 30, window_minutes: 300, resets_at: 1777215600 },",
+      "        secondary: null,",
+      '        plan_type: "plus",',
+      "      },",
+      "    },",
+      "  },",
+      "};",
+      'writeFileSync(path.join(sessionDir, "probe.jsonl"), `${JSON.stringify(event)}\\n`);',
+      'const lockedDir = path.join(process.env.CODEX_HOME, "cleanup-blocked");',
+      "mkdirSync(lockedDir, { recursive: true });",
+      'writeFileSync(path.join(lockedDir, "kept.txt"), "kept");',
+      "chmodSync(lockedDir, 0o500);",
+      'console.log("OK");',
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  await chmod(commandPath, 0o755);
+
+  try {
+    const provider = new CachedCodexCredentialStatusProvider({
+      ttlMs: 5 * 60 * 1000,
+      now: () => new Date("2026-04-26T12:00:00.000Z"),
+      loadCredentialAuthJson: async () => authJson,
+      command: commandPath,
+      workDir: rootDir,
+      timeoutMs: 5000,
+    });
+
+    const status = await provider.getStatus({
+      credentialId: "cred_codex_1",
+      credentialName: "Credential cred_codex_1",
+    });
+
+    assert.equal(status.available, true);
+    assert.equal(status.source, "codex_exec_rate_limits");
+    assert.equal(status.limits?.fiveHour?.usedPercent, 30);
+  } finally {
+    await makeTreeWritable(rootDir);
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
 test("CachedCodexCredentialStatusProvider reports healthy probes with unknown limits", async () => {
   const provider = new CachedCodexCredentialStatusProvider({
     ttlMs: 5 * 60 * 1000,
@@ -542,3 +611,18 @@ test("CachedCodexCredentialStatusProvider reports healthy probes with unknown li
   assert.equal(status.limits?.fiveHour, null);
   assert.equal(status.limits?.weekly, null);
 });
+
+async function makeTreeWritable(root: string): Promise<void> {
+  await chmod(root, 0o700).catch(() => {});
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  await Promise.all(
+    entries.map(async (entry) => {
+      const resolved = path.join(root, entry.name);
+      if (entry.isDirectory()) {
+        await makeTreeWritable(resolved);
+      } else {
+        await chmod(resolved, 0o600).catch(() => {});
+      }
+    }),
+  );
+}

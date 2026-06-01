@@ -74,12 +74,9 @@ This inventory maps the production environment needed for the VSLO-185 owned-ser
 | Variable | Source | Migration note |
 | --- | --- | --- |
 | `YOUTRACK_PROJECT_KEY` | Existing production value | Expected `VSLO`. |
-| `YOUTRACK_MCP_COMMAND` | Existing production value | Use only for stdio MCP mode. |
-| `YOUTRACK_MCP_ARGS` | Existing production value or secret | JSON string array for stdio MCP mode. |
-| `YOUTRACK_MCP_TIMEOUT_MS` | Existing production value or default | Remote call timeout. |
-| `YOUTRACK_MCP_WIRE_PROTOCOL` | Existing production value or default | `content-length` or `line`. |
-| `YOUTRACK_MCP_URL` | Existing production secret/value | Remote HTTP MCP URL when using HTTP mode. |
-| `YOUTRACK_MCP_TOKEN` | Existing production secret | Remote MCP token when using HTTP mode. |
+| `YOUTRACK_URL` | Existing production secret/value | YouTrack REST base URL. |
+| `YOUTRACK_TOKEN` | Existing production secret | YouTrack permanent token. |
+| `YOUTRACK_TIMEOUT_MS` | Existing production value or default | REST request timeout. |
 
 ## Den Debug-Log Ingest
 

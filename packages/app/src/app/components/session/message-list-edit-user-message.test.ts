@@ -22,8 +22,23 @@ test("message list exposes a latest-user-message edit action next to copy", () =
   );
   assert.match(
     source,
+    /pendingMessageStateById\?: Record<string, PendingMessageState>;/,
+    "message list props should receive pending submit state by message id",
+  );
+  assert.match(
+    source,
     /const editableMessage = \(\) =>\s*props\.editableUserMessage\?\.messageId === block\.messageId \? props\.editableUserMessage : null;/,
     "edit affordance should be scoped to the exact editable message id",
+  );
+  assert.match(
+    source,
+    /const pendingMessageState = \(\) => props\.pendingMessageStateById\?\.\[block\.messageId\] \?\? null;/,
+    "pending status should be scoped to the exact message id",
+  );
+  assert.match(
+    source,
+    /<Show when=\{block\.isUser && pendingMessageState\(\)\}>[\s\S]*session\.pending_submit_sending[\s\S]*session\.pending_submit_failed/s,
+    "pending user messages should render localized sending and failed status text",
   );
   assert.match(
     source,

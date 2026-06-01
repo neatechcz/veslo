@@ -72,12 +72,9 @@ cp .env.development .env
 - `POLAR_SUCCESS_URL` redirect URL after successful checkout (required when paywall enabled)
 - `POLAR_RETURN_URL` return URL shown in checkout (required when paywall enabled)
 - `YOUTRACK_PROJECT_KEY` default YouTrack project key used for feedback issues
-- `YOUTRACK_MCP_COMMAND` command used to start the installed YouTrack MCP server on the Den host
-- `YOUTRACK_MCP_ARGS` optional JSON string array of extra MCP command arguments
-- `YOUTRACK_MCP_TIMEOUT_MS` timeout for one MCP tool call (default `20000`)
-- `YOUTRACK_MCP_WIRE_PROTOCOL` stdio framing for the MCP command: `content-length` by default, or `line` for the local wrapper used by the live desktop smoke
-- `YOUTRACK_MCP_URL` optional remote MCP URL used directly when no stdio MCP command is configured; also forwarded to child MCP wrappers through the process environment
-- `YOUTRACK_MCP_TOKEN` optional remote MCP token used directly when no stdio MCP command is configured; also forwarded to child MCP wrappers through the process environment
+- `YOUTRACK_URL` YouTrack REST base URL, for example `https://neatech.myjetbrains.com`
+- `YOUTRACK_TOKEN` YouTrack permanent token used by feedback projection
+- `YOUTRACK_TIMEOUT_MS` timeout for one YouTrack REST request (default `20000`)
 - `DEN_LOG_INGEST_TOKEN` internal bearer token required by `POST /v1/internal/debug-logs`
 - `DEN_LOG_MASTER_KEY` master key material used to encrypt debug log payloads at ingest
 - `DEN_LOG_MASTER_KEY_VERSION` operator-managed key version stored with each encrypted payload
@@ -174,7 +171,7 @@ The workflow `.github/workflows/deploy-den.yml` updates Render env vars and depl
 
 The workflow also patches the configured Render control-plane service with `autoDeploy: no` on every manual run. Keep native Render Auto-Deploy off for this service.
 
-The deployment workflow preserves existing Render YouTrack projector variables when matching GitHub secrets/vars are not provided, then writes them back during the env sync. It fails before deploying when the final config has no MCP command transport and no remote URL plus token transport, which prevents a manual Den deploy from silently disabling feedback projection.
+The deployment workflow preserves existing Render YouTrack projector variables when matching GitHub secrets/vars are not provided, then writes them back during the env sync. It fails before deploying when the final config has no REST URL plus token, which prevents a manual Den deploy from silently disabling feedback projection.
 
 See `docs/dev/cloud-deployments.md` for the canonical operator procedure.
 
@@ -197,7 +194,7 @@ Optional GitHub Actions variable:
 - `DEN_RENDER_WORKER_REPO` (defaults to `https://github.com/<github.repository>` in workflow, or `https://github.com/neatechcz/veslo` fallback)
 - `DEN_RENDER_WORKER_PLAN` (defaults to `standard`)
 - `DEN_RENDER_WORKER_VESLO_VERSION` (defaults to `0.11.113` and is used for `veslo-orchestrator`)
-- `DEN_CORS_ORIGINS` (defaults to `https://app.veslo.neatech.com,https://api.veslo.neatech.com,<render-service-url>`)
+- `DEN_CORS_ORIGINS` (defaults to `https://app.veslo.work,https://api.veslo.work,<render-service-url>`)
 - `DEN_RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX` (defaults to `veslo.studio`)
 - `DEN_RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS` (defaults to `240000`)
 - `DEN_VERCEL_API_BASE` (defaults to `https://api.vercel.com`)
@@ -206,7 +203,7 @@ Optional GitHub Actions variable:
 - `DEN_VERCEL_DNS_DOMAIN` (defaults to `veslo.studio`)
 - `DEN_POLAR_FEATURE_GATE_ENABLED` (`true`/`false`, defaults to `false`)
 - `DEN_POLAR_API_BASE` (defaults to `https://api.polar.sh`)
-- `DEN_POLAR_SUCCESS_URL` (defaults to `https://app.veslo.neatech.com`)
+- `DEN_POLAR_SUCCESS_URL` (defaults to `https://app.veslo.work`)
 - `DEN_POLAR_RETURN_URL` (defaults to `DEN_POLAR_SUCCESS_URL`)
 - `DEN_AUTH_EMAIL_ADDRESS` sender email value for hosted auth emails, for example `noreply@mail.veslo.work`
 - `DEN_AUTH_EMAIL_FROM_NAME` optional sender display name for hosted auth emails, for example `Veslo`

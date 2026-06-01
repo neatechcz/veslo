@@ -24,6 +24,7 @@ interface CliArgs {
   opencodeUsername?: string;
   opencodePassword?: string;
   workspaces: string[];
+  workspaceIds: string[];
   corsOrigins?: string[];
   readOnly?: boolean;
   verbose?: boolean;
@@ -46,6 +47,7 @@ interface FileConfig {
   opencodeUsername?: string;
   opencodePassword?: string;
   denApiBase?: string;
+  skillRegistryBaseUrl?: string;
   logFormat?: LogFormat;
   logRequests?: boolean;
 }
@@ -83,8 +85,13 @@ function parsePositiveInteger(value: string | undefined): number | undefined {
   return parsed;
 }
 
+function normalizeOptionalUrl(value: string | undefined): string | undefined {
+  const trimmed = value?.trim() ?? "";
+  return trimmed ? trimmed.replace(/\/+$/, "") : undefined;
+}
+
 export function parseCliArgs(argv: string[]): CliArgs {
-  const args: CliArgs = { workspaces: [] };
+  const args: CliArgs = { workspaces: [], workspaceIds: [] };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (!value) continue;
@@ -177,6 +184,12 @@ export function parseCliArgs(argv: string[]): CliArgs {
       index += 1;
       continue;
     }
+    if (value === "--workspace-id") {
+      const id = argv[index + 1];
+      if (id) args.workspaceIds.push(id);
+      index += 1;
+      continue;
+    }
     if (value === "--cors") {
       args.corsOrigins = parseList(argv[index + 1]);
       index += 1;
@@ -207,6 +220,7 @@ export function printHelp(): void {
     "  --opencode-username <user> OpenCode server username",
     "  --opencode-password <pass> OpenCode server password",
     "  --workspace <path>       Workspace root (repeatable)",
+    "  --workspace-id <id>      Workspace id for the matching --workspace entry",
     "  --cors <origins>          Comma-separated origins or *",
     "  --read-only              Disable writes",
     "  --log-format <format>     Log output format: pretty | json",
@@ -232,7 +246,7 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
   const envWorkspaces = parseList(process.env.VESLO_WORKSPACES);
   let workspaceConfigs: WorkspaceConfig[] =
     cli.workspaces.length > 0
-      ? cli.workspaces.map((path) => ({ path }))
+      ? cli.workspaces.map((path, index) => ({ path, id: cli.workspaceIds[index] }))
       : envWorkspaces.length > 0
         ? envWorkspaces.map((path) => ({ path }))
         : fileConfig.workspaces ?? [];
@@ -341,8 +355,12 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     spoolMaxBytes: debugLogSpoolMaxBytes,
     flushIntervalMs: debugLogFlushIntervalMs,
   };
-  const denApiBaseRaw = process.env.VESLO_DEN_API_BASE?.trim() || fileConfig.denApiBase?.trim() || "";
-  const denApiBase = denApiBaseRaw ? denApiBaseRaw.replace(/\/+$/, "") : undefined;
+  const denApiBase = normalizeOptionalUrl(process.env.VESLO_DEN_API_BASE) ?? normalizeOptionalUrl(fileConfig.denApiBase);
+  const skillRegistryBaseUrl =
+    normalizeOptionalUrl(process.env.VESLO_SKILL_REGISTRY_BASE_URL) ??
+    normalizeOptionalUrl(fileConfig.skillRegistryBaseUrl) ??
+    denApiBase;
+  const skillRegistryToken = process.env.VESLO_SKILL_REGISTRY_TOKEN?.trim() || undefined;
 
   const authorizedRoots =
     fileConfig.authorizedRoots?.length
@@ -370,5 +388,7 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     logRequests,
     debugLogs,
     denApiBase,
+    skillRegistryBaseUrl,
+    skillRegistryToken,
   };
 }

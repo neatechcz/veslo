@@ -35,7 +35,7 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
 - `config.tsx`
   Workspace-scoped config, reload, auto-reload, live access details, and diagnostics bundle.
 - `skills.tsx`
-  Installed skills, hub skills, sharing a single skill, and skill editing flows.
+  Installed skills inventory, location filters, bulk selection, detail drawer, hub skills, sharing a single skill, and skill editing flows.
 - `plugins.tsx`
   `opencode.json` plugin management and suggested plugin flows.
 - `mcp.tsx`
@@ -76,7 +76,7 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
 ## Config and Persistence Helpers
 
 - `packages/app/src/app/lib/veslo-server.ts`
-  Veslo server settings persistence, workspace URL helpers, invite links, bundle links, and API client types.
+  Veslo server settings persistence, workspace URL helpers, invite links, bundle links, skill registry search/materialization client wrappers, and API client types.
 - `packages/app/src/app/lib/den-auth.ts`
   Den auth state, browser sign-in handoff, keep-signed-in behavior, and Den endpoint override.
 - `packages/app/src/app/constants.ts`

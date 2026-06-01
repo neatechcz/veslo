@@ -1,19 +1,22 @@
 import type { VesloServerStatus } from "../lib/veslo-server";
+import { currentLocale, t } from "../../i18n";
+
+const tr = (key: string) => t(key, currentLocale());
 
 export function getOpencodeStatusMeta(clientConnected: boolean) {
   return clientConnected
-    ? { text: "text-green-11", label: "Connected" }
-    : { text: "text-gray-10", label: "Offline" };
+    ? { text: "text-green-11", label: tr("status.connected") }
+    : { text: "text-gray-10", label: tr("status.offline") };
 }
 
 export function getVesloStatusMeta(vesloServerStatus: VesloServerStatus) {
   switch (vesloServerStatus) {
     case "connected":
-      return { text: "text-green-11", label: "Connected" };
+      return { text: "text-green-11", label: tr("status.connected") };
     case "limited":
-      return { text: "text-amber-11", label: "Limited" };
+      return { text: "text-amber-11", label: tr("status.limited") };
     default:
-      return { text: "text-gray-10", label: "Unavailable" };
+      return { text: "text-gray-10", label: tr("status.unavailable") };
   }
 }
 
@@ -31,13 +34,13 @@ export function getUnifiedStatusMeta(
   void runtimeAvailableWithoutClient;
 
   return isLoggedIn && vesloServerStatus === "connected"
-    ? { dot: "bg-green-9", text: "text-green-11", label: "Ready" }
-    : { dot: "bg-red-9", text: "text-red-11", label: "Unavailable" };
+    ? { dot: "bg-green-9", text: "text-green-11", label: tr("status.ready") }
+    : { dot: "bg-red-9", text: "text-red-11", label: tr("status.unavailable") };
 }
 
 export function formatConnectedUserLabel(value?: string | null) {
   const normalized = String(value ?? "").trim();
-  return normalized || "Not signed in";
+  return normalized || tr("status.not_signed_in");
 }
 
 export function resolveConnectedUserLabel(primaryValue?: string | null, persistedValue?: string | null) {
@@ -45,5 +48,5 @@ export function resolveConnectedUserLabel(primaryValue?: string | null, persiste
   if (primary) return primary;
 
   const persisted = String(persistedValue ?? "").trim();
-  return persisted || "Not signed in";
+  return persisted || tr("status.not_signed_in");
 }
