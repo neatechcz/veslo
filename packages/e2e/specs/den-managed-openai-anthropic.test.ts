@@ -39,7 +39,15 @@ test('live managed AI spec treats auth-error assistant output as a failed roundt
 test('live managed AI spec can click localized send buttons', () => {
   assert.match(
     source,
-    /button\[title="Send"\], button\[title="Odeslat"\]/,
-    'live managed AI roundtrip should work with English and Czech desktop profiles',
+    /button\[title="Queue message"\][\s\S]*button\[title="Zařadit zprávu"\][\s\S]*button\[title="加入队列"\]/,
+    'live managed AI roundtrip should work with queue-message send buttons in localized desktop profiles',
+  );
+});
+
+test('live managed AI spec covers a new chat and then the reopened existing chat', () => {
+  assert.match(
+    source,
+    /newChatToken[\s\S]*?existingChatToken[\s\S]*?waitForSelectedSessionHash\(\)[\s\S]*?navigateToHash\(`\/session\/\$\{sessionId\}`\)[\s\S]*?sendPromptAndWaitForAssistant\(existingChatPrompt, existingChatToken\)/,
+    'managed AI roundtrip should verify one response in a newly created chat and another after reopening that same existing chat',
   );
 });

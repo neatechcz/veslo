@@ -2154,7 +2154,13 @@ export default function App() {
       }
     }
 
-    await ensureManagedAiBootstrapReady();
+    if (!(await ensureManagedAiBootstrapReady())) {
+      recordSendTrace("sendPrompt:blocked-managed-ai-bootstrap");
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
+      return false;
+    }
     if (!(await ensureLocalRuntimeReachableForSend("sendPrompt"))) {
       recordSendTrace("sendPrompt:blocked-runtime-unreachable");
       return false;
@@ -3138,7 +3144,7 @@ export default function App() {
     };
   };
 
-  const ensureManagedAiBootstrapReady = async () => {
+  const ensureManagedAiBootstrapReady = async (): Promise<boolean> => {
     try {
       await waitForManagedAiBootstrapReady({
         hasManagedProfile: Boolean(managedAiAccess()) || managedAiBootstrapBusy(),
@@ -3146,8 +3152,10 @@ export default function App() {
         isReloadBusy: reloadBusy,
         hasClient: () => Boolean(client()),
       });
+      return true;
     } catch (error) {
       setError(error instanceof Error ? error.message : safeStringify(error));
+      return false;
     }
   };
 
@@ -7561,7 +7569,10 @@ export default function App() {
       return undefined;
     }
 
-    await ensureManagedAiBootstrapReady();
+    if (!(await ensureManagedAiBootstrapReady())) {
+      recordSendTrace("createSessionAndOpen:blocked-managed-ai-bootstrap");
+      return undefined;
+    }
     if (!(await ensureLocalRuntimeReachableForSend("createSessionAndOpen"))) {
       recordSendTrace("createSessionAndOpen:blocked-runtime-unreachable");
       setError("Local runtime is not ready yet.");

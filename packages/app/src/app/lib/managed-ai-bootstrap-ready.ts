@@ -1,3 +1,5 @@
+export const DEFAULT_MANAGED_AI_BOOTSTRAP_TIMEOUT_MS = 180_000;
+
 export async function waitForManagedAiBootstrapReady(input: {
   hasManagedProfile: boolean;
   isBootstrapBusy: () => boolean;
@@ -10,7 +12,7 @@ export async function waitForManagedAiBootstrapReady(input: {
 }): Promise<void> {
   if (!input.hasManagedProfile) return;
 
-  const timeoutMs = input.timeoutMs ?? 15_000;
+  const timeoutMs = input.timeoutMs ?? DEFAULT_MANAGED_AI_BOOTSTRAP_TIMEOUT_MS;
   const pollMs = input.pollMs ?? 100;
   const now = input.now ?? Date.now;
   const sleep = input.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));

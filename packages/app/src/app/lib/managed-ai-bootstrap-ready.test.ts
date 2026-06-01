@@ -43,6 +43,24 @@ test("waitForManagedAiBootstrapReady waits for bootstrap, reload, and client rec
   assert.equal(now, 30);
 });
 
+test("waitForManagedAiBootstrapReady default timeout covers slow desktop engine and config bootstrap", async () => {
+  let now = 0;
+
+  await waitForManagedAiBootstrapReady({
+    hasManagedProfile: true,
+    isBootstrapBusy: () => false,
+    isReloadBusy: () => false,
+    hasClient: () => now >= 90_000,
+    now: () => now,
+    pollMs: 30_000,
+    sleep: async (ms) => {
+      now += ms;
+    },
+  });
+
+  assert.equal(now, 90_000);
+});
+
 test("waitForManagedAiBootstrapReady times out when the client never recovers", async () => {
   let now = 0;
 
