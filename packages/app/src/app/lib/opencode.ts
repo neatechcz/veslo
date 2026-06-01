@@ -31,7 +31,6 @@ const GATEWAY_PROVIDER_ALLOWED_HEADER_KEYS = new Set([
   "xveslogatewaytoken",
   "xveslosessionid",
 ]);
-const SERVER_PATCH_COMPARISON_SECRET_VALUE = "__veslo_secret__";
 const SERVER_PATCH_COMPARISON_GATEWAY_TOKEN_VALUE = "__veslo_gateway_token__";
 
 export const OPENCODE_SESSION_ID_TEMPLATE = "${OPENCODE_SESSION_ID}";
@@ -244,18 +243,12 @@ function normalizeConfigForServerPatchComparison(value: unknown): unknown {
 
   for (const [key, rawValue] of Object.entries(input)) {
     const normalizedKey = normalizeConfigKey(key);
+    // Server reads redact the gateway access token; local server bearer
+    // credentials must remain value-sensitive so token rotation patches config.
     if (normalizedKey === "xveslogatewaytoken") {
       output[key] =
         typeof rawValue === "string" && rawValue.trim()
           ? SERVER_PATCH_COMPARISON_GATEWAY_TOKEN_VALUE
-          : rawValue;
-      continue;
-    }
-
-    if (isGatewayProviderSecretKey(normalizedKey)) {
-      output[key] =
-        typeof rawValue === "string" && rawValue.trim()
-          ? SERVER_PATCH_COMPARISON_SECRET_VALUE
           : rawValue;
       continue;
     }

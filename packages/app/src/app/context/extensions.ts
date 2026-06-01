@@ -54,6 +54,7 @@ import {
 import type {
   VesloServerCapabilities,
   VesloServerClient,
+  VesloSkillMaterializationRequestOptions,
   VesloSkillRemovalItem,
   VesloSkillRemovalScope,
   VesloServerStatus,
@@ -512,6 +513,11 @@ export function createExtensionsStore(options: {
     type SkillMaterializationClient = VesloServerClient & {
       getGlobalSkillMaterializationStatus?: () => Promise<SkillMaterializationStatusLike>;
       getWorkspaceSkillMaterializationStatus?: (workspaceId: string) => Promise<SkillMaterializationStatusLike>;
+      syncGlobalSkillMaterialization?: (options?: VesloSkillMaterializationRequestOptions) => Promise<unknown>;
+      syncWorkspaceSkillMaterialization?: (
+        workspaceId: string,
+        options?: VesloSkillMaterializationRequestOptions,
+      ) => Promise<unknown>;
     };
 
     const getSkillMaterializationClient = (): SkillMaterializationClient | null => {
@@ -1841,6 +1847,20 @@ export function createExtensionsStore(options: {
     return null;
   };
 
+  const managedSkillMaterializationClient = (): (VesloServerClient & {
+    syncGlobalSkillMaterialization?: (options?: VesloSkillMaterializationRequestOptions) => Promise<unknown>;
+    syncWorkspaceSkillMaterialization?: (
+      workspaceId: string,
+      options?: VesloSkillMaterializationRequestOptions,
+    ) => Promise<unknown>;
+  }) | null => {
+    const vesloClient = options.vesloServerClient();
+    if (options.vesloServerStatus() === "connected" && vesloClient) {
+      return vesloClient;
+    }
+    return null;
+  };
+
   const managedSkillTargetAffectsActiveRuntime = (target: ManagedSkillMutationTarget) => {
     if (target.scope === "user-global") return true;
     if (target.scope !== "workspace" && target.scope !== "organization") return false;
@@ -1851,6 +1871,35 @@ export function createExtensionsStore(options: {
     return targetWorkspaceId === activeWorkspaceId || Boolean(vesloWorkspaceId && targetWorkspaceId === vesloWorkspaceId);
   };
 
+  const syncMaterializationAfterManagedSkillMutation = async (target: ManagedSkillMutationTarget) => {
+    const client = managedSkillMaterializationClient();
+    if (!client) return;
+
+    const scope = target.restoreTarget?.scope ?? target.scope;
+    const workspaceId =
+      target.restoreTarget?.workspaceId?.trim() ||
+      target.workspaceId?.trim() ||
+      (scope === "workspace"
+        ? options.vesloServerWorkspaceId()?.trim() || options.activeWorkspaceId().trim()
+        : "");
+    const syncOptions = resolveDenRegistryContext();
+
+    if (
+      (scope === "user-global" || (scope === "organization" && !workspaceId)) &&
+      typeof client.syncGlobalSkillMaterialization === "function"
+    ) {
+      await client.syncGlobalSkillMaterialization(syncOptions);
+    }
+
+    if (
+      workspaceId &&
+      (scope === "workspace" || scope === "organization") &&
+      typeof client.syncWorkspaceSkillMaterialization === "function"
+    ) {
+      await client.syncWorkspaceSkillMaterialization(workspaceId, syncOptions);
+    }
+  };
+
   const refreshAfterManagedSkillMutation = async (
     target: ManagedSkillMutationTarget,
     action: NonNullable<ReloadTrigger["action"]>,
@@ -1858,6 +1907,7 @@ export function createExtensionsStore(options: {
     if (managedSkillTargetAffectsActiveRuntime(target)) {
       options.markReloadRequired?.("skills", { type: "skill", name: target.name.trim(), action });
     }
+    await syncMaterializationAfterManagedSkillMutation(target);
     await refreshHubSkills({ force: true });
     await refreshSkillInventory({ force: true });
   };

@@ -118,14 +118,16 @@ const hubSkill = (name: string) => ({
 async function withRegistryMutationStore(
   run: (context: {
     store: any;
-	    calls: {
-	      deleteInstallations: Array<{ installationId: string; input: unknown }>;
-	      restoreInstallations: Array<{ installationId: string; input: unknown }>;
-	      updatePolicies: Array<{ policyId: string; input: unknown }>;
-	      deleteWorkspaceSkills: Array<{ workspaceId: string; name: string; options?: unknown }>;
-	      deleteGlobalSkills: Array<{ name: string; options?: unknown }>;
-        batchRemoveSkills: Array<{ input: unknown }>;
-	      restoreRemovals: string[];
+    calls: {
+      deleteInstallations: Array<{ installationId: string; input: unknown }>;
+      restoreInstallations: Array<{ installationId: string; input: unknown }>;
+      updatePolicies: Array<{ policyId: string; input: unknown }>;
+      deleteWorkspaceSkills: Array<{ workspaceId: string; name: string; options?: unknown }>;
+      deleteGlobalSkills: Array<{ name: string; options?: unknown }>;
+      batchRemoveSkills: Array<{ input: unknown }>;
+      restoreRemovals: string[];
+      syncGlobalMaterializations: unknown[];
+      syncWorkspaceMaterializations: Array<{ workspaceId: string; options?: unknown }>;
       hubRefreshes: unknown[];
       inventoryReads: Array<{ projectDir: string; scope: LocalSkillListScope }>;
       reloads: unknown[];
@@ -135,14 +137,16 @@ async function withRegistryMutationStore(
 ) {
   await withDenAuthStorage(async () => {
     await createRoot(async (dispose) => {
-	      const calls = {
-	        deleteInstallations: [] as Array<{ installationId: string; input: unknown }>,
-	        restoreInstallations: [] as Array<{ installationId: string; input: unknown }>,
-	        updatePolicies: [] as Array<{ policyId: string; input: unknown }>,
-	        deleteWorkspaceSkills: [] as Array<{ workspaceId: string; name: string; options?: unknown }>,
-	        deleteGlobalSkills: [] as Array<{ name: string; options?: unknown }>,
+      const calls = {
+        deleteInstallations: [] as Array<{ installationId: string; input: unknown }>,
+        restoreInstallations: [] as Array<{ installationId: string; input: unknown }>,
+        updatePolicies: [] as Array<{ policyId: string; input: unknown }>,
+        deleteWorkspaceSkills: [] as Array<{ workspaceId: string; name: string; options?: unknown }>,
+        deleteGlobalSkills: [] as Array<{ name: string; options?: unknown }>,
         batchRemoveSkills: [] as Array<{ input: unknown }>,
         restoreRemovals: [] as string[],
+        syncGlobalMaterializations: [] as unknown[],
+        syncWorkspaceMaterializations: [] as Array<{ workspaceId: string; options?: unknown }>,
         hubRefreshes: [] as unknown[],
         inventoryReads: [] as Array<{ projectDir: string; scope: LocalSkillListScope }>,
         reloads: [] as unknown[],
@@ -234,6 +238,26 @@ async function withRegistryMutationStore(
             ok: true,
             path: "/Users/example/.opencode/skills/restored/SKILL.md",
             reloadRequired: true,
+          };
+        },
+        async syncGlobalSkillMaterialization(options?: unknown) {
+          calls.syncGlobalMaterializations.push(options);
+          return {
+            scope: "personal-global",
+            status: "synced",
+            registryConfigured: true,
+            materializedSkills: [],
+            synced: true,
+          };
+        },
+        async syncWorkspaceSkillMaterialization(workspaceId: string, options?: unknown) {
+          calls.syncWorkspaceMaterializations.push({ workspaceId, options });
+          return {
+            workspaceId,
+            status: "synced",
+            registryConfigured: true,
+            materializedSkills: [],
+            synced: true,
           };
         },
         async listHubSkills(input: unknown) {
@@ -363,6 +387,14 @@ test("registry installation removal calls the Veslo server client with Den conte
     ]);
     assert.equal(calls.restoreInstallations.length, 0);
     assert.equal(calls.updatePolicies.length, 0);
+    assert.deepEqual(calls.syncGlobalMaterializations, [
+      {
+        denApiBase: "https://api.veslo.test",
+        denToken: "den-token",
+        denOrgId: "org-1",
+        denUserId: "user-1",
+      },
+    ]);
     assert.ok(calls.hubRefreshes.length > 0);
     assert.ok(calls.inventoryReads.length > 0);
     assert.deepEqual(calls.reloads, [["skills", { type: "skill", name: "personal-helper", action: "removed" }]]);
@@ -459,6 +491,7 @@ test("managed global materializations are removed through registry installation 
       const calls = {
         deleteInstallations: [] as Array<{ installationId: string; input: unknown }>,
         deleteGlobalSkills: [] as Array<{ name: string; options?: unknown }>,
+        syncGlobalMaterializations: [] as unknown[],
       };
       const vesloServerClient = {
         async listHubSkills() {
@@ -490,6 +523,16 @@ test("managed global materializations are removed through registry installation 
         async deleteGlobalSkill(name: string, options?: unknown) {
           calls.deleteGlobalSkills.push({ name, options });
           return { ok: true, name, path: `/Users/example/.opencode/skills/${name}/SKILL.md` };
+        },
+        async syncGlobalSkillMaterialization(options?: unknown) {
+          calls.syncGlobalMaterializations.push(options);
+          return {
+            scope: "personal-global",
+            status: "synced",
+            registryConfigured: true,
+            materializedSkills: [],
+            synced: true,
+          };
         },
       };
 
@@ -540,6 +583,14 @@ test("managed global materializations are removed through registry installation 
         },
       ]);
       assert.equal(calls.deleteGlobalSkills.length, 0);
+      assert.deepEqual(calls.syncGlobalMaterializations, [
+        {
+          denApiBase: "https://api.veslo.test",
+          denToken: "den-token",
+          denOrgId: "org-1",
+          denUserId: "user-1",
+        },
+      ]);
 
       dispose();
     });
@@ -552,6 +603,7 @@ test("managed rollout materializations are removed through rollout policy metada
       const calls = {
         updatePolicies: [] as Array<{ policyId: string; input: unknown }>,
         deleteGlobalSkills: [] as Array<{ name: string; options?: unknown }>,
+        syncGlobalMaterializations: [] as unknown[],
       };
       const vesloServerClient = {
         async listHubSkills() {
@@ -583,6 +635,16 @@ test("managed rollout materializations are removed through rollout policy metada
         async deleteGlobalSkill(name: string, options?: unknown) {
           calls.deleteGlobalSkills.push({ name, options });
           return { ok: true, name, path: `/Users/example/.opencode/skills/${name}/SKILL.md` };
+        },
+        async syncGlobalSkillMaterialization(options?: unknown) {
+          calls.syncGlobalMaterializations.push(options);
+          return {
+            scope: "personal-global",
+            status: "synced",
+            registryConfigured: true,
+            materializedSkills: [],
+            synced: true,
+          };
         },
       };
 
@@ -634,6 +696,14 @@ test("managed rollout materializations are removed through rollout policy metada
         },
       ]);
       assert.equal(calls.deleteGlobalSkills.length, 0);
+      assert.deepEqual(calls.syncGlobalMaterializations, [
+        {
+          denApiBase: "https://api.veslo.test",
+          denToken: "den-token",
+          denOrgId: "org-1",
+          denUserId: "user-1",
+        },
+      ]);
 
       dispose();
     });
@@ -718,6 +788,20 @@ test("organization rollout removal and restore disable and enable the registry r
     ]);
     assert.equal(calls.deleteInstallations.length, 0);
     assert.equal(calls.restoreInstallations.length, 0);
+    assert.deepEqual(calls.syncGlobalMaterializations, [
+      {
+        denApiBase: "https://api.veslo.test",
+        denToken: "den-token",
+        denOrgId: "org-1",
+        denUserId: "user-1",
+      },
+      {
+        denApiBase: "https://api.veslo.test",
+        denToken: "den-token",
+        denOrgId: "org-1",
+        denUserId: "user-1",
+      },
+    ]);
     assert.deepEqual(calls.reloads, [
       ["skills", { type: "skill", name: "org-helper", action: "removed" }],
       ["skills", { type: "skill", name: "org-helper", action: "added" }],

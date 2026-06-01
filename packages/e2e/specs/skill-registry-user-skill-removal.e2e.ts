@@ -1,21 +1,31 @@
 import { expect } from "@wdio/globals";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { navigateToHash, waitForHashRoute } from "../helpers/app-launcher.js";
 import {
   E2E_SKILL_REGISTRY_FIXTURE,
+  E2E_SKILL_REGISTRY_ORG_ID,
+  E2E_SKILL_REGISTRY_TOKEN,
+  E2E_SKILL_REGISTRY_USER_ID,
   readSkillRegistryFixtureBaseUrl,
   readSkillRegistryFixtureEvents,
   resetSkillRegistryFixtureState,
 } from "../helpers/skill-registry-fixture.js";
 
 const userSkill = E2E_SKILL_REGISTRY_FIXTURE.personalGlobalSkill;
+const orgRolloutSkill = E2E_SKILL_REGISTRY_FIXTURE.orgRolloutTool;
 const isolatedProfileRoot = () => join(process.cwd(), ".tmp-veslo-home");
 const userManagedSkillsRoot = () => join(isolatedProfileRoot(), ".config", "opencode", "skills", "veslo-managed");
 const userManagedSkillRoot = () => join(userManagedSkillsRoot(), userSkill.name);
+const orgRolloutSkillRoot = () => join(userManagedSkillsRoot(), orgRolloutSkill.name);
+const orgRolloutSkillPath = () => join(orgRolloutSkillRoot(), "SKILL.md");
 const userManagedSkillSelector = () =>
   `[data-skill-inventory-name="${userSkill.name}"]` +
+  `[data-skill-inventory-scope="user-global"]` +
+  `[data-skill-inventory-lifecycle="active"]`;
+const orgRolloutSkillSelector = () =>
+  `[data-skill-inventory-name="${orgRolloutSkill.name}"]` +
   `[data-skill-inventory-scope="user-global"]` +
   `[data-skill-inventory-lifecycle="active"]`;
 
@@ -31,6 +41,25 @@ type VesloServerInfo = {
   clientToken?: string | null;
   hostToken?: string | null;
 };
+
+type VesloServerConnection = {
+  baseUrl: string;
+  clientToken: string;
+  hostToken: string;
+};
+
+function fixtureDenAuthJson(): string {
+  return JSON.stringify({
+    denApiBase: readSkillRegistryFixtureBaseUrl(),
+    token: E2E_SKILL_REGISTRY_TOKEN,
+    orgId: E2E_SKILL_REGISTRY_ORG_ID,
+    user: {
+      id: `${E2E_SKILL_REGISTRY_USER_ID}_fixture`,
+      email: "veslo-registry-e2e@example.test",
+    },
+    org: { id: E2E_SKILL_REGISTRY_ORG_ID, slug: "veslo-e2e" },
+  });
+}
 
 async function tauriInvoke<T>(command: string, payload: Record<string, unknown> = {}): Promise<T> {
   const result = await browser.executeAsync(
@@ -64,14 +93,15 @@ async function tauriInvoke<T>(command: string, payload: Record<string, unknown> 
   return result.value as T;
 }
 
-async function waitForLocalVesloServerReady(): Promise<void> {
+async function waitForLocalVesloServerReady(): Promise<VesloServerConnection> {
+  let latest: VesloServerInfo | null = null;
   await browser.waitUntil(
     async () => {
-      const info = await tauriInvoke<VesloServerInfo>("veslo_server_info").catch(() => null);
-      const baseUrl = info?.baseUrl?.trim().replace(/\/+$/, "") ?? "";
-      const clientToken = info?.clientToken?.trim() ?? "";
-      const hostToken = info?.hostToken?.trim() ?? "";
-      if (!info?.running || !baseUrl || !clientToken || !hostToken) return false;
+      latest = await tauriInvoke<VesloServerInfo>("veslo_server_info").catch(() => null);
+      const baseUrl = latest?.baseUrl?.trim().replace(/\/+$/, "") ?? "";
+      const clientToken = latest?.clientToken?.trim() ?? "";
+      const hostToken = latest?.hostToken?.trim() ?? "";
+      if (!latest?.running || !baseUrl || !clientToken || !hostToken) return false;
       const response = await fetch(`${baseUrl}/health`).catch(() => null);
       if (response?.ok !== true) return false;
       const capabilities = await fetch(`${baseUrl}/capabilities`, {
@@ -88,6 +118,15 @@ async function waitForLocalVesloServerReady(): Promise<void> {
       timeoutMsg: "Local Veslo server did not become ready before managed user skill removal.",
     },
   );
+
+  const info = await tauriInvoke<VesloServerInfo>("veslo_server_info");
+  const baseUrl = info.baseUrl?.trim().replace(/\/+$/, "") ?? "";
+  const clientToken = info.clientToken?.trim() ?? "";
+  const hostToken = info.hostToken?.trim() ?? "";
+  if (!baseUrl || !clientToken || !hostToken) {
+    throw new Error("Local Veslo server readiness returned incomplete connection data.");
+  }
+  return { baseUrl, clientToken, hostToken };
 }
 
 async function waitForAppVesloServerConnected(): Promise<void> {
@@ -103,6 +142,21 @@ async function waitForAppVesloServerConnected(): Promise<void> {
       timeoutMsg: `The app did not mark the local Veslo server as connected. Body: ${await visibleBodyText()}`,
     },
   );
+}
+
+async function prepareLocalDesktopRuntime(route: string): Promise<void> {
+  await browser.execute((authJson) => {
+    window.localStorage.setItem("veslo.language", "en");
+    window.localStorage.setItem("veslo.onboardingComplete", "1");
+    window.localStorage.setItem("veslo.startupPref", "local");
+    window.localStorage.setItem("veslo.den.keepSignedIn", "1");
+    window.localStorage.setItem("veslo.den.auth", authJson);
+    window.sessionStorage.removeItem("veslo.den.auth");
+  }, fixtureDenAuthJson());
+  await navigateToHash(route);
+  await browser.refresh();
+  await waitForHashRoute(`#${route}`);
+  await expect($('[data-testid="skills-page"]')).toExist();
 }
 
 function seedUserManagedSkill(): void {
@@ -166,6 +220,57 @@ async function clickUserSkillRemoveButton(): Promise<void> {
   expect(clicked).toBe(true);
 }
 
+async function waitForOrgRolloutSkill(): Promise<void> {
+  await browser.waitUntil(
+    async () => {
+      const found = await browser.execute((selector) => Boolean(document.querySelector(selector)), orgRolloutSkillSelector());
+      return found;
+    },
+    {
+      timeout: 15_000,
+      timeoutMsg: "org-rollout-tool did not appear as an active user skill on the Skills page.",
+    },
+  );
+}
+
+async function clickOrgRolloutSkillRemoveButton(): Promise<void> {
+  await waitForOrgRolloutSkill();
+  const clicked = await browser.execute(
+    (selector) => {
+      const button = document
+        .querySelector<HTMLElement>(selector)
+        ?.querySelector<HTMLButtonElement>('[data-testid="skill-inventory-deactivate-button"]');
+      if (!button || button.disabled) return false;
+      button.click();
+      return true;
+    },
+    orgRolloutSkillSelector(),
+  );
+  expect(clicked).toBe(true);
+}
+
+async function syncGlobalMaterialization(connection: VesloServerConnection): Promise<void> {
+  const response = await fetch(`${connection.baseUrl}/skills/materialization/sync-global`, {
+    method: "POST",
+    headers: {
+      "X-Veslo-Host-Token": connection.hostToken,
+      "x-veslo-den-api-base": readSkillRegistryFixtureBaseUrl(),
+      "x-veslo-den-token": E2E_SKILL_REGISTRY_TOKEN,
+      "x-veslo-den-org-id": E2E_SKILL_REGISTRY_ORG_ID,
+      "x-veslo-den-user-id": E2E_SKILL_REGISTRY_USER_ID,
+      accept: "application/json",
+    },
+  });
+  expect(response.status).toBe(200);
+  const payload = (await response.json()) as {
+    synced?: boolean;
+    materializedSkills?: Array<{ name?: string }>;
+  };
+  expect(payload.synced).toBe(true);
+  expect(payload.materializedSkills?.some((skill) => skill.name === orgRolloutSkill.name)).toBe(true);
+  expect(existsSync(orgRolloutSkillPath())).toBe(true);
+}
+
 async function visibleBodyText(): Promise<string> {
   return browser.execute(() => document.body.innerText);
 }
@@ -188,9 +293,7 @@ runWhenRegistryServerEnvDisabled("Skill registry user skill removal", () => {
     await resetSkillRegistryFixtureState();
     seedUserManagedSkill();
 
-    await navigateToHash("/dashboard/skills");
-    await waitForHashRoute("#/dashboard/skills");
-    await expect($('[data-testid="skills-page"]')).toExist();
+    await prepareLocalDesktopRuntime("/dashboard/skills");
     await waitForLocalVesloServerReady();
     await waitForAppVesloServerConnected();
     expect(await browserDenAuthBaseUrl()).toBe(readSkillRegistryFixtureBaseUrl());
@@ -214,5 +317,51 @@ runWhenRegistryServerEnvDisabled("Skill registry user skill removal", () => {
     );
 
     expect(await visibleBodyText()).not.toContain("Skill registry base URL is missing");
+  });
+
+  it("removes org-rollout-tool from active user skills through the rollout policy", async () => {
+    await resetSkillRegistryFixtureState();
+    rmSync(userManagedSkillsRoot(), { recursive: true, force: true });
+
+    await prepareLocalDesktopRuntime("/dashboard/skills");
+    const connection = await waitForLocalVesloServerReady();
+    await waitForAppVesloServerConnected();
+    expect(await browserDenAuthBaseUrl()).toBe(readSkillRegistryFixtureBaseUrl());
+
+    await syncGlobalMaterialization(connection);
+    await $('[data-testid="skills-refresh-button"]').click();
+    await waitForOrgRolloutSkill();
+
+    await clickOrgRolloutSkillRemoveButton();
+    await expect($('[data-testid="skill-uninstall-modal"]')).toExist();
+    expect(await $('[data-testid="skill-uninstall-modal"]').getText()).toContain(orgRolloutSkill.name);
+
+    await $('[data-testid="skill-uninstall-confirm"]').click();
+    await expect($('[data-testid="skill-uninstall-modal"]')).not.toExist();
+
+    await browser.waitUntil(
+      async () => {
+        const events = await readSkillRegistryFixtureEvents();
+        return events.updatedRolloutPolicyCalls.some((call) =>
+          call.policyId === E2E_SKILL_REGISTRY_FIXTURE.orgRolloutToolPolicyId && call.enabled === false
+        );
+      },
+      {
+        timeout: 10_000,
+        timeoutMsg: `org-rollout-tool removal did not disable rollout policy ${E2E_SKILL_REGISTRY_FIXTURE.orgRolloutToolPolicyId}. Body: ${await visibleBodyText()}`,
+      },
+    );
+
+    await browser.waitUntil(
+      async () => {
+        const found = await browser.execute((selector) => Boolean(document.querySelector(selector)), orgRolloutSkillSelector());
+        return !found;
+      },
+      {
+        timeout: 10_000,
+        timeoutMsg: `org-rollout-tool stayed visible as an active user skill after delete. Body: ${await visibleBodyText()}`,
+      },
+    );
+    expect(existsSync(orgRolloutSkillPath())).toBe(false);
   });
 });

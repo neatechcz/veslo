@@ -168,6 +168,15 @@ const personalGlobalSkill = fixtureSkill({
   description: 'Personal managed skill from the registry fixture.',
 });
 
+const orgRolloutTool = fixtureSkill({
+  name: 'org-rollout-tool',
+  skillId: 'skill_e2e_org_rollout_tool',
+  installationId: 'rollout:policy_e2e_org_rollout_tool',
+  versionId: 'version_org_rollout_tool_1',
+  source: 'organization',
+  description: 'Organization rollout tool materialized into user skills.',
+});
+
 export const E2E_SKILL_REGISTRY_FIXTURE = {
   runtimeSkill,
   runtimeSkillUpdated,
@@ -175,6 +184,8 @@ export const E2E_SKILL_REGISTRY_FIXTURE = {
   orgLockedSkill,
   personalShadowSkill,
   personalGlobalSkill,
+  orgRolloutTool,
+  orgRolloutToolPolicyId: 'policy_e2e_org_rollout_tool',
   workspaceSkillSetId: 'skill_set_e2e_org_workspace',
   workspaceSkillSetRevision: 'rev_e2e_org_workspace_1',
   workspaceSkillSetUpdatedRevision: 'rev_e2e_org_workspace_2',
@@ -185,6 +196,8 @@ let registryBaseUrl: string | null = null;
 let useUpdatedRuntimeVersion = false;
 let deletedInstallationIds = new Set<string>();
 let deletedInstallationCalls: string[] = [];
+let disabledRolloutPolicyIds = new Set<string>();
+let updatedRolloutPolicyCalls: Array<{ policyId: string; enabled: boolean | null }> = [];
 
 const fixtureInfoPath = () => join(process.cwd(), '.tmp-skill-registry-fixture.json');
 
@@ -223,6 +236,40 @@ function installationFor(skill: FixtureSkill, workspaceId = E2E_SKILL_REGISTRY_W
   };
 }
 
+function rolloutPolicyForOrgRolloutTool() {
+  return {
+    id: E2E_SKILL_REGISTRY_FIXTURE.orgRolloutToolPolicyId,
+    skillId: orgRolloutTool.skillId,
+    versionId: orgRolloutTool.versionId,
+    target: 'user-global',
+    audience: 'all-org-users',
+    catalogScope: 'organization',
+    orgId: E2E_SKILL_REGISTRY_ORG_ID,
+    enabled: !disabledRolloutPolicyIds.has(E2E_SKILL_REGISTRY_FIXTURE.orgRolloutToolPolicyId),
+    updatePolicy: 'pinned',
+    releaseChannel: null,
+    removalPolicy: 'admin_removable',
+    createdAt: '2026-05-27T00:00:00.000Z',
+    updatedAt: '2026-05-27T00:00:00.000Z',
+  };
+}
+
+function readJsonBody(req: IncomingMessage, callback: (body: Record<string, unknown>) => void): void {
+  let raw = '';
+  req.setEncoding('utf8');
+  req.on('data', (chunk) => {
+    raw += chunk;
+  });
+  req.on('end', () => {
+    try {
+      const parsed = raw.trim() ? JSON.parse(raw) : {};
+      callback(parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {});
+    } catch {
+      callback({});
+    }
+  });
+}
+
 function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void {
   const base = registryBaseUrl ?? 'http://127.0.0.1';
   const url = new URL(req.url ?? '/', base);
@@ -230,6 +277,8 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
     useUpdatedRuntimeVersion = false;
     deletedInstallationIds = new Set();
     deletedInstallationCalls = [];
+    disabledRolloutPolicyIds = new Set();
+    updatedRolloutPolicyCalls = [];
     json(res, 200, { ok: true, mode: 'initial' });
     return;
   }
@@ -239,7 +288,7 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
     return;
   }
   if (req.method === 'GET' && url.pathname === '/__e2e/events') {
-    json(res, 200, { deletedInstallationCalls });
+    json(res, 200, { deletedInstallationCalls, updatedRolloutPolicyCalls });
     return;
   }
 
@@ -252,6 +301,7 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
       orgLockedSkill,
       personalShadowSkill,
       personalGlobalSkill,
+      orgRolloutTool,
     ].map((skill) => [skill.versionId, skill]),
   );
 
@@ -284,6 +334,7 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
       orgLockedSkill,
       personalShadowSkill,
       personalGlobalSkill,
+      orgRolloutTool,
     ].find((candidate) => candidate.installationId === installationId);
     if (!skill) {
       json(res, 404, { code: 'not_found', message: 'Installation not found' });
@@ -325,7 +376,28 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
   }
 
   if (url.pathname === '/v1/skill-rollout-policies') {
-    json(res, 200, { policies: [], nextCursor: null });
+    const target = url.searchParams.get('target')?.trim() ?? '';
+    const enabled = url.searchParams.get('enabled')?.trim() ?? '';
+    const policy = rolloutPolicyForOrgRolloutTool();
+    const policies = target === 'user-global' && (enabled !== 'true' || policy.enabled) ? [policy] : [];
+    json(res, 200, { policies, nextCursor: null });
+    return;
+  }
+
+  const rolloutPolicyMatch = /^\/v1\/skill-rollout-policies\/([^/]+)$/.exec(url.pathname);
+  if (req.method === 'PATCH' && rolloutPolicyMatch?.[1]) {
+    const policyId = decodeURIComponent(rolloutPolicyMatch[1]);
+    readJsonBody(req, (body) => {
+      const enabled = typeof body.enabled === 'boolean' ? body.enabled : null;
+      if (policyId === E2E_SKILL_REGISTRY_FIXTURE.orgRolloutToolPolicyId && enabled === false) {
+        disabledRolloutPolicyIds.add(policyId);
+      }
+      if (policyId === E2E_SKILL_REGISTRY_FIXTURE.orgRolloutToolPolicyId && enabled === true) {
+        disabledRolloutPolicyIds.delete(policyId);
+      }
+      updatedRolloutPolicyCalls.push({ policyId, enabled });
+      json(res, 200, { policy: rolloutPolicyForOrgRolloutTool() });
+    });
     return;
   }
 
@@ -372,6 +444,8 @@ export async function stopSkillRegistryFixture(): Promise<void> {
   useUpdatedRuntimeVersion = false;
   deletedInstallationIds = new Set();
   deletedInstallationCalls = [];
+  disabledRolloutPolicyIds = new Set();
+  updatedRolloutPolicyCalls = [];
   rmSync(fixtureInfoPath(), { force: true });
   if (!server) return;
   await new Promise<void>((resolve, reject) => {
@@ -407,10 +481,16 @@ export async function useUpdatedRuntimeSkillVersion(): Promise<void> {
   await postFixtureControl('/__e2e/use-updated-runtime-version');
 }
 
-export async function readSkillRegistryFixtureEvents(): Promise<{ deletedInstallationCalls: string[] }> {
+export async function readSkillRegistryFixtureEvents(): Promise<{
+  deletedInstallationCalls: string[];
+  updatedRolloutPolicyCalls: Array<{ policyId: string; enabled: boolean | null }>;
+}> {
   const response = await fetch(`${readSkillRegistryFixtureBaseUrl()}/__e2e/events`);
   if (!response.ok) {
     throw new Error(`Skill registry fixture events failed with ${response.status}`);
   }
-  return (await response.json()) as { deletedInstallationCalls: string[] };
+  return (await response.json()) as {
+    deletedInstallationCalls: string[];
+    updatedRolloutPolicyCalls: Array<{ policyId: string; enabled: boolean | null }>;
+  };
 }

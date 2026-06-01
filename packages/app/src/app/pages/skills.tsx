@@ -1597,6 +1597,7 @@ export default function SkillsView(props: SkillsViewProps) {
       <div class="flex flex-wrap items-center gap-3 border-b border-dls-border pb-4">
         <button
           type="button"
+          data-testid="skills-refresh-button"
           onClick={() => {
             props.refreshSkillInventory({ force: true });
             props.refreshSkills({ force: true });
