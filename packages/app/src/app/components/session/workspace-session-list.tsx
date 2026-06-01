@@ -94,6 +94,7 @@ type Props = {
   unreadSessionIds?: Record<string, true>;
   activeWorkspaceId: string;
   selectedSessionId: string | null;
+  allowSelectedParentExpansion: boolean;
   pendingSelectedSessionId?: string | null;
   pendingSelectedWorkspaceId?: string | null;
   suspendProjectReorder?: boolean;
@@ -702,6 +703,7 @@ export default function WorkspaceSessionList(props: Props) {
       selectedSessionId: props.selectedSessionId,
       clickedSessionId: row.session.id,
       hasChildren: hasChildren(row.session.id),
+      allowSelectedParentExpansion: props.allowSelectedParentExpansion,
     });
 
     if (action.toggleExpandedParent) {

@@ -276,7 +276,7 @@ test("project rows expose drag lifecycle bindings without dedicated grip handle"
 test("clicking selected rows still opens session detail while selected parents toggle subagent expansion", () => {
   assert.match(
     source,
-    /const action = resolveSessionRowClickAction\(\{\s*selectedSessionId: props\.selectedSessionId,\s*clickedSessionId: row\.session\.id,\s*hasChildren: hasChildren\(row\.session\.id\),\s*\}\);/s,
+    /const action = resolveSessionRowClickAction\(\{\s*selectedSessionId: props\.selectedSessionId,\s*clickedSessionId: row\.session\.id,\s*hasChildren: hasChildren\(row\.session\.id\),\s*allowSelectedParentExpansion: props\.allowSelectedParentExpansion,\s*\}\);/s,
     "session row clicks should compute selected-row behavior through shared click action logic",
   );
 

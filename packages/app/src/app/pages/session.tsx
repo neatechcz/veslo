@@ -3910,6 +3910,7 @@ export default function SessionView(props: SessionViewProps) {
             archivedSessionIds={props.archivedSessionIds}
             activeWorkspaceId={props.activeWorkspaceId}
             selectedSessionId={props.selectedSessionId}
+            allowSelectedParentExpansion={true}
             pendingSelectedSessionId={props.pendingSessionLoad?.sessionId ?? null}
             pendingSelectedWorkspaceId={props.pendingSessionLoad?.workspaceId ?? null}
             suspendProjectReorder={Boolean(props.pendingSessionLoad)}

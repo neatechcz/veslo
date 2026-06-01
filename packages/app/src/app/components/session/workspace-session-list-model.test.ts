@@ -564,6 +564,7 @@ test("session row click behavior after restart keeps first click for selection a
     selectedSessionId: null,
     clickedSessionId: "root-parent",
     hasChildren: hasChildren("root-parent"),
+    allowSelectedParentExpansion: true,
   });
   assert.deepEqual(firstClick, {
     openSession: true,
@@ -574,10 +575,25 @@ test("session row click behavior after restart keeps first click for selection a
     selectedSessionId: "root-parent",
     clickedSessionId: "root-parent",
     hasChildren: hasChildren("root-parent"),
+    allowSelectedParentExpansion: true,
   });
   assert.deepEqual(secondClick, {
     openSession: true,
     toggleExpandedParent: true,
+  });
+});
+
+test("selected parent session navigation clicks can open without expanding subagents", () => {
+  const action = resolveSessionRowClickAction({
+    selectedSessionId: "root-parent",
+    clickedSessionId: "root-parent",
+    hasChildren: true,
+    allowSelectedParentExpansion: false,
+  });
+
+  assert.deepEqual(action, {
+    openSession: true,
+    toggleExpandedParent: false,
   });
 });
 

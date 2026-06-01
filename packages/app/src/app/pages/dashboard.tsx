@@ -1387,6 +1387,7 @@ export default function DashboardView(props: DashboardViewProps) {
               archivedSessionIds={props.archivedSessionIds}
               activeWorkspaceId={props.activeWorkspaceId}
               selectedSessionId={props.selectedSessionId}
+              allowSelectedParentExpansion={false}
               connectingWorkspaceId={props.connectingWorkspaceId}
               workspaceConnectionStateById={props.workspaceConnectionStateById}
               newTaskDisabled={props.newTaskDisabled}

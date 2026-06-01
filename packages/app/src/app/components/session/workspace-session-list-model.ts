@@ -392,6 +392,7 @@ export const resolveSessionRowClickAction = (input: {
   selectedSessionId: string | null | undefined;
   clickedSessionId: string | null | undefined;
   hasChildren: boolean;
+  allowSelectedParentExpansion: boolean;
 }): SessionRowClickAction => {
   const selected = input.selectedSessionId?.trim() ?? "";
   const clicked = input.clickedSessionId?.trim() ?? "";
@@ -411,7 +412,7 @@ export const resolveSessionRowClickAction = (input: {
 
   return {
     openSession: true,
-    toggleExpandedParent: input.hasChildren,
+    toggleExpandedParent: input.allowSelectedParentExpansion && input.hasChildren,
   };
 };
 
