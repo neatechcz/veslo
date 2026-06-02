@@ -476,6 +476,25 @@ test("batch skill removal calls the Veslo server client with selected targets an
         },
       },
     ]);
+    assert.deepEqual(calls.syncGlobalMaterializations, [
+      {
+        denApiBase: "https://api.veslo.test",
+        denToken: "den-token",
+        denOrgId: "org-1",
+        denUserId: "user-1",
+      },
+    ]);
+    assert.deepEqual(calls.syncWorkspaceMaterializations, [
+      {
+        workspaceId: "ws-alpha",
+        options: {
+          denApiBase: "https://api.veslo.test",
+          denToken: "den-token",
+          denOrgId: "org-1",
+          denUserId: "user-1",
+        },
+      },
+    ]);
     assert.ok(calls.hubRefreshes.length > 0);
     assert.ok(calls.inventoryReads.length > 0);
     assert.deepEqual(calls.reloads, [
