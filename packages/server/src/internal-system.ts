@@ -288,6 +288,60 @@ function upsertManagedBlock(
   return `${trimmed}\n\n${block.trimEnd()}\n`;
 }
 
+const LEGACY_ONBOARDING_SKILLS = ["workspace-guide", "get-started"] as const;
+
+function normalizeLegacySkillContent(content: string) {
+  return content.replace(/\r\n/g, "\n").replace(/\\"/g, '"');
+}
+
+function isLegacyWorkspaceGuideContent(content: string) {
+  const normalized = normalizeLegacySkillContent(content);
+  return normalized.includes("name: workspace-guide") &&
+    normalized.includes("description: Workspace guide to introduce") &&
+    normalized.includes("onboard new users") &&
+    normalized.includes("# Welcome to") &&
+    (normalized.includes("End with two friendly next actions to try") ||
+      normalized.includes("local-first alternative to Claude"));
+}
+
+function isLegacyGetStartedContent(content: string) {
+  const normalized = normalizeLegacySkillContent(content);
+  return normalized.includes("name: get-started") &&
+    normalized.includes("description: Guide users through the get started setup") &&
+    normalized.includes("Chrome DevTools demo") &&
+    normalized.includes('Always load this skill when the user says "get started"') &&
+    normalized.includes("Reply with these four lines, exactly and in order");
+}
+
+function isLegacyOnboardingSkillContent(name: string, content: string) {
+  if (name === "workspace-guide") return isLegacyWorkspaceGuideContent(content);
+  if (name === "get-started") return isLegacyGetStartedContent(content);
+  return false;
+}
+
+async function skillDirContainsOnlyEntrypoint(skillDir: string) {
+  const entries = await readdir(skillDir, { withFileTypes: true });
+  return entries.length === 1 && entries[0]?.isFile() && entries[0].name === "SKILL.md";
+}
+
+async function removeLegacyOnboardingSkills(workspaceRoot: string, stats: ProvisionStats) {
+  const skillRoot = join(workspaceRoot, ".opencode", "skills");
+  if (!(await exists(skillRoot))) return;
+
+  for (const name of LEGACY_ONBOARDING_SKILLS) {
+    const skillDir = join(skillRoot, name);
+    const skillPath = join(skillDir, "SKILL.md");
+    if (!(await exists(skillPath))) continue;
+    if (!(await skillDirContainsOnlyEntrypoint(skillDir))) continue;
+
+    const content = await readFile(skillPath, "utf8");
+    if (!isLegacyOnboardingSkillContent(name, content)) continue;
+
+    await rm(skillDir, { recursive: true, force: true });
+    stats.written += 1;
+  }
+}
+
 async function ensureWorkspaceInstructions(workspaceRoot: string, stats: ProvisionStats) {
   const path = join(workspaceRoot, "AGENTS.md");
   const existing = (await exists(path)) ? await readFile(path, "utf8") : "";
@@ -907,6 +961,7 @@ export async function provisionWorkspaceInternalSystem(
     centralPacksDir = await provisionCentralPacks(appDataDir);
   }
 
+  await removeLegacyOnboardingSkills(workspaceRoot, stats);
   await ensureSoulFiles(workspaceRoot, stats);
   await copyInternalPacks(workspaceRoot, stats, centralPacksDir);
   await writeInternalAgents(workspaceRoot, stats);

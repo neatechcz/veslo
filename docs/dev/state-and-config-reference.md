@@ -297,6 +297,18 @@ workspace behavior, but the inventory must not expand user skills under every
 workspace. Workspace rows represent only real workspace-local instances or
 overrides.
 
+Private app-created workspaces, including new private chat workspaces, remove
+workspace-local skill directories that are exact copies of user-root skills
+during provisioning. User-root skills remain user-global inventory entries and
+must not become private workspace-only entries.
+
+Older desktop builds created `workspace-guide` and `get-started` as
+workspace-local onboarding skills. They are no longer part of the runtime skill
+catalog. Workspace provisioning removes those legacy directories only when the
+contents still match the generated onboarding templates and the directory
+contains no files other than `SKILL.md`; user-owned skills with the same names or
+additional files are preserved.
+
 Skill edit and save flows target a concrete inventory instance by scope,
 workspace id, and path before falling back to name-based legacy commands.
 Remove and restore target only concrete skill locations or registry records
