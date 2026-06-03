@@ -328,6 +328,42 @@ export const buildRowHierarchyLookup = (rows: FlatSessionRow[]): RowHierarchyLoo
   return { rowBySessionId, parentBySessionId, childrenByParentId };
 };
 
+export const rootRowsForSessionTree = (rows: FlatSessionRow[]): FlatSessionRow[] => {
+  const ids = new Set(rows.map((row) => row.session.id));
+  return rows.filter((row) => !row.parentSessionId || !ids.has(row.parentSessionId));
+};
+
+export const directChildRowsForParent = (
+  rows: FlatSessionRow[],
+  parentSessionId: string,
+): FlatSessionRow[] => {
+  const id = parentSessionId.trim();
+  if (!id) return [];
+  return rows.filter((row) => row.parentSessionId === id);
+};
+
+export const descendantRowsForParent = (
+  rows: FlatSessionRow[],
+  parentSessionId: string,
+): FlatSessionRow[] => {
+  const id = parentSessionId.trim();
+  if (!id) return [];
+
+  const parentIndex = rows.findIndex((row) => row.session.id === id);
+  if (parentIndex < 0) return [];
+
+  const parentLevel = rows[parentIndex].nestingLevel;
+  const descendants: FlatSessionRow[] = [];
+
+  for (let index = parentIndex + 1; index < rows.length; index += 1) {
+    const row = rows[index];
+    if (row.nestingLevel <= parentLevel) break;
+    descendants.push(row);
+  }
+
+  return descendants;
+};
+
 export const rowVisibleByExpansion = (
   row: FlatSessionRow,
   lookup: RowHierarchyLookup,

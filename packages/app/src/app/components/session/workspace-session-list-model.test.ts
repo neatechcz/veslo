@@ -6,12 +6,15 @@ import {
   buildProjectGroups,
   buildRecentRows,
   buildRowHierarchyLookup,
+  directChildRowsForParent,
+  descendantRowsForParent,
   displayTimestamp,
   filterVisibleProjectGroups,
   formatSessionRelativeAge,
   formatSessionTimestampTooltip,
   isProjectCollapsed,
   resolveSessionRowClickAction,
+  rootRowsForSessionTree,
   sessionChatLabel,
   splitSessionDisplayLabel,
   splitProjectGroupsForSidebar,
@@ -526,6 +529,63 @@ test("rowVisibleByExpansion keeps a three-level branch closed until each parent 
   assert.deepEqual(visibleIds(new Set()), ["root-a"]);
   assert.deepEqual(visibleIds(new Set(["root-a"])), ["root-a", "sub-a-1"]);
   assert.deepEqual(visibleIds(new Set(["root-a", "sub-a-1"])), ["root-a", "sub-a-1", "sub-a-2"]);
+});
+
+test("session tree helpers expose roots, direct children, and descendants in row order", () => {
+  const workspace = {
+    id: "workspace-1",
+    name: "workspace-1",
+    path: "/tmp/workspace-1",
+    preset: "starter",
+    workspaceType: "local" as const,
+  };
+
+  const rows = buildRecentRows([
+    {
+      workspace,
+      sessions: [
+        { id: "root-a", title: "root-a", time: { created: 100, updated: 100 } },
+        { id: "child-a", title: "child-a", parentID: "root-a", time: { created: 110, updated: 110 } },
+        { id: "grandchild-a", title: "grandchild-a", parentID: "child-a", time: { created: 120, updated: 120 } },
+        { id: "child-b", title: "child-b", parentID: "root-a", time: { created: 105, updated: 105 } },
+        { id: "root-b", title: "root-b", time: { created: 90, updated: 90 } },
+      ],
+      status: "ready",
+    },
+  ]);
+
+  assert.deepEqual(rootRowsForSessionTree(rows).map((row) => row.session.id), ["root-a", "root-b"]);
+  assert.deepEqual(directChildRowsForParent(rows, "root-a").map((row) => row.session.id), ["child-a", "child-b"]);
+  assert.deepEqual(descendantRowsForParent(rows, "root-a").map((row) => row.session.id), [
+    "child-a",
+    "grandchild-a",
+    "child-b",
+  ]);
+});
+
+test("session tree helpers treat rows whose parent is missing from the slice as roots", () => {
+  const workspace = {
+    id: "workspace-1",
+    name: "workspace-1",
+    path: "/tmp/workspace-1",
+    preset: "starter",
+    workspaceType: "local" as const,
+  };
+
+  const rows = buildRecentRows([
+    {
+      workspace,
+      sessions: [
+        { id: "root-a", title: "root-a", time: { created: 100, updated: 100 } },
+        { id: "child-a", title: "child-a", parentID: "root-a", time: { created: 110, updated: 110 } },
+      ],
+      status: "ready",
+    },
+  ]);
+
+  const sliced = rows.slice(1);
+
+  assert.deepEqual(rootRowsForSessionTree(sliced).map((row) => row.session.id), ["child-a"]);
 });
 
 test("session row click behavior after restart keeps first click for selection and second click for subagent expansion", () => {
