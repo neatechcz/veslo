@@ -28,6 +28,8 @@ import {
 } from "../../utils";
 import {
   buildRowHierarchyLookup,
+  directChildRowsForParent,
+  descendantRowsForParent,
   filterVisibleProjectGroups,
   buildProjectGroups,
   buildRecentRows,
@@ -42,6 +44,7 @@ import {
   sessionSidebarTitle,
   splitProjectGroupsForSidebar,
   splitSessionDisplayLabel,
+  rootRowsForSessionTree,
   toggleProjectCollapsed,
   type FlatSessionRow,
   type ProjectSessionGroup,
@@ -167,6 +170,31 @@ type ChatSidebarResizeState = {
   startHeight: number;
   restoreHeight: number;
   wasCollapsed: boolean;
+};
+
+type SessionRowRenderOptions = {
+  anchorPrefix: string;
+  label?: (row: FlatSessionRow) => string;
+  showWorkspaceMenu?: boolean;
+  soulEnabled?: () => boolean;
+  canRecover?: () => boolean;
+  isConnectionActionBusy?: () => boolean;
+  variant?: "project" | "recent";
+};
+
+type AnimatedSessionBranchProps = {
+  parentSessionId: string;
+  rows: FlatSessionRow[];
+  open: boolean;
+  hasChildren: (sessionId: string) => boolean;
+  options: SessionRowRenderOptions;
+};
+
+type SessionTreeRowsProps = {
+  rows: FlatSessionRow[];
+  hasChildren: (sessionId: string) => boolean;
+  options: SessionRowRenderOptions;
+  parentSessionId?: string;
 };
 
 const CHAT_SIDEBAR_COLLAPSED_DRAG_ACTIVATION_PX = 4;
@@ -568,6 +596,8 @@ export default function WorkspaceSessionList(props: Props) {
   );
 
   const recentHierarchy = createMemo(() => buildRowHierarchyLookup(visibleRecentRows()));
+  const recentHasChildren = (sessionId: string) =>
+    (recentHierarchy().childrenByParentId.get(sessionId)?.length ?? 0) > 0;
 
   const recentRowsTreeVisible = createMemo(() =>
     visibleRecentRows().filter((row) =>
@@ -1819,6 +1849,238 @@ export default function WorkspaceSessionList(props: Props) {
     );
   };
 
+  const recentSessionRow = (
+    row: FlatSessionRow,
+    hasChildren: (sessionId: string) => boolean,
+    options: SessionRowRenderOptions,
+  ) => {
+    const workspace = () => row.workspace;
+    const session = () => row.session;
+    const isSelected = () => isRowSelected(workspace().id, session().id);
+    const isSessionActive = () => (props.sessionStatusById?.[session().id] ?? "idle") !== "idle";
+    const isUnread = () => isSessionUnread(session().id);
+    const isConnecting = () => isConnectingWorkspace(workspace().id);
+    const soulStatus = () => props.soulStatusByWorkspaceId[workspace().id] ?? null;
+    const soulEnabled = () => Boolean(soulStatus()?.enabled);
+    const taskLoadError = () => taskLoadErrorFor(workspace(), row.error);
+    const label = () => sessionLabelParts(row);
+    const labelColor = () => sessionLabelColor(row);
+    const archiveConfirmationPending = () => isArchiveConfirmationPending(session().id);
+    const anchorKey = `${options.anchorPrefix}:${row.rowKey}`;
+
+    return (
+      <div
+        class="relative group/session-row"
+        onContextMenu={(event) => handleSessionRowContextMenu(event, workspace().id, anchorKey)}
+      >
+        <button
+          type="button"
+          data-session-sidebar-row="true"
+          class={sessionRowClass(isSelected(), "pr-12")}
+          aria-current={isSelected() ? "page" : undefined}
+          style={rowIndentStyle(row)}
+          onMouseUp={(event) => handleSessionRowMouseUp(event, row, hasChildren)}
+          onClick={(event) => handleSessionRowPress(event, row, hasChildren)}
+        >
+          <span class="relative min-w-0 flex-1">
+            <span class="flex items-center gap-1.5 min-w-0">
+              <Show when={isSessionActive()}>
+                <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
+              </Show>
+              <span
+                class="text-[13px] text-gray-12 truncate"
+                classList={{ "font-bold": isUnread() }}
+                title={sessionLabelTitle(row)}
+              >
+                <Show when={label().decoratedName} fallback={label().description ?? ""}>
+                  {(decoratedName) => (
+                    <>
+                      <span style={labelColor() ? { color: labelColor() } : undefined}>
+                        {decoratedName()}
+                      </span>
+                      <Show when={label().description}>
+                        {(description) => <span>{` · ${description()}`}</span>}
+                      </Show>
+                    </>
+                  )}
+                </Show>
+              </span>
+            </span>
+
+            <span class="mt-px flex items-center gap-1 text-[11px] text-gray-10 min-w-0">
+              <Show when={row.projectLabel}>
+                <span class="truncate">{row.projectLabel}</span>
+              </Show>
+              <Show when={row.projectLabel && workspace().workspaceType === "remote"}>
+                <span aria-hidden>•</span>
+              </Show>
+              <Show when={workspace().workspaceType === "remote"}>
+                <span>{workspaceKindLabel(workspace())}</span>
+              </Show>
+              <Show when={soulEnabled()}>
+                <span class="inline-flex items-center gap-1 rounded-full border border-ruby-7 bg-ruby-3 px-1.5 py-0.5 text-[10px] text-ruby-11">
+                  <HeartPulse size={10} />
+                  {tr("sidebar.soul_badge")}
+                </span>
+              </Show>
+              <Show when={isConnecting()}>
+                <Loader2 size={11} class="animate-spin text-gray-10" />
+              </Show>
+              <Show when={row.status === "error"}>
+                <span
+                  class={`text-[10px] px-1.5 py-0.5 rounded-full border ${
+                    taskLoadError().tone === "offline"
+                      ? "border-amber-7 text-amber-11 bg-amber-3"
+                      : "border-red-7 text-red-11 bg-red-3"
+                  }`}
+                  title={taskLoadError().title}
+                >
+                  {taskLoadError().label}
+                </span>
+              </Show>
+            </span>
+          </span>
+        </button>
+
+        <span
+          class={`pointer-events-none absolute right-2 bottom-1 text-[11px] text-gray-9 whitespace-nowrap transition-opacity ${
+            sessionHoverActionsSuspended()
+              ? ""
+              : "group-hover/session-row:opacity-0 group-focus-within/session-row:opacity-0"
+          }`}
+          title={formatSessionTimestampTooltip(displayTimestamp(session()), currentLocale())}
+        >
+          {formatSessionRelativeAge(displayTimestamp(session()))}
+        </span>
+
+        <div
+          class={`absolute right-2 bottom-1 transition-opacity ${
+            archiveConfirmationPending()
+              ? "opacity-100"
+              : sessionHoverActionsSuspended()
+              ? "pointer-events-none opacity-0"
+              : "opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100"
+          }`}
+        >
+          <button
+            type="button"
+            class={archiveConfirmationPending()
+              ? "rounded-md border border-amber-7 bg-amber-3 px-2 py-0.5 text-[11px] font-medium text-amber-11 hover:bg-amber-4"
+              : "p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"}
+            onClick={(event) => handleSessionArchiveAction(event, session().id)}
+            aria-label={archiveConfirmationPending()
+              ? tr("sidebar.archive_confirm")
+              : isSessionArchived(session().id)
+              ? tr("sidebar.unarchive_session")
+              : tr("sidebar.archive_session")}
+            title={archiveConfirmationPending()
+              ? tr("sidebar.archive_confirm")
+              : isSessionArchived(session().id)
+              ? tr("sidebar.unarchive_session")
+              : tr("sidebar.archive_session")}
+            ref={(el) => {
+              if (archiveConfirmationPending()) pendingArchiveConfirmButtonRef = el;
+            }}
+          >
+            <Show when={archiveConfirmationPending()} fallback={<Archive size={14} />}>
+              {tr("sidebar.archive_confirm")}
+            </Show>
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderSingleSessionRow = (
+    row: FlatSessionRow,
+    hasChildren: (sessionId: string) => boolean,
+    options: SessionRowRenderOptions,
+  ) => {
+    if (options.variant === "recent") {
+      return recentSessionRow(row, hasChildren, options);
+    }
+
+    return projectSessionRow(row, hasChildren, {
+      anchorKey: `${options.anchorPrefix}:${row.rowKey}`,
+      label: options.label ? () => options.label?.(row) ?? "" : undefined,
+      showWorkspaceMenu: options.showWorkspaceMenu,
+      soulEnabled: options.soulEnabled,
+      canRecover: options.canRecover,
+      isConnectionActionBusy: options.isConnectionActionBusy,
+    });
+  };
+
+  const renderSessionTreeRows = (
+    rows: FlatSessionRow[],
+    hasChildren: (sessionId: string) => boolean,
+    options: SessionRowRenderOptions,
+    parentSessionId?: string,
+  ): JSX.Element => (
+    <SessionTreeRows
+      rows={rows}
+      hasChildren={hasChildren}
+      options={options}
+      parentSessionId={parentSessionId}
+    />
+  );
+
+  const SessionTreeRows = (props: SessionTreeRowsProps) => {
+    const hasChildren = props.hasChildren;
+    const options = props.options;
+    const branchRows = createMemo(() =>
+      props.parentSessionId
+        ? directChildRowsForParent(props.rows, props.parentSessionId)
+        : rootRowsForSessionTree(props.rows),
+    );
+
+    return (
+      <For each={branchRows()}>
+        {(row) => (
+          <>
+            {renderSingleSessionRow(row, hasChildren, options)}
+            <Show when={hasChildren(row.session.id)}>
+              <AnimatedSessionBranch
+                parentSessionId={row.session.id}
+                rows={descendantRowsForParent(props.rows, row.session.id)}
+                open={expandedParentSessionIds().has(row.session.id)}
+                hasChildren={hasChildren}
+                options={options}
+              />
+            </Show>
+          </>
+        )}
+      </For>
+    );
+  };
+
+  const AnimatedSessionBranch = (props: AnimatedSessionBranchProps) => {
+    const [renderedRows, setRenderedRows] = createSignal<FlatSessionRow[]>(props.open ? props.rows : []);
+
+    createEffect(() => {
+      if (props.open || props.rows.length > 0) {
+        setRenderedRows(props.rows);
+      }
+    });
+
+    return (
+      <AnimatedCollapse
+        open={props.open}
+        region="session-branch"
+        innerClass="space-y-0"
+        onExitComplete={() => {
+          if (!props.open) setRenderedRows([]);
+        }}
+      >
+        {renderSessionTreeRows(
+          renderedRows(),
+          props.hasChildren,
+          props.options,
+          props.parentSessionId,
+        )}
+      </AnimatedCollapse>
+    );
+  };
+
   const emptyState = (
     <Show
       when={anyWorkspaceLoading()}
@@ -1972,150 +2234,10 @@ export default function WorkspaceSessionList(props: Props) {
             <Show when={sidebarMode() === "by-project"} fallback={
               <>
                 <div class="space-y-0">
-                  <For each={recentRowsVisible()}>
-                    {(row) => {
-                      const workspace = () => row.workspace;
-                      const session = () => row.session;
-                      const hasChildren = (sessionId: string) =>
-                        (recentHierarchy().childrenByParentId.get(sessionId)?.length ?? 0) > 0;
-                      const isSelected = () => isRowSelected(workspace().id, session().id);
-                      const isSessionActive = () => (props.sessionStatusById?.[session().id] ?? "idle") !== "idle";
-                      const isUnread = () => isSessionUnread(session().id);
-                      const isConnecting = () => isConnectingWorkspace(workspace().id);
-                      const canRecover = () => canRecoverWorkspace(workspace());
-                      const soulStatus = () => props.soulStatusByWorkspaceId[workspace().id] ?? null;
-                      const soulEnabled = () => Boolean(soulStatus()?.enabled);
-                      const taskLoadError = () => taskLoadErrorFor(workspace(), row.error);
-                      const label = () => sessionLabelParts(row);
-                      const labelColor = () => sessionLabelColor(row);
-                      const archiveConfirmationPending = () => isArchiveConfirmationPending(session().id);
-                      const anchorKey = `recent:${row.rowKey}`;
-                      const isConnectionActionBusy = () => isConnectionActionBusyFor(workspace().id);
-
-                      return (
-                        <div
-                          class="relative group/session-row"
-                          onContextMenu={(event) => handleSessionRowContextMenu(event, workspace().id, anchorKey)}
-                        >
-                          <button
-                            type="button"
-                            data-session-sidebar-row="true"
-                            class={sessionRowClass(isSelected(), "pr-12")}
-                            aria-current={isSelected() ? "page" : undefined}
-                            style={rowIndentStyle(row)}
-                            onMouseUp={(event) => handleSessionRowMouseUp(event, row, hasChildren)}
-                            onClick={(event) => handleSessionRowPress(event, row, hasChildren)}
-                          >
-                            <span class="relative min-w-0 flex-1">
-                              <span class="flex items-center gap-1.5 min-w-0">
-                                <Show when={isSessionActive()}>
-                                  <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
-                                </Show>
-                                <span
-                                  class="text-[13px] text-gray-12 truncate"
-                                  classList={{ "font-bold": isUnread() }}
-                                  title={sessionLabelTitle(row)}
-                                >
-                                  <Show when={label().decoratedName} fallback={label().description ?? ""}>
-                                    {(decoratedName) => (
-                                      <>
-                                        <span style={labelColor() ? { color: labelColor() } : undefined}>
-                                          {decoratedName()}
-                                        </span>
-                                        <Show when={label().description}>
-                                          {(description) => <span>{` · ${description()}`}</span>}
-                                        </Show>
-                                      </>
-                                    )}
-                                  </Show>
-                                </span>
-                              </span>
-
-                              <span class="mt-px flex items-center gap-1 text-[11px] text-gray-10 min-w-0">
-                                <Show when={row.projectLabel}>
-                                  <span class="truncate">{row.projectLabel}</span>
-                                </Show>
-                                <Show when={row.projectLabel && workspace().workspaceType === "remote"}>
-                                  <span aria-hidden>•</span>
-                                </Show>
-                                <Show when={workspace().workspaceType === "remote"}>
-                                  <span>{workspaceKindLabel(workspace())}</span>
-                                </Show>
-                                <Show when={soulEnabled()}>
-                                  <span class="inline-flex items-center gap-1 rounded-full border border-ruby-7 bg-ruby-3 px-1.5 py-0.5 text-[10px] text-ruby-11">
-                                    <HeartPulse size={10} />
-                                    {tr("sidebar.soul_badge")}
-                                  </span>
-                                </Show>
-                                <Show when={isConnecting()}>
-                                  <Loader2 size={11} class="animate-spin text-gray-10" />
-                                </Show>
-                                <Show when={row.status === "error"}>
-                                  <span
-                                    class={`text-[10px] px-1.5 py-0.5 rounded-full border ${
-                                      taskLoadError().tone === "offline"
-                                        ? "border-amber-7 text-amber-11 bg-amber-3"
-                                        : "border-red-7 text-red-11 bg-red-3"
-                                    }`}
-                                    title={taskLoadError().title}
-                                  >
-                                    {taskLoadError().label}
-                                  </span>
-                                </Show>
-                              </span>
-                            </span>
-                          </button>
-
-                          <span
-                            class={`pointer-events-none absolute right-2 bottom-1 text-[11px] text-gray-9 whitespace-nowrap transition-opacity ${
-                              sessionHoverActionsSuspended()
-                                ? ""
-                                : "group-hover/session-row:opacity-0 group-focus-within/session-row:opacity-0"
-                            }`}
-                            title={formatSessionTimestampTooltip(displayTimestamp(session()), currentLocale())}
-                          >
-                            {formatSessionRelativeAge(displayTimestamp(session()))}
-                          </span>
-
-                          <div
-                            class={`absolute right-2 bottom-1 transition-opacity ${
-                              archiveConfirmationPending()
-                                ? "opacity-100"
-                                : sessionHoverActionsSuspended()
-                                ? "pointer-events-none opacity-0"
-                                : "opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100"
-                            }`}
-                          >
-                            <button
-                              type="button"
-                              class={archiveConfirmationPending()
-                                ? "rounded-md border border-amber-7 bg-amber-3 px-2 py-0.5 text-[11px] font-medium text-amber-11 hover:bg-amber-4"
-                                : "p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"}
-                              onClick={(event) => handleSessionArchiveAction(event, session().id)}
-                              aria-label={archiveConfirmationPending()
-                                ? tr("sidebar.archive_confirm")
-                                : isSessionArchived(session().id)
-                                ? tr("sidebar.unarchive_session")
-                                : tr("sidebar.archive_session")}
-                              title={archiveConfirmationPending()
-                                ? tr("sidebar.archive_confirm")
-                                : isSessionArchived(session().id)
-                                ? tr("sidebar.unarchive_session")
-                                : tr("sidebar.archive_session")}
-                              ref={(el) => {
-                                if (archiveConfirmationPending()) pendingArchiveConfirmButtonRef = el;
-                              }}
-                            >
-                              <Show when={archiveConfirmationPending()} fallback={<Archive size={14} />}>
-                                {tr("sidebar.archive_confirm")}
-                              </Show>
-                            </button>
-                          </div>
-
-                        </div>
-                      );
-                    }}
-                  </For>
+                  {renderSessionTreeRows(recentRowsVisible(), recentHasChildren, {
+                    anchorPrefix: "recent",
+                    variant: "recent",
+                  })}
                   <Show when={recentRowsVisible().length === 0}>
                     <For each={recentFallbackProjectGroups()}>
                       {(project) => {
@@ -2389,15 +2511,12 @@ export default function WorkspaceSessionList(props: Props) {
 
                     <Show when={!collapsed()}>
                       <div class="pl-5 pt-0.5 space-y-0">
-                        <For each={visibleRows()}>
-                          {(row) =>
-                            projectSessionRow(row, hasChildren, {
-                              anchorKey: `project-session:${row.rowKey}`,
-                              soulEnabled,
-                              canRecover,
-                              isConnectionActionBusy,
-                            })}
-                        </For>
+                        {renderSessionTreeRows(visibleRows(), hasChildren, {
+                          anchorPrefix: "project-session",
+                          soulEnabled,
+                          canRecover,
+                          isConnectionActionBusy,
+                        })}
                         <Show when={canLoadMoreProjectRows()}>
                           <div>
                             <button
@@ -2509,14 +2628,11 @@ export default function WorkspaceSessionList(props: Props) {
                     height: `${chatSidebarListHeight()}px`,
                   }}
                 >
-                  <For each={chatRows()}>
-                    {(row) =>
-                      projectSessionRow(row, hasChildren, {
-                        anchorKey: `chat-session:${row.rowKey}`,
-                        label: () => sessionChatLabel(row.session, tr("session.chat_label")),
-                        showWorkspaceMenu: false,
-                      })}
-                  </For>
+                  {renderSessionTreeRows(chatRows(), hasChildren, {
+                    anchorPrefix: "chat-session",
+                    label: (row) => sessionChatLabel(row.session, tr("session.chat_label")),
+                    showWorkspaceMenu: false,
+                  })}
                   <Show when={canLoadMoreChatRows()}>
                     <div>
                       <button

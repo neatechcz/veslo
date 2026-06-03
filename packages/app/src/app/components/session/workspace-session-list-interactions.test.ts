@@ -32,12 +32,12 @@ test("recent mode interactions stay wired to recentRowsVisible instead of chatPr
 
   assert.match(
     recentBranch,
-    /<For each=\{recentRowsVisible\(\)\}>/,
-    "recent mode should iterate the recent row stream",
+    /renderSessionTreeRows\(\s*recentRowsVisible\(\),\s*recentHasChildren,/s,
+    "recent mode should render the recent row stream through the animated tree renderer",
   );
 
   assert.match(
-    recentBranch,
+    source,
     /onClick=\{\(event\) => handleSessionRowPress\(event, row, hasChildren\)\}/,
     "recent rows should keep the shared row-click behavior",
   );
@@ -403,6 +403,39 @@ test("session label span exposes full title tooltip and renders colored subagent
   );
 });
 
+test("session and subagent branches render through animated branch containers", () => {
+  assert.match(source, /const AnimatedSessionBranch = \(props: AnimatedSessionBranchProps\) =>/);
+  assert.match(source, /data-sidebar-collapse-region=\{props\.region\}/);
+  assert.match(source, /descendantRowsForParent\(props\.rows, row\.session\.id\)/);
+  assert.match(source, /directChildRowsForParent\(props\.rows, props\.parentSessionId\)/);
+});
+
+test("recent and by-project session lists use the animated session tree renderer", () => {
+  assert.match(source, /renderSessionTreeRows\(\s*recentRowsVisible\(\),/s);
+  assert.match(source, /renderSessionTreeRows\(\s*visibleRows\(\),/s);
+  assert.match(source, /renderSessionTreeRows\(\s*chatRows\(\),/s);
+});
+
+test("animated session branch rendering keeps parent row click behavior and archive wiring shared", () => {
+  assert.match(
+    source,
+    /renderSingleSessionRow\(row, hasChildren, options\)/,
+    "tree renderer should render parent rows through the shared row component",
+  );
+
+  assert.match(
+    source,
+    /open=\{expandedParentSessionIds\(\)\.has\(row\.session\.id\)\}/,
+    "animated branches should still read explicit persisted parent expansion state",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /const handleSessionExpandToggle = \(event: MouseEvent, sessionId: string\) => \{/,
+    "animated branch wiring must not reintroduce a dedicated session branch toggle",
+  );
+});
+
 test("collapsed project persistence writes only from explicit user toggles", () => {
   assert.match(
     source,
@@ -410,9 +443,12 @@ test("collapsed project persistence writes only from explicit user toggles", () 
     "collapsed project state should persist when user toggles a project header",
   );
 
-  assert.doesNotMatch(
-    source,
-    /createEffect\(\(\) => \{[\s\S]*writeCollapsedProjectMap\(/,
+  const effectBlocks = Array.from(source.matchAll(/createEffect\(\(\) => \{[\s\S]*?\n  \}\);/g)).map(
+    (match) => match[0],
+  );
+  assert.equal(
+    effectBlocks.some((block) => /writeCollapsedProjectMap\(/.test(block)),
+    false,
     "startup/effect paths must not overwrite persisted collapse preferences",
   );
 });
