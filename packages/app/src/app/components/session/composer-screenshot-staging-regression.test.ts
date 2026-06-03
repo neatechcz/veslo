@@ -17,7 +17,7 @@ test("staging failure blocks send with an explicit error and no draft clear", ()
 
   assert.match(
     stagingWindow,
-    /const stagedAttachments = await stageAttachmentsIntoSessionDirectory\(resolvedDraft, sessionID\);\s*const routedDraft = routeStagedAttachmentsForModel\(\{[\s\S]*?\}\);\s*if \(routedDraft\.error\) \{\s*restorePendingDraftAfterSendFailure\(\);\s*setError\(routedDraft\.error\);\s*return false;\s*\}\s*resolvedDraft = routedDraft\.draft;\s*promptSystem = routedDraft\.system;\s*\} catch \(error\) \{\s*restorePendingDraftAfterSendFailure\(\);\s*setError\(error instanceof Error \? error\.message : safeStringify\(error\)\);\s*return false;\s*\}/s,
+    /const stagedAttachments = await stageAttachmentsIntoSessionDirectory\(resolvedDraft, sessionID\);\s*const routedDraft = routeStagedAttachmentsForModel\(\{[\s\S]*?\}\);\s*if \(routedDraft\.error\) \{\s*restorePendingDraftAfterSendFailure\(\);\s*setError\(routedDraft\.error\);\s*stopSendPromptBusy\(\);\s*return false;\s*\}\s*resolvedDraft = routedDraft\.draft;\s*promptSystem = routedDraft\.system;\s*\} catch \(error\) \{\s*restorePendingDraftAfterSendFailure\(\);\s*setError\(error instanceof Error \? error\.message : safeStringify\(error\)\);\s*stopSendPromptBusy\(\);\s*return false;\s*\}/s,
     "send flow should hard-fail when attachment staging fails",
   );
 
@@ -33,7 +33,10 @@ test("send flow snapshots pending draft context before materializing a real sess
   const sessionTarget = appSource.indexOf("let sessionID = options.targetSessionId?.trim() || selectedSessionId();", sendStart);
   const pendingSnapshot = appSource.indexOf("const pendingDraftSendState = (() => {", sessionTarget);
   const pendingKey = appSource.indexOf("const pendingDraftKey = (activePendingDraftKey() ?? \"\").trim();", pendingSnapshot);
-  const sessionCreate = appSource.indexOf("sessionID = (await createSessionAndOpen(initialSessionTitle)) ?? selectedSessionId();", pendingSnapshot);
+  const sessionCreate = appSource.indexOf(
+    "sessionID = (await createSessionAndOpen(initialSessionTitle, { blockAppDuringCreate: blockAppDuringPromptSend })) ?? selectedSessionId();",
+    pendingSnapshot,
+  );
 
   assert.notEqual(sendStart, -1, "sendPrompt should exist");
   assert.ok(sessionTarget > sendStart, "send flow should resolve the target session before pending draft snapshot");
@@ -127,7 +130,7 @@ test("send flow blocks screenshot analysis on non-vision models instead of relyi
 
   assert.match(
     appSource,
-    /if \(routedDraft\.error\) \{\s*restorePendingDraftAfterSendFailure\(\);\s*setError\(routedDraft\.error\);\s*return false;\s*\}/s,
+    /if \(routedDraft\.error\) \{\s*restorePendingDraftAfterSendFailure\(\);\s*setError\(routedDraft\.error\);\s*stopSendPromptBusy\(\);\s*return false;\s*\}/s,
     "non-vision screenshot sends should fail with a visible error before the prompt runs",
   );
 

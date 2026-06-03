@@ -57,6 +57,8 @@ Current keyboard behavior:
 Submit behavior:
 
 - a submitted draft is rendered immediately as a temporary user message while workspace/session/message handoff is pending
+- if the submitted draft materializes a brand-new pending chat, the starter-template empty state is hidden immediately and the session footer shows the normal responding state before backend messages arrive
+- first-send workspace and session materialization is scoped to the session run state; it must not hold the global app busy/navigation lock or force the user back to chat if they navigate elsewhere while the handoff is still pending
 - the Composer clears immediately and remains available for a separate new draft, including while a new session is still being materialized
 - attachment staging, pending-session creation, and message handoff continue in the backend/session layer after the Composer releases the submitted draft
 - if handoff fails before a real message exists, the temporary user message stays in the timeline with failed status instead of being restored into the Composer automatically

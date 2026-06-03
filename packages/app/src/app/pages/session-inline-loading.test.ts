@@ -64,3 +64,39 @@ test("pending draft write-back only runs while the bare pending draft route owns
     "pending-draft persistence should stop once a real session is selected so a failed send cannot overwrite the pending draft with the real-session composer bucket",
   );
 });
+
+test("optimistic first submit replaces the quickstart empty state immediately", () => {
+  assert.match(
+    sessionSource,
+    /const showQuickstartEmptyState = createMemo\(\(\) =>\s*effectiveRenderedMessages\(\)\.length === 0 &&\s*!showWorkspaceSetupEmptyState\(\) &&\s*!showSessionLoadingState\(\),\s*\);/s,
+    "quickstart visibility should use rendered messages so an optimistic submitted draft hides the starter templates before backend messages exist",
+  );
+
+  assert.match(
+    sessionSource,
+    /<Show when=\{showQuickstartEmptyState\(\)\}>/,
+    "the quickstart starter templates should be controlled by the derived quickstart empty-state memo",
+  );
+
+  assert.doesNotMatch(
+    sessionSource,
+    /<Show when=\{props\.messages\.length === 0 && !showWorkspaceSetupEmptyState\(\) && !showSessionLoadingState\(\)\}>/,
+    "quickstart visibility must not depend only on backend props.messages length",
+  );
+});
+
+test("materializing a pending submitted draft preserves the visible run indicator", () => {
+  assert.match(
+    sessionSource,
+    /const pendingKey = !previousSessionId \? pendingQueueKeyAwaitingSessionId\(\) : null;[\s\S]*if \(!pendingKey\) \{\s*resetRunState\(\);\s*\}/s,
+    "selecting the real session created for a pending submit should remap the optimistic draft without resetting the active run indicator",
+  );
+});
+
+test("optimistic submitted drafts show the responding label before assistant parts arrive", () => {
+  assert.match(
+    sessionSource,
+    /if \(status === "idle"\) \{\s*if \(!started\) return "idle";\s*if \(optimisticSubmittedDraft\(\)\) return "responding";/s,
+    "a first optimistic submit should read as Responding/Odpovídám, not as a workspace-loading or thinking-only state",
+  );
+});

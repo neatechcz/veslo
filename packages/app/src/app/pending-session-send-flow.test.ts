@@ -70,3 +70,50 @@ test("failed slash command sends clear the preassigned command display alias", (
     "failed slash-command sends should clear optimistic command display aliases",
   );
 });
+
+
+test("first pending draft send materializes workspace and session without global app blocking", () => {
+  const sendPromptStart = appSource.indexOf("  async function sendPrompt(");
+  const sendPromptEnd = appSource.indexOf("  async function abortSession(", sendPromptStart);
+  assert.notEqual(sendPromptStart, -1, "sendPrompt should exist");
+  assert.notEqual(sendPromptEnd, -1, "sendPrompt block should end before abortSession");
+  const sendPromptSource = appSource.slice(sendPromptStart, sendPromptEnd);
+
+  assert.match(
+    sendPromptSource,
+    /const blockAppDuringPromptSend = Boolean\(sessionID\);/,
+    "a brand-new pending draft send should be identifiable so workspace/session materialization can stay scoped to the session view",
+  );
+  assert.match(
+    sendPromptSource,
+    /sessionID = \(await createSessionAndOpen\(initialSessionTitle, \{ blockAppDuringCreate: blockAppDuringPromptSend \}\)\) \?\? selectedSessionId\(\);/,
+    "first prompt session creation should opt out of global app blocking while existing-session sends keep the old guarded behavior",
+  );
+
+  const createSessionStart = appSource.indexOf("  async function createSessionAndOpen(");
+  const createSessionEnd = appSource.indexOf("  const openNewSessionWithDirectory = async () =>", createSessionStart);
+  assert.notEqual(createSessionStart, -1, "createSessionAndOpen should exist");
+  assert.notEqual(createSessionEnd, -1, "createSessionAndOpen block should end before openNewSessionWithDirectory");
+  const createSessionSource = appSource.slice(createSessionStart, createSessionEnd);
+
+  assert.match(
+    createSessionSource,
+    /options: \{ blockAppDuringCreate\?: boolean \} = \{\}/,
+    "session creation should expose a scoped option for pending first sends",
+  );
+  assert.match(
+    createSessionSource,
+    /const blockAppDuringCreate = options\.blockAppDuringCreate \?\? true;/,
+    "manual session creation should keep the existing global guard by default",
+  );
+  assert.match(
+    createSessionSource,
+    /if \(blockAppDuringCreate\) \{\s*setBusy\(true\);[\s\S]*setCreatingSession\(true\);[\s\S]*\}/s,
+    "global busy and navigation lock should only be used when the caller requests app-level blocking",
+  );
+  assert.match(
+    createSessionSource,
+    /if \(blockAppDuringCreate \|\| currentView\(\) === "session"\) \{\s*goToSession\(session\.id\);\s*\}/s,
+    "non-blocking first-send materialization should not force the user back to chat after they navigate elsewhere",
+  );
+});

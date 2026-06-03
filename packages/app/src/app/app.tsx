@@ -2093,6 +2093,22 @@ export default function App() {
     });
     let sessionID = options.targetSessionId?.trim() || selectedSessionId();
     const replacementMessageID = options.messageId?.trim() || undefined;
+    const blockAppDuringPromptSend = Boolean(sessionID);
+    let ownsSendPromptBusy = false;
+    const startSendPromptBusy = (label: string) => {
+      if (!blockAppDuringPromptSend) return;
+      ownsSendPromptBusy = true;
+      setBusy(true);
+      setBusyLabel(label);
+      setBusyStartedAt(Date.now());
+    };
+    const stopSendPromptBusy = () => {
+      if (!ownsSendPromptBusy) return;
+      ownsSendPromptBusy = false;
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
+    };
     const hasExplicitDraft = Boolean(draft);
     const fallbackDraft = composerDraft();
     const fallbackText = fallbackDraft.text.trim();
@@ -2130,9 +2146,7 @@ export default function App() {
         }
       }
 
-      setBusy(true);
-      setBusyLabel("status.connecting");
-      setBusyStartedAt(Date.now());
+      startSendPromptBusy("status.connecting");
       // Yield to the browser's macro task queue so it paints the spinner
       // before the engine start blocks the microtask chain.
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -2140,35 +2154,31 @@ export default function App() {
         const started = await workspaceStore.ensureEngineForWorkspace();
         if (!started) {
           recordSendTrace("sendPrompt:engine-not-started");
-          setBusy(false);
-          setBusyLabel(null);
-          setBusyStartedAt(null);
+          stopSendPromptBusy();
           return false;
         }
       } catch {
         recordSendTrace("sendPrompt:engine-start-error");
-        setBusy(false);
-        setBusyLabel(null);
-        setBusyStartedAt(null);
+        stopSendPromptBusy();
         return false;
       }
     }
 
     if (!(await ensureManagedAiBootstrapReady())) {
       recordSendTrace("sendPrompt:blocked-managed-ai-bootstrap");
-      setBusy(false);
-      setBusyLabel(null);
-      setBusyStartedAt(null);
+      stopSendPromptBusy();
       return false;
     }
     if (!(await ensureLocalRuntimeReachableForSend("sendPrompt"))) {
       recordSendTrace("sendPrompt:blocked-runtime-unreachable");
+      stopSendPromptBusy();
       return false;
     }
 
     const c = client();
     if (!c) {
       recordSendTrace("sendPrompt:blocked-no-client");
+      stopSendPromptBusy();
       return false;
     }
 
@@ -2192,10 +2202,11 @@ export default function App() {
     })();
     if (!sessionID) {
       recordSendTrace("sendPrompt:create-session-needed");
-      sessionID = (await createSessionAndOpen(initialSessionTitle)) ?? selectedSessionId();
+      sessionID = (await createSessionAndOpen(initialSessionTitle, { blockAppDuringCreate: blockAppDuringPromptSend })) ?? selectedSessionId();
     }
     if (!sessionID) {
       recordSendTrace("sendPrompt:blocked-no-session");
+      stopSendPromptBusy();
       return false;
     }
 
@@ -2220,6 +2231,7 @@ export default function App() {
       if (routedDraft.error) {
         restorePendingDraftAfterSendFailure();
         setError(routedDraft.error);
+        stopSendPromptBusy();
         return false;
       }
       resolvedDraft = routedDraft.draft;
@@ -2227,15 +2239,17 @@ export default function App() {
     } catch (error) {
       restorePendingDraftAfterSendFailure();
       setError(error instanceof Error ? error.message : safeStringify(error));
+      stopSendPromptBusy();
       return false;
     }
 
     const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
-    if (!content && !resolvedDraft.attachments.length && !promptSystem) return false;
+    if (!content && !resolvedDraft.attachments.length && !promptSystem) {
+      stopSendPromptBusy();
+      return false;
+    }
 
-    setBusy(true);
-    setBusyLabel("status.running");
-    setBusyStartedAt(Date.now());
+    startSendPromptBusy("status.running");
     setError(null);
 
     const perfEnabled = developerMode();
@@ -2382,9 +2396,7 @@ export default function App() {
       sessionStore.appendSessionErrorTurn(sessionID, addOpencodeCacheHint(message));
       return false;
     } finally {
-      setBusy(false);
-      setBusyLabel(null);
-      setBusyStartedAt(null);
+      stopSendPromptBusy();
     }
   }
 
@@ -7547,7 +7559,11 @@ export default function App() {
     }
   }
 
-  async function createSessionAndOpen(initialTitle = "") {
+  async function createSessionAndOpen(
+    initialTitle = "",
+    options: { blockAppDuringCreate?: boolean } = {},
+  ) {
+    const blockAppDuringCreate = options.blockAppDuringCreate ?? true;
     recordSendTrace("createSessionAndOpen:start", {
       connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
       activeWorkspaceId: workspaceStore.activeWorkspaceId(),
@@ -7628,11 +7644,13 @@ export default function App() {
     // Small delay to allow pending requests to settle
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    setBusy(true);
-    setBusyLabel("status.creating_task");
-    setBusyStartedAt(Date.now());
     setError(null);
-    setCreatingSession(true);
+    if (blockAppDuringCreate) {
+      setBusy(true);
+      setBusyLabel("status.creating_task");
+      setBusyStartedAt(Date.now());
+      setCreatingSession(true);
+    }
 
     const withTimeout = async <T,>(
       promise: Promise<T>,
@@ -7700,7 +7718,9 @@ export default function App() {
       }
       const displaySession = applyPendingInitialSessionTitle(session);
       // Immediately select and show the new session before background list refresh.
-      setBusyLabel("status.loading_session");
+      if (blockAppDuringCreate) {
+        setBusyLabel("status.loading_session");
+      }
       mark("session:select:start", { sessionID: session.id });
       await selectSession(session.id);
       mark("session:select:ok", { sessionID: session.id });
@@ -7735,7 +7755,9 @@ export default function App() {
       }
 
       // setSessionViewLockUntil(Date.now() + 1200);
-      goToSession(session.id);
+      if (blockAppDuringCreate || currentView() === "session") {
+        goToSession(session.id);
+      }
 
       // The new session is already in the sessions() store (injected above)
       // and in the sidebar signal. SSE session.created events will handle
@@ -7763,8 +7785,10 @@ export default function App() {
       setError(addOpencodeCacheHint(message));
       return undefined;
     } finally {
-      setCreatingSession(false);
-      setBusy(false);
+      if (blockAppDuringCreate) {
+        setCreatingSession(false);
+        setBusy(false);
+      }
     }
   }
 

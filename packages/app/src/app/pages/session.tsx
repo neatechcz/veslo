@@ -1011,6 +1011,11 @@ export default function SessionView(props: SessionViewProps) {
   // (idle → running, browsing → engine start).  The memo path is
   // reliable because SolidJS memos propagate synchronously.
   const effectiveRenderedMessages = renderedMessages;
+  const showQuickstartEmptyState = createMemo(() =>
+    effectiveRenderedMessages().length === 0 &&
+    !showWorkspaceSetupEmptyState() &&
+    !showSessionLoadingState(),
+  );
 
   createEffect(() => {
     const next = renderedMessages();
@@ -1755,8 +1760,9 @@ export default function SessionView(props: SessionViewProps) {
     const started = runStartedAt() !== null;
     if (status === "idle") {
       if (!started) return "idle";
+      if (optimisticSubmittedDraft()) return "responding";
       if (responseStarted()) return "responding";
-      return optimisticSubmittedDraft() ? "thinking" : "sending";
+      return "sending";
     }
     if (status === "retry") return responseStarted() ? "responding" : "retrying";
     if (responseStarted()) return "responding";
@@ -2004,9 +2010,13 @@ export default function SessionView(props: SessionViewProps) {
         setSearchQueryDebounced("");
         setActiveSearchHitIndex(0);
 
+        const pendingKey = !previousSessionId ? pendingQueueKeyAwaitingSessionId() : null;
         // Reset run state when switching sessions so a stuck error from a
-        // previous session doesn't bleed into the new one.
-        resetRunState();
+        // previous session doesn't bleed into the new one. Pending first sends
+        // remap their optimistic draft to the materialized session instead.
+        if (!pendingKey) {
+          resetRunState();
+        }
         const previousEditingQueuedDraftId = editingQueuedDraftId();
         restoreEditingQueuedDraft(sessionQueueKeyForSessionId(previousSessionId), previousEditingQueuedDraftId);
         if (previousEditingQueuedDraftId) {
@@ -2016,7 +2026,6 @@ export default function SessionView(props: SessionViewProps) {
         setEditingTranscriptMessageId(null);
 
         if (!sessionId) return;
-        const pendingKey = previousSessionId ? null : pendingQueueKeyAwaitingSessionId();
         if (pendingKey) {
           remapPendingQueueToSession(pendingKey, sessionId);
           setPendingQueueKeyAwaitingSessionId(null);
@@ -4203,7 +4212,7 @@ export default function SessionView(props: SessionViewProps) {
                 </div>
               </div>
             </Show>
-            <Show when={props.messages.length === 0 && !showWorkspaceSetupEmptyState() && !showSessionLoadingState()}>
+            <Show when={showQuickstartEmptyState()}>
               <div class="text-center py-16 px-6 space-y-6">
                 <div class="w-16 h-16 bg-dls-hover rounded-3xl mx-auto flex items-center justify-center border border-dls-border">
                   <Zap class="text-dls-secondary" />
