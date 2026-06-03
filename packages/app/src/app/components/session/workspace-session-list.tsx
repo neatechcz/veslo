@@ -205,6 +205,7 @@ const sessionRowClass = (isSelected: boolean, extraClass?: string) => {
 
 const SIDEBAR_COLLAPSE_DURATION_MS = 160;
 const SIDEBAR_COLLAPSE_EASING = "cubic-bezier(0.2, 0, 0, 1)";
+const sidebarCollapseTransition = `height ${SIDEBAR_COLLAPSE_DURATION_MS}ms ${SIDEBAR_COLLAPSE_EASING}, opacity ${SIDEBAR_COLLAPSE_DURATION_MS}ms ${SIDEBAR_COLLAPSE_EASING}, transform ${SIDEBAR_COLLAPSE_DURATION_MS}ms ${SIDEBAR_COLLAPSE_EASING}`;
 
 type AnimatedCollapseProps = {
   open: boolean;
@@ -227,11 +228,15 @@ const AnimatedCollapse = (props: AnimatedCollapseProps) => {
     opacity: props.open ? 1 : 0,
     overflow: "hidden",
     transform: props.open ? "translateY(0)" : "translateY(-2px)",
-    transition: `height ${SIDEBAR_COLLAPSE_DURATION_MS}ms ${SIDEBAR_COLLAPSE_EASING}, opacity ${SIDEBAR_COLLAPSE_DURATION_MS}ms ${SIDEBAR_COLLAPSE_EASING}, transform ${SIDEBAR_COLLAPSE_DURATION_MS}ms ${SIDEBAR_COLLAPSE_EASING}`,
+    transition: sidebarCollapseTransition,
   });
   let outerRef: HTMLDivElement | undefined;
   let innerRef: HTMLDivElement | undefined;
   let frame = 0;
+  let transitionFallback = 0;
+  let previousOpen = props.open;
+  let hasMounted = false;
+  let closeCompletionPending = false;
 
   const cancelFrame = () => {
     if (!frame || typeof window === "undefined") return;
@@ -239,13 +244,73 @@ const AnimatedCollapse = (props: AnimatedCollapseProps) => {
     frame = 0;
   };
 
+  const clearTransitionFallback = () => {
+    if (!transitionFallback || typeof window === "undefined") return;
+    window.clearTimeout(transitionFallback);
+    transitionFallback = 0;
+  };
+
   const measuredHeight = () => innerRef?.scrollHeight ?? 0;
+
+  const finishOpen = () => {
+    closeCompletionPending = false;
+    setStyle((current) => ({
+      ...current,
+      height: "auto",
+      opacity: 1,
+      transform: "translateY(0)",
+    }));
+  };
+
+  const finishClosed = () => {
+    setStyle((current) => ({
+      ...current,
+      height: "0px",
+      opacity: 0,
+      transform: "translateY(-2px)",
+    }));
+    setRendered(false);
+    if (!closeCompletionPending) return;
+    closeCompletionPending = false;
+    props.onExitComplete?.();
+  };
+
+  const scheduleTransitionFallback = (open: boolean) => {
+    if (typeof window === "undefined") return;
+    transitionFallback = window.setTimeout(() => {
+      transitionFallback = 0;
+      if (props.open !== open) return;
+      if (open) {
+        finishOpen();
+        return;
+      }
+      finishClosed();
+    }, SIDEBAR_COLLAPSE_DURATION_MS + 40);
+  };
 
   createEffect(() => {
     const open = props.open;
     cancelFrame();
+    clearTransitionFallback();
 
-    if (prefersReducedMotion()) {
+    if (!hasMounted) {
+      hasMounted = true;
+      previousOpen = open;
+      setRendered(open);
+      setStyle((current) => ({
+        ...current,
+        height: open ? "auto" : "0px",
+        opacity: open ? 1 : 0,
+        transform: open ? "translateY(0)" : "translateY(-2px)",
+        transition: prefersReducedMotion() ? "none" : sidebarCollapseTransition,
+      }));
+      return;
+    }
+
+    if (previousOpen === open) return;
+    previousOpen = open;
+
+    if (typeof window === "undefined" || prefersReducedMotion()) {
       setRendered(open);
       setStyle((current) => ({
         ...current,
@@ -254,57 +319,85 @@ const AnimatedCollapse = (props: AnimatedCollapseProps) => {
         transform: "translateY(0)",
         transition: "none",
       }));
-      if (!open) props.onExitComplete?.();
+      if (open) {
+        closeCompletionPending = false;
+        return;
+      }
+      closeCompletionPending = true;
+      finishClosed();
       return;
     }
 
     if (open) {
+      closeCompletionPending = false;
       setRendered(true);
       setStyle((current) => ({
         ...current,
         height: "0px",
         opacity: 0,
         transform: "translateY(-2px)",
+        transition: sidebarCollapseTransition,
       }));
       frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        const height = measuredHeight();
+        if (height <= 0) {
+          finishOpen();
+          return;
+        }
         setStyle((current) => ({
           ...current,
-          height: `${measuredHeight()}px`,
+          height: `${height}px`,
           opacity: 1,
           transform: "translateY(0)",
+          transition: sidebarCollapseTransition,
         }));
+        scheduleTransitionFallback(true);
       });
       return;
     }
 
     if (!rendered()) return;
 
+    closeCompletionPending = true;
+    const height = measuredHeight();
+    if (height <= 0) {
+      finishClosed();
+      return;
+    }
     setStyle((current) => ({
       ...current,
-      height: `${measuredHeight()}px`,
+      height: `${height}px`,
       opacity: 1,
       transform: "translateY(0)",
+      transition: sidebarCollapseTransition,
     }));
     frame = window.requestAnimationFrame(() => {
+      frame = 0;
       setStyle((current) => ({
         ...current,
         height: "0px",
         opacity: 0,
         transform: "translateY(-2px)",
+        transition: sidebarCollapseTransition,
       }));
+      scheduleTransitionFallback(false);
     });
   });
 
-  onCleanup(cancelFrame);
+  onCleanup(() => {
+    cancelFrame();
+    clearTransitionFallback();
+  });
 
   const handleTransitionEnd = (event: TransitionEvent) => {
     if (event.target !== outerRef || event.propertyName !== "height") return;
+    clearTransitionFallback();
     if (props.open) {
-      setStyle((current) => ({ ...current, height: "auto" }));
+      finishOpen();
       return;
     }
-    setRendered(false);
-    props.onExitComplete?.();
+    finishClosed();
   };
 
   return (
