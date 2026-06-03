@@ -2510,8 +2510,12 @@ export default function WorkspaceSessionList(props: Props) {
                       </div>
                     </div>
 
-                    <Show when={!collapsed()}>
-                      <div class="pl-5 pt-0.5 space-y-0">
+                    <AnimatedCollapse
+                      open={!collapsed()}
+                      region="project"
+                      innerClass="pl-5 pt-0.5 space-y-0"
+                    >
+                      <>
                         {renderSessionTreeRows(() => visibleRows(), hasChildren, {
                           anchorPrefix: "project-session",
                           soulEnabled,
@@ -2544,8 +2548,8 @@ export default function WorkspaceSessionList(props: Props) {
                             </button>
                           </div>
                         </Show>
-                      </div>
-                    </Show>
+                      </>
+                    </AnimatedCollapse>
                     </div>
                   );
                 }}

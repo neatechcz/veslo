@@ -423,6 +423,19 @@ test("recent and by-project session lists use accessor-backed animated session t
   );
 });
 
+test("by-project project contents use the animated project collapse region", () => {
+  assert.match(
+    source,
+    /<AnimatedCollapse\s+open=\{!collapsed\(\)\}\s+region="project"[\s\S]*innerClass="pl-5 pt-0\.5 space-y-0"/,
+  );
+
+  assert.doesNotMatch(
+    source,
+    /<Show when=\{!collapsed\(\)\}>\s*<div class="pl-5 pt-0\.5 space-y-0">/,
+    "project collapse should not instantly unmount project rows",
+  );
+});
+
 test("animated session branch rendering keeps parent row click behavior and archive wiring shared", () => {
   assert.match(
     source,
