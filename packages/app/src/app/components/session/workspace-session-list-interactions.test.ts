@@ -32,7 +32,7 @@ test("recent mode interactions stay wired to recentRowsVisible instead of chatPr
 
   assert.match(
     recentBranch,
-    /renderSessionTreeRows\(\s*recentRowsVisible\(\),\s*recentHasChildren,/s,
+    /renderSessionTreeRows\(\s*\(\) => recentRowsVisible\(\),\s*recentHasChildren,/s,
     "recent mode should render the recent row stream through the animated tree renderer",
   );
 
@@ -406,14 +406,21 @@ test("session label span exposes full title tooltip and renders colored subagent
 test("session and subagent branches render through animated branch containers", () => {
   assert.match(source, /const AnimatedSessionBranch = \(props: AnimatedSessionBranchProps\) =>/);
   assert.match(source, /data-sidebar-collapse-region=\{props\.region\}/);
-  assert.match(source, /descendantRowsForParent\(props\.rows, row\.session\.id\)/);
-  assert.match(source, /directChildRowsForParent\(props\.rows, props\.parentSessionId\)/);
+  assert.match(source, /rows: Accessor<FlatSessionRow\[]>;/);
+  assert.match(source, /descendantRowsForParent\(props\.rows\(\), row\.session\.id\)/);
+  assert.match(source, /directChildRowsForParent\(props\.rows\(\), props\.parentSessionId\)/);
+  assert.match(source, /setRenderedRows\(rows\);/);
 });
 
-test("recent and by-project session lists use the animated session tree renderer", () => {
-  assert.match(source, /renderSessionTreeRows\(\s*recentRowsVisible\(\),/s);
-  assert.match(source, /renderSessionTreeRows\(\s*visibleRows\(\),/s);
-  assert.match(source, /renderSessionTreeRows\(\s*chatRows\(\),/s);
+test("recent and by-project session lists use accessor-backed animated session tree rendering", () => {
+  assert.match(source, /renderSessionTreeRows\(\s*\(\) => recentRowsVisible\(\),/s);
+  assert.match(source, /renderSessionTreeRows\(\s*\(\) => visibleRows\(\),/s);
+  assert.match(source, /renderSessionTreeRows\(\s*\(\) => chatRows\(\),/s);
+  assert.doesNotMatch(
+    source,
+    /renderSessionTreeRows\(\s*(?:recentRowsVisible|visibleRows|chatRows)\(\),/s,
+    "session tree renderers should receive row accessors so closing branches keep their previous content",
+  );
 });
 
 test("animated session branch rendering keeps parent row click behavior and archive wiring shared", () => {

@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import type { JSX } from "solid-js";
+import type { Accessor, JSX } from "solid-js";
 import { useOutsideClick } from "./use-outside-click";
 import {
   Archive,
@@ -184,14 +184,14 @@ type SessionRowRenderOptions = {
 
 type AnimatedSessionBranchProps = {
   parentSessionId: string;
-  rows: FlatSessionRow[];
+  rows: Accessor<FlatSessionRow[]>;
   open: boolean;
   hasChildren: (sessionId: string) => boolean;
   options: SessionRowRenderOptions;
 };
 
 type SessionTreeRowsProps = {
-  rows: FlatSessionRow[];
+  rows: Accessor<FlatSessionRow[]>;
   hasChildren: (sessionId: string) => boolean;
   options: SessionRowRenderOptions;
   parentSessionId?: string;
@@ -2011,7 +2011,7 @@ export default function WorkspaceSessionList(props: Props) {
   };
 
   const renderSessionTreeRows = (
-    rows: FlatSessionRow[],
+    rows: Accessor<FlatSessionRow[]>,
     hasChildren: (sessionId: string) => boolean,
     options: SessionRowRenderOptions,
     parentSessionId?: string,
@@ -2029,8 +2029,8 @@ export default function WorkspaceSessionList(props: Props) {
     const options = props.options;
     const branchRows = createMemo(() =>
       props.parentSessionId
-        ? directChildRowsForParent(props.rows, props.parentSessionId)
-        : rootRowsForSessionTree(props.rows),
+        ? directChildRowsForParent(props.rows(), props.parentSessionId)
+        : rootRowsForSessionTree(props.rows()),
     );
 
     return (
@@ -2041,7 +2041,7 @@ export default function WorkspaceSessionList(props: Props) {
             <Show when={hasChildren(row.session.id)}>
               <AnimatedSessionBranch
                 parentSessionId={row.session.id}
-                rows={descendantRowsForParent(props.rows, row.session.id)}
+                rows={() => descendantRowsForParent(props.rows(), row.session.id)}
                 open={expandedParentSessionIds().has(row.session.id)}
                 hasChildren={hasChildren}
                 options={options}
@@ -2054,11 +2054,12 @@ export default function WorkspaceSessionList(props: Props) {
   };
 
   const AnimatedSessionBranch = (props: AnimatedSessionBranchProps) => {
-    const [renderedRows, setRenderedRows] = createSignal<FlatSessionRow[]>(props.open ? props.rows : []);
+    const [renderedRows, setRenderedRows] = createSignal<FlatSessionRow[]>(props.open ? props.rows() : []);
 
     createEffect(() => {
-      if (props.open || props.rows.length > 0) {
-        setRenderedRows(props.rows);
+      const rows = props.rows();
+      if (props.open || rows.length > 0) {
+        setRenderedRows(rows);
       }
     });
 
@@ -2072,7 +2073,7 @@ export default function WorkspaceSessionList(props: Props) {
         }}
       >
         {renderSessionTreeRows(
-          renderedRows(),
+          () => renderedRows(),
           props.hasChildren,
           props.options,
           props.parentSessionId,
@@ -2234,7 +2235,7 @@ export default function WorkspaceSessionList(props: Props) {
             <Show when={sidebarMode() === "by-project"} fallback={
               <>
                 <div class="space-y-0">
-                  {renderSessionTreeRows(recentRowsVisible(), recentHasChildren, {
+                  {renderSessionTreeRows(() => recentRowsVisible(), recentHasChildren, {
                     anchorPrefix: "recent",
                     variant: "recent",
                   })}
@@ -2511,7 +2512,7 @@ export default function WorkspaceSessionList(props: Props) {
 
                     <Show when={!collapsed()}>
                       <div class="pl-5 pt-0.5 space-y-0">
-                        {renderSessionTreeRows(visibleRows(), hasChildren, {
+                        {renderSessionTreeRows(() => visibleRows(), hasChildren, {
                           anchorPrefix: "project-session",
                           soulEnabled,
                           canRecover,
@@ -2628,7 +2629,7 @@ export default function WorkspaceSessionList(props: Props) {
                     height: `${chatSidebarListHeight()}px`,
                   }}
                 >
-                  {renderSessionTreeRows(chatRows(), hasChildren, {
+                  {renderSessionTreeRows(() => chatRows(), hasChildren, {
                     anchorPrefix: "chat-session",
                     label: (row) => sessionChatLabel(row.session, tr("session.chat_label")),
                     showWorkspaceMenu: false,
