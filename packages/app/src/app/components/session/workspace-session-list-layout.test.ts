@@ -4,6 +4,13 @@ import test from "node:test";
 
 const source = readFileSync(new URL("./workspace-session-list.tsx", import.meta.url), "utf8");
 
+test("workspace session sidebar defines local collapse animation primitives", () => {
+  assert.match(source, /const SIDEBAR_COLLAPSE_DURATION_MS = 160;/);
+  assert.match(source, /const AnimatedCollapse = \(props: AnimatedCollapseProps\) =>/);
+  assert.match(source, /prefers-reduced-motion: reduce/);
+  assert.match(source, /onTransitionEnd=\{handleTransitionEnd\}/);
+});
+
 test("workspace session sidebar keeps controls pinned while only session rows scroll", () => {
   assert.match(
     source,

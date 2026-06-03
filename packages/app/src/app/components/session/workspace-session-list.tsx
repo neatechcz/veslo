@@ -1,4 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import type { JSX } from "solid-js";
 import { useOutsideClick } from "./use-outside-click";
 import {
   Archive,
@@ -200,6 +201,127 @@ const sessionRowClass = (isSelected: boolean, extraClass?: string) => {
     ? "bg-gray-5 text-gray-12 before:content-[''] before:absolute before:left-1 before:top-1 before:bottom-1 before:w-0.5 before:rounded-full before:bg-indigo-9"
     : "hover:bg-gray-3/70 text-gray-12";
   return [base, extraClass, state].filter(Boolean).join(" ");
+};
+
+const SIDEBAR_COLLAPSE_DURATION_MS = 160;
+const SIDEBAR_COLLAPSE_EASING = "cubic-bezier(0.2, 0, 0, 1)";
+
+type AnimatedCollapseProps = {
+  open: boolean;
+  region: "project" | "session-branch";
+  class?: string;
+  innerClass?: string;
+  children: JSX.Element;
+  onExitComplete?: () => void;
+};
+
+const prefersReducedMotion = () =>
+  typeof window !== "undefined" &&
+  typeof window.matchMedia === "function" &&
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+const AnimatedCollapse = (props: AnimatedCollapseProps) => {
+  const [rendered, setRendered] = createSignal(props.open);
+  const [style, setStyle] = createSignal<JSX.CSSProperties>({
+    height: props.open ? "auto" : "0px",
+    opacity: props.open ? 1 : 0,
+    overflow: "hidden",
+    transform: props.open ? "translateY(0)" : "translateY(-2px)",
+    transition: `height ${SIDEBAR_COLLAPSE_DURATION_MS}ms ${SIDEBAR_COLLAPSE_EASING}, opacity ${SIDEBAR_COLLAPSE_DURATION_MS}ms ${SIDEBAR_COLLAPSE_EASING}, transform ${SIDEBAR_COLLAPSE_DURATION_MS}ms ${SIDEBAR_COLLAPSE_EASING}`,
+  });
+  let outerRef: HTMLDivElement | undefined;
+  let innerRef: HTMLDivElement | undefined;
+  let frame = 0;
+
+  const cancelFrame = () => {
+    if (!frame || typeof window === "undefined") return;
+    window.cancelAnimationFrame(frame);
+    frame = 0;
+  };
+
+  const measuredHeight = () => innerRef?.scrollHeight ?? 0;
+
+  createEffect(() => {
+    const open = props.open;
+    cancelFrame();
+
+    if (prefersReducedMotion()) {
+      setRendered(open);
+      setStyle((current) => ({
+        ...current,
+        height: open ? "auto" : "0px",
+        opacity: open ? 1 : 0,
+        transform: "translateY(0)",
+        transition: "none",
+      }));
+      if (!open) props.onExitComplete?.();
+      return;
+    }
+
+    if (open) {
+      setRendered(true);
+      setStyle((current) => ({
+        ...current,
+        height: "0px",
+        opacity: 0,
+        transform: "translateY(-2px)",
+      }));
+      frame = window.requestAnimationFrame(() => {
+        setStyle((current) => ({
+          ...current,
+          height: `${measuredHeight()}px`,
+          opacity: 1,
+          transform: "translateY(0)",
+        }));
+      });
+      return;
+    }
+
+    if (!rendered()) return;
+
+    setStyle((current) => ({
+      ...current,
+      height: `${measuredHeight()}px`,
+      opacity: 1,
+      transform: "translateY(0)",
+    }));
+    frame = window.requestAnimationFrame(() => {
+      setStyle((current) => ({
+        ...current,
+        height: "0px",
+        opacity: 0,
+        transform: "translateY(-2px)",
+      }));
+    });
+  });
+
+  onCleanup(cancelFrame);
+
+  const handleTransitionEnd = (event: TransitionEvent) => {
+    if (event.target !== outerRef || event.propertyName !== "height") return;
+    if (props.open) {
+      setStyle((current) => ({ ...current, height: "auto" }));
+      return;
+    }
+    setRendered(false);
+    props.onExitComplete?.();
+  };
+
+  return (
+    <div
+      ref={(el) => (outerRef = el)}
+      data-sidebar-collapse-region={props.region}
+      class={props.class}
+      style={style()}
+      onTransitionEnd={handleTransitionEnd}
+    >
+      <Show when={rendered()}>
+        <div ref={(el) => (innerRef = el)} class={props.innerClass}>
+          {props.children}
+        </div>
+      </Show>
+    </div>
+  );
 };
 
 export default function WorkspaceSessionList(props: Props) {
