@@ -588,6 +588,33 @@ test("session tree helpers treat rows whose parent is missing from the slice as 
   assert.deepEqual(rootRowsForSessionTree(sliced).map((row) => row.session.id), ["child-a"]);
 });
 
+test("session tree helpers do not treat grandchildren with missing parents as descendants", () => {
+  const workspace = {
+    id: "workspace-1",
+    name: "workspace-1",
+    path: "/tmp/workspace-1",
+    preset: "starter",
+    workspaceType: "local" as const,
+  };
+
+  const rows = buildRecentRows([
+    {
+      workspace,
+      sessions: [
+        { id: "root-a", title: "root-a", time: { created: 100, updated: 100 } },
+        { id: "child-a", title: "child-a", parentID: "root-a", time: { created: 110, updated: 110 } },
+        { id: "grandchild-a", title: "grandchild-a", parentID: "child-a", time: { created: 120, updated: 120 } },
+      ],
+      status: "ready",
+    },
+  ]);
+
+  const sliced = rows.filter((row) => row.session.id !== "child-a");
+
+  assert.deepEqual(rootRowsForSessionTree(sliced).map((row) => row.session.id), ["root-a", "grandchild-a"]);
+  assert.deepEqual(descendantRowsForParent(sliced, "root-a").map((row) => row.session.id), []);
+});
+
 test("session row click behavior after restart keeps first click for selection and second click for subagent expansion", () => {
   const workspace = {
     id: "workspace-1",

@@ -353,12 +353,21 @@ export const descendantRowsForParent = (
   if (parentIndex < 0) return [];
 
   const parentLevel = rows[parentIndex].nestingLevel;
+  const lookup = buildRowHierarchyLookup(rows);
   const descendants: FlatSessionRow[] = [];
+  const isDescendantOf = (candidateId: string, ancestorId: string) => {
+    let parentId = lookup.parentBySessionId.get(candidateId) ?? null;
+    while (parentId) {
+      if (parentId === ancestorId) return true;
+      parentId = lookup.parentBySessionId.get(parentId) ?? null;
+    }
+    return false;
+  };
 
   for (let index = parentIndex + 1; index < rows.length; index += 1) {
     const row = rows[index];
     if (row.nestingLevel <= parentLevel) break;
-    descendants.push(row);
+    if (isDescendantOf(row.session.id, id)) descendants.push(row);
   }
 
   return descendants;
