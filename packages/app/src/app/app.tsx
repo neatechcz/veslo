@@ -1250,6 +1250,7 @@ export default function App() {
   // is enough — subsequent patches just update the file on disk and the
   // engine picks up the new token on its next read.
   const [lastReloadedForServerToken, setLastReloadedForServerToken] = createSignal("");
+  const managedAiReloadInFlightByToken = new Map<string, Promise<boolean>>();
 
   createEffect(() => {
     if (developerMode()) return;
@@ -7234,6 +7235,40 @@ export default function App() {
     anyActiveRuns,
   } = systemState;
 
+  const reloadManagedAiConfigOnce = async (reloadKey: string): Promise<boolean> => {
+    if (!reloadKey) return false;
+    if (lastReloadedForServerToken() === reloadKey) return true;
+
+    const existing = managedAiReloadInFlightByToken.get(reloadKey);
+    if (existing) {
+      console.log("[managed-ai] reload SKIP (already in-flight)", { reloadKey });
+      return existing;
+    }
+
+    let run = Promise.resolve(false);
+    run = (async () => {
+      try {
+        if (lastReloadedForServerToken() === reloadKey) return true;
+        console.log("[managed-ai] reload START", { reloadKey });
+        const ok = await reloadWorkspaceEngine();
+        if (ok) {
+          setLastReloadedForServerToken(reloadKey);
+          console.log("[managed-ai] reload DONE", { reloadKey });
+        } else {
+          console.warn("[managed-ai] reload FAILED", { reloadKey });
+        }
+        return ok;
+      } finally {
+        if (managedAiReloadInFlightByToken.get(reloadKey) === run) {
+          managedAiReloadInFlightByToken.delete(reloadKey);
+        }
+      }
+    })();
+
+    managedAiReloadInFlightByToken.set(reloadKey, run);
+    return run;
+  };
+
   markReloadRequiredHandler = systemState.markReloadRequired;
   onHotReloadAppliedHandler = () => {
     const hadPendingSkillFallback = skillReloadGuard.hotReloadApplied();
@@ -9954,10 +9989,7 @@ export default function App() {
               }) &&
               lastReloadedForServerToken() !== providerRoutingReloadKey
             ) {
-              const managedAiReloaded = await reloadWorkspaceEngine();
-              if (managedAiReloaded) {
-                setLastReloadedForServerToken(providerRoutingReloadKey);
-              }
+              await reloadManagedAiConfigOnce(providerRoutingReloadKey);
             }
             return;
           }
@@ -10013,10 +10045,7 @@ export default function App() {
             }) &&
             lastReloadedForServerToken() !== providerRoutingReloadKey
           ) {
-            const managedAiReloaded = await reloadWorkspaceEngine();
-            if (managedAiReloaded) {
-              setLastReloadedForServerToken(providerRoutingReloadKey);
-            }
+            await reloadManagedAiConfigOnce(providerRoutingReloadKey);
           }
           return;
         }
