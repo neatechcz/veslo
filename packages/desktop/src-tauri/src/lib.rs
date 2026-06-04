@@ -241,6 +241,9 @@ pub fn run() {
     #[cfg(all(debug_assertions, feature = "e2e"))]
     let builder = builder.plugin(tauri_plugin_webdriver::init());
 
+    #[cfg(debug_assertions)]
+    let builder = builder.plugin(tauri_plugin_pilot::init());
+
     let app = builder
         .manage(EngineManager::default())
         .manage(OrchestratorManager::default())
