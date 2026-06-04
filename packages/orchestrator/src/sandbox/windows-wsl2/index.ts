@@ -225,6 +225,7 @@ export const WindowsWsl2: WorkerSandbox = {
       env: opts.command.env,
       displayCommand: `wsl.exe -d ${runtime.distro} --exec bash -c <veslo-wsl2-bwrap-opencode>`,
       childKind: "wsl",
+      connectHost: runtime.wslIp,
     };
   },
 };

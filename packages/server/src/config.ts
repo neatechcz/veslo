@@ -24,7 +24,7 @@ interface CliArgs {
   opencodeUsername?: string;
   opencodePassword?: string;
   workspaces: string[];
-  workspaceIds: string[];
+  workspaceIds: Array<string | undefined>;
   corsOrigins?: string[];
   readOnly?: boolean;
   verbose?: boolean;
@@ -180,13 +180,24 @@ export function parseCliArgs(argv: string[]): CliArgs {
     }
     if (value === "--workspace") {
       const path = argv[index + 1];
-      if (path) args.workspaces.push(path);
+      if (path) {
+        args.workspaces.push(path);
+        args.workspaceIds.push(undefined);
+      }
       index += 1;
       continue;
     }
     if (value === "--workspace-id") {
       const id = argv[index + 1];
-      if (id) args.workspaceIds.push(id);
+      if (id) {
+        const targetIndex = (() => {
+          for (let i = args.workspaceIds.length - 1; i >= 0; i -= 1) {
+            if (!args.workspaceIds[i]) return i;
+          }
+          return args.workspaceIds.length;
+        })();
+        args.workspaceIds[targetIndex] = id;
+      }
       index += 1;
       continue;
     }

@@ -30,7 +30,13 @@ afterEach(async () => {
  * verify Veslo's routing/forwarding is correct.
  */
 function startMockOpencode() {
-  const responses: Array<{ pathname: string; directory: string | null; auth: string | null; method: string }> = [];
+  const responses: Array<{
+    pathname: string;
+    directory: string | null;
+    auth: string | null;
+    method: string;
+    acceptEncoding: string | null;
+  }> = [];
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -43,6 +49,7 @@ function startMockOpencode() {
         directory,
         auth,
         method: request.method,
+        acceptEncoding: request.headers.get("accept-encoding"),
       });
       return new Response(
         JSON.stringify({
@@ -128,6 +135,41 @@ test("canonical /workspace/:id/opencode/* routes request with directory from wor
   const payload = (await response.json()) as { seenDirectory: string };
   expect(payload.seenDirectory).toBe(wsA);
   expect(mock.responses[0]!.directory).toBe(wsA);
+});
+
+test("OpenCode health proxy forces identity encoding for upstream fetch", async () => {
+  const { server, mock } = await makeTwoWorkspaces();
+
+  const response = await fetch(
+    `http://127.0.0.1:${server.port}/workspace/ws_alpha/opencode/global/health`,
+    {
+      headers: {
+        Authorization: "Bearer client-token",
+        "Accept-Encoding": "gzip, deflate, br",
+      },
+    },
+  );
+
+  expect(response.status).toBe(200);
+  expect(mock.responses[0]!.acceptEncoding).toBe("identity");
+});
+
+test("workspace-scoped OpenCode base URL preserves orchestrator mount and retargets workspace id", async () => {
+  const wsA = await mkdtemp(join(tmpdir(), "veslo-ws-A-"));
+  tempDirs.push(wsA);
+  const mock = startMockOpencode();
+  const workspaces = [
+    buildWorkspace("ws_alpha", wsA, `${mock.baseUrl}/workspace/ws_stale/opencode`),
+  ];
+  const { server } = await startVesloFixture(workspaces);
+
+  const response = await fetch(
+    `http://127.0.0.1:${server.port}/workspace/ws_alpha/opencode/global/health`,
+    { headers: { Authorization: "Bearer client-token" } },
+  );
+
+  expect(response.status).toBe(200);
+  expect(mock.responses[0]!.pathname).toBe("/workspace/ws_alpha/opencode/global/health");
 });
 
 test("canonical /workspace/:id/opencode/* routes request with directory from workspace B", async () => {

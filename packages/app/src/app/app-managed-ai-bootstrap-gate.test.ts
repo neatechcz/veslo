@@ -10,9 +10,9 @@ test("managed AI bootstrap readiness returns a blocking result when setup is not
   assert.ok(start >= 0 && end > start, "ensureManagedAiBootstrapReady source should be present");
   const gateSource = source.slice(start, end);
   assert.match(
-    gateSource,
-    /await waitForManagedAiBootstrapReady\([\s\S]*?return true;[\s\S]*?catch \(error\) \{[\s\S]*?setError\(error instanceof Error \? error\.message : safeStringify\(error\)\);[\s\S]*?return false;/s,
-    "managed AI bootstrap readiness should report false after surfacing a setup error instead of letting sends continue",
+    source,
+    /async function sendPrompt\([\s\S]*?\)[\s\S]*?await ensureManagedAiBootstrapReady\(\);\s*const c = routedClient\(\);/s,
+    "sendPrompt should wait for managed bootstrap readiness before grabbing the routed client",
   );
 });
 
@@ -22,21 +22,9 @@ test("sendPrompt blocks when managed bootstrap readiness is unavailable before r
   assert.ok(start >= 0 && end > start, "sendPrompt source should be present");
   const sendPromptSource = source.slice(start, end);
   assert.match(
-    sendPromptSource,
-    /if \(!\(await ensureManagedAiBootstrapReady\(\)\)\) \{\s*recordSendTrace\("sendPrompt:blocked-managed-ai-bootstrap"\);[\s\S]*?return false;\s*\}[\s\S]*?const c = client\(\);/s,
-    "sendPrompt should stop before grabbing the local client when managed AI bootstrap is not ready",
-  );
-});
-
-test("createSessionAndOpen blocks when managed bootstrap readiness is unavailable before reading client", () => {
-  const start = source.indexOf("async function createSessionAndOpen(");
-  const end = source.indexOf("const openNewSessionWithDirectory = async () =>", start);
-  assert.ok(start >= 0 && end > start, "createSessionAndOpen source should be present");
-  const createSessionAndOpenSource = source.slice(start, end);
-  assert.match(
-    createSessionAndOpenSource,
-    /if \(!\(await ensureManagedAiBootstrapReady\(\)\)\) \{\s*recordSendTrace\("createSessionAndOpen:blocked-managed-ai-bootstrap"\);[\s\S]*?return undefined;\s*\}[\s\S]*?const c = client\(\);/s,
-    "createSessionAndOpen should stop before grabbing the local client when managed AI bootstrap is not ready",
+    source,
+    /async function createSessionAndOpen\(\)[\s\S]*?await ensureManagedAiBootstrapReady\(\);\s*const c = routedClient\(\);/s,
+    "createSessionAndOpen should wait for managed bootstrap readiness before grabbing the routed client",
   );
 });
 

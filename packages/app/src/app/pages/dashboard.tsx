@@ -477,13 +477,7 @@ export default function DashboardView(props: DashboardViewProps) {
     workspace.path?.trim() ||
     t("workspace.fallback_worker", currentLocale());
   const workspaceKindLabel = (workspace: WorkspaceInfo) =>
-    workspace.workspaceType === "remote"
-      ? workspace.sandboxBackend === "docker" ||
-        Boolean(workspace.sandboxRunId?.trim()) ||
-        Boolean(workspace.sandboxContainerName?.trim())
-        ? t("sidebar.workspace_kind_sandbox", currentLocale())
-        : t("sidebar.workspace_kind_remote", currentLocale())
-      : t("sidebar.workspace_kind_local", currentLocale());
+    workspace.workspaceType === "remote" ? "Remote" : "Local";
 
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
     void openSessionWithWorkspaceActivation({

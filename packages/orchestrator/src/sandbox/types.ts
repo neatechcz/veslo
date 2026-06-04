@@ -38,6 +38,8 @@ export type SandboxLaunch = {
   displayCommand?: string;
   /** Host process kind, used for lifecycle diagnostics. */
   childKind?: "direct" | "wsl";
+  /** Host-reachable address for wildcard-bound guest processes. */
+  connectHost?: string;
 };
 
 export type SandboxSpawnOptions = {

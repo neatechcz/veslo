@@ -22,7 +22,6 @@ import {
   workspaceUpdateRemote,
   type WorkspaceInfo,
 } from "../lib/tauri";
-import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 
 export interface RemoteStoreDeps {
   // Workspace state accessors
