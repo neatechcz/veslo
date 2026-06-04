@@ -22,6 +22,37 @@ export type PendingUpdate = { update: UpdateHandle; version: string; notes?: str
 
 export const UPDATE_AUTO_CHECK_EVERY_MS = 60 * 60_000;
 export const DEFAULT_UPDATE_AUTO_DOWNLOAD = true;
+export const UPDATE_AUTO_DOWNLOAD_RETRY_DELAYS_MS = [
+  30_000,
+  2 * 60_000,
+  10 * 60_000,
+] as const;
+export const UPDATE_AUTO_DOWNLOAD_MAX_RETRIES = UPDATE_AUTO_DOWNLOAD_RETRY_DELAYS_MS.length;
+
+export type UpdateDownloadRetryInfo =
+  | { kind: "active"; retryAttempt: number; maxRetries: number }
+  | { kind: "scheduled"; retryAttempt: number; maxRetries: number; nextRetryAt: number; message?: string }
+  | { kind: "exhausted"; retryAttempt: number; maxRetries: number; message?: string };
+
+export function resolveNextUpdateDownloadRetry(input: { completedRetries: number; now?: number }) {
+  const completedRetries = Math.max(0, Math.floor(input.completedRetries));
+  if (completedRetries >= UPDATE_AUTO_DOWNLOAD_MAX_RETRIES) {
+    return {
+      kind: "exhausted" as const,
+      retryAttempt: UPDATE_AUTO_DOWNLOAD_MAX_RETRIES,
+      maxRetries: UPDATE_AUTO_DOWNLOAD_MAX_RETRIES,
+    };
+  }
+
+  const retryAttempt = completedRetries + 1;
+  const delay = UPDATE_AUTO_DOWNLOAD_RETRY_DELAYS_MS[completedRetries] ?? 0;
+  return {
+    kind: "scheduled" as const,
+    retryAttempt,
+    maxRetries: UPDATE_AUTO_DOWNLOAD_MAX_RETRIES,
+    nextRetryAt: (input.now ?? Date.now()) + delay,
+  };
+}
 
 export function resolveUpdateAutoDownloadPreference(stored: string | null) {
   if (stored === "0") return false;
