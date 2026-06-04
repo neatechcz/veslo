@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 // `<configDir>/node_modules/` by the orchestrator (`ensureOpencodeManagedTools`)
 // for managed tool files. Keep these aligned with the constants in
 // `packages/orchestrator/src/cli.ts`.
-const VESLO_MANAGED_PLUGIN_VERSION: &str = "1.15.10";
-const VESLO_MANAGED_ZOD_VERSION: &str = "4.1.13";
+const VESLO_MANAGED_PLUGIN_VERSION: &str = "1.14.29";
+const VESLO_MANAGED_ZOD_VERSION: &str = "4.1.8";
 
 const INTERNAL_PACK_VERSION: &str = "2026-04-22.1";
 const INTERNAL_PACK_SOURCE: &str = "openwork-snapshot";
@@ -562,20 +562,29 @@ fn vendor_opencode_plugin_into_workspace(opencode_root: &Path, stats: &mut Write
         eprintln!("[workspace] failed to create plugin node_modules: {err}");
         return;
     }
-    vendor_bun_cache_package(
+    let plugin_vendored = vendor_bun_cache_package(
         &home,
         "@opencode-ai/plugin",
         VESLO_MANAGED_PLUGIN_VERSION,
         &node_modules_root,
         stats,
     );
-    vendor_bun_cache_package(
+    let zod_vendored = vendor_bun_cache_package(
         &home,
         "zod",
         VESLO_MANAGED_ZOD_VERSION,
         &node_modules_root,
         stats,
     );
+    if !plugin_vendored {
+        write_zod_backed_plugin_fallback(&node_modules_root, stats);
+    }
+    if !zod_vendored {
+        eprintln!(
+            "[workspace] zod-backed @opencode-ai/plugin fallback is present, but zod@{VESLO_MANAGED_ZOD_VERSION} could not be vendored; workspace plugins may fail to load"
+        );
+    }
+    log_workspace_opencode_dependency_status(opencode_root, &node_modules_root);
 }
 
 fn vendor_bun_cache_package(
@@ -584,37 +593,150 @@ fn vendor_bun_cache_package(
     version: &str,
     node_modules_root: &Path,
     stats: &mut WriteStats,
-) {
-    let src = PathBuf::from(home)
+) -> bool {
+    let flat_src = PathBuf::from(home)
+        .join(".bun")
+        .join("install")
+        .join("cache")
+        .join(format!("{pkg}@{version}@@@1"));
+    let legacy_src = PathBuf::from(home)
         .join(".bun")
         .join("install")
         .join("cache")
         .join(pkg)
         .join(format!("{}@@@1", version));
+    let src = if flat_src.exists() {
+        flat_src
+    } else {
+        legacy_src
+    };
     if !src.exists() {
         eprintln!(
             "[workspace] Bun cache miss for {pkg}@{version} (looked at {}); engine plugins importing this package may fail to load",
             src.display()
         );
-        return;
+        return false;
     }
     let dst = node_modules_root.join(pkg);
     // Skip when the package is already present — vendoring is idempotent and
     // we don't want to clobber every provisioning run.
     if dst.join("package.json").exists() {
-        return;
+        return true;
     }
     if let Some(parent) = dst.parent() {
         let _ = fs::create_dir_all(parent);
     }
     match copy_dir_recursive(&src, &dst) {
-        Ok(_) => stats.written += 1,
+        Ok(_) => {
+            stats.written += 1;
+            true
+        }
         Err(err) => {
             eprintln!(
                 "[workspace] failed to vendor {pkg}@{version} into {}: {err}",
                 dst.display()
             );
+            false
         }
+    }
+}
+
+fn write_zod_backed_plugin_fallback(node_modules_root: &Path, stats: &mut WriteStats) {
+    let plugin_dir = node_modules_root.join("@opencode-ai").join("plugin");
+    let package_path = plugin_dir.join("package.json");
+    if package_path.exists() {
+        return;
+    }
+
+    let dist_dir = plugin_dir.join("dist");
+    if let Err(err) = fs::create_dir_all(&dist_dir) {
+        eprintln!(
+            "[workspace] failed to create @opencode-ai/plugin fallback at {}: {err}",
+            dist_dir.display()
+        );
+        return;
+    }
+
+    let package_json = serde_json::json!({
+        "name": "@opencode-ai/plugin",
+        "version": "0.0.0-veslo-managed",
+        "type": "module",
+        "exports": {
+            ".": { "import": "./dist/index.js" },
+            "./tool": { "import": "./dist/tool.js" }
+        },
+        "files": ["dist"]
+    })
+    .to_string();
+
+    let writes = [
+        (package_path, format!("{package_json}\n")),
+        (
+            dist_dir.join("index.js"),
+            "export * from \"./tool.js\";\n".to_string(),
+        ),
+        (
+            dist_dir.join("tool.js"),
+            "import { z } from \"zod\";\nexport function tool(input) {\n  return input;\n}\ntool.schema = z;\n".to_string(),
+        ),
+    ];
+
+    for (path, content) in writes {
+        match fs::write(&path, content) {
+            Ok(_) => stats.written += 1,
+            Err(err) => eprintln!(
+                "[workspace] failed to write @opencode-ai/plugin fallback file {}: {err}",
+                path.display()
+            ),
+        }
+    }
+}
+
+fn package_json_version(package_dir: &Path) -> Option<String> {
+    let raw = fs::read_to_string(package_dir.join("package.json")).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    parsed
+        .get("version")
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+}
+
+fn log_workspace_opencode_dependency_status(opencode_root: &Path, node_modules_root: &Path) {
+    let plugin_dir = node_modules_root.join("@opencode-ai").join("plugin");
+    let zod_dir = node_modules_root.join("zod");
+    let plugin_version = package_json_version(&plugin_dir);
+    let zod_version = package_json_version(&zod_dir);
+    let plugin_mode = match plugin_version.as_deref() {
+        Some("0.0.0-veslo-managed") => "fallback-shim",
+        Some(VESLO_MANAGED_PLUGIN_VERSION) => "vendored",
+        Some(_) => "vendored-version-mismatch",
+        None => "missing",
+    };
+    let zod_mode = match zod_version.as_deref() {
+        Some(VESLO_MANAGED_ZOD_VERSION) => "vendored",
+        Some(_) => "vendored-version-mismatch",
+        None => "missing",
+    };
+    let payload = serde_json::json!({
+        "opencodeRoot": opencode_root.display().to_string(),
+        "pluginMode": plugin_mode,
+        "pluginVersion": plugin_version,
+        "pluginPackagePath": plugin_dir.join("package.json").display().to_string(),
+        "expectedPluginVersion": VESLO_MANAGED_PLUGIN_VERSION,
+        "zodMode": zod_mode,
+        "zodVersion": zod_version,
+        "zodPackagePath": zod_dir.join("package.json").display().to_string(),
+        "expectedZodVersion": VESLO_MANAGED_ZOD_VERSION,
+    });
+
+    if plugin_mode == "fallback-shim" || plugin_mode == "missing" || zod_mode == "missing" {
+        eprintln!(
+            "[workspace] opencode plugin dependency status {payload} — workspace plugins may fail OpenCode zod introspection (symptom: Object.values on null/undefined)"
+        );
+    } else if plugin_mode == "vendored-version-mismatch" || zod_mode == "vendored-version-mismatch" {
+        eprintln!("[workspace] opencode plugin dependency status {payload}");
+    } else {
+        println!("[workspace] opencode plugin dependency status {payload}");
     }
 }
 
