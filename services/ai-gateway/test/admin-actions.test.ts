@@ -57,6 +57,18 @@ function createCredential(
   };
 }
 
+function createCodexAuthJson(refreshToken = "codex-refresh-token") {
+  return JSON.stringify({
+    auth_mode: "chatgpt",
+    tokens: {
+      id_token: "codex-id-token",
+      access_token: "codex-access-token",
+      refresh_token: refreshToken,
+      account_id: "acct_codex_runtime",
+    },
+  });
+}
+
 function createUnusedDenClient() {
   return {
     async startBrowserAuth() {
@@ -186,6 +198,15 @@ function createAdminServiceSpy() {
         },
       };
     },
+    async reconnectCredential(token, credentialId, input, actorUserId) {
+      calls.credential.push({ action: "reconnect", credentialId, token, actorUserId });
+      return {
+        credential: {
+          ...createCredential(credentialId, "healthy", { provider: "codex_oauth", activeLeases: 0 }),
+          lastRefreshAt: "2026-04-03T11:30:00.000Z",
+        },
+      };
+    },
     async listSessions(): Promise<{ sessions: SessionRecord[] }> {
       return { sessions: [] };
     },
@@ -285,6 +306,37 @@ test("DELETE /admin/api/credentials/:credentialId forwards admin actor identity"
   }
 });
 
+test("POST /admin/api/credentials/:credentialId/reconnect forwards new Codex auth JSON", async () => {
+  const { service, calls, session } = createAdminServiceSpy();
+  const app = createApp({ admin: service });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/credentials/cred_codex_1/reconnect`, {
+      method: "POST",
+      headers: {
+        ...AUTHORIZATION,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ secret: createCodexAuthJson("fresh-refresh-token") }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).credential.state, "healthy");
+    assert.deepEqual(calls.credential.at(-1), {
+      action: "reconnect",
+      credentialId: "cred_codex_1",
+      token: "admin-token",
+      actorUserId: session.user.email,
+    });
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
 test("createDefaultAdminService soft-deletes an unusable credential and tombstones its secret", async () => {
   const deletedCredential = {
     ...createCredential("cred_revoked_1", "revoked", { activeLeases: 0 }),
@@ -378,6 +430,191 @@ test("createDefaultAdminService soft-deletes an unusable credential and tombston
       entityId: "cred_revoked_1",
       result: "warning",
       summary: "Deleted credential cred_revoked_1.",
+    },
+  ]);
+});
+
+test("createDefaultAdminService reconnects a Codex credential in place", async () => {
+  const secretReplacements: unknown[] = [];
+  const reconnectCalls: string[] = [];
+  const auditCalls: Array<{ action: string; entityId: string; result: string }> = [];
+  const refreshedCredential = {
+    ...createCredential("cred_codex_1", "healthy", { provider: "codex_oauth", activeLeases: 0 }),
+    alertCount: 0,
+    linkedAlertIds: [],
+    lastRefreshAt: "2026-04-03T11:30:00.000Z",
+  };
+  const service = createDefaultAdminService("http://den.example.test", {
+    denClient: createUnusedDenClient(),
+    credentialReadRepository: {
+      async listAdminCredentials() {
+        return [refreshedCredential];
+      },
+    },
+    credentialActionRepository: {
+      async revokeCredential() {
+        throw new Error("unused");
+      },
+      async drainCredential() {
+        throw new Error("unused");
+      },
+      async rotateCredential() {
+        throw new Error("unused");
+      },
+      async deleteCredential() {
+        throw new Error("unused");
+      },
+      async reconnectCredential(credentialId: string) {
+        reconnectCalls.push(credentialId);
+        return true;
+      },
+    } as any,
+    credentialSecretLookupRepository: {
+      async getCredentialRecordById(credentialId: string) {
+        assert.equal(credentialId, "cred_codex_1");
+        return {
+          provider: "codex_oauth",
+          secretRef: "secret_codex_1",
+        };
+      },
+    },
+    secretStore: {
+      async put() {
+        throw new Error("unused");
+      },
+      async get() {
+        throw new Error("unused");
+      },
+      async replace(secretRef: string, secret: unknown) {
+        secretReplacements.push({ secretRef, secret });
+      },
+    },
+    auditRepository: {
+      async recordEvent(input) {
+        auditCalls.push({
+          action: input.action,
+          entityId: input.entityId,
+          result: input.result,
+        });
+      },
+      async listEvents() {
+        return [];
+      },
+    },
+    alertRepository: {
+      async listAlerts() {
+        return [];
+      },
+    },
+  } as any);
+  const freshAuthJson = createCodexAuthJson("fresh-refresh-token");
+
+  const result = await (service as any).reconnectCredential(
+    "admin-token",
+    "cred_codex_1",
+    { secret: freshAuthJson },
+    "admin@example.test",
+  );
+
+  assert.equal(result.credential.id, "cred_codex_1");
+  assert.equal(result.credential.state, "healthy");
+  assert.deepEqual(secretReplacements, [
+    {
+      secretRef: "secret_codex_1",
+      secret: {
+        kind: "codex_auth_json",
+        authJson: freshAuthJson,
+      },
+    },
+  ]);
+  assert.deepEqual(reconnectCalls, ["cred_codex_1"]);
+  assert.deepEqual(auditCalls, [
+    {
+      action: "credential.reconnect",
+      entityId: "cred_codex_1",
+      result: "ok",
+    },
+  ]);
+});
+
+test("createDefaultAdminService quarantines Codex credentials with reused refresh tokens", async () => {
+  const quarantineCalls: Array<{ credentialId: string; reason: string }> = [];
+  const auditCalls: Array<{ action: string; entityId: string; result: string }> = [];
+  const service = createDefaultAdminService("http://den.example.test", {
+    denClient: createUnusedDenClient(),
+    credentialReadRepository: {
+      async listAdminCredentials() {
+        return [
+          {
+            ...createCredential("cred_codex_michal", "healthy", { provider: "codex_oauth", activeLeases: 0 }),
+            alertCount: 0,
+            linkedAlertIds: [],
+          },
+        ];
+      },
+    },
+    credentialActionRepository: {
+      async revokeCredential() {
+        throw new Error("unused");
+      },
+      async drainCredential() {
+        throw new Error("unused");
+      },
+      async rotateCredential() {
+        throw new Error("unused");
+      },
+      async deleteCredential() {
+        throw new Error("unused");
+      },
+      async quarantineCredential(credentialId: string, reason: string) {
+        quarantineCalls.push({ credentialId, reason });
+        return true;
+      },
+    } as any,
+    codexStatusProvider: {
+      async getStatus() {
+        return {
+          available: false,
+          source: "unavailable",
+          label: "Codex limits unavailable",
+          detail: "Your access token could not be refreshed because your refresh token was already used.",
+          checkedAt: "2026-06-04T15:14:57.039Z",
+        };
+      },
+    },
+    auditRepository: {
+      async recordEvent(input) {
+        auditCalls.push({
+          action: input.action,
+          entityId: input.entityId,
+          result: input.result,
+        });
+      },
+      async listEvents() {
+        return [];
+      },
+    },
+    alertRepository: {
+      async listAlerts() {
+        return [];
+      },
+    },
+  } as any);
+
+  const result = await service.listCredentials("admin-token");
+
+  assert.equal(result.credentials[0]?.eligibility?.state, "unavailable");
+  assert.deepEqual(quarantineCalls, [
+    {
+      credentialId: "cred_codex_michal",
+      reason: "codex_refresh_token_reused",
+    },
+  ]);
+  assert.deepEqual(auditCalls, [
+    {
+      action: "credential.quarantine",
+      entityId: "cred_codex_michal",
+      result: "warning",
     },
   ]);
 });
@@ -896,6 +1133,16 @@ test("default admin service returns Codex model catalog for codex credentials", 
         throw new Error("unused");
       },
     },
+    codexStatusProvider: {
+      async getStatus() {
+        return {
+          available: true,
+          source: "codex_exec_no_rate_limits",
+          label: "Codex OK, limits unknown",
+          checkedAt: "2026-06-04T15:14:57.039Z",
+        };
+      },
+    },
   });
 
   const payload = await service.listCredentialModels("admin-token", "cred_codex_1");
@@ -904,6 +1151,56 @@ test("default admin service returns Codex model catalog for codex credentials", 
   assert.equal(payload.defaultModel, "gpt-5.5");
   assert.ok(payload.models.includes("gpt-5.4"));
   assert.ok(payload.models.includes("gpt-5.5"));
+});
+
+test("default admin service filters unsupported Codex models for a specific credential", async () => {
+  const service = createDefaultAdminService("http://den.example.test", {
+    denClient: createUnusedDenClient(),
+    credentialSecretLookupRepository: {
+      async getCredentialRecordById(credentialId: string) {
+        assert.equal(credentialId, "cred_codex_vaclav");
+        return {
+          provider: "codex_oauth",
+          secretRef: "secret_codex_vaclav",
+          name: "Vaclav CODEX",
+        };
+      },
+    },
+    secretStore: {
+      async put() {
+        throw new Error("unused");
+      },
+      async get() {
+        throw new Error("should_not_read_codex_secret_for_model_filter");
+      },
+      async replace() {
+        throw new Error("unused");
+      },
+    },
+    codexStatusProvider: {
+      async getStatus(input) {
+        assert.deepEqual(input, {
+          credentialId: "cred_codex_vaclav",
+          credentialName: "Vaclav CODEX",
+        });
+        return {
+          available: true,
+          source: "codex_exec_no_rate_limits",
+          label: "Codex OK, limits unknown",
+          checkedAt: "2026-06-04T15:14:57.039Z",
+          detail: "The 'gpt-5.3-codex' model is not supported when using Codex with a ChatGPT account.",
+          unsupportedModels: ["gpt-5.3-codex"],
+        } as any;
+      },
+    },
+  });
+
+  const payload = await service.listCredentialModels("admin-token", "cred_codex_vaclav");
+
+  assert.equal(payload.credentialId, "cred_codex_vaclav");
+  assert.equal(payload.defaultModel, "gpt-5.5");
+  assert.ok(payload.models.includes("gpt-5.5"));
+  assert.ok(!payload.models.includes("gpt-5.3-codex"));
 });
 
 test("createDefaultAdminService does not auto-assign codex ai access on user creation", async () => {
