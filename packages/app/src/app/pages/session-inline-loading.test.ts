@@ -93,36 +93,52 @@ test("materializing a pending submitted draft preserves the visible run indicato
   );
 });
 
-test("optimistic submitted drafts show the responding label before assistant parts arrive", () => {
+test("optimistic submitted drafts enter responding phase before assistant parts arrive", () => {
   assert.match(
     sessionSource,
     /if \(status === "idle"\) \{\s*if \(!started\) return "idle";\s*if \(optimisticSubmittedDraft\(\)\) return "responding";/s,
-    "a first optimistic submit should read as Responding/Odpovídám, not as a workspace-loading or thinking-only state",
+    "a first optimistic submit should use the responding run phase, with the label decided separately from the phase",
   );
 });
 
-test("optimistic responding state renders as an assistant message instead of footer text", () => {
+test("cold workspace pending sends use loading label until backend progress starts", () => {
   assert.match(
+    sessionSource,
+    /const workspaceSendWarmupActive = createMemo\(\(\) => \{[\s\S]*const submitted = optimisticSubmittedDraft\(\);[\s\S]*if \(!submitted \|\| submitted\.state !== "sending"\) return false;[\s\S]*if \(props\.engineReady !== false\) return false;[\s\S]*if \(runHasBegun\(\) \|\| responseStarted\(\)\) return false;[\s\S]*return true;[\s\S]*\}\);/s,
+    "pending sends in browsing mode should be labeled as loading while the workspace/runtime is starting",
+  );
+
+  assert.match(
+    sessionSource,
+    /case "responding":\s*return workspaceSendWarmupActive\(\) \? tr\("session\.run_loading"\) : tr\("session\.run_responding"\);/s,
+    "Responding/Odpovídám should change to Loading/Nahrávám only during workspace/runtime warmup",
+  );
+});
+
+test("optimistic responding state survives idle workspace preflight while send handoff is pending", () => {
+  assert.match(
+    sessionSource,
+    /if \(props\.sessionStatus !== "idle"\) return;\s*if \(optimisticSubmittedDraft\(\)\?\.state === "sending"\) return;\s*if \(runHasBegun\(\) \|\| responseStarted\(\)\) return;/s,
+    "workspace/runtime startup can keep the session idle for more than the safety grace period, so the pending submitted draft must keep the run indicator visible until handoff resolves",
+  );
+});
+
+test("optimistic responding state renders as the footer run indicator, not assistant response text", () => {
+  assert.doesNotMatch(
     sessionSource,
     /pendingSubmittedDraftToAssistantPlaceholderMessage/,
-    "session view should use a synthetic assistant placeholder while a pending submit is waiting for backend assistant output",
+    "session view should not turn the Responding/Odpovídám run label into a synthetic assistant text message",
   );
 
   assert.match(
     sessionSource,
-    /const optimisticAssistantRespondingMessage = createMemo<MessageWithParts \| null>\(\(\) => \{[\s\S]*if \(responseStarted\(\)\) return null;[\s\S]*return pendingSubmittedDraftToAssistantPlaceholderMessage\(/s,
-    "the placeholder should disappear as soon as the real backend assistant response starts",
+    /const renderedMessages = createMemo\(\(\) => \{[\s\S]*const optimisticMessage = optimisticSubmittedMessage\(\);[\s\S]*const sourceMessages = optimisticMessage \? \[\.\.\.props\.messages, optimisticMessage\] : props\.messages;/s,
+    "rendered messages should append only the optimistic user message while the run indicator owns responding status",
   );
 
   assert.match(
     sessionSource,
-    /const sourceMessages = optimisticAssistantMessage\s*\?\s*\[\.\.\.messagesWithOptimisticUser, optimisticAssistantMessage\]\s*:\s*messagesWithOptimisticUser;/,
-    "rendered messages should append the responding assistant placeholder after the optimistic user message",
-  );
-
-  assert.match(
-    sessionSource,
-    /const showFooterRunIndicator = createMemo\(\(\) => showRunIndicator\(\) && !optimisticAssistantRespondingMessage\(\)\);[\s\S]*footer=\{\s*showFooterRunIndicator\(\) \?/s,
-    "the footer run indicator should be suppressed while the responding placeholder is rendered as an assistant message",
+    /const showFooterRunIndicator = createMemo\(\(\) => showRunIndicator\(\)\);[\s\S]*footer=\{\s*showFooterRunIndicator\(\) \?/s,
+    "the standard dot run indicator should remain visible while waiting for backend assistant output",
   );
 });

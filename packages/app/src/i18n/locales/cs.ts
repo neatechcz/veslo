@@ -1210,6 +1210,7 @@ export default {
   "session.reveal_desktop_only": "Zobrazení je dostupné jen v desktopové aplikaci.",
   "session.reveal_remote_unavailable": "Zobrazení není pro vzdálené workery dostupné.",
   "session.run_failed": "Běh selhal",
+  "session.run_loading": "Nahrávám",
   "session.run_responding": "Odpovídám",
   "session.run_retrying": "Opakuji",
   "session.run_sending": "Odesílám",

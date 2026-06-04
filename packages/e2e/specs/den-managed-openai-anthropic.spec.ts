@@ -628,7 +628,9 @@ async function setComposerText(text: string): Promise<void> {
   );
 }
 
-async function clickSend(): Promise<void> {
+type RunIndicatorExpectation = 'loading' | 'responding';
+
+async function clickSend(expectedRunIndicator: RunIndicatorExpectation): Promise<void> {
   const textbox = await waitForComposer();
   await textbox.click();
   const sendButtons = await $$([
@@ -668,12 +670,62 @@ async function clickSend(): Promise<void> {
   });
   await sendButton.click();
 
+  const runIndicatorText = await waitForRunIndicatorAfterSend(expectedRunIndicator);
+  console.log(`[den-managed-ai-roundtrip] run indicator after send=${JSON.stringify(runIndicatorText)}`);
+
   await browser.pause(1000);
   const after = await browser.execute((editor: HTMLElement) => ({
     activeElementIsEditor: document.activeElement === editor,
     editorText: editor.textContent ?? '',
   }), textbox);
   console.log(`[den-managed-ai-roundtrip] after send=${JSON.stringify(after)}`);
+}
+
+function expectedRunIndicatorLabels(expected: RunIndicatorExpectation): string[] {
+  if (expected === 'loading') {
+    return ['Loading', 'Nahrávám', '正在加载'];
+  }
+  return ['Responding', 'Odpovídám', '正在回应'];
+}
+
+async function waitForRunIndicatorAfterSend(expected: RunIndicatorExpectation, timeout = 10000): Promise<string> {
+  let diagnostics: unknown = null;
+  await browser.waitUntil(
+    async () => {
+      diagnostics = await browser.execute(() => {
+        const indicator = document.querySelector('[data-testid="session-run-indicator"]') as HTMLElement | null;
+        const pendingUserStatuses = Array.from(document.querySelectorAll('[data-message-role="user"] [role="status"]'))
+          .map((element) => element.textContent?.replace(/\s+/g, ' ').trim() ?? '')
+          .filter(Boolean);
+        return {
+          indicatorText: indicator?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+          phase: indicator?.dataset.runPhase ?? null,
+          pendingUserStatuses,
+          rootText: document.querySelector('#root')?.textContent?.replace(/\s+/g, ' ').trim().slice(0, 800) ?? '',
+        };
+      });
+      const record = diagnostics as { indicatorText?: string; phase?: string | null; pendingUserStatuses?: string[] };
+      const indicatorText = record.indicatorText ?? '';
+      const expectedLabels = expectedRunIndicatorLabels(expected);
+      const hasExpectedText = expectedLabels.some((label) => indicatorText.includes(label));
+      const disallowedFootnoteLabels = [
+        ...expectedRunIndicatorLabels('loading'),
+        ...expectedRunIndicatorLabels('responding'),
+      ];
+      return record.phase === 'responding' &&
+        hasExpectedText &&
+        !(record.pendingUserStatuses ?? []).some((text) =>
+          disallowedFootnoteLabels.some((label) => text.includes(label))
+        );
+    },
+    {
+      timeout,
+      interval: 100,
+      timeoutMsg: `${expected} run indicator did not appear after sending. Diagnostics=${JSON.stringify(diagnostics)}`,
+    },
+  );
+  const finalRecord = diagnostics as { indicatorText?: string };
+  return finalRecord.indicatorText ?? '';
 }
 
 async function waitForNewAssistantResponse(
@@ -707,10 +759,14 @@ async function waitForNewAssistantResponse(
   return assistantResponse;
 }
 
-async function sendPromptAndWaitForAssistant(prompt: string, token: string): Promise<string> {
+async function sendPromptAndWaitForAssistant(
+  prompt: string,
+  token: string,
+  expectedRunIndicator: RunIndicatorExpectation,
+): Promise<string> {
   const baselineAssistantMessages = await readMessageTexts('assistant');
   await setComposerText(prompt);
-  await clickSend();
+  await clickSend(expectedRunIndicator);
   return waitForNewAssistantResponse(baselineAssistantMessages, token);
 }
 
@@ -813,7 +869,7 @@ describe('DEN-managed AI roundtrip', () => {
     let existingChatAssistantResponse = '';
     let sessionId = '';
     try {
-      newChatAssistantResponse = await sendPromptAndWaitForAssistant(newChatPrompt, newChatToken);
+      newChatAssistantResponse = await sendPromptAndWaitForAssistant(newChatPrompt, newChatToken, 'loading');
       const sessionHash = await waitForSelectedSessionHash();
       sessionId = extractSessionIdFromHash(sessionHash);
 
@@ -822,7 +878,7 @@ describe('DEN-managed AI roundtrip', () => {
       await waitForHashRoute(`#/session/${sessionId}`, 30000);
       await waitForComposer();
 
-      existingChatAssistantResponse = await sendPromptAndWaitForAssistant(existingChatPrompt, existingChatToken);
+      existingChatAssistantResponse = await sendPromptAndWaitForAssistant(existingChatPrompt, existingChatToken, 'responding');
       await expectManagedAiFixtureObservedSession([newChatToken, existingChatToken], sessionId);
     } catch (error) {
       const text = await readRootText().catch(() => '');

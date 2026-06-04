@@ -1214,6 +1214,7 @@ export default {
   "session.reveal_desktop_only": "Reveal is available in the desktop app.",
   "session.reveal_remote_unavailable": "Reveal is unavailable for remote workers.",
   "session.run_failed": "Run failed",
+  "session.run_loading": "Loading",
   "session.run_responding": "Responding",
   "session.run_retrying": "Retrying",
   "session.run_sending": "Sending",

@@ -73,14 +73,13 @@ test("failed pending handoff restores the pending submit to its original pending
   );
 });
 
-test("session renders temporary submitted user and responding assistant messages until the real transcript takes over", () => {
+test("session renders a temporary submitted user message while footer indicator owns responding state", () => {
   const optimisticIndex = source.indexOf("const optimisticSubmittedMessage = createMemo<MessageWithParts | null>(() => {");
-  const assistantIndex = source.indexOf("const optimisticAssistantRespondingMessage = createMemo<MessageWithParts | null>(() => {");
   const renderedIndex = source.indexOf("const renderedMessages = createMemo(() => {");
 
   assert.ok(
-    optimisticIndex >= 0 && assistantIndex > optimisticIndex && assistantIndex < renderedIndex,
-    "the optimistic submitted user and responding assistant memos must be defined before renderedMessages reads them",
+    optimisticIndex >= 0 && optimisticIndex < renderedIndex,
+    "the optimistic submitted user memo must be defined before renderedMessages reads it",
   );
 
   assert.match(
@@ -89,16 +88,16 @@ test("session renders temporary submitted user and responding assistant messages
     "session should derive a synthetic user message from the pending submitted draft model",
   );
 
-  assert.match(
+  assert.doesNotMatch(
     source,
-    /pendingSubmittedDraftToAssistantPlaceholderMessage\([\s\S]*submitted,[\s\S]*props\.activeWorkspaceRoot,[\s\S]*tr\("session\.run_responding"\),[\s\S]*\)/s,
-    "session should derive a synthetic assistant responding message while backend output has not started",
+    /pendingSubmittedDraftToAssistantPlaceholderMessage/,
+    "session should not render Responding/Odpovídám as synthetic assistant response text",
   );
 
   assert.match(
     source,
-    /const optimisticMessage = optimisticSubmittedMessage\(\);\s*const optimisticAssistantMessage = optimisticAssistantRespondingMessage\(\);\s*const messagesWithOptimisticUser = optimisticMessage \? \[\.\.\.props\.messages, optimisticMessage\] : props\.messages;\s*const sourceMessages = optimisticAssistantMessage\s*\?\s*\[\.\.\.messagesWithOptimisticUser, optimisticAssistantMessage\]\s*:\s*messagesWithOptimisticUser;/,
-    "rendered messages should append the optimistic user message and then the responding assistant placeholder",
+    /const optimisticMessage = optimisticSubmittedMessage\(\);\s*const sourceMessages = optimisticMessage \? \[\.\.\.props\.messages, optimisticMessage\] : props\.messages;/,
+    "rendered messages should append only the optimistic user message",
   );
 
   assert.match(
@@ -111,8 +110,8 @@ test("session renders temporary submitted user and responding assistant messages
 test("session passes pending submit status to the rendered message list", () => {
   assert.match(
     source,
-    /const pendingMessageStateById = createMemo<Record<string, PendingMessageState>>\(\(\) => \{\s*const submitted = optimisticSubmittedDraft\(\);[\s\S]*const state: PendingMessageState[\s\S]*return \{\s*\[submitted\.id\]: state,\s*\};\s*\}\);/s,
-    "session view should expose pending submit state keyed by the optimistic message id",
+    /const pendingMessageStateById = createMemo<Record<string, PendingMessageState>>\(\(\) => \{\s*const submitted = optimisticSubmittedDraft\(\);[\s\S]*if \(submitted\.state !== "error"\) return \{\};[\s\S]*return \{\s*\[submitted\.id\]: \{ state: submitted\.state, error: submitted\.error \},\s*\};\s*\}\);/s,
+    "session view should expose pending submit state only for failed handoffs, not while the assistant is responding",
   );
 
   assert.match(

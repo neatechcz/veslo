@@ -100,7 +100,6 @@ import { getEditableUserMessageDraft, type EditableUserMessageDraft } from "../c
 import {
   createPendingSubmittedDraft,
   markPendingSubmittedFailed,
-  pendingSubmittedDraftToAssistantPlaceholderMessage,
   pendingSubmittedDraftToEditable,
   pendingSubmittedDraftToMessage,
   remapPendingSubmittedSession,
@@ -1030,28 +1029,13 @@ export default function SessionView(props: SessionViewProps) {
     return pendingSubmittedDraftToMessage(submitted, props.activeWorkspaceRoot);
   });
 
-  const optimisticAssistantRespondingMessage = createMemo<MessageWithParts | null>(() => {
-    const submitted = optimisticSubmittedDraft();
-    if (!submitted) return null;
-    if (submitted.sessionKey !== currentSessionQueueKey()) return null;
-    if (submitted.state !== "sending") return null;
-    if (responseStarted()) return null;
-    return pendingSubmittedDraftToAssistantPlaceholderMessage(
-      submitted,
-      props.activeWorkspaceRoot,
-      tr("session.run_responding"),
-    );
-  });
-
   const pendingMessageStateById = createMemo<Record<string, PendingMessageState>>(() => {
     const submitted = optimisticSubmittedDraft();
     if (!submitted) return {};
     if (submitted.sessionKey !== currentSessionQueueKey()) return {};
-    const state: PendingMessageState = submitted.error
-      ? { state: submitted.state, error: submitted.error }
-      : { state: submitted.state };
+    if (submitted.state !== "error") return {};
     return {
-      [submitted.id]: state,
+      [submitted.id]: { state: submitted.state, error: submitted.error },
     };
   });
 
@@ -1060,11 +1044,7 @@ export default function SessionView(props: SessionViewProps) {
 
   const renderedMessages = createMemo(() => {
     const optimisticMessage = optimisticSubmittedMessage();
-    const optimisticAssistantMessage = optimisticAssistantRespondingMessage();
-    const messagesWithOptimisticUser = optimisticMessage ? [...props.messages, optimisticMessage] : props.messages;
-    const sourceMessages = optimisticAssistantMessage
-      ? [...messagesWithOptimisticUser, optimisticAssistantMessage]
-      : messagesWithOptimisticUser;
+    const sourceMessages = optimisticMessage ? [...props.messages, optimisticMessage] : props.messages;
     if (messageWindowExpanded() || searchActive()) return sourceMessages;
 
     const start = messageWindowStart();
@@ -1791,7 +1771,14 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const showRunIndicator = createMemo(() => runPhase() !== "idle");
-  const showFooterRunIndicator = createMemo(() => showRunIndicator() && !optimisticAssistantRespondingMessage());
+  const showFooterRunIndicator = createMemo(() => showRunIndicator());
+  const workspaceSendWarmupActive = createMemo(() => {
+    const submitted = optimisticSubmittedDraft();
+    if (!submitted || submitted.state !== "sending") return false;
+    if (props.engineReady !== false) return false;
+    if (runHasBegun() || responseStarted()) return false;
+    return true;
+  });
   const createTranscriptEditableUserMessage = () => {
     const editableUserMessage = createMemo(() =>
       getEditableUserMessageDraft({
@@ -1946,7 +1933,7 @@ export default function SessionView(props: SessionViewProps) {
       case "retrying":
         return tr("session.run_retrying");
       case "responding":
-        return tr("session.run_responding");
+        return workspaceSendWarmupActive() ? tr("session.run_loading") : tr("session.run_responding");
       case "thinking":
         return tr("session.run_thinking");
       case "error":
@@ -2289,9 +2276,16 @@ export default function SessionView(props: SessionViewProps) {
   createEffect(() => {
     if (!runStartedAt()) return;
     if (props.sessionStatus !== "idle") return;
+    if (optimisticSubmittedDraft()?.state === "sending") return;
     if (runHasBegun() || responseStarted()) return;
     const timer = setTimeout(() => {
-      if (runStartedAt() && props.sessionStatus === "idle" && !runHasBegun() && !responseStarted()) {
+      if (
+        runStartedAt() &&
+        props.sessionStatus === "idle" &&
+        optimisticSubmittedDraft()?.state !== "sending" &&
+        !runHasBegun() &&
+        !responseStarted()
+      ) {
         resetRunState();
       }
     }, 2_000);
@@ -4363,6 +4357,8 @@ export default function SessionView(props: SessionViewProps) {
                   <div class={`w-full ${railWidthClass()}`}>
                     <div
                       class={`flex items-center gap-2 text-xs py-1 ${runPhase() === "error" ? "text-red-11" : "text-gray-9"}`}
+                      data-testid="session-run-indicator"
+                      data-run-phase={runPhase()}
                       role="status"
                       aria-live="polite"
                     >
