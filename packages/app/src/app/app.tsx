@@ -6388,6 +6388,7 @@ export default function App() {
     setUpdateEnv,
     checkForUpdates,
     downloadUpdate,
+    retryUpdateDownload,
     installUpdateAndRestart,
     resetModalOpen,
     setResetModalOpen,
@@ -9231,7 +9232,28 @@ export default function App() {
     if (state.state !== "available") return;
     if (!pendingUpdate()) return;
 
-    downloadUpdate().catch(e => reportError(e, "updates.download"));
+    downloadUpdate({ automatic: true }).catch(e => reportError(e, "updates.download"));
+  });
+
+  createEffect(() => {
+    if (!isTauriRuntime()) return;
+    if (!updateAutoDownload()) return;
+
+    const state = updateStatus();
+    if (state.state !== "downloading") return;
+    if (state.retry?.kind !== "scheduled") return;
+
+    const delayMs = Math.max(0, state.retry.nextRetryAt - Date.now());
+    const timeout = window.setTimeout(() => {
+      if (state.retry?.kind !== "scheduled") return;
+      downloadUpdate({
+        automatic: true,
+        retryAttempt: state.retry.retryAttempt,
+        refreshBeforeDownload: true,
+      }).catch(e => reportError(e, "updates.download.retry"));
+    }, delayMs);
+
+    onCleanup(() => window.clearTimeout(timeout));
   });
 
   const headerConnectedVersion = createMemo(() => {
@@ -9706,6 +9728,7 @@ export default function App() {
       appVersion: appVersion(),
       checkForUpdates: () => checkForUpdates(),
       downloadUpdate: () => downloadUpdate(),
+      retryUpdateDownload: () => retryUpdateDownload(),
       installUpdateAndRestart,
       anyActiveRuns: anyActiveRuns(),
       engineSource: engineSource(),
@@ -9883,6 +9906,7 @@ export default function App() {
     updateAutoDownload: updateAutoDownload(),
     anyActiveRuns: anyActiveRuns(),
     downloadUpdate: () => downloadUpdate(),
+    retryUpdateDownload: () => retryUpdateDownload(),
     installUpdateAndRestart,
     activePlugins: sidebarPluginList(),
     activePluginStatus: sidebarPluginStatus(),
