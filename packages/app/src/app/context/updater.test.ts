@@ -10,6 +10,7 @@ import {
   UPDATE_AUTO_CHECK_EVERY_MS,
   createUpdaterState,
   resolveAutoDownloadFailureStatus,
+  resolveAutoDownloadOptOutStatus,
   resolveNextUpdateDownloadRetry,
   resolveUpdateAutoDownloadPreference,
   resolveUpdateStartupPreferences,
@@ -194,5 +195,20 @@ test("auto-download failure becomes visible error after retries are exhausted", 
       maxRetries: 3,
       message: "signature mismatch",
     },
+  });
+});
+
+test("auto-download opt-out restores a manual available update state", () => {
+  const status = resolveAutoDownloadOptOutStatus({
+    lastCheckedAt: 100,
+    version: "2026.6.1",
+    notes: "Release notes",
+  });
+
+  assert.deepEqual(status, {
+    state: "available",
+    lastCheckedAt: 100,
+    version: "2026.6.1",
+    notes: "Release notes",
   });
 });

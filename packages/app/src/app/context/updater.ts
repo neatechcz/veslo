@@ -96,6 +96,19 @@ export function resolveAutoDownloadFailureStatus(input: {
   };
 }
 
+export function resolveAutoDownloadOptOutStatus(input: {
+  lastCheckedAt: number;
+  version: string;
+  notes?: string;
+}): UpdateStatus {
+  return {
+    state: "available",
+    lastCheckedAt: input.lastCheckedAt,
+    version: input.version,
+    notes: input.notes,
+  };
+}
+
 export function resolveUpdateAutoDownloadPreference(stored: string | null) {
   if (stored === "0") return false;
   if (stored === "1") return true;

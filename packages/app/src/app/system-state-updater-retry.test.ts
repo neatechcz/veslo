@@ -21,9 +21,22 @@ test("scheduled updater retries refresh the update handle before downloading", (
 });
 
 test("manual updater downloads do not enter the automatic retry loop", () => {
-  assert.match(source, /if \(optionsDownload\?\.automatic\)/);
+  assert.match(source, /if \(optionsDownload\?\.automatic && updateAutoDownload\(\)\)/);
   assert.match(source, /resolveAutoDownloadFailureStatus\(\{/);
   assert.match(source, /else[\s\S]*setUpdateStatus\(\{ state: "error"/);
+});
+
+test("automatic retry stops when auto-download is disabled", () => {
+  assert.match(source, /resolveAutoDownloadOptOutStatus/);
+  assert.match(source, /if \(optionsDownload\?\.automatic && updateAutoDownload\(\)\)/);
+  assert.match(source, /if \(optionsDownload\?\.automatic\)[\s\S]*resolveAutoDownloadOptOutStatus\(\{/);
+});
+
+test("disabling auto-download restores scheduled retry to manual availability", () => {
+  assert.match(source, /function restoreScheduledUpdateRetryForManualDownload\(\)/);
+  assert.match(source, /state\.state !== "downloading" \|\| state\.retry\?\.kind !== "scheduled"/);
+  assert.match(source, /setUpdateAutoDownloadSignal/);
+  assert.match(source, /restoreScheduledUpdateRetryForManualDownload\(\)/);
 });
 
 test("stale updater progress does not mutate scheduled retry state", () => {

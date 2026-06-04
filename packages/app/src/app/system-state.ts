@@ -22,6 +22,7 @@ import {
   UPDATE_AUTO_DOWNLOAD_MAX_RETRIES,
   createUpdaterState,
   resolveAutoDownloadFailureStatus,
+  resolveAutoDownloadOptOutStatus,
 } from "./context/updater";
 import {
   resetVesloState,
@@ -105,7 +106,7 @@ export function createSystemState(options: {
     updateAutoCheck,
     setUpdateAutoCheck,
     updateAutoDownload,
-    setUpdateAutoDownload,
+    setUpdateAutoDownload: setUpdateAutoDownloadSignal,
     updateStatus,
     setUpdateStatus,
     pendingUpdate,
@@ -120,6 +121,31 @@ export function createSystemState(options: {
   const [resetModalBusy, setResetModalBusy] = createSignal(false);
 
   const resetModalTextValue = resetModalText;
+
+  function restoreScheduledUpdateRetryForManualDownload() {
+    const state = updateStatus();
+    if (state.state !== "downloading" || state.retry?.kind !== "scheduled") return;
+
+    const pending = pendingUpdate();
+    if (!pending) return;
+
+    setUpdateStatus(
+      resolveAutoDownloadOptOutStatus({
+        lastCheckedAt: state.lastCheckedAt,
+        version: pending.version,
+        notes: pending.notes,
+      }),
+    );
+  }
+
+  const setUpdateAutoDownload: typeof setUpdateAutoDownloadSignal = (value) =>
+    setUpdateAutoDownloadSignal((current) => {
+      const next = typeof value === "function" ? value(current) : value;
+      if (!next) {
+        restoreScheduledUpdateRetryForManualDownload();
+      }
+      return next;
+    });
 
   const anyActiveRuns = createMemo(() => {
     const statuses = options.sessionStatusById();
@@ -614,7 +640,7 @@ export function createSystemState(options: {
         return;
       }
 
-      if (optionsDownload?.automatic) {
+      if (optionsDownload?.automatic && updateAutoDownload()) {
         setUpdateStatus(
           resolveAutoDownloadFailureStatus({
             lastCheckedAt,
@@ -626,6 +652,17 @@ export function createSystemState(options: {
         );
         return;
       } else {
+        if (optionsDownload?.automatic) {
+          setUpdateStatus(
+            resolveAutoDownloadOptOutStatus({
+              lastCheckedAt,
+              version: failedPending.version,
+              notes: failedPending.notes,
+            }),
+          );
+          return;
+        }
+
         setUpdateStatus({ state: "error", lastCheckedAt, message, version: failedPending.version });
       }
     }
