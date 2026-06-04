@@ -125,6 +125,19 @@ test("auto-download retry policy schedules the next clean retry", () => {
   });
 });
 
+test("auto-download retry policy treats non-finite completed retries as zero", () => {
+  const now = 1_800_000_000_000;
+
+  for (const completedRetries of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+    assert.deepEqual(resolveNextUpdateDownloadRetry({ completedRetries, now }), {
+      kind: "scheduled",
+      retryAttempt: 1,
+      maxRetries: 3,
+      nextRetryAt: now + 30_000,
+    });
+  }
+});
+
 test("auto-download retry policy exhausts after the third retry fails", () => {
   assert.deepEqual(resolveNextUpdateDownloadRetry({ completedRetries: 3, now: 1000 }), {
     kind: "exhausted",

@@ -35,7 +35,8 @@ export type UpdateDownloadRetryInfo =
   | { kind: "exhausted"; retryAttempt: number; maxRetries: number; message?: string };
 
 export function resolveNextUpdateDownloadRetry(input: { completedRetries: number; now?: number }) {
-  const completedRetries = Math.max(0, Math.floor(input.completedRetries));
+  const retryCount = Number.isFinite(input.completedRetries) ? input.completedRetries : 0;
+  const completedRetries = Math.max(0, Math.floor(retryCount));
   if (completedRetries >= UPDATE_AUTO_DOWNLOAD_MAX_RETRIES) {
     return {
       kind: "exhausted" as const,
