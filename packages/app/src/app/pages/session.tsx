@@ -100,6 +100,7 @@ import { getEditableUserMessageDraft, type EditableUserMessageDraft } from "../c
 import {
   createPendingSubmittedDraft,
   markPendingSubmittedFailed,
+  pendingSubmittedDraftToAssistantPlaceholderMessage,
   pendingSubmittedDraftToEditable,
   pendingSubmittedDraftToMessage,
   remapPendingSubmittedSession,
@@ -972,12 +973,74 @@ export default function SessionView(props: SessionViewProps) {
       : sessionKey;
   const currentSessionQueueKey = createMemo(() => sessionQueueKeyForSessionId(props.selectedSessionId));
   const [optimisticSubmittedDraft, setOptimisticSubmittedDraft] = createSignal<PendingSubmittedDraft | null>(null);
+  const [runStartedAt, setRunStartedAt] = createSignal<number | null>(null);
+  const [runHasBegun, setRunHasBegun] = createSignal(false);
+  const [runTick, setRunTick] = createSignal(Date.now());
+  const [runLastProgressAt, setRunLastProgressAt] = createSignal<number | null>(null);
+  const [runBaseline, setRunBaseline] = createSignal<{ assistantId: string | null; partCount: number }>({
+    assistantId: null,
+    partCount: 0,
+  });
+  const resetRunState = () => {
+    setRunStartedAt(null);
+    setRunHasBegun(false);
+    setRunLastProgressAt(null);
+    setRunBaseline({ assistantId: null, partCount: 0 });
+  };
+
+  const lastAssistantSnapshot = createMemo(() => {
+    for (let i = props.messages.length - 1; i >= 0; i -= 1) {
+      const msg = props.messages[i];
+      const info = msg?.info as { id?: string | number; role?: string } | undefined;
+      if (info?.role === "assistant") {
+        const id = typeof info.id === "string" ? info.id : typeof info.id === "number" ? String(info.id) : null;
+        return { id, partCount: msg.parts.length };
+      }
+    }
+    return { id: null, partCount: 0 };
+  });
+
+  const captureRunBaseline = () => {
+    const snapshot = lastAssistantSnapshot();
+    setRunBaseline({ assistantId: snapshot.id, partCount: snapshot.partCount });
+  };
+
+  const startRun = () => {
+    if (runStartedAt()) return;
+    const now = Date.now();
+    setRunStartedAt(now);
+    setRunLastProgressAt(now);
+    setRunHasBegun(false);
+    captureRunBaseline();
+  };
+
+  const responseStarted = createMemo(() => {
+    if (!runStartedAt()) return false;
+    const baseline = runBaseline();
+    const snapshot = lastAssistantSnapshot();
+    if (!snapshot.id && !baseline.assistantId) return false;
+    if (snapshot.id && snapshot.id !== baseline.assistantId) return true;
+    return snapshot.id === baseline.assistantId && snapshot.partCount > baseline.partCount;
+  });
 
   const optimisticSubmittedMessage = createMemo<MessageWithParts | null>(() => {
     const submitted = optimisticSubmittedDraft();
     if (!submitted) return null;
     if (submitted.sessionKey !== currentSessionQueueKey()) return null;
     return pendingSubmittedDraftToMessage(submitted, props.activeWorkspaceRoot);
+  });
+
+  const optimisticAssistantRespondingMessage = createMemo<MessageWithParts | null>(() => {
+    const submitted = optimisticSubmittedDraft();
+    if (!submitted) return null;
+    if (submitted.sessionKey !== currentSessionQueueKey()) return null;
+    if (submitted.state !== "sending") return null;
+    if (responseStarted()) return null;
+    return pendingSubmittedDraftToAssistantPlaceholderMessage(
+      submitted,
+      props.activeWorkspaceRoot,
+      tr("session.run_responding"),
+    );
   });
 
   const pendingMessageStateById = createMemo<Record<string, PendingMessageState>>(() => {
@@ -997,7 +1060,11 @@ export default function SessionView(props: SessionViewProps) {
 
   const renderedMessages = createMemo(() => {
     const optimisticMessage = optimisticSubmittedMessage();
-    const sourceMessages = optimisticMessage ? [...props.messages, optimisticMessage] : props.messages;
+    const optimisticAssistantMessage = optimisticAssistantRespondingMessage();
+    const messagesWithOptimisticUser = optimisticMessage ? [...props.messages, optimisticMessage] : props.messages;
+    const sourceMessages = optimisticAssistantMessage
+      ? [...messagesWithOptimisticUser, optimisticAssistantMessage]
+      : messagesWithOptimisticUser;
     if (messageWindowExpanded() || searchActive()) return sourceMessages;
 
     const start = messageWindowStart();
@@ -1577,20 +1644,6 @@ export default function SessionView(props: SessionViewProps) {
   const [prevTodoCount, setPrevTodoCount] = createSignal(0);
   const [prevFileCount, setPrevFileCount] = createSignal(0);
   const [isInitialLoad, setIsInitialLoad] = createSignal(true);
-  const [runStartedAt, setRunStartedAt] = createSignal<number | null>(null);
-  const [runHasBegun, setRunHasBegun] = createSignal(false);
-  const [runTick, setRunTick] = createSignal(Date.now());
-  const [runLastProgressAt, setRunLastProgressAt] = createSignal<number | null>(null);
-  const [runBaseline, setRunBaseline] = createSignal<{ assistantId: string | null; partCount: number }>({
-    assistantId: null,
-    partCount: 0,
-  });
-  const resetRunState = () => {
-    setRunStartedAt(null);
-    setRunHasBegun(false);
-    setRunLastProgressAt(null);
-    setRunBaseline({ assistantId: null, partCount: 0 });
-  };
   const [queuedDraftsBySessionKey, setQueuedDraftsBySessionKey] = createSignal<Record<string, QueuedDraft[]>>({});
   const [queuePausedAfterStopBySessionKey, setQueuePausedAfterStopBySessionKey] = createSignal<Record<string, boolean>>({});
   const [pendingQueueKeyAwaitingSessionId, setPendingQueueKeyAwaitingSessionId] = createSignal<string | null>(null);
@@ -1722,41 +1775,6 @@ export default function SessionView(props: SessionViewProps) {
     updateQueueForSessionKey(sessionKey, (queue) => markQueuedDraftQueued(queue, id));
   };
 
-  const lastAssistantSnapshot = createMemo(() => {
-    for (let i = props.messages.length - 1; i >= 0; i -= 1) {
-      const msg = props.messages[i];
-      const info = msg?.info as { id?: string | number; role?: string } | undefined;
-      if (info?.role === "assistant") {
-        const id = typeof info.id === "string" ? info.id : typeof info.id === "number" ? String(info.id) : null;
-        return { id, partCount: msg.parts.length };
-      }
-    }
-    return { id: null, partCount: 0 };
-  });
-
-  const captureRunBaseline = () => {
-    const snapshot = lastAssistantSnapshot();
-    setRunBaseline({ assistantId: snapshot.id, partCount: snapshot.partCount });
-  };
-
-  const startRun = () => {
-    if (runStartedAt()) return;
-    const now = Date.now();
-    setRunStartedAt(now);
-    setRunLastProgressAt(now);
-    setRunHasBegun(false);
-    captureRunBaseline();
-  };
-
-  const responseStarted = createMemo(() => {
-    if (!runStartedAt()) return false;
-    const baseline = runBaseline();
-    const snapshot = lastAssistantSnapshot();
-    if (!snapshot.id && !baseline.assistantId) return false;
-    if (snapshot.id && snapshot.id !== baseline.assistantId) return true;
-    return snapshot.id === baseline.assistantId && snapshot.partCount > baseline.partCount;
-  });
-
   const runPhase = createMemo(() => {
     if (props.error && (runStartedAt() !== null || runHasBegun())) return "error";
     const status = props.sessionStatus;
@@ -1773,6 +1791,7 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const showRunIndicator = createMemo(() => runPhase() !== "idle");
+  const showFooterRunIndicator = createMemo(() => showRunIndicator() && !optimisticAssistantRespondingMessage());
   const createTranscriptEditableUserMessage = () => {
     const editableUserMessage = createMemo(() =>
       getEditableUserMessageDraft({
@@ -4339,7 +4358,7 @@ export default function SessionView(props: SessionViewProps) {
               scrollMessageIntoViewById = handler;
             }}
             footer={
-              showRunIndicator() ? (
+              showFooterRunIndicator() ? (
                 <div class="flex justify-start pl-2">
                   <div class={`w-full ${railWidthClass()}`}>
                     <div

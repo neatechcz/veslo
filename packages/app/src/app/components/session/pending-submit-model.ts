@@ -142,3 +142,42 @@ export function pendingSubmittedDraftToMessage(
     parts,
   };
 }
+
+export function pendingSubmittedDraftToAssistantPlaceholderMessage(
+  pending: PendingSubmittedDraft,
+  workspaceRoot: string,
+  text: string,
+): MessageWithParts {
+  const sessionID = pending.sessionId ?? "";
+  const messageId = `${pending.id}:assistant-placeholder`;
+
+  return {
+    info: {
+      id: messageId,
+      sessionID,
+      role: "assistant",
+      time: { created: pending.createdAt + 1 },
+      parentID: pending.id,
+      model: "",
+      modelID: "",
+      providerID: "",
+      mode: pending.draft.mode,
+      agent: "",
+      path: {
+        cwd: workspaceRoot,
+        root: workspaceRoot,
+      },
+      cost: 0,
+      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    } as unknown as MessageWithParts["info"],
+    parts: [
+      {
+        id: `${messageId}:text`,
+        sessionID,
+        messageID: messageId,
+        type: "text",
+        text,
+      } as Part,
+    ],
+  };
+}

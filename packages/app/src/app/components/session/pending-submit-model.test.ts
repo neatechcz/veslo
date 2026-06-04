@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createPendingSubmittedDraft,
   markPendingSubmittedFailed,
+  pendingSubmittedDraftToAssistantPlaceholderMessage,
   pendingSubmittedDraftToEditable,
   pendingSubmittedDraftToMessage,
   remapPendingSubmittedSession,
@@ -104,4 +105,22 @@ test("pending submit creates a renderable text placeholder for attachment-only d
   assert.equal((attachment as { filename?: string } | undefined)?.filename, "screenshot.png");
   assert.equal(placeholder?.type, "text");
   assert.notEqual(((placeholder as { text?: string } | undefined)?.text ?? "").trim(), "");
+});
+
+test("pending submit creates an assistant responding placeholder after the user message", () => {
+  const pending = createPendingSubmittedDraft({
+    id: "pending-submit-1",
+    sessionKey: "pending-draft:abc",
+    sessionId: null,
+    createdAt: 10,
+    draft: draft("hello"),
+  });
+
+  const message = pendingSubmittedDraftToAssistantPlaceholderMessage(pending, "/tmp/workspace", "Responding");
+
+  assert.equal(message.info.id, "pending-submit-1:assistant-placeholder");
+  assert.equal(message.info.role, "assistant");
+  assert.equal(message.info.sessionID, "");
+  assert.equal(message.parts[0]?.type, "text");
+  assert.equal((message.parts[0] as { text?: string }).text, "Responding");
 });
