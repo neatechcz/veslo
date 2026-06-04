@@ -1646,6 +1646,32 @@ export function createWorkspaceStore(options: {
             });
             return false;
           }
+          const currentActiveId = activeWorkspaceId().trim();
+          const currentActiveRoot = activeWorkspaceRoot().trim();
+          if (
+            context?.workspaceType === "local" &&
+            ((currentActiveId && currentActiveId !== multiWorkspaceId) ||
+              (currentActiveRoot && incomingDirectory && currentActiveRoot !== incomingDirectory))
+          ) {
+            wsDebug("connect:abort-stale-after-ensure", {
+              workspaceId: multiWorkspaceId,
+              activeWorkspaceId: currentActiveId || null,
+              baseUrl: nextBaseUrl,
+              directory: incomingDirectory || null,
+              activeRoot: currentActiveRoot || null,
+              reason: context?.reason ?? null,
+              ms: Date.now() - connectStart,
+            });
+            console.log("[workspace] connect ABORT (stale workspace after ensure)", {
+              workspaceId: multiWorkspaceId,
+              activeWorkspaceId: currentActiveId || null,
+              baseUrl: nextBaseUrl,
+              directory: incomingDirectory || null,
+              activeRoot: currentActiveRoot || null,
+              reason: context?.reason ?? null,
+            });
+            return false;
+          }
           // Publish on the global client signal so callsites that still read
           // `client()` directly (rather than `routedClient()`) see the active
           // workspace's client. `routedClient()` prefers
