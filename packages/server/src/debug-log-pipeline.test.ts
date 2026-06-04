@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDebugLogPipeline } from "./debug-log-pipeline.js";
+import { createDebugLogSpool } from "./debug-log-spool.js";
 import type { DebugLogConfig } from "./types.js";
 import type { DebugLogEvent } from "./debug-log-events.js";
 
@@ -125,6 +126,33 @@ describe("debug-log-pipeline", () => {
       // At least one retention warning should have been logged.
       expect(droppedWarnings.some((msg) => msg.includes("retention"))).toBe(true);
 
+      await pipeline.shutdown();
+    });
+  });
+
+  test("disabled pipeline applies retention to pre-existing backlog", async () => {
+    await withTempDir(async (dir) => {
+      const spool = createDebugLogSpool({ dir, maxBytes: 16 * 1024 });
+      const filler = "x".repeat(450);
+      await spool.append(
+        Array.from({ length: 100 }, (_value, index) =>
+          makeEvent({ id: `preexisting-${index}`, payload: { filler } }),
+        ),
+      );
+      const currentBytes = () => createDebugLogSpool({ dir, maxBytes: 16 * 1024 }).currentBytes();
+      expect(await currentBytes()).toBeGreaterThan(16 * 1024);
+
+      const pipeline = createDebugLogPipeline({
+        config: makeConfig({ enabled: false, spoolMaxBytes: 16 * 1024, flushIntervalMs: 10 }),
+        spoolDir: dir,
+      });
+
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        if ((await currentBytes()) <= 16 * 1024 * 0.7) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      expect(await currentBytes()).toBeLessThanOrEqual(16 * 1024 * 0.7);
       await pipeline.shutdown();
     });
   });

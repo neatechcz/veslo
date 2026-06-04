@@ -159,6 +159,12 @@ The local Veslo server normalizes managed-AI proxy compression at the gateway bo
 
 Managed-AI proxy endpoints accept larger JSON request bodies than the default Express parser limit so OpenCode can send realistic accumulated session context. This larger parser is scoped to provider proxy routes; unrelated API surfaces keep their narrower defaults or route-specific limits.
 
+The local Veslo server must stream provider request bodies through to the managed gateway without first parsing the full OpenCode payload for diagnostics. Model extraction for normalized error details is best-effort and limited to small requests with a known `Content-Length`; large or chunked provider requests may omit model from local error details.
+
+The same local server boundary keeps full-body parsing byte-limited. Provider error diagnostics read only a bounded sanitized preview, provider success responses stay streamed unless a small redacted management response must be parsed, and OpenCode transcript/helper JSON responses fail explicitly when they exceed local parsing limits. Local JSON and multipart API ingress rejects oversized payloads before normal schema or form parsing where the request size is known.
+
+Session transcript prefetch is bounded by both entry count and estimated bytes per workspace. Large tool outputs or message parts can evict older warm transcript snapshots even when the session-count limit has not been reached.
+
 Managed-AI usage is attributed by request, user, org, session, and credential. Accounting stores input tokens, output tokens, cached tokens, and total tokens from the routed provider response.
 
 OpenAI-compatible custom providers are admin-managed. The desktop app receives provider `openai_compatible` and a model id in the read-only AI access policy, writes local OpenCode routing for `@ai-sdk/openai-compatible`, and sends prompts through the local Veslo server route `/ai-gateway/providers/openai_compatible/v1/chat/completions`. The managed-AI service that receives the request, DEN or standalone AI Gateway, resolves the assigned platform credential, reads the encrypted base URL and API key, forwards to `${baseUrl}/chat/completions`, and records usage against provider `openai_compatible`.

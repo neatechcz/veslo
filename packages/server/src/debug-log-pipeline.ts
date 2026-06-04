@@ -125,19 +125,31 @@ export function createDebugLogPipeline(input: {
     }
   }
 
-  function startFlushLoop(): void {
+  function triggerRetention(): void {
+    void enforceRetention().catch((error) => {
+      if (logger) {
+        logger.log("error", "debug log pipeline retention error", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
+  }
+
+  function startMaintenanceLoop(): void {
     if (flushTimer || stopped) return;
     flushTimer = setInterval(() => {
-      void flushNow();
+      triggerRetention();
+      if (uploader) {
+        void flushNow();
+      }
     }, config.flushIntervalMs);
     if (typeof flushTimer === "object" && flushTimer && "unref" in flushTimer) {
       (flushTimer as { unref?: () => void }).unref?.();
     }
+    triggerRetention();
   }
 
-  if (uploader) {
-    startFlushLoop();
-  }
+  startMaintenanceLoop();
 
   return {
     async append(eventOrEvents) {

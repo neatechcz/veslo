@@ -42,6 +42,39 @@ fn build_veslo_server_dev_watch_args(mut server_args: Vec<String>) -> Vec<String
     args
 }
 
+fn host_from_http_url(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    let without_scheme = trimmed
+        .strip_prefix("http://")
+        .or_else(|| trimmed.strip_prefix("https://"))?;
+    let authority = without_scheme.split('/').next().unwrap_or("");
+    if let Some(rest) = authority.strip_prefix('[') {
+        return rest.split(']').next().map(|host| host.to_string());
+    }
+    authority.split(':').next().map(|host| host.to_string())
+}
+
+fn is_loopback_http_url(raw: &str) -> bool {
+    let Some(host) = host_from_http_url(raw) else {
+        return false;
+    };
+    let normalized = host.trim().to_ascii_lowercase();
+    normalized == "localhost" || normalized == "::1" || normalized.starts_with("127.")
+}
+
+fn validate_managed_opencode_base_url(opencode_base_url: Option<&str>) -> Result<(), String> {
+    let Some(raw) = opencode_base_url else {
+        return Ok(());
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || is_loopback_http_url(trimmed) {
+        return Ok(());
+    }
+    Err(format!(
+        "Refusing to start local Veslo server with non-loopback OpenCode base URL: {trimmed}"
+    ))
+}
+
 pub fn resolve_veslo_port() -> Result<u16, String> {
     if TcpListener::bind(("0.0.0.0", DEFAULT_VESLO_PORT)).is_ok() {
         return Ok(DEFAULT_VESLO_PORT);
@@ -149,6 +182,8 @@ pub fn spawn_veslo_server(
     opencode_password: Option<&str>,
     opencode_router_health_port: Option<u16>,
 ) -> Result<(Receiver<CommandEvent>, CommandChild), String> {
+    validate_managed_opencode_base_url(opencode_base_url)?;
+
     let server_args = build_veslo_args(
         host,
         port,
@@ -256,6 +291,18 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|pair| pair == ["--workspace-id", "app-workspace-a"]));
+    }
+
+    #[test]
+    fn managed_opencode_base_url_requires_loopback() {
+        assert!(validate_managed_opencode_base_url(Some("http://127.0.0.1:52925")).is_ok());
+        assert!(validate_managed_opencode_base_url(Some("http://localhost:52925")).is_ok());
+        assert!(validate_managed_opencode_base_url(Some("http://[::1]:52925")).is_ok());
+        assert!(validate_managed_opencode_base_url(None).is_ok());
+
+        let error = validate_managed_opencode_base_url(Some("http://172.20.10.2:52925"))
+            .expect_err("LAN OpenCode URLs must not be used for local sidecar wiring");
+        assert!(error.contains("non-loopback OpenCode base URL"));
     }
 
     #[test]

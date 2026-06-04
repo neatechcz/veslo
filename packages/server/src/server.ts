@@ -110,6 +110,9 @@ const FILE_SESSION_MIN_TTL_MS = 30 * 1000;
 const FILE_SESSION_MAX_TTL_MS = 24 * 60 * 60 * 1000;
 const FILE_SESSION_MAX_BATCH_ITEMS = 64;
 const FILE_SESSION_MAX_FILE_BYTES = 5_000_000;
+const DEFAULT_JSON_BODY_MAX_BYTES = 1024 * 1024;
+const FILE_SESSION_WRITE_BODY_MAX_BYTES = Math.ceil(FILE_SESSION_MAX_FILE_BYTES * 4 / 3) + 1024 * 1024;
+const WORKSPACE_FILE_CONTENT_BODY_MAX_BYTES = FILE_SESSION_MAX_FILE_BYTES + 256 * 1024;
 const FILE_SESSION_CATALOG_DEFAULT_LIMIT = 2000;
 const FILE_SESSION_CATALOG_MAX_LIMIT = 10000;
 const SESSION_TRANSCRIPT_DEFAULT_LIMIT = 140;
@@ -117,10 +120,16 @@ const SESSION_TRANSCRIPT_MAX_LIMIT = 200;
 const SKILL_BATCH_REMOVE_MAX_ITEMS = 50;
 const AI_GATEWAY_DEFAULT_PORT = 4034;
 const AI_GATEWAY_UPSTREAM_RESPONSE_SNIPPET_MAX = 1000;
+const OPENCODE_JSON_DEFAULT_RESPONSE_MAX_BYTES = 1024 * 1024;
+const OPENCODE_TRANSCRIPT_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
+const OPENCODE_JSON_FETCH_DEFAULT_TIMEOUT_MS = 5_000;
 export const REDACTED_SECRET_VALUE = "[REDACTED]";
 const GATEWAY_CALLER_AUTH_HEADER = "x-veslo-gateway-authorization";
 const GATEWAY_ACCESS_TOKEN_HEADER = "x-veslo-gateway-token";
 const GATEWAY_SESSION_ID_HEADER = "x-veslo-session-id";
+const AI_GATEWAY_MODEL_DIAGNOSTIC_MAX_REQUEST_BYTES = 64 * 1024;
+const AI_GATEWAY_JSON_REDACTION_MAX_RESPONSE_BYTES = 64 * 1024;
+const AI_GATEWAY_ERROR_DIAGNOSTIC_MAX_RESPONSE_BYTES = 64 * 1024;
 
 const REDACTED_CONFIG_KEYS = [
   "password",
@@ -625,7 +634,13 @@ export function startServer(config: ServerConfig) {
         authMode = "host";
         try {
           await requireHost(request, config, tokens);
-          const body = await request.json().catch(() => null);
+          const body = await readJsonBody(request, {
+            maxBytes: config.debugLogs.batchMaxBytes,
+            label: "debug log batch",
+          }).catch((error) => {
+            if (error instanceof ApiError && error.code === "invalid_json") return null;
+            throw error;
+          });
           const issues = validateDebugLogBatch(body);
           if (issues.length > 0) {
             return finalize(
@@ -633,7 +648,12 @@ export function startServer(config: ServerConfig) {
             );
           }
           const batch = body as { batchId: string; events: Parameters<DebugLogPipeline["append"]>[0] };
-          await debugLogPipeline.append(batch.events);
+          void debugLogPipeline.append(batch.events).catch((error) => {
+            logger.log("error", "debug log ingest append failed", {
+              batchId: batch.batchId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
           return finalize(jsonResponse({ ok: true, acceptedBatchIds: [batch.batchId] }, 202));
         } catch (error) {
           const apiError = error instanceof ApiError
@@ -726,7 +746,11 @@ function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string) {
   return target.toString();
 }
 
-async function fetchOpencodeJson(workspace: WorkspaceInfo, path: string, init: { method: string; body?: unknown }) {
+async function fetchOpencodeJson(
+  workspace: WorkspaceInfo,
+  path: string,
+  init: { method: string; body?: unknown; maxResponseBytes?: number; timeoutMs?: number },
+) {
   const baseUrl = workspace.baseUrl?.trim() ?? "";
   if (!baseUrl) {
     throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
@@ -750,27 +774,76 @@ async function fetchOpencodeJson(workspace: WorkspaceInfo, path: string, init: {
     headers.set("Authorization", auth);
   }
 
-  const response = await fetch(url.toString(), {
-    method: init.method,
-    headers,
-    body: init.body === undefined ? undefined : JSON.stringify(init.body),
-  });
+  const timeoutMs = init.timeoutMs ?? resolveOpenCodeJsonFetchTimeoutMs();
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  if (typeof timeout === "object" && timeout && "unref" in timeout) {
+    (timeout as { unref?: () => void }).unref?.();
+  }
 
-  const text = await response.text();
-  let json: any = null;
   try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    json = null;
-  }
-  if (!response.ok) {
-    throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
-      status: response.status,
-      body: json ?? text,
-      path,
+    const response = await fetch(url.toString(), {
+      method: init.method,
+      headers,
+      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      signal: controller.signal,
     });
+
+    let text = "";
+    try {
+      text = await readResponseTextWithLimit(
+        response,
+        init.maxResponseBytes ?? OPENCODE_JSON_DEFAULT_RESPONSE_MAX_BYTES,
+      );
+    } catch (error) {
+      if (timedOut || isAbortError(error)) {
+        throw new ApiError(502, "opencode_request_timeout", "OpenCode request timed out", {
+          path,
+          timeoutMs,
+        });
+      }
+      if (error instanceof ApiError && error.code === "upstream_payload_too_large") {
+        throw new ApiError(502, "opencode_response_too_large", "OpenCode response exceeds local parsing limit", {
+          path,
+          ...(error.details && typeof error.details === "object" ? error.details as Record<string, unknown> : {}),
+        });
+      }
+      throw error;
+    }
+
+    let json: any = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      json = null;
+    }
+    if (!response.ok) {
+      throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
+        status: response.status,
+        body: json ?? text,
+        path,
+      });
+    }
+    return json;
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    if (timedOut || isAbortError(error)) {
+      throw new ApiError(502, "opencode_request_timeout", "OpenCode request timed out", {
+        path,
+        timeoutMs,
+      });
+    }
+    throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
+      path,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    clearTimeout(timeout);
   }
-  return json;
 }
 
 function buildOpenCodeRouterProxyUrl(baseUrl: string, path: string, search: string) {
@@ -919,6 +992,10 @@ async function readAiGatewayRequestModel(request: Request): Promise<string | und
   const contentType = request.headers.get("content-type") ?? "";
   if (!contentType.toLowerCase().includes("application/json")) return undefined;
 
+  const contentLength = Number(request.headers.get("content-length") ?? NaN);
+  if (!Number.isFinite(contentLength) || contentLength < 0) return undefined;
+  if (contentLength > AI_GATEWAY_MODEL_DIAGNOSTIC_MAX_REQUEST_BYTES) return undefined;
+
   try {
     const text = await request.clone().text();
     const json = text ? JSON.parse(text) : null;
@@ -955,17 +1032,22 @@ function expandKnownSecrets(secrets: Array<string | undefined>): Array<string | 
   return Array.from(new Set(expanded));
 }
 
-function truncateAiGatewaySnippet(text: string): string {
+function truncateAiGatewaySnippet(text: string): { text: string; truncated: boolean } {
   const normalized = text.replace(/\s+/g, " ").trim();
-  if (normalized.length <= AI_GATEWAY_UPSTREAM_RESPONSE_SNIPPET_MAX) return normalized;
-  return `${normalized.slice(0, AI_GATEWAY_UPSTREAM_RESPONSE_SNIPPET_MAX)}...`;
+  if (normalized.length <= AI_GATEWAY_UPSTREAM_RESPONSE_SNIPPET_MAX) {
+    return { text: normalized, truncated: false };
+  }
+  return {
+    text: `${normalized.slice(0, AI_GATEWAY_UPSTREAM_RESPONSE_SNIPPET_MAX)}...`,
+    truncated: true,
+  };
 }
 
 function buildAiGatewayUpstreamSnippet(input: {
   text: string;
   contentType: string;
   knownSecrets: Array<string | undefined>;
-}): string {
+}): { text: string; truncated: boolean } {
   const contentType = input.contentType.toLowerCase();
   let text = input.text;
   if (contentType.includes("application/json")) {
@@ -976,6 +1058,67 @@ function buildAiGatewayUpstreamSnippet(input: {
     }
   }
   return truncateAiGatewaySnippet(redactKnownSecretsFromText(text, input.knownSecrets));
+}
+
+async function readTextPreview(
+  body: ReadableStream<Uint8Array> | null,
+  maxBytes: number,
+): Promise<{ text: string; truncated: boolean }> {
+  if (!body) return { text: "", truncated: false };
+  const reader = body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  let truncated = false;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = Buffer.from(value);
+      const remaining = maxBytes - total;
+      if (chunk.byteLength > remaining) {
+        if (remaining > 0) {
+          chunks.push(chunk.subarray(0, remaining));
+          total += remaining;
+        }
+        truncated = true;
+        await reader.cancel().catch(() => undefined);
+        break;
+      }
+
+      chunks.push(chunk);
+      total += chunk.byteLength;
+    }
+  } finally {
+    if (truncated) {
+      await reader.cancel().catch(() => undefined);
+    }
+  }
+
+  return {
+    text: Buffer.concat(chunks).toString("utf8"),
+    truncated,
+  };
+}
+
+async function readResponseTextWithLimit(response: Response, maxBytes: number): Promise<string> {
+  const contentLength = Number(response.headers.get("content-length") ?? NaN);
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new ApiError(502, "upstream_payload_too_large", "Upstream response body exceeds local parsing limit", {
+      maxBytes,
+      size: contentLength,
+    });
+  }
+
+  const preview = await readTextPreview(response.body, maxBytes);
+  if (preview.truncated) {
+    throw new ApiError(502, "upstream_payload_too_large", "Upstream response body exceeds local parsing limit", {
+      maxBytes,
+    });
+  }
+  return preview.text;
 }
 
 function firstResponseHeader(headers: Headers, names: string[]): string | undefined {
@@ -994,6 +1137,7 @@ function buildAiGatewayFailureDetails(input: {
   model?: string;
   response: Response;
   responseText: string;
+  responseTextTruncated?: boolean;
   knownSecrets: Array<string | undefined>;
 }) {
   const contentType = input.response.headers.get("content-type") ?? "";
@@ -1004,6 +1148,12 @@ function buildAiGatewayFailureDetails(input: {
   const orgId =
     trimmedHeader(input.request, "x-veslo-den-org-id") ??
     trimmedHeader(input.request, "x-veslo-org-id");
+
+  const upstreamSnippet = buildAiGatewayUpstreamSnippet({
+    text: input.responseText,
+    contentType,
+    knownSecrets: input.knownSecrets,
+  });
 
   return {
     requestId: input.requestId,
@@ -1023,11 +1173,8 @@ function buildAiGatewayFailureDetails(input: {
       "x-amzn-trace-id",
     ]),
     upstreamContentType: contentType || undefined,
-    upstreamResponse: buildAiGatewayUpstreamSnippet({
-      text: input.responseText,
-      contentType,
-      knownSecrets: input.knownSecrets,
-    }),
+    upstreamResponse: upstreamSnippet.text,
+    upstreamResponseTruncated: input.responseTextTruncated || upstreamSnippet.truncated || undefined,
   };
 }
 
@@ -1091,7 +1238,7 @@ async function proxyAiGatewayRequest(input: {
 
   const contentType = response.headers.get("content-type") ?? "";
   if (!response.ok) {
-    const text = await response.text();
+    const diagnostic = await readTextPreview(response.body, AI_GATEWAY_ERROR_DIAGNOSTIC_MAX_RESPONSE_BYTES);
     throw new ApiError(502, "ai_gateway_upstream_failed", "AI gateway upstream request failed", buildAiGatewayFailureDetails({
       requestId,
       request: input.request,
@@ -1099,12 +1246,13 @@ async function proxyAiGatewayRequest(input: {
       sessionId,
       model,
       response,
-      responseText: text,
+      responseText: diagnostic.text,
+      responseTextTruncated: diagnostic.truncated,
       knownSecrets: expandKnownSecrets([gatewayAccessToken, gatewayCallerAuth, authorization]),
     }));
   }
 
-  if (!contentType.toLowerCase().includes("application/json")) {
+  if (!contentType.toLowerCase().includes("application/json") || !input.preserveAiAccessToken) {
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
@@ -1112,7 +1260,7 @@ async function proxyAiGatewayRequest(input: {
     });
   }
 
-  const text = await response.text();
+  const text = await readResponseTextWithLimit(response, AI_GATEWAY_JSON_REDACTION_MAX_RESPONSE_BYTES);
   let json: unknown = null;
   try {
     json = text ? JSON.parse(text) : null;
@@ -2450,7 +2598,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       const upstreamMessages = await fetchOpencodeJson(
         workspace,
         `/session/${encodeURIComponent(sessionId)}/message?limit=${encodeURIComponent(String(limit))}`,
-        { method: "GET" },
+        { method: "GET", maxResponseBytes: OPENCODE_TRANSCRIPT_RESPONSE_MAX_BYTES },
       );
       const messages = Array.isArray(upstreamMessages) ? upstreamMessages : [];
       return {
@@ -2950,7 +3098,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     const messages = await fetchOpencodeJson(
       workspace,
       `/session/${encodeURIComponent(sessionId)}/message?limit=200`,
-      { method: "GET" },
+      { method: "GET", maxResponseBytes: OPENCODE_TRANSCRIPT_RESPONSE_MAX_BYTES },
     );
 
     return jsonResponse(
@@ -3949,6 +4097,16 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     if (!contentType.toLowerCase().includes("multipart/form-data")) {
       throw new ApiError(400, "invalid_payload", "Expected multipart/form-data");
     }
+    const maxBytes = resolveInboxMaxBytes();
+    const contentLength = contentLengthFor(ctx.request.headers);
+    if (contentLength !== null && contentLength > maxBytes) {
+      await ctx.request.body?.cancel().catch(() => undefined);
+      throw new ApiError(413, "payload_too_large", "Request body exceeds size limit", {
+        label: "workspace inbox upload",
+        maxBytes,
+        size: contentLength,
+      });
+    }
     const form = await ctx.request.formData();
     const file = form.get("file");
     if (!(file instanceof File)) {
@@ -3962,7 +4120,6 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     const relativePath = normalizeWorkspaceRelativePath(requestedPath, { allowSubdirs: true });
     const inboxRoot = resolveInboxDir(workspace.path);
     const dest = resolveSafeChildPath(inboxRoot, relativePath);
-    const maxBytes = resolveInboxMaxBytes();
     if (file.size > maxBytes) {
       throw new ApiError(413, "file_too_large", "File exceeds upload limit", { maxBytes, size: file.size });
     }
@@ -4162,7 +4319,10 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       throw new ApiError(403, "forbidden", "File session is read-only");
     }
 
-    const body = await readJsonBody(ctx.request);
+    const body = await readJsonBody(ctx.request, {
+      maxBytes: FILE_SESSION_WRITE_BODY_MAX_BYTES,
+      label: "file session write batch",
+    });
     const writes = parseBatchWriteList((body as Record<string, unknown>).writes);
     const items: Array<Record<string, unknown>> = [];
 
@@ -4412,7 +4572,10 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    const body = await readJsonBody(ctx.request);
+    const body = await readJsonBody(ctx.request, {
+      maxBytes: WORKSPACE_FILE_CONTENT_BODY_MAX_BYTES,
+      label: "workspace file content",
+    });
 
     const requestedPath = String(body.path ?? "");
     const relativePath = normalizeWorkspaceRelativePath(requestedPath, { allowSubdirs: true });
@@ -6170,17 +6333,61 @@ function requireClientScope(ctx: RequestContext, required: TokenScope): void {
   }
 }
 
-async function readJsonBody(request: Request): Promise<Record<string, unknown>> {
+type BodyReadOptions = {
+  maxBytes?: number;
+  label?: string;
+};
+
+function readMaxBytes(options?: BodyReadOptions): number {
+  return options?.maxBytes ?? DEFAULT_JSON_BODY_MAX_BYTES;
+}
+
+function bodyLimitLabel(options?: BodyReadOptions): string {
+  return options?.label ?? "request body";
+}
+
+function contentLengthFor(headers: Headers): number | null {
+  const parsed = Number(headers.get("content-length") ?? NaN);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return parsed;
+}
+
+async function readRequestTextWithLimit(request: Request, options?: BodyReadOptions): Promise<string> {
+  const maxBytes = readMaxBytes(options);
+  const label = bodyLimitLabel(options);
+  const contentLength = contentLengthFor(request.headers);
+  if (contentLength !== null && contentLength > maxBytes) {
+    await request.body?.cancel().catch(() => undefined);
+    throw new ApiError(413, "payload_too_large", "Request body exceeds size limit", {
+      label,
+      maxBytes,
+      size: contentLength,
+    });
+  }
+
+  const preview = await readTextPreview(request.body, maxBytes);
+  if (preview.truncated) {
+    throw new ApiError(413, "payload_too_large", "Request body exceeds size limit", {
+      label,
+      maxBytes,
+    });
+  }
+  return preview.text;
+}
+
+async function readJsonBody(request: Request, options?: BodyReadOptions): Promise<Record<string, unknown>> {
   try {
-    const json = await request.json();
+    const text = await readRequestTextWithLimit(request, options);
+    const json = JSON.parse(text);
     return json as Record<string, unknown>;
-  } catch {
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
     throw new ApiError(400, "invalid_json", "Invalid JSON body");
   }
 }
 
-async function readOptionalJsonBody(request: Request): Promise<Record<string, unknown>> {
-  const text = await request.text();
+async function readOptionalJsonBody(request: Request, options?: BodyReadOptions): Promise<Record<string, unknown>> {
+  const text = await readRequestTextWithLimit(request, options);
   if (!text.trim()) return {};
   try {
     const json = JSON.parse(text);
@@ -6194,6 +6401,24 @@ function parseInteger(value: string | undefined): number | null {
   if (!value) return null;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function resolveOpenCodeJsonFetchTimeoutMs(): number {
+  const parsed = parseInteger(process.env.VESLO_OPENCODE_JSON_FETCH_TIMEOUT_MS);
+  if (parsed && parsed > 0) {
+    return clampNumber(parsed, 100, 60_000);
+  }
+  return OPENCODE_JSON_FETCH_DEFAULT_TIMEOUT_MS;
+}
+
+function isAbortError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const name = "name" in error ? String((error as { name?: unknown }).name ?? "") : "";
+  return name === "AbortError" || name === "TimeoutError";
 }
 
 function expandHome(value: string): string {
@@ -7463,13 +7688,39 @@ async function reloadOpencodeEngine(workspace: WorkspaceInfo): Promise<void> {
   const auth = buildOpencodeAuthHeader(workspace);
   if (auth) headers.Authorization = auth;
 
-  const response = await fetch(targetUrl, { method: "POST", headers });
-  if (response.ok) return;
-  const body = parseOpencodeErrorBody(await response.text());
-  throw new ApiError(502, "opencode_reload_failed", "OpenCode reload failed", {
-    status: response.status,
-    body,
-  });
+  const timeoutMs = resolveOpenCodeJsonFetchTimeoutMs();
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  if (typeof timeout === "object" && timeout && "unref" in timeout) {
+    (timeout as { unref?: () => void }).unref?.();
+  }
+
+  try {
+    const response = await fetch(targetUrl, { method: "POST", headers, signal: controller.signal });
+    if (response.ok) return;
+    const body = parseOpencodeErrorBody(await readResponseTextWithLimit(response, OPENCODE_JSON_DEFAULT_RESPONSE_MAX_BYTES));
+    throw new ApiError(502, "opencode_reload_failed", "OpenCode reload failed", {
+      status: response.status,
+      body,
+    });
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    if (timedOut || isAbortError(error)) {
+      throw new ApiError(502, "opencode_request_timeout", "OpenCode request timed out", {
+        path: "/instance/dispose",
+        timeoutMs,
+      });
+    }
+    throw new ApiError(502, "opencode_reload_failed", "OpenCode reload failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function writeVesloConfig(workspaceRoot: string, payload: Record<string, unknown>, merge: boolean): Promise<void> {

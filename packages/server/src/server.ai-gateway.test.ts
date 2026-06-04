@@ -94,6 +94,12 @@ function stopTestServer(server: ReturnType<typeof startServer>): void {
   (server as unknown as { stop: (closeActiveConnections?: boolean) => void }).stop(true);
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 describe("ai gateway proxy routes", () => {
   test("server proxies ai-gateway provider routes to the managed ai base url with gateway token and session id", async () => {
     const requests: Array<{
@@ -372,6 +378,121 @@ describe("ai gateway proxy routes", () => {
     }
   });
 
+  test("server reports truncated diagnostics for oversized upstream ai-gateway errors", async () => {
+    const oversizedMarker = "tail-marker-should-not-be-read";
+    const oversizedBody = `${"blocked ".repeat(20_000)}${oversizedMarker}`;
+    const upstream = createServer((_req, res) => {
+      res.statusCode = 502;
+      res.statusMessage = "Bad Gateway";
+      res.setHeader("content-type", "text/plain; charset=utf-8");
+      res.setHeader("content-length", String(Buffer.byteLength(oversizedBody, "utf8")));
+      res.end(oversizedBody);
+    });
+    const upstreamPort = await listenTestServer(upstream);
+
+    try {
+      await withManagedAiEnv(
+        {
+          managedAiBaseUrl: `http://127.0.0.1:${upstreamPort}`,
+        },
+        async () => {
+          const server = startServer(createTestConfig());
+
+          try {
+            const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
+              method: "POST",
+              headers: {
+                authorization: "Bearer client-token",
+                "content-type": "application/json",
+                "x-veslo-gateway-token": "gateway-access-token",
+                "x-veslo-session-id": "session_oversized_error_123",
+              },
+              body: JSON.stringify({
+                model: "gpt-5.5",
+                messages: [{ role: "user", content: "Hello" }],
+              }),
+            });
+
+            expect(response.status).toBe(502);
+            const payload = await response.json() as {
+              details: {
+                upstreamResponse: string;
+                upstreamResponseTruncated?: boolean;
+              };
+            };
+            expect(payload.details.upstreamResponseTruncated).toBe(true);
+            expect(payload.details.upstreamResponse.length).toBeLessThan(2_000);
+            expect(payload.details.upstreamResponse).not.toContain(oversizedMarker);
+          } finally {
+            stopTestServer(server);
+          }
+        },
+      );
+    } finally {
+      upstream.close();
+      await once(upstream, "close");
+    }
+  });
+
+  test("server streams oversized successful ai-gateway json responses without parsing them", async () => {
+    const body = JSON.stringify({
+      id: "chatcmpl_large_json_123",
+      object: "chat.completion",
+      choices: [
+        {
+          message: {
+            role: "assistant",
+            content: "large-json ".repeat(20_000),
+          },
+        },
+      ],
+    });
+    const upstream = createServer((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader("content-type", "application/json");
+      res.setHeader("content-length", String(Buffer.byteLength(body, "utf8")));
+      res.setHeader("x-upstream-marker", "large-json");
+      res.end(body);
+    });
+    const upstreamPort = await listenTestServer(upstream);
+
+    try {
+      await withManagedAiEnv(
+        {
+          managedAiBaseUrl: `http://127.0.0.1:${upstreamPort}`,
+        },
+        async () => {
+          const server = startServer(createTestConfig());
+
+          try {
+            const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
+              method: "POST",
+              headers: {
+                authorization: "Bearer client-token",
+                "content-type": "application/json",
+                "x-veslo-gateway-token": "gateway-access-token",
+                "x-veslo-session-id": "session_large_json_123",
+              },
+              body: JSON.stringify({
+                model: "gpt-5.5",
+                messages: [{ role: "user", content: "Hello" }],
+              }),
+            });
+
+            expect(response.status).toBe(200);
+            expect(response.headers.get("x-upstream-marker")).toBe("large-json");
+            expect(await response.text()).toBe(body);
+          } finally {
+            stopTestServer(server);
+          }
+        },
+      );
+    } finally {
+      upstream.close();
+      await once(upstream, "close");
+    }
+  });
+
   test("server strips compression headers from streamed ai-gateway responses", async () => {
     const requests: Array<{
       acceptEncoding: string | null;
@@ -421,6 +542,92 @@ describe("ai gateway proxy routes", () => {
             expect(response.headers.get("content-encoding")).toBeNull();
             expect(await response.text()).toBe(eventStream);
             expect(requests).toEqual([{ acceptEncoding: "identity" }]);
+          } finally {
+            stopTestServer(server);
+          }
+        },
+      );
+    } finally {
+      upstream.close();
+      await once(upstream, "close");
+    }
+  });
+
+  test("server forwards streaming ai-gateway request bodies before the client finishes uploading", async () => {
+    let upstreamReceivedFirstChunk!: Promise<void>;
+    let resolveUpstreamReceivedFirstChunk!: () => void;
+    upstreamReceivedFirstChunk = new Promise((resolve) => {
+      resolveUpstreamReceivedFirstChunk = resolve;
+    });
+
+    const upstream = createServer(async (req, res) => {
+      const chunks: Buffer[] = [];
+      req.once("data", () => {
+        resolveUpstreamReceivedFirstChunk();
+      });
+      for await (const chunk of req) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const rawBody = Buffer.concat(chunks).toString("utf8");
+
+      res.statusCode = 200;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({
+        id: "chatcmpl_streamed_request_123",
+        object: "chat.completion",
+        model: JSON.parse(rawBody).model,
+      }));
+    });
+    const upstreamPort = await listenTestServer(upstream);
+
+    try {
+      await withManagedAiEnv(
+        {
+          managedAiBaseUrl: `http://127.0.0.1:${upstreamPort}`,
+        },
+        async () => {
+          const server = startServer(createTestConfig());
+          const encoder = new TextEncoder();
+          let controller!: ReadableStreamDefaultController<Uint8Array>;
+          const body = new ReadableStream<Uint8Array>({
+            start(nextController) {
+              controller = nextController;
+              controller.enqueue(encoder.encode('{"model":"gpt-5.5","messages":[{"role":"user","content":"'));
+            },
+          });
+
+          try {
+            const responsePromise = fetch(
+              `http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`,
+              {
+                method: "POST",
+                headers: {
+                  authorization: "Bearer client-token",
+                  "content-type": "application/json",
+                  "x-veslo-gateway-token": "gateway-access-token",
+                  "x-veslo-session-id": "session_streamed_request_123",
+                },
+                body,
+                duplex: "half",
+              } as RequestInit & { duplex: "half" },
+            );
+
+            const reachedUpstreamBeforeUploadFinished = await Promise.race([
+              upstreamReceivedFirstChunk.then(() => true),
+              delay(250).then(() => false),
+            ]);
+
+            controller.enqueue(encoder.encode('Hello"}],"stream":true}'));
+            controller.close();
+
+            const response = await responsePromise;
+            expect(response.status).toBe(200);
+            expect(await response.json()).toEqual({
+              id: "chatcmpl_streamed_request_123",
+              object: "chat.completion",
+              model: "gpt-5.5",
+            });
+            expect(reachedUpstreamBeforeUploadFinished).toBe(true);
           } finally {
             stopTestServer(server);
           }
