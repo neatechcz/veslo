@@ -3389,8 +3389,8 @@ export default function SessionView(props: SessionViewProps) {
       return;
     }
     if (editableUserMessage()?.messageId !== editable.messageId) return;
-    setEditingTranscriptMessageId(editable.messageId);
     props.setComposerDraft(editable.draft);
+    setEditingTranscriptMessageId(editable.messageId);
   };
 
   const handleSendPrompt = async (draft: ComposerDraft, options: ComposerSendOptions = {}) => {

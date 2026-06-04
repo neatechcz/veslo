@@ -86,7 +86,7 @@ Veslo can show an edit pencil beside the latest user message only when the actio
 
 After the candidate user message, only read-only assistant activity may exist. Reasoning, step markers, blank assistant text, and known read/list/search-style tools are allowed. Visible assistant text, mutating tools, unknown tools, shell or terminal activity, and unreconstructable attachments hide the pencil.
 
-Clicking the pencil loads the reconstructed user draft into the composer and arms a replacement send. Submitting the edited draft uses OpenCode revert semantics: Veslo reverts to the original user message boundary and then sends the revised draft to the same session. If the revised send is rejected, Veslo attempts to restore the prior revert boundary.
+Clicking the pencil loads the reconstructed user draft into the composer and arms a replacement send. Submitting the edited draft uses OpenCode revert semantics: Veslo reverts to the original user message boundary and then sends the revised draft to the same session as a new backend message, leaving the original message hidden behind the revert boundary. If the revised send is rejected, Veslo attempts to restore the prior revert boundary.
 
 ## Message Scroll Anchoring
 

@@ -94,7 +94,7 @@ test("composer clears the submitted draft and releases the editor before send ha
 
   assert.match(
     composerSource,
-    /const sendPromise = props\.onSend\(submittedDraft, options\);[\s\S]*setSending\(false\);[\s\S]*sent = await sendPromise;/,
+    /sendPromise = props\.onSend\(submittedDraft, options\);[\s\S]*setSending\(false\);[\s\S]*sent = await sendPromise;/,
     "local sending should be released before awaiting the handoff promise",
   );
 

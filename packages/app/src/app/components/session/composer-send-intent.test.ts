@@ -20,10 +20,28 @@ test("composer exports send intent options and passes them to onSend", () => {
     "composer onSend should accept optional send intent options",
   );
 
-  assert.match(
-    composerSource,
-    /const submittedDraft = draft;[\s\S]*const sendPromise = props\.onSend\(submittedDraft, options\);[\s\S]*sent = await sendPromise;/s,
-    "sendDraft should pass the send intent through to onSend",
+  const handlerStart = composerSource.indexOf("const sendDraft = async (");
+  const submittedDraftIndex = composerSource.indexOf("const submittedDraft = draft;", handlerStart);
+  const onSendIndex = composerSource.indexOf("sendPromise = props.onSend(submittedDraft, options);", handlerStart);
+  const awaitIndex = composerSource.indexOf("sent = await sendPromise;", handlerStart);
+  assert.notEqual(handlerStart, -1, "sendDraft should exist");
+  assert.notEqual(submittedDraftIndex, -1, "sendDraft should capture the draft being submitted");
+  assert.notEqual(onSendIndex, -1, "sendDraft should pass the send intent through to onSend");
+  assert.notEqual(awaitIndex, -1, "sendDraft should await the parent send promise");
+  assert.ok(submittedDraftIndex < onSendIndex && onSendIndex < awaitIndex);
+});
+
+test("composer calls onSend before clearing the parent draft", () => {
+  const handlerStart = composerSource.indexOf("const sendDraft = async (");
+  const onSendIndex = composerSource.indexOf("sendPromise = props.onSend(submittedDraft, options);", handlerStart);
+  const clearDraftIndex = composerSource.indexOf("props.onDraftChange({", handlerStart);
+
+  assert.notEqual(handlerStart, -1, "sendDraft should exist");
+  assert.notEqual(onSendIndex, -1, "sendDraft should call onSend");
+  assert.notEqual(clearDraftIndex, -1, "sendDraft should clear the parent draft after submit");
+  assert.ok(
+    onSendIndex < clearDraftIndex,
+    "sendDraft should let the parent capture edit/replacement state before it clears the parent draft",
   );
 });
 

@@ -300,6 +300,7 @@ import {
   pendingSessionDraftsPut,
   readOpencodeConfig,
   writeOpencodeConfig,
+  engineInfo,
   schedulerDeleteJob,
   schedulerListJobs,
   vesloServerInfo,
@@ -2081,7 +2082,7 @@ export default function App() {
 
   async function sendPrompt(
     draft?: ComposerDraft,
-    options: { targetSessionId?: string | null; messageId?: string | null } = {},
+    options: { targetSessionId?: string | null } = {},
   ): Promise<boolean> {
     recordSendTrace("sendPrompt:start", {
       engineReady: engineReady(),
@@ -2092,7 +2093,6 @@ export default function App() {
       busyLabel: busyLabel(),
     });
     let sessionID = options.targetSessionId?.trim() || selectedSessionId();
-    const replacementMessageID = options.messageId?.trim() || undefined;
     const blockAppDuringPromptSend = Boolean(sessionID);
     let ownsSendPromptBusy = false;
     const startSendPromptBusy = (label: string) => {
@@ -2309,7 +2309,7 @@ export default function App() {
         }
 
         // Slash command: route through session.command() API
-        commandMessageIDToClear = replacementMessageID ?? createClientMessageID();
+        commandMessageIDToClear = createClientMessageID();
         sessionStore.setCommandDisplay(commandMessageIDToClear, command.name, command.arguments);
         const modelString = `${model.providerID}/${model.modelID}`;
         const files = buildCommandFileParts(resolvedDraft);
@@ -2333,7 +2333,6 @@ export default function App() {
 
       } else {
         const result = await c.session.promptAsync({
-          ...(replacementMessageID ? { messageID: replacementMessageID } : {}),
           sessionID,
           model,
           agent: agent ?? undefined,
@@ -2666,9 +2665,26 @@ export default function App() {
     draft: ComposerDraft,
     options: { targetSessionId?: string | null } = {},
   ): Promise<boolean> {
-    const c = client();
     const sessionID = (options.targetSessionId?.trim() || selectedSessionId() || "").trim();
-    if (!c || !sessionID || !messageID.trim()) return false;
+    if (!sessionID || !messageID.trim()) return false;
+
+    recordSendTrace("replaceUserMessage:start", {
+      sessionID,
+      messageID,
+      engineReady: engineReady(),
+      hasClient: Boolean(client()),
+    });
+
+    let c = client() ?? await connectLocalRuntimeClientFromEngineInfo("replaceUserMessage");
+    if (!c) {
+      if (!(await ensureLocalRuntimeReachableForSend("replaceUserMessage"))) return false;
+      c = client() ?? await connectLocalRuntimeClientFromEngineInfo("replaceUserMessage");
+    }
+    if (!(await ensureManagedAiBootstrapReady())) return false;
+    if (!c) {
+      recordSendTrace("replaceUserMessage:blocked-no-client");
+      return false;
+    }
 
     await abortSessionSafe(c, sessionID);
 
@@ -2676,7 +2692,7 @@ export default function App() {
     const next = await revertSession(c, sessionID, messageID);
     upsertLocalSession(next);
 
-    const accepted = await sendPrompt(draft, { targetSessionId: sessionID, messageId: messageID });
+    const accepted = await sendPrompt(draft, { targetSessionId: sessionID });
     if (!accepted) {
       try {
         const restored = previousRevertMessageID
@@ -3271,6 +3287,46 @@ export default function App() {
       setBusyLabel(null);
       setBusyStartedAt(null);
       return false;
+    }
+  }
+
+  async function connectLocalRuntimeClientFromEngineInfo(reason: string): Promise<Client | null> {
+    if (!isTauriRuntime() || workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") {
+      return client();
+    }
+
+    try {
+      const info = await engineInfo();
+      const nextBaseUrl = info.baseUrl?.trim() ?? "";
+      if (!info.running || !nextBaseUrl) {
+        recordSendTrace(`${reason}:engine-info-unavailable`, {
+          running: Boolean(info.running),
+          hasBaseUrl: Boolean(nextBaseUrl),
+        });
+        return null;
+      }
+
+      const directory = info.projectDir?.trim() || clientDirectory().trim() || undefined;
+      const username = info.opencodeUsername?.trim() ?? "";
+      const password = info.opencodePassword?.trim() ?? "";
+      const auth = username && password ? { username, password } : undefined;
+      const nextClient = createClient(nextBaseUrl, directory, auth);
+      setBaseUrl(nextBaseUrl);
+      if (directory) {
+        setClientDirectory(directory);
+      }
+      setClient(nextClient);
+      setEngineReady(true);
+      recordSendTrace(`${reason}:engine-info-client`, {
+        hasDirectory: Boolean(directory),
+        hasAuth: Boolean(auth),
+      });
+      return nextClient;
+    } catch (error) {
+      recordSendTrace(`${reason}:engine-info-error`, {
+        message: messageFromUnknownError(error),
+      });
+      return null;
     }
   }
 

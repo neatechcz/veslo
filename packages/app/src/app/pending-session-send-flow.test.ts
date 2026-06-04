@@ -42,14 +42,14 @@ test("pending draft cleanup failures are handled separately from prompt handoff 
   );
 });
 
-test("slash command sends use the replacement id or preassign the id used for optimistic display", () => {
+test("slash command sends preassign the message id used for optimistic display", () => {
   const commandBranchStart = appSource.indexOf("// Slash command: route through session.command() API");
   const commandBranchEnd = appSource.indexOf("      } else {", commandBranchStart);
   assert.notEqual(commandBranchStart, -1, "sendPrompt should have a slash command branch");
   assert.notEqual(commandBranchEnd, -1, "slash command branch should end before promptAsync branch");
 
   const commandBranch = appSource.slice(commandBranchStart, commandBranchEnd);
-  assert.match(commandBranch, /commandMessageIDToClear = replacementMessageID \?\? createClientMessageID\(\);/);
+  assert.match(commandBranch, /commandMessageIDToClear = createClientMessageID\(\);/);
   assert.match(
     commandBranch,
     /sessionStore\.setCommandDisplay\(commandMessageIDToClear,\s*command\.name,\s*command\.arguments\);/,
@@ -70,7 +70,6 @@ test("failed slash command sends clear the preassigned command display alias", (
     "failed slash-command sends should clear optimistic command display aliases",
   );
 });
-
 
 test("first pending draft send materializes workspace and session without global app blocking", () => {
   const sendPromptStart = appSource.indexOf("  async function sendPrompt(");
