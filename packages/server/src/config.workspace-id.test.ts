@@ -38,6 +38,33 @@ describe("workspace id config", () => {
     expect(config.workspaces[0].path).toBe(workspacePath);
   });
 
+  test("cli workspace id attaches to the most recent workspace without an id", async () => {
+    const configDir = await mkdtemp(join(tmpdir(), "veslo-server-workspace-id-"));
+    tempDirs.push(configDir);
+    const configPath = join(configDir, "server.json");
+    const scratchPath = join(configDir, "scratch");
+    const realWorkspacePath = join(configDir, "workspace-real");
+
+    await writeFile(configPath, "{}\n", "utf8");
+
+    const config = await resolveServerConfig(parseCliArgs([
+      "--config",
+      configPath,
+      "--workspace",
+      scratchPath,
+      "--workspace",
+      realWorkspacePath,
+      "--workspace-id",
+      "app-workspace-real",
+    ]));
+
+    expect(config.workspaces).toHaveLength(2);
+    expect(config.workspaces[0].path).toBe(scratchPath);
+    expect(config.workspaces[0].id).not.toBe("app-workspace-real");
+    expect(config.workspaces[1].path).toBe(realWorkspacePath);
+    expect(config.workspaces[1].id).toBe("app-workspace-real");
+  });
+
   test("file workspace ids override generated path ids", async () => {
     const configDir = await mkdtemp(join(tmpdir(), "veslo-server-workspace-id-"));
     tempDirs.push(configDir);

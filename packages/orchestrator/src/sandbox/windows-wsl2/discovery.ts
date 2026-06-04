@@ -26,6 +26,65 @@ export type Wsl2Runtime = {
 
 const MANAGED_WSL_DISTRO = "VesloSandbox";
 
+function isUsableWslConnectIp(value: string): boolean {
+  const parts = value.trim().split(".");
+  if (parts.length !== 4) return false;
+  const octets = parts.map((part) => Number.parseInt(part, 10));
+  if (octets.some((octet, index) => !/^\d+$/.test(parts[index] ?? "") || octet < 0 || octet > 255)) {
+    return false;
+  }
+  const [a, b, c, d] = octets;
+  if (a === 0 || a === 127 || a === 255) return false;
+  if (a === 169 && b === 254) return false;
+  if (a === 224 || a > 224) return false;
+  if (a === 10 && b === 255 && c === 255 && d === 254) return false;
+  return true;
+}
+
+async function resolveWslConnectIp(distro: string): Promise<{ ip: string; detail: string }> {
+  const override = process.env.VESLO_WSL_CONNECT_HOST?.trim();
+  if (override) {
+    if (!isUsableWslConnectIp(override)) {
+      throw new Error(`VESLO_WSL_CONNECT_HOST is not a usable IPv4 address: ${override}`);
+    }
+    return { ip: override, detail: "VESLO_WSL_CONNECT_HOST" };
+  }
+
+  const script = [
+    "set +e",
+    "{",
+    `  ip -4 -o addr show dev eth0 scope global 2>/dev/null | awk '{split($4,a,"/"); print a[1]}'`,
+    "  ip route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \\([0-9.]*\\).*/\\1/p'",
+    `  ip -4 -o addr show scope global up 2>/dev/null | awk '$2 != "lo" {split($4,a,"/"); print a[1]}'`,
+    "  hostname -I 2>/dev/null | tr ' ' '\\n'",
+    "} | awk 'NF && !seen[$0]++'",
+  ].join("\n");
+  const probe = await runWslInDistro(distro, script, 5000);
+  const candidates = probe.stdout
+    .replace(/\r/g, "")
+    .split(/\s+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const ip = candidates.find(isUsableWslConnectIp);
+  const detail = [
+    probe.stdout.trim() ? `stdout=${JSON.stringify(probe.stdout.trim())}` : "",
+    probe.stderr.trim() ? `stderr=${JSON.stringify(probe.stderr.trim())}` : "",
+    `candidates=${JSON.stringify(candidates)}`,
+  ].filter(Boolean).join(" ");
+
+  if (!ip) {
+    throw new Error(
+      `Could not resolve a host-reachable IPv4 address for WSL distro '${distro}'. ` +
+        "Tried eth0, route source, non-loopback global IPv4, and hostname -I. " +
+        "Without this address Veslo would have to use flaky Windows localhost forwarding. " +
+        "Set VESLO_WSL_CONNECT_HOST to the distro IPv4 address after verifying Windows can reach it." +
+        (detail ? ` Probe output: ${detail}` : ""),
+    );
+  }
+
+  return { ip, detail };
+}
+
 export function resolveWslExe(): string {
   const override = process.env.VESLO_WSL_EXE?.trim();
   if (override) return override;
@@ -203,6 +262,7 @@ export async function discoverWsl2Runtime(): Promise<Wsl2Runtime> {
     const detail = (smoke.stderr || smoke.stdout).trim();
     throw new Error(formatBwrapRuntimeError(distro, detail));
   }
+  const connectIp = await resolveWslConnectIp(distro);
 
   return {
     wslExe: resolveWslExe(),
@@ -210,7 +270,8 @@ export async function discoverWsl2Runtime(): Promise<Wsl2Runtime> {
     kernel,
     arch,
     bwrapPath,
-    localhostMode: "windows-localhost",
+    localhostMode: "wsl-ip",
+    wslIp: connectIp.ip,
   };
 }
 

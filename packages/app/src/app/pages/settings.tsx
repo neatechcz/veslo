@@ -576,7 +576,12 @@ export default function SettingsView(props: SettingsViewProps) {
   });
 
   const isLocalEngineRunning = createMemo(() => Boolean(props.engineInfo?.running));
-  const startupLabel = createMemo(() => translate("settings.connect_to_cloud_server"));
+  const startupLabel = createMemo(() => "Connect to cloud server");
+
+  const availableTabs = createMemo<SettingsTab[]>(() => {
+    const tabs: SettingsTab[] = ["general", "extensions", "archived", "advanced"];
+    return tabs;
+  });
 
   const activeTab = createMemo<SettingsTab>(() => {
     return resolveVisibleSettingsTab(props.settingsTab, props.developerMode);
@@ -1540,9 +1545,10 @@ export default function SettingsView(props: SettingsViewProps) {
 
                 <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                   <div class="min-w-0">
-                    <div class="text-sm text-gray-12">{__vesloT("ui.literal.veslo_docker_containers_pb5rho", __vesloCurrentLocale())}</div>
+                    <div class="text-sm text-gray-12">Legacy Docker containers</div>
                     <div class="text-xs text-gray-7">
-                      {__vesloT("ui.literal.force_remove_docker_containers_launched_by_v_1drkh2", __vesloCurrentLocale())}</div>
+                      Force-remove old Docker containers launched by earlier Veslo sandbox and local dev flows.
+                    </div>
                     <Show when={props.dockerCleanupResult}>
                       <div class="text-xs text-gray-11 mt-2">{props.dockerCleanupResult}</div>
                     </Show>

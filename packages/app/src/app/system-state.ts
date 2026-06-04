@@ -27,7 +27,6 @@ import {
 import {
   resetVesloState,
   resetOpencodeCache,
-  updaterPrepareInstall,
 } from "./lib/tauri";
 import { unwrap, waitForHealthy } from "./lib/opencode";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../i18n";

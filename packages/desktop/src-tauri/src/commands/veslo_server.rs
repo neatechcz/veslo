@@ -2,13 +2,13 @@ use tauri::{AppHandle, State};
 
 use crate::engine::manager::EngineManager;
 use crate::opencode_router::manager::OpenCodeRouterManager;
-use crate::types::{VesloServerInfo, WorkspaceState, WorkspaceType};
-use crate::utils::truncate_output;
 use crate::veslo_server::manager::VesloServerManager;
 use crate::veslo_server::{
-    clear_persisted_veslo_server_info, recover_persisted_veslo_server_info, server_health_identity,
-    start_veslo_server, HealthIdentity,
+    clear_persisted_veslo_server_info, recover_persisted_veslo_server_info,
+    server_health_identity, start_veslo_server, HealthIdentity,
 };
+use crate::types::{VesloServerInfo, WorkspaceState, WorkspaceType};
+use crate::utils::truncate_output;
 use crate::workspace::state::load_workspace_state;
 
 fn active_local_workspace_path(state: &WorkspaceState) -> Option<String> {
@@ -62,7 +62,7 @@ fn local_workspace_paths_for_server_restart(
 }
 
 fn sanitize_live_info_with_health(
-    mut info: VesloServerInfo,
+    info: VesloServerInfo,
     health_check: impl Fn(&str) -> Option<HealthIdentity>,
 ) -> (VesloServerInfo, bool) {
     if !info.running {
@@ -126,7 +126,10 @@ fn sanitize_live_info_with_health(
 #[tauri::command]
 pub fn veslo_server_info(app: AppHandle, manager: State<VesloServerManager>) -> VesloServerInfo {
     {
-        let mut state = manager.inner.lock().expect("veslo server mutex poisoned");
+        let mut state = manager
+            .inner
+            .lock()
+            .expect("veslo server mutex poisoned");
         let info = VesloServerManager::snapshot_locked(&mut state);
         let (sanitized, stale) = sanitize_live_info_with_health(info, server_health_identity);
         if sanitized.running {
@@ -141,7 +144,10 @@ pub fn veslo_server_info(app: AppHandle, manager: State<VesloServerManager>) -> 
     match recover_persisted_veslo_server_info(&app) {
         Ok(Some(info)) => info,
         Ok(None) | Err(_) => {
-            let mut state = manager.inner.lock().expect("veslo server mutex poisoned");
+            let mut state = manager
+                .inner
+                .lock()
+                .expect("veslo server mutex poisoned");
             VesloServerManager::snapshot_locked(&mut state)
         }
     }
@@ -154,12 +160,7 @@ pub fn veslo_server_restart(
     engine_manager: State<EngineManager>,
     opencode_router_manager: State<OpenCodeRouterManager>,
 ) -> Result<VesloServerInfo, String> {
-    let (
-        engine_workspace_path,
-        engine_opencode_url,
-        engine_opencode_username,
-        engine_opencode_password,
-    ) = {
+    let (engine_workspace_path, engine_opencode_url, engine_opencode_username, engine_opencode_password) = {
         let engine = engine_manager
             .inner
             .lock()
@@ -315,7 +316,6 @@ mod tests {
             connect_url: Some("http://192.168.0.10:8787".to_string()),
             mdns_url: Some("http://veslo.local:8787".to_string()),
             lan_url: Some("http://192.168.0.10:8787".to_string()),
-            engine_url: Some("http://engine-host.internal:8787".to_string()),
             client_token: Some("client-token".to_string()),
             host_token: Some("host-token".to_string()),
             pid: Some(12345),
@@ -349,7 +349,6 @@ mod tests {
         assert_eq!(sanitized.connect_url, info.connect_url);
         assert_eq!(sanitized.mdns_url, info.mdns_url);
         assert_eq!(sanitized.lan_url, info.lan_url);
-        assert_eq!(sanitized.engine_url, info.engine_url);
         assert_eq!(sanitized.client_token, info.client_token);
         assert_eq!(sanitized.host_token, info.host_token);
         assert_eq!(sanitized.pid, info.pid);
@@ -370,23 +369,9 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_live_info_tolerates_pid_mismatch_when_token_matches() {
+    fn sanitize_live_info_marks_stale_when_pid_does_not_match() {
         let info = sample_live_info();
         let (sanitized, stale) = sanitize_live_info_with_health(info.clone(), |_| {
-            Some(HealthIdentity {
-                token: info.client_token.clone(),
-                pid: Some(99999),
-            })
-        });
-        assert!(!stale);
-        assert!(sanitized.running);
-        assert_eq!(sanitized.client_token, info.client_token);
-    }
-
-    #[test]
-    fn sanitize_live_info_marks_stale_when_pid_does_not_match_without_token_match() {
-        let info = sample_live_info();
-        let (sanitized, stale) = sanitize_live_info_with_health(info, |_| {
             Some(HealthIdentity {
                 token: None,
                 pid: Some(99999),

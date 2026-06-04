@@ -903,10 +903,32 @@ function pathToRegex(path: string, keys: string[]): RegExp {
   return new RegExp(`^${pattern}$`);
 }
 
-function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string) {
+const HOP_BY_HOP_REQUEST_HEADERS = [
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "trailers",
+  "transfer-encoding",
+  "upgrade",
+];
+const ACCEPT_ENCODING_HEADER = "accept-encoding";
+const ACCEPT_ENCODING_IDENTITY = "identity";
+
+function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string, workspaceId?: string) {
   const target = new URL(baseUrl);
   const trimmedPath = path.replace(/^\/opencode/, "");
-  target.pathname = trimmedPath.startsWith("/") ? trimmedPath : `/${trimmedPath}`;
+  const suffix = trimmedPath === "" ? "/" : trimmedPath.startsWith("/") ? trimmedPath : `/${trimmedPath}`;
+  const basePath = target.pathname.replace(/\/+$/, "") || "";
+  const workspaceMount = basePath.match(/^\/workspace\/([^/]+)\/opencode(?:\/.*)?$/);
+  if (workspaceMount) {
+    const id = encodeURIComponent(workspaceId ?? decodeURIComponent(workspaceMount[1] ?? ""));
+    target.pathname = `/workspace/${id}/opencode${suffix === "/" ? "" : suffix}`;
+  } else {
+    target.pathname = `${basePath}${suffix === "/" ? "" : suffix}` || "/";
+  }
   target.search = search;
   return target.toString();
 }
@@ -1099,13 +1121,18 @@ async function proxyOpencodeRequest(input: {
   }
 
   const proxyPath = input.proxyPath ?? input.url.pathname;
-  const targetUrl = buildOpencodeProxyUrl(baseUrl, proxyPath, input.url.search);
+  const targetUrl = buildOpencodeProxyUrl(baseUrl, proxyPath, input.url.search, workspace?.id);
   const headers = new Headers(input.request.headers);
   headers.delete("authorization");
   headers.delete("x-veslo-host-token");
   headers.delete("x-veslo-client-id");
   headers.delete("host");
   headers.delete("origin");
+  headers.delete("content-length");
+  for (const header of HOP_BY_HOP_REQUEST_HEADERS) {
+    headers.delete(header);
+  }
+  headers.set(ACCEPT_ENCODING_HEADER, ACCEPT_ENCODING_IDENTITY);
 
   // Per-request directory override (e.g. from sessions moved via "Choose folder")
   // takes priority over the workspace-level default.
@@ -1126,11 +1153,19 @@ async function proxyOpencodeRequest(input: {
 
   const method = input.request.method.toUpperCase();
   const body = method === "GET" || method === "HEAD" ? undefined : input.request.body;
-  const response = await fetch(targetUrl, {
-    method,
-    headers,
-    body,
-  });
+  let response: Response;
+  try {
+    response = await fetch(targetUrl, {
+      method,
+      headers,
+      body,
+    });
+  } catch (error) {
+    throw new ApiError(502, "opencode_proxy_failed", "OpenCode proxy request failed", {
+      url: targetUrl,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 
   return sanitizeProxyResponse(response);
 }
