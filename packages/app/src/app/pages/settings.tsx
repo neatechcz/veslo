@@ -44,6 +44,13 @@ import { MODEL_VARIANT_OPTIONS } from "../lib/model-variant";
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 import type { UpdateDownloadRetryInfo } from "../context/updater";
 
+function formatUpdateRetryDelay(delayMs: number) {
+  const clampedMs = Math.max(0, delayMs);
+  if (clampedMs < 60_000) return `${Math.max(1, Math.ceil(clampedMs / 1000))}s`;
+  if (clampedMs < 60 * 60_000) return `${Math.max(1, Math.ceil(clampedMs / 60_000))}m`;
+  return `${Math.max(1, Math.ceil(clampedMs / (60 * 60_000)))}h`;
+}
+
 export type SettingsViewProps = {
   startupPreference: StartupPreference | null;
   baseUrl: string;
@@ -182,7 +189,7 @@ export default function SettingsView(props: SettingsViewProps) {
   const updateRetryDelayLabel = () => {
     const retry = updateRetry();
     if (retry?.kind !== "scheduled") return null;
-    return formatRelativeTime(retry.nextRetryAt);
+    return formatUpdateRetryDelay(retry.nextRetryAt - Date.now());
   };
 
   const updateDownloadPercent = createMemo<number | null>(() => {

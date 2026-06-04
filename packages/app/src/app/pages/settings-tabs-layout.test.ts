@@ -80,6 +80,8 @@ test("settings exposes updater download retry states", () => {
   assert.match(source, /settings\.update_retrying_download/);
   assert.match(source, /settings\.update_retrying_in/);
   assert.match(source, /settings\.update_download_failed/);
+  assert.doesNotMatch(source, /formatRelativeTime\(retry\.nextRetryAt\)/);
+  assert.match(source, /retry\.nextRetryAt\s*-\s*Date\.now\(\)/);
   assert.match(source, /props\.retryUpdateDownload\(\)/);
 });
 
