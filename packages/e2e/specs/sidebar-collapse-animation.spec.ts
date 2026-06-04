@@ -559,6 +559,11 @@ function expectActiveCollapseTransition(metrics: CollapseMetrics, expectedRegion
   expect(metrics.height).not.toBe("auto");
 }
 
+function expectVisibleProjectCollapseTransition(metrics: CollapseMetrics) {
+  expectActiveCollapseTransition(metrics, "project");
+  expect(metrics.transition.includes("0.24s") || metrics.transition.includes("240ms")).toBe(true);
+}
+
 describe("Sidebar collapse animation", () => {
   it("animates recent subagent branches when collapsing and expanding a parent session", async () => {
     const tree = await seedSessionTree();
@@ -610,7 +615,7 @@ describe("Sidebar collapse animation", () => {
     const projectKey = await clickProjectHeaderContaining(tree.parentTitle);
 
     const closingMetrics = await waitForActiveProjectCollapseTransition(projectKey);
-    await expectActiveCollapseTransition(closingMetrics, "project");
+    await expectVisibleProjectCollapseTransition(closingMetrics);
     await waitForNoCollapseRegionText(PROJECT_REGION_SELECTOR, tree.parentTitle);
   });
 });
