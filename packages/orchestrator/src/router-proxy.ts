@@ -101,6 +101,9 @@ export function proxyToEngine(opts: ProxyToEngineOptions): void {
   for (const [k, v] of Object.entries(opts.injectHeaders ?? {})) {
     headers[k] = v;
   }
+  if (opts.rewriteJsonResponse) {
+    headers["accept-encoding"] = "identity";
+  }
 
   const upstreamReq = httpRequest(
     {
