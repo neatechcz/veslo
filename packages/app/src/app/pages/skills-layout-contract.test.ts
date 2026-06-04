@@ -204,6 +204,16 @@ test("skill detail drawer exposes restore actions separately from version restor
   assert.match(source, /onRestoreVersion=\{showRegistryActionPending\}/);
 });
 
+test("skills page rebinds an open skill detail after inventory refreshes", () => {
+  assert.match(source, /const resolveSelectedDetailFromInventory = \(\s*detail: \{ item: SkillInventoryItem; instance: SkillInstance \},\s*items: SkillInventoryItem\[\],\s*\): \{ item: SkillInventoryItem; instance: SkillInstance \} \| null =>/);
+  assert.match(source, /const matchingItem = items\.find\(\(item\) => item\.name === detail\.item\.name\)/);
+  assert.match(source, /const matchingInstance = instances\.find\(\(instance\) => instance\.id === detail\.instance\.id\)/);
+  assert.match(source, /inventoryInstanceLifecycle\(instance\) === "active"/);
+  assert.match(source, /createEffect\(\(\) => \{\s*const detail = selectedDetail\(\);\s*if \(!detail\) return;\s*const nextDetail = resolveSelectedDetailFromInventory\(detail, inventoryItemsForDisplay\(\)\);/);
+  assert.match(source, /if \(!nextDetail\) \{\s*setSelectedDetail\(null\);\s*return;\s*\}/);
+  assert.match(source, /if \(nextDetail\.instance\.id !== detail\.instance\.id \|\| nextDetail\.item !== detail\.item\) \{\s*setSelectedDetail\(nextDetail\);\s*\}/);
+});
+
 test("skills remove and restore locale keys are present", () => {
   for (const localeSource of [enSource, csSource, zhSource]) {
     assert.match(localeSource, /"skills\.restore_skills":/);
