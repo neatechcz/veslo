@@ -4,10 +4,11 @@ import type { WorkerSandbox } from "./sandbox/index.js";
 import { resolveSandbox } from "./sandbox/index.js";
 import { randomUUID, createHash } from "node:crypto";
 import { chmod, copyFile, cp, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile, realpath } from "node:fs/promises";
+import { appendFileSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { createServer as createHttpServer } from "node:http";
 import { homedir, hostname, networkInterfaces, tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { access } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -661,6 +662,9 @@ function prefixStream(
       }
       const severity: LogLevel = level === "stderr" ? "error" : "info";
       logger.log(severity, line, { stream: level, pid }, label);
+      if (label === "opencode" && process.env.VESLO_OPENCODE_HEALTH_DIAG === "1") {
+        writeOpencodeHealthDiag("child-output", { stream: level, pid: pid ?? null, line });
+      }
     }
   });
   stream.on("end", () => {
@@ -671,6 +675,9 @@ function prefixStream(
     }
     const severity: LogLevel = level === "stderr" ? "error" : "info";
     logger.log(severity, buffer, { stream: level, pid }, label);
+    if (label === "opencode" && process.env.VESLO_OPENCODE_HEALTH_DIAG === "1") {
+      writeOpencodeHealthDiag("child-output", { stream: level, pid: pid ?? null, line: buffer });
+    }
   });
 }
 
@@ -1572,8 +1579,25 @@ async function loadRouterState(path: string): Promise<RouterState> {
   }
 }
 
+const routerStateWriteQueues = new Map<string, Promise<void>>();
+
 async function saveRouterState(path: string, state: RouterState): Promise<void> {
-  await atomicWriteJson(path, state);
+  const snapshot = JSON.parse(JSON.stringify(state)) as RouterState;
+  const previous = routerStateWriteQueues.get(path) ?? Promise.resolve();
+  let queued!: Promise<void>;
+  queued = previous
+    .catch(() => {
+      // Preserve ordering after a failed write; callers still receive their
+      // own write error from `queued`.
+    })
+    .then(() => atomicWriteJson(path, snapshot))
+    .finally(() => {
+      if (routerStateWriteQueues.get(path) === queued) {
+        routerStateWriteQueues.delete(path);
+      }
+    });
+  routerStateWriteQueues.set(path, queued);
+  await queued;
 }
 
 const routerStatePersister = createDebouncedPersister<RouterState>({
@@ -1588,12 +1612,25 @@ async function flushPersist(): Promise<void> {
   await routerStatePersister.flush();
 }
 
+function stripExtendedWindowsPathPrefix(input: string): string {
+  if (/^\\\\\?\\UNC\\/i.test(input)) return `\\\\${input.slice("\\\\?\\UNC\\".length)}`;
+  if (/^\/\/\?\/UNC\//i.test(input)) return `//${input.slice("//?/UNC/".length)}`;
+  if (/^\\\\\?\\/i.test(input)) return input.slice("\\\\?\\".length);
+  if (/^\/\/\?\//i.test(input)) return input.slice("//?/".length);
+  return input;
+}
+
 function normalizeWorkspacePath(input: string): string {
-  return resolve(input).replace(/[\\/]+$/, "");
+  const stripped = stripExtendedWindowsPathPrefix(input.trim());
+  const resolved =
+    process.platform === "win32" || /^[A-Za-z]:[\\/]/.test(stripped)
+      ? win32.resolve(stripped)
+      : resolve(stripped);
+  return resolved.replace(/[\\/]+$/, "");
 }
 
 function workspaceIdForLocal(path: string): string {
-  return `ws-${createHash("sha1").update(path).digest("hex").slice(0, 12)}`;
+  return `ws-${createHash("sha1").update(normalizeWorkspacePath(path)).digest("hex").slice(0, 12)}`;
 }
 
 function workspaceIdForRemote(baseUrl: string, directory?: string | null): string {
@@ -1884,37 +1921,14 @@ function opencodeRouterStatusToolSource(): string {
  * a minimal hand-written shim that lets opencode load the tools but won't pass
  * full zod introspection — the warning is logged so callers can investigate.
  */
-const VESLO_MANAGED_PLUGIN_VERSION = "1.15.10";
-const VESLO_MANAGED_ZOD_VERSION = "4.1.13";
+const VESLO_MANAGED_PLUGIN_VERSION = "1.14.29";
+const VESLO_MANAGED_ZOD_VERSION = "4.1.8";
 
-const MANAGED_PLUGIN_FALLBACK_TOOL = `function makeLeaf(typeName) {
-  const leaf = { _veslo_schema_type: typeName, _zod: { def: { type: typeName } } };
-  leaf.optional = () => leaf;
-  leaf.nullable = () => leaf;
-  leaf.describe = () => leaf;
-  leaf.default = () => leaf;
-  leaf.parse = (value) => value;
-  leaf.safeParse = (value) => ({ success: true, data: value });
-  return leaf;
-}
-const schema = {
-  string: () => makeLeaf("string"),
-  number: () => makeLeaf("number"),
-  boolean: () => makeLeaf("boolean"),
-  any: () => makeLeaf("any"),
-  enum: (values) => Object.assign(makeLeaf("enum"), { options: Array.isArray(values) ? values.slice() : [] }),
-  literal: (value) => Object.assign(makeLeaf("literal"), { value }),
-  object: (shape) => Object.assign(makeLeaf("object"), { shape: shape || {} }),
-  array: (item) => Object.assign(makeLeaf("array"), { element: item }),
-  record: (value) => Object.assign(makeLeaf("record"), { valueType: value }),
-  union: (options) => Object.assign(makeLeaf("union"), { options: Array.isArray(options) ? options.slice() : [] }),
-  optional: (inner) => Object.assign(makeLeaf("optional"), { inner }),
-  nullable: (inner) => Object.assign(makeLeaf("nullable"), { inner }),
-};
+const MANAGED_PLUGIN_FALLBACK_TOOL = `import { z } from "zod";
 export function tool(input) {
   return input;
 }
-tool.schema = schema;
+tool.schema = z;
 `;
 
 const MANAGED_PLUGIN_FALLBACK_INDEX = `export * from "./tool.js";\n`;
@@ -1933,6 +1947,69 @@ const MANAGED_PLUGIN_FALLBACK_PACKAGE_JSON = `${JSON.stringify(
   null,
   2,
 )}\n`;
+
+async function readPackageJsonVersion(packageDir: string): Promise<string | null> {
+  try {
+    const raw = await readFile(join(packageDir, "package.json"), "utf8");
+    const parsed = JSON.parse(raw) as { version?: unknown };
+    return typeof parsed.version === "string" ? parsed.version : null;
+  } catch {
+    return null;
+  }
+}
+
+async function logOpencodeManagedDependencyStatus(configDir: string): Promise<void> {
+  const pluginDir = join(configDir, "node_modules", "@opencode-ai", "plugin");
+  const zodDir = join(configDir, "node_modules", "zod");
+  const pluginVersion = await readPackageJsonVersion(pluginDir);
+  const zodVersion = await readPackageJsonVersion(zodDir);
+  const pluginPackagePath = join(pluginDir, "package.json");
+  const zodPackagePath = join(zodDir, "package.json");
+  const pluginMode =
+    pluginVersion === "0.0.0-veslo-managed"
+      ? "fallback-zod-shim"
+      : pluginVersion
+        ? pluginVersion === VESLO_MANAGED_PLUGIN_VERSION
+          ? "vendored"
+          : "vendored-version-mismatch"
+        : "missing";
+  const zodMode =
+    zodVersion
+      ? zodVersion === VESLO_MANAGED_ZOD_VERSION
+        ? "vendored"
+        : "vendored-version-mismatch"
+      : "missing";
+  const payload = JSON.stringify({
+    configDir,
+    pluginMode,
+    pluginVersion,
+    pluginPackagePath,
+    expectedPluginVersion: VESLO_MANAGED_PLUGIN_VERSION,
+    zodMode,
+    zodVersion,
+    zodPackagePath,
+    expectedZodVersion: VESLO_MANAGED_ZOD_VERSION,
+  });
+
+  if (pluginMode === "fallback-zod-shim" && zodMode !== "missing") {
+    console.warn(`[veslo-orchestrator] opencode managed dependency status ${payload}`);
+    return;
+  }
+
+  if (pluginMode === "missing" || zodMode === "missing") {
+    console.warn(
+      `[veslo-orchestrator] opencode managed dependency status ${payload} — managed tools may fail OpenCode zod introspection (symptom: Object.values on null/undefined).`,
+    );
+    return;
+  }
+
+  if (pluginMode === "vendored-version-mismatch" || zodMode === "vendored-version-mismatch") {
+    console.warn(`[veslo-orchestrator] opencode managed dependency status ${payload}`);
+    return;
+  }
+
+  console.log(`[veslo-orchestrator] opencode managed dependency status ${payload}`);
+}
 
 async function copyDirRecursive(src: string, dst: string): Promise<void> {
   // Prefer fs/promises.cp, but fall back to shell `cp -R` when running inside a
@@ -1971,14 +2048,11 @@ async function pathExists(target: string): Promise<boolean> {
 }
 
 function resolveBunCacheEntry(pkg: string, version: string): string {
-  return join(
-    process.env.HOME ?? "",
-    ".bun",
-    "install",
-    "cache",
-    pkg,
-    `${version}@@@1`,
-  );
+  return join(process.env.HOME ?? "", ".bun", "install", "cache", `${pkg}@${version}@@@1`);
+}
+
+function resolveLegacyBunCacheEntry(pkg: string, version: string): string {
+  return join(process.env.HOME ?? "", ".bun", "install", "cache", pkg, `${version}@@@1`);
 }
 
 async function vendorBunCachePackage(
@@ -1986,9 +2060,14 @@ async function vendorBunCachePackage(
   version: string,
   destNodeModules: string,
 ): Promise<boolean> {
-  const cacheRoot = resolveBunCacheEntry(pkg, version);
-  if (!(await pathExists(cacheRoot))) return false;
+  let cacheRoot = resolveBunCacheEntry(pkg, version);
+  if (!(await pathExists(cacheRoot))) {
+    const legacy = resolveLegacyBunCacheEntry(pkg, version);
+    if (!(await pathExists(legacy))) return false;
+    cacheRoot = legacy;
+  }
   const destDir = join(destNodeModules, pkg);
+  await rm(destDir, { recursive: true, force: true });
   await mkdir(destDir, { recursive: true });
   await copyDirRecursive(cacheRoot, destDir);
   return true;
@@ -2022,7 +2101,8 @@ async function ensureOpencodeManagedTools(configDir: string): Promise<void> {
 
   // Vendor @opencode-ai/plugin (preferred: from Bun cache; fallback: hand-rolled shim).
   const pluginDir = join(nodeModulesDir, "@opencode-ai", "plugin");
-  if (!(await pathExists(join(pluginDir, "package.json")))) {
+  const existingPluginVersion = await readPackageJsonVersion(pluginDir);
+  if (!existingPluginVersion || existingPluginVersion === "0.0.0-veslo-managed") {
     await mkdir(join(nodeModulesDir, "@opencode-ai"), { recursive: true });
     const ok = await vendorBunCachePackage(
       "@opencode-ai/plugin",
@@ -2031,7 +2111,7 @@ async function ensureOpencodeManagedTools(configDir: string): Promise<void> {
     );
     if (!ok) {
       console.warn(
-        `[veslo-orchestrator] Bun cache miss for @opencode-ai/plugin@${VESLO_MANAGED_PLUGIN_VERSION}; using hand-rolled shim (tools may not pass full zod introspection).`,
+        `[veslo-orchestrator] Bun cache miss for @opencode-ai/plugin@${VESLO_MANAGED_PLUGIN_VERSION}; using minimal zod-backed plugin shim.`,
       );
       await writeManagedPluginFallback(pluginDir);
     }
@@ -2051,6 +2131,7 @@ async function ensureOpencodeManagedTools(configDir: string): Promise<void> {
 
   await writeManagedTool("opencode_router_send.ts", opencodeRouterSendToolSource());
   await writeManagedTool("opencode_router_status.ts", opencodeRouterStatusToolSource());
+  await logOpencodeManagedDependencyStatus(configDir);
 }
 
 function findWorkspace(state: RouterState, input: string): RouterWorkspace | undefined {
@@ -2128,20 +2209,204 @@ async function waitForOpenCodeRouterHealthy(baseUrl: string, timeoutMs = 10_000,
   throw new Error(lastError ?? "Timed out waiting for opencodeRouter health");
 }
 
-async function waitForOpencodeHealthy(client: ReturnType<typeof createOpencodeClient>, timeoutMs = 10_000, pollMs = 250) {
+async function waitForOpencodeHealthy(
+  client: ReturnType<typeof createOpencodeClient>,
+  timeoutMs = 10_000,
+  pollMs = 250,
+  logger?: Logger,
+  context?: LogAttributes,
+  rawHealth?: { baseUrl: string; headers?: Record<string, string> },
+) {
   const start = Date.now();
   let lastError: string | null = null;
+  let lastLoggedAt = 0;
+  const requestTimeoutMs = Math.min(1_500, Math.max(250, timeoutMs));
+  const healthDiag = process.env.VESLO_OPENCODE_HEALTH_DIAG === "1";
   while (Date.now() - start < timeoutMs) {
     try {
-      const health = unwrap(await client.global.health());
+      const health = rawHealth?.baseUrl
+        ? await fetchOpencodeHealthRaw(rawHealth.baseUrl, rawHealth.headers, requestTimeoutMs, context)
+        : await fetchOpencodeHealthViaSdk(client, requestTimeoutMs);
       if (health?.healthy) return health;
       lastError = "Server reported unhealthy";
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
     }
+    const elapsedMs = Date.now() - start;
+    if (logger && (elapsedMs - lastLoggedAt >= 2_000 || lastLoggedAt === 0)) {
+      lastLoggedAt = elapsedMs;
+      logger.info(
+        "opencode health waiting",
+        {
+          ...(context ?? {}),
+          elapsedMs,
+          timeoutMs,
+          requestTimeoutMs,
+          lastError,
+        },
+        "opencode",
+      );
+      if (healthDiag) {
+        writeOpencodeHealthDiag("waiting", {
+          ...(context ?? {}),
+          elapsedMs,
+          timeoutMs,
+          requestTimeoutMs,
+          lastError,
+        });
+        console.error(
+          `[veslo:health-diag] waiting ${JSON.stringify({
+            ...(context ?? {}),
+            elapsedMs,
+            timeoutMs,
+            requestTimeoutMs,
+            lastError,
+          })}`,
+        );
+      }
+    }
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
+  logger?.warn(
+    "opencode health failed",
+    {
+      ...(context ?? {}),
+      elapsedMs: Date.now() - start,
+      timeoutMs,
+      requestTimeoutMs,
+      lastError,
+    },
+    "opencode",
+  );
+  if (healthDiag) {
+    writeOpencodeHealthDiag("failed", {
+      ...(context ?? {}),
+      elapsedMs: Date.now() - start,
+      timeoutMs,
+      requestTimeoutMs,
+      lastError,
+    });
+    console.error(
+      `[veslo:health-diag] failed ${JSON.stringify({
+        ...(context ?? {}),
+        elapsedMs: Date.now() - start,
+        timeoutMs,
+        requestTimeoutMs,
+        lastError,
+      })}`,
+    );
+  }
   throw new Error(lastError ?? "Timed out waiting for OpenCode health");
+}
+
+async function fetchOpencodeHealthViaSdk(
+  client: ReturnType<typeof createOpencodeClient>,
+  requestTimeoutMs: number,
+) {
+  const healthRequest = client.global.health();
+  healthRequest.catch(() => {});
+  return unwrap(
+    await Promise.race([
+      healthRequest,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("OpenCode health request timed out")), requestTimeoutMs),
+      ),
+    ]),
+  );
+}
+
+async function fetchOpencodeHealthRaw(
+  baseUrl: string,
+  headers: Record<string, string> | undefined,
+  requestTimeoutMs: number,
+  context?: LogAttributes,
+) {
+  const controller = new AbortController();
+  const startedAt = Date.now();
+  const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
+  const url = `${baseUrl.replace(/\/+$/, "")}/global/health`;
+  const authHeaderPresent = Boolean(headers?.Authorization ?? headers?.authorization);
+  try {
+    const response = await fetch(url, {
+      headers,
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    const elapsedMs = Date.now() - startedAt;
+    writeOpencodeHealthDiag("raw-health", {
+      ...(context ?? {}),
+      baseUrl,
+      status: response.status,
+      ok: response.ok,
+      authHeaderPresent,
+      elapsedMs,
+      bodyExcerpt: text.slice(0, 200),
+    });
+    if (!response.ok) {
+      throw new Error(`OpenCode health HTTP ${response.status}: ${text.slice(0, 200)}`);
+    }
+    try {
+      return JSON.parse(text) as { healthy?: boolean; version?: string };
+    } catch {
+      throw new Error(`OpenCode health returned non-JSON response: ${text.slice(0, 200)}`);
+    }
+  } catch (error) {
+    const elapsedMs = Date.now() - startedAt;
+    writeOpencodeHealthDiag("raw-health", {
+      ...(context ?? {}),
+      baseUrl,
+      ok: false,
+      authHeaderPresent,
+      elapsedMs,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function writeOpencodeHealthDiag(event: string, payload: LogAttributes): void {
+  const file = process.env.VESLO_OPENCODE_HEALTH_DIAG_FILE?.trim();
+  if (!file) return;
+  try {
+    appendFileSync(
+      file,
+      `${JSON.stringify({ time: new Date().toISOString(), event, ...payload })}\n`,
+      "utf8",
+    );
+  } catch {
+    // Diagnostics must never affect runtime behavior.
+  }
+}
+
+function selectedProcessEnvForDiag(env: NodeJS.ProcessEnv): LogAttributes {
+  const keys = [
+    "APPDATA",
+    "BUN_CONFIG_DNS_RESULT_ORDER",
+    "BUN_OPTIONS",
+    "HOME",
+    "LOCALAPPDATA",
+    "NODE_OPTIONS",
+    "OPENCODE_CONFIG_DIR",
+    "OPENCODE_HOME",
+    "OPENCODE_VERSION",
+    "PATH",
+    "USERPROFILE",
+    "VESLO_APP_DATA_DIR",
+    "VESLO_APP_LOCAL_DATA_DIR",
+    "VESLO_DATA_DIR",
+    "WSLENV",
+    "XDG_CACHE_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+  ];
+  const out: LogAttributes = {};
+  for (const key of keys) {
+    const value = env[key];
+    if (typeof value === "string" && value.length > 0) out[key] = value;
+  }
+  return out;
 }
 
 /**
@@ -2333,7 +2598,7 @@ async function startOpencode(options: {
   /** F4Ú4 — wrap engine spawn in OS-level sandbox. When omitted, sandbox is
    *  resolved automatically per platform unless `VESLO_DISABLE_SANDBOX=1`. */
   sandbox?: WorkerSandbox | null;
-}) {
+}): Promise<{ child: ChildProcess; connectHost?: string; childKind?: "direct" | "wsl" }> {
   const args = ["serve", "--hostname", options.bindHost, "--port", String(options.port)];
   for (const origin of options.corsOrigins) {
     args.push("--cors", origin);
@@ -2393,6 +2658,9 @@ async function startOpencode(options: {
   }
 
   let child: ChildProcess;
+  let connectHost: string | undefined;
+  let childKind: "direct" | "wsl" = "direct";
+  let launchDiag: LogAttributes | undefined;
   if (sandbox) {
     if (!sandbox.isAvailable()) {
       throw new Error(`Sandbox backend ${sandbox.name} is not available on this host.`);
@@ -2440,20 +2708,91 @@ async function startOpencode(options: {
     });
     options.logger.info(
       "engine spawn (sandboxed)",
-      { workspace: options.workspace, backend: sandbox.name, childKind: launch.childKind ?? "direct" },
+      {
+        workspace: options.workspace,
+        configDir: options.configDir,
+        backend: sandbox.name,
+        childKind: launch.childKind ?? "direct",
+        bindHost: options.bindHost,
+        port: options.port,
+        displayCommand: launch.displayCommand,
+        connectHost: launch.connectHost,
+      },
       "sandbox",
     );
+    if (options.bindHost === "0.0.0.0" || options.bindHost === "::") {
+      connectHost = launch.connectHost;
+    }
+    childKind = launch.childKind ?? "direct";
+    launchDiag = {
+      command: launch.command,
+      args: launch.args.join(" "),
+      cwd: launch.cwd,
+      displayCommand: launch.displayCommand,
+      childKind: launch.childKind ?? "direct",
+      launchEnv: selectedProcessEnvForDiag(launch.env ?? {}),
+      processCwd: process.cwd(),
+      processEnv: selectedProcessEnvForDiag(process.env),
+    };
     child = spawnProcess(launch.command, launch.args, {
       cwd: launch.cwd,
       stdio: ["ignore", "pipe", "pipe"],
       env: launch.env,
     });
   } else {
+    options.logger.info(
+      "engine spawn (unsandboxed)",
+      {
+        workspace: options.workspace,
+        configDir: options.configDir,
+        bindHost: options.bindHost,
+        port: options.port,
+      },
+      "opencode",
+    );
     child = spawnProcess(options.bin, args, {
       cwd: options.workspace,
       stdio: ["ignore", "pipe", "pipe"],
       env,
     });
+  }
+  options.logger.info(
+    "engine child spawned",
+    {
+      workspace: options.workspace,
+      configDir: options.configDir,
+      pid: child.pid,
+      bindHost: options.bindHost,
+      port: options.port,
+      connectHost,
+      childKind,
+    },
+    "opencode",
+  );
+  if (process.env.VESLO_OPENCODE_HEALTH_DIAG === "1") {
+    writeOpencodeHealthDiag("child-spawned", {
+      workspace: options.workspace,
+      configDir: options.configDir ?? "",
+      pid: child.pid ?? null,
+      bindHost: options.bindHost,
+      port: options.port,
+      connectHost: connectHost ?? "",
+      childKind,
+      sandboxed: Boolean(sandbox),
+      ...(launchDiag ? { launch: launchDiag } : {}),
+    });
+    console.error(
+      `[veslo:health-diag] child-spawned ${JSON.stringify({
+        workspace: options.workspace,
+        configDir: options.configDir,
+        pid: child.pid,
+        bindHost: options.bindHost,
+        port: options.port,
+        connectHost,
+        childKind,
+        sandboxed: Boolean(sandbox),
+      })}`,
+    );
   }
 
   prefixStream(child.stdout, "opencode", "stdout", options.logger, child.pid ?? undefined);
@@ -2483,7 +2822,7 @@ async function startOpencode(options: {
     );
   });
 
-  return child;
+  return { child, connectHost, childKind };
 }
 
 function resolveConfiguredSandboxBackend(): WorkerSandbox["name"] | "none" {
@@ -3588,7 +3927,7 @@ async function runRouterDaemon(args: ParsedArgs) {
         return { workdir, configDir };
       },
       spawnEngine: async ({ workspaceId, workdir, configDir, port }) => {
-        const child = await startOpencode({
+        const spawned = await startOpencode({
           bin: opencodeBinary.bin,
           workspace: workdir,
           configDir,
@@ -3610,22 +3949,26 @@ async function runRouterDaemon(args: ParsedArgs) {
         // on others, producing "Unable to connect" engine proxy errors. Map
         // wildcard binds to loopback so the local client always has a valid
         // target.
-        const clientHost = opencodeHost === "0.0.0.0" || opencodeHost === "::" ? "127.0.0.1" : opencodeHost;
-        return { child, baseUrl: `http://${clientHost}:${port}` };
+        const clientHost =
+          spawned.connectHost ??
+          (opencodeHost === "0.0.0.0" || opencodeHost === "::" ? "127.0.0.1" : opencodeHost);
+        return {
+          child: spawned.child,
+          baseUrl: `http://${clientHost}:${port}`,
+          childKind: spawned.childKind,
+        };
       },
       waitForHealthy: async (baseUrl) => {
         const client = createOpencodeClient({ baseUrl, headers: authHeaders });
-        // Opencode cold-start (Bun JIT + SQLite migration + sandbox-runtime
-        // init) routinely exceeds 30s in dev builds. Pool returns 502 to the
-        // SDK if we time out, even though the engine reaches ready shortly
-        // after — the user then sees Error badges and a stuck UI. 60s gives
-        // cold paths room without blocking interactive switches.
+        // Keep the proxy interactive: if OpenCode does not become healthy
+        // promptly, surface a concrete 502 instead of holding the caller for
+        // a minute and hiding the real failing step behind the UI spinner.
         const timeoutMs = (() => {
           const raw = process.env.VESLO_OPENCODE_HEALTH_TIMEOUT_MS;
           const parsed = raw ? Number.parseInt(raw, 10) : NaN;
-          return Number.isFinite(parsed) && parsed >= 1_000 ? parsed : 60_000;
+          return Number.isFinite(parsed) && parsed >= 1_000 ? parsed : 12_000;
         })();
-        await waitForOpencodeHealthy(client, timeoutMs);
+        await waitForOpencodeHealthy(client, timeoutMs, 250, logger, { baseUrl }, { baseUrl, headers: authHeaders });
       },
       stopChild,
       findFreePort: () => findFreePort(opencodeHost),
@@ -3635,7 +3978,7 @@ async function runRouterDaemon(args: ParsedArgs) {
       // strikes 3× before treating as crashed.
       healthCheck: async (baseUrl) => {
         const client = createOpencodeClient({ baseUrl, headers: authHeaders });
-        await waitForOpencodeHealthy(client, 2000, 250);
+        await waitForOpencodeHealthy(client, 2000, 250, undefined, { baseUrl }, { baseUrl, headers: authHeaders });
       },
       // F2Ú5 — state transition events. Log + trigger debounced persist.
       onEngineChange: (workspaceId, event) => {
@@ -3735,7 +4078,15 @@ async function runRouterDaemon(args: ParsedArgs) {
         const name = typeof body?.name === "string" && body.name.trim()
           ? body.name.trim()
           : resolved.split(/[\\/]/).filter(Boolean).pop() ?? "Workspace";
-        const existing = state.workspaces.find((entry) => entry.id === id);
+        const normalizedResolved = normalizeWorkspacePath(resolved);
+        const matchingLocalWorkspaces = state.workspaces.filter((entry) => {
+          if (entry.workspaceType !== "local" || !entry.path) return false;
+          return normalizeWorkspacePath(entry.path) === normalizedResolved;
+        });
+        const existing = matchingLocalWorkspaces.find((entry) => entry.id === id);
+        const legacyIds = matchingLocalWorkspaces
+          .map((entry) => entry.id)
+          .filter((entryId) => entryId !== id);
         const entry: RouterWorkspace = {
           id,
           name,
@@ -3744,9 +4095,12 @@ async function runRouterDaemon(args: ParsedArgs) {
           createdAt: existing?.createdAt ?? nowMs(),
           lastUsedAt: nowMs(),
         };
-        state.workspaces = state.workspaces.filter((item) => item.id !== id);
+        for (const legacyId of legacyIds) {
+          await pool.forget(legacyId);
+        }
+        state.workspaces = state.workspaces.filter((item) => item.id !== id && !legacyIds.includes(item.id));
         state.workspaces.push(entry);
-        if (!state.activeId) state.activeId = id;
+        if (!state.activeId || legacyIds.includes(state.activeId)) state.activeId = id;
         await saveRouterState(statePath, state);
         send(200, { activeId: state.activeId, workspace: entry });
         return;
@@ -3843,7 +4197,7 @@ async function runRouterDaemon(args: ParsedArgs) {
         // killnut, lazy respawn na další proxy request. Pro remote workspaces
         // dispose je no-op (vzdálený server si engine spravuje sám).
         if (workspace.workspaceType === "local") {
-          await pool.suspend(workspace.id);
+          await pool.suspend(workspace.id, "api-dispose");
           persistEnginesSnapshot();
         }
         workspace.lastUsedAt = nowMs();
@@ -4309,7 +4663,14 @@ async function runStatus(args: ParsedArgs) {
         baseUrl: opencodeUrl,
         headers,
       });
-      const health = await waitForOpencodeHealthy(client, 5000, 400);
+      const health = await waitForOpencodeHealthy(
+        client,
+        5000,
+        400,
+        undefined,
+        { baseUrl: opencodeUrl },
+        { baseUrl: opencodeUrl, headers },
+      );
       status.opencode = { ok: true, url: opencodeUrl, health };
     } catch (error) {
       status.opencode = { ok: false, url: opencodeUrl, error: String(error) };
@@ -4769,7 +5130,7 @@ async function runStart(args: ParsedArgs) {
     let opencodeClient: ReturnType<typeof createOpencodeClient>;
 
     {
-      const opencodeChild = await startOpencode({
+      const opencodeSpawn = await startOpencode({
         bin: opencodeBinary.bin,
         workspace: resolvedWorkspace,
         configDir: opencodeConfigDir,
@@ -4785,6 +5146,7 @@ async function runStart(args: ParsedArgs) {
         logFormat,
         opencodeRouterHealthPort: opencodeRouterEnabled ? opencodeRouterHealthPort : undefined,
       });
+      const opencodeChild = opencodeSpawn.child;
       children.push({ name: "opencode", child: opencodeChild });
       tui?.updateService("opencode", {
         status: "running",
@@ -4806,7 +5168,14 @@ async function runStart(args: ParsedArgs) {
       });
 
       logger.info("Waiting for health", { url: opencodeBaseUrl }, "opencode");
-      await waitForOpencodeHealthy(opencodeClient);
+      await waitForOpencodeHealthy(
+        opencodeClient,
+        10_000,
+        250,
+        logger,
+        { baseUrl: opencodeBaseUrl },
+        { baseUrl: opencodeBaseUrl, headers: Object.keys(authHeaders).length ? authHeaders : undefined },
+      );
       logger.info("Healthy", { url: opencodeBaseUrl }, "opencode");
       tui?.updateService("opencode", { status: "healthy" });
 

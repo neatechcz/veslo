@@ -1,10 +1,25 @@
 import type { ChildProcess } from "node:child_process";
+import { appendFileSync } from "node:fs";
 
 // Workflow diagnostic toggle — see dev-specific-docs/logging-workflow-milestones--claude.md
 // Off by default. Opt-in via env var: VESLO_FLOW_LOG=1 (or =true)
 const FLOW_LOG_ENABLED =
   process.env.VESLO_FLOW_LOG === "1" ||
   process.env.VESLO_FLOW_LOG?.toLowerCase() === "true";
+
+function writeSpawnDiag(event: string, payload: Record<string, unknown>): void {
+  const file = process.env.VESLO_OPENCODE_HEALTH_DIAG_FILE?.trim();
+  if (!file) return;
+  try {
+    appendFileSync(
+      file,
+      `${JSON.stringify({ time: new Date().toISOString(), event, ...payload })}\n`,
+      "utf8",
+    );
+  } catch {
+    // Diagnostics must never affect runtime behavior.
+  }
+}
 
 export type EngineState =
   | "spawning"
@@ -28,6 +43,7 @@ export type EngineSpawnContext = {
 export type EngineSpawnResult = {
   child: ChildProcess;
   baseUrl: string;
+  childKind?: "direct" | "wsl";
 };
 
 export type EngineProcess = {
@@ -37,6 +53,7 @@ export type EngineProcess = {
   baseUrl: string;
   workdir: string;
   configDir: string;
+  childKind?: "direct" | "wsl";
   state: EngineState;
   spawnedAt: number;
   lastActivityAt: number;
@@ -56,6 +73,7 @@ export type SerializedEngineState = {
   baseUrl: string;
   workdir: string;
   configDir: string;
+  childKind?: "direct" | "wsl";
   state: EngineState;
   spawnedAt: number;
   lastActivityAt: number;
@@ -268,6 +286,7 @@ export class EnginePool {
       baseUrl: engine.baseUrl,
       workdir: engine.workdir,
       configDir: engine.configDir,
+      childKind: engine.childKind,
       state: engine.state,
       spawnedAt: engine.spawnedAt,
       lastActivityAt: engine.lastActivityAt,
@@ -280,15 +299,38 @@ export class EnginePool {
   }
 
   async ensure(workspace: EngineWorkspace): Promise<EngineProcess> {
+    const inflight = this.pending.get(workspace.id);
+    if (inflight) {
+      writeSpawnDiag("ensure-pending-reuse", { workspaceId: workspace.id });
+      return inflight;
+    }
+
     const existing = this.engines.get(workspace.id);
     if (existing) {
       const alive =
         (existing.state === "ready" || existing.state === "idle") &&
-        this.deps.isProcessAlive(existing.pid);
+        (this.deps.isProcessAlive(existing.pid) || !!this.deps.healthCheck);
       if (alive) {
         existing.lastActivityAt = this.deps.now();
+        writeSpawnDiag("ensure-ready-reuse", {
+          workspaceId: workspace.id,
+          state: existing.state,
+          pid: existing.pid,
+          port: existing.port,
+          baseUrl: existing.baseUrl,
+          childKind: existing.childKind,
+        });
         return existing;
       }
+      writeSpawnDiag("ensure-stale-respawn", {
+        workspaceId: workspace.id,
+        state: existing.state,
+        pid: existing.pid,
+        port: existing.port,
+        childKind: existing.childKind,
+        processAlive: this.deps.isProcessAlive(existing.pid),
+        hasHealthCheck: Boolean(this.deps.healthCheck),
+      });
       this.engines.delete(workspace.id);
       if (existing.child && this.deps.isProcessAlive(existing.pid)) {
         try {
@@ -301,9 +343,6 @@ export class EnginePool {
         }
       }
     }
-
-    const inflight = this.pending.get(workspace.id);
-    if (inflight) return inflight;
 
     // F2Ú4 — capacity check + spawn must be wrapped in a single inflight
     // promise. `pending.set` runs synchronously before any `await` so
@@ -319,9 +358,20 @@ export class EnginePool {
     return promise;
   }
 
-  async suspend(workspaceId: string): Promise<void> {
+  async suspend(workspaceId: string, reason = "unspecified"): Promise<void> {
     const engine = this.engines.get(workspaceId);
     if (!engine) return;
+    writeSpawnDiag("engine-suspend", {
+      workspaceId,
+      reason,
+      state: engine.state,
+      pid: engine.pid,
+      port: engine.port,
+      baseUrl: engine.baseUrl,
+      childKind: engine.childKind,
+      processAlive: this.deps.isProcessAlive(engine.pid),
+      hasHealthCheck: Boolean(this.deps.healthCheck),
+    });
     // F2Ú5 — cancel any pending restart so suspend wins races against backoff.
     const pendingRestart = this.restartTimers.get(workspaceId);
     if (pendingRestart !== undefined) {
@@ -345,6 +395,46 @@ export class EnginePool {
       this.intentionallyStopping.delete(workspaceId);
     }
     engine.state = "suspended";
+    this.emit(workspaceId, "suspended");
+  }
+
+  async forget(workspaceId: string): Promise<void> {
+    const pendingRestart = this.restartTimers.get(workspaceId);
+    if (pendingRestart !== undefined) {
+      this.deps.schedule.clearTimeout(pendingRestart);
+      this.restartTimers.delete(workspaceId);
+    }
+
+    const engine = this.engines.get(workspaceId);
+    this.engines.delete(workspaceId);
+    if (!engine) return;
+    writeSpawnDiag("engine-suspend", {
+      workspaceId,
+      reason: "forget",
+      state: engine.state,
+      pid: engine.pid,
+      port: engine.port,
+      baseUrl: engine.baseUrl,
+      childKind: engine.childKind,
+      processAlive: this.deps.isProcessAlive(engine.pid),
+      hasHealthCheck: Boolean(this.deps.healthCheck),
+    });
+
+    this.intentionallyStopping.add(workspaceId);
+    try {
+      if (this.deps.isProcessAlive(engine.pid)) {
+        try {
+          await this.deps.stopChild(engine.child);
+        } catch (err) {
+          this.deps.log?.("engine forget failed", {
+            workspaceId,
+            error: String(err),
+          });
+        }
+      }
+    } finally {
+      this.intentionallyStopping.delete(workspaceId);
+    }
     this.emit(workspaceId, "suspended");
   }
 
@@ -413,7 +503,7 @@ export class EnginePool {
       idsToSuspend.map(async (id) => {
         this.deps.log?.("engine idle, suspending", { workspaceId: id });
         try {
-          await this.suspend(id);
+          await this.suspend(id, "idle-sweep");
         } catch (err) {
           this.deps.log?.("engine idle suspend failed", {
             workspaceId: id,
@@ -463,13 +553,19 @@ export class EnginePool {
       activeSize: this.activeSize(),
       maxEngines: this.config.maxEngines,
     });
-    await this.suspend(candidate.workspaceId);
+    await this.suspend(candidate.workspaceId, "lru-eviction");
   }
 
   private async spawn(workspace: EngineWorkspace): Promise<EngineProcess> {
     const { workdir, configDir } = await this.deps.resolveWorkspace(workspace);
     const port = await this.deps.findFreePort();
     const spawnedAt = this.deps.now();
+    writeSpawnDiag("engine-spawn-start", {
+      workspaceId: workspace.id,
+      workdir,
+      configDir,
+      port,
+    });
 
     if (FLOW_LOG_ENABLED) {
       console.log(
@@ -483,7 +579,7 @@ export class EnginePool {
       workdir,
       port,
     });
-    const { child, baseUrl } = await this.deps.spawnEngine({
+    const { child, baseUrl, childKind } = await this.deps.spawnEngine({
       workspaceId: workspace.id,
       workdir,
       configDir,
@@ -498,6 +594,7 @@ export class EnginePool {
       baseUrl,
       workdir,
       configDir,
+      childKind,
       state: "spawning",
       spawnedAt,
       lastActivityAt: spawnedAt,
@@ -515,6 +612,7 @@ export class EnginePool {
     // `intentionallyStopping` Set.
     child.on("exit", (code, signal) => this.handleExit(workspace.id, code, signal));
 
+    let spawnFailureClass = "unknown";
     try {
       await this.deps.waitForHealthy(baseUrl);
     } catch (err) {
@@ -529,6 +627,55 @@ export class EnginePool {
           )} }`,
         );
       }
+      // [veslo:spawn-diag] Always-on classification of a spawn-health failure so a
+      // single run distinguishes A–E (child never spawned / spawned then died /
+      // port never listened / port listens but /global/health fails / health ok
+      // but later request fails). See dev-specific/veslo-server-opencode-proxy-500-2026-06-04.md.
+      {
+        const diagMs = this.deps.now() - spawnedAt;
+        const childAlive = child.exitCode === null && child.signalCode === null;
+        let rawProbe = "skipped";
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 2_000);
+          try {
+            const probeUrl = `${baseUrl.replace(/\/+$/, "")}/global/health`;
+            const res = await fetch(probeUrl, { signal: controller.signal });
+            rawProbe = `http ${res.status}`;
+          } catch (probeErr) {
+            rawProbe = `threw ${(probeErr as Error)?.name ?? "Error"}: ${(probeErr as Error)?.message ?? String(probeErr)}`;
+          } finally {
+            clearTimeout(timer);
+          }
+        } catch {
+          /* never let diagnostics break the spawn path */
+        }
+        spawnFailureClass =
+          (child.pid ?? null) === null
+            ? "A:child-never-spawned"
+            : !childAlive
+              ? "B:child-died-immediately"
+              : rawProbe.startsWith("threw")
+                ? "C:port-not-listening"
+                : rawProbe.startsWith("http")
+                  ? "D:health-route-unresponsive"
+                  : "unknown";
+        const diagPayload = {
+          class: spawnFailureClass,
+          workspaceId: workspace.id,
+          baseUrl,
+          port,
+          ms: diagMs,
+          childPid: child.pid ?? null,
+          childAlive,
+          childExitCode: child.exitCode,
+          childSignal: child.signalCode,
+          hostProbe: rawProbe,
+          waitForHealthyError: String(err),
+        };
+        writeSpawnDiag("spawn-diag", diagPayload);
+        console.error(`[veslo:spawn-diag] engine health FAILED ${JSON.stringify(diagPayload)}`);
+      }
       // F2Ú5 — spawn-time fail (engine never reached ready). Mark intentional
       // before stopChild so the exit handler doesn't trigger restart logic.
       this.intentionallyStopping.add(workspace.id);
@@ -542,12 +689,22 @@ export class EnginePool {
       } finally {
         this.intentionallyStopping.delete(workspace.id);
       }
-      throw err;
+      throw new Error(
+        `engine spawn-health failed [${spawnFailureClass}] (${this.deps.now() - spawnedAt}ms): ${String(err)}`,
+      );
     }
 
     engine.state = "ready";
     engine.lastActivityAt = this.deps.now();
     engine.lastSuccessfulRunStartedAt = engine.lastActivityAt;
+    writeSpawnDiag("engine-ready", {
+      workspaceId: workspace.id,
+      pid: engine.pid,
+      port,
+      baseUrl,
+      childKind: engine.childKind,
+      ms: engine.lastActivityAt - spawnedAt,
+    });
     if (FLOW_LOG_ENABLED) {
       console.log(
         `[veslo:flow] ENGINE healthy { wsId: ${JSON.stringify(
@@ -584,8 +741,41 @@ export class EnginePool {
     // Engine never reached "ready" (waitForHealthy threw earlier in spawn).
     // Don't treat as crash; ensure() callsite already got the throw.
     if (engine.lastSuccessfulRunStartedAt === 0) return;
+    if (engine.childKind === "wsl" && (engine.state === "ready" || engine.state === "idle")) {
+      writeSpawnDiag("engine-wrapper-exit-kept", {
+        workspaceId,
+        state: engine.state,
+        pid: engine.pid,
+        port: engine.port,
+        code,
+        signal,
+      });
+      this.deps.log?.("engine wrapper exited; keeping WSL engine under health monitor", {
+        workspaceId,
+        code,
+        signal,
+      });
+      return;
+    }
 
+    this.markEngineCrashed(workspaceId, engine, code, signal);
+  }
+
+  private markEngineCrashed(
+    workspaceId: string,
+    engine: EngineProcess,
+    code: number | null,
+    signal: NodeJS.Signals | null,
+  ): void {
     this.deps.log?.("engine crashed", { workspaceId, code, signal });
+    writeSpawnDiag("engine-crashed", {
+      workspaceId,
+      pid: engine.pid,
+      port: engine.port,
+      state: engine.state,
+      code,
+      signal,
+    });
     engine.state = "crashed";
 
     // F2Ú5 — reset restart counter if the engine ran stably for long enough.
