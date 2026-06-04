@@ -163,7 +163,7 @@ test("accepted first pending submit captures and remaps the pending queue key", 
 
   assert.match(
     source,
-    /createEffect\(\s*on\(\s*\(\) => props\.selectedSessionId,[\s\S]*const pendingKey = previousSessionId \? null : pendingQueueKeyAwaitingSessionId\(\);[\s\S]*if \(pendingKey\) \{[\s\S]*remapPendingQueueToSession\(pendingKey, sessionId\);[\s\S]*setPendingQueueKeyAwaitingSessionId\(null\);[\s\S]*\}/s,
+    /createEffect\(\s*on\(\s*\(\) => props\.selectedSessionId,[\s\S]*const pendingKey = !previousSessionId \? pendingQueueKeyAwaitingSessionId\(\) : null;[\s\S]*if \(pendingKey\) \{[\s\S]*remapPendingQueueToSession\(pendingKey, sessionId\);[\s\S]*setPendingQueueKeyAwaitingSessionId\(null\);[\s\S]*\}/s,
     "session view should also remap pending queues when the selected session id arrives in a later reactive update",
   );
 

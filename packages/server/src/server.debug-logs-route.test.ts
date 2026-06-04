@@ -170,6 +170,29 @@ test("POST /debug-logs with malformed body returns 400 with issues", async () =>
   expect(payload.issues.length).toBeGreaterThan(0);
 });
 
+test("POST /debug-logs rejects oversized JSON before validation", async () => {
+  const server = await startFixture();
+  const oversizedBatch = makeBatch({
+    events: [
+      {
+        ...makeBatch().events[0],
+        payload: { line: "x".repeat(300 * 1024) },
+      },
+    ],
+  });
+  const response = await fetch(`http://127.0.0.1:${server.port}/debug-logs`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-veslo-host-token": "host-token",
+    },
+    body: JSON.stringify(oversizedBatch),
+  });
+  expect(response.status).toBe(413);
+  const payload = await response.json() as { code: string };
+  expect(payload.code).toBe("payload_too_large");
+});
+
 test("POST /debug-logs with empty events array returns 400", async () => {
   const server = await startFixture();
   const response = await fetch(`http://127.0.0.1:${server.port}/debug-logs`, {

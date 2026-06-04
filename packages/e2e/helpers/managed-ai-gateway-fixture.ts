@@ -107,6 +107,19 @@ function buildChatCompletionResponse(model: string, content: string) {
   };
 }
 
+function responseDelayMs(): number {
+  const raw = process.env.E2E_MANAGED_AI_RESPONSE_DELAY_MS?.trim() ?? '';
+  if (!raw) return 0;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 30000) : 0;
+}
+
+async function delayResponseIfRequested(): Promise<void> {
+  const delayMs = responseDelayMs();
+  if (!delayMs) return;
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
 function sendChatCompletionStream(res: ServerResponse, model: string, content: string): void {
   setCorsHeaders(res);
   res.statusCode = 200;
@@ -201,6 +214,7 @@ export async function startManagedAiGatewayFixture(): Promise<ManagedAiGatewayFi
         });
 
         const content = `Veslo managed AI fixture response for ${extractToken(promptText)}.`;
+        await delayResponseIfRequested();
         if (stream) {
           sendChatCompletionStream(res, model, content);
         } else {

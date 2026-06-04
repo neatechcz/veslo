@@ -152,6 +152,7 @@ export function createSessionStore(options: {
   onHotReloadApplied?: () => void;
   onSessionLoadComplete?: () => void;
   loadOfflineTranscript?: (sessionID: string, limit: number) => Promise<VesloSessionTranscriptSnapshot | null>;
+  shouldBrowseSessionFromDb?: (sessionID: string) => boolean;
   onSessionBusyChange?: (sessionId: string, busy: boolean) => void;
   onAssistantResponseObserved?: (sessionId: string) => void;
 }) {
@@ -839,8 +840,9 @@ export function createSessionStore(options: {
       const existingLimit = messageLimitBySession()[sessionID] ?? 0;
       const requestLimit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, existingLimit);
       setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: true }));
-      mark("client check", { hasClient: Boolean(c), sessionID });
-      if (!c) {
+      const browseFromDb = options.shouldBrowseSessionFromDb?.(sessionID) ?? false;
+      mark("client check", { hasClient: Boolean(c), browseFromDb, sessionID });
+      if (!c || browseFromDb) {
         try {
           mark("calling offline transcript fallback", { limit: requestLimit });
           let snapshot: VesloSessionTranscriptSnapshot | null = null;
@@ -928,7 +930,6 @@ export function createSessionStore(options: {
 
   async function loadEarlierMessages(sessionID: string, chunk = SESSION_MESSAGE_LOAD_CHUNK) {
     const c = options.client();
-    if (!c) return;
     if (!sessionID) return;
     if (messageLoadBusyBySession()[sessionID]) return;
     if (messageCompleteBySession()[sessionID]) return;
@@ -938,6 +939,12 @@ export function createSessionStore(options: {
 
     setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: true }));
     try {
+      const browseFromDb = options.shouldBrowseSessionFromDb?.(sessionID) ?? false;
+      if (!c || browseFromDb) {
+        const snapshot = (await options.loadOfflineTranscript?.(sessionID, nextLimit)) ?? null;
+        if (snapshot) hydrateTranscriptSnapshot(snapshot);
+        return;
+      }
       const msgs = unwrap(await withTimeout(c.session.messages({ sessionID, limit: nextLimit }), 12000, "session.messages"));
       setMessagesForSession(sessionID, msgs);
       setMessageLimitBySession((prev) => ({ ...prev, [sessionID]: nextLimit }));

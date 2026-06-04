@@ -95,6 +95,7 @@ import {
 import {
   openPendingDraftFromDirectorySelection,
   openPendingDraftWithWorkspaceActivation,
+  type SessionBrowseScope,
 } from "./pages/session-navigation";
 import {
   SIDEBAR_SESSION_PAGE_SIZE,
@@ -300,6 +301,7 @@ import {
   pendingSessionDraftsPut,
   readOpencodeConfig,
   writeOpencodeConfig,
+  engineInfo,
   schedulerDeleteJob,
   schedulerListJobs,
   vesloServerInfo,
@@ -1200,6 +1202,25 @@ export default function App() {
   const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(
     null
   );
+  type SelectedSessionBrowseScope = SessionBrowseScope;
+  const [selectedSessionBrowseScope, setSelectedSessionBrowseScope] = createSignal<SelectedSessionBrowseScope | null>(null);
+  const resolveSelectedSessionBrowseScope = (sessionId: string): SelectedSessionBrowseScope | null => {
+    const id = sessionId.trim();
+    if (!id) return null;
+    const scope = selectedSessionBrowseScope();
+    if (!scope || scope.sessionId !== id) return null;
+    return scope;
+  };
+  const setSessionBrowseScope = (scope: SessionBrowseScope) => {
+    const sessionId = scope.sessionId.trim();
+    const workspaceId = scope.workspaceId.trim();
+    if (!sessionId || !workspaceId) return;
+    setSelectedSessionBrowseScope({
+      sessionId,
+      workspaceId,
+      workspaceRoot: scope.workspaceRoot.trim(),
+    });
+  };
   const [unreadSessionIds, setUnreadSessionIds] = createSignal<UnreadSessionMap>({});
   const SESSION_BY_WORKSPACE_KEY = "veslo.workspace-last-session.v1";
   const ACTIVE_PENDING_DRAFT_KEY = "veslo.active-pending-draft.v1";
@@ -1454,6 +1475,11 @@ export default function App() {
       onHotReloadAppliedHandler?.();
     },
     onSessionLoadComplete: () => setPendingSessionLoad(null),
+    shouldBrowseSessionFromDb: (sessionId) => {
+      const transcriptScope = resolveSelectedSessionBrowseScope(sessionId);
+      if (transcriptScope) return true;
+      return !engineReady();
+    },
     onAssistantResponseObserved: (sessionId) => {
       setUnreadSessionIds((current) =>
         markUnreadAfterAssistantResponse(current, {
@@ -1465,13 +1491,15 @@ export default function App() {
     },
     loadOfflineTranscript: async (sessionId, limit) => {
       if (!isTauriRuntime()) return null;
-      const workspaceRoot = workspaceStore.activeWorkspaceRoot().trim();
+      const transcriptScope = resolveSelectedSessionBrowseScope(sessionId);
+      const transcriptWorkspaceId = transcriptScope?.workspaceId ?? workspaceStore.activeWorkspaceId().trim();
+      const workspaceRoot = transcriptScope?.workspaceRoot || workspaceStore.activeWorkspaceRoot().trim();
       if (!workspaceRoot) return null;
       const { readTranscriptFromDb, dbTranscriptToSnapshot } = await import("./lib/db-reader");
       const transcript = await readTranscriptFromDb(sessionId, limit);
       return dbTranscriptToSnapshot(
         sessionId,
-        workspaceStore.activeWorkspaceId().trim(),
+        transcriptWorkspaceId,
         transcript,
         limit,
       );
@@ -2079,9 +2107,40 @@ export default function App() {
     }
   }
 
+  async function ensureSelectedSessionWorkspaceActiveForSend(sessionId: string): Promise<boolean> {
+    const transcriptScope = resolveSelectedSessionBrowseScope(sessionId);
+    if (!transcriptScope) return true;
+    const targetWorkspaceId = transcriptScope.workspaceId.trim();
+    if (!targetWorkspaceId) return true;
+    if (targetWorkspaceId === workspaceStore.activeWorkspaceId().trim()) return true;
+
+    recordSendTrace("sendPrompt:activate-scoped-workspace", {
+      sessionId,
+      workspaceId: targetWorkspaceId,
+      activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
+    });
+    try {
+      const activated = await workspaceStore.activateWorkspace(targetWorkspaceId);
+      if (!activated) {
+        recordSendTrace("sendPrompt:activate-scoped-workspace-blocked", {
+          sessionId,
+          workspaceId: targetWorkspaceId,
+        });
+      }
+      return Boolean(activated);
+    } catch (error) {
+      recordSendTrace("sendPrompt:activate-scoped-workspace-error", {
+        sessionId,
+        workspaceId: targetWorkspaceId,
+        message: messageFromUnknownError(error),
+      });
+      return false;
+    }
+  }
+
   async function sendPrompt(
     draft?: ComposerDraft,
-    options: { targetSessionId?: string | null; messageId?: string | null } = {},
+    options: { targetSessionId?: string | null } = {},
   ): Promise<boolean> {
     recordSendTrace("sendPrompt:start", {
       engineReady: engineReady(),
@@ -2092,7 +2151,22 @@ export default function App() {
       busyLabel: busyLabel(),
     });
     let sessionID = options.targetSessionId?.trim() || selectedSessionId();
-    const replacementMessageID = options.messageId?.trim() || undefined;
+    const blockAppDuringPromptSend = Boolean(sessionID);
+    let ownsSendPromptBusy = false;
+    const startSendPromptBusy = (label: string) => {
+      if (!blockAppDuringPromptSend) return;
+      ownsSendPromptBusy = true;
+      setBusy(true);
+      setBusyLabel(label);
+      setBusyStartedAt(Date.now());
+    };
+    const stopSendPromptBusy = () => {
+      if (!ownsSendPromptBusy) return;
+      ownsSendPromptBusy = false;
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
+    };
     const hasExplicitDraft = Boolean(draft);
     const fallbackDraft = composerDraft();
     const fallbackText = fallbackDraft.text.trim();
@@ -2105,6 +2179,19 @@ export default function App() {
       resolvedText: fallbackResolvedText || undefined,
       command: fallbackDraft.command,
     };
+
+    const preflightContent = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
+    if (!preflightContent && !resolvedDraft.attachments.length) {
+      recordSendTrace("sendPrompt:blocked-empty");
+      return false;
+    }
+
+    if (sessionID && !(await ensureSelectedSessionWorkspaceActiveForSend(sessionID))) {
+      recordSendTrace("sendPrompt:blocked-scoped-workspace");
+      stopSendPromptBusy();
+      return false;
+    }
+
     resolvedDraft = await maybeResolveSkillCommand(resolvedDraft);
 
     const initialSessionTitle = resolvedDraft.text.trim();
@@ -2130,9 +2217,7 @@ export default function App() {
         }
       }
 
-      setBusy(true);
-      setBusyLabel("status.connecting");
-      setBusyStartedAt(Date.now());
+      startSendPromptBusy("status.connecting");
       // Yield to the browser's macro task queue so it paints the spinner
       // before the engine start blocks the microtask chain.
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -2140,35 +2225,31 @@ export default function App() {
         const started = await workspaceStore.ensureEngineForWorkspace();
         if (!started) {
           recordSendTrace("sendPrompt:engine-not-started");
-          setBusy(false);
-          setBusyLabel(null);
-          setBusyStartedAt(null);
+          stopSendPromptBusy();
           return false;
         }
       } catch {
         recordSendTrace("sendPrompt:engine-start-error");
-        setBusy(false);
-        setBusyLabel(null);
-        setBusyStartedAt(null);
+        stopSendPromptBusy();
         return false;
       }
     }
 
     if (!(await ensureManagedAiBootstrapReady())) {
       recordSendTrace("sendPrompt:blocked-managed-ai-bootstrap");
-      setBusy(false);
-      setBusyLabel(null);
-      setBusyStartedAt(null);
+      stopSendPromptBusy();
       return false;
     }
     if (!(await ensureLocalRuntimeReachableForSend("sendPrompt"))) {
       recordSendTrace("sendPrompt:blocked-runtime-unreachable");
+      stopSendPromptBusy();
       return false;
     }
 
     const c = client();
     if (!c) {
       recordSendTrace("sendPrompt:blocked-no-client");
+      stopSendPromptBusy();
       return false;
     }
 
@@ -2192,10 +2273,11 @@ export default function App() {
     })();
     if (!sessionID) {
       recordSendTrace("sendPrompt:create-session-needed");
-      sessionID = (await createSessionAndOpen(initialSessionTitle)) ?? selectedSessionId();
+      sessionID = (await createSessionAndOpen(initialSessionTitle, { blockAppDuringCreate: blockAppDuringPromptSend })) ?? selectedSessionId();
     }
     if (!sessionID) {
       recordSendTrace("sendPrompt:blocked-no-session");
+      stopSendPromptBusy();
       return false;
     }
 
@@ -2220,6 +2302,7 @@ export default function App() {
       if (routedDraft.error) {
         restorePendingDraftAfterSendFailure();
         setError(routedDraft.error);
+        stopSendPromptBusy();
         return false;
       }
       resolvedDraft = routedDraft.draft;
@@ -2227,15 +2310,17 @@ export default function App() {
     } catch (error) {
       restorePendingDraftAfterSendFailure();
       setError(error instanceof Error ? error.message : safeStringify(error));
+      stopSendPromptBusy();
       return false;
     }
 
     const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
-    if (!content && !resolvedDraft.attachments.length && !promptSystem) return false;
+    if (!content && !resolvedDraft.attachments.length && !promptSystem) {
+      stopSendPromptBusy();
+      return false;
+    }
 
-    setBusy(true);
-    setBusyLabel("status.running");
-    setBusyStartedAt(Date.now());
+    startSendPromptBusy("status.running");
     setError(null);
 
     const perfEnabled = developerMode();
@@ -2295,7 +2380,7 @@ export default function App() {
         }
 
         // Slash command: route through session.command() API
-        commandMessageIDToClear = replacementMessageID ?? createClientMessageID();
+        commandMessageIDToClear = createClientMessageID();
         sessionStore.setCommandDisplay(commandMessageIDToClear, command.name, command.arguments);
         const modelString = `${model.providerID}/${model.modelID}`;
         const files = buildCommandFileParts(resolvedDraft);
@@ -2319,7 +2404,6 @@ export default function App() {
 
       } else {
         const result = await c.session.promptAsync({
-          ...(replacementMessageID ? { messageID: replacementMessageID } : {}),
           sessionID,
           model,
           agent: agent ?? undefined,
@@ -2382,9 +2466,7 @@ export default function App() {
       sessionStore.appendSessionErrorTurn(sessionID, addOpencodeCacheHint(message));
       return false;
     } finally {
-      setBusy(false);
-      setBusyLabel(null);
-      setBusyStartedAt(null);
+      stopSendPromptBusy();
     }
   }
 
@@ -2654,9 +2736,26 @@ export default function App() {
     draft: ComposerDraft,
     options: { targetSessionId?: string | null } = {},
   ): Promise<boolean> {
-    const c = client();
     const sessionID = (options.targetSessionId?.trim() || selectedSessionId() || "").trim();
-    if (!c || !sessionID || !messageID.trim()) return false;
+    if (!sessionID || !messageID.trim()) return false;
+
+    recordSendTrace("replaceUserMessage:start", {
+      sessionID,
+      messageID,
+      engineReady: engineReady(),
+      hasClient: Boolean(client()),
+    });
+
+    let c = client() ?? await connectLocalRuntimeClientFromEngineInfo("replaceUserMessage");
+    if (!c) {
+      if (!(await ensureLocalRuntimeReachableForSend("replaceUserMessage"))) return false;
+      c = client() ?? await connectLocalRuntimeClientFromEngineInfo("replaceUserMessage");
+    }
+    if (!(await ensureManagedAiBootstrapReady())) return false;
+    if (!c) {
+      recordSendTrace("replaceUserMessage:blocked-no-client");
+      return false;
+    }
 
     await abortSessionSafe(c, sessionID);
 
@@ -2664,7 +2763,7 @@ export default function App() {
     const next = await revertSession(c, sessionID, messageID);
     upsertLocalSession(next);
 
-    const accepted = await sendPrompt(draft, { targetSessionId: sessionID, messageId: messageID });
+    const accepted = await sendPrompt(draft, { targetSessionId: sessionID });
     if (!accepted) {
       try {
         const restored = previousRevertMessageID
@@ -3259,6 +3358,46 @@ export default function App() {
       setBusyLabel(null);
       setBusyStartedAt(null);
       return false;
+    }
+  }
+
+  async function connectLocalRuntimeClientFromEngineInfo(reason: string): Promise<Client | null> {
+    if (!isTauriRuntime() || workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") {
+      return client();
+    }
+
+    try {
+      const info = await engineInfo();
+      const nextBaseUrl = info.baseUrl?.trim() ?? "";
+      if (!info.running || !nextBaseUrl) {
+        recordSendTrace(`${reason}:engine-info-unavailable`, {
+          running: Boolean(info.running),
+          hasBaseUrl: Boolean(nextBaseUrl),
+        });
+        return null;
+      }
+
+      const directory = info.projectDir?.trim() || clientDirectory().trim() || undefined;
+      const username = info.opencodeUsername?.trim() ?? "";
+      const password = info.opencodePassword?.trim() ?? "";
+      const auth = username && password ? { username, password } : undefined;
+      const nextClient = createClient(nextBaseUrl, directory, auth);
+      setBaseUrl(nextBaseUrl);
+      if (directory) {
+        setClientDirectory(directory);
+      }
+      setClient(nextClient);
+      setEngineReady(true);
+      recordSendTrace(`${reason}:engine-info-client`, {
+        hasDirectory: Boolean(directory),
+        hasAuth: Boolean(auth),
+      });
+      return nextClient;
+    } catch (error) {
+      recordSendTrace(`${reason}:engine-info-error`, {
+        message: messageFromUnknownError(error),
+      });
+      return null;
     }
   }
 
@@ -4682,8 +4821,10 @@ export default function App() {
 
   createEffect(() => {
     if (typeof window === "undefined") return;
-    const workspaceId = workspaceStore.activeWorkspaceId();
     const sessionId = selectedSessionId();
+    const workspaceId =
+      (sessionId ? resolveSelectedSessionBrowseScope(sessionId)?.workspaceId : null) ??
+      workspaceStore.activeWorkspaceId();
     if (!workspaceId || !sessionId) return;
     const map = readSessionByWorkspace();
     if (map[workspaceId] === sessionId) return;
@@ -4695,7 +4836,8 @@ export default function App() {
     const workspaceId = workspaceStore.activeWorkspaceId().trim();
     const selected = selectedSessionId()?.trim() ?? "";
     if (!workspaceId) return selected || null;
-    if (selected) return selected;
+    const selectedScope = selected ? resolveSelectedSessionBrowseScope(selected) : null;
+    if (selected && (!selectedScope || selectedScope.workspaceId === workspaceId)) return selected;
     const stored = readSessionByWorkspace()[workspaceId]?.trim() ?? "";
     return stored || null;
   });
@@ -6320,6 +6462,7 @@ export default function App() {
     setUpdateEnv,
     checkForUpdates,
     downloadUpdate,
+    retryUpdateDownload,
     installUpdateAndRestart,
     resetModalOpen,
     setResetModalOpen,
@@ -7547,7 +7690,11 @@ export default function App() {
     }
   }
 
-  async function createSessionAndOpen(initialTitle = "") {
+  async function createSessionAndOpen(
+    initialTitle = "",
+    options: { blockAppDuringCreate?: boolean } = {},
+  ) {
+    const blockAppDuringCreate = options.blockAppDuringCreate ?? true;
     recordSendTrace("createSessionAndOpen:start", {
       connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
       activeWorkspaceId: workspaceStore.activeWorkspaceId(),
@@ -7628,11 +7775,13 @@ export default function App() {
     // Small delay to allow pending requests to settle
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    setBusy(true);
-    setBusyLabel("status.creating_task");
-    setBusyStartedAt(Date.now());
     setError(null);
-    setCreatingSession(true);
+    if (blockAppDuringCreate) {
+      setBusy(true);
+      setBusyLabel("status.creating_task");
+      setBusyStartedAt(Date.now());
+      setCreatingSession(true);
+    }
 
     const withTimeout = async <T,>(
       promise: Promise<T>,
@@ -7700,7 +7849,9 @@ export default function App() {
       }
       const displaySession = applyPendingInitialSessionTitle(session);
       // Immediately select and show the new session before background list refresh.
-      setBusyLabel("status.loading_session");
+      if (blockAppDuringCreate) {
+        setBusyLabel("status.loading_session");
+      }
       mark("session:select:start", { sessionID: session.id });
       await selectSession(session.id);
       mark("session:select:ok", { sessionID: session.id });
@@ -7735,7 +7886,9 @@ export default function App() {
       }
 
       // setSessionViewLockUntil(Date.now() + 1200);
-      goToSession(session.id);
+      if (blockAppDuringCreate || currentView() === "session") {
+        goToSession(session.id);
+      }
 
       // The new session is already in the sessions() store (injected above)
       // and in the sidebar signal. SSE session.created events will handle
@@ -7763,8 +7916,10 @@ export default function App() {
       setError(addOpencodeCacheHint(message));
       return undefined;
     } finally {
-      setCreatingSession(false);
-      setBusy(false);
+      if (blockAppDuringCreate) {
+        setCreatingSession(false);
+        setBusy(false);
+      }
     }
   }
 
@@ -9151,7 +9306,28 @@ export default function App() {
     if (state.state !== "available") return;
     if (!pendingUpdate()) return;
 
-    downloadUpdate().catch(e => reportError(e, "updates.download"));
+    downloadUpdate({ automatic: true }).catch(e => reportError(e, "updates.download"));
+  });
+
+  createEffect(() => {
+    if (!isTauriRuntime()) return;
+    if (!updateAutoDownload()) return;
+
+    const state = updateStatus();
+    if (state.state !== "downloading") return;
+    if (state.retry?.kind !== "scheduled") return;
+
+    const delayMs = Math.max(0, state.retry.nextRetryAt - Date.now());
+    const timeout = window.setTimeout(() => {
+      if (state.retry?.kind !== "scheduled") return;
+      downloadUpdate({
+        automatic: true,
+        retryAttempt: state.retry.retryAttempt,
+        refreshBeforeDownload: true,
+      }).catch(e => reportError(e, "updates.download.retry"));
+    }, delayMs);
+
+    onCleanup(() => window.clearTimeout(timeout));
   });
 
   const headerConnectedVersion = createMemo(() => {
@@ -9430,6 +9606,7 @@ export default function App() {
       setSettingsTab,
       view: currentView(),
       setView,
+      setSessionBrowseScope,
       startupPreference: startupPreference(),
       baseUrl: baseUrl(),
       clientConnected: Boolean(client()),
@@ -9626,6 +9803,7 @@ export default function App() {
       appVersion: appVersion(),
       checkForUpdates: () => checkForUpdates(),
       downloadUpdate: () => downloadUpdate(),
+      retryUpdateDownload: () => retryUpdateDownload(),
       installUpdateAndRestart,
       anyActiveRuns: anyActiveRuns(),
       engineSource: engineSource(),
@@ -9731,14 +9909,17 @@ export default function App() {
     selectedSessionId: activeSessionId(),
     activePendingDraftKey: activePendingDraftKey(),
     setView,
+    setSessionBrowseScope,
     tab: tab(),
     setTab,
     setSettingsTab,
     activeWorkspaceDisplay: activeWorkspaceDisplay(),
-    activeWorkspaceRoot: preferredSessionWorkspaceRoot(
-      resolveSessionDirectory(selectedSession() ?? { id: "", directory: "" }),
-      workspaceStore.activeWorkspaceRoot().trim(),
-    ),
+    activeWorkspaceRoot:
+      (activeSessionId() ? resolveSelectedSessionBrowseScope(activeSessionId()!)?.workspaceRoot : null) ||
+      preferredSessionWorkspaceRoot(
+        resolveSessionDirectory(selectedSession() ?? { id: "", directory: "" }),
+        workspaceStore.activeWorkspaceRoot().trim(),
+      ),
     workspaces: workspaceStore.workspaces(),
     activeWorkspaceId: workspaceStore.activeWorkspaceId(),
     connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
@@ -9803,6 +9984,7 @@ export default function App() {
     updateAutoDownload: updateAutoDownload(),
     anyActiveRuns: anyActiveRuns(),
     downloadUpdate: () => downloadUpdate(),
+    retryUpdateDownload: () => retryUpdateDownload(),
     installUpdateAndRestart,
     activePlugins: sidebarPluginList(),
     activePluginStatus: sidebarPluginStatus(),

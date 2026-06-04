@@ -41,6 +41,7 @@ export type SessionTranscriptPrefetchResult = {
 type SessionTranscriptPrefetchOptions = {
   loadTranscript: (input: SessionTranscriptLoadInput) => Promise<SessionTranscriptLoadResult>;
   maxEntriesPerWorkspace?: number;
+  maxBytesPerWorkspace?: number;
   defaultLimit?: number;
   staleTtlMs?: number;
   autoPrefetchOnInterest?: boolean;
@@ -49,6 +50,7 @@ type SessionTranscriptPrefetchOptions = {
 type CacheEntry = {
   snapshot: SessionTranscriptSnapshot;
   lastAccessedAt: number;
+  byteSize: number;
 };
 
 type InFlightLoad = {
@@ -59,6 +61,7 @@ type InFlightLoad = {
 const DEFAULT_LIMIT = 140;
 const DEFAULT_STALE_TTL_MS = 20_000;
 const DEFAULT_MAX_ENTRIES_PER_WORKSPACE = 24;
+const DEFAULT_MAX_BYTES_PER_WORKSPACE = 16 * 1024 * 1024;
 
 const normalizeId = (value: string | null | undefined) => value?.trim() ?? "";
 
@@ -84,6 +87,7 @@ const sanitizePartsByMessageId = (input: Record<string, unknown[]> | undefined) 
 
 export function createSessionTranscriptPrefetchStore(options: SessionTranscriptPrefetchOptions) {
   const maxEntriesPerWorkspace = toPositiveInt(options.maxEntriesPerWorkspace, DEFAULT_MAX_ENTRIES_PER_WORKSPACE);
+  const maxBytesPerWorkspace = toPositiveInt(options.maxBytesPerWorkspace, DEFAULT_MAX_BYTES_PER_WORKSPACE);
   const defaultLimit = toPositiveInt(options.defaultLimit, DEFAULT_LIMIT);
   const staleTtlMs = toPositiveInt(options.staleTtlMs, DEFAULT_STALE_TTL_MS);
   const autoPrefetchOnInterest = options.autoPrefetchOnInterest ?? true;
@@ -122,25 +126,56 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
     cache.set(sessionId, entry);
   };
 
+  const estimateSnapshotBytes = (snapshot: SessionTranscriptSnapshot) => {
+    try {
+      return Buffer.byteLength(JSON.stringify({
+        messages: snapshot.messages,
+        partsByMessageId: snapshot.partsByMessageId,
+      }), "utf8");
+    } catch {
+      return Number.POSITIVE_INFINITY;
+    }
+  };
+
+  const workspaceCacheBytes = (cache: Map<string, CacheEntry>) => {
+    let total = 0;
+    for (const entry of cache.values()) {
+      total += entry.byteSize;
+    }
+    return total;
+  };
+
+  const deleteOldestWorkspaceEntry = (cache: Map<string, CacheEntry>) => {
+    let oldestKey: string | null = null;
+    let oldestAccess = Number.POSITIVE_INFINITY;
+    for (const [sessionId, entry] of cache.entries()) {
+      if (entry.lastAccessedAt < oldestAccess) {
+        oldestAccess = entry.lastAccessedAt;
+        oldestKey = sessionId;
+      }
+    }
+    if (!oldestKey) return false;
+    cache.delete(oldestKey);
+    return true;
+  };
+
   const evictWorkspaceCacheIfNeeded = (workspaceId: string) => {
     const cache = workspaceCache(workspaceId);
     while (cache.size > maxEntriesPerWorkspace) {
-      let oldestKey: string | null = null;
-      let oldestAccess = Number.POSITIVE_INFINITY;
-      for (const [sessionId, entry] of cache.entries()) {
-        if (entry.lastAccessedAt < oldestAccess) {
-          oldestAccess = entry.lastAccessedAt;
-          oldestKey = sessionId;
-        }
-      }
-      if (!oldestKey) break;
-      cache.delete(oldestKey);
+      if (!deleteOldestWorkspaceEntry(cache)) break;
+    }
+    while (cache.size > 0 && workspaceCacheBytes(cache) > maxBytesPerWorkspace) {
+      if (!deleteOldestWorkspaceEntry(cache)) break;
     }
   };
 
   const setCachedSnapshot = (snapshot: SessionTranscriptSnapshot) => {
     const cache = workspaceCache(snapshot.workspaceId);
-    cache.set(snapshot.sessionId, { snapshot, lastAccessedAt: nowMs() });
+    cache.set(snapshot.sessionId, {
+      snapshot,
+      lastAccessedAt: nowMs(),
+      byteSize: estimateSnapshotBytes(snapshot),
+    });
     evictWorkspaceCacheIfNeeded(snapshot.workspaceId);
   };
 

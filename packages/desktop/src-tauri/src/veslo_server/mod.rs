@@ -79,11 +79,6 @@ fn build_urls(port: u16) -> (Option<String>, Option<String>, Option<String>) {
     (connect_url, mdns_url, lan_url)
 }
 
-pub fn resolve_connect_url(port: u16) -> Option<String> {
-    let (connect_url, _mdns_url, _lan_url) = build_urls(port);
-    connect_url
-}
-
 fn persisted_state_path(dir: &Path) -> PathBuf {
     dir.join(PERSISTED_STATE_FILE_NAME)
 }

@@ -1,5 +1,5 @@
 import { expect } from "@wdio/globals";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { navigateToHash, waitForHashRoute } from "../helpers/app-launcher.js";
@@ -16,6 +16,7 @@ const isolatedProfileRoot = () => join(process.cwd(), ".tmp-veslo-home");
 const workspaceRoot = () => join(isolatedProfileRoot(), "workspaces", "visual-workspace");
 const globalSkillsRoot = () => join(isolatedProfileRoot(), ".config", "opencode", "skills");
 const workspaceSkillsRoot = () => join(workspaceRoot(), ".opencode", "skills");
+const skillPath = (root: string, name: string) => join(root, name, "SKILL.md");
 
 function writeSkill(root: string, name: string, description: string): void {
   const skillDir = join(root, name);
@@ -187,6 +188,56 @@ async function clickInventoryCardDetailButton(selector: string): Promise<void> {
     return Boolean(button);
   }, selector);
   expect(clicked).toBe(true);
+}
+
+async function clickSkillDetailButton(label: string): Promise<void> {
+  const result = await browser.execute((buttonLabel) => {
+    const normalize = (value: string) => value.replace(/\s+/g, " ").trim();
+    const drawer = document.querySelector<HTMLElement>('[data-testid="skill-detail-drawer"]');
+    const button = Array.from(drawer?.querySelectorAll<HTMLButtonElement>("button") ?? [])
+      .find((candidate) => normalize(candidate.textContent ?? "") === buttonLabel);
+    button?.click();
+    return {
+      disabled: button?.disabled ?? null,
+      found: Boolean(button),
+      text: drawer?.innerText ?? "",
+    };
+  }, label);
+
+  expect(result.found).toBe(true);
+  expect(result.disabled).toBe(false);
+}
+
+async function waitForSkillDetailText(
+  predicate: (text: string) => boolean,
+  timeoutMsg: string,
+): Promise<string> {
+  let latestText = "";
+  await browser.waitUntil(
+    async () => {
+      latestText = await browser.execute(() =>
+        document.querySelector<HTMLElement>('[data-testid="skill-detail-drawer"]')?.innerText ?? ""
+      );
+      return predicate(latestText);
+    },
+    {
+      timeout: 15_000,
+      interval: 250,
+      timeoutMsg,
+    },
+  );
+  return latestText;
+}
+
+async function waitForSkillFileState(path: string, expectedExists: boolean): Promise<void> {
+  await browser.waitUntil(
+    async () => existsSync(path) === expectedExists,
+    {
+      timeout: 15_000,
+      interval: 250,
+      timeoutMsg: `Expected ${path} existence to be ${String(expectedExists)}.`,
+    },
+  );
 }
 
 async function closeSkillDetailIfOpen(): Promise<void> {
@@ -384,6 +435,16 @@ runWhenIsolatedProfile("Skills global inventory", () => {
     await expect($('button=Deactivate')).toExist();
     await expect($('button=Publish to organization')).toExist();
     await expect($('button=Request system catalog approval')).toExist();
+
+    await clickSkillDetailButton("Move to user skills");
+    await waitForSkillFileState(skillPath(workspaceSkillsRoot(), "e2e-workspace-skill"), false);
+    await waitForSkillFileState(skillPath(globalSkillsRoot(), "e2e-workspace-skill"), true);
+    const movedDetailText = await waitForSkillDetailText(
+      (text) => text.includes("Install to workspace") && !text.includes("Move to user skills"),
+      "Skill detail did not reload from workspace actions to user-skill actions after moving the skill.",
+    );
+    expect(movedDetailText).toContain("Publish to organization");
+    expect(movedDetailText).toContain("Request system catalog approval");
 
     await browser.keys('Escape');
     await expect($('[data-testid="skill-detail-drawer"]')).not.toExist();

@@ -168,6 +168,26 @@ describe("session transcript prefetch core", () => {
     expect(store.debugCacheSessionIds("ws_local")).toEqual(["sess-b", "sess-c"]);
   });
 
+  test("evicts least-recently-accessed entries when workspace cache exceeds byte budget", async () => {
+    const store = createSessionTranscriptPrefetchStore({
+      maxEntriesPerWorkspace: 10,
+      maxBytesPerWorkspace: 1_500,
+      loadTranscript: async ({ workspaceId, sessionId }) => ({
+        workspaceId,
+        sessionId,
+        messages: [{ id: `message-${sessionId}`, text: "x".repeat(900) }],
+        partsByMessageId: {},
+      }),
+    });
+
+    await store.getOrLoad({ workspaceId: "ws_local", sessionId: "sess-a", limit: 140 });
+    await store.getOrLoad({ workspaceId: "ws_local", sessionId: "sess-b", limit: 140 });
+
+    expect(store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-a" })).toBeNull();
+    expect(store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-b" })?.sessionId).toBe("sess-b");
+    expect(store.debugCacheSessionIds("ws_local")).toEqual(["sess-b"]);
+  });
+
   test("does not let a lower-limit in-flight load satisfy a higher-limit caller", async () => {
     let calls = 0;
     let releaseFirst: () => void = () => {};

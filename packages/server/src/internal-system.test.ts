@@ -145,6 +145,70 @@ You are Veslo.
     }
   });
 
+  test("removes legacy onboarding skills without removing user-owned skills", async () => {
+    const workspaceRoot = await createWorkspaceRoot("legacy-onboarding-skills");
+    const skillsRoot = join(workspaceRoot, ".opencode", "skills");
+    const workspaceGuideDir = join(skillsRoot, "workspace-guide");
+    const getStartedDir = join(skillsRoot, "get-started");
+    const userGuideDir = join(skillsRoot, "user-guide");
+
+    try {
+      await mkdir(workspaceGuideDir, { recursive: true });
+      await mkdir(getStartedDir, { recursive: true });
+      await mkdir(userGuideDir, { recursive: true });
+      await writeFile(
+        join(workspaceGuideDir, "SKILL.md"),
+        `---
+name: workspace-guide
+description: Workspace guide to introduce Veslo and onboard new users.
+---
+
+# Welcome to Veslo
+
+Hi, I'm Ben and this is Veslo. It's a local-first alternative to Claude's cowork.
+
+End with two friendly next actions to try in Veslo.
+`,
+        "utf8",
+      );
+      await writeFile(
+        join(getStartedDir, "SKILL.md"),
+        `---
+name: get-started
+description: Guide users through the get started setup and Chrome DevTools demo.
+---
+
+## When to use
+- Always load this skill when the user says "get started".
+
+## What to do
+- Reply with these four lines, exactly and in order:
+  1) hey there welcome this is veslo
+`,
+        "utf8",
+      );
+      await writeFile(
+        join(userGuideDir, "SKILL.md"),
+        `---
+name: user-guide
+description: User-owned onboarding notes.
+---
+
+# User guide
+`,
+        "utf8",
+      );
+
+      await provisionWorkspaceInternalSystem(workspaceRoot);
+
+      await expect(access(workspaceGuideDir)).rejects.toThrow();
+      await expect(access(getStartedDir)).rejects.toThrow();
+      await access(join(userGuideDir, "SKILL.md"));
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
   test("is idempotent in central symlink mode", async () => {
     const workspaceRoot = await createWorkspaceRoot("idempotent-symlink");
     const appDataDir = await createWorkspaceRoot("idempotent-symlink-appdata");

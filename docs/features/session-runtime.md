@@ -57,6 +57,11 @@ Current keyboard behavior:
 Submit behavior:
 
 - a submitted draft is rendered immediately as a temporary user message while workspace/session/message handoff is pending
+- if the submitted draft materializes a brand-new pending chat, the starter-template empty state is hidden immediately while the normal footer run indicator shows the responding state before backend messages arrive
+- the responding state is not rendered as assistant message text or as a footnote under the submitted user message; it belongs to the footer run indicator and must stay visible while a pending send handoff is still warming up workspace/runtime state
+- while that pending send is still starting a local workspace/runtime, the footer indicator label is `Loading`/`Nahrávám`; once workspace warmup is done and the backend is simply producing the assistant turn, the same indicator returns to `Responding`/`Odpovídám`
+- first-send workspace and session materialization is scoped to the session run state; it must not hold the global app busy/navigation lock or force the user back to chat if they navigate elsewhere while the handoff is still pending
+- when a local workspace is in browsing mode, the OpenCode runtime warmup needed before a send must also stay outside the global app busy/navigation lock; the warmup may delay that send, but the rest of the app remains usable
 - the Composer clears immediately and remains available for a separate new draft, including while a new session is still being materialized
 - attachment staging, pending-session creation, and message handoff continue in the backend/session layer after the Composer releases the submitted draft
 - if handoff fails before a real message exists, the temporary user message stays in the timeline with failed status instead of being restored into the Composer automatically
@@ -84,7 +89,7 @@ Veslo can show an edit pencil beside the latest user message only when the actio
 
 After the candidate user message, only read-only assistant activity may exist. Reasoning, step markers, blank assistant text, and known read/list/search-style tools are allowed. Visible assistant text, mutating tools, unknown tools, shell or terminal activity, and unreconstructable attachments hide the pencil.
 
-Clicking the pencil loads the reconstructed user draft into the composer and arms a replacement send. Submitting the edited draft uses OpenCode revert semantics: Veslo reverts to the original user message boundary and then sends the revised draft to the same session. If the revised send is rejected, Veslo attempts to restore the prior revert boundary.
+Clicking the pencil loads the reconstructed user draft into the composer and arms a replacement send. Submitting the edited draft uses OpenCode revert semantics: Veslo reverts to the original user message boundary and then sends the revised draft to the same session as a new backend message, leaving the original message hidden behind the revert boundary. If the revised send is rejected, Veslo attempts to restore the prior revert boundary.
 
 ## Message Scroll Anchoring
 
@@ -156,6 +161,12 @@ If the managed gateway reports that no eligible Codex credential is available, t
 The local Veslo server normalizes managed-AI proxy compression at the gateway boundary. It requests identity encoding from the managed service and does not forward stale `Content-Encoding` headers on streamed responses, because the local fetch runtime may already have decoded the upstream body before the response reaches OpenCode.
 
 Managed-AI proxy endpoints accept larger JSON request bodies than the default Express parser limit so OpenCode can send realistic accumulated session context. This larger parser is scoped to provider proxy routes; unrelated API surfaces keep their narrower defaults or route-specific limits.
+
+The local Veslo server must stream provider request bodies through to the managed gateway without first parsing the full OpenCode payload for diagnostics. Model extraction for normalized error details is best-effort and limited to small requests with a known `Content-Length`; large or chunked provider requests may omit model from local error details.
+
+The same local server boundary keeps full-body parsing byte-limited. Provider error diagnostics read only a bounded sanitized preview, provider success responses stay streamed unless a small redacted management response must be parsed, and OpenCode transcript/helper JSON responses fail explicitly when they exceed local parsing limits. Local JSON and multipart API ingress rejects oversized payloads before normal schema or form parsing where the request size is known.
+
+Session transcript prefetch is bounded by both entry count and estimated bytes per workspace. Large tool outputs or message parts can evict older warm transcript snapshots even when the session-count limit has not been reached.
 
 Managed-AI usage is attributed by request, user, org, session, and credential. Accounting stores input tokens, output tokens, cached tokens, and total tokens from the routed provider response.
 

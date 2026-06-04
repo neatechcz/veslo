@@ -87,6 +87,7 @@ import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
 import { normalizeLocalFilePath } from "../lib/local-file-path";
 import { shouldStopRunOnEscape } from "./session-shortcuts";
 import { currentLocale, t } from "../../i18n";
+import type { UpdateDownloadRetryInfo } from "../context/updater";
 
 import browserSetupTemplate from "../data/commands/browser-setup.md?raw";
 import soulSetupTemplate from "../data/commands/give-me-a-soul.md?raw";
@@ -139,7 +140,7 @@ import ArtifactsPanel from "../components/session/artifacts-panel";
 import type { ArtifactFamily } from "../components/session/artifact-family-model";
 import SessionCapabilitiesPanel from "../components/session/session-capabilities-panel";
 import type { SessionCapabilitiesSnapshot } from "../lib/session-capabilities";
-import { openSessionWithWorkspaceActivation } from "./session-navigation";
+import { openSessionWithWorkspaceActivation, type SessionBrowseScope } from "./session-navigation";
 import { availableChatWidthForLayout, reconcileSidebarLayoutForRootWidth } from "./session-layout-width";
 import { resolveSessionTitlebarContext } from "./session-titlebar-context";
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
@@ -168,6 +169,7 @@ export type SessionViewProps = {
   selectedSessionId: string | null;
   activePendingDraftKey: string | null;
   setView: (view: View, sessionId?: string) => void;
+  setSessionBrowseScope: (scope: SessionBrowseScope) => void;
   tab: DashboardTab;
   setTab: (tab: DashboardTab) => void;
   setSettingsTab: (tab: SettingsTab) => void;
@@ -221,11 +223,13 @@ export type SessionViewProps = {
     totalBytes?: number | null;
     downloadedBytes?: number;
     message?: string;
+    retry?: UpdateDownloadRetryInfo;
   } | null;
   updateEnv: { supported?: boolean; reason?: string | null } | null;
   updateAutoDownload: boolean;
   anyActiveRuns: boolean;
   downloadUpdate: () => void;
+  retryUpdateDownload: () => void;
   installUpdateAndRestart: () => void;
   createSessionAndOpen: () => Promise<string | undefined>;
   sendPromptAsync: (draft: ComposerDraft, options?: { targetSessionId?: string | null }) => Promise<boolean>;
@@ -969,6 +973,55 @@ export default function SessionView(props: SessionViewProps) {
       : sessionKey;
   const currentSessionQueueKey = createMemo(() => sessionQueueKeyForSessionId(props.selectedSessionId));
   const [optimisticSubmittedDraft, setOptimisticSubmittedDraft] = createSignal<PendingSubmittedDraft | null>(null);
+  const [runStartedAt, setRunStartedAt] = createSignal<number | null>(null);
+  const [runHasBegun, setRunHasBegun] = createSignal(false);
+  const [runTick, setRunTick] = createSignal(Date.now());
+  const [runLastProgressAt, setRunLastProgressAt] = createSignal<number | null>(null);
+  const [runBaseline, setRunBaseline] = createSignal<{ assistantId: string | null; partCount: number }>({
+    assistantId: null,
+    partCount: 0,
+  });
+  const resetRunState = () => {
+    setRunStartedAt(null);
+    setRunHasBegun(false);
+    setRunLastProgressAt(null);
+    setRunBaseline({ assistantId: null, partCount: 0 });
+  };
+
+  const lastAssistantSnapshot = createMemo(() => {
+    for (let i = props.messages.length - 1; i >= 0; i -= 1) {
+      const msg = props.messages[i];
+      const info = msg?.info as { id?: string | number; role?: string } | undefined;
+      if (info?.role === "assistant") {
+        const id = typeof info.id === "string" ? info.id : typeof info.id === "number" ? String(info.id) : null;
+        return { id, partCount: msg.parts.length };
+      }
+    }
+    return { id: null, partCount: 0 };
+  });
+
+  const captureRunBaseline = () => {
+    const snapshot = lastAssistantSnapshot();
+    setRunBaseline({ assistantId: snapshot.id, partCount: snapshot.partCount });
+  };
+
+  const startRun = () => {
+    if (runStartedAt()) return;
+    const now = Date.now();
+    setRunStartedAt(now);
+    setRunLastProgressAt(now);
+    setRunHasBegun(false);
+    captureRunBaseline();
+  };
+
+  const responseStarted = createMemo(() => {
+    if (!runStartedAt()) return false;
+    const baseline = runBaseline();
+    const snapshot = lastAssistantSnapshot();
+    if (!snapshot.id && !baseline.assistantId) return false;
+    if (snapshot.id && snapshot.id !== baseline.assistantId) return true;
+    return snapshot.id === baseline.assistantId && snapshot.partCount > baseline.partCount;
+  });
 
   const optimisticSubmittedMessage = createMemo<MessageWithParts | null>(() => {
     const submitted = optimisticSubmittedDraft();
@@ -981,11 +1034,9 @@ export default function SessionView(props: SessionViewProps) {
     const submitted = optimisticSubmittedDraft();
     if (!submitted) return {};
     if (submitted.sessionKey !== currentSessionQueueKey()) return {};
-    const state: PendingMessageState = submitted.error
-      ? { state: submitted.state, error: submitted.error }
-      : { state: submitted.state };
+    if (submitted.state !== "error") return {};
     return {
-      [submitted.id]: state,
+      [submitted.id]: { state: submitted.state, error: submitted.error },
     };
   });
 
@@ -1011,6 +1062,11 @@ export default function SessionView(props: SessionViewProps) {
   // (idle → running, browsing → engine start).  The memo path is
   // reliable because SolidJS memos propagate synchronously.
   const effectiveRenderedMessages = renderedMessages;
+  const showQuickstartEmptyState = createMemo(() =>
+    effectiveRenderedMessages().length === 0 &&
+    !showWorkspaceSetupEmptyState() &&
+    !showSessionLoadingState(),
+  );
 
   createEffect(() => {
     const next = renderedMessages();
@@ -1569,20 +1625,6 @@ export default function SessionView(props: SessionViewProps) {
   const [prevTodoCount, setPrevTodoCount] = createSignal(0);
   const [prevFileCount, setPrevFileCount] = createSignal(0);
   const [isInitialLoad, setIsInitialLoad] = createSignal(true);
-  const [runStartedAt, setRunStartedAt] = createSignal<number | null>(null);
-  const [runHasBegun, setRunHasBegun] = createSignal(false);
-  const [runTick, setRunTick] = createSignal(Date.now());
-  const [runLastProgressAt, setRunLastProgressAt] = createSignal<number | null>(null);
-  const [runBaseline, setRunBaseline] = createSignal<{ assistantId: string | null; partCount: number }>({
-    assistantId: null,
-    partCount: 0,
-  });
-  const resetRunState = () => {
-    setRunStartedAt(null);
-    setRunHasBegun(false);
-    setRunLastProgressAt(null);
-    setRunBaseline({ assistantId: null, partCount: 0 });
-  };
   const [queuedDraftsBySessionKey, setQueuedDraftsBySessionKey] = createSignal<Record<string, QueuedDraft[]>>({});
   const [queuePausedAfterStopBySessionKey, setQueuePausedAfterStopBySessionKey] = createSignal<Record<string, boolean>>({});
   const [pendingQueueKeyAwaitingSessionId, setPendingQueueKeyAwaitingSessionId] = createSignal<string | null>(null);
@@ -1714,49 +1756,15 @@ export default function SessionView(props: SessionViewProps) {
     updateQueueForSessionKey(sessionKey, (queue) => markQueuedDraftQueued(queue, id));
   };
 
-  const lastAssistantSnapshot = createMemo(() => {
-    for (let i = props.messages.length - 1; i >= 0; i -= 1) {
-      const msg = props.messages[i];
-      const info = msg?.info as { id?: string | number; role?: string } | undefined;
-      if (info?.role === "assistant") {
-        const id = typeof info.id === "string" ? info.id : typeof info.id === "number" ? String(info.id) : null;
-        return { id, partCount: msg.parts.length };
-      }
-    }
-    return { id: null, partCount: 0 };
-  });
-
-  const captureRunBaseline = () => {
-    const snapshot = lastAssistantSnapshot();
-    setRunBaseline({ assistantId: snapshot.id, partCount: snapshot.partCount });
-  };
-
-  const startRun = () => {
-    if (runStartedAt()) return;
-    const now = Date.now();
-    setRunStartedAt(now);
-    setRunLastProgressAt(now);
-    setRunHasBegun(false);
-    captureRunBaseline();
-  };
-
-  const responseStarted = createMemo(() => {
-    if (!runStartedAt()) return false;
-    const baseline = runBaseline();
-    const snapshot = lastAssistantSnapshot();
-    if (!snapshot.id && !baseline.assistantId) return false;
-    if (snapshot.id && snapshot.id !== baseline.assistantId) return true;
-    return snapshot.id === baseline.assistantId && snapshot.partCount > baseline.partCount;
-  });
-
   const runPhase = createMemo(() => {
     if (props.error && (runStartedAt() !== null || runHasBegun())) return "error";
     const status = props.sessionStatus;
     const started = runStartedAt() !== null;
     if (status === "idle") {
       if (!started) return "idle";
+      if (optimisticSubmittedDraft()) return "responding";
       if (responseStarted()) return "responding";
-      return optimisticSubmittedDraft() ? "thinking" : "sending";
+      return "sending";
     }
     if (status === "retry") return responseStarted() ? "responding" : "retrying";
     if (responseStarted()) return "responding";
@@ -1764,6 +1772,14 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const showRunIndicator = createMemo(() => runPhase() !== "idle");
+  const showFooterRunIndicator = createMemo(() => showRunIndicator());
+  const workspaceSendWarmupActive = createMemo(() => {
+    const submitted = optimisticSubmittedDraft();
+    if (!submitted || submitted.state !== "sending") return false;
+    if (props.engineReady !== false) return false;
+    if (runHasBegun() || responseStarted()) return false;
+    return true;
+  });
   const createTranscriptEditableUserMessage = () => {
     const editableUserMessage = createMemo(() =>
       getEditableUserMessageDraft({
@@ -1918,7 +1934,7 @@ export default function SessionView(props: SessionViewProps) {
       case "retrying":
         return tr("session.run_retrying");
       case "responding":
-        return tr("session.run_responding");
+        return workspaceSendWarmupActive() ? tr("session.run_loading") : tr("session.run_responding");
       case "thinking":
         return tr("session.run_thinking");
       case "error":
@@ -2004,9 +2020,13 @@ export default function SessionView(props: SessionViewProps) {
         setSearchQueryDebounced("");
         setActiveSearchHitIndex(0);
 
+        const pendingKey = !previousSessionId ? pendingQueueKeyAwaitingSessionId() : null;
         // Reset run state when switching sessions so a stuck error from a
-        // previous session doesn't bleed into the new one.
-        resetRunState();
+        // previous session doesn't bleed into the new one. Pending first sends
+        // remap their optimistic draft to the materialized session instead.
+        if (!pendingKey) {
+          resetRunState();
+        }
         const previousEditingQueuedDraftId = editingQueuedDraftId();
         restoreEditingQueuedDraft(sessionQueueKeyForSessionId(previousSessionId), previousEditingQueuedDraftId);
         if (previousEditingQueuedDraftId) {
@@ -2016,7 +2036,6 @@ export default function SessionView(props: SessionViewProps) {
         setEditingTranscriptMessageId(null);
 
         if (!sessionId) return;
-        const pendingKey = previousSessionId ? null : pendingQueueKeyAwaitingSessionId();
         if (pendingKey) {
           remapPendingQueueToSession(pendingKey, sessionId);
           setPendingQueueKeyAwaitingSessionId(null);
@@ -2258,9 +2277,16 @@ export default function SessionView(props: SessionViewProps) {
   createEffect(() => {
     if (!runStartedAt()) return;
     if (props.sessionStatus !== "idle") return;
+    if (optimisticSubmittedDraft()?.state === "sending") return;
     if (runHasBegun() || responseStarted()) return;
     const timer = setTimeout(() => {
-      if (runStartedAt() && props.sessionStatus === "idle" && !runHasBegun() && !responseStarted()) {
+      if (
+        runStartedAt() &&
+        props.sessionStatus === "idle" &&
+        optimisticSubmittedDraft()?.state !== "sending" &&
+        !runHasBegun() &&
+        !responseStarted()
+      ) {
         resetRunState();
       }
     }, 2_000);
@@ -3380,8 +3406,8 @@ export default function SessionView(props: SessionViewProps) {
       return;
     }
     if (editableUserMessage()?.messageId !== editable.messageId) return;
-    setEditingTranscriptMessageId(editable.messageId);
     props.setComposerDraft(editable.draft);
+    setEditingTranscriptMessageId(editable.messageId);
   };
 
   const handleSendPrompt = async (draft: ComposerDraft, options: ComposerSendOptions = {}) => {
@@ -3540,10 +3566,14 @@ export default function SessionView(props: SessionViewProps) {
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
     const attempt = ++pendingSessionLoadAttempt;
     const shouldShowOverlay = sessionId !== props.selectedSessionId;
+    const group = props.workspaceSessionGroups.find((g) => g.workspace.id === workspaceId);
+    const workspaceRoot =
+      group?.workspace.directory?.trim() ||
+      group?.workspace.path?.trim() ||
+      "";
 
     // Show loading overlay immediately when switching to a different session.
     if (shouldShowOverlay) {
-      const group = props.workspaceSessionGroups.find((g) => g.workspace.id === workspaceId);
       const session = group?.sessions.find((s) => s.id === sessionId);
       const workspaceName = group?.workspace.displayName ?? group?.workspace.name ?? "";
       const sessionTitle = session?.title ?? "";
@@ -3561,7 +3591,14 @@ export default function SessionView(props: SessionViewProps) {
       sessionId,
       activateWorkspace: props.activateWorkspace,
       // Route-driven selection: navigate first and let the route effect own selectSession.
-      openSession: (nextSessionId) => props.setView("session", nextSessionId),
+      openSession: (nextSessionId) => {
+        props.setSessionBrowseScope({
+          sessionId: nextSessionId,
+          workspaceId,
+          workspaceRoot: workspaceRoot,
+        });
+        props.setView("session", nextSessionId);
+      },
     })
       .then((result) => {
         if (!shouldShowOverlay) return;
@@ -3716,7 +3753,13 @@ export default function SessionView(props: SessionViewProps) {
   const showUpdatePill = createMemo(() => {
     if (!isTauriRuntime()) return false;
     const state = props.updateStatus?.state;
-    return state === "available" || state === "downloading" || state === "ready";
+    const retry = props.updateStatus?.retry;
+    return (
+      state === "available" ||
+      state === "downloading" ||
+      state === "ready" ||
+      (state === "error" && retry?.kind === "exhausted")
+    );
   });
 
   const updateDownloadPercent = createMemo<number | null>(() => {
@@ -3729,13 +3772,20 @@ export default function SessionView(props: SessionViewProps) {
 
   const updatePillLabel = createMemo(() => {
     const state = props.updateStatus?.state;
+    const retry = props.updateStatus?.retry;
     if (state === "ready") {
       return t("settings.sidebar_update_ready", currentLocale());
     }
     if (state === "available" && props.updateAutoDownload) {
       return t("settings.sidebar_update_preparing", currentLocale());
     }
+    if (state === "error" && retry?.kind === "exhausted") {
+      return t("settings.update_download_failed", currentLocale());
+    }
     if (state === "downloading") {
+      if (retry?.kind === "scheduled" || retry?.kind === "active") {
+        return t("settings.update_retrying_download", currentLocale());
+      }
       const percent = updateDownloadPercent();
       const label = t("settings.update_downloading", currentLocale());
       return percent == null ? label : `${label} ${percent}%`;
@@ -3745,8 +3795,10 @@ export default function SessionView(props: SessionViewProps) {
 
   const updatePillActionLabel = createMemo(() => {
     const state = props.updateStatus?.state;
+    const retry = props.updateStatus?.retry;
     if (state === "available" && !props.updateAutoDownload) return t("settings.sidebar_download_update", currentLocale());
     if (state === "ready") return t("settings.sidebar_install_update", currentLocale());
+    if (state === "error" && retry?.kind === "exhausted") return t("settings.retry_update_download", currentLocale());
     return null;
   });
 
@@ -3764,10 +3816,14 @@ export default function SessionView(props: SessionViewProps) {
 
   const updatePillButtonTone = createMemo(() => {
     const state = props.updateStatus?.state;
+    const retry = props.updateStatus?.retry;
     if (state === "ready") {
       return props.anyActiveRuns
         ? "text-amber-11 hover:text-amber-11 hover:bg-amber-3/30"
         : "text-green-11 hover:text-green-11 hover:bg-green-3/30";
+    }
+    if (state === "error" && retry?.kind === "exhausted") {
+      return "text-red-11 hover:text-red-11 hover:bg-red-3/30";
     }
     if (state === "downloading") {
       return "text-blue-11 hover:text-blue-11 hover:bg-blue-3/30";
@@ -3777,8 +3833,12 @@ export default function SessionView(props: SessionViewProps) {
 
   const updatePillBorderTone = createMemo(() => {
     const state = props.updateStatus?.state;
+    const retry = props.updateStatus?.retry;
     if (state === "ready") {
       return props.anyActiveRuns ? "border-amber-7/35" : "border-green-7/35";
+    }
+    if (state === "error" && retry?.kind === "exhausted") {
+      return "border-red-7/35";
     }
     if (state === "downloading") {
       return "border-blue-7/35";
@@ -3788,8 +3848,12 @@ export default function SessionView(props: SessionViewProps) {
 
   const updatePillDotTone = createMemo(() => {
     const state = props.updateStatus?.state;
+    const retry = props.updateStatus?.retry;
     if (state === "ready") {
       return props.anyActiveRuns ? "text-amber-10 fill-amber-10" : "text-green-10 fill-green-10";
+    }
+    if (state === "error" && retry?.kind === "exhausted") {
+      return "text-red-10 fill-red-10";
     }
     if (state === "downloading") {
       return "text-blue-10";
@@ -3799,8 +3863,12 @@ export default function SessionView(props: SessionViewProps) {
 
   const updatePillVersionTone = createMemo(() => {
     const state = props.updateStatus?.state;
+    const retry = props.updateStatus?.retry;
     if (state === "ready") {
       return props.anyActiveRuns ? "text-amber-11/75" : "text-green-11/75";
+    }
+    if (state === "error" && retry?.kind === "exhausted") {
+      return "text-red-11/75";
     }
     if (state === "downloading") {
       return "text-blue-11/75";
@@ -3811,10 +3879,17 @@ export default function SessionView(props: SessionViewProps) {
   const updatePillTitle = createMemo(() => {
     const version = props.updateStatus?.version ? ` v${props.updateStatus.version}` : "";
     const state = props.updateStatus?.state;
+    const retry = props.updateStatus?.retry;
     if (state === "ready") {
       return props.anyActiveRuns
         ? `${t("settings.sidebar_update_ready", currentLocale())}${version}. ${t("settings.stop_runs_to_update", currentLocale())}.`
         : `${t("settings.sidebar_update_ready", currentLocale())}${version}`;
+    }
+    if (state === "error" && retry?.kind === "exhausted") {
+      return `${t("settings.update_download_failed", currentLocale())}${version}`;
+    }
+    if (state === "downloading" && (retry?.kind === "scheduled" || retry?.kind === "active")) {
+      return `${t("settings.update_retrying_download", currentLocale())}${version}`;
     }
     if (state === "downloading") return `${t("settings.update_downloading", currentLocale())}${version}`;
     if (state === "available" && props.updateAutoDownload) {
@@ -3888,6 +3963,10 @@ export default function SessionView(props: SessionViewProps) {
                       if (!props.updateAutoDownload) {
                         props.downloadUpdate();
                       }
+                      return;
+                    }
+                    if (props.updateStatus?.state === "error" && props.updateStatus?.retry?.kind === "exhausted") {
+                      props.retryUpdateDownload();
                       return;
                     }
                     if (props.updateStatus?.state === "ready" && !props.anyActiveRuns) {
@@ -4203,7 +4282,7 @@ export default function SessionView(props: SessionViewProps) {
                 </div>
               </div>
             </Show>
-            <Show when={props.messages.length === 0 && !showWorkspaceSetupEmptyState() && !showSessionLoadingState()}>
+            <Show when={showQuickstartEmptyState()}>
               <div class="text-center py-16 px-6 space-y-6">
                 <div class="w-16 h-16 bg-dls-hover rounded-3xl mx-auto flex items-center justify-center border border-dls-border">
                   <Zap class="text-dls-secondary" />
@@ -4285,11 +4364,13 @@ export default function SessionView(props: SessionViewProps) {
               scrollMessageIntoViewById = handler;
             }}
             footer={
-              showRunIndicator() ? (
+              showFooterRunIndicator() ? (
                 <div class="flex justify-start pl-2">
                   <div class={`w-full ${railWidthClass()}`}>
                     <div
                       class={`flex items-center gap-2 text-xs py-1 ${runPhase() === "error" ? "text-red-11" : "text-gray-9"}`}
+                      data-testid="session-run-indicator"
+                      data-run-phase={runPhase()}
                       role="status"
                       aria-live="polite"
                     >

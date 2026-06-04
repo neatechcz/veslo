@@ -908,6 +908,17 @@ function resolveConnectUrl(port: number, overrideHost?: string): { connectUrl?: 
   return { connectUrl, lanUrl, mdnsUrl };
 }
 
+function localClientHostForBindHost(bindHost: string): string {
+  const trimmed = bindHost.trim();
+  if (!trimmed || trimmed === "0.0.0.0" || trimmed === "::" || trimmed === "[::]") {
+    return "127.0.0.1";
+  }
+  if (trimmed.includes(":") && !trimmed.startsWith("[") && !trimmed.endsWith("]")) {
+    return `[${trimmed}]`;
+  }
+  return trimmed;
+}
+
 function encodeBasicAuth(username: string, password: string): string {
   return Buffer.from(`${username}:${password}`, "utf8").toString("base64");
 }
@@ -4026,6 +4037,7 @@ async function runRouterDaemon(args: ParsedArgs) {
   const opencodeBin = readFlag(args.flags, "opencode-bin") ?? process.env.VESLO_OPENCODE_BIN;
   const opencodeHost =
     readFlag(args.flags, "opencode-host") ?? process.env.VESLO_OPENCODE_HOST ?? "127.0.0.1";
+  const opencodeClientHost = localClientHostForBindHost(opencodeHost);
   const opencodePassword =
     readFlag(args.flags, "opencode-password") ??
     process.env.VESLO_OPENCODE_PASSWORD ??
@@ -4177,7 +4189,7 @@ async function runRouterDaemon(args: ParsedArgs) {
     });
     opencodeChild = child;
     logger.info("Process spawned", { pid: child.pid ?? 0 }, "opencode");
-    const baseUrl = `http://${opencodeHost}:${opencodePort}`;
+    const baseUrl = `http://${opencodeClientHost}:${opencodePort}`;
     const client = createOpencodeClient({
       baseUrl,
       directory: currentWorkdir,
@@ -5506,7 +5518,7 @@ async function runStart(args: ParsedArgs) {
           opencodeRouterChild = await startOpenCodeRouter({
             bin: opencodeRouterBinary.bin,
             workspace: resolvedWorkspace,
-            opencodeUrl: opencodeConnectUrl,
+            opencodeUrl: opencodeBaseUrl,
             opencodeUsername,
             opencodePassword,
             opencodeRouterHealthPort,
@@ -5570,7 +5582,7 @@ async function runStart(args: ParsedArgs) {
         approvalTimeoutMs,
         readOnly,
         corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
-        opencodeBaseUrl: opencodeConnectUrl,
+        opencodeBaseUrl: opencodeBaseUrl,
         opencodeDirectory: resolvedWorkspace,
         opencodeUsername,
         opencodePassword,
@@ -5601,7 +5613,7 @@ async function runStart(args: ParsedArgs) {
         hostToken: vesloHostToken,
         expectedVersion: vesloServerBinary.expectedVersion,
         expectedWorkspace: resolvedWorkspace,
-        expectedOpencodeBaseUrl: opencodeConnectUrl,
+        expectedOpencodeBaseUrl: opencodeBaseUrl,
         expectedOpencodeDirectory: resolvedWorkspace,
         expectedOpencodeUsername: opencodeUsername,
         expectedOpencodePassword: opencodePassword,

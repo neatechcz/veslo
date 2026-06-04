@@ -26,6 +26,7 @@ const defaultSpecs = [
   './specs/skill-publish-dialog.e2e.ts',
   './specs/skills-global-inventory.e2e.ts',
   './specs/session-capabilities.spec.ts',
+  './specs/session-message-replacement.spec.ts',
   './specs/skill-registry-materialization.e2e.ts',
   './specs/shared-workspace-skill-lock.e2e.ts',
   './specs/session-artifacts.spec.ts',

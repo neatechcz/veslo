@@ -224,6 +224,7 @@ For coding and maintenance work, use these docs in this order:
 - [docs/features/extensions-and-integrations.md](./docs/features/extensions-and-integrations.md)
 - [docs/features/session-runtime.md](./docs/features/session-runtime.md)
 - [docs/features/workspace-config-and-sharing.md](./docs/features/workspace-config-and-sharing.md)
+- [docs/features/ui-interaction-contract.md](./docs/features/ui-interaction-contract.md)
 - [docs/features/soul-and-automations.md](./docs/features/soul-and-automations.md)
 
 ### Existing deep dives

@@ -14,7 +14,7 @@ use crate::orchestrator::manager::OrchestratorManager;
 use crate::orchestrator::{self, OrchestratorSpawnOptions};
 use crate::types::{EngineDoctorResult, EngineInfo, EngineRuntime, ExecResult};
 use crate::utils::truncate_output;
-use crate::veslo_server::{manager::VesloServerManager, resolve_connect_url, start_veslo_server};
+use crate::veslo_server::{manager::VesloServerManager, start_veslo_server};
 use serde_json::json;
 use std::time::Duration;
 use tauri_plugin_shell::process::CommandEvent;
@@ -661,8 +661,6 @@ pub fn engine_start(
             .ok_or_else(|| "Orchestrator did not report OpenCode status".to_string())?;
         let opencode_port = opencode.port;
         let opencode_base_url = format!("http://127.0.0.1:{opencode_port}");
-        let opencode_connect_url =
-            resolve_connect_url(opencode_port).unwrap_or_else(|| opencode_base_url.clone());
 
         if let Ok(mut state) = manager.inner.lock() {
             state.runtime = EngineRuntime::Orchestrator;
@@ -695,7 +693,7 @@ pub fn engine_start(
             &app,
             &veslo_manager,
             &workspace_paths,
-            Some(&opencode_connect_url),
+            Some(&opencode_base_url),
             opencode_username.as_deref(),
             opencode_password.as_deref(),
             opencode_router_health_port,
@@ -709,7 +707,7 @@ pub fn engine_start(
             app.clone(),
             opencode_router_manager,
             project_dir.clone(),
-            Some(opencode_connect_url),
+            Some(opencode_base_url.clone()),
             opencode_username.clone(),
             opencode_password.clone(),
             opencode_router_health_port,
@@ -874,16 +872,16 @@ pub fn engine_start(
         std::thread::sleep(std::time::Duration::from_millis(150));
     }
 
+    let opencode_base_url = format!("http://{client_host}:{port}");
+
     state.child = Some(child);
     state.project_dir = Some(project_dir.clone());
     state.hostname = Some(client_host.clone());
     state.port = Some(port);
-    state.base_url = Some(format!("http://{client_host}:{port}"));
+    state.base_url = Some(opencode_base_url.clone());
     state.opencode_username = opencode_username.clone();
     state.opencode_password = opencode_password.clone();
 
-    let opencode_connect_url =
-        resolve_connect_url(port).unwrap_or_else(|| format!("http://{client_host}:{port}"));
     let opencode_router_health_port = match resolve_opencode_router_health_port() {
         Ok(port) => Some(port),
         Err(error) => {
@@ -899,7 +897,7 @@ pub fn engine_start(
         &app,
         &veslo_manager,
         &workspace_paths,
-        Some(&opencode_connect_url),
+        Some(&opencode_base_url),
         opencode_username.as_deref(),
         opencode_password.as_deref(),
         opencode_router_health_port,
@@ -911,7 +909,7 @@ pub fn engine_start(
         app.clone(),
         opencode_router_manager,
         project_dir.clone(),
-        Some(opencode_connect_url),
+        Some(opencode_base_url.clone()),
         opencode_username,
         opencode_password,
         opencode_router_health_port,
@@ -925,6 +923,19 @@ pub fn engine_start(
 #[cfg(test)]
 mod tests {
     use super::{format_orchestrator_start_error, should_retry_orchestrator_start};
+
+    #[test]
+    fn local_sidecars_use_loopback_opencode_url() {
+        let source = include_str!("engine.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source");
+
+        assert!(source.contains("Some(&opencode_base_url)"));
+        assert!(source.contains("Some(opencode_base_url.clone())"));
+        assert!(!source.contains("Some(&opencode_connect_url)"));
+        assert!(!source.contains("Some(opencode_connect_url)"));
+    }
 
     #[test]
     fn formats_orchestrator_timeout_with_captured_stderr() {
