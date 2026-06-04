@@ -567,6 +567,7 @@ export function createSystemState(options: {
 
       const throttledUpdateProgress = throttle(() => {
         setUpdateStatus((current) => {
+          if (current.state === "downloading" && current.retry?.kind === "scheduled") return current;
           if (current.state !== "downloading") return current;
           return {
             ...current,

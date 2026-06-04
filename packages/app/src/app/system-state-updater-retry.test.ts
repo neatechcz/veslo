@@ -26,6 +26,13 @@ test("manual updater downloads do not enter the automatic retry loop", () => {
   assert.match(source, /else[\s\S]*setUpdateStatus\(\{ state: "error"/);
 });
 
+test("stale updater progress does not mutate scheduled retry state", () => {
+  assert.match(
+    source,
+    /if \(current\.state === "downloading" && current\.retry\?\.kind === "scheduled"\) return current;[\s\S]*if \(current\.state !== "downloading"\) return current;[\s\S]*downloadedBytes: accumulatedBytes/,
+  );
+});
+
 test("system state exposes a manual retry entry point", () => {
   assert.match(source, /async function retryUpdateDownload\(\)/);
   assert.match(source, /downloadUpdate\(\{[\s\S]*refreshBeforeDownload: true[\s\S]*\}\)/);
