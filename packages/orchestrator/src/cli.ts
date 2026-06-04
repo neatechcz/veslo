@@ -3922,7 +3922,7 @@ async function runRouterDaemon(args: ParsedArgs) {
     deps: {
       resolveWorkspace: async (ws) => {
         const workdir = await ensureWorkspace(ws.path ?? "");
-        const configDir = join(dataDir, "opencode-config", workspaceIdForLocal(workdir));
+        const configDir = join(dataDir, "opencode-config", ws.id || workspaceIdForLocal(workdir));
         await ensureOpencodeManagedTools(configDir);
         return { workdir, configDir };
       },
