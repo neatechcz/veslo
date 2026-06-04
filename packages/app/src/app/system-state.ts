@@ -27,10 +27,12 @@ import {
 import {
   resetVesloState,
   resetOpencodeCache,
+  updaterPrepareInstall,
 } from "./lib/tauri";
 import { unwrap, waitForHealthy } from "./lib/opencode";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../i18n";
 import type { WorkspaceRouting } from "./context/workspace-routing";
+import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../i18n";
 
 function throttle<T extends (...args: any[]) => any>(
   fn: T,

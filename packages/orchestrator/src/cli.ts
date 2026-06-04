@@ -4074,7 +4074,8 @@ async function runRouterDaemon(args: ParsedArgs) {
           return;
         }
         const resolved = await ensureWorkspace(pathInput);
-        const id = workspaceIdForLocal(resolved);
+        const requestedId = typeof body?.id === "string" ? body.id.trim() : "";
+        const id = requestedId || workspaceIdForLocal(resolved);
         const name = typeof body?.name === "string" && body.name.trim()
           ? body.name.trim()
           : resolved.split(/[\\/]/).filter(Boolean).pop() ?? "Workspace";

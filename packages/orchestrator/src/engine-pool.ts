@@ -876,7 +876,7 @@ export class EnginePool {
    * F2Ú5 — global health monitor tick. For each `ready` engine: race
    * `deps.healthCheck(baseUrl)` against `healthCheckTimeoutMs`. Failures
    * accumulate in `engine.healthStrikes`; reaching `healthFailureThreshold`
-   * simulates a crash (kill + restart via handleExit). One engine's failure
+   * marks the engine crashed and schedules a restart. One engine's failure
    * never breaks the loop.
    */
   private async runHealthChecks(): Promise<void> {
@@ -913,22 +913,26 @@ export class EnginePool {
             this.emit(engine.workspaceId, "unhealthy");
           }
           if (engine.healthStrikes >= this.config.healthFailureThreshold) {
-            // Treat as crash: kill child (un-intentional so handleExit triggers
-            // restart logic), then handleExit picks it up via child.on('exit').
-            // If process is already dead, manually call handleExit.
+            // Health failure is authoritative for WSL engines too. Do not route
+            // this through handleExit(), because WSL wrapper exits are normally
+            // ignored once the engine is ready; here repeated failed probes mean
+            // the actual engine endpoint is gone or wedged and must restart.
             engine.healthStrikes = 0;
-            if (this.deps.isProcessAlive(engine.pid)) {
-              try {
+            this.intentionallyStopping.add(engine.workspaceId);
+            try {
+              if (this.deps.isProcessAlive(engine.pid)) {
                 await this.deps.stopChild(engine.child);
-              } catch (killErr) {
-                this.deps.log?.("engine health-driven kill failed", {
-                  workspaceId: engine.workspaceId,
-                  error: String(killErr),
-                });
               }
-            } else {
-              // Process already dead — exit handler may not fire. Trigger manually.
-              this.handleExit(engine.workspaceId, -1, null);
+            } catch (killErr) {
+              this.deps.log?.("engine health-driven kill failed", {
+                workspaceId: engine.workspaceId,
+                error: String(killErr),
+              });
+            } finally {
+              this.intentionallyStopping.delete(engine.workspaceId);
+            }
+            if (engine.state === "ready") {
+              this.markEngineCrashed(engine.workspaceId, engine, -1, null);
             }
           }
         }

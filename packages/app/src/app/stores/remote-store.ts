@@ -6,6 +6,7 @@ import {
   safeStringify,
 } from "../utils";
 import { t, currentLocale } from "../../i18n";
+import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 import type { OpencodeAuth } from "../lib/opencode";
 import {
   buildVesloWorkspaceBaseUrl,

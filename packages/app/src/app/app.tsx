@@ -1241,15 +1241,16 @@ export default function App() {
   // the server restarts with a fresh token, every entry effectively expires
   // because the next iteration sees a different token and re-patches.
   const inactiveWorkspaceBaseUrlHealedFor = new Map<string, string>();
-  // Tracks which Veslo server token we already triggered a managed-AI engine
-  // reload for. The Veslo server mints a fresh client token on every restart,
-  // so opencode.jsonc files in workspaces that were not visited since the
-  // last restart still hold the old apiKey. Patching them on workspace
-  // switch is fast, but `reloadWorkspaceEngine()` blocks the UI for ~1-3s
-  // per workspace. Since the engine is shared across workspaces, one reload
-  // is enough — subsequent patches just update the file on disk and the
-  // engine picks up the new token on its next read.
-  const [lastReloadedForServerToken, setLastReloadedForServerToken] = createSignal("");
+  // Tracks which Veslo server token we already wrote into managed-AI config.
+  // The Veslo server mints a fresh client token on every restart, so
+  // opencode.jsonc files in workspaces that were not visited since the last
+  // restart still hold the old apiKey. Patching them is fast; automatically
+  // disposing the engine from this reactive path is not, and it can kill a
+  // healthy engine immediately before Send.
+  const [
+    lastManagedAiConfigAppliedForServerToken,
+    setLastManagedAiConfigAppliedForServerToken,
+  ] = createSignal("");
 
   createEffect(() => {
     if (developerMode()) return;
@@ -3746,12 +3747,16 @@ export default function App() {
   const [sendPromptInFlightCount, setSendPromptInFlightCount] = createSignal(0);
   const sendPromptInFlight = createMemo(() => sendPromptInFlightCount() > 0);
   const managedAiAccessModel = createMemo(() => managedAiAccess()?.defaultModel ?? null);
+  let lastManagedAiAccessResetKey = "";
   // When the managed AI profile changes (admin reassigns user, credential
-  // is rotated, etc.) we need to reload the engine again on the next
-  // workspace patch — even if the server token didn't change.
+  // is rotated, etc.) we need to re-apply config on the next workspace patch.
+  // Do this by semantic value, not object identity: the access bundle can be
+  // refreshed/recreated during polling without changing the effective profile.
   createEffect(() => {
-    managedAiAccess();
-    setLastReloadedForServerToken("");
+    const nextKey = JSON.stringify(managedAiAccess() ?? null);
+    if (nextKey === lastManagedAiAccessResetKey) return;
+    lastManagedAiAccessResetKey = nextKey;
+    setLastManagedAiConfigAppliedForServerToken("");
     lastKnownConfigSnapshotByWs.clear();
     inactiveWorkspaceBaseUrlHealedFor.clear();
   });
@@ -3883,7 +3888,7 @@ export default function App() {
       } catch (error) {
         const message = messageFromUnknownError(error);
         recordSendTrace(`${reason}:runtime-health-error`, { message });
-        if (isLocalRuntimeHealthTimeoutError(error) || !shouldRecoverLocalRuntimeFromHealthError(error)) {
+        if (!isLocalRuntimeHealthTimeoutError(error) && !shouldRecoverLocalRuntimeFromHealthError(error)) {
           return true;
         }
       }
@@ -4035,6 +4040,7 @@ export default function App() {
     vesloServerClient,
     ensureLocalVesloServerRunning: () => ensureLocalVesloServerRunning({ ignoreStartupPreference: true }),
     vesloServerHostInfo: () => vesloServerHostInfo(),
+    ensureLocalVesloServerRunning: () => ensureLocalVesloServerRunning({ ignoreStartupPreference: true }),
     onEngineStable: () => {
       setEngineReady(true);
       void ensureLocalVesloServerRunning().catch((error) => {
@@ -7234,6 +7240,13 @@ export default function App() {
     anyActiveRuns,
   } = systemState;
 
+  const markManagedAiConfigApplied = (reloadKey: string): void => {
+    if (!reloadKey) return;
+    if (lastManagedAiConfigAppliedForServerToken() === reloadKey) return;
+    setLastManagedAiConfigAppliedForServerToken(reloadKey);
+    console.log("[managed-ai] config applied; destructive engine reload deferred", { reloadKey });
+  };
+
   markReloadRequiredHandler = systemState.markReloadRequired;
   onHotReloadAppliedHandler = () => {
     const hadPendingSkillFallback = skillReloadGuard.hotReloadApplied();
@@ -9937,14 +9950,11 @@ export default function App() {
             });
             lastKnownConfigSnapshotByWs.set(wsKey, desiredSnapshot);
             markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
-            // Engine needs to be reloaded so it picks up the new managed-AI
-            // tokens — but only ONCE per Veslo server token. The engine is
-            // shared across workspaces, so after the first reload all
-            // subsequent workspace patches just update opencode.jsonc on
-            // disk; the engine reads the fresh apiKey on its next call.
-            // The race with workspace switching is handled by the
-            // stale-workspace ABORT and idempotent SKIP guards inside
-            // connectToServer.
+            // Do not auto-dispose/reload the engine here. This effect runs
+            // during boot and before Send; a destructive reload can suspend a
+            // healthy WSL engine and block the first prompt behind runtime
+            // recovery. The banner still marks config as changed, while the
+            // managed provider config is available for OpenCode's next read.
             if (
               shouldAutoReloadManagedAiConfig({
                 hasManagedProfile: true,
@@ -9952,12 +9962,9 @@ export default function App() {
                 hasActiveRuns: anyActiveRuns() || sendPromptInFlight(),
                 canReloadWorkspace: canReloadWorkspace(),
               }) &&
-              lastReloadedForServerToken() !== providerRoutingReloadKey
+              lastManagedAiConfigAppliedForServerToken() !== providerRoutingReloadKey
             ) {
-              const managedAiReloaded = await reloadWorkspaceEngine();
-              if (managedAiReloaded) {
-                setLastReloadedForServerToken(providerRoutingReloadKey);
-              }
+              markManagedAiConfigApplied(providerRoutingReloadKey);
             }
             return;
           }
@@ -10003,7 +10010,7 @@ export default function App() {
           }
           lastKnownConfigSnapshotByWs.set(root, getConfigSnapshot(content));
           markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
-          // Reload engine only once per Veslo server token — see comment above.
+          // Do not auto-dispose/reload the engine here — see comment above.
           if (
             shouldAutoReloadManagedAiConfig({
               hasManagedProfile: true,
@@ -10011,12 +10018,9 @@ export default function App() {
               hasActiveRuns: anyActiveRuns() || sendPromptInFlight(),
               canReloadWorkspace: canReloadWorkspace(),
             }) &&
-            lastReloadedForServerToken() !== providerRoutingReloadKey
+            lastManagedAiConfigAppliedForServerToken() !== providerRoutingReloadKey
           ) {
-            const managedAiReloaded = await reloadWorkspaceEngine();
-            if (managedAiReloaded) {
-              setLastReloadedForServerToken(providerRoutingReloadKey);
-            }
+            markManagedAiConfigApplied(providerRoutingReloadKey);
           }
           return;
         }

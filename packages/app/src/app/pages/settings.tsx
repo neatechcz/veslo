@@ -579,7 +579,7 @@ export default function SettingsView(props: SettingsViewProps) {
   const startupLabel = createMemo(() => "Connect to cloud server");
 
   const availableTabs = createMemo<SettingsTab[]>(() => {
-    const tabs: SettingsTab[] = ["general", "extensions", "archived", "advanced"];
+    const tabs: SettingsTab[] = ["general", "archived", "advanced"];
     return tabs;
   });
 

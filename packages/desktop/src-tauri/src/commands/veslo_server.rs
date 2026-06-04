@@ -62,7 +62,7 @@ fn local_workspace_paths_for_server_restart(
 }
 
 fn sanitize_live_info_with_health(
-    info: VesloServerInfo,
+    mut info: VesloServerInfo,
     health_check: impl Fn(&str) -> Option<HealthIdentity>,
 ) -> (VesloServerInfo, bool) {
     if !info.running {
@@ -70,41 +70,34 @@ fn sanitize_live_info_with_health(
     }
 
     let base_url = info.base_url.clone().unwrap_or_default();
-    let label = if base_url.trim().is_empty() {
-        "the recorded host".to_string()
-    } else {
-        base_url.clone()
-    };
-
-    // Identity guard — if the in-memory snapshot disagrees with what the server on
-    // this port actually reports (token rotated, foreign process bound the port),
-    // treat the snapshot as stale and force a respawn. A missing health response
-    // alone is not enough to discard a supervised child process; the frontend
-    // separately polls HTTP health and can surface transient startup failures.
     if base_url.trim().is_empty() {
         return (info, false);
     }
 
     let Some(identity) = health_check(&base_url) else {
+        // For the managed child, this command reports process ownership. HTTP
+        // health is polled separately by the frontend; using it here turns one
+        // transient probe failure into a lost token/PID snapshot and can trigger
+        // a restart loop for an otherwise live sidecar.
         return (info, false);
     };
 
-    let token_mismatch = matches!(
-        (info.client_token.as_deref(), identity.token.as_deref()),
-        (Some(a), Some(b)) if a != b
-    );
     let token_verified = matches!(
         (info.client_token.as_deref(), identity.token.as_deref()),
         (Some(a), Some(b)) if a == b
     );
-    let pid_mismatch = matches!(
-        (info.pid, identity.pid),
-        (Some(a), Some(b)) if !token_verified && a != b
+    let token_mismatch = matches!(
+        (info.client_token.as_deref(), identity.token.as_deref()),
+        (Some(a), Some(b)) if a != b
     );
-
+    // A matching bearer token is stronger than the PID. In dev-watch mode the
+    // managed child can be the Bun watcher while /health is served by its
+    // worker process, so the PID can differ for a valid server.
+    let pid_mismatch =
+        !token_verified && matches!((info.pid, identity.pid), (Some(a), Some(b)) if a != b);
     if !(token_mismatch || pid_mismatch) {
         return (info, false);
-    };
+    }
 
     info.running = false;
     info.base_url = None;
@@ -116,7 +109,7 @@ fn sanitize_live_info_with_health(
     info.host_token = None;
     info.pid = None;
     info.last_stderr = Some(truncate_output(
-        &format!("Veslo server on {label} is no longer responding."),
+        "Veslo server identity does not match persisted state.",
         8000,
     ));
 
@@ -316,6 +309,7 @@ mod tests {
             connect_url: Some("http://192.168.0.10:8787".to_string()),
             mdns_url: Some("http://veslo.local:8787".to_string()),
             lan_url: Some("http://192.168.0.10:8787".to_string()),
+            engine_url: Some("http://172.21.0.1:8787".to_string()),
             client_token: Some("client-token".to_string()),
             host_token: Some("host-token".to_string()),
             pid: Some(12345),
@@ -369,9 +363,23 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_live_info_marks_stale_when_pid_does_not_match() {
+    fn sanitize_live_info_tolerates_pid_mismatch_when_token_matches() {
         let info = sample_live_info();
         let (sanitized, stale) = sanitize_live_info_with_health(info.clone(), |_| {
+            Some(HealthIdentity {
+                token: None,
+                pid: Some(99999),
+            })
+        });
+        assert!(!stale);
+        assert!(sanitized.running);
+        assert_eq!(sanitized.client_token, info.client_token);
+    }
+
+    #[test]
+    fn sanitize_live_info_marks_stale_when_pid_mismatch_without_token_match() {
+        let info = sample_live_info();
+        let (sanitized, stale) = sanitize_live_info_with_health(info, |_| {
             Some(HealthIdentity {
                 token: None,
                 pid: Some(99999),
