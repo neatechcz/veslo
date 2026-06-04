@@ -1340,51 +1340,6 @@ export default function SessionView(props: SessionViewProps) {
     }
   };
 
-  const openArtifactInObsidian = async (file: string) => {
-    if (!/\.(md|mdx|markdown)$/i.test(file)) return;
-    if (!obsidianAvailable()) {
-      setToastMessage(tr("session.obsidian_unavailable"));
-      return;
-    }
-    if (!isTauriRuntime()) {
-      setToastMessage(tr("session.obsidian_desktop_only"));
-      return;
-    }
-
-    const isRemoteWorkspace = props.activeWorkspaceDisplay.workspaceType === "remote";
-    const preferLocalOpen = !isRemoteWorkspace;
-
-    try {
-      if (preferLocalOpen) {
-        const localResult = await runLocalFileAction(file, "obsidian", async (candidate) => {
-          await openInObsidian(candidate);
-        });
-        if (localResult.ok) {
-          return;
-        }
-        if (localResult.reason === "missing-root" && !isRemoteWorkspace) {
-          setToastMessage(tr("session.pick_worker_open_files"));
-          return;
-        }
-        if (!isRemoteWorkspace) {
-          setToastMessage(localResult.reason);
-          return;
-        }
-      }
-
-      if (!isRemoteWorkspace) {
-        setToastMessage(tr("session.pick_worker_open_files"));
-        return;
-      }
-
-      const mirrored = await mirrorRemoteArtifactForObsidian(file);
-      await openInObsidian(mirrored);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : tr("session.unable_open_obsidian");
-      setToastMessage(message);
-    }
-  };
-
   const revealWorkspaceInFinder = async (workspaceId: string) => {
     const workspace = props.workspaces.find((entry) => entry.id === workspaceId) ?? null;
     if (!workspace || workspace.workspaceType !== "local") return;

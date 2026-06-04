@@ -528,6 +528,58 @@ describe("EnginePool — F2Ú5 crash recovery + health monitor", () => {
     }
   });
 
+  test("health monitor — WSL wrapper exit is kept, but failed health still restarts", async () => {
+    const timers = new FakeTimers();
+    const h = harness(
+      {
+        spawnEngine: async ({ port }) => {
+          h.counters.spawns++;
+          const child = spawnLongLivedChild();
+          h.registry.push(child);
+          return {
+            child,
+            baseUrl: `http://127.0.0.1:${port}`,
+            childKind: "wsl",
+          };
+        },
+        healthCheck: async () => {
+          throw new Error("engine endpoint gone");
+        },
+      },
+      {
+        healthIntervalMs: 100,
+        healthFailureThreshold: 3,
+        restartBackoffBaseMs: 50,
+        idleSweepIntervalMs: 999_999,
+      },
+      timers,
+    );
+    try {
+      const first = await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      const firstPid = first.pid;
+
+      await stopChild(first.child);
+      await tick();
+      expect(h.pool.get("a")?.state).toBe("ready");
+
+      timers.advance(100);
+      await tick();
+      timers.advance(100);
+      await tick();
+      timers.advance(100);
+      await tick();
+      timers.advance(50);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const after = h.pool.get("a");
+      expect(after?.state).toBe("ready");
+      expect(after?.pid).not.toBe(firstPid);
+      expect(h.counters.spawns).toBe(2);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
   test("health monitor — strike count resets after success", async () => {
     const timers = new FakeTimers();
     const sequence = [false, false, true, false, false]; // F, F, OK, F, F

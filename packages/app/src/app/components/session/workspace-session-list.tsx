@@ -1943,7 +1943,7 @@ export default function WorkspaceSessionList(props: Props) {
                                   <Show when={project.status === "error"}>
                                     <span
                                       class={`text-[10px] px-1.5 py-0.5 rounded-full border ${
-                                        taskLoadError().tone === "offline"
+                                        (taskLoadError().tone as string) === "offline"
                                           ? "border-amber-7 text-amber-11 bg-amber-3"
                                           : "border-red-7 text-red-11 bg-red-3"
                                       }`}

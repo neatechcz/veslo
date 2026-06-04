@@ -8,6 +8,7 @@ use crate::veslo_server::{
     server_health_identity, start_veslo_server, HealthIdentity,
 };
 use crate::types::{VesloServerInfo, WorkspaceState, WorkspaceType};
+use crate::utils::truncate_output;
 use crate::workspace::state::load_workspace_state;
 
 fn active_local_workspace_path(state: &WorkspaceState) -> Option<String> {
@@ -28,14 +29,56 @@ fn active_local_workspace_path(state: &WorkspaceState) -> Option<String> {
 }
 
 fn sanitize_live_info_with_health(
-    info: VesloServerInfo,
-    _health_check: impl Fn(&str) -> bool,
+    mut info: VesloServerInfo,
+    health_check: impl Fn(&str) -> Option<HealthIdentity>,
 ) -> (VesloServerInfo, bool) {
-    // For the managed child, this command reports process ownership. HTTP
-    // health is polled separately by the frontend; using it here turns one
-    // transient probe failure into a lost token/PID snapshot and can trigger
-    // a restart loop for an otherwise live sidecar.
-    (info, false)
+    if !info.running {
+        return (info, false);
+    }
+
+    let base_url = info.base_url.clone().unwrap_or_default();
+    if base_url.trim().is_empty() {
+        return (info, false);
+    }
+
+    let Some(identity) = health_check(&base_url) else {
+        // For the managed child, this command reports process ownership. HTTP
+        // health is polled separately by the frontend; using it here turns one
+        // transient probe failure into a lost token/PID snapshot and can trigger
+        // a restart loop for an otherwise live sidecar.
+        return (info, false);
+    };
+
+    let token_verified = matches!(
+        (info.client_token.as_deref(), identity.token.as_deref()),
+        (Some(a), Some(b)) if a == b
+    );
+    let token_mismatch = matches!(
+        (info.client_token.as_deref(), identity.token.as_deref()),
+        (Some(a), Some(b)) if a != b
+    );
+    // A matching bearer token is stronger than the PID. In dev-watch mode the
+    // managed child can be the Bun watcher while /health is served by its
+    // worker process, so the PID can differ for a valid server.
+    let pid_mismatch = !token_verified && matches!((info.pid, identity.pid), (Some(a), Some(b)) if a != b);
+    if !(token_mismatch || pid_mismatch) {
+        return (info, false);
+    }
+
+    info.running = false;
+    info.base_url = None;
+    info.connect_url = None;
+    info.mdns_url = None;
+    info.lan_url = None;
+    info.client_token = None;
+    info.host_token = None;
+    info.pid = None;
+    info.last_stderr = Some(truncate_output(
+        "Veslo server identity does not match persisted state.",
+        8000,
+    ));
+
+    (info, true)
 }
 
 #[tauri::command]
@@ -189,6 +232,7 @@ mod tests {
             connect_url: Some("http://192.168.0.10:8787".to_string()),
             mdns_url: Some("http://veslo.local:8787".to_string()),
             lan_url: Some("http://192.168.0.10:8787".to_string()),
+            engine_url: Some("http://172.21.0.1:8787".to_string()),
             client_token: Some("client-token".to_string()),
             host_token: Some("host-token".to_string()),
             pid: Some(12345),
@@ -215,7 +259,7 @@ mod tests {
     #[test]
     fn sanitize_live_info_with_health_preserves_live_child_when_health_fails() {
         let info = sample_live_info();
-        let (sanitized, stale) = sanitize_live_info_with_health(info.clone(), |_| false);
+        let (sanitized, stale) = sanitize_live_info_with_health(info.clone(), |_| None);
         assert!(!stale);
         assert!(sanitized.running);
         assert_eq!(sanitized.base_url, info.base_url);
@@ -242,11 +286,25 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_live_info_marks_stale_when_pid_does_not_match() {
+    fn sanitize_live_info_tolerates_pid_mismatch_when_token_matches() {
         let info = sample_live_info();
         let (sanitized, stale) = sanitize_live_info_with_health(info.clone(), |_| {
             Some(HealthIdentity {
                 token: info.client_token.clone(),
+                pid: Some(99999),
+            })
+        });
+        assert!(!stale);
+        assert!(sanitized.running);
+        assert_eq!(sanitized.client_token, info.client_token);
+    }
+
+    #[test]
+    fn sanitize_live_info_marks_stale_when_pid_mismatch_without_token_match() {
+        let info = sample_live_info();
+        let (sanitized, stale) = sanitize_live_info_with_health(info, |_| {
+            Some(HealthIdentity {
+                token: None,
                 pid: Some(99999),
             })
         });

@@ -10,14 +10,17 @@ test("sendPrompt recovers a stale local runtime before reading the client", () =
   assert.ok(start >= 0 && end > start, "sendPrompt source should be present");
 
   const sendPromptSource = source.slice(start, end);
-  assert.match(
-    sendPromptSource,
-    /await ensureManagedAiBootstrapReady\(\);\s*if \(!\(await ensureLocalRuntimeReachableForSend\("sendPrompt"\)\)\) \{\s*recordSendTrace\("sendPrompt:blocked-runtime-unreachable"\);\s*return false;\s*\}\s*const c = client\(\);/s,
-    "sendPrompt should verify and recover the local runtime before capturing the client used for create/prompt calls",
+  const recoveryCheckIndex = sendPromptSource.indexOf('ensureLocalRuntimeReachableForSend("sendPrompt")');
+  const routedClientIndex = sendPromptSource.indexOf("const c = routedClient();");
+  assert.ok(recoveryCheckIndex >= 0, "sendPrompt should check local runtime reachability");
+  assert.ok(routedClientIndex >= 0, "sendPrompt should capture the routed client after recovery");
+  assert.ok(
+    recoveryCheckIndex < routedClientIndex,
+    "sendPrompt should verify and recover the local runtime before capturing the routed client used for prompt calls",
   );
 });
 
-test("local runtime recovery restarts only for dead endpoints and preserves flaky health fallback", () => {
+test("local runtime recovery restarts for dead endpoints and health timeouts", () => {
   assert.match(
     source,
     /const shouldRecoverLocalRuntimeFromHealthError = \(error: unknown\): boolean => \{[\s\S]*error sending request[\s\S]*connection refused[\s\S]*ECONNREFUSED/s,
@@ -26,11 +29,11 @@ test("local runtime recovery restarts only for dead endpoints and preserves flak
   assert.match(
     source,
     /const localRuntimeHealthTimeoutMessage = "Timed out waiting for local runtime health";[\s\S]*const isLocalRuntimeHealthTimeoutError = \(error: unknown\): boolean =>[\s\S]*localRuntimeHealthTimeoutMessage/s,
-    "health timeouts should remain distinct from dead endpoint failures",
+    "health timeouts should stay separately detectable so stale daemon probes can trigger runtime recovery",
   );
   assert.match(
     source,
-    /if \(isLocalRuntimeHealthTimeoutError\(error\) \|\| !shouldRecoverLocalRuntimeFromHealthError\(error\)\) \{[\s\S]*return true;[\s\S]*setEngineReady\(false\);[\s\S]*workspaceStore\.ensureEngineForWorkspace\(\)/s,
-    "runtime recovery should ignore flaky health probes but restart before send when the endpoint is clearly dead",
+    /if \(!isLocalRuntimeHealthTimeoutError\(error\) && !shouldRecoverLocalRuntimeFromHealthError\(error\)\) \{[\s\S]*return true;[\s\S]*setEngineReady\(false\);[\s\S]*workspaceStore\.ensureEngineForWorkspace\(\)/s,
+    "runtime recovery should restart before send when the endpoint is dead or the local health probe times out",
   );
 });

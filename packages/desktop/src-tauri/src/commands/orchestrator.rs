@@ -70,6 +70,22 @@ fn resolve_base_url(manager: &OrchestratorManager) -> Result<String, String> {
         .ok_or_else(|| "orchestrator daemon is not running".to_string())
 }
 
+fn workspace_id_for_registered_path(app: &AppHandle, workspace_path: &str) -> Option<String> {
+    let needle = workspace_path.trim();
+    if needle.is_empty() {
+        return None;
+    }
+    crate::workspace::state::load_workspace_state(app)
+        .ok()?
+        .workspaces
+        .into_iter()
+        .find(|workspace| {
+            matches!(workspace.workspace_type, crate::types::WorkspaceType::Local)
+                && workspace.path.trim() == needle
+        })
+        .map(|workspace| workspace.id)
+}
+
 #[tauri::command]
 pub fn orchestrator_status(manager: State<OrchestratorManager>) -> OrchestratorStatus {
     let data_dir = resolve_data_dir(&manager);
@@ -182,11 +198,13 @@ pub fn spawn_engine_event_poller(app: AppHandle) {
 fn register_workspace_with_orchestrator(
     base_url: &str,
     workspace_path: &str,
+    workspace_id: Option<&str>,
     name: Option<&str>,
 ) -> Result<OrchestratorWorkspace, String> {
     let add_url = format!("{}/workspaces", base_url.trim_end_matches('/'));
     let payload = json!({
         "path": workspace_path,
+        "id": workspace_id,
         "name": name,
     });
 
@@ -257,7 +275,7 @@ pub fn reconcile_orchestrator_workspaces(
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .or_else(|| Some(workspace.name.trim()).filter(|s| !s.is_empty()));
-        match register_workspace_with_orchestrator(&base_url, path, display_name) {
+        match register_workspace_with_orchestrator(&base_url, path, Some(workspace.id.as_str()), display_name) {
             Ok(_) => registered += 1,
             Err(error) => eprintln!("[orchestrator] reconcile failed for {path}: {error}"),
         }
@@ -276,6 +294,7 @@ pub async fn orchestrator_workspace_activate(
         validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?
             .to_string_lossy()
             .to_string();
+    let workspace_id = workspace_id_for_registered_path(&app, &workspace_path);
     let base_url = resolve_base_url(&manager)?;
 
     // VSLO-86 — push the blocking ureq calls onto a dedicated thread so the
@@ -285,7 +304,12 @@ pub async fn orchestrator_workspace_activate(
     // browser.execute / other Tauri invokes wait for their turn.
     tauri::async_runtime::spawn_blocking(move || {
         let added =
-            register_workspace_with_orchestrator(&base_url, &workspace_path, name.as_deref())?;
+            register_workspace_with_orchestrator(
+                &base_url,
+                &workspace_path,
+                workspace_id.as_deref(),
+                name.as_deref(),
+            )?;
         let activate_url = format!(
             "{}/workspaces/{}/activate",
             base_url.trim_end_matches('/'),
@@ -341,10 +365,12 @@ pub fn orchestrator_instance_dispose(
         validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?
             .to_string_lossy()
             .to_string();
+    let workspace_id = workspace_id_for_registered_path(&app, &workspace_path);
     let base_url = resolve_base_url(&manager)?;
     let add_url = format!("{}/workspaces", base_url.trim_end_matches('/'));
     let payload = json!({
         "path": workspace_path,
+        "id": workspace_id,
     });
 
     let add_response = ureq::post(&add_url)

@@ -8,7 +8,6 @@ test("managed AI bootstrap readiness returns a blocking result when setup is not
   const start = source.indexOf("const ensureManagedAiBootstrapReady = async");
   const end = source.indexOf("const localRuntimeHealthTimeoutMessage", start);
   assert.ok(start >= 0 && end > start, "ensureManagedAiBootstrapReady source should be present");
-  const gateSource = source.slice(start, end);
   assert.match(
     source,
     /async function sendPrompt\([\s\S]*?\)[\s\S]*?await ensureManagedAiBootstrapReady\(\);\s*const c = routedClient\(\);/s,
@@ -20,10 +19,9 @@ test("sendPrompt blocks when managed bootstrap readiness is unavailable before r
   const start = source.indexOf("async function sendPrompt(");
   const end = source.indexOf("async function abortSession", start);
   assert.ok(start >= 0 && end > start, "sendPrompt source should be present");
-  const sendPromptSource = source.slice(start, end);
   assert.match(
     source,
-    /async function createSessionAndOpen\(\)[\s\S]*?await ensureManagedAiBootstrapReady\(\);\s*const c = routedClient\(\);/s,
+    /async function createSessionAndOpen\([^)]*\)[\s\S]*?await ensureManagedAiBootstrapReady\(\);\s*const c = routedClient\(\);/s,
     "createSessionAndOpen should wait for managed bootstrap readiness before grabbing the routed client",
   );
 });
@@ -73,14 +71,24 @@ test("managed AI bootstrap skips veslo-server config patches when the computed m
   );
 });
 
-test("managed AI reload coalescing records the server token only after a successful reload", () => {
-  const reloadBlocks = source.match(
-    /if \(\s*shouldAutoReloadManagedAiConfig\(\{[\s\S]*?\}\) &&\s*lastReloadedForServerToken\(\) !== providerRoutingReloadKey\s*\) \{\s*const managedAiReloaded = await reloadWorkspaceEngine\(\);\s*if \(managedAiReloaded\) \{\s*setLastReloadedForServerToken\(providerRoutingReloadKey\);\s*\}\s*\}/g,
+test("managed AI config patching does not auto-dispose the engine before Send", () => {
+  const autoApplyBlocks = source.match(
+    /if \(\s*shouldAutoReloadManagedAiConfig\(\{[\s\S]*?\}\) &&\s*lastManagedAiConfigAppliedForServerToken\(\) !== providerRoutingReloadKey\s*\) \{\s*markManagedAiConfigApplied\(providerRoutingReloadKey\);\s*\}/g,
   );
 
   assert.equal(
-    reloadBlocks?.length,
+    autoApplyBlocks?.length,
     2,
-    "both managed AI reload branches should mark the server token only after reloadWorkspaceEngine reports success",
+    "both managed AI config branches should record the applied token without calling the destructive reload path",
+  );
+
+  const helperStart = source.indexOf("const markManagedAiConfigApplied =");
+  const helperEnd = source.indexOf("markReloadRequiredHandler =", helperStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart, "managed AI config apply helper should be present");
+  const helperSource = source.slice(helperStart, helperEnd);
+  assert.doesNotMatch(
+    helperSource,
+    /reloadWorkspaceEngine\(/,
+    "managed AI config apply helper must not call reloadWorkspaceEngine",
   );
 });
