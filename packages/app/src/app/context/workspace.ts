@@ -1631,7 +1631,10 @@ export function createWorkspaceStore(options: {
             }
           );
           if (!entry) {
-            const message = "Failed to ensure workspace client";
+            const detail = options.routing.lastEnsureError(multiWorkspaceId);
+            const message = detail
+              ? `Failed to ensure workspace client: ${detail}`
+              : "Failed to ensure workspace client";
             options.setError(message);
             options.setOpencodeConnectStatus?.({
               at: Date.now(),

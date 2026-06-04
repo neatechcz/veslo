@@ -116,6 +116,7 @@ export interface WorkspaceRouting {
     baseUrl: string,
     options?: EnsureOptions
   ): Promise<ClientEntry | null>;
+  lastEnsureError(workspaceId: string): string | null;
   release(workspaceId: string): void;
   forEach(cb: (workspaceId: string, client: RoutingClient) => void): void;
   /**
@@ -149,6 +150,7 @@ export function createWorkspaceRouting(
   opts: CreateWorkspaceRoutingOptions
 ): WorkspaceRouting {
   const entries = new Map<string, ClientEntry>();
+  const ensureErrors = new Map<string, string>();
   // VSLO-86 F4Ú12 — reactive trigger so consumers (SSE multiplex) re-run
   // when workspaces are ensured/released.
   const [entryIdsSignal, setEntryIdsSignal] = createSignal<string[]>([], {
@@ -213,7 +215,11 @@ export function createWorkspaceRouting(
       );
       try {
         await opts.waitForHealthy(client, { timeoutMs: 10_000 });
-      } catch {
+      } catch (error) {
+        ensureErrors.set(
+          workspaceId,
+          error instanceof Error ? error.message : String(error),
+        );
         return null;
       }
       const entry: ClientEntry = {
@@ -224,10 +230,17 @@ export function createWorkspaceRouting(
         lastUsed: Date.now(),
       };
       entries.set(workspaceId, entry);
+      ensureErrors.delete(workspaceId);
       bumpEntryIds();
       return entry;
     },
+    lastEnsureError(workspaceId: string) {
+      const id = workspaceId.trim();
+      if (!id) return null;
+      return ensureErrors.get(id) ?? null;
+    },
     release(workspaceId: string) {
+      ensureErrors.delete(workspaceId);
       if (entries.delete(workspaceId)) bumpEntryIds();
     },
     forEach(cb) {
