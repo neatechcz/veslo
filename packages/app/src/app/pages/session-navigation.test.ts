@@ -11,6 +11,8 @@ import {
 import * as sessionNavigation from "./session-navigation.js";
 
 const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const sessionPageSource = readFileSync(new URL("./session.tsx", import.meta.url), "utf8");
+const dashboardSource = readFileSync(new URL("./dashboard.tsx", import.meta.url), "utf8");
 
 const openNewSessionStart = appSource.indexOf("  const openNewSessionWithDirectory = async () => {");
 const openNewSessionEnd = appSource.indexOf("  const openDirectorySessionFromPicker = async () => {", openNewSessionStart);
@@ -40,6 +42,18 @@ const openPendingDirectoryDraftInWorkspaceEnd = appSource.indexOf(
 const openPendingDirectoryDraftInWorkspaceSource =
   openPendingDirectoryDraftInWorkspaceStart >= 0 && openPendingDirectoryDraftInWorkspaceEnd >= 0
     ? appSource.slice(openPendingDirectoryDraftInWorkspaceStart, openPendingDirectoryDraftInWorkspaceEnd)
+    : "";
+const scopedSendActivationStart = appSource.indexOf("  async function ensureSelectedSessionWorkspaceActiveForSend(");
+const scopedSendActivationEnd = appSource.indexOf("  async function sendPrompt(", scopedSendActivationStart);
+const scopedSendActivationSource =
+  scopedSendActivationStart >= 0 && scopedSendActivationEnd >= 0
+    ? appSource.slice(scopedSendActivationStart, scopedSendActivationEnd)
+    : "";
+const sendPromptStart = appSource.indexOf("  async function sendPrompt(");
+const sendPromptEnd = appSource.indexOf("  async function abortSession(", sendPromptStart);
+const sendPromptSource =
+  sendPromptStart >= 0 && sendPromptEnd >= 0
+    ? appSource.slice(sendPromptStart, sendPromptEnd)
     : "";
 
 const openPendingDraftWithWorkspaceActivation = () => {
@@ -132,7 +146,59 @@ test("opens immediately when session is in active workspace", async () => {
   assert.deepEqual(opened, ["sess-1"]);
 });
 
-test("does not open session when cross-workspace activation fails", async () => {
+test("session list clicks record browse scope before route navigation", () => {
+  for (const source of [sessionPageSource, dashboardSource]) {
+    const openSessionStart = source.indexOf("  const openSessionFromList = (workspaceId: string, sessionId: string) => {");
+    assert.notEqual(openSessionStart, -1, "openSessionFromList should exist");
+    const openSessionEnd = source.indexOf("  const resolveVesloWorkspaceId = (workspaceId: string) => {", openSessionStart);
+    assert.notEqual(openSessionEnd, -1, "openSessionFromList block end should exist");
+    const openSessionSource = source.slice(openSessionStart, openSessionEnd);
+
+    assert.match(
+      openSessionSource,
+      /props\.setSessionBrowseScope\(\{[\s\S]*sessionId: nextSessionId,[\s\S]*workspaceId,[\s\S]*workspaceRoot:/,
+      "existing-session navigation should record the workspace scope for DB transcript browsing",
+    );
+    assert.match(
+      openSessionSource,
+      /props\.setSessionBrowseScope\(\{[\s\S]*\}\);\s*props\.setView\("session", nextSessionId\);/s,
+      "session browse scope must be recorded before route navigation triggers selectSession",
+    );
+  }
+});
+
+test("app routes selected session browsing through DB scope", () => {
+  assert.match(
+    appSource,
+    /const \[selectedSessionBrowseScope, setSelectedSessionBrowseScope\] = createSignal<SelectedSessionBrowseScope \| null>\(null\);/,
+    "app should track the workspace scope of the selected browsed session",
+  );
+  assert.match(
+    appSource,
+    /shouldBrowseSessionFromDb: \(sessionId\) => \{[\s\S]*const transcriptScope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*if \(transcriptScope\) return true;[\s\S]*return !engineReady\(\);[\s\S]*\},/s,
+    "session store should force DB browsing for scoped sidebar selections",
+  );
+  assert.match(
+    appSource,
+    /loadOfflineTranscript: async \(sessionId, limit\) => \{[\s\S]*const transcriptScope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*const transcriptWorkspaceId = transcriptScope\?\.workspaceId \?\? workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*dbTranscriptToSnapshot\([\s\S]*transcriptWorkspaceId,/s,
+    "offline transcript snapshots should keep the clicked session's workspace id",
+  );
+});
+
+test("app activates selected session workspace at send time, not browse time", () => {
+  assert.match(
+    scopedSendActivationSource,
+    /const transcriptScope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*await workspaceStore\.activateWorkspace\(targetWorkspaceId\);/s,
+    "send path should activate the workspace from the selected session scope",
+  );
+  assert.match(
+    sendPromptSource,
+    /if \(sessionID && !\(await ensureSelectedSessionWorkspaceActiveForSend\(sessionID\)\)\) \{[\s\S]*recordSendTrace\("sendPrompt:blocked-scoped-workspace"\);[\s\S]*return false;[\s\S]*\}[\s\S]*resolvedDraft = await maybeResolveSkillCommand\(resolvedDraft\);/s,
+    "scoped workspace activation should run during send before workspace-sensitive prompt routing",
+  );
+});
+
+test("opens cross-workspace session without activating the workspace", async () => {
   const opened: string[] = [];
   const activated: string[] = [];
 
@@ -147,42 +213,20 @@ test("does not open session when cross-workspace activation fails", async () => 
     openSession: (id) => opened.push(id),
   });
 
-  assert.equal(result, "blocked");
-  assert.deepEqual(activated, ["ws-other"]);
-  assert.deepEqual(opened, []);
-});
-
-test("opens session after successful cross-workspace activation", async () => {
-  const opened: string[] = [];
-  const activated: string[] = [];
-
-  const result = await openSessionWithWorkspaceActivation({
-    activeWorkspaceId: "ws-active",
-    workspaceId: "ws-other",
-    sessionId: "sess-3",
-    activateWorkspace: async (id) => {
-      activated.push(id);
-      return true;
-    },
-    openSession: (id) => opened.push(id),
-  });
-
   assert.equal(result, "opened");
-  assert.deepEqual(activated, ["ws-other"]);
-  assert.deepEqual(opened, ["sess-3"]);
+  assert.deepEqual(activated, []);
+  assert.deepEqual(opened, ["sess-2"]);
 });
 
 test("serializes rapid cross-workspace session clicks and only opens the latest session", async () => {
   const opened: string[] = [];
   const activationEvents: string[] = [];
-  const gate = deferred<void>();
   let concurrent = 0;
   let maxConcurrent = 0;
   const activateWorkspace = async (id: string) => {
     concurrent += 1;
     maxConcurrent = Math.max(maxConcurrent, concurrent);
     activationEvents.push(`start:${id}`);
-    await gate.promise;
     concurrent -= 1;
     activationEvents.push(`end:${id}`);
     return true;
@@ -204,14 +248,13 @@ test("serializes rapid cross-workspace session clicks and only opens the latest 
     openSession: (id) => opened.push(id),
   });
 
-  gate.resolve();
   const firstResult = await first;
   const secondResult = await second;
 
   assert.equal(firstResult, "superseded");
   assert.equal(secondResult, "opened");
-  assert.equal(maxConcurrent, 1);
-  assert.deepEqual(activationEvents, ["start:ws-two", "end:ws-two"]);
+  assert.equal(maxConcurrent, 0);
+  assert.deepEqual(activationEvents, []);
   assert.deepEqual(opened, ["sess-2"]);
 });
 
@@ -686,7 +729,7 @@ test("fresh directory pending drafts use collision-resistant ids", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Rapid back-and-forth switching stress tests
+// Rapid back-and-forth session browsing stress tests
 //
 // These reproduce the freeze that occurs when users click back and forth
 // between sessions/projects several times in quick succession.
@@ -704,7 +747,7 @@ test("rapid back-and-forth between two workspaces completes without hanging", as
 
   const activateWorkspace = async (id: string) => {
     activations.push(id);
-    // Simulate real-world activation latency (engine restart, connect, etc.)
+    // This should never run for existing-session browsing.
     await delay(50);
     currentActive = id;
     return true;
@@ -742,9 +785,10 @@ test("rapid back-and-forth between two workspaces completes without hanging", as
   assert.equal(results[results.length - 1], "opened", "last click should succeed");
   assert.ok(opened.length >= 1, "at least one session must be opened");
   assert.equal(opened[opened.length - 1], "sess-9", "the last opened session should be the final click");
+  assert.deepEqual(activations, [], "existing-session browsing must not activate workspaces");
 });
 
-test("rapid back-and-forth with slow activations does not deadlock", async () => {
+test("rapid back-and-forth ignores slow activation callbacks for existing sessions", async () => {
   const TIMEOUT_MS = 5_000;
   const opened: string[] = [];
   const activationStarts: string[] = [];
@@ -757,7 +801,7 @@ test("rapid back-and-forth with slow activations does not deadlock", async () =>
     concurrentActivations++;
     maxConcurrent = Math.max(maxConcurrent, concurrentActivations);
     activationStarts.push(id);
-    // Simulate a slow activation (engine restart, veslo host resolution, etc.)
+    // This should never run for existing-session browsing.
     await delay(200);
     activationEnds.push(id);
     concurrentActivations--;
@@ -767,8 +811,8 @@ test("rapid back-and-forth with slow activations does not deadlock", async () =>
 
   const clicks: Promise<"opened" | "blocked" | "superseded">[] = [];
 
-  // 7 rapid back-and-forth clicks (odd count so last click ends on ws-B,
-  // which differs from the starting ws-A and requires activation)
+  // 7 rapid back-and-forth clicks. Existing-session browsing should stay
+  // navigation-only even when the target workspace differs from the active one.
   for (let i = 0; i < 7; i++) {
     const targetWs = i % 2 === 0 ? "ws-B" : "ws-A";
     clicks.push(
@@ -787,18 +831,14 @@ test("rapid back-and-forth with slow activations does not deadlock", async () =>
     Promise.all(clicks),
     delay(TIMEOUT_MS).then(() => {
       throw new Error(
-        `Slow-activation back-and-forth switching did not settle within ${TIMEOUT_MS}ms — system froze`,
+        `Slow-activation back-and-forth browsing did not settle within ${TIMEOUT_MS}ms — system froze`,
       );
     }),
   ]);
 
-  // Serialization must prevent concurrent activateWorkspace calls
-  assert.equal(maxConcurrent, 1, "activateWorkspace must never run concurrently");
-
-  // Only the final (winning) click should trigger activation
-  assert.ok(activationStarts.length >= 1, "at least one activation must run");
-
-  // Last click must succeed
+  assert.equal(maxConcurrent, 0, "existing-session browsing must not activate workspaces");
+  assert.deepEqual(activationStarts, []);
+  assert.deepEqual(activationEnds, []);
   assert.equal(results[results.length - 1], "opened");
   assert.ok(opened.length >= 1);
   assert.equal(opened[opened.length - 1], "sess-6");
@@ -892,7 +932,7 @@ test("rapid back-and-forth createSession does not hang", async () => {
   assert.ok(created.length >= 1);
 });
 
-test("activation failure during rapid switching does not leave queue stuck", async () => {
+test("activation failure callback is ignored during rapid existing-session browsing", async () => {
   const TIMEOUT_MS = 3_000;
   const opened: string[] = [];
   let currentActive = "ws-A";
@@ -901,7 +941,7 @@ test("activation failure during rapid switching does not leave queue stuck", asy
   const activateWorkspace = async (id: string) => {
     callCount++;
     await delay(30);
-    // Fail every other activation to simulate flaky connections
+    // This should never run for existing-session browsing.
     if (callCount % 2 === 0) return false;
     currentActive = id;
     return true;
@@ -923,7 +963,6 @@ test("activation failure during rapid switching does not leave queue stuck", asy
     );
   }
 
-  // Key assertion: even with failures, the queue must drain
   const results = await Promise.race([
     Promise.all(clicks),
     delay(TIMEOUT_MS).then(() => {
@@ -934,9 +973,11 @@ test("activation failure during rapid switching does not leave queue stuck", asy
   ]);
 
   assert.ok(Array.isArray(results), "all promises must settle");
+  assert.equal(callCount, 0, "existing-session browsing must not activate workspaces");
+  assert.equal(opened[opened.length - 1], "sess-7");
 });
 
-test("activation throwing error during rapid switching does not leave queue stuck", async () => {
+test("activation throwing callback is ignored during rapid existing-session browsing", async () => {
   const TIMEOUT_MS = 3_000;
   const opened: string[] = [];
   let currentActive = "ws-A";
@@ -945,7 +986,7 @@ test("activation throwing error during rapid switching does not leave queue stuc
   const activateWorkspace = async (id: string) => {
     callCount++;
     await delay(20);
-    // Throw on every 3rd activation to simulate crashes
+    // This should never run for existing-session browsing.
     if (callCount % 3 === 0) throw new Error("Connection lost");
     currentActive = id;
     return true;
@@ -967,7 +1008,6 @@ test("activation throwing error during rapid switching does not leave queue stuc
     );
   }
 
-  // Queue must drain even when activateWorkspace throws
   const results = await Promise.race([
     Promise.all(clicks),
     delay(TIMEOUT_MS).then(() => {
@@ -978,4 +1018,6 @@ test("activation throwing error during rapid switching does not leave queue stuc
   ]);
 
   assert.ok(Array.isArray(results), "all promises must settle");
+  assert.equal(callCount, 0, "existing-session browsing must not activate workspaces");
+  assert.equal(opened[opened.length - 1], "sess-9");
 });

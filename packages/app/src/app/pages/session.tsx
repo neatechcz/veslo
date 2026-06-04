@@ -140,7 +140,7 @@ import ArtifactsPanel from "../components/session/artifacts-panel";
 import type { ArtifactFamily } from "../components/session/artifact-family-model";
 import SessionCapabilitiesPanel from "../components/session/session-capabilities-panel";
 import type { SessionCapabilitiesSnapshot } from "../lib/session-capabilities";
-import { openSessionWithWorkspaceActivation } from "./session-navigation";
+import { openSessionWithWorkspaceActivation, type SessionBrowseScope } from "./session-navigation";
 import { availableChatWidthForLayout, reconcileSidebarLayoutForRootWidth } from "./session-layout-width";
 import { resolveSessionTitlebarContext } from "./session-titlebar-context";
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
@@ -169,6 +169,7 @@ export type SessionViewProps = {
   selectedSessionId: string | null;
   activePendingDraftKey: string | null;
   setView: (view: View, sessionId?: string) => void;
+  setSessionBrowseScope: (scope: SessionBrowseScope) => void;
   tab: DashboardTab;
   setTab: (tab: DashboardTab) => void;
   setSettingsTab: (tab: SettingsTab) => void;
@@ -3565,10 +3566,14 @@ export default function SessionView(props: SessionViewProps) {
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
     const attempt = ++pendingSessionLoadAttempt;
     const shouldShowOverlay = sessionId !== props.selectedSessionId;
+    const group = props.workspaceSessionGroups.find((g) => g.workspace.id === workspaceId);
+    const workspaceRoot =
+      group?.workspace.directory?.trim() ||
+      group?.workspace.path?.trim() ||
+      "";
 
     // Show loading overlay immediately when switching to a different session.
     if (shouldShowOverlay) {
-      const group = props.workspaceSessionGroups.find((g) => g.workspace.id === workspaceId);
       const session = group?.sessions.find((s) => s.id === sessionId);
       const workspaceName = group?.workspace.displayName ?? group?.workspace.name ?? "";
       const sessionTitle = session?.title ?? "";
@@ -3586,7 +3591,14 @@ export default function SessionView(props: SessionViewProps) {
       sessionId,
       activateWorkspace: props.activateWorkspace,
       // Route-driven selection: navigate first and let the route effect own selectSession.
-      openSession: (nextSessionId) => props.setView("session", nextSessionId),
+      openSession: (nextSessionId) => {
+        props.setSessionBrowseScope({
+          sessionId: nextSessionId,
+          workspaceId,
+          workspaceRoot: workspaceRoot,
+        });
+        props.setView("session", nextSessionId);
+      },
     })
       .then((result) => {
         if (!shouldShowOverlay) return;

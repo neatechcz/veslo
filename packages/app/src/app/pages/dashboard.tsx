@@ -76,7 +76,7 @@ import {
   readLeftSidebarWidth,
   writeLeftSidebarWidth,
 } from "../components/layout/left-sidebar-width-prefs";
-import { openSessionWithWorkspaceActivation } from "./session-navigation";
+import { openSessionWithWorkspaceActivation, type SessionBrowseScope } from "./session-navigation";
 import {
   resolveDashboardTabSelectionAction,
   resolveLeftMenuAction,
@@ -110,6 +110,7 @@ export type DashboardViewProps = {
   onOpenFeedback: () => void;
   view: View;
   setView: (view: View, sessionId?: string) => void;
+  setSessionBrowseScope: (scope: SessionBrowseScope) => void;
   startupPreference: StartupPreference | null;
   baseUrl: string;
   clientConnected: boolean;
@@ -485,6 +486,11 @@ export default function DashboardView(props: DashboardViewProps) {
       : t("sidebar.workspace_kind_local", currentLocale());
 
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
+    const group = props.workspaceSessionGroups.find((g) => g.workspace.id === workspaceId);
+    const workspaceRoot =
+      group?.workspace.directory?.trim() ||
+      group?.workspace.path?.trim() ||
+      "";
     void openSessionWithWorkspaceActivation({
       activeWorkspaceId: props.activeWorkspaceId,
       getActiveWorkspaceId: () => props.activeWorkspaceId,
@@ -492,7 +498,14 @@ export default function DashboardView(props: DashboardViewProps) {
       sessionId,
       activateWorkspace: props.activateWorkspace,
       // Route-driven selection: navigate first and let the route effect own selectSession.
-      openSession: (nextSessionId) => props.setView("session", nextSessionId),
+      openSession: (nextSessionId) => {
+        props.setSessionBrowseScope({
+          sessionId: nextSessionId,
+          workspaceId,
+          workspaceRoot: workspaceRoot,
+        });
+        props.setView("session", nextSessionId);
+      },
     });
   };
 

@@ -95,6 +95,7 @@ import {
 import {
   openPendingDraftFromDirectorySelection,
   openPendingDraftWithWorkspaceActivation,
+  type SessionBrowseScope,
 } from "./pages/session-navigation";
 import {
   SIDEBAR_SESSION_PAGE_SIZE,
@@ -1201,6 +1202,25 @@ export default function App() {
   const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(
     null
   );
+  type SelectedSessionBrowseScope = SessionBrowseScope;
+  const [selectedSessionBrowseScope, setSelectedSessionBrowseScope] = createSignal<SelectedSessionBrowseScope | null>(null);
+  const resolveSelectedSessionBrowseScope = (sessionId: string): SelectedSessionBrowseScope | null => {
+    const id = sessionId.trim();
+    if (!id) return null;
+    const scope = selectedSessionBrowseScope();
+    if (!scope || scope.sessionId !== id) return null;
+    return scope;
+  };
+  const setSessionBrowseScope = (scope: SessionBrowseScope) => {
+    const sessionId = scope.sessionId.trim();
+    const workspaceId = scope.workspaceId.trim();
+    if (!sessionId || !workspaceId) return;
+    setSelectedSessionBrowseScope({
+      sessionId,
+      workspaceId,
+      workspaceRoot: scope.workspaceRoot.trim(),
+    });
+  };
   const [unreadSessionIds, setUnreadSessionIds] = createSignal<UnreadSessionMap>({});
   const SESSION_BY_WORKSPACE_KEY = "veslo.workspace-last-session.v1";
   const ACTIVE_PENDING_DRAFT_KEY = "veslo.active-pending-draft.v1";
@@ -1455,6 +1475,11 @@ export default function App() {
       onHotReloadAppliedHandler?.();
     },
     onSessionLoadComplete: () => setPendingSessionLoad(null),
+    shouldBrowseSessionFromDb: (sessionId) => {
+      const transcriptScope = resolveSelectedSessionBrowseScope(sessionId);
+      if (transcriptScope) return true;
+      return !engineReady();
+    },
     onAssistantResponseObserved: (sessionId) => {
       setUnreadSessionIds((current) =>
         markUnreadAfterAssistantResponse(current, {
@@ -1466,13 +1491,15 @@ export default function App() {
     },
     loadOfflineTranscript: async (sessionId, limit) => {
       if (!isTauriRuntime()) return null;
-      const workspaceRoot = workspaceStore.activeWorkspaceRoot().trim();
+      const transcriptScope = resolveSelectedSessionBrowseScope(sessionId);
+      const transcriptWorkspaceId = transcriptScope?.workspaceId ?? workspaceStore.activeWorkspaceId().trim();
+      const workspaceRoot = transcriptScope?.workspaceRoot || workspaceStore.activeWorkspaceRoot().trim();
       if (!workspaceRoot) return null;
       const { readTranscriptFromDb, dbTranscriptToSnapshot } = await import("./lib/db-reader");
       const transcript = await readTranscriptFromDb(sessionId, limit);
       return dbTranscriptToSnapshot(
         sessionId,
-        workspaceStore.activeWorkspaceId().trim(),
+        transcriptWorkspaceId,
         transcript,
         limit,
       );
@@ -2080,6 +2107,37 @@ export default function App() {
     }
   }
 
+  async function ensureSelectedSessionWorkspaceActiveForSend(sessionId: string): Promise<boolean> {
+    const transcriptScope = resolveSelectedSessionBrowseScope(sessionId);
+    if (!transcriptScope) return true;
+    const targetWorkspaceId = transcriptScope.workspaceId.trim();
+    if (!targetWorkspaceId) return true;
+    if (targetWorkspaceId === workspaceStore.activeWorkspaceId().trim()) return true;
+
+    recordSendTrace("sendPrompt:activate-scoped-workspace", {
+      sessionId,
+      workspaceId: targetWorkspaceId,
+      activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
+    });
+    try {
+      const activated = await workspaceStore.activateWorkspace(targetWorkspaceId);
+      if (!activated) {
+        recordSendTrace("sendPrompt:activate-scoped-workspace-blocked", {
+          sessionId,
+          workspaceId: targetWorkspaceId,
+        });
+      }
+      return Boolean(activated);
+    } catch (error) {
+      recordSendTrace("sendPrompt:activate-scoped-workspace-error", {
+        sessionId,
+        workspaceId: targetWorkspaceId,
+        message: messageFromUnknownError(error),
+      });
+      return false;
+    }
+  }
+
   async function sendPrompt(
     draft?: ComposerDraft,
     options: { targetSessionId?: string | null } = {},
@@ -2121,6 +2179,19 @@ export default function App() {
       resolvedText: fallbackResolvedText || undefined,
       command: fallbackDraft.command,
     };
+
+    const preflightContent = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
+    if (!preflightContent && !resolvedDraft.attachments.length) {
+      recordSendTrace("sendPrompt:blocked-empty");
+      return false;
+    }
+
+    if (sessionID && !(await ensureSelectedSessionWorkspaceActiveForSend(sessionID))) {
+      recordSendTrace("sendPrompt:blocked-scoped-workspace");
+      stopSendPromptBusy();
+      return false;
+    }
+
     resolvedDraft = await maybeResolveSkillCommand(resolvedDraft);
 
     const initialSessionTitle = resolvedDraft.text.trim();
@@ -4750,8 +4821,10 @@ export default function App() {
 
   createEffect(() => {
     if (typeof window === "undefined") return;
-    const workspaceId = workspaceStore.activeWorkspaceId();
     const sessionId = selectedSessionId();
+    const workspaceId =
+      (sessionId ? resolveSelectedSessionBrowseScope(sessionId)?.workspaceId : null) ??
+      workspaceStore.activeWorkspaceId();
     if (!workspaceId || !sessionId) return;
     const map = readSessionByWorkspace();
     if (map[workspaceId] === sessionId) return;
@@ -4763,7 +4836,8 @@ export default function App() {
     const workspaceId = workspaceStore.activeWorkspaceId().trim();
     const selected = selectedSessionId()?.trim() ?? "";
     if (!workspaceId) return selected || null;
-    if (selected) return selected;
+    const selectedScope = selected ? resolveSelectedSessionBrowseScope(selected) : null;
+    if (selected && (!selectedScope || selectedScope.workspaceId === workspaceId)) return selected;
     const stored = readSessionByWorkspace()[workspaceId]?.trim() ?? "";
     return stored || null;
   });
@@ -9532,6 +9606,7 @@ export default function App() {
       setSettingsTab,
       view: currentView(),
       setView,
+      setSessionBrowseScope,
       startupPreference: startupPreference(),
       baseUrl: baseUrl(),
       clientConnected: Boolean(client()),
@@ -9834,14 +9909,17 @@ export default function App() {
     selectedSessionId: activeSessionId(),
     activePendingDraftKey: activePendingDraftKey(),
     setView,
+    setSessionBrowseScope,
     tab: tab(),
     setTab,
     setSettingsTab,
     activeWorkspaceDisplay: activeWorkspaceDisplay(),
-    activeWorkspaceRoot: preferredSessionWorkspaceRoot(
-      resolveSessionDirectory(selectedSession() ?? { id: "", directory: "" }),
-      workspaceStore.activeWorkspaceRoot().trim(),
-    ),
+    activeWorkspaceRoot:
+      (activeSessionId() ? resolveSelectedSessionBrowseScope(activeSessionId()!)?.workspaceRoot : null) ||
+      preferredSessionWorkspaceRoot(
+        resolveSessionDirectory(selectedSession() ?? { id: "", directory: "" }),
+        workspaceStore.activeWorkspaceRoot().trim(),
+      ),
     workspaces: workspaceStore.workspaces(),
     activeWorkspaceId: workspaceStore.activeWorkspaceId(),
     connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),

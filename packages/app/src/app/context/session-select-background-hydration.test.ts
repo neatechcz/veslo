@@ -209,6 +209,57 @@ test("selectSession hydrates transcript from offline fallback when no client is 
   });
 });
 
+test("selectSession uses offline fallback for database browsing even when a client is available", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(null);
+      let offlineLoadCalls = 0;
+      let messageCalls = 0;
+
+      const store = createSessionStore({
+        client: () =>
+          ({
+            session: {
+              messages: () => {
+                messageCalls += 1;
+                throw new Error("session.messages must not run for DB browsing");
+              },
+            },
+          } as any),
+        activeWorkspaceRoot: () => "/tmp/prometheus",
+        selectedSessionId,
+        setSelectedSessionId,
+        developerMode: () => false,
+        setError: () => {},
+        setSseConnected: () => {},
+        shouldBrowseSessionFromDb: (sessionId: string) => sessionId === "sess-db",
+        loadOfflineTranscript: async (sessionId: string, limit: number) => {
+          offlineLoadCalls += 1;
+          return {
+            workspaceId: "ws-prometheus",
+            sessionId,
+            limit,
+            fetchedAt: Date.now(),
+            messages: [makeMessageInfo()],
+            partsByMessageId: {
+              "msg-1": [makeTextPart()],
+            },
+          };
+        },
+      } as any);
+
+      await store.selectSession("sess-db");
+
+      assert.equal(selectedSessionId(), "sess-db");
+      assert.equal(offlineLoadCalls, 1);
+      assert.equal(messageCalls, 0);
+      assert.equal(store.getCachedTranscriptMessageCount("sess-db"), 1);
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("re-selecting the same session while the first load is in flight still applies the transcript", async () => {
   const messagesGate = deferred<ReturnType<typeof ok<Array<{ info: ReturnType<typeof makeMessageInfo>; parts: Part[] }>>>>();
   let messageCalls = 0;
