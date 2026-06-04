@@ -18,7 +18,11 @@ import type {
 import { currentLocale, t } from "../i18n";
 import { addOpencodeCacheHint, isTauriRuntime, safeStringify } from "./utils";
 import { mapConfigProvidersToList } from "./utils/providers";
-import { createUpdaterState } from "./context/updater";
+import {
+  UPDATE_AUTO_DOWNLOAD_MAX_RETRIES,
+  createUpdaterState,
+  resolveAutoDownloadFailureStatus,
+} from "./context/updater";
 import {
   resetVesloState,
   resetOpencodeCache,
@@ -60,6 +64,12 @@ export type NotionState = {
   setStatusDetail: (value: string | null) => void;
   skillInstalled: Accessor<boolean>;
   setTryPromptVisible: (value: boolean) => void;
+};
+
+type DownloadUpdateOptions = {
+  automatic?: boolean;
+  retryAttempt?: number;
+  refreshBeforeDownload?: boolean;
 };
 
 export function createSystemState(options: {
@@ -489,40 +499,83 @@ export function createSystemState(options: {
     }
   }
 
-  async function downloadUpdate() {
-    const pending = pendingUpdate();
-    if (!pending) return;
+  async function refreshPendingUpdateForDownload(optionsRefresh?: { requireUpdate?: boolean }) {
+    const update = (await check({ timeout: 8_000 })) as unknown as UpdateHandle | null;
+    const checkedAt = Date.now();
+    if (!update) {
+      if (optionsRefresh?.requireUpdate) {
+        throw new Error("Update is no longer available.");
+      }
+      setPendingUpdate(null);
+      setUpdateStatus({ state: "idle", lastCheckedAt: checkedAt });
+      return null;
+    }
 
+    const notes = typeof update.body === "string" ? update.body : undefined;
+    const pending = { update, version: update.version, notes };
+    setPendingUpdate(pending);
+    return { pending, checkedAt, date: update.date };
+  }
+
+  async function downloadUpdate(optionsDownload?: DownloadUpdateOptions) {
+    let pending = pendingUpdate();
     const state = updateStatus();
-    if (state.state === "downloading" || state.state === "ready") return;
+    const scheduledRetryDownload =
+      optionsDownload?.refreshBeforeDownload &&
+      state.state === "downloading" &&
+      state.retry?.kind === "scheduled";
+    if (state.state === "downloading" && !scheduledRetryDownload) return;
+    if (state.state === "ready") return;
 
     options.setError(null);
-    const lastCheckedAt = state.state === "available" ? state.lastCheckedAt : Date.now();
-
-    setUpdateStatus({
-      state: "downloading",
-      lastCheckedAt,
-      version: pending.version,
-      totalBytes: null,
-      downloadedBytes: 0,
-      notes: pending.notes,
-    });
-    
-    let accumulatedBytes = 0;
-    let totalBytes: number | null = null;
-
-    const throttledUpdateProgress = throttle(() => {
-      setUpdateStatus((current) => {
-        if (current.state !== "downloading") return current;
-        return {
-          ...current,
-          totalBytes,
-          downloadedBytes: accumulatedBytes,
-        };
-      });
-    }, 100);
+    let lastCheckedAt =
+      state.state === "available" || state.state === "downloading"
+        ? state.lastCheckedAt
+        : Date.now();
 
     try {
+      if (optionsDownload?.refreshBeforeDownload) {
+        const refreshed = await refreshPendingUpdateForDownload({
+          requireUpdate: Boolean(optionsDownload.automatic),
+        });
+        if (!refreshed) return;
+        pending = refreshed.pending;
+        lastCheckedAt = refreshed.checkedAt;
+      }
+
+      if (!pending) return;
+
+      setUpdateStatus({
+        state: "downloading",
+        lastCheckedAt,
+        version: pending.version,
+        totalBytes: null,
+        downloadedBytes: 0,
+        notes: pending.notes,
+        retry:
+          optionsDownload?.automatic && (optionsDownload.retryAttempt ?? 0) > 0
+            ? {
+                kind: "active",
+                retryAttempt: optionsDownload.retryAttempt ?? 0,
+                maxRetries: UPDATE_AUTO_DOWNLOAD_MAX_RETRIES,
+              }
+            : undefined,
+      });
+
+      let accumulatedBytes = 0;
+      let totalBytes: number | null = null;
+
+      const throttledUpdateProgress = throttle(() => {
+        setUpdateStatus((current) => {
+          if (current.state !== "downloading") return current;
+          return {
+            ...current,
+            totalBytes,
+            downloadedBytes: accumulatedBytes,
+          };
+        });
+      }, 100);
+
       await pending.update.download((event: any) => {
         if (!event || typeof event !== "object") return;
         const record = event as Record<string, any>;
@@ -554,8 +607,31 @@ export function createSystemState(options: {
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
-      setUpdateStatus({ state: "error", lastCheckedAt, message });
+      const failedPending = pending ?? pendingUpdate();
+      if (!failedPending) {
+        setUpdateStatus({ state: "error", lastCheckedAt, message });
+        return;
+      }
+
+      if (optionsDownload?.automatic) {
+        setUpdateStatus(
+          resolveAutoDownloadFailureStatus({
+            lastCheckedAt,
+            version: failedPending.version,
+            notes: failedPending.notes,
+            completedRetries: optionsDownload.retryAttempt ?? 0,
+            message,
+          }),
+        );
+        return;
+      } else {
+        setUpdateStatus({ state: "error", lastCheckedAt, message, version: failedPending.version });
+      }
     }
+  }
+
+  async function retryUpdateDownload() {
+    return downloadUpdate({ refreshBeforeDownload: true });
   }
 
   async function installUpdateAndRestart() {
@@ -612,6 +688,7 @@ export function createSystemState(options: {
     setUpdateEnv,
     checkForUpdates,
     downloadUpdate,
+    retryUpdateDownload,
     installUpdateAndRestart,
     resetModalOpen,
     setResetModalOpen,
