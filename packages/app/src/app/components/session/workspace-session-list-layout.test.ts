@@ -4,6 +4,24 @@ import test from "node:test";
 
 const source = readFileSync(new URL("./workspace-session-list.tsx", import.meta.url), "utf8");
 
+test("workspace session sidebar defines local collapse animation primitives", () => {
+  assert.match(source, /const SIDEBAR_COLLAPSE_DURATION_MS = 160;/);
+  assert.match(source, /const AnimatedCollapse = \(props: AnimatedCollapseProps\) =>/);
+  assert.match(source, /prefers-reduced-motion: reduce/);
+  assert.match(source, /onTransitionEnd=\{handleTransitionEnd\}/);
+});
+
+test("workspace session sidebar collapse primitive guards lifecycle edge cases", () => {
+  assert.match(source, /let previousOpen = props\.open;/);
+  assert.match(source, /let hasMounted = false;/);
+  assert.match(source, /if \(!hasMounted\) \{[\s\S]*hasMounted = true;[\s\S]*previousOpen = open;[\s\S]*return;/);
+  assert.match(source, /if \(previousOpen === open\) return;/);
+  assert.match(source, /const scheduleTransitionFallback = \(open: boolean\) =>/);
+  assert.match(source, /SIDEBAR_COLLAPSE_DURATION_MS \+ 40/);
+  assert.match(source, /if \(height <= 0\) \{[\s\S]*finishOpen\(\);[\s\S]*return;/);
+  assert.match(source, /if \(height <= 0\) \{[\s\S]*finishClosed\(\);[\s\S]*return;/);
+});
+
 test("workspace session sidebar keeps controls pinned while only session rows scroll", () => {
   assert.match(
     source,
