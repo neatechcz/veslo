@@ -79,6 +79,7 @@ Use these for shipped feature semantics and non-obvious runtime behavior.
 - `docs/features/session-runtime.md`
 - `docs/features/workspace-config-and-sharing.md`
 - `docs/features/skill-registry-and-distribution.md`
+- `docs/features/ui-interaction-contract.md`
 - `docs/features/soul-and-automations.md`
 
 ## Specialized Deep Dives
