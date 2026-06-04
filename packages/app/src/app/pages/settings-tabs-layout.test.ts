@@ -76,6 +76,13 @@ test("settings keeps compact update controls in general instead of a floating to
   assert.doesNotMatch(source, /"Checking for updates"|"Up to date"|"Check"|"Download"|"Install"|"Retry"|"Last checked"/);
 });
 
+test("settings exposes updater download retry states", () => {
+  assert.match(source, /settings\.update_retrying_download/);
+  assert.match(source, /settings\.update_retrying_in/);
+  assert.match(source, /settings\.update_download_failed/);
+  assert.match(source, /props\.retryUpdateDownload\(\)/);
+});
+
 test("settings locales include Settings and dashboard labels", () => {
   assert.match(enLocaleSource, /"settings\.archived": "Archived"/);
   assert.match(csLocaleSource, /"settings\.archived": "Archivované"/);

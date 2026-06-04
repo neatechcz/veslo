@@ -48,6 +48,13 @@ test("left-menu manual download action is only exposed when auto-download is dis
   assert.match(dashboardSource, /updateAutoDownload={props\.updateAutoDownload}/);
 });
 
+test("left-menu update prompts expose exhausted download retry", () => {
+  assert.match(dashboardSource, /state === "error"[\s\S]*retry\?\.kind === "exhausted"/);
+  assert.match(sessionSource, /state === "error"[\s\S]*retry\?\.kind === "exhausted"/);
+  assert.match(dashboardSource, /props\.retryUpdateDownload\(\)/);
+  assert.match(sessionSource, /props\.retryUpdateDownload\(\)/);
+});
+
 test("left-menu update action copy is localized", () => {
   for (const source of [enLocale, csLocale, zhLocale]) {
     assert.match(source, /"settings\.sidebar_download_update"/);
@@ -63,4 +70,13 @@ test("left-menu preparing update copy is localized", () => {
   }
   assert.match(dashboardSource, /settings\.sidebar_update_preparing/);
   assert.match(sessionSource, /settings\.sidebar_update_preparing/);
+});
+
+test("updater retry copy is localized", () => {
+  for (const source of [enLocale, csLocale, zhLocale]) {
+    assert.match(source, /"settings\.update_retrying_download"/);
+    assert.match(source, /"settings\.update_retrying_in"/);
+    assert.match(source, /"settings\.update_download_failed"/);
+    assert.match(source, /"settings\.retry_update_download"/);
+  }
 });

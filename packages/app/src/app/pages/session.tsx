@@ -87,6 +87,7 @@ import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
 import { normalizeLocalFilePath } from "../lib/local-file-path";
 import { shouldStopRunOnEscape } from "./session-shortcuts";
 import { currentLocale, t } from "../../i18n";
+import type { UpdateDownloadRetryInfo } from "../context/updater";
 
 import browserSetupTemplate from "../data/commands/browser-setup.md?raw";
 import soulSetupTemplate from "../data/commands/give-me-a-soul.md?raw";
@@ -221,11 +222,13 @@ export type SessionViewProps = {
     totalBytes?: number | null;
     downloadedBytes?: number;
     message?: string;
+    retry?: UpdateDownloadRetryInfo;
   } | null;
   updateEnv: { supported?: boolean; reason?: string | null } | null;
   updateAutoDownload: boolean;
   anyActiveRuns: boolean;
   downloadUpdate: () => void;
+  retryUpdateDownload: () => void;
   installUpdateAndRestart: () => void;
   createSessionAndOpen: () => Promise<string | undefined>;
   sendPromptAsync: (draft: ComposerDraft, options?: { targetSessionId?: string | null }) => Promise<boolean>;
@@ -3725,7 +3728,13 @@ export default function SessionView(props: SessionViewProps) {
   const showUpdatePill = createMemo(() => {
     if (!isTauriRuntime()) return false;
     const state = props.updateStatus?.state;
-    return state === "available" || state === "downloading" || state === "ready";
+    const retry = props.updateStatus?.retry;
+    return (
+      state === "available" ||
+      state === "downloading" ||
+      state === "ready" ||
+      (state === "error" && retry?.kind === "exhausted")
+    );
   });
 
   const updateDownloadPercent = createMemo<number | null>(() => {
@@ -3738,13 +3747,20 @@ export default function SessionView(props: SessionViewProps) {
 
   const updatePillLabel = createMemo(() => {
     const state = props.updateStatus?.state;
+    const retry = props.updateStatus?.retry;
     if (state === "ready") {
       return t("settings.sidebar_update_ready", currentLocale());
     }
     if (state === "available" && props.updateAutoDownload) {
       return t("settings.sidebar_update_preparing", currentLocale());
     }
+    if (state === "error" && retry?.kind === "exhausted") {
+      return t("settings.update_download_failed", currentLocale());
+    }
     if (state === "downloading") {
+      if (retry?.kind === "scheduled" || retry?.kind === "active") {
+        return t("settings.update_retrying_download", currentLocale());
+      }
       const percent = updateDownloadPercent();
       const label = t("settings.update_downloading", currentLocale());
       return percent == null ? label : `${label} ${percent}%`;
@@ -3754,8 +3770,10 @@ export default function SessionView(props: SessionViewProps) {
 
   const updatePillActionLabel = createMemo(() => {
     const state = props.updateStatus?.state;
+    const retry = props.updateStatus?.retry;
     if (state === "available" && !props.updateAutoDownload) return t("settings.sidebar_download_update", currentLocale());
     if (state === "ready") return t("settings.sidebar_install_update", currentLocale());
+    if (state === "error" && retry?.kind === "exhausted") return t("settings.retry_update_download", currentLocale());
     return null;
   });
 
@@ -3773,10 +3791,14 @@ export default function SessionView(props: SessionViewProps) {
 
   const updatePillButtonTone = createMemo(() => {
     const state = props.updateStatus?.state;
+    const retry = props.updateStatus?.retry;
     if (state === "ready") {
       return props.anyActiveRuns
         ? "text-amber-11 hover:text-amber-11 hover:bg-amber-3/30"
         : "text-green-11 hover:text-green-11 hover:bg-green-3/30";
+    }
+    if (state === "error" && retry?.kind === "exhausted") {
+      return "text-red-11 hover:text-red-11 hover:bg-red-3/30";
     }
     if (state === "downloading") {
       return "text-blue-11 hover:text-blue-11 hover:bg-blue-3/30";
@@ -3786,8 +3808,12 @@ export default function SessionView(props: SessionViewProps) {
 
   const updatePillBorderTone = createMemo(() => {
     const state = props.updateStatus?.state;
+    const retry = props.updateStatus?.retry;
     if (state === "ready") {
       return props.anyActiveRuns ? "border-amber-7/35" : "border-green-7/35";
+    }
+    if (state === "error" && retry?.kind === "exhausted") {
+      return "border-red-7/35";
     }
     if (state === "downloading") {
       return "border-blue-7/35";
@@ -3797,8 +3823,12 @@ export default function SessionView(props: SessionViewProps) {
 
   const updatePillDotTone = createMemo(() => {
     const state = props.updateStatus?.state;
+    const retry = props.updateStatus?.retry;
     if (state === "ready") {
       return props.anyActiveRuns ? "text-amber-10 fill-amber-10" : "text-green-10 fill-green-10";
+    }
+    if (state === "error" && retry?.kind === "exhausted") {
+      return "text-red-10 fill-red-10";
     }
     if (state === "downloading") {
       return "text-blue-10";
@@ -3808,8 +3838,12 @@ export default function SessionView(props: SessionViewProps) {
 
   const updatePillVersionTone = createMemo(() => {
     const state = props.updateStatus?.state;
+    const retry = props.updateStatus?.retry;
     if (state === "ready") {
       return props.anyActiveRuns ? "text-amber-11/75" : "text-green-11/75";
+    }
+    if (state === "error" && retry?.kind === "exhausted") {
+      return "text-red-11/75";
     }
     if (state === "downloading") {
       return "text-blue-11/75";
@@ -3820,10 +3854,17 @@ export default function SessionView(props: SessionViewProps) {
   const updatePillTitle = createMemo(() => {
     const version = props.updateStatus?.version ? ` v${props.updateStatus.version}` : "";
     const state = props.updateStatus?.state;
+    const retry = props.updateStatus?.retry;
     if (state === "ready") {
       return props.anyActiveRuns
         ? `${t("settings.sidebar_update_ready", currentLocale())}${version}. ${t("settings.stop_runs_to_update", currentLocale())}.`
         : `${t("settings.sidebar_update_ready", currentLocale())}${version}`;
+    }
+    if (state === "error" && retry?.kind === "exhausted") {
+      return `${t("settings.update_download_failed", currentLocale())}${version}`;
+    }
+    if (state === "downloading" && (retry?.kind === "scheduled" || retry?.kind === "active")) {
+      return `${t("settings.update_retrying_download", currentLocale())}${version}`;
     }
     if (state === "downloading") return `${t("settings.update_downloading", currentLocale())}${version}`;
     if (state === "available" && props.updateAutoDownload) {
@@ -3897,6 +3938,10 @@ export default function SessionView(props: SessionViewProps) {
                       if (!props.updateAutoDownload) {
                         props.downloadUpdate();
                       }
+                      return;
+                    }
+                    if (props.updateStatus?.state === "error" && props.updateStatus?.retry?.kind === "exhausted") {
+                      props.retryUpdateDownload();
                       return;
                     }
                     if (props.updateStatus?.state === "ready" && !props.anyActiveRuns) {

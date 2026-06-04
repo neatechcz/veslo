@@ -42,6 +42,7 @@ import { currentLocale, LANGUAGE_OPTIONS, t, type Language } from "../../i18n";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 import { MODEL_VARIANT_OPTIONS } from "../lib/model-variant";
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
+import type { UpdateDownloadRetryInfo } from "../context/updater";
 
 export type SettingsViewProps = {
   startupPreference: StartupPreference | null;
@@ -111,11 +112,13 @@ export type SettingsViewProps = {
     totalBytes?: number | null;
     downloadedBytes?: number;
     message?: string;
+    retry?: UpdateDownloadRetryInfo;
   } | null;
   updateEnv: { supported?: boolean; reason?: string | null } | null;
   appVersion: string | null;
   checkForUpdates: () => void;
   downloadUpdate: () => void;
+  retryUpdateDownload: () => void;
   installUpdateAndRestart: () => void;
   anyActiveRuns: boolean;
   onResetStartupPreference: () => void;
@@ -175,6 +178,12 @@ export default function SettingsView(props: SettingsViewProps) {
   const updateDownloadedBytes = () => props.updateStatus?.downloadedBytes ?? null;
   const updateTotalBytes = () => props.updateStatus?.totalBytes ?? null;
   const updateErrorMessage = () => props.updateStatus?.message ?? null;
+  const updateRetry = () => props.updateStatus?.retry ?? null;
+  const updateRetryDelayLabel = () => {
+    const retry = updateRetry();
+    if (retry?.kind !== "scheduled") return null;
+    return formatRelativeTime(retry.nextRetryAt);
+  };
 
   const updateDownloadPercent = createMemo<number | null>(() => {
     const total = updateTotalBytes();
@@ -215,10 +224,19 @@ export default function SettingsView(props: SettingsViewProps) {
     if (updateState() === "available") return `${translate("settings.update_available")}${version}`;
     if (updateState() === "ready") return `${translate("settings.update_ready")}${version}`;
     if (updateState() === "downloading") {
+      const retry = updateRetry();
+      if (retry?.kind === "scheduled") {
+        const delay = updateRetryDelayLabel();
+        return delay
+          ? translate("settings.update_retrying_in").replace("{time}", delay)
+          : translate("settings.update_retrying_download");
+      }
+      if (retry?.kind === "active") return translate("settings.update_retrying_download");
       const percent = updateDownloadPercent();
       return percent == null ? translate("settings.update_downloading") : `${translate("settings.update_downloading")} ${percent}%`;
     }
     if (updateState() === "checking") return translate("settings.update_checking");
+    if (updateState() === "error" && updateRetry()?.kind === "exhausted") return translate("settings.update_download_failed");
     if (updateState() === "error") return translate("settings.update_error");
     return translate("settings.update_uptodate");
   });
@@ -226,6 +244,9 @@ export default function SettingsView(props: SettingsViewProps) {
   const generalUpdateActionLabel = createMemo(() => {
     if (updateState() === "available" && !props.updateAutoDownload) return translate("settings.download_update");
     if (updateState() === "ready") return translate("settings.install_restart");
+    if (updateState() === "error" && updateRetry()?.kind === "exhausted") {
+      return translate("settings.retry_update_download");
+    }
     if (updateState() === "error") return translate("settings.retry");
     if (updateState() === "checking" || updateState() === "downloading") return null;
     return translate("settings.check_update");
@@ -252,6 +273,10 @@ export default function SettingsView(props: SettingsViewProps) {
     }
     if (updateState() === "ready") {
       props.installUpdateAndRestart();
+      return;
+    }
+    if (updateState() === "error" && updateRetry()?.kind === "exhausted") {
+      props.retryUpdateDownload();
       return;
     }
     props.checkForUpdates();
