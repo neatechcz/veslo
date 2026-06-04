@@ -965,6 +965,7 @@ pub fn install_skill_template(
     })
 }
 
+#[tauri::command]
 pub fn install_global_skill_template(
     name: String,
     content: String,
