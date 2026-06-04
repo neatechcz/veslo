@@ -9,6 +9,7 @@ import {
   UPDATE_AUTO_DOWNLOAD_RETRY_DELAYS_MS,
   UPDATE_AUTO_CHECK_EVERY_MS,
   createUpdaterState,
+  resolveAutoDownloadFailureStatus,
   resolveNextUpdateDownloadRetry,
   resolveUpdateAutoDownloadPreference,
   resolveUpdateStartupPreferences,
@@ -143,5 +144,55 @@ test("auto-download retry policy exhausts after the third retry fails", () => {
     kind: "exhausted",
     retryAttempt: 3,
     maxRetries: 3,
+  });
+});
+
+test("auto-download failure schedules a retry while attempts remain", () => {
+  const status = resolveAutoDownloadFailureStatus({
+    lastCheckedAt: 100,
+    version: "2026.6.1",
+    notes: "Release notes",
+    completedRetries: 0,
+    now: 1_000,
+    message: "network error",
+  });
+
+  assert.deepEqual(status, {
+    state: "downloading",
+    lastCheckedAt: 100,
+    version: "2026.6.1",
+    totalBytes: null,
+    downloadedBytes: 0,
+    notes: "Release notes",
+    retry: {
+      kind: "scheduled",
+      retryAttempt: 1,
+      maxRetries: 3,
+      nextRetryAt: 31_000,
+      message: "network error",
+    },
+  });
+});
+
+test("auto-download failure becomes visible error after retries are exhausted", () => {
+  const status = resolveAutoDownloadFailureStatus({
+    lastCheckedAt: 100,
+    version: "2026.6.1",
+    completedRetries: 3,
+    now: 1_000,
+    message: "signature mismatch",
+  });
+
+  assert.deepEqual(status, {
+    state: "error",
+    lastCheckedAt: 100,
+    message: "signature mismatch",
+    version: "2026.6.1",
+    retry: {
+      kind: "exhausted",
+      retryAttempt: 3,
+      maxRetries: 3,
+      message: "signature mismatch",
+    },
   });
 });

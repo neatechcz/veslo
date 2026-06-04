@@ -14,9 +14,16 @@ export type UpdateStatus =
       totalBytes: number | null;
       downloadedBytes: number;
       notes?: string;
+      retry?: Extract<UpdateDownloadRetryInfo, { kind: "active" | "scheduled" }>;
     }
   | { state: "ready"; lastCheckedAt: number; version: string; notes?: string }
-  | { state: "error"; lastCheckedAt: number | null; message: string };
+  | {
+      state: "error";
+      lastCheckedAt: number | null;
+      message: string;
+      version?: string;
+      retry?: Extract<UpdateDownloadRetryInfo, { kind: "exhausted" }>;
+    };
 
 export type PendingUpdate = { update: UpdateHandle; version: string; notes?: string } | null;
 
@@ -52,6 +59,40 @@ export function resolveNextUpdateDownloadRetry(input: { completedRetries: number
     retryAttempt,
     maxRetries: UPDATE_AUTO_DOWNLOAD_MAX_RETRIES,
     nextRetryAt: (input.now ?? Date.now()) + delay,
+  };
+}
+
+export function resolveAutoDownloadFailureStatus(input: {
+  lastCheckedAt: number;
+  version: string;
+  notes?: string;
+  completedRetries: number;
+  now?: number;
+  message: string;
+}): UpdateStatus {
+  const retry = resolveNextUpdateDownloadRetry({
+    completedRetries: input.completedRetries,
+    now: input.now,
+  });
+
+  if (retry.kind === "scheduled") {
+    return {
+      state: "downloading",
+      lastCheckedAt: input.lastCheckedAt,
+      version: input.version,
+      totalBytes: null,
+      downloadedBytes: 0,
+      notes: input.notes,
+      retry: { ...retry, message: input.message },
+    };
+  }
+
+  return {
+    state: "error",
+    lastCheckedAt: input.lastCheckedAt,
+    message: input.message,
+    version: input.version,
+    retry: { ...retry, message: input.message },
   };
 }
 
