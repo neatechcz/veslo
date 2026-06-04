@@ -11,13 +11,31 @@ test("workspace session sidebar defines local collapse animation primitives", ()
   assert.match(source, /onTransitionEnd=\{handleTransitionEnd\}/);
 });
 
+test("workspace session sidebar uses a more visible project collapse profile", () => {
+  assert.match(source, /const SIDEBAR_PROJECT_COLLAPSE_DURATION_MS = 240;/);
+  assert.match(source, /const SIDEBAR_PROJECT_COLLAPSE_OFFSET_PX = 6;/);
+  assert.match(
+    source,
+    /const sidebarCollapseDurationForRegion = \(region: AnimatedCollapseRegion\) =>\s*region === "project" \? SIDEBAR_PROJECT_COLLAPSE_DURATION_MS : SIDEBAR_COLLAPSE_DURATION_MS;/,
+  );
+  assert.match(
+    source,
+    /const sidebarCollapseClosedTransformForRegion = \(region: AnimatedCollapseRegion\) =>\s*`translateY\(-\$\{sidebarCollapseOffsetForRegion\(region\)\}px\)`;/,
+  );
+  assert.match(
+    source,
+    /sidebarCollapseDurationForRegion\(props\.region\) \+ 40/,
+    "transition fallback should wait for the region-specific duration",
+  );
+});
+
 test("workspace session sidebar collapse primitive guards lifecycle edge cases", () => {
   assert.match(source, /let previousOpen = props\.open;/);
   assert.match(source, /let hasMounted = false;/);
   assert.match(source, /if \(!hasMounted\) \{[\s\S]*hasMounted = true;[\s\S]*previousOpen = open;[\s\S]*return;/);
   assert.match(source, /if \(previousOpen === open\) return;/);
   assert.match(source, /const scheduleTransitionFallback = \(open: boolean\) =>/);
-  assert.match(source, /SIDEBAR_COLLAPSE_DURATION_MS \+ 40/);
+  assert.match(source, /sidebarCollapseDurationForRegion\(props\.region\) \+ 40/);
   assert.match(source, /if \(height <= 0\) \{[\s\S]*finishOpen\(\);[\s\S]*return;/);
   assert.match(source, /if \(height <= 0\) \{[\s\S]*finishClosed\(\);[\s\S]*return;/);
 });

@@ -197,6 +197,8 @@ type SessionTreeRowsProps = {
   parentSessionId?: string;
 };
 
+type AnimatedCollapseRegion = "project" | "session-branch";
+
 const CHAT_SIDEBAR_COLLAPSED_DRAG_ACTIVATION_PX = 4;
 const VIEWPORT_PADDING = 12;
 const WORKSPACE_MENU_DEFAULT_WIDTH = 176;
@@ -232,12 +234,24 @@ const sessionRowClass = (isSelected: boolean, extraClass?: string) => {
 };
 
 const SIDEBAR_COLLAPSE_DURATION_MS = 160;
+const SIDEBAR_PROJECT_COLLAPSE_DURATION_MS = 240;
+const SIDEBAR_COLLAPSE_OFFSET_PX = 2;
+const SIDEBAR_PROJECT_COLLAPSE_OFFSET_PX = 6;
 const SIDEBAR_COLLAPSE_EASING = "cubic-bezier(0.2, 0, 0, 1)";
-const sidebarCollapseTransition = `height ${SIDEBAR_COLLAPSE_DURATION_MS}ms ${SIDEBAR_COLLAPSE_EASING}, opacity ${SIDEBAR_COLLAPSE_DURATION_MS}ms ${SIDEBAR_COLLAPSE_EASING}, transform ${SIDEBAR_COLLAPSE_DURATION_MS}ms ${SIDEBAR_COLLAPSE_EASING}`;
+const sidebarCollapseDurationForRegion = (region: AnimatedCollapseRegion) =>
+  region === "project" ? SIDEBAR_PROJECT_COLLAPSE_DURATION_MS : SIDEBAR_COLLAPSE_DURATION_MS;
+const sidebarCollapseOffsetForRegion = (region: AnimatedCollapseRegion) =>
+  region === "project" ? SIDEBAR_PROJECT_COLLAPSE_OFFSET_PX : SIDEBAR_COLLAPSE_OFFSET_PX;
+const sidebarCollapseClosedTransformForRegion = (region: AnimatedCollapseRegion) =>
+  `translateY(-${sidebarCollapseOffsetForRegion(region)}px)`;
+const sidebarCollapseTransitionForRegion = (region: AnimatedCollapseRegion) => {
+  const duration = sidebarCollapseDurationForRegion(region);
+  return `height ${duration}ms ${SIDEBAR_COLLAPSE_EASING}, opacity ${duration}ms ${SIDEBAR_COLLAPSE_EASING}, transform ${duration}ms ${SIDEBAR_COLLAPSE_EASING}`;
+};
 
 type AnimatedCollapseProps = {
   open: boolean;
-  region: "project" | "session-branch";
+  region: AnimatedCollapseRegion;
   class?: string;
   innerClass?: string;
   children: JSX.Element;
@@ -250,13 +264,15 @@ const prefersReducedMotion = () =>
   window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 const AnimatedCollapse = (props: AnimatedCollapseProps) => {
+  const closedTransform = () => sidebarCollapseClosedTransformForRegion(props.region);
+  const transition = () => sidebarCollapseTransitionForRegion(props.region);
   const [rendered, setRendered] = createSignal(props.open);
   const [style, setStyle] = createSignal<JSX.CSSProperties>({
     height: props.open ? "auto" : "0px",
     opacity: props.open ? 1 : 0,
     overflow: "hidden",
-    transform: props.open ? "translateY(0)" : "translateY(-2px)",
-    transition: sidebarCollapseTransition,
+    transform: props.open ? "translateY(0)" : closedTransform(),
+    transition: transition(),
   });
   let outerRef: HTMLDivElement | undefined;
   let innerRef: HTMLDivElement | undefined;
@@ -295,7 +311,7 @@ const AnimatedCollapse = (props: AnimatedCollapseProps) => {
       ...current,
       height: "0px",
       opacity: 0,
-      transform: "translateY(-2px)",
+      transform: closedTransform(),
     }));
     setRendered(false);
     if (!closeCompletionPending) return;
@@ -313,7 +329,7 @@ const AnimatedCollapse = (props: AnimatedCollapseProps) => {
         return;
       }
       finishClosed();
-    }, SIDEBAR_COLLAPSE_DURATION_MS + 40);
+    }, sidebarCollapseDurationForRegion(props.region) + 40);
   };
 
   createEffect(() => {
@@ -329,8 +345,8 @@ const AnimatedCollapse = (props: AnimatedCollapseProps) => {
         ...current,
         height: open ? "auto" : "0px",
         opacity: open ? 1 : 0,
-        transform: open ? "translateY(0)" : "translateY(-2px)",
-        transition: prefersReducedMotion() ? "none" : sidebarCollapseTransition,
+        transform: open ? "translateY(0)" : closedTransform(),
+        transition: prefersReducedMotion() ? "none" : transition(),
       }));
       return;
     }
@@ -363,8 +379,8 @@ const AnimatedCollapse = (props: AnimatedCollapseProps) => {
         ...current,
         height: "0px",
         opacity: 0,
-        transform: "translateY(-2px)",
-        transition: sidebarCollapseTransition,
+        transform: closedTransform(),
+        transition: transition(),
       }));
       frame = window.requestAnimationFrame(() => {
         frame = 0;
@@ -378,7 +394,7 @@ const AnimatedCollapse = (props: AnimatedCollapseProps) => {
           height: `${height}px`,
           opacity: 1,
           transform: "translateY(0)",
-          transition: sidebarCollapseTransition,
+          transition: transition(),
         }));
         scheduleTransitionFallback(true);
       });
@@ -398,7 +414,7 @@ const AnimatedCollapse = (props: AnimatedCollapseProps) => {
       height: `${height}px`,
       opacity: 1,
       transform: "translateY(0)",
-      transition: sidebarCollapseTransition,
+      transition: transition(),
     }));
     frame = window.requestAnimationFrame(() => {
       frame = 0;
@@ -406,8 +422,8 @@ const AnimatedCollapse = (props: AnimatedCollapseProps) => {
         ...current,
         height: "0px",
         opacity: 0,
-        transform: "translateY(-2px)",
-        transition: sidebarCollapseTransition,
+        transform: closedTransform(),
+        transition: transition(),
       }));
       scheduleTransitionFallback(false);
     });
