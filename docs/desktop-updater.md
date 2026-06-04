@@ -92,6 +92,8 @@ Downloads start automatically by default after an update is detected. Users can 
 
 The app listens to Tauri download events and converts them into progress state for the UI.
 
+Auto-download failures are retried by the app state machine. Veslo retries clean full downloads after 30 seconds, 2 minutes, and 10 minutes. Each retry performs a fresh quiet update check and uses a fresh Tauri update handle. Veslo does not resume partial updater files; the Tauri updater plugin remains responsible for download integrity and signature validation.
+
 ### 6. Installing
 
 Install is intentionally gated:
