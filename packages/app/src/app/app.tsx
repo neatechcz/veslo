@@ -3833,11 +3833,16 @@ export default function App() {
     if (!workspace) return null;
 
     if (workspace.workspaceType === "local") {
-      const info = workspaceStore.engine();
-      const baseUrl = info?.baseUrl?.trim() ?? "";
       const directory = workspace.path?.trim() ?? "";
-      const username = info?.opencodeUsername?.trim() ?? "";
-      const password = info?.opencodePassword?.trim() ?? "";
+      const entry = workspaceRouting.entry(workspace.id);
+      const isActiveWorkspace = workspace.id === workspaceStore.activeWorkspaceId().trim();
+      const activeInfo = isActiveWorkspace ? workspaceStore.engine() : null;
+      const activeInfoDirectory = activeInfo?.projectDir?.trim() ?? "";
+      const info = activeInfo && activeInfoDirectory === directory ? activeInfo : null;
+      const baseUrl = entry?.baseUrl?.trim() || info?.baseUrl?.trim() || "";
+      const authInfo = workspaceStore.engine();
+      const username = authInfo?.opencodeUsername?.trim() ?? "";
+      const password = authInfo?.opencodePassword?.trim() ?? "";
       const auth: OpencodeAuth | undefined = username && password ? { username, password } : undefined;
       return {
         baseUrl,
