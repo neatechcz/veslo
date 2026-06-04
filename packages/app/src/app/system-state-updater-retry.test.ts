@@ -2,7 +2,38 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { createEffect, createRoot } from "solid-js";
+
+import { createSystemState } from "./system-state.js";
+import type { UpdateHandle } from "./types.js";
+
 const source = readFileSync(new URL("./system-state.ts", import.meta.url), "utf8");
+
+const tick = () => new Promise<void>((resolve) => queueMicrotask(resolve));
+
+const createSystemStateForTest = () =>
+  createSystemState({
+    client: () => null,
+    sessions: () => [],
+    sessionStatusById: () => ({}),
+    refreshPlugins: async () => undefined,
+    refreshSkills: async () => undefined,
+    setProviders: () => undefined,
+    setProviderDefaults: () => undefined,
+    setProviderConnectedIds: () => undefined,
+    setError: () => undefined,
+  });
+
+const createPendingUpdateForTest = (): UpdateHandle => ({
+  available: true,
+  currentVersion: "2026.6.0",
+  version: "2026.6.1",
+  rawJson: {},
+  close: async () => undefined,
+  download: async () => undefined,
+  install: async () => undefined,
+  downloadAndInstall: async () => undefined,
+});
 
 test("system state schedules automatic updater download retries", () => {
   assert.match(source, /resolveAutoDownloadFailureStatus/);
@@ -37,6 +68,57 @@ test("disabling auto-download restores scheduled retry to manual availability", 
   assert.match(source, /state\.state !== "downloading" \|\| state\.retry\?\.kind !== "scheduled"/);
   assert.match(source, /setUpdateAutoDownloadSignal/);
   assert.match(source, /restoreScheduledUpdateRetryForManualDownload\(\)/);
+  assert.match(source, /const next = setUpdateAutoDownloadSignal\(value\);[\s\S]*if \(!next\) \{[\s\S]*restoreScheduledUpdateRetryForManualDownload\(\)/);
+  assert.doesNotMatch(source, /setUpdateAutoDownloadSignal\(\(current\) => \{[\s\S]*restoreScheduledUpdateRetryForManualDownload\(\)/);
+});
+
+test("disabling auto-download during scheduled retry does not trigger automatic download", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const systemState = createSystemStateForTest();
+      let automaticDownloads = 0;
+
+      systemState.setPendingUpdate({
+        update: createPendingUpdateForTest(),
+        version: "2026.6.1",
+        notes: "Release notes",
+      });
+      systemState.setUpdateStatus({
+        state: "downloading",
+        lastCheckedAt: 100,
+        version: "2026.6.1",
+        totalBytes: null,
+        downloadedBytes: 0,
+        notes: "Release notes",
+        retry: {
+          kind: "scheduled",
+          retryAttempt: 1,
+          maxRetries: 3,
+          nextRetryAt: Date.now() + 30_000,
+        },
+      });
+
+      createEffect(() => {
+        if (!systemState.updateAutoDownload()) return;
+        const state = systemState.updateStatus();
+        if (state.state !== "available") return;
+        if (!systemState.pendingUpdate()) return;
+        automaticDownloads += 1;
+      });
+
+      await tick();
+      assert.equal(automaticDownloads, 0);
+
+      systemState.setUpdateAutoDownload(false);
+      await tick();
+
+      assert.equal(systemState.updateAutoDownload(), false);
+      assert.equal(systemState.updateStatus().state, "available");
+      assert.equal(automaticDownloads, 0);
+    } finally {
+      dispose();
+    }
+  });
 });
 
 test("stale updater progress does not mutate scheduled retry state", () => {

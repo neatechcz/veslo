@@ -138,14 +138,13 @@ export function createSystemState(options: {
     );
   }
 
-  const setUpdateAutoDownload: typeof setUpdateAutoDownloadSignal = (value) =>
-    setUpdateAutoDownloadSignal((current) => {
-      const next = typeof value === "function" ? value(current) : value;
-      if (!next) {
-        restoreScheduledUpdateRetryForManualDownload();
-      }
-      return next;
-    });
+  const setUpdateAutoDownload: typeof setUpdateAutoDownloadSignal = (value) => {
+    const next = setUpdateAutoDownloadSignal(value);
+    if (!next) {
+      restoreScheduledUpdateRetryForManualDownload();
+    }
+    return next;
+  };
 
   const anyActiveRuns = createMemo(() => {
     const statuses = options.sessionStatusById();
