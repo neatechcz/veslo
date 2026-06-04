@@ -100,3 +100,29 @@ test("optimistic submitted drafts show the responding label before assistant par
     "a first optimistic submit should read as Responding/Odpovídám, not as a workspace-loading or thinking-only state",
   );
 });
+
+test("optimistic responding state renders as an assistant message instead of footer text", () => {
+  assert.match(
+    sessionSource,
+    /pendingSubmittedDraftToAssistantPlaceholderMessage/,
+    "session view should use a synthetic assistant placeholder while a pending submit is waiting for backend assistant output",
+  );
+
+  assert.match(
+    sessionSource,
+    /const optimisticAssistantRespondingMessage = createMemo<MessageWithParts \| null>\(\(\) => \{[\s\S]*if \(responseStarted\(\)\) return null;[\s\S]*return pendingSubmittedDraftToAssistantPlaceholderMessage\(/s,
+    "the placeholder should disappear as soon as the real backend assistant response starts",
+  );
+
+  assert.match(
+    sessionSource,
+    /const sourceMessages = optimisticAssistantMessage\s*\?\s*\[\.\.\.messagesWithOptimisticUser, optimisticAssistantMessage\]\s*:\s*messagesWithOptimisticUser;/,
+    "rendered messages should append the responding assistant placeholder after the optimistic user message",
+  );
+
+  assert.match(
+    sessionSource,
+    /const showFooterRunIndicator = createMemo\(\(\) => showRunIndicator\(\) && !optimisticAssistantRespondingMessage\(\)\);[\s\S]*footer=\{\s*showFooterRunIndicator\(\) \?/s,
+    "the footer run indicator should be suppressed while the responding placeholder is rendered as an assistant message",
+  );
+});

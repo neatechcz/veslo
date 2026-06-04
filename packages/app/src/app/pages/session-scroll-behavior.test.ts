@@ -73,13 +73,14 @@ test("failed pending handoff restores the pending submit to its original pending
   );
 });
 
-test("session renders a temporary submitted user message until the real transcript takes over", () => {
+test("session renders temporary submitted user and responding assistant messages until the real transcript takes over", () => {
   const optimisticIndex = source.indexOf("const optimisticSubmittedMessage = createMemo<MessageWithParts | null>(() => {");
+  const assistantIndex = source.indexOf("const optimisticAssistantRespondingMessage = createMemo<MessageWithParts | null>(() => {");
   const renderedIndex = source.indexOf("const renderedMessages = createMemo(() => {");
 
   assert.ok(
-    optimisticIndex >= 0 && optimisticIndex < renderedIndex,
-    "the optimistic submitted message memo must be defined before renderedMessages reads it",
+    optimisticIndex >= 0 && assistantIndex > optimisticIndex && assistantIndex < renderedIndex,
+    "the optimistic submitted user and responding assistant memos must be defined before renderedMessages reads them",
   );
 
   assert.match(
@@ -90,8 +91,14 @@ test("session renders a temporary submitted user message until the real transcri
 
   assert.match(
     source,
-    /const optimisticMessage = optimisticSubmittedMessage\(\);\s*const sourceMessages = optimisticMessage \? \[\.\.\.props\.messages, optimisticMessage\] : props\.messages;/,
-    "rendered messages should append the optimistic user message to the transcript source",
+    /pendingSubmittedDraftToAssistantPlaceholderMessage\([\s\S]*submitted,[\s\S]*props\.activeWorkspaceRoot,[\s\S]*tr\("session\.run_responding"\),[\s\S]*\)/s,
+    "session should derive a synthetic assistant responding message while backend output has not started",
+  );
+
+  assert.match(
+    source,
+    /const optimisticMessage = optimisticSubmittedMessage\(\);\s*const optimisticAssistantMessage = optimisticAssistantRespondingMessage\(\);\s*const messagesWithOptimisticUser = optimisticMessage \? \[\.\.\.props\.messages, optimisticMessage\] : props\.messages;\s*const sourceMessages = optimisticAssistantMessage\s*\?\s*\[\.\.\.messagesWithOptimisticUser, optimisticAssistantMessage\]\s*:\s*messagesWithOptimisticUser;/,
+    "rendered messages should append the optimistic user message and then the responding assistant placeholder",
   );
 
   assert.match(
