@@ -221,6 +221,23 @@ test("by-project sidebar renders private chats as a bottom section", () => {
     /data-sidebar-chat-collapsed="true"[\s\S]*onClick=\{startQuickChatFromCollapsed\}[\s\S]*disabled=\{!props\.onQuickNewSession\}[\s\S]*aria-label=\{tr\("sidebar\.new_chat"\)\}[\s\S]*title=\{tr\("sidebar\.new_chat"\)\}[\s\S]*<Plus size=\{12\} \/>[\s\S]*<span>\{tr\("sidebar\.chat"\)\}<\/span>/,
     "collapsed Chats should expose a compact + Chat button",
   );
+  assert.doesNotMatch(
+    source,
+    /data-sidebar-chat-collapsed="true"[\s\S]*data-tooltip=\{tr\("sidebar\.new_chat"\)\}/,
+    "collapsed + Chat should not use the custom tooltip attribute",
+  );
+  const collapsedChatStart = source.indexOf('data-sidebar-chat-collapsed="true"');
+  const collapsedQuickChatClick = source.indexOf("onClick={startQuickChatFromCollapsed}", collapsedChatStart);
+  const collapsedQuickChatEnd = source.indexOf("</button>", collapsedQuickChatClick);
+  assert.notEqual(collapsedChatStart, -1, "collapsed Chats markup should be present");
+  assert.notEqual(collapsedQuickChatClick, -1, "collapsed + Chat button should be present");
+  assert.notEqual(collapsedQuickChatEnd, -1, "collapsed + Chat button markup should close");
+  const collapsedQuickChatButtonSource = source.slice(collapsedChatStart, collapsedQuickChatEnd);
+  assert.doesNotMatch(
+    collapsedQuickChatButtonSource,
+    /sidebarControlTooltipClass/,
+    "collapsed + Chat should not use the custom tooltip class",
+  );
   assert.match(
     source,
     /data-sidebar-chat-expand-button="true"[\s\S]*data-sidebar-chat-collapsed-resize-handle="true"[\s\S]*onPointerDown=\{handleChatSidebarResizeStart\}[\s\S]*onClick=\{expandChatSidebar\}[\s\S]*aria-label=\{tr\("sidebar\.chats"\)\}[\s\S]*title=\{tr\("sidebar\.chats"\)\}[\s\S]*<ChevronUp size=\{11\} \/>/,
