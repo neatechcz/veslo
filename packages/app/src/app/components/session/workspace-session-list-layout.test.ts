@@ -224,9 +224,32 @@ test("by-project sidebar renders private chats as a bottom section", () => {
     /disabled=\{!props\.onQuickNewSession \|\| props\.newTaskDisabled\}/,
     "Chaty new-chat button should not be disabled by unrelated newTaskDisabled state",
   );
-  assert.match(source, /const chatRows = \(\) => visibleProjectRowsForGroup\(chatGroup\(\)\);/);
+  assert.match(source, /const chatRows = \(\) => \{\s*const group = chatGroup\(\);\s*return group \? visibleProjectRowsForGroup\(group\) : \[\];\s*\};/);
   assert.match(source, /const canLoadMoreChatRows = \(\) => hasHiddenChatRows\(\) \|\| chatPaging\(\)\.hasMore;/);
-  assert.match(source, /void loadMoreProjectRowsForGroup\(chatGroup\(\)\);/);
-  assert.match(source, /resetProjectVisibleRowsForGroup\(chatGroup\(\)\)/);
+  assert.match(source, /if \(group\) void loadMoreProjectRowsForGroup\(group\);/);
+  assert.match(source, /if \(group\) resetProjectVisibleRowsForGroup\(group\);/);
   assert.match(source, /showWorkspaceMenu: false/);
+});
+
+test("by-project sidebar keeps the Chaty section visible before any private chat exists", () => {
+  assert.match(
+    source,
+    /const shouldShowChatSidebar = createMemo\(\(\) =>\s*sidebarMode\(\) === "by-project" && \(Boolean\(chatProjectGroup\(\)\) \|\| Boolean\(props\.onQuickNewSession\)\)/,
+    "Chaty should render on a fresh install even before the first private chat creates a chat group",
+  );
+  assert.match(
+    source,
+    /const chatGroup = \(\) => chatProjectGroup\(\);/,
+    "Chaty should keep reading the real private chat group when one exists",
+  );
+  assert.match(
+    source,
+    /const chatRows = \(\) => \{\s*const group = chatGroup\(\);\s*return group \? visibleProjectRowsForGroup\(group\) : \[\];\s*\};/,
+    "empty fresh installs should render the Chaty shell without requiring session rows",
+  );
+  assert.match(
+    source,
+    /<Show when=\{chatRows\(\)\.length > 0\} fallback=\{[\s\S]*tr\("sidebar\.no_sessions"\)[\s\S]*\}>/,
+    "expanded empty Chaty should show an explicit empty state instead of a blank panel",
+  );
 });

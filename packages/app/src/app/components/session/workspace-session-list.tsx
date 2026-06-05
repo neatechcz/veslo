@@ -607,6 +607,9 @@ export default function WorkspaceSessionList(props: Props) {
   const projectSidebarSplit = createMemo(() => splitProjectGroupsForSidebar(allProjectModeGroups()));
   const normalProjectGroups = createMemo(() => projectSidebarSplit().projectGroups);
   const chatProjectGroup = createMemo(() => projectSidebarSplit().chatGroup);
+  const shouldShowChatSidebar = createMemo(() =>
+    sidebarMode() === "by-project" && (Boolean(chatProjectGroup()) || Boolean(props.onQuickNewSession))
+  );
   const recentFallbackProjectGroups = createMemo(() =>
     normalProjectGroups().filter((group) => group.isWorkspaceOnlyProject && group.sessions.length === 0),
   );
@@ -2138,6 +2141,40 @@ export default function WorkspaceSessionList(props: Props) {
         : "text-gray-11 hover:bg-gray-3 hover:text-gray-12"
     }`;
 
+  const chatGroup = () => chatProjectGroup();
+  const chatHierarchy = () => buildRowHierarchyLookup(chatGroup()?.sessions ?? []);
+  const chatVisibleCount = () => {
+    const group = chatGroup();
+    return group ? projectVisibleCountForGroup(group) : PROJECT_VISIBLE_DEFAULT;
+  };
+  const chatTreeVisibleRows = () => {
+    const group = chatGroup();
+    return group ? projectTreeVisibleRowsForGroup(group) : [];
+  };
+  const chatRows = () => {
+    const group = chatGroup();
+    return group ? visibleProjectRowsForGroup(group) : [];
+  };
+  const chatHasChildren = (sessionId: string) =>
+    (chatHierarchy().childrenByParentId.get(sessionId)?.length ?? 0) > 0;
+  const chatPaging = () => {
+    const group = chatGroup();
+    return group
+      ? projectPagingForGroup(group)
+      : { hasMore: false, loadingMore: false, nextWorkspaceId: null };
+  };
+  const hasHiddenChatRows = () => chatTreeVisibleRows().length > chatVisibleCount();
+  const canLoadMoreChatRows = () => hasHiddenChatRows() || chatPaging().hasMore;
+  const chatLoadMoreCount = () =>
+    computeVisibleRowLoadCount(
+      chatTreeVisibleRows().length,
+      chatVisibleCount(),
+      chatPaging().hasMore,
+      VIEW_LOAD_MORE_STEP,
+    );
+  const canShowLessChatRows = () =>
+    shouldShowLessVisibleRowsControl(chatVisibleCount(), PROJECT_VISIBLE_DEFAULT);
+
   return (
     <div class="flex h-full min-h-0 flex-col">
       <div class="mb-3 flex flex-nowrap items-center gap-1">
@@ -2574,117 +2611,103 @@ export default function WorkspaceSessionList(props: Props) {
           </Show>
         </div>
       </div>
-      <Show when={sidebarMode() === "by-project" && chatProjectGroup()}>
-        {(chatGroup) => {
-          const chatHierarchy = () => buildRowHierarchyLookup(chatGroup().sessions);
-          const visibleCount = () => projectVisibleCountForGroup(chatGroup());
-          const chatTreeVisibleRows = () => projectTreeVisibleRowsForGroup(chatGroup());
-          const chatRows = () => visibleProjectRowsForGroup(chatGroup());
-          const hasChildren = (sessionId: string) =>
-            (chatHierarchy().childrenByParentId.get(sessionId)?.length ?? 0) > 0;
-          const chatPaging = () => projectPagingForGroup(chatGroup());
-          const hasHiddenChatRows = () => chatTreeVisibleRows().length > visibleCount();
-          const canLoadMoreChatRows = () => hasHiddenChatRows() || chatPaging().hasMore;
-          const chatLoadMoreCount = () =>
-            computeVisibleRowLoadCount(
-              chatTreeVisibleRows().length,
-              visibleCount(),
-              chatPaging().hasMore,
-              VIEW_LOAD_MORE_STEP,
-            );
-          const canShowLessChatRows = () =>
-            shouldShowLessVisibleRowsControl(visibleCount(), PROJECT_VISIBLE_DEFAULT);
-
-          return (
-            <Show when={!chatSidebarCollapsed()} fallback={
+      <Show when={shouldShowChatSidebar()}>
+        <Show when={!chatSidebarCollapsed()} fallback={
+          <button
+            type="button"
+            data-sidebar-chat-collapsed="true"
+            data-sidebar-chat-collapsed-resize-handle="true"
+            class="mt-2 flex h-9 w-full shrink-0 cursor-ns-resize items-center justify-between border-t border-gray-6/70 px-1.5 pt-2 text-[12px] font-semibold text-gray-10 transition-colors hover:text-gray-12"
+            style={{ cursor: "ns-resize" }}
+            onPointerDown={handleChatSidebarResizeStart}
+            onClick={expandChatSidebar}
+            aria-label={tr("sidebar.chats")}
+            title={tr("sidebar.chats")}
+          >
+            <span class="truncate">{tr("sidebar.chats")}</span>
+            <ChevronUp size={11} />
+          </button>
+        }>
+          <div
+            data-sidebar-chat-section="true"
+            class="mt-2 shrink-0"
+          >
+            <button
+              type="button"
+              data-sidebar-chat-resize-handle="true"
+              class="group flex h-3 w-full cursor-ns-resize items-center px-1.5"
+              style={{ cursor: "ns-resize" }}
+              onPointerDown={handleChatSidebarResizeStart}
+              aria-label={tr("sidebar.chats")}
+              title={tr("sidebar.chats")}
+            >
+              <span class="h-px w-full rounded-full bg-gray-6/70 transition-colors group-hover:bg-gray-8" />
+            </button>
+            <div class="mb-1 flex items-center justify-between gap-2 px-1.5">
+              <span class="truncate text-[12px] font-semibold text-gray-10">
+                {tr("sidebar.chats")}
+              </span>
               <button
                 type="button"
-                data-sidebar-chat-collapsed="true"
-                data-sidebar-chat-collapsed-resize-handle="true"
-                class="mt-2 flex h-9 w-full shrink-0 cursor-ns-resize items-center justify-between border-t border-gray-6/70 px-1.5 pt-2 text-[12px] font-semibold text-gray-10 transition-colors hover:text-gray-12"
-                style={{ cursor: "ns-resize" }}
-                onPointerDown={handleChatSidebarResizeStart}
-                onClick={expandChatSidebar}
-                aria-label={tr("sidebar.chats")}
-                title={tr("sidebar.chats")}
+                data-sidebar-chat-new-button="true"
+                class="inline-flex h-7 items-center gap-1 rounded-full border border-gray-6 bg-gray-1 px-2 text-[11px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={startQuickChat}
+                disabled={!props.onQuickNewSession}
+                aria-label={tr("sidebar.new_chat")}
+                title={tr("sidebar.new_chat")}
               >
-                <span class="truncate">{tr("sidebar.chats")}</span>
-                <ChevronUp size={11} />
+                <Plus size={12} />
+                <span>{tr("sidebar.chat")}</span>
               </button>
-            }>
-              <div
-                data-sidebar-chat-section="true"
-                class="mt-2 shrink-0"
-              >
-                <button
-                  type="button"
-                  data-sidebar-chat-resize-handle="true"
-                  class="group flex h-3 w-full cursor-ns-resize items-center px-1.5"
-                  style={{ cursor: "ns-resize" }}
-                  onPointerDown={handleChatSidebarResizeStart}
-                  aria-label={tr("sidebar.chats")}
-                  title={tr("sidebar.chats")}
-                >
-                  <span class="h-px w-full rounded-full bg-gray-6/70 transition-colors group-hover:bg-gray-8" />
-                </button>
-                <div class="mb-1 flex items-center justify-between gap-2 px-1.5">
-                  <span class="truncate text-[12px] font-semibold text-gray-10">
-                    {tr("sidebar.chats")}
-                  </span>
+            </div>
+            <div
+              class="overflow-y-auto pr-1"
+              style={{
+                height: `${chatSidebarListHeight()}px`,
+              }}
+            >
+              <Show when={chatRows().length > 0} fallback={
+                <div class="px-3 py-1.5 text-xs text-gray-10">{tr("sidebar.no_sessions")}</div>
+              }>
+                {renderSessionTreeRows(() => chatRows(), chatHasChildren, {
+                  anchorPrefix: "chat-session",
+                  label: (row) => sessionChatLabel(row.session, tr("session.chat_label")),
+                  showWorkspaceMenu: false,
+                })}
+              </Show>
+              <Show when={canLoadMoreChatRows()}>
+                <div>
                   <button
                     type="button"
-                    class="inline-flex h-7 items-center gap-1 rounded-full border border-gray-6 bg-gray-1 px-2 text-[11px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2 disabled:cursor-not-allowed disabled:opacity-60"
-                    onClick={startQuickChat}
-                    disabled={!props.onQuickNewSession}
-                    aria-label={tr("sidebar.new_chat")}
-                    title={tr("sidebar.new_chat")}
+                    class="w-full inline-flex items-center gap-1 rounded-xl px-3 py-1 text-left text-[11px] text-gray-9 transition-colors hover:bg-gray-3/70 hover:text-gray-11 disabled:opacity-60 disabled:cursor-not-allowed"
+                    disabled={chatPaging().loadingMore}
+                    onClick={() => {
+                      const group = chatGroup();
+                      if (group) void loadMoreProjectRowsForGroup(group);
+                    }}
                   >
-                    <Plus size={12} />
-                    <span>{tr("sidebar.chat")}</span>
+                    <span aria-hidden>{tr("sidebar.more_ellipsis")}</span>
+                    <span>{chatPaging().loadingMore ? tr("sidebar.loading_more") : loadMoreLabel(chatLoadMoreCount())}</span>
                   </button>
                 </div>
-                <div
-                  class="overflow-y-auto pr-1"
-                  style={{
-                    height: `${chatSidebarListHeight()}px`,
-                  }}
-                >
-                  {renderSessionTreeRows(() => chatRows(), hasChildren, {
-                    anchorPrefix: "chat-session",
-                    label: (row) => sessionChatLabel(row.session, tr("session.chat_label")),
-                    showWorkspaceMenu: false,
-                  })}
-                  <Show when={canLoadMoreChatRows()}>
-                    <div>
-                      <button
-                        type="button"
-                        class="w-full inline-flex items-center gap-1 rounded-xl px-3 py-1 text-left text-[11px] text-gray-9 transition-colors hover:bg-gray-3/70 hover:text-gray-11 disabled:opacity-60 disabled:cursor-not-allowed"
-                        disabled={chatPaging().loadingMore}
-                        onClick={() => {
-                          void loadMoreProjectRowsForGroup(chatGroup());
-                        }}
-                      >
-                        <span aria-hidden>{tr("sidebar.more_ellipsis")}</span>
-                        <span>{chatPaging().loadingMore ? tr("sidebar.loading_more") : loadMoreLabel(chatLoadMoreCount())}</span>
-                      </button>
-                    </div>
-                  </Show>
-                  <Show when={canShowLessChatRows()}>
-                    <div>
-                      <button
-                        type="button"
-                        class="w-full inline-flex items-center gap-1 rounded-xl px-3 py-1 text-left text-[11px] text-gray-9 transition-colors hover:bg-gray-3/70 hover:text-gray-11 disabled:opacity-60 disabled:cursor-not-allowed"
-                        onClick={() => resetProjectVisibleRowsForGroup(chatGroup())}
-                      >
-                        <span>{tr("sidebar.show_less")}</span>
-                      </button>
-                    </div>
-                  </Show>
+              </Show>
+              <Show when={canShowLessChatRows()}>
+                <div>
+                  <button
+                    type="button"
+                    class="w-full inline-flex items-center gap-1 rounded-xl px-3 py-1 text-left text-[11px] text-gray-9 transition-colors hover:bg-gray-3/70 hover:text-gray-11 disabled:opacity-60 disabled:cursor-not-allowed"
+                    onClick={() => {
+                      const group = chatGroup();
+                      if (group) resetProjectVisibleRowsForGroup(group);
+                    }}
+                  >
+                    <span>{tr("sidebar.show_less")}</span>
+                  </button>
                 </div>
-              </div>
-            </Show>
-          );
-        }}
+              </Show>
+            </div>
+          </div>
+        </Show>
       </Show>
       {workspaceMenu()}
       <Show when={projectDragPreview()}>
