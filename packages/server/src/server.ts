@@ -3283,7 +3283,6 @@ function createRoutes(
     ensureWritable(config);
 
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    ctx.automationRunner.removeWorkspace(workspace.id);
 
     // Attempt to persist to server.json (when present) before mutating in-memory state.
     const configPath = config.configPath?.trim() ?? "";
@@ -3298,6 +3297,7 @@ function createRoutes(
     if (deleted) {
       // Only remove exact matches; authorizedRoots can contain broader entries.
       config.authorizedRoots = config.authorizedRoots.filter((root) => resolve(root) !== resolve(workspace.path));
+      ctx.automationRunner.removeWorkspace(workspace.id);
     }
 
     await recordAudit(workspace.path, {

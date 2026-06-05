@@ -299,6 +299,36 @@ test("DELETE /workspaces/:id clears scheduled automation timers before they can 
   expect(fixture.openCodeCalls).toEqual([]);
 });
 
+test("failed workspace deletion preserves automation runner state for later runs", async () => {
+  const configDir = await mkdtemp(join(tmpdir(), "veslo-automations-bad-config-"));
+  tempDirs.push(configDir);
+  const configPath = join(configDir, "server.json");
+  await writeFile(configPath, "{not json", "utf8");
+  const fixture = await startFixture({ configPath });
+  const created = await fixture.createAutomation();
+
+  const deleteResponse = await fixture.hostFetch("/workspaces/ws_1", { method: "DELETE" });
+  expect(deleteResponse.status).toBe(422);
+
+  const runResponse = await fixture.clientFetch(`/workspace/ws_1/automations/${created.id}/run`, {
+    method: "POST",
+  });
+
+  expect(runResponse.status).toBe(200);
+  const payload = await runResponse.json() as { run: AutomationRun };
+  expect(payload.run).toMatchObject({
+    automationId: created.id,
+    status: "success",
+    sessionId: "ses_new",
+    createdSession: true,
+  });
+  expect(fixture.openCodeCalls).toContainEqual({
+    method: "POST",
+    pathname: "/session/ses_new/prompt_async",
+    body: { parts: [{ type: "text", text: "Run once" }] },
+  });
+});
+
 test("POST /workspace/ws_1/automations rejects duplicate ids without replacing existing data", async () => {
   const fixture = await startFixture();
   const existing = fixture.makeAutomation({ id: "auto_duplicate", name: "Original", prompt: "Keep me" });
@@ -422,6 +452,7 @@ test("legacy Agent Lab run reports failed runner result instead of ok true", asy
 type FixtureOptions = {
   readOnly?: boolean;
   failPrompt?: boolean;
+  configPath?: string;
   beforeStart?: (workspaceRoot: string) => Promise<void>;
   extraWorkspaces?: Array<{
     id: string;
@@ -478,6 +509,7 @@ async function startFixture(options: FixtureOptions = {}) {
       ...(options.extraWorkspaces ?? []),
     ],
     authorizedRoots: [workspaceRoot],
+    configPath: options.configPath,
     readOnly: options.readOnly ?? false,
     startedAt: Date.now(),
     tokenSource: "cli",
