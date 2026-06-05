@@ -16,6 +16,32 @@ Current responsibilities:
 
 The page is a management and launch surface. It is not the scheduler implementation itself.
 
+## Veslo Automations
+
+Veslo automations are persistent workspace definitions managed by Veslo server.
+They can be one-shot or recurring. Each automation stores its prompt, schedule,
+target session hints, enabled state, lifecycle status, next scheduled run time,
+and completed run history.
+
+Supported public behavior:
+
+- One-shot automations run once and then remain visible as completed history.
+- Recurring automations compute and persist the next future run after a
+  successful scheduled occurrence.
+- Paused, disabled, failed, completed, and cancelled automations do not continue
+  scheduling until reactivated where applicable.
+- Manual run executes immediately through the workspace OpenCode upstream and
+  records a run entry without erasing prior history.
+- Deleting an automation cancels the active definition but preserves its run
+  history for completed/history views.
+
+Automation reads are available to viewer-level clients. Creating, updating,
+cancelling, and manual runs require collaborator access.
+
+Legacy Agent Lab scheduler routes remain compatibility aliases. Older Agent Lab
+automation files are migrated into the canonical Veslo automation store on
+server read when the canonical store does not already exist.
+
 ## Soul
 
 The Soul UI lives in `packages/app/src/app/pages/soul.tsx`.

@@ -13,6 +13,7 @@ The app treats Veslo server as the canonical workspace-control API for:
 - audit trail
 - import/export
 - reload requests
+- persistent automations and automation run history
 - capabilities discovery
 - OpenCode and OpenCode Router proxying
 
@@ -207,6 +208,44 @@ Common app flows:
   Ask the engine to reread config for a workspace.
 
 Use workspace-scoped URLs whenever possible, including the mounted `/w/:id/...` forms.
+
+## Automations Contract
+
+Veslo server is the app-facing API for workspace automations. The app should use
+these routes instead of writing automation JSON directly:
+
+- `GET /workspace/:id/automations`
+  Requires client auth. Viewer, collaborator, and owner tokens can read. Returns
+  `{ items, updatedAt }`; reading migrates legacy Agent Lab automation state
+  into the canonical automation store when needed.
+- `POST /workspace/:id/automations`
+  Requires collaborator client auth. Creates an automation from `name`,
+  `prompt`, `schedule`, optional `target`, and optional `enabled`/`status`.
+  Active enabled automations return a persisted `automation.nextRunAt`.
+- `PATCH /workspace/:id/automations/:automationId`
+  Requires collaborator client auth. Updates name, prompt, schedule, target, and
+  pause/resume/cancel state. Paused, disabled, completed, failed, and cancelled
+  automations do not have a scheduled `nextRunAt`.
+- `DELETE /workspace/:id/automations/:automationId`
+  Requires collaborator client auth. Cancels the automation by marking it
+  disabled with `status: "cancelled"` and `nextRunAt: null`; run history is
+  preserved.
+- `POST /workspace/:id/automations/:automationId/run`
+  Requires collaborator client auth. Runs the automation immediately through the
+  workspace OpenCode upstream and returns `{ run }`.
+- `GET /workspace/:id/automations/:automationId/runs`
+  Requires client auth. Viewer, collaborator, and owner tokens can read run
+  history. Returns `{ items }`.
+
+Automation mutation routes record audit actions `automations.create`,
+`automations.update`, `automations.delete`, and `automations.run`. The server
+refreshes the in-process automation runner after create/update/delete so local
+schedules reflect persisted state.
+
+Agent Lab compatibility routes under
+`/workspace/:id/agentlab/automations...` remain available for older callers.
+They read through the canonical automation store and legacy migration path
+where practical, while new app work should target `/workspace/:id/automations`.
 
 ## Capability Discovery
 

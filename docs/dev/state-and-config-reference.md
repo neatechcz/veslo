@@ -6,6 +6,7 @@ This document describes the main persistence and config surfaces used by Veslo.
 
 - App-global UI preferences: browser storage keys in the Solid app.
 - Workspace-scoped config: `.opencode/veslo.json`.
+- Workspace automation state: `.opencode/veslo/automations.json`.
 - OpenCode config: `opencode.json` or `opencode.jsonc`.
 - Server connection state: browser storage keys managed by `veslo-server.ts`.
 - Den auth state: browser storage keys managed by `den-auth.ts`.
@@ -231,6 +232,34 @@ Meaning:
   Whether queued reloads should apply automatically when the workspace is idle.
 - `reload.resume`
   Whether Veslo should try to restore session continuity after an automatic reload.
+
+## Workspace Automation State
+
+Persistent Veslo automations live in:
+
+- `<workspace>/.opencode/veslo/automations.json`
+
+The file stores automation definitions and run history together under schema
+version 1. Definitions include `name`, `prompt`, `schedule`, `target`,
+`enabled`, `status`, `nextRunAt`, and timestamps. Runs are append-or-replace
+history records keyed by run id and are not removed when an automation is
+completed or cancelled.
+
+The local `veslo-server` process owns runtime scheduling. On startup it creates
+an automation runner for configured workspaces, reads the canonical store,
+initializes missing `nextRunAt` values for active enabled automations, recovers
+recent due runs, skips stale missed runs after the runner grace window, and
+sends prompts to the workspace OpenCode upstream. Mutating automation routes
+refresh the runner for that workspace after the store write.
+
+Legacy Agent Lab scheduler data may still exist at:
+
+- `<workspace>/.opencode/veslo/agentlab/automations.json`
+
+When the canonical automation file is absent, server reads migrate valid legacy
+items into `.opencode/veslo/automations.json` and preserve legacy last-run
+metadata as run history. The legacy file is left in place for compatibility; the
+canonical file becomes the source of truth after migration.
 
 ## OpenCode Config
 
