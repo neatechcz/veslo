@@ -333,6 +333,7 @@ export type SessionViewProps = {
   setSessionAgent: (sessionId: string, agent: string | null) => void;
   saveSession: (sessionId: string) => Promise<string>;
   sessionStatusById: Record<string, string>;
+  busySessionByWorkspaceId?: Record<string, { sessionId: string; startedAt: number }>;
   hasEarlierMessages: boolean;
   loadingEarlierMessages: boolean;
   loadEarlierMessages: (sessionId: string) => Promise<void>;
@@ -3996,6 +3997,7 @@ export default function SessionView(props: SessionViewProps) {
             pendingSelectedWorkspaceId={props.pendingSessionLoad?.workspaceId ?? null}
             suspendProjectReorder={Boolean(props.pendingSessionLoad)}
             sessionStatusById={props.sessionStatusById}
+            busySessionByWorkspaceId={props.busySessionByWorkspaceId}
             connectingWorkspaceId={props.connectingWorkspaceId}
             workspaceConnectionStateById={props.workspaceConnectionStateById}
             readyEngineWorkspaceIds={props.readyEngineWorkspaceIds}

@@ -6,12 +6,14 @@ export type SessionTranscriptSnapshot = {
   partsByMessageId: Record<string, unknown[]>;
   fetchedAt: number;
   staleAt: number;
+  source?: "sqlite" | "unavailable";
 };
 
 export type SessionTranscriptLoadInput = {
   workspaceId: string;
   sessionId: string;
   limit: number;
+  directory?: string | null;
 };
 
 export type SessionTranscriptLoadResult = {
@@ -21,6 +23,7 @@ export type SessionTranscriptLoadResult = {
   partsByMessageId?: Record<string, unknown[]>;
   fetchedAt?: number;
   staleAt?: number;
+  source?: "sqlite" | "unavailable";
 };
 
 export type SessionTranscriptPrefetchInterest = {
@@ -67,7 +70,10 @@ const normalizeId = (value: string | null | undefined) => value?.trim() ?? "";
 
 const nowMs = () => Date.now();
 
-const inFlightKey = (workspaceId: string, sessionId: string) => `${workspaceId}:${sessionId}`;
+const normalizeDirectory = (value: string | null | undefined) => value?.trim() ?? "";
+
+const inFlightKey = (workspaceId: string, sessionId: string, directory?: string | null) =>
+  `${workspaceId}:${normalizeDirectory(directory)}:${sessionId}`;
 
 const toPositiveInt = (value: number | undefined, fallback: number) => {
   if (!Number.isFinite(value) || (value ?? 0) <= 0) return fallback;
@@ -232,20 +238,21 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
   const ensureLoaded = async (input: SessionTranscriptLoadInput) => {
     const workspaceId = normalizeId(input.workspaceId);
     const sessionId = normalizeId(input.sessionId);
+    const directory = normalizeDirectory(input.directory);
     const limit = resolveDesiredLimit(workspaceId, sessionId, input.limit);
     if (!workspaceId || !sessionId) {
       throw new Error("workspaceId and sessionId are required");
     }
 
-    const warm = getWarmSnapshot({ workspaceId, sessionId, limit });
+    const warm = directory ? null : getWarmSnapshot({ workspaceId, sessionId, limit });
     if (warm) return warm;
 
-    const dedupeKey = inFlightKey(workspaceId, sessionId);
+    const dedupeKey = inFlightKey(workspaceId, sessionId, directory);
     const existing = inFlightBySession.get(dedupeKey);
     if (existing && existing.limit >= limit) return existing.promise;
 
     const run = (async () => {
-      const raw = await options.loadTranscript({ workspaceId, sessionId, limit });
+      const raw = await options.loadTranscript({ workspaceId, sessionId, limit, directory: directory || undefined });
       const fetchedAt = Number.isFinite(raw.fetchedAt) ? Math.floor(raw.fetchedAt as number) : nowMs();
       const staleAt = Number.isFinite(raw.staleAt) && (raw.staleAt as number) > fetchedAt
         ? Math.floor(raw.staleAt as number)
@@ -258,8 +265,11 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
         partsByMessageId: sanitizePartsByMessageId(raw.partsByMessageId),
         fetchedAt,
         staleAt,
+        source: raw.source,
       };
-      setCachedSnapshot(snapshot);
+      if (!directory && snapshot.source !== "unavailable") {
+        setCachedSnapshot(snapshot);
+      }
       removeFromQueue(workspaceId, sessionId);
       return snapshot;
     })();

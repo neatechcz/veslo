@@ -1511,6 +1511,144 @@ export default function App() {
     skillReloadGuard.dispose();
   });
 
+  const resolveConversationServerWorkspaceId = (workspaceIdRaw: string) => {
+    const workspaceId = workspaceIdRaw.trim();
+    if (!workspaceId) return "";
+
+    const workspace = workspaceStore.workspaces().find((entry) => entry.id === workspaceId) ?? null;
+    if (!workspace) return workspaceId;
+
+    if (workspace.workspaceType === "remote" && workspace.remoteType === "veslo") {
+      return (
+        workspace.vesloWorkspaceId?.trim() ||
+        parseVesloWorkspaceIdFromUrl(workspace.vesloHostUrl ?? "") ||
+        parseVesloWorkspaceIdFromUrl(workspace.baseUrl ?? "") ||
+        workspaceId
+      );
+    }
+
+    return workspace.vesloWorkspaceId?.trim() || workspaceId;
+  };
+
+  const resolvePassiveConversationReadClient = async () => {
+    let serverClient = vesloServerClient();
+    if (isTauriRuntime() && startupPreference() !== "server" && vesloServerStatus() === "disconnected") {
+      await ensureLocalVesloServerRunning().catch((error) => {
+        wsDebug("conversation-read:server-start:failed", {
+          error: error instanceof Error ? error.message : safeStringify(error),
+        });
+      });
+      serverClient = vesloServerClient();
+    }
+    if (serverClient) return serverClient;
+
+    if (isTauriRuntime()) {
+      await ensureLocalVesloServerRunning().catch((error) => {
+        wsDebug("conversation-read:server-start:failed", {
+          error: error instanceof Error ? error.message : safeStringify(error),
+        });
+      });
+      serverClient = vesloServerClient();
+    }
+
+    return serverClient;
+  };
+
+  const ensureConversationReadWorkspaceRegistered = async (
+    serverClient: NonNullable<ReturnType<typeof vesloServerClient>>,
+    workspaceIdRaw: string,
+    directoryRaw?: string | null,
+  ) => {
+    const workspaceId = workspaceIdRaw.trim();
+    const fallback = resolveConversationServerWorkspaceId(workspaceId);
+    if (!workspaceId) return "";
+
+    const workspace = workspaceStore.workspaces().find((entry) => entry.id === workspaceId) ?? null;
+    if (!workspace || workspace.workspaceType !== "local") return fallback;
+
+    const workspaceRoot = normalizeDirectoryPath(workspace.path?.trim() || workspace.directory?.trim() || "");
+    const targetDirectory = normalizeDirectoryPath(directoryRaw?.trim() || workspaceRoot);
+    if (!targetDirectory) return fallback;
+    const matchDirectories = new Set([workspaceRoot, targetDirectory].filter(Boolean));
+
+    const findMatchingWorkspaceId = (items: Array<{ id: string; path?: string; directory?: string; opencode?: { directory?: string } }>) => {
+      const exact = items.find((entry) => entry.id === fallback);
+      if (exact) return exact.id;
+      const match = items.find((entry) => {
+        const candidates = [
+          entry.path,
+          entry.directory,
+          entry.opencode?.directory,
+        ]
+          .map((value) => normalizeDirectoryPath(value?.trim() ?? ""))
+          .filter(Boolean);
+        return candidates.some((candidate) => matchDirectories.has(candidate));
+      });
+      return match?.id ?? "";
+    };
+
+    try {
+      const listed = await serverClient.listWorkspaces();
+      const existing = findMatchingWorkspaceId(listed.items);
+      if (existing) return existing;
+    } catch (error) {
+      wsDebug("conversation-read:workspace-list:failed", {
+        workspaceId,
+        error: error instanceof Error ? error.message : safeStringify(error),
+      });
+    }
+
+    try {
+      // Explicit read bootstrap: registers workspace metadata with Veslo server
+      // so passive reads can be routed by workspace id. This does not start
+      // or contact the OpenCode engine.
+      const added = await serverClient.addLocalWorkspace({
+        path: workspaceRoot || targetDirectory,
+        name: workspace.name?.trim() || undefined,
+      });
+      const registered = findMatchingWorkspaceId(added.items);
+      if (registered) return registered;
+    } catch (error) {
+      wsDebug("conversation-read:workspace-register:failed", {
+        workspaceId,
+        directory: targetDirectory,
+        error: error instanceof Error ? error.message : safeStringify(error),
+      });
+    }
+
+    return fallback;
+  };
+
+  const listConversationsFromVesloReadApi = async (
+    workspaceId: string,
+    directory?: string,
+  ) => {
+    const serverClient = await resolvePassiveConversationReadClient();
+    if (!serverClient) {
+      return { workspaceId, serverWorkspaceId: "", items: [], source: "unavailable" as const };
+    }
+    const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(serverClient, workspaceId, directory);
+    if (!serverWorkspaceId) {
+      return { workspaceId, serverWorkspaceId: "", items: [], source: "unavailable" as const };
+    }
+    const result = await serverClient.listConversations(serverWorkspaceId, directory);
+    return { ...result, serverWorkspaceId };
+  };
+
+  const getTranscriptFromVesloReadApi = async (
+    workspaceId: string,
+    sessionId: string,
+    limit: number,
+    directory?: string,
+  ) => {
+    const serverClient = await resolvePassiveConversationReadClient();
+    if (!serverClient) return null;
+    const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(serverClient, workspaceId, directory);
+    if (!serverWorkspaceId) return null;
+    const snapshot = await serverClient.getSessionTranscript(serverWorkspaceId, sessionId, limit, directory);
+    return snapshot.source === "unavailable" ? null : snapshot;
+  };
+
   const sessionStore = createSessionStore({
     client,
     routing: workspaceRouting,
@@ -1527,6 +1665,12 @@ export default function App() {
       onHotReloadAppliedHandler?.();
     },
     onSessionLoadComplete: () => setPendingSessionLoad(null),
+    conversationReader: () => ({
+      listConversations: async (workspaceId, directory) => {
+        const result = await listConversationsFromVesloReadApi(workspaceId, directory);
+        return { items: result.items, source: result.source };
+      },
+    }),
     shouldBrowseSessionFromDb: (sessionId) => {
       const transcriptScope = resolveSelectedSessionBrowseScope(sessionId);
       if (transcriptScope) return true;
@@ -1542,18 +1686,15 @@ export default function App() {
       );
     },
     loadOfflineTranscript: async (sessionId, limit) => {
-      if (!isTauriRuntime()) return null;
       const transcriptScope = resolveSelectedSessionBrowseScope(sessionId);
       const transcriptWorkspaceId = transcriptScope?.workspaceId ?? workspaceStore.activeWorkspaceId().trim();
       const workspaceRoot = transcriptScope?.workspaceRoot || workspaceStore.activeWorkspaceRoot().trim();
       if (!workspaceRoot) return null;
-      const { readTranscriptFromDb, dbTranscriptToSnapshot } = await import("./lib/db-reader");
-      const transcript = await readTranscriptFromDb(sessionId, limit);
-      return dbTranscriptToSnapshot(
-        sessionId,
+      return await getTranscriptFromVesloReadApi(
         transcriptWorkspaceId,
-        transcript,
+        sessionId,
         limit,
+        workspaceRoot || undefined,
       );
     },
     // VSLO-86 — selectSession uses this to decide between the offline DB
@@ -1647,8 +1788,8 @@ export default function App() {
         }
         return result;
       },
-      getSessionTranscript: async (workspaceId, sessionId, limit = 140) => {
-        const snapshot = await client.getSessionTranscript(workspaceId, sessionId, limit);
+      getSessionTranscript: async (workspaceId, sessionId, limit = 140, directory) => {
+        const snapshot = await client.getSessionTranscript(workspaceId, sessionId, limit, directory);
         hydrateTranscriptSnapshot(snapshot);
         return snapshot;
       },
@@ -1666,6 +1807,19 @@ export default function App() {
   const activeSessionId = createMemo(() => selectedSessionId());
   const activeSessions = createMemo(() => sessions());
   const activeSessionStatusById = createMemo(() => sessionStatusById());
+  const busySessionByWorkspaceId = createMemo(() => workspaceStore.workspaceBusy());
+  const activeConversationBusy = createMemo(() => {
+    const workspaceId = workspaceStore.activeWorkspaceId().trim();
+    const entry = workspaceId ? busySessionByWorkspaceId()[workspaceId] : null;
+    const sessionId = activeSessionId();
+    return Boolean(entry && sessionId && entry.sessionId === sessionId);
+  });
+  const activeComposerBusy = createMemo(() => {
+    if (activeConversationBusy()) return true;
+    const label = busyLabel();
+    if (label === "status.running") return false;
+    return busy();
+  });
   const activeMessages = createMemo(() => messages());
   const activeTodos = createMemo(() => todos());
   const activeArtifacts = createMemo(() => artifacts());
@@ -3552,21 +3706,20 @@ export default function App() {
       // Set status to "loading" SYNCHRONOUSLY before any await, so the idle-loader
       // effect (line ~2964) doesn't fire and try to contact the engine API.
       setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [workspaceId]: "loading" as const }));
-      const { readSessionsFromDb, dbSessionRowToSidebarItem } = await import("./lib/db-reader");
-      const rows = await readSessionsFromDb(directory);
+      const result = await listConversationsFromVesloReadApi(workspaceId, directory);
       const { visible: items } = partitionVesloUtilitySessions(
-        rows.map(dbSessionRowToSidebarItem).map(applyPendingInitialSessionTitle),
+        result.items.map(applyPendingInitialSessionTitle),
       );
       setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [workspaceId]: items }));
       setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [workspaceId]: "ready" as const }));
     },
     hydrateLatestSessionFromDb: async (workspaceId: string, directory: string) => {
-      const { readSessionsFromDb, readTranscriptFromDb, dbTranscriptToSnapshot } = await import("./lib/db-reader");
-      const sessions = await readSessionsFromDb(directory);
-      if (sessions.length === 0) return;
-      const latest = sessions[0];
-      const transcript = await readTranscriptFromDb(latest.id, 50);
-      const snapshot = dbTranscriptToSnapshot(latest.id, workspaceId, transcript, 50);
+      const result = await listConversationsFromVesloReadApi(workspaceId, directory);
+      if (result.items.length === 0) return;
+      const latest = result.items[0];
+      if (!latest) return;
+      const snapshot = await getTranscriptFromVesloReadApi(workspaceId, latest.id, 50, directory);
+      if (!snapshot) return;
       // Only populate the cache — don't change selectedSessionId.
       // The route effect and selectSession will pick the correct session
       // when the user clicks. Changing selectedSessionId here interfered
@@ -4019,50 +4172,37 @@ export default function App() {
     const config = resolveSidebarClientConfig(id);
     if (!config) return;
 
-    // For local workspaces without a running engine, try reading sessions
-    // directly from SQLite. Falls back to idle state if that also fails.
+    // For local workspaces without a running engine, use Veslo's passive
+    // conversation read API. Do not hit OpenCode just to render sidebar history.
     if (!config.baseUrl) {
-      if (isTauriRuntime()) {
+      const workspace = workspaceStore.workspaces().find((w) => w.id === id);
+      const wsDirectory = workspace?.path?.trim() ?? "";
+      if (wsDirectory) {
         try {
-          const workspace = workspaceStore.workspaces().find((w) => w.id === id);
-          const wsDirectory = workspace?.path?.trim() ?? "";
-          if (wsDirectory) {
-            const { readSessionsFromDb, dbSessionRowToSidebarItem } = await import("./lib/db-reader");
-            const rows = await readSessionsFromDb(wsDirectory);
-            const { visible: items } = partitionVesloUtilitySessions(
-              rows.map(dbSessionRowToSidebarItem).map(applyPendingInitialSessionTitle),
-            );
-            setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [id]: items }));
-            setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" as const }));
-            setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
-            wsDebug("sidebar:db-fallback", { id, count: items.length });
-            return;
-          }
+          const result = await listConversationsFromVesloReadApi(id, wsDirectory);
+          const { visible: items } = partitionVesloUtilitySessions(
+            result.items.map(applyPendingInitialSessionTitle),
+          );
+          setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [id]: items }));
+          setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" as const }));
+          setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
+          setSidebarSessionHasMoreByWorkspaceId((prev) => ({ ...prev, [id]: false }));
+          wsDebug("sidebar:conversation-read", {
+            id,
+            source: result.source ?? "unknown",
+            count: items.length,
+          });
+          return;
         } catch (e) {
-          wsDebug("sidebar:db-fallback:error", { id, error: String(e) });
-          // fall through to existing idle behavior
+          wsDebug("sidebar:conversation-read:error", { id, error: String(e) });
         }
       }
 
-      let changed = false;
-      setSidebarSessionStatusByWorkspaceId((prev) => {
-        if (prev[id] === "idle") return prev;
-        changed = true;
-        return { ...prev, [id]: "idle" };
-      });
-      setSidebarSessionErrorByWorkspaceId((prev) => {
-        if ((prev[id] ?? null) === null) return prev;
-        changed = true;
-        return { ...prev, [id]: null };
-      });
-      setSidebarSessionHasMoreByWorkspaceId((prev) => {
-        if ((prev[id] ?? false) === false) return prev;
-        changed = true;
-        return { ...prev, [id]: false };
-      });
-      if (changed) {
-        wsDebug("sidebar:skip", { id, reason: "no-baseUrl" });
-      }
+      setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [id]: [] }));
+      setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" as const }));
+      setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
+      setSidebarSessionHasMoreByWorkspaceId((prev) => ({ ...prev, [id]: false }));
+      wsDebug("sidebar:conversation-read:unavailable", { id });
       return;
     }
 
@@ -10370,7 +10510,7 @@ export default function App() {
     artifactFamilies: activeArtifactFamilies(),
     workingFiles: activeWorkingFiles(),
     authorizedDirs: activeAuthorizedDirs(),
-    busy: busy(),
+    busy: activeComposerBusy(),
     prompt: prompt(),
     setPrompt: setPrompt,
     reconnectNotice: sessionReconnectNotice(),
@@ -10393,6 +10533,7 @@ export default function App() {
     setSessionAgent: setSessionAgent,
     saveSession: saveSessionExport,
     sessionStatusById: activeSessionStatusById(),
+    busySessionByWorkspaceId: busySessionByWorkspaceId(),
     hasEarlierMessages: selectedSessionHasEarlierMessages(),
     loadingEarlierMessages: selectedSessionLoadingEarlierMessages(),
     loadEarlierMessages,

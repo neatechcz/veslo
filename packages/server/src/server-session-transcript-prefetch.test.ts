@@ -1,12 +1,14 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { startServer } from "./server.js";
 
 const runningServers: Array<{ stop?: (closeActiveConnections?: boolean) => void }> = [];
 const tempDirs: string[] = [];
+const envRestores: Array<() => void> = [];
 
 afterEach(async () => {
   while (runningServers.length > 0) {
@@ -16,6 +18,9 @@ afterEach(async () => {
     } catch {
       // ignore cleanup errors in tests
     }
+  }
+  while (envRestores.length > 0) {
+    envRestores.pop()?.();
   }
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
@@ -46,26 +51,98 @@ const buildMessages = (sessionId: string, limit: number) =>
     };
   });
 
+const useOpenCodeDbPath = (dbPath: string) => {
+  const previous = process.env.VESLO_OPENCODE_DB_PATH;
+  process.env.VESLO_OPENCODE_DB_PATH = dbPath;
+  envRestores.push(() => {
+    if (previous === undefined) {
+      delete process.env.VESLO_OPENCODE_DB_PATH;
+    } else {
+      process.env.VESLO_OPENCODE_DB_PATH = previous;
+    }
+  });
+};
+
+const useTempVesloDataDir = async (prefix: string) => {
+  const dataDir = await mkdtemp(join(tmpdir(), prefix));
+  tempDirs.push(dataDir);
+  const previous = process.env.VESLO_DATA_DIR;
+  process.env.VESLO_DATA_DIR = dataDir;
+  envRestores.push(() => {
+    if (previous === undefined) {
+      delete process.env.VESLO_DATA_DIR;
+    } else {
+      process.env.VESLO_DATA_DIR = previous;
+    }
+  });
+  return dataDir;
+};
+
+const seedOpenCodeDb = (dbPath: string, directory: string, transcriptLimit: number) => {
+  const db = new Database(dbPath);
+  try {
+    db.exec(`
+      CREATE TABLE session (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        directory TEXT,
+        parent_id TEXT,
+        time_created INTEGER,
+        time_updated INTEGER
+      );
+      CREATE TABLE message (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        data TEXT NOT NULL
+      );
+      CREATE TABLE part (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        data TEXT NOT NULL
+      );
+    `);
+
+    const insertSession = db.query(
+      "INSERT INTO session (id, title, directory, parent_id, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    );
+    insertSession.run("sess-clicked", "Clicked", directory, null, 10, 500);
+    insertSession.run("sess-a", "Session A", directory, null, 10, 400);
+    insertSession.run("sess-b", "Session B", directory, null, 10, 300);
+    insertSession.run("sub-2", "Sub 2", directory, "sess-a", 10, 200);
+    insertSession.run("sub-1", "Sub 1", directory, "sess-a", 10, 100);
+
+    const insertMessage = db.query("INSERT INTO message (id, session_id, data) VALUES (?1, ?2, ?3)");
+    const insertPart = db.query("INSERT INTO part (id, session_id, message_id, data) VALUES (?1, ?2, ?3, ?4)");
+    for (const sessionId of ["sess-clicked", "sess-a", "sess-b", "sub-2", "sub-1"]) {
+      for (const message of buildMessages(sessionId, transcriptLimit)) {
+        insertMessage.run(message.info.id, sessionId, JSON.stringify(message.info));
+        for (const part of message.parts) {
+          insertPart.run(part.id, sessionId, part.messageID, JSON.stringify(part));
+        }
+      }
+    }
+  } finally {
+    db.close();
+  }
+};
+
 describe("session transcript prefetch routes", () => {
-  test("POST prefetch accepts loaded sidebar payload and GET transcript returns warm snapshot", async () => {
+  test("POST prefetch accepts loaded sidebar payload and GET transcript reads from SQLite without upstream", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-session-transcript-route-"));
     tempDirs.push(workspaceRoot);
+    await useTempVesloDataDir("veslo-session-transcript-data-");
+    const dbPath = join(workspaceRoot, "opencode.db");
+    seedOpenCodeDb(dbPath, workspaceRoot, 200);
+    useOpenCodeDbPath(dbPath);
 
+    let upstreamHits = 0;
     const upstream = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
-      fetch: async (request) => {
-        const url = new URL(request.url);
-        const match = url.pathname.match(/^\/session\/([^/]+)\/message$/);
-        if (!match) return new Response("not found", { status: 404 });
-        const sessionId = decodeURIComponent(match[1] ?? "").trim();
-        if (!sessionId) return new Response("bad session", { status: 400 });
-        const limitRaw = Number(url.searchParams.get("limit") ?? "140");
-        const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.floor(limitRaw) : 140;
-        return new Response(JSON.stringify(buildMessages(sessionId, limit)), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
+      fetch: async () => {
+        upstreamHits += 1;
+        return new Response("passive transcript read must not hit OpenCode", { status: 500 });
       },
     });
     runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
@@ -104,6 +181,69 @@ describe("session transcript prefetch routes", () => {
       },
     });
     runningServers.push(server as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const conversationsResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
+      {
+        headers: {
+          Authorization: "Bearer client-token",
+        },
+      },
+    );
+    expect(conversationsResponse.status).toBe(200);
+    const conversationsPayload = await conversationsResponse.json() as {
+      workspaceId: string;
+      source: string;
+      items: Array<{
+        id: string;
+        conversationId?: string;
+        opencodeSessionId?: string;
+        directory: string;
+        parentID: string | null;
+        parentConversationId?: string | null;
+      }>;
+    };
+    expect(conversationsPayload.workspaceId).toBe("ws_1");
+    expect(conversationsPayload.source).toBe("sqlite");
+    expect(conversationsPayload.items.map((item) => item.id)).toEqual([
+      "sess-clicked",
+      "sess-a",
+      "sess-b",
+      "sub-2",
+      "sub-1",
+    ]);
+    expect(conversationsPayload.items[3]?.parentID).toBe("sess-a");
+    const sessionA = conversationsPayload.items.find((item) => item.id === "sess-a");
+    const sub2 = conversationsPayload.items.find((item) => item.id === "sub-2");
+    expect(sessionA?.conversationId).toMatch(/^conv-/);
+    expect(sessionA?.opencodeSessionId).toBe("sess-a");
+    expect(sub2?.parentConversationId).toBe(sessionA?.conversationId);
+
+    const scopedConversationsResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations?directory=${encodeURIComponent(join(workspaceRoot, "nested"))}`,
+      {
+        headers: {
+          Authorization: "Bearer client-token",
+        },
+      },
+    );
+    expect(scopedConversationsResponse.status).toBe(200);
+    const scopedConversationsPayload = await scopedConversationsResponse.json() as {
+      source: string;
+      items: unknown[];
+    };
+    expect(scopedConversationsPayload.source).toBe("sqlite");
+    expect(scopedConversationsPayload.items).toEqual([]);
+
+    const rejectedConversationsResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations?directory=${encodeURIComponent(join(tmpdir(), "veslo-outside"))}`,
+      {
+        headers: {
+          Authorization: "Bearer client-token",
+        },
+      },
+    );
+    expect(rejectedConversationsResponse.status).toBe(403);
 
     const prefetchResponse = await fetch(
       `http://127.0.0.1:${server.port}/workspace/ws_1/sessions/transcript-prefetch`,
@@ -149,12 +289,45 @@ describe("session transcript prefetch routes", () => {
       limit: number;
       messages: unknown[];
       partsByMessageId: Record<string, unknown[]>;
+      source?: string;
     };
     expect(transcriptPayload.workspaceId).toBe("ws_1");
     expect(transcriptPayload.sessionId).toBe("sess-a");
     expect(transcriptPayload.limit).toBe(12);
     expect(transcriptPayload.messages.length).toBe(12);
     expect(Object.keys(transcriptPayload.partsByMessageId).length).toBe(12);
+    expect(transcriptPayload.source).toBe("sqlite");
+
+    const conversationTranscriptResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/sessions/${encodeURIComponent(sessionA?.conversationId ?? "")}/transcript?limit=12`,
+      {
+        headers: {
+          Authorization: "Bearer client-token",
+        },
+      },
+    );
+
+    expect(conversationTranscriptResponse.status).toBe(200);
+    const conversationTranscriptPayload = await conversationTranscriptResponse.json() as {
+      sessionId: string;
+      conversationId?: string;
+      opencodeSessionId?: string;
+      messages: unknown[];
+    };
+    expect(conversationTranscriptPayload.sessionId).toBe("sess-a");
+    expect(conversationTranscriptPayload.conversationId).toBe(sessionA?.conversationId);
+    expect(conversationTranscriptPayload.opencodeSessionId).toBe("sess-a");
+    expect(conversationTranscriptPayload.messages.length).toBe(12);
+
+    const rejectedTranscriptResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/sessions/sess-a/transcript?limit=12&directory=${encodeURIComponent(join(tmpdir(), "veslo-outside"))}`,
+      {
+        headers: {
+          Authorization: "Bearer client-token",
+        },
+      },
+    );
+    expect(rejectedTranscriptResponse.status).toBe(403);
 
     const warmPrefetchResponse = await fetch(
       `http://127.0.0.1:${server.port}/workspace/ws_1/sessions/transcript-prefetch`,
@@ -184,11 +357,13 @@ describe("session transcript prefetch routes", () => {
     expect(warmPrefetchPayload.items[0]?.sessionId).toBe("sess-a");
     expect(warmPrefetchPayload.items[0]?.limit).toBe(12);
     expect(warmPrefetchPayload.items[0]?.messages.length).toBe(12);
+    expect(upstreamHits).toBe(0);
   });
 
   test("routes require client authentication", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-session-transcript-auth-"));
     tempDirs.push(workspaceRoot);
+    await useTempVesloDataDir("veslo-session-transcript-auth-data-");
 
     const upstream = Bun.serve({
       hostname: "127.0.0.1",
@@ -258,11 +433,17 @@ describe("session transcript prefetch routes", () => {
       `http://127.0.0.1:${server.port}/workspace/ws_1/sessions/sess-a/transcript?limit=12`,
     );
     expect(transcriptResponse.status).toBe(401);
+
+    const conversationsResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
+    );
+    expect(conversationsResponse.status).toBe(401);
   });
 
   test("rejects non-string loaded top-level session ids", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-session-transcript-invalid-visible-"));
     tempDirs.push(workspaceRoot);
+    await useTempVesloDataDir("veslo-session-transcript-invalid-visible-data-");
 
     const upstream = Bun.serve({
       hostname: "127.0.0.1",
@@ -334,6 +515,7 @@ describe("session transcript prefetch routes", () => {
   test("rejects non-string expanded subagent ids", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-session-transcript-invalid-expanded-"));
     tempDirs.push(workspaceRoot);
+    await useTempVesloDataDir("veslo-session-transcript-invalid-expanded-data-");
 
     const upstream = Bun.serve({
       hostname: "127.0.0.1",
@@ -402,27 +584,21 @@ describe("session transcript prefetch routes", () => {
     expect(response.status).toBe(400);
   });
 
-  test("caps oversized transcript limits before upstream fetch", async () => {
+  test("caps oversized transcript limits before passive SQLite read", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-session-transcript-limit-cap-"));
     tempDirs.push(workspaceRoot);
-    const seenLimits: number[] = [];
+    await useTempVesloDataDir("veslo-session-transcript-limit-data-");
+    const dbPath = join(workspaceRoot, "opencode.db");
+    seedOpenCodeDb(dbPath, workspaceRoot, 200);
+    useOpenCodeDbPath(dbPath);
 
+    let upstreamHits = 0;
     const upstream = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
-      fetch: async (request) => {
-        const url = new URL(request.url);
-        const match = url.pathname.match(/^\/session\/([^/]+)\/message$/);
-        if (!match) return new Response("not found", { status: 404 });
-        const sessionId = decodeURIComponent(match[1] ?? "").trim();
-        if (!sessionId) return new Response("bad session", { status: 400 });
-        const limitRaw = Number(url.searchParams.get("limit") ?? "140");
-        const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.floor(limitRaw) : 140;
-        seenLimits.push(limit);
-        return new Response(JSON.stringify(buildMessages(sessionId, limit)), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
+      fetch: async () => {
+        upstreamHits += 1;
+        return new Response("passive transcript read must not hit OpenCode", { status: 500 });
       },
     });
     runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
@@ -478,6 +654,6 @@ describe("session transcript prefetch routes", () => {
     };
     expect(transcriptPayload.limit).toBe(200);
     expect(transcriptPayload.messages.length).toBe(200);
-    expect(seenLimits).toEqual([200]);
+    expect(upstreamHits).toBe(0);
   });
 });

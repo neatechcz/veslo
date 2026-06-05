@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile, rm, readdir, realpath, rename, stat } from "node:fs/promises";
 import { createHash, randomInt, randomUUID } from "node:crypto";
 import { homedir, hostname } from "node:os";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
   ApprovalRequest,
   Capabilities,
@@ -102,6 +102,11 @@ import { FileSessionStore } from "./file-sessions.js";
 import { createSessionArchiveStore } from "./session-archives.js";
 import { deriveLatestRunArtifactsResponse } from "./session-artifacts.js";
 import { createSessionTranscriptPrefetchStore } from "./session-transcript-prefetch.js";
+import { createConversationReadStore, type ConversationSummary } from "./conversation-read-store.js";
+import {
+  createConversationBindingStore,
+  deterministicConversationId,
+} from "./conversation-binding-store.js";
 import pkg from "../package.json" with { type: "json" };
 
 const SERVER_VERSION = pkg.version;
@@ -1897,34 +1902,6 @@ function parseOptionalSessionId(input: unknown): string | undefined {
   return normalized ? normalized : undefined;
 }
 
-function resolveSessionTranscriptMessageId(message: unknown): string {
-  if (!message || typeof message !== "object") return "";
-  const record = message as Record<string, unknown>;
-  const fromRoot = typeof record.id === "string" ? record.id.trim() : "";
-  if (fromRoot) return fromRoot;
-  const info = record.info;
-  if (!info || typeof info !== "object") return "";
-  const fromInfo = typeof (info as Record<string, unknown>).id === "string"
-    ? ((info as Record<string, unknown>).id as string).trim()
-    : "";
-  return fromInfo;
-}
-
-function deriveSessionTranscriptPartsByMessageId(messages: unknown[]): Record<string, unknown[]> {
-  const partsByMessageId: Record<string, unknown[]> = {};
-  for (const message of messages) {
-    const messageId = resolveSessionTranscriptMessageId(message);
-    if (!messageId) continue;
-    if (!message || typeof message !== "object") {
-      partsByMessageId[messageId] = [];
-      continue;
-    }
-    const parts = (message as Record<string, unknown>).parts;
-    partsByMessageId[messageId] = Array.isArray(parts) ? parts : [];
-  }
-  return partsByMessageId;
-}
-
 function parseCatalogPathFilter(input: string | null): string | null {
   if (!input) return null;
   const trimmed = input.trim();
@@ -2701,20 +2678,130 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
   const serverDataDir = resolveVesloDataDir();
   const fileSessions = new FileSessionStore();
   const sessionArchives = createSessionArchiveStore();
+  const conversationReadStore = createConversationReadStore();
+  const conversationBindingStore = createConversationBindingStore({ dataDir: serverDataDir });
+
+  const attachConversationBindings = async (
+    workspaceId: string,
+    directory: string | null,
+    items: ConversationSummary[],
+  ): Promise<ConversationSummary[]> => {
+    const normalizedDirectory = directory?.trim() ?? "";
+    if (!workspaceId.trim() || !normalizedDirectory || items.length === 0) return items;
+
+    const fallbackItems = () =>
+      items.map((item) => ({
+        ...item,
+        conversationId: deterministicConversationId({
+          workspaceId,
+          directory: normalizedDirectory,
+          engineSessionId: item.id,
+        }),
+        opencodeSessionId: item.id,
+        parentConversationId: item.parentID
+          ? deterministicConversationId({
+              workspaceId,
+              directory: normalizedDirectory,
+              engineSessionId: item.parentID,
+            })
+          : null,
+        branchId: null,
+      }));
+
+    try {
+      const bindings = await conversationBindingStore.bindOpenCodeSessions({
+        workspaceId,
+        directory: normalizedDirectory,
+        sessions: items.map((item) => ({
+          engineSessionId: item.id,
+          title: item.title,
+          parentEngineSessionId: item.parentID,
+          createdAt: item.time.created,
+          updatedAt: item.time.updated,
+        })),
+      });
+
+      return items.map((item) => {
+        const binding = bindings.get(item.id);
+        return {
+          ...item,
+          conversationId:
+            binding?.conversationId ??
+            deterministicConversationId({
+              workspaceId,
+              directory: normalizedDirectory,
+              engineSessionId: item.id,
+            }),
+          opencodeSessionId: item.id,
+          parentConversationId:
+            binding?.parentConversationId ??
+            (item.parentID
+              ? deterministicConversationId({
+                  workspaceId,
+                  directory: normalizedDirectory,
+                  engineSessionId: item.parentID,
+                })
+              : null),
+          branchId: binding?.branchId ?? null,
+        };
+      });
+    } catch (error) {
+      console.warn("[veslo-server] conversation binding persistence failed", {
+        workspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return fallbackItems();
+    }
+  };
+
+  const resolveOpenCodeSessionForConversationRead = async (input: {
+    workspaceId: string;
+    directory: string | null;
+    sessionOrConversationId: string;
+  }) => {
+    const directory = input.directory?.trim() ?? "";
+    if (!input.workspaceId.trim() || !directory || !input.sessionOrConversationId.trim()) {
+      return null;
+    }
+    try {
+      return await conversationBindingStore.resolveOpenCodeSession({
+        workspaceId: input.workspaceId,
+        directory,
+        sessionOrConversationId: input.sessionOrConversationId,
+      });
+    } catch (error) {
+      console.warn("[veslo-server] conversation binding resolution failed", {
+        workspaceId: input.workspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  };
+
   const sessionTranscriptPrefetch = createSessionTranscriptPrefetchStore({
-    loadTranscript: async ({ workspaceId, sessionId, limit }) => {
+    loadTranscript: async ({ workspaceId, sessionId, limit, directory }) => {
       const workspace = await resolveWorkspace(config, workspaceId);
-      const upstreamMessages = await fetchOpencodeJson(
+      const resolvedDirectory = directory ?? resolveOpencodeDirectory(workspace);
+      const binding = await resolveOpenCodeSessionForConversationRead({
+        workspaceId: workspace.id,
+        directory: resolvedDirectory,
+        sessionOrConversationId: sessionId,
+      });
+      const opencodeSessionId = binding?.engineSessionId ?? sessionId;
+      const snapshot = await conversationReadStore.getTranscript({
+        workspaceId: workspace.id,
+        sessionId: opencodeSessionId,
+        limit,
+        directory: resolvedDirectory,
         workspace,
-        `/session/${encodeURIComponent(sessionId)}/message?limit=${encodeURIComponent(String(limit))}`,
-        { method: "GET", maxResponseBytes: OPENCODE_TRANSCRIPT_RESPONSE_MAX_BYTES },
-      );
-      const messages = Array.isArray(upstreamMessages) ? upstreamMessages : [];
+      });
       return {
         workspaceId: workspace.id,
-        sessionId,
-        messages,
-        partsByMessageId: deriveSessionTranscriptPartsByMessageId(messages),
+        sessionId: opencodeSessionId,
+        messages: snapshot.messages,
+        partsByMessageId: snapshot.partsByMessageId,
+        fetchedAt: snapshot.fetchedAt,
+        source: snapshot.source,
       };
     },
   });
@@ -3235,6 +3322,23 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     return jsonResponse({ ok: true });
   });
 
+  addRoute(routes, "GET", "/workspace/:id/conversations", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const directory = await resolveConversationReadDirectory(
+      workspace,
+      ctx.url.searchParams.get("directory"),
+    );
+    const result = await conversationReadStore.listConversations({
+      workspaceId: workspace.id,
+      directory,
+      workspace,
+    });
+    const items = result.source === "sqlite"
+      ? await attachConversationBindings(workspace.id, directory, result.items)
+      : result.items;
+    return jsonResponse({ ...result, items });
+  });
+
   addRoute(routes, "POST", "/workspace/:id/sessions/transcript-prefetch", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
@@ -3265,17 +3369,33 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       throw new ApiError(400, "invalid_payload", "sessionId is required");
     }
     const limit = parseSessionTranscriptLimit(ctx.url.searchParams.get("limit"));
+    const directory = await resolveConversationReadDirectory(
+      workspace,
+      ctx.url.searchParams.get("directory"),
+    );
+    const binding = await resolveOpenCodeSessionForConversationRead({
+      workspaceId: workspace.id,
+      directory,
+      sessionOrConversationId: sessionId,
+    });
+    const opencodeSessionId = binding?.engineSessionId ?? sessionId;
     const snapshot = await sessionTranscriptPrefetch.getOrLoad({
       workspaceId: workspace.id,
-      sessionId,
+      sessionId: opencodeSessionId,
       limit,
+      directory,
     });
     return jsonResponse({
       workspaceId: workspace.id,
-      sessionId,
+      sessionId: opencodeSessionId,
+      conversationId: binding?.conversationId,
+      opencodeSessionId,
       limit: snapshot.limit,
       messages: snapshot.messages,
       partsByMessageId: snapshot.partsByMessageId,
+      fetchedAt: snapshot.fetchedAt,
+      staleAt: snapshot.staleAt,
+      source: snapshot.source,
     });
   });
 
@@ -7834,6 +7954,30 @@ function resolveOpencodeDirectory(workspace: WorkspaceInfo): string | null {
   if (explicit) return normalizeOpencodeDirectory(explicit);
   if (workspace.workspaceType === "local") return normalizeOpencodeDirectory(workspace.path);
   return null;
+}
+
+async function resolveConversationReadDirectory(
+  workspace: WorkspaceInfo,
+  requestedRaw: string | null,
+): Promise<string | null> {
+  const fallback = resolveOpencodeDirectory(workspace);
+  const requested = requestedRaw?.trim() ?? "";
+  if (!requested) return fallback;
+
+  if (!isAbsolute(requested)) {
+    throw new ApiError(400, "invalid_directory", "Conversation directory must be absolute");
+  }
+
+  const directory = normalizeOpencodeDirectory(resolve(requested));
+  const allowedRoots = [
+    workspace.path,
+    fallback,
+  ].filter((value): value is string => Boolean(value?.trim()));
+  const authorized = await isAuthorizedRoot(directory, allowedRoots);
+  if (!authorized) {
+    throw new ApiError(403, "directory_unauthorized", "Conversation directory is outside this workspace");
+  }
+  return directory;
 }
 
 export function normalizeOpencodeDirectory(directory: string): string {

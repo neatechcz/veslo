@@ -135,6 +135,54 @@ Minimal durable tables / JSON stores:
 Every key includes `workspaceId`; every run includes `runId`; branch is nullable
 for the initial implementation but part of the schema from day one.
 
+## Phase 1b — Minimal Durable Binding Store
+
+Before the full projection exists, keep a small Veslo-owned binding table outside
+workspaces, sandboxes and OpenCode storage:
+
+```ts
+type ConversationBinding = {
+  workspaceId: string;
+  conversationId: string;
+  engine: "opencode";
+  engineSessionId: string;
+  directory: string;
+  branchId?: string | null;
+  parentConversationId?: string | null;
+  parentEngineSessionId?: string | null;
+  title?: string | null;
+  createdAt: number;
+  updatedAt: number;
+  firstSeenAt: number;
+  lastSeenAt: number;
+};
+```
+
+Implementation direction:
+
+- Store it as SQLite under `VESLO_DATA_DIR/conversations/bindings.sqlite`
+  by default, with `VESLO_CONVERSATION_BINDINGS_DB_PATH` and
+  `VESLO_CONVERSATION_BINDINGS_DIR` overrides for CI/dev/runtime-specific
+  setups.
+- Never place this store in the workspace, sandbox, bwrap filesystem, WSL
+  runtime home, or OpenCode DB.
+- Generate deterministic `conversationId` from
+  `{ engine, workspaceId, directory, engineSessionId }` so a missing local
+  binding DB can be rebuilt from passive OpenCode history.
+- Keep current UI compatibility by returning OpenCode `session.id` as `id`, and
+  add `conversationId` / `opencodeSessionId` as sidecar fields.
+- Resolve transcript requests by `workspaceId + directory + conversationId`, so
+  a conversation id from another workspace/directory fails closed.
+
+Acceptance:
+
+- Passive `/workspace/:id/conversations` persists/rebuilds bindings without
+  calling OpenCode HTTP.
+- The same OpenCode session id in two workspaces/directories maps to different
+  Veslo conversation ids.
+- New machines work without manual config through the default server data dir;
+  unusual runtimes can pin the store path with env vars.
+
 ## Phase 0 — Guardrail Audit
 
 Purpose: make current leakage points visible before moving APIs.

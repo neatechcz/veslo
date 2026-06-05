@@ -31,8 +31,12 @@ export function buildWorkspaceInfos(
       workspaceType: workspace.workspaceType ?? "local",
       baseUrl: workspace.baseUrl,
       directory: workspace.directory,
+      opencodeDbPath: workspace.opencodeDbPath,
+      opencodeDataDir: workspace.opencodeDataDir,
+      opencodeDataHome: workspace.opencodeDataHome,
       opencodeUsername: workspace.opencodeUsername,
       opencodePassword: workspace.opencodePassword,
+      opencode: workspace.opencode,
     };
   });
 }
@@ -48,8 +52,12 @@ function serializeWorkspaceConfigEntry(workspace: WorkspaceInfo): WorkspaceConfi
     ...(workspace.workspaceType ? { workspaceType: workspace.workspaceType } : {}),
     ...(workspace.baseUrl ? { baseUrl: workspace.baseUrl } : {}),
     ...(workspace.directory ? { directory: workspace.directory } : {}),
+    ...(workspace.opencodeDbPath ? { opencodeDbPath: workspace.opencodeDbPath } : {}),
+    ...(workspace.opencodeDataDir ? { opencodeDataDir: workspace.opencodeDataDir } : {}),
+    ...(workspace.opencodeDataHome ? { opencodeDataHome: workspace.opencodeDataHome } : {}),
     ...(workspace.opencodeUsername ? { opencodeUsername: workspace.opencodeUsername } : {}),
     ...(workspace.opencodePassword ? { opencodePassword: workspace.opencodePassword } : {}),
+    ...(workspace.opencode ? { opencode: workspace.opencode } : {}),
   };
 }
 

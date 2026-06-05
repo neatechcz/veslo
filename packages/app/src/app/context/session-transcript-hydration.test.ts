@@ -93,7 +93,7 @@ test("app hydrates transcript snapshots returned by veslo prefetch calls", () =>
   );
   assert.match(
     source,
-    /getSessionTranscript:\s*async\s*\(workspaceId,\s*sessionId,\s*limit = 140\)\s*=>/,
+    /getSessionTranscript:\s*async\s*\(workspaceId,\s*sessionId,\s*limit = 140,\s*directory\)\s*=>/,
     "app should wrap getSessionTranscript through the same hydration path",
   );
   assert.match(

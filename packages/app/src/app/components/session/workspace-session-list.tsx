@@ -103,6 +103,7 @@ type Props = {
   pendingSelectedWorkspaceId?: string | null;
   suspendProjectReorder?: boolean;
   sessionStatusById?: Record<string, string>;
+  busySessionByWorkspaceId?: Record<string, { sessionId: string; startedAt: number }>;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
@@ -1566,6 +1567,9 @@ export default function WorkspaceSessionList(props: Props) {
   const taskLoadErrorFor = (workspace: WorkspaceInfo, error: string | null) =>
     getWorkspaceTaskLoadErrorDisplay(workspace, error);
 
+  const isBusySession = (workspaceId: string, sessionId: string) =>
+    props.busySessionByWorkspaceId?.[workspaceId]?.sessionId === sessionId;
+
   const workspaceMenuContext = createMemo(() => {
     const target = workspaceMenuTarget();
     if (!target) return null;
@@ -1759,7 +1763,9 @@ export default function WorkspaceSessionList(props: Props) {
     const workspace = () => row.workspace;
     const session = () => row.session;
     const isSelected = () => isRowSelected(workspace().id, session().id);
-    const isSessionActive = () => (props.sessionStatusById?.[session().id] ?? "idle") !== "idle";
+    const isSessionActive = () =>
+      (props.sessionStatusById?.[session().id] ?? "idle") !== "idle" ||
+      isBusySession(workspace().id, session().id);
     const isUnread = () => isSessionUnread(session().id);
     const labelOverride = () => options.label?.().trim() ?? "";
     const label = () => {
@@ -1874,7 +1880,9 @@ export default function WorkspaceSessionList(props: Props) {
     const workspace = () => row.workspace;
     const session = () => row.session;
     const isSelected = () => isRowSelected(workspace().id, session().id);
-    const isSessionActive = () => (props.sessionStatusById?.[session().id] ?? "idle") !== "idle";
+    const isSessionActive = () =>
+      (props.sessionStatusById?.[session().id] ?? "idle") !== "idle" ||
+      isBusySession(workspace().id, session().id);
     const isUnread = () => isSessionUnread(session().id);
     const isConnecting = () => isConnectingWorkspace(workspace().id);
     const soulStatus = () => props.soulStatusByWorkspaceId[workspace().id] ?? null;

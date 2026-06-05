@@ -39,6 +39,7 @@ test("veslo server client exposes transcript prefetch methods", async () => {
     });
 
     assert.equal(typeof (client as { prefetchSessionTranscripts?: unknown }).prefetchSessionTranscripts, "function");
+    assert.equal(typeof (client as { listConversations?: unknown }).listConversations, "function");
     assert.equal(typeof (client as { getSessionTranscript?: unknown }).getSessionTranscript, "function");
 
     const prefetch = await (client as {
@@ -59,11 +60,14 @@ test("veslo server client exposes transcript prefetch methods", async () => {
       expandedSubagentSessionIds: ["sub-2", "sub-1"],
       limit: 12,
     });
+    const conversations = await (client as {
+      listConversations: (workspaceId: string, directory?: string) => Promise<unknown>;
+    }).listConversations("ws 1", "/tmp/work space");
     const transcript = await (client as {
-      getSessionTranscript: (workspaceId: string, sessionId: string, limit?: number) => Promise<unknown>;
-    }).getSessionTranscript("ws 1", "sess/a", 12);
+      getSessionTranscript: (workspaceId: string, sessionId: string, limit?: number, directory?: string) => Promise<unknown>;
+    }).getSessionTranscript("ws 1", "sess/a", 12, "/tmp/work space");
 
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 3);
 
     assert.equal(calls[0]?.url, "https://veslo.example/workspace/ws%201/sessions/transcript-prefetch");
     assert.equal(calls[0]?.method, "POST");
@@ -76,12 +80,18 @@ test("veslo server client exposes transcript prefetch methods", async () => {
       limit: 12,
     });
 
-    assert.equal(calls[1]?.url, "https://veslo.example/workspace/ws%201/sessions/sess%2Fa/transcript?limit=12");
+    assert.equal(calls[1]?.url, "https://veslo.example/workspace/ws%201/conversations?directory=%2Ftmp%2Fwork+space");
     assert.equal(calls[1]?.method, "GET");
     assert.equal(calls[1]?.headers.get("authorization"), "Bearer token-123");
     assert.equal(calls[1]?.body, null);
 
+    assert.equal(calls[2]?.url, "https://veslo.example/workspace/ws%201/sessions/sess%2Fa/transcript?limit=12&directory=%2Ftmp%2Fwork+space");
+    assert.equal(calls[2]?.method, "GET");
+    assert.equal(calls[2]?.headers.get("authorization"), "Bearer token-123");
+    assert.equal(calls[2]?.body, null);
+
     assert.equal(typeof prefetch, "object");
+    assert.equal(typeof conversations, "object");
     assert.equal(typeof transcript, "object");
   } finally {
     globalThis.fetch = previousFetch;

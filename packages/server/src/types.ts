@@ -24,8 +24,21 @@ export interface WorkspaceConfig {
   workspaceType?: WorkspaceType;
   baseUrl?: string;
   directory?: string;
+  opencodeDbPath?: string;
+  opencodeDataDir?: string;
+  opencodeDataHome?: string;
   opencodeUsername?: string;
   opencodePassword?: string;
+  opencode?: {
+    baseUrl?: string;
+    directory?: string;
+    dbPath?: string;
+    dataDir?: string;
+    dataHome?: string;
+    xdgDataHome?: string;
+    username?: string;
+    password?: string;
+  };
 }
 
 export interface WorkspaceInfo {
@@ -35,11 +48,18 @@ export interface WorkspaceInfo {
   workspaceType: WorkspaceType;
   baseUrl?: string;
   directory?: string;
+  opencodeDbPath?: string;
+  opencodeDataDir?: string;
+  opencodeDataHome?: string;
   opencodeUsername?: string;
   opencodePassword?: string;
   opencode?: {
     baseUrl?: string;
     directory?: string;
+    dbPath?: string;
+    dataDir?: string;
+    dataHome?: string;
+    xdgDataHome?: string;
     username?: string;
     password?: string;
   };
