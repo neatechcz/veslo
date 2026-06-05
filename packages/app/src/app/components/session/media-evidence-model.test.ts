@@ -129,6 +129,30 @@ test("excludes svg from inline and structured image evidence", () => {
           images: [{ src: "https://example.com/icon.svg", mediaType: "image/png", alt: "Spoofed src" }],
         },
       }),
+      part("p2-spoof-filename", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ data: "AAAA", mediaType: "image/png", filename: "icon.svg" }],
+        },
+      }),
+      part("p2-spoof-name", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ data: "BBBB", mediaType: "image/png", name: "icon.svg" }],
+        },
+      }),
+      part("p2-spoof-encoded", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ url: "https://example.com/icon%2Esvg", mediaType: "image/png", alt: "Encoded spoof" }],
+        },
+      }),
     ],
   });
 
@@ -151,6 +175,24 @@ test("infers structured bitmap url mime from extension", () => {
   assert.equal(evidence.length, 1);
   assert.equal(evidence[0]?.mime, "image/png");
   assert.equal(evidence[0]?.src, "https://example.com/preview.png");
+});
+
+test("infers structured bitmap url mime from encoded extension", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p2i-encoded",
+    defaultKind: "analyzed",
+    parts: [
+      part("p2i-encoded", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: { status: "completed", images: ["https://example.com/preview%2Epng"] },
+      }),
+    ],
+  });
+
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0]?.mime, "image/png");
+  assert.equal(evidence[0]?.src, "https://example.com/preview%2Epng");
 });
 
 test("rejects unsafe inline and structured image source schemes", () => {
@@ -438,6 +480,7 @@ test("encodes reserved filename characters in workspace file urls", () => {
 test("formats windows absolute file urls", () => {
   const evidence = buildMediaEvidenceForParts({
     sourceId: "tool:p3d",
+    workspaceRoot: "C:/Users/me/project",
     parts: [
       part("p3d", {
         type: "tool",
@@ -449,6 +492,24 @@ test("formats windows absolute file urls", () => {
 
   assert.equal(evidence.length, 1);
   assert.equal(evidence[0]?.src, "file:///C:/Users/me/project/result.png");
+});
+
+test("keeps rootless absolute created paths missing without file urls", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p3d-rootless",
+    parts: [
+      part("p3d-rootless", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "/Users/me/project/result.png" } },
+      }),
+    ],
+  });
+
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0]?.path, "/Users/me/project/result.png");
+  assert.equal(evidence[0]?.src, undefined);
+  assert.equal(evidence[0]?.status, "missing");
 });
 
 test("formats windows workspace file urls for relative created paths", () => {

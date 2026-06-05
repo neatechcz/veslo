@@ -62,17 +62,26 @@ function getToolName(part: Part): string {
   return typeof (part as any).tool === "string" ? String((part as any).tool).toLowerCase() : "";
 }
 
-function getBitmapExtension(value: string, options?: { treatUrlDelimiters?: boolean }): string {
+function safelyDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function getBitmapExtension(value: string, options?: { treatUrlDelimiters?: boolean; decode?: boolean }): string {
   const withoutQuery = options?.treatUrlDelimiters ? (value.split(/[?#]/, 1)[0] ?? value) : value;
-  const match = withoutQuery.toLowerCase().match(/\.[a-z0-9]+$/);
+  const candidate = options?.decode ? safelyDecodeURIComponent(withoutQuery) : withoutQuery;
+  const match = candidate.toLowerCase().match(/\.[a-z0-9]+$/);
   return match?.[0] ?? "";
 }
 
-function getBitmapMime(path: string, options?: { treatUrlDelimiters?: boolean }): string | null {
+function getBitmapMime(path: string, options?: { treatUrlDelimiters?: boolean; decode?: boolean }): string | null {
   return BITMAP_MIME_BY_EXTENSION[getBitmapExtension(path, options)] ?? null;
 }
 
-function hasExtension(value: string, extension: string, options?: { treatUrlDelimiters?: boolean }): boolean {
+function hasExtension(value: string, extension: string, options?: { treatUrlDelimiters?: boolean; decode?: boolean }): boolean {
   return getBitmapExtension(value, options) === extension;
 }
 
@@ -128,6 +137,7 @@ function toFileUrl(path: string, workspaceRoot?: string): string | undefined {
   if (!normalizedPath) return undefined;
 
   if (isAbsolutePath(normalizedPath)) {
+    if (!isNonEmptyString(workspaceRoot)) return undefined;
     return toAbsoluteFileUrl(normalizedPath);
   }
 
@@ -158,12 +168,21 @@ function hasAllowedImageSourceScheme(src: string): boolean {
 }
 
 function inferStructuredMimeFromSource(src: string): string | null {
-  return mimeFromDataUrl(src) ?? getBitmapMime(src, { treatUrlDelimiters: true });
+  return mimeFromDataUrl(src) ?? getBitmapMime(src, { treatUrlDelimiters: true, decode: true });
 }
 
 function hasSvgSourceExtension(src: string): boolean {
   if (/^data:/i.test(src)) return false;
-  return hasExtension(src, ".svg", { treatUrlDelimiters: true });
+  return hasExtension(src, ".svg", { treatUrlDelimiters: true, decode: true });
+}
+
+function hasSvgMetadataName(record: Record<string, unknown>): boolean {
+  const filename = record.filename;
+  const name = record.name;
+  return (
+    (isNonEmptyString(filename) && hasExtension(filename, ".svg", { decode: true })) ||
+    (isNonEmptyString(name) && hasExtension(name, ".svg", { decode: true }))
+  );
 }
 
 function isCompletedOrStatusOmittedForHistoricalParts(part: Part): boolean {
@@ -211,6 +230,7 @@ function normalizeStructuredImage(image: unknown): { src: string; mime: string; 
   const record = image as Record<string, unknown>;
   const rawSrc = [record.url, record.src, record.data].find(isNonEmptyString);
   if (!rawSrc) return null;
+  if (hasSvgMetadataName(record)) return null;
 
   const rawMime = isNonEmptyString(record.mediaType) ? record.mediaType : inferStructuredMimeFromSource(rawSrc);
   const mime = rawMime ? normalizeMime(rawMime) : "";
