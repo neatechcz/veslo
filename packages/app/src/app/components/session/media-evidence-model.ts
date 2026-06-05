@@ -99,6 +99,15 @@ function hasExtension(value: string, extension: string, options?: { treatUrlDeli
   return getBitmapExtension(value, options) === extension;
 }
 
+function hasSvgFamilyExtension(value: string, options?: { decode?: boolean }): boolean {
+  if (/^data:/i.test(value)) return false;
+  const candidate = options?.decode ? safelyDecodeURIComponentDeep(value) : value;
+  return candidate
+    .split(/[?#&=]/)
+    .map((part) => part.split(/[\\/]/).pop() ?? "")
+    .some((segment) => /\.(?:svg|svgz)$/i.test(segment));
+}
+
 function normalizeMime(value: string): string {
   return value.split(";", 1)[0]?.trim().toLowerCase() ?? "";
 }
@@ -161,6 +170,7 @@ function toFileUrl(path: string, workspaceRoot?: string): string | undefined {
 
   const normalizedRoot = normalizePath(workspaceRoot ?? "");
   if (!normalizedRoot) return undefined;
+  if (!isAbsolutePath(normalizedRoot)) return undefined;
   return toAbsoluteFileUrl(`${normalizedRoot.replace(/\/+$/, "")}/${normalizedPath.replace(/^\/+/, "")}`);
 }
 
@@ -190,16 +200,15 @@ function inferStructuredMimeFromSource(src: string): string | null {
 }
 
 function hasSvgSourceExtension(src: string): boolean {
-  if (/^data:/i.test(src)) return false;
-  return hasExtension(src, ".svg", { treatUrlDelimiters: true, decode: true });
+  return hasSvgFamilyExtension(src, { decode: true });
 }
 
 function hasSvgMetadataName(record: Record<string, unknown>): boolean {
   const filename = record.filename;
   const name = record.name;
   return (
-    (isNonEmptyString(filename) && hasExtension(filename, ".svg", { treatUrlDelimiters: true, decode: true })) ||
-    (isNonEmptyString(name) && hasExtension(name, ".svg", { treatUrlDelimiters: true, decode: true }))
+    (isNonEmptyString(filename) && hasSvgFamilyExtension(filename, { decode: true })) ||
+    (isNonEmptyString(name) && hasSvgFamilyExtension(name, { decode: true }))
   );
 }
 
@@ -221,13 +230,17 @@ function buildInlineFileEvidence(
   if (!normalizedMime || !isBitmapMime(normalizedMime)) return null;
   if (!isNonEmptyString(url) || !hasAllowedImageSourceScheme(url)) return null;
   if (hasSvgSourceExtension(url)) return null;
-  if (isNonEmptyString((part as any).filename) && hasExtension((part as any).filename, ".svg", { treatUrlDelimiters: true, decode: true })) return null;
-  if (isNonEmptyString((part as any).name) && hasExtension((part as any).name, ".svg", { treatUrlDelimiters: true, decode: true })) return null;
+  if (isNonEmptyString((part as any).filename) && hasSvgFamilyExtension((part as any).filename, { decode: true })) return null;
+  if (isNonEmptyString((part as any).name) && hasSvgFamilyExtension((part as any).name, { decode: true })) return null;
 
   return {
     id: buildEvidenceId(input.sourceId, part.id, `inline:${index}`),
     kind: input.defaultKind ?? "analyzed",
-    title: isNonEmptyString((part as any).filename) ? (part as any).filename : "Image",
+    title: isNonEmptyString((part as any).filename)
+      ? (part as any).filename
+      : isNonEmptyString((part as any).name)
+        ? (part as any).name
+        : "Image",
     mime: normalizedMime,
     src: url,
     sourcePartId: part.id,
@@ -259,7 +272,13 @@ function normalizeStructuredImage(image: unknown): { src: string; mime: string; 
   const src = rawSrc === record.data && !/^data:/i.test(rawSrc) ? `data:${mime};base64,${rawSrc}` : rawSrc;
   if (!hasAllowedImageSourceScheme(src)) return null;
   if (hasSvgSourceExtension(src)) return null;
-  const title = isNonEmptyString(record.alt) ? record.alt : "Image";
+  const title = isNonEmptyString(record.alt)
+    ? record.alt
+    : isNonEmptyString(record.filename)
+      ? record.filename
+      : isNonEmptyString(record.name)
+        ? record.name
+        : "Image";
   return { src, mime, title };
 }
 

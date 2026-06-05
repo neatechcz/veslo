@@ -218,6 +218,46 @@ test("excludes svg from inline and structured image evidence", () => {
           images: [{ data: "FFFF", mediaType: "image/png", name: "icon%2Esvg%3Fdownload=1" }],
         },
       }),
+      part("p2-spoof-png-fragment-svg", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ url: "https://example.com/safe.png%23evil.svg", mediaType: "image/png", alt: "Fragment svg" }],
+        },
+      }),
+      part("p2-spoof-png-query-svg", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ url: "https://example.com/safe.png%3Fevil.svg", mediaType: "image/png", alt: "Query svg" }],
+        },
+      }),
+      part("p2-spoof-double-encoded-png-query-svg", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ url: "https://example.com/safe.png%253Fevil.svg", mediaType: "image/png", alt: "Double query svg" }],
+        },
+      }),
+      part("p2-spoof-svgz-url", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ url: "https://example.com/icon.svgz", mediaType: "image/png", alt: "SVGZ URL" }],
+        },
+      }),
+      part("p2-spoof-svgz-name", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ data: "GGGG", mediaType: "image/png", name: "icon.svgz" }],
+        },
+      }),
       part("p2-spoof-inline-name", {
         type: "file",
         mime: "image/png",
@@ -240,6 +280,12 @@ test("excludes svg from inline and structured image evidence", () => {
         type: "file",
         mime: "image/png",
         name: "icon.svg?download=1",
+        url: "https://example.com/render",
+      }),
+      part("p2-spoof-inline-svgz", {
+        type: "file",
+        mime: "image/png",
+        filename: "icon.svgz",
         url: "https://example.com/render",
       }),
     ],
@@ -411,6 +457,42 @@ test("normalizes accepted image mime values", () => {
   assert.equal(evidence[0]?.mime, "image/png");
   assert.equal(evidence[1]?.mime, "image/png");
   assert.equal(evidence[1]?.src, "data:image/png;base64,BBBB");
+});
+
+test("uses safe name metadata as image titles", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:title-fallbacks",
+    defaultKind: "analyzed",
+    parts: [
+      part("p-title-inline", {
+        type: "file",
+        mime: "image/png",
+        name: "Inline preview",
+        url: "https://example.com/render",
+      }),
+      part("p-title-structured-filename", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ data: "AAAA", mediaType: "image/png", filename: "structured-preview.png" }],
+        },
+      }),
+      part("p-title-structured-name", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ data: "BBBB", mediaType: "image/png", name: "Named preview" }],
+        },
+      }),
+    ],
+  });
+
+  assert.equal(evidence.length, 3);
+  assert.equal(evidence[0]?.title, "Inline preview");
+  assert.equal(evidence[1]?.title, "structured-preview.png");
+  assert.equal(evidence[2]?.title, "Named preview");
 });
 
 test("does not create workspace file evidence for relative parent traversal paths", () => {
@@ -685,6 +767,25 @@ test("formats windows workspace file urls for relative created paths", () => {
 
   assert.equal(evidence.length, 1);
   assert.equal(evidence[0]?.src, "file:///C:/Users/me/project/artifacts/result.png");
+});
+
+test("keeps relative created paths missing when workspace root is not absolute", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p3-relative-root",
+    workspaceRoot: "relative/project",
+    parts: [
+      part("p3-relative-root", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "artifacts/result.png" } },
+      }),
+    ],
+  });
+
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0]?.path, "artifacts/result.png");
+  assert.equal(evidence[0]?.src, undefined);
+  assert.equal(evidence[0]?.status, "missing");
 });
 
 test("keeps ids unique when a tool has structured images and created bitmap paths", () => {
