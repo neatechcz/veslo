@@ -194,6 +194,30 @@ test("excludes svg from inline and structured image evidence", () => {
           images: [{ data: "CCCC", mediaType: "image/png", filename: "icon%252Esvg" }],
         },
       }),
+      part("p2-spoof-filename-fragment", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ data: "DDDD", mediaType: "image/png", filename: "icon.svg#x" }],
+        },
+      }),
+      part("p2-spoof-name-query", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ data: "EEEE", mediaType: "image/png", name: "icon.svg?download=1" }],
+        },
+      }),
+      part("p2-spoof-encoded-name-query", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ data: "FFFF", mediaType: "image/png", name: "icon%2Esvg%3Fdownload=1" }],
+        },
+      }),
       part("p2-spoof-inline-name", {
         type: "file",
         mime: "image/png",
@@ -204,6 +228,18 @@ test("excludes svg from inline and structured image evidence", () => {
         type: "file",
         mime: "image/png",
         filename: "icon%2Esvg",
+        url: "https://example.com/render",
+      }),
+      part("p2-spoof-inline-filename-fragment", {
+        type: "file",
+        mime: "image/png",
+        filename: "icon.svg#x",
+        url: "https://example.com/render",
+      }),
+      part("p2-spoof-inline-name-query", {
+        type: "file",
+        mime: "image/png",
+        name: "icon.svg?download=1",
         url: "https://example.com/render",
       }),
     ],
@@ -423,6 +459,39 @@ test("does not create file evidence for absolute paths outside workspace root", 
   });
 
   assert.deepEqual(evidence, []);
+});
+
+test("does not create file evidence for posix case-mismatched workspace paths", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p3-posix-case",
+    workspaceRoot: "/Users/me/project",
+    parts: [
+      part("p3-posix-case", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "/users/me/project/result.png" } },
+      }),
+    ],
+  });
+
+  assert.deepEqual(evidence, []);
+});
+
+test("keeps windows workspace containment case-insensitive", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p3-windows-case",
+    workspaceRoot: "C:/Users/me/project",
+    parts: [
+      part("p3-windows-case", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "c:/users/me/project/result.png" } },
+      }),
+    ],
+  });
+
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0]?.src, "file:///c:/users/me/project/result.png");
 });
 
 test("keeps absolute file evidence inside workspace root", () => {
@@ -659,6 +728,28 @@ test("does not extract structured images from unsuccessful tool states", () => {
     });
 
     assert.deepEqual(evidence, []);
+  }
+});
+
+test("extracts structured images for successful status aliases and omitted status", () => {
+  for (const status of ["done", "success", "succeeded", undefined]) {
+    const evidence = buildMediaEvidenceForParts({
+      sourceId: `tool:structured:${status ?? "omitted"}`,
+      defaultKind: "analyzed",
+      parts: [
+        part(`p-structured-${status ?? "omitted"}`, {
+          type: "tool",
+          tool: "browser_screenshot",
+          state: {
+            ...(status ? { status } : {}),
+            images: [{ data: "BBBB", mediaType: "image/png", alt: "Screenshot" }],
+          },
+        }),
+      ],
+    });
+
+    assert.equal(evidence.length, 1);
+    assert.equal(evidence[0]?.kind, "analyzed");
   }
 });
 

@@ -120,13 +120,17 @@ function isWindowsAbsolutePath(path: string): boolean {
 }
 
 function normalizeComparablePath(path: string): string {
-  return normalizePath(path).replace(/\/+$/, "").toLowerCase();
+  return normalizePath(path).replace(/\/+$/, "");
 }
 
 function isPathWithinRoot(path: string, root: string): boolean {
-  const normalizedPath = normalizeComparablePath(path);
-  const normalizedRoot = normalizeComparablePath(root);
+  let normalizedPath = normalizeComparablePath(path);
+  let normalizedRoot = normalizeComparablePath(root);
   if (!normalizedPath || !normalizedRoot) return false;
+  if (isWindowsAbsolutePath(normalizedPath) || isWindowsAbsolutePath(normalizedRoot)) {
+    normalizedPath = normalizedPath.toLowerCase();
+    normalizedRoot = normalizedRoot.toLowerCase();
+  }
   return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`);
 }
 
@@ -194,8 +198,8 @@ function hasSvgMetadataName(record: Record<string, unknown>): boolean {
   const filename = record.filename;
   const name = record.name;
   return (
-    (isNonEmptyString(filename) && hasExtension(filename, ".svg", { decode: true })) ||
-    (isNonEmptyString(name) && hasExtension(name, ".svg", { decode: true }))
+    (isNonEmptyString(filename) && hasExtension(filename, ".svg", { treatUrlDelimiters: true, decode: true })) ||
+    (isNonEmptyString(name) && hasExtension(name, ".svg", { treatUrlDelimiters: true, decode: true }))
   );
 }
 
@@ -217,8 +221,8 @@ function buildInlineFileEvidence(
   if (!normalizedMime || !isBitmapMime(normalizedMime)) return null;
   if (!isNonEmptyString(url) || !hasAllowedImageSourceScheme(url)) return null;
   if (hasSvgSourceExtension(url)) return null;
-  if (isNonEmptyString((part as any).filename) && hasExtension((part as any).filename, ".svg", { decode: true })) return null;
-  if (isNonEmptyString((part as any).name) && hasExtension((part as any).name, ".svg", { decode: true })) return null;
+  if (isNonEmptyString((part as any).filename) && hasExtension((part as any).filename, ".svg", { treatUrlDelimiters: true, decode: true })) return null;
+  if (isNonEmptyString((part as any).name) && hasExtension((part as any).name, ".svg", { treatUrlDelimiters: true, decode: true })) return null;
 
   return {
     id: buildEvidenceId(input.sourceId, part.id, `inline:${index}`),
