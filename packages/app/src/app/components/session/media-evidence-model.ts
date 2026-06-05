@@ -72,6 +72,10 @@ function getBitmapMime(path: string, options?: { treatUrlDelimiters?: boolean })
   return BITMAP_MIME_BY_EXTENSION[getBitmapExtension(path, options)] ?? null;
 }
 
+function hasExtension(value: string, extension: string, options?: { treatUrlDelimiters?: boolean }): boolean {
+  return getBitmapExtension(value, options) === extension;
+}
+
 function normalizeMime(value: string): string {
   return value.split(";", 1)[0]?.trim().toLowerCase() ?? "";
 }
@@ -90,6 +94,17 @@ function isAbsolutePath(path: string): boolean {
 
 function isWindowsAbsolutePath(path: string): boolean {
   return /^[A-Za-z]:\//.test(path);
+}
+
+function normalizeComparablePath(path: string): string {
+  return normalizePath(path).replace(/\/+$/, "").toLowerCase();
+}
+
+function isPathWithinRoot(path: string, root: string): boolean {
+  const normalizedPath = normalizeComparablePath(path);
+  const normalizedRoot = normalizeComparablePath(root);
+  if (!normalizedPath || !normalizedRoot) return false;
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`);
 }
 
 function hasParentPathSegment(path: string): boolean {
@@ -131,7 +146,7 @@ function buildEvidenceId(sourceId: string, partId: string, sourceKey: string): s
 
 function mimeFromDataUrl(value: string): string | null {
   const match = value.match(/^data:([^,;]+)[,;]/);
-  return match?.[1] ?? null;
+  return match ? normalizeMime(match[1] ?? "") : null;
 }
 
 function hasAllowedImageSourceScheme(src: string): boolean {
@@ -144,6 +159,11 @@ function hasAllowedImageSourceScheme(src: string): boolean {
 
 function inferStructuredMimeFromSource(src: string): string | null {
   return mimeFromDataUrl(src) ?? getBitmapMime(src, { treatUrlDelimiters: true });
+}
+
+function hasSvgSourceExtension(src: string): boolean {
+  if (/^data:/i.test(src)) return false;
+  return hasExtension(src, ".svg", { treatUrlDelimiters: true });
 }
 
 function isCompletedOrStatusOmittedForHistoricalParts(part: Part): boolean {
@@ -160,14 +180,17 @@ function buildInlineFileEvidence(
 ): MediaEvidence | null {
   const mime = (part as any).mime;
   const url = (part as any).url;
-  if (!isNonEmptyString(mime) || !isBitmapMime(mime)) return null;
+  const normalizedMime = isNonEmptyString(mime) ? normalizeMime(mime) : "";
+  if (!normalizedMime || !isBitmapMime(normalizedMime)) return null;
   if (!isNonEmptyString(url) || !hasAllowedImageSourceScheme(url)) return null;
+  if (hasSvgSourceExtension(url)) return null;
+  if (isNonEmptyString((part as any).filename) && hasExtension((part as any).filename, ".svg")) return null;
 
   return {
     id: buildEvidenceId(input.sourceId, part.id, `inline:${index}`),
     kind: input.defaultKind ?? "analyzed",
     title: isNonEmptyString((part as any).filename) ? (part as any).filename : "Image",
-    mime,
+    mime: normalizedMime,
     src: url,
     sourcePartId: part.id,
     status: "available",
@@ -180,6 +203,7 @@ function normalizeStructuredImage(image: unknown): { src: string; mime: string; 
     if (!mime) return null;
     if (!isBitmapMime(mime)) return null;
     if (!hasAllowedImageSourceScheme(image)) return null;
+    if (hasSvgSourceExtension(image)) return null;
     return { src: image, mime, title: "Image" };
   }
 
@@ -188,12 +212,14 @@ function normalizeStructuredImage(image: unknown): { src: string; mime: string; 
   const rawSrc = [record.url, record.src, record.data].find(isNonEmptyString);
   if (!rawSrc) return null;
 
-  const mime = isNonEmptyString(record.mediaType) ? record.mediaType : inferStructuredMimeFromSource(rawSrc);
+  const rawMime = isNonEmptyString(record.mediaType) ? record.mediaType : inferStructuredMimeFromSource(rawSrc);
+  const mime = rawMime ? normalizeMime(rawMime) : "";
   if (!mime) return null;
   if (!isBitmapMime(mime)) return null;
 
   const src = rawSrc === record.data && !rawSrc.startsWith("data:") ? `data:${mime};base64,${rawSrc}` : rawSrc;
   if (!hasAllowedImageSourceScheme(src)) return null;
+  if (hasSvgSourceExtension(src)) return null;
   const title = isNonEmptyString(record.alt) ? record.alt : "Image";
   return { src, mime, title };
 }
@@ -221,11 +247,19 @@ function buildStructuredImageEvidence(part: Part, input: BuildMediaEvidenceInput
   return evidence;
 }
 
-function getCreatedBitmapPath(part: Part): string | null {
+function getCreatedBitmapPath(part: Part, workspaceRoot?: string): string | null {
   const input = getInput(part);
   for (const key of CREATED_PATH_INPUT_KEYS) {
     const value = input[key];
-    if (isNonEmptyString(value) && !isAbsolutePath(normalizePath(value)) && hasParentPathSegment(normalizePath(value))) {
+    if (isNonEmptyString(value) && hasParentPathSegment(normalizePath(value))) {
+      continue;
+    }
+    if (
+      isNonEmptyString(value) &&
+      isAbsolutePath(normalizePath(value)) &&
+      isNonEmptyString(workspaceRoot) &&
+      !isPathWithinRoot(normalizePath(value), workspaceRoot)
+    ) {
       continue;
     }
     if (isNonEmptyString(value) && getBitmapMime(value)) return value;
@@ -242,7 +276,7 @@ function buildCreatedPathEvidence(
   if (DISCOVERY_ONLY_TOOLS.has(toolName) || !WRITE_LIKE_TOOLS.has(toolName)) return null;
   if (!isCompletedOrStatusOmittedForHistoricalParts(part)) return null;
 
-  const path = getCreatedBitmapPath(part);
+  const path = getCreatedBitmapPath(part, input.workspaceRoot);
   if (!path) return null;
 
   const src = toFileUrl(path, input.workspaceRoot);

@@ -107,6 +107,28 @@ test("excludes svg from inline and structured image evidence", () => {
         tool: "browser_screenshot",
         state: { status: "completed", images: [{ src: "https://example.com/icon.svg", alt: "Vector src" }] },
       }),
+      part("p2-spoof-inline", {
+        type: "file",
+        mime: "image/png",
+        filename: "icon.svg",
+        url: "https://example.com/icon.svg",
+      }),
+      part("p2-spoof-url", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ url: "https://example.com/icon.svg", mediaType: "image/png", alt: "Spoofed URL" }],
+        },
+      }),
+      part("p2-spoof-src", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ src: "https://example.com/icon.svg", mediaType: "image/png", alt: "Spoofed src" }],
+        },
+      }),
     ],
   });
 
@@ -205,6 +227,61 @@ test("keeps allowed inline and structured image source schemes", () => {
   assert.equal(evidence.some((item) => item.src === "http://example.com/preview.png"), true);
 });
 
+test("keeps extensionless sources with bitmap metadata", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p2l",
+    defaultKind: "analyzed",
+    parts: [
+      part("p2l-inline", {
+        type: "file",
+        mime: "image/png",
+        filename: "preview",
+        url: "https://example.com/render",
+      }),
+      part("p2l-tool", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ src: "blob:https://example.com/blob-id", mediaType: "image/png", alt: "Blob preview" }],
+        },
+      }),
+    ],
+  });
+
+  assert.equal(evidence.length, 2);
+  assert.equal(evidence.some((item) => item.src === "https://example.com/render"), true);
+  assert.equal(evidence.some((item) => item.src === "blob:https://example.com/blob-id"), true);
+});
+
+test("normalizes accepted image mime values", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p2m",
+    defaultKind: "analyzed",
+    parts: [
+      part("p2m-inline", {
+        type: "file",
+        mime: "Image/PNG; charset=binary",
+        filename: "inline.png",
+        url: "data:image/png;base64,AAAA",
+      }),
+      part("p2m-tool", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ data: "BBBB", mediaType: "Image/PNG; charset=binary", alt: "Normalized preview" }],
+        },
+      }),
+    ],
+  });
+
+  assert.equal(evidence.length, 2);
+  assert.equal(evidence[0]?.mime, "image/png");
+  assert.equal(evidence[1]?.mime, "image/png");
+  assert.equal(evidence[1]?.src, "data:image/png;base64,BBBB");
+});
+
 test("does not create workspace file evidence for relative parent traversal paths", () => {
   const evidence = buildMediaEvidenceForParts({
     sourceId: "tool:p3-traversal",
@@ -219,6 +296,55 @@ test("does not create workspace file evidence for relative parent traversal path
   });
 
   assert.deepEqual(evidence, []);
+});
+
+test("does not create file evidence for absolute parent traversal paths", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p3-absolute-traversal",
+    workspaceRoot: "/Users/me/project",
+    parts: [
+      part("p3-absolute-traversal", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "/Users/me/project/../private.png" } },
+      }),
+    ],
+  });
+
+  assert.deepEqual(evidence, []);
+});
+
+test("does not create file evidence for absolute paths outside workspace root", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p3-outside-root",
+    workspaceRoot: "/Users/me/project",
+    parts: [
+      part("p3-outside-root", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "/Users/me/other/result.png" } },
+      }),
+    ],
+  });
+
+  assert.deepEqual(evidence, []);
+});
+
+test("keeps absolute file evidence inside workspace root", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p3-inside-root",
+    workspaceRoot: "/Users/me/project",
+    parts: [
+      part("p3-inside-root", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "/Users/me/project/screens/result.png" } },
+      }),
+    ],
+  });
+
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0]?.src, "file:///Users/me/project/screens/result.png");
 });
 
 test("classifies concrete created bitmap paths from write-like tools", () => {
