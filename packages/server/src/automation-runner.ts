@@ -43,6 +43,7 @@ type RunnerOptions = {
   now?: () => number;
   setTimeout?: (callback: () => void, delayMs: number) => unknown;
   clearTimeout?: (handle: unknown) => void;
+  beforeReadWorkspaceStore?: (workspaceId: string) => Promise<void> | void;
   execute: (input: AutomationExecutionInput) => Promise<AutomationExecutionResult>;
 };
 
@@ -55,6 +56,8 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
   const scheduleTimeout = options.setTimeout ?? ((callback, delayMs) => setTimeout(callback, delayMs));
   const clearScheduledTimeout = options.clearTimeout ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
   const timersByWorkspace = new Map<string, Set<TimerEntry>>();
+  const refreshGenerationsByWorkspace = new Map<string, number>();
+  const inFlightRunIds = new Set<string>();
   let stopped = true;
   let generation = 0;
 
@@ -69,6 +72,9 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
   function stop(): void {
     stopped = true;
     generation += 1;
+    for (const workspace of options.workspaces) {
+      bumpWorkspaceRefreshGeneration(workspace.id);
+    }
     for (const workspaceId of timersByWorkspace.keys()) {
       clearWorkspaceTimers(workspaceId);
     }
@@ -76,12 +82,14 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
 
   async function refreshWorkspace(workspaceId: string): Promise<void> {
     const workspace = requireWorkspace(workspaceId);
+    const refreshGeneration = bumpWorkspaceRefreshGeneration(workspace.id);
     clearWorkspaceTimers(workspace.id);
     if (stopped) return;
 
-    const store = await readAutomationStore(workspace.path, workspace.id);
+    const store = await readStore(workspace);
+    if (!isRefreshCurrent(workspace.id, refreshGeneration)) return;
     for (const item of store.items) {
-      if (stopped) return;
+      if (!isRefreshCurrent(workspace.id, refreshGeneration)) return;
       if (!isRunnableAutomation(item)) continue;
 
       let automation = item;
@@ -96,13 +104,13 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
       }
 
       if (!nextRunAt) continue;
-      await recoverOrSchedule(workspace, automation.id, nextRunAt);
+      await recoverOrSchedule(workspace, automation.id, nextRunAt, refreshGeneration);
     }
   }
 
   async function runNow(workspaceId: string, automationId: string): Promise<AutomationRun> {
     const workspace = requireWorkspace(workspaceId);
-    const store = await readAutomationStore(workspace.path, workspace.id);
+    const store = await readStore(workspace);
     const automation = store.items.find((item) => item.id === automationId);
     if (!automation) {
       throw new ApiError(404, "not_found", "Automation not found");
@@ -110,20 +118,34 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
 
     const scheduledFor = nowIso(now);
     const runId = uniqueRunId(store, stableRunId(automation.id, scheduledFor));
-    const finalRun = await executeOccurrence(workspace, automation, scheduledFor, runId);
+    const isDueOneShot =
+      isRunnableAutomation(automation) &&
+      automation.schedule.kind === "oneShot" &&
+      automation.nextRunAt === scheduledFor;
+    const finalRun = await executeOccurrence(workspace, automation, scheduledFor, runId, {
+      kind: isDueOneShot ? "scheduled" : "manual",
+    });
     await schedulePersistedNext(workspace, automation.id);
     return finalRun;
   }
 
-  async function recoverOrSchedule(workspace: WorkspaceRef, automationId: string, scheduledFor: string): Promise<void> {
+  async function recoverOrSchedule(
+    workspace: WorkspaceRef,
+    automationId: string,
+    scheduledFor: string,
+    refreshGeneration: number,
+  ): Promise<void> {
+    if (!isRefreshCurrent(workspace.id, refreshGeneration)) return;
     const scheduledMs = Date.parse(scheduledFor);
     const nowMs = now();
     if (scheduledMs > nowMs) {
+      if (!isRefreshCurrent(workspace.id, refreshGeneration)) return;
       scheduleCachedTimer(workspace, automationId, scheduledFor, scheduledMs - nowMs);
       return;
     }
 
     if (nowMs - scheduledMs > RECOVERY_GRACE_MS) {
+      if (!isRefreshCurrent(workspace.id, refreshGeneration)) return;
       const skipped = await skipStaleOccurrence(workspace, automationId, scheduledFor);
       if (skipped) {
         await schedulePersistedNext(workspace, automationId);
@@ -131,6 +153,7 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
       return;
     }
 
+    if (!isRefreshCurrent(workspace.id, refreshGeneration)) return;
     const finalRun = await runScheduledOccurrence(workspace, automationId, scheduledFor);
     if (finalRun) {
       await schedulePersistedNext(workspace, automationId);
@@ -142,7 +165,7 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
     automationId: string,
     scheduledFor: string,
   ): Promise<AutomationRun | null> {
-    const store = await readAutomationStore(workspace.path, workspace.id);
+    const store = await readStore(workspace);
     const automation = store.items.find((item) => item.id === automationId);
     if (!automation || !isRunnableAutomation(automation) || automation.nextRunAt !== scheduledFor) {
       return null;
@@ -150,14 +173,15 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
 
     const runId = stableRunId(automation.id, scheduledFor);
     const existing = store.runs.find((run) => run.id === runId);
-    if (existing && isInProgressOrTerminal(existing)) {
-      if (isTerminalRun(existing)) {
-        await persistAutomationAfterRun(workspace, automation, existing, now());
-      }
+    if (existing && isTerminalRun(existing)) {
+      await persistAutomationAfterScheduledRun(workspace, automation.id, existing, now());
+      return existing;
+    }
+    if (existing?.status === "running" && inFlightRunIds.has(existing.id)) {
       return existing;
     }
 
-    return executeOccurrence(workspace, automation, scheduledFor, runId);
+    return executeOccurrence(workspace, automation, scheduledFor, runId, { kind: "scheduled" });
   }
 
   async function executeOccurrence(
@@ -165,6 +189,7 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
     automation: VesloAutomation,
     scheduledFor: string,
     runId: string,
+    persistence: { kind: "scheduled" | "manual" },
   ): Promise<AutomationRun> {
     const startedAt = nowIso(now);
     const runningRun: AutomationRun = {
@@ -181,11 +206,16 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
     const prepared = await appendRunningRun(workspace, runningRun);
     if (!prepared.shouldExecute) {
       if (isTerminalRun(prepared.run)) {
-        await persistAutomationAfterRun(workspace, automation, prepared.run, now());
+        if (persistence.kind === "scheduled") {
+          await persistAutomationAfterScheduledRun(workspace, automation.id, prepared.run, now());
+        } else {
+          await persistAutomationAfterManualRun(workspace, automation.id, prepared.run, now());
+        }
       }
       return prepared.run;
     }
 
+    inFlightRunIds.add(runId);
     try {
       const result = await options.execute({
         workspaceId: workspace.id,
@@ -204,7 +234,11 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
         error: null,
       };
       await appendRun(workspace, successRun);
-      await persistAutomationAfterRun(workspace, automation, successRun, now());
+      if (persistence.kind === "scheduled") {
+        await persistAutomationAfterScheduledRun(workspace, automation.id, successRun, now());
+      } else {
+        await persistAutomationAfterManualRun(workspace, automation.id, successRun, now());
+      }
       return successRun;
     } catch (error) {
       const failedRun: AutomationRun = {
@@ -216,8 +250,14 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
         error: errorMessage(error),
       };
       await appendRun(workspace, failedRun);
-      await persistAutomationAfterRun(workspace, automation, failedRun, now());
+      if (persistence.kind === "scheduled") {
+        await persistAutomationAfterScheduledRun(workspace, automation.id, failedRun, now());
+      } else {
+        await persistAutomationAfterManualRun(workspace, automation.id, failedRun, now());
+      }
       return failedRun;
+    } finally {
+      inFlightRunIds.delete(runId);
     }
   }
 
@@ -226,7 +266,7 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
     automationId: string,
     scheduledFor: string,
   ): Promise<AutomationRun | null> {
-    const store = await readAutomationStore(workspace.path, workspace.id);
+    const store = await readStore(workspace);
     const automation = store.items.find((item) => item.id === automationId);
     if (!automation || !isRunnableAutomation(automation) || automation.nextRunAt !== scheduledFor) {
       return null;
@@ -234,10 +274,11 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
 
     const runId = stableRunId(automation.id, scheduledFor);
     const existing = store.runs.find((run) => run.id === runId);
-    if (existing && isInProgressOrTerminal(existing)) {
-      if (isTerminalRun(existing)) {
-        await persistAutomationAfterRun(workspace, automation, existing, now());
-      }
+    if (existing && isTerminalRun(existing)) {
+      await persistAutomationAfterScheduledRun(workspace, automation.id, existing, now());
+      return existing;
+    }
+    if (existing?.status === "running" && inFlightRunIds.has(existing.id)) {
       return existing;
     }
 
@@ -245,7 +286,7 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
       id: runId,
       automationId: automation.id,
       scheduledFor,
-      startedAt: null,
+      startedAt: existing?.startedAt ?? null,
       finishedAt: nowIso(now),
       status: "skipped",
       sessionId: null,
@@ -253,49 +294,74 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
       error: STALE_SKIP_ERROR,
     };
     await appendRun(workspace, skippedRun);
-    await persistAutomationAfterRun(workspace, automation, skippedRun, now());
+    await persistAutomationAfterScheduledRun(workspace, automation.id, skippedRun, now());
     return skippedRun;
   }
 
-  async function persistAutomationAfterRun(
+  async function persistAutomationAfterScheduledRun(
     workspace: WorkspaceRef,
-    automation: VesloAutomation,
+    automationId: string,
     run: AutomationRun,
     finishedMs: number,
-  ): Promise<VesloAutomation> {
+  ): Promise<void> {
     const finishedAt = nowIso(() => finishedMs);
-    let updated: VesloAutomation;
+    await mutateAutomationStore(workspace.path, workspace.id, (store) => {
+      const items = store.items.map((item) => {
+        if (item.id !== automationId) return item;
 
-    if (run.status === "failed") {
-      updated = {
-        ...automation,
-        enabled: false,
-        status: "failed",
-        updatedAt: finishedAt,
-        lastRunId: run.id,
-      };
-    } else if (automation.schedule.kind === "oneShot") {
-      updated = {
-        ...automation,
-        enabled: false,
-        status: "completed",
-        completedAt: finishedAt,
-        nextRunAt: null,
-        updatedAt: finishedAt,
-        lastRunId: run.id,
-      };
-    } else {
-      updated = {
-        ...automation,
-        enabled: true,
-        status: "active",
-        nextRunAt: computeNextFutureRunAt(automation, run.scheduledFor, finishedMs),
-        updatedAt: finishedAt,
-        lastRunId: run.id,
-      };
-    }
+        if (run.status === "failed") {
+          return {
+            ...item,
+            enabled: false,
+            status: "failed" as const,
+            updatedAt: finishedAt,
+            lastRunId: run.id,
+          };
+        }
 
-    return persistAutomation(workspace, updated);
+        if (item.schedule.kind === "oneShot") {
+          return {
+            ...item,
+            enabled: false,
+            status: "completed" as const,
+            completedAt: finishedAt,
+            nextRunAt: null,
+            updatedAt: finishedAt,
+            lastRunId: run.id,
+          };
+        }
+
+        return {
+          ...item,
+          enabled: true,
+          status: "active" as const,
+          nextRunAt: computeNextFutureRunAt(item, run.scheduledFor, finishedMs),
+          updatedAt: finishedAt,
+          lastRunId: run.id,
+        };
+      });
+      return { ...store, updatedAt: nowIso(now), items };
+    });
+  }
+
+  async function persistAutomationAfterManualRun(
+    workspace: WorkspaceRef,
+    automationId: string,
+    run: AutomationRun,
+    finishedMs: number,
+  ): Promise<void> {
+    const finishedAt = nowIso(() => finishedMs);
+    await mutateAutomationStore(workspace.path, workspace.id, (store) => {
+      const items = store.items.map((item) => {
+        if (item.id !== automationId) return item;
+        return {
+          ...item,
+          updatedAt: finishedAt,
+          lastRunId: run.id,
+        };
+      });
+      return { ...store, updatedAt: nowIso(now), items };
+    });
   }
 
   async function persistAutomation(workspace: WorkspaceRef, automation: VesloAutomation): Promise<VesloAutomation> {
@@ -321,7 +387,11 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
     let result: { run: AutomationRun; shouldExecute: boolean } = { run, shouldExecute: true };
     await mutateAutomationStore(workspace.path, workspace.id, (store) => {
       const existing = store.runs.find((item) => item.id === run.id);
-      if (existing && isInProgressOrTerminal(existing)) {
+      if (existing && isTerminalRun(existing)) {
+        result = { run: existing, shouldExecute: false };
+        return store;
+      }
+      if (existing?.status === "running" && inFlightRunIds.has(existing.id)) {
         result = { run: existing, shouldExecute: false };
         return store;
       }
@@ -332,7 +402,7 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
 
   async function schedulePersistedNext(workspace: WorkspaceRef, automationId: string): Promise<void> {
     if (stopped) return;
-    const store = await readAutomationStore(workspace.path, workspace.id);
+    const store = await readStore(workspace);
     const automation = store.items.find((item) => item.id === automationId);
     if (!automation || !isRunnableAutomation(automation) || !automation.nextRunAt) {
       return;
@@ -352,21 +422,37 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
   ): void {
     if (stopped) return;
     const timerGeneration = generation;
+    let entry: TimerEntry | null = null;
     const handle = scheduleTimeout(() => {
       if (stopped || timerGeneration !== generation) return;
-      void runScheduledOccurrence(workspace, automationId, scheduledFor)
-        .then((run) => {
+      void (async () => {
+        try {
+          const run = await runScheduledOccurrence(workspace, automationId, scheduledFor);
           if (run) {
-            return schedulePersistedNext(workspace, automationId);
+            await schedulePersistedNext(workspace, automationId);
           }
-          return undefined;
-        })
-        .catch(() => undefined);
+        } catch {
+          // Timer callbacks must not surface unhandled rejections.
+        } finally {
+          if (entry) {
+            removeTimerEntry(workspace.id, entry);
+          }
+        }
+      })();
     }, Math.max(0, delayMs));
-    const entry: TimerEntry = { handle, generation: timerGeneration };
+    entry = { handle, generation: timerGeneration };
     const entries = timersByWorkspace.get(workspace.id) ?? new Set<TimerEntry>();
     entries.add(entry);
     timersByWorkspace.set(workspace.id, entries);
+  }
+
+  function removeTimerEntry(workspaceId: string, entry: TimerEntry): void {
+    const entries = timersByWorkspace.get(workspaceId);
+    if (!entries) return;
+    entries.delete(entry);
+    if (entries.size === 0) {
+      timersByWorkspace.delete(workspaceId);
+    }
   }
 
   function clearWorkspaceTimers(workspaceId: string): void {
@@ -386,15 +472,26 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
     return workspace;
   }
 
+  async function readStore(workspace: WorkspaceRef): Promise<AutomationStoreData> {
+    await options.beforeReadWorkspaceStore?.(workspace.id);
+    return readAutomationStore(workspace.path, workspace.id);
+  }
+
+  function bumpWorkspaceRefreshGeneration(workspaceId: string): number {
+    const nextGeneration = (refreshGenerationsByWorkspace.get(workspaceId) ?? 0) + 1;
+    refreshGenerationsByWorkspace.set(workspaceId, nextGeneration);
+    return nextGeneration;
+  }
+
+  function isRefreshCurrent(workspaceId: string, refreshGeneration: number): boolean {
+    return !stopped && refreshGenerationsByWorkspace.get(workspaceId) === refreshGeneration;
+  }
+
   return { start, stop, refreshWorkspace, runNow };
 }
 
 function isRunnableAutomation(automation: VesloAutomation): boolean {
   return automation.enabled && automation.status === "active";
-}
-
-function isInProgressOrTerminal(run: AutomationRun): boolean {
-  return run.status === "running" || isTerminalRun(run);
 }
 
 function isTerminalRun(run: AutomationRun): boolean {

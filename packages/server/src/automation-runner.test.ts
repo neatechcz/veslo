@@ -194,8 +194,9 @@ test("executor failure records failed run and disables automation", async () => 
       nextRunAt: "2026-06-05T12:00:00.000Z",
     })]);
 
-    const run = await harness.runner.runNow(workspaceId, "auto_fail");
+    await harness.runner.start();
     const store = await harness.readStore();
+    const run = store.runs[0]!;
 
     expect(run).toMatchObject({
       id: "run_auto_fail_1780660800000",
@@ -208,6 +209,241 @@ test("executor failure records failed run and disables automation", async () => 
       enabled: false,
       status: "failed",
       lastRunId: "run_auto_fail_1780660800000",
+    });
+  });
+});
+
+test("persisted running scheduled run within grace is retried on recovery", async () => {
+  await withHarness(async (harness) => {
+    await harness.writeStore([harness.makeAutomation({
+      id: "auto_recover_running",
+      schedule: { kind: "oneShot", runAt: "2026-06-05T11:00:00.000Z" },
+      nextRunAt: "2026-06-05T11:00:00.000Z",
+    })], [{
+      id: "run_auto_recover_running_1780657200000",
+      automationId: "auto_recover_running",
+      scheduledFor: "2026-06-05T11:00:00.000Z",
+      startedAt: "2026-06-05T11:00:01.000Z",
+      finishedAt: null,
+      status: "running",
+      sessionId: null,
+      createdSession: false,
+      error: null,
+    }]);
+
+    await harness.runner.start();
+    await harness.flush();
+
+    const store = await harness.readStore();
+    expect(harness.executions.map((input) => input.automation.id)).toEqual(["auto_recover_running"]);
+    expect(store.runs).toHaveLength(1);
+    expect(store.runs[0]).toMatchObject({
+      id: "run_auto_recover_running_1780657200000",
+      status: "success",
+      sessionId: "ses_new",
+      createdSession: true,
+    });
+    expect(store.items[0]).toMatchObject({
+      id: "auto_recover_running",
+      enabled: false,
+      status: "completed",
+      lastRunId: "run_auto_recover_running_1780657200000",
+    });
+  });
+});
+
+test("stale persisted running one-shot is skipped and completed on recovery", async () => {
+  await withHarness(async (harness) => {
+    await harness.writeStore([harness.makeAutomation({
+      id: "auto_stale_running",
+      schedule: { kind: "oneShot", runAt: "2026-06-04T10:00:00.000Z" },
+      nextRunAt: "2026-06-04T10:00:00.000Z",
+    })], [{
+      id: "run_auto_stale_running_1780567200000",
+      automationId: "auto_stale_running",
+      scheduledFor: "2026-06-04T10:00:00.000Z",
+      startedAt: "2026-06-04T10:00:01.000Z",
+      finishedAt: null,
+      status: "running",
+      sessionId: null,
+      createdSession: false,
+      error: null,
+    }]);
+
+    await harness.runner.start();
+
+    const store = await harness.readStore();
+    expect(harness.executions).toEqual([]);
+    expect(store.runs).toEqual([{
+      id: "run_auto_stale_running_1780567200000",
+      automationId: "auto_stale_running",
+      scheduledFor: "2026-06-04T10:00:00.000Z",
+      startedAt: "2026-06-04T10:00:01.000Z",
+      finishedAt: "2026-06-05T12:00:00.000Z",
+      status: "skipped",
+      sessionId: null,
+      createdSession: false,
+      error: "Scheduled automation was missed by more than 24 hours",
+    }]);
+    expect(store.items[0]).toMatchObject({
+      id: "auto_stale_running",
+      enabled: false,
+      status: "completed",
+      completedAt: "2026-06-05T12:00:00.000Z",
+      lastRunId: "run_auto_stale_running_1780567200000",
+    });
+  });
+});
+
+test("finishing an execution preserves concurrent automation edits", async () => {
+  const executionGate = new Deferred<void>();
+  await withHarness(async (harness) => {
+    harness.executionGate = executionGate;
+    await harness.writeStore([harness.makeAutomation({
+      id: "auto_edit_during_run",
+      name: "Original name",
+      schedule: { kind: "interval", seconds: 3600 },
+      prompt: "Original prompt",
+      target: { preferredSessionId: "ses_original" },
+      nextRunAt: "2026-06-05T11:00:00.000Z",
+    })]);
+
+    const startPromise = harness.runner.start();
+    await harness.waitForExecutions(1);
+
+    const storeDuringRun = await harness.readStore();
+    await harness.writeStore([{
+      ...storeDuringRun.items[0]!,
+      name: "Edited name",
+      schedule: { kind: "daily", hour: 9, minute: 15 },
+      prompt: "Edited prompt",
+      target: { preferredSessionId: "ses_edited", fallbackTitle: "Edited fallback" },
+      updatedAt: "2026-06-05T12:00:01.000Z",
+    }], storeDuringRun.runs);
+
+    executionGate.resolve();
+    await startPromise;
+
+    const store = await harness.readStore();
+    expect(store.items[0]).toMatchObject({
+      id: "auto_edit_during_run",
+      name: "Edited name",
+      schedule: { kind: "daily", hour: 9, minute: 15 },
+      prompt: "Edited prompt",
+      target: { preferredSessionId: "ses_edited", fallbackTitle: "Edited fallback" },
+      enabled: true,
+      status: "active",
+      lastRunId: "run_auto_edit_during_run_1780657200000",
+    });
+  });
+});
+
+test("fired timer entries are not retained when refreshing recurring automations", async () => {
+  await withHarness(async (harness) => {
+    await harness.writeStore([harness.makeAutomation({
+      id: "auto_timer_cleanup",
+      schedule: { kind: "interval", seconds: 300 },
+      nextRunAt: "2026-06-05T12:05:00.000Z",
+    })]);
+    await harness.runner.start();
+    const firedTimerId = harness.activeTimers()[0]?.id;
+    expect(firedTimerId).toBe(1);
+
+    harness.currentMs = Date.parse("2026-06-05T12:05:00.000Z");
+    await harness.fireTimer(firedTimerId);
+
+    await harness.waitForActiveTimers(1);
+    await harness.runner.refreshWorkspace(workspaceId);
+
+    expect(harness.clearedTimerIds).not.toContain(firedTimerId);
+    await harness.waitForActiveTimers(1);
+  });
+});
+
+test("overlapping workspace refreshes do not schedule stale duplicate timers", async () => {
+  const firstRefreshRead = new Deferred<void>();
+  await withHarness(async (harness) => {
+    let blockNextRead = false;
+    let blockedReads = 0;
+    harness.beforeReadWorkspaceStore = async () => {
+      if (!blockNextRead) return;
+      blockNextRead = false;
+      blockedReads += 1;
+      await firstRefreshRead.promise;
+    };
+
+    await harness.writeStore([]);
+    await harness.runner.start();
+    await harness.writeStore([harness.makeAutomation({
+      id: "auto_overlap",
+      schedule: { kind: "oneShot", runAt: "2026-06-05T12:05:00.000Z" },
+      nextRunAt: "2026-06-05T12:05:00.000Z",
+    })]);
+
+    blockNextRead = true;
+    const staleRefresh = harness.runner.refreshWorkspace(workspaceId);
+    await harness.flush();
+    expect(blockedReads).toBe(1);
+
+    await harness.writeStore([harness.makeAutomation({
+      id: "auto_overlap",
+      schedule: { kind: "oneShot", runAt: "2026-06-05T12:10:00.000Z" },
+      nextRunAt: "2026-06-05T12:10:00.000Z",
+    })]);
+    await harness.runner.refreshWorkspace(workspaceId);
+    expect(harness.activeTimers()).toHaveLength(1);
+    expect(harness.activeTimers()[0]?.delayMs).toBe(10 * 60 * 1000);
+
+    firstRefreshRead.resolve();
+    await staleRefresh;
+
+    expect(harness.activeTimers()).toHaveLength(1);
+    expect(harness.activeTimers()[0]?.delayMs).toBe(10 * 60 * 1000);
+  });
+});
+
+test("runNow preserves a future active one-shot schedule", async () => {
+  await withHarness(async (harness) => {
+    await harness.writeStore([harness.makeAutomation({
+      id: "auto_manual_future",
+      schedule: { kind: "oneShot", runAt: "2026-06-05T12:30:00.000Z" },
+      nextRunAt: "2026-06-05T12:30:00.000Z",
+    })]);
+
+    const run = await harness.runner.runNow(workspaceId, "auto_manual_future");
+    const store = await harness.readStore();
+
+    expect(run.status).toBe("success");
+    expect(store.items[0]).toMatchObject({
+      id: "auto_manual_future",
+      enabled: true,
+      status: "active",
+      completedAt: null,
+      nextRunAt: "2026-06-05T12:30:00.000Z",
+      lastRunId: run.id,
+    });
+  });
+});
+
+test("runNow preserves recurring cadence", async () => {
+  await withHarness(async (harness) => {
+    await harness.writeStore([harness.makeAutomation({
+      id: "auto_manual_recurring",
+      schedule: { kind: "interval", seconds: 3600 },
+      nextRunAt: "2026-06-05T12:30:00.000Z",
+    })]);
+
+    const run = await harness.runner.runNow(workspaceId, "auto_manual_recurring");
+    const store = await harness.readStore();
+
+    expect(run.status).toBe("success");
+    expect(store.items[0]).toMatchObject({
+      id: "auto_manual_recurring",
+      enabled: true,
+      status: "active",
+      completedAt: null,
+      nextRunAt: "2026-06-05T12:30:00.000Z",
+      lastRunId: run.id,
     });
   });
 });
@@ -227,7 +463,10 @@ class RunnerHarness {
   currentMs = baseNow;
   executions: AutomationExecutionInput[] = [];
   failExecution: Error | null = null;
-  timers: Array<{ id: number; callback: () => void; delayMs: number; cleared: boolean }> = [];
+  executionGate: Deferred<void> | null = null;
+  beforeReadWorkspaceStore: (() => Promise<void>) | null = null;
+  timers: Array<{ id: number; callback: () => void; delayMs: number; cleared: boolean; fired: boolean }> = [];
+  clearedTimerIds: number[] = [];
   private nextTimerId = 1;
   readonly runner;
 
@@ -235,17 +474,24 @@ class RunnerHarness {
     this.runner = createAutomationRunner({
       workspaces: [{ id: workspaceId, path: this.workspaceRoot }],
       now: () => this.currentMs,
+      beforeReadWorkspaceStore: async () => {
+        await this.beforeReadWorkspaceStore?.();
+      },
       setTimeout: (callback, delayMs) => {
-        const timer = { id: this.nextTimerId++, callback, delayMs, cleared: false };
+        const timer = { id: this.nextTimerId++, callback, delayMs, cleared: false, fired: false };
         this.timers.push(timer);
         return timer.id;
       },
       clearTimeout: (handle) => {
         const timer = this.timers.find((item) => item.id === handle);
-        if (timer) timer.cleared = true;
+        if (timer) {
+          timer.cleared = true;
+          this.clearedTimerIds.push(timer.id);
+        }
       },
       execute: async (input) => {
         this.executions.push(input);
+        await this.executionGate?.promise;
         if (this.failExecution) {
           throw this.failExecution;
         }
@@ -260,10 +506,37 @@ class RunnerHarness {
   async flush(): Promise<void> {
     await Promise.resolve();
     await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
   }
 
-  activeTimers(): Array<{ id: number; callback: () => void; delayMs: number; cleared: boolean }> {
-    return this.timers.filter((timer) => !timer.cleared);
+  async waitForExecutions(count: number): Promise<void> {
+    await this.waitFor(() => this.executions.length >= count, `Expected ${count} executions`);
+  }
+
+  async waitForActiveTimers(count: number): Promise<void> {
+    await this.waitFor(() => this.activeTimers().length === count, `Expected ${count} active timers`);
+  }
+
+  async fireTimer(timerId: number | undefined): Promise<void> {
+    const timer = this.timers.find((item) => item.id === timerId);
+    if (!timer) throw new Error(`Timer ${timerId} not found`);
+    timer.fired = true;
+    timer.callback();
+    await this.flush();
+  }
+
+  activeTimers(): Array<{ id: number; callback: () => void; delayMs: number; cleared: boolean; fired: boolean }> {
+    return this.timers.filter((timer) => !timer.cleared && !timer.fired);
+  }
+
+  private async waitFor(predicate: () => boolean, message: string): Promise<void> {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      await this.flush();
+      if (predicate()) return;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    throw new Error(message);
   }
 
   async writeStore(items: VesloAutomation[], runs: AutomationRun[] = []): Promise<void> {
@@ -296,5 +569,22 @@ class RunnerHarness {
       lastRunId: null,
       ...overrides,
     };
+  }
+}
+
+class Deferred<T> {
+  readonly promise: Promise<T>;
+  private resolveValue!: (value: T | PromiseLike<T>) => void;
+
+  constructor() {
+    this.promise = new Promise<T>((resolve) => {
+      this.resolveValue = resolve;
+    });
+  }
+
+  resolve(value: T): void;
+  resolve(this: Deferred<void>): void;
+  resolve(value?: T): void {
+    this.resolveValue(value as T);
   }
 }
