@@ -3283,6 +3283,7 @@ function createRoutes(
     ensureWritable(config);
 
     const workspace = await resolveWorkspace(config, ctx.params.id);
+    ctx.automationRunner.removeWorkspace(workspace.id);
 
     // Attempt to persist to server.json (when present) before mutating in-memory state.
     const configPath = config.configPath?.trim() ?? "";

@@ -402,6 +402,36 @@ test("overlapping workspace refreshes do not schedule stale duplicate timers", a
   });
 });
 
+test("removed workspace clears timers and stale callbacks do not write", async () => {
+  await withHarness(async (harness) => {
+    await harness.writeStore([harness.makeAutomation({
+      id: "auto_removed",
+      schedule: { kind: "oneShot", runAt: "2026-06-05T12:05:00.000Z" },
+      nextRunAt: "2026-06-05T12:05:00.000Z",
+    })]);
+    await harness.runner.start();
+    const timerId = harness.activeTimers()[0]?.id;
+    expect(timerId).toBe(1);
+
+    harness.runner.removeWorkspace(workspaceId);
+    expect(harness.activeTimers()).toHaveLength(0);
+
+    harness.currentMs = Date.parse("2026-06-05T12:05:00.000Z");
+    await harness.fireTimer(timerId);
+
+    const store = await harness.readStore();
+    expect(harness.executions).toEqual([]);
+    expect(store.runs).toEqual([]);
+    expect(store.items[0]).toMatchObject({
+      id: "auto_removed",
+      enabled: true,
+      status: "active",
+      nextRunAt: "2026-06-05T12:05:00.000Z",
+      lastRunId: null,
+    });
+  });
+});
+
 test("runNow preserves a future active one-shot schedule", async () => {
   await withHarness(async (harness) => {
     await harness.writeStore([harness.makeAutomation({

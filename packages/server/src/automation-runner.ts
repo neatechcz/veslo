@@ -25,6 +25,7 @@ export type AutomationExecutionResult = { sessionId: string; createdSession: boo
 export type AutomationRunner = {
   start(): Promise<void>;
   stop(): void;
+  removeWorkspace(workspaceId: string): void;
   refreshWorkspace(workspaceId: string): Promise<void>;
   runNow(workspaceId: string, automationId: string): Promise<AutomationRun>;
 };
@@ -66,7 +67,7 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
   async function start(): Promise<void> {
     generation += 1;
     stopped = false;
-    for (const workspace of options.workspaces) {
+    for (const workspace of workspaceById.values()) {
       await refreshWorkspace(workspace.id);
     }
   }
@@ -74,12 +75,19 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
   function stop(): void {
     stopped = true;
     generation += 1;
-    for (const workspace of options.workspaces) {
-      bumpWorkspaceRefreshGeneration(workspace.id);
+    for (const workspaceId of workspaceById.keys()) {
+      bumpWorkspaceRefreshGeneration(workspaceId);
     }
     for (const workspaceId of timersByWorkspace.keys()) {
       clearWorkspaceTimers(workspaceId);
     }
+  }
+
+  function removeWorkspace(workspaceId: string): void {
+    generation += 1;
+    bumpWorkspaceRefreshGeneration(workspaceId);
+    clearWorkspaceTimers(workspaceId);
+    workspaceById.delete(workspaceId);
   }
 
   async function refreshWorkspace(workspaceId: string): Promise<void> {
@@ -418,8 +426,9 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
   }
 
   async function schedulePersistedNext(workspace: WorkspaceRef, automationId: string): Promise<void> {
-    if (stopped) return;
+    if (stopped || !hasWorkspace(workspace)) return;
     const store = await readStore(workspace);
+    if (stopped || !hasWorkspace(workspace)) return;
     const automation = store.items.find((item) => item.id === automationId);
     if (!automation || !isRunnableAutomation(automation) || !automation.nextRunAt) {
       return;
@@ -437,7 +446,7 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
     scheduledFor: string,
     delayMs: number,
   ): void {
-    if (stopped) return;
+    if (stopped || !hasWorkspace(workspace)) return;
     const key = timerKey(workspace.id, automationId, scheduledFor);
     const entries = timersByWorkspace.get(workspace.id) ?? new Set<TimerEntry>();
     if ([...entries].some((entry) => entry.key === key)) {
@@ -449,6 +458,7 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
       if (stopped || timerGeneration !== generation) return;
       void (async () => {
         try {
+          if (!hasWorkspace(workspace)) return;
           const run = await runScheduledOccurrence(workspace, automationId, scheduledFor);
           if (run) {
             await schedulePersistedNext(workspace, automationId);
@@ -493,6 +503,11 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
     return workspace;
   }
 
+  function hasWorkspace(workspace: WorkspaceRef): boolean {
+    const current = workspaceById.get(workspace.id);
+    return current?.path === workspace.path;
+  }
+
   async function readStore(workspace: WorkspaceRef): Promise<AutomationStoreData> {
     await options.beforeReadWorkspaceStore?.(workspace.id);
     return readAutomationStore(workspace.path, workspace.id);
@@ -505,10 +520,10 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
   }
 
   function isRefreshCurrent(workspaceId: string, refreshGeneration: number): boolean {
-    return !stopped && refreshGenerationsByWorkspace.get(workspaceId) === refreshGeneration;
+    return !stopped && workspaceById.has(workspaceId) && refreshGenerationsByWorkspace.get(workspaceId) === refreshGeneration;
   }
 
-  return { start, stop, refreshWorkspace, runNow };
+  return { start, stop, removeWorkspace, refreshWorkspace, runNow };
 }
 
 function isRunnableAutomation(automation: VesloAutomation): boolean {

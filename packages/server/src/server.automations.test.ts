@@ -261,6 +261,44 @@ test("automation runner ignores unauthorized configured workspaces", async () =>
   expect(persisted.runs).toEqual([]);
 });
 
+test("DELETE /workspaces/:id clears scheduled automation timers before they can mutate removed workspace", async () => {
+  const scheduledFor = new Date(Date.now() + 1_000).toISOString();
+  const fixture = await startFixture({
+    beforeStart: async (workspaceRoot) => {
+      await writeAutomationStore(workspaceRoot, {
+        schemaVersion: 1,
+        updatedAt: "2026-06-05T12:00:00.000Z",
+        items: [makeAutomation({
+          id: "auto_delete_workspace",
+          schedule: { kind: "oneShot", runAt: scheduledFor },
+          nextRunAt: scheduledFor,
+          prompt: "Do not run after workspace deletion",
+        })],
+        runs: [],
+      });
+    },
+  });
+  await sleep(100);
+
+  const deleteResponse = await fixture.hostFetch("/workspaces/ws_1", { method: "DELETE" });
+  expect(deleteResponse.status).toBe(200);
+  await sleep(1_200);
+
+  const persisted = JSON.parse(await readFile(resolveAutomationsPath(fixture.workspaceRoot), "utf8")) as {
+    items: VesloAutomation[];
+    runs: AutomationRun[];
+  };
+  expect(persisted.runs).toEqual([]);
+  expect(persisted.items[0]).toMatchObject({
+    id: "auto_delete_workspace",
+    enabled: true,
+    status: "active",
+    nextRunAt: scheduledFor,
+    lastRunId: null,
+  });
+  expect(fixture.openCodeCalls).toEqual([]);
+});
+
 test("POST /workspace/ws_1/automations rejects duplicate ids without replacing existing data", async () => {
   const fixture = await startFixture();
   const existing = fixture.makeAutomation({ id: "auto_duplicate", name: "Original", prompt: "Keep me" });
@@ -474,6 +512,21 @@ async function startFixture(options: FixtureOptions = {}) {
     });
   };
 
+  const hostFetch = (path: string, options: {
+    method?: string;
+    body?: Record<string, unknown>;
+  } = {}) => {
+    const headers = new Headers({ "x-veslo-host-token": "host-token" });
+    if (options.body !== undefined) {
+      headers.set("Content-Type", "application/json");
+    }
+    return fetch(`http://127.0.0.1:${server.port}${path}`, {
+      method: options.method ?? "GET",
+      headers,
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    });
+  };
+
   const createViewerToken = async (): Promise<string> => {
     const response = await fetch(`http://127.0.0.1:${server.port}/tokens`, {
       method: "POST",
@@ -508,6 +561,7 @@ async function startFixture(options: FixtureOptions = {}) {
     workspaceRoot,
     openCodeCalls,
     clientFetch,
+    hostFetch,
     createViewerToken,
     createAutomation,
     makeAutomation,
