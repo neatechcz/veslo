@@ -131,6 +131,96 @@ test("infers structured bitmap url mime from extension", () => {
   assert.equal(evidence[0]?.src, "https://example.com/preview.png");
 });
 
+test("rejects unsafe inline and structured image source schemes", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p2j",
+    defaultKind: "analyzed",
+    parts: [
+      part("p2j-inline", {
+        type: "file",
+        mime: "image/png",
+        filename: "unsafe.png",
+        url: "javascript:alert(1)",
+      }),
+      part("p2j-tool", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [
+            { src: "javascript:alert(1)", mediaType: "image/png", alt: "Unsafe src" },
+            { url: "ftp://example.com/image.png", mediaType: "image/png", alt: "Unsafe URL" },
+          ],
+        },
+      }),
+    ],
+  });
+
+  assert.deepEqual(evidence, []);
+});
+
+test("keeps allowed inline and structured image source schemes", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p2k",
+    defaultKind: "analyzed",
+    parts: [
+      part("p2k-inline-data", {
+        type: "file",
+        mime: "image/png",
+        filename: "inline.png",
+        url: "data:image/png;base64,AAAA",
+      }),
+      part("p2k-inline-http", {
+        type: "file",
+        mime: "image/jpeg",
+        filename: "remote.jpg",
+        url: "https://example.com/remote.jpg",
+      }),
+      part("p2k-inline-blob", {
+        type: "file",
+        mime: "image/gif",
+        filename: "blob.gif",
+        url: "blob:https://example.com/blob-id",
+      }),
+      part("p2k-tool", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [
+            "data:image/webp;base64,BBBB",
+            { url: "http://example.com/preview.png", alt: "HTTP preview" },
+            { src: "blob:https://example.com/blob-id", mediaType: "image/png", alt: "Blob preview" },
+          ],
+        },
+      }),
+    ],
+  });
+
+  assert.equal(evidence.length, 6);
+  assert.equal(evidence.some((item) => item.src === "data:image/png;base64,AAAA"), true);
+  assert.equal(evidence.some((item) => item.src === "https://example.com/remote.jpg"), true);
+  assert.equal(evidence.some((item) => item.src === "blob:https://example.com/blob-id"), true);
+  assert.equal(evidence.some((item) => item.src === "data:image/webp;base64,BBBB"), true);
+  assert.equal(evidence.some((item) => item.src === "http://example.com/preview.png"), true);
+});
+
+test("does not create workspace file evidence for relative parent traversal paths", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p3-traversal",
+    workspaceRoot: "/Users/me/project",
+    parts: [
+      part("p3-traversal", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "../private.png" } },
+      }),
+    ],
+  });
+
+  assert.deepEqual(evidence, []);
+});
+
 test("classifies concrete created bitmap paths from write-like tools", () => {
   const evidence = buildMediaEvidenceForParts({
     sourceId: "tool:p3",
@@ -272,6 +362,49 @@ test("keeps ids unique when a tool has structured images and created bitmap path
   assert.equal(evidence.length, 2);
   assert.equal(evidence.some((item) => item.kind === "analyzed"), true);
   assert.equal(evidence.some((item) => item.kind === "created"), true);
+  assert.equal(new Set(evidence.map((item) => item.id)).size, evidence.length);
+});
+
+test("does not extract structured images from unsuccessful tool states", () => {
+  for (const status of ["error", "failed", "running", "pending"]) {
+    const evidence = buildMediaEvidenceForParts({
+      sourceId: `tool:structured:${status}`,
+      defaultKind: "analyzed",
+      parts: [
+        part(`p-structured-${status}`, {
+          type: "tool",
+          tool: "browser_screenshot",
+          state: {
+            status,
+            images: [{ data: "BBBB", mediaType: "image/png", alt: "Incomplete screenshot" }],
+          },
+        }),
+      ],
+    });
+
+    assert.deepEqual(evidence, []);
+  }
+});
+
+test("keeps structured ids unique when duplicate part ids appear across parts", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:duplicate-structured",
+    defaultKind: "analyzed",
+    parts: [
+      part("p-duplicate", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: { status: "completed", images: [{ data: "AAAA", mediaType: "image/png", alt: "First" }] },
+      }),
+      part("p-duplicate", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: { status: "completed", images: [{ data: "BBBB", mediaType: "image/png", alt: "Second" }] },
+      }),
+    ],
+  });
+
+  assert.equal(evidence.length, 2);
   assert.equal(new Set(evidence.map((item) => item.id)).size, evidence.length);
 });
 
