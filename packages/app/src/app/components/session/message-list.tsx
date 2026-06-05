@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
-import { Bot, Check, ChevronDown, ChevronRight, CircleAlert, Copy, Eye, File, FileEdit, FolderSearch, Loader2, Pencil, Search, Sparkles, Terminal } from "lucide-solid";
+import { Bot, Check, ChevronDown, ChevronRight, CircleAlert, Copy, Eye, File, FileEdit, FolderSearch, Pencil, Search, Sparkles, Terminal } from "lucide-solid";
 import { createVirtualizer } from "@tanstack/solid-virtual";
 
 import {
@@ -34,7 +34,7 @@ import {
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../../i18n";
 
 export type PendingMessageState = {
-  state: "sending" | "error";
+  state: "error";
   error?: string;
 };
 
@@ -1428,23 +1428,15 @@ export default function MessageList(props: MessageListProps) {
                     isInline={true}
                   />
                 </Show>
-                <Show when={block.isUser && pendingMessageState()}>
-                  {(pending) => (
-                    <div
-                      class={`mt-2 flex items-center gap-1.5 font-product type-ui-xs ${pending().state === "error" ? "text-red-11" : "text-gray-10"}`}
-                      title={pending().error ?? undefined}
-                      role="status"
-                    >
-                      <Show when={pending().state === "sending"} fallback={<CircleAlert size={12} />}>
-                        <Loader2 size={12} class="animate-spin" />
-                      </Show>
-                      <span>
-                        {pending().state === "sending"
-                          ? tr("session.pending_submit_sending")
-                          : tr("session.pending_submit_failed")}
-                      </span>
-                    </div>
-                  )}
+                <Show when={block.isUser && pendingMessageState()?.state === "error"}>
+                  <div
+                    class="mt-2 flex items-center gap-1.5 font-product type-ui-xs text-red-11"
+                    title={pendingMessageState()?.error ?? undefined}
+                    role="status"
+                  >
+                    <CircleAlert size={12} />
+                    <span>{tr("session.pending_submit_failed")}</span>
+                  </div>
                 </Show>
                 <div class="absolute bottom-2 right-2 flex justify-end gap-1 opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto transition-opacity select-none">
                   <Show when={editableMessage()}>

@@ -107,7 +107,7 @@ import type { WorkspaceRouting } from "./workspace-routing";
 
 export function createExtensionsStore(options: {
   client: () => Client | null;
-  routing: WorkspaceRouting;
+  routing?: WorkspaceRouting;
   projectDir: () => string;
   activeWorkspaceId: () => string;
   activeWorkspaceRoot: () => string;
@@ -128,6 +128,7 @@ export function createExtensionsStore(options: {
 }) {
   // Translation helper that uses current language from i18n
   const translate = (key: string) => t(key, currentLocale());
+  const routing = options.routing ?? { active: options.client };
 
   const [skills, setSkills] = createSignal<SkillCard[]>([]);
   const [skillsStatus, setSkillsStatus] = createSignal<string | null>(null);
@@ -1040,7 +1041,7 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    const c = options.routing.active();
+    const c = routing.active();
     if (!c) {
       setSkills([]);
       markLocalSkillsSourceChanged();
@@ -2150,10 +2151,19 @@ export function createExtensionsStore(options: {
         : baseMessage;
       setSkillsStatus(message);
       if (!response.ok) options.setError(addOpencodeCacheHint(message));
-      for (const target of validTargets) {
+      const succeededRemovalIds = new Set(
+        response.results
+          .filter((result) => result.ok)
+          .map((result) => result.id?.trim())
+          .filter((id): id is string => Boolean(id)),
+      );
+      for (const [index, target] of validTargets.entries()) {
+        const targetId = `${target.scope}:${target.workspaceId ?? ""}:${target.name}:${target.path || index}`;
+        if (!succeededRemovalIds.has(targetId)) continue;
         if (managedSkillTargetAffectsActiveRuntime(target)) {
           options.markReloadRequired?.("skills", { type: "skill", name: target.name, action: "removed" });
         }
+        await syncMaterializationAfterManagedSkillMutation(target);
       }
       await refreshHubSkills({ force: true });
       await refreshSkills({ force: true });

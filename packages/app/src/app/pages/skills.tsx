@@ -328,6 +328,37 @@ export default function SkillsView(props: SkillsViewProps) {
   const inventoryInstanceLifecycle = (instance: SkillInstance) =>
     instance.lifecycle === "removed" ? "removed" : "active";
 
+  const resolveSelectedDetailFromInventory = (
+    detail: { item: SkillInventoryItem; instance: SkillInstance },
+    items: SkillInventoryItem[],
+  ): { item: SkillInventoryItem; instance: SkillInstance } | null => {
+    const matchingItem = items.find((item) => item.name === detail.item.name);
+    if (!matchingItem) return null;
+
+    const instances = [matchingItem.globalInstance, ...matchingItem.workspaceInstances]
+      .filter((instance): instance is SkillInstance => Boolean(instance));
+    const matchingInstance = instances.find((instance) => instance.id === detail.instance.id);
+    const replacementInstance = matchingInstance
+      ?? instances.find((instance) => inventoryInstanceLifecycle(instance) === "active")
+      ?? instances[0]
+      ?? null;
+
+    return replacementInstance ? { item: matchingItem, instance: replacementInstance } : null;
+  };
+
+  createEffect(() => {
+    const detail = selectedDetail();
+    if (!detail) return;
+    const nextDetail = resolveSelectedDetailFromInventory(detail, inventoryItemsForDisplay());
+    if (!nextDetail) {
+      setSelectedDetail(null);
+      return;
+    }
+    if (nextDetail.instance.id !== detail.instance.id || nextDetail.item !== detail.item) {
+      setSelectedDetail(nextDetail);
+    }
+  });
+
   const canRevealInventoryInstanceLocation = (instance: SkillInstance) =>
     inventoryInstanceLifecycle(instance) === "active" && Boolean(instance.path.trim());
 

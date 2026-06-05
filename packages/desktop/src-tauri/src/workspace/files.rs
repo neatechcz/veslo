@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::paths::{candidate_xdg_config_dirs, home_dir};
 use crate::types::{OpencodeCommand, WorkspaceVesloConfig};
 use crate::utils::now_ms;
 use crate::workspace::commands::{sanitize_command_name, serialize_command_frontmatter};
@@ -208,100 +209,263 @@ and they need to switch it off first.
     Ok(())
 }
 
-fn seed_workspace_guide(skill_root: &PathBuf) -> Result<(), String> {
-    let guide_dir = skill_root.join("workspace-guide");
-    if guide_dir.exists() {
-        return Ok(());
+const LEGACY_ONBOARDING_SKILLS: &[&str] = &["workspace-guide", "get-started"];
+
+fn normalize_legacy_skill_content(content: &str) -> String {
+    content.replace("\r\n", "\n").replace("\\\"", "\"")
+}
+
+fn is_legacy_workspace_guide_content(content: &str) -> bool {
+    let normalized = normalize_legacy_skill_content(content);
+    normalized.contains("name: workspace-guide")
+        && normalized.contains("description: Workspace guide to introduce")
+        && normalized.contains("onboard new users")
+        && normalized.contains("# Welcome to")
+        && (normalized.contains("End with two friendly next actions to try")
+            || normalized.contains("local-first alternative to Claude"))
+}
+
+fn is_legacy_get_started_content(content: &str) -> bool {
+    let normalized = normalize_legacy_skill_content(content);
+    normalized.contains("name: get-started")
+        && normalized.contains("description: Guide users through the get started setup")
+        && normalized.contains("Chrome DevTools demo")
+        && normalized.contains("Always load this skill when the user says \"get started\"")
+        && normalized.contains("Reply with these four lines, exactly and in order")
+}
+
+fn is_legacy_onboarding_skill_content(name: &str, content: &str) -> bool {
+    match name {
+        "workspace-guide" => is_legacy_workspace_guide_content(content),
+        "get-started" => is_legacy_get_started_content(content),
+        _ => false,
+    }
+}
+
+fn is_private_workspace_path(workspace_root: &Path, app_data_dir: Option<&Path>) -> bool {
+    if let Some(app_data_dir) = app_data_dir {
+        if workspace_root.starts_with(app_data_dir.join("private-workspaces")) {
+            return true;
+        }
     }
 
-    fs::create_dir_all(&guide_dir)
-        .map_err(|e| format!("Failed to create {}: {e}", guide_dir.display()))?;
+    workspace_root
+        .components()
+        .any(|component| component.as_os_str() == "private-workspaces")
+}
 
-    let doc = r#"---
-name: workspace-guide
-description: Workspace guide to introduce Veslo and onboard new users.
----
+fn collect_user_skill_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    for dir in candidate_xdg_config_dirs() {
+        let opencode_root = dir.join("opencode").join("skills");
+        if opencode_root.is_dir() {
+            roots.push(opencode_root);
+        }
+    }
 
-# Welcome to Veslo
+    if let Some(home) = home_dir() {
+        for root in [
+            home.join(".claude").join("skills"),
+            home.join(".agents").join("skills"),
+            home.join(".agent").join("skills"),
+        ] {
+            if root.is_dir() {
+                roots.push(root);
+            }
+        }
+    }
 
-Hi, I'm Ben and this is Veslo. It's a local-first alternative to Claude's cowork. It helps you work on your files with AI and automate the mundane tasks so you don't have to.
+    roots
+}
 
-Before we start, use the question tool to ask:
-"Are you more technical or non-technical? I'll tailor the explanation."
+fn collect_user_skill_dirs_by_name(name: &str, user_skill_roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    for root in user_skill_roots {
+        let direct = root.join(name);
+        if direct.join("SKILL.md").is_file() {
+            dirs.push(direct);
+        }
 
-## If the person is non-technical
-Veslo feels like a chat app, but it can safely work with the files you allow. Put files in this workspace and I can summarize them, create new ones, or help organize them.
+        let Ok(entries) = fs::read_dir(&root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if !file_type.is_dir() {
+                continue;
+            }
+            let candidate = entry.path().join(name);
+            if candidate.join("SKILL.md").is_file() {
+                dirs.push(candidate);
+            }
+        }
+    }
+    dirs
+}
 
-Try:
-- "Summarize the files in this workspace."
-- "Create a checklist for my week."
-- "Draft a short summary from this document."
+fn collect_relative_files(
+    root: &Path,
+    current: &Path,
+    out: &mut Vec<PathBuf>,
+) -> Result<bool, String> {
+    let mut only_regular_entries = true;
+    let entries =
+        fs::read_dir(current).map_err(|e| format!("Failed to read {}: {e}", current.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let file_type = entry.file_type().map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if file_type.is_dir() {
+            only_regular_entries =
+                collect_relative_files(root, &path, out)? && only_regular_entries;
+            continue;
+        }
+        if file_type.is_file() {
+            let relative = path
+                .strip_prefix(root)
+                .map_err(|e| format!("Failed to compare {}: {e}", path.display()))?
+                .to_path_buf();
+            out.push(relative);
+            continue;
+        }
 
-## Skills and plugins (simple)
-Skills add new capabilities. Plugins add advanced features like scheduling or browser automation. We can add them later when you're ready.
+        only_regular_entries = false;
+    }
 
-## If the person is technical
-Veslo is a GUI for OpenCode. Everything that works in OpenCode works here.
+    Ok(only_regular_entries)
+}
 
-Most reliable setup today:
-1) Install OpenCode from opencode.ai
-2) Configure providers there (models and API keys)
-3) Come back to Veslo and start a session
+fn relative_file_list(root: &Path) -> Result<Option<Vec<PathBuf>>, String> {
+    let mut files = Vec::new();
+    if !collect_relative_files(root, root, &mut files)? {
+        return Ok(None);
+    }
+    files.sort();
+    Ok(Some(files))
+}
 
-Skills:
-- Install from the Skills tab, or add them to this workspace.
-- Docs: https://opencode.ai/docs/skills
+fn skill_dirs_have_identical_files(left: &Path, right: &Path) -> Result<bool, String> {
+    let Some(left_files) = relative_file_list(left)? else {
+        return Ok(false);
+    };
+    let Some(right_files) = relative_file_list(right)? else {
+        return Ok(false);
+    };
+    if left_files != right_files {
+        return Ok(false);
+    }
 
-Plugins:
-- Configure in opencode.json or use the Plugins tab.
-- Docs: https://opencode.ai/docs/plugins/
+    for relative in left_files {
+        let left_content = fs::read(left.join(&relative))
+            .map_err(|e| format!("Failed to read {}: {e}", left.join(&relative).display()))?;
+        let right_content = fs::read(right.join(&relative))
+            .map_err(|e| format!("Failed to read {}: {e}", right.join(&relative).display()))?;
+        if left_content != right_content {
+            return Ok(false);
+        }
+    }
 
-MCP servers:
-- Add external tools via opencode.json.
-- Docs: https://opencode.ai/docs/mcp-servers/
+    Ok(true)
+}
 
-Config reference:
-- Docs: https://opencode.ai/docs/config/
+fn skill_dir_contains_only_entrypoint(skill_dir: &Path) -> Result<bool, String> {
+    let mut entries = fs::read_dir(skill_dir)
+        .map_err(|e| format!("Failed to read {}: {e}", skill_dir.display()))?;
+    let Some(entry) = entries.next() else {
+        return Ok(false);
+    };
+    let entry = entry.map_err(|e| e.to_string())?;
+    let file_type = entry.file_type().map_err(|e| e.to_string())?;
+    if entry.file_name() != std::ffi::OsStr::new("SKILL.md") || !file_type.is_file() {
+        return Ok(false);
+    }
+    Ok(entries.next().is_none())
+}
 
-End with two friendly next actions to try in Veslo."#;
-
-    fs::write(guide_dir.join("SKILL.md"), doc)
-        .map_err(|e| format!("Failed to write SKILL.md: {e}"))?;
+fn remove_legacy_onboarding_skill_copies(skill_root: &Path) -> Result<(), String> {
+    for name in LEGACY_ONBOARDING_SKILLS {
+        let skill_dir = skill_root.join(name);
+        let skill_path = skill_dir.join("SKILL.md");
+        if !skill_path.is_file() || !skill_dir_contains_only_entrypoint(&skill_dir)? {
+            continue;
+        }
+        let raw = fs::read_to_string(&skill_path)
+            .map_err(|e| format!("Failed to read {}: {e}", skill_path.display()))?;
+        if is_legacy_onboarding_skill_content(name, &raw) {
+            fs::remove_dir_all(&skill_dir).map_err(|e| {
+                format!(
+                    "Failed to remove legacy onboarding skill {}: {e}",
+                    skill_dir.display()
+                )
+            })?;
+        }
+    }
 
     Ok(())
 }
 
-fn seed_get_started_skill(skill_root: &PathBuf) -> Result<(), String> {
-    let skill_dir = skill_root.join("get-started");
-    if skill_dir.exists() {
+fn remove_private_workspace_user_skill_copies(
+    workspace_root: &Path,
+    skill_root: &Path,
+    app_data_dir: Option<&Path>,
+) -> Result<(), String> {
+    let user_skill_roots = collect_user_skill_roots();
+    remove_private_workspace_user_skill_copies_with_roots(
+        workspace_root,
+        skill_root,
+        app_data_dir,
+        &user_skill_roots,
+    )
+}
+
+fn remove_private_workspace_user_skill_copies_with_roots(
+    workspace_root: &Path,
+    skill_root: &Path,
+    app_data_dir: Option<&Path>,
+    user_skill_roots: &[PathBuf],
+) -> Result<(), String> {
+    if !is_private_workspace_path(workspace_root, app_data_dir) || !skill_root.is_dir() {
         return Ok(());
     }
 
-    fs::create_dir_all(&skill_dir)
-        .map_err(|e| format!("Failed to create {}: {e}", skill_dir.display()))?;
+    if user_skill_roots.is_empty() {
+        return Ok(());
+    }
 
-    let doc = r#"---
-name: get-started
-description: Guide users through the get started setup and Chrome DevTools demo.
----
+    let entries = fs::read_dir(skill_root)
+        .map_err(|e| format!("Failed to read {}: {e}", skill_root.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let file_type = entry.file_type().map_err(|e| e.to_string())?;
+        if !file_type.is_dir() {
+            continue;
+        }
 
-## When to use
-- Always load this skill when the user says \"get started\".
+        let workspace_skill_dir = entry.path();
+        if !workspace_skill_dir.join("SKILL.md").is_file() {
+            continue;
+        }
+        let Some(name) = workspace_skill_dir
+            .file_name()
+            .and_then(|value| value.to_str())
+        else {
+            continue;
+        };
 
-## What to do
-- Reply with these four lines, exactly and in order:
-  1) hey there welcome this is veslo
-  2) we've pre-configured you with a couple tools
-  3) Get Started
-  4) write \"hey go on google.com\"
-
-## Then
-- If the user writes \"go on google.com\" (or \"hey go on google.com\"), use the chrome-devtools MCP to open the site.
-- After the navigation completes, reply: \"I'm on <site>\" where <site> is the final URL or page title they asked for.
-"#;
-
-    fs::write(skill_dir.join("SKILL.md"), doc)
-        .map_err(|e| format!("Failed to write SKILL.md: {e}"))?;
+        for user_skill_dir in collect_user_skill_dirs_by_name(name, &user_skill_roots) {
+            if skill_dirs_have_identical_files(&workspace_skill_dir, &user_skill_dir)? {
+                fs::remove_dir_all(&workspace_skill_dir).map_err(|e| {
+                    format!(
+                        "Failed to remove copied user skill {}: {e}",
+                        workspace_skill_dir.display()
+                    )
+                })?;
+                break;
+            }
+        }
+    }
 
     Ok(())
 }
@@ -388,6 +552,8 @@ pub fn ensure_workspace_files(
     let skill_root = root.join(".opencode").join("skills");
     fs::create_dir_all(&skill_root)
         .map_err(|e| format!("Failed to create .opencode/skills: {e}"))?;
+    remove_legacy_onboarding_skill_copies(&skill_root)?;
+    remove_private_workspace_user_skill_copies(&root, &skill_root, app_data_dir)?;
 
     let agents_dir = root.join(".opencode").join("agents");
     fs::create_dir_all(&agents_dir)
@@ -639,6 +805,139 @@ mod tests {
         assert!(!skills_dir.join("skill-creator").exists());
         assert!(!skills_dir.join("plugin-creator").exists());
         assert!(!skills_dir.join("agent-creator").exists());
+    }
+
+    #[test]
+    fn private_workspace_cleanup_removes_exact_user_skill_copies() {
+        let app_data_dir = temp_workspace_root("app-data");
+        let home_dir = temp_workspace_root("home");
+        let workspace_root = app_data_dir
+            .join("private-workspaces")
+            .join("private-workspace");
+        let user_skill_dir = home_dir
+            .join(".config")
+            .join("opencode")
+            .join("skills")
+            .join("skill-creator");
+        let workspace_skill_dir = workspace_root
+            .join(".opencode")
+            .join("skills")
+            .join("skill-creator");
+        let skill_content = "---\nname: skill-creator\n---\n\n# Skill Creator\n";
+
+        fs::create_dir_all(&user_skill_dir).expect("create user skill");
+        fs::write(user_skill_dir.join("SKILL.md"), skill_content).expect("write user skill");
+        fs::create_dir_all(&workspace_skill_dir).expect("create workspace skill");
+        fs::write(workspace_skill_dir.join("SKILL.md"), skill_content)
+            .expect("write workspace skill copy");
+
+        remove_private_workspace_user_skill_copies_with_roots(
+            &workspace_root,
+            &workspace_root.join(".opencode").join("skills"),
+            Some(&app_data_dir),
+            &[home_dir.join(".config").join("opencode").join("skills")],
+        )
+        .expect("remove private workspace user skill copies");
+
+        assert!(
+            user_skill_dir.join("SKILL.md").exists(),
+            "user skill should stay in the user root"
+        );
+        assert!(
+            !workspace_skill_dir.exists(),
+            "private workspace should not keep an exact user skill copy"
+        );
+    }
+
+    #[test]
+    fn ensure_workspace_files_removes_legacy_onboarding_skills_only_when_unmodified() {
+        let root = temp_workspace_root("legacy-onboarding-skills");
+        let legacy_root = root.join(".opencode").join("skills");
+        let guide_dir = legacy_root.join("workspace-guide");
+        let get_started_dir = legacy_root.join("get-started");
+        let custom_dir = legacy_root.join("user-guide");
+        fs::create_dir_all(&guide_dir).expect("create workspace-guide");
+        fs::create_dir_all(&get_started_dir).expect("create get-started");
+        fs::create_dir_all(&custom_dir).expect("create user-guide");
+        fs::write(
+            guide_dir.join("SKILL.md"),
+            r#"---
+name: workspace-guide
+description: Workspace guide to introduce Veslo and onboard new users.
+---
+
+# Welcome to Veslo
+
+Hi, I'm Ben and this is Veslo. It's a local-first alternative to Claude's cowork.
+
+End with two friendly next actions to try in Veslo.
+"#,
+        )
+        .expect("write workspace-guide");
+        fs::write(
+            get_started_dir.join("SKILL.md"),
+            r#"---
+name: get-started
+description: Guide users through the get started setup and Chrome DevTools demo.
+---
+
+## When to use
+- Always load this skill when the user says "get started".
+
+## What to do
+- Reply with these four lines, exactly and in order:
+  1) hey there welcome this is veslo
+"#,
+        )
+        .expect("write get-started");
+        fs::write(
+            custom_dir.join("SKILL.md"),
+            r#"---
+name: user-guide
+description: User-owned onboarding notes.
+---
+
+# User guide
+"#,
+        )
+        .expect("write custom skill");
+
+        let root_str = root.to_string_lossy().to_string();
+        ensure_workspace_files(&root_str, "starter", None, None).expect("seed workspace files");
+
+        assert!(!guide_dir.exists());
+        assert!(!get_started_dir.exists());
+        assert!(custom_dir.join("SKILL.md").exists());
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn ensure_workspace_files_preserves_customized_legacy_onboarding_skill_names() {
+        let root = temp_workspace_root("customized-onboarding-skills");
+        let skill_root = root.join(".opencode").join("skills");
+        let guide_dir = skill_root.join("workspace-guide");
+        fs::create_dir_all(&guide_dir).expect("create workspace-guide");
+        fs::write(
+            guide_dir.join("SKILL.md"),
+            r#"---
+name: workspace-guide
+description: User-owned workspace guide.
+---
+
+# Team Workspace Guide
+
+Use this guide for the team's custom process.
+"#,
+        )
+        .expect("write custom workspace-guide");
+
+        let root_str = root.to_string_lossy().to_string();
+        ensure_workspace_files(&root_str, "starter", None, None).expect("seed workspace files");
+
+        assert!(guide_dir.join("SKILL.md").exists());
+
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]

@@ -35,7 +35,7 @@ Common keys:
 - `veslo.engineRuntime`
 - `veslo.onboardingComplete`
 
-`veslo.updateAutoDownload` is default-on when absent. A stored `0` is an explicit opt-out and keeps the manual download flow.
+`veslo.updateAutoDownload` is default-on when absent. A stored `0` is an explicit opt-out and keeps the manual download flow. When enabled, failed automatic update downloads are retried with bounded backoff. The retry state is runtime-only; only the preference and last successful check time are stored.
 
 `veslo.modelVariant` stores the app-global model variant / thinking effort. The built-in default is `xhigh` (Max). Existing stored values from before the Max-default migration are overwritten to `xhigh` once and marked by `veslo.modelVariant.maxDefaultMigration`; later user changes remain stored in `veslo.modelVariant`.
 
@@ -110,6 +110,8 @@ Invite-link and bundle-link parsing also lives in `veslo-server.ts`. Incoming qu
 
 The desktop shell also persists the managed local `veslo-server` process snapshot in the app-local data directory so a new app process can recover a still-running server. For the live managed child, native `veslo_server_info` reports process ownership and keeps the recorded URL/token/PID while the child is alive; HTTP health is polled separately by the frontend. Persisted snapshots from a previous app process still require a successful `/health` check before recovery and are cleaned up when stale.
 
+Managed local sidecars distinguish internal runtime URLs from advertised connect URLs. Same-machine communication between the desktop shell, `veslo-server`, `veslo-orchestrator`, OpenCode, and `veslo-code-router` uses loopback OpenCode URLs such as `http://127.0.0.1:<port>`. LAN or mDNS connect URLs are for external clients only; they must not be passed as the local `--opencode-base-url` or `--opencode-url`, because sleep/resume and network changes can invalidate those addresses while the local OpenCode process remains healthy.
+
 ## Desktop Debug Log Forwarder
 
 The Tauri shell forwards stdout/stderr from every supervised sidecar (`veslo-server`, `opencode-router`, `veslo-orchestrator`, `engine`) into the veslo-server debug log pipeline. Implementation lives in `packages/desktop/src-tauri/src/debug_logs_forwarder.rs`.
@@ -147,7 +149,8 @@ Pipeline behavior:
 - `enabled` is derived as `Boolean(ingestUrl && ingestToken)`. Without both vars the spool keeps collecting and retention prunes the oldest entries; nothing is sent over the network. Flip the two vars and the pipeline starts uploading on the next tick — no restart required for the upload to start, but the running process must be restarted to pick up new env values.
 - Spool location: `${VESLO_DATA_DIR or ~/.veslo/veslo-server}/debug-log-spool/events/`. One JSON file per event today (file-per-event format owned by `debug-log-spool.ts`); switching to JSONL append-only is tracked separately as a follow-up.
 - Upload retry policy lives in `debug-log-uploader.ts` (3 attempts, 250 ms initial, 2× multiplier, capped at 2 s). Failed batches stay leased in the manifest and the next flush tick re-leases them after the lease TTL.
-- Retention is enforced asynchronously after appends. The spool can temporarily exceed `VESLO_LOG_SPOOL_MAX_BYTES`, but `/debug-logs` ingest stays off the cleanup hot path and bulk-prunes old unleased events back toward the low-water mark.
+- Retention is enforced asynchronously after appends and by a maintenance loop that runs even when remote upload is disabled. The spool can temporarily exceed `VESLO_LOG_SPOOL_MAX_BYTES`, but `/debug-logs` ingest stays off the cleanup hot path and bulk-prunes old unleased events back toward the low-water mark.
+- `POST /debug-logs` validates the host token and batch body before returning `202`, then appends the events to the durable spool asynchronously. Append failures are logged locally; sidecar log forwarding must not block server health or other UI-facing routes on disk cleanup.
 - Process signals: `startServer` registers SIGINT/SIGTERM handlers that drain the pipeline (final flush) before exit.
 
 ## Den Debug Log Ingest
@@ -184,11 +187,17 @@ Desktop local workspaces separate the managed-AI access-policy source from the O
 
 When the local Veslo server proxies managed-AI requests, successful JSON and streamed provider responses are passed through. Upstream non-2xx failures are normalized to a local `502` JSON error so a managed-AI gateway/provider block is not reported as local server authentication failure. The error details include a generated request id, provider/model/session/user/org context when available, upstream status/request id/content type, and a short sanitized upstream response snippet.
 
+The local proxy must not parse the full provider request body before forwarding it. OpenCode can send large or chunked accumulated-session payloads, so local model extraction for error diagnostics is limited to small JSON requests with a known `Content-Length`; stream and large-body requests are forwarded without diagnostic pre-buffering.
+
+The local server also treats body parsing as byte-bounded infrastructure. AI gateway error details include only a bounded sanitized upstream preview, large provider JSON success responses remain streamed, OpenCode JSON helper responses have explicit parsing limits, and local JSON/form ingest rejects oversized request bodies before validation or multipart parsing when possible. Transcript prefetch caches are bounded by estimated bytes as well as entry count, so large tool outputs cannot remain resident solely because the session count is low.
+
+OpenCode JSON helper calls made by the local server use a bounded upstream timeout so stale interface URLs or hung sockets cannot hold UI-facing server routes for OS-level TCP timeouts. The default is 5000 ms and can be overridden for diagnostics/tests with `VESLO_OPENCODE_JSON_FETCH_TIMEOUT_MS`. Streaming pass-through proxy routes are not governed by this helper timeout.
+
 The desktop app recognizes managed Codex credential exhaustion or missing eligible binding inside these normalized errors and formats it as an actionable AI access failure. Prompt sends that hit this condition set the session run state to failed and insert the error into the transcript instead of leaving OpenCode's empty assistant turn looking like an active run.
 
 DEN managed-AI uses `MANAGED_AI_DATABASE_URL`. Standalone AI Gateway uses `AI_GATEWAY_DATABASE_URL`. Their assignment, credential, eligibility, and usage views match only when those services are intentionally pointed at the same managed-AI backing database and compatible config.
 
-Managed-AI provider assignments may use `openai`, `anthropic`, `codex_oauth`, or `openai_compatible`. The desktop app treats these assignments as read-only policy and writes local OpenCode routing for the assigned provider. AI access rows also store `assignment_origin`: `auto_assigned` for DEN sign-up Codex defaults and `admin_assigned` for explicit admin edits or legacy rows. For `codex_oauth`, OpenCode still owns local tool execution and calls the local Veslo server route `/ai-gateway/providers/codex_oauth/v1`; the configured managed-AI service keeps the Codex OAuth auth JSON server-side, translates the OpenAI-compatible request to the ChatGPT Codex Responses endpoint, and translates the response back for OpenCode. Standalone AI Gateway admin model pickers use live upstream discovery for `openai_compatible` credentials and a gateway-owned Codex model catalog for `codex_oauth` credentials. Codex status probes run from temporary Codex homes, and refreshed probe auth JSON is written back to the credential's encrypted secret when Codex rotates it. Any assigned Codex row can be repaired to another healthy eligible Codex credential on the next request when its assigned credential becomes unhealthy, revoked, missing, permanently unavailable, or exhausted; the original assignment origin is preserved after repair, and legacy repairs without a stored model use the Codex catalog default. For `openai_compatible`, OpenCode uses the local Veslo server route `/ai-gateway/providers/openai_compatible/v1`; the upstream custom base URL and API key remain server-side in the configured managed-AI service's encrypted secret store.
+Managed-AI provider assignments may use `openai`, `anthropic`, `codex_oauth`, or `openai_compatible`. The desktop app treats these assignments as read-only policy and writes local OpenCode routing for the assigned provider. AI access rows also store `assignment_origin`: `auto_assigned` for DEN sign-up Codex defaults and `admin_assigned` for explicit admin edits or legacy rows. For `codex_oauth`, OpenCode still owns local tool execution and calls the local Veslo server route `/ai-gateway/providers/codex_oauth/v1`; the configured managed-AI service keeps the Codex OAuth auth JSON server-side, translates the OpenAI-compatible request to the ChatGPT Codex Responses endpoint, and translates the response back for OpenCode. Standalone AI Gateway admin model pickers use live upstream discovery for `openai_compatible` credentials and a gateway-owned Codex model catalog for `codex_oauth` credentials. Codex status probes run from temporary Codex homes, and refreshed probe auth JSON is written back to the credential's encrypted secret when Codex rotates it. If a Codex status probe reports refresh-token reuse, the standalone admin service quarantines the credential as unhealthy; the admin Reconnect action replaces the stored auth JSON in place and marks the same credential healthy again. If a Codex status probe reports that a specific model is unsupported for the credential's ChatGPT account, the credential remains available and that model is filtered from the credential's admin model list. Any assigned Codex row can be repaired to another healthy eligible Codex credential on the next request when its assigned credential becomes unhealthy, revoked, missing, permanently unavailable, or exhausted; the original assignment origin is preserved after repair, and legacy repairs without a stored model use the Codex catalog default. For `openai_compatible`, OpenCode uses the local Veslo server route `/ai-gateway/providers/openai_compatible/v1`; the upstream custom base URL and API key remain server-side in the configured managed-AI service's encrypted secret store.
 
 Standalone AI Gateway credentials can be soft-deleted only after they are no longer usable and are not referenced by user AI-access policy. Active leases and assignment references still block soft-delete unless the credential is already revoked. Soft-deleted rows keep their credential id for audit, usage, and alert history, but `deleted_at` removes them from default admin lists, assignment options, rotation, and runtime selection; their stored secret is replaced with a deleted tombstone.
 
@@ -296,6 +305,18 @@ separately. Runtime-effective discovery may still include both scopes for active
 workspace behavior, but the inventory must not expand user skills under every
 workspace. Workspace rows represent only real workspace-local instances or
 overrides.
+
+Private app-created workspaces, including new private chat workspaces, remove
+workspace-local skill directories that are exact copies of user-root skills
+during provisioning. User-root skills remain user-global inventory entries and
+must not become private workspace-only entries.
+
+Older desktop builds created `workspace-guide` and `get-started` as
+workspace-local onboarding skills. They are no longer part of the runtime skill
+catalog. Workspace provisioning removes those legacy directories only when the
+contents still match the generated onboarding templates and the directory
+contains no files other than `SKILL.md`; user-owned skills with the same names or
+additional files are preserved.
 
 Skill edit and save flows target a concrete inventory instance by scope,
 workspace id, and path before falling back to name-based legacy commands.

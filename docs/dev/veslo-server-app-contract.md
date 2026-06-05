@@ -246,7 +246,7 @@ Veslo server exposes a host-token-protected ingest route the desktop shell uses 
 
 Route:
 
-- `POST /debug-logs` — auth: host (`x-veslo-host-token`). Body: `{ batchId: string, events: DebugLogEvent[] }` validated by `validateDebugLogBatch` in `debug-log-events.ts` (1–1000 events per batch). Success returns `202 Accepted` with `{ ok: true, acceptedBatchIds: [batchId] }`. Validation failures return `400 invalid_batch` with a list of issues.
+- `POST /debug-logs` — auth: host (`x-veslo-host-token`). Body: `{ batchId: string, events: DebugLogEvent[] }` validated by `validateDebugLogBatch` in `debug-log-events.ts` (1–1000 events per batch). Success returns `202 Accepted` with `{ ok: true, acceptedBatchIds: [batchId] }` after validation; durable spool append continues asynchronously so log forwarding cannot block server health or UI routes. Validation failures return `400 invalid_batch` with a list of issues.
 
 Event shape (single source of truth: `packages/server/src/debug-log-events.ts`):
 

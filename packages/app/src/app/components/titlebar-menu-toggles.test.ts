@@ -133,13 +133,13 @@ test("titlebar text labels are not selectable while dragging the window", () => 
 test("titlebar text labels participate in window dragging", () => {
   assert.match(
     source,
-    /<span[\s\S]*data-tauri-drag-region[\s\S]*onMouseDown=\{handleTitlebarDragMouseDown\}[\s\S]*class="[^"]*\bselect-none\b[^"]*"[\s\S]*>\s*\{__vesloT\("ui\.literal\.veslo_by_neatech_86m8cx", __vesloCurrentLocale\(\)\)\}/,
+    /<span[\s\S]*data-tauri-drag-region[\s\S]*onMouseDown=\{handleTitlebarDragMouseDown\}[\s\S]*onDblClick=\{handleTitlebarDoubleClick\}[\s\S]*class="[^"]*\bselect-none\b[^"]*"[\s\S]*>\s*\{__vesloT\("ui\.literal\.veslo_by_neatech_86m8cx", __vesloCurrentLocale\(\)\)\}/,
     "fallback app name should be a Tauri drag region instead of blocking the titlebar drag strip",
   );
 
   assert.match(
     source,
-    /<div[\s\S]*data-tauri-drag-region[\s\S]*onMouseDown=\{handleTitlebarDragMouseDown\}[\s\S]*class="[^"]*\bselect-none\b[^"]*"[\s\S]*>\s*\{props\.centerContent\}/,
+    /<div[\s\S]*data-tauri-drag-region[\s\S]*onMouseDown=\{handleTitlebarDragMouseDown\}[\s\S]*onDblClick=\{handleTitlebarDoubleClick\}[\s\S]*class="[^"]*\bselect-none\b[^"]*"[\s\S]*>\s*\{props\.centerContent\}/,
     "centered session and project titlebar labels should be Tauri drag regions",
   );
 });

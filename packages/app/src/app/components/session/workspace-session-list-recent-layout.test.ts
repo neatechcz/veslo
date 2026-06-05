@@ -26,7 +26,7 @@ test("recent mode renders from recentRowsVisible without using the chat project 
 
   assert.match(
     recentBranch,
-    /<For each=\{recentRowsVisible\(\)\}>/,
+    /renderSessionTreeRows\(\(\) => recentRowsVisible\(\), recentHasChildren, \{\s*anchorPrefix: "recent",\s*variant: "recent",\s*\}\)/,
     "recent mode should continue rendering the single activity-sorted recent row stream",
   );
 
@@ -102,13 +102,13 @@ test("recent rows keep timestamp on the right and replace it with menu trigger o
 test("left sidebar session list uses tighter vertical spacing", () => {
   assert.match(
     source,
-    /fallback=\{\s*<>\s*<div class="space-y-0">[\s\S]*<For each=\{recentRowsVisible\(\)\}>/,
+    /fallback=\{\s*<>\s*<div class="space-y-0">[\s\S]*renderSessionTreeRows\(\(\) => recentRowsVisible\(\), recentHasChildren/,
     "recent-mode session rows should use a zero-gap stack",
   );
 
   assert.match(
     source,
-    /<div class="pl-5 pt-0\.5 space-y-0">/,
+    /innerClass="pl-5 pt-0\.5 space-y-0"/,
     "project session rows should use the same zero-gap stack",
   );
 });

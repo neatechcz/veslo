@@ -9,6 +9,12 @@ export type OpenSessionWithWorkspaceActivationInput = {
 
 export type OpenSessionWithWorkspaceActivationResult = "opened" | "blocked" | "superseded";
 
+export type SessionBrowseScope = {
+  sessionId: string;
+  workspaceId: string;
+  workspaceRoot: string;
+};
+
 export type CreateSessionWithWorkspaceActivationInput = {
   activeWorkspaceId: string;
   getActiveWorkspaceId?: () => string;
@@ -69,19 +75,12 @@ export async function openSessionWithWorkspaceActivation(
 ): Promise<OpenSessionWithWorkspaceActivationResult> {
   const sessionId = input.sessionId.trim();
   const workspaceId = input.workspaceId.trim();
-  const activeWorkspaceId = input.activeWorkspaceId.trim();
-  const getActiveWorkspaceId = () => input.getActiveWorkspaceId?.().trim() || activeWorkspaceId;
   if (!sessionId || !workspaceId) return "blocked";
 
   const token = ++openSessionNavigationToken;
 
   const run = async () => {
     if (token !== openSessionNavigationToken) return "superseded";
-
-    if (workspaceId !== getActiveWorkspaceId()) {
-      const activated = await Promise.resolve(input.activateWorkspace(workspaceId));
-      if (!activated) return "blocked";
-    }
 
     if (token !== openSessionNavigationToken) return "superseded";
     input.openSession(sessionId);

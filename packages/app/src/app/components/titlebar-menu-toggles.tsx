@@ -45,15 +45,16 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
   const leftLabel = () => props.leftLabel ?? __vesloT("sidebar.toggle_left_menu", __vesloCurrentLocale());
 
   const handleTitlebarDragMouseDown = (event: MouseEvent) => {
-    if (event.button !== 0) return;
-    // Keep explicit startDragging fallback for titlebar text and drag strip
-    // hit-testing while data-tauri-drag-region remains the primary drag path.
+    if (event.button !== 0 || event.detail !== 1) return;
+    // Keep explicit startDragging fallback for titlebar text hit-testing while
+    // letting Tauri handle direct drag-region double-clicks.
     void startWindowDragging().catch(() => {
       // Ignore: data-tauri-drag-region remains the primary drag path.
     });
   };
-  const handleTitlebarDoubleClick = () => {
-    if (!isWindows) return;
+  const handleTitlebarDoubleClick = (event: MouseEvent) => {
+    if (!isTauri) return;
+    if (event.target === event.currentTarget) return;
     void toggleMaximizeCurrentWindow().catch((error) => {
       console.error("[titlebar.windowControls] Failed to toggle maximize from titlebar double-click", error);
     });
@@ -72,8 +73,6 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
         <div
           data-tauri-drag-region
           class={layout.dragRegionClass}
-          onMouseDown={handleTitlebarDragMouseDown}
-          onDblClick={handleTitlebarDoubleClick}
         />
       ) : null}
       <div class={layout.rootClass}>

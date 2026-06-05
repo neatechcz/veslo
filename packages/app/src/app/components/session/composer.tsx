@@ -1008,6 +1008,26 @@ export default function Composer(props: ComposerProps) {
     setMentionQuery("");
     setSlashOpen(false);
     setSlashQuery("");
+    recordSendTrace("sendDraft:onSend", {
+      textLength: text.length,
+      attachmentCount: draft.attachments.length,
+      sendNow: options.sendNow,
+      source: options.source,
+    });
+    let sent = false;
+    let sendPromise: Promise<boolean>;
+    try {
+      sendPromise = props.onSend(submittedDraft, options);
+    } catch (error) {
+      setSending(false);
+      if (options.sendNow) setSendNowPending(false);
+      recordSendTrace("sendDraft:onSend:error", {
+        message: error instanceof Error ? error.message : String(error),
+        sendNow: options.sendNow,
+        source: options.source,
+      });
+      return;
+    }
     setAttachments([]);
     setEditorText("");
     rememberRecentEmit("");
@@ -1022,19 +1042,10 @@ export default function Composer(props: ComposerProps) {
     queueMicrotask(() => {
       suppressPromptSync = false;
     });
-    recordSendTrace("sendDraft:onSend", {
-      textLength: text.length,
-      attachmentCount: draft.attachments.length,
-      sendNow: options.sendNow,
-      source: options.source,
-    });
-    let sent = false;
+    setSending(false);
     try {
-      const sendPromise = props.onSend(submittedDraft, options);
-      setSending(false);
       sent = await sendPromise;
     } catch (error) {
-      setSending(false);
       recordSendTrace("sendDraft:onSend:error", {
         message: error instanceof Error ? error.message : String(error),
         sendNow: options.sendNow,

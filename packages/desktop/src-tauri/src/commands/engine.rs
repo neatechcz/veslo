@@ -843,10 +843,6 @@ pub fn engine_start(
         } else {
             format!("http://127.0.0.1:{daemon_port}")
         };
-        // Loopback only — daemon binds 127.0.0.1; LAN URL (resolve_connect_url)
-        // would loop router/server health checks against an unreachable address.
-        let opencode_connect_url = format!("http://127.0.0.1:{opencode_port}");
-
         if let Ok(mut state) = manager.inner.lock() {
             state.runtime = EngineRuntime::Orchestrator;
             state.child = None;
@@ -879,7 +875,7 @@ pub fn engine_start(
             &app,
             &veslo_manager,
             &workspace_paths,
-            Some(&opencode_connect_url),
+            Some(&opencode_base_url),
             opencode_username.as_deref(),
             opencode_password.as_deref(),
             opencode_router_health_port,
@@ -924,7 +920,7 @@ pub fn engine_start(
             app.clone(),
             opencode_router_manager,
             project_dir.clone(),
-            Some(opencode_connect_url),
+            Some(opencode_base_url.clone()),
             opencode_username.clone(),
             opencode_password.clone(),
             opencode_router_health_port,
@@ -1115,15 +1111,16 @@ pub fn engine_start(
         std::thread::sleep(std::time::Duration::from_millis(150));
     }
 
+    let opencode_base_url = format!("http://{client_host}:{port}");
+
     state.child = Some(child);
     state.project_dir = Some(project_dir.clone());
     state.hostname = Some(client_host.clone());
     state.port = Some(port);
-    state.base_url = Some(format!("http://{client_host}:{port}"));
+    state.base_url = Some(opencode_base_url.clone());
     state.opencode_username = opencode_username.clone();
     state.opencode_password = opencode_password.clone();
 
-    let opencode_connect_url = format!("http://127.0.0.1:{port}");
     let opencode_router_health_port = match resolve_opencode_router_health_port() {
         Ok(port) => Some(port),
         Err(error) => {
@@ -1139,7 +1136,7 @@ pub fn engine_start(
         &app,
         &veslo_manager,
         &workspace_paths,
-        Some(&opencode_connect_url),
+        Some(&opencode_base_url),
         opencode_username.as_deref(),
         opencode_password.as_deref(),
         opencode_router_health_port,
@@ -1151,7 +1148,7 @@ pub fn engine_start(
         app.clone(),
         opencode_router_manager,
         project_dir.clone(),
-        Some(opencode_connect_url),
+        Some(opencode_base_url.clone()),
         opencode_username,
         opencode_password,
         opencode_router_health_port,
@@ -1165,6 +1162,19 @@ pub fn engine_start(
 #[cfg(test)]
 mod tests {
     use super::{format_orchestrator_start_error, should_retry_orchestrator_start};
+
+    #[test]
+    fn local_sidecars_use_loopback_opencode_url() {
+        let source = include_str!("engine.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source");
+
+        assert!(source.contains("Some(&opencode_base_url)"));
+        assert!(source.contains("Some(opencode_base_url.clone())"));
+        assert!(!source.contains("Some(&opencode_connect_url)"));
+        assert!(!source.contains("Some(opencode_connect_url)"));
+    }
 
     #[test]
     fn formats_orchestrator_timeout_with_captured_stderr() {

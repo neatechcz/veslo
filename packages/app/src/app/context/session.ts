@@ -185,6 +185,7 @@ export function createSessionStore(options: {
    * never accidentally cold-spawns sandbox-exec + opencode serve.
    */
   engineReady?: () => boolean;
+  shouldBrowseSessionFromDb?: (sessionID: string) => boolean;
   onSessionBusyChange?: (sessionId: string, busy: boolean) => void;
   onAssistantResponseObserved?: (sessionId: string) => void;
 }) {
@@ -941,13 +942,14 @@ export function createSessionStore(options: {
       const requestLimit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, existingLimit);
       setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: true }));
       const browseModeOnly = options.engineReady ? !options.engineReady() : false;
-      mark("client check", { hasClient: Boolean(c), browseModeOnly, sessionID });
+      const browseFromDb = options.shouldBrowseSessionFromDb?.(sessionID) ?? browseModeOnly;
+      mark("client check", { hasClient: Boolean(c), browseModeOnly, browseFromDb, sessionID });
       // VSLO-86 — in browse mode (engineReady=false), the user hasn't asked
       // for the engine yet. Hitting `c.session.messages` here would force a
       // 30-60s sandbox-exec cold spawn just so we could pull the same
       // messages already cached locally. Fall through to the offline
       // transcript instead so passive sidebar clicking stays free.
-      if (!c || browseModeOnly) {
+      if (!c || browseFromDb) {
         try {
           mark("calling offline transcript fallback", { limit: requestLimit });
           let snapshot: VesloSessionTranscriptSnapshot | null = null;
@@ -1035,7 +1037,6 @@ export function createSessionStore(options: {
 
   async function loadEarlierMessages(sessionID: string, chunk = SESSION_MESSAGE_LOAD_CHUNK) {
     const c = options.routing.active();
-    if (!c) return;
     if (!sessionID) return;
     if (messageLoadBusyBySession()[sessionID]) return;
     if (messageCompleteBySession()[sessionID]) return;
@@ -1045,6 +1046,12 @@ export function createSessionStore(options: {
 
     setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: true }));
     try {
+      const browseFromDb = options.shouldBrowseSessionFromDb?.(sessionID) ?? false;
+      if (!c || browseFromDb) {
+        const snapshot = (await options.loadOfflineTranscript?.(sessionID, nextLimit)) ?? null;
+        if (snapshot) hydrateTranscriptSnapshot(snapshot);
+        return;
+      }
       const msgs = unwrap(await withTimeout(c.session.messages({ sessionID, limit: nextLimit }), 12000, "session.messages"));
       setMessagesForSession(sessionID, msgs);
       setMessageLimitBySession((prev) => ({ ...prev, [sessionID]: nextLimit }));

@@ -58,7 +58,10 @@ system-approved catalog, or bulk organization rollout remains future work.
 Starter workspace provisioning does not install creator skills such as
 `skill-creator`, `plugin-creator`, or `agent-creator` into workspace-local
 skill roots. Those creator skills are expected to be supplied through the
-user skill root when available.
+user skill root when available. Private app-created workspace provisioning also
+removes workspace-local skill directories that are exact copies of a user-root
+skill, including during new private chat setup, so the user root remains the
+single source for user skills.
 
 Hub skill installs require an explicit target. Today, the supported target is
 the active workspace; all-workspaces Hub install is visible as unavailable until
