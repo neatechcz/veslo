@@ -139,11 +139,11 @@ function isNonEmptyString(value: unknown): value is string {
 }
 
 function isAbsolutePath(path: string): boolean {
-  return path.startsWith("/") || /^[A-Za-z]:\//.test(path);
+  return path.startsWith("/") || isWindowsAbsolutePath(path);
 }
 
 function isWindowsAbsolutePath(path: string): boolean {
-  return /^[A-Za-z]:\//.test(path);
+  return /^[A-Za-z]:[\\/]/.test(path);
 }
 
 function isUrlLikePath(path: string): boolean {

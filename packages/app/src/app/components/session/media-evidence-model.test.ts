@@ -756,6 +756,11 @@ test("does not create bitmap evidence from url-like path values", () => {
         tool: "write",
         state: { status: "completed", input: { filePath: "javascript:alert.png" } },
       }),
+      part("p3-url-like-generic", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "foo:bar.png" } },
+      }),
     ],
   });
 
@@ -1020,6 +1025,39 @@ test("formats windows absolute file urls", () => {
 
   assert.equal(evidence.length, 1);
   assert.equal(evidence[0]?.src, "file:///C:/Users/me/project/result.png");
+});
+
+test("formats windows native absolute file urls", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p3d-native",
+    workspaceRoot: "C:\\Users\\me\\project",
+    parts: [
+      part("p3d-native", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "C:\\Users\\me\\project\\result image.png" } },
+      }),
+    ],
+  });
+
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0]?.src, "file:///C:/Users/me/project/result%20image.png");
+});
+
+test("keeps windows native absolute paths outside workspace root rejected", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p3d-native-outside",
+    workspaceRoot: "C:\\Users\\me\\project",
+    parts: [
+      part("p3d-native-outside", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "C:\\Users\\me\\other\\result.png" } },
+      }),
+    ],
+  });
+
+  assert.deepEqual(evidence, []);
 });
 
 test("keeps rootless absolute created paths missing without file urls", () => {
