@@ -202,6 +202,23 @@ test("encodes workspace file urls for paths with spaces", () => {
   assert.equal(evidence[0]?.src, "file:///Users/me/AI%20agent%20projects/Veslo/artifacts/result%20image.png");
 });
 
+test("encodes reserved filename characters in workspace file urls", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p3c-reserved",
+    workspaceRoot: "/Users/me/project",
+    parts: [
+      part("p3c-reserved", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "screens/result #1?.png" } },
+      }),
+    ],
+  });
+
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0]?.src, "file:///Users/me/project/screens/result%20%231%3F.png");
+});
+
 test("formats windows absolute file urls", () => {
   const evidence = buildMediaEvidenceForParts({
     sourceId: "tool:p3d",

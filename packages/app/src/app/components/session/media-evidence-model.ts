@@ -62,14 +62,14 @@ function getToolName(part: Part): string {
   return typeof (part as any).tool === "string" ? String((part as any).tool).toLowerCase() : "";
 }
 
-function getBitmapExtension(path: string): string {
-  const withoutQuery = path.split(/[?#]/, 1)[0] ?? path;
+function getBitmapExtension(value: string, options?: { treatUrlDelimiters?: boolean }): string {
+  const withoutQuery = options?.treatUrlDelimiters ? (value.split(/[?#]/, 1)[0] ?? value) : value;
   const match = withoutQuery.toLowerCase().match(/\.[a-z0-9]+$/);
   return match?.[0] ?? "";
 }
 
-function getBitmapMime(path: string): string | null {
-  return BITMAP_MIME_BY_EXTENSION[getBitmapExtension(path)] ?? null;
+function getBitmapMime(path: string, options?: { treatUrlDelimiters?: boolean }): string | null {
+  return BITMAP_MIME_BY_EXTENSION[getBitmapExtension(path, options)] ?? null;
 }
 
 function normalizeMime(value: string): string {
@@ -92,9 +92,16 @@ function isWindowsAbsolutePath(path: string): boolean {
   return /^[A-Za-z]:\//.test(path);
 }
 
+function encodeFilePath(path: string): string {
+  return path
+    .split("/")
+    .map((segment, index) => (index === 0 && /^[A-Za-z]:$/.test(segment) ? segment : encodeURIComponent(segment)))
+    .join("/");
+}
+
 function toAbsoluteFileUrl(path: string): string {
   const prefix = isWindowsAbsolutePath(path) ? "file:///" : "file://";
-  return encodeURI(`${prefix}${path}`);
+  return `${prefix}${encodeFilePath(path)}`;
 }
 
 function toFileUrl(path: string, workspaceRoot?: string): string | undefined {
@@ -124,7 +131,7 @@ function mimeFromDataUrl(value: string): string | null {
 }
 
 function inferStructuredMimeFromSource(src: string): string | null {
-  return mimeFromDataUrl(src) ?? getBitmapMime(src);
+  return mimeFromDataUrl(src) ?? getBitmapMime(src, { treatUrlDelimiters: true });
 }
 
 function isCompletedOrStatusOmittedForHistoricalParts(part: Part): boolean {
