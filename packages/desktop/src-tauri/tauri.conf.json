@@ -12,7 +12,9 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Veslo by Neatech",
+        "create": false,
         "width": 1180,
         "minWidth": 390,
         "height": 820,
