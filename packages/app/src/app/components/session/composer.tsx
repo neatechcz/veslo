@@ -36,6 +36,7 @@ type ComposerProps = {
   developerMode: boolean;
   busy: boolean;
   isStreaming: boolean;
+  stopShortcutConfirmPending?: boolean;
   compactTopSpacing?: boolean;
   compactWidth?: boolean;
   onSend: (draft: ComposerDraft, options?: ComposerSendOptions) => Promise<boolean>;
@@ -1965,10 +1966,24 @@ export default function Composer(props: ComposerProps) {
                           <button
                             type="button"
                             onClick={() => props.onStop()}
-                            class="shrink-0 p-1.5 rounded-full bg-gray-12 text-gray-1 hover:bg-gray-11 transition-colors"
-                            title={translate("session.stop_label")}
+                            class="inline-flex h-8 w-10 shrink-0 items-center justify-center rounded-full bg-gray-12 text-gray-1 transition-colors hover:bg-gray-11"
+                            title={
+                              props.stopShortcutConfirmPending
+                                ? translate("session.stop_escape_confirm_label")
+                                : translate("session.stop_label")
+                            }
+                            aria-label={
+                              props.stopShortcutConfirmPending
+                                ? translate("session.stop_escape_confirm_label")
+                                : translate("session.stop_label")
+                            }
                           >
-                            <Square size={14} fill="currentColor" />
+                            <Show
+                              when={props.stopShortcutConfirmPending}
+                              fallback={<Square size={14} fill="currentColor" />}
+                            >
+                              <span class="font-product text-xs font-bold leading-none">Esc</span>
+                            </Show>
                           </button>
                           <Show when={hasDraftContent()}>
                             <button

@@ -1245,6 +1245,7 @@ export default {
   "session.status_thinking_prefix": "Thinking: {text}",
   "session.status_working": "Working",
   "session.status_writing_file": "Writing file",
+  "session.stop_escape_confirm_label": "Press Esc again to stop",
   "session.stop_label": "Stop",
   "session.stopping_run": "Stopping the run...",
   "session.tasks_completed": "{completed} of {total} tasks completed",

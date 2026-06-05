@@ -2545,7 +2545,9 @@ export default function App() {
   async function abortSession(sessionID?: string) {
     const id = (sessionID ?? selectedSessionId() ?? "").trim();
     if (!id) return;
-    if (!(await ensureSelectedSessionWorkspaceActiveForSend(id))) return;
+    if (!(await ensureSelectedSessionWorkspaceActiveForSend(id))) {
+      return;
+    }
     const c = client();
     if (!c) return;
     // OpenCode exposes session.abort which interrupts the active prompt/run.
@@ -2570,7 +2572,9 @@ export default function App() {
     if (!sessionID) {
       throw new Error("Select a session before compacting.");
     }
-    if (!(await ensureSelectedSessionWorkspaceActiveForSend(sessionID))) return;
+    if (!(await ensureSelectedSessionWorkspaceActiveForSend(sessionID))) {
+      return;
+    }
     const c = client();
     if (!c) {
       throw new Error("Not connected to a server");
@@ -2857,7 +2861,9 @@ export default function App() {
   async function undoLastUserMessage() {
     const sessionID = (selectedSessionId() ?? "").trim();
     if (!sessionID) return;
-    if (!(await ensureSelectedSessionWorkspaceActiveForSend(sessionID))) return;
+    if (!(await ensureSelectedSessionWorkspaceActiveForSend(sessionID))) {
+      return;
+    }
     const c = client();
     if (!c) return;
 
@@ -2895,7 +2901,9 @@ export default function App() {
   async function redoLastUserMessage() {
     const sessionID = (selectedSessionId() ?? "").trim();
     if (!sessionID) return;
-    if (!(await ensureSelectedSessionWorkspaceActiveForSend(sessionID))) return;
+    if (!(await ensureSelectedSessionWorkspaceActiveForSend(sessionID))) {
+      return;
+    }
     const c = client();
     if (!c) return;
 
@@ -2950,7 +2958,9 @@ export default function App() {
     if (!trimmed) {
       throw new Error("Session name is required");
     }
-    if (!(await ensureSelectedSessionWorkspaceActiveForSend(sessionID))) return;
+    if (!(await ensureSelectedSessionWorkspaceActiveForSend(sessionID))) {
+      return;
+    }
 
     await renameSession(sessionID, trimmed);
     await refreshSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(e => reportError(e, "sidebar.refreshSessions"));

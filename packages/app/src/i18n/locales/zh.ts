@@ -201,6 +201,7 @@ export default {
   "session.run": "运行",
   "session.queue_message_label": "加入队列",
   "session.reorder_queued_message": "移动队列消息",
+  "session.stop_escape_confirm_label": "再次按 Esc 停止",
   "session.send_now_label": "立即发送",
   "session.send_now_title": "立即引导代理",
   "session.edit_message_title": "编辑消息",

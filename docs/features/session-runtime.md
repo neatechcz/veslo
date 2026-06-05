@@ -80,6 +80,8 @@ When a session is running or streaming, plain Enter and the queue send button ad
 
 Stopping a run pauses the current session queue before the abort can make the session idle. The queue resumes when the user sends a queued Enter draft or after an accepted send-now draft finishes. When a non-idle session returns to idle and the queue is not paused, Veslo drains the first queued or retryable queued draft.
 
+Plain Escape while a run is active is a two-step stop shortcut. The first eligible Escape changes the streaming stop button from the square icon to `Esc` and does not abort the run. The next eligible Escape confirms the stop and uses the same abort path as the stop button. Escape used by command palette, search, side overlays, modals, or other handled UI must not arm or confirm the stop shortcut.
+
 Queued drafts can be edited, canceled, and reordered before they are sent. Saving an edited queued draft with Enter updates the queued item; saving with send-now submits it immediately.
 
 Queued drafts are app/session UI state, not a durable server queue contract. They are keyed by session id, or by the pending draft key before a real session exists. Queue sends capture their source session before awaiting asynchronous send setup so a draft queued in one session is not accidentally submitted to a different session after navigation. If a queued item is draining in a background session, Veslo avoids starting run UI for the newly selected session while still letting the original session queue continue after that session becomes idle.

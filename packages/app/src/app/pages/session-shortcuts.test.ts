@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { shouldStopRunOnEscape } from "./session-shortcuts.js";
+import { isEscapeStopShortcutEligible, resolveEscapeStopShortcut } from "./session-shortcuts.js";
 
-test("stops run on plain Escape when a run is active", () => {
+test("marks plain Escape eligible for stop workflow when a run is active", () => {
   assert.equal(
-    shouldStopRunOnEscape({
+    isEscapeStopShortcutEligible({
       key: "Escape",
       defaultPrevented: false,
       metaKey: false,
@@ -21,7 +21,7 @@ test("stops run on plain Escape when a run is active", () => {
   );
 });
 
-test("does not stop run when escape should be ignored", () => {
+test("marks Escape ineligible when it should be ignored", () => {
   const cases = [
     { key: "Enter" },
     { defaultPrevented: true },
@@ -37,7 +37,7 @@ test("does not stop run when escape should be ignored", () => {
 
   for (const current of cases) {
     assert.equal(
-      shouldStopRunOnEscape({
+      isEscapeStopShortcutEligible({
         key: "Escape",
         defaultPrevented: false,
         metaKey: false,
@@ -53,4 +53,54 @@ test("does not stop run when escape should be ignored", () => {
       false,
     );
   }
+});
+
+test("requests Escape stop confirmation before stopping an active run", () => {
+  const base = {
+    key: "Escape",
+    defaultPrevented: false,
+    metaKey: false,
+    ctrlKey: false,
+    altKey: false,
+    shiftKey: false,
+    commandPaletteOpen: false,
+    searchOpen: false,
+    showRunIndicator: true,
+    abortBusy: false,
+  };
+
+  assert.equal(
+    resolveEscapeStopShortcut({
+      ...base,
+      confirmationPending: false,
+    }),
+    "request-confirmation",
+  );
+
+  assert.equal(
+    resolveEscapeStopShortcut({
+      ...base,
+      confirmationPending: true,
+    }),
+    "confirm-stop",
+  );
+});
+
+test("ignores Escape stop confirmation when the shortcut is not eligible", () => {
+  assert.equal(
+    resolveEscapeStopShortcut({
+      key: "Escape",
+      defaultPrevented: false,
+      metaKey: false,
+      ctrlKey: false,
+      altKey: false,
+      shiftKey: false,
+      commandPaletteOpen: true,
+      searchOpen: false,
+      showRunIndicator: true,
+      abortBusy: false,
+      confirmationPending: true,
+    }),
+    "ignore",
+  );
 });

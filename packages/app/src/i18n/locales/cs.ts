@@ -1241,6 +1241,7 @@ export default {
   "session.status_thinking_prefix": "Přemýšlím: {text}",
   "session.status_working": "Pracuji",
   "session.status_writing_file": "Zapisuji soubor",
+  "session.stop_escape_confirm_label": "Dalším Esc zastavíte běh",
   "session.stop_label": "Zastavit",
   "session.stopping_run": "Zastavuji běh...",
   "session.tasks_completed": "Dokončeno {completed} z {total} úkolů",

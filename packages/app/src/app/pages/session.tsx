@@ -85,7 +85,7 @@ import {
 } from "../utils";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
 import { normalizeLocalFilePath } from "../lib/local-file-path";
-import { shouldStopRunOnEscape } from "./session-shortcuts";
+import { resolveEscapeStopShortcut } from "./session-shortcuts";
 import { currentLocale, t } from "../../i18n";
 import type { UpdateDownloadRetryInfo } from "../context/updater";
 
@@ -1631,8 +1631,10 @@ export default function SessionView(props: SessionViewProps) {
   const [editingQueuedDraftId, setEditingQueuedDraftId] = createSignal<string | null>(null);
   const [editingTranscriptMessageId, setEditingTranscriptMessageId] = createSignal<string | null>(null);
   const [abortBusy, setAbortBusy] = createSignal(false);
+  const [escapeStopConfirmationPending, setEscapeStopConfirmationPending] = createSignal(false);
   const [todoExpanded, setTodoExpanded] = createSignal(false);
   let queueDrainAttemptInFlight = false;
+  let escapeStopConfirmationSessionId = props.selectedSessionId;
 
   const queuedDrafts = createMemo(() => queuedDraftsBySessionKey()[currentSessionQueueKey()] ?? []);
   const queuePaused = createMemo(() => Boolean(queuePausedAfterStopBySessionKey()[currentSessionQueueKey()]));
@@ -1773,6 +1775,17 @@ export default function SessionView(props: SessionViewProps) {
 
   const showRunIndicator = createMemo(() => runPhase() !== "idle");
   const showFooterRunIndicator = createMemo(() => showRunIndicator());
+  createEffect(() => {
+    const sessionId = props.selectedSessionId;
+    if (sessionId === escapeStopConfirmationSessionId) return;
+    escapeStopConfirmationSessionId = sessionId;
+    setEscapeStopConfirmationPending(false);
+  });
+  createEffect(() => {
+    if (!showRunIndicator() || abortBusy() || commandPaletteOpen() || searchOpen() || overlayOpenSide()) {
+      setEscapeStopConfirmationPending(false);
+    }
+  });
   const workspaceSendWarmupActive = createMemo(() => {
     const submitted = optimisticSubmittedDraft();
     if (!submitted || submitted.state !== "sending") return false;
@@ -2192,21 +2205,28 @@ export default function SessionView(props: SessionViewProps) {
         }
       }
 
-      if (
-        shouldStopRunOnEscape({
-          key: event.key,
-          defaultPrevented: event.defaultPrevented,
-          metaKey: event.metaKey,
-          ctrlKey: event.ctrlKey,
-          altKey: event.altKey,
-          shiftKey: event.shiftKey,
-          commandPaletteOpen: commandPaletteOpen(),
-          searchOpen: searchOpen(),
-          showRunIndicator: showRunIndicator(),
-          abortBusy: abortBusy(),
-        })
-      ) {
+      if (overlayOpenSide()) return;
+
+      const escapeStopAction = resolveEscapeStopShortcut({
+        key: event.key,
+        defaultPrevented: event.defaultPrevented,
+        metaKey: event.metaKey,
+        ctrlKey: event.ctrlKey,
+        altKey: event.altKey,
+        shiftKey: event.shiftKey,
+        commandPaletteOpen: commandPaletteOpen(),
+        searchOpen: searchOpen(),
+        showRunIndicator: showRunIndicator(),
+        abortBusy: abortBusy(),
+        confirmationPending: escapeStopConfirmationPending(),
+      });
+      if (escapeStopAction !== "ignore") {
         event.preventDefault();
+        if (escapeStopAction === "request-confirmation") {
+          setEscapeStopConfirmationPending(true);
+          return;
+        }
+        setEscapeStopConfirmationPending(false);
         void cancelRun();
       }
     };
@@ -2405,6 +2425,7 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const cancelRun = async () => {
+    setEscapeStopConfirmationPending(false);
     if (abortBusy()) return;
 
     setQueuePausedForCurrentSession(true);
@@ -2442,6 +2463,7 @@ export default function SessionView(props: SessionViewProps) {
     }
 
     if (abortBusy()) return;
+    setEscapeStopConfirmationPending(false);
     setAbortBusy(true);
     setToastMessage(tr("session.trying_again"));
     try {
@@ -4507,6 +4529,7 @@ export default function SessionView(props: SessionViewProps) {
                 developerMode={props.developerMode}
                 busy={props.busy}
                 isStreaming={showRunIndicator()}
+                stopShortcutConfirmPending={escapeStopConfirmationPending()}
                 compactTopSpacing={todoCount() > 0}
                 compactWidth={useCompactCenterColumn()}
                 onSend={handleSendPrompt}
