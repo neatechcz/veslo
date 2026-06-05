@@ -218,12 +218,12 @@ test("by-project sidebar renders private chats as a bottom section", () => {
   );
   assert.match(
     source,
-    /data-sidebar-chat-collapsed="true"[\s\S]*data-tooltip=\{tr\("sidebar\.new_chat"\)\}[\s\S]*onClick=\{startQuickChatFromCollapsed\}[\s\S]*<Plus size=\{12\} \/>[\s\S]*<span>\{tr\("sidebar\.chat"\)\}<\/span>/,
+    /data-sidebar-chat-collapsed="true"[\s\S]*data-tooltip=\{tr\("sidebar\.new_chat"\)\}[\s\S]*onClick=\{startQuickChatFromCollapsed\}[\s\S]*disabled=\{!props\.onQuickNewSession\}[\s\S]*aria-label=\{tr\("sidebar\.new_chat"\)\}[\s\S]*title=\{tr\("sidebar\.new_chat"\)\}[\s\S]*<Plus size=\{12\} \/>[\s\S]*<span>\{tr\("sidebar\.chat"\)\}<\/span>/,
     "collapsed Chats should expose a compact + Chat button",
   );
   assert.match(
     source,
-    /data-sidebar-chat-expand-button="true"[\s\S]*data-sidebar-chat-collapsed-resize-handle="true"[\s\S]*onPointerDown=\{handleChatSidebarResizeStart\}[\s\S]*onClick=\{expandChatSidebar\}[\s\S]*<ChevronUp size=\{11\} \/>/,
+    /data-sidebar-chat-expand-button="true"[\s\S]*data-sidebar-chat-collapsed-resize-handle="true"[\s\S]*onPointerDown=\{handleChatSidebarResizeStart\}[\s\S]*onClick=\{expandChatSidebar\}[\s\S]*aria-label=\{tr\("sidebar\.chats"\)\}[\s\S]*title=\{tr\("sidebar\.chats"\)\}[\s\S]*<ChevronUp size=\{11\} \/>/,
     "collapsed Chats should keep a separate expand button on the right",
   );
   assert.doesNotMatch(
@@ -258,7 +258,7 @@ test("by-project sidebar renders private chats as a bottom section", () => {
 test("project create-session actions use visible button chrome", () => {
   assert.match(
     source,
-    /const projectCreateSessionButtonClass =[\s\S]*h-7 w-7[\s\S]*rounded-full[\s\S]*border border-gray-6[\s\S]*bg-gray-1[\s\S]*shadow-sm/,
+    /const projectCreateSessionButtonClass =[\s\S]*h-7 w-7[\s\S]*rounded-full[\s\S]*border border-gray-6[\s\S]*bg-gray-1[\s\S]*shadow-sm[\s\S]*hover:border-gray-7[\s\S]*hover:bg-gray-2[\s\S]*hover:text-gray-12[\s\S]*focus-visible:outline-none[\s\S]*focus-visible:ring-2[\s\S]*focus-visible:ring-\[rgba\(var\(--dls-accent-rgb\),0\.2\)\]/,
     "project plus actions should use a shared button-like class",
   );
   assert.match(
