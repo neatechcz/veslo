@@ -213,6 +213,11 @@ test("by-project sidebar renders private chats as a bottom section", () => {
   assert.doesNotMatch(source, /cursor-row-resize/);
   assert.match(
     source,
+    /data-sidebar-chat-collapsed="true"[\s\S]*class="mt-2 flex h-11 w-full shrink-0 items-center justify-between gap-2 border-t border-gray-6\/70 px-1\.5 pt-2"[\s\S]*class=\{`inline-flex h-8/,
+    "collapsed Chats wrapper should reserve enough height for its h-8 controls",
+  );
+  assert.match(
+    source,
     /data-sidebar-chat-collapsed="true"[\s\S]*data-tooltip=\{tr\("sidebar\.new_chat"\)\}[\s\S]*onClick=\{startQuickChatFromCollapsed\}[\s\S]*<Plus size=\{12\} \/>[\s\S]*<span>\{tr\("sidebar\.chat"\)\}<\/span>/,
     "collapsed Chats should expose a compact + Chat button",
   );
@@ -226,7 +231,11 @@ test("by-project sidebar renders private chats as a bottom section", () => {
     /data-sidebar-chat-collapsed="true"[\s\S]*<span class="truncate">\{tr\("sidebar\.chats"\)\}<\/span>/,
     "collapsed Chats should not show the old Chats label in place of + Chat",
   );
-  assert.match(source, /compactChatSidebarHeight\(chatSidebarAvailableHeight\(\)\)/);
+  assert.match(
+    source,
+    /const startQuickChatFromCollapsed = \(\) => \{\s*applyResolvedChatSidebarResize\(compactChatSidebarHeight\(chatSidebarAvailableHeight\(\)\), false, true\);\s*startQuickChat\(\);\s*\};/,
+    "collapsed + Chat should resize to compact height before creating a chat",
+  );
   assert.match(source, /tr\("sidebar\.chats"\)/);
   assert.match(source, /tr\("sidebar\.new_chat"\)/);
   assert.match(source, /ChevronUp/);
@@ -256,6 +265,11 @@ test("project create-session actions use visible button chrome", () => {
     source,
     /class=\{projectCreateSessionButtonClass\}[\s\S]*aria-label=\{tr\("sidebar\.create_session_in_project"\)\}[\s\S]*<Plus size=\{14\} \/>/,
     "project plus actions should render as the shared button",
+  );
+  assert.equal(
+    (source.match(/class=\{projectCreateSessionButtonClass\}/g) ?? []).length,
+    2,
+    "both project plus call sites should use the shared button class",
   );
   assert.doesNotMatch(
     source,
