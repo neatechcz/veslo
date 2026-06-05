@@ -15,7 +15,8 @@ mluví s **1 managed-AI HTTPS endpointem**:
 [2] veslo-orchestrator daemon      — Bun, engine pool + HTTP proxy (random port)
 [3] bun --watch src/cli.ts         — veslo-server v dev modu (port 8787, fallback random)
 [4] veslo-code-router              — Bun, Telegram/Slack messaging bridge (random port)
-[5] veslo-code (× N)               — OpenCode engines, jeden per workspace (random porty)
+[5] veslo-code (× N)               — OpenCode engines, jeden per workspace (random porty,
+                                      přes platformní sandbox backend)
 [6] https://ai.veslo.work          — standalone AI Gateway na owned serveru
                                       (managed-AI access/proxy; Den auth běží na
                                       https://api.veslo.work)
@@ -88,8 +89,18 @@ Zdroj: `packages/opencode-router/src/cli.ts`.
 ### 5) OpenCode engines (`veslo-code serve`)
 
 OpenCode native binárka, jedna instance per workspace. Spawne ji
-orchestrator přes `engine-pool.ts::spawnEngine`. Běží uvnitř macOS
-**sandbox-exec** (filesystem allowlist na workspace + vendoring dirs).
+orchestrator přes `engine-pool.ts::spawnEngine`. Engine neběží přímo na
+hostu, ale přes `WorkerSandbox` backend z
+`packages/orchestrator/src/sandbox/index.ts`:
+
+- macOS (`process.platform === "darwin"`): `mac-sandbox-exec`, tj.
+  `sandbox-exec` přes `@anthropic-ai/sandbox-runtime`.
+- Windows (`process.platform === "win32"`): `windows-wsl2`, tj. `wsl.exe`
+  spustí Linux OpenCode runtime uvnitř `bubblewrap` (`bwrap`) v WSL2.
+  Orchestrator používá WSL guest IP jako `connectHost`, protože Windows
+  localhost forwarding je v tomto flow nespolehlivý.
+- Ostatní host platformy: aktuálně bez podporovaného sandbox backendu
+  (`resolveSandbox()` failne closed).
 
 Naslouchá na `0.0.0.0:<random>`. Auth: HTTP Basic, stejné credentials
 jako daemon.
@@ -151,7 +162,7 @@ Ne lineární pipeline, je to **mesh**. Šipka = "volá":
    ┌────────┴────────────┐         ┌────────────────────┐
    │ Tauri webview (UI)  │         │  OpenCode engine   │
    │ SolidJS + signals   │         │  (per workspace,   │
-   │ + 3 SSE streamy     │         │   sandbox-exec)    │
+   │ + 3 SSE streamy     │         │   platform sandbox)│
    └──┬────┬────┬─────┬──┘         └────────▲───────────┘
       │    │    │     │                     │
       │    │    │     │ Tauri IPC           │ HTTP proxy
@@ -175,6 +186,7 @@ Ne lineární pipeline, je to **mesh**. Šipka = "volá":
       │    │           daemon (random port)  │
       │    │              │                  │
       │    │              │ spawne engine    │
+      │    │              │ přes WorkerSandbox
       │    │              │ + HTTP proxy ────┘
       │    │              ▼
       │    │           OpenCode engine (per workspace)
@@ -216,6 +228,24 @@ Výjimka: **Rust-side SSE proxy** (`engine_sse_subscribe`,
 události webview přes Tauri event bus. To proto, aby SSE nedrželo Tauri
 HTTP plugin IPC kanál (viz commit `1dffda5e`).
 
+### Windows proxy chain má dvě vrstvy
+
+Na Windows je nutné rozlišovat tyto dvě cesty:
+
+```text
+veslo-server :8787
+  -> orchestrator /workspace/<id>/opencode
+  -> WSL2/bwrap OpenCode engine
+```
+
+Když přímý orchestrator health vrací 200, ale stejný endpoint přes
+`veslo-server` vrací 500/502, není to WSL routing problém. Znamená to chybu
+ve `veslo-server` proxy vrstvě.
+
+Invariant: `veslo-server` používá workspace-scoped base URL
+`/workspace/<id>/opencode`, drží `--workspace` a `--workspace-id` zarovnané a
+na upstream posílá `Accept-Encoding: identity`.
+
 ### Engine konfigurace je 3-zdrojová
 
 OpenCode engine při startu čte:
@@ -256,7 +286,7 @@ Krátce — proč nelze jen "back-end + API + front-end":
 | Tauri | Desktop window, native menus, file picker, IPC do Rust | Ne (jinak ne desktop app) |
 | Veslo-server | Persistent state (workspaces, sessions), AI gateway proxy | Ne, ale lze sloučit s orchestratorem |
 | Orchestrator daemon | Engine pool (spawn, suspend, route), HTTP proxy | Lze sloučit do veslo-server |
-| Engine (per workspace) | OpenCode native, sandbox-exec, čte tvoje soubory | Ne (jinak žádné AI s context tvého kódu) |
+| Engine (per workspace) | OpenCode native, platformní sandbox (`sandbox-exec` na macOS, WSL2 + bwrap na Windows), čte tvoje soubory | Ne (jinak žádné AI s context tvého kódu) |
 | Veslo-code-router | Telegram/Slack messaging bridge | Ano (vypnout v dev) |
 | Managed AI gateway | AI provider keys management, gateway | Ne (kromě případů kdy user má vlastní keys) |
 

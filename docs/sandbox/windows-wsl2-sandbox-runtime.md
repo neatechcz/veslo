@@ -1,14 +1,20 @@
 # Windows WSL2 Sandbox Runtime
 
-This document is the sandbox-track source of truth for the Windows WSL2 sandbox
-runtime direction. The historical POC files in this folder explain how the
-decision was reached; this file describes the intended product shape for the
-WSL2 + bwrap implementation.
+This document is the sandbox-track source of truth for the Windows sandbox
+runtime. The historical POC files in this folder explain how the decision was
+reached; this file describes the current project reality and intended product
+shape for the WSL2 + bwrap implementation.
 
 ## Decision
 
-Windows sandboxing is WSL2-first. Veslo should provision and use a managed WSL2
-distribution named `VesloSandbox` for sandboxed OpenCode execution.
+Windows sandboxing is **WSL2 + bwrap**. Veslo should provision and use a
+managed WSL2 distribution named `VesloSandbox` for sandboxed OpenCode
+execution.
+
+This is not just an option among equivalent Windows backends. In the current
+code, `resolveSandbox()` returns `WindowsWsl2` on `win32`. The native Windows
+Job Object backend is a stub and AppContainer is historical POC material, not
+the supported OpenCode sandbox path.
 
 The managed distro should be based on a pinned lightweight Ubuntu rootfs that
 passes the real bwrap probe. Do not auto-follow the newest Ubuntu release. The
@@ -86,14 +92,18 @@ Not acceptable during a normal build:
 
 ## Runtime Selection
 
-The runtime selector should use this order:
+The runtime selector currently uses this order:
 
 1. `VESLO_WSL_DISTRO`, when explicitly set.
 2. Managed `VesloSandbox`, when installed.
-3. Existing WSL2 distro fallback for development only.
+3. Existing WSL2 distro fallback for development/support only.
 
 The fallback exists to keep development unblocked while the onboarding
-provisioner is being built. The product default remains `VesloSandbox`.
+provisioner is being built. The product default remains `VesloSandbox`; a
+normal user should not be asked to prepare a personal Ubuntu distro by hand.
+
+Do not treat fallback to a personal distro as product behavior. It is only a
+development/support bridge; `VESLO_WSL_DISTRO` is the explicit escape hatch.
 
 ## Current Implementation State
 
@@ -108,6 +118,9 @@ Current implemented behavior:
 - verifies `bubblewrap` by spawning it
 - runs OpenCode inside bwrap
 - uses a WSL-native per-workspace engine home/config directory
+- maps Windows workspace paths to WSL paths before launching OpenCode
+- returns the WSL guest IP as `connectHost` so Windows can reach a
+  wildcard-bound engine without depending on flaky localhost forwarding
 - fails closed when WSL2, bwrap, workspace path visibility, or OpenCode version
   checks fail
 
@@ -121,6 +134,41 @@ Not yet implemented:
 
 Smoke tests should only verify the environment. They must not install packages,
 repair WSL, or modify user distros.
+
+## Launch Model
+
+On Windows, the orchestrator does not spawn the Windows OpenCode binary. It
+launches Linux OpenCode through WSL2:
+
+```text
+wsl.exe -d <distro> --exec bash -c <veslo-wsl2-bwrap-opencode>
+```
+
+Inside that script:
+
+- the workspace is mounted as `/workspace`
+- the per-engine config dir is mounted as `/config`
+- `HOME` points to a WSL-native per-engine home under `~/.veslo/engines/<key>`
+- `.git` under the workspace is read-only
+- host managed config `tools` and `node_modules` are read-only bound into
+  `/config/tools` and `/config/node_modules`
+- `OPENCODE_SERVER_PASSWORD` and similar sensitive runtime values must pass
+  through environment, not be rendered into the generated `bash -c` argv
+- the Linux OpenCode runtime is invoked inside `bwrap`
+
+The host-side proxy reaches the engine through WSL guest IPv4 (`connectHost`).
+`VESLO_WSL_CONNECT_HOST` is only a diagnostic override.
+
+## Required WSL+bwrap Invariants
+
+- DNS must work inside bwrap, not just in bare WSL. If `/etc/resolv.conf`
+  points into `/mnt/wsl`, bind its real target into the sandbox.
+- Use WSL guest IP as `connectHost`; Windows `127.0.0.1` forwarding is not the
+  source of truth for engine health.
+- Managed OpenCode dependencies must use `@opencode-ai/plugin@1.14.29` and
+  `zod@4.1.8`.
+
+Fallback plugin mode is acceptable only when it imports real vendored `zod`.
 
 ## Local Dev Provisioning Snapshot
 
@@ -171,6 +219,8 @@ Supported development overrides:
 - `VESLO_WSL_DISTRO` - explicit WSL distro name
 - `VESLO_WSL_OPENCODE_BIN` - Linux path to a provisioned OpenCode binary inside
   WSL
+- `VESLO_WSL_CONNECT_HOST` - explicit WSL guest IPv4 address for host-to-guest
+  engine connectivity diagnostics
 
 These overrides are for development, support, and advanced diagnostics. They
 are not the product onboarding path.

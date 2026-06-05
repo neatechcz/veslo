@@ -1,10 +1,11 @@
 # Known issues — současné pain pointy
 
-Tohle jsou problémy, které **stále existují** v stavu k commitu
-`60c5d93d` (květen 2026), nebo byly opraveny ale jejich kořenová příčina
-zůstává v architektuře. Cíl: nový vývojář ví, co očekávat, a nepokouší
-se "opravit" něco, co je úmyslné nebo neopravitelné bez velkého
-refactoru.
+Tohle jsou problémy, které **stále existují** v aktuálním sandbox-track
+stavu větve `local/sandbox-merge`, nebo byly opraveny ale jejich kořenová
+příčina zůstává v architektuře. Historické části vycházejí z květnového
+handoffu k commitu `60c5d93d`; Windows poznámky jsou aktualizované po
+červnové WSL2 stabilizaci. Cíl: nový vývojář ví, co očekávat, a nepokouší
+se "opravit" něco, co je úmyslné nebo neopravitelné bez velkého refactoru.
 
 Pro chronologii **toho, co už bylo opraveno**, viz
 [`fixes-timeline.md`](fixes-timeline.md). Pro **jak debugovat**, když
@@ -15,10 +16,11 @@ narazíš, viz [`debug-playbook.md`](debug-playbook.md).
 **Symptom:** První `sendPrompt` v daném workspace blokuje UI ~30-60 s.
 Spinner "status.connecting", composer button šedý.
 
-**Příčina:** Engine = OpenCode native (`veslo-code serve`) spuštěný
-v macOS `sandbox-exec`. Při startu:
+**Příčina:** Engine = OpenCode native (`veslo-code serve`) spuštěný přes
+platformní sandbox backend. Na macOS je to `sandbox-exec`; na Windows je to
+WSL2 distro + `bubblewrap` (`bwrap`). Při startu:
 
-1. Sandbox profile load
+1. Sandbox backend init (`sandbox-exec` profile nebo WSL2 + bwrap wrapper)
 2. Bun JIT initialization
 3. SQLite migration na workspace DB
 4. Plugin load (`@opencode-ai/plugin` + workspace plugins)
@@ -42,6 +44,8 @@ Možné mitigace:
 **Kód k pochopení:**
 - `packages/orchestrator/src/engine-pool.ts::EnginePool::ensure`
 - `packages/orchestrator/src/cli.ts:3536` `spawnEngine`
+- `packages/orchestrator/src/sandbox/index.ts::resolveSandbox`
+- `packages/orchestrator/src/sandbox/windows-wsl2/index.ts`
 - `packages/desktop/src-tauri/src/commands/engine.rs::spawn_engine`
 
 ## 2. Tauri HTTP plugin má jeden IPC channel
@@ -186,8 +190,9 @@ A engine se nikdy nespawne, dokud uživatel restartne aplikaci.
 
 **Příčiny (multi-faktor):**
 
-- Sandbox-exec policy denial — engine se spustí, ale `read()` na
-  workspace soubor selže → engine umře → "Unable to connect" na
+- Sandbox policy denial — na macOS typicky `sandbox-exec`, na Windows WSL2
+  + bwrap mount/namespace problém. Engine se spustí, ale nemůže číst
+  workspace nebo runtime cestu → engine umře → "Unable to connect" na
   subsequent request.
 - Stale plugin / vendoring mezi `~/.veslo/veslo-orchestrator-dev/opencode-config/<wsId>/`
   a `<workspace>/.opencode/node_modules/`. Engine `bun.resolve()` hledá
@@ -205,10 +210,39 @@ A engine se nikdy nespawne, dokud uživatel restartne aplikaci.
 - `bdccc0c6` (fix #7) — `resolve_veslo_port` reapne vlastní zombie
   bun procesy před bind.
 
-**Co zůstává:** sandbox-exec denials jsou case-by-case, vyžadují ruční
-audit profile. Žádný systémový fix bez OpenCode upstream práce.
+**Co zůstává:** sandbox denials jsou case-by-case a vyžadují audit
+konkrétního backendu. Na Windows není správná reakce přepnout na native
+Windows proces; aktuální podporovaná cesta je opravit WSL2 + bwrap runtime
+nebo onboarding/repair flow.
 
-## 7. WorkspaceClientStaleError jako unhandled rejection
+## 7. Windows sandbox závisí na WSL2 + bwrap runtime
+
+**Symptom:** Na Windows engine spawn failne před OpenCode health checkem.
+
+**Příčina:** `resolveSandbox()` na `win32` vrací `windows-wsl2`, ne native
+Windows sandbox. Runtime potřebuje WSL2 distro, `bwrap`, Linux OpenCode,
+viditelnou workspace path a funkční `connectHost` přes WSL guest IP.
+
+**Co zůstává:** first-run UI onboarding a managed import/provisioning
+`VesloSandbox` ještě nejsou hotové. `VESLO_WSL_DISTRO` je dev/support override,
+ne produktový fallback.
+
+## 8. Windows runtime failures nejsou jedna vrstva
+
+Podobné symptomy mají jiné fixy:
+
+- bwrap DNS failne před `server listening` → bind realpath target
+  `/etc/resolv.conf`.
+- Windows `127.0.0.1:<engine-port>` timeoutuje, ale WSL IP health vrací 200
+  → používat `connectHost`.
+- Přímý orchestrator health je 200, ale `:8787/workspace/...` vrací 500/502
+  → `veslo-server` proxy/base path/`Accept-Encoding: identity`.
+- `engine-suspend` s `reason: "api-dispose"` → managed-AI reload/runtime
+  state, ne WSL routing.
+- `Object.values requires that input parameter not be null or undefined`
+  → managed OpenCode plugin/zod provisioning (`1.14.29` + `4.1.8`).
+
+## 9. WorkspaceClientStaleError jako unhandled rejection
 
 **Symptom:** V console (často v desítkách):
 
@@ -227,7 +261,7 @@ window.onerror.
 **Opravitelné?** Ano, jednorázový audit callsites a centralizované
 catchování. Není to fatal, ale poškozuje signál v console. Otevřený úkol.
 
-## 8. Veslo-code-router běží zbytečně v dev mode
+## 10. Veslo-code-router běží zbytečně v dev mode
 
 **Symptom:** Další proces v `ps aux`, který v multi-workspace flow
 nemá co dělat. Pollne `/global/health` na orchestrator daemon a může
@@ -242,7 +276,7 @@ přesto běží.
 přesun do explicit user action (Settings → Messaging → Enable). Drobný
 úklid, ne kritické.
 
-## 9. Logy jsou roztroušené napříč 5 místy
+## 11. Logy jsou roztroušené napříč 5 místy
 
 **Symptom:** Debugovat single user click vyžaduje otevřít:
 
@@ -257,7 +291,7 @@ přesun do explicit user action (Settings → Messaging → Enable). Drobný
 **Opravitelné?** Ano (= jeden `/tmp/veslo-trace.log` co dostane vše).
 Doporučený systémový úkol, viz [`handoff.md`](handoff.md).
 
-## 10. Build / restart cyklus je pomalý
+## 12. Build / restart cyklus je pomalý
 
 **Symptom:** Změnit Rust → cargo build → Tauri restart → 30-60 s před
 testem. Pokud zapomeneš `--features e2e`, není WebDriver, musíš rebuildit.

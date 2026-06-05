@@ -1,15 +1,17 @@
-# Sandbox docs — multi-workspace stabilizace (VSLO-86)
+# Sandbox docs — multi-workspace + sandbox runtime (VSLO-86)
 
 Tahle složka je **handoff dokumentace** pro nového vývojáře, který přebírá
-práci na multi-workspace stabilizaci Vesla (interní označení VSLO-86).
-Píše se v květnu 2026, navazuje na sérii commitů `04a2ba75 … 60c5d93d`
-na branchi `sandbox`.
+práci na multi-workspace stabilizaci a lokálním sandbox runtime Vesla
+(interní označení VSLO-86). Původně vznikla v květnu 2026 na branchi
+`sandbox`; po červnových Windows/WSL opravách je aktualizovaná tak, aby
+popisovala současnou realitu větve `local/sandbox-merge`.
 
 > **Pozor na slovo "sandbox":** tahle složka řeší **multi-workspace
-> stabilizaci** (= VSLO-86 = branch `sandbox`). Existuje ještě
-> separátní téma "sandbox" v kontextu **filesystem isolation** (= jak
-> engine `sandbox-exec` čte/zapisuje soubory). To je jiná věc, není
-> v této složce popsaná.
+> stabilizaci** i **filesystem isolation** pro lokální OpenCode engine.
+> Na macOS je backend `sandbox-exec` přes `@anthropic-ai/sandbox-runtime`.
+> Na Windows je aktuální řešení **WSL2 + bwrap** v managed nebo explicitně
+> zvolené WSL2 distribuci; native Windows Job Object/AppContainer cesta není
+> produktový backend v aktuálním kódu.
 
 ## Komu je to určeno
 
@@ -23,8 +25,13 @@ repozitáře. Odkazy do `docs/dev/`, `docs/features/` a kořenového
 **Multi-workspace** = uživatel má v aplikaci současně přepínatelné
 projektové adresáře (workspaces). Klik v sidebaru → uvidí historii
 sessions toho workspace, napíše zprávu → AI odpoví v kontextu toho
-workspace. Každý workspace má vlastní isolovaný **engine** (sandbox-exec
-spuštěná instance OpenCode), který pracuje s jeho soubory.
+workspace. Každý workspace má vlastní izolovaný **engine** (OpenCode
+instance spuštěná přes platformní sandbox backend), který pracuje s jeho
+soubory. Backend je platformní:
+
+- macOS: `mac-sandbox-exec` (`sandbox-exec` přes Anthropic sandbox runtime)
+- Windows: `windows-wsl2` (`wsl.exe` + Linux OpenCode runtime uvnitř bwrap)
+- Linux host mimo WSL: aktuálně bez podporovaného orchestrator sandbox backendu
 
 VSLO-86 řeší **stabilitu** tohohle flow — freezy při bootu, mrtvé
 spinnery při kliku, engine crash cascade, neúplné token rotace. Detaily
@@ -41,7 +48,7 @@ viz [`known-issues.md`](known-issues.md) a [`fixes-timeline.md`](fixes-timeline.
 | 5 | [`debug-playbook.md`](debug-playbook.md) | Jak spustit dev mode, najít porty, otevřít DevTools, číst logy | Jakmile narazíš na první problém. |
 | 6 | [`e2e-specs.md`](e2e-specs.md) | Existující WebDriver specy a jak je rozšířit | Pokud chceš automatizovaně reprodukovat / verifikovat fixy. |
 | 7 | [`handoff.md`](handoff.md) | Otevřené úkoly, doporučená strategie, copy-paste prompt pro novou AI session | Až budeš plánovat další krok. |
-| 8 | [`windows-wsl2-sandbox-runtime.md`](windows-wsl2-sandbox-runtime.md) | Windows WSL2 + bwrap runtime, first-run onboarding, managed `VesloSandbox` distro | Windows sandbox/runtime provisioning. |
+| 8 | [`windows-wsl2-sandbox-runtime.md`](windows-wsl2-sandbox-runtime.md) | Windows WSL2 + bwrap runtime, runtime selection, managed `VesloSandbox` distro | Windows sandbox/runtime provisioning. |
 
 ## Vztah k existující dokumentaci v gitu
 
@@ -73,8 +80,8 @@ Existující docs **nezatahuj duplikováním**, jen na ně odkazuj:
 Pokud najdeš rozpor mezi sandbox docs a něčím jiným:
 
 1. **`ARCHITECTURE.md` v kořeni** je high-level pravda o vizi.
-2. **`docs/sandbox/`** je pravda o **současném stavu kódu** k květnu 2026
-   (= VSLO-86 commit `60c5d93d`).
+2. **`docs/sandbox/`** je pravda o **současném stavu kódu** pro
+   multi-workspace/sandbox runtime na větvi `local/sandbox-merge`.
 3. **Realita v běžící aplikaci** přebíjí všechno — viz `debug-playbook.md`
    jak ji ověřit.
 
