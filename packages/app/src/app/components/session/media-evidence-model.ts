@@ -46,7 +46,11 @@ const WRITE_LIKE_TOOLS = new Set([
 ]);
 
 const DISCOVERY_ONLY_TOOLS = new Set(["read", "grep", "glob", "search", "list", "list_files"]);
+const FILE_MUTATING_TOOLS = new Set(["write", "edit", "apply_patch"]);
+const OUTPUT_ORIENTED_TOOLS = new Set(["imagegen", "screenshot"]);
+const SHELL_LIKE_TOOLS = new Set(["bash", "shell", "exec", "command", "run"]);
 const CREATED_PATH_INPUT_KEYS = ["filePath", "path", "file", "outputPath"] as const;
+const CREATED_OUTPUT_PATH_INPUT_KEYS = ["outputPath"] as const;
 
 function getState(part: Part): Record<string, unknown> {
   const state = (part as any).state;
@@ -70,9 +74,19 @@ function safelyDecodeURIComponent(value: string): string {
   }
 }
 
+function safelyDecodeURIComponentDeep(value: string): string {
+  let current = value;
+  for (let index = 0; index < 3; index += 1) {
+    const next = safelyDecodeURIComponent(current);
+    if (next === current) return current;
+    current = next;
+  }
+  return current;
+}
+
 function getBitmapExtension(value: string, options?: { treatUrlDelimiters?: boolean; decode?: boolean }): string {
-  const withoutQuery = options?.treatUrlDelimiters ? (value.split(/[?#]/, 1)[0] ?? value) : value;
-  const candidate = options?.decode ? safelyDecodeURIComponent(withoutQuery) : withoutQuery;
+  const decoded = options?.decode ? safelyDecodeURIComponentDeep(value) : value;
+  const candidate = options?.treatUrlDelimiters ? (decoded.split(/[?#]/, 1)[0] ?? decoded) : decoded;
   const match = candidate.toLowerCase().match(/\.[a-z0-9]+$/);
   return match?.[0] ?? "";
 }
@@ -155,7 +169,7 @@ function buildEvidenceId(sourceId: string, partId: string, sourceKey: string): s
 }
 
 function mimeFromDataUrl(value: string): string | null {
-  const match = value.match(/^data:([^,;]+)[,;]/);
+  const match = value.match(/^data:([^,;]+)[,;]/i);
   return match ? normalizeMime(match[1] ?? "") : null;
 }
 
@@ -203,7 +217,8 @@ function buildInlineFileEvidence(
   if (!normalizedMime || !isBitmapMime(normalizedMime)) return null;
   if (!isNonEmptyString(url) || !hasAllowedImageSourceScheme(url)) return null;
   if (hasSvgSourceExtension(url)) return null;
-  if (isNonEmptyString((part as any).filename) && hasExtension((part as any).filename, ".svg")) return null;
+  if (isNonEmptyString((part as any).filename) && hasExtension((part as any).filename, ".svg", { decode: true })) return null;
+  if (isNonEmptyString((part as any).name) && hasExtension((part as any).name, ".svg", { decode: true })) return null;
 
   return {
     id: buildEvidenceId(input.sourceId, part.id, `inline:${index}`),
@@ -237,7 +252,7 @@ function normalizeStructuredImage(image: unknown): { src: string; mime: string; 
   if (!mime) return null;
   if (!isBitmapMime(mime)) return null;
 
-  const src = rawSrc === record.data && !rawSrc.startsWith("data:") ? `data:${mime};base64,${rawSrc}` : rawSrc;
+  const src = rawSrc === record.data && !/^data:/i.test(rawSrc) ? `data:${mime};base64,${rawSrc}` : rawSrc;
   if (!hasAllowedImageSourceScheme(src)) return null;
   if (hasSvgSourceExtension(src)) return null;
   const title = isNonEmptyString(record.alt) ? record.alt : "Image";
@@ -267,9 +282,15 @@ function buildStructuredImageEvidence(part: Part, input: BuildMediaEvidenceInput
   return evidence;
 }
 
+function createdPathKeysForTool(toolName: string): readonly string[] {
+  if (SHELL_LIKE_TOOLS.has(toolName)) return CREATED_OUTPUT_PATH_INPUT_KEYS;
+  if (FILE_MUTATING_TOOLS.has(toolName) || OUTPUT_ORIENTED_TOOLS.has(toolName)) return CREATED_PATH_INPUT_KEYS;
+  return [];
+}
+
 function getCreatedBitmapPath(part: Part, workspaceRoot?: string): string | null {
   const input = getInput(part);
-  for (const key of CREATED_PATH_INPUT_KEYS) {
+  for (const key of createdPathKeysForTool(getToolName(part))) {
     const value = input[key];
     if (isNonEmptyString(value) && hasParentPathSegment(normalizePath(value))) {
       continue;
@@ -300,12 +321,13 @@ function buildCreatedPathEvidence(
   if (!path) return null;
 
   const src = toFileUrl(path, input.workspaceRoot);
+  const shouldExposePath = Boolean(src) || !isAbsolutePath(normalizePath(path));
   return {
     id: buildEvidenceId(input.sourceId, part.id, `created:${index}`),
     kind: "created",
     title: titleForPath(path),
     mime: getBitmapMime(path) ?? "image/png",
-    path,
+    path: shouldExposePath ? path : undefined,
     src,
     sourcePartId: part.id,
     status: src ? "available" : "missing",

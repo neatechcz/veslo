@@ -68,6 +68,23 @@ test("extracts mime from structured image string data urls without semicolons", 
   assert.equal(evidence[0]?.mime, "image/png");
 });
 
+test("accepts uppercase bitmap data url schemes", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p2b-uppercase",
+    defaultKind: "analyzed",
+    parts: [
+      part("p2b-uppercase", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: { status: "completed", images: ["DATA:image/png;base64,AAAA"] },
+      }),
+    ],
+  });
+
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0]?.mime, "image/png");
+});
+
 test("excludes svg from inline and structured image evidence", () => {
   const evidence = buildMediaEvidenceForParts({
     sourceId: "message:m2",
@@ -152,6 +169,42 @@ test("excludes svg from inline and structured image evidence", () => {
           status: "completed",
           images: [{ url: "https://example.com/icon%2Esvg", mediaType: "image/png", alt: "Encoded spoof" }],
         },
+      }),
+      part("p2-spoof-encoded-query", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ url: "https://example.com/icon%2Esvg%3Fv=1", mediaType: "image/png", alt: "Encoded query spoof" }],
+        },
+      }),
+      part("p2-spoof-double-encoded", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ url: "https://example.com/icon%252Esvg", mediaType: "image/png", alt: "Double encoded spoof" }],
+        },
+      }),
+      part("p2-spoof-double-encoded-filename", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ data: "CCCC", mediaType: "image/png", filename: "icon%252Esvg" }],
+        },
+      }),
+      part("p2-spoof-inline-name", {
+        type: "file",
+        mime: "image/png",
+        name: "icon.svg",
+        url: "https://example.com/render",
+      }),
+      part("p2-spoof-inline-encoded-filename", {
+        type: "file",
+        mime: "image/png",
+        filename: "icon%2Esvg",
+        url: "https://example.com/render",
       }),
     ],
   });
@@ -408,6 +461,42 @@ test("classifies concrete created bitmap paths from write-like tools", () => {
   assert.equal(evidence[0]?.src, "file:///Users/me/project/artifacts/result.webp");
 });
 
+test("does not treat shell-like input paths as created evidence", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p3-shell-input",
+    workspaceRoot: "/Users/me/project",
+    parts: [
+      part("p3-shell-input", {
+        type: "tool",
+        tool: "bash",
+        state: {
+          status: "completed",
+          input: { filePath: "artifacts/result.png", path: "artifacts/other.png", file: "artifacts/file.png" },
+        },
+      }),
+    ],
+  });
+
+  assert.deepEqual(evidence, []);
+});
+
+test("keeps shell-like outputPath evidence", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p3-shell-output",
+    workspaceRoot: "/Users/me/project",
+    parts: [
+      part("p3-shell-output", {
+        type: "tool",
+        tool: "bash",
+        state: { status: "completed", input: { outputPath: "artifacts/result.png" } },
+      }),
+    ],
+  });
+
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0]?.src, "file:///Users/me/project/artifacts/result.png");
+});
+
 test("does not create bitmap path evidence for unsuccessful write-like tool states", () => {
   for (const status of ["error", "failed", "running", "pending"]) {
     const evidence = buildMediaEvidenceForParts({
@@ -507,7 +596,7 @@ test("keeps rootless absolute created paths missing without file urls", () => {
   });
 
   assert.equal(evidence.length, 1);
-  assert.equal(evidence[0]?.path, "/Users/me/project/result.png");
+  assert.equal(evidence[0]?.path, undefined);
   assert.equal(evidence[0]?.src, undefined);
   assert.equal(evidence[0]?.status, "missing");
 });
