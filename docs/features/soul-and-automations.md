@@ -31,7 +31,8 @@ Supported public behavior:
 - Paused, disabled, failed, completed, and cancelled automations do not continue
   scheduling until reactivated where applicable.
 - Manual run executes immediately through the workspace OpenCode upstream and
-  records a run entry without erasing prior history.
+  records a run entry without erasing prior history. Target agent, model, and
+  variant hints are forwarded when present.
 - Deleting an automation cancels the active definition but preserves its run
   history for completed/history views.
 
@@ -40,7 +41,8 @@ cancelling, and manual runs require collaborator access.
 
 Legacy Agent Lab scheduler routes remain compatibility aliases. Older Agent Lab
 automation files are migrated into the canonical Veslo automation store on
-server read when the canonical store does not already exist.
+server read when the canonical store does not already exist. The legacy list
+shows only schedule kinds older Agent Lab clients understand.
 
 ## Soul
 

@@ -1,10 +1,10 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, expect, test } from "bun:test";
 
-import { resolveLegacyAgentLabAutomationsPath, writeAutomationStore } from "./automation-store.js";
+import { resolveAutomationsPath, resolveLegacyAgentLabAutomationsPath, writeAutomationStore } from "./automation-store.js";
 import type { AutomationRun, VesloAutomation } from "./automations.js";
 import { startServer } from "./server.js";
 
@@ -119,12 +119,12 @@ test("POST /workspace/ws_1/automations/:id/run creates a run and posts prompt to
     sessionId: "ses_existing",
     createdSession: false,
   });
-  expect(fixture.opencCodeCalls).toContainEqual({
+  expect(fixture.openCodeCalls).toContainEqual({
     method: "GET",
     pathname: "/session/ses_existing",
     body: null,
   });
-  expect(fixture.opencCodeCalls).toContainEqual({
+  expect(fixture.openCodeCalls).toContainEqual({
     method: "POST",
     pathname: "/session/ses_existing/prompt_async",
     body: { parts: [{ type: "text", text: "Run once" }] },
@@ -213,10 +213,191 @@ test("collaborator auth is required for automation mutations", async () => {
   expect(deleteResponse.status).toBe(403);
 });
 
-async function startFixture() {
+test("read-only automation list migrates legacy items in memory without writing canonical store", async () => {
+  const fixture = await startFixture({
+    readOnly: true,
+    beforeStart: async (workspaceRoot) => {
+      await writeLegacyAutomationStore(workspaceRoot);
+    },
+  });
+
+  const response = await fixture.clientFetch("/workspace/ws_1/automations");
+
+  expect(response.status).toBe(200);
+  const payload = await response.json() as { items: VesloAutomation[] };
+  expect(payload.items.map((item) => item.id)).toEqual(["agentlab_daily"]);
+  await expect(readFile(resolveAutomationsPath(fixture.workspaceRoot), "utf8")).rejects.toThrow();
+});
+
+test("automation runner ignores unauthorized configured workspaces", async () => {
+  const unauthorizedRoot = await mkdtemp(join(tmpdir(), "veslo-automations-unauthorized-"));
+  tempDirs.push(unauthorizedRoot);
+  await writeAutomationStore(unauthorizedRoot, {
+    schemaVersion: 1,
+    updatedAt: "2026-06-05T12:00:00.000Z",
+    items: [makeAutomation({
+      id: "auto_unauthorized_due",
+      workspaceId: "ws_unauthorized",
+      schedule: { kind: "oneShot", runAt: "2026-06-05T12:00:00.000Z" },
+      nextRunAt: "2026-06-05T12:00:00.000Z",
+      prompt: "Do not run",
+    })],
+    runs: [],
+  });
+
+  const fixture = await startFixture({
+    extraWorkspaces: [{
+      id: "ws_unauthorized",
+      name: "Unauthorized",
+      path: unauthorizedRoot,
+      workspaceType: "local",
+      baseUrl: "http://127.0.0.1:1",
+    }],
+  });
+  await sleep(100);
+
+  expect(fixture.openCodeCalls).toEqual([]);
+  const persisted = JSON.parse(await readFile(resolveAutomationsPath(unauthorizedRoot), "utf8")) as { runs: unknown[] };
+  expect(persisted.runs).toEqual([]);
+});
+
+test("POST /workspace/ws_1/automations rejects duplicate ids without replacing existing data", async () => {
+  const fixture = await startFixture();
+  const existing = fixture.makeAutomation({ id: "auto_duplicate", name: "Original", prompt: "Keep me" });
+  const existingRun = fixture.makeRun({ id: "run_duplicate", automationId: existing.id });
+  const originalStore = {
+    schemaVersion: 1 as const,
+    updatedAt: "2026-06-05T12:05:00.000Z",
+    items: [existing],
+    runs: [existingRun],
+  };
+  await writeAutomationStore(fixture.workspaceRoot, originalStore);
+
+  const response = await fixture.clientFetch("/workspace/ws_1/automations", {
+    method: "POST",
+    body: {
+      id: "auto_duplicate",
+      name: "Replacement",
+      prompt: "Overwrite",
+      schedule: { kind: "oneShot", runAt: futureRunAt() },
+    },
+  });
+
+  expect(response.status).toBe(409);
+  const persisted = JSON.parse(await readFile(resolveAutomationsPath(fixture.workspaceRoot), "utf8"));
+  expect(persisted.items).toEqual(originalStore.items);
+  expect(persisted.runs).toEqual(originalStore.runs);
+});
+
+test("PATCH enabled true does not reactivate a completed past one-shot", async () => {
+  const fixture = await startFixture();
+  const completed = fixture.makeAutomation({
+    id: "auto_completed",
+    enabled: false,
+    status: "completed",
+    schedule: { kind: "oneShot", runAt: "2026-06-01T10:00:00.000Z" },
+    nextRunAt: null,
+    completedAt: "2026-06-01T10:05:00.000Z",
+  });
+  await writeAutomationStore(fixture.workspaceRoot, {
+    schemaVersion: 1,
+    updatedAt: "2026-06-01T10:05:00.000Z",
+    items: [completed],
+    runs: [],
+  });
+
+  const response = await fixture.clientFetch("/workspace/ws_1/automations/auto_completed", {
+    method: "PATCH",
+    body: { enabled: true },
+  });
+
+  expect(response.status).toBe(409);
+  const persisted = JSON.parse(await readFile(resolveAutomationsPath(fixture.workspaceRoot), "utf8")) as { items: VesloAutomation[] };
+  expect(persisted.items[0]).toEqual(completed);
+});
+
+test("manual run forwards target agent model and variant to OpenCode prompt", async () => {
+  const fixture = await startFixture();
+  const created = await fixture.createAutomation({
+    target: {
+      preferredSessionId: "ses_existing",
+      agent: "build",
+      model: "gpt-5",
+      variant: "xhigh",
+    },
+  });
+
+  const response = await fixture.clientFetch(`/workspace/ws_1/automations/${created.id}/run`, {
+    method: "POST",
+  });
+
+  expect(response.status).toBe(200);
+  expect(fixture.openCodeCalls).toContainEqual({
+    method: "POST",
+    pathname: "/session/ses_existing/prompt_async",
+    body: {
+      parts: [{ type: "text", text: "Run once" }],
+      agent: "build",
+      model: "gpt-5",
+      variant: "xhigh",
+    },
+  });
+});
+
+test("legacy Agent Lab list filters schedules old clients do not understand", async () => {
+  const fixture = await startFixture();
+  await writeAutomationStore(fixture.workspaceRoot, {
+    schemaVersion: 1,
+    updatedAt: "2026-06-05T12:00:00.000Z",
+    items: [
+      fixture.makeAutomation({ id: "auto_daily", schedule: { kind: "daily", hour: 9, minute: 0 } }),
+      fixture.makeAutomation({ id: "auto_once", schedule: { kind: "oneShot", runAt: futureRunAt() } }),
+      fixture.makeAutomation({ id: "auto_cron", schedule: { kind: "cron", expression: "0 9 * * *" } }),
+    ],
+    runs: [],
+  });
+
+  const response = await fixture.clientFetch("/workspace/ws_1/agentlab/automations");
+
+  expect(response.status).toBe(200);
+  const payload = await response.json() as { items: Array<{ id: string }> };
+  expect(payload.items.map((item) => item.id)).toEqual(["auto_daily"]);
+});
+
+test("legacy Agent Lab run reports failed runner result instead of ok true", async () => {
+  const fixture = await startFixture({ failPrompt: true });
+  const created = await fixture.createAutomation();
+
+  const response = await fixture.clientFetch(`/workspace/ws_1/agentlab/automations/${created.id}/run`, {
+    method: "POST",
+  });
+  const payload = await response.json() as { ok?: boolean; run?: AutomationRun };
+
+  if (response.status >= 200 && response.status < 300) {
+    expect(payload.ok).toBe(false);
+    expect(payload.run?.status).toBe("failed");
+  } else {
+    expect(response.status).toBeGreaterThanOrEqual(400);
+  }
+});
+
+type FixtureOptions = {
+  readOnly?: boolean;
+  failPrompt?: boolean;
+  beforeStart?: (workspaceRoot: string) => Promise<void>;
+  extraWorkspaces?: Array<{
+    id: string;
+    name: string;
+    path: string;
+    workspaceType: "local";
+    baseUrl?: string;
+  }>;
+};
+
+async function startFixture(options: FixtureOptions = {}) {
   const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-automations-route-"));
   tempDirs.push(workspaceRoot);
-  const opencCodeCalls: Array<{ method: string; pathname: string; body: unknown }> = [];
+  const openCodeCalls: Array<{ method: string; pathname: string; body: unknown }> = [];
 
   const upstream = Bun.serve({
     hostname: "127.0.0.1",
@@ -224,16 +405,22 @@ async function startFixture() {
     fetch: async (request) => {
       const url = new URL(request.url);
       const body = request.method === "GET" ? null : await request.json().catch(() => null);
-      opencCodeCalls.push({ method: request.method, pathname: url.pathname, body });
+      openCodeCalls.push({ method: request.method, pathname: url.pathname, body });
 
       if (request.method === "GET" && url.pathname === "/session/ses_existing") return json(200, { id: "ses_existing" });
       if (request.method === "POST" && url.pathname === "/session") return json(200, { id: "ses_new" });
-      if (request.method === "POST" && url.pathname === "/session/ses_new/prompt_async") return json(200, { ok: true });
-      if (request.method === "POST" && url.pathname === "/session/ses_existing/prompt_async") return json(200, { ok: true });
+      if (request.method === "POST" && url.pathname === "/session/ses_new/prompt_async") {
+        return options.failPrompt ? json(500, { code: "failed" }) : json(200, { ok: true });
+      }
+      if (request.method === "POST" && url.pathname === "/session/ses_existing/prompt_async") {
+        return options.failPrompt ? json(500, { code: "failed" }) : json(200, { ok: true });
+      }
       return json(404, { code: "not_found" });
     },
   });
   runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+  await options.beforeStart?.(workspaceRoot);
 
   const server = startServer({
     host: "127.0.0.1",
@@ -250,9 +437,10 @@ async function startFixture() {
         workspaceType: "local",
         baseUrl: `http://127.0.0.1:${upstream.port}`,
       },
+      ...(options.extraWorkspaces ?? []),
     ],
     authorizedRoots: [workspaceRoot],
-    readOnly: false,
+    readOnly: options.readOnly ?? false,
     startedAt: Date.now(),
     tokenSource: "cli",
     hostTokenSource: "cli",
@@ -318,13 +506,17 @@ async function startFixture() {
   return {
     server,
     workspaceRoot,
-    opencCodeCalls,
+    openCodeCalls,
     clientFetch,
     createViewerToken,
     createAutomation,
     makeAutomation,
     makeRun,
   };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function writeLegacyAutomationStore(workspaceRoot: string): Promise<void> {

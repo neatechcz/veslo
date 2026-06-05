@@ -217,22 +217,27 @@ these routes instead of writing automation JSON directly:
 - `GET /workspace/:id/automations`
   Requires client auth. Viewer, collaborator, and owner tokens can read. Returns
   `{ items, updatedAt }`; reading migrates legacy Agent Lab automation state
-  into the canonical automation store when needed.
+  into the canonical automation store when needed. On read-only servers, legacy
+  items are returned as an in-memory view and the canonical file is not written.
 - `POST /workspace/:id/automations`
   Requires collaborator client auth. Creates an automation from `name`,
   `prompt`, `schedule`, optional `target`, and optional `enabled`/`status`.
-  Active enabled automations return a persisted `automation.nextRunAt`.
+  Active enabled automations return a persisted `automation.nextRunAt`. A
+  caller-supplied duplicate automation id is rejected with a conflict response.
 - `PATCH /workspace/:id/automations/:automationId`
   Requires collaborator client auth. Updates name, prompt, schedule, target, and
   pause/resume/cancel state. Paused, disabled, completed, failed, and cancelled
-  automations do not have a scheduled `nextRunAt`.
+  automations do not have a scheduled `nextRunAt`. Terminal states are not
+  reactivated by bare `enabled: true`; reactivation requires explicit active
+  status and an updated future one-shot or recurring schedule.
 - `DELETE /workspace/:id/automations/:automationId`
   Requires collaborator client auth. Cancels the automation by marking it
   disabled with `status: "cancelled"` and `nextRunAt: null`; run history is
   preserved.
 - `POST /workspace/:id/automations/:automationId/run`
   Requires collaborator client auth. Runs the automation immediately through the
-  workspace OpenCode upstream and returns `{ run }`.
+  workspace OpenCode upstream and returns `{ run }`. Target `agent`, `model`,
+  and `variant` values are forwarded to the OpenCode prompt request when set.
 - `GET /workspace/:id/automations/:automationId/runs`
   Requires client auth. Viewer, collaborator, and owner tokens can read run
   history. Returns `{ items }`.
@@ -245,7 +250,9 @@ schedules reflect persisted state.
 Agent Lab compatibility routes under
 `/workspace/:id/agentlab/automations...` remain available for older callers.
 They read through the canonical automation store and legacy migration path
-where practical, while new app work should target `/workspace/:id/automations`.
+where practical, but list only legacy-compatible schedules (`interval`, `daily`,
+`weekly`) and report failed manual runs as failures. New app work should target
+`/workspace/:id/automations`.
 
 ## Capability Discovery
 

@@ -449,8 +449,13 @@ export function startServer(config: ServerConfig) {
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
+  const runnerWorkspaces = config.readOnly
+    ? []
+    : config.workspaces
+      .filter((workspace) => isAuthorizedRootSync(resolve(workspace.path), config.authorizedRoots))
+      .map((workspace) => ({ ...workspace, path: resolve(workspace.path) }));
   const automationRunner = createAutomationRunner({
-    workspaces: config.workspaces,
+    workspaces: runnerWorkspaces,
     execute: createOpenCodeAutomationExecutor(config),
   });
   const routes = createRoutes(config, approvals, tokens, automationRunner);
@@ -749,6 +754,16 @@ export function startServer(config: ServerConfig) {
   return server;
 }
 
+function isAuthorizedRootSync(workspacePath: string, roots: string[]): boolean {
+  const resolvedWorkspace = resolve(workspacePath);
+  for (const root of roots) {
+    const resolvedRoot = resolve(root);
+    if (resolvedWorkspace === resolvedRoot) return true;
+    if (resolvedWorkspace.startsWith(resolvedRoot + sep)) return true;
+  }
+  return false;
+}
+
 function matchRoute(routes: Route[], method: string, path: string) {
   for (const route of routes) {
     if (route.method !== method) continue;
@@ -889,10 +904,7 @@ function createOpenCodeAutomationExecutor(
   config: ServerConfig,
 ): (input: AutomationExecutionInput) => Promise<AutomationExecutionResult> {
   return async (input) => {
-    const workspace = config.workspaces.find((item) => item.id === input.workspaceId);
-    if (!workspace) {
-      throw new ApiError(404, "workspace_not_found", "Workspace not found");
-    }
+    const workspace = await resolveWorkspace(config, input.workspaceId);
 
     const preferredSessionId = input.target.preferredSessionId?.trim() || "";
     if (preferredSessionId) {
@@ -937,6 +949,14 @@ async function postAutomationPrompt(
   const agent = target.agent?.trim();
   if (agent) {
     body.agent = agent;
+  }
+  const model = typeof target.model === "string" ? target.model.trim() : "";
+  if (model) {
+    body.model = model;
+  }
+  const variant = typeof target.variant === "string" ? target.variant.trim() : "";
+  if (variant) {
+    body.variant = variant;
   }
   await fetchOpencodeJson(workspace, `/session/${encodeURIComponent(sessionId)}/prompt_async`, {
     method: "POST",
@@ -2774,6 +2794,17 @@ function resolveAutomationState(
   return { enabled, status };
 }
 
+function isTerminalAutomationStatus(status: AutomationStatus): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
+}
+
+function canReactivateWithSchedule(schedule: AutomationSchedule): boolean {
+  if (schedule.kind !== "oneShot") {
+    return true;
+  }
+  return Date.parse(schedule.runAt) > Date.now();
+}
+
 function nextAutomationRunAt(
   schedule: AutomationSchedule,
   state: { enabled: boolean; status: AutomationStatus },
@@ -2838,6 +2869,17 @@ function updateAutomationFromPayload(
   const name = body.name === undefined ? existing.name : requireNonEmptyPayloadString(body.name, "name");
   const prompt = body.prompt === undefined ? existing.prompt : requireNonEmptyPayloadString(body.prompt, "prompt");
   const schedule = body.schedule === undefined ? existing.schedule : parseAutomationSchedule(body.schedule);
+  const wantsActive = body.enabled === true || body.status === "active";
+  if (isTerminalAutomationStatus(existing.status) && wantsActive) {
+    const allowed = body.status === "active" && body.schedule !== undefined && canReactivateWithSchedule(schedule);
+    if (!allowed) {
+      throw new ApiError(
+        409,
+        "automation_terminal",
+        "Terminal automations require an explicit active status and updated future or recurring schedule to reactivate",
+      );
+    }
+  }
   const state = resolveAutomationState(
     { enabled: body.enabled, status: body.status },
     { enabled: existing.enabled, status: existing.status },
@@ -2876,11 +2918,17 @@ function toLegacyAgentLabAutomation(
   };
 }
 
+function isLegacyAgentLabSchedule(schedule: AutomationSchedule): schedule is AgentLabSchedule {
+  return schedule.kind === "interval" || schedule.kind === "daily" || schedule.kind === "weekly";
+}
+
 function legacyAgentLabStoreFromAutomations(store: { updatedAt: string; items: VesloAutomation[]; runs: AutomationRun[] }): AgentLabAutomationStore {
   return {
     schemaVersion: 1,
     updatedAt: Date.parse(store.updatedAt),
-    items: store.items.map((item) => toLegacyAgentLabAutomation(item, store.runs)),
+    items: store.items
+      .filter((item) => isLegacyAgentLabSchedule(item.schedule))
+      .map((item) => toLegacyAgentLabAutomation(item, store.runs)),
   };
 }
 
@@ -6308,7 +6356,7 @@ function createRoutes(
 
   addRoute(routes, "GET", "/workspace/:id/automations", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    const store = await readAutomationStore(workspace.path, workspace.id);
+    const store = await readAutomationStore(workspace.path, workspace.id, { migrateLegacy: !config.readOnly });
     return jsonResponse({ items: store.items, updatedAt: store.updatedAt });
   });
 
@@ -6328,8 +6376,10 @@ function createRoutes(
     });
 
     await mutateAutomationStore(workspace.path, workspace.id, (store) => {
-      const items = store.items.filter((item) => item.id !== automation.id);
-      return { ...store, updatedAt: automation.updatedAt, items: [automation, ...items] };
+      if (store.items.some((item) => item.id === automation.id)) {
+        throw new ApiError(409, "automation_conflict", "Automation id already exists");
+      }
+      return { ...store, updatedAt: automation.updatedAt, items: [automation, ...store.items] };
     });
     await recordAudit(workspace.path, {
       id: shortId(),
@@ -6465,7 +6515,7 @@ function createRoutes(
   addRoute(routes, "GET", "/workspace/:id/automations/:automationId/runs", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const automationId = validateAutomationId(ctx.params.automationId);
-    const store = await readAutomationStore(workspace.path, workspace.id);
+    const store = await readAutomationStore(workspace.path, workspace.id, { migrateLegacy: !config.readOnly });
     const items = store.runs.filter((run) => run.automationId === automationId);
     if (!store.items.some((item) => item.id === automationId) && items.length === 0) {
       throw new ApiError(404, "automation_not_found", "Automation not found");
@@ -6475,7 +6525,7 @@ function createRoutes(
 
   addRoute(routes, "GET", "/workspace/:id/agentlab/automations", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    const store = await readAutomationStore(workspace.path, workspace.id);
+    const store = await readAutomationStore(workspace.path, workspace.id, { migrateLegacy: !config.readOnly });
     const legacy = legacyAgentLabStoreFromAutomations(store);
     return jsonResponse({ items: legacy.items, updatedAt: legacy.updatedAt });
   });
@@ -6578,11 +6628,22 @@ function createRoutes(
       timestamp: Date.now(),
     });
 
+    if (run.status === "failed") {
+      return jsonResponse({
+        ok: false,
+        automationId,
+        sessionId: run.sessionId,
+        ranAt: run.finishedAt ? Date.parse(run.finishedAt) : Date.now(),
+        run,
+      }, 502);
+    }
+
     return jsonResponse({
       ok: true,
       automationId,
       sessionId: run.sessionId,
       ranAt: run.finishedAt ? Date.parse(run.finishedAt) : Date.now(),
+      run,
     });
   });
 
@@ -6722,21 +6783,11 @@ async function resolveWorkspace(config: ServerConfig, id: string): Promise<Works
     throw new ApiError(404, "workspace_not_found", "Workspace not found");
   }
   const resolvedWorkspace = resolve(workspace.path);
-  const authorized = await isAuthorizedRoot(resolvedWorkspace, config.authorizedRoots);
+  const authorized = isAuthorizedRootSync(resolvedWorkspace, config.authorizedRoots);
   if (!authorized) {
     throw new ApiError(403, "workspace_unauthorized", "Workspace is not authorized");
   }
   return { ...workspace, path: resolvedWorkspace };
-}
-
-async function isAuthorizedRoot(workspacePath: string, roots: string[]): Promise<boolean> {
-  const resolvedWorkspace = resolve(workspacePath);
-  for (const root of roots) {
-    const resolvedRoot = resolve(root);
-    if (resolvedWorkspace === resolvedRoot) return true;
-    if (resolvedWorkspace.startsWith(resolvedRoot + sep)) return true;
-  }
-  return false;
 }
 
 function ensureWritable(config: ServerConfig): void {

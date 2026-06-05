@@ -246,11 +246,11 @@ history records keyed by run id and are not removed when an automation is
 completed or cancelled.
 
 The local `veslo-server` process owns runtime scheduling. On startup it creates
-an automation runner for configured workspaces, reads the canonical store,
-initializes missing `nextRunAt` values for active enabled automations, recovers
-recent due runs, skips stale missed runs after the runner grace window, and
-sends prompts to the workspace OpenCode upstream. Mutating automation routes
-refresh the runner for that workspace after the store write.
+an automation runner only for writable, authorized configured workspaces, reads
+the canonical store, initializes missing `nextRunAt` values for active enabled
+automations, recovers recent due runs, skips stale missed runs after the runner
+grace window, and sends prompts to the workspace OpenCode upstream. Mutating
+automation routes refresh the runner for that workspace after the store write.
 
 Legacy Agent Lab scheduler data may still exist at:
 
@@ -259,7 +259,8 @@ Legacy Agent Lab scheduler data may still exist at:
 When the canonical automation file is absent, server reads migrate valid legacy
 items into `.opencode/veslo/automations.json` and preserve legacy last-run
 metadata as run history. The legacy file is left in place for compatibility; the
-canonical file becomes the source of truth after migration.
+canonical file becomes the source of truth after migration. Read-only server
+instances return the migrated view without writing the canonical file.
 
 ## OpenCode Config
 

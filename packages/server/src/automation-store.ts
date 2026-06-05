@@ -36,6 +36,10 @@ type LegacyAgentLabStore = {
   items?: unknown;
 };
 
+type ReadAutomationStoreOptions = {
+  migrateLegacy?: boolean;
+};
+
 const mutationQueues = new Map<string, Promise<void>>();
 
 export function resolveAutomationsPath(workspaceRoot: string): string {
@@ -46,7 +50,12 @@ export function resolveLegacyAgentLabAutomationsPath(workspaceRoot: string): str
   return join(workspaceRoot, ".opencode", "veslo", "agentlab", "automations.json");
 }
 
-export async function readAutomationStore(workspaceRoot: string, workspaceId: string): Promise<AutomationStoreData> {
+export async function readAutomationStore(
+  workspaceRoot: string,
+  workspaceId: string,
+  options: ReadAutomationStoreOptions = {},
+): Promise<AutomationStoreData> {
+  const migrateLegacy = options.migrateLegacy ?? true;
   const path = resolveAutomationsPath(workspaceRoot);
   if (await exists(path)) {
     return readNewAutomationStore(path);
@@ -59,7 +68,9 @@ export async function readAutomationStore(workspaceRoot: string, workspaceId: st
       throw new ApiError(400, "invalid_payload", "workspaceId is required to migrate legacy automations");
     }
     const migrated = await readLegacyAgentLabStore(legacyPath, migrationWorkspaceId);
-    await writeAutomationStore(workspaceRoot, migrated);
+    if (migrateLegacy) {
+      await writeAutomationStore(workspaceRoot, migrated);
+    }
     return migrated;
   }
 
