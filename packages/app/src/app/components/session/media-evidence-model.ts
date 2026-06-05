@@ -62,6 +62,11 @@ function getInput(part: Part): Record<string, unknown> {
   return input && typeof input === "object" ? (input as Record<string, unknown>) : {};
 }
 
+function getObjectField(record: Record<string, unknown>, key: string): Record<string, unknown> {
+  const value = record[key];
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
 function getToolName(part: Part): string {
   return typeof (part as any).tool === "string" ? String((part as any).tool).toLowerCase() : "";
 }
@@ -84,7 +89,11 @@ function decodeCommonPercentTokens(value: string): string {
     .replace(/%26/gi, "&")
     .replace(/%3d/gi, "=")
     .replace(/%3f/gi, "?")
-    .replace(/%3b/gi, ";");
+    .replace(/%3b/gi, ";")
+    .replace(/%[0-9a-f]{2}/gi, (token) => {
+      const charCode = Number.parseInt(token.slice(1), 16);
+      return charCode >= 0x20 && charCode <= 0x7e ? String.fromCharCode(charCode) : token;
+    });
 }
 
 function safelyDecodeURIComponentDeep(value: string): string {
@@ -135,6 +144,10 @@ function isAbsolutePath(path: string): boolean {
 
 function isWindowsAbsolutePath(path: string): boolean {
   return /^[A-Za-z]:\//.test(path);
+}
+
+function isUrlLikePath(path: string): boolean {
+  return /^(?:https?|data|blob|file):/i.test(path.trim());
 }
 
 function normalizeComparablePath(path: string): string {
@@ -248,7 +261,7 @@ function buildInlineFileEvidence(
 
   return {
     id: buildEvidenceId(input.sourceId, part.id, `inline:${index}`),
-    kind: input.defaultKind ?? "analyzed",
+    kind: "analyzed",
     title: isNonEmptyString((part as any).filename)
       ? (part as any).filename
       : isNonEmptyString((part as any).name)
@@ -307,7 +320,7 @@ function buildStructuredImageEvidence(part: Part, input: BuildMediaEvidenceInput
     if (!normalized) return;
     evidence.push({
       id: buildEvidenceId(input.sourceId, part.id, `structured:${partIndex}:${index}`),
-      kind: input.defaultKind ?? "analyzed",
+      kind: "analyzed",
       title: normalized.title,
       mime: normalized.mime,
       src: normalized.src,
@@ -324,25 +337,34 @@ function createdPathKeysForTool(toolName: string): readonly string[] {
   return [];
 }
 
+function createdPathSourcesForPart(part: Part): Record<string, unknown>[] {
+  const state = getState(part);
+  return [getInput(part), getObjectField(state, "output"), getObjectField(state, "result")];
+}
+
 function getCreatedBitmapPath(part: Part, workspaceRoot?: string): string | null {
-  const input = getInput(part);
-  for (const key of createdPathKeysForTool(getToolName(part))) {
-    const value = input[key];
-    if (isNonEmptyString(value) && hasParentPathSegment(normalizePath(value))) {
-      continue;
+  for (const source of createdPathSourcesForPart(part)) {
+    for (const key of createdPathKeysForTool(getToolName(part))) {
+      const value = source[key];
+      if (isNonEmptyString(value) && isUrlLikePath(value)) {
+        continue;
+      }
+      if (isNonEmptyString(value) && hasParentPathSegment(normalizePath(value))) {
+        continue;
+      }
+      if (
+        isNonEmptyString(value) &&
+        isAbsolutePath(normalizePath(value)) &&
+        isNonEmptyString(workspaceRoot) &&
+        !isPathWithinRoot(normalizePath(value), workspaceRoot)
+      ) {
+        continue;
+      }
+      if (isNonEmptyString(value) && hasSvgFamilyExtension(value, { decode: true })) {
+        continue;
+      }
+      if (isNonEmptyString(value) && getBitmapMime(value)) return value;
     }
-    if (
-      isNonEmptyString(value) &&
-      isAbsolutePath(normalizePath(value)) &&
-      isNonEmptyString(workspaceRoot) &&
-      !isPathWithinRoot(normalizePath(value), workspaceRoot)
-    ) {
-      continue;
-    }
-    if (isNonEmptyString(value) && hasSvgFamilyExtension(value, { decode: true })) {
-      continue;
-    }
-    if (isNonEmptyString(value) && getBitmapMime(value)) return value;
   }
   return null;
 }

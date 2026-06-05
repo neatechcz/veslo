@@ -51,6 +51,35 @@ test("extracts structured tool images", () => {
   assert.equal(evidence[0]?.src, "data:image/png;base64,BBBB");
 });
 
+test("keeps inline and structured image evidence analyzed when default kind is created", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "message:m1-default-created",
+    defaultKind: "created",
+    parts: [
+      part("p1-default-created", {
+        type: "file",
+        mime: "image/png",
+        filename: "input.png",
+        url: "data:image/png;base64,AAAA",
+      }),
+      part("p2-default-created", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ data: "BBBB", mediaType: "image/png", alt: "Preview" }],
+        },
+      }),
+    ],
+  });
+
+  assert.equal(evidence.length, 2);
+  assert.deepEqual(
+    evidence.map((item) => item.kind),
+    ["analyzed", "analyzed"],
+  );
+});
+
 test("extracts mime from structured image string data urls without semicolons", () => {
   const evidence = buildMediaEvidenceForParts({
     sourceId: "tool:p2b",
@@ -186,6 +215,14 @@ test("excludes svg from inline and structured image evidence", () => {
           images: [{ url: "https://example.com/icon%2Esvg%ZZ", mediaType: "image/png", alt: "Malformed encoded spoof" }],
         },
       }),
+      part("p2-spoof-encoded-letters-malformed", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ url: "https://example.com/icon.%73%76%67%ZZ", mediaType: "image/png", alt: "Encoded letters spoof" }],
+        },
+      }),
       part("p2-spoof-double-encoded", {
         type: "tool",
         tool: "browser_screenshot",
@@ -240,6 +277,14 @@ test("excludes svg from inline and structured image evidence", () => {
         state: {
           status: "completed",
           images: [{ data: "DDDD", mediaType: "image/png", filename: "icon%2Esvg%ZZ" }],
+        },
+      }),
+      part("p2-spoof-filename-encoded-letters-malformed", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ data: "DDDD", mediaType: "image/png", filename: "icon.%73%76%67%ZZ" }],
         },
       }),
       part("p2-spoof-name-query", {
@@ -666,6 +711,42 @@ test("does not create bitmap evidence from svg-family spoofed paths", () => {
   assert.deepEqual(evidence, []);
 });
 
+test("does not create bitmap evidence from url-like path values", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p3-url-like-paths",
+    workspaceRoot: "/Users/me/project",
+    parts: [
+      part("p3-url-like-https", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "https://example.com/image.png" } },
+      }),
+      part("p3-url-like-http", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "http://example.com/image.png" } },
+      }),
+      part("p3-url-like-data", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "data:image/png;base64,AAAA" } },
+      }),
+      part("p3-url-like-blob", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "blob:https://example.com/image" } },
+      }),
+      part("p3-url-like-file", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "file:///Users/me/project/image.png" } },
+      }),
+    ],
+  });
+
+  assert.deepEqual(evidence, []);
+});
+
 test("does not create file evidence for posix case-mismatched workspace paths", () => {
   const evidence = buildMediaEvidenceForParts({
     sourceId: "tool:p3-posix-case",
@@ -786,6 +867,58 @@ test("keeps shell-like outputPath evidence", () => {
 
   assert.equal(evidence.length, 1);
   assert.equal(evidence[0]?.src, "file:///Users/me/project/artifacts/result.png");
+});
+
+test("extracts created paths from structured output and result objects", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p3-structured-outputs",
+    workspaceRoot: "/Users/me/project",
+    parts: [
+      part("p3-output-object", {
+        type: "tool",
+        tool: "imagegen",
+        state: { status: "completed", output: { outputPath: "artifacts/generated.png" } },
+      }),
+      part("p3-result-object", {
+        type: "tool",
+        tool: "screenshot",
+        state: { status: "completed", result: { file: "artifacts/screenshot.webp" } },
+      }),
+      part("p3-write-result-object", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", result: { filePath: "artifacts/write-result.gif" } },
+      }),
+    ],
+  });
+
+  assert.equal(evidence.length, 3);
+  assert.deepEqual(
+    evidence.map((item) => item.path),
+    ["artifacts/generated.png", "artifacts/screenshot.webp", "artifacts/write-result.gif"],
+  );
+});
+
+test("keeps shell-like structured output paths limited to outputPath", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p3-shell-structured-output",
+    workspaceRoot: "/Users/me/project",
+    parts: [
+      part("p3-shell-output-object-path", {
+        type: "tool",
+        tool: "bash",
+        state: { status: "completed", output: { path: "artifacts/not-created.png" } },
+      }),
+      part("p3-shell-output-object-output-path", {
+        type: "tool",
+        tool: "bash",
+        state: { status: "completed", output: { outputPath: "artifacts/shell-output.png" } },
+      }),
+    ],
+  });
+
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0]?.path, "artifacts/shell-output.png");
 });
 
 test("does not create bitmap path evidence for unsuccessful write-like tool states", () => {
