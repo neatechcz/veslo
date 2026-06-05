@@ -2097,12 +2097,13 @@ function requireSoulUserId(ctx: SoulDenContext): string {
 
 function soulCanEdit(ctx: RequestContext, scope: SoulScope): boolean {
   if (ctx.config.readOnly) return false;
+  const tokenScope = ctx.actor?.scope;
+  const hasCollaboratorScope = Boolean(tokenScope && scopeRank(tokenScope) >= scopeRank("collaborator"));
   if (scope === "organization") {
     const den = soulDenContext(ctx);
-    return Boolean(den.denToken && den.orgId);
+    return Boolean(hasCollaboratorScope && den.denToken && den.orgId);
   }
-  const tokenScope = ctx.actor?.scope;
-  return Boolean(tokenScope && scopeRank(tokenScope) >= scopeRank("collaborator"));
+  return hasCollaboratorScope;
 }
 
 function soulUpdatedAt(document: SoulDocument | null): string | null {
@@ -2204,6 +2205,11 @@ function soulVersionResponse(document: SoulDocument, versionId: string): SoulVer
 async function readCachedSoulVersions(dataDir: string, scope: SoulScope, ownerId: string): Promise<SoulVersion[]> {
   const document = await readCachedSoulDocument({ dataDir, scope, ownerId });
   return document?.versions ?? [];
+}
+
+async function readPendingSoulEditsFor(dataDir: string, scope: SoulScope, ownerId: string): Promise<SoulPendingEdit[]> {
+  const edits = await listPendingSoulEdits({ dataDir });
+  return edits.filter((edit) => edit.scope === scope && edit.ownerId === ownerId);
 }
 
 function soulReadPayload(input: {
@@ -2908,6 +2914,9 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     const cached = den.userId
       ? await readCachedSoulDocument({ dataDir: serverDataDir, scope: "user", ownerId: den.userId })
       : null;
+    const pendingEdits = den.userId
+      ? await readPendingSoulEditsFor(serverDataDir, "user", den.userId)
+      : [];
     return {
       document: cached,
       summary: soulSummary({
@@ -2915,7 +2924,9 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
         ownerId,
         document: cached,
         canEdit: soulCanEdit(ctx, "user"),
+        status: pendingEdits.length > 0 ? "pending" : undefined,
       }),
+      pendingEdits: pendingEdits.length > 0 ? pendingEdits : undefined,
       denSynced: false,
     };
   };

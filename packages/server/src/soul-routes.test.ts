@@ -125,6 +125,19 @@ const denHeaders = {
   "x-veslo-den-user-id": "user_1",
 };
 
+async function issueToken(server: { port: number }, scope: "owner" | "collaborator" | "viewer"): Promise<string> {
+  const response = await fetch(`http://127.0.0.1:${server.port}/tokens`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-veslo-host-token": "host-token",
+    },
+    body: JSON.stringify({ scope }),
+  });
+  expect(response.status).toBe(201);
+  return (await response.json() as { token: string }).token;
+}
+
 test("GET /soul returns organization, user, and workspace summaries", async () => {
   const organization = document({
     scope: "organization",
@@ -218,6 +231,47 @@ test("GET /soul/organization returns read model", async () => {
     currentVersionId: "org_v1",
     status: "active",
   });
+});
+
+test("organization Soul read canEdit requires collaborator scope even with Den context", async () => {
+  const organization = document({
+    scope: "organization",
+    ownerId: "org_1",
+    versionId: "org_v1",
+    content: "Org memory",
+  });
+  const den = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: () => Response.json(organization),
+  });
+  runningServers.push(den as { stop?: (closeActiveConnections?: boolean) => void });
+  const server = await startFixture({ denApiBase: `http://127.0.0.1:${den.port}` });
+  const viewerToken = await issueToken(server, "viewer");
+
+  const viewerResponse = await fetch(`http://127.0.0.1:${server.port}/soul/organization`, {
+    headers: {
+      ...denHeaders,
+      Authorization: `Bearer ${viewerToken}`,
+    },
+  });
+  expect(viewerResponse.status).toBe(200);
+  expect((await viewerResponse.json() as { summary: { canEdit: boolean } }).summary.canEdit).toBe(false);
+
+  const collaboratorResponse = await fetch(`http://127.0.0.1:${server.port}/soul/organization`, {
+    headers: denHeaders,
+  });
+  expect(collaboratorResponse.status).toBe(200);
+  expect((await collaboratorResponse.json() as { summary: { canEdit: boolean } }).summary.canEdit).toBe(true);
+
+  const overviewResponse = await fetch(`http://127.0.0.1:${server.port}/soul`, {
+    headers: {
+      ...denHeaders,
+      Authorization: `Bearer ${viewerToken}`,
+    },
+  });
+  expect(overviewResponse.status).toBe(200);
+  expect((await overviewResponse.json() as { organization: { canEdit: boolean } }).organization.canEdit).toBe(false);
 });
 
 test("GET /soul/organization uses request Den base header when server Den base is unset", async () => {
@@ -350,6 +404,59 @@ test("PATCH /soul/organization uses request Den base header when server Den base
       },
     },
   ]);
+});
+
+test("GET /soul/user reports persisted pending edit after offline user patch", async () => {
+  const server = await startFixture();
+
+  const patch = await fetch(`http://127.0.0.1:${server.port}/soul/user`, {
+    method: "PATCH",
+    headers: { ...denHeaders, "content-type": "application/json" },
+    body: JSON.stringify({
+      content: "Offline user memory",
+      changeSummary: "Queue offline user memory",
+      baseVersionId: null,
+    }),
+  });
+
+  expect(patch.status).toBe(202);
+  const patchPayload = await patch.json() as {
+    summary: { status: string };
+    pendingEdits?: Array<{ scope: string; ownerId: string; content: string; denSynced: boolean }>;
+    denSynced?: boolean;
+  };
+  expect(patchPayload.summary.status).toBe("pending");
+  expect(patchPayload.denSynced).toBe(false);
+  expect(patchPayload.pendingEdits).toEqual([
+    expect.objectContaining({
+      scope: "user",
+      ownerId: "user_1",
+      content: "Offline user memory",
+      denSynced: false,
+    }),
+  ]);
+
+  const read = await fetch(`http://127.0.0.1:${server.port}/soul/user`, { headers: denHeaders });
+  expect(read.status).toBe(200);
+  const readPayload = await read.json() as {
+    summary: { status: string };
+    pendingEdits?: Array<{ scope: string; ownerId: string; content: string; denSynced: boolean }>;
+    denSynced?: boolean;
+  };
+  expect(readPayload.summary.status).toBe("pending");
+  expect(readPayload.denSynced).toBe(false);
+  expect(readPayload.pendingEdits).toEqual([
+    expect.objectContaining({
+      scope: "user",
+      ownerId: "user_1",
+      content: "Offline user memory",
+      denSynced: false,
+    }),
+  ]);
+
+  const overview = await fetch(`http://127.0.0.1:${server.port}/soul`, { headers: denHeaders });
+  expect(overview.status).toBe(200);
+  expect((await overview.json() as { user: { status: string } }).user.status).toBe("pending");
 });
 
 test("PATCH /soul/user creates a new version", async () => {
