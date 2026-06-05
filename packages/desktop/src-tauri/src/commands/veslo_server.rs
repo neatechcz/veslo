@@ -124,8 +124,10 @@ pub fn veslo_server_restart(
         .map(|path| path.trim().to_string())
         .filter(|path| !path.is_empty());
     let workspace_state = load_workspace_state(&app)?;
-    let workspace_paths =
-        local_workspace_paths_for_server_restart(&workspace_state, engine_workspace_path.as_deref());
+    let workspace_paths = local_workspace_paths_for_server_restart(
+        &workspace_state,
+        engine_workspace_path.as_deref(),
+    );
     if workspace_paths.is_empty() {
         return Err("No active local workspace available".to_string());
     }
@@ -224,7 +226,11 @@ mod tests {
             workspaces: vec![
                 workspace("ws-a", "/workspace-a", WorkspaceType::Local),
                 workspace("ws-b", "/workspace-b", WorkspaceType::Local),
-                workspace("ws-remote", "https://example.invalid", WorkspaceType::Remote),
+                workspace(
+                    "ws-remote",
+                    "https://example.invalid",
+                    WorkspaceType::Remote,
+                ),
             ],
         };
 

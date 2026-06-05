@@ -3577,7 +3577,6 @@ export default function App() {
   createEffect(() => {
     if (!isTauriRuntime()) return;
     if (startupPreference() === "server") return;
-    if (!client()) return;
     if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") return;
 
     const nextKey = [
@@ -3587,13 +3586,19 @@ export default function App() {
     ].join("::");
     if (!nextKey.replace(/:/g, "")) return;
     if (nextKey === lastLocalVesloEnsureKey) return;
-    lastLocalVesloEnsureKey = nextKey;
 
-    void ensureLocalVesloServerRunning().catch((error) => {
-      const message = error instanceof Error ? error.message : safeStringify(error);
-      setError(addOpencodeCacheHint(message));
-      reportError(error, "veslo-server.ensure.effect");
-    });
+    const scheduledKey = nextKey;
+    void ensureLocalVesloServerRunning()
+      .then((ok) => {
+        if (ok) {
+          lastLocalVesloEnsureKey = scheduledKey;
+        }
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : safeStringify(error);
+        setError(addOpencodeCacheHint(message));
+        reportError(error, "veslo-server.ensure.effect");
+      });
   });
 
   type PendingSkillRegistryReplay = {

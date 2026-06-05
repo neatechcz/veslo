@@ -76,12 +76,11 @@ fn validate_managed_opencode_base_url(opencode_base_url: Option<&str>) -> Result
 }
 
 pub fn resolve_veslo_port() -> Result<u16, String> {
-    if TcpListener::bind(("0.0.0.0", DEFAULT_VESLO_PORT)).is_ok() {
-        return Ok(DEFAULT_VESLO_PORT);
-    }
-    let listener = TcpListener::bind(("0.0.0.0", 0)).map_err(|e| e.to_string())?;
-    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
-    Ok(port)
+    TcpListener::bind(("0.0.0.0", DEFAULT_VESLO_PORT))
+        .map(|_| DEFAULT_VESLO_PORT)
+        .map_err(|error| {
+            format!("Veslo server fixed port {DEFAULT_VESLO_PORT} is unavailable: {error}")
+        })
 }
 
 pub fn build_veslo_args(
@@ -270,6 +269,21 @@ mod tests {
             "0.0.0.0".to_string(),
         ];
         assert_eq!(build_veslo_server_dev_watch_args(args), expected);
+    }
+
+    #[test]
+    fn resolve_veslo_port_reports_fixed_port_contention() {
+        let fixed_port_guard = TcpListener::bind(("0.0.0.0", DEFAULT_VESLO_PORT)).ok();
+
+        let error = resolve_veslo_port()
+            .expect_err("Veslo desktop must not fall back to a dynamic server port");
+
+        drop(fixed_port_guard);
+
+        assert!(
+            error.contains(&DEFAULT_VESLO_PORT.to_string()),
+            "fixed-port contention errors should name the configured Veslo server port: {error}"
+        );
     }
 
     #[test]
