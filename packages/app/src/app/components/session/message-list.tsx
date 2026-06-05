@@ -17,6 +17,7 @@ import { perfNow, recordPerfLog } from "../../lib/perf-log";
 import { getTaskPartSubagentInfo, isVesloInternalSubagentType } from "../../lib/internal-subagents";
 import { currentLocale, t } from "../../../i18n";
 import { buildTimelineDetailModel, type TimelineRowModel, type TimelineRowType, type TimelineSectionKind } from "./timeline-detail-model.js";
+import MediaEvidenceStrip from "./media-evidence-strip.js";
 import {
   createTimelineSectionStateId,
   reconcileTimelineOpenSectionIds,
@@ -307,13 +308,16 @@ export default function MessageList(props: MessageListProps) {
     );
   const countTimelineMediaEvidence = (sections: TimelineSectionView[], kind: "created" | "analyzed") =>
     sections.reduce((count, section) => count + countSectionMediaEvidence(section.rows, kind), 0);
-  const imageEvidenceSummary = (count: number, kind: "created" | "analyzed") => {
+  const mediaEvidenceSummary = (count: number, kind: "created" | "analyzed") => {
     if (count <= 0) return "";
-    return `${count} ${count === 1 ? "image" : "images"} ${kind}`;
+    if (kind === "created") {
+      return plural(count, "session.media_evidence_image_created_one", "session.media_evidence_image_created_other");
+    }
+    return plural(count, "session.media_evidence_image_analyzed_one", "session.media_evidence_image_analyzed_other");
   };
   const appendSectionMediaEvidenceSummaries = (items: string[], rows: TimelineRowView[]) => {
-    const createdImages = imageEvidenceSummary(countSectionMediaEvidence(rows, "created"), "created");
-    const analyzedImages = imageEvidenceSummary(countSectionMediaEvidence(rows, "analyzed"), "analyzed");
+    const createdImages = mediaEvidenceSummary(countSectionMediaEvidence(rows, "created"), "created");
+    const analyzedImages = mediaEvidenceSummary(countSectionMediaEvidence(rows, "analyzed"), "analyzed");
     if (createdImages) items.push(createdImages);
     if (analyzedImages) items.push(analyzedImages);
     return items;
@@ -433,8 +437,8 @@ export default function MessageList(props: MessageListProps) {
     if (listCount > 0) items.push(plural(listCount, "session.timeline_list_one", "session.timeline_list_other"));
     if (actionCount > 0) items.push(plural(actionCount, "session.timeline_summary_action_one", "session.timeline_summary_action_other"));
     if (thoughtCount > 0) items.push(plural(thoughtCount, "session.timeline_summary_thinking_one", "session.timeline_summary_thinking_other"));
-    if (createdImageCount > 0) items.push(imageEvidenceSummary(createdImageCount, "created"));
-    if (analyzedImageCount > 0) items.push(imageEvidenceSummary(analyzedImageCount, "analyzed"));
+    if (createdImageCount > 0) items.push(mediaEvidenceSummary(createdImageCount, "created"));
+    if (analyzedImageCount > 0) items.push(mediaEvidenceSummary(analyzedImageCount, "analyzed"));
     if (verifySections.length > 0) {
       const hasVerifyError = verifySections.some((section) => section.rows.some((entry) => entry.row.status === "error"));
       const hasVerifyRunning = verifySections.some((section) => section.rows.some((entry) => entry.row.status === "running"));
@@ -1262,6 +1266,10 @@ export default function MessageList(props: MessageListProps) {
                                           </button>
                                         </Show>
                                       </div>
+
+                                      <Show when={row.mediaEvidence?.length}>
+                                        <MediaEvidenceStrip evidence={row.mediaEvidence ?? []} />
+                                      </Show>
 
                                       <Show when={canShowTimelineTechnicalDetail(entry)}>
                                         <details class="mt-2">

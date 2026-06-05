@@ -75,14 +75,20 @@ const SECTION_TITLE_KEYS: Record<TimelineSectionKind, string> = {
   issues: "timeline.section.issues",
 };
 
-function tr(key: string, replacements?: Record<string, string>): string {
-  let value = t(key, currentLocale());
+type TimelineLocale = ReturnType<typeof currentLocale>;
+
+function trForLocale(key: string, locale: TimelineLocale, replacements?: Record<string, string>): string {
+  let value = t(key, locale);
   if (replacements) {
     for (const [placeholder, replacement] of Object.entries(replacements)) {
       value = value.replaceAll(`{${placeholder}}`, replacement);
     }
   }
   return value;
+}
+
+function tr(key: string, replacements?: Record<string, string>): string {
+  return trForLocale(key, currentLocale(), replacements);
 }
 
 function normalizeText(value: unknown): string {
@@ -435,10 +441,26 @@ function countMediaEvidence(rows: TimelineRowModel[], kind: MediaEvidence["kind"
   );
 }
 
-function summarizeMediaEvidenceCount(count: number, kind: MediaEvidence["kind"]): string {
+function summarizeMediaEvidenceCount(count: number, kind: MediaEvidence["kind"], locale: TimelineLocale = currentLocale()): string {
   if (count <= 0) return "";
-  const noun = count === 1 ? "image" : "images";
-  return `${count} ${noun} ${kind}`;
+  if (kind === "created") {
+    return trForLocale(count === 1 ? "session.media_evidence_image_created_one" : "session.media_evidence_image_created_other", locale, {
+      count: String(count),
+    });
+  }
+  return trForLocale(count === 1 ? "session.media_evidence_image_analyzed_one" : "session.media_evidence_image_analyzed_other", locale, {
+    count: String(count),
+  });
+}
+
+function summaryLooksEnglish(value: string): boolean {
+  return /\b(?:action|actions|file|files|image|images|issue|issues|list|lists|search|searches|verification)\b/i.test(value);
+}
+
+function mediaEvidenceSummaryLocale(summaries: string[]): TimelineLocale {
+  const locale = currentLocale();
+  if (locale === "en") return locale;
+  return summaries.some(summaryLooksEnglish) ? "en" : locale;
 }
 
 function summarizeSection(kind: TimelineSectionKind, rows: TimelineRowModel[]): string {
@@ -497,8 +519,9 @@ function summarizeLatestLabel(sections: TimelineSectionModel[]): string | undefi
 export function buildCollapsedSummary(input: BuildCollapsedSummaryInput): string {
   const summaries = input.sections.map((section) => normalizeText(section.summary)).filter(Boolean);
   const rows = input.sections.flatMap((section) => section.rows ?? []);
-  const createdImages = summarizeMediaEvidenceCount(countMediaEvidence(rows, "created"), "created");
-  const analyzedImages = summarizeMediaEvidenceCount(countMediaEvidence(rows, "analyzed"), "analyzed");
+  const mediaSummaryLocale = mediaEvidenceSummaryLocale(summaries);
+  const createdImages = summarizeMediaEvidenceCount(countMediaEvidence(rows, "created"), "created", mediaSummaryLocale);
+  const analyzedImages = summarizeMediaEvidenceCount(countMediaEvidence(rows, "analyzed"), "analyzed", mediaSummaryLocale);
   const items = [...summaries, createdImages, analyzedImages].filter(Boolean);
   const base = items.join(" · ");
   if (input.latestLabel && summaries.length <= 1) {
