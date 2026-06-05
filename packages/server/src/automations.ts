@@ -50,6 +50,7 @@ export type AutomationRun = {
 
 const AUTOMATION_STATUSES: AutomationStatus[] = ["active", "paused", "completed", "failed", "cancelled"];
 const AUTOMATION_RUN_STATUSES: AutomationRunStatus[] = ["queued", "running", "success", "failed", "skipped"];
+const DEFAULT_AUTOMATION_TIMEZONE = "UTC";
 
 export function parseAutomationSchedule(value: unknown): AutomationSchedule {
   if (!value || typeof value !== "object") {
@@ -112,9 +113,7 @@ export function parseAutomationRunStatus(value: unknown): AutomationRunStatus {
 }
 
 export function computeNextAutomationRunAt(schedule: AutomationSchedule, fromMs: number): string | null {
-  if (!Number.isFinite(fromMs)) {
-    throw invalidPayload("fromMs must be finite");
-  }
+  requireValidDateMs(fromMs, "fromMs");
 
   if (schedule.kind === "oneShot") {
     return schedule.runAt;
@@ -122,7 +121,7 @@ export function computeNextAutomationRunAt(schedule: AutomationSchedule, fromMs:
 
   if (schedule.kind === "interval") {
     const seconds = requireInt(schedule.seconds, { min: 60, max: 7 * 24 * 60 * 60, name: "schedule.seconds" });
-    return new Date(fromMs + seconds * 1000).toISOString();
+    return toValidIsoInstant(fromMs + seconds * 1000, "scheduled date");
   }
 
   if (schedule.kind === "daily") {
@@ -173,10 +172,14 @@ function computeCronNextRunAt(expression: string, timezone: string | undefined, 
   try {
     const interval = CronExpressionParser.parse(expression, {
       currentDate: new Date(fromMs),
-      ...(timezone ? { tz: timezone } : {}),
+      tz: timezone ?? DEFAULT_AUTOMATION_TIMEZONE,
     });
-    return interval.next().toDate().toISOString();
-  } catch {
+    const nextDate = interval.next().toDate();
+    return toValidIsoInstant(nextDate.getTime(), "scheduled date");
+  } catch (error) {
+    if (error instanceof ApiError) {
+      throw error;
+    }
     throw invalidPayload("schedule.expression must be a valid cron expression");
   }
 }
@@ -185,7 +188,7 @@ function validateCronExpression(expression: string, timezone: string | undefined
   try {
     CronExpressionParser.parse(expression, {
       currentDate: new Date(0),
-      ...(timezone ? { tz: timezone } : {}),
+      tz: timezone ?? DEFAULT_AUTOMATION_TIMEZONE,
     });
   } catch {
     throw invalidPayload(`${fieldName} must be a valid cron expression`);
@@ -219,6 +222,20 @@ function requireInt(value: unknown, options: { min: number; max: number; name: s
     throw invalidPayload(`${options.name} must be between ${options.min} and ${options.max}`);
   }
   return value;
+}
+
+function requireValidDateMs(value: number, name: string): void {
+  if (!Number.isFinite(value)) {
+    throw invalidPayload(`${name} must be finite`);
+  }
+  if (!Number.isFinite(new Date(value).getTime())) {
+    throw invalidPayload(`${name} must be within the valid JavaScript Date range`);
+  }
+}
+
+function toValidIsoInstant(value: number, name: string): string {
+  requireValidDateMs(value, name);
+  return new Date(value).toISOString();
 }
 
 function invalidPayload(message: string): ApiError {
