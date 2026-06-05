@@ -220,6 +220,52 @@ test("GET /soul/organization returns read model", async () => {
   });
 });
 
+test("GET /soul/organization uses request Den base header when server Den base is unset", async () => {
+  const organization = document({
+    scope: "organization",
+    ownerId: "org_1",
+    versionId: "org_header_v1",
+    content: "Org memory from header Den",
+  });
+  const denCalls: Array<{ method: string; pathname: string; auth: string | null; org: string | null }> = [];
+  const den = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (request) => {
+      const url = new URL(request.url);
+      denCalls.push({
+        method: request.method,
+        pathname: url.pathname,
+        auth: request.headers.get("authorization"),
+        org: request.headers.get("x-veslo-den-org-id"),
+      });
+      return Response.json(organization);
+    },
+  });
+  runningServers.push(den as { stop?: (closeActiveConnections?: boolean) => void });
+  const server = await startFixture();
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/soul/organization`, {
+    headers: {
+      ...denHeaders,
+      "x-veslo-den-api-base": `http://127.0.0.1:${den.port}`,
+    },
+  });
+
+  expect(response.status).toBe(200);
+  const payload = await response.json() as { document: SoulDocument; summary: { currentVersionId: string | null } };
+  expect(payload.document).toEqual(organization);
+  expect(payload.summary.currentVersionId).toBe("org_header_v1");
+  expect(denCalls).toEqual([
+    {
+      method: "GET",
+      pathname: "/v1/soul/organization",
+      auth: "Bearer den-token",
+      org: "org_1",
+    },
+  ]);
+});
+
 test("PATCH /soul/organization requires Den auth and propagates Den 403", async () => {
   const denCalls: string[] = [];
   const den = Bun.serve({
@@ -249,6 +295,61 @@ test("PATCH /soul/organization requires Den auth and propagates Den 403", async 
   expect(forbidden.status).toBe(403);
   expect((await forbidden.json() as { code: string }).code).toBe("soul_den_forbidden");
   expect(denCalls).toEqual(["PATCH /v1/soul/organization"]);
+});
+
+test("PATCH /soul/organization uses request Den base header when server Den base is unset", async () => {
+  const updated = document({
+    scope: "organization",
+    ownerId: "org_1",
+    versionId: "org_header_v2",
+    content: "Updated org memory from header Den",
+  });
+  const denCalls: Array<{ method: string; pathname: string; body: unknown }> = [];
+  const den = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      const url = new URL(request.url);
+      denCalls.push({
+        method: request.method,
+        pathname: url.pathname,
+        body: await request.json(),
+      });
+      return Response.json(updated);
+    },
+  });
+  runningServers.push(den as { stop?: (closeActiveConnections?: boolean) => void });
+  const server = await startFixture();
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/soul/organization`, {
+    method: "PATCH",
+    headers: {
+      ...denHeaders,
+      "content-type": "application/json",
+      "x-veslo-den-api-base": `http://127.0.0.1:${den.port}`,
+    },
+    body: JSON.stringify({
+      content: "Updated org memory from header Den",
+      changeSummary: "Update org through header Den",
+      baseVersionId: null,
+    }),
+  });
+
+  expect(response.status).toBe(200);
+  const payload = await response.json() as { document: SoulDocument; summary: { currentVersionId: string | null } };
+  expect(payload.document).toEqual(updated);
+  expect(payload.summary.currentVersionId).toBe("org_header_v2");
+  expect(denCalls).toEqual([
+    {
+      method: "PATCH",
+      pathname: "/v1/soul/organization",
+      body: {
+        content: "Updated org memory from header Den",
+        changeSummary: "Update org through header Den",
+        baseVersionId: null,
+      },
+    },
+  ]);
 });
 
 test("PATCH /soul/user creates a new version", async () => {

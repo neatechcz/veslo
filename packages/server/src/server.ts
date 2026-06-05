@@ -2067,7 +2067,7 @@ function soulDenContext(ctx: RequestContext): SoulDenContext {
     ctx.request.headers.get("x-veslo-account-id")?.trim() ||
     undefined;
   return {
-    baseUrl: ctx.config.denApiBase?.trim() || "",
+    baseUrl: ctx.config.denApiBase?.trim() || normalizeSkillRegistryBaseUrl(ctx.request.headers.get("x-veslo-den-api-base")),
     denToken: ctx.request.headers.get("x-veslo-den-token")?.trim() || undefined,
     orgId: ctx.request.headers.get("x-veslo-den-org-id")?.trim() || undefined,
     userId,
