@@ -1854,13 +1854,11 @@ export default function App() {
   const resolveWorkspaceIdForAttachmentStaging = async (
     client: NonNullable<ReturnType<typeof vesloServerClient>>,
   ) => {
-    let workspaceId = (vesloServerWorkspaceId() ?? "").trim();
-    if (workspaceId) return workspaceId;
-
     const response = await client.listWorkspaces();
     const items = Array.isArray(response.items) ? response.items : [];
     const active = workspaceStore.activeWorkspaceDisplay();
     const activeId = response.activeId?.trim() ?? "";
+    const cachedWorkspaceId = (vesloServerWorkspaceId() ?? "").trim();
 
     const findByPath = (targetPath: string) => {
       const normalizedTarget = normalizeDirectoryPath(targetPath.trim());
@@ -1884,13 +1882,14 @@ export default function App() {
       const storedId = active.vesloWorkspaceId?.trim() || inferredWorkspaceId || envVesloWorkspaceId || "";
       resolved =
         (storedId && items.find((entry) => entry.id === storedId)?.id) ||
+        (cachedWorkspaceId && items.find((entry) => entry.id === cachedWorkspaceId)?.id) ||
         findByPath(active.directory?.trim() ?? active.path?.trim() ?? "")?.id ||
         activeId ||
         (items.length === 1 ? items[0]?.id ?? "" : "");
     } else if (active.workspaceType === "local") {
       resolved =
         findByPath(workspaceStore.activeWorkspaceRoot().trim())?.id ||
-        (items.length === 1 ? (activeId || items[0]?.id || "") : "");
+        (!workspaceStore.activeWorkspaceRoot().trim() && items.length === 1 ? (activeId || items[0]?.id || "") : "");
     }
 
     if (resolved) {
@@ -1898,6 +1897,70 @@ export default function App() {
     }
 
     return resolved;
+  };
+
+  type AttachmentStagingWorkspaceReady = {
+    client: NonNullable<ReturnType<typeof vesloServerClient>>;
+    workspaceId: string;
+  };
+
+  const recoverWorkspaceReadyForAttachmentStaging = async (
+    fallbackClient: NonNullable<ReturnType<typeof vesloServerClient>>,
+  ): Promise<AttachmentStagingWorkspaceReady> => {
+    const active = workspaceStore.activeWorkspaceDisplay();
+    if (!isTauriRuntime() || startupPreference() === "server" || active.workspaceType !== "local") {
+      throw new Error("Veslo server workspace is not ready for attachments.");
+    }
+
+    recordSendTrace("sendPrompt:attachment-workspace-recover", {
+      activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
+      activeRoot: workspaceStore.activeWorkspaceRoot().trim(),
+    });
+
+    const restarted = await vesloServerRestart();
+    setVesloServerHostInfo(restarted);
+    const running = resolveRunningVesloServerHostInfo(restarted);
+    if (!running?.baseUrl?.trim()) {
+      setVesloServerStatus("disconnected");
+      setVesloServerCapabilities(null);
+      setVesloServerCheckedAt(Date.now());
+      throw new Error("Veslo server workspace is not ready for attachments.");
+    }
+
+    const result = await checkVesloServer(
+      running.baseUrl.trim(),
+      running.clientToken?.trim() || undefined,
+      running.hostToken?.trim() || undefined,
+    );
+    setVesloServerStatus(result.status);
+    setVesloServerCapabilities(result.capabilities);
+    setVesloServerCheckedAt(Date.now());
+    if (result.status !== "connected") {
+      throw new Error("Veslo server workspace is not ready for attachments.");
+    }
+
+    const client = vesloServerClient() ?? fallbackClient;
+    const workspaceId = await resolveWorkspaceIdForAttachmentStaging(client);
+    if (!workspaceId) {
+      throw new Error("Veslo server workspace is not ready for attachments.");
+    }
+    return { client, workspaceId };
+  };
+
+  const ensureWorkspaceReadyForAttachmentStaging = async (
+    client: NonNullable<ReturnType<typeof vesloServerClient>>,
+  ): Promise<AttachmentStagingWorkspaceReady> => {
+    const workspaceId = await resolveWorkspaceIdForAttachmentStaging(client);
+    if (workspaceId) return { client, workspaceId };
+    return await recoverWorkspaceReadyForAttachmentStaging(client);
+  };
+
+  const shouldRecoverAttachmentStagingWorkspace = (error: unknown) => {
+    if (error instanceof VesloServerError) {
+      return error.status === 404;
+    }
+    const message = messageFromUnknownError(error).toLowerCase();
+    return message.includes("workspace") && message.includes("not");
   };
 
   const stageAttachmentsIntoSessionDirectory = async (
@@ -1911,25 +1974,34 @@ export default function App() {
     if (!client || vesloServerStatus() !== "connected") {
       throw new Error("Connect to Veslo server before sending attachments.");
     }
-    const workspaceId = await resolveWorkspaceIdForAttachmentStaging(client);
-    if (!workspaceId) {
-      throw new Error("Veslo server workspace is not ready for attachments.");
-    }
+    let ready = await ensureWorkspaceReadyForAttachmentStaging(client);
 
     const reservedPaths = new Set<string>();
     const stagedAttachments: StagedSessionAttachment[] = [];
-    const fileSession = await client.createFileSession(workspaceId, {
-      ttlSeconds: 15 * 60,
-      write: true,
-    });
+    let fileSession: Awaited<ReturnType<typeof ready.client.createFileSession>>;
+    try {
+      fileSession = await ready.client.createFileSession(ready.workspaceId, {
+        ttlSeconds: 15 * 60,
+        write: true,
+      });
+    } catch (error) {
+      if (!shouldRecoverAttachmentStagingWorkspace(error)) {
+        throw error;
+      }
+      ready = await recoverWorkspaceReadyForAttachmentStaging(ready.client);
+      fileSession = await ready.client.createFileSession(ready.workspaceId, {
+        ttlSeconds: 15 * 60,
+        write: true,
+      });
+    }
 
     try {
       for (const attachment of attachmentsToStage) {
         const file = await attachmentToFile(attachment);
         const preferredPath = resolveSessionDirectoryRelativePath(sessionID, file.name);
-        const relativePath = await resolveCollisionSafeAttachmentPath(client, fileSession.session.id, preferredPath, reservedPaths);
+        const relativePath = await resolveCollisionSafeAttachmentPath(ready.client, fileSession.session.id, preferredPath, reservedPaths);
         const contentBase64 = arrayBufferToBase64(await file.arrayBuffer());
-        const writeResult = await client.writeFileBatch(fileSession.session.id, [
+        const writeResult = await ready.client.writeFileBatch(fileSession.session.id, [
           {
             path: relativePath,
             contentBase64,
@@ -1948,7 +2020,7 @@ export default function App() {
         });
       }
     } finally {
-      await client.closeFileSession(fileSession.session.id).catch(() => undefined);
+      await ready.client.closeFileSession(fileSession.session.id).catch(() => undefined);
     }
 
     return stagedAttachments;

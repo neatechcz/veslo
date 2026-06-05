@@ -40,7 +40,7 @@ test("all attachment staging happens in session-directory send pipeline, not in 
 
   assert.match(
     appSource,
-    /await client\.createFileSession\(workspaceId, \{[\s\S]*write: true,/,
+    /await ready\.client\.createFileSession\(ready\.workspaceId, \{[\s\S]*write: true,/,
     "staging should open a writable file session",
   );
 
@@ -64,7 +64,7 @@ test("all attachment staging happens in session-directory send pipeline, not in 
 
   assert.match(
     appSource,
-    /await client\.writeFileBatch\([^,]+, \[/,
+    /await ready\.client\.writeFileBatch\([^,]+, \[/,
     "staging should write attachments into the session directory",
   );
 

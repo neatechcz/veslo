@@ -193,7 +193,7 @@ installation restore or rollout-policy enable route instead.
 
 ## Workspace Scope
 
-Many routes are workspace-scoped and should be called with an active workspace id. Desktop-launched local servers pass the app workspace id into the server process so app state, registry workspace skill-set sync, and `/workspace/:id/*` routes share the same identifier instead of falling back to a path-hash id.
+Many routes are workspace-scoped and should be called with an active workspace id. Desktop-launched local servers pass the app workspace id into the server process so app state, registry workspace skill-set sync, and `/workspace/:id/*` routes share the same identifier instead of falling back to a path-hash id. When the desktop app refreshes the local server, it should pass the currently attached local workspace first and the remaining known local workspace paths after it, so a newly materialized private chat workspace is available to file-session and other workspace-scoped routes before the prompt handoff continues.
 
 Common app flows:
 

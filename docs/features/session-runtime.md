@@ -64,6 +64,7 @@ Submit behavior:
 - when a local workspace is in browsing mode, the OpenCode runtime warmup needed before a send must also stay outside the global app busy/navigation lock; the warmup may delay that send, but the rest of the app remains usable
 - the Composer clears immediately and remains available for a separate new draft, including while a new session is still being materialized
 - attachment staging, pending-session creation, and message handoff continue in the backend/session layer after the Composer releases the submitted draft
+- after a pending chat is materialized into a real session, attachment staging must resolve the active workspace against the live Veslo server workspace list before opening a file session; for local desktop workspaces, a missing server workspace is recovered once by refreshing the local server/workspace state before the agent/model prompt starts
 - if handoff fails before a real message exists, the temporary user message stays in the timeline with failed status instead of being restored into the Composer automatically
 - failed pending submitted messages can be changed only through the explicit edit pencil, which removes that pending timeline message and loads that exact draft into the Composer
 - the Composer is not an automatic rollback buffer for pre-real-message submit failures because the user may already be composing a different message or working in a different pending session
