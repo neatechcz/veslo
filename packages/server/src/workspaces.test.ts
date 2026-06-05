@@ -163,7 +163,24 @@ describe("persistServerWorkspaceState", () => {
   test("roundtrip preserves workspaces through write+read", async () => {
     const original = [
       ws("/tmp/a"),
-      { ...ws("/tmp/b"), directory: "/explicit/dir", workspaceType: "remote" as const, baseUrl: "http://upstream" },
+      {
+        ...ws("/tmp/b"),
+        directory: "/explicit/dir",
+        workspaceType: "remote" as const,
+        baseUrl: "http://upstream",
+        opencodeDbPath: "/tmp/opencode.db",
+        opencodeDataDir: "/tmp/opencode-data",
+        opencodeDataHome: "/tmp/xdg-data",
+        opencode: {
+          baseUrl: "http://opencode",
+          directory: "/explicit/dir",
+          dbPath: "/nested/opencode.db",
+          dataDir: "/nested/opencode-data",
+          dataHome: "/nested/xdg-data",
+          username: "user",
+          password: "pass",
+        },
+      },
     ];
     const config = makeConfig({ configPath, workspaces: original, authorizedRoots: [] });
     await persistServerWorkspaceState(config);
@@ -177,6 +194,18 @@ describe("persistServerWorkspaceState", () => {
         workspaceType: "remote",
         baseUrl: "http://upstream",
         directory: "/explicit/dir",
+        opencodeDbPath: "/tmp/opencode.db",
+        opencodeDataDir: "/tmp/opencode-data",
+        opencodeDataHome: "/tmp/xdg-data",
+        opencode: {
+          baseUrl: "http://opencode",
+          directory: "/explicit/dir",
+          dbPath: "/nested/opencode.db",
+          dataDir: "/nested/opencode-data",
+          dataHome: "/nested/xdg-data",
+          username: "user",
+          password: "pass",
+        },
       },
     ]);
   });

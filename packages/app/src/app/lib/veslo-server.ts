@@ -1,5 +1,5 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
-import type { Part } from "@opencode-ai/sdk/v2/client";
+import type { Part, Session } from "@opencode-ai/sdk/v2/client";
 import type {
   MessageInfo,
   VesloAutomation,
@@ -87,9 +87,16 @@ export type VesloWorkspaceInfo = {
   workspaceType: "local" | "remote";
   baseUrl?: string;
   directory?: string;
+  opencodeDbPath?: string;
+  opencodeDataDir?: string;
+  opencodeDataHome?: string;
   opencode?: {
     baseUrl?: string;
     directory?: string;
+    dbPath?: string;
+    dataDir?: string;
+    dataHome?: string;
+    xdgDataHome?: string;
     username?: string;
     password?: string;
   };
@@ -973,11 +980,14 @@ export type VesloSessionLatestRunArtifacts = {
 export type VesloSessionTranscriptSnapshot = {
   workspaceId: string;
   sessionId: string;
+  conversationId?: string;
+  opencodeSessionId?: string;
   limit: number;
   messages: MessageInfo[];
   partsByMessageId: Record<string, Part[]>;
   fetchedAt?: number;
   staleAt?: number;
+  source?: "sqlite" | "unavailable";
 };
 
 export type VesloSessionTranscriptPrefetchInput = {
@@ -992,6 +1002,17 @@ export type VesloSessionTranscriptPrefetchResult = {
   workspaceId: string;
   queuedSessionIds: string[];
   items: VesloSessionTranscriptSnapshot[];
+};
+
+export type VesloConversationList = {
+  workspaceId: string;
+  items: Array<Session & {
+    conversationId?: string;
+    opencodeSessionId?: string;
+    parentConversationId?: string | null;
+    branchId?: string | null;
+  }>;
+  source?: "sqlite" | "unavailable";
 };
 
 export type VesloInboxItem = {
@@ -2402,6 +2423,17 @@ export function createVesloServerClient(options: {
         `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}`,
         { token, hostToken, method: "DELETE", timeoutMs: timeouts.deleteSession },
       ),
+    listConversations: (workspaceId: string, directory?: string) => {
+      const search = new URLSearchParams();
+      const directoryRaw = directory?.trim() ?? "";
+      if (directoryRaw) search.set("directory", directoryRaw);
+      const query = search.toString();
+      return requestJson<VesloConversationList>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/conversations${query ? `?${query}` : ""}`,
+        { token, hostToken, timeoutMs: timeouts.sessionTranscript },
+      );
+    },
     getSessionLatestRunArtifacts: (workspaceId: string, sessionId: string) =>
       requestJson<VesloSessionLatestRunArtifacts>(
         baseUrl,
@@ -2414,12 +2446,17 @@ export function createVesloServerClient(options: {
         `/workspace/${encodeURIComponent(workspaceId)}/sessions/transcript-prefetch`,
         { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.sessionTranscript },
       ),
-    getSessionTranscript: (workspaceId: string, sessionId: string, limit = 140) =>
-      requestJson<VesloSessionTranscriptSnapshot>(
+    getSessionTranscript: (workspaceId: string, sessionId: string, limit = 140, directory?: string) => {
+      const search = new URLSearchParams();
+      search.set("limit", String(limit));
+      const directoryRaw = directory?.trim() ?? "";
+      if (directoryRaw) search.set("directory", directoryRaw);
+      return requestJson<VesloSessionTranscriptSnapshot>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/transcript?limit=${encodeURIComponent(String(limit))}`,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/transcript?${search.toString()}`,
         { token, hostToken, timeoutMs: timeouts.sessionTranscript },
-      ),
+      );
+    },
     exportWorkspace: (workspaceId: string) =>
       requestJson<VesloWorkspaceExport>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/export`, {
         token,

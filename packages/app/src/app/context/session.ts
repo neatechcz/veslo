@@ -178,6 +178,12 @@ export function createSessionStore(options: {
   onSessionLoadComplete?: () => void;
   loadOfflineTranscript?: (sessionID: string, limit: number) => Promise<VesloSessionTranscriptSnapshot | null>;
   shouldBrowseSessionFromDb?: (sessionID: string) => boolean;
+  conversationReader?: () => {
+    listConversations: (
+      workspaceId: string,
+      directory?: string,
+    ) => Promise<{ items: Session[]; source?: "sqlite" | "unavailable" }>;
+  } | null;
   /**
    * VSLO-86 — `engineReady()` reports whether the user has explicitly brought
    * up the engine for the active workspace (sendPrompt has succeeded at least
@@ -695,9 +701,6 @@ export function createSessionStore(options: {
   });
 
   async function loadSessions(scopeRoot?: string) {
-    const c = options.routing.active();
-    if (!c) return;
-
     // IMPORTANT: OpenCode's session.list() supports server-side filtering by directory.
     // Use it to avoid fetching every session across every workspace root.
     //
@@ -708,9 +711,47 @@ export function createSessionStore(options: {
 
     const start = Date.now();
     sessionDebug("sessions:load:start", { scopeRoot: scopeRoot ?? null, queryDirectory: queryDirectory ?? null });
-    // Keep `roots` unset so the backend returns both root sessions and child/subagent sessions.
-    const list = unwrap(await c.session.list({ directory: queryDirectory }));
-    sessionDebug("sessions:load:raw", { count: list.length, ms: Date.now() - start });
+    let list: Session[] | null = null;
+    let usedConversationRead = false;
+    const workspaceId = options.routing.activeWorkspaceId().trim();
+    const c = options.routing.active();
+    const reader = options.conversationReader?.() ?? null;
+    if (workspaceId && reader) {
+      try {
+        const result = await reader.listConversations(workspaceId, queryDirectory);
+        if (result.source !== "unavailable" || options.engineReady?.() === false || !c) {
+          list = result.items;
+          usedConversationRead = true;
+          sessionDebug("sessions:load:conversation-read", {
+            workspaceId,
+            source: result.source ?? "unknown",
+            count: list.length,
+            ms: Date.now() - start,
+          });
+        } else {
+          sessionDebug("sessions:load:conversation-read-unavailable-fallback", {
+            workspaceId,
+            ms: Date.now() - start,
+          });
+        }
+      } catch (error) {
+        sessionDebug("sessions:load:conversation-read-failed", {
+          workspaceId,
+          error: error instanceof Error ? error.message : safeStringify(error),
+        });
+        if (options.engineReady?.() === false || !c) {
+          list = [];
+          usedConversationRead = true;
+        }
+      }
+    }
+
+    if (!list) {
+      if (!c) return;
+      // Keep `roots` unset so the backend returns both root sessions and child/subagent sessions.
+      list = unwrap(await c.session.list({ directory: queryDirectory }));
+      sessionDebug("sessions:load:raw", { count: list.length, ms: Date.now() - start });
+    }
 
     // Defensive client-side filter in case the server returns sessions spanning
     // multiple roots (e.g. older servers or proxies).
@@ -730,6 +771,7 @@ export function createSessionStore(options: {
     const merged = new Map(filtered.map((session) => [session.id, session] as const));
     for (const sessionID of overrideIds) {
       if (merged.has(sessionID)) continue;
+      if (usedConversationRead || !c) continue;
       try {
         // Fetch by ID without directory filter — the session may still be
         // registered under the old directory in the engine while the local
@@ -841,6 +883,8 @@ export function createSessionStore(options: {
   }
 
   function hydrateTranscriptSnapshot(snapshot: VesloSessionTranscriptSnapshot) {
+    if (snapshot.source === "unavailable") return;
+
     const sessionID = snapshot.sessionId.trim();
     if (!sessionID) return;
 
