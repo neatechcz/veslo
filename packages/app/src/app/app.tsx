@@ -2543,10 +2543,11 @@ export default function App() {
   }
 
   async function abortSession(sessionID?: string) {
-    const c = client();
-    if (!c) return;
     const id = (sessionID ?? selectedSessionId() ?? "").trim();
     if (!id) return;
+    if (!(await ensureSelectedSessionWorkspaceActiveForSend(id))) return;
+    const c = client();
+    if (!c) return;
     // OpenCode exposes session.abort which interrupts the active prompt/run.
     // We intentionally don't mutate global busy state here; the SessionView
     // provides local UX (button disabled + toast) for cancellation.
@@ -2565,14 +2566,14 @@ export default function App() {
   }
 
   async function compactCurrentSession(sessionIdOverride?: string) {
-    const c = client();
-    if (!c) {
-      throw new Error("Not connected to a server");
-    }
-
     const sessionID = (sessionIdOverride ?? selectedSessionId() ?? "").trim();
     if (!sessionID) {
       throw new Error("Select a session before compacting.");
+    }
+    if (!(await ensureSelectedSessionWorkspaceActiveForSend(sessionID))) return;
+    const c = client();
+    if (!c) {
+      throw new Error("Not connected to a server");
     }
 
     const visible = messages();
@@ -2817,6 +2818,10 @@ export default function App() {
       engineReady: engineReady(),
       hasClient: Boolean(client()),
     });
+    if (!(await ensureSelectedSessionWorkspaceActiveForSend(sessionID))) {
+      recordSendTrace("replaceUserMessage:blocked-scoped-workspace", { sessionID });
+      return false;
+    }
 
     let c = client() ?? await connectLocalRuntimeClientFromEngineInfo("replaceUserMessage");
     if (!c) {
@@ -2850,9 +2855,11 @@ export default function App() {
   }
 
   async function undoLastUserMessage() {
-    const c = client();
     const sessionID = (selectedSessionId() ?? "").trim();
-    if (!c || !sessionID) return;
+    if (!sessionID) return;
+    if (!(await ensureSelectedSessionWorkspaceActiveForSend(sessionID))) return;
+    const c = client();
+    if (!c) return;
 
     // Revert is rejected while the session is busy. We *usually* have an accurate
     // session status via SSE, but to be resilient to transient desync we attempt
@@ -2886,9 +2893,11 @@ export default function App() {
   }
 
   async function redoLastUserMessage() {
-    const c = client();
     const sessionID = (selectedSessionId() ?? "").trim();
-    if (!c || !sessionID) return;
+    if (!sessionID) return;
+    if (!(await ensureSelectedSessionWorkspaceActiveForSend(sessionID))) return;
+    const c = client();
+    if (!c) return;
 
     await abortSessionSafe(c, sessionID);
 
@@ -2941,7 +2950,8 @@ export default function App() {
     if (!trimmed) {
       throw new Error("Session name is required");
     }
-    
+    if (!(await ensureSelectedSessionWorkspaceActiveForSend(sessionID))) return;
+
     await renameSession(sessionID, trimmed);
     await refreshSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(e => reportError(e, "sidebar.refreshSessions"));
   }

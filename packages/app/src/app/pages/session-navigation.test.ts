@@ -49,6 +49,42 @@ const scopedSendActivationSource =
   scopedSendActivationStart >= 0 && scopedSendActivationEnd >= 0
     ? appSource.slice(scopedSendActivationStart, scopedSendActivationEnd)
     : "";
+const abortSessionStart = appSource.indexOf("  async function abortSession(");
+const abortSessionEnd = appSource.indexOf("  function retryLastPrompt()", abortSessionStart);
+const abortSessionSource =
+  abortSessionStart >= 0 && abortSessionEnd >= 0
+    ? appSource.slice(abortSessionStart, abortSessionEnd)
+    : "";
+const compactCurrentSessionStart = appSource.indexOf("  async function compactCurrentSession(");
+const compactCurrentSessionEnd = appSource.indexOf("  const triggerAutoCompaction = async (sessionID: string) => {", compactCurrentSessionStart);
+const compactCurrentSessionSource =
+  compactCurrentSessionStart >= 0 && compactCurrentSessionEnd >= 0
+    ? appSource.slice(compactCurrentSessionStart, compactCurrentSessionEnd)
+    : "";
+const replaceUserMessageStart = appSource.indexOf("  async function replaceUserMessage(");
+const replaceUserMessageEnd = appSource.indexOf("  async function undoLastUserMessage() {", replaceUserMessageStart);
+const replaceUserMessageSource =
+  replaceUserMessageStart >= 0 && replaceUserMessageEnd >= 0
+    ? appSource.slice(replaceUserMessageStart, replaceUserMessageEnd)
+    : "";
+const undoLastUserMessageStart = appSource.indexOf("  async function undoLastUserMessage() {");
+const undoLastUserMessageEnd = appSource.indexOf("  async function redoLastUserMessage() {", undoLastUserMessageStart);
+const undoLastUserMessageSource =
+  undoLastUserMessageStart >= 0 && undoLastUserMessageEnd >= 0
+    ? appSource.slice(undoLastUserMessageStart, undoLastUserMessageEnd)
+    : "";
+const redoLastUserMessageStart = appSource.indexOf("  async function redoLastUserMessage() {");
+const redoLastUserMessageEnd = appSource.indexOf("  async function renameSessionTitle(", redoLastUserMessageStart);
+const redoLastUserMessageSource =
+  redoLastUserMessageStart >= 0 && redoLastUserMessageEnd >= 0
+    ? appSource.slice(redoLastUserMessageStart, redoLastUserMessageEnd)
+    : "";
+const renameSessionTitleStart = appSource.indexOf("  async function renameSessionTitle(");
+const renameSessionTitleEnd = appSource.indexOf("  async function deleteSessionById(", renameSessionTitleStart);
+const renameSessionTitleSource =
+  renameSessionTitleStart >= 0 && renameSessionTitleEnd >= 0
+    ? appSource.slice(renameSessionTitleStart, renameSessionTitleEnd)
+    : "";
 const sendPromptStart = appSource.indexOf("  async function sendPrompt(");
 const sendPromptEnd = appSource.indexOf("  async function abortSession(", sendPromptStart);
 const sendPromptSource =
@@ -196,6 +232,24 @@ test("app activates selected session workspace at send time, not browse time", (
     /if \(sessionID && !\(await ensureSelectedSessionWorkspaceActiveForSend\(sessionID\)\)\) \{[\s\S]*recordSendTrace\("sendPrompt:blocked-scoped-workspace"\);[\s\S]*return false;[\s\S]*\}[\s\S]*resolvedDraft = await maybeResolveSkillCommand\(resolvedDraft\);/s,
     "scoped workspace activation should run during send before workspace-sensitive prompt routing",
   );
+});
+
+test("cross-workspace browse mode activates the selected workspace before session actions", () => {
+  for (const [name, source] of [
+    ["abortSession", abortSessionSource],
+    ["compactCurrentSession", compactCurrentSessionSource],
+    ["replaceUserMessage", replaceUserMessageSource],
+    ["undoLastUserMessage", undoLastUserMessageSource],
+    ["redoLastUserMessage", redoLastUserMessageSource],
+    ["renameSessionTitle", renameSessionTitleSource],
+  ] as const) {
+    assert.notEqual(source, "", `${name} source should exist`);
+    assert.match(
+      source,
+      /if \(!\(await ensureSelectedSessionWorkspaceActiveForSend\((?:id|sessionID)\)\)\) \{[\s\S]*return/s,
+      `${name} should activate the scoped workspace before using the active runtime client`,
+    );
+  }
 });
 
 test("opens cross-workspace session without activating the workspace", async () => {
