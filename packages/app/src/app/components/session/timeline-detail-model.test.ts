@@ -345,6 +345,38 @@ test("buildCollapsedSummary includes image evidence counts", () => {
   assert.equal(summary, "1 action · 1 image created · 2 images analyzed");
 });
 
+test("buildCollapsedSummary keeps latest label for one section summary with image evidence counts", () => {
+  const summary = buildCollapsedSummary({
+    sections: [
+      {
+        kind: "action" as TimelineSectionKind,
+        title: "Action",
+        summary: "1 action",
+        rows: [
+          {
+            kind: "action" as TimelineSectionKind,
+            rowType: "write",
+            primary: "Write result.png",
+            mediaEvidence: [
+              {
+                id: "image-created",
+                kind: "created",
+                title: "result.png",
+                mime: "image/png",
+                sourcePartId: "p1",
+                status: "available",
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    latestLabel: "typecheck",
+  } as any);
+
+  assert.equal(summary, "1 action · 1 image created · poslední: typecheck");
+});
+
 test("buildCollapsedSummary includes the latest label when present", () => {
   const summary = buildCollapsedSummary({
     sections: [

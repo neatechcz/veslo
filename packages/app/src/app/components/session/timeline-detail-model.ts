@@ -501,7 +501,7 @@ export function buildCollapsedSummary(input: BuildCollapsedSummaryInput): string
   const analyzedImages = summarizeMediaEvidenceCount(countMediaEvidence(rows, "analyzed"), "analyzed");
   const items = [...summaries, createdImages, analyzedImages].filter(Boolean);
   const base = items.join(" · ");
-  if (input.latestLabel && items.length <= 1) {
+  if (input.latestLabel && summaries.length <= 1) {
     const latest = tr("timeline.latest_label", { label: input.latestLabel });
     return base ? `${base} · ${latest}` : latest;
   }

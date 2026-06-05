@@ -311,6 +311,13 @@ export default function MessageList(props: MessageListProps) {
     if (count <= 0) return "";
     return `${count} ${count === 1 ? "image" : "images"} ${kind}`;
   };
+  const appendSectionMediaEvidenceSummaries = (items: string[], rows: TimelineRowView[]) => {
+    const createdImages = imageEvidenceSummary(countSectionMediaEvidence(rows, "created"), "created");
+    const analyzedImages = imageEvidenceSummary(countSectionMediaEvidence(rows, "analyzed"), "analyzed");
+    if (createdImages) items.push(createdImages);
+    if (analyzedImages) items.push(analyzedImages);
+    return items;
+  };
   const localizedSectionTitle = (section: TimelineSectionView) => timelineSectionTitle(section.labelKind);
   const sectionStatusFromRows = (rows: TimelineRowView[]) => {
     if (rows.some((entry) => entry.row.status === "error")) return "error" as const;
@@ -354,10 +361,14 @@ export default function MessageList(props: MessageListProps) {
   const localizedSectionSummary = (section: TimelineSectionView) => {
     switch (section.kind) {
       case "plan": {
+        const items: string[] = [];
         const plans = countSectionRows(section.rows, ["plan"]);
-        return plans === 1
-          ? tr("session.timeline_summary_plan_ready")
-          : tr("session.timeline_summary_plan_steps", { count: String(plans) });
+        items.push(
+          plans === 1
+            ? tr("session.timeline_summary_plan_ready")
+            : tr("session.timeline_summary_plan_steps", { count: String(plans) }),
+        );
+        return appendSectionMediaEvidenceSummaries(items, section.rows).join(" · ");
       }
       case "explore": {
         const items: string[] = [];
@@ -367,29 +378,33 @@ export default function MessageList(props: MessageListProps) {
         if (fileCount > 0) items.push(plural(fileCount, "session.timeline_file_one", "session.timeline_file_other"));
         if (searchCount > 0) items.push(plural(searchCount, "session.timeline_search_one", "session.timeline_search_other"));
         if (listCount > 0) items.push(plural(listCount, "session.timeline_list_one", "session.timeline_list_other"));
-        return items.length > 0 ? items.join(" · ") : tr("session.timeline_context_activity");
+        if (items.length === 0) items.push(tr("session.timeline_context_activity"));
+        return appendSectionMediaEvidenceSummaries(items, section.rows).join(" · ");
       }
       case "action": {
         const items: string[] = [];
         const actions = countSectionRows(section.rows, ["edit", "write", "task", "skill", "command", "tool"]);
         const thoughts = countSectionRows(section.rows, ["note"]);
-        const createdImages = imageEvidenceSummary(countSectionMediaEvidence(section.rows, "created"), "created");
-        const analyzedImages = imageEvidenceSummary(countSectionMediaEvidence(section.rows, "analyzed"), "analyzed");
         if (actions > 0) items.push(plural(actions, "session.timeline_summary_action_one", "session.timeline_summary_action_other"));
         if (thoughts > 0) items.push(plural(thoughts, "session.timeline_summary_thinking_one", "session.timeline_summary_thinking_other"));
-        if (createdImages) items.push(createdImages);
-        if (analyzedImages) items.push(analyzedImages);
-        return items.join(" · ");
+        if (items.length === 0) items.push(plural(actions, "session.timeline_summary_action_one", "session.timeline_summary_action_other"));
+        return appendSectionMediaEvidenceSummaries(items, section.rows).join(" · ");
       }
-      case "verify":
-        return section.rows.some((entry) => entry.row.status === "error")
-          ? tr("session.timeline_summary_verify_failed")
-          : section.rows.some((entry) => entry.row.status === "running")
-            ? tr("session.timeline_summary_verify_running")
-            : tr("session.timeline_summary_verify_ok");
+      case "verify": {
+        const items = [
+          section.rows.some((entry) => entry.row.status === "error")
+            ? tr("session.timeline_summary_verify_failed")
+            : section.rows.some((entry) => entry.row.status === "running")
+              ? tr("session.timeline_summary_verify_running")
+              : tr("session.timeline_summary_verify_ok"),
+        ];
+        return appendSectionMediaEvidenceSummaries(items, section.rows).join(" · ");
+      }
       case "issues": {
+        const items: string[] = [];
         const issues = countSectionRows(section.rows, ["issue"]);
-        return plural(issues, "session.timeline_summary_issue_one", "session.timeline_summary_issue_other");
+        items.push(plural(issues, "session.timeline_summary_issue_one", "session.timeline_summary_issue_other"));
+        return appendSectionMediaEvidenceSummaries(items, section.rows).join(" · ");
       }
     }
   };
