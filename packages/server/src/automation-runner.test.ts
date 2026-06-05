@@ -475,6 +475,36 @@ test("runNow consumes an overdue active one-shot schedule", async () => {
   });
 });
 
+test("runNow consumes an overdue active one-shot schedule when nextRunAt is missing", async () => {
+  await withHarness(async (harness) => {
+    await harness.writeStore([harness.makeAutomation({
+      id: "auto_manual_overdue_missing_next",
+      schedule: { kind: "oneShot", runAt: "2026-06-05T11:00:00.000Z" },
+      nextRunAt: null,
+    })]);
+
+    const run = await harness.runner.runNow(workspaceId, "auto_manual_overdue_missing_next");
+    await harness.runner.start();
+    await harness.runner.refreshWorkspace(workspaceId);
+    const store = await harness.readStore();
+
+    expect(run).toMatchObject({
+      id: "run_auto_manual_overdue_missing_next_1780657200000",
+      scheduledFor: "2026-06-05T11:00:00.000Z",
+      status: "success",
+    });
+    expect(store.runs).toHaveLength(1);
+    expect(store.items[0]).toMatchObject({
+      id: "auto_manual_overdue_missing_next",
+      enabled: false,
+      status: "completed",
+      completedAt: "2026-06-05T12:00:00.000Z",
+      nextRunAt: null,
+      lastRunId: "run_auto_manual_overdue_missing_next_1780657200000",
+    });
+  });
+});
+
 test("runNow does not duplicate an existing future timer", async () => {
   await withHarness(async (harness) => {
     await harness.writeStore([harness.makeAutomation({

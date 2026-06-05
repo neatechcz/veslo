@@ -516,10 +516,11 @@ function isRunnableAutomation(automation: VesloAutomation): boolean {
 }
 
 function overdueActiveOneShotScheduledFor(automation: VesloAutomation, nowMs: number): string | null {
-  if (!isRunnableAutomation(automation) || automation.schedule.kind !== "oneShot" || !automation.nextRunAt) {
+  if (!isRunnableAutomation(automation) || automation.schedule.kind !== "oneShot") {
     return null;
   }
-  return Date.parse(automation.nextRunAt) <= nowMs ? automation.nextRunAt : null;
+  const scheduledFor = automation.nextRunAt ?? automation.schedule.runAt;
+  return Date.parse(scheduledFor) <= nowMs ? scheduledFor : null;
 }
 
 function isTerminalRun(run: AutomationRun): boolean {
