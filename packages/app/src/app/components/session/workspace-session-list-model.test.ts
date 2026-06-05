@@ -915,7 +915,7 @@ test("filterVisibleProjectGroups keeps a local workspace visible when its last s
   assert.equal(visibleGroups[0].isWorkspaceOnlyProject, true);
 });
 
-test("buildProjectGroups keeps empty private workspaces hidden", () => {
+test("buildProjectGroups keeps empty private workspaces visible as the chat group", () => {
   const privateRoot = "/Users/test/.veslo/workspaces/private";
   const isPrivateWorkspacePath = (folder: string | null | undefined) =>
     typeof folder === "string" && (folder === privateRoot || folder.startsWith(`${privateRoot}/`));
@@ -937,7 +937,19 @@ test("buildProjectGroups keeps empty private workspaces hidden", () => {
     isPrivateWorkspacePath,
   );
 
-  assert.deepEqual(groups, []);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].key, PRIVATE_PROJECT_GROUP_KEY);
+  assert.equal(groups[0].workspace.id, "scratch");
+  assert.equal(groups[0].projectRoot, `${privateRoot}/scratch`);
+  assert.equal(groups[0].projectLabel, "");
+  assert.equal(groups[0].projectTitle, "");
+  assert.equal(groups[0].sessions.length, 0);
+  assert.equal(groups[0].isPrivateProject, true);
+  assert.equal(groups[0].isWorkspaceOnlyProject, true);
+
+  const split = splitProjectGroupsForSidebar(groups);
+  assert.equal(split.chatGroup?.key, PRIVATE_PROJECT_GROUP_KEY);
+  assert.deepEqual(split.projectGroups, []);
 });
 
 test("formatSessionRelativeAge uses compact d/h/m/s labels", () => {

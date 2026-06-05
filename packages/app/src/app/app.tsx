@@ -1496,7 +1496,7 @@ export default function App() {
       const workspaceRoot = transcriptScope?.workspaceRoot || workspaceStore.activeWorkspaceRoot().trim();
       if (!workspaceRoot) return null;
       const { readTranscriptFromDb, dbTranscriptToSnapshot } = await import("./lib/db-reader");
-      const transcript = await readTranscriptFromDb(sessionId, limit);
+      const transcript = await readTranscriptFromDb(sessionId, limit, workspaceRoot);
       return dbTranscriptToSnapshot(
         sessionId,
         transcriptWorkspaceId,
@@ -3530,7 +3530,7 @@ export default function App() {
       const sessions = await readSessionsFromDb(directory);
       if (sessions.length === 0) return;
       const latest = sessions[0];
-      const transcript = await readTranscriptFromDb(latest.id, 50);
+      const transcript = await readTranscriptFromDb(latest.id, 50, directory);
       const snapshot = dbTranscriptToSnapshot(latest.id, workspaceId, transcript, 50);
       // Only populate the cache — don't change selectedSessionId.
       // The route effect and selectSession will pick the correct session

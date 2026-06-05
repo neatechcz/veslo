@@ -65,7 +65,7 @@ Workspace activation state is runtime-only state managed by `packages/app/src/ap
 - `workspaceConnectionStateById[workspaceId].status === "connected"`
   Means the workspace activation flow succeeded for the app surface.
 - In Tauri local-to-local browsing mode, the active workspace can be `connected` even while the live OpenCode client is intentionally detached.
-- In that browsing mode the app loads sidebar/session history from SQLite first, and only re-attaches the engine when the user performs an action that requires it, such as sending a message.
+- In that browsing mode the app loads sidebar/session history from SQLite first, checking the active workspace's `.opencode/opencode.db` before legacy/global OpenCode database locations, and only re-attaches the engine when the user performs an action that requires it, such as sending a message.
 - The sidebar connection dot treats this state as runtime-available when the Veslo server is also connected, so browsing a different local workspace does not appear as a false runtime failure.
 
 ## Den Auth State
