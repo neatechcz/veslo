@@ -36,6 +36,7 @@ type TimerHandle = unknown;
 type TimerEntry = {
   handle: TimerHandle;
   generation: number;
+  key: string;
 };
 
 type RunnerOptions = {
@@ -44,6 +45,7 @@ type RunnerOptions = {
   setTimeout?: (callback: () => void, delayMs: number) => unknown;
   clearTimeout?: (handle: unknown) => void;
   beforeReadWorkspaceStore?: (workspaceId: string) => Promise<void> | void;
+  beforePersistMissingNextRunAt?: (workspaceId: string, automationId: string) => Promise<void> | void;
   execute: (input: AutomationExecutionInput) => Promise<AutomationExecutionResult>;
 };
 
@@ -95,12 +97,10 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
       let automation = item;
       let nextRunAt = automation.nextRunAt ?? null;
       if (!nextRunAt) {
-        nextRunAt = computeNextAutomationRunAt(automation.schedule, now());
-        automation = await persistAutomation(workspace, {
-          ...automation,
-          nextRunAt,
-          updatedAt: nowIso(now),
-        });
+        const initializedAutomation = await initializeMissingNextRunAt(workspace, automation.id);
+        if (!initializedAutomation) continue;
+        automation = initializedAutomation;
+        nextRunAt = automation.nextRunAt ?? null;
       }
 
       if (!nextRunAt) continue;
@@ -116,14 +116,13 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
       throw new ApiError(404, "not_found", "Automation not found");
     }
 
-    const scheduledFor = nowIso(now);
-    const runId = uniqueRunId(store, stableRunId(automation.id, scheduledFor));
-    const isDueOneShot =
-      isRunnableAutomation(automation) &&
-      automation.schedule.kind === "oneShot" &&
-      automation.nextRunAt === scheduledFor;
+    const nowMs = now();
+    const overdueScheduledFor = overdueActiveOneShotScheduledFor(automation, nowMs);
+    const scheduledFor = overdueScheduledFor ?? nowIso(() => nowMs);
+    const baseRunId = stableRunId(automation.id, scheduledFor);
+    const runId = overdueScheduledFor ? baseRunId : uniqueRunId(store, baseRunId);
     const finalRun = await executeOccurrence(workspace, automation, scheduledFor, runId, {
-      kind: isDueOneShot ? "scheduled" : "manual",
+      kind: overdueScheduledFor ? "scheduled" : "manual",
     });
     await schedulePersistedNext(workspace, automation.id);
     return finalRun;
@@ -364,12 +363,30 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
     });
   }
 
-  async function persistAutomation(workspace: WorkspaceRef, automation: VesloAutomation): Promise<VesloAutomation> {
-    let saved = automation;
+  async function initializeMissingNextRunAt(
+    workspace: WorkspaceRef,
+    automationId: string,
+  ): Promise<VesloAutomation | null> {
+    await options.beforePersistMissingNextRunAt?.(workspace.id, automationId);
+
+    let saved: VesloAutomation | null = null;
     await mutateAutomationStore(workspace.path, workspace.id, (store) => {
-      const items = store.items.map((item) => (item.id === automation.id ? automation : item));
-      saved = items.find((item) => item.id === automation.id) ?? automation;
-      return { ...store, updatedAt: nowIso(now), items };
+      const timestamp = nowIso(now);
+      const items = store.items.map((item) => {
+        if (item.id !== automationId) return item;
+        if (!isRunnableAutomation(item) || item.nextRunAt) {
+          saved = item;
+          return item;
+        }
+        const updated = {
+          ...item,
+          nextRunAt: computeNextAutomationRunAt(item.schedule, now()),
+          updatedAt: timestamp,
+        };
+        saved = updated;
+        return updated;
+      });
+      return { ...store, updatedAt: timestamp, items };
     });
     return saved;
   }
@@ -421,6 +438,11 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
     delayMs: number,
   ): void {
     if (stopped) return;
+    const key = timerKey(workspace.id, automationId, scheduledFor);
+    const entries = timersByWorkspace.get(workspace.id) ?? new Set<TimerEntry>();
+    if ([...entries].some((entry) => entry.key === key)) {
+      return;
+    }
     const timerGeneration = generation;
     let entry: TimerEntry | null = null;
     const handle = scheduleTimeout(() => {
@@ -440,8 +462,7 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
         }
       })();
     }, Math.max(0, delayMs));
-    entry = { handle, generation: timerGeneration };
-    const entries = timersByWorkspace.get(workspace.id) ?? new Set<TimerEntry>();
+    entry = { handle, generation: timerGeneration, key };
     entries.add(entry);
     timersByWorkspace.set(workspace.id, entries);
   }
@@ -494,8 +515,19 @@ function isRunnableAutomation(automation: VesloAutomation): boolean {
   return automation.enabled && automation.status === "active";
 }
 
+function overdueActiveOneShotScheduledFor(automation: VesloAutomation, nowMs: number): string | null {
+  if (!isRunnableAutomation(automation) || automation.schedule.kind !== "oneShot" || !automation.nextRunAt) {
+    return null;
+  }
+  return Date.parse(automation.nextRunAt) <= nowMs ? automation.nextRunAt : null;
+}
+
 function isTerminalRun(run: AutomationRun): boolean {
   return run.status === "success" || run.status === "failed" || run.status === "skipped";
+}
+
+function timerKey(workspaceId: string, automationId: string, scheduledFor: string): string {
+  return `${workspaceId}\u0000${automationId}\u0000${scheduledFor}`;
 }
 
 function appendOrReplaceRun(runs: AutomationRun[], run: AutomationRun): AutomationRun[] {

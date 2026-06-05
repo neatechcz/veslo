@@ -448,6 +448,92 @@ test("runNow preserves recurring cadence", async () => {
   });
 });
 
+test("runNow consumes an overdue active one-shot schedule", async () => {
+  await withHarness(async (harness) => {
+    await harness.writeStore([harness.makeAutomation({
+      id: "auto_manual_overdue",
+      schedule: { kind: "oneShot", runAt: "2026-06-05T11:00:00.000Z" },
+      nextRunAt: "2026-06-05T11:00:00.000Z",
+    })]);
+
+    const run = await harness.runner.runNow(workspaceId, "auto_manual_overdue");
+    const store = await harness.readStore();
+
+    expect(run).toMatchObject({
+      id: "run_auto_manual_overdue_1780657200000",
+      scheduledFor: "2026-06-05T11:00:00.000Z",
+      status: "success",
+    });
+    expect(store.items[0]).toMatchObject({
+      id: "auto_manual_overdue",
+      enabled: false,
+      status: "completed",
+      completedAt: "2026-06-05T12:00:00.000Z",
+      nextRunAt: null,
+      lastRunId: "run_auto_manual_overdue_1780657200000",
+    });
+  });
+});
+
+test("runNow does not duplicate an existing future timer", async () => {
+  await withHarness(async (harness) => {
+    await harness.writeStore([harness.makeAutomation({
+      id: "auto_manual_timer",
+      schedule: { kind: "oneShot", runAt: "2026-06-05T12:30:00.000Z" },
+      nextRunAt: "2026-06-05T12:30:00.000Z",
+    })]);
+    await harness.runner.start();
+    expect(harness.activeTimers()).toHaveLength(1);
+
+    await harness.runner.runNow(workspaceId, "auto_manual_timer");
+    await harness.runner.runNow(workspaceId, "auto_manual_timer");
+
+    expect(harness.activeTimers()).toHaveLength(1);
+    expect(harness.activeTimers()[0]?.delayMs).toBe(30 * 60 * 1000);
+  });
+});
+
+test("missing nextRunAt initialization preserves concurrent automation edits", async () => {
+  await withHarness(async (harness) => {
+    let edited = false;
+    harness.beforePersistMissingNextRunAt = async () => {
+      if (edited) return;
+      edited = true;
+      const store = await harness.readStore();
+      await harness.writeStore([{
+        ...store.items[0]!,
+        name: "Edited missing next",
+        schedule: { kind: "daily", hour: 9, minute: 15 },
+        prompt: "Edited missing prompt",
+        target: { preferredSessionId: "ses_missing_edited", fallbackTitle: "Edited fallback" },
+        updatedAt: "2026-06-05T12:00:01.000Z",
+      }], store.runs);
+    };
+    await harness.writeStore([harness.makeAutomation({
+      id: "auto_missing_next_edit",
+      name: "Original missing next",
+      schedule: { kind: "interval", seconds: 3600 },
+      prompt: "Original missing prompt",
+      target: { preferredSessionId: "ses_missing_original" },
+      nextRunAt: null,
+    })]);
+
+    await harness.runner.start();
+
+    const store = await harness.readStore();
+    expect(store.items[0]).toMatchObject({
+      id: "auto_missing_next_edit",
+      name: "Edited missing next",
+      schedule: { kind: "daily", hour: 9, minute: 15 },
+      prompt: "Edited missing prompt",
+      target: { preferredSessionId: "ses_missing_edited", fallbackTitle: "Edited fallback" },
+      enabled: true,
+      status: "active",
+      nextRunAt: "2026-06-06T09:15:00.000Z",
+    });
+  });
+});
+
 async function withHarness(fn: (harness: RunnerHarness) => Promise<void>): Promise<void> {
   const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-automation-runner-"));
   const harness = new RunnerHarness(workspaceRoot);
@@ -465,6 +551,7 @@ class RunnerHarness {
   failExecution: Error | null = null;
   executionGate: Deferred<void> | null = null;
   beforeReadWorkspaceStore: (() => Promise<void>) | null = null;
+  beforePersistMissingNextRunAt: (() => Promise<void>) | null = null;
   timers: Array<{ id: number; callback: () => void; delayMs: number; cleared: boolean; fired: boolean }> = [];
   clearedTimerIds: number[] = [];
   private nextTimerId = 1;
@@ -476,6 +563,9 @@ class RunnerHarness {
       now: () => this.currentMs,
       beforeReadWorkspaceStore: async () => {
         await this.beforeReadWorkspaceStore?.();
+      },
+      beforePersistMissingNextRunAt: async () => {
+        await this.beforePersistMissingNextRunAt?.();
       },
       setTimeout: (callback, delayMs) => {
         const timer = { id: this.nextTimerId++, callback, delayMs, cleared: false, fired: false };
