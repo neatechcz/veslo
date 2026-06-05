@@ -3,7 +3,7 @@ import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { resolveVesloDataDir } from "./audit.js";
-import type { SoulDocument, SoulScope } from "./soul-memory.js";
+import type { SoulDocument, SoulScope, SoulVersion } from "./soul-memory.js";
 import { exists } from "./utils.js";
 
 export type SoulCacheInput = {
@@ -42,6 +42,8 @@ export type WritePendingSoulEditInput = SoulCacheInput & {
 
 const OWNER_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 const PENDING_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
+const SOUL_SCOPES: readonly SoulScope[] = ["organization", "user", "workspace"];
+const SOUL_VERSION_SOURCES: ReadonlyArray<SoulVersion["source"]> = ["manual", "api", "heartbeat", "restore", "system"];
 
 const resolveDataDir = (dataDir?: string): string => {
   const trimmed = dataDir?.trim();
@@ -81,17 +83,54 @@ function normalizePendingId(pendingEditId: string): string {
 }
 
 function validateSoulDocumentForCache(document: SoulDocument): SoulDocument {
+  if (
+    !document
+    || typeof document !== "object"
+    || typeof document.id !== "string"
+    || typeof document.ownerId !== "string"
+    || !(document.currentVersionId === null || typeof document.currentVersionId === "string")
+    || typeof document.heartbeatEnabled !== "boolean"
+    || !Array.isArray(document.versions)
+  ) {
+    throw new Error("Soul cache document is invalid");
+  }
   normalizeOwnerId(document.ownerId);
-  if (!["organization", "user", "workspace"].includes(document.scope)) {
+  if (!SOUL_SCOPES.includes(document.scope)) {
     throw new Error("Soul cache document scope is invalid");
   }
   if (!document.id.trim()) {
     throw new Error("Soul cache document id is invalid");
   }
-  if (!Array.isArray(document.versions)) {
+  const versions = document.versions.map(validateSoulVersionForCache);
+  const versionIds = new Set<string>();
+  for (const version of versions) {
+    if (versionIds.has(version.id)) {
+      throw new Error("Soul cache document versions are invalid");
+    }
+    versionIds.add(version.id);
+  }
+  if (document.currentVersionId !== null && !versionIds.has(document.currentVersionId)) {
+    throw new Error("Soul cache current version is invalid");
+  }
+  return { ...document, versions };
+}
+
+function validateSoulVersionForCache(version: SoulVersion): SoulVersion {
+  if (
+    !version
+    || typeof version !== "object"
+    || typeof version.id !== "string"
+    || typeof version.content !== "string"
+    || typeof version.changeSummary !== "string"
+    || typeof version.createdAt !== "string"
+    || typeof version.createdBy !== "string"
+    || !SOUL_VERSION_SOURCES.includes(version.source)
+    || !(version.baseVersionId === null || typeof version.baseVersionId === "string")
+    || !(version.restoreSourceVersionId === null || typeof version.restoreSourceVersionId === "string")
+  ) {
     throw new Error("Soul cache document versions are invalid");
   }
-  return document;
+  return version;
 }
 
 function validateCachedSoulDocument(document: SoulDocument, scope: SoulScope, ownerId: string): SoulDocument {

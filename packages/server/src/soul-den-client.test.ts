@@ -151,6 +151,44 @@ describe("soul Den client", () => {
     expect(error.code).toBe("soul_den_conflict");
   });
 
+  test("rejects documents with malformed embedded versions", async () => {
+    const malformedDocument = {
+      ...userDocument(),
+      versions: [{ ...version("version_1"), content: 123 }],
+    };
+    const { fetch } = mockFetch(malformedDocument);
+
+    const error = await expectApiError(getUserSoul({
+      baseUrl: "https://den.example",
+      denToken: "den-token",
+      orgId: "org_123",
+      userId: "user_123",
+      fetch,
+    }));
+
+    expect(error.status).toBe(502);
+    expect(error.code).toBe("soul_den_invalid_payload");
+  });
+
+  test("rejects documents with invalid embedded version source", async () => {
+    const malformedDocument = {
+      ...organizationDocument(),
+      versions: [{ ...version("version_1"), source: "imported" }],
+    };
+    const { fetch } = mockFetch(malformedDocument);
+
+    const error = await expectApiError(getOrganizationSoul({
+      baseUrl: "https://den.example",
+      denToken: "den-token",
+      orgId: "org_123",
+      userId: "user_123",
+      fetch,
+    }));
+
+    expect(error.status).toBe(502);
+    expect(error.code).toBe("soul_den_invalid_payload");
+  });
+
   test("supports user and organization version routes", async () => {
     const { calls, fetch } = mockFetch({ versions: [version("version_1"), version("version_2")], nextCursor: null });
 

@@ -2,6 +2,7 @@ import { ApiError } from "./errors.js";
 import type { SoulDocument, SoulScope, SoulVersion } from "./soul-memory.js";
 
 type SoulDenScope = Extract<SoulScope, "organization" | "user">;
+type SoulVersionSource = SoulVersion["source"];
 
 type SoulDenClientInput = {
   baseUrl: string;
@@ -41,6 +42,9 @@ export type SoulVersionsResponse = {
   versions: SoulVersion[];
   nextCursor: string | null;
 };
+
+const SOUL_SCOPES: readonly SoulScope[] = ["organization", "user", "workspace"];
+const SOUL_VERSION_SOURCES: readonly SoulVersionSource[] = ["manual", "api", "heartbeat", "restore", "system"];
 
 function parseBaseUrl(baseUrl: string): URL {
   const trimmed = baseUrl.trim();
@@ -170,7 +174,7 @@ function validateSoulDocument(payload: unknown, url: string): SoulDocument {
   const document = payload as SoulDocument;
   if (
     typeof document.id !== "string"
-    || !["organization", "user", "workspace"].includes(document.scope)
+    || !SOUL_SCOPES.includes(document.scope)
     || typeof document.ownerId !== "string"
     || !(document.currentVersionId === null || typeof document.currentVersionId === "string")
     || typeof document.heartbeatEnabled !== "boolean"
@@ -178,7 +182,18 @@ function validateSoulDocument(payload: unknown, url: string): SoulDocument {
   ) {
     throw new ApiError(502, "soul_den_invalid_payload", "Soul Den returned an invalid Soul document", { url });
   }
-  return document;
+  const versions = document.versions.map((item) => validateSoulVersion(item, url));
+  const versionIds = new Set<string>();
+  for (const version of versions) {
+    if (versionIds.has(version.id)) {
+      throw new ApiError(502, "soul_den_invalid_payload", "Soul Den returned an invalid Soul document", { url });
+    }
+    versionIds.add(version.id);
+  }
+  if (document.currentVersionId !== null && !versionIds.has(document.currentVersionId)) {
+    throw new ApiError(502, "soul_den_invalid_payload", "Soul Den returned an invalid Soul document", { url });
+  }
+  return { ...document, versions };
 }
 
 function validateSoulVersion(payload: unknown, url: string): SoulVersion {
@@ -192,7 +207,7 @@ function validateSoulVersion(payload: unknown, url: string): SoulVersion {
     || typeof version.changeSummary !== "string"
     || typeof version.createdAt !== "string"
     || typeof version.createdBy !== "string"
-    || typeof version.source !== "string"
+    || !SOUL_VERSION_SOURCES.includes(version.source)
     || !(version.baseVersionId === null || typeof version.baseVersionId === "string")
     || !(version.restoreSourceVersionId === null || typeof version.restoreSourceVersionId === "string")
   ) {

@@ -82,6 +82,33 @@ describe("soul cache", () => {
     await expect(readCachedSoulDocument({ dataDir, scope: "user", ownerId: "user_123" })).resolves.toBeNull();
   });
 
+  test("serves no cached document when embedded versions are malformed", async () => {
+    const dataDir = await tempDataDir();
+    const userSoul = {
+      ...document("user", "user_123"),
+      versions: [{
+        ...document("user", "user_123").versions[0],
+        source: "imported",
+      }],
+    };
+    await mkdir(join(dataDir, "soul-cache", "user"), { recursive: true });
+    await writeFile(soulCachePath({ dataDir, scope: "user", ownerId: "user_123" }), JSON.stringify(userSoul), "utf8");
+
+    await expect(readCachedSoulDocument({ dataDir, scope: "user", ownerId: "user_123" })).resolves.toBeNull();
+  });
+
+  test("serves no cached document when currentVersionId points to a missing version", async () => {
+    const dataDir = await tempDataDir();
+    const userSoul = {
+      ...document("user", "user_123"),
+      currentVersionId: "missing_version",
+    };
+    await mkdir(join(dataDir, "soul-cache", "user"), { recursive: true });
+    await writeFile(soulCachePath({ dataDir, scope: "user", ownerId: "user_123" }), JSON.stringify(userSoul), "utf8");
+
+    await expect(readCachedSoulDocument({ dataDir, scope: "user", ownerId: "user_123" })).resolves.toBeNull();
+  });
+
   test("marks pending edits when Den is unavailable without claiming Den sync", async () => {
     const dataDir = await tempDataDir();
 
