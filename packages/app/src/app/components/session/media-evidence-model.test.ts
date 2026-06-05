@@ -741,6 +741,21 @@ test("does not create bitmap evidence from url-like path values", () => {
         tool: "write",
         state: { status: "completed", input: { filePath: "file:///Users/me/project/image.png" } },
       }),
+      part("p3-url-like-ftp", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "ftp://example.com/image.png" } },
+      }),
+      part("p3-url-like-s3", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "s3://bucket/image.png" } },
+      }),
+      part("p3-url-like-javascript", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "javascript:alert.png" } },
+      }),
     ],
   });
 

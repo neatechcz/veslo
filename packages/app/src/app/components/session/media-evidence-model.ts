@@ -147,7 +147,9 @@ function isWindowsAbsolutePath(path: string): boolean {
 }
 
 function isUrlLikePath(path: string): boolean {
-  return /^(?:https?|data|blob|file):/i.test(path.trim());
+  const trimmed = path.trim();
+  if (isWindowsAbsolutePath(trimmed)) return false;
+  return /^[A-Za-z][A-Za-z0-9+.-]*:/.test(trimmed);
 }
 
 function normalizeComparablePath(path: string): string {
