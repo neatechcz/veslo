@@ -177,7 +177,7 @@ async function readLegacyAgentLabStore(path: string, workspaceId: string): Promi
   };
 }
 
-async function mutateAutomationStore(
+export async function mutateAutomationStore(
   workspaceRoot: string,
   workspaceId: string | undefined,
   mutate: (store: AutomationStoreData) => AutomationStoreData | Promise<AutomationStoreData>,
