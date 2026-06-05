@@ -1,8 +1,10 @@
 # Handoff — pro nového vývojáře, který přebírá VSLO-86
 
 Tenhle dokument je **vstupní bod**, pokud přebíráš multi-workspace
-stabilizaci (= návaznost na sérii commitů `04a2ba75 … 60c5d93d` na
-branchi `sandbox` z května 2026). Předpokládá, že jsi přečetl
+stabilizaci a sandbox runtime. Historicky navazuje na sérii commitů
+`04a2ba75 … 60c5d93d` na branchi `sandbox` z května 2026; aktuální stav
+je rozšířený o červnové Windows/WSL2 opravy na `local/sandbox-merge`.
+Předpokládá, že jsi přečetl
 [`README.md`](README.md) a alespoň [`architecture.md`](architecture.md)
 a [`known-issues.md`](known-issues.md).
 
@@ -17,14 +19,18 @@ a [`known-issues.md`](known-issues.md).
 | Workspace ID mismatch | ✅ Vyřešeno (`04a2ba75`) |
 | Token rotation po restartu | ✅ Vyřešeno (`bdccc0c6`) |
 | Port discovery (8787) | ✅ Vyřešeno (`2dac2a81` + `bdccc0c6`) |
+| Windows sandbox backend | ✅ WSL2 + bwrap (`windows-wsl2`), Job Object/AppContainer nejsou produktový fallback |
+| WSL engine startup | ✅ Stabilizováno po 2026-06-04 (`ed25f578`) |
+| Windows managed runtime onboarding | ❌ Chybí first-run UI/import `VesloSandbox` |
 | **AI gateway preflight 30 s timeout** | ❌ Neopraveno — vidíš v console při bootu |
 | **WorkspaceClientStaleError jako unhandled** | ❌ Neopraveno — non-fatal, ale šum v console |
 | **Reactive cascade ve frontendu** | ❌ Architektonický problém |
 | **Engine cold start 30-60 s** | ❌ OpenCode upstream issue |
 | **Logy roztroušené napříč 5 místy** | ❌ Bez systémového řešení |
 
-Branch `sandbox`, **11+ commitů ahead origin/sandbox**, **žádný push**.
-Latest commit: `60c5d93d`.
+Původní handoff byl pro branch `sandbox`, latest commit `60c5d93d`. Aktuální
+checkout je `local/sandbox-merge`; současná Windows realita je
+[`windows-wsl2-sandbox-runtime.md`](windows-wsl2-sandbox-runtime.md).
 
 ## Priorita 1 — nehas dílčí bugy, opravit systémově
 
@@ -121,6 +127,36 @@ Oba jsou bun procesy, oba mluví HTTP. Sloučit do jednoho procesu:
 **Risk:** Veliká diff, řada testů. Doporučuju feature flag (`VESLO_MERGED=1`)
 během přechodu.
 
+### d) Windows first-run sandbox onboarding (~1-2 dny MVP)
+
+Kód už na Windows předpokládá WSL2 + bwrap. Co chybí, je produktová cesta,
+která uživatele dostane do stejného stavu bez ručního nastavování distra.
+
+MVP:
+
+- Detekovat WSL/WSL2 a existenci `VesloSandbox`.
+- Pokud chybí, zobrazit explicitní onboarding/repair flow místo tichého
+  engine spawn failu.
+- Provisioning oddělit od normálního buildu a smoke testů.
+- Verifikovat `bwrap`, Linux OpenCode runtime, workspace path visibility a
+  host-to-WSL `connectHost`.
+
+Nedělej native Windows Job Object/AppContainer fallback pro OpenCode engine.
+V aktuálním kódu je podporovaná Windows sandbox cesta WSL2 + bwrap.
+
+### e) Windows runtime merge checklist (~30 minut)
+
+- WSL bwrap script musí bindovat realpath target `/etc/resolv.conf`.
+- Windows runtime nemá tichým produkčním chováním padat na osobní Ubuntu;
+  product default je managed `VesloSandbox`, explicitní override je
+  `VESLO_WSL_DISTRO`.
+- Host-to-WSL health má používat `connectHost` WSL guest IP, ne
+  `127.0.0.1`.
+- `veslo-server` OpenCode proxy musí zachovat `/workspace/<id>/opencode` base
+  path a posílat `Accept-Encoding: identity`.
+- Managed OpenCode dependencies musí být ve verzi `@opencode-ai/plugin@1.14.29`
+  a `zod@4.1.8`.
+
 ## Priorita 2 — drobné fixy
 
 Pokud nemáš čas na systémové iniciativy, tahle malé fixy stojí
@@ -213,8 +249,9 @@ Pak `tail -f ~/.veslo/debug.log` ukáže komplet timeline.
    - Update [`fixes-timeline.md`](fixes-timeline.md) o nový commit
      v stejném commit (jinak docs ztratí cenu rychle).
 
-4. **Commit, ale NEPUSHOVAT** bez explicitního OK maintainera. Branch
-   `sandbox` je work-in-progress, push by mohl overwrite další session.
+4. **Commit, ale NEPUSHOVAT** bez explicitního OK maintainera. Historická
+   branch `sandbox` i aktuální `local/sandbox-merge` jsou integrační větve;
+   push by mohl přepsat práci další session.
 
 ## Copy-paste prompt pro novou AI session
 
@@ -223,13 +260,16 @@ Pokud používáš Claude Code / podobnou AI pro pokračování:
 ```
 Přebírám multi-workspace stabilizaci Vesla (VSLO-86).
 
-Branch: sandbox, latest commit 60c5d93d.
+Branch: local/sandbox-merge.
 
-První krok: přečíst docs/sandbox/ — všechno potřebné v 7 souborech,
+První krok: přečíst docs/sandbox/ — všechno potřebné je v hlavních souborech,
 začni s README.md a architecture.md.
 
 Aktuální stav: viz docs/sandbox/handoff.md sekce "TL;DR — současný
 stav". Co je opraveno + co zbývá.
+
+Windows sandbox realita: WSL2 + bwrap (`windows-wsl2`).
+
 
 První úkol: audit všech entry points pro engine spawn ve frontendu
 (viz handoff.md priorita 1a). Cíl: garantovat že žádné implicit volání

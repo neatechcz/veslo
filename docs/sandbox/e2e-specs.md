@@ -257,9 +257,11 @@ Užitečné pro asserce "tahle akce nesmí spawnout engine".
 - **Lokalizace** — specy assume English (`"Otevírám"` substring je
   hardcoded). Pokud Vesla flipne na češtinu, asserce selžou. Lze
   vyřešit i18n-aware selektory (data attribute, `data-testid`).
-- **Sandbox-exec dependency** — engine spawn v testech vyžaduje
-  funkční macOS sandbox-exec. Na fresh CI runner bez user privileges
-  může selhat. Žádné CI integration zatím není.
+- **Sandbox backend dependency** — engine spawn v testech vyžaduje funkční
+  platformní sandbox backend. Na macOS je to `sandbox-exec`; na Windows je to
+  WSL2 + `bwrap` s Linux OpenCode runtime ve vybraném distru
+  (`VesloSandbox` nebo `VESLO_WSL_DISTRO`). Na fresh CI runneru bez těchto
+  runtime prerekvizit test selže. Žádná CI integration zatím není.
 - **No happy-path send test** — chybí spec "klik workspace + napsat +
   send + AI odpoví". Důvod: cold engine spawn je 30-60 s + AI inference
   3-10 s; test by trval ~90 s. Plus AI gateway preflight 30 s timeout

@@ -9,8 +9,9 @@ stabilizaci. Pro každý commit:
 - **Verification** — jak bylo ověřeno (E2E spec, API test, manuální klik)
 - **Soubor(y)** — kde se to stalo
 
-Všechny commity jsou na branchi `sandbox`. Pořadí je chronologické
-(starší → novější).
+Květnové commity jsou na historické branchi `sandbox`. Pořadí je
+chronologické (starší → novější). Sekce Windows/WSL2 na konci doplňuje
+červnové opravy z větve `local/sandbox-merge`.
 
 Pro **vysvětlení problémů, které stále existují**, viz
 [`known-issues.md`](known-issues.md). Pro **jak debugovat**, viz
@@ -243,8 +244,8 @@ i bez explicit user akce. Aplikace naběhla a UI nereaguje.
 **Root cause:** `STEP 5-BROWSE` v `workspace.ts:1241` (původně) fired
 `void ensureEngineForWorkspace()` na každý sidebar klik — včetně
 auto-activate posledního workspace při bootu. To kicks off full engine
-bootstrap (sandbox-exec + opencode serve = 30-60 s) pro workspace, který
-chce uživatel jen prohlížet.
+bootstrap (platformní sandbox + `opencode serve` = 30-60 s) pro workspace,
+který chce uživatel jen prohlížet.
 
 **Fix:** Drop eager call. `sendPrompt` v `app.tsx` už volá
 `ensureEngineForWorkspace` + `ensureManagedAiBootstrapReady` před send,
@@ -256,6 +257,11 @@ Předtím 30-60 s spinner per boot.
 
 **Soubor:** `context/workspace.ts:1224-1243`, nový
 `packages/e2e/specs/boot-freeze.spec.ts`.
+
+Poznámka po Windows/WSL stabilizaci: na Windows stejný princip platí pro
+WSL2 + bwrap backend. Browse mode nesmí spouštět engine jen kvůli prohlížení
+historie, protože cold start zahrnuje WSL2/bwrap wrapper, Linux OpenCode
+runtime a health polling.
 
 ### `60c5d93d` — selectSession offline-first v browse mode
 
@@ -298,6 +304,27 @@ nový `packages/e2e/specs/browse-no-engine-spawn.spec.ts`.
 | Token rotation cascade | ✅ `[REDACTED]` allowlist + zombie reaping |
 | Browse mode spawns engine | ✅ selectSession offline-first |
 | AI inference test | ✅ C, A, B, D PONG přes API + UI |
+
+## Windows/WSL2 aktualizace po 2026-06-04
+
+- Windows sandbox backend je `windows-wsl2`.
+- Engine se spouští přes `wsl.exe` uvnitř WSL2 distribuce a izolaci vynucuje
+  Linux `bwrap`.
+- Preferovaný product runtime je managed distro `VesloSandbox`; explicitní
+  `VESLO_WSL_DISTRO` je dev/support override.
+- Native Windows Job Object backend zůstává stub, ne fallback pro OpenCode
+  sandbox.
+- Orchestrator používá WSL guest IP jako `connectHost`, ne flaky Windows
+  localhost forwarding.
+
+Windows runtime invarianty:
+
+- bwrap DNS musí fungovat uvnitř sandboxu; binduj realpath target
+  `/etc/resolv.conf`.
+- `veslo-server` proxy musí zachovat `/workspace/<id>/opencode` base path a
+  používat `Accept-Encoding: identity`.
+- `api-dispose` reloady jsou managed-AI/runtime state, ne WSL routing.
+- Managed OpenCode dependencies: `@opencode-ai/plugin@1.14.29` a `zod@4.1.8`.
 
 ## Co stále **neopravené**
 

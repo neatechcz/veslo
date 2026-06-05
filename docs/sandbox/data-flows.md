@@ -11,7 +11,8 @@ Konvence v sekvenčních diagramech:
 - `Rust` = Tauri Rust shell
 - `Server` = veslo-server (port 8787)
 - `Daemon` = orchestrator daemon (random port)
-- `Engine` = OpenCode engine (per workspace)
+- `Engine` = OpenCode engine (per workspace; macOS `sandbox-exec`, Windows
+  WSL2 + `bwrap`)
 - `Managed AI` = nakonfigurovaný managed-AI backend. Aktuální produkční
   default je standalone AI Gateway na owned serveru (`https://ai.veslo.work`);
   Den pořád zajišťuje browser/app auth a může být fallback nebo zdroj user
@@ -203,7 +204,8 @@ app.tsx ::sendPrompt
    │       │
    │       └── orchestrator pool.ensure(<wsId>)         ← TADY první engine spawn!
    │           │
-   │           ├── spawn opencode child (sandbox-exec)
+   │           ├── spawn opencode child přes WorkerSandbox
+   │           │   (macOS sandbox-exec, Windows WSL2 + bwrap)
    │           ├── waitForHealthy (~30-60 s cold start)
    │           └── proxy POST na engine
    │
@@ -228,11 +230,18 @@ už běží).
 
 | Symptom | Místo | Důvod |
 |---|---|---|
-| 30 s freeze před engine ready | `pool.ensure` v daemonu | Sandbox-exec init + Bun JIT cold |
+| 30 s freeze před engine ready | `pool.ensure` v daemonu | Sandbox init (`sandbox-exec` na macOS, WSL2 + bwrap na Windows) + Bun JIT cold |
 | 502 Bad Gateway na `/opencode/*` | Orchestrator proxy | Engine spawn fail (`Unable to connect`) |
+| Direct orchestrator health 200, ale `:8787/workspace/.../health` 500/502 | `veslo-server` proxy | Base path dropped nebo Bun `fetch` zlib; neřešit WSL routing |
+| WSL engine log končí na `Failed to fetch models.dev` před `server listening` | bwrap DNS | `/etc/resolv.conf` symlink target není bindnutý do sandboxu |
+| Health přes `127.0.0.1:<engine-port>` timeout, přes WSL IP 200 | WSL host route | Windows localhost forwarding flaky; použít `connectHost` WSL guest IP |
 | `WorkspaceClientStaleError` | Guard proxy v `workspace-routing.ts:59` | Uživatel přepnul workspace během SDK call |
 | `Timed out waiting for session.messages` | `withTimeout` 12 s v session.ts:965 | Engine pomalý / mrtvý |
 | AI gateway 401 | Veslo-server `/ai-gateway/...` | Stale gateway token v opencode.jsonc, nebo expired caller/gateway auth (typicky Den bearer token nebo managed-AI access token) |
+
+Pokud managed-AI gateway nedostala request, prompt se zastavil lokálně.
+Neřeš model backend, dokud engine health a lokální provider request nejsou
+potvrzené.
 
 ## Flow 5 — Workspace switch během běžícího sendu
 
