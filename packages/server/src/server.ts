@@ -62,6 +62,12 @@ import {
   type SoulVersion,
 } from "./soul-memory.js";
 import {
+  materializeEffectiveSoul,
+  readSoulMaterializationManifest,
+  soulMaterializationManifestPath,
+  type SoulMaterializationResult,
+} from "./soul-materializer.js";
+import {
   createRegistrySkill,
   createRegistrySkillInstallation,
   createRegistrySkillRolloutPolicy,
@@ -2212,17 +2218,81 @@ async function readPendingSoulEditsFor(dataDir: string, scope: SoulScope, ownerI
   return edits.filter((edit) => edit.scope === scope && edit.ownerId === ownerId);
 }
 
+async function readCachedSoulForMaterialization(
+  dataDir: string,
+  scope: SoulScope,
+  ownerId: string | undefined,
+): Promise<SoulDocument | null> {
+  if (!ownerId) return null;
+  return readCachedSoulDocument({ dataDir, scope, ownerId });
+}
+
+async function materializeSoulForWorkspace(
+  dataDir: string,
+  ctx: RequestContext,
+  workspace: WorkspaceInfo,
+  overrides: Partial<Record<SoulScope, SoulDocument | null>> = {},
+  options: { workspaceActive?: boolean } = {},
+): Promise<SoulMaterializationResult> {
+  const den = soulDenContext(ctx);
+  const hasOverride = (scope: SoulScope) => Object.prototype.hasOwnProperty.call(overrides, scope);
+  const organization = hasOverride("organization")
+    ? overrides.organization ?? null
+    : await readCachedSoulForMaterialization(dataDir, "organization", den.orgId);
+  const user = hasOverride("user")
+    ? overrides.user ?? null
+    : await readCachedSoulForMaterialization(dataDir, "user", den.userId);
+  const workspaceDocument = hasOverride("workspace")
+    ? overrides.workspace ?? null
+    : await readCachedSoulForMaterialization(dataDir, "workspace", workspace.id);
+
+  return materializeEffectiveSoul({
+    workspaceRoot: workspace.path,
+    organization,
+    user,
+    workspace: workspaceDocument,
+    workspaceActive: options.workspaceActive,
+  });
+}
+
+async function materializeSoulForConfiguredWorkspaces(
+  dataDir: string,
+  config: ServerConfig,
+  ctx: RequestContext,
+  overrides: Partial<Record<SoulScope, SoulDocument | null>>,
+): Promise<{
+  ok: boolean;
+  pending: boolean;
+  manualSyncRequired: false;
+  workspaces: Array<{ workspaceId: string; result: SoulMaterializationResult }>;
+}> {
+  const workspaces = [];
+  for (const configuredWorkspace of config.workspaces) {
+    const workspace = await resolveWorkspace(config, configuredWorkspace.id);
+    const result = await materializeSoulForWorkspace(dataDir, ctx, workspace, overrides);
+    workspaces.push({ workspaceId: workspace.id, result });
+  }
+  return {
+    ok: workspaces.every((item) => item.result.ok),
+    pending: workspaces.some((item) => item.result.pending),
+    manualSyncRequired: false,
+    workspaces,
+  };
+}
+
 function soulReadPayload(input: {
   document: SoulDocument | null;
   summary: SoulSummary;
   pendingEdits?: SoulPendingEdit[];
   denSynced?: boolean;
+  materialization?: unknown;
 }) {
   return {
     document: input.document ?? emptySoulDocument(input.summary.scope, input.summary.ownerId),
     summary: input.summary,
     ...(input.pendingEdits ? { pendingEdits: input.pendingEdits } : {}),
     ...(input.denSynced === undefined ? {} : { denSynced: input.denSynced }),
+    ...(input.materialization === undefined ? {} : { materialization: input.materialization }),
   };
 }
 
@@ -2251,6 +2321,50 @@ function materializationSummaryPayload(entry: WorkspaceSkillMaterialization) {
     packageSha256: entry.packageSha256,
     target: entry.target,
   };
+}
+
+async function buildSoulMaterializationStatus(workspace: WorkspaceInfo): Promise<SoulMaterializationResult | undefined> {
+  const manifestPath = soulMaterializationManifestPath(workspace.path);
+  try {
+    const manifest = await readSoulMaterializationManifest(workspace.path);
+    if (!manifest) return undefined;
+    const files = manifest.files.map((file) => ({
+      ...file,
+      absolutePath: join(workspace.path, file.path),
+    }));
+    const contents = await Promise.all(
+      files.map(async (file) => {
+        try {
+          const content = await readFile(file.absolutePath, "utf8");
+          return content.endsWith("\n") ? content.slice(0, -1) : content;
+        } catch {
+          return "";
+        }
+      }),
+    );
+    return {
+      ok: true,
+      status: "current",
+      workspaceRoot: workspace.path,
+      effectiveContent: contents.filter((content) => content.length > 0).join("\n\n"),
+      manifestPath,
+      instructionsPath: opencodeConfigPath(workspace.path),
+      files,
+      pending: false,
+      reloadRequired: true,
+      manualSyncRequired: false,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "manifest_error",
+      message: error instanceof Error ? error.message : "Soul materialization manifest is invalid",
+      path: manifestPath,
+      pending: false,
+      manualSyncRequired: false,
+      requiresAction: "fix_soul_manifest",
+    };
+  }
 }
 
 async function buildWorkspaceSkillMaterializationStatus(config: ServerConfig, workspace: WorkspaceInfo) {
@@ -2946,6 +3060,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
         canEdit: soulCanEdit(ctx, "workspace"),
         workspace,
       }),
+      materialization: await buildSoulMaterializationStatus(workspace),
     };
   };
 
@@ -3198,6 +3313,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     ];
 
     let provision: { version: string; status: "updated" | "unchanged"; written: number; unchanged: number } | null = null;
+    let soulMaterialization: SoulMaterializationResult | null = null;
     try {
       provision = await provisionWorkspaceInternalSystem(workspace.path, resolveVesloAppDataDir());
       if (provision.written > 0) {
@@ -3212,6 +3328,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
           path: ".opencode/agents",
         });
       }
+      soulMaterialization = await materializeSoulForWorkspace(serverDataDir, ctx, workspace, {}, { workspaceActive: true });
     } catch (error) {
       console.warn("[veslo-server] workspace activation provisioning failed", {
         workspaceId: workspace.id,
@@ -3232,6 +3349,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       activeId: workspace.id,
       workspace: serializeWorkspace(workspace),
       provision,
+      soulMaterialization,
     });
   });
 
@@ -3289,6 +3407,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     const workspace = await resolveWorkspace(config, ctx.params.id);
 
     const result = await provisionWorkspaceInternalSystem(workspace.path, resolveVesloAppDataDir());
+    const soulMaterialization = await materializeSoulForWorkspace(serverDataDir, ctx, workspace);
 
     await recordAudit(workspace.path, {
       id: shortId(),
@@ -3320,6 +3439,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       status: result.status,
       written: result.written,
       unchanged: result.unchanged,
+      soulMaterialization,
     });
   });
 
@@ -6647,6 +6767,9 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       baseVersionId: optionalSoulBaseVersionId(body),
     });
     await cacheSoulDocument({ dataDir: serverDataDir, document });
+    const materialization = await materializeSoulForConfiguredWorkspaces(serverDataDir, config, ctx, {
+      organization: document,
+    });
     return jsonResponse(soulReadPayload({
       document,
       summary: soulSummary({
@@ -6656,6 +6779,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
         canEdit: soulCanEdit(ctx, "organization"),
       }),
       denSynced: true,
+      materialization,
     }));
   });
 
@@ -6679,6 +6803,9 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
           baseVersionId,
         });
         await cacheSoulDocument({ dataDir: serverDataDir, document });
+        const materialization = await materializeSoulForConfiguredWorkspaces(serverDataDir, config, ctx, {
+          user: document,
+        });
         return jsonResponse(soulReadPayload({
           document,
           summary: soulSummary({
@@ -6688,6 +6815,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
             canEdit: soulCanEdit(ctx, "user"),
           }),
           denSynced: true,
+          materialization,
         }));
       } catch (error) {
         if (!isSoulDenUnavailable(error)) throw error;
@@ -6741,6 +6869,9 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
         : "Restore Organization Soul version",
     });
     await cacheSoulDocument({ dataDir: serverDataDir, document });
+    const materialization = await materializeSoulForConfiguredWorkspaces(serverDataDir, config, ctx, {
+      organization: document,
+    });
     return jsonResponse(soulReadPayload({
       document,
       summary: soulSummary({
@@ -6750,6 +6881,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
         canEdit: soulCanEdit(ctx, "organization"),
       }),
       denSynced: true,
+      materialization,
     }));
   });
 
@@ -6772,6 +6904,9 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
           changeSummary,
         });
         await cacheSoulDocument({ dataDir: serverDataDir, document });
+        const materialization = await materializeSoulForConfiguredWorkspaces(serverDataDir, config, ctx, {
+          user: document,
+        });
         return jsonResponse(soulReadPayload({
           document,
           summary: soulSummary({
@@ -6781,6 +6916,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
             canEdit: soulCanEdit(ctx, "user"),
           }),
           denSynced: true,
+          materialization,
         }));
       } catch (error) {
         if (!isSoulDenUnavailable(error)) throw error;
@@ -6797,6 +6933,9 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       createdBy: soulActorId(ctx),
     });
     await cacheSoulDocument({ dataDir: serverDataDir, document: restored });
+    const materialization = await materializeSoulForConfiguredWorkspaces(serverDataDir, config, ctx, {
+      user: restored,
+    });
     return jsonResponse(soulReadPayload({
       document: restored,
       summary: soulSummary({
@@ -6808,6 +6947,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       }),
       pendingEdits: await listPendingSoulEdits({ dataDir: serverDataDir }),
       denSynced: false,
+      materialization,
     }));
   });
 
@@ -6835,6 +6975,9 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     );
     const nextDocument = { ...document, heartbeatEnabled: existing?.heartbeatEnabled ?? true };
     await cacheSoulDocument({ dataDir: serverDataDir, document: nextDocument });
+    const materialization = await materializeSoulForWorkspace(serverDataDir, ctx, workspace, {
+      workspace: nextDocument,
+    });
     return jsonResponse(soulReadPayload({
       document: nextDocument,
       summary: soulSummary({
@@ -6844,6 +6987,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
         canEdit: soulCanEdit(ctx, "workspace"),
         workspace,
       }),
+      materialization,
     }));
   });
 
@@ -6864,6 +7008,9 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       createdBy: soulActorId(ctx),
     });
     await cacheSoulDocument({ dataDir: serverDataDir, document: restored });
+    const materialization = await materializeSoulForWorkspace(serverDataDir, ctx, workspace, {
+      workspace: restored,
+    });
     return jsonResponse(soulReadPayload({
       document: restored,
       summary: soulSummary({
@@ -6873,6 +7020,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
         canEdit: soulCanEdit(ctx, "workspace"),
         workspace,
       }),
+      materialization,
     }));
   });
 

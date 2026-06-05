@@ -733,89 +733,6 @@ export default async (ctx) => {
 `;
 }
 
-const DEFAULT_SOUL_COMPANY = `# Company Instructions
-
-<!-- Edit this file to set company-wide tone, guardrails, and context. -->
-<!-- This file is loaded into every workspace conversation. -->
-
-## Tone & Style
-- Professional and clear.
-- Respond in the user's language.
-
-## Guardrails
-- Never share credentials, tokens, or API keys.
-- Explain consequences before destructive actions.
-- Respect workspace boundaries.
-`;
-
-const DEFAULT_SOUL_USER = `# User Memory
-
-<!-- This file stores personal notes and preferences. -->
-<!-- Say "remember this" or "zapamatuj si" to add entries. -->
-<!-- Veslo will append new facts below. -->
-`;
-
-const SOUL_INSTRUCTIONS = [".opencode/soul-company.md", ".opencode/soul-user.md"] as const;
-
-async function ensureSoulFiles(workspaceRoot: string, stats: ProvisionStats) {
-  const opencodePath = join(workspaceRoot, ".opencode");
-  await ensureDir(opencodePath);
-
-  const files: Array<[string, string]> = [
-    ["soul-company.md", DEFAULT_SOUL_COMPANY],
-    ["soul-user.md", DEFAULT_SOUL_USER],
-  ];
-
-  for (const [filename, defaultContent] of files) {
-    const dest = join(opencodePath, filename);
-    if (await exists(dest)) {
-      stats.unchanged += 1;
-      continue;
-    }
-    await writeFile(dest, defaultContent, "utf8");
-    stats.written += 1;
-  }
-}
-
-async function ensureSoulInstructions(workspaceRoot: string, stats: ProvisionStats) {
-  // Find opencode config (jsonc or json)
-  const jsoncPath = join(workspaceRoot, "opencode.jsonc");
-  const jsonPath = join(workspaceRoot, "opencode.json");
-  const configPath = (await exists(jsoncPath)) ? jsoncPath : (await exists(jsonPath)) ? jsonPath : null;
-  if (!configPath) return; // Config is created by Rust side; if it doesn't exist, skip
-
-  const raw = await readFile(configPath, "utf8");
-  let config: Record<string, unknown>;
-  try {
-    config = JSON.parse(raw);
-  } catch {
-    return; // Can't parse JSONC with JSON.parse — Rust side handles this
-  }
-
-  const existing: string[] = Array.isArray(config.instructions)
-    ? (config.instructions as string[])
-    : typeof config.instructions === "string"
-      ? [config.instructions]
-      : [];
-
-  const merged = [...existing];
-  let changed = false;
-  for (const instruction of SOUL_INSTRUCTIONS) {
-    if (!merged.includes(instruction)) {
-      merged.push(instruction);
-      changed = true;
-    }
-  }
-
-  if (changed) {
-    config.instructions = merged;
-    await writeFile(configPath, JSON.stringify(config, null, 2), "utf8");
-    stats.written += 1;
-  } else {
-    stats.unchanged += 1;
-  }
-}
-
 async function writeDelegatePlugin(workspaceRoot: string, stats: ProvisionStats) {
   const pluginsDir = join(workspaceRoot, ".opencode", "plugins");
   await ensureDir(pluginsDir);
@@ -962,13 +879,11 @@ export async function provisionWorkspaceInternalSystem(
   }
 
   await removeLegacyOnboardingSkills(workspaceRoot, stats);
-  await ensureSoulFiles(workspaceRoot, stats);
   await copyInternalPacks(workspaceRoot, stats, centralPacksDir);
   await writeInternalAgents(workspaceRoot, stats);
   await writeDelegatePlugin(workspaceRoot, stats);
   await ensureVesloAgentRouting(workspaceRoot, stats);
   await ensureWorkspaceInstructions(workspaceRoot, stats);
-  await ensureSoulInstructions(workspaceRoot, stats);
   await writeInternalManifest(workspaceRoot, stats, centralPacksDir);
 
   return {
