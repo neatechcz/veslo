@@ -83,14 +83,27 @@ fn persisted_state_path(dir: &Path) -> PathBuf {
     dir.join(PERSISTED_STATE_FILE_NAME)
 }
 
+fn persisted_state_dir_override() -> Option<PathBuf> {
+    crate::paths::app_local_data_dir_override()
+}
+
 fn persisted_state_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    if let Some(override_dir) = crate::paths::app_local_data_dir_override() {
+    if let Some(override_dir) = persisted_state_dir_override() {
         return Ok(override_dir);
     }
 
     app.path()
         .app_local_data_dir()
         .map_err(|e| format!("Failed to resolve app local data dir: {e}"))
+}
+
+pub fn persisted_veslo_server_state_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(persisted_state_path(&persisted_state_dir(app)?))
+}
+
+#[cfg(test)]
+fn persisted_veslo_server_state_path_from_override() -> Option<PathBuf> {
+    persisted_state_dir_override().map(|dir| persisted_state_path(&dir))
 }
 
 pub(crate) fn server_health_ok(base_url: &str) -> bool {
@@ -335,16 +348,62 @@ pub fn start_veslo_server(
 #[cfg(test)]
 mod tests {
     use super::{
-        read_persisted_veslo_server_info, read_persisted_veslo_server_info_with_cleanup,
-        PersistedVesloServerState,
+        persisted_veslo_server_state_path_from_override, read_persisted_veslo_server_info,
+        read_persisted_veslo_server_info_with_cleanup, PersistedVesloServerState,
     };
     use std::fs;
     use std::io::ErrorKind;
     use std::io::Read;
     use std::io::Write;
     use std::net::TcpListener;
+    use std::sync::{Mutex, OnceLock};
     use std::thread;
     use uuid::Uuid;
+
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    struct EnvGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: String) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.prev.take() {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    #[test]
+    fn persisted_server_state_path_uses_app_local_data_override() {
+        let _lock = ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let dir = std::env::temp_dir().join(format!("veslo-server-state-path-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create test dir");
+        let _guard = EnvGuard::set(
+            "VESLO_APP_LOCAL_DATA_DIR",
+            dir.to_string_lossy().to_string(),
+        );
+
+        let path =
+            persisted_veslo_server_state_path_from_override().expect("resolve override state path");
+
+        assert_eq!(path, dir.join("veslo-server-state.json"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn read_persisted_server_info_returns_none_without_state() {

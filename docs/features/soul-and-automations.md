@@ -39,6 +39,11 @@ Supported public behavior:
 Automation reads are available to viewer-level clients. Creating, updating,
 cancelling, and manual runs require collaborator access.
 
+Agent-facing automation tools are provisioned as Veslo-managed OpenCode plugins.
+They read the running Veslo server state from the desktop-provided environment
+and call the server automation routes. Agents must not create separate OS jobs or
+write scheduler files directly for Veslo automations.
+
 Legacy Agent Lab scheduler routes remain compatibility aliases. Older Agent Lab
 automation files are migrated into the canonical Veslo automation store on
 server read when the canonical store does not already exist. The legacy list

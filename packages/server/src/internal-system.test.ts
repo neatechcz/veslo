@@ -82,6 +82,27 @@ You are Veslo.
       expect(plugin).toContain("client.session.get");
       expect(plugin).toContain("query: { directory: parentDirectory }");
 
+      const automationPlugin = await readFile(
+        join(workspaceRoot, ".opencode", "plugins", "veslo-automations.js"),
+        "utf8",
+      );
+      expect(automationPlugin).toContain("veslo_create_automation");
+      expect(automationPlugin).toContain("veslo_list_automations");
+      expect(automationPlugin).toContain("veslo_run_automation");
+      expect(automationPlugin).toContain("veslo_update_automation");
+      expect(automationPlugin).toContain("veslo_delete_automation");
+      expect(automationPlugin).toContain("VESLO_SERVER_STATE_PATH");
+      expect(automationPlugin).toContain("/workspace/${workspaceId}/automations");
+      for (const forbidden of [
+        "launchctl",
+        "crontab",
+        "systemctl",
+        ".opencode/veslo/automations.json",
+        ".opencode/veslo/agentlab",
+      ]) {
+        expect(automationPlugin).not.toContain(forbidden);
+      }
+
       const manifest = await readFile(
         join(workspaceRoot, ".opencode", "veslo", "internal", "manifest.json"),
         "utf8",
@@ -90,6 +111,7 @@ You are Veslo.
       expect(manifest).toContain('"schemaVersion": 1');
       expect(manifest).toContain('"plugins"');
       expect(manifest).toContain("veslo-delegate.js");
+      expect(manifest).toContain("veslo-automations.js");
       expect(manifest).toContain('"routingBlockVersion": 3');
 
       // AGENTS.md with Veslo instructions at workspace root
