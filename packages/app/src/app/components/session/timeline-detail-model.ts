@@ -1,6 +1,7 @@
 import type { Part } from "@opencode-ai/sdk/v2/client";
 import { getBasename as basename } from "../../utils/workspace-path";
 import { currentLocale, t } from "../../../i18n";
+import { buildMediaEvidenceForParts, type MediaEvidence } from "./media-evidence-model.js";
 
 export type TimelineSectionKind = "plan" | "explore" | "action" | "verify" | "issues";
 
@@ -26,6 +27,7 @@ export type TimelineRowModel = {
   secondary?: string;
   status?: "done" | "running" | "error" | "pass";
   technicalDetail?: string;
+  mediaEvidence?: MediaEvidence[];
 };
 
 export type TimelineSectionModel = {
@@ -45,10 +47,11 @@ export type TimelineDetailModel = {
 type BuildTimelineDetailModelInput = {
   parts: Part[];
   latestLabel?: string;
+  workspaceRoot?: string;
 };
 
 type BuildCollapsedSummaryInput = {
-  sections: Array<Pick<TimelineSectionModel, "summary">>;
+  sections: Array<Pick<TimelineSectionModel, "summary"> & Partial<Pick<TimelineSectionModel, "rows">>>;
   latestLabel?: string;
 };
 
@@ -425,6 +428,19 @@ function countRows(rows: TimelineRowModel[], kinds: readonly TimelineRowType[]) 
   return rows.filter((row) => set.has(row.rowType)).length;
 }
 
+function countMediaEvidence(rows: TimelineRowModel[], kind: MediaEvidence["kind"]): number {
+  return rows.reduce(
+    (total, row) => total + (row.mediaEvidence ?? []).filter((item) => item.kind === kind).length,
+    0,
+  );
+}
+
+function summarizeMediaEvidenceCount(count: number, kind: MediaEvidence["kind"]): string {
+  if (count <= 0) return "";
+  const noun = count === 1 ? "image" : "images";
+  return `${count} ${noun} ${kind}`;
+}
+
 function summarizeSection(kind: TimelineSectionKind, rows: TimelineRowModel[]): string {
   if (!rows.length) return "";
 
@@ -480,8 +496,12 @@ function summarizeLatestLabel(sections: TimelineSectionModel[]): string | undefi
 
 export function buildCollapsedSummary(input: BuildCollapsedSummaryInput): string {
   const summaries = input.sections.map((section) => normalizeText(section.summary)).filter(Boolean);
-  const base = summaries.join(" · ");
-  if (input.latestLabel && summaries.length <= 1) {
+  const rows = input.sections.flatMap((section) => section.rows ?? []);
+  const createdImages = summarizeMediaEvidenceCount(countMediaEvidence(rows, "created"), "created");
+  const analyzedImages = summarizeMediaEvidenceCount(countMediaEvidence(rows, "analyzed"), "analyzed");
+  const items = [...summaries, createdImages, analyzedImages].filter(Boolean);
+  const base = items.join(" · ");
+  if (input.latestLabel && items.length <= 1) {
     const latest = tr("timeline.latest_label", { label: input.latestLabel });
     return base ? `${base} · ${latest}` : latest;
   }
@@ -513,7 +533,13 @@ export function buildTimelineDetailModel(input: BuildTimelineDetailModelInput): 
   for (let index = 0; index < parts.length; index += 1) {
     const part = parts[index];
     const kind = classifyPartKind(part, previousKind);
-    const row = normalizeStaleRunningReasoningRow(buildRowModel(part, kind), part, index, parts.length);
+    const baseRow = normalizeStaleRunningReasoningRow(buildRowModel(part, kind), part, index, parts.length);
+    const mediaEvidence = buildMediaEvidenceForParts({
+      parts: [part],
+      sourceId: `${part.type}:${index}`,
+      workspaceRoot: input.workspaceRoot,
+    });
+    const row = mediaEvidence.length > 0 ? { ...baseRow, mediaEvidence } : baseRow;
     appendSection(kind, row);
     previousKind = kind;
   }

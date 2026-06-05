@@ -10,6 +10,9 @@ import { setLocale } from "../../../i18n/index.js";
 
 setLocale("cs");
 
+const part = (id: string, value: Record<string, unknown>) =>
+  ({ id, sessionID: "s1", messageID: "m1", ...value }) as any;
+
 test("buildTimelineDetailModel derives explore and action sections", () => {
   const model = buildTimelineDetailModel({
     parts: [
@@ -75,6 +78,48 @@ test("buildTimelineDetailModel classifies edit write task and skill as action", 
   assert.ok(model.sections.some((section) => section.rows.some((row) => row.primary.toLowerCase().includes("timeline-detail-model.ts"))));
   assert.ok(model.sections.some((section) => section.rows.some((row) => row.primary.toLowerCase().includes("review pass"))));
   assert.ok(model.sections.some((section) => section.rows.some((row) => row.primary.toLowerCase().includes("brainstorming"))));
+});
+
+test("buildTimelineDetailModel attaches created image evidence to a write row when workspaceRoot is provided", () => {
+  const model = buildTimelineDetailModel({
+    workspaceRoot: "/Users/me/project",
+    parts: [
+      part("tool-write-image", {
+        type: "tool",
+        tool: "write",
+        state: { input: { filePath: "screenshots/result.png" }, status: "completed" },
+      }),
+    ],
+  } as any);
+
+  const row = model.sections[0]?.rows[0];
+  assert.equal(row?.rowType, "write");
+  assert.equal(row?.mediaEvidence?.length, 1);
+  assert.equal(row?.mediaEvidence?.[0]?.kind, "created");
+  assert.equal(row?.mediaEvidence?.[0]?.title, "result.png");
+  assert.equal(row?.mediaEvidence?.[0]?.src, "file:///Users/me/project/screenshots/result.png");
+});
+
+test("buildTimelineDetailModel attaches structured analyzed image evidence to a non-discovery tool row", () => {
+  const model = buildTimelineDetailModel({
+    parts: [
+      part("tool-browser-screenshot", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ data: "AAAA", mediaType: "image/png", alt: "Browser screenshot" }],
+        },
+      }),
+    ],
+  } as any);
+
+  const row = model.sections[0]?.rows[0];
+  assert.equal(row?.rowType, "tool");
+  assert.equal(row?.mediaEvidence?.length, 1);
+  assert.equal(row?.mediaEvidence?.[0]?.kind, "analyzed");
+  assert.equal(row?.mediaEvidence?.[0]?.title, "Browser screenshot");
+  assert.equal(row?.mediaEvidence?.[0]?.src, "data:image/png;base64,AAAA");
 });
 
 test("buildTimelineDetailModel keeps plan separate from exploration", () => {
@@ -251,6 +296,53 @@ test("buildCollapsedSummary prefers human readable summaries", () => {
   } as any);
 
   assert.equal(summary, "Prozkoumáno 3 soubory · 2 akce · ověření OK");
+});
+
+test("buildCollapsedSummary includes image evidence counts", () => {
+  const summary = buildCollapsedSummary({
+    sections: [
+      {
+        kind: "action" as TimelineSectionKind,
+        title: "Action",
+        summary: "1 action",
+        rows: [
+          {
+            kind: "action" as TimelineSectionKind,
+            rowType: "write",
+            primary: "Write result.png",
+            mediaEvidence: [
+              {
+                id: "image-created",
+                kind: "created",
+                title: "result.png",
+                mime: "image/png",
+                sourcePartId: "p1",
+                status: "available",
+              },
+              {
+                id: "image-analyzed-1",
+                kind: "analyzed",
+                title: "Input A",
+                mime: "image/png",
+                sourcePartId: "p2",
+                status: "available",
+              },
+              {
+                id: "image-analyzed-2",
+                kind: "analyzed",
+                title: "Input B",
+                mime: "image/png",
+                sourcePartId: "p3",
+                status: "available",
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  } as any);
+
+  assert.equal(summary, "1 action · 1 image created · 2 images analyzed");
 });
 
 test("buildCollapsedSummary includes the latest label when present", () => {

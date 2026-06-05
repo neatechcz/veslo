@@ -300,6 +300,17 @@ export default function MessageList(props: MessageListProps) {
       0,
     );
   };
+  const countSectionMediaEvidence = (rows: TimelineRowView[], kind: "created" | "analyzed") =>
+    rows.reduce(
+      (count, entry) => count + (entry.row.mediaEvidence ?? []).filter((item) => item.kind === kind).length,
+      0,
+    );
+  const countTimelineMediaEvidence = (sections: TimelineSectionView[], kind: "created" | "analyzed") =>
+    sections.reduce((count, section) => count + countSectionMediaEvidence(section.rows, kind), 0);
+  const imageEvidenceSummary = (count: number, kind: "created" | "analyzed") => {
+    if (count <= 0) return "";
+    return `${count} ${count === 1 ? "image" : "images"} ${kind}`;
+  };
   const localizedSectionTitle = (section: TimelineSectionView) => timelineSectionTitle(section.labelKind);
   const sectionStatusFromRows = (rows: TimelineRowView[]) => {
     if (rows.some((entry) => entry.row.status === "error")) return "error" as const;
@@ -359,18 +370,16 @@ export default function MessageList(props: MessageListProps) {
         return items.length > 0 ? items.join(" · ") : tr("session.timeline_context_activity");
       }
       case "action": {
+        const items: string[] = [];
         const actions = countSectionRows(section.rows, ["edit", "write", "task", "skill", "command", "tool"]);
         const thoughts = countSectionRows(section.rows, ["note"]);
-        if (actions > 0 && thoughts > 0) {
-          return [
-            plural(actions, "session.timeline_summary_action_one", "session.timeline_summary_action_other"),
-            plural(thoughts, "session.timeline_summary_thinking_one", "session.timeline_summary_thinking_other"),
-          ].join(" · ");
-        }
-        if (thoughts > 0) {
-          return plural(thoughts, "session.timeline_summary_thinking_one", "session.timeline_summary_thinking_other");
-        }
-        return plural(actions, "session.timeline_summary_action_one", "session.timeline_summary_action_other");
+        const createdImages = imageEvidenceSummary(countSectionMediaEvidence(section.rows, "created"), "created");
+        const analyzedImages = imageEvidenceSummary(countSectionMediaEvidence(section.rows, "analyzed"), "analyzed");
+        if (actions > 0) items.push(plural(actions, "session.timeline_summary_action_one", "session.timeline_summary_action_other"));
+        if (thoughts > 0) items.push(plural(thoughts, "session.timeline_summary_thinking_one", "session.timeline_summary_thinking_other"));
+        if (createdImages) items.push(createdImages);
+        if (analyzedImages) items.push(analyzedImages);
+        return items.join(" · ");
       }
       case "verify":
         return section.rows.some((entry) => entry.row.status === "error")
@@ -393,6 +402,8 @@ export default function MessageList(props: MessageListProps) {
     const actionCount = countTimelineRows(sections, ["edit", "write", "task", "skill", "command", "tool"]);
     const thoughtCount = countTimelineRows(sections, ["note"]);
     const issueCount = countTimelineRows(sections, ["issue"]);
+    const createdImageCount = countTimelineMediaEvidence(sections, "created");
+    const analyzedImageCount = countTimelineMediaEvidence(sections, "analyzed");
     const verifySections = sections.filter((section) => section.kind === "verify");
 
     if (planCount > 0) {
@@ -407,6 +418,8 @@ export default function MessageList(props: MessageListProps) {
     if (listCount > 0) items.push(plural(listCount, "session.timeline_list_one", "session.timeline_list_other"));
     if (actionCount > 0) items.push(plural(actionCount, "session.timeline_summary_action_one", "session.timeline_summary_action_other"));
     if (thoughtCount > 0) items.push(plural(thoughtCount, "session.timeline_summary_thinking_one", "session.timeline_summary_thinking_other"));
+    if (createdImageCount > 0) items.push(imageEvidenceSummary(createdImageCount, "created"));
+    if (analyzedImageCount > 0) items.push(imageEvidenceSummary(analyzedImageCount, "analyzed"));
     if (verifySections.length > 0) {
       const hasVerifyError = verifySections.some((section) => section.rows.some((entry) => entry.row.status === "error"));
       const hasVerifyRunning = verifySections.some((section) => section.rows.some((entry) => entry.row.status === "running"));
@@ -900,6 +913,7 @@ export default function MessageList(props: MessageListProps) {
       buildTimelineDetailModel({
         parts: allStepParts(),
         latestLabel: latestStepLabel(),
+        workspaceRoot: props.workspaceRoot,
       }),
     );
     const timelineSections = createMemo<TimelineSectionView[]>(() => {
