@@ -30,6 +30,8 @@ const BITMAP_MIME_BY_EXTENSION: Record<string, string> = {
   ".webp": "image/webp",
 };
 
+const BITMAP_MIME_TYPES = new Set(Object.values(BITMAP_MIME_BY_EXTENSION));
+
 const WRITE_LIKE_TOOLS = new Set([
   "write",
   "edit",
@@ -70,6 +72,14 @@ function getBitmapMime(path: string): string | null {
   return BITMAP_MIME_BY_EXTENSION[getBitmapExtension(path)] ?? null;
 }
 
+function normalizeMime(value: string): string {
+  return value.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+}
+
+function isBitmapMime(value: string): boolean {
+  return BITMAP_MIME_TYPES.has(normalizeMime(value));
+}
+
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
@@ -78,17 +88,22 @@ function isAbsolutePath(path: string): boolean {
   return path.startsWith("/") || /^[A-Za-z]:\//.test(path);
 }
 
+function isWindowsAbsolutePath(path: string): boolean {
+  return /^[A-Za-z]:\//.test(path);
+}
+
 function toFileUrl(path: string, workspaceRoot?: string): string | undefined {
   const normalizedPath = normalizePath(path);
   if (!normalizedPath) return undefined;
 
   if (isAbsolutePath(normalizedPath)) {
-    return `file://${normalizedPath}`;
+    const prefix = isWindowsAbsolutePath(normalizedPath) ? "file:///" : "file://";
+    return encodeURI(`${prefix}${normalizedPath}`);
   }
 
   const normalizedRoot = normalizePath(workspaceRoot ?? "");
   if (!normalizedRoot) return undefined;
-  return `file://${normalizedRoot.replace(/\/+$/, "")}/${normalizedPath.replace(/^\/+/, "")}`;
+  return encodeURI(`file://${normalizedRoot.replace(/\/+$/, "")}/${normalizedPath.replace(/^\/+/, "")}`);
 }
 
 function titleForPath(path: string): string {
@@ -104,6 +119,13 @@ function mimeFromDataUrl(value: string): string | null {
   return match?.[1] ?? null;
 }
 
+function isCompletedOrStatusOmittedForHistoricalParts(part: Part): boolean {
+  const statusValue = getState(part).status;
+  if (!isNonEmptyString(statusValue)) return true;
+  const status = statusValue.trim().toLowerCase();
+  return status === "completed" || status === "done" || status === "success" || status === "succeeded";
+}
+
 function buildInlineFileEvidence(
   part: Part,
   input: BuildMediaEvidenceInput,
@@ -111,7 +133,7 @@ function buildInlineFileEvidence(
 ): MediaEvidence | null {
   const mime = (part as any).mime;
   const url = (part as any).url;
-  if (!isNonEmptyString(mime) || !mime.startsWith("image/")) return null;
+  if (!isNonEmptyString(mime) || !isBitmapMime(mime)) return null;
   if (!isNonEmptyString(url) || url.startsWith("file://")) return null;
 
   return {
@@ -127,7 +149,9 @@ function buildInlineFileEvidence(
 
 function normalizeStructuredImage(image: unknown): { src: string; mime: string; title: string } | null {
   if (isNonEmptyString(image)) {
-    return { src: image, mime: mimeFromDataUrl(image) ?? "image/png", title: "Image" };
+    const mime = mimeFromDataUrl(image) ?? "image/png";
+    if (!isBitmapMime(mime)) return null;
+    return { src: image, mime, title: "Image" };
   }
 
   if (!image || typeof image !== "object") return null;
@@ -135,7 +159,9 @@ function normalizeStructuredImage(image: unknown): { src: string; mime: string; 
   const rawSrc = [record.url, record.src, record.data].find(isNonEmptyString);
   if (!rawSrc) return null;
 
-  const mime = isNonEmptyString(record.mediaType) ? record.mediaType : "image/png";
+  const mime = isNonEmptyString(record.mediaType) ? record.mediaType : mimeFromDataUrl(rawSrc) ?? "image/png";
+  if (!isBitmapMime(mime)) return null;
+
   const src = rawSrc === record.data && !rawSrc.startsWith("data:") ? `data:${mime};base64,${rawSrc}` : rawSrc;
   const title = isNonEmptyString(record.alt) ? record.alt : "Image";
   return { src, mime, title };
@@ -178,6 +204,7 @@ function buildCreatedPathEvidence(
 ): MediaEvidence | null {
   const toolName = getToolName(part);
   if (DISCOVERY_ONLY_TOOLS.has(toolName) || !WRITE_LIKE_TOOLS.has(toolName)) return null;
+  if (!isCompletedOrStatusOmittedForHistoricalParts(part)) return null;
 
   const path = getCreatedBitmapPath(part);
   if (!path) return null;
