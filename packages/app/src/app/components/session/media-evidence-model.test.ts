@@ -51,6 +51,23 @@ test("extracts structured tool images", () => {
   assert.equal(evidence[0]?.src, "data:image/png;base64,BBBB");
 });
 
+test("extracts mime from structured image string data urls without semicolons", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p2b",
+    defaultKind: "analyzed",
+    parts: [
+      part("p2b", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: { status: "completed", images: ["data:image/png,AAAA"] },
+      }),
+    ],
+  });
+
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0]?.mime, "image/png");
+});
+
 test("classifies concrete created bitmap paths from write-like tools", () => {
   const evidence = buildMediaEvidenceForParts({
     sourceId: "tool:p3",
@@ -68,6 +85,29 @@ test("classifies concrete created bitmap paths from write-like tools", () => {
   assert.equal(evidence[0]?.kind, "created");
   assert.equal(evidence[0]?.path, "artifacts/result.webp");
   assert.equal(evidence[0]?.src, "file:///Users/me/project/artifacts/result.webp");
+});
+
+test("keeps ids unique when a tool has structured images and created bitmap paths", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p3b",
+    workspaceRoot: "/Users/me/project",
+    parts: [
+      part("p3b", {
+        type: "tool",
+        tool: "write",
+        state: {
+          status: "completed",
+          images: [{ data: "CCCC", mediaType: "image/png", alt: "Generated preview" }],
+          input: { filePath: "artifacts/result.png" },
+        },
+      }),
+    ],
+  });
+
+  assert.equal(evidence.length, 2);
+  assert.equal(evidence.some((item) => item.kind === "analyzed"), true);
+  assert.equal(evidence.some((item) => item.kind === "created"), true);
+  assert.equal(new Set(evidence.map((item) => item.id)).size, evidence.length);
 });
 
 test("ignores discovery-only tools and non-image files", () => {

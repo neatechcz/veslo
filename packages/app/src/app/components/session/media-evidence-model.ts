@@ -95,8 +95,13 @@ function titleForPath(path: string): string {
   return basename(normalizePath(path)) || "Image";
 }
 
-function buildEvidenceId(sourceId: string, partId: string, index: number): string {
-  return `${sourceId}:${partId}:${index}`;
+function buildEvidenceId(sourceId: string, partId: string, sourceKey: string): string {
+  return `${sourceId}:${partId}:${sourceKey}`;
+}
+
+function mimeFromDataUrl(value: string): string | null {
+  const match = value.match(/^data:([^,;]+)[,;]/);
+  return match?.[1] ?? null;
 }
 
 function buildInlineFileEvidence(
@@ -110,7 +115,7 @@ function buildInlineFileEvidence(
   if (!isNonEmptyString(url) || url.startsWith("file://")) return null;
 
   return {
-    id: buildEvidenceId(input.sourceId, part.id, index),
+    id: buildEvidenceId(input.sourceId, part.id, `inline:${index}`),
     kind: input.defaultKind ?? "analyzed",
     title: isNonEmptyString((part as any).filename) ? (part as any).filename : "Image",
     mime,
@@ -122,7 +127,7 @@ function buildInlineFileEvidence(
 
 function normalizeStructuredImage(image: unknown): { src: string; mime: string; title: string } | null {
   if (isNonEmptyString(image)) {
-    return { src: image, mime: image.startsWith("data:image/") ? image.slice(5, image.indexOf(";")) : "image/png", title: "Image" };
+    return { src: image, mime: mimeFromDataUrl(image) ?? "image/png", title: "Image" };
   }
 
   if (!image || typeof image !== "object") return null;
@@ -145,7 +150,7 @@ function buildStructuredImageEvidence(part: Part, input: BuildMediaEvidenceInput
     const normalized = normalizeStructuredImage(image);
     if (!normalized) return;
     evidence.push({
-      id: buildEvidenceId(input.sourceId, part.id, index),
+      id: buildEvidenceId(input.sourceId, part.id, `structured:${index}`),
       kind: input.defaultKind ?? "analyzed",
       title: normalized.title,
       mime: normalized.mime,
@@ -179,7 +184,7 @@ function buildCreatedPathEvidence(
 
   const src = toFileUrl(path, input.workspaceRoot);
   return {
-    id: buildEvidenceId(input.sourceId, part.id, index),
+    id: buildEvidenceId(input.sourceId, part.id, `created:${index}`),
     kind: "created",
     title: titleForPath(path),
     mime: getBitmapMime(path) ?? "image/png",
