@@ -57,6 +57,7 @@ import {
   RECENT_LOAD_MORE_THRESHOLD_PX,
   VIEW_LOAD_MORE_STEP,
   CHAT_SIDEBAR_COLLAPSE_THRESHOLD_PX,
+  compactChatSidebarHeight,
   computeInitialRecentVisibleCount,
   resolveChatSidebarResize,
   restoreChatSidebarHeight,
@@ -1371,6 +1372,11 @@ export default function WorkspaceSessionList(props: Props) {
     props.onQuickNewSession?.();
   };
 
+  const startQuickChatFromCollapsed = () => {
+    applyResolvedChatSidebarResize(compactChatSidebarHeight(chatSidebarAvailableHeight()), false, true);
+    startQuickChat();
+  };
+
   const expandChatSidebar = () => {
     const height = restoreChatSidebarHeight(chatSidebarHeight(), chatSidebarAvailableHeight());
     applyResolvedChatSidebarResize(height, false, true);
@@ -2131,6 +2137,9 @@ export default function WorkspaceSessionList(props: Props) {
   const compactTopRailButtonClass =
     `inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-11 shadow-sm transition-colors hover:bg-gray-2 disabled:cursor-not-allowed disabled:opacity-60 ${sidebarControlTooltipClass}`;
 
+  const projectCreateSessionButtonClass =
+    "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-10 shadow-sm transition-colors hover:border-gray-7 hover:bg-gray-2 hover:text-gray-12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)]";
+
   const overflowActionClass = (active = false) =>
     `flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs transition-colors ${
       active
@@ -2321,7 +2330,7 @@ export default function WorkspaceSessionList(props: Props) {
                               <div class="flex items-center gap-1 shrink-0">
                                 <button
                                   type="button"
-                                  class="p-1 rounded-md text-gray-8 hover:text-gray-11 hover:bg-gray-3"
+                                  class={projectCreateSessionButtonClass}
                                   onClick={() => props.onOpenPendingDirectoryDraftInWorkspace(workspace().id)}
                                   aria-label={tr("sidebar.create_session_in_project")}
                                   title={tr("sidebar.create_session_in_project")}
@@ -2508,7 +2517,7 @@ export default function WorkspaceSessionList(props: Props) {
                       <div class="flex items-center gap-1 shrink-0">
                         <button
                           type="button"
-                          class="p-1 rounded-md text-gray-8 hover:text-gray-11 hover:bg-gray-3"
+                          class={projectCreateSessionButtonClass}
                           onClick={() => props.onOpenPendingDirectoryDraftInWorkspace(workspace().id)}
                           aria-label={tr("sidebar.create_session_in_project")}
                           title={tr("sidebar.create_session_in_project")}
@@ -2597,20 +2606,36 @@ export default function WorkspaceSessionList(props: Props) {
 
           return (
             <Show when={!chatSidebarCollapsed()} fallback={
-              <button
-                type="button"
+              <div
                 data-sidebar-chat-collapsed="true"
-                data-sidebar-chat-collapsed-resize-handle="true"
-                class="mt-2 flex h-9 w-full shrink-0 cursor-ns-resize items-center justify-between border-t border-gray-6/70 px-1.5 pt-2 text-[12px] font-semibold text-gray-10 transition-colors hover:text-gray-12"
-                style={{ cursor: "ns-resize" }}
-                onPointerDown={handleChatSidebarResizeStart}
-                onClick={expandChatSidebar}
-                aria-label={tr("sidebar.chats")}
-                title={tr("sidebar.chats")}
+                class="mt-2 flex h-9 w-full shrink-0 items-center justify-between gap-2 border-t border-gray-6/70 px-1.5 pt-2"
               >
-                <span class="truncate">{tr("sidebar.chats")}</span>
-                <ChevronUp size={11} />
-              </button>
+                <button
+                  type="button"
+                  class={`inline-flex h-8 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full border border-gray-6 bg-gray-1 px-2 text-[11px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2 hover:text-gray-12 disabled:cursor-not-allowed disabled:opacity-60 ${sidebarControlTooltipClass}`}
+                  data-tooltip={tr("sidebar.new_chat")}
+                  onClick={startQuickChatFromCollapsed}
+                  disabled={!props.onQuickNewSession}
+                  aria-label={tr("sidebar.new_chat")}
+                  title={tr("sidebar.new_chat")}
+                >
+                  <Plus size={12} />
+                  <span>{tr("sidebar.chat")}</span>
+                </button>
+                <button
+                  type="button"
+                  data-sidebar-chat-expand-button="true"
+                  data-sidebar-chat-collapsed-resize-handle="true"
+                  class="inline-flex h-8 w-8 shrink-0 cursor-ns-resize items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-10 shadow-sm transition-colors hover:bg-gray-2 hover:text-gray-12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)]"
+                  style={{ cursor: "ns-resize" }}
+                  onPointerDown={handleChatSidebarResizeStart}
+                  onClick={expandChatSidebar}
+                  aria-label={tr("sidebar.chats")}
+                  title={tr("sidebar.chats")}
+                >
+                  <ChevronUp size={11} />
+                </button>
+              </div>
             }>
               <div
                 data-sidebar-chat-section="true"
