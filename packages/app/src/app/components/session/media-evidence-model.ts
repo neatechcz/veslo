@@ -90,7 +90,7 @@ function safelyDecodeURIComponentDeep(value: string): string {
 
 function getBitmapExtension(value: string, options?: { treatUrlDelimiters?: boolean; decode?: boolean }): string {
   const decoded = options?.decode ? safelyDecodeURIComponentDeep(value) : value;
-  const candidate = options?.treatUrlDelimiters ? (decoded.split(/[?#]/, 1)[0] ?? decoded) : decoded;
+  const candidate = options?.treatUrlDelimiters ? (decoded.split(/[?#;]/, 1)[0] ?? decoded) : decoded;
   const match = candidate.toLowerCase().match(/\.[a-z0-9]+$/);
   return match?.[0] ?? "";
 }
@@ -165,13 +165,14 @@ function toAbsoluteFileUrl(path: string): string {
 function toFileUrl(path: string, workspaceRoot?: string): string | undefined {
   const normalizedPath = normalizePath(path);
   if (!normalizedPath) return undefined;
+  const normalizedRoot = normalizePath(workspaceRoot ?? "");
+  if (normalizedRoot && hasParentPathSegment(normalizedRoot)) return undefined;
 
   if (isAbsolutePath(normalizedPath)) {
     if (!isNonEmptyString(workspaceRoot)) return undefined;
     return toAbsoluteFileUrl(normalizedPath);
   }
 
-  const normalizedRoot = normalizePath(workspaceRoot ?? "");
   if (!normalizedRoot) return undefined;
   if (!isAbsolutePath(normalizedRoot)) return undefined;
   return toAbsoluteFileUrl(`${normalizedRoot.replace(/\/+$/, "")}/${normalizedPath.replace(/^\/+/, "")}`);

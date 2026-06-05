@@ -374,6 +374,24 @@ test("infers structured bitmap url mime from encoded extension", () => {
   assert.equal(evidence[0]?.src, "https://example.com/preview%2Epng");
 });
 
+test("infers structured bitmap url mime before semicolon delimiters", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p2i-semicolon",
+    defaultKind: "analyzed",
+    parts: [
+      part("p2i-semicolon", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: { status: "completed", images: ["https://example.com/preview.png;v=1"] },
+      }),
+    ],
+  });
+
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0]?.mime, "image/png");
+  assert.equal(evidence[0]?.src, "https://example.com/preview.png;v=1");
+});
+
 test("rejects unsafe inline and structured image source schemes", () => {
   const evidence = buildMediaEvidenceForParts({
     sourceId: "tool:p2j",
@@ -839,6 +857,25 @@ test("keeps relative created paths missing when workspace root is not absolute",
         type: "tool",
         tool: "write",
         state: { status: "completed", input: { filePath: "artifacts/result.png" } },
+      }),
+    ],
+  });
+
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0]?.path, undefined);
+  assert.equal(evidence[0]?.src, undefined);
+  assert.equal(evidence[0]?.status, "missing");
+});
+
+test("keeps relative created paths missing when workspace root has parent traversal", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p3-traversal-root",
+    workspaceRoot: "/Users/me/project/..",
+    parts: [
+      part("p3-traversal-root", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "private/result.png" } },
       }),
     ],
   });
