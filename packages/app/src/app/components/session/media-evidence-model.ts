@@ -74,14 +74,23 @@ function safelyDecodeURIComponent(value: string): string {
   }
 }
 
+function decodeCommonPercentTokens(value: string): string {
+  return value
+    .replace(/%25/gi, "%")
+    .replace(/%2e/gi, ".")
+    .replace(/%2f/gi, "/")
+    .replace(/%5c/gi, "\\")
+    .replace(/%23/gi, "#")
+    .replace(/%26/gi, "&")
+    .replace(/%3d/gi, "=")
+    .replace(/%3f/gi, "?")
+    .replace(/%3b/gi, ";");
+}
+
 function safelyDecodeURIComponentDeep(value: string): string {
   let current = value;
   for (let index = 0; index < 3; index += 1) {
-    const next = safelyDecodeURIComponent(current)
-      .replace(/%2e/gi, ".")
-      .replace(/%23/gi, "#")
-      .replace(/%3f/gi, "?")
-      .replace(/%3b/gi, ";");
+    const next = decodeCommonPercentTokens(safelyDecodeURIComponent(current));
     if (next === current) return current;
     current = next;
   }
@@ -328,6 +337,9 @@ function getCreatedBitmapPath(part: Part, workspaceRoot?: string): string | null
       isNonEmptyString(workspaceRoot) &&
       !isPathWithinRoot(normalizePath(value), workspaceRoot)
     ) {
+      continue;
+    }
+    if (isNonEmptyString(value) && hasSvgFamilyExtension(value, { decode: true })) {
       continue;
     }
     if (isNonEmptyString(value) && getBitmapMime(value)) return value;

@@ -194,12 +194,28 @@ test("excludes svg from inline and structured image evidence", () => {
           images: [{ url: "https://example.com/icon%252Esvg", mediaType: "image/png", alt: "Double encoded spoof" }],
         },
       }),
+      part("p2-spoof-double-encoded-malformed", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ url: "https://example.com/icon%252Esvg%ZZ", mediaType: "image/png", alt: "Double malformed spoof" }],
+        },
+      }),
       part("p2-spoof-double-encoded-filename", {
         type: "tool",
         tool: "browser_screenshot",
         state: {
           status: "completed",
           images: [{ data: "CCCC", mediaType: "image/png", filename: "icon%252Esvg" }],
+        },
+      }),
+      part("p2-spoof-double-encoded-malformed-filename", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ data: "CCCC", mediaType: "image/png", filename: "icon%252Esvg%ZZ" }],
         },
       }),
       part("p2-spoof-filename-fragment", {
@@ -266,6 +282,14 @@ test("excludes svg from inline and structured image evidence", () => {
           images: [{ url: "https://example.com/safe.png%253Fevil.svg", mediaType: "image/png", alt: "Double query svg" }],
         },
       }),
+      part("p2-spoof-double-encoded-png-query-encoded-svg-malformed", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ url: "https://example.com/safe.png%253Fevil%252Esvg%ZZ", mediaType: "image/png", alt: "Double query encoded svg" }],
+        },
+      }),
       part("p2-spoof-svgz-url", {
         type: "tool",
         tool: "browser_screenshot",
@@ -300,6 +324,12 @@ test("excludes svg from inline and structured image evidence", () => {
         type: "file",
         mime: "image/png",
         filename: "icon%2Esvg",
+        url: "https://example.com/render",
+      }),
+      part("p2-spoof-inline-double-encoded-malformed-filename", {
+        type: "file",
+        mime: "image/png",
+        filename: "icon%252Esvg%ZZ",
         url: "https://example.com/render",
       }),
       part("p2-spoof-inline-filename-fragment", {
@@ -598,6 +628,37 @@ test("does not create file evidence for absolute paths outside workspace root", 
         type: "tool",
         tool: "write",
         state: { status: "completed", input: { filePath: "/Users/me/other/result.png" } },
+      }),
+    ],
+  });
+
+  assert.deepEqual(evidence, []);
+});
+
+test("does not create bitmap evidence from svg-family spoofed paths", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p3-svg-spoof",
+    workspaceRoot: "/Users/me/project",
+    parts: [
+      part("p3-svg-spoof-query", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "artifacts/icon.svg?x=.png" } },
+      }),
+      part("p3-svg-spoof-semicolon", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "artifacts/icon.svg;download=.png" } },
+      }),
+      part("p3-svg-spoof-encoded-query", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "artifacts/icon%2Esvg%3Fx=.png" } },
+      }),
+      part("p3-svg-spoof-double-encoded-malformed", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "artifacts/safe.png%253Fevil%252Esvg%ZZ" } },
       }),
     ],
   });
