@@ -38,6 +38,30 @@ import {
 } from "./skill-removal-journal.js";
 import { fetchOrgMcpCatalog, fetchOrgSkillsCatalog } from "./den-catalog.js";
 import {
+  getOrganizationSoul,
+  getSoulVersion,
+  getUserSoul,
+  listSoulVersions,
+  restoreSoulVersion as restoreDenSoulVersion,
+  updateOrganizationSoul,
+  updateUserSoul,
+} from "./soul-den-client.js";
+import {
+  cacheSoulDocument,
+  listPendingSoulEdits,
+  readCachedSoulDocument,
+  writePendingSoulEdit,
+  type SoulPendingEdit,
+} from "./soul-cache.js";
+import {
+  createSoulVersion,
+  currentSoulVersion,
+  restoreSoulVersion as restoreLocalSoulVersion,
+  type SoulDocument,
+  type SoulScope,
+  type SoulVersion,
+} from "./soul-memory.js";
+import {
   createRegistrySkill,
   createRegistrySkillInstallation,
   createRegistrySkillRolloutPolicy,
@@ -2017,6 +2041,185 @@ function skillRegistryRequestInput(ctx: RequestContext) {
   };
 }
 
+type SoulSummary = {
+  scope: "organization" | "user" | "workspace";
+  ownerId: string;
+  title: string;
+  currentVersionId: string | null;
+  updatedAt: string | null;
+  updatedBy: string | null;
+  status: "active" | "pending" | "conflict" | "not_configured";
+  heartbeatEnabled: boolean;
+  pendingSuggestionCount: number;
+  canEdit: boolean;
+};
+
+type SoulDenContext = {
+  baseUrl: string;
+  denToken?: string;
+  orgId?: string;
+  userId?: string;
+};
+
+function soulDenContext(ctx: RequestContext): SoulDenContext {
+  const userId = ctx.request.headers.get("x-veslo-den-user-id")?.trim() ||
+    ctx.request.headers.get("x-veslo-user-id")?.trim() ||
+    ctx.request.headers.get("x-veslo-account-id")?.trim() ||
+    undefined;
+  return {
+    baseUrl: ctx.config.denApiBase?.trim() || "",
+    denToken: ctx.request.headers.get("x-veslo-den-token")?.trim() || undefined,
+    orgId: ctx.request.headers.get("x-veslo-den-org-id")?.trim() || undefined,
+    userId,
+  };
+}
+
+function requireSoulDenToken(ctx: SoulDenContext): string {
+  if (!ctx.denToken) {
+    throw new ApiError(401, "den_token_required", "Den token is required");
+  }
+  return ctx.denToken;
+}
+
+function requireSoulOrgId(ctx: SoulDenContext): string {
+  if (!ctx.orgId) {
+    throw new ApiError(400, "den_org_required", "Den organization id is required");
+  }
+  return ctx.orgId;
+}
+
+function requireSoulUserId(ctx: SoulDenContext): string {
+  if (!ctx.userId) {
+    throw new ApiError(400, "den_user_required", "Den user id is required");
+  }
+  return ctx.userId;
+}
+
+function soulCanEdit(ctx: RequestContext, scope: SoulScope): boolean {
+  if (ctx.config.readOnly) return false;
+  if (scope === "organization") {
+    const den = soulDenContext(ctx);
+    return Boolean(den.denToken && den.orgId);
+  }
+  const tokenScope = ctx.actor?.scope;
+  return Boolean(tokenScope && scopeRank(tokenScope) >= scopeRank("collaborator"));
+}
+
+function soulUpdatedAt(document: SoulDocument | null): string | null {
+  if (!document) return null;
+  return currentSoulVersion(document)?.createdAt ?? null;
+}
+
+function soulUpdatedBy(document: SoulDocument | null): string | null {
+  if (!document) return null;
+  return currentSoulVersion(document)?.createdBy ?? null;
+}
+
+function soulTitle(scope: SoulScope, workspace?: WorkspaceInfo): string {
+  if (scope === "organization") return "Organization Soul";
+  if (scope === "user") return "User Soul";
+  return workspace?.name ? `${workspace.name} Soul` : "Workspace Soul";
+}
+
+function soulSummary(input: {
+  scope: SoulScope;
+  ownerId: string;
+  document: SoulDocument | null;
+  canEdit: boolean;
+  status?: SoulSummary["status"];
+  workspace?: WorkspaceInfo;
+}): SoulSummary {
+  const status = input.status ?? (input.document?.currentVersionId ? "active" : "not_configured");
+  return {
+    scope: input.scope,
+    ownerId: input.ownerId,
+    title: soulTitle(input.scope, input.workspace),
+    currentVersionId: input.document?.currentVersionId ?? null,
+    updatedAt: soulUpdatedAt(input.document),
+    updatedBy: soulUpdatedBy(input.document),
+    status,
+    heartbeatEnabled: input.document?.heartbeatEnabled ?? false,
+    pendingSuggestionCount: 0,
+    canEdit: input.canEdit,
+  };
+}
+
+function emptySoulDocument(scope: SoulScope, ownerId: string): SoulDocument {
+  return {
+    id: `${scope}_${ownerId}`,
+    scope,
+    ownerId,
+    currentVersionId: null,
+    heartbeatEnabled: false,
+    versions: [],
+  };
+}
+
+function isSoulDenUnavailable(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false;
+  return error.code === "soul_den_fetch_failed" || error.code === "soul_den_misconfigured";
+}
+
+function validateSoulScopeParam(value: string): SoulScope {
+  if (value === "organization" || value === "user" || value === "workspace") return value;
+  throw new ApiError(400, "invalid_soul_scope", "Soul scope is invalid");
+}
+
+function requireSoulText(body: Record<string, unknown>, field: "content" | "changeSummary"): string {
+  const value = body[field];
+  if (typeof value !== "string" || !value.trim()) {
+    throw new ApiError(400, "invalid_request", `Field ${field} is required`);
+  }
+  return value;
+}
+
+function optionalSoulBaseVersionId(body: Record<string, unknown>): string | null {
+  const value = body.baseVersionId;
+  if (value === undefined || value === null) return null;
+  if (typeof value === "string") return value;
+  throw new ApiError(400, "invalid_request", "Field baseVersionId must be a string or null");
+}
+
+function soulActorId(ctx: RequestContext): string {
+  return ctx.request.headers.get("x-veslo-den-user-id")?.trim() ||
+    ctx.request.headers.get("x-veslo-user-id")?.trim() ||
+    ctx.request.headers.get("x-veslo-account-id")?.trim() ||
+    ctx.actor?.tokenHash ||
+    ctx.actor?.clientId ||
+    "system";
+}
+
+function soulVersionId(prefix = "soul_v"): string {
+  return `${prefix}${shortId()}`;
+}
+
+function soulVersionResponse(document: SoulDocument, versionId: string): SoulVersion {
+  const version = document.versions.find((item) => item.id === versionId);
+  if (!version) {
+    throw new ApiError(404, "soul_version_not_found", "Soul version not found");
+  }
+  return version;
+}
+
+async function readCachedSoulVersions(dataDir: string, scope: SoulScope, ownerId: string): Promise<SoulVersion[]> {
+  const document = await readCachedSoulDocument({ dataDir, scope, ownerId });
+  return document?.versions ?? [];
+}
+
+function soulReadPayload(input: {
+  document: SoulDocument | null;
+  summary: SoulSummary;
+  pendingEdits?: SoulPendingEdit[];
+  denSynced?: boolean;
+}) {
+  return {
+    document: input.document ?? emptySoulDocument(input.summary.scope, input.summary.ownerId),
+    summary: input.summary,
+    ...(input.pendingEdits ? { pendingEdits: input.pendingEdits } : {}),
+    ...(input.denSynced === undefined ? {} : { denSynced: input.denSynced }),
+  };
+}
+
 function materializationEntryPayload(entry: WorkspaceSkillMaterialization & {
   skillDir?: string;
   materializedAt?: string;
@@ -2641,6 +2844,98 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     }
 
     return { session, workspace };
+  };
+
+  const readOrganizationSoulModel = async (ctx: RequestContext) => {
+    const den = soulDenContext(ctx);
+    const ownerId = den.orgId ?? "organization";
+    if (den.baseUrl && den.denToken && den.orgId) {
+      try {
+        const document = await getOrganizationSoul({ ...den, token: den.denToken });
+        await cacheSoulDocument({ dataDir: serverDataDir, document });
+        return {
+          document,
+          summary: soulSummary({
+            scope: "organization",
+            ownerId: document.ownerId,
+            document,
+            canEdit: soulCanEdit(ctx, "organization"),
+          }),
+          denSynced: true,
+        };
+      } catch (error) {
+        if (!isSoulDenUnavailable(error)) throw error;
+      }
+    }
+
+    const cached = den.orgId
+      ? await readCachedSoulDocument({ dataDir: serverDataDir, scope: "organization", ownerId: den.orgId })
+      : null;
+    return {
+      document: cached,
+      summary: soulSummary({
+        scope: "organization",
+        ownerId,
+        document: cached,
+        canEdit: soulCanEdit(ctx, "organization"),
+      }),
+      denSynced: false,
+    };
+  };
+
+  const readUserSoulModel = async (ctx: RequestContext) => {
+    const den = soulDenContext(ctx);
+    const ownerId = den.userId ?? "user";
+    if (den.baseUrl && den.denToken && den.userId) {
+      try {
+        const document = await getUserSoul({ ...den, token: den.denToken });
+        await cacheSoulDocument({ dataDir: serverDataDir, document });
+        return {
+          document,
+          summary: soulSummary({
+            scope: "user",
+            ownerId: document.ownerId,
+            document,
+            canEdit: soulCanEdit(ctx, "user"),
+          }),
+          denSynced: true,
+        };
+      } catch (error) {
+        if (!isSoulDenUnavailable(error)) throw error;
+      }
+    }
+
+    const cached = den.userId
+      ? await readCachedSoulDocument({ dataDir: serverDataDir, scope: "user", ownerId: den.userId })
+      : null;
+    return {
+      document: cached,
+      summary: soulSummary({
+        scope: "user",
+        ownerId,
+        document: cached,
+        canEdit: soulCanEdit(ctx, "user"),
+      }),
+      denSynced: false,
+    };
+  };
+
+  const readWorkspaceSoulModel = async (ctx: RequestContext, workspace: WorkspaceInfo) => {
+    const document = await readCachedSoulDocument({
+      dataDir: serverDataDir,
+      scope: "workspace",
+      ownerId: workspace.id,
+    });
+    return {
+      document,
+      summary: soulSummary({
+        scope: "workspace",
+        ownerId: workspace.id,
+        document,
+        canEdit: soulCanEdit(ctx, "workspace"),
+        workspace,
+      }),
+    };
   };
 
   const recordWorkspaceFileEvent = (workspaceId: string, input: { type: "write" | "delete" | "rename" | "mkdir"; path: string; toPath?: string; revision?: string }) => {
@@ -6223,6 +6518,372 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       timestamp: Date.now(),
     });
     return jsonResponse({ job });
+  });
+
+  addRoute(routes, "GET", "/soul", "client", async (ctx) => {
+    const organization = await readOrganizationSoulModel(ctx);
+    const user = await readUserSoulModel(ctx);
+    const workspaces = await Promise.all(config.workspaces.map(async (configuredWorkspace) => {
+      const workspace = await resolveWorkspace(config, configuredWorkspace.id);
+      return (await readWorkspaceSoulModel(ctx, workspace)).summary;
+    }));
+    return jsonResponse({
+      organization: organization.summary,
+      user: user.summary,
+      workspaces,
+    });
+  });
+
+  addRoute(routes, "GET", "/soul/organization", "client", async (ctx) => {
+    return jsonResponse(soulReadPayload(await readOrganizationSoulModel(ctx)));
+  });
+
+  addRoute(routes, "GET", "/soul/user", "client", async (ctx) => {
+    return jsonResponse(soulReadPayload(await readUserSoulModel(ctx)));
+  });
+
+  addRoute(routes, "GET", "/soul/workspaces", "client", async (ctx) => {
+    const workspaces = await Promise.all(config.workspaces.map(async (configuredWorkspace) => {
+      const workspace = await resolveWorkspace(config, configuredWorkspace.id);
+      return (await readWorkspaceSoulModel(ctx, workspace)).summary;
+    }));
+    return jsonResponse({ workspaces });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/soul", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    return jsonResponse(soulReadPayload(await readWorkspaceSoulModel(ctx, workspace)));
+  });
+
+  addRoute(routes, "GET", "/soul/:scope/versions", "client", async (ctx) => {
+    const scope = validateSoulScopeParam(ctx.params.scope);
+    if (scope === "workspace") {
+      const workspaceId = ctx.url.searchParams.get("workspaceId")?.trim();
+      if (!workspaceId) {
+        throw new ApiError(400, "workspace_id_required", "workspaceId query parameter is required");
+      }
+      const workspace = await resolveWorkspace(config, workspaceId);
+      const versions = await readCachedSoulVersions(serverDataDir, "workspace", workspace.id);
+      return jsonResponse({ versions, nextCursor: null });
+    }
+
+    const den = soulDenContext(ctx);
+    const ownerId = scope === "organization" ? den.orgId : den.userId;
+    if (den.baseUrl && den.denToken && ownerId) {
+      try {
+        const response = await listSoulVersions({
+          ...den,
+          token: den.denToken,
+          scope,
+          cursor: ctx.url.searchParams.get("cursor")?.trim() || undefined,
+          limit: parseInteger(ctx.url.searchParams.get("limit") ?? undefined) ?? undefined,
+        });
+        return jsonResponse(response);
+      } catch (error) {
+        if (!isSoulDenUnavailable(error)) throw error;
+      }
+    }
+
+    const versions = ownerId ? await readCachedSoulVersions(serverDataDir, scope, ownerId) : [];
+    return jsonResponse({ versions, nextCursor: null, denSynced: false });
+  });
+
+  addRoute(routes, "GET", "/soul/:scope/versions/:versionId", "client", async (ctx) => {
+    const scope = validateSoulScopeParam(ctx.params.scope);
+    if (scope === "workspace") {
+      const workspaceId = ctx.url.searchParams.get("workspaceId")?.trim();
+      if (!workspaceId) {
+        throw new ApiError(400, "workspace_id_required", "workspaceId query parameter is required");
+      }
+      const workspace = await resolveWorkspace(config, workspaceId);
+      const document = await readCachedSoulDocument({ dataDir: serverDataDir, scope: "workspace", ownerId: workspace.id });
+      if (!document) throw new ApiError(404, "soul_not_found", "Soul document not found");
+      return jsonResponse({ version: soulVersionResponse(document, ctx.params.versionId) });
+    }
+
+    const den = soulDenContext(ctx);
+    const ownerId = scope === "organization" ? den.orgId : den.userId;
+    if (den.baseUrl && den.denToken && ownerId) {
+      try {
+        const version = await getSoulVersion({ ...den, token: den.denToken, scope, versionId: ctx.params.versionId });
+        return jsonResponse({ version });
+      } catch (error) {
+        if (!isSoulDenUnavailable(error)) throw error;
+      }
+    }
+
+    if (!ownerId) throw new ApiError(404, "soul_not_found", "Soul document not found");
+    const document = await readCachedSoulDocument({ dataDir: serverDataDir, scope, ownerId });
+    if (!document) throw new ApiError(404, "soul_not_found", "Soul document not found");
+    return jsonResponse({ version: soulVersionResponse(document, ctx.params.versionId), denSynced: false });
+  });
+
+  addRoute(routes, "PATCH", "/soul/organization", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const den = soulDenContext(ctx);
+    const denToken = requireSoulDenToken(den);
+    requireSoulOrgId(den);
+    if (!den.baseUrl) {
+      throw new ApiError(503, "soul_den_misconfigured", "Soul Den base URL is missing");
+    }
+    const body = await readJsonBody(ctx.request);
+    const document = await updateOrganizationSoul({
+      ...den,
+      token: denToken,
+      content: requireSoulText(body, "content"),
+      changeSummary: requireSoulText(body, "changeSummary"),
+      baseVersionId: optionalSoulBaseVersionId(body),
+    });
+    await cacheSoulDocument({ dataDir: serverDataDir, document });
+    return jsonResponse(soulReadPayload({
+      document,
+      summary: soulSummary({
+        scope: "organization",
+        ownerId: document.ownerId,
+        document,
+        canEdit: soulCanEdit(ctx, "organization"),
+      }),
+      denSynced: true,
+    }));
+  });
+
+  addRoute(routes, "PATCH", "/soul/user", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const den = soulDenContext(ctx);
+    const userId = requireSoulUserId(den);
+    const body = await readJsonBody(ctx.request);
+    const content = requireSoulText(body, "content");
+    const changeSummary = requireSoulText(body, "changeSummary");
+    const baseVersionId = optionalSoulBaseVersionId(body);
+
+    if (den.baseUrl && den.denToken) {
+      try {
+        const document = await updateUserSoul({
+          ...den,
+          token: den.denToken,
+          content,
+          changeSummary,
+          baseVersionId,
+        });
+        await cacheSoulDocument({ dataDir: serverDataDir, document });
+        return jsonResponse(soulReadPayload({
+          document,
+          summary: soulSummary({
+            scope: "user",
+            ownerId: document.ownerId,
+            document,
+            canEdit: soulCanEdit(ctx, "user"),
+          }),
+          denSynced: true,
+        }));
+      } catch (error) {
+        if (!isSoulDenUnavailable(error)) throw error;
+      }
+    }
+
+    const pendingEdit = await writePendingSoulEdit({
+      dataDir: serverDataDir,
+      edit: {
+        scope: "user",
+        ownerId: userId,
+        content,
+        changeSummary,
+        baseVersionId,
+        createdAt: new Date().toISOString(),
+        createdBy: soulActorId(ctx),
+      },
+    });
+    const cached = await readCachedSoulDocument({ dataDir: serverDataDir, scope: "user", ownerId: userId });
+    return jsonResponse(soulReadPayload({
+      document: cached,
+      summary: soulSummary({
+        scope: "user",
+        ownerId: userId,
+        document: cached,
+        canEdit: soulCanEdit(ctx, "user"),
+        status: "pending",
+      }),
+      pendingEdits: [pendingEdit],
+      denSynced: false,
+    }), 202);
+  });
+
+  addRoute(routes, "POST", "/soul/organization/versions/:versionId/restore", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const den = soulDenContext(ctx);
+    const denToken = requireSoulDenToken(den);
+    requireSoulOrgId(den);
+    if (!den.baseUrl) {
+      throw new ApiError(503, "soul_den_misconfigured", "Soul Den base URL is missing");
+    }
+    const body = await readOptionalJsonBody(ctx.request);
+    const document = await restoreDenSoulVersion({
+      ...den,
+      token: denToken,
+      scope: "organization",
+      versionId: ctx.params.versionId,
+      changeSummary: typeof body.changeSummary === "string" && body.changeSummary.trim()
+        ? body.changeSummary
+        : "Restore Organization Soul version",
+    });
+    await cacheSoulDocument({ dataDir: serverDataDir, document });
+    return jsonResponse(soulReadPayload({
+      document,
+      summary: soulSummary({
+        scope: "organization",
+        ownerId: document.ownerId,
+        document,
+        canEdit: soulCanEdit(ctx, "organization"),
+      }),
+      denSynced: true,
+    }));
+  });
+
+  addRoute(routes, "POST", "/soul/user/versions/:versionId/restore", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const den = soulDenContext(ctx);
+    const userId = requireSoulUserId(den);
+    const body = await readOptionalJsonBody(ctx.request);
+    const changeSummary = typeof body.changeSummary === "string" && body.changeSummary.trim()
+      ? body.changeSummary
+      : "Restore User Soul version";
+    if (den.baseUrl && den.denToken) {
+      try {
+        const document = await restoreDenSoulVersion({
+          ...den,
+          token: den.denToken,
+          scope: "user",
+          versionId: ctx.params.versionId,
+          changeSummary,
+        });
+        await cacheSoulDocument({ dataDir: serverDataDir, document });
+        return jsonResponse(soulReadPayload({
+          document,
+          summary: soulSummary({
+            scope: "user",
+            ownerId: document.ownerId,
+            document,
+            canEdit: soulCanEdit(ctx, "user"),
+          }),
+          denSynced: true,
+        }));
+      } catch (error) {
+        if (!isSoulDenUnavailable(error)) throw error;
+      }
+    }
+
+    const cached = await readCachedSoulDocument({ dataDir: serverDataDir, scope: "user", ownerId: userId });
+    if (!cached) throw new ApiError(404, "soul_not_found", "Soul document not found");
+    const restored = restoreLocalSoulVersion(cached, {
+      id: soulVersionId("user_restore_"),
+      restoreSourceVersionId: ctx.params.versionId,
+      changeSummary,
+      createdAt: new Date().toISOString(),
+      createdBy: soulActorId(ctx),
+    });
+    await cacheSoulDocument({ dataDir: serverDataDir, document: restored });
+    return jsonResponse(soulReadPayload({
+      document: restored,
+      summary: soulSummary({
+        scope: "user",
+        ownerId: restored.ownerId,
+        document: restored,
+        canEdit: soulCanEdit(ctx, "user"),
+        status: "pending",
+      }),
+      pendingEdits: await listPendingSoulEdits({ dataDir: serverDataDir }),
+      denSynced: false,
+    }));
+  });
+
+  addRoute(routes, "PATCH", "/workspace/:id/soul", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const existing = await readCachedSoulDocument({
+      dataDir: serverDataDir,
+      scope: "workspace",
+      ownerId: workspace.id,
+    });
+    const document = createSoulVersion(
+      existing ?? { ...emptySoulDocument("workspace", workspace.id), heartbeatEnabled: true },
+      {
+        id: soulVersionId("workspace_"),
+        content: requireSoulText(body, "content"),
+        changeSummary: requireSoulText(body, "changeSummary"),
+        createdAt: new Date().toISOString(),
+        createdBy: soulActorId(ctx),
+        source: "api",
+        baseVersionId: optionalSoulBaseVersionId(body),
+      },
+    );
+    const nextDocument = { ...document, heartbeatEnabled: existing?.heartbeatEnabled ?? true };
+    await cacheSoulDocument({ dataDir: serverDataDir, document: nextDocument });
+    return jsonResponse(soulReadPayload({
+      document: nextDocument,
+      summary: soulSummary({
+        scope: "workspace",
+        ownerId: workspace.id,
+        document: nextDocument,
+        canEdit: soulCanEdit(ctx, "workspace"),
+        workspace,
+      }),
+    }));
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/soul/versions/:versionId/restore", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const document = await readCachedSoulDocument({ dataDir: serverDataDir, scope: "workspace", ownerId: workspace.id });
+    if (!document) throw new ApiError(404, "soul_not_found", "Soul document not found");
+    const body = await readOptionalJsonBody(ctx.request);
+    const restored = restoreLocalSoulVersion(document, {
+      id: soulVersionId("workspace_restore_"),
+      restoreSourceVersionId: ctx.params.versionId,
+      changeSummary: typeof body.changeSummary === "string" && body.changeSummary.trim()
+        ? body.changeSummary
+        : "Restore Workspace Soul version",
+      createdAt: new Date().toISOString(),
+      createdBy: soulActorId(ctx),
+    });
+    await cacheSoulDocument({ dataDir: serverDataDir, document: restored });
+    return jsonResponse(soulReadPayload({
+      document: restored,
+      summary: soulSummary({
+        scope: "workspace",
+        ownerId: workspace.id,
+        document: restored,
+        canEdit: soulCanEdit(ctx, "workspace"),
+        workspace,
+      }),
+    }));
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/soul/heartbeat-toggle", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readOptionalJsonBody(ctx.request);
+    const existing = await readCachedSoulDocument({ dataDir: serverDataDir, scope: "workspace", ownerId: workspace.id });
+    const enabled = typeof body.enabled === "boolean" ? body.enabled : !(existing?.heartbeatEnabled ?? false);
+    const document = { ...(existing ?? emptySoulDocument("workspace", workspace.id)), heartbeatEnabled: enabled };
+    await cacheSoulDocument({ dataDir: serverDataDir, document });
+    return jsonResponse(soulReadPayload({
+      document,
+      summary: soulSummary({
+        scope: "workspace",
+        ownerId: workspace.id,
+        document,
+        canEdit: soulCanEdit(ctx, "workspace"),
+        workspace,
+      }),
+    }));
   });
 
   addRoute(routes, "GET", "/workspace/:id/soul/status", "client", async (ctx) => {
