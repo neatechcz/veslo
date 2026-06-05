@@ -77,7 +77,11 @@ function safelyDecodeURIComponent(value: string): string {
 function safelyDecodeURIComponentDeep(value: string): string {
   let current = value;
   for (let index = 0; index < 3; index += 1) {
-    const next = safelyDecodeURIComponent(current);
+    const next = safelyDecodeURIComponent(current)
+      .replace(/%2e/gi, ".")
+      .replace(/%23/gi, "#")
+      .replace(/%3f/gi, "?")
+      .replace(/%3b/gi, ";");
     if (next === current) return current;
     current = next;
   }
@@ -95,17 +99,13 @@ function getBitmapMime(path: string, options?: { treatUrlDelimiters?: boolean; d
   return BITMAP_MIME_BY_EXTENSION[getBitmapExtension(path, options)] ?? null;
 }
 
-function hasExtension(value: string, extension: string, options?: { treatUrlDelimiters?: boolean; decode?: boolean }): boolean {
-  return getBitmapExtension(value, options) === extension;
-}
-
 function hasSvgFamilyExtension(value: string, options?: { decode?: boolean }): boolean {
   if (/^data:/i.test(value)) return false;
   const candidate = options?.decode ? safelyDecodeURIComponentDeep(value) : value;
   return candidate
-    .split(/[?#&=]/)
+    .split(/[?#&=;]/)
     .map((part) => part.split(/[\\/]/).pop() ?? "")
-    .some((segment) => /\.(?:svg|svgz)$/i.test(segment));
+    .some((segment) => /\.(?:svg|svgz)(?:$|[^a-z0-9])/i.test(segment));
 }
 
 function normalizeMime(value: string): string {
@@ -129,13 +129,16 @@ function isWindowsAbsolutePath(path: string): boolean {
 }
 
 function normalizeComparablePath(path: string): string {
-  return normalizePath(path).replace(/\/+$/, "");
+  const normalized = normalizePath(path);
+  if (normalized === "/") return "/";
+  return normalized.replace(/\/+$/, "");
 }
 
 function isPathWithinRoot(path: string, root: string): boolean {
   let normalizedPath = normalizeComparablePath(path);
   let normalizedRoot = normalizeComparablePath(root);
   if (!normalizedPath || !normalizedRoot) return false;
+  if (normalizedRoot === "/") return normalizedPath.startsWith("/");
   if (isWindowsAbsolutePath(normalizedPath) || isWindowsAbsolutePath(normalizedRoot)) {
     normalizedPath = normalizedPath.toLowerCase();
     normalizedRoot = normalizedRoot.toLowerCase();
@@ -344,13 +347,12 @@ function buildCreatedPathEvidence(
   if (!path) return null;
 
   const src = toFileUrl(path, input.workspaceRoot);
-  const shouldExposePath = Boolean(src) || !isAbsolutePath(normalizePath(path));
   return {
     id: buildEvidenceId(input.sourceId, part.id, `created:${index}`),
     kind: "created",
     title: titleForPath(path),
     mime: getBitmapMime(path) ?? "image/png",
-    path: shouldExposePath ? path : undefined,
+    path: src ? path : undefined,
     src,
     sourcePartId: part.id,
     status: src ? "available" : "missing",

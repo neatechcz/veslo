@@ -178,6 +178,14 @@ test("excludes svg from inline and structured image evidence", () => {
           images: [{ url: "https://example.com/icon%2Esvg%3Fv=1", mediaType: "image/png", alt: "Encoded query spoof" }],
         },
       }),
+      part("p2-spoof-encoded-malformed", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ url: "https://example.com/icon%2Esvg%ZZ", mediaType: "image/png", alt: "Malformed encoded spoof" }],
+        },
+      }),
       part("p2-spoof-double-encoded", {
         type: "tool",
         tool: "browser_screenshot",
@@ -200,6 +208,22 @@ test("excludes svg from inline and structured image evidence", () => {
         state: {
           status: "completed",
           images: [{ data: "DDDD", mediaType: "image/png", filename: "icon.svg#x" }],
+        },
+      }),
+      part("p2-spoof-filename-semicolon", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ data: "DDDD", mediaType: "image/png", filename: "icon.svg;download=1" }],
+        },
+      }),
+      part("p2-spoof-filename-malformed", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ data: "DDDD", mediaType: "image/png", filename: "icon%2Esvg%ZZ" }],
         },
       }),
       part("p2-spoof-name-query", {
@@ -250,6 +274,14 @@ test("excludes svg from inline and structured image evidence", () => {
           images: [{ url: "https://example.com/icon.svgz", mediaType: "image/png", alt: "SVGZ URL" }],
         },
       }),
+      part("p2-spoof-semicolon-url", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: {
+          status: "completed",
+          images: [{ url: "https://example.com/icon.svg;download=1", mediaType: "image/png", alt: "Semicolon URL" }],
+        },
+      }),
       part("p2-spoof-svgz-name", {
         type: "tool",
         tool: "browser_screenshot",
@@ -274,6 +306,18 @@ test("excludes svg from inline and structured image evidence", () => {
         type: "file",
         mime: "image/png",
         filename: "icon.svg#x",
+        url: "https://example.com/render",
+      }),
+      part("p2-spoof-inline-filename-semicolon", {
+        type: "file",
+        mime: "image/png",
+        filename: "icon.svg;download=1",
+        url: "https://example.com/render",
+      }),
+      part("p2-spoof-inline-filename-malformed", {
+        type: "file",
+        mime: "image/png",
+        filename: "icon%2Esvg%ZZ",
         url: "https://example.com/render",
       }),
       part("p2-spoof-inline-name-query", {
@@ -593,6 +637,23 @@ test("keeps absolute file evidence inside workspace root", () => {
   assert.equal(evidence[0]?.src, "file:///Users/me/project/screens/result.png");
 });
 
+test("keeps absolute file evidence inside posix root workspace", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p3-posix-root",
+    workspaceRoot: "/",
+    parts: [
+      part("p3-posix-root", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "/tmp/result.png" } },
+      }),
+    ],
+  });
+
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0]?.src, "file:///tmp/result.png");
+});
+
 test("classifies concrete created bitmap paths from write-like tools", () => {
   const evidence = buildMediaEvidenceForParts({
     sourceId: "tool:p3",
@@ -783,7 +844,7 @@ test("keeps relative created paths missing when workspace root is not absolute",
   });
 
   assert.equal(evidence.length, 1);
-  assert.equal(evidence[0]?.path, "artifacts/result.png");
+  assert.equal(evidence[0]?.path, undefined);
   assert.equal(evidence[0]?.src, undefined);
   assert.equal(evidence[0]?.status, "missing");
 });
