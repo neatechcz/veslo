@@ -213,12 +213,12 @@ test("by-project sidebar renders private chats as a bottom section", () => {
   assert.doesNotMatch(source, /cursor-row-resize/);
   assert.match(
     source,
-    /data-sidebar-chat-collapsed="true"[\s\S]*class="mt-2 flex h-11 w-full shrink-0 items-center justify-between gap-2 border-t border-gray-6\/70 px-1\.5 pt-2"[\s\S]*class=\{`inline-flex h-8/,
+    /data-sidebar-chat-collapsed="true"[\s\S]*class="mt-2 flex h-11 w-full shrink-0 items-center justify-between gap-2 border-t border-gray-6\/70 px-1\.5 pt-2"[\s\S]*class="inline-flex h-8 min-w-0 flex-1[\s\S]*disabled:opacity-60"[\s\S]*onClick=\{startQuickChatFromCollapsed\}/,
     "collapsed Chats wrapper should reserve enough height for its h-8 controls",
   );
   assert.match(
     source,
-    /data-sidebar-chat-collapsed="true"[\s\S]*data-tooltip=\{tr\("sidebar\.new_chat"\)\}[\s\S]*onClick=\{startQuickChatFromCollapsed\}[\s\S]*disabled=\{!props\.onQuickNewSession\}[\s\S]*aria-label=\{tr\("sidebar\.new_chat"\)\}[\s\S]*title=\{tr\("sidebar\.new_chat"\)\}[\s\S]*<Plus size=\{12\} \/>[\s\S]*<span>\{tr\("sidebar\.chat"\)\}<\/span>/,
+    /data-sidebar-chat-collapsed="true"[\s\S]*onClick=\{startQuickChatFromCollapsed\}[\s\S]*disabled=\{!props\.onQuickNewSession\}[\s\S]*aria-label=\{tr\("sidebar\.new_chat"\)\}[\s\S]*title=\{tr\("sidebar\.new_chat"\)\}[\s\S]*<Plus size=\{12\} \/>[\s\S]*<span>\{tr\("sidebar\.chat"\)\}<\/span>/,
     "collapsed Chats should expose a compact + Chat button",
   );
   assert.match(

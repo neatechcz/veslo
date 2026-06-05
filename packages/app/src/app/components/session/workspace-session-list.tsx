@@ -2612,8 +2612,7 @@ export default function WorkspaceSessionList(props: Props) {
               >
                 <button
                   type="button"
-                  class={`inline-flex h-8 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full border border-gray-6 bg-gray-1 px-2 text-[11px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2 hover:text-gray-12 disabled:cursor-not-allowed disabled:opacity-60 ${sidebarControlTooltipClass}`}
-                  data-tooltip={tr("sidebar.new_chat")}
+                  class="inline-flex h-8 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full border border-gray-6 bg-gray-1 px-2 text-[11px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2 hover:text-gray-12 disabled:cursor-not-allowed disabled:opacity-60"
                   onClick={startQuickChatFromCollapsed}
                   disabled={!props.onQuickNewSession}
                   aria-label={tr("sidebar.new_chat")}
