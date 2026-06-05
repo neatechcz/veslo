@@ -123,6 +123,10 @@ function mimeFromDataUrl(value: string): string | null {
   return match?.[1] ?? null;
 }
 
+function inferStructuredMimeFromSource(src: string): string | null {
+  return mimeFromDataUrl(src) ?? getBitmapMime(src);
+}
+
 function isCompletedOrStatusOmittedForHistoricalParts(part: Part): boolean {
   const statusValue = getState(part).status;
   if (!isNonEmptyString(statusValue)) return true;
@@ -153,7 +157,8 @@ function buildInlineFileEvidence(
 
 function normalizeStructuredImage(image: unknown): { src: string; mime: string; title: string } | null {
   if (isNonEmptyString(image)) {
-    const mime = mimeFromDataUrl(image) ?? "image/png";
+    const mime = inferStructuredMimeFromSource(image);
+    if (!mime) return null;
     if (!isBitmapMime(mime)) return null;
     return { src: image, mime, title: "Image" };
   }
@@ -163,7 +168,8 @@ function normalizeStructuredImage(image: unknown): { src: string; mime: string; 
   const rawSrc = [record.url, record.src, record.data].find(isNonEmptyString);
   if (!rawSrc) return null;
 
-  const mime = isNonEmptyString(record.mediaType) ? record.mediaType : mimeFromDataUrl(rawSrc) ?? "image/png";
+  const mime = isNonEmptyString(record.mediaType) ? record.mediaType : inferStructuredMimeFromSource(rawSrc);
+  if (!mime) return null;
   if (!isBitmapMime(mime)) return null;
 
   const src = rawSrc === record.data && !rawSrc.startsWith("data:") ? `data:${mime};base64,${rawSrc}` : rawSrc;

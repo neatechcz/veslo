@@ -92,10 +92,43 @@ test("excludes svg from inline and structured image evidence", () => {
         tool: "browser_screenshot",
         state: { status: "completed", images: ["data:image/svg+xml;base64,AAAA"] },
       }),
+      part("p2f", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: { status: "completed", images: ["https://example.com/icon.svg"] },
+      }),
+      part("p2g", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: { status: "completed", images: [{ url: "https://example.com/icon.svg", alt: "Vector URL" }] },
+      }),
+      part("p2h", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: { status: "completed", images: [{ src: "https://example.com/icon.svg", alt: "Vector src" }] },
+      }),
     ],
   });
 
   assert.deepEqual(evidence, []);
+});
+
+test("infers structured bitmap url mime from extension", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p2i",
+    defaultKind: "analyzed",
+    parts: [
+      part("p2i", {
+        type: "tool",
+        tool: "browser_screenshot",
+        state: { status: "completed", images: ["https://example.com/preview.png"] },
+      }),
+    ],
+  });
+
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0]?.mime, "image/png");
+  assert.equal(evidence[0]?.src, "https://example.com/preview.png");
 });
 
 test("classifies concrete created bitmap paths from write-like tools", () => {
