@@ -96,3 +96,21 @@ test("managed AI reload coalescing records the server token only after a success
     "both managed AI reload branches should mark the server token only after reloadWorkspaceEngine reports success",
   );
 });
+
+test("managed AI auto-reload is blocked while a prompt send is in flight", () => {
+  assert.match(
+    source,
+    /const \[sendPromptInFlightCount, setSendPromptInFlightCount\] = createSignal\(0\);[\s\S]*?const sendPromptInFlight = createMemo\(\(\) => sendPromptInFlightCount\(\) > 0\);/s,
+    "app should track prompt sends before a session has materialized as running",
+  );
+  assert.match(
+    source,
+    /releaseSendPromptInFlight = beginSendPromptInFlight\(\);[\s\S]*?finally \{[\s\S]*?releasePromptSendInFlight\(\);[\s\S]*?stopSendPromptBusy\(\);/s,
+    "sendPrompt should keep the prompt-send guard active until all send cleanup finishes",
+  );
+  assert.match(
+    source,
+    /hasActiveRuns: anyActiveRuns\(\) \|\| sendPromptInFlight\(\),/g,
+    "managed AI config reload should not restart the runtime while the first prompt send is still in flight",
+  );
+});

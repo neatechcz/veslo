@@ -29,6 +29,7 @@ import {
   type WorkspaceInfo,
 } from "../lib/tauri";
 import { acquireBlankNativeWindowTitleLease } from "../lib/native-window-title-lease";
+import { AI_ACCESS_LOADING_MESSAGE } from "../lib/ai-access";
 
 import {
   Box,
@@ -3194,6 +3195,8 @@ export default function SessionView(props: SessionViewProps) {
     return null;
   });
 
+  const aiAccessLoading = createMemo(() => props.aiAccessBlockedReason === AI_ACCESS_LOADING_MESSAGE);
+
   const sendPromptImmediate = async (
     draft: ComposerDraft,
     options: {
@@ -4505,7 +4508,7 @@ export default function SessionView(props: SessionViewProps) {
                 initialDraft={props.composerDraft}
                 prompt={props.composerDraft.text}
                 developerMode={props.developerMode}
-                busy={props.busy}
+                busy={props.busy || aiAccessLoading()}
                 isStreaming={showRunIndicator()}
                 compactTopSpacing={todoCount() > 0}
                 compactWidth={useCompactCenterColumn()}

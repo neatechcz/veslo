@@ -2153,6 +2153,11 @@ export default function App() {
     let sessionID = options.targetSessionId?.trim() || selectedSessionId();
     const blockAppDuringPromptSend = Boolean(sessionID);
     let ownsSendPromptBusy = false;
+    let releaseSendPromptInFlight: (() => void) | null = null;
+    const releasePromptSendInFlight = () => {
+      releaseSendPromptInFlight?.();
+      releaseSendPromptInFlight = null;
+    };
     const startSendPromptBusy = (label: string) => {
       if (!blockAppDuringPromptSend) return;
       ownsSendPromptBusy = true;
@@ -2161,6 +2166,7 @@ export default function App() {
       setBusyStartedAt(Date.now());
     };
     const stopSendPromptBusy = () => {
+      releasePromptSendInFlight();
       if (!ownsSendPromptBusy) return;
       ownsSendPromptBusy = false;
       setBusy(false);
@@ -2222,19 +2228,37 @@ export default function App() {
       // before the engine start blocks the microtask chain.
       await new Promise((resolve) => setTimeout(resolve, 0));
       try {
+        recordSendTrace("sendPrompt:ensure-engine-before", {
+          activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
+          activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
+          baseUrl: baseUrl().trim() || null,
+          clientDirectory: clientDirectory().trim() || null,
+          hasClient: Boolean(client()),
+        });
         const started = await workspaceStore.ensureEngineForWorkspace();
+        recordSendTrace("sendPrompt:ensure-engine-after", {
+          started,
+          activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
+          activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
+          baseUrl: baseUrl().trim() || null,
+          clientDirectory: clientDirectory().trim() || null,
+          hasClient: Boolean(client()),
+        });
         if (!started) {
           recordSendTrace("sendPrompt:engine-not-started");
           stopSendPromptBusy();
           return false;
         }
-      } catch {
-        recordSendTrace("sendPrompt:engine-start-error");
+      } catch (error) {
+        recordSendTrace("sendPrompt:engine-start-error", {
+          message: error instanceof Error ? error.message : String(error),
+        });
         stopSendPromptBusy();
         return false;
       }
     }
 
+    releaseSendPromptInFlight = beginSendPromptInFlight();
     if (!(await ensureManagedAiBootstrapReady())) {
       recordSendTrace("sendPrompt:blocked-managed-ai-bootstrap");
       stopSendPromptBusy();
@@ -2258,6 +2282,7 @@ export default function App() {
     const commandName = compactCommand ? "compact" : (resolvedDraft.command?.name ?? null);
     if (compactCommand && !sessionID) {
       setError("Select a session with messages before running /compact.");
+      stopSendPromptBusy();
       return false;
     }
 
@@ -2466,6 +2491,7 @@ export default function App() {
       sessionStore.appendSessionErrorTurn(sessionID, addOpencodeCacheHint(message));
       return false;
     } finally {
+      releasePromptSendInFlight();
       stopSendPromptBusy();
     }
   }
@@ -3190,7 +3216,10 @@ export default function App() {
   const [denAuthRevision, setDenAuthRevision] = createSignal(0);
   const [managedAiAccessRefreshNonce, setManagedAiAccessRefreshNonce] = createSignal(0);
   const [managedAiAccessRetryAttempt, setManagedAiAccessRetryAttempt] = createSignal(0);
+  const [managedAiAccessRetryScheduled, setManagedAiAccessRetryScheduled] = createSignal(false);
   const [managedAiBootstrapPendingCount, setManagedAiBootstrapPendingCount] = createSignal(0);
+  const [sendPromptInFlightCount, setSendPromptInFlightCount] = createSignal(0);
+  const sendPromptInFlight = createMemo(() => sendPromptInFlightCount() > 0);
   const managedAiAccessModel = createMemo(() => managedAiAccess()?.defaultModel ?? null);
   // When the managed AI profile changes (admin reassigns user, credential
   // is rotated, etc.) we need to reload the engine again on the next
@@ -3240,6 +3269,16 @@ export default function App() {
       if (released) return;
       released = true;
       setManagedAiBootstrapPendingCount((count) => Math.max(0, count - 1));
+    };
+  };
+
+  const beginSendPromptInFlight = () => {
+    let released = false;
+    setSendPromptInFlightCount((count) => count + 1);
+    return () => {
+      if (released) return;
+      released = true;
+      setSendPromptInFlightCount((count) => Math.max(0, count - 1));
     };
   };
 
@@ -5901,7 +5940,7 @@ export default function App() {
 
   const managedAiAccessMessage = createMemo(() => {
     if (managedAiAccess()) return AI_ACCESS_ADMIN_MANAGED_MESSAGE;
-    if (managedAiAccessBusy()) return AI_ACCESS_LOADING_MESSAGE;
+    if (managedAiAccessBusy() || managedAiAccessRetryScheduled()) return AI_ACCESS_LOADING_MESSAGE;
     return managedAiAccessError() ?? AI_ACCESS_NOT_CONFIGURED_MESSAGE;
   });
 
@@ -5924,7 +5963,7 @@ export default function App() {
       return null;
     }
     if (managedAiAccess()) return null;
-    if (managedAiAccessBusy()) return AI_ACCESS_LOADING_MESSAGE;
+    if (managedAiAccessBusy() || managedAiAccessRetryScheduled()) return AI_ACCESS_LOADING_MESSAGE;
     return managedAiAccessError() ?? AI_ACCESS_NOT_CONFIGURED_MESSAGE;
   });
 
@@ -5987,6 +6026,7 @@ export default function App() {
       setManagedAiAccessBusy(false);
       setManagedAiAccessError(null);
       setManagedAiAccessRetryAttempt(0);
+      setManagedAiAccessRetryScheduled(false);
       return;
     }
 
@@ -6004,12 +6044,15 @@ export default function App() {
         })
       ) {
         setManagedAiAccessRetryAttempt(0);
+        setManagedAiAccessRetryScheduled(false);
         return;
       }
 
       const delayMs = resolveManagedAiAccessRetryDelayMs(managedAiAccessRetryAttempt());
+      setManagedAiAccessRetryScheduled(true);
       retryTimeoutId = window.setTimeout(() => {
         if (cancelled) return;
+        setManagedAiAccessRetryScheduled(false);
         setManagedAiAccessRetryAttempt((value) => value + 1);
         requestManagedAiAccessRefresh();
       }, delayMs);
@@ -6034,6 +6077,7 @@ export default function App() {
         setManagedAiAccessError(profile ? null : reason ?? AI_ACCESS_NOT_CONFIGURED_MESSAGE);
         if (profile) {
           setManagedAiAccessRetryAttempt(0);
+          setManagedAiAccessRetryScheduled(false);
           return;
         }
         scheduleRetry(false);
@@ -6055,6 +6099,7 @@ export default function App() {
       if (retryTimeoutId != null) {
         window.clearTimeout(retryTimeoutId);
       }
+      setManagedAiAccessRetryScheduled(false);
     });
   });
 
@@ -8947,7 +8992,7 @@ export default function App() {
               shouldAutoReloadManagedAiConfig({
                 hasManagedProfile: true,
                 hasConfigChanged: true,
-                hasActiveRuns: anyActiveRuns(),
+                hasActiveRuns: anyActiveRuns() || sendPromptInFlight(),
                 canReloadWorkspace: canReloadWorkspace(),
               }) &&
               lastReloadedForServerToken() !== providerRoutingTarget.serverClientToken
@@ -9005,7 +9050,7 @@ export default function App() {
             shouldAutoReloadManagedAiConfig({
               hasManagedProfile: true,
               hasConfigChanged: true,
-              hasActiveRuns: anyActiveRuns(),
+              hasActiveRuns: anyActiveRuns() || sendPromptInFlight(),
               canReloadWorkspace: canReloadWorkspace(),
             }) &&
             lastReloadedForServerToken() !== providerRoutingTarget.serverClientToken

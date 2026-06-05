@@ -221,6 +221,8 @@ export function createWorkspaceStore(options: {
   const WORKSPACE_ACTIVATE_TIMEOUT_MS = 30_000;
   const ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS = 15_000;
   const LONG_BOOT_CONNECT_REASONS = new Set([
+    "browse-cold-start",
+    "browse-cold-start-reattach",
     "host-start",
     "workspace-orchestrator-switch",
     "workspace-restart",
@@ -275,6 +277,9 @@ export function createWorkspaceStore(options: {
     if (!normalized) return false;
     return DB_MIGRATE_UNSUPPORTED_PATTERNS.some((pattern) => pattern.test(normalized));
   };
+
+  const messageFromUnknownError = (error: unknown): string =>
+    error instanceof Error ? error.message : safeStringify(error);
 
   const makeRunId = () => {
     if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -2358,6 +2363,7 @@ export function createWorkspaceStore(options: {
           _wsLog("[workspace:bootstrap] hydrateLatestSessionFromDb failed", e);
         }
         markOnboardingComplete();
+        options.setOnboardingStep(resolveWelcomeOnboardingStep());
         return;
       }
 
@@ -2493,9 +2499,10 @@ export function createWorkspaceStore(options: {
     baseUrl: string,
     directory: string,
     auth?: OpencodeAuth,
+    context?: { reason?: string },
   ): Promise<boolean> {
     const nextClient = createClient(baseUrl, directory, auth);
-    const health = await waitForHealthy(nextClient, { timeoutMs: DEFAULT_CONNECT_HEALTH_TIMEOUT_MS });
+    const health = await waitForHealthy(nextClient, { timeoutMs: resolveConnectHealthTimeoutMs(context?.reason) });
     options.setClient(nextClient);
     options.setConnectedVersion(health.version);
     options.setBaseUrl(baseUrl);
@@ -2562,17 +2569,51 @@ export function createWorkspaceStore(options: {
             id,
             error: restartError instanceof Error ? restartError.message : String(restartError),
           });
-          ok = await localRuntimeLifecycle.startHost({
-            workspacePath: workspace.path,
-            workspaceId: workspace.id,
-            reason: "browse-cold-start",
-            navigate: false,
-          });
+          try {
+            ok = await localRuntimeLifecycle.startHost({
+              workspacePath: workspace.path,
+              workspaceId: workspace.id,
+              reason: "browse-cold-start",
+              connectMode: "quiet",
+              navigate: false,
+            });
+          } catch (startHostError) {
+            if (
+              resolveEngineRuntime() !== "veslo-orchestrator" ||
+              !messageFromUnknownError(startHostError).includes("Request timed out")
+            ) {
+              throw startHostError;
+            }
+            _wsLog("[workspace:ensureEngine] startHost timed out, trying orchestrator reattach...", {
+              id,
+              error: messageFromUnknownError(startHostError),
+            });
+            ok = await localRuntimeLifecycle.reattachOrchestratorWorkspace({
+              workspacePath: workspace.path,
+              workspaceId: workspace.id,
+              workspaceName: workspace.displayName?.trim() || workspace.name?.trim() || null,
+              reason: "browse-cold-start-reattach",
+              connectMode: "quiet",
+              navigate: false,
+            });
+          }
         }
         if (!ok) return false;
 
-        // Load sessions while engineReady is still false (SSE sync guard protects sidebar)
-        await options.loadSessions(workspace.path);
+        // Load sessions while engineReady is still false (SSE sync guard protects sidebar).
+        // This is sidebar hydration, not a prerequisite for the first prompt;
+        // keep send moving if the just-started engine stalls on session.list().
+        try {
+          await withTimeoutOrThrow(
+            options.loadSessions(workspace.path),
+            { timeoutMs: CONNECT_LOAD_SESSIONS_TIMEOUT_MS, label: "loadSessions" },
+          );
+        } catch (loadSessionsError) {
+          _wsLog("[workspace:ensureEngine] loadSessions failed; continuing first prompt", {
+            id,
+            error: messageFromUnknownError(loadSessionsError),
+          });
+        }
 
         // Now set engineReady — SSE sync fires with correct session data
         options.setEngineReady?.(true);

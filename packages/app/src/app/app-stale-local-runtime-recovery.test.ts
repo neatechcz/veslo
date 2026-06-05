@@ -12,7 +12,7 @@ test("sendPrompt recovers a stale local runtime before reading the client", () =
   const sendPromptSource = source.slice(start, end);
   assert.match(
     sendPromptSource,
-    /await ensureManagedAiBootstrapReady\(\);\s*if \(!\(await ensureLocalRuntimeReachableForSend\("sendPrompt"\)\)\) \{\s*recordSendTrace\("sendPrompt:blocked-runtime-unreachable"\);\s*return false;\s*\}\s*const c = client\(\);/s,
+    /if \(!\(await ensureManagedAiBootstrapReady\(\)\)\) \{[\s\S]*?return false;\s*\}\s*if \(!\(await ensureLocalRuntimeReachableForSend\("sendPrompt"\)\)\) \{\s*recordSendTrace\("sendPrompt:blocked-runtime-unreachable"\);[\s\S]*?return false;\s*\}\s*const c = client\(\);/s,
     "sendPrompt should verify and recover the local runtime before capturing the client used for create/prompt calls",
   );
 });
