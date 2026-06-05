@@ -92,18 +92,22 @@ function isWindowsAbsolutePath(path: string): boolean {
   return /^[A-Za-z]:\//.test(path);
 }
 
+function toAbsoluteFileUrl(path: string): string {
+  const prefix = isWindowsAbsolutePath(path) ? "file:///" : "file://";
+  return encodeURI(`${prefix}${path}`);
+}
+
 function toFileUrl(path: string, workspaceRoot?: string): string | undefined {
   const normalizedPath = normalizePath(path);
   if (!normalizedPath) return undefined;
 
   if (isAbsolutePath(normalizedPath)) {
-    const prefix = isWindowsAbsolutePath(normalizedPath) ? "file:///" : "file://";
-    return encodeURI(`${prefix}${normalizedPath}`);
+    return toAbsoluteFileUrl(normalizedPath);
   }
 
   const normalizedRoot = normalizePath(workspaceRoot ?? "");
   if (!normalizedRoot) return undefined;
-  return encodeURI(`file://${normalizedRoot.replace(/\/+$/, "")}/${normalizedPath.replace(/^\/+/, "")}`);
+  return toAbsoluteFileUrl(`${normalizedRoot.replace(/\/+$/, "")}/${normalizedPath.replace(/^\/+/, "")}`);
 }
 
 function titleForPath(path: string): string {

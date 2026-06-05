@@ -185,6 +185,23 @@ test("formats windows absolute file urls", () => {
   assert.equal(evidence[0]?.src, "file:///C:/Users/me/project/result.png");
 });
 
+test("formats windows workspace file urls for relative created paths", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p3e",
+    workspaceRoot: "C:/Users/me/project",
+    parts: [
+      part("p3e", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "artifacts/result.png" } },
+      }),
+    ],
+  });
+
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0]?.src, "file:///C:/Users/me/project/artifacts/result.png");
+});
+
 test("keeps ids unique when a tool has structured images and created bitmap paths", () => {
   const evidence = buildMediaEvidenceForParts({
     sourceId: "tool:p3b",
