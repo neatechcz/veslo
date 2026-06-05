@@ -1,5 +1,5 @@
-import { readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { open, readFile, rename, rm } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 
 import {
   type AutomationRun,
@@ -36,6 +36,8 @@ type LegacyAgentLabStore = {
   items?: unknown;
 };
 
+const mutationQueues = new Map<string, Promise<void>>();
+
 export function resolveAutomationsPath(workspaceRoot: string): string {
   return join(workspaceRoot, ".opencode", "veslo", "automations.json");
 }
@@ -52,7 +54,11 @@ export async function readAutomationStore(workspaceRoot: string, workspaceId: st
 
   const legacyPath = resolveLegacyAgentLabAutomationsPath(workspaceRoot);
   if (await exists(legacyPath)) {
-    const migrated = await readLegacyAgentLabStore(legacyPath, workspaceId);
+    const migrationWorkspaceId = normalizeNonEmptyString(workspaceId);
+    if (!migrationWorkspaceId) {
+      throw new ApiError(400, "invalid_payload", "workspaceId is required to migrate legacy automations");
+    }
+    const migrated = await readLegacyAgentLabStore(legacyPath, migrationWorkspaceId);
     await writeAutomationStore(workspaceRoot, migrated);
     return migrated;
   }
@@ -62,44 +68,71 @@ export async function readAutomationStore(workspaceRoot: string, workspaceId: st
 
 export async function writeAutomationStore(workspaceRoot: string, data: AutomationStoreData): Promise<void> {
   const path = resolveAutomationsPath(workspaceRoot);
-  await ensureDir(dirname(path));
-  await writeFile(path, JSON.stringify(data, null, 2) + "\n", "utf8");
+  const dir = dirname(path);
+  await ensureDir(dir);
+
+  const tmpPath = join(
+    dir,
+    `${basename(path)}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`,
+  );
+  let handle: Awaited<ReturnType<typeof open>> | null = null;
+  try {
+    handle = await open(tmpPath, "w");
+    await handle.writeFile(JSON.stringify(data, null, 2) + "\n", "utf8");
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await rename(tmpPath, path);
+  } catch (error) {
+    if (handle) {
+      try {
+        await handle.close();
+      } catch {
+        // Best effort: preserve the original write error.
+      }
+    }
+    await rm(tmpPath, { force: true });
+    throw error;
+  }
 }
 
 export async function upsertAutomation(workspaceRoot: string, automation: VesloAutomation): Promise<AutomationStoreData> {
-  const store = await readAutomationStore(workspaceRoot, automation.workspaceId);
-  const items = [...store.items];
-  const existingIndex = items.findIndex((item) => item.id === automation.id);
-  if (existingIndex === -1) {
-    items.unshift(automation);
-  } else {
-    items[existingIndex] = automation;
-  }
+  return mutateAutomationStore(workspaceRoot, automation.workspaceId, (store) => {
+    const items = [...store.items];
+    const existingIndex = items.findIndex((item) => item.id === automation.id);
+    if (existingIndex === -1) {
+      items.unshift(automation);
+    } else {
+      items[existingIndex] = automation;
+    }
 
-  const next = { ...store, updatedAt: nowIso(), items };
-  await writeAutomationStore(workspaceRoot, next);
-  return next;
+    return { ...store, updatedAt: nowIso(), items };
+  });
 }
 
-export async function appendOrReplaceAutomationRun(workspaceRoot: string, run: AutomationRun): Promise<AutomationStoreData> {
-  const store = await readAutomationStore(workspaceRoot, "");
-  const runs = [...store.runs];
-  const existingIndex = runs.findIndex((item) => item.id === run.id);
-  if (existingIndex === -1) {
-    runs.push(run);
-  } else {
-    runs[existingIndex] = run;
-  }
+export async function appendOrReplaceAutomationRun(
+  workspaceRoot: string,
+  run: AutomationRun,
+  workspaceId?: string,
+): Promise<AutomationStoreData> {
+  return mutateAutomationStore(workspaceRoot, workspaceId, (store) => {
+    const runs = [...store.runs];
+    const existingIndex = runs.findIndex((item) => item.id === run.id);
+    if (existingIndex === -1) {
+      runs.push(run);
+    } else {
+      runs[existingIndex] = run;
+    }
 
-  const next = { ...store, updatedAt: nowIso(), runs };
-  await writeAutomationStore(workspaceRoot, next);
-  return next;
+    return { ...store, updatedAt: nowIso(), runs };
+  });
 }
 
 async function readNewAutomationStore(path: string): Promise<AutomationStoreData> {
+  const raw = await readFile(path, "utf8");
   let parsed: unknown;
   try {
-    parsed = JSON.parse(await readFile(path, "utf8"));
+    parsed = JSON.parse(raw);
   } catch {
     throw new ApiError(422, "invalid_json", "Failed to parse Veslo automations");
   }
@@ -114,9 +147,10 @@ async function readNewAutomationStore(path: string): Promise<AutomationStoreData
 }
 
 async function readLegacyAgentLabStore(path: string, workspaceId: string): Promise<AutomationStoreData> {
+  const raw = await readFile(path, "utf8");
   let parsed: unknown;
   try {
-    parsed = JSON.parse(await readFile(path, "utf8"));
+    parsed = JSON.parse(raw);
   } catch {
     throw new ApiError(422, "invalid_json", "Failed to parse Agent Lab automations");
   }
@@ -141,6 +175,33 @@ async function readLegacyAgentLabStore(path: string, workspaceId: string): Promi
     items: automations,
     runs,
   };
+}
+
+async function mutateAutomationStore(
+  workspaceRoot: string,
+  workspaceId: string | undefined,
+  mutate: (store: AutomationStoreData) => AutomationStoreData | Promise<AutomationStoreData>,
+): Promise<AutomationStoreData> {
+  const path = resolveAutomationsPath(workspaceRoot);
+  const previous = mutationQueues.get(path) ?? Promise.resolve();
+  let result: AutomationStoreData | undefined;
+
+  const operation = previous.catch(() => undefined).then(async () => {
+    const store = await readAutomationStore(workspaceRoot, workspaceId ?? "");
+    result = await mutate(store);
+    await writeAutomationStore(workspaceRoot, result);
+  });
+  const queued = operation.then(() => undefined, () => undefined);
+  mutationQueues.set(path, queued);
+
+  try {
+    await operation;
+    return result ?? emptyStore();
+  } finally {
+    if (mutationQueues.get(path) === queued) {
+      mutationQueues.delete(path);
+    }
+  }
 }
 
 function migrateLegacyAutomation(

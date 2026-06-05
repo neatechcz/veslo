@@ -152,6 +152,39 @@ test("successful one-shot automation remains in store as completed", async () =>
   });
 });
 
+test("append before workspace-aware legacy migration does not write empty workspace ids", async () => {
+  await withWorkspace(async (workspaceRoot) => {
+    const legacyPath = await writeLegacyStore(workspaceRoot);
+    const run = makeRun({ id: "run_before_migration", automationId: "agentlab_daily" });
+
+    await expect(appendOrReplaceAutomationRun(workspaceRoot, run)).rejects.toThrow("workspaceId is required");
+
+    await expect(readFile(resolveAutomationsPath(workspaceRoot), "utf8")).rejects.toThrow();
+    expect(await readFile(legacyPath, "utf8")).toContain("Legacy Daily");
+
+    const store = await readAutomationStore(workspaceRoot, workspaceId);
+
+    expect(store.items).toHaveLength(1);
+    expect(store.items[0]?.workspaceId).toBe(workspaceId);
+    expect(store.items[0]?.id).toBe("agentlab_daily");
+    expect(store.runs.map((item) => item.id)).toEqual(["run_agentlab_daily_2026-06-02T09-00-00-000Z"]);
+  });
+});
+
+test("parallel upserts preserve every automation", async () => {
+  await withWorkspace(async (workspaceRoot) => {
+    const automations = Array.from({ length: 20 }, (_, index) => makeAutomation({
+      id: `auto_parallel_${index}`,
+      name: `Parallel ${index}`,
+    }));
+
+    await Promise.all(automations.map((automation) => upsertAutomation(workspaceRoot, automation)));
+
+    const store = await readAutomationStore(workspaceRoot, workspaceId);
+    expect(store.items.map((item) => item.id).sort()).toEqual(automations.map((item) => item.id).sort());
+  });
+});
+
 async function withWorkspace(fn: (workspaceRoot: string) => Promise<void>): Promise<void> {
   const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-automation-store-"));
   try {
@@ -159,6 +192,27 @@ async function withWorkspace(fn: (workspaceRoot: string) => Promise<void>): Prom
   } finally {
     await rm(workspaceRoot, { recursive: true, force: true });
   }
+}
+
+async function writeLegacyStore(workspaceRoot: string): Promise<string> {
+  const legacyStore = {
+    schemaVersion: 1,
+    updatedAt: Date.parse("2026-06-01T10:00:00.000Z"),
+    items: [{
+      id: "agentlab_daily",
+      name: "Legacy Daily",
+      enabled: true,
+      schedule: { kind: "daily", hour: 9, minute: 0 },
+      prompt: "Legacy prompt",
+      createdAt: Date.parse("2026-06-01T10:00:00.000Z"),
+      lastRunAt: Date.parse("2026-06-02T09:00:00.000Z"),
+      lastRunSessionId: "ses_legacy",
+    }],
+  };
+  const legacyPath = resolveLegacyAgentLabAutomationsPath(workspaceRoot);
+  await mkdir(join(workspaceRoot, ".opencode", "veslo", "agentlab"), { recursive: true });
+  await writeFile(legacyPath, JSON.stringify(legacyStore, null, 2) + "\n", "utf8");
+  return legacyPath;
 }
 
 function makeAutomation(overrides: Partial<VesloAutomation> = {}): VesloAutomation {
