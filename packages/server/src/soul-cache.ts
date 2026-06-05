@@ -1,0 +1,179 @@
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+
+import { resolveVesloDataDir } from "./audit.js";
+import type { SoulDocument, SoulScope } from "./soul-memory.js";
+import { exists } from "./utils.js";
+
+export type SoulCacheInput = {
+  dataDir?: string;
+};
+
+export type CacheSoulDocumentInput = SoulCacheInput & {
+  document: SoulDocument;
+};
+
+export type ReadCachedSoulDocumentInput = SoulCacheInput & {
+  scope: SoulScope;
+  ownerId: string;
+};
+
+export type SoulPendingEditDraft = {
+  scope: SoulScope;
+  ownerId: string;
+  content: string;
+  changeSummary: string;
+  baseVersionId: string | null;
+  createdAt: string;
+  createdBy: string;
+};
+
+export type SoulPendingEdit = SoulPendingEditDraft & {
+  id: string;
+  denSynced: false;
+};
+
+export type WritePendingSoulEditInput = SoulCacheInput & {
+  edit: SoulPendingEditDraft & {
+    id?: string;
+  };
+};
+
+const OWNER_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
+const PENDING_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+const resolveDataDir = (dataDir?: string): string => {
+  const trimmed = dataDir?.trim();
+  return trimmed ? resolve(trimmed) : resolveVesloDataDir();
+};
+
+export function soulCacheRoot(dataDir?: string): string {
+  return join(resolveDataDir(dataDir), "soul-cache");
+}
+
+export function soulCachePath(input: ReadCachedSoulDocumentInput): string {
+  return join(soulCacheRoot(input.dataDir), input.scope, `${normalizeOwnerId(input.ownerId)}.json`);
+}
+
+export function soulPendingCacheDir(dataDir?: string): string {
+  return join(soulCacheRoot(dataDir), "pending");
+}
+
+export function soulPendingEditPath(input: SoulCacheInput & { pendingEditId: string }): string {
+  return join(soulPendingCacheDir(input.dataDir), `${normalizePendingId(input.pendingEditId)}.json`);
+}
+
+function normalizeOwnerId(ownerId: string): string {
+  const normalized = ownerId.trim();
+  if (!OWNER_ID_PATTERN.test(normalized)) {
+    throw new Error("Soul cache owner id is invalid");
+  }
+  return normalized;
+}
+
+function normalizePendingId(pendingEditId: string): string {
+  const normalized = pendingEditId.trim();
+  if (!PENDING_ID_PATTERN.test(normalized)) {
+    throw new Error("Soul pending edit id is invalid");
+  }
+  return normalized;
+}
+
+function validateSoulDocumentForCache(document: SoulDocument): SoulDocument {
+  normalizeOwnerId(document.ownerId);
+  if (!["organization", "user", "workspace"].includes(document.scope)) {
+    throw new Error("Soul cache document scope is invalid");
+  }
+  if (!document.id.trim()) {
+    throw new Error("Soul cache document id is invalid");
+  }
+  if (!Array.isArray(document.versions)) {
+    throw new Error("Soul cache document versions are invalid");
+  }
+  return document;
+}
+
+function validateCachedSoulDocument(document: SoulDocument, scope: SoulScope, ownerId: string): SoulDocument {
+  const validated = validateSoulDocumentForCache(document);
+  if (validated.scope !== scope || validated.ownerId !== ownerId) {
+    throw new Error("Cached Soul document does not match requested scope and owner");
+  }
+  return validated;
+}
+
+function validatePendingEdit(edit: SoulPendingEdit): SoulPendingEdit {
+  normalizePendingId(edit.id);
+  normalizeOwnerId(edit.ownerId);
+  if (!["organization", "user", "workspace"].includes(edit.scope)) {
+    throw new Error("Soul pending edit scope is invalid");
+  }
+  if (edit.denSynced !== false) {
+    throw new Error("Soul pending edit must not be marked as Den-synced");
+  }
+  if (
+    !edit.content.trim()
+    || !edit.changeSummary.trim()
+    || !edit.createdAt.trim()
+    || !edit.createdBy.trim()
+    || !(edit.baseVersionId === null || typeof edit.baseVersionId === "string")
+  ) {
+    throw new Error("Soul pending edit is invalid");
+  }
+  return edit;
+}
+
+export async function cacheSoulDocument(input: CacheSoulDocumentInput): Promise<string> {
+  const document = validateSoulDocumentForCache(input.document);
+  const path = soulCachePath({ dataDir: input.dataDir, scope: document.scope, ownerId: document.ownerId });
+  await mkdir(join(soulCacheRoot(input.dataDir), document.scope), { recursive: true });
+  await writeFile(path, `${JSON.stringify(document, null, 2)}\n`, "utf8");
+  return path;
+}
+
+export async function readCachedSoulDocument(input: ReadCachedSoulDocumentInput): Promise<SoulDocument | null> {
+  const ownerId = normalizeOwnerId(input.ownerId);
+  const path = soulCachePath({ ...input, ownerId });
+  if (!(await exists(path))) return null;
+
+  try {
+    const parsed = JSON.parse(await readFile(path, "utf8")) as SoulDocument;
+    return validateCachedSoulDocument(parsed, input.scope, ownerId);
+  } catch {
+    return null;
+  }
+}
+
+export async function writePendingSoulEdit(input: WritePendingSoulEditInput): Promise<SoulPendingEdit> {
+  const edit = validatePendingEdit({
+    ...input.edit,
+    id: input.edit.id ?? `pending_${randomUUID()}`,
+    denSynced: false,
+  });
+  const path = soulPendingEditPath({ dataDir: input.dataDir, pendingEditId: edit.id });
+  await mkdir(soulPendingCacheDir(input.dataDir), { recursive: true });
+  await writeFile(path, `${JSON.stringify(edit, null, 2)}\n`, "utf8");
+  return edit;
+}
+
+export async function listPendingSoulEdits(input: SoulCacheInput = {}): Promise<SoulPendingEdit[]> {
+  const dir = soulPendingCacheDir(input.dataDir);
+  if (!(await exists(dir))) return [];
+
+  const edits: SoulPendingEdit[] = [];
+  const entries = (await readdir(dir, { withFileTypes: true }))
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+    .map((entry) => entry.name)
+    .sort();
+
+  for (const entry of entries) {
+    try {
+      const parsed = JSON.parse(await readFile(join(dir, entry), "utf8")) as SoulPendingEdit;
+      edits.push(validatePendingEdit(parsed));
+    } catch {
+      continue;
+    }
+  }
+
+  return edits;
+}
