@@ -425,13 +425,13 @@ export default function SoulView(props: SoulViewProps) {
 
       <Show when={activeModalSource()}>
         {(modalSource) => (
-          <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
             <div
               data-testid="soul-source-modal"
               role="dialog"
               aria-modal="true"
               aria-labelledby="soul-source-modal-title"
-              class="flex max-h-[calc(100vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-dls-border bg-dls-bg shadow-xl"
+              class="flex max-h-[calc(100vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-dls-border bg-dls-surface shadow-2xl"
             >
               <div class="flex items-start justify-between gap-4 border-b border-dls-border bg-dls-surface px-4 py-3">
                 <div class="min-w-0">
@@ -566,7 +566,7 @@ export default function SoulView(props: SoulViewProps) {
               <span class="text-sm font-medium text-dls-text">{translate("soul.editor_content")}</span>
               <textarea
                 data-testid="soul-editor-content"
-                class="mt-2 min-h-[20rem] w-full resize-y rounded-lg border border-dls-border bg-dls-bg px-3 py-3 font-mono text-sm leading-6 text-dls-text outline-none transition-colors focus:border-blue-8 read-only:text-dls-secondary"
+                class="mt-2 min-h-[20rem] w-full resize-y rounded-lg border border-dls-border bg-dls-surface px-3 py-3 font-mono text-sm leading-6 text-dls-text outline-none transition-colors focus:border-blue-8 read-only:text-dls-secondary"
                 value={content()}
                 placeholder={translate("soul.detail_empty")}
                 readOnly={!selectedCanEdit() || detailLoading() || savePending()}
@@ -578,7 +578,8 @@ export default function SoulView(props: SoulViewProps) {
               <label class="block">
                 <span class="text-sm font-medium text-dls-text">{translate("soul.change_summary")}</span>
                 <input
-                  class="mt-2 w-full rounded-lg border border-dls-border bg-dls-bg px-3 py-2 text-sm text-dls-text outline-none transition-colors focus:border-blue-8 disabled:text-dls-secondary"
+                  data-testid="soul-change-summary"
+                  class="mt-2 w-full rounded-lg border border-dls-border bg-dls-surface px-3 py-2 text-sm text-dls-text outline-none transition-colors focus:border-blue-8 disabled:text-dls-secondary"
                   value={changeSummary()}
                   placeholder={translate("soul.change_summary_placeholder")}
                   disabled={!selectedCanEdit() || savePending()}
@@ -639,7 +640,7 @@ export default function SoulView(props: SoulViewProps) {
                         class={`w-full rounded-lg border px-3 py-2 text-left transition-colors ${
                           selected()
                             ? "border-blue-8 bg-blue-3/30"
-                            : "border-dls-border bg-dls-bg hover:border-blue-7/50 hover:bg-dls-hover/40"
+                            : "border-dls-border bg-dls-surface hover:border-blue-7/50 hover:bg-dls-hover/40"
                         }`}
                         onClick={() => previewVersion(version.id)}
                       >
@@ -670,7 +671,7 @@ export default function SoulView(props: SoulViewProps) {
               </div>
             </Show>
 
-            <div class="rounded-lg border border-dls-border bg-dls-bg p-3">
+            <div class="rounded-lg border border-dls-border bg-dls-surface p-3">
               <div class="mb-2 flex items-center justify-between gap-3">
                 <div class="text-sm font-medium text-dls-text">{translate("soul.preview_title")}</div>
                 <Show when={selectedVersion()}>

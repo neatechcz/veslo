@@ -32,6 +32,28 @@ type FixtureSkill = {
   archive: PackageArchive;
 };
 
+type SoulScope = 'organization' | 'user';
+
+type SoulVersion = {
+  id: string;
+  content: string;
+  changeSummary: string;
+  createdAt: string;
+  createdBy: string;
+  source: 'manual' | 'api' | 'heartbeat' | 'restore' | 'system';
+  baseVersionId: string | null;
+  restoreSourceVersionId: string | null;
+};
+
+type SoulDocument = {
+  id: string;
+  scope: SoulScope;
+  ownerId: string;
+  currentVersionId: string | null;
+  heartbeatEnabled: boolean;
+  versions: SoulVersion[];
+};
+
 export const E2E_SKILL_REGISTRY_ORG_ID = 'org_veslo_e2e_default';
 export const E2E_SKILL_REGISTRY_USER_ID = 'user_veslo_e2e_default';
 export const E2E_SKILL_REGISTRY_TOKEN = 'veslo-e2e-default-token';
@@ -198,6 +220,8 @@ let deletedInstallationIds = new Set<string>();
 let deletedInstallationCalls: string[] = [];
 let disabledRolloutPolicyIds = new Set<string>();
 let updatedRolloutPolicyCalls: Array<{ policyId: string; enabled: boolean | null }> = [];
+let soulVersionSeq = 1;
+let soulDocuments = createDefaultSoulDocuments();
 
 const fixtureInfoPath = () => join(process.cwd(), '.tmp-skill-registry-fixture.json');
 
@@ -209,6 +233,140 @@ function currentSkillSetRevision(): string {
   return useUpdatedRuntimeVersion
     ? E2E_SKILL_REGISTRY_FIXTURE.workspaceSkillSetUpdatedRevision
     : E2E_SKILL_REGISTRY_FIXTURE.workspaceSkillSetRevision;
+}
+
+function soulVersion(input: {
+  id: string;
+  content: string;
+  changeSummary: string;
+  createdBy: string;
+  createdAt?: string;
+  source?: SoulVersion['source'];
+  baseVersionId?: string | null;
+  restoreSourceVersionId?: string | null;
+}): SoulVersion {
+  return {
+    id: input.id,
+    content: input.content,
+    changeSummary: input.changeSummary,
+    createdAt: input.createdAt ?? '2026-06-06T10:00:00.000Z',
+    createdBy: input.createdBy,
+    source: input.source ?? 'api',
+    baseVersionId: input.baseVersionId ?? null,
+    restoreSourceVersionId: input.restoreSourceVersionId ?? null,
+  };
+}
+
+function soulDocument(scope: SoulScope, ownerId: string, version: SoulVersion): SoulDocument {
+  return {
+    id: `${scope}_${ownerId}`,
+    scope,
+    ownerId,
+    currentVersionId: version.id,
+    heartbeatEnabled: false,
+    versions: [version],
+  };
+}
+
+function createDefaultSoulDocuments(): Record<SoulScope, SoulDocument> {
+  soulVersionSeq = 1;
+  return {
+    organization: soulDocument('organization', E2E_SKILL_REGISTRY_ORG_ID, soulVersion({
+      id: 'org_soul_v1',
+      content: '# Organization Soul\n\n- Existing organization memory',
+      changeSummary: 'Initial organization Soul',
+      createdBy: E2E_SKILL_REGISTRY_USER_ID,
+    })),
+    user: soulDocument('user', E2E_SKILL_REGISTRY_USER_ID, soulVersion({
+      id: 'user_soul_v1',
+      content: '# User Soul\n\n- Existing user memory',
+      changeSummary: 'Initial user Soul',
+      createdBy: E2E_SKILL_REGISTRY_USER_ID,
+    })),
+  };
+}
+
+function requestHeader(req: IncomingMessage, name: string): string {
+  const value = req.headers[name.toLowerCase()];
+  return Array.isArray(value) ? value[0]?.trim() ?? '' : value?.trim() ?? '';
+}
+
+function soulOwnerId(scope: SoulScope, req: IncomingMessage): string {
+  if (scope === 'organization') {
+    return requestHeader(req, 'x-veslo-den-org-id') || requestHeader(req, 'x-veslo-org-id') || E2E_SKILL_REGISTRY_ORG_ID;
+  }
+  return requestHeader(req, 'x-veslo-den-user-id') || requestHeader(req, 'x-veslo-user-id') || E2E_SKILL_REGISTRY_USER_ID;
+}
+
+function ensureSoulDocumentOwner(scope: SoulScope, req: IncomingMessage): SoulDocument {
+  const ownerId = soulOwnerId(scope, req);
+  const current = soulDocuments[scope];
+  if (current.ownerId === ownerId) return current;
+  const version = soulVersion({
+    id: `${scope}_soul_v1`,
+    content: scope === 'organization' ? '# Organization Soul' : '# User Soul',
+    changeSummary: `Initial ${scope} Soul`,
+    createdBy: requestHeader(req, 'x-veslo-den-user-id') || E2E_SKILL_REGISTRY_USER_ID,
+  });
+  const next = soulDocument(scope, ownerId, version);
+  soulDocuments = { ...soulDocuments, [scope]: next };
+  return next;
+}
+
+function updateSoulDocument(scope: SoulScope, req: IncomingMessage, body: Record<string, unknown>): SoulDocument {
+  const current = ensureSoulDocumentOwner(scope, req);
+  const content = typeof body.content === 'string' ? body.content : '';
+  const changeSummary = typeof body.changeSummary === 'string' ? body.changeSummary : '';
+  const baseVersionId = body.baseVersionId === null || typeof body.baseVersionId === 'string' ? body.baseVersionId : null;
+  if (!content.trim() || !changeSummary.trim()) {
+    throw new Error('invalid_soul_update');
+  }
+  if (baseVersionId && current.currentVersionId && baseVersionId !== current.currentVersionId) {
+    throw new Error('soul_conflict');
+  }
+
+  const version = soulVersion({
+    id: `${scope}_soul_v${++soulVersionSeq}`,
+    content,
+    changeSummary,
+    createdAt: new Date().toISOString(),
+    createdBy: requestHeader(req, 'x-veslo-den-user-id') || E2E_SKILL_REGISTRY_USER_ID,
+    baseVersionId,
+  });
+  const updated = {
+    ...current,
+    currentVersionId: version.id,
+    versions: [...current.versions, version],
+  };
+  soulDocuments = { ...soulDocuments, [scope]: updated };
+  return updated;
+}
+
+function restoreSoulDocument(scope: SoulScope, req: IncomingMessage, versionId: string, body: Record<string, unknown>): SoulDocument {
+  const current = ensureSoulDocumentOwner(scope, req);
+  const source = current.versions.find((version) => version.id === versionId);
+  if (!source) {
+    throw new Error('soul_not_found');
+  }
+  const version = soulVersion({
+    id: `${scope}_soul_restore_${++soulVersionSeq}`,
+    content: source.content,
+    changeSummary: typeof body.changeSummary === 'string' && body.changeSummary.trim()
+      ? body.changeSummary
+      : `Restore ${scope} Soul`,
+    createdAt: new Date().toISOString(),
+    createdBy: requestHeader(req, 'x-veslo-den-user-id') || E2E_SKILL_REGISTRY_USER_ID,
+    source: 'restore',
+    baseVersionId: current.currentVersionId,
+    restoreSourceVersionId: source.id,
+  });
+  const restored = {
+    ...current,
+    currentVersionId: version.id,
+    versions: [...current.versions, version],
+  };
+  soulDocuments = { ...soulDocuments, [scope]: restored };
+  return restored;
 }
 
 function json(res: ServerResponse, status: number, payload: unknown): void {
@@ -279,6 +437,7 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
     deletedInstallationCalls = [];
     disabledRolloutPolicyIds = new Set();
     updatedRolloutPolicyCalls = [];
+    soulDocuments = createDefaultSoulDocuments();
     json(res, 200, { ok: true, mode: 'initial' });
     return;
   }
@@ -304,6 +463,60 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
       orgRolloutTool,
     ].map((skill) => [skill.versionId, skill]),
   );
+
+  const soulDocumentMatch = /^\/v1\/soul\/(organization|user)$/.exec(url.pathname);
+  if (soulDocumentMatch?.[1]) {
+    const scope = soulDocumentMatch[1] as SoulScope;
+    if (req.method === 'GET') {
+      json(res, 200, ensureSoulDocumentOwner(scope, req));
+      return;
+    }
+    if (req.method === 'PATCH') {
+      readJsonBody(req, (body) => {
+        try {
+          json(res, 200, updateSoulDocument(scope, req, body));
+        } catch (error) {
+          const code = error instanceof Error ? error.message : 'invalid_soul_update';
+          json(res, code === 'soul_conflict' ? 409 : 400, { code });
+        }
+      });
+      return;
+    }
+  }
+
+  const soulVersionsMatch = /^\/v1\/soul\/(organization|user)\/versions$/.exec(url.pathname);
+  if (req.method === 'GET' && soulVersionsMatch?.[1]) {
+    const scope = soulVersionsMatch[1] as SoulScope;
+    json(res, 200, { versions: ensureSoulDocumentOwner(scope, req).versions, nextCursor: null });
+    return;
+  }
+
+  const soulVersionMatch = /^\/v1\/soul\/(organization|user)\/versions\/([^/]+)$/.exec(url.pathname);
+  if (req.method === 'GET' && soulVersionMatch?.[1] && soulVersionMatch[2]) {
+    const scope = soulVersionMatch[1] as SoulScope;
+    const versionId = decodeURIComponent(soulVersionMatch[2]);
+    const version = ensureSoulDocumentOwner(scope, req).versions.find((item) => item.id === versionId);
+    if (!version) {
+      json(res, 404, { code: 'not_found', message: 'Soul version not found' });
+      return;
+    }
+    json(res, 200, version);
+    return;
+  }
+
+  const soulRestoreMatch = /^\/v1\/soul\/(organization|user)\/versions\/([^/]+)\/restore$/.exec(url.pathname);
+  if (req.method === 'POST' && soulRestoreMatch?.[1] && soulRestoreMatch[2]) {
+    const scope = soulRestoreMatch[1] as SoulScope;
+    const versionId = decodeURIComponent(soulRestoreMatch[2]);
+    readJsonBody(req, (body) => {
+      try {
+        json(res, 200, restoreSoulDocument(scope, req, versionId, body));
+      } catch {
+        json(res, 404, { code: 'not_found', message: 'Soul version not found' });
+      }
+    });
+    return;
+  }
 
   const workspaceSkillSetMatch = /^\/v1\/workspaces\/([^/]+)\/skill-set$/.exec(url.pathname);
   if (workspaceSkillSetMatch?.[1]) {
@@ -446,6 +659,7 @@ export async function stopSkillRegistryFixture(): Promise<void> {
   deletedInstallationCalls = [];
   disabledRolloutPolicyIds = new Set();
   updatedRolloutPolicyCalls = [];
+  soulDocuments = createDefaultSoulDocuments();
   rmSync(fixtureInfoPath(), { force: true });
   if (!server) return;
   await new Promise<void>((resolve, reject) => {
