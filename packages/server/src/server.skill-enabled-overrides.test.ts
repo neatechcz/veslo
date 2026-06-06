@@ -359,6 +359,57 @@ test("PATCH /skills/enabled-state emits reload events for user-global skill chan
   }
 });
 
+test("PATCH /skills/enabled-state emits reload events for platform skill changes", async () => {
+  const previousHome = process.env.HOME;
+  const homeDir = await tempDir("veslo-skill-enabled-route-platform-event-home-");
+  process.env.HOME = homeDir;
+  try {
+    const { server } = await startFixture();
+    const skillPath = await createGlobalSkill(homeDir, "platform-event-skill");
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/skills/enabled-state`, {
+      method: "PATCH",
+      headers: {
+        ...clientHeaders,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        enabled: false,
+        target: {
+          name: "platform-event-skill",
+          scope: "platform",
+          path: skillPath,
+        },
+      }),
+    });
+    expect(response.status).toBe(200);
+
+    const eventsResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/events`, {
+      headers: clientHeaders,
+    });
+    const eventsPayload = await readJson(eventsResponse) as {
+      items?: Array<{ reason?: string; trigger?: { name?: string; action?: string } }>;
+    };
+
+    expect(eventsResponse.status).toBe(200);
+    expect(eventsPayload.items).toMatchObject([
+      {
+        reason: "skills",
+        trigger: {
+          name: "platform-event-skill",
+          action: "updated",
+        },
+      },
+    ]);
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+  }
+});
+
 test("GET /workspace/:id/skills excludes disabled skills by default", async () => {
   const previousHome = process.env.HOME;
   const homeDir = await tempDir("veslo-skill-enabled-route-home-");
@@ -411,6 +462,54 @@ test("GET /workspace/:id/skills excludes disabled skills by default", async () =
   }
 });
 
+test("GET /workspace/:id/skills excludes platform disabled global skills by path", async () => {
+  const previousHome = process.env.HOME;
+  const homeDir = await tempDir("veslo-skill-enabled-route-platform-home-");
+  process.env.HOME = homeDir;
+  try {
+    const { dataDir, server } = await startFixture();
+    const skillPath = await createGlobalSkill(homeDir, "platform-runtime-skill");
+    await setSkillEnabledState({
+      dataDir,
+      target: {
+        name: "platform-runtime-skill",
+        scope: "platform",
+        path: skillPath,
+      },
+      enabled: false,
+      actor: { type: "host" },
+    });
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/skills?includeGlobal=true`, {
+      headers: clientHeaders,
+    });
+    const body = await readJson(response);
+
+    expect(response.status).toBe(200);
+    expect(body.items).toEqual([]);
+
+    const includeDisabled = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/skills?includeGlobal=true&includeDisabled=true`,
+      { headers: clientHeaders },
+    );
+    const includeDisabledBody = await readJson(includeDisabled);
+    expect(includeDisabled.status).toBe(200);
+    expect(includeDisabledBody.items).toMatchObject([
+      {
+        name: "platform-runtime-skill",
+        enabled: false,
+        disabledReason: "user",
+      },
+    ]);
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+  }
+});
+
 test("GET /workspace/:id/skills includeDisabled returns disabled skills with enabled false", async () => {
   const { dataDir, workspaceRoot, server } = await startFixture();
   const disabledPath = await createWorkspaceSkill(workspaceRoot, "included-disabled-skill");
@@ -440,6 +539,54 @@ test("GET /workspace/:id/skills includeDisabled returns disabled skills with ena
     enabled: false,
     disabledReason: "user",
   });
+});
+
+test("GET /skills/user-global/:name exact path respects disabled filtering", async () => {
+  const previousHome = process.env.HOME;
+  const homeDir = await tempDir("veslo-skill-enabled-route-global-read-home-");
+  process.env.HOME = homeDir;
+  try {
+    const { dataDir, server } = await startFixture();
+    const skillPath = await createGlobalSkill(homeDir, "global-read-disabled-skill");
+    await setSkillEnabledState({
+      dataDir,
+      target: {
+        name: "global-read-disabled-skill",
+        scope: "user-global",
+        path: skillPath,
+      },
+      enabled: false,
+      actor: { type: "host" },
+    });
+
+    const query = new URLSearchParams({ path: skillPath });
+    const filtered = await fetch(
+      `http://127.0.0.1:${server.port}/skills/user-global/global-read-disabled-skill?${query}`,
+      { headers: clientHeaders },
+    );
+    expect(filtered.status).toBe(404);
+
+    query.set("includeDisabled", "true");
+    const included = await fetch(
+      `http://127.0.0.1:${server.port}/skills/user-global/global-read-disabled-skill?${query}`,
+      { headers: clientHeaders },
+    );
+    const body = await readJson(included);
+
+    expect(included.status).toBe(200);
+    expect(body.item).toMatchObject({
+      name: "global-read-disabled-skill",
+      path: skillPath,
+      enabled: false,
+      disabledReason: "user",
+    });
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+  }
 });
 
 test("GET /workspace/:id/skills/:name exact path respects disabled filtering", async () => {

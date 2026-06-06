@@ -22,6 +22,7 @@ import {
   deleteGlobalSkillRecoverable,
   deleteSkillAtPathRecoverable,
   deleteSkillRecoverable,
+  disabledRecordMatchesSkill,
   listSkills,
   readGlobalSkillAtPath,
   readSkillAtPath,
@@ -6172,7 +6173,7 @@ function createRoutes(
     };
     if (workspace) {
       emitReloadEvent(ctx.reloadEvents, workspace, "skills", reloadTrigger);
-    } else if (target.scope === "user-global") {
+    } else if (target.scope === "user-global" || target.scope === "organization" || target.scope === "platform") {
       for (const configuredWorkspace of config.workspaces) {
         emitReloadEvent(ctx.reloadEvents, configuredWorkspace, "skills", reloadTrigger);
       }
@@ -6192,13 +6193,22 @@ function createRoutes(
       throw new ApiError(400, "invalid_skill_path", "User-global exact skill read requires path");
     }
     const result = await readGlobalSkillAtPath({ name, path: instancePath });
+    const item = {
+      name,
+      path: result.path,
+      description: "",
+      scope: "global" as const,
+    };
+    const disabledSkills = await listDisabledSkills({
+      dataDir: serverDataDir,
+      includeGlobal: true,
+    });
+    const disabled = disabledSkills.some((record) => disabledRecordMatchesSkill(record, item, undefined));
+    if (disabled && ctx.url.searchParams.get("includeDisabled") !== "true") {
+      throw new ApiError(404, "skill_not_found", `Skill not found: ${name}`);
+    }
     return jsonResponse({
-      item: {
-        name,
-        path: result.path,
-        description: "",
-        scope: "global",
-      },
+      item: disabled ? { ...item, enabled: false, disabledReason: "user" } : item,
       content: result.content,
     });
   });

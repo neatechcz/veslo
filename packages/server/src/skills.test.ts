@@ -176,3 +176,56 @@ test("listSkills path matching keeps disabled scope boundaries", async () => {
   expect(items).toHaveLength(1);
   expect(items[0]?.enabled).not.toBe(false);
 });
+
+test("listSkills path matching applies platform disabled records to materialized global skills", async () => {
+  const previousHome = process.env.HOME;
+  const homeDir = await mkdtemp(join(tmpdir(), "veslo-skills-disabled-platform-home-"));
+  const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-skills-disabled-platform-workspace-"));
+  tempDirs.push(homeDir, workspaceRoot);
+  process.env.HOME = homeDir;
+
+  try {
+    await mkdir(join(workspaceRoot, ".git"), { recursive: true });
+    const skillDir = join(homeDir, ".config", "opencode", "skills", "platform-skill");
+    await mkdir(skillDir, { recursive: true });
+    const skillPath = join(skillDir, "SKILL.md");
+    await writeFile(
+      skillPath,
+      "---\nname: platform-skill\ndescription: Platform skill\n---\n\n# Platform\n",
+      "utf8",
+    );
+
+    const disabledSkills = [
+      {
+        id: "platform-disabled",
+        name: "platform-skill",
+        scope: "platform" as const,
+        path: skillPath,
+        disabledAt: new Date(0).toISOString(),
+      },
+    ];
+
+    const filtered = await listSkills(workspaceRoot, {
+      includeGlobal: true,
+      disabledSkills,
+      workspaceId: "ws_1",
+    });
+    expect(filtered).toEqual([]);
+
+    const included = await listSkills(workspaceRoot, {
+      includeGlobal: true,
+      includeDisabled: true,
+      disabledSkills,
+      workspaceId: "ws_1",
+    });
+    expect(included).toHaveLength(1);
+    expect(included[0]?.enabled).toBe(false);
+    expect(included[0]?.disabledReason).toBe("user");
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+  }
+});

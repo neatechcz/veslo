@@ -138,15 +138,15 @@ function normalizeListSkillsOptions(includeGlobalOrOptions: boolean | ListSkills
   };
 }
 
-function disabledRecordMatchesSkill(
+export function disabledRecordMatchesSkill(
   record: DisabledSkillRecord,
   item: SkillItem,
   workspaceId: string | undefined,
 ): boolean {
   const scope = item.scope === "project" ? "workspace" : "user-global";
   if (record.path) {
-    if (record.scope !== scope) return false;
     if (resolve(record.path) !== resolve(item.path)) return false;
+    if (record.scope !== scope && record.scope !== "organization" && record.scope !== "platform") return false;
     return !record.workspaceId || !workspaceId || record.workspaceId === workspaceId;
   }
 
