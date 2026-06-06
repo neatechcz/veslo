@@ -2,9 +2,19 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+const readOptionalSource = (path: string) => {
+  try {
+    return readFileSync(new URL(path, import.meta.url), "utf8");
+  } catch {
+    return "";
+  }
+};
+
 const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 const sessionSource = readFileSync(new URL("./session.tsx", import.meta.url), "utf8");
 const typesSource = readFileSync(new URL("../types.ts", import.meta.url), "utf8");
+const pickerSource = readOptionalSource("../components/session/composer-target-picker.tsx");
+const conflictSource = readOptionalSource("../components/session/composer-target-conflict-modal.tsx");
 
 test("session view receives composer target picker state from app", () => {
   assert.match(typesSource, /export type ComposerTargetOption = \{/);
@@ -33,4 +43,14 @@ test("switchComposerTarget returns conflict before mutating active draft", () =>
 
 test("switchComposerTarget blocks when an existing destination draft cannot be loaded", () => {
   assert.match(appSource, /if \(destinationSummary && !destinationDraft\) \{/);
+});
+
+test("target picker and conflict modal expose stable test hooks", () => {
+  assert.match(pickerSource, /data-testid="composer-target-picker"/);
+  assert.match(pickerSource, /data-testid="composer-target-option"/);
+  assert.match(pickerSource, /session\.target_draft_badge/);
+  assert.match(conflictSource, /data-testid="composer-target-conflict-modal"/);
+  assert.match(conflictSource, /data-testid="composer-target-use-current"/);
+  assert.match(conflictSource, /data-testid="composer-target-load-existing"/);
+  assert.match(conflictSource, /session\.target_conflict_escape_hint/);
 });
