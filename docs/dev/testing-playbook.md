@@ -91,6 +91,29 @@ pnpm test
 
 `tauri-pilot` is the desktop test driver. The E2E build includes `tauri-plugin-pilot` behind the `e2e` Cargo feature, and `packages/e2e` launches the debug Tauri binary with a deterministic `TAURI_PILOT_SOCKET`. Install the matching CLI when the environment does not already provide it:
 
+The E2E launcher uses an isolated app profile under `packages/e2e/.tmp-veslo-home` by default so local desktop state does not leak into tests. Set `E2E_USE_EXISTING_PROFILE=1` only when a test explicitly needs the current user profile.
+
+For core platform skill materialization coverage, build with the pilot-enabled E2E config and run the targeted pilot script:
+
+Prerequisite: the `tauri-pilot` CLI must be on `PATH`. If it is installed elsewhere, set `E2E_TAURI_PILOT_BIN=/absolute/path/to/tauri-pilot`.
+
+```bash
+# First run the Desktop Test Runtime Preflight above.
+
+pnpm --filter veslo-server build:bin
+VESLO_SIDECAR_FORCE_BUILD=1 pnpm --filter @neatech/veslo run prepare:sidecar
+
+cd packages/desktop
+pnpm tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json -- --features e2e
+
+cd ../e2e
+pnpm test:pilot:core-platform-skills
+```
+
+The pilot config uses the isolated `com.neatech.veslo.e2e` app identifier and enables `pilot:default` only for the E2E build. Do not add pilot permissions to the default desktop capability.
+
+For Windows sidecar-launch changes, also run the clean-profile runtime probe after the Tauri E2E build:
+
 ```bash
 cargo install tauri-pilot-cli --version 0.7.1 --locked
 ```
@@ -135,9 +158,7 @@ Run server tests if relevant, and rebuild the server binary used by orchestrator
 pnpm --filter veslo-server build:bin
 ```
 
-If app behavior depends on that server change, verify the app against the rebuilt binary.
-Desktop E2E builds also run `packages/desktop/scripts/prepare-sidecar.mjs`, which rebuilds the bundled
-`veslo-server` sidecar from current server sources so the Tauri runtime does not reuse a stale local sidecar.
+If app behavior depends on that server change, refresh the desktop sidecar with `VESLO_SIDECAR_FORCE_BUILD=1 pnpm --filter @neatech/veslo run prepare:sidecar` and verify the app against the rebuilt binary.
 
 ### Orchestrator changes
 

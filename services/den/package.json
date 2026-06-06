@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/copy-core-platform-skill-assets.mjs",
     "start": "node dist/index.js",
     "test": "tsx --test test/**/*.test.ts",
     "test:desktop-auth-v2": "tsx --test test/desktop-auth-v2-contract.test.ts",

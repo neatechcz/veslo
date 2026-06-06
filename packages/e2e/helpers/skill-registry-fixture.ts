@@ -1,13 +1,16 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { join } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { TextDecoder } from 'node:util';
 
 type PackageFile = {
   path: string;
   sha256: string;
   sizeBytes: number;
   mediaType: string;
+  executable?: boolean;
   text?: string;
   contentBase64: string;
 };
@@ -20,6 +23,8 @@ type PackageArchive = {
   metadata: {
     name: string;
     description?: string;
+    tags?: string[];
+    language?: string;
   };
 };
 
@@ -28,7 +33,7 @@ type FixtureSkill = {
   skillId: string;
   installationId: string;
   versionId: string;
-  source: 'personal' | 'workspace' | 'organization';
+  source: 'personal' | 'workspace' | 'organization' | 'platform';
   archive: PackageArchive;
 };
 
@@ -59,8 +64,16 @@ export const E2E_SKILL_REGISTRY_USER_ID = 'user_veslo_e2e_default';
 export const E2E_SKILL_REGISTRY_TOKEN = 'veslo-e2e-default-token';
 export const E2E_SKILL_REGISTRY_WORKSPACE_ID = 'e2e-visual-workspace';
 
-function sha256(value: string): string {
-  return createHash('sha256').update(value).digest('hex');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const REPO_ROOT = resolve(__dirname, '..', '..', '..');
+const CORE_PLATFORM_SKILL_ASSETS_ROOT = join(REPO_ROOT, 'services', 'den', 'src', 'skills', 'core-platform-skill-assets');
+const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true });
+
+function sha256(value: Buffer | string): string {
+  return createHash('sha256')
+    .update(typeof value === 'string' ? value : new Uint8Array(value))
+    .digest('hex');
 }
 
 function stableStringify(value: unknown): string {
@@ -74,22 +87,64 @@ function stableStringify(value: unknown): string {
     .join(',')}}`;
 }
 
-function archiveFile(path: string, text: string, mediaType = 'text/markdown'): PackageFile {
-  const bytes = Buffer.from(text, 'utf8');
+function textForFile(bytes: Buffer, mediaType: string): string | undefined {
+  if (
+    !mediaType.startsWith('text/') &&
+    mediaType !== 'application/json' &&
+    mediaType !== 'application/yaml' &&
+    mediaType !== 'image/svg+xml'
+  ) {
+    return undefined;
+  }
+
+  try {
+    return UTF8_DECODER.decode(new Uint8Array(bytes));
+  } catch {
+    return undefined;
+  }
+}
+
+function archiveFileFromBytes(path: string, bytes: Buffer, mediaType: string, executable = false): PackageFile {
+  const text = textForFile(bytes, mediaType);
   return {
     path,
-    sha256: sha256(text),
+    sha256: sha256(bytes),
     sizeBytes: bytes.byteLength,
     mediaType,
-    text,
+    ...(executable ? { executable: true } : {}),
+    ...(text !== undefined ? { text } : {}),
     contentBase64: bytes.toString('base64'),
   };
+}
+
+function archiveFile(path: string, text: string, mediaType = 'text/markdown'): PackageFile {
+  const bytes = Buffer.from(text, 'utf8');
+  return archiveFileFromBytes(path, bytes, mediaType);
 }
 
 function comparePackagePaths(left: PackageFile, right: PackageFile): number {
   if (left.path < right.path) return -1;
   if (left.path > right.path) return 1;
   return 0;
+}
+
+function buildArchiveFromFiles(
+  metadata: PackageArchive['metadata'],
+  files: PackageFile[],
+): PackageArchive {
+  const sortedFiles = [...files].sort(comparePackagePaths);
+  const manifestWithoutHash = {
+    schemaVersion: 1,
+    entrypoint: 'SKILL.md',
+    files: sortedFiles.map(({ contentBase64: _contentBase64, ...file }) => file),
+    metadata,
+  };
+  const packageSha256 = sha256(stableStringify(manifestWithoutHash));
+  return {
+    ...manifestWithoutHash,
+    files: sortedFiles,
+    packageSha256,
+  } as PackageArchive;
 }
 
 function buildArchive(name: string, description: string): PackageArchive {
@@ -109,20 +164,9 @@ function buildArchive(name: string, description: string): PackageArchive {
       ].join('\n'),
     ),
     archiveFile('scripts/run.txt', `${name}\n`, 'text/plain'),
-  ].sort(comparePackagePaths);
+  ];
   const metadata = { name, description };
-  const manifestWithoutHash = {
-    schemaVersion: 1,
-    entrypoint: 'SKILL.md',
-    files: files.map(({ contentBase64, ...file }) => file),
-    metadata,
-  };
-  const packageSha256 = sha256(stableStringify(manifestWithoutHash));
-  return {
-    ...manifestWithoutHash,
-    files,
-    packageSha256,
-  } as PackageArchive;
+  return buildArchiveFromFiles(metadata, files);
 }
 
 function fixtureSkill(input: Omit<FixtureSkill, 'archive'> & { description: string }): FixtureSkill {
@@ -199,6 +243,160 @@ const orgRolloutTool = fixtureSkill({
   description: 'Organization rollout tool materialized into user skills.',
 });
 
+type CorePlatformSkillName =
+  | 'veslo-docx'
+  | 'veslo-pdf'
+  | 'veslo-pptx'
+  | 'veslo-xlsx'
+  | 'skill-creator';
+
+type CorePlatformFixtureDefinition = {
+  name: CorePlatformSkillName;
+  sourcePack: string;
+  skillId: string;
+  policyId: string;
+  versionId: string;
+  description: string;
+  tags: string[];
+};
+
+const CORE_PLATFORM_FIXTURE_DEFINITIONS: CorePlatformFixtureDefinition[] = [
+  {
+    name: 'veslo-docx',
+    sourcePack: 'docx',
+    skillId: 'skill_e2e_core_platform_docx',
+    policyId: 'policy_e2e_core_platform_docx',
+    versionId: 'version_core_platform_docx_1',
+    description: 'Create, edit, analyze, convert, and validate Word DOCX documents using standard skill execution.',
+    tags: ['documents', 'docx', 'office', 'platform-core'],
+  },
+  {
+    name: 'veslo-pdf',
+    sourcePack: 'pdf',
+    skillId: 'skill_e2e_core_platform_pdf',
+    policyId: 'policy_e2e_core_platform_pdf',
+    versionId: 'version_core_platform_pdf_1',
+    description: 'Extract, create, merge, split, annotate, fill forms, and validate PDF documents using standard skill execution.',
+    tags: ['documents', 'pdf', 'office', 'platform-core'],
+  },
+  {
+    name: 'veslo-pptx',
+    sourcePack: 'pptx',
+    skillId: 'skill_e2e_core_platform_pptx',
+    policyId: 'policy_e2e_core_platform_pptx',
+    versionId: 'version_core_platform_pptx_1',
+    description: 'Create, edit, analyze, and visually validate PowerPoint PPTX presentations using standard skill execution.',
+    tags: ['presentations', 'pptx', 'office', 'platform-core'],
+  },
+  {
+    name: 'veslo-xlsx',
+    sourcePack: 'xlsx',
+    skillId: 'skill_e2e_core_platform_xlsx',
+    policyId: 'policy_e2e_core_platform_xlsx',
+    versionId: 'version_core_platform_xlsx_1',
+    description: 'Create, edit, analyze, recalculate, and validate Excel XLSX workbooks using standard skill execution.',
+    tags: ['spreadsheets', 'xlsx', 'office', 'platform-core'],
+  },
+  {
+    name: 'skill-creator',
+    sourcePack: 'skill-creator',
+    skillId: 'skill_e2e_core_platform_skill_creator',
+    policyId: 'policy_e2e_core_platform_skill_creator',
+    versionId: 'version_core_platform_skill_creator_1',
+    description: 'Create and update Veslo skills for user, workspace, organization, and public registry-backed distribution.',
+    tags: ['skills', 'registry', 'authoring', 'platform-core'],
+  },
+];
+
+function toPackagePath(path: string): string {
+  return sep === '/' ? path : path.split(sep).join('/');
+}
+
+function shouldSkipPackageFile(path: string): boolean {
+  return path.endsWith('.pyc') || path === 'scripts/test_quick_validate.py';
+}
+
+function mediaTypeForPath(path: string): string {
+  if (path.endsWith('.md')) return 'text/markdown';
+  if (path.endsWith('.py')) return 'text/x-python';
+  if (path.endsWith('.js')) return 'text/javascript';
+  if (path.endsWith('.css')) return 'text/css';
+  if (path.endsWith('.html')) return 'text/html';
+  if (path.endsWith('.json')) return 'application/json';
+  if (path.endsWith('.yaml') || path.endsWith('.yml')) return 'application/yaml';
+  if (path.endsWith('.xml') || path.endsWith('.xsd')) return 'text/xml';
+  if (path.endsWith('.tgz') || path.endsWith('.tar.gz')) return 'application/gzip';
+  return 'application/octet-stream';
+}
+
+function isExecutablePath(path: string): boolean {
+  return path.endsWith('.sh') || path.endsWith('.py');
+}
+
+function collectPackageFiles(root: string): string[] {
+  const files: string[] = [];
+  for (const entry of readdirSync(root).sort((left, right) => left.localeCompare(right))) {
+    if (entry === '__pycache__' || entry === '.DS_Store') continue;
+    const path = join(root, entry);
+    const stat = statSync(path);
+    if (stat.isDirectory()) {
+      files.push(...collectPackageFiles(path));
+    } else if (stat.isFile()) {
+      files.push(path);
+    }
+  }
+  return files;
+}
+
+function buildCorePlatformArchive(definition: CorePlatformFixtureDefinition): PackageArchive {
+  const packRoot = join(CORE_PLATFORM_SKILL_ASSETS_ROOT, definition.sourcePack);
+  const files = collectPackageFiles(packRoot)
+    .map((absolutePath) => {
+      const path = toPackagePath(relative(packRoot, absolutePath));
+      if (shouldSkipPackageFile(path)) return null;
+      return archiveFileFromBytes(
+        path,
+        readFileSync(absolutePath),
+        mediaTypeForPath(path),
+        isExecutablePath(path),
+      );
+    })
+    .filter((file): file is PackageFile => Boolean(file));
+
+  return buildArchiveFromFiles(
+    {
+      name: definition.name,
+      description: definition.description,
+      tags: definition.tags,
+      language: 'en',
+    },
+    files,
+  );
+}
+
+function corePlatformFixtureSkill(definition: CorePlatformFixtureDefinition): FixtureSkill {
+  return {
+    name: definition.name,
+    skillId: definition.skillId,
+    installationId: `rollout:${definition.policyId}`,
+    versionId: definition.versionId,
+    source: 'platform',
+    archive: buildCorePlatformArchive(definition),
+  };
+}
+
+const corePlatformSkills = CORE_PLATFORM_FIXTURE_DEFINITIONS.map(corePlatformFixtureSkill);
+const corePlatformSkillByPolicyId = new Map(
+  CORE_PLATFORM_FIXTURE_DEFINITIONS.map((definition, index) => [
+    definition.policyId,
+    {
+      definition,
+      skill: corePlatformSkills[index],
+    },
+  ]),
+);
+const corePlatformDocxSkill = corePlatformSkills.find((skill) => skill.name === 'veslo-docx') ?? corePlatformSkills[0];
+
 export const E2E_SKILL_REGISTRY_FIXTURE = {
   runtimeSkill,
   runtimeSkillUpdated,
@@ -207,7 +405,11 @@ export const E2E_SKILL_REGISTRY_FIXTURE = {
   personalShadowSkill,
   personalGlobalSkill,
   orgRolloutTool,
+  corePlatformDocxSkill,
+  corePlatformSkills,
   orgRolloutToolPolicyId: 'policy_e2e_org_rollout_tool',
+  corePlatformDocxPolicyId: 'policy_e2e_core_platform_docx',
+  corePlatformPolicyIds: CORE_PLATFORM_FIXTURE_DEFINITIONS.map((definition) => definition.policyId),
   workspaceSkillSetId: 'skill_set_e2e_org_workspace',
   workspaceSkillSetRevision: 'rev_e2e_org_workspace_1',
   workspaceSkillSetUpdatedRevision: 'rev_e2e_org_workspace_2',
@@ -317,7 +519,11 @@ function updateSoulDocument(scope: SoulScope, req: IncomingMessage, body: Record
   const current = ensureSoulDocumentOwner(scope, req);
   const content = typeof body.content === 'string' ? body.content : '';
   const changeSummary = typeof body.changeSummary === 'string' ? body.changeSummary : '';
-  const baseVersionId = body.baseVersionId === null || typeof body.baseVersionId === 'string' ? body.baseVersionId : null;
+  const rawBaseVersionId = body.baseVersionId;
+  let baseVersionId: string | null = null;
+  if (typeof rawBaseVersionId === 'string') {
+    baseVersionId = rawBaseVersionId;
+  }
   if (!content.trim() || !changeSummary.trim()) {
     throw new Error('invalid_soul_update');
   }
@@ -412,6 +618,32 @@ function rolloutPolicyForOrgRolloutTool() {
   };
 }
 
+function rolloutPolicyForCorePlatformDocx() {
+  return rolloutPolicyForCorePlatformSkill(E2E_SKILL_REGISTRY_FIXTURE.corePlatformDocxPolicyId);
+}
+
+function rolloutPolicyForCorePlatformSkill(policyId: string) {
+  const entry = corePlatformSkillByPolicyId.get(policyId);
+  if (!entry) {
+    throw new Error(`Unknown core platform skill rollout policy: ${policyId}`);
+  }
+  return {
+    id: policyId,
+    skillId: entry.skill.skillId,
+    versionId: entry.skill.versionId,
+    target: 'user-global',
+    audience: 'all-platform-users',
+    catalogScope: 'platform',
+    orgId: null,
+    enabled: !disabledRolloutPolicyIds.has(policyId),
+    updatePolicy: 'pinned',
+    releaseChannel: null,
+    removalPolicy: 'locked',
+    createdAt: '2026-06-06T00:00:00.000Z',
+    updatedAt: '2026-06-06T00:00:00.000Z',
+  };
+}
+
 function readJsonBody(req: IncomingMessage, callback: (body: Record<string, unknown>) => void): void {
   let raw = '';
   req.setEncoding('utf8');
@@ -461,6 +693,7 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
       personalShadowSkill,
       personalGlobalSkill,
       orgRolloutTool,
+      ...corePlatformSkills,
     ].map((skill) => [skill.versionId, skill]),
   );
 
@@ -548,6 +781,7 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
       personalShadowSkill,
       personalGlobalSkill,
       orgRolloutTool,
+      ...corePlatformSkills,
     ].find((candidate) => candidate.installationId === installationId);
     if (!skill) {
       json(res, 404, { code: 'not_found', message: 'Installation not found' });
@@ -591,8 +825,13 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
   if (url.pathname === '/v1/skill-rollout-policies') {
     const target = url.searchParams.get('target')?.trim() ?? '';
     const enabled = url.searchParams.get('enabled')?.trim() ?? '';
-    const policy = rolloutPolicyForOrgRolloutTool();
-    const policies = target === 'user-global' && (enabled !== 'true' || policy.enabled) ? [policy] : [];
+    const policies = target === 'user-global'
+      ? [
+          rolloutPolicyForOrgRolloutTool(),
+          ...E2E_SKILL_REGISTRY_FIXTURE.corePlatformPolicyIds.map(rolloutPolicyForCorePlatformSkill),
+        ]
+        .filter((policy) => enabled !== 'true' || policy.enabled)
+      : [];
     json(res, 200, { policies, nextCursor: null });
     return;
   }
@@ -608,8 +847,17 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
       if (policyId === E2E_SKILL_REGISTRY_FIXTURE.orgRolloutToolPolicyId && enabled === true) {
         disabledRolloutPolicyIds.delete(policyId);
       }
+      if (corePlatformSkillByPolicyId.has(policyId) && enabled === false) {
+        disabledRolloutPolicyIds.add(policyId);
+      }
+      if (corePlatformSkillByPolicyId.has(policyId) && enabled === true) {
+        disabledRolloutPolicyIds.delete(policyId);
+      }
       updatedRolloutPolicyCalls.push({ policyId, enabled });
-      json(res, 200, { policy: rolloutPolicyForOrgRolloutTool() });
+      const policy = corePlatformSkillByPolicyId.has(policyId)
+        ? rolloutPolicyForCorePlatformSkill(policyId)
+        : rolloutPolicyForOrgRolloutTool();
+      json(res, 200, { policy });
     });
     return;
   }

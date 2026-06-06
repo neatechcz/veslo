@@ -424,6 +424,13 @@ type ResolveReviewInput = {
   releaseChannel?: string | null
 }
 
+type FindPendingReviewRequestInput = {
+  skillId: string
+  versionId: string
+  scope: SkillApprovalScope
+  orgId?: string | null
+}
+
 export type SkillRegistryStoreSnapshot = {
   skills: StoredSkill[]
   versions: StoredVersion[]
@@ -457,6 +464,7 @@ export interface SkillRegistryStore {
   getWorkspaceSkillSet(context: SkillRegistryRouteContext, workspaceId: string): Promise<{ workspaceId: string; skills: RegistrySkillInstallation[] }>
   replaceWorkspaceSkillSet(context: SkillRegistryRouteContext, input: PatchWorkspaceSkillSetInput): Promise<{ workspaceId: string; skills: RegistrySkillInstallation[] }>
   createReviewRequest(context: SkillRegistryRouteContext, input: CreateReviewRequestInput): Promise<RegistryReviewResponse>
+  findPendingReviewRequest(context: SkillRegistryRouteContext, input: FindPendingReviewRequestInput): Promise<RegistryReviewResponse | null>
   approveReviewRequest(context: SkillRegistryRouteContext, input: ResolveReviewInput): Promise<RegistryReviewResponse | null>
   rejectReviewRequest(context: SkillRegistryRouteContext, input: ResolveReviewInput): Promise<RegistryReviewResponse | null>
   searchSkills(context: SkillRegistryRouteContext, filters: Record<string, unknown> & { query?: string | null }): Promise<{ query: string; skills: RegistrySkillSummary[]; nextCursor?: string | null }>
@@ -1183,6 +1191,25 @@ export class InMemorySkillRegistryStore implements SkillRegistryStore {
     }
     this.reviewRequests.set(request.id, request)
     return toReviewResponse(request)
+  }
+
+  async findPendingReviewRequest(context: SkillRegistryRouteContext, input: FindPendingReviewRequestInput) {
+    const skill = this.requireVisibleSkill(context, input.skillId)
+    const version = this.requireVersion(input.versionId)
+    if (version.skillId !== skill.id) {
+      throw new SkillRegistryStoreError(400, "version_skill_mismatch")
+    }
+    const orgId = input.scope === "org" ? input.orgId ?? skill.orgId ?? context.orgId ?? null : null
+    if (input.scope === "org" && !orgId) throw new SkillRegistryStoreError(400, "org_id_required")
+    validateReviewRequestTarget(context, skill, version, input.scope, orgId)
+    const request = Array.from(this.reviewRequests.values()).find((entry) =>
+      entry.skillId === skill.id &&
+      entry.versionId === version.id &&
+      entry.scope === input.scope &&
+      entry.status === "pending" &&
+      entry.orgId === orgId
+    )
+    return request ? toReviewResponse(request) : null
   }
 
   async approveReviewRequest(context: SkillRegistryRouteContext, input: ResolveReviewInput) {

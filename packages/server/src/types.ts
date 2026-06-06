@@ -169,11 +169,22 @@ export interface SkillItem {
   aliases?: string[];
   whenToUse?: string;
   paths?: string[];
+  registry?: SkillItemRegistryMetadata;
 }
 
 export type ManagedSkillSource = "personal" | "workspace" | "organization" | "platform";
 
 export type WorkspaceSkillWorkspaceScope = "personal" | "organization";
+
+export type SkillItemRegistryMetadata = {
+  skillId?: string;
+  installationId?: string;
+  policyId?: string;
+  versionId?: string;
+  packageSha256?: string;
+  source?: ManagedSkillSource;
+  removalPolicy?: WorkspaceSkillRolloutRemovalPolicy;
+};
 
 export type WorkspaceSkillSetWorkspace = {
   id: string;
@@ -247,6 +258,7 @@ export type ResolvedWorkspaceSkill = {
   packageSha256: string;
   source: ManagedSkillSource;
   target: "workspace" | "personal-global";
+  removalPolicy: WorkspaceSkillRolloutRemovalPolicy;
 };
 
 export type WorkspaceSkillMaterialization = {
@@ -256,8 +268,8 @@ export type WorkspaceSkillMaterialization = {
   versionId: string;
   packageSha256: string;
   source: ManagedSkillSource;
-  removalPolicy: WorkspaceSkillRolloutRemovalPolicy;
   target: "workspace" | "personal-global";
+  removalPolicy: WorkspaceSkillRolloutRemovalPolicy;
 };
 
 export type WorkspaceSkillConflict = {

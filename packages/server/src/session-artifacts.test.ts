@@ -309,17 +309,17 @@ describe("deriveLatestRunArtifacts", () => {
     expect(files(artifacts)).toEqual([]);
   });
 
-  test("does not turn SKILL.md, internal prompts, AGENTS.md, or .opencode plumbing into generic Files artifacts", () => {
+  test("does not turn SKILL.md, workspace instructions, AGENTS.md, or .opencode plumbing into generic Files artifacts", () => {
     const artifacts = deriveLatestRunArtifacts(
       session(
-        userMessage("msg_1", "Inspect the internal setup."),
+        userMessage("msg_1", "Inspect the workspace setup."),
         assistantMessage(
           "msg_2",
           toolPart("read", { path: ".opencode/skills/brainstorming/SKILL.md" }),
-          toolPart("search", { path: ".opencode/veslo/internal/skill-creator/SKILL.md" }),
+          toolPart("search", { path: ".opencode/skills/skill-creator/SKILL.md" }),
           toolPart("glob", { path: "AGENTS.md" }),
           toolPart("list", { path: ".opencode" }),
-          toolPart("read", { path: ".opencode/veslo/internal/prompts/internal-review.md" }),
+          toolPart("read", { path: ".opencode/agents/veslo.md" }),
         ),
       ),
     );

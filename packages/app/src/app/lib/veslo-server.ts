@@ -6,6 +6,7 @@ import type {
   VesloAutomationCreatePayload,
   VesloAutomationRun,
   VesloAutomationUpdatePayload,
+  SkillInventoryRegistryMetadata,
 } from "../types";
 import { isTauriRuntime } from "../utils";
 import type { ScheduledJob } from "./tauri";
@@ -102,6 +103,7 @@ export type VesloSkillItem = {
   description: string;
   scope: "project" | "global";
   trigger?: string;
+  registry?: SkillInventoryRegistryMetadata;
   disableModelInvocation?: boolean;
   userInvocable?: boolean;
   aliases?: string[];
@@ -329,12 +331,14 @@ export type VesloSkillRegistryVersionsResponse = {
   nextCursor?: string | null;
 };
 
+export type VesloManagedSkillSource = "personal" | "workspace" | "organization" | "platform";
+
 export type VesloSkillRegistryInstallation = {
   installationId: string;
   skillId: string;
   versionId: string;
   enabled: boolean;
-  source: "personal" | "workspace" | "organization" | "platform";
+  source: VesloManagedSkillSource;
   installedAt: string;
   updatedAt?: string;
   name?: string;
@@ -517,9 +521,9 @@ export type VesloSkillMaterializationEntry = {
   name: string;
   versionId?: string;
   packageSha256: string;
-  source?: VesloSkillRegistryInstallation["source"];
-  removalPolicy?: VesloSkillRegistryRolloutRemovalPolicy;
+  source?: VesloManagedSkillSource;
   target?: "workspace" | "personal-global";
+  removalPolicy?: VesloSkillRegistryRolloutRemovalPolicy;
   skillDir?: string;
   materializedAt?: string;
 };

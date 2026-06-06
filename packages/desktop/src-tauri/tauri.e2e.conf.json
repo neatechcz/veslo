@@ -1,0 +1,18 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Veslo E2E",
+  "identifier": "com.neatech.veslo.e2e",
+  "app": {
+    "security": {
+      "capabilities": [
+        "veslo-default",
+        {
+          "identifier": "veslo-e2e-pilot",
+          "description": "E2E-only tauri-pilot capability for desktop automation.",
+          "windows": ["*"],
+          "permissions": ["pilot:default"]
+        }
+      ]
+    }
+  }
+}

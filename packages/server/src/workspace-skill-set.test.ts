@@ -78,8 +78,8 @@ describe("resolveWorkspaceSkillSet", () => {
         packageSha256:
           "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         source: "personal",
-        removalPolicy: "user_removable",
         target: "personal-global",
+        removalPolicy: "user_removable",
       },
     ]);
     expect(result.conflicts).toEqual([]);
@@ -238,8 +238,8 @@ describe("resolveWorkspaceSkillSet", () => {
         packageSha256:
           "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         source: "organization",
-        removalPolicy: "locked",
         target: "personal-global",
+        removalPolicy: "locked",
       },
     ]);
 

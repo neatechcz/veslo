@@ -2,6 +2,7 @@ import "dotenv/config"
 import cors from "cors"
 import express from "express"
 import path from "node:path"
+import { readFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import { fromNodeHeaders, toNodeHandler } from "better-auth/node"
 import { sql } from "drizzle-orm"
@@ -28,7 +29,9 @@ import {
 import { createProxyRouter } from "./managed-ai/http/proxy.js"
 import { createUserCredentialsRouter } from "./managed-ai/http/user-credentials.js"
 import { createDbSkillRegistryStore } from "./skills/db-store.js"
+import { ensureCorePlatformSkills } from "./skills/core-platform-skill-bootstrap.js"
 import { createSkillRegistryRouter } from "./skills/routes.js"
+import { SkillRegistryTables } from "./skills/schema.js"
 import {
   createDefaultProxyDependencies,
   createDefaultRuntimeState,
@@ -48,10 +51,15 @@ const MANAGED_AI_PROXY_JSON_LIMIT = "10mb"
 const FEEDBACK_PROJECTOR_DUE_RETRY_INTERVAL_MS = 60_000
 const DEBUG_LOG_RETENTION_INTERVAL_MS = 86_400_000
 const MANAGED_AI_CODEX_CAPACITY_ALERT_INTERVAL_MS = 5 * 60_000
+const SKILL_REGISTRY_SCHEMA_MIGRATIONS = [
+  "0013_skill_registry.sql",
+  "0014_skill_rollout_policies.sql",
+] as const
 const managedAiRuntime = env.managedAi.enabled ? createDefaultRuntimeState() : null
 const managedAiProxyJsonParser = express.json({ limit: MANAGED_AI_PROXY_JSON_LIMIT })
 const currentFile = fileURLToPath(import.meta.url)
-const publicDir = path.resolve(path.dirname(currentFile), "../public")
+const denRoot = path.resolve(path.dirname(currentFile), "..")
+const publicDir = path.resolve(denRoot, "public")
 const feedbackProjector = createFeedbackProjector({
   projectKey: env.youtrack.projectKey,
   store: createDbFeedbackProjectorStore(db),
@@ -364,6 +372,53 @@ async function ensureColumn(table: string, columnName: string, columnDefinition:
       `ALTER TABLE ${quoteIdentifier(table)} ADD COLUMN ${quoteIdentifier(columnName)} ${columnDefinition}`,
     ),
   )
+}
+
+async function tableExists(table: string) {
+  const existing = await db.execute(sql`
+    SELECT 1
+    FROM INFORMATION_SCHEMA.TABLES
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = ${table}
+    LIMIT 1
+  `)
+  return extractMetadataRows(existing).length > 0
+}
+
+async function ensureSkillRegistryTables() {
+  const tableNames = Object.values(SkillRegistryTables)
+  const present = new Set<string>()
+  for (const tableName of tableNames) {
+    if (await tableExists(tableName)) {
+      present.add(tableName)
+    }
+  }
+
+  if (present.size === tableNames.length) {
+    return
+  }
+
+  if (present.size > 0) {
+    const missing = tableNames.filter((tableName) => !present.has(tableName))
+    throw new Error(
+      `skill registry schema is incomplete; missing tables: ${missing.join(", ")}. Run pnpm --filter @neatech/den db:migrate.`,
+    )
+  }
+
+  for (const migration of SKILL_REGISTRY_SCHEMA_MIGRATIONS) {
+    const migrationPath = path.resolve(denRoot, "drizzle", migration)
+    const statements = splitDrizzleMigrationStatements(await readFile(migrationPath, "utf8"))
+    for (const statement of statements) {
+      await db.execute(sql.raw(statement))
+    }
+  }
+}
+
+function splitDrizzleMigrationStatements(content: string) {
+  return content
+    .split(/-->\s*statement-breakpoint\s*/g)
+    .map((statement) => statement.trim())
+    .filter(Boolean)
 }
 
 async function ensureVarcharColumnMinimumLength(
@@ -920,6 +975,7 @@ async function ensureTables() {
       ["authorization_code_hash"],
     )
     await ensureIndex("desktop_auth_transaction", "desktop_auth_transaction_manual_code_hash", ["manual_code_hash"])
+    await ensureSkillRegistryTables()
 
     console.log("[den] all tables ensured")
   } catch (err) {
@@ -930,6 +986,7 @@ async function ensureTables() {
 
 async function bootstrap() {
   await ensureTables()
+  await ensureCorePlatformSkills(skillRegistryStore)
   startFeedbackProjectorDueRetryLoop(feedbackProjector)
   startDebugLogRetentionLoop(debugLogService)
   if (env.managedAi.enabled) {

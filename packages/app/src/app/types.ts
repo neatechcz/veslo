@@ -323,6 +323,7 @@ export type SkillCard = {
   path: string;
   description?: string;
   trigger?: string;
+  registry?: SkillInventoryRegistryMetadata;
 };
 
 export type SkillSaveResult = {
