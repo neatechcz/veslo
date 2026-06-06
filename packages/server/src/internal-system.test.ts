@@ -59,6 +59,27 @@ You are Veslo.
       expect(researchSubagent).toContain("Veslo internal Research execution agent");
       expect(researchSubagent).toContain("mode: subagent");
 
+      const skillCreatorSkill = await readFile(
+        join(workspaceRoot, ".opencode", "veslo", "internal", "skill-creator", "SKILL.md"),
+        "utf8",
+      );
+      expect(skillCreatorSkill).toContain("Veslo Registry-Aware Skill Creation");
+      expect(skillCreatorSkill).toContain(
+        "Where should this skill live: user skill, workspace skill, organization skill, or public skill?",
+      );
+      expect(skillCreatorSkill).toContain('scope: "system"');
+      expect(skillCreatorSkill).toContain('removalPolicy: "locked"');
+
+      const skillCreatorSubagent = await readFile(
+        join(workspaceRoot, ".opencode", "agents", "veslo-internal-skill-creator.md"),
+        "utf8",
+      );
+      expect(skillCreatorSubagent).toContain("Do not assume workspace scope");
+      expect(skillCreatorSubagent).toContain("organization skill");
+      expect(skillCreatorSubagent).toContain("public skill");
+      expect(skillCreatorSubagent).not.toContain("Create or update skills only in this workspace");
+      expect(skillCreatorSubagent).not.toContain("Do not write company-global/shared skills in this flow");
+
       const vesloAgent = await readFile(join(workspaceRoot, ".opencode", "agents", "veslo.md"), "utf8");
       expect(vesloAgent).toContain("VESLO_INTERNAL_ROUTING_START");
       expect(vesloAgent).toContain("delegate");
