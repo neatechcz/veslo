@@ -1741,10 +1741,13 @@ export default function App() {
   });
 
   const [composerDraftBySessionId, setComposerDraftBySessionId] = createSignal<Record<string, ComposerDraft>>({});
-  const workspaceLabel = (workspace: WorkspaceInfo) =>
+  const composerTargetWorkspaceLabel = (workspace: WorkspaceInfo) =>
     workspace.displayName?.trim() ||
-    workspace.name?.trim() ||
     workspace.vesloWorkspaceName?.trim() ||
+    workspace.name?.trim() ||
+    workspace.vesloHostUrl?.trim() ||
+    workspace.baseUrl?.trim() ||
+    workspace.path?.trim() ||
     workspace.id;
   const composerTargetOptions = createMemo<ComposerTargetOption[]>(() => {
     const summaries = pendingDraftSummaries();
@@ -1780,7 +1783,7 @@ export default function App() {
         kind: "workspace",
         workspaceId: workspace.id,
         directory,
-        label: workspaceLabel(workspace),
+        label: composerTargetWorkspaceLabel(workspace),
         description: directory,
         draftStatus: hasDraft(id) ? "draft" : null,
       });
