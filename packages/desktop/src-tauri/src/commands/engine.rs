@@ -12,12 +12,12 @@ use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::opencode_router::spawn::resolve_opencode_router_health_port;
 use crate::orchestrator::manager::OrchestratorManager;
 use crate::orchestrator::{self, OrchestratorSpawnOptions};
+use crate::supervised_process::CommandEvent;
 use crate::types::{EngineDoctorResult, EngineInfo, EngineRuntime, ExecResult};
 use crate::utils::truncate_output;
 use crate::veslo_server::{manager::VesloServerManager, start_veslo_server};
 use serde_json::json;
 use std::time::Duration;
-use tauri_plugin_shell::process::CommandEvent;
 use uuid::Uuid;
 
 #[derive(Default)]

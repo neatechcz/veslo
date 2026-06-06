@@ -13,12 +13,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 use tauri::Emitter;
 use tauri::State;
-use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
 
 use crate::orchestrator::manager::OrchestratorManager;
 use crate::orchestrator::{resolve_orchestrator_data_dir, resolve_orchestrator_status};
 use crate::platform::configure_hidden;
+use crate::supervised_process;
 use crate::types::{ExecResult, OrchestratorStatus, OrchestratorWorkspace};
 
 const SANDBOX_PROGRESS_EVENT: &str = "veslo://sandbox-create-progress";
@@ -814,9 +814,9 @@ pub fn orchestrator_start_detached(
         );
     }
 
-    let command = match app.shell().sidecar("veslo-orchestrator") {
+    let command = match supervised_process::sidecar(&app, "veslo-orchestrator") {
         Ok(command) => command,
-        Err(_) => app.shell().command("veslo"),
+        Err(_) => supervised_process::command(&app, "veslo"),
     };
 
     // Start a dedicated host stack for this workspace.

@@ -2,11 +2,10 @@ use std::path::Path;
 
 use tauri::async_runtime::Receiver;
 use tauri::{AppHandle, Manager};
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
-use tauri_plugin_shell::ShellExt;
 
 use crate::paths::{candidate_xdg_config_dirs, candidate_xdg_data_dirs, maybe_infer_xdg_home};
 use crate::paths::{prepended_path_env, sidecar_path_candidates};
+use crate::supervised_process::{self, CommandEvent, SupervisedCommandChild};
 
 pub fn find_free_port() -> Result<u16, String> {
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(|e| e.to_string())?;
@@ -37,15 +36,14 @@ pub fn spawn_engine(
     use_sidecar: bool,
     opencode_username: Option<&str>,
     opencode_password: Option<&str>,
-) -> Result<(Receiver<CommandEvent>, CommandChild), String> {
+) -> Result<(Receiver<CommandEvent>, SupervisedCommandChild), String> {
     let args = build_engine_args(hostname, port);
 
     let command = if use_sidecar {
-        app.shell()
-            .sidecar("opencode")
+        supervised_process::sidecar(app, "opencode")
             .map_err(|e| format!("Failed to locate bundled OpenCode sidecar: {e}"))?
     } else {
-        app.shell().command(program)
+        supervised_process::command(app, program)
     };
 
     let mut command = command.args(args).current_dir(project_dir);

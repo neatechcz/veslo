@@ -1,7 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use tauri_plugin_shell::process::CommandChild;
-
+use crate::supervised_process::SupervisedCommandChild;
 use crate::types::{EngineInfo, EngineRuntime};
 
 #[derive(Default)]
@@ -12,7 +11,7 @@ pub struct EngineManager {
 #[derive(Default)]
 pub struct EngineState {
     pub runtime: EngineRuntime,
-    pub child: Option<CommandChild>,
+    pub child: Option<SupervisedCommandChild>,
     pub child_exited: bool,
     pub project_dir: Option<String>,
     pub hostname: Option<String>,
