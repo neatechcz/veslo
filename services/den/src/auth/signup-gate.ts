@@ -67,6 +67,39 @@ export type EmailSignupAccessInput = {
   dependencies: EmailSignupAccessDependencies
 }
 
+function inviteTokenLookupHashes(inviteToken: string) {
+  const hashedToken = hashOrganizationInviteToken(inviteToken)
+  return hashedToken === inviteToken ? [hashedToken] : [hashedToken, inviteToken]
+}
+
+function shouldTryLegacyRawInviteToken(error: unknown): error is OrganizationAdminRepositoryError {
+  return error instanceof OrganizationAdminRepositoryError && error.code === "invite_not_found"
+}
+
+async function resolveSignupInviteWithTokenFallback(input: {
+  dependencies: EmailSignupAccessDependencies
+  email: string
+  inviteToken: string
+}) {
+  let lastInviteNotFound: OrganizationAdminRepositoryError | null = null
+
+  for (const tokenHash of inviteTokenLookupHashes(input.inviteToken)) {
+    try {
+      return await input.dependencies.resolveValidOrganizationInviteForSignup({
+        email: input.email,
+        tokenHash,
+      })
+    } catch (error) {
+      if (!shouldTryLegacyRawInviteToken(error)) {
+        throw error
+      }
+      lastInviteNotFound = error
+    }
+  }
+
+  throw lastInviteNotFound ?? new OrganizationAdminRepositoryError("invite_not_found")
+}
+
 export async function resolveEmailSignupAccess(input: EmailSignupAccessInput): Promise<ResolvedSignupAccessDecision> {
   const email = normalizeInviteEmail(input.email)
   if (!email) {
@@ -101,9 +134,10 @@ export async function resolveEmailSignupAccess(input: EmailSignupAccessInput): P
 
   if (input.inviteToken) {
     try {
-      const invite = await input.dependencies.resolveValidOrganizationInviteForSignup({
+      const invite = await resolveSignupInviteWithTokenFallback({
+        dependencies: input.dependencies,
         email,
-        tokenHash: hashOrganizationInviteToken(input.inviteToken),
+        inviteToken: input.inviteToken,
       })
       await input.dependencies.assertCanActivateOrganizationSeat(invite.orgId)
       return {
@@ -154,6 +188,34 @@ export type CompleteSignupAfterUserCreateInput = CompleteSignupAfterUserCreateDe
   inviteToken: string | null
 }
 
+async function acceptSignupInviteWithTokenFallback(input: Pick<
+  CompleteSignupAfterUserCreateDependencies,
+  "acceptOrganizationInvite"
+> & {
+  inviteToken: string
+  userId: string
+  email: string
+}) {
+  let lastInviteNotFound: OrganizationAdminRepositoryError | null = null
+
+  for (const tokenHash of inviteTokenLookupHashes(input.inviteToken)) {
+    try {
+      return await input.acceptOrganizationInvite({
+        tokenHash,
+        userId: input.userId,
+        email: input.email,
+      })
+    } catch (error) {
+      if (!shouldTryLegacyRawInviteToken(error)) {
+        throw error
+      }
+      lastInviteNotFound = error
+    }
+  }
+
+  throw lastInviteNotFound ?? new OrganizationAdminRepositoryError("invite_not_found")
+}
+
 export async function completeSignupAfterUserCreate(input: CompleteSignupAfterUserCreateInput) {
   const email = normalizeInviteEmail(input.user.email)
   if (!email) {
@@ -173,8 +235,9 @@ export async function completeSignupAfterUserCreate(input: CompleteSignupAfterUs
   }
 
   if (input.inviteToken) {
-    await input.acceptOrganizationInvite({
-      tokenHash: hashOrganizationInviteToken(input.inviteToken),
+    await acceptSignupInviteWithTokenFallback({
+      acceptOrganizationInvite: input.acceptOrganizationInvite,
+      inviteToken: input.inviteToken,
       userId: input.user.id,
       email,
     })

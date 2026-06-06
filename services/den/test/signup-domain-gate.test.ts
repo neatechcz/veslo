@@ -193,6 +193,46 @@ test("invite signup resolves repository lookup with a stable hash of the raw inv
   assert.notEqual(capturedTokenHashes[0], "raw_invite_token_once")
 })
 
+test("invite signup accepts legacy pending invites stored with raw token hashes", async () => {
+  const capturedTokenHashes: string[] = []
+  const decision = await resolveEmailSignupAccess({
+    email: "invited@example.test",
+    inviteToken: "legacy_raw_invite_token",
+    dependencies: {
+      resolveEnabledOrganizationDomainForEmail: async () => {
+        throw new OrganizationAdminRepositoryError("domain_not_allowed")
+      },
+      countActiveOrganizationSeats: async () => {
+        throw new Error("domain seat count should not be used for invite signup")
+      },
+      assertCanActivateOrganizationSeat: async () => undefined,
+      resolveValidOrganizationInviteForSignup: async (input: { email: string; tokenHash: string }) => {
+        capturedTokenHashes.push(input.tokenHash)
+        if (input.tokenHash !== "legacy_raw_invite_token") {
+          throw new OrganizationAdminRepositoryError("invite_not_found")
+        }
+        return createInviteRecord({
+          orgId: "org_legacy",
+          email: input.email,
+          role: "member",
+          tokenHash: input.tokenHash,
+        })
+      },
+    },
+  })
+
+  assert.deepEqual(decision, {
+    ok: true,
+    mode: "invite",
+    organizationId: "org_legacy",
+    role: "member",
+    inviteToken: "legacy_raw_invite_token",
+  })
+  assert.equal(capturedTokenHashes.length, 2)
+  assert.notEqual(capturedTokenHashes[0], "legacy_raw_invite_token")
+  assert.equal(capturedTokenHashes[1], "legacy_raw_invite_token")
+})
+
 test("post-create invite acceptance receives a stable hash instead of the raw invite token", async () => {
   const acceptedTokenHashes: string[] = []
   const input = {
@@ -230,6 +270,46 @@ test("post-create invite acceptance receives a stable hash instead of the raw in
   assert.equal(acceptedTokenHashes.length, 2)
   assert.equal(acceptedTokenHashes[0], acceptedTokenHashes[1])
   assert.notEqual(acceptedTokenHashes[0], "raw_invite_token_once")
+})
+
+test("post-create invite acceptance accepts legacy pending invites stored with raw token hashes", async () => {
+  const acceptedTokenHashes: string[] = []
+  const result = await completeSignupAfterUserCreate({
+    user: { id: "user_1", email: "invited@example.test" },
+    inviteToken: "legacy_raw_invite_token",
+    createMembershipId: () => "membership_1",
+    resolveEnabledOrganizationDomainForEmail: async () => {
+      throw new OrganizationAdminRepositoryError("domain_not_allowed")
+    },
+    createOrActivateOrganizationMembership: async () => {
+      throw new Error("domain membership should not be activated")
+    },
+    acceptOrganizationInvite: async (acceptInput: { tokenHash: string; userId: string; email: string }) => {
+      acceptedTokenHashes.push(acceptInput.tokenHash)
+      if (acceptInput.tokenHash !== "legacy_raw_invite_token") {
+        throw new OrganizationAdminRepositoryError("invite_not_found")
+      }
+      return {
+        invite: createInviteRecord({
+          email: acceptInput.email,
+          tokenHash: acceptInput.tokenHash,
+        }),
+        membership: {
+          id: "membership_legacy",
+          orgId: "org_1",
+          userId: acceptInput.userId,
+          role: "member" as const,
+          status: "active" as const,
+          createdAt: new Date("2026-06-06T08:00:00.000Z"),
+        },
+      }
+    },
+  })
+
+  assert.deepEqual(result, { activatedOrganizationMembership: true, createDefaultOrganization: false })
+  assert.equal(acceptedTokenHashes.length, 2)
+  assert.notEqual(acceptedTokenHashes[0], "legacy_raw_invite_token")
+  assert.equal(acceptedTokenHashes[1], "legacy_raw_invite_token")
 })
 
 test("social post-create without authorized signup access does not authorize default org fallback", async () => {

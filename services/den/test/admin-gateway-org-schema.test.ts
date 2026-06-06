@@ -62,3 +62,14 @@ test("admin gateway organization bootstrap reconciles old org table shapes befor
   assert.ok(statusIndexOffset >= 0)
   assert.ok(statusColumnOffset < statusIndexOffset)
 })
+
+test("admin gateway migrations convert legacy raw invite tokens to hashes", () => {
+  const migration = readFileSync(
+    new URL("../drizzle/0016_hash_legacy_organization_invite_tokens.sql", import.meta.url),
+    "utf8",
+  )
+
+  assert.match(migration, /UPDATE `organization_invite`/)
+  assert.match(migration, /SET `token_hash` = SHA2\(`token_hash`, 256\)/)
+  assert.match(migration, /`token_hash` NOT REGEXP '\^\[0-9a-f\]\{64\}\$'/)
+})
