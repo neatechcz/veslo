@@ -1306,6 +1306,76 @@ async function createAdminOrganizationInvite(req: express.Request, res: express.
   }
 }
 
+async function resendAdminOrganizationInvite(req: express.Request, res: express.Response) {
+  const context = await requireAdminOrganizationAccess(req, res, {
+    orgId: req.params.orgId,
+  })
+  if (!context) {
+    return null
+  }
+
+  const inviteId = readBodyString(req.params.inviteId)
+  if (!inviteId) {
+    res.status(400).json({ error: "invalid_invite_id" })
+    return null
+  }
+
+  const rows = await db
+    .select()
+    .from(OrganizationInviteTable)
+    .where(and(eq(OrganizationInviteTable.org_id, context.organization.id), eq(OrganizationInviteTable.id, inviteId)))
+    .limit(1)
+  const invite = rows[0] ?? null
+  if (!invite) {
+    res.status(404).json({ error: "invite_not_found" })
+    return null
+  }
+  if (invite.status === "accepted") {
+    res.status(409).json({ error: "invite_already_accepted" })
+    return null
+  }
+  if (invite.status === "revoked") {
+    res.status(409).json({ error: "invite_already_revoked" })
+    return null
+  }
+
+  const hasExpiresAt = hasOwnProperty(req.body ?? {}, "expiresAt")
+  const expiresAt = hasExpiresAt ? parseInviteExpiresAt((req.body ?? {}).expiresAt) : invite.expires_at
+  if (expiresAt === "invalid") {
+    res.status(400).json({ error: "invalid_expires_at" })
+    return null
+  }
+
+  const inviteToken = randomBytes(24).toString("base64url")
+  const updatedAt = new Date()
+  await db
+    .update(OrganizationInviteTable)
+    .set({
+      token_hash: hashOrganizationInviteToken(inviteToken),
+      status: "pending",
+      expires_at: expiresAt,
+      updated_at: updatedAt,
+    })
+    .where(and(eq(OrganizationInviteTable.org_id, context.organization.id), eq(OrganizationInviteTable.id, inviteId)))
+
+  await recordAdminOrganizationAudit(context.snapshot, context.organization.id, "org.invite.resent", {
+    inviteId,
+    email: invite.email,
+    expiresAt,
+  })
+
+  const updatedRows = await db
+    .select()
+    .from(OrganizationInviteTable)
+    .where(eq(OrganizationInviteTable.id, inviteId))
+    .limit(1)
+
+  return {
+    invite: mapInviteRow(updatedRows[0]),
+    inviteToken,
+  }
+}
+
 async function revokeAdminOrganizationInvite(req: express.Request, res: express.Response) {
   const context = await requireAdminOrganizationAccess(req, res, {
     orgId: req.params.orgId,
@@ -1880,6 +1950,7 @@ export function createAdminRuntimeRouter(options: CreateAdminRuntimeRouterOption
     deleteOrganizationDomain: deleteAdminOrganizationDomain,
     listOrganizationInvites: listAdminOrganizationInvites,
     createOrganizationInvite: createAdminOrganizationInvite,
+    resendOrganizationInvite: resendAdminOrganizationInvite,
     revokeOrganizationInvite: revokeAdminOrganizationInvite,
     listUsers: async (req, res) => {
       const snapshot = await requireAdminSessionSnapshot(req, res)

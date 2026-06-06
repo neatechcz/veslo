@@ -293,6 +293,10 @@ export type AdminRouteDeps = {
     req: express.Request,
     res: express.Response,
   ) => Promise<{ invite: AdminOrganizationInviteRecord; inviteToken: string } | null>
+  resendOrganizationInvite?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<{ invite: AdminOrganizationInviteRecord; inviteToken: string } | null>
   revokeOrganizationInvite?: (
     req: express.Request,
     res: express.Response,
@@ -615,6 +619,20 @@ export function createAdminRouter(deps: AdminRouteDeps) {
     }
 
     const payload = await deps.revokeOrganizationInvite(req, res)
+    if (!payload) {
+      return
+    }
+
+    res.json(payload)
+  })
+
+  route.post("/organizations/:orgId/invites/:inviteId/resend", async (req, res) => {
+    if (!deps.resendOrganizationInvite) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.resendOrganizationInvite(req, res)
     if (!payload) {
       return
     }

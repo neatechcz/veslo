@@ -119,6 +119,9 @@ function createUnusedDenClient() {
     async createOrganizationInvite() {
       throw new Error("unused");
     },
+    async resendOrganizationInvite() {
+      throw new Error("unused");
+    },
     async revokeOrganizationInvite() {
       throw new Error("unused");
     },

@@ -152,6 +152,18 @@ test("admin invite creation stores only a derived token hash while returning the
   assert.doesNotMatch(createInviteSource, /tokenHash:\s*inviteToken/)
 })
 
+test("admin invite resend rotates only the derived token hash while returning the raw token once", async () => {
+  const source = await readFile(new URL("../src/http/admin-runtime.ts", import.meta.url), "utf8")
+  const resendInviteSource = source.match(/async function resendAdminOrganizationInvite[\s\S]*?async function revokeAdminOrganizationInvite/)?.[0] ?? ""
+
+  assert.match(resendInviteSource, /inviteToken/)
+  assert.match(resendInviteSource, /token_hash:\s*hashOrganizationInviteToken\(inviteToken\)/)
+  assert.match(resendInviteSource, /invite_already_accepted/)
+  assert.match(resendInviteSource, /invite_already_revoked/)
+  assert.match(resendInviteSource, /inviteToken/)
+  assert.doesNotMatch(resendInviteSource, /token_hash:\s*inviteToken/)
+})
+
 test("admin-created users use the internal provisioning override for email signup", async () => {
   const source = await readFile(new URL("../src/http/admin-runtime.ts", import.meta.url), "utf8")
   const signupFetch = source.match(/fetch\(`\$\{baseUrl\}\/api\/auth\/sign-up\/email`, \{[\s\S]*?body:/)?.[0] ?? ""

@@ -311,6 +311,26 @@ test("admin router exposes organization, member, domain, and invite endpoints", 
           },
         }
       },
+      async resendOrganizationInvite(req) {
+        calls.push(`resendInvite:${req.params.orgId}:${req.params.inviteId}`)
+        return {
+          invite: {
+            id: req.params.inviteId,
+            orgId: req.params.orgId,
+            email: "invited@example.com",
+            role: "member" as const,
+            status: "pending" as const,
+            invitedByUserId: "user_admin_1",
+            acceptedByUserId: null,
+            expiresAt: null,
+            acceptedAt: null,
+            revokedAt: null,
+            createdAt: "2026-06-06T08:00:00.000Z",
+            updatedAt: "2026-06-06T08:15:00.000Z",
+          },
+          inviteToken: "resend_token_once",
+        }
+      },
     }),
   )
 
@@ -437,6 +457,28 @@ test("admin router exposes organization, member, domain, and invite endpoints", 
     assert.equal(revokeResponse.status, 200)
     assert.equal((await revokeResponse.json()).invite.status, "revoked")
 
+    const resendResponse = await fetch(`${baseUrl}/organizations/org_1/invites/invite_1/resend`, {
+      method: "POST",
+    })
+    assert.equal(resendResponse.status, 200)
+    assert.deepEqual(await resendResponse.json(), {
+      invite: {
+        id: "invite_1",
+        orgId: "org_1",
+        email: "invited@example.com",
+        role: "member",
+        status: "pending",
+        invitedByUserId: "user_admin_1",
+        acceptedByUserId: null,
+        expiresAt: null,
+        acceptedAt: null,
+        revokedAt: null,
+        createdAt: "2026-06-06T08:00:00.000Z",
+        updatedAt: "2026-06-06T08:15:00.000Z",
+      },
+      inviteToken: "resend_token_once",
+    })
+
     assert.deepEqual(calls, [
       "listOrganizations",
       "getOrganization:org_1",
@@ -452,6 +494,7 @@ test("admin router exposes organization, member, domain, and invite endpoints", 
       "listInvites:org_1",
       "createInvite:org_1:invited@example.com",
       "revokeInvite:org_1:invite_1",
+      "resendInvite:org_1:invite_1",
     ])
   } finally {
     server.close()

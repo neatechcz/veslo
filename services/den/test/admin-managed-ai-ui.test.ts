@@ -215,6 +215,10 @@ test("GET /admin/app.js uses DEN desktop auth and OpenAI OAuth credential routes
     assert.match(script, /orgRole:\s*normalizeOrganizationRoleInput\(els\.userRole\.value\)/)
     assert.match(script, /<option value="organization_admin">Organization admin<\/option>/)
     assert.match(script, /function buildUserUpdatePayload\(payload\)/)
+    assert.match(script, /data-invite-resend/)
+    assert.match(script, /async function resendOrganizationInvite\(card\)/)
+    assert.match(script, /\/invites\/\$\{encodeURIComponent\(inviteId\)\}\/resend/)
+    assert.match(script, /event\.target\.closest\("\[data-invite-resend\]"\)/)
     assert.match(
       script,
       /if \(state\.session\?\.platformAdmin !== true\) \{[\s\S]*return \{[\s\S]*orgId: payload\.orgId,[\s\S]*orgRole: payload\.orgRole,[\s\S]*\}/,

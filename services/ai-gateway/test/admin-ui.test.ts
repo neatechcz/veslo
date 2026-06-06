@@ -140,6 +140,9 @@ function createAdminServiceStub(overrides: Partial<AdminService> = {}): AdminSer
     async createOrganizationInvite() {
       throw new Error("unused")
     },
+    async resendOrganizationInvite() {
+      throw new Error("unused")
+    },
     async revokeOrganizationInvite() {
       throw new Error("unused")
     },
@@ -591,6 +594,10 @@ test("GET /admin/app.js saves organization membership changes only from the user
     assert.match(script, /function normalizeOrganizationRoleInput\(value\)/)
     assert.match(script, /orgRole:\s*normalizeOrganizationRoleInput\(els\.userRole\.value\)/)
     assert.match(script, /function buildUserUpdatePayload\(payload\)/)
+    assert.match(script, /data-invite-resend/)
+    assert.match(script, /async function resendOrganizationInvite\(card\)/)
+    assert.match(script, /\/invites\/\$\{encodeURIComponent\(inviteId\)\}\/resend/)
+    assert.match(script, /event\.target\.closest\("\[data-invite-resend\]"\)/)
     assert.match(
       script,
       /if \(state\.session\?\.platformAdmin !== true\) \{[\s\S]*return \{[\s\S]*orgId: payload\.orgId,[\s\S]*orgRole: payload\.orgRole,[\s\S]*\}/,
@@ -661,6 +668,10 @@ test("organization admins are forbidden from platform-only gateway admin API rou
     ["GET", "/admin/api/audit"],
     ["GET", "/admin/api/users/user_1/ai-access"],
     ["PUT", "/admin/api/users/user_1/ai-access"],
+    ["POST", "/admin/api/users"],
+    ["POST", "/admin/api/users/user_1/disable"],
+    ["POST", "/admin/api/users/user_1/enable"],
+    ["DELETE", "/admin/api/users/user_1"],
   ] as const
 
   try {
@@ -755,6 +766,117 @@ test("organization admins can access session, users, and organization gateway ad
     })
     assert.equal(domainsResponse.status, 200)
     assert.deepEqual(await domainsResponse.json(), { domains: [] })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("POST /admin/api/organizations/:orgId/invites/:inviteId/resend forwards invite resend payloads", async () => {
+  let captured: unknown = null
+  const admin = createAdminServiceStub() as AdminService & {
+    resendOrganizationInvite?: (
+      token: string,
+      orgId: string,
+      inviteId: string,
+    ) => Promise<{
+      invite: {
+        id: string
+        orgId: string
+        email: string
+        role: "member" | "organization_admin"
+        status: "pending" | "accepted" | "revoked"
+        invitedByUserId: string | null
+        acceptedByUserId: string | null
+        expiresAt: string | null
+        acceptedAt: string | null
+        revokedAt: string | null
+        createdAt: string
+        updatedAt: string
+      }
+      inviteToken: string
+    }>
+  }
+  admin.resendOrganizationInvite = async (token, orgId, inviteId) => {
+    captured = { token, orgId, inviteId }
+    return {
+      invite: {
+        id: inviteId,
+        orgId,
+        email: "invited@example.test",
+        role: "member",
+        status: "pending",
+        invitedByUserId: "user_admin",
+        acceptedByUserId: null,
+        expiresAt: null,
+        acceptedAt: null,
+        revokedAt: null,
+        createdAt: "2026-06-06T08:00:00.000Z",
+        updatedAt: "2026-06-06T09:00:00.000Z",
+      },
+      inviteToken: "invite_token_once",
+    }
+  }
+  const app = createApp({ admin })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/invites/invite_1/resend`, {
+      method: "POST",
+      headers: { cookie: ADMIN_COOKIE },
+    })
+
+    assert.equal(response.status, 200)
+    assert.deepEqual(captured, {
+      token: "admin-token",
+      orgId: "org_1",
+      inviteId: "invite_1",
+    })
+    assert.deepEqual(await response.json(), {
+      invite: {
+        id: "invite_1",
+        orgId: "org_1",
+        email: "invited@example.test",
+        role: "member",
+        status: "pending",
+        invitedByUserId: "user_admin",
+        acceptedByUserId: null,
+        expiresAt: null,
+        acceptedAt: null,
+        revokedAt: null,
+        createdAt: "2026-06-06T08:00:00.000Z",
+        updatedAt: "2026-06-06T09:00:00.000Z",
+      },
+      inviteToken: "invite_token_once",
+    })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("POST /admin/api/organizations/:orgId/invites/:inviteId/resend preserves DEN invite errors", async () => {
+  const admin = createAdminServiceStub() as AdminService & {
+    resendOrganizationInvite?: () => Promise<never>
+  }
+  admin.resendOrganizationInvite = async () => {
+    throw Object.assign(new Error("invite_already_accepted"), { status: 409 })
+  }
+  const app = createApp({ admin })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/invites/invite_1/resend`, {
+      method: "POST",
+      headers: { cookie: ADMIN_COOKIE },
+    })
+
+    assert.equal(response.status, 409)
+    assert.deepEqual(await response.json(), { error: "invite_already_accepted" })
   } finally {
     server.close()
     await once(server, "close")

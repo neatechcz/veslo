@@ -269,6 +269,11 @@ export type CreateOrganizationInviteInput = {
   expiresAt?: string | null;
 };
 
+export type OrganizationInviteActionPayload = {
+  invite: AdminOrganizationInviteRecord;
+  inviteToken?: string;
+};
+
 export type CreateOrganizationMemberInput = {
   email: string;
   role: AdminOrganizationRole;
@@ -309,7 +314,8 @@ export interface AdminService {
   updateOrganizationDomain(token: string, orgId: string, domainId: string, input: UpdateOrganizationDomainInput): Promise<{ domain: AdminOrganizationDomainRecord }>;
   deleteOrganizationDomain(token: string, orgId: string, domainId: string): Promise<void>;
   listOrganizationInvites(token: string, orgId: string): Promise<{ invites: AdminOrganizationInviteRecord[] }>;
-  createOrganizationInvite(token: string, orgId: string, input: CreateOrganizationInviteInput): Promise<{ invite: AdminOrganizationInviteRecord }>;
+  createOrganizationInvite(token: string, orgId: string, input: CreateOrganizationInviteInput): Promise<OrganizationInviteActionPayload>;
+  resendOrganizationInvite(token: string, orgId: string, inviteId: string): Promise<OrganizationInviteActionPayload>;
   revokeOrganizationInvite(token: string, orgId: string, inviteId: string): Promise<{ invite: AdminOrganizationInviteRecord }>;
   getUserAiAccess(
     token: string,
@@ -366,7 +372,8 @@ type DenAdminApi = {
   updateOrganizationDomain(token: string, orgId: string, domainId: string, input: UpdateOrganizationDomainInput): Promise<{ domain: AdminOrganizationDomainRecord }>;
   deleteOrganizationDomain(token: string, orgId: string, domainId: string): Promise<void>;
   listOrganizationInvites(token: string, orgId: string): Promise<{ invites: AdminOrganizationInviteRecord[] }>;
-  createOrganizationInvite(token: string, orgId: string, input: CreateOrganizationInviteInput): Promise<{ invite: AdminOrganizationInviteRecord }>;
+  createOrganizationInvite(token: string, orgId: string, input: CreateOrganizationInviteInput): Promise<OrganizationInviteActionPayload>;
+  resendOrganizationInvite(token: string, orgId: string, inviteId: string): Promise<OrganizationInviteActionPayload>;
   revokeOrganizationInvite(token: string, orgId: string, inviteId: string): Promise<{ invite: AdminOrganizationInviteRecord }>;
   disableUser(token: string, userId: string): Promise<AdminUserRecord>;
   enableUser(token: string, userId: string): Promise<AdminUserRecord>;
@@ -1084,7 +1091,17 @@ class DenAdminClient {
       method: "POST",
       headers: this.adminHeaders(token, true),
       body: JSON.stringify(input),
-    }) as Promise<{ invite: AdminOrganizationInviteRecord }>;
+    }) as Promise<OrganizationInviteActionPayload>;
+  }
+
+  async resendOrganizationInvite(token: string, orgId: string, inviteId: string) {
+    return this.requestJson(
+      `/v1/admin/organizations/${encodeURIComponent(orgId)}/invites/${encodeURIComponent(inviteId)}/resend`,
+      {
+        method: "POST",
+        headers: this.adminHeaders(token),
+      },
+    ) as Promise<OrganizationInviteActionPayload>;
   }
 
   async revokeOrganizationInvite(token: string, orgId: string, inviteId: string) {
@@ -1618,6 +1635,9 @@ export function createDefaultAdminService(
     },
     createOrganizationInvite(token, orgId, input) {
       return requireDenOrganizationProxy("createOrganizationInvite")(token, orgId, input);
+    },
+    resendOrganizationInvite(token, orgId, inviteId) {
+      return requireDenOrganizationProxy("resendOrganizationInvite")(token, orgId, inviteId);
     },
     revokeOrganizationInvite(token, orgId, inviteId) {
       return requireDenOrganizationProxy("revokeOrganizationInvite")(token, orgId, inviteId);
@@ -2348,6 +2368,16 @@ function requireAdminCapability(res: express.Response, capability: AdminCapabili
   return false;
 }
 
+function requirePlatformAdmin(res: express.Response): boolean {
+  const session = res.locals.adminSession as AdminSessionSnapshot | undefined;
+  if (session?.platformAdmin === true) {
+    return true;
+  }
+
+  res.status(403).json({ error: "forbidden" });
+  return false;
+}
+
 function pageFromAdminPath(pathname: string): AdminAllowedPage | "overview" {
   const path = pathname.replace(/\/+$/, "");
   if (!path || path === "/admin") {
@@ -2833,6 +2863,26 @@ export function createAdminRouter(adminService: AdminService) {
     }
   });
 
+  router.post("/admin/api/organizations/:orgId/invites/:inviteId/resend", async (req, res) => {
+    if (!requireAdminCapability(res, "organization")) {
+      return;
+    }
+
+    try {
+      const payload = await adminService.resendOrganizationInvite(
+        res.locals.adminToken as string,
+        req.params.orgId,
+        req.params.inviteId,
+      );
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "organization_invite_resend_failed" });
+    }
+  });
+
   router.get("/admin/api/credentials", async (req, res) => {
     if (!requireAdminCapability(res, "credentials")) {
       return;
@@ -3084,6 +3134,10 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.get("/admin/api/users", async (req, res) => {
+    if (!requireAdminCapability(res, "users")) {
+      return;
+    }
+
     try {
       const users = await adminService.listUsers(res.locals.adminToken as string);
       res.json({ users });
@@ -3096,6 +3150,10 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.post("/admin/api/users", async (req, res) => {
+    if (!requireAdminCapability(res, "users") || !requirePlatformAdmin(res)) {
+      return;
+    }
+
     try {
       const user = await adminService.createUser(res.locals.adminToken as string, {
         email: typeof req.body?.email === "string" ? req.body.email.trim() : "",
@@ -3114,6 +3172,10 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.patch("/admin/api/users/:userId", async (req, res) => {
+    if (!requireAdminCapability(res, "users")) {
+      return;
+    }
+
     const session = res.locals.adminSession as AdminSessionSnapshot | undefined;
     if (session?.platformAdmin !== true && (hasOwn(req.body, "name") || hasOwn(req.body, "platformAdmin"))) {
       res.status(403).json({ error: "forbidden" });
@@ -3188,6 +3250,10 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.post("/admin/api/users/:userId/disable", async (req, res) => {
+    if (!requireAdminCapability(res, "users") || !requirePlatformAdmin(res)) {
+      return;
+    }
+
     try {
       const user = await adminService.disableUser(res.locals.adminToken as string, req.params.userId);
       res.json({ user });
@@ -3200,6 +3266,10 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.post("/admin/api/users/:userId/enable", async (req, res) => {
+    if (!requireAdminCapability(res, "users") || !requirePlatformAdmin(res)) {
+      return;
+    }
+
     try {
       const user = await adminService.enableUser(res.locals.adminToken as string, req.params.userId);
       res.json({ user });
@@ -3212,6 +3282,10 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.delete("/admin/api/users/:userId", async (req, res) => {
+    if (!requireAdminCapability(res, "users") || !requirePlatformAdmin(res)) {
+      return;
+    }
+
     try {
       await adminService.deleteUser(res.locals.adminToken as string, req.params.userId);
       res.status(204).end();

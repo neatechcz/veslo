@@ -1094,7 +1094,10 @@ function renderOrganization() {
         <strong>${escapeHtml(invite.email)}</strong>
         <p>${escapeHtml(normalizeOrganizationRoleInput(invite.role))} · expires ${escapeHtml(formatDate(invite.expiresAt))}</p>
       </div>
-      <button class="button button-secondary" type="button" data-invite-revoke>Revoke</button>
+      <span class="button-row">
+        <button class="button button-secondary" type="button" data-invite-resend>Resend</button>
+        <button class="button button-secondary" type="button" data-invite-revoke>Revoke</button>
+      </span>
     </article>
   `).join("") || `<article class="list-card active"><div><strong>No pending invites</strong><p>Pending invites will appear here.</p></div></article>`;
 
@@ -2098,6 +2101,28 @@ async function createOrganizationInvite() {
   }
 }
 
+async function resendOrganizationInvite(card) {
+  const orgId = currentOrganizationId();
+  const inviteId = card?.dataset?.inviteId;
+  if (!orgId || !inviteId) {
+    return;
+  }
+
+  try {
+    setOrganizationSaveStatus("Resending invite...", "pending");
+    await fetchJson(`/organizations/${encodeURIComponent(orgId)}/invites/${encodeURIComponent(inviteId)}/resend`, {
+      method: "POST",
+    });
+    await loadOrganization();
+    setOrganizationSaveStatus("Invite resent.", "success");
+  } catch (error) {
+    setOrganizationSaveStatus(
+      `Unable to resend invite: ${error instanceof Error ? error.message : "unknown_error"}`,
+      "error",
+    );
+  }
+}
+
 async function revokeOrganizationInvite(card) {
   const orgId = currentOrganizationId();
   const inviteId = card?.dataset?.inviteId;
@@ -2374,6 +2399,10 @@ function bindActions() {
   els.organizationInviteList.addEventListener("click", (event) => {
     const card = event.target.closest("[data-invite-id]");
     if (!card) return;
+    if (event.target.closest("[data-invite-resend]")) {
+      void resendOrganizationInvite(card);
+      return;
+    }
     if (event.target.closest("[data-invite-revoke]")) {
       void revokeOrganizationInvite(card);
     }
