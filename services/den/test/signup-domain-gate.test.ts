@@ -156,6 +156,82 @@ test("invite signup checks invite organization seat capacity before user create"
   assert.deepEqual(checkedSeats, ["org_full"])
 })
 
+test("invite signup resolves repository lookup with a stable hash of the raw invite token", async () => {
+  const capturedTokenHashes: string[] = []
+  const dependencies = {
+    resolveEnabledOrganizationDomainForEmail: async () => {
+      throw new OrganizationAdminRepositoryError("domain_not_allowed")
+    },
+    countActiveOrganizationSeats: async () => {
+      throw new Error("domain seat count should not be used for invite signup")
+    },
+    assertCanActivateOrganizationSeat: async () => undefined,
+    resolveValidOrganizationInviteForSignup: async (input: { email: string; tokenHash: string }) => {
+      capturedTokenHashes.push(input.tokenHash)
+      return createInviteRecord({
+        orgId: "org_1",
+        email: input.email,
+        role: "member",
+        tokenHash: input.tokenHash,
+      })
+    },
+  }
+
+  await resolveEmailSignupAccess({
+    email: "invited@example.test",
+    inviteToken: "raw_invite_token_once",
+    dependencies,
+  })
+  await resolveEmailSignupAccess({
+    email: "invited@example.test",
+    inviteToken: "raw_invite_token_once",
+    dependencies,
+  })
+
+  assert.equal(capturedTokenHashes.length, 2)
+  assert.equal(capturedTokenHashes[0], capturedTokenHashes[1])
+  assert.notEqual(capturedTokenHashes[0], "raw_invite_token_once")
+})
+
+test("post-create invite acceptance receives a stable hash instead of the raw invite token", async () => {
+  const acceptedTokenHashes: string[] = []
+  const input = {
+    user: { id: "user_1", email: "invited@example.test" },
+    inviteToken: "raw_invite_token_once",
+    createMembershipId: () => "membership_1",
+    resolveEnabledOrganizationDomainForEmail: async () => {
+      throw new OrganizationAdminRepositoryError("domain_not_allowed")
+    },
+    createOrActivateOrganizationMembership: async () => {
+      throw new Error("domain membership should not be activated")
+    },
+    acceptOrganizationInvite: async (acceptInput: { tokenHash: string; userId: string; email: string }) => {
+      acceptedTokenHashes.push(acceptInput.tokenHash)
+      return {
+        invite: createInviteRecord({
+          email: acceptInput.email,
+          tokenHash: acceptInput.tokenHash,
+        }),
+        membership: {
+          id: "membership_1",
+          orgId: "org_1",
+          userId: acceptInput.userId,
+          role: "member" as const,
+          status: "active" as const,
+          createdAt: new Date("2026-06-06T08:00:00.000Z"),
+        },
+      }
+    },
+  }
+
+  await completeSignupAfterUserCreate(input)
+  await completeSignupAfterUserCreate(input)
+
+  assert.equal(acceptedTokenHashes.length, 2)
+  assert.equal(acceptedTokenHashes[0], acceptedTokenHashes[1])
+  assert.notEqual(acceptedTokenHashes[0], "raw_invite_token_once")
+})
+
 test("social post-create without authorized signup access does not authorize default org fallback", async () => {
   const result = await completeSignupAfterUserCreate({
     user: { id: "user_1", email: "personal@example.test" },

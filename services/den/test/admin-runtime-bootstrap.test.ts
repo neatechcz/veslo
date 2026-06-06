@@ -39,6 +39,40 @@ test("only platform admins can edit organization seat limits", () => {
   assert.equal(adminRuntime.canAdminEditOrganizationSeatLimit({ platformAdmin: false }), false)
 })
 
+test("admin runtime organization access helper distinguishes platform, org admin, and member scope", () => {
+  assert.equal(typeof adminRuntime.canAdminAccessOrganization, "function")
+  const canAdminAccessOrganization = adminRuntime.canAdminAccessOrganization as (snapshot: {
+    platformAdmin: boolean
+    organizations: Array<{ id: string; role: "member" | "organization_admin" | "owner" }>
+  }, orgId: string | null | undefined) => boolean
+
+  assert.equal(canAdminAccessOrganization({
+    platformAdmin: true,
+    organizations: [],
+  }, "org_other"), true)
+  assert.equal(canAdminAccessOrganization({
+    platformAdmin: false,
+    organizations: [{ id: "org_own", role: "organization_admin" }],
+  }, "org_own"), true)
+  assert.equal(canAdminAccessOrganization({
+    platformAdmin: false,
+    organizations: [{ id: "org_own", role: "organization_admin" }],
+  }, "org_other"), false)
+  assert.equal(canAdminAccessOrganization({
+    platformAdmin: false,
+    organizations: [{ id: "org_own", role: "member" }],
+  }, "org_own"), false)
+})
+
+test("admin invite creation stores only a derived token hash while returning the raw token once", async () => {
+  const source = await readFile(new URL("../src/http/admin-runtime.ts", import.meta.url), "utf8")
+  const createInviteSource = source.match(/async function createAdminOrganizationInvite[\s\S]*?async function revokeAdminOrganizationInvite/)?.[0] ?? ""
+
+  assert.match(createInviteSource, /inviteToken/)
+  assert.match(createInviteSource, /tokenHash:\s*hashOrganizationInviteToken\(inviteToken\)/)
+  assert.doesNotMatch(createInviteSource, /tokenHash:\s*inviteToken/)
+})
+
 test("admin-created users use the internal provisioning override for email signup", async () => {
   const source = await readFile(new URL("../src/http/admin-runtime.ts", import.meta.url), "utf8")
   const signupFetch = source.match(/fetch\(`\$\{baseUrl\}\/api\/auth\/sign-up\/email`, \{[\s\S]*?body:/)?.[0] ?? ""

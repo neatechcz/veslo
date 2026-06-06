@@ -5,6 +5,7 @@ import type {
 } from "../org-admin/repository.js"
 import { OrganizationAdminRepositoryError } from "../org-admin/repository.js"
 import { normalizeInviteEmail } from "../org-admin/policy.js"
+import { hashOrganizationInviteToken } from "../org-admin/invite-token.js"
 import type { OrgRole } from "../db/schema.js"
 
 export type SignupAccessError = "domain_not_allowed" | "seat_limit_reached"
@@ -102,7 +103,7 @@ export async function resolveEmailSignupAccess(input: EmailSignupAccessInput): P
     try {
       const invite = await input.dependencies.resolveValidOrganizationInviteForSignup({
         email,
-        tokenHash: input.inviteToken,
+        tokenHash: hashOrganizationInviteToken(input.inviteToken),
       })
       await input.dependencies.assertCanActivateOrganizationSeat(invite.orgId)
       return {
@@ -173,7 +174,7 @@ export async function completeSignupAfterUserCreate(input: CompleteSignupAfterUs
 
   if (input.inviteToken) {
     await input.acceptOrganizationInvite({
-      tokenHash: input.inviteToken,
+      tokenHash: hashOrganizationInviteToken(input.inviteToken),
       userId: input.user.id,
       email,
     })

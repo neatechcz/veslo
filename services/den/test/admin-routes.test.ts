@@ -5,6 +5,7 @@ import test from "node:test"
 import express from "express"
 
 import { createAdminRouter } from "../src/http/admin.js"
+import { errorMiddleware } from "../src/http/errors.js"
 
 function buildSession() {
   return {
@@ -421,6 +422,39 @@ test("admin router exposes organization, member, domain, and invite endpoints", 
       "revokeInvite:org_1:invite_1",
     ])
   } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("admin router forwards async dependency failures to error middleware", async () => {
+  const app = express()
+  const unhandledRejections: unknown[] = []
+  const onUnhandledRejection = (error: unknown) => {
+    unhandledRejections.push(error)
+  }
+
+  process.on("unhandledRejection", onUnhandledRejection)
+  app.use(
+    createAdminRouter({
+      async getSessionSnapshot() {
+        throw new Error("admin dependency failed")
+      },
+    }),
+  )
+  app.use(errorMiddleware)
+
+  const { server, baseUrl } = await listen(app)
+  try {
+    const signal = AbortSignal.timeout(250)
+    const response = await fetch(`${baseUrl}/session`, { signal }).catch((error: unknown) => error)
+
+    assert.ok(response instanceof Response, "expected error middleware response before the request timeout")
+    assert.equal(response.status, 500)
+    assert.deepEqual(await response.json(), { error: "internal_error" })
+    assert.deepEqual(unhandledRejections, [])
+  } finally {
+    process.off("unhandledRejection", onUnhandledRejection)
     server.close()
     await once(server, "close")
   }

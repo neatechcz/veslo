@@ -46,6 +46,7 @@ import {
   createOrganizationInvite as createOrganizationInviteRecord,
   createOrActivateOrganizationMembership,
 } from "../org-admin/repository.js"
+import { hashOrganizationInviteToken } from "../org-admin/invite-token.js"
 import { createAdminProvisioningSignupHeaders } from "../auth/admin-provisioning.js"
 
 type ListedUserRow = {
@@ -76,6 +77,19 @@ export function isBootstrapPlatformAdminEmail(email: string | null) {
 
 export function canAdminEditOrganizationSeatLimit(input: Pick<AdminSessionSnapshot, "platformAdmin">) {
   return input.platformAdmin === true
+}
+
+export function canAdminAccessOrganization(
+  snapshot: Pick<AdminSessionSnapshot, "platformAdmin" | "organizations">,
+  orgId: string | null | undefined,
+) {
+  if (!orgId) {
+    return false
+  }
+  if (snapshot.platformAdmin) {
+    return true
+  }
+  return snapshot.organizations.some((entry) => entry.id === orgId && isOrganizationAdminRole(entry.role))
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -407,7 +421,7 @@ async function requireAdminOrganizationAccess(
     return null
   }
 
-  if (!snapshot.platformAdmin && !snapshot.organizations.some((entry) => entry.id === orgId && isOrganizationAdminRole(entry.role))) {
+  if (!canAdminAccessOrganization(snapshot, orgId)) {
     res.status(403).json({ error: "organization_forbidden" })
     return null
   }
@@ -1177,7 +1191,7 @@ async function createAdminOrganizationInvite(req: express.Request, res: express.
       orgId: context.organization.id,
       email,
       role,
-      tokenHash: inviteToken,
+      tokenHash: hashOrganizationInviteToken(inviteToken),
       invitedByUserId: context.snapshot.user.id,
       expiresAt,
     })
