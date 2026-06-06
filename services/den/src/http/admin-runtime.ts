@@ -45,6 +45,7 @@ import {
   OrganizationAdminRepositoryError,
   createOrganizationInvite as createOrganizationInviteRecord,
   createOrActivateOrganizationMembership,
+  extractAffectedRows,
 } from "../org-admin/repository.js"
 import { hashOrganizationInviteToken } from "../org-admin/invite-token.js"
 import { createAdminProvisioningSignupHeaders } from "../auth/admin-provisioning.js"
@@ -148,6 +149,25 @@ export function evaluateAdminUserUpdatePayloadScope(
   }
 
   return { ok: true, role }
+}
+
+export type AdminInviteResendStatusResult =
+  | { ok: true }
+  | { ok: false; status: 409; error: "invite_already_accepted" | "invite_already_revoked" | "invite_expired" }
+
+export function evaluateAdminInviteResendStatus(
+  inviteStatus: (typeof OrganizationInviteTable.$inferSelect)["status"],
+): AdminInviteResendStatusResult {
+  if (inviteStatus === "pending") {
+    return { ok: true }
+  }
+  if (inviteStatus === "accepted") {
+    return { ok: false, status: 409, error: "invite_already_accepted" }
+  }
+  if (inviteStatus === "revoked") {
+    return { ok: false, status: 409, error: "invite_already_revoked" }
+  }
+  return { ok: false, status: 409, error: "invite_expired" }
 }
 
 function readSeatLimit(value: unknown): number | null | "invalid" {
@@ -1330,12 +1350,9 @@ async function resendAdminOrganizationInvite(req: express.Request, res: express.
     res.status(404).json({ error: "invite_not_found" })
     return null
   }
-  if (invite.status === "accepted") {
-    res.status(409).json({ error: "invite_already_accepted" })
-    return null
-  }
-  if (invite.status === "revoked") {
-    res.status(409).json({ error: "invite_already_revoked" })
+  const statusScope = evaluateAdminInviteResendStatus(invite.status)
+  if (!statusScope.ok) {
+    res.status(statusScope.status).json({ error: statusScope.error })
     return null
   }
 
@@ -1348,7 +1365,7 @@ async function resendAdminOrganizationInvite(req: express.Request, res: express.
 
   const inviteToken = randomBytes(24).toString("base64url")
   const updatedAt = new Date()
-  await db
+  const result = await db
     .update(OrganizationInviteTable)
     .set({
       token_hash: hashOrganizationInviteToken(inviteToken),
@@ -1356,7 +1373,16 @@ async function resendAdminOrganizationInvite(req: express.Request, res: express.
       expires_at: expiresAt,
       updated_at: updatedAt,
     })
-    .where(and(eq(OrganizationInviteTable.org_id, context.organization.id), eq(OrganizationInviteTable.id, inviteId)))
+    .where(and(
+      eq(OrganizationInviteTable.org_id, context.organization.id),
+      eq(OrganizationInviteTable.id, inviteId),
+      eq(OrganizationInviteTable.status, "pending"),
+    ))
+
+  if (extractAffectedRows(result) === 0) {
+    res.status(409).json({ error: "invite_not_pending" })
+    return null
+  }
 
   await recordAdminOrganizationAudit(context.snapshot, context.organization.id, "org.invite.resent", {
     inviteId,

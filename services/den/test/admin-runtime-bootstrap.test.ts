@@ -158,10 +158,35 @@ test("admin invite resend rotates only the derived token hash while returning th
 
   assert.match(resendInviteSource, /inviteToken/)
   assert.match(resendInviteSource, /token_hash:\s*hashOrganizationInviteToken\(inviteToken\)/)
-  assert.match(resendInviteSource, /invite_already_accepted/)
-  assert.match(resendInviteSource, /invite_already_revoked/)
+  assert.match(resendInviteSource, /evaluateAdminInviteResendStatus\(invite\.status\)/)
+  assert.match(resendInviteSource, /eq\(OrganizationInviteTable\.status,\s*"pending"\)/)
+  assert.match(resendInviteSource, /extractAffectedRows\(result\) === 0/)
   assert.match(resendInviteSource, /inviteToken/)
   assert.doesNotMatch(resendInviteSource, /token_hash:\s*inviteToken/)
+})
+
+test("admin invite resend status guard only allows pending invites", () => {
+  assert.equal(typeof adminRuntime.evaluateAdminInviteResendStatus, "function")
+  const evaluateAdminInviteResendStatus = adminRuntime.evaluateAdminInviteResendStatus as (
+    status: "pending" | "accepted" | "expired" | "revoked",
+  ) => { ok: true } | { ok: false; status: number; error: string }
+
+  assert.deepEqual(evaluateAdminInviteResendStatus("pending"), { ok: true })
+  assert.deepEqual(evaluateAdminInviteResendStatus("accepted"), {
+    ok: false,
+    status: 409,
+    error: "invite_already_accepted",
+  })
+  assert.deepEqual(evaluateAdminInviteResendStatus("revoked"), {
+    ok: false,
+    status: 409,
+    error: "invite_already_revoked",
+  })
+  assert.deepEqual(evaluateAdminInviteResendStatus("expired"), {
+    ok: false,
+    status: 409,
+    error: "invite_expired",
+  })
 })
 
 test("admin-created users use the internal provisioning override for email signup", async () => {
