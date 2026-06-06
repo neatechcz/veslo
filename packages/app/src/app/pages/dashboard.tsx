@@ -37,6 +37,7 @@ import {
 } from "../lib/veslo-server";
 import type {
   VesloAuditEntry,
+  VesloSoulAuthContext,
   VesloSoulHeartbeatEntry,
   VesloSoulOverviewResponse,
   VesloSoulStatus,
@@ -198,6 +199,9 @@ export type DashboardViewProps = {
   soulOverview: VesloSoulOverviewResponse | null;
   soulOverviewError: string | null;
   soulOverviewBusy: boolean;
+  soulClient: VesloServerClient | null;
+  soulServerConnected: boolean;
+  soulAuthContext: VesloSoulAuthContext;
   soulStatusByWorkspaceId: Record<string, VesloSoulStatus | null>;
   activeSoulStatus: VesloSoulStatus | null;
   activeSoulHeartbeats: VesloSoulHeartbeatEntry[];
@@ -1621,6 +1625,9 @@ export default function DashboardView(props: DashboardViewProps) {
                 soulOverview={props.soulOverview}
                 soulOverviewError={props.soulOverviewError}
                 soulOverviewBusy={props.soulOverviewBusy}
+                client={props.soulClient}
+                serverConnected={props.soulServerConnected}
+                authContext={props.soulAuthContext}
                 refresh={props.refreshSoulData}
               />
             </Match>

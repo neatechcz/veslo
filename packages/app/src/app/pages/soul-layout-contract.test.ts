@@ -5,12 +5,14 @@ import test from "node:test";
 const soulSource = readFileSync(new URL("./soul.tsx", import.meta.url), "utf8");
 const dashboardSource = readFileSync(new URL("./dashboard.tsx", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const vesloServerSource = readFileSync(new URL("../lib/veslo-server.ts", import.meta.url), "utf8");
 const enSource = readFileSync(new URL("../../i18n/locales/en.ts", import.meta.url), "utf8");
 const csSource = readFileSync(new URL("../../i18n/locales/cs.ts", import.meta.url), "utf8");
 const zhSource = readFileSync(new URL("../../i18n/locales/zh.ts", import.meta.url), "utf8");
 
 test("SoulView consumes overview source summaries instead of legacy prompt setup state", () => {
-  assert.match(soulSource, /import type \{ VesloSoulOverviewResponse,\s*VesloSoulSummary \} from "\.\.\/lib\/veslo-server"/);
+  assert.match(soulSource, /VesloSoulOverviewResponse/);
+  assert.match(soulSource, /VesloSoulSummary/);
   assert.match(soulSource, /soulOverview:\s*VesloSoulOverviewResponse\s*\|\s*null;/);
   assert.match(soulSource, /soulOverviewError:\s*string\s*\|\s*null;/);
   assert.match(soulSource, /soulOverviewBusy:\s*boolean;/);
@@ -22,11 +24,20 @@ test("SoulView consumes overview source summaries instead of legacy prompt setup
 
 test("Dashboard passes Soul overview state and busy flag to SoulView", () => {
   assert.match(dashboardSource, /soulOverviewBusy:\s*boolean;/);
+  assert.match(dashboardSource, /soulClient:\s*VesloServerClient\s*\|\s*null;/);
+  assert.match(dashboardSource, /soulServerConnected:\s*boolean;/);
+  assert.match(dashboardSource, /soulAuthContext:\s*VesloSoulAuthContext;/);
   assert.match(appSource, /const \[soulOverviewBusy,\s*setSoulOverviewBusy\] = createSignal\(false\)/);
   assert.match(appSource, /soulOverviewBusy:\s*soulOverviewBusy\(\)/);
+  assert.match(appSource, /soulClient:\s*vesloServerClient\(\)/);
+  assert.match(appSource, /soulServerConnected:\s*vesloServerStatus\(\)\s*===\s*"connected"/);
+  assert.match(appSource, /soulAuthContext:\s*skillRegistryMaterializationAuthContext\(\)/);
   assert.match(dashboardSource, /<SoulView[\s\S]*soulOverview=\{props\.soulOverview\}/);
   assert.match(dashboardSource, /<SoulView[\s\S]*soulOverviewError=\{props\.soulOverviewError\}/);
   assert.match(dashboardSource, /<SoulView[\s\S]*soulOverviewBusy=\{props\.soulOverviewBusy\}/);
+  assert.match(dashboardSource, /<SoulView[\s\S]*client=\{props\.soulClient\}/);
+  assert.match(dashboardSource, /<SoulView[\s\S]*serverConnected=\{props\.soulServerConnected\}/);
+  assert.match(dashboardSource, /<SoulView[\s\S]*authContext=\{props\.soulAuthContext\}/);
   assert.match(dashboardSource, /<SoulView[\s\S]*refresh=\{props\.refreshSoulData\}/);
   assert.doesNotMatch(dashboardSource, /<SoulView[\s\S]{0,500}runSoulPrompt=\{props\.runSoulPrompt\}/);
 });
@@ -59,6 +70,49 @@ test("Soul overview locale keys exist in all app locales", () => {
     "soul.empty_workspaces",
     "soul.not_available",
     "soul.loading_overview",
+    "soul.actions",
+    "soul.change_summary",
+    "soul.change_summary_placeholder",
+    "soul.default_change_summary",
+    "soul.detail_empty",
+    "soul.detail_error",
+    "soul.detail_loading",
+    "soul.detail_title",
+    "soul.editor_content",
+    "soul.history_empty",
+    "soul.history_error",
+    "soul.history_loading",
+    "soul.history_title",
+    "soul.materialization_action",
+    "soul.materialization_conflicts",
+    "soul.materialization_status",
+    "soul.open_source",
+    "soul.preview_error",
+    "soul.preview_loading",
+    "soul.preview_title",
+    "soul.restore",
+    "soul.restore_change_summary",
+    "soul.restore_change_summary_placeholder",
+    "soul.restore_default_summary",
+    "soul.restore_selected",
+    "soul.restoring",
+    "soul.save",
+    "soul.save_blocked_read_only",
+    "soul.save_changes",
+    "soul.saving",
+    "soul.selected",
+    "soul.source_current_marker",
+    "soul.source_details",
+    "soul.source_unavailable",
+    "soul.toggle_heartbeat",
+    "soul.turn_heartbeat_off",
+    "soul.turn_heartbeat_on",
+    "soul.updated_by",
+    "soul.version_created",
+    "soul.version_current",
+    "soul.version_preview",
+    "soul.version_source",
+    "soul.workspace_heartbeat_description",
   ];
 
   for (const localeSource of [enSource, csSource, zhSource]) {
@@ -66,4 +120,62 @@ test("Soul overview locale keys exist in all app locales", () => {
       assert.match(localeSource, new RegExp(`"${key.replaceAll(".", "\\.")}":`), `${key} should be localized`);
     }
   }
+});
+
+test("SoulView loads selected source detail and version history through existing client methods", () => {
+  assert.match(soulSource, /client:\s*VesloServerClient\s*\|\s*null;/);
+  assert.match(soulSource, /serverConnected:\s*boolean;/);
+  assert.match(soulSource, /authContext:\s*VesloSoulAuthContext;/);
+  assert.match(soulSource, /getOrganizationSoul\(props\.authContext\)/);
+  assert.match(soulSource, /getUserSoul\(props\.authContext\)/);
+  assert.match(soulSource, /getWorkspaceSoul\(source\.workspaceId,\s*props\.authContext\)/);
+  assert.match(soulSource, /listSoulVersions\(source\.scope,\s*versionListOptions\(source,\s*props\.authContext\)\)/);
+  assert.match(soulSource, /getSoulVersion\(source\.scope,\s*versionId,\s*versionGetOptions\(source,\s*props\.authContext\)\)/);
+});
+
+test("SoulView save flow sends current baseVersionId and respects organization summary editability", () => {
+  assert.match(soulSource, /const selectedCanEdit = createMemo/);
+  assert.match(
+    soulSource,
+    /source\.scope === "organization"[\s\S]{0,180}source\.summary\?\.canEdit/,
+    "organization editability should come from the selected overview summary",
+  );
+  assert.match(soulSource, /const saveDisabled = createMemo/);
+  assert.match(soulSource, /!props\.client \|\| !props\.serverConnected/);
+  assert.match(soulSource, /detailLoading\(\) \|\| savePending\(\)/);
+  assert.match(soulSource, /content\(\) === initialContent\(\)/);
+  assert.match(soulSource, /baseVersionId:\s*currentBaseVersionId\(\)/);
+  assert.match(soulSource, /updateOrganizationSoul\(\{[\s\S]*baseVersionId:\s*currentBaseVersionId\(\)/);
+  assert.match(soulSource, /updateUserSoul\(\{[\s\S]*baseVersionId:\s*currentBaseVersionId\(\)/);
+  assert.match(soulSource, /updateWorkspaceSoul\(source\.workspaceId,\s*\{[\s\S]*baseVersionId:\s*currentBaseVersionId\(\)/);
+});
+
+test("SoulView exposes version preview and restore without inventing endpoints", () => {
+  assert.match(soulSource, /data-testid="soul-version-history"/);
+  assert.match(soulSource, /selectedVersionId/);
+  assert.match(soulSource, /selectedVersionPreview/);
+  assert.match(soulSource, /restoreOrganizationSoulVersion\(versionId,\s*\{/);
+  assert.match(soulSource, /restoreUserSoulVersion\(versionId,\s*\{/);
+  assert.match(soulSource, /restoreWorkspaceSoulVersion\(source\.workspaceId,\s*versionId,\s*\{/);
+  assert.match(soulSource, /changeSummary:\s*restoreChangeSummaryValue\(\)/);
+  assert.doesNotMatch(vesloServerSource, /restoreSoulVersion:\s*\(/, "client should keep scope-specific restore methods");
+});
+
+test("SoulView exposes heartbeat toggle only for workspace Soul sources", () => {
+  assert.match(soulSource, /source\.scope !== "workspace"/);
+  assert.match(soulSource, /setWorkspaceSoulHeartbeat\(source\.workspaceId,\s*nextEnabled,\s*props\.authContext\)/);
+  assert.match(soulSource, /heartbeatPendingSourceKey/);
+  assert.match(soulSource, /data-testid="soul-workspace-heartbeat-toggle"/);
+  assert.doesNotMatch(soulSource, /setOrganizationSoulHeartbeat|setUserSoulHeartbeat/);
+  assert.doesNotMatch(vesloServerSource, /setOrganizationSoulHeartbeat|setUserSoulHeartbeat/);
+});
+
+test("SoulView keeps runtime materialization automatic and shows diagnostics only", () => {
+  assert.match(soulSource, /materialization/);
+  assert.match(soulSource, /requiresAction/);
+  assert.match(soulSource, /conflicts/);
+  assert.doesNotMatch(soulSource, /manual sync|manualSync|sync toggle|syncSoul|runtime sync/i);
+  assert.doesNotMatch(enSource, /manual sync|sync now|runtime sync/i);
+  assert.doesNotMatch(csSource, /ruční synchronizaci|synchronizovat teď/i);
+  assert.doesNotMatch(zhSource, /手动同步|立即同步/i);
 });
