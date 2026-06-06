@@ -362,7 +362,7 @@ export type DisabledSkillTarget = {
 export type DisabledSkillRecord = DisabledSkillTarget & {
   id: string;
   disabledAt: string;
-  disabledBy?: Actor;
+  disabledBy?: string;
 };
 
 export type SkillEnabledOverridesDocument = {

@@ -83,6 +83,33 @@ test("disabling the same skill twice is idempotent", async () => {
   expect(records[0]?.name).toBe("research-helper");
 });
 
+test("parallel disables preserve every disabled skill record", async () => {
+  const dataDir = await tempDir();
+  const targets = Array.from({ length: 24 }, (_, index) => {
+    const name = `parallel-skill-${index}`;
+    return {
+      name,
+      scope: "workspace" as const,
+      workspaceId: "ws_1",
+      path: `/workspace/.opencode/skills/${name}/SKILL.md`,
+    };
+  });
+
+  await Promise.all(
+    targets.map((target) =>
+      setSkillEnabledState({
+        dataDir,
+        target,
+        enabled: false,
+        actor: { type: "host" },
+      })
+    ),
+  );
+
+  const records = await listDisabledSkills({ dataDir, workspaceId: "ws_1" });
+  expect(records.map((record) => record.name).sort()).toEqual(targets.map((target) => target.name).sort());
+});
+
 test("setSkillEnabledState enabling removes the matching disabled record", async () => {
   const dataDir = await tempDir();
   const target = {
@@ -148,6 +175,76 @@ test("registry policy id wins over path when matching records", async () => {
     path: "/third/.opencode/skills/org-helper/SKILL.md",
     registry: { policyId: "policy_1" },
   })).toBe(true);
+});
+
+test("disabled records do not expose actor token hashes", async () => {
+  const dataDir = await tempDir();
+
+  await setSkillEnabledState({
+    dataDir,
+    target: {
+      name: "research-helper",
+      scope: "workspace",
+      workspaceId: "ws_1",
+      path: "/workspace/.opencode/skills/research-helper/SKILL.md",
+    },
+    enabled: false,
+    actor: { type: "remote", tokenHash: "secret-token-hash", scope: "owner", clientId: "client_1" },
+  });
+
+  const records = await listDisabledSkills({ dataDir, workspaceId: "ws_1" });
+  const persisted = await readFile(join(dataDir, "skill-enabled-overrides.json"), "utf8");
+
+  expect(typeof records[0]?.disabledBy).toBe("string");
+  expect(JSON.stringify(records)).not.toContain("tokenHash");
+  expect(JSON.stringify(records)).not.toContain("secret-token-hash");
+  expect(persisted).not.toContain("tokenHash");
+  expect(persisted).not.toContain("secret-token-hash");
+});
+
+test("setSkillEnabledState rejects relative skill paths", async () => {
+  const dataDir = await tempDir();
+
+  await expect(setSkillEnabledState({
+    dataDir,
+    target: {
+      name: "research-helper",
+      scope: "workspace",
+      workspaceId: "ws_1",
+      path: "workspace/.opencode/skills/research-helper/SKILL.md",
+    },
+    enabled: false,
+  })).rejects.toThrow("absolute");
+});
+
+test("setSkillEnabledState rejects paths that do not point to SKILL.md", async () => {
+  const dataDir = await tempDir();
+
+  await expect(setSkillEnabledState({
+    dataDir,
+    target: {
+      name: "research-helper",
+      scope: "workspace",
+      workspaceId: "ws_1",
+      path: "/workspace/.opencode/skills/research-helper/README.md",
+    },
+    enabled: false,
+  })).rejects.toThrow("SKILL.md");
+});
+
+test("setSkillEnabledState rejects skill paths whose parent directory does not match the skill name", async () => {
+  const dataDir = await tempDir();
+
+  await expect(setSkillEnabledState({
+    dataDir,
+    target: {
+      name: "research-helper",
+      scope: "workspace",
+      workspaceId: "ws_1",
+      path: "/workspace/.opencode/skills/other-helper/SKILL.md",
+    },
+    enabled: false,
+  })).rejects.toThrow("Skill path parent directory must match skill name");
 });
 
 test("corrupt JSON returns a typed ApiError", async () => {

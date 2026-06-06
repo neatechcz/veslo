@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { open, readFile, rename, rm } from "node:fs/promises";
-import { basename, dirname, join, normalize, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, normalize, resolve } from "node:path";
 
 import { resolveVesloDataDir } from "./audit.js";
 import { ApiError } from "./errors.js";
@@ -23,10 +23,17 @@ export type SetSkillEnabledStateInput = {
   actor?: Actor;
 };
 
+type SetSkillEnabledStateResult = {
+  ok: true;
+  enabled: boolean;
+  record?: DisabledSkillRecord;
+};
+
 const STORE_FILE = "skill-enabled-overrides.json";
 const SCOPES = new Set<SkillEnabledScope>(["workspace", "user-global", "organization", "platform"]);
 const REGISTRY_SOURCES = new Set(["personal", "workspace", "organization", "platform"]);
 const TOKEN_SCOPES = new Set<TokenScope>(["owner", "collaborator", "viewer"]);
+const mutationQueues = new Map<string, Promise<void>>();
 
 export async function listDisabledSkills(input: {
   dataDir?: string;
@@ -45,43 +52,49 @@ export async function listDisabledSkills(input: {
   });
 }
 
-export async function setSkillEnabledState(input: SetSkillEnabledStateInput): Promise<{
-  ok: true;
-  enabled: boolean;
-  record?: DisabledSkillRecord;
-}> {
+export async function setSkillEnabledState(input: SetSkillEnabledStateInput): Promise<SetSkillEnabledStateResult> {
   if (typeof input.enabled !== "boolean") {
     throw new ApiError(400, "invalid_payload", "enabled must be a boolean");
   }
 
   const target = normalizeTarget(input.target);
   const id = disabledSkillTargetId(target);
-  const document = await readStore(input.dataDir);
-  const existingIndex = document.disabled.findIndex((record) => record.id === id);
 
-  if (input.enabled) {
-    if (existingIndex !== -1) {
-      document.disabled.splice(existingIndex, 1);
+  return mutateStore<SetSkillEnabledStateResult>(input.dataDir, (document) => {
+    const existingIndex = document.disabled.findIndex((record) => record.id === id);
+
+    if (input.enabled) {
+      if (existingIndex !== -1) {
+        document.disabled.splice(existingIndex, 1);
+      }
+      return {
+        document,
+        result: { ok: true as const, enabled: true },
+      };
     }
-    await writeStore(input.dataDir, document);
-    return { ok: true, enabled: true };
-  }
 
-  const existing = existingIndex === -1 ? undefined : document.disabled[existingIndex];
-  const record: DisabledSkillRecord = {
-    id,
-    ...target,
-    disabledAt: existing?.disabledAt ?? new Date().toISOString(),
-    ...(input.actor ? { disabledBy: normalizeActor(input.actor) } : existing?.disabledBy ? { disabledBy: existing.disabledBy } : {}),
-  };
+    const existing = existingIndex === -1 ? undefined : document.disabled[existingIndex];
+    const record: DisabledSkillRecord = {
+      id,
+      ...target,
+      disabledAt: existing?.disabledAt ?? new Date().toISOString(),
+      ...(input.actor
+        ? { disabledBy: normalizeActorIdentity(input.actor) }
+        : existing?.disabledBy
+          ? { disabledBy: existing.disabledBy }
+          : {}),
+    };
 
-  if (existingIndex === -1) {
-    document.disabled.push(record);
-  } else {
-    document.disabled[existingIndex] = record;
-  }
-  await writeStore(input.dataDir, document);
-  return { ok: true, enabled: false, record };
+    if (existingIndex === -1) {
+      document.disabled.push(record);
+    } else {
+      document.disabled[existingIndex] = record;
+    }
+    return {
+      document,
+      result: { ok: true as const, enabled: false, record },
+    };
+  });
 }
 
 export function disabledSkillRecordMatchesTarget(
@@ -154,6 +167,33 @@ async function writeStore(dataDir: string | undefined, document: SkillEnabledOve
   }
 }
 
+async function mutateStore<T>(
+  dataDir: string | undefined,
+  mutate: (document: SkillEnabledOverridesDocument) => { document: SkillEnabledOverridesDocument; result: T },
+): Promise<T> {
+  const path = storePath(dataDir);
+  const previous = mutationQueues.get(path) ?? Promise.resolve();
+  let result: T | undefined;
+
+  const operation = previous.catch(() => undefined).then(async () => {
+    const current = await readStore(dataDir);
+    const next = mutate(current);
+    result = next.result;
+    await writeStore(dataDir, next.document);
+  });
+  const queued = operation.then(() => undefined, () => undefined);
+  mutationQueues.set(path, queued);
+
+  try {
+    await operation;
+    return result as T;
+  } finally {
+    if (mutationQueues.get(path) === queued) {
+      mutationQueues.delete(path);
+    }
+  }
+}
+
 function emptyStore(): SkillEnabledOverridesDocument {
   return { schemaVersion: 1, disabled: [] };
 }
@@ -168,11 +208,12 @@ function normalizeStoredRecord(value: unknown): DisabledSkillRecord | null {
       path: value.path,
       registry: isRecord(value.registry) ? value.registry : undefined,
     } as DisabledSkillTarget);
+    const disabledBy = normalizeStoredDisabledBy(value.disabledBy);
     return {
       id: disabledSkillTargetId(target),
       ...target,
       disabledAt: normalizeIsoString(value.disabledAt) ?? new Date(0).toISOString(),
-      ...(isRecord(value.disabledBy) ? { disabledBy: normalizeActor(value.disabledBy) } : {}),
+      ...(disabledBy ? { disabledBy } : {}),
     };
   } catch {
     return null;
@@ -200,7 +241,7 @@ function normalizeTarget(target: DisabledSkillTarget): DisabledSkillTarget {
     throw new ApiError(400, "invalid_workspace_id", "Workspace skill overrides require a workspace id");
   }
 
-  const path = normalizePath(target.path);
+  const path = normalizePath(target.path, name);
   const registry = normalizeRegistry(target.registry);
   return {
     name,
@@ -238,24 +279,28 @@ function normalizeRegistry(registry: SkillEnabledRegistryIdentity | undefined): 
   return Object.keys(result).length ? result : undefined;
 }
 
-function normalizeActor(actor: unknown): Actor {
+function normalizeActorIdentity(actor: unknown): string {
   if (!isRecord(actor) || (actor.type !== "host" && actor.type !== "remote")) {
     throw new ApiError(400, "invalid_payload", "actor is invalid");
   }
 
   const clientId = normalizeOptionalString(actor.clientId, "actor.clientId");
-  const tokenHash = normalizeOptionalString(actor.tokenHash, "actor.tokenHash");
   const scope = normalizeOptionalString(actor.scope, "actor.scope") as TokenScope | undefined;
   if (scope && !TOKEN_SCOPES.has(scope)) {
     throw new ApiError(400, "invalid_payload", "actor.scope is invalid");
   }
 
-  return {
-    type: actor.type,
-    ...(clientId ? { clientId } : {}),
-    ...(tokenHash ? { tokenHash } : {}),
-    ...(scope ? { scope } : {}),
-  };
+  if (actor.type === "host") return "host";
+  return ["remote", clientId ? `client:${clientId}` : undefined, scope ? `scope:${scope}` : undefined]
+    .filter(Boolean)
+    .join(":");
+}
+
+function normalizeStoredDisabledBy(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "string") return normalizeOptionalString(value, "disabledBy", 256);
+  if (isRecord(value)) return normalizeActorIdentity(value);
+  return undefined;
 }
 
 function normalizeOptionalString(value: unknown, field: string, maxLength = 2048): string | undefined {
@@ -274,9 +319,20 @@ function normalizeOptionalString(value: unknown, field: string, maxLength = 2048
   return trimmed;
 }
 
-function normalizePath(value: unknown): string | undefined {
+function normalizePath(value: unknown, name: string): string | undefined {
   const path = normalizeOptionalString(value, "target.path", 4096);
-  return path ? normalize(path) : undefined;
+  if (!path) return undefined;
+  const normalized = normalize(path);
+  if (!isAbsolute(normalized)) {
+    throw new ApiError(400, "invalid_skill_path", "Skill path must be absolute");
+  }
+  if (basename(normalized) !== "SKILL.md") {
+    throw new ApiError(400, "invalid_skill_path", "Skill path must point to SKILL.md");
+  }
+  if (basename(dirname(normalized)) !== name) {
+    throw new ApiError(400, "invalid_skill_path", "Skill path parent directory must match skill name");
+  }
+  return normalized;
 }
 
 function normalizeIsoString(value: unknown): string | undefined {
