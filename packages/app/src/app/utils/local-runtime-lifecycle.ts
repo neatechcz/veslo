@@ -126,7 +126,7 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
   };
 
   async function startHost(
-    options: Pick<LocalRuntimeReconnectOptions, "workspacePath" | "workspaceId" | "reason" | "navigate">,
+    options: Pick<LocalRuntimeReconnectOptions, "workspacePath" | "workspaceId" | "reason" | "connectMode" | "navigate">,
   ) {
     const runtime = deps.resolveEngineRuntime();
     const info = await deps.startEngine(options.workspacePath, buildStartOptions(runtime));

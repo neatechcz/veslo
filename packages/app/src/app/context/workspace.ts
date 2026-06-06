@@ -2566,6 +2566,7 @@ export function createWorkspaceStore(options: {
             workspacePath: workspace.path,
             workspaceId: workspace.id,
             reason: "browse-cold-start",
+            connectMode: "quiet",
             navigate: false,
           });
         }
