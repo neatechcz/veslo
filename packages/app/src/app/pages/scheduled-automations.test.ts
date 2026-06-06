@@ -77,4 +77,8 @@ test("buildSchedule preserves local timezone for recurring wall-clock schedules"
     kind: "interval",
     seconds: 21600,
   });
+
+  const oneShot = buildSchedule("oneShot", baseOptions, "Europe/Prague");
+  assert.equal(oneShot?.kind, "oneShot");
+  assert.equal("timezone" in (oneShot ?? {}), false);
 });
