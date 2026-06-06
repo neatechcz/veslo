@@ -114,6 +114,8 @@ User-open progress groups, nested action sections, and technical detail disclosu
 
 Expanded intermediate comments and expanded technical detail values expose scoped copy controls. Their text values remain directly selectable, but copying a single value should not require selecting across the surrounding agent output.
 
+Markdown code blocks in assistant messages, including `text`-labeled value boxes, expose an icon-only scoped copy control on block hover or focus that copies only the code block value.
+
 ## Timeline Media Evidence
 
 The session timeline can show image evidence attached to the step or message where it mattered.
