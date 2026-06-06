@@ -43,9 +43,9 @@
         <section class="sidebar-card subtle">
           <div class="eyebrow">Live signals</div>
           <div class="stack tight">
-            <div class="pill-row"><span class="dot good"></span> Gateway healthy</div>
-            <div class="pill-row"><span class="dot warn"></span> 2 credential alerts</div>
-            <div class="pill-row"><span class="dot info"></span> 18 active sessions</div>
+            <div class="pill-row"><span class="dot info"></span> Waiting for live data</div>
+            <div class="pill-row"><span class="dot info"></span> Credential alerts loading</div>
+            <div class="pill-row"><span class="dot info"></span> Session leases loading</div>
           </div>
         </section>
       </aside>
@@ -83,23 +83,23 @@
                 <p class="eyebrow">Control summary</p>
                 <h2>Operator dashboard</h2>
               </div>
-              <span class="status-chip success">Stable</span>
+              <span class="status-chip info">Loading</span>
             </div>
             <div class="hero-metrics">
               <article class="metric-card">
                 <span class="metric-label">Active leases</span>
-                <strong>18</strong>
-                <span class="metric-note">Sticky bindings in healthy state</span>
+                <strong>0</strong>
+                <span class="metric-note">Waiting for session data</span>
               </article>
               <article class="metric-card">
                 <span class="metric-label">Unhealthy credentials</span>
-                <strong>2</strong>
-                <span class="metric-note">1 OAuth refresh failure, 1 revoked key</span>
+                <strong>0</strong>
+                <span class="metric-note">Waiting for credential data</span>
               </article>
               <article class="metric-card">
                 <span class="metric-label">Tracked users</span>
-                <strong>41</strong>
-                <span class="metric-note">13 platform admins in directory</span>
+                <strong>0</strong>
+                <span class="metric-note">Waiting for user data</span>
               </article>
             </div>
           </section>
@@ -305,57 +305,15 @@
                     </tr>
                   </thead>
                   <tbody id="credentials-table-body">
-                    <tr class="row-alert">
-                      <td><strong>OpenAI org key</strong><span>secret_ref: vault://cred/oa-001</span></td>
-                      <td>OAuth</td>
-                      <td><span class="status-chip danger">Unhealthy</span></td>
-                      <td><a href="/admin/alerts">2 active alerts</a></td>
-                      <td>6</td>
-                      <td>3 min ago</td>
-                      <td>0</td>
-                      <td><span class="muted">N/A</span></td>
-                      <td><span class="muted">N/A</span></td>
-                    </tr>
-                    <tr>
-                      <td><strong>Anthropic shared key</strong><span>secret_ref: vault://cred/anth-004</span></td>
-                      <td>API key</td>
-                      <td><span class="status-chip warning">Degraded</span></td>
-                      <td><a href="/admin/alerts">1 warning</a></td>
-                      <td>8</td>
-                      <td>18 min ago</td>
-                      <td>0</td>
-                      <td><span class="muted">N/A</span></td>
-                      <td><span class="muted">N/A</span></td>
-                    </tr>
-                    <tr>
-                      <td><strong>Google Workspace OAuth</strong><span>secret_ref: vault://cred/gws-019</span></td>
-                      <td>OAuth</td>
-                      <td><span class="status-chip success">Healthy</span></td>
-                      <td><a href="/admin/alerts">No current alerts</a></td>
-                      <td>4</td>
-                      <td>1 hour ago</td>
-                      <td>0</td>
-                      <td><span class="muted">N/A</span></td>
-                      <td><span class="muted">N/A</span></td>
-                    </tr>
+                    <tr><td colspan="9">Credentials will appear after live data loads.</td></tr>
                   </tbody>
                 </table>
               </div>
               <aside class="detail-rail">
                 <div id="credential-detail" class="detail-card">
                   <p class="eyebrow">Selected credential</p>
-                  <h3>OpenAI org key</h3>
-                  <div class="stack">
-                    <div class="detail-line"><span>Health</span><strong>Unhealthy</strong></div>
-                    <div class="detail-line"><span>Linked alerts</span><strong>2 active</strong></div>
-                    <div class="detail-line"><span>Latest incident</span><strong>Token refresh failed</strong></div>
-                    <div class="detail-line"><span>Rotation</span><strong>Retry now</strong></div>
-                  </div>
-                  <div class="button-row">
-                    <button class="button button-secondary" type="button">Drain</button>
-                    <button class="button button-secondary" type="button">Rotate</button>
-                    <button class="button button-primary" type="button">Open alerts</button>
-                  </div>
+                  <h3>No credential selected</h3>
+                  <p class="muted">Select a credential after live data loads.</p>
                 </div>
               </aside>
             </div>
@@ -367,7 +325,7 @@
                 <p class="eyebrow">Sessions</p>
                 <h2>Sticky lease roster</h2>
               </div>
-              <span class="status-chip success">18 active</span>
+              <span class="status-chip info">Loading</span>
             </div>
             <div class="split-layout">
               <div>
@@ -381,42 +339,13 @@
                   </select>
                 </div>
                 <div id="session-list" class="list-cards">
-                  <article class="list-card active">
-                    <div>
-                      <strong>session_2841</strong>
-                      <p>Vaclav Soukup, project Atlas, worker `design-bot`</p>
-                    </div>
-                    <span class="status-chip success">Healthy</span>
-                  </article>
-                  <article class="list-card">
-                    <div>
-                      <strong>session_1884</strong>
-                      <p>Alicia, project Billing, worker `watchdog`</p>
-                    </div>
-                    <span class="status-chip warning">Rebinding</span>
-                  </article>
-                  <article class="list-card">
-                    <div>
-                      <strong>session_5510</strong>
-                      <p>Martin, project Docs, worker `writer`</p>
-                    </div>
-                    <span class="status-chip danger">Failed</span>
-                  </article>
+                  <article class="list-card active"><div><strong>No sessions loaded</strong><p>Session leases will appear after live data loads.</p></div></article>
                 </div>
               </div>
               <aside id="session-detail" class="detail-card session-detail">
                 <p class="eyebrow">Selected session</p>
-                <h3>session_2841</h3>
-                <div class="timeline">
-                  <div><span>Lease created</span><strong>09:12</strong></div>
-                  <div><span>Active binding</span><strong>OpenAI org key</strong></div>
-                  <div><span>Last failover</span><strong>Not needed</strong></div>
-                  <div><span>Usage this session</span><strong>18,240 tokens</strong></div>
-                </div>
-                <div class="button-row">
-                  <button class="button button-secondary" type="button">Open trace</button>
-                  <button class="button button-primary" type="button">Watch session</button>
-                </div>
+                <h3>No session selected</h3>
+                <p class="muted">Select a session after live data loads.</p>
               </aside>
             </div>
           </section>
@@ -458,32 +387,24 @@
                     <p class="eyebrow">Total usage</p>
                     <h3>Token volume trend</h3>
                   </div>
-                  <span class="status-chip success">+12% vs yesterday</span>
+                  <span class="status-chip info">Loading</span>
                 </div>
-                <div id="usage-chart-bars" class="fake-chart">
-                  <span style="height: 44%"></span>
-                  <span style="height: 66%"></span>
-                  <span style="height: 58%"></span>
-                  <span style="height: 78%"></span>
-                  <span style="height: 50%"></span>
-                  <span style="height: 88%"></span>
-                  <span style="height: 74%"></span>
-                </div>
+                <div id="usage-chart-bars" class="fake-chart"></div>
               </article>
               <article class="metric-card tall">
                 <span class="metric-label">Prompt tokens</span>
-                <strong id="usage-total-tokens">821k</strong>
+                <strong id="usage-total-tokens">0</strong>
                 <span class="metric-note">Collected across sessions, users, and orgs</span>
               </article>
               <article class="metric-card tall">
                 <span class="metric-label">Requests</span>
-                <strong id="usage-total-requests">412k</strong>
+                <strong id="usage-total-requests">0</strong>
                 <span class="metric-note">Can be grouped by credential or user</span>
               </article>
               <article class="metric-card tall">
                 <span class="metric-label">Top credential</span>
-                <strong id="usage-top-credential">OpenAI org key</strong>
-                <span class="metric-note">53% of current rolling usage</span>
+                <strong id="usage-top-credential">No data</strong>
+                <span class="metric-note">Waiting for usage data</span>
               </article>
             </div>
             <div id="usage-series" class="list-cards"></div>
@@ -560,42 +481,12 @@
             </div>
             <div class="alerts-layout">
               <div id="alert-list" class="alert-queue">
-                <article class="alert-card critical active">
-                  <div class="alert-head">
-                    <strong>Credential outage</strong>
-                    <span class="status-chip danger">Critical</span>
-                  </div>
-                  <p>OpenAI org key has failed 11 refresh attempts and now impacts 6 sessions.</p>
-                  <div class="alert-meta">
-                    <span>Credential: OpenAI org key</span>
-                    <span>First seen: 09:12</span>
-                  </div>
-                </article>
-                <article class="alert-card">
-                  <div class="alert-head">
-                    <strong>Usage spike</strong>
-                    <span class="status-chip warning">High</span>
-                  </div>
-                  <p>Anthropic shared key exceeded baseline on worker `assistant-runner`.</p>
-                  <div class="alert-meta">
-                    <span>Credential: Anthropic shared key</span>
-                    <span>Session: 4</span>
-                  </div>
-                </article>
+                <article class="alert-card active"><div class="alert-head"><strong>No alerts loaded</strong></div><p>Alerts will appear after live data loads.</p></article>
               </div>
               <aside id="alert-detail" class="detail-card alert-detail">
                 <p class="eyebrow">Runbook</p>
-                <h3>Credential outage</h3>
-                <div class="stack">
-                  <div class="detail-line"><span>Affected credential</span><strong>OpenAI org key</strong></div>
-                  <div class="detail-line"><span>Affected sessions</span><strong>6</strong></div>
-                  <div class="detail-line"><span>Recommended action</span><strong>Rebind sessions</strong></div>
-                </div>
-                <div class="button-row">
-                  <button class="button button-secondary" type="button">Acknowledge</button>
-                  <button class="button button-secondary" type="button">Escalate</button>
-                  <button class="button button-primary" type="button">Resolve</button>
-                </div>
+                <h3>No alert selected</h3>
+                <p class="muted">Select an alert after live data loads.</p>
               </aside>
             </div>
           </section>
@@ -625,45 +516,25 @@
                   </select>
                 </div>
                 <div id="user-list" class="list-cards">
-                  <article class="list-card active">
-                    <div>
-                      <strong>Vaclav Soukup</strong>
-                      <p>vaclav.soukup@neatec.cz · Platform admin · owner in Personal</p>
-                    </div>
-                    <span class="status-chip success">Active</span>
-                  </article>
-                  <article class="list-card">
-                    <div>
-                      <strong>Alena Novak</strong>
-                      <p>alena@studio.test · member in Product · invited 2 days ago</p>
-                    </div>
-                    <span class="status-chip info">Invited</span>
-                  </article>
-                  <article class="list-card">
-                    <div>
-                      <strong>Martin Kriz</strong>
-                      <p>martin@studio.test · disabled by admin</p>
-                    </div>
-                    <span class="status-chip danger">Disabled</span>
-                  </article>
+                  <article class="list-card active"><div><strong>No users loaded</strong><p>Directory users will appear after live data loads.</p></div></article>
                 </div>
               </div>
               <aside class="detail-card user-editor">
-                <p id="user-editor-status" class="eyebrow">Edit user</p>
-                <h3 id="user-editor-title">Vaclav Soukup</h3>
+                <p id="user-editor-status" class="eyebrow">User</p>
+                <h3 id="user-editor-title">No user selected</h3>
                 <form class="editor-form">
                   <label>
                     <span>Name</span>
-                    <input id="user-name" class="input" value="Vaclav Soukup" />
+                    <input id="user-name" class="input" value="" />
                   </label>
                   <label>
                     <span>Email</span>
-                    <input id="user-email" class="input" value="vaclav.soukup@neatec.cz" />
+                    <input id="user-email" class="input" value="" />
                   </label>
                   <label>
                     <span>Organization</span>
                     <select id="user-org" class="input">
-                      <option>Personal</option>
+                      <option value="">No organization loaded</option>
                     </select>
                   </label>
                   <label>
@@ -776,39 +647,16 @@
               <section id="audit-list" class="audit-stream">
                 <article class="audit-row active">
                   <div>
-                    <strong>User invited</strong>
-                    <p>Václav Soukup created `alena@studio.test` and sent an invite.</p>
+                    <strong>No events loaded</strong>
+                    <p>Audit events will appear after live data loads.</p>
                   </div>
-                  <span>14:21</span>
-                </article>
-                <article class="audit-row">
-                  <div>
-                    <strong>Credential rotated</strong>
-                    <p>OpenAI org key moved to draining and a replacement binding was assigned.</p>
-                  </div>
-                  <span>13:58</span>
-                </article>
-                <article class="audit-row">
-                  <div>
-                    <strong>Session rebinding</strong>
-                    <p>session_1884 switched to Anthropic shared key after failure classification.</p>
-                  </div>
-                  <span>13:31</span>
+                  <span></span>
                 </article>
               </section>
               <aside id="audit-detail" class="detail-card audit-detail">
                 <p class="eyebrow">Event detail</p>
-                <h3>User invited</h3>
-                <div class="stack">
-                  <div class="detail-line"><span>Actor</span><strong>Václav Soukup</strong></div>
-                  <div class="detail-line"><span>Changed fields</span><strong>invite status, platform role</strong></div>
-                  <div class="detail-line"><span>Result</span><strong>Success</strong></div>
-                  <div class="detail-line"><span>Correlation</span><strong>evt_9a21f</strong></div>
-                </div>
-                <div class="button-row">
-                  <button class="button button-secondary" type="button">Open user</button>
-                  <button class="button button-secondary" type="button">Open org</button>
-                </div>
+                <h3>No event selected</h3>
+                <p class="muted">Select an audit event after live data loads.</p>
               </aside>
             </div>
           </section>

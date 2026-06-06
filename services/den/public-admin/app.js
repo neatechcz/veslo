@@ -1177,6 +1177,12 @@ function renderCredentials() {
         <button class="button button-primary" type="button" data-route-alerts>Open alerts</button>
       </div>
     `;
+  } else {
+    els.credentialDetail.innerHTML = `
+      <p class="eyebrow">Selected credential</p>
+      <h3>No credential selected</h3>
+      <p class="muted">Credentials will appear after live data loads.</p>
+    `;
   }
 }
 
@@ -1207,6 +1213,12 @@ function renderSessions() {
         <button class="button button-secondary" type="button">Open trace</button>
         <button class="button button-primary" type="button">Watch session</button>
       </div>
+    `;
+  } else {
+    els.sessionDetail.innerHTML = `
+      <p class="eyebrow">Selected session</p>
+      <h3>No session selected</h3>
+      <p class="muted">Session leases will appear after live data loads.</p>
     `;
   }
 }
@@ -1449,6 +1461,12 @@ function renderAlerts() {
         <button class="button button-secondary" type="button" data-route-audit>Open audit</button>
       </div>
     `;
+  } else {
+    els.alertDetail.innerHTML = `
+      <p class="eyebrow">Runbook</p>
+      <h3>No alert selected</h3>
+      <p class="muted">Alerts will appear after live data loads.</p>
+    `;
   }
 }
 
@@ -1659,6 +1677,12 @@ function renderAudit() {
         <button class="button button-secondary" type="button">Open entity</button>
         <button class="button button-secondary" type="button">Trace request</button>
       </div>
+    `;
+  } else {
+    els.auditDetail.innerHTML = `
+      <p class="eyebrow">Event detail</p>
+      <h3>No event selected</h3>
+      <p class="muted">Audit events will appear after live data loads.</p>
     `;
   }
 }

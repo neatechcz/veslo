@@ -123,6 +123,37 @@ test("GET /admin/credentials serves the DEN admin shell with Codex inference con
   }
 })
 
+test("GET /admin/credentials does not ship demo admin data in the static shell", async () => {
+  const app = createUiApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/credentials`)
+
+    assert.equal(response.status, 200)
+    const html = await response.text()
+    assert.doesNotMatch(html, /OpenAI org key/)
+    assert.doesNotMatch(html, /Anthropic shared key/)
+    assert.doesNotMatch(html, /Google Workspace OAuth/)
+    assert.doesNotMatch(html, /session_2841/)
+    assert.doesNotMatch(html, /session_1884/)
+    assert.doesNotMatch(html, /session_5510/)
+    assert.doesNotMatch(html, /Alena Novak/)
+    assert.doesNotMatch(html, /Martin Kriz/)
+    assert.doesNotMatch(html, /821k/)
+    assert.doesNotMatch(html, /412k/)
+    assert.doesNotMatch(html, /Credential outage/)
+    assert.doesNotMatch(html, /Usage spike/)
+    assert.doesNotMatch(html, /2 credential alerts/)
+    assert.doesNotMatch(html, /18 active sessions/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
 test("GET /admin/organization serves the DEN admin shell with organization management", async () => {
   const app = createUiApp()
   const server = app.listen(0, "127.0.0.1")
