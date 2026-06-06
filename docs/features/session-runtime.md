@@ -114,9 +114,12 @@ Unstarted sessions are modeled as pending drafts.
 Current behavior:
 
 - pending drafts are durable local state
+- empty pending sessions show a centered composer entry instead of the full conversation layout
 - pending drafts do not appear in the sidebar until the user presses `Run`; when the pending draft is for a newly registered local directory, the directory itself can appear immediately as an empty project/workspace row in by-project mode
 - `Chat` reopens the one existing unpublished private draft instead of creating another unpublished private workspace
 - project `+` actions reopen the pending draft for that project directory when one already exists
+- the composer target picker can switch the centered entry between the private chat draft and workspace pending drafts
+- when switching targets would collide with an existing draft, Veslo requires an explicit choice between keeping the current text for the destination or loading the existing destination draft
 - a real OpenCode session is materialized only when the pending draft is sent successfully
 
 ## Titlebar Context

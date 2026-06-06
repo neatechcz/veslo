@@ -65,24 +65,20 @@ test("pending draft write-back only runs while the bare pending draft route owns
   );
 });
 
-test("optimistic first submit replaces the quickstart empty state immediately", () => {
+test("optimistic first submit replaces the centered composer entry immediately", () => {
   assert.match(
     sessionSource,
-    /const showQuickstartEmptyState = createMemo\(\(\) =>\s*effectiveRenderedMessages\(\)\.length === 0 &&\s*!showWorkspaceSetupEmptyState\(\) &&\s*!showSessionLoadingState\(\),\s*\);/s,
-    "quickstart visibility should use rendered messages so an optimistic submitted draft hides the starter templates before backend messages exist",
+    /const showComposerEntryState = createMemo\(\(\) =>\s*effectiveRenderedMessages\(\)\.length === 0 &&\s*!showWorkspaceSetupEmptyState\(\) &&\s*!showSessionLoadingState\(\),\s*\);/s,
+    "composer entry visibility should use rendered messages so an optimistic submitted draft hides the entry before backend messages exist",
   );
 
   assert.match(
     sessionSource,
-    /<Show when=\{showQuickstartEmptyState\(\)\}>/,
-    "the quickstart starter templates should be controlled by the derived quickstart empty-state memo",
+    /<Show when=\{showComposerEntryState\(\)\}>/,
+    "the centered composer entry should be controlled by the derived empty-state memo",
   );
 
-  assert.doesNotMatch(
-    sessionSource,
-    /<Show when=\{props\.messages\.length === 0 && !showWorkspaceSetupEmptyState\(\) && !showSessionLoadingState\(\)\}>/,
-    "quickstart visibility must not depend only on backend props.messages length",
-  );
+  assert.doesNotMatch(sessionSource, /showQuickstartEmptyState/);
 });
 
 test("materializing a pending submitted draft preserves the visible run indicator", () => {
