@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import type { Dirent } from "node:fs";
+import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { resolveVesloDataDir } from "./audit.js";
+import { ApiError } from "./errors.js";
 import { validateSkillPackageManifest } from "./skill-package-model.js";
 import type { SkillPackageArchive } from "./skill-packages.js";
 import { unpackSkillPackage } from "./skill-packages.js";
@@ -52,6 +54,7 @@ export type MaterializeSkillSetInput = {
 
 export type MaterializePersonalGlobalSkillSetInput = Omit<MaterializeSkillSetInput, "workspaceRoot"> & {
   globalSkillsRoot?: string;
+  unmanagedSkillRoots?: string[];
 };
 
 const ROOT_MARKER_FILE = ".veslo-materialization.json";
@@ -246,6 +249,70 @@ const assertUniqueDesiredSkillNames = (skills: WorkspaceSkillMaterialization[]) 
   }
 };
 
+const findUnmanagedPersonalGlobalSkillConflicts = async (
+  rootDir: string,
+  skills: WorkspaceSkillMaterialization[],
+  unmanagedSkillRoots?: string[],
+): Promise<Array<{ name: string; path: string }>> => {
+  const desiredNames = new Set(skills.filter((skill) => skill.target === "personal-global").map((skill) => skill.name));
+  if (desiredNames.size === 0) return [];
+
+  const globalRoots = Array.from(new Set([dirname(rootDir), ...(unmanagedSkillRoots ?? [])].map((root) => root.trim()).filter(Boolean)));
+  const managedRootName = basename(rootDir);
+  const conflicts: Array<{ name: string; path: string }> = [];
+  const addConflictIfSkillExists = async (name: string, skillDir: string) => {
+    const skillPath = join(skillDir, SKILL_ENTRYPOINT);
+    if (await exists(skillPath)) conflicts.push({ name, path: skillPath });
+  };
+
+  for (const globalRoot of globalRoots) {
+    for (const name of desiredNames) {
+      await addConflictIfSkillExists(name, join(globalRoot, name));
+    }
+
+    let entries: Dirent[];
+    try {
+      entries = await readdir(globalRoot, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name === managedRootName) continue;
+      const domainDir = join(globalRoot, entry.name);
+      let subEntries: Dirent[];
+      try {
+        subEntries = await readdir(domainDir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const subEntry of subEntries) {
+        if (!subEntry.isDirectory() || !desiredNames.has(subEntry.name)) continue;
+        await addConflictIfSkillExists(subEntry.name, join(domainDir, subEntry.name));
+      }
+    }
+  }
+
+  return conflicts.sort((left, right) => left.name.localeCompare(right.name) || left.path.localeCompare(right.path));
+};
+
+const assertNoUnmanagedPersonalGlobalSkillConflicts = async (
+  rootDir: string,
+  skills: WorkspaceSkillMaterialization[],
+  unmanagedSkillRoots?: string[],
+): Promise<void> => {
+  const conflicts = await findUnmanagedPersonalGlobalSkillConflicts(rootDir, skills, unmanagedSkillRoots);
+  if (conflicts.length === 0) return;
+  const conflict = conflicts[0];
+  throw new ApiError(
+    409,
+    "managed_skill_name_conflict",
+    `Refusing to materialize managed skill ${conflict.name} because an unmanaged user-global skill already exists at ${conflict.path}`,
+    { conflicts },
+  );
+};
+
 export async function materializeSkillPackageToRoot(
   input: MaterializeSkillPackageToRootInput,
 ): Promise<SkillMaterializationResult> {
@@ -328,7 +395,13 @@ export async function materializeWorkspaceSkillSet(input: MaterializeSkillSetInp
 export async function materializePersonalGlobalSkillSet(
   input: MaterializePersonalGlobalSkillSetInput,
 ): Promise<SkillSetMaterializationResult> {
-  return materializeSkillSetToRoot(personalGlobalManagedSkillsRoot(input.globalSkillsRoot), input);
+  const rootDir = personalGlobalManagedSkillsRoot(input.globalSkillsRoot);
+  const desiredSkills = input.skills.map(normalizeSkill);
+  await assertNoUnmanagedPersonalGlobalSkillConflicts(rootDir, desiredSkills, input.unmanagedSkillRoots);
+  return materializeSkillSetToRoot(rootDir, {
+    ...input,
+    skills: desiredSkills,
+  });
 }
 
 export const __skillMaterializerTestHooks = {
@@ -338,4 +411,5 @@ export const __skillMaterializerTestHooks = {
   },
   backupRoot,
   skillMarkerPath,
+  findUnmanagedPersonalGlobalSkillConflicts,
 };

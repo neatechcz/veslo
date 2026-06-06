@@ -143,7 +143,7 @@ Server-controlled registry package materialization is a local server responsibil
 - `GET /skills/materialization`
   Requires client auth. Returns local server-controlled user skill materialization status.
 - `POST /skills/materialization/sync-global`
-  Requires host or owner auth. Downloads desired user-skill registry installations and matching user-global rollout policies, validates package archives, writes server-controlled user skill directories, returns any resolver `conflicts`, and returns `pending` without mutating files when the caller reports an active run.
+  Requires host or owner auth. Materializes platform-managed personal-global skills even when no registry is configured. When registry is configured, also downloads desired user-skill registry installations and matching user-global rollout policies, validates package archives, writes server-controlled user skill directories, returns any resolver `conflicts`, and returns `pending` without mutating files when the caller reports an active run.
 - `GET /workspace/:id/skills/materialization`
   Requires client auth. Returns local server-controlled skill materialization status for the workspace.
 - `POST /workspace/:id/skills/materialization/sync`
@@ -153,6 +153,13 @@ Rollout policy resolution must enforce target exclusivity: the same effective
 skill/audience cannot be materialized as both a user skill and a workspace skill.
 If registry state contains both because of legacy data or a race, the server
 returns a conflict and avoids writing both targets.
+
+Veslo ships a platform-managed locked personal-global `veslo-automations` skill.
+It is materialized under `veslo-managed` and teaches agents to use the Veslo
+automation wrapper tools instead of writing external scheduler files. If an
+unmanaged user-global skill with the same name already exists outside
+`veslo-managed`, sync rejects the materialization with a conflict instead of
+creating an ambiguous duplicate.
 
 ## Skill Removal and Restore
 

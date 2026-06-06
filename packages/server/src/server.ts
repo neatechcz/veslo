@@ -66,6 +66,7 @@ import {
   readSkillMaterializationManifest,
   workspaceManagedSkillsRoot,
 } from "./skill-materializer.js";
+import { getPlatformManagedPersonalGlobalSkillSet } from "./platform-managed-skills.js";
 import type { SkillSetMaterializationResult } from "./skill-materializer.js";
 import type {
   RegistrySkillPackageArchive,
@@ -2306,6 +2307,7 @@ async function fetchRegistryWorkspaceMaterializations(
   }
 
   const registryInput = skillRegistryRequestInput(ctx);
+  const platformSkillSet = await getPlatformManagedPersonalGlobalSkillSet();
   const skillSet = await getWorkspaceSkillSetFromRegistry({
     ...registryInput,
     workspaceId: workspace.id,
@@ -2314,6 +2316,9 @@ async function fetchRegistryWorkspaceMaterializations(
   const registryInstallations: WorkspaceSkillRegistryInstallation[] = [];
   const rolloutPolicies: WorkspaceSkillRolloutPolicy[] = [];
   const packagesByInstallationId = new Map<string, SkillPackageArchive>();
+  for (const [installationId, archive] of platformSkillSet.archivesByInstallationId) {
+    packagesByInstallationId.set(installationId, archive);
+  }
   const seenInstallationIds = new Set<string>();
   const personalGlobalWorkspace: WorkspaceInfo = {
     id: "personal-global",
@@ -2411,7 +2416,9 @@ async function fetchRegistryWorkspaceMaterializations(
     localUnmanagedSkills: [],
     policy: {},
   });
-  const materializations = resolution.requiredMaterializations;
+  const materializations = personalGlobalSyncRequired
+    ? [...resolution.requiredMaterializations, ...platformSkillSet.skills]
+    : resolution.requiredMaterializations;
 
   return {
     materializations,
@@ -2431,8 +2438,13 @@ async function fetchRegistryPersonalGlobalMaterializations(
   packagesByInstallationId: Map<string, SkillPackageArchive>;
 }> {
   const baseUrl = skillRegistryRequestBaseUrl(ctx);
+  const platformSkillSet = await getPlatformManagedPersonalGlobalSkillSet();
   if (!baseUrl) {
-    throw new ApiError(503, "skill_registry_misconfigured", "Skill registry base URL is missing");
+    return {
+      materializations: platformSkillSet.skills,
+      conflicts: [],
+      packagesByInstallationId: platformSkillSet.archivesByInstallationId,
+    };
   }
 
   const registryInput = skillRegistryRequestInput(ctx);
@@ -2445,6 +2457,9 @@ async function fetchRegistryPersonalGlobalMaterializations(
   const registryInstallations: WorkspaceSkillRegistryInstallation[] = [];
   const rolloutPolicies: WorkspaceSkillRolloutPolicy[] = [];
   const packagesByInstallationId = new Map<string, SkillPackageArchive>();
+  for (const [installationId, archive] of platformSkillSet.archivesByInstallationId) {
+    packagesByInstallationId.set(installationId, archive);
+  }
   const personalGlobalWorkspace: WorkspaceInfo = {
     id: "personal-global",
     name: "Personal global skills",
@@ -2509,7 +2524,18 @@ async function fetchRegistryPersonalGlobalMaterializations(
     localUnmanagedSkills: [],
     policy: {},
   });
-  const materializations = resolution.requiredMaterializations;
+  const duplicatePlatformSkill = resolution.requiredMaterializations.find((skill) =>
+    platformSkillSet.skills.some((platformSkill) => platformSkill.name === skill.name)
+  );
+  if (duplicatePlatformSkill) {
+    throw new ApiError(
+      409,
+      "managed_skill_name_conflict",
+      `Platform-managed skill ${duplicatePlatformSkill.name} conflicts with registry-managed personal-global skill ${duplicatePlatformSkill.installationId}`,
+      { name: duplicatePlatformSkill.name, installationId: duplicatePlatformSkill.installationId },
+    );
+  }
+  const materializations = [...resolution.requiredMaterializations, ...platformSkillSet.skills];
 
   return { materializations, conflicts: resolution.conflicts, packagesByInstallationId };
 }
@@ -5707,6 +5733,7 @@ function createRoutes(
     const result = await materializePersonalGlobalSkillSet({
       skills: materializations,
       loadPackage,
+      unmanagedSkillRoots: userGlobalSkillRootsForMutation(),
     });
 
     await recordAudit(result.rootDir, {
@@ -5732,7 +5759,7 @@ function createRoutes(
       status: "synced",
       synced: true,
       reloadRequired: true,
-      registryConfigured: true,
+      registryConfigured: Boolean(skillRegistryBaseUrl(config)),
       rootDir: result.rootDir,
       materializedSkills: materializations.map(materializationSummaryPayload),
       conflicts,
@@ -5871,6 +5898,7 @@ function createRoutes(
       personalGlobalResult = await materializePersonalGlobalSkillSet({
         skills: personalGlobalMaterializations,
         loadPackage,
+        unmanagedSkillRoots: userGlobalSkillRootsForMutation(),
       });
     }
     const responseMaterializations = [

@@ -44,6 +44,12 @@ They read the running Veslo server state from the desktop-provided environment
 and call the server automation routes. Agents must not create separate OS jobs or
 write scheduler files directly for Veslo automations.
 
+The server also materializes a platform-managed, locked user-global
+`veslo-automations` skill under the `veslo-managed` skill root. The skill directs
+agents to use `veslo_create_automation`, `veslo_list_automations`,
+`veslo_run_automation`, `veslo_update_automation`, and
+`veslo_delete_automation` for persistent one-shot and recurring automations.
+
 Legacy Agent Lab scheduler routes remain compatibility aliases. Older Agent Lab
 automation files are migrated into the canonical Veslo automation store on
 server read when the canonical store does not already exist. The legacy list
