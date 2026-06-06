@@ -1,8 +1,6 @@
 ---
 name: skill-creator
 description: Guide for creating effective Veslo skills. Use when users want to create or update user, workspace, organization, or public skills with local authoring, registry publishing, review, rollout, or materialization semantics.
-veslo_internal_pack: true
-veslo_internal_snapshot: "2026-06-06"
 ---
 
 # Veslo Registry-Aware Skill Creation

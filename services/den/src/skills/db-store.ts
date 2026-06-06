@@ -858,6 +858,32 @@ export class DbSkillRegistryStore implements SkillRegistryStore {
     return toReviewResponse(await this.requireReviewRequest(requestId))
   }
 
+  async findPendingReviewRequest(
+    context: SkillRegistryRouteContext,
+    input: Parameters<SkillRegistryStore["findPendingReviewRequest"]>[1],
+  ) {
+    const skill = await this.requireVisibleSkill(context, input.skillId)
+    const version = await this.requireVersion(input.versionId)
+    if (version.skill_id !== skill.id) {
+      throw new SkillRegistryStoreError(400, "version_skill_mismatch")
+    }
+    const orgId = input.scope === "org" ? input.orgId ?? skill.org_id ?? context.orgId ?? null : null
+    if (input.scope === "org" && !orgId) throw new SkillRegistryStoreError(400, "org_id_required")
+    validateReviewRequestTarget(context, skill, version, input.scope, orgId)
+    const rows = await this.database
+      .select()
+      .from(SkillReviewRequestTable)
+      .where(and(
+        eq(SkillReviewRequestTable.skill_id, skill.id),
+        eq(SkillReviewRequestTable.version_id, version.id),
+        eq(SkillReviewRequestTable.scope, input.scope),
+        eq(SkillReviewRequestTable.status, "pending"),
+        ...(orgId === null ? [isNull(SkillReviewRequestTable.org_id)] : [eq(SkillReviewRequestTable.org_id, orgId)]),
+      ))
+      .limit(1)
+    return rows[0] ? toReviewResponse(rows[0]) : null
+  }
+
   async approveReviewRequest(context: SkillRegistryRouteContext, input: ResolveReviewInput) {
     const request = await this.findReviewRequest(input.requestId)
     if (!request) return null

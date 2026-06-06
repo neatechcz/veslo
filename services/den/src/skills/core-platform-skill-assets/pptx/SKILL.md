@@ -1,8 +1,6 @@
 ---
-name: pptx
-description: "Presentation creation, editing, and analysis. When Claude needs to work with presentations (.pptx files) for: (1) Creating new presentations, (2) Modifying or editing content, (3) Working with layouts, (4) Adding comments or speaker notes, or any other presentation tasks"
-veslo_internal_pack: true
-veslo_internal_snapshot: "2026-03-16"
+name: veslo-pptx
+description: "Create, edit, analyze, and visually validate PowerPoint PPTX presentations using standard skill execution."
 ---
 
 # PPTX creation, editing, and analysis
@@ -40,7 +38,7 @@ Use raw XML access for: comments, speaker notes, slide layouts, animations, desi
 
 `python ooxml/scripts/unpack.py <office_file> <output_dir>`
 
-**Note**: The unpack.py script is located at `skills/public/pptx/ooxml/scripts/unpack.py` relative to the project root. If the script doesn't exist at this path, use `find . -name "unpack.py"` to locate it.
+**Note**: The unpack.py script is located at `ooxml/scripts/unpack.py` relative to this skill package. If the script doesn't exist at this path, use `find . -name "unpack.py"` to locate it.
 
 #### Key file structures
 
@@ -70,7 +68,7 @@ When creating a new PowerPoint presentation from scratch, use the **html2pptx** 
 1. **Read documentation**: Read [`html2pptx.md`](html2pptx.md) and [`css.md`](css.md) completely (see "CRITICAL: Read All Documentation First" section above)
 
 2. **PREREQUISITE - Extract html2pptx library**:
-   - Extract the library next to your script: `mkdir -p html2pptx && tar -xzf skills/public/pptx/html2pptx.tgz -C html2pptx`
+   - Extract the library next to your script: `mkdir -p html2pptx && tar -xzf html2pptx.tgz -C html2pptx`
    - This creates a `html2pptx/` directory with the library files and CLI binaries
 
 3. **Plan the presentation**: Follow html2pptx.md "Design Philosophy" section for:

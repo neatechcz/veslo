@@ -2469,8 +2469,8 @@ function materializationEntryPayload(entry: WorkspaceSkillMaterialization & {
     versionId: entry.versionId,
     packageSha256: entry.packageSha256,
     source: entry.source,
-    removalPolicy: entry.removalPolicy,
     target: entry.target,
+    removalPolicy: entry.removalPolicy,
     ...(entry.skillDir ? { skillDir: entry.skillDir } : {}),
     ...(entry.materializedAt ? { materializedAt: entry.materializedAt } : {}),
   };
@@ -2484,8 +2484,8 @@ function materializationSummaryPayload(entry: WorkspaceSkillMaterialization) {
     versionId: entry.versionId,
     packageSha256: entry.packageSha256,
     source: entry.source,
-    removalPolicy: entry.removalPolicy,
     target: entry.target,
+    removalPolicy: entry.removalPolicy,
   };
 }
 
@@ -2553,8 +2553,8 @@ function desiredSkillSetRevision(materializations: WorkspaceSkillMaterialization
       versionId: entry.versionId,
       packageSha256: entry.packageSha256,
       source: entry.source,
-      removalPolicy: entry.removalPolicy,
       target: entry.target,
+      removalPolicy: entry.removalPolicy,
     }))
     .sort((left, right) => left.name.localeCompare(right.name) || left.installationId.localeCompare(right.installationId));
   return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
@@ -3739,15 +3739,10 @@ function createRoutes(
     try {
       provision = await provisionWorkspaceInternalSystem(workspace.path, resolveVesloAppDataDir());
       if (provision.written > 0) {
-        emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
-          type: "skill",
-          action: "updated",
-          path: ".opencode/veslo/internal",
-        });
         emitReloadEvent(ctx.reloadEvents, workspace, "agents", {
           type: "agent",
           action: "updated",
-          path: ".opencode/agents",
+          path: ".opencode/agents/veslo.md",
         });
       }
       soulMaterialization = await materializeSoulForWorkspace(serverDataDir, ctx, workspace, {}, { workspaceActive: true });
@@ -3837,21 +3832,16 @@ function createRoutes(
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
       action: "system.provision",
-      target: ".opencode/veslo/internal",
-      summary: `Provisioned internal packs (${result.status})`,
+      target: ".opencode/agents/veslo.md",
+      summary: `Updated Veslo workspace instructions (${result.status})`,
       timestamp: Date.now(),
     });
 
     if (result.written > 0) {
-      emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
-        type: "skill",
-        action: "updated",
-        path: ".opencode/veslo/internal",
-      });
       emitReloadEvent(ctx.reloadEvents, workspace, "agents", {
         type: "agent",
         action: "updated",
-        path: ".opencode/agents",
+        path: ".opencode/agents/veslo.md",
       });
     }
 

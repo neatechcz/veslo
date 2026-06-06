@@ -17,6 +17,9 @@ import {
 } from "./skill-metadata.js";
 
 export const SKILL_ENTRYPOINT = "SKILL.md";
+const MANAGED_MARKER_FILE = ".veslo-managed.json";
+const MANAGED_SKILL_SOURCES = new Set(["personal", "workspace", "organization", "platform"]);
+const SKILL_REMOVAL_POLICIES = new Set(["user_removable", "admin_removable", "locked"]);
 
 export interface SkillRemovalJournalContext {
   dataDir?: string;
@@ -43,6 +46,62 @@ async function findWorkspaceRoots(workspaceRoot: string): Promise<string[]> {
 }
 
 export const extractTriggerFromBody = extractTriggerFromSkillBody;
+
+const markerString = (value: unknown, key: string): string | undefined => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const candidate = (value as Record<string, unknown>)[key];
+  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : undefined;
+};
+
+const markerSource = (
+  marker: unknown,
+  fallbackScope: "project" | "global",
+): NonNullable<SkillItem["registry"]>["source"] | undefined => {
+  const source = markerString(marker, "source");
+  if (source && MANAGED_SKILL_SOURCES.has(source)) {
+    return source as NonNullable<SkillItem["registry"]>["source"];
+  }
+  const target = markerString(marker, "target");
+  if (target === "workspace") return "workspace";
+  if (target === "personal-global") return "personal";
+  return fallbackScope === "project" ? "workspace" : "personal";
+};
+
+const markerRemovalPolicy = (marker: unknown): NonNullable<SkillItem["registry"]>["removalPolicy"] | undefined => {
+  const removalPolicy = markerString(marker, "removalPolicy");
+  if (removalPolicy && SKILL_REMOVAL_POLICIES.has(removalPolicy)) {
+    return removalPolicy as NonNullable<SkillItem["registry"]>["removalPolicy"];
+  }
+  return "user_removable";
+};
+
+async function registryMetadataFromManagedMarker(
+  skillDir: string,
+  scope: "project" | "global",
+): Promise<SkillItem["registry"] | undefined> {
+  let marker: unknown;
+  try {
+    marker = JSON.parse(await readFile(join(skillDir, MANAGED_MARKER_FILE), "utf8"));
+  } catch {
+    return undefined;
+  }
+
+  const rawInstallationId = markerString(marker, "installationId");
+  if (!rawInstallationId) return undefined;
+  const registry: NonNullable<SkillItem["registry"]> = {
+    ...(markerString(marker, "skillId") ? { skillId: markerString(marker, "skillId") } : {}),
+    ...(markerString(marker, "versionId") ? { versionId: markerString(marker, "versionId") } : {}),
+    ...(markerString(marker, "packageSha256") ? { packageSha256: markerString(marker, "packageSha256") } : {}),
+    source: markerSource(marker, scope),
+    removalPolicy: markerRemovalPolicy(marker),
+  };
+
+  if (rawInstallationId.startsWith("rollout:")) {
+    const policyId = rawInstallationId.slice("rollout:".length).trim();
+    return policyId ? { ...registry, policyId } : undefined;
+  }
+  return { ...registry, installationId: rawInstallationId };
+}
 
 async function parseSkillEntry(
   skillPath: string,
@@ -76,6 +135,7 @@ async function parseSkillEntry(
     aliases: metadata.aliases,
     whenToUse: metadata.whenToUse,
     paths: metadata.paths,
+    registry: await registryMetadataFromManagedMarker(dirname(skillPath), scope),
   };
 }
 

@@ -175,6 +175,7 @@ export default function SkillsView(props: SkillsViewProps) {
           description: skill.description,
           trigger: skill.trigger,
           source: "unknown",
+          registry: skill.registry,
           enabled: true,
           readable: true,
           writable: true,

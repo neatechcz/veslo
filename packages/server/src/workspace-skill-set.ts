@@ -99,6 +99,7 @@ const toResolvedSkill = (installation: WorkspaceSkillRegistryInstallation): Reso
     packageSha256: resolved.packageSha256,
     source: installation.source,
     target: materializationTargetForSource(installation.source),
+    removalPolicy: "user_removable",
   };
 };
 
@@ -125,8 +126,8 @@ const toMaterialization = (skill: ManagedCandidate): WorkspaceSkillMaterializati
   versionId: skill.versionId,
   packageSha256: skill.packageSha256,
   source: skill.source,
-  removalPolicy: skill.removalPolicy,
   target: skill.target,
+  removalPolicy: skill.removalPolicy,
 });
 
 function isRolloutInScope(

@@ -1,8 +1,6 @@
 ---
-name: docx
-description: "Comprehensive document creation, editing, and analysis with support for tracked changes, comments, formatting preservation, and text extraction. When Claude needs to work with professional documents (.docx files) for: (1) Creating new documents, (2) Modifying or editing content, (3) Working with tracked changes, (4) Adding comments, or any other document tasks"
-veslo_internal_pack: true
-veslo_internal_snapshot: "2026-03-16"
+name: veslo-docx
+description: "Create, edit, analyze, convert, and validate Word DOCX documents using standard skill execution."
 ---
 
 # DOCX creation, editing, and analysis

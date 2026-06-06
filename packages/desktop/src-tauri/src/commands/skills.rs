@@ -524,30 +524,45 @@ fn marker_string(value: &serde_json::Value, key: &str) -> Option<String> {
         .map(ToString::to_string)
 }
 
+fn marker_source(value: &serde_json::Value) -> Option<String> {
+    match marker_string(value, "source").as_deref() {
+        Some("personal") => Some("personal".to_string()),
+        Some("workspace") => Some("workspace".to_string()),
+        Some("organization") => Some("organization".to_string()),
+        Some("platform") => Some("platform".to_string()),
+        _ => match marker_string(value, "target").as_deref() {
+            Some("workspace") => Some("workspace".to_string()),
+            Some("personal-global") => Some("personal".to_string()),
+            _ => None,
+        },
+    }
+}
+
+fn marker_removal_policy(value: &serde_json::Value) -> Option<String> {
+    match marker_string(value, "removalPolicy").as_deref() {
+        Some("user_removable") => Some("user_removable".to_string()),
+        Some("admin_removable") => Some("admin_removable".to_string()),
+        Some("locked") => Some("locked".to_string()),
+        _ => Some("user_removable".to_string()),
+    }
+}
+
 fn registry_metadata_from_managed_marker(skill_dir: &Path) -> Option<LocalSkillRegistryMetadata> {
     let raw = fs::read_to_string(skill_dir.join(".veslo-managed.json")).ok()?;
     let marker: serde_json::Value = serde_json::from_str(&raw).ok()?;
     let marker_installation_id = marker_string(&marker, "installationId")?;
+    let source = marker_source(&marker);
+    let removal_policy = marker_removal_policy(&marker);
 
-    let (installation_id, policy_id, source, removal_policy) =
+    let (installation_id, policy_id) =
         if let Some(policy_id) = marker_installation_id.strip_prefix("rollout:") {
             let policy_id = policy_id.trim().to_string();
             if policy_id.is_empty() {
                 return None;
             }
-            (None, Some(policy_id), None, None)
+            (None, Some(policy_id))
         } else {
-            let source = match marker_string(&marker, "target").as_deref() {
-                Some("workspace") => Some("workspace".to_string()),
-                Some("personal-global") => Some("personal".to_string()),
-                _ => None,
-            };
-            (
-                Some(marker_installation_id),
-                None,
-                source,
-                Some("user_removable".to_string()),
-            )
+            (Some(marker_installation_id), None)
         };
 
     Some(LocalSkillRegistryMetadata {
@@ -720,8 +735,41 @@ mod tests {
 
         assert_eq!(metadata.installation_id.as_deref(), None);
         assert_eq!(metadata.policy_id.as_deref(), Some("policy_workspace_tool"));
-        assert_eq!(metadata.source.as_deref(), None);
-        assert_eq!(metadata.removal_policy.as_deref(), None);
+        assert_eq!(metadata.source.as_deref(), Some("workspace"));
+        assert_eq!(metadata.removal_policy.as_deref(), Some("user_removable"));
+    }
+
+    #[test]
+    fn managed_marker_preserves_platform_lock_metadata() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let skill_dir = temp.path().join("platform-tool");
+        fs::create_dir_all(&skill_dir).expect("create skill dir");
+        fs::write(
+            skill_dir.join(".veslo-managed.json"),
+            r#"{
+              "installationId": "platform_install_tool",
+              "skillId": "platform_skill_tool",
+              "versionId": "platform_version_tool_v1",
+              "packageSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+              "target": "personal-global",
+              "source": "platform",
+              "removalPolicy": "locked"
+            }"#,
+        )
+        .expect("write managed marker");
+
+        let metadata =
+            registry_metadata_from_managed_marker(&skill_dir).expect("registry metadata");
+
+        assert_eq!(
+            metadata.installation_id.as_deref(),
+            Some("platform_install_tool")
+        );
+        assert_eq!(metadata.policy_id.as_deref(), None);
+        assert_eq!(metadata.skill_id.as_deref(), Some("platform_skill_tool"));
+        assert_eq!(metadata.version_id.as_deref(), Some("platform_version_tool_v1"));
+        assert_eq!(metadata.source.as_deref(), Some("platform"));
+        assert_eq!(metadata.removal_policy.as_deref(), Some("locked"));
     }
 }
 

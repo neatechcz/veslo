@@ -1,12 +1,10 @@
-import { lstat, readdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { exists, ensureDir } from "./utils.js";
 
 export const INTERNAL_SYSTEM_VERSION = "2026-06-06.1";
 const INTERNAL_SYSTEM_SOURCE = "openwork-snapshot";
-const MANIFEST_SCHEMA_VERSION = 1;
-const ROUTING_BLOCK_VERSION = 3;
 
 const DELEGATE_PLUGIN_FILE = "veslo-delegate.js";
 const AUTOMATIONS_PLUGIN_FILE = "veslo-automations.js";
@@ -20,8 +18,8 @@ const INSTRUCTIONS_BLOCK_END = "<!-- VESLO_INSTRUCTIONS_END -->";
 const AGENT_BLOCK_START = "<!-- VESLO_AGENT_INSTRUCTIONS_START -->";
 const AGENT_BLOCK_END = "<!-- VESLO_AGENT_INSTRUCTIONS_END -->";
 
-const INTERNAL_PACKS = ["docx", "pdf", "pptx", "xlsx", "skill-creator", "research"] as const;
-const INTERNAL_AGENT_FILES = [
+const LEGACY_INTERNAL_PACKS = ["docx", "pdf", "pptx", "xlsx", "skill-creator", "research"] as const;
+const LEGACY_INTERNAL_AGENT_FILES = [
   "veslo-internal-docx.md",
   "veslo-internal-pdf.md",
   "veslo-internal-pptx.md",
@@ -29,7 +27,8 @@ const INTERNAL_AGENT_FILES = [
   "veslo-internal-skill-creator.md",
   "veslo-internal-research.md",
 ] as const;
-const INTERNAL_PLUGIN_FILES = [DELEGATE_PLUGIN_FILE, AUTOMATIONS_PLUGIN_FILE] as const;
+
+const LEGACY_INTERNAL_AGENT_NAMES = LEGACY_INTERNAL_AGENT_FILES.map((name) => name.replace(/\.md$/i, ""));
 
 type ProvisionStats = { written: number; unchanged: number };
 
@@ -39,52 +38,6 @@ export type WorkspaceProvisionResult = {
   written: number;
   unchanged: number;
 };
-
-type InternalManifest = {
-  schemaVersion: number;
-  version: string;
-  source: string;
-  packs: string[];
-  agents: string[];
-  plugins: string[];
-  routingBlockVersion: number;
-  packsMode?: string;
-  centralPacksDir?: string;
-};
-
-async function resolveInternalPackSourceRoot(): Promise<string> {
-  const candidates = [
-    join(import.meta.dir, "..", "..", "..", "internal", "veslo-internal-packs"),
-    join(process.cwd(), "internal", "veslo-internal-packs"),
-  ];
-
-  for (const candidate of candidates) {
-    if (await exists(candidate)) {
-      return candidate;
-    }
-  }
-
-  throw new Error("Internal pack source directory not found");
-}
-
-async function collectFiles(root: string, relative = ""): Promise<string[]> {
-  const dir = relative ? join(root, relative) : root;
-  const entries = (await readdir(dir, { withFileTypes: true })).sort((a, b) =>
-    a.name.localeCompare(b.name),
-  );
-  const out: string[] = [];
-  for (const entry of entries) {
-    const nextRel = relative ? join(relative, entry.name) : entry.name;
-    if (entry.isDirectory()) {
-      out.push(...(await collectFiles(root, nextRel)));
-      continue;
-    }
-    if (entry.isFile()) {
-      out.push(nextRel);
-    }
-  }
-  return out;
-}
 
 async function writeIfChanged(path: string, content: string | Uint8Array, stats: ProvisionStats) {
   const nextBytes = typeof content === "string" ? Buffer.from(content, "utf8") : Buffer.from(content);
@@ -96,99 +49,6 @@ async function writeIfChanged(path: string, content: string | Uint8Array, stats:
   await ensureDir(dirname(path));
   await writeFile(path, nextBytes);
   stats.written += 1;
-}
-
-function internalAgentDocument(input: { label: string; pack: string; summary: string }) {
-  return `---
-description: Veslo internal ${input.label} execution agent
-mode: subagent
-hidden: true
-temperature: 0.5
-tools:
-  "*": false
-  "read": true
-  "write": true
-  "edit": true
-  "apply_patch": true
-  "glob": true
-  "grep": true
-  "list": true
-  "bash": true
----
-
-You are a hidden Veslo internal execution agent.
-
-Scope:
-- ${input.summary}
-- Use resources from \`.opencode/veslo/internal/${input.pack}\`.
-
-MANDATORY first step:
-1. Read \`.opencode/veslo/internal/${input.pack}/SKILL.md\` using the read tool.
-2. Follow the workflow described in SKILL.md exactly.
-3. Only read additional helper files when SKILL.md references them.
-
-Critical rules:
-- You MUST read SKILL.md before doing anything else. Do not skip this step.
-- You MUST produce files in the correct binary format (e.g. .docx must be a valid ZIP/OOXML archive, not plaintext).
-- If SKILL.md says to use a library (e.g. \`npm install -g docx\`, \`pip install pypdf\`), install it first via bash, then use it.
-- Perform concrete file/tool work end-to-end.
-- Keep edits deterministic and minimal.
-- Return concise execution status and outputs to the parent.
-- Do not dump raw JSON, manifests, tool payloads, or full generated file contents unless explicitly requested.
-- Do not expose internal implementation details unless explicitly requested in developer/debug mode.
-`;
-}
-
-function internalSkillCreatorAgentDocument() {
-  return `---
-description: Veslo internal skill-creator execution agent
-mode: subagent
-hidden: true
-temperature: 0.5
-tools:
-  "*": false
-  "read": true
-  "write": true
-  "edit": true
-  "apply_patch": true
-  "glob": true
-  "grep": true
-  "list": true
-  "bash": true
----
-
-You are a hidden Veslo internal execution agent for reusable skill authoring.
-
-Scope:
-- Use resources from \`.opencode/veslo/internal/skill-creator\`.
-- Load \`.opencode/veslo/internal/skill-creator/SKILL.md\` first.
-
-Rules:
-- Only run for explicit requests to create/update reusable skills.
-- Do not assume workspace scope.
-- Before giving path, API, install, or publishing advice, confirm where the skill should live: user skill, workspace skill, organization skill, or public skill.
-- Use the scope mapping in SKILL.md for registry-backed user skill, workspace skill, organization skill, and public skill workflows.
-- Create local files only for the confirmed target scope, and use registry review/rollout workflows when SKILL.md requires them.
-- Keep the resulting skill concise and runnable.
-- Do not dump raw JSON, manifests, tool payloads, or full generated file contents unless explicitly requested.
-- Do not expose internal implementation details unless explicitly requested in developer/debug mode.
-`;
-}
-
-function managedVesloRoutingBlock() {
-  return `${ROUTING_BLOCK_START}
-## Managed Internal Delegation (Veslo)
-
-This block is managed by Veslo. Keep it intact.
-
-Document, skill, and explicit subagent requests are handled via the \`delegate\` tool, which routes work
-to specialized hidden subagents. Use it like any other tool — the model selects it
-based on context (file types, document references, skill creation requests, explicit delegation language).
-
-Execution behavior:
-- Internal subagent identities are implementation details; do not surface their names unless explicitly requested in developer/debug context.
-- Return normal progress/results in the parent session.
-${ROUTING_BLOCK_END}`;
 }
 
 function managedVesloAgentInstructionsBlock() {
@@ -221,10 +81,9 @@ This block is managed by Veslo. Keep it intact.
 - If validation fails, do not attach the file. Continue with a short diagnostic note and request/choose a different document source.
 
 ### Veslo Tools & Features
-- **delegate** — routes document tasks and explicit "use subagent/delegate" requests to specialized subagents.
-- **Skills** — reusable workflows in \`.opencode/skills/\`. Suggest creating one when work repeats.
-- **Scheduler** — recurring tasks (daily, weekly, interval). Mention when a task could be automated.
-- **Workspace** — user may have multiple workspaces; respect workspace boundaries.
+- **Skills** - reusable workflows distributed through user, workspace, organization, and platform skill roots.
+- **Scheduler** - recurring tasks (daily, weekly, interval). Mention when a task could be automated.
+- **Workspace** - user may have multiple workspaces; respect workspace boundaries.
 
 ### User Memory
 - The materialized Soul files are read-only runtime output owned by Veslo. Do not edit \`.opencode/soul-company.md\`, \`.opencode/soul-user.md\`, or \`.opencode/soul-workspace.md\` directly.
@@ -238,24 +97,24 @@ function managedVesloInstructionsBlock() {
   return `${INSTRUCTIONS_BLOCK_START}
 # Veslo
 
-This is Veslo — a desktop AI application. When the user says "you", they mean Veslo.
+This is Veslo - a desktop AI application. When the user says "you", they mean Veslo.
 
 ## Identity
 - Introduce yourself as Veslo, not OpenCode.
-- Do not use CLI references (ctrl+p, /help, terminal) — the user works in a GUI.
+- Do not use CLI references (ctrl+p, /help, terminal) - the user works in a GUI.
 - Do not reference opencode.ai or github.com/anomalyco/opencode.
 
 ## Tone
 - Professional, calm, clear.
-- Do not assume programming knowledge — explain simply.
+- Do not assume programming knowledge - explain simply.
 - Adjust response length to question complexity (not always <4 lines).
 - When working with files, explain what you are doing and why.
 
 ## Veslo Features
-- **Skills** — reusable workflows in \`.opencode/skills/\`. If a task repeats, suggest creating a skill.
-- **Office files** — Veslo can process DOCX, PDF, PPTX, XLSX via internal agents.
-- **Workspace** — the user may have multiple workspaces and switch between them.
-- **Scheduler** — recurring tasks can be scheduled (daily, weekly, interval).
+- **Skills** - reusable workflows distributed through user, workspace, organization, and platform skill roots.
+- **Office files** - Veslo can process DOCX, PDF, PPTX, and XLSX files through available skills and tools.
+- **Workspace** - the user may have multiple workspaces and switch between them.
+- **Scheduler** - recurring tasks can be scheduled (daily, weekly, interval).
 
 ## Safety
 - Explain consequences before destructive actions.
@@ -290,6 +149,17 @@ function upsertManagedBlock(
   const trimmed = existing.trimEnd();
   if (!trimmed) return `${block.trimEnd()}\n`;
   return `${trimmed}\n\n${block.trimEnd()}\n`;
+}
+
+function removeManagedBlock(existing: string, startMarker: string, endMarker: string): string {
+  const start = existing.indexOf(startMarker);
+  if (start < 0) return existing;
+  const end = existing.indexOf(endMarker, start);
+  if (end < 0) return existing;
+  const before = existing.slice(0, start).replace(/\n+$/g, "");
+  const after = existing.slice(end + endMarker.length).replace(/^\n+/g, "");
+  const body = [before, after].filter(Boolean).join("\n\n");
+  return body ? `${body}\n` : "";
 }
 
 const LEGACY_ONBOARDING_SKILLS = ["workspace-guide", "get-started"] as const;
@@ -346,6 +216,124 @@ async function removeLegacyOnboardingSkills(workspaceRoot: string, stats: Provis
   }
 }
 
+function manifestArrayIncludes(value: unknown, expected: readonly string[]) {
+  return Array.isArray(value) && value.some((entry) => typeof entry === "string" && expected.includes(entry));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function legacyManifestReferencesManagedArtifacts(manifest: Record<string, unknown>) {
+  return manifestArrayIncludes(manifest.agents, LEGACY_INTERNAL_AGENT_NAMES) ||
+    manifestArrayIncludes(manifest.plugins, [DELEGATE_PLUGIN_FILE]);
+}
+
+function isManagedLegacyInternalManifest(content: string) {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return false;
+  }
+
+  if (!isRecord(parsed)) return false;
+  return parsed.source === INTERNAL_SYSTEM_SOURCE || legacyManifestReferencesManagedArtifacts(parsed);
+}
+
+async function removeManagedLegacyInternalRoot(workspaceRoot: string, stats: ProvisionStats) {
+  const internalRoot = join(workspaceRoot, ".opencode", "veslo", "internal");
+  const manifestPath = join(internalRoot, "manifest.json");
+  if (!(await exists(manifestPath))) return;
+
+  const manifest = await readFile(manifestPath, "utf8");
+  if (!isManagedLegacyInternalManifest(manifest)) return;
+
+  for (const pack of LEGACY_INTERNAL_PACKS) {
+    if (await removeManagedLegacyInternalPack(join(internalRoot, pack))) {
+      stats.written += 1;
+    }
+  }
+
+  await rm(manifestPath, { force: true });
+  stats.written += 1;
+
+  if (await directoryIsEmpty(internalRoot)) {
+    await rm(internalRoot, { recursive: true, force: true });
+    stats.written += 1;
+  }
+}
+
+async function removeManagedLegacyInternalPack(packDir: string) {
+  if (!(await exists(packDir))) return false;
+
+  const stat = await lstat(packDir);
+  if (stat.isSymbolicLink()) {
+    await rm(packDir, { recursive: true, force: true });
+    return true;
+  }
+
+  const skillPath = join(packDir, "SKILL.md");
+  if (!(await exists(skillPath))) return false;
+
+  const skill = await readFile(skillPath, "utf8");
+  if (!skill.includes("veslo_internal_pack: true")) return false;
+
+  await rm(packDir, { recursive: true, force: true });
+  return true;
+}
+
+async function directoryIsEmpty(path: string) {
+  try {
+    return (await readdir(path)).length === 0;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
+  }
+}
+
+function isManagedLegacyInternalAgent(content: string) {
+  return content.includes("mode: subagent") &&
+    content.includes("hidden: true") &&
+    content.includes("Veslo internal");
+}
+
+async function removeManagedLegacyInternalAgents(workspaceRoot: string, stats: ProvisionStats) {
+  const agentsRoot = join(workspaceRoot, ".opencode", "agents");
+
+  for (const filename of LEGACY_INTERNAL_AGENT_FILES) {
+    const path = join(agentsRoot, filename);
+    if (!(await exists(path))) continue;
+
+    const content = await readFile(path, "utf8");
+    if (!isManagedLegacyInternalAgent(content)) continue;
+
+    await rm(path, { force: true });
+    stats.written += 1;
+  }
+}
+
+function isManagedLegacyDelegatePlugin(content: string) {
+  return content.includes("Veslo Delegate Plugin") && content.includes("Managed by Veslo internal system");
+}
+
+async function removeManagedLegacyDelegatePlugin(workspaceRoot: string, stats: ProvisionStats) {
+  const path = join(workspaceRoot, ".opencode", "plugins", DELEGATE_PLUGIN_FILE);
+  if (!(await exists(path))) return;
+
+  const content = await readFile(path, "utf8");
+  if (!isManagedLegacyDelegatePlugin(content)) return;
+
+  await rm(path, { force: true });
+  stats.written += 1;
+}
+
+async function cleanupLegacyInternalDelegation(workspaceRoot: string, stats: ProvisionStats) {
+  await removeManagedLegacyInternalRoot(workspaceRoot, stats);
+  await removeManagedLegacyInternalAgents(workspaceRoot, stats);
+  await removeManagedLegacyDelegatePlugin(workspaceRoot, stats);
+}
+
 async function ensureWorkspaceInstructions(workspaceRoot: string, stats: ProvisionStats) {
   const path = join(workspaceRoot, "AGENTS.md");
   const existing = (await exists(path)) ? await readFile(path, "utf8") : "";
@@ -358,383 +346,21 @@ async function ensureWorkspaceInstructions(workspaceRoot: string, stats: Provisi
   await writeIfChanged(path, next, stats);
 }
 
-async function ensureVesloAgentRouting(workspaceRoot: string, stats: ProvisionStats) {
+async function ensureVesloAgentInstructions(workspaceRoot: string, stats: ProvisionStats) {
   const path = join(workspaceRoot, ".opencode", "agents", "veslo.md");
   // veslo.md base content is written by Rust (seed_veslo_agent) at workspace creation.
-  // TS only upserts managed blocks — if the file doesn't exist, skip.
+  // TS only upserts managed blocks - if the file doesn't exist, skip.
   if (!(await exists(path))) return;
 
   const raw = await readFile(path, "utf8");
-  let next = upsertManagedBlock(raw, managedVesloRoutingBlock(), ROUTING_BLOCK_START, ROUTING_BLOCK_END);
-  next = upsertManagedBlock(next, managedVesloAgentInstructionsBlock(), AGENT_BLOCK_START, AGENT_BLOCK_END);
+  const withoutRouting = removeManagedBlock(raw, ROUTING_BLOCK_START, ROUTING_BLOCK_END);
+  const next = upsertManagedBlock(
+    withoutRouting,
+    managedVesloAgentInstructionsBlock(),
+    AGENT_BLOCK_START,
+    AGENT_BLOCK_END,
+  );
   await writeIfChanged(path, next, stats);
-}
-
-async function writeInternalAgents(workspaceRoot: string, stats: ProvisionStats) {
-  const agentsRoot = join(workspaceRoot, ".opencode", "agents");
-  await ensureDir(agentsRoot);
-
-  const docs: Array<[string, string]> = [
-    [
-      "veslo-internal-docx.md",
-      internalAgentDocument({
-        label: "DOCX",
-        pack: "docx",
-        summary: "Handle .docx authoring, editing, conversion, and XML-safe patching tasks.",
-      }),
-    ],
-    [
-      "veslo-internal-pdf.md",
-      internalAgentDocument({
-        label: "PDF",
-        pack: "pdf",
-        summary: "Handle PDF extraction, form filling, transformation, and validation tasks.",
-      }),
-    ],
-    [
-      "veslo-internal-pptx.md",
-      internalAgentDocument({
-        label: "PPTX",
-        pack: "pptx",
-        summary: "Handle .pptx generation, slide edits, and OOXML-safe presentation updates.",
-      }),
-    ],
-    [
-      "veslo-internal-xlsx.md",
-      internalAgentDocument({
-        label: "XLSX",
-        pack: "xlsx",
-        summary: "Handle spreadsheet recalculation and workbook-safe mutation tasks.",
-      }),
-    ],
-    ["veslo-internal-skill-creator.md", internalSkillCreatorAgentDocument()],
-    [
-      "veslo-internal-research.md",
-      internalAgentDocument({
-        label: "Research",
-        pack: "research",
-        summary:
-          "Handle explicit user requests to run/delegate to a subagent for general research or multi-step execution.",
-      }),
-    ],
-  ];
-
-  for (const [filename, doc] of docs) {
-    await writeIfChanged(join(agentsRoot, filename), doc, stats);
-  }
-}
-
-function delegatePluginSource(): string {
-  return `import { tool } from "@opencode-ai/plugin";
-
-/**
- * Veslo Delegate Plugin
- *
- * Registers a \`delegate\` tool that the model can call via native tool_use
- * to route work to specialized Veslo internal subagents (docx, pdf, pptx,
- * xlsx, skill-creator, research).
- *
- * This replaces text-based routing with a hard tool-call mechanism — the
- * same way the model invokes read, bash, etc.
- *
- * Managed by Veslo internal system (v${INTERNAL_SYSTEM_VERSION}). Do not edit manually.
- */
-
-const AGENTS = [
-  "veslo-internal-docx",
-  "veslo-internal-pdf",
-  "veslo-internal-pptx",
-  "veslo-internal-xlsx",
-  "veslo-internal-skill-creator",
-  "veslo-internal-research",
-];
-
-const FORCE_DELEGATE_PREFIX = "[VESLO_ROUTER_FORCE_DELEGATE]";
-
-function normalizedText(value) {
-  return \` \${String(value || "")
-    .toLowerCase()
-    .replaceAll("\\n", " ")
-    .replaceAll("\\r", " ")
-    .replaceAll("\\t", " ")} \`;
-}
-
-function includesAny(value, tokens) {
-  return tokens.some((token) => value.includes(token));
-}
-
-function hasExplicitDelegateRequest(value) {
-  return includesAny(value, [
-    " subagent ",
-    " sub-agent ",
-    " subagenta",
-    " subagenti",
-    " spusť subagenta",
-    " spust subagenta",
-    " použij subagenta",
-    " pouzij subagenta",
-    " spawn subagent",
-    " run subagent",
-    " start subagent",
-    " use subagent",
-    " delegate this ",
-    " delegate to subagent",
-    " delegate to a subagent",
-    " deleguj na subagenta",
-    " deleguj to ",
-  ]);
-}
-
-function detectDelegateAgentFromText(text) {
-  const value = normalizedText(text);
-
-  if (
-    includesAny(value, [
-      " skill ",
-      " skills ",
-      " skill.md ",
-      " .opencode/skills ",
-      " create skill ",
-      " update skill ",
-      " vytvor skill ",
-      " vytvorit skill ",
-      " uprav skill ",
-      " skill creator ",
-    ])
-  ) {
-    return "veslo-internal-skill-creator";
-  }
-
-  if (
-    includesAny(value, [
-      ".xlsx",
-      ".xlsm",
-      ".xls ",
-      ".csv",
-      ".tsv",
-      " excel ",
-      " excelu ",
-      " exelu ",
-      " spreadsheet ",
-      " workbook ",
-      " worksheet ",
-      " tabulk",
-      " sesit ",
-      " sloupc",
-      " radek ",
-      " radku ",
-      " bunka ",
-      " listu ",
-    ])
-  ) {
-    return "veslo-internal-xlsx";
-  }
-
-  if (
-    includesAny(value, [
-      ".docx",
-      ".doc ",
-      " docx ",
-      " word ",
-      " dokument ",
-      " smlouva ",
-    ])
-  ) {
-    return "veslo-internal-docx";
-  }
-
-  if (includesAny(value, [".pdf", " pdf ", " acrobat "])) {
-    return "veslo-internal-pdf";
-  }
-
-  if (
-    includesAny(value, [
-      ".pptx",
-      ".ppt ",
-      " pptx ",
-      " powerpoint ",
-      " prezentace ",
-      " slide ",
-      " slides ",
-      " slajd ",
-    ])
-  ) {
-    return "veslo-internal-pptx";
-  }
-
-  if (hasExplicitDelegateRequest(value)) {
-    return "veslo-internal-research";
-  }
-
-  return null;
-}
-
-function textParts(parts) {
-  return (parts || [])
-    .filter((part) => part && part.type === "text" && typeof part.text === "string")
-    .map((part) => part.text)
-    .join("\\n")
-    .trim();
-}
-
-function forceDelegateInstruction(agent, userText) {
-  return [
-    \`\${FORCE_DELEGATE_PREFIX} \${agent}\`,
-    "Managed Veslo routing:",
-    \`First action MUST be a tool call: delegate(agent=\\"\${agent}\\").\`,
-    "Use the full original user request as delegate.task.",
-    "Do not answer from memory before delegate returns.",
-    "",
-    "IMPORTANT: Do NOT use the 'skill' tool for this request. The delegate tool",
-    "routes to a specialized subagent that has the correct tools and context.",
-    "Using 'skill' instead of 'delegate' will produce incorrect results.",
-    "",
-    "Original user request:",
-    userText,
-  ].join("\\n");
-}
-
-export default async (ctx) => {
-  const { client } = ctx;
-
-  return {
-    "chat.message": async (input, output) => {
-      if (input.agent && input.agent !== "veslo") return;
-
-      const userText = textParts(output.parts);
-      if (!userText) return;
-      if (userText.includes(FORCE_DELEGATE_PREFIX)) return;
-
-      const delegateAgent = detectDelegateAgentFromText(userText);
-      if (!delegateAgent) return;
-
-      output.parts = [
-        {
-          type: "text",
-          text: forceDelegateInstruction(delegateAgent, userText),
-        },
-        ...output.parts,
-      ];
-    },
-    "experimental.chat.system.transform": async (input, output) => {
-      if (!input.sessionID) return;
-
-      let latestUser = null;
-      try {
-        const messages = await client.session.messages({
-          path: { sessionID: input.sessionID },
-          query: { limit: 8 },
-        });
-        const history = Array.isArray(messages.data) ? messages.data : [];
-        for (let index = history.length - 1; index >= 0; index -= 1) {
-          const candidate = history[index];
-          if (candidate?.info?.role === "user") {
-            latestUser = candidate;
-            break;
-          }
-        }
-      } catch {
-        return;
-      }
-
-      if (!latestUser) return;
-      if (latestUser.info?.agent && latestUser.info.agent !== "veslo") return;
-
-      const userText = textParts(latestUser.parts);
-      if (!userText) return;
-
-      const delegateAgent = detectDelegateAgentFromText(userText);
-      if (!delegateAgent) return;
-
-      output.system.push(
-        [
-          "Managed Veslo routing instruction:",
-          \`For the current user request, first action MUST be tool call delegate(agent=\\"\${delegateAgent}\\").\`,
-          "Pass the full user request as delegate.task.",
-          "Do not answer from memory before delegate returns.",
-          "Do NOT use the 'skill' tool — use 'delegate' exclusively.",
-        ].join("\\n"),
-      );
-    },
-    tool: {
-      delegate: tool({
-        description: [
-          "Delegate a task to a specialized Veslo subagent.",
-          "Use this tool when the user's message involves documents, skill creation,",
-          "or explicitly asks to run/delegate to a subagent:",
-          "- veslo-internal-xlsx: Excel/spreadsheet files (.xlsx, .xlsm, .csv, .tsv) — reading, writing, editing, charting, formulas",
-          "- veslo-internal-docx: Word documents (.docx) — authoring, editing, conversion, formatting",
-          "- veslo-internal-pdf: PDF files (.pdf) — extraction, form filling, transformation, merging",
-          "- veslo-internal-pptx: PowerPoint presentations (.pptx) — creating, editing slides",
-          "- veslo-internal-skill-creator: Creating or updating reusable skills (only on explicit user request)",
-          "- veslo-internal-research: Explicit user request to run/delegate to a subagent for general research/execution",
-          "",
-          "Delegate on any signal that document work is needed: file extensions, attached files,",
-          "file paths, references to document content, or phrasing about editing/reading/creating",
-          "those formats. When unsure whether a file exists, delegate to search for it.",
-          "Do not delegate general coding or plain-text tasks unless the user explicitly requests subagent delegation.",
-          "",
-          "Return the subagent's results directly. Do not expose internal agent names to the user.",
-        ].join("\\n"),
-        args: {
-          agent: tool.schema
-            .enum(AGENTS)
-            .describe("Which specialized subagent to delegate the task to"),
-          task: tool.schema
-            .string()
-            .describe("Complete description of what the subagent should do, including any relevant context from the conversation"),
-        },
-        async execute(args, context) {
-          try {
-            let parentDirectory = "";
-            try {
-              const parent = await client.session.get({
-                path: { sessionID: context.sessionID },
-              });
-              const candidate =
-                (typeof parent?.data?.directory === "string" && parent.data.directory.trim()) ||
-                (typeof parent?.directory === "string" && parent.directory.trim()) ||
-                "";
-              parentDirectory = candidate || "";
-            } catch {
-              // Fallback to default workspace directory when parent lookup fails.
-            }
-
-            const created = await client.session.create({
-              ...(parentDirectory ? { query: { directory: parentDirectory } } : {}),
-              body: {
-                parentID: context.sessionID,
-                title: \`Delegate: \${args.agent}\`,
-              },
-            });
-
-            const sessionId = created.data?.id ?? created.data;
-            if (!sessionId) {
-              return "Error: Failed to create delegate session — no session ID returned.";
-            }
-
-            const response = await client.session.prompt({
-              path: { id: typeof sessionId === "string" ? sessionId : String(sessionId) },
-              body: {
-                agent: args.agent,
-                parts: [{ type: "text", text: args.task }],
-              },
-            });
-
-            const parts = response.data?.parts ?? [];
-            const textParts = parts.filter((p) => p.type === "text");
-            const result = textParts.map((p) => p.text).join("\\n").trim();
-            return result || "Task completed (no text output from subagent).";
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            return \`Error during delegation to \${args.agent}: \${message}\`;
-          }
-        },
-      }),
-    },
-  };
-};
-`;
 }
 
 function automationsPluginSource(): string {
@@ -1220,158 +846,33 @@ async function ensureSoulInstructions(workspaceRoot: string, stats: ProvisionSta
 async function writeInternalPlugins(workspaceRoot: string, stats: ProvisionStats) {
   const pluginsDir = join(workspaceRoot, ".opencode", "plugins");
   await ensureDir(pluginsDir);
-  await writeIfChanged(join(pluginsDir, DELEGATE_PLUGIN_FILE), delegatePluginSource(), stats);
   await writeIfChanged(join(pluginsDir, AUTOMATIONS_PLUGIN_FILE), automationsPluginSource(), stats);
 }
 
 /**
- * Write internal packs once to a central versioned directory under `appDataDir`.
- * Returns the path to the versioned central directory.
+ * Compatibility wrapper retained for callers that still expect this export.
+ * Server-side internal pack provisioning has been removed; the returned path is
+ * the legacy location shape only and is not created.
  */
 export async function provisionCentralPacks(appDataDir: string): Promise<string> {
-  const centralRoot = join(appDataDir, "internal-packs", INTERNAL_SYSTEM_VERSION);
-  const marker = join(centralRoot, ".provisioned");
-
-  if (await exists(marker)) {
-    return centralRoot;
-  }
-
-  await ensureDir(centralRoot);
-
-  const sourceRoot = await resolveInternalPackSourceRoot();
-  for (const pack of INTERNAL_PACKS) {
-    const sourcePack = join(sourceRoot, pack);
-    const destinationPack = join(centralRoot, pack);
-    if (!(await exists(sourcePack))) {
-      throw new Error(`Missing internal pack source: ${pack}`);
-    }
-    await ensureDir(destinationPack);
-
-    const files = await collectFiles(sourcePack);
-    const stats: ProvisionStats = { written: 0, unchanged: 0 };
-    for (const relativePath of files) {
-      const sourcePath = join(sourcePack, relativePath);
-      const destinationPath = join(destinationPack, relativePath);
-      const content = await readFile(sourcePath);
-      await writeIfChanged(destinationPath, content, stats);
-    }
-  }
-
-  await writeFile(marker, INTERNAL_SYSTEM_VERSION, "utf8");
-
-  // Cleanup stale versions
-  const packsParent = join(appDataDir, "internal-packs");
-  try {
-    const entries = await readdir(packsParent, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory() && entry.name !== INTERNAL_SYSTEM_VERSION) {
-        await rm(join(packsParent, entry.name), { recursive: true, force: true });
-      }
-    }
-  } catch {
-    // Ignore cleanup errors
-  }
-
-  return centralRoot;
-}
-
-/**
- * Create a directory symlink from `linkPath` to `targetPath`.
- * Handles migration from real directories and stale symlinks.
- */
-async function ensureSymlink(targetPath: string, linkPath: string): Promise<boolean> {
-  try {
-    const stat = await lstat(linkPath);
-    if (stat.isSymbolicLink()) {
-      const currentTarget = await readlink(linkPath);
-      if (currentTarget === targetPath) return false;
-      await rm(linkPath);
-    } else {
-      await rm(linkPath, { recursive: stat.isDirectory(), force: true });
-    }
-  } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-  }
-
-  await symlink(targetPath, linkPath, "dir");
-  return true;
-}
-
-async function copyInternalPacks(workspaceRoot: string, stats: ProvisionStats, centralPacksDir?: string) {
-  const destinationRoot = join(workspaceRoot, ".opencode", "veslo", "internal");
-  await ensureDir(destinationRoot);
-
-  if (centralPacksDir) {
-    // Symlink mode: point each pack to the central store
-    let anyPackUpdated = false;
-    for (const pack of INTERNAL_PACKS) {
-      const linkPath = join(destinationRoot, pack);
-      const targetPath = join(centralPacksDir, pack);
-      if (await ensureSymlink(targetPath, linkPath)) {
-        anyPackUpdated = true;
-      }
-    }
-    if (anyPackUpdated) {
-      stats.written += 1;
-    }
-  } else {
-    // Copy mode: write packs directly (fallback when no central store)
-    const sourceRoot = await resolveInternalPackSourceRoot();
-    for (const pack of INTERNAL_PACKS) {
-      const sourcePack = join(sourceRoot, pack);
-      const destinationPack = join(destinationRoot, pack);
-      if (!(await exists(sourcePack))) {
-        throw new Error(`Missing internal pack source: ${pack}`);
-      }
-      await ensureDir(destinationPack);
-
-      const files = await collectFiles(sourcePack);
-      for (const relativePath of files) {
-        const sourcePath = join(sourcePack, relativePath);
-        const destinationPath = join(destinationPack, relativePath);
-        const content = await readFile(sourcePath);
-        await writeIfChanged(destinationPath, content, stats);
-      }
-    }
-  }
-}
-
-async function writeInternalManifest(workspaceRoot: string, stats: ProvisionStats, centralPacksDir?: string) {
-  const manifest: InternalManifest = {
-    schemaVersion: MANIFEST_SCHEMA_VERSION,
-    version: INTERNAL_SYSTEM_VERSION,
-    source: INTERNAL_SYSTEM_SOURCE,
-    packs: [...INTERNAL_PACKS],
-    agents: INTERNAL_AGENT_FILES.map((name) => name.replace(/\.md$/i, "")),
-    plugins: [...INTERNAL_PLUGIN_FILES],
-    routingBlockVersion: ROUTING_BLOCK_VERSION,
-    packsMode: centralPacksDir ? "symlink" : "copy",
-    centralPacksDir: centralPacksDir ?? undefined,
-  };
-  const path = join(workspaceRoot, ".opencode", "veslo", "internal", "manifest.json");
-  await writeIfChanged(path, `${JSON.stringify(manifest, null, 2)}\n`, stats);
+  return join(appDataDir, "internal-packs", INTERNAL_SYSTEM_VERSION);
 }
 
 export async function provisionWorkspaceInternalSystem(
   workspaceRoot: string,
   appDataDir?: string,
 ): Promise<WorkspaceProvisionResult> {
+  void appDataDir;
+
   const stats: ProvisionStats = { written: 0, unchanged: 0 };
 
-  let centralPacksDir: string | undefined;
-  if (appDataDir) {
-    centralPacksDir = await provisionCentralPacks(appDataDir);
-  }
-
   await removeLegacyOnboardingSkills(workspaceRoot, stats);
+  await cleanupLegacyInternalDelegation(workspaceRoot, stats);
   await ensureSoulFiles(workspaceRoot, stats);
-  await copyInternalPacks(workspaceRoot, stats, centralPacksDir);
-  await writeInternalAgents(workspaceRoot, stats);
   await writeInternalPlugins(workspaceRoot, stats);
-  await ensureVesloAgentRouting(workspaceRoot, stats);
+  await ensureVesloAgentInstructions(workspaceRoot, stats);
   await ensureWorkspaceInstructions(workspaceRoot, stats);
   await ensureSoulInstructions(workspaceRoot, stats);
-  await writeInternalManifest(workspaceRoot, stats, centralPacksDir);
 
   return {
     version: INTERNAL_SYSTEM_VERSION,
@@ -1387,16 +888,6 @@ export async function provisionWorkspaceInternalSystem(
  * appropriate paths on Linux/Windows, or undefined if unsupported.
  */
 export function resolveVesloAppDataDir(): string | undefined {
-  const explicitAppDataDir = process.env.VESLO_APP_DATA_DIR?.trim();
-  if (explicitAppDataDir) {
-    return explicitAppDataDir;
-  }
-
-  const explicitDataDir = process.env.VESLO_DATA_DIR?.trim();
-  if (explicitDataDir) {
-    return join(explicitDataDir, "app-data");
-  }
-
   const home = homedir();
   const os = platform();
   if (os === "darwin") {

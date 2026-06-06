@@ -100,8 +100,6 @@ def validate_skill(skill_path):
         'allowed-tools',
         'metadata',
         'compatibility',
-        'veslo_internal_pack',
-        'veslo_internal_snapshot',
     }
 
     # Check for unexpected properties (excluding nested keys under metadata)

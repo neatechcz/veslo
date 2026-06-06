@@ -50,6 +50,20 @@ pnpm test -- --scenario <name-or-path>
 ```
 
 Legacy WebdriverIO specs are not a runtime gate. Convert the target behavior to `tauri-pilot` before relying on it for validation.
+For core platform skill materialization, run the focused pilot gate:
+
+```bash
+pnpm --filter veslo-server build:bin
+VESLO_SIDECAR_FORCE_BUILD=1 pnpm --filter @neatech/veslo run prepare:sidecar
+
+cd packages/desktop
+pnpm tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json -- --features e2e
+
+cd ../e2e
+pnpm test:pilot:core-platform-skills
+```
+
+The pilot script requires `tauri-pilot` on `PATH`, or `E2E_TAURI_PILOT_BIN=/absolute/path/to/tauri-pilot`.
 
 ## When in Doubt
 

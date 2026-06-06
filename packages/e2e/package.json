@@ -8,6 +8,7 @@
     "seed:live-auth": "node --import=tsx/esm ./scripts/seed-live-den-auth.ts",
     "test": "node --import=tsx/esm ./helpers/pilot-runner.ts",
     "test:pilot": "node --import=tsx/esm ./helpers/pilot-runner.ts",
+    "test:pilot:core-platform-skills": "node --import=tsx/esm ./specs/core-platform-skills.pilot.ts",
     "test:pilot:smoke": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario smoke",
     "test:pilot:navigation": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario navigation",
     "test:pilot:skills-enabled-state": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario skills-enabled-state",
@@ -25,6 +26,7 @@
     "@wdio/visual-service": "^6",
     "webdriverio": "^9.6",
     "@types/mocha": "^10",
+    "@types/node": "^22.10.2",
     "typescript": "^5.6",
     "tsx": "^4"
   }

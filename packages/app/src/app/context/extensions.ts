@@ -506,8 +506,8 @@ export function createExtensionsStore(options: {
       versionId?: string;
       packageSha256?: string;
       source?: string;
-      removalPolicy?: string;
       target?: string;
+      removalPolicy?: string;
       skillDir?: string;
     };
 
@@ -528,7 +528,7 @@ export function createExtensionsStore(options: {
 
     const getSkillMaterializationClient = (): SkillMaterializationClient | null => {
       const vesloClient = options.vesloServerClient();
-      if (options.vesloServerStatus() === "connected" && vesloClient) {
+      if (options.vesloServerStatus() !== "disconnected" && vesloClient) {
         return vesloClient as SkillMaterializationClient;
       }
       return null;
@@ -781,8 +781,10 @@ export function createExtensionsStore(options: {
       if (refreshSkillInventoryInFlight) {
         const inFlightContextKey = refreshSkillInventoryInFlightContextKey;
         const inFlightRefresh = refreshSkillInventoryPromise;
+        const rerunAfterInFlight = forceRefresh;
         const result = inFlightRefresh ? await inFlightRefresh : "stale";
-        forceRefresh = false;
+        forceRefresh = rerunAfterInFlight;
+        if (rerunAfterInFlight) continue;
         if (result === "failed" || result === "aborted") {
           if (inFlightContextKey && getCurrentSkillInventoryRefreshContextKey() !== inFlightContextKey) continue;
           return;
@@ -1086,6 +1088,7 @@ export function createExtensionsStore(options: {
               description: entry.description,
               path: entry.path,
               trigger: entry.trigger,
+              registry: entry.registry,
             }))
           : [];
         setSkills(next);
@@ -1136,6 +1139,7 @@ export function createExtensionsStore(options: {
               description: entry.description,
               path: entry.path,
               trigger: entry.trigger,
+              registry: entry.registry,
             }))
           : [];
 

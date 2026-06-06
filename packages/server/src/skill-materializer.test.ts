@@ -69,8 +69,8 @@ const materialization = (name: string, pkg: SkillPackageArchive) => ({
   versionId: `version-${name}`,
   packageSha256: pkg.packageSha256,
   source: "workspace" as const,
-  removalPolicy: "user_removable" as const,
   target: "workspace" as const,
+  removalPolicy: "user_removable" as const,
 });
 
 test("materializes a full package tree with root and per-skill managed markers", async () => {

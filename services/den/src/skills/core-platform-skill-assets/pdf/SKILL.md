@@ -1,8 +1,6 @@
 ---
-name: pdf
-description: Comprehensive PDF manipulation toolkit for extracting text and tables, creating new PDFs, merging/splitting documents, and handling forms. When Claude needs to fill in a PDF form or programmatically process, generate, or analyze PDF documents at scale.
-veslo_internal_pack: true
-veslo_internal_snapshot: "2026-03-16"
+name: veslo-pdf
+description: "Extract, create, merge, split, annotate, fill forms, and validate PDF documents using standard skill execution."
 ---
 
 # PDF Processing Guide

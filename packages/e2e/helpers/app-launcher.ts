@@ -37,6 +37,7 @@ const DEFAULT_PILOT_RUNTIME_DIR = join('/tmp', `veslo-pilot-${PILOT_RUNTIME_ID}`
 const APP_IDENTIFIERS = [
   'com.neatech.veslo',
   'com.neatech.veslo.dev',
+  'com.neatech.veslo.e2e',
   'com.differentai.openwork',
   'com.differentai.openwork.dev',
 ] as const;
