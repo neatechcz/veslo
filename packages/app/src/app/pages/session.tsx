@@ -4297,7 +4297,7 @@ export default function SessionView(props: SessionViewProps) {
                   />
                   <h2
                     data-testid="composer-entry-target-heading"
-                    class="font-product type-title-md max-w-[18ch] text-balance text-dls-text"
+                    class="font-product type-title-md w-full max-w-[960px] text-balance text-dls-text"
                   >
                     {composerEntryHeading()}
                   </h2>

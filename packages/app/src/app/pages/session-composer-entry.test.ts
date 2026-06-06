@@ -147,6 +147,15 @@ test("session empty state renders target picker above centered composer", () => 
   assert.doesNotMatch(sessionSource, /handleSoulQuickstart/);
 });
 
+test("composer entry heading uses the same width cap as the centered composer", () => {
+  assert.match(
+    sessionSource,
+    /data-testid="composer-entry-target-heading"\s+class="[^"]*w-full[^"]*max-w-\[960px\][^"]*"/s,
+    "the target heading should span the same 960px center column as the composer",
+  );
+  assert.doesNotMatch(sessionSource, /data-testid="composer-entry-target-heading"\s+class="[^"]*max-w-\[18ch\]/s);
+});
+
 test("centered composer entry keeps composer text left aligned", () => {
   assert.match(
     sessionSource,
