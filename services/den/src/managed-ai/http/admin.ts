@@ -673,7 +673,7 @@ export function createManagedAiAdminRouteDeps(
           entityType: "credential",
           entityId: credentialId,
           result: "ok",
-          summary: `Rotated active sessions off credential ${credentialId}.`,
+          summary: `Rotated active routes off credential ${credentialId}.`,
         })
         return {
           credential: await getCredentialOrThrow(credentialId),

@@ -395,14 +395,14 @@ Run:
 pnpm --filter @neatech/den test -- test/admin-contract.test.ts test/admin-organization-routes.test.ts
 ```
 
-Expected: FAIL because capability session and organization admin routes do not exist.
+Expected: FAIL because capability-aware admin session payloads and organization admin routes do not exist.
 
 **Step 3: Add admin session capabilities**
 
 Extend admin session response to include:
 
 ```ts
-type AdminCapability = "credentials" | "sessions" | "usage" | "alerts" | "users" | "organizations" | "audit"
+type AdminCapability = "organization" | "users" | "credentials" | "usage" | "alerts" | "audit"
 ```
 
 Add:
@@ -466,7 +466,7 @@ Create tests proving:
 
 - `GET /admin/api/session` returns visible sections from DEN,
 - organization admin can call `GET /admin/api/users` and receives scoped users from DEN,
-- organization admin cannot call credentials, sessions, usage, alerts, or audit routes,
+- organization admin cannot call credentials, usage, alerts, audit, or backend managed-AI lease/session routes,
 - platform admin can call existing managed-AI routes,
 - organization endpoints proxy to DEN and preserve DEN errors.
 
@@ -542,6 +542,7 @@ Add assertions that admin HTML/JS contains:
 
 - Organization nav item,
 - capability-based nav filtering,
+- no Sessions nav or page UI,
 - no top-level Domains or Approvals nav,
 - Users page scoped copy for organization admins,
 - Organization page sections: Overview, Members, Invites, Domains, Settings,
@@ -1217,6 +1218,7 @@ git commit -m "fix: stabilize VSLO-201 admin gateway"
 - Keep DEN-owned organization data out of the AI Gateway database.
 - Keep organization admins scoped server-side, not only in UI.
 - Do not autosave form fields.
+- Do not expose Sessions as an Admin Gateway navigation item or page; backend lease/session records remain runtime data only.
 - Last-admin guard applies only to platform admins.
 - Unknown Codex capacity is not included in pool percentage denominators.
 - Alert emails must include credential breakdown for capacity alerts.

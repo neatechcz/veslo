@@ -33,22 +33,20 @@ import { MySqlUsageRepository } from "../usage/mysql-repository.js";
 import { CachedCodexCredentialStatusProvider, UnavailableCodexCredentialStatusProvider, type CodexCredentialStatusProvider, type CodexUsageStatus } from "../usage/codex-status.js";
 import type { AggregateUsageInput, UsageAggregateResponse, UsageCredentialAggregate, UsageGroupBy as RepositoryUsageGroupBy, UsageRepository } from "../usage/repository.js";
 
-const OrganizationAdminCapabilities = ["organization", "users"] as const;
-const PlatformAdminCapabilities = [
+export const OrganizationAdminCapabilities = ["organization", "users"] as const;
+export const PlatformAdminCapabilities = [
   ...OrganizationAdminCapabilities,
   "credentials",
-  "sessions",
   "usage",
   "alerts",
   "audit",
   "debugLogs",
   "managedAiUserAccess",
 ] as const;
-const OrganizationAdminAllowedPages = ["organization", "users"] as const;
-const PlatformAdminAllowedPages = [
+export const OrganizationAdminAllowedPages = ["organization", "users"] as const;
+export const PlatformAdminAllowedPages = [
   ...OrganizationAdminAllowedPages,
   "credentials",
-  "sessions",
   "usage",
   "alerts",
   "audit",
@@ -1870,7 +1868,7 @@ export function createDefaultAdminService(
         entityType: "credential",
         entityId: credentialId,
         result: "ok",
-        summary: `Rotated active sessions off credential ${credentialId}.`,
+        summary: `Rotated active routes off credential ${credentialId}.`,
       });
       return { credential: await getCredentialOrThrow(credentialId) };
     },
@@ -2372,8 +2370,8 @@ function adminShellHtml() {
         <p>Loading control plane...</p>
       </header>
       <nav aria-label="Primary">
+        <a href="/admin/organization">Organization</a>
         <a href="/admin/credentials">Credentials</a>
-        <a href="/admin/sessions">Sessions</a>
         <a href="/admin/usage">Usage</a>
         <a href="/admin/alerts">Alerts</a>
         <a href="/admin/users">Users</a>
@@ -3086,7 +3084,7 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.get("/admin/api/sessions", async (req, res) => {
-    if (!requireAdminCapability(res, "sessions")) {
+    if (!requirePlatformAdmin(res)) {
       return;
     }
 

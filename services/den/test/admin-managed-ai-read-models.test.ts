@@ -167,7 +167,7 @@ function createAlert(id: string) {
     firstSeenAt: "2026-04-03T10:00:00.000Z",
     lastSeenAt: "2026-04-03T10:05:00.000Z",
     owner: null,
-    runbook: "Inspect quota pressure and rotate session load across healthy credentials.",
+    runbook: "Inspect quota pressure and rebalance routing across healthy credentials.",
   }
 }
 

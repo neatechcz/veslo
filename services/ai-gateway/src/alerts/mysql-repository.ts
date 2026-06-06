@@ -174,7 +174,7 @@ export function buildAlertRecord(input: AlertSignalSummary): AlertRecord {
       firstSeenAt: input.occurredAt,
       lastSeenAt: input.occurredAt,
       owner: null,
-      runbook: "Inspect quota pressure and rotate session load across healthy credentials.",
+      runbook: "Inspect quota pressure and rebalance routing across healthy credentials.",
     };
   }
 
@@ -205,7 +205,7 @@ export function buildAlertRecord(input: AlertSignalSummary): AlertRecord {
     firstSeenAt: input.occurredAt,
     lastSeenAt: input.occurredAt,
     owner: null,
-    runbook: "Inspect recent credential health transitions and active session impact.",
+    runbook: "Inspect recent credential health transitions and active routing impact.",
   };
 }
 

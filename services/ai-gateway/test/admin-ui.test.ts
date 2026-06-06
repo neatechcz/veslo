@@ -1,9 +1,11 @@
 import assert from "node:assert/strict"
 import { once } from "node:events"
+import { readFile } from "node:fs/promises"
 import type { AddressInfo } from "node:net"
 import test from "node:test"
 
 import { createApp } from "../src/index.js"
+import { PlatformAdminAllowedPages, PlatformAdminCapabilities } from "../src/http/admin.js"
 import type {
   AdminService,
   AdminSessionSnapshot,
@@ -553,6 +555,57 @@ test("GET /admin includes an Organization admin page alongside existing platform
   }
 })
 
+test("GET /admin shell excludes Sessions navigation and page UI", async () => {
+  const app = createApp({ admin: createAdminServiceStub() })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin`, {
+      headers: {
+        cookie: ADMIN_COOKIE,
+      },
+    })
+
+    assert.equal(response.status, 200)
+    const html = await response.text()
+    assert.doesNotMatch(html, /href="\/admin\/sessions"/)
+    assert.doesNotMatch(html, /data-route="sessions"/)
+    assert.doesNotMatch(html, /data-page="sessions"/)
+    assert.doesNotMatch(html, /page-sessions/)
+    assert.doesNotMatch(html, /18 active sessions/)
+    assert.doesNotMatch(html, /Inspect credentials, sessions, usage, alerts, users, and audit events from one place\./)
+    assert.doesNotMatch(html, /Collected across sessions, users, and orgs/)
+    assert.doesNotMatch(html, /Affected sessions/)
+    assert.doesNotMatch(html, /Rebind sessions/)
+    assert.doesNotMatch(html, /Session rebinding/)
+    assert.doesNotMatch(html, /<option>Session<\/option>/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("AI Gateway admin server defaults exclude Sessions from visible pages and fallback shell", async () => {
+  assert.deepEqual(PlatformAdminAllowedPages, ["organization", "users", "credentials", "usage", "alerts", "audit"])
+  assert.deepEqual(PlatformAdminCapabilities, [
+    "organization",
+    "users",
+    "credentials",
+    "usage",
+    "alerts",
+    "audit",
+    "debugLogs",
+    "managedAiUserAccess",
+  ])
+
+  const source = await readFile(new URL("../src/http/admin.ts", import.meta.url), "utf8")
+  assert.doesNotMatch(source, /<a href="\/admin\/sessions">Sessions<\/a>/)
+  assert.doesNotMatch(source, /"sessions",\s*\n\s*"usage"/)
+  assert.match(source, /router\.get\("\/admin\/api\/sessions"[\s\S]*requirePlatformAdmin\(res\)/)
+})
+
 test("GET /admin/app.js gates organization-admin navigation and platform-only loads by DEN capabilities", async () => {
   const app = createApp()
   const server = app.listen(0, "127.0.0.1")
@@ -564,13 +617,26 @@ test("GET /admin/app.js gates organization-admin navigation and platform-only lo
 
     assert.equal(response.status, 200)
     const script = await response.text()
-    assert.match(script, /const DEFAULT_PAGES = \["organization", "credentials", "sessions", "usage", "alerts", "users", "audit"\]/)
+    assert.match(script, /const DEFAULT_PAGES = \["organization", "credentials", "usage", "alerts", "users", "audit"\]/)
     assert.match(script, /function allowedPages\(\)/)
     assert.match(script, /function hasCapability\(capability\)/)
     assert.match(script, /function applyAdminCapabilities\(\)/)
     assert.match(script, /runAllowedLoad\("organization", loadOrganization\)/)
     assert.match(script, /runAllowedLoad\("users", loadUsers\)/)
     assert.match(script, /runAllowedLoad\("credentials", loadCredentials\)/)
+    assert.doesNotMatch(script, /runAllowedLoad\("sessions", loadSessions\)/)
+    assert.doesNotMatch(script, /async function loadSessions\(\)/)
+    assert.doesNotMatch(script, /function renderSessions\(\)/)
+    assert.doesNotMatch(script, /sessionList:\s*document\.getElementById\("session-list"\)/)
+    assert.doesNotMatch(script, /sessionDetail:\s*document\.getElementById\("session-detail"\)/)
+    assert.doesNotMatch(script, /selectedSessionId/)
+    assert.doesNotMatch(script, /session anomalies/)
+    assert.doesNotMatch(script, /New sessions will stop using this credential/)
+    assert.doesNotMatch(script, /Active sessions will move to another healthy credential/)
+    assert.doesNotMatch(script, /Existing sessions may lose access/)
+    assert.match(script, /String\(state\.credentials\.filter\(\(entry\) => !entry\.deletedAt\)\.length\)/)
+    assert.match(script, /String\(state\.credentials\.filter\(\(entry\) => !entry\.deletedAt && entry\.state !== "healthy"\)\.length\)/)
+    assert.doesNotMatch(script, /String\(state\.credentials\.length\)/)
     assert.match(script, /if \(!hasCapability\("managedAiUserAccess"\)\) \{[\s\S]*return null/)
     assert.match(script, /if \(!hasCapability\("managedAiUserAccess"\)\) \{[\s\S]*return;/)
     assert.match(script, /setActivePage\(firstAllowedPage\(\)\)/)

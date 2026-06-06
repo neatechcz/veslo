@@ -25,7 +25,6 @@
         <nav class="nav" aria-label="Admin sections">
           <a href="/admin/organization" data-route="organization" class="nav-item">Organization</a>
           <a href="/admin/credentials" data-route="credentials" class="nav-item">Credentials</a>
-          <a href="/admin/sessions" data-route="sessions" class="nav-item">Sessions</a>
           <a href="/admin/usage" data-route="usage" class="nav-item">Usage</a>
           <a href="/admin/alerts" data-route="alerts" class="nav-item">Alerts</a>
           <a href="/admin/users" data-route="users" class="nav-item">Users</a>
@@ -46,7 +45,6 @@
           <div class="stack tight">
             <div class="pill-row"><span class="dot good"></span> Gateway healthy</div>
             <div class="pill-row"><span class="dot warn"></span> 2 credential alerts</div>
-            <div class="pill-row"><span class="dot info"></span> 18 active sessions</div>
           </div>
         </section>
       </aside>
@@ -56,7 +54,7 @@
           <div>
             <p class="eyebrow" id="page-eyebrow">AI Gateway control plane</p>
             <h1 id="page-title">Overview</h1>
-            <p class="page-description" id="page-description">Inspect credentials, sessions, usage, alerts, users, and audit events from one place.</p>
+            <p class="page-description" id="page-description">Inspect credentials, usage, alerts, users, and audit events from one place.</p>
           </div>
           <div class="topbar-actions">
             <button id="refresh-button" class="button button-secondary" type="button">Refresh</button>
@@ -88,9 +86,9 @@
             </div>
             <div class="hero-metrics">
               <article class="metric-card">
-                <span class="metric-label">Active leases</span>
+                <span class="metric-label">Credentials</span>
                 <strong>18</strong>
-                <span class="metric-note">Sticky bindings in healthy state</span>
+                <span class="metric-note">Provider bindings in the shared pool</span>
               </article>
               <article class="metric-card">
                 <span class="metric-label">Unhealthy credentials</span>
@@ -324,66 +322,6 @@
             </div>
           </section>
 
-          <section class="panel page page-sessions hidden" data-page="sessions">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Sessions</p>
-                <h2>Sticky lease roster</h2>
-              </div>
-              <span class="status-chip success">18 active</span>
-            </div>
-            <div class="split-layout">
-              <div>
-                <div class="toolbar">
-                  <input class="input" type="search" name="session-search" placeholder="Search session, user, or worker" />
-                  <select class="input" name="session-status-filter">
-                    <option>All states</option>
-                    <option>Healthy</option>
-                    <option>Rebinding</option>
-                    <option>Failed</option>
-                  </select>
-                </div>
-                <div id="session-list" class="list-cards">
-                  <article class="list-card active">
-                    <div>
-                      <strong>session_2841</strong>
-                      <p>Vaclav Soukup, project Atlas, worker `design-bot`</p>
-                    </div>
-                    <span class="status-chip success">Healthy</span>
-                  </article>
-                  <article class="list-card">
-                    <div>
-                      <strong>session_1884</strong>
-                      <p>Alicia, project Billing, worker `watchdog`</p>
-                    </div>
-                    <span class="status-chip warning">Rebinding</span>
-                  </article>
-                  <article class="list-card">
-                    <div>
-                      <strong>session_5510</strong>
-                      <p>Martin, project Docs, worker `writer`</p>
-                    </div>
-                    <span class="status-chip danger">Failed</span>
-                  </article>
-                </div>
-              </div>
-              <aside id="session-detail" class="detail-card session-detail">
-                <p class="eyebrow">Selected session</p>
-                <h3>session_2841</h3>
-                <div class="timeline">
-                  <div><span>Lease created</span><strong>09:12</strong></div>
-                  <div><span>Active binding</span><strong>OpenAI org key</strong></div>
-                  <div><span>Last failover</span><strong>Not needed</strong></div>
-                  <div><span>Usage this session</span><strong>18,240 tokens</strong></div>
-                </div>
-                <div class="button-row">
-                  <button class="button button-secondary" type="button">Open trace</button>
-                  <button class="button button-primary" type="button">Watch session</button>
-                </div>
-              </aside>
-            </div>
-          </section>
-
           <section class="panel page page-usage hidden" data-page="usage">
             <div class="section-head">
               <div>
@@ -436,7 +374,7 @@
               <article class="metric-card tall">
                 <span class="metric-label">Prompt tokens</span>
                 <strong id="usage-total-tokens">821k</strong>
-                <span class="metric-note">Collected across sessions, users, and orgs</span>
+                <span class="metric-note">Collected across credentials, users, and orgs</span>
               </article>
               <article class="metric-card tall">
                 <span class="metric-label">Requests</span>
@@ -530,7 +468,7 @@
                     <strong>Credential outage</strong>
                     <span class="status-chip danger">Critical</span>
                   </div>
-                  <p>OpenAI org key has failed 11 refresh attempts and now impacts 6 sessions.</p>
+                  <p>OpenAI org key has failed 11 refresh attempts and now impacts 6 active routes.</p>
                   <div class="alert-meta">
                     <span>Credential: OpenAI org key</span>
                     <span>First seen: 09:12</span>
@@ -544,7 +482,7 @@
                   <p>Anthropic shared key exceeded baseline on worker `assistant-runner`.</p>
                   <div class="alert-meta">
                     <span>Credential: Anthropic shared key</span>
-                    <span>Session: 4</span>
+                    <span>Routes: 4</span>
                   </div>
                 </article>
               </div>
@@ -553,8 +491,8 @@
                 <h3>Credential outage</h3>
                 <div class="stack">
                   <div class="detail-line"><span>Affected credential</span><strong>OpenAI org key</strong></div>
-                  <div class="detail-line"><span>Affected sessions</span><strong>6</strong></div>
-                  <div class="detail-line"><span>Recommended action</span><strong>Rebind sessions</strong></div>
+                  <div class="detail-line"><span>Affected routes</span><strong>6</strong></div>
+                  <div class="detail-line"><span>Recommended action</span><strong>Rebalance routes</strong></div>
                 </div>
                 <div class="button-row">
                   <button class="button button-secondary" type="button">Acknowledge</button>
@@ -730,7 +668,7 @@
                       <option>All entities</option>
                       <option>User</option>
                       <option>Credential</option>
-                      <option>Session</option>
+                      <option>Route</option>
                     </select>
                   </label>
                 </div>
@@ -756,8 +694,8 @@
                 </article>
                 <article class="audit-row">
                   <div>
-                    <strong>Session rebinding</strong>
-                    <p>session_1884 switched to Anthropic shared key after failure classification.</p>
+                    <strong>Route rebinding</strong>
+                    <p>route_1884 switched to Anthropic shared key after failure classification.</p>
                   </div>
                   <span>13:31</span>
                 </article>
