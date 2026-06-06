@@ -1,6 +1,12 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import type { Part } from "@opencode-ai/sdk/v2/client";
-import type { MessageInfo } from "../types";
+import type {
+  MessageInfo,
+  VesloAutomation,
+  VesloAutomationCreatePayload,
+  VesloAutomationRun,
+  VesloAutomationUpdatePayload,
+} from "../types";
 import { isTauriRuntime } from "../utils";
 import type { ScheduledJob } from "./tauri";
 import { mergeVesloServerSettingsWithEnv } from "./cloud-policy";
@@ -2987,6 +2993,42 @@ export function createVesloServerClient(options: {
         hostToken,
         method: "DELETE",
       }),
+    listAutomations: (workspaceId: string) =>
+      requestJson<{ items: VesloAutomation[]; updatedAt: string }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/automations`,
+        { token, hostToken },
+      ),
+    createAutomation: (workspaceId: string, payload: VesloAutomationCreatePayload) =>
+      requestJson<{ automation: VesloAutomation }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/automations`,
+        { token, hostToken, method: "POST", body: payload },
+      ),
+    updateAutomation: (workspaceId: string, automationId: string, payload: VesloAutomationUpdatePayload) =>
+      requestJson<{ automation: VesloAutomation }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/automations/${encodeURIComponent(automationId)}`,
+        { token, hostToken, method: "PATCH", body: payload },
+      ),
+    deleteAutomation: (workspaceId: string, automationId: string) =>
+      requestJson<{ automation: VesloAutomation }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/automations/${encodeURIComponent(automationId)}`,
+        { token, hostToken, method: "DELETE" },
+      ),
+    runAutomation: (workspaceId: string, automationId: string) =>
+      requestJson<{ run: VesloAutomationRun }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/automations/${encodeURIComponent(automationId)}/run`,
+        { token, hostToken, method: "POST" },
+      ),
+    listAutomationRuns: (workspaceId: string, automationId: string) =>
+      requestJson<{ items: VesloAutomationRun[] }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/automations/${encodeURIComponent(automationId)}/runs`,
+        { token, hostToken },
+      ),
     listScheduledJobs: (workspaceId: string) =>
       requestJson<{ items: ScheduledJob[] }>(baseUrl, `/workspace/${workspaceId}/scheduler/jobs`, { token, hostToken }),
     deleteScheduledJob: (workspaceId: string, name: string) =>

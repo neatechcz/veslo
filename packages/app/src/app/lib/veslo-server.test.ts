@@ -194,6 +194,49 @@ test("non-archive requests do not include the account id header", async () => {
   }
 });
 
+test("automation requests encode workspace and automation ids", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method?: string }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({ url: String(input), method: init?.method });
+    return new Response(JSON.stringify({ items: [], updatedAt: "2026-06-05T10:00:00.000Z" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+    });
+
+    await client.listAutomations("ws 1");
+    await client.createAutomation("ws 1", {
+      name: "Daily plan",
+      prompt: "Plan the day",
+      schedule: { kind: "daily", hour: 8, minute: 30 },
+    });
+    await client.updateAutomation("ws 1", "auto 1", { enabled: false, status: "paused" });
+    await client.runAutomation("ws 1", "auto 1");
+    await client.listAutomationRuns("ws 1", "auto 1");
+
+    assert.deepEqual(
+      calls.map((call) => ({ url: call.url, method: call.method ?? "GET" })),
+      [
+        { url: "https://veslo.example/workspace/ws%201/automations", method: "GET" },
+        { url: "https://veslo.example/workspace/ws%201/automations", method: "POST" },
+        { url: "https://veslo.example/workspace/ws%201/automations/auto%201", method: "PATCH" },
+        { url: "https://veslo.example/workspace/ws%201/automations/auto%201/run", method: "POST" },
+        { url: "https://veslo.example/workspace/ws%201/automations/auto%201/runs", method: "GET" },
+      ],
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("requestManagedAiAccessBundle fetches the raw managed gateway bundle with the DEN bearer token", async () => {
   const previousFetch = globalThis.fetch;
   const calls: Array<{ url: string; method?: string; headers: Headers; body: string | null }> = [];

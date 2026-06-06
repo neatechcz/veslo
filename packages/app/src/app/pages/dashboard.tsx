@@ -17,6 +17,9 @@ import type {
   SkillSaveResult,
   StartupPreference,
   LoadedSessionPrefetchInterestChangeHandler,
+  VesloAutomation,
+  VesloAutomationCreatePayload,
+  VesloAutomationRun,
   WorkspaceConnectionState,
   WorkspaceSessionGroup,
   View,
@@ -185,6 +188,8 @@ export type DashboardViewProps = {
   editWorkspaceConnection: (workspaceId: string) => void;
   forgetWorkspace: (workspaceId: string) => void;
   stopSandbox: (workspaceId: string) => void;
+  automations: VesloAutomation[];
+  automationRunsById: Record<string, VesloAutomationRun[]>;
   scheduledJobs: ScheduledJob[];
   scheduledJobsSource: "local" | "remote";
   scheduledJobsSourceReady: boolean;
@@ -194,6 +199,9 @@ export type DashboardViewProps = {
   scheduledJobsUpdatedAt: number | null;
   refreshScheduledJobs: (options?: { force?: boolean }) => void;
   deleteScheduledJob: (name: string) => Promise<void> | void;
+  createAutomation: (payload: VesloAutomationCreatePayload) => Promise<void> | void;
+  deleteAutomation: (automationId: string) => Promise<void> | void;
+  runAutomation: (automationId: string) => Promise<void> | void;
   soulStatusByWorkspaceId: Record<string, VesloSoulStatus | null>;
   activeSoulStatus: VesloSoulStatus | null;
   activeSoulHeartbeats: VesloSoulHeartbeatEntry[];
@@ -1591,18 +1599,21 @@ export default function DashboardView(props: DashboardViewProps) {
           <Switch>
             <Match when={props.tab === "scheduled"}>
               <ScheduledTasksView
-                jobs={props.scheduledJobs}
+                automations={props.automations}
+                automationRunsById={props.automationRunsById}
+                legacyScheduledJobs={props.scheduledJobs}
                 source={props.scheduledJobsSource}
                 sourceReady={props.scheduledJobsSourceReady}
                 status={props.scheduledJobsStatus}
                 busy={props.scheduledJobsBusy}
                 lastUpdatedAt={props.scheduledJobsUpdatedAt}
                 refreshJobs={props.refreshScheduledJobs}
-                deleteJob={props.deleteScheduledJob}
+                createAutomation={props.createAutomation}
+                deleteAutomation={props.deleteAutomation}
+                runAutomation={props.runAutomation}
+                deleteLegacyJob={props.deleteScheduledJob}
                 isWindows={props.isWindows}
                 activeWorkspaceRoot={props.activeWorkspaceRoot}
-                createSessionAndOpen={props.createSessionAndOpen}
-                setPrompt={props.setPrompt}
                 newTaskDisabled={props.newTaskDisabled}
                 schedulerInstalled={props.schedulerPluginInstalled}
                 canEditPlugins={props.canEditPlugins}
