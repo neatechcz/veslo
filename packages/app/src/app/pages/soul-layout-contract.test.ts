@@ -55,6 +55,39 @@ test("Soul source overview order is organization, user, then workspace table", (
   assert.ok(userIndex < workspaceIndex, "user source should render before workspace sources");
 });
 
+test("SoulView opens source editing and history in a modal from every source row", () => {
+  assert.match(soulSource, /const \[openSourceKey,\s*setOpenSourceKey\] = createSignal<string \| null>\(null\)/);
+  assert.match(soulSource, /"soul-organization-source-open"/);
+  assert.match(soulSource, /"soul-user-source-open"/);
+  assert.match(soulSource, /data-testid=\{`\$\{source\.testId\}-open`\}/);
+  assert.match(soulSource, /data-testid="soul-source-modal"/);
+  assert.match(soulSource, /role="dialog"/);
+  assert.match(soulSource, /aria-modal="true"/);
+  assert.match(soulSource, /data-testid="soul-source-modal-close"/);
+  assert.match(soulSource, /event\.key === "Escape"/);
+  assert.match(soulSource, /closeSoulModal/);
+
+  const modalIndex = soulSource.indexOf('data-testid="soul-source-modal"');
+  const detailIndex = soulSource.indexOf('data-testid="soul-source-detail"');
+  const historyIndex = soulSource.indexOf('data-testid="soul-version-history"');
+  assert.ok(modalIndex >= 0, "Soul editor modal should have a stable test id");
+  assert.ok(detailIndex > modalIndex, "Soul source detail should live inside the modal");
+  assert.ok(historyIndex > modalIndex, "Soul version history should live inside the modal");
+
+  assert.match(soulSource, /sources:\s*modalSourceOptions/);
+  assert.doesNotMatch(soulSource, /sources:\s*sourceOptions/);
+});
+
+test("SoulView hides private workspace Soul rows from the workspace source table", () => {
+  assert.match(soulSource, /workspaces:\s*WorkspaceInfo\[\];/);
+  assert.match(soulSource, /isPrivateWorkspacePath:\s*\(folder:\s*string \| null \| undefined\) => boolean;/);
+  assert.match(soulSource, /const workspaceById = createMemo\(\(\) => new Map/);
+  assert.match(soulSource, /workspace\?\.workspaceType === "local"/);
+  assert.match(soulSource, /props\.isPrivateWorkspacePath\(workspace\.path\)/);
+  assert.match(dashboardSource, /<SoulView[\s\S]*workspaces=\{props\.workspaces\}/);
+  assert.match(dashboardSource, /<SoulView[\s\S]*isPrivateWorkspacePath=\{props\.isPrivateWorkspacePath\}/);
+});
+
 test("Soul overview locale keys exist in all app locales", () => {
   const requiredKeys = [
     "soul.source_title",
