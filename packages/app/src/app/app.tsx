@@ -1923,7 +1923,13 @@ export default function App() {
 
       const cleanupFreshScratchWorkspace = async () => {
         try {
-          await workspaceStore.forgetWorkspace(scratch.id, { deleteLocalData: true });
+          const cleanupSucceeded = await workspaceStore.forgetWorkspace(scratch.id, { deleteLocalData: true });
+          if (!cleanupSucceeded) {
+            reportError(
+              new Error(`Failed to clean up failed scratch workspace ${scratch.id}.`),
+              "pendingDrafts.switch.cleanupPrivate",
+            );
+          }
         } catch (error) {
           reportError(error, "pendingDrafts.switch.cleanupPrivate");
         }
@@ -1980,18 +1986,52 @@ export default function App() {
 
     return false;
   };
+  const selectComposerWorkspaceTargetFromPicker = async (): Promise<ComposerTargetOption | "cancelled" | null> => {
+    if (!isTauriRuntime()) return null;
+
+    const selectedDirectory = await workspaceStore.pickWorkspaceFolder();
+    if (selectedDirectory == null || selectedDirectory.trim() === "") return "cancelled";
+
+    const directory = normalizeDirectoryPath(selectedDirectory);
+    if (!directory) return "cancelled";
+
+    const workspace = await workspaceStore.ensureWorkspaceForFolder(selectedDirectory);
+    const workspaceId = workspace?.id?.trim() ?? "";
+    if (!workspaceId) return null;
+
+    publishRegisteredWorkspaceToSidebar(workspaceId);
+
+    const targetId = resolvePendingDraftKey({ kind: "directory", workspaceId, directory });
+    const existingTarget = findComposerTargetOption(targetId);
+    if (existingTarget) return existingTarget;
+
+    const targetWorkspace = workspaceStore.workspaces().find((entry) => entry.id === workspaceId) ?? workspace;
+    const target: ComposerTargetOption = {
+      id: targetId,
+      kind: "workspace",
+      workspaceId,
+      directory,
+      label: targetWorkspace ? composerTargetWorkspaceLabel(targetWorkspace) : directory,
+      description: directory,
+      draftStatus: null,
+    };
+    return {
+      ...target,
+      draftStatus: findPendingDraftSummaryForTarget(target) ? "draft" : null,
+    };
+  };
   const switchComposerTarget = async (
     targetId: string,
     resolution?: ComposerTargetSwitchResolution,
   ): Promise<ComposerTargetSwitchResult> => {
-    const target = findComposerTargetOption(targetId);
+    let target = findComposerTargetOption(targetId);
     if (!target) return { status: "blocked", message: t("session.target_not_available", currentLocale()) };
 
     if (target.kind === "choose-workspace") {
-      const result = await openDirectorySessionFromPicker();
-      if (result === "opened") return { status: "switched" };
-      if (result === "cancelled") return { status: "cancelled" };
-      return { status: "blocked", message: t("session.target_not_available", currentLocale()) };
+      const pickedTarget = await selectComposerWorkspaceTargetFromPicker();
+      if (pickedTarget === "cancelled") return { status: "cancelled" };
+      if (!pickedTarget) return { status: "blocked", message: t("session.target_not_available", currentLocale()) };
+      target = pickedTarget;
     }
 
     if (target.id === activeComposerTargetId()) return { status: "switched" };

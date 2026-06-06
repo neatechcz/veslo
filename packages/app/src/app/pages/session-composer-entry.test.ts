@@ -45,6 +45,14 @@ test("switchComposerTarget blocks when an existing destination draft cannot be l
   assert.match(appSource, /if \(destinationSummary && !destinationDraft\) \{/);
 });
 
+test("switchComposerTarget routes picked workspaces through safe switching", () => {
+  assert.match(appSource, /selectComposerWorkspaceTargetFromPicker/);
+  assert.doesNotMatch(
+    appSource,
+    /if \(target\.kind === "choose-workspace"\) \{\s*const result = await openDirectorySessionFromPicker\(\);/s,
+  );
+});
+
 test("target picker and conflict modal expose stable test hooks", () => {
   assert.match(pickerSource, /data-testid="composer-target-picker"/);
   assert.match(pickerSource, /data-testid="composer-target-option"/);
