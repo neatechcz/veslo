@@ -253,6 +253,8 @@ export type WorkspaceSkillMaterialization = {
   name: string;
   versionId: string;
   packageSha256: string;
+  source: ManagedSkillSource;
+  removalPolicy: WorkspaceSkillRolloutRemovalPolicy;
   target: "workspace" | "personal-global";
 };
 

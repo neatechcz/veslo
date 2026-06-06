@@ -11,6 +11,8 @@ export const VESLO_AUTOMATIONS_PLATFORM_SKILL = {
   name: "veslo-automations",
   versionId: "platform_version_veslo_automations_v1",
   target: "personal-global" as const,
+  source: "platform" as const,
+  removalPolicy: "locked" as const,
 };
 
 export type PlatformManagedPersonalGlobalSkillSet = {

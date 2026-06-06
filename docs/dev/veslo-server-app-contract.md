@@ -141,7 +141,7 @@ organization-owner or skill-admin rights through the registry context.
 Server-controlled registry package materialization is a local server responsibility:
 
 - `GET /skills/materialization`
-  Requires client auth. Returns local server-controlled user skill materialization status.
+  Requires client auth. Returns local server-controlled user skill materialization status, including platform-managed desired state. When platform-managed skills are not yet materialized, the response is `pending` with `reloadRequired: true` even if no registry is configured.
 - `POST /skills/materialization/sync-global`
   Requires host or owner auth. Materializes platform-managed personal-global skills even when no registry is configured. When registry is configured, also downloads desired user-skill registry installations and matching user-global rollout policies, validates package archives, writes server-controlled user skill directories, returns any resolver `conflicts`, and returns `pending` without mutating files when the caller reports an active run.
 - `GET /workspace/:id/skills/materialization`
@@ -157,14 +157,21 @@ returns a conflict and avoids writing both targets.
 Veslo ships a platform-managed locked personal-global `veslo-automations` skill.
 It is materialized under `veslo-managed` and teaches agents to use the Veslo
 automation wrapper tools instead of writing external scheduler files. If an
-unmanaged user-global skill with the same name already exists outside
-`veslo-managed`, sync rejects the materialization with a conflict instead of
-creating an ambiguous duplicate.
+unmanaged user-global skill with the same name already exists in any supported
+global skill root, including an unmanaged directory under the target
+`veslo-managed` root, sync rejects the materialization with a conflict instead
+of creating an ambiguous duplicate.
+Materialization entries include `source` and `removalPolicy`; the platform
+automation skill is reported as `source: platform` and `removalPolicy: locked`.
 
 ## Skill Removal and Restore
 
 Local filesystem skill removal is recoverable and server-backed. The app should
 call these routes instead of deleting skill directories directly:
+
+- `GET /skills/user-global/:name?path=...`
+  Requires client or host auth. Reads an exact user-global skill path, including
+  managed `veslo-managed` paths, without allowing mutation.
 
 - `DELETE /workspace/:id/skills/:name`
   Requires collaborator client auth plus any host approval required for the

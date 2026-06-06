@@ -49,6 +49,8 @@ The server also materializes a platform-managed, locked user-global
 agents to use `veslo_create_automation`, `veslo_list_automations`,
 `veslo_run_automation`, `veslo_update_automation`, and
 `veslo_delete_automation` for persistent one-shot and recurring automations.
+Inventory/materialization metadata reports this skill as platform sourced and
+locked so normal user removal controls stay disabled.
 
 Legacy Agent Lab scheduler routes remain compatibility aliases. Older Agent Lab
 automation files are migrated into the canonical Veslo automation store on

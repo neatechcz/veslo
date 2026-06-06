@@ -19,6 +19,8 @@ test("veslo-automations platform skill is deterministic and personal-global", as
     name: "veslo-automations",
     versionId: VESLO_AUTOMATIONS_PLATFORM_SKILL.versionId,
     target: "personal-global",
+    source: "platform",
+    removalPolicy: "locked",
   });
 });
 

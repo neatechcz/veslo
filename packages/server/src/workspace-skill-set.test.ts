@@ -77,6 +77,8 @@ describe("resolveWorkspaceSkillSet", () => {
         versionId: "research_v1",
         packageSha256:
           "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        source: "personal",
+        removalPolicy: "user_removable",
         target: "personal-global",
       },
     ]);
@@ -235,6 +237,8 @@ describe("resolveWorkspaceSkillSet", () => {
         versionId: "office-writer_v1",
         packageSha256:
           "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        source: "organization",
+        removalPolicy: "locked",
         target: "personal-global",
       },
     ]);

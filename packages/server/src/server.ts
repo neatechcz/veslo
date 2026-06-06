@@ -22,6 +22,7 @@ import {
   deleteSkillAtPathRecoverable,
   deleteSkillRecoverable,
   listSkills,
+  readGlobalSkillAtPath,
   readSkillAtPath,
   updateSkillAtPath,
   upsertSkill,
@@ -2146,6 +2147,8 @@ function materializationEntryPayload(entry: WorkspaceSkillMaterialization & {
     name: entry.name,
     versionId: entry.versionId,
     packageSha256: entry.packageSha256,
+    source: entry.source,
+    removalPolicy: entry.removalPolicy,
     target: entry.target,
     ...(entry.skillDir ? { skillDir: entry.skillDir } : {}),
     ...(entry.materializedAt ? { materializedAt: entry.materializedAt } : {}),
@@ -2159,9 +2162,24 @@ function materializationSummaryPayload(entry: WorkspaceSkillMaterialization) {
     name: entry.name,
     versionId: entry.versionId,
     packageSha256: entry.packageSha256,
+    source: entry.source,
+    removalPolicy: entry.removalPolicy,
     target: entry.target,
   };
 }
+
+const materializationMatchesDesired = (
+  entry: WorkspaceSkillMaterialization,
+  desired: WorkspaceSkillMaterialization,
+): boolean =>
+  entry.installationId === desired.installationId &&
+  entry.skillId === desired.skillId &&
+  entry.name === desired.name &&
+  entry.versionId === desired.versionId &&
+  entry.packageSha256 === desired.packageSha256 &&
+  entry.source === desired.source &&
+  entry.removalPolicy === desired.removalPolicy &&
+  entry.target === desired.target;
 
 async function buildWorkspaceSkillMaterializationStatus(config: ServerConfig, workspace: WorkspaceInfo) {
   const rootDir = workspaceManagedSkillsRoot(workspace.path);
@@ -2181,13 +2199,23 @@ async function buildGlobalSkillMaterializationStatus(config: ServerConfig) {
   const rootDir = personalGlobalManagedSkillsRoot();
   const manifest = await readSkillMaterializationManifest(rootDir);
   const registryConfigured = Boolean(skillRegistryBaseUrl(config));
+  const platformSkillSet = await getPlatformManagedPersonalGlobalSkillSet();
+  const platformSynced = platformSkillSet.skills.every((skill) =>
+    manifest?.entries.some((entry) => materializationMatchesDesired(entry, skill)) ?? false
+  );
+  const platformPending = platformSkillSet.skills.length > 0 && !platformSynced;
   return {
     scope: "personal-global",
-    status: registryConfigured ? "pending" : "not-configured",
+    status: registryConfigured || platformPending ? "pending" : "synced",
     registryConfigured,
     rootDir,
     materializedSkills: manifest?.entries.map(materializationEntryPayload) ?? [],
-    reloadRequired: registryConfigured,
+    platformManaged: {
+      enabled: platformSkillSet.skills.length > 0,
+      synced: platformSynced,
+      desiredSkills: platformSkillSet.skills.map(materializationSummaryPayload),
+    },
+    reloadRequired: registryConfigured || platformPending,
   };
 }
 
@@ -2199,6 +2227,8 @@ function desiredSkillSetRevision(materializations: WorkspaceSkillMaterialization
       name: entry.name,
       versionId: entry.versionId,
       packageSha256: entry.packageSha256,
+      source: entry.source,
+      removalPolicy: entry.removalPolicy,
       target: entry.target,
     }))
     .sort((left, right) => left.name.localeCompare(right.name) || left.installationId.localeCompare(right.installationId));
@@ -2288,6 +2318,23 @@ function registryRolloutPolicyAppliesToMaterialization(input: {
     return Boolean(orgId && policy.orgId === orgId);
   }
   return policy.audience === "all-platform-users";
+}
+
+function assertNoPlatformManagedPersonalGlobalNameConflicts(input: {
+  materializations: WorkspaceSkillMaterialization[];
+  platformSkills: WorkspaceSkillMaterialization[];
+}) {
+  const platformNames = new Set(input.platformSkills.map((skill) => skill.name));
+  const duplicate = input.materializations.find((skill) =>
+    skill.target === "personal-global" && platformNames.has(skill.name)
+  );
+  if (!duplicate) return;
+  throw new ApiError(
+    409,
+    "managed_skill_name_conflict",
+    `Platform-managed skill ${duplicate.name} conflicts with registry-managed personal-global skill ${duplicate.installationId}`,
+    { name: duplicate.name, installationId: duplicate.installationId },
+  );
 }
 
 async function fetchRegistryWorkspaceMaterializations(
@@ -2416,6 +2463,10 @@ async function fetchRegistryWorkspaceMaterializations(
     localUnmanagedSkills: [],
     policy: {},
   });
+  assertNoPlatformManagedPersonalGlobalNameConflicts({
+    materializations: resolution.requiredMaterializations,
+    platformSkills: platformSkillSet.skills,
+  });
   const materializations = personalGlobalSyncRequired
     ? [...resolution.requiredMaterializations, ...platformSkillSet.skills]
     : resolution.requiredMaterializations;
@@ -2524,17 +2575,10 @@ async function fetchRegistryPersonalGlobalMaterializations(
     localUnmanagedSkills: [],
     policy: {},
   });
-  const duplicatePlatformSkill = resolution.requiredMaterializations.find((skill) =>
-    platformSkillSet.skills.some((platformSkill) => platformSkill.name === skill.name)
-  );
-  if (duplicatePlatformSkill) {
-    throw new ApiError(
-      409,
-      "managed_skill_name_conflict",
-      `Platform-managed skill ${duplicatePlatformSkill.name} conflicts with registry-managed personal-global skill ${duplicatePlatformSkill.installationId}`,
-      { name: duplicatePlatformSkill.name, installationId: duplicatePlatformSkill.installationId },
-    );
-  }
+  assertNoPlatformManagedPersonalGlobalNameConflicts({
+    materializations: resolution.requiredMaterializations,
+    platformSkills: platformSkillSet.skills,
+  });
   const materializations = [...resolution.requiredMaterializations, ...platformSkillSet.skills];
 
   return { materializations, conflicts: resolution.conflicts, packagesByInstallationId };
@@ -5654,6 +5698,28 @@ function createRoutes(
       succeeded,
       failed,
       results,
+    });
+  });
+
+  addRoute(routes, "GET", "/skills/user-global/:name", "none", async (ctx) => {
+    await requireHostOrClient(ctx.request, config, ctx.tokens);
+    const name = String(ctx.params.name ?? "").trim();
+    if (!name) {
+      throw new ApiError(400, "invalid_skill_name", "Skill name is required");
+    }
+    const instancePath = trimmedSearchParam(ctx.url.searchParams, "path");
+    if (!instancePath) {
+      throw new ApiError(400, "invalid_skill_path", "User-global exact skill read requires path");
+    }
+    const result = await readGlobalSkillAtPath({ name, path: instancePath });
+    return jsonResponse({
+      item: {
+        name,
+        path: result.path,
+        description: "",
+        scope: "global",
+      },
+      content: result.content,
     });
   });
 

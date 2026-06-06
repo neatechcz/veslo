@@ -68,6 +68,8 @@ const materialization = (name: string, pkg: SkillPackageArchive) => ({
   name,
   versionId: `version-${name}`,
   packageSha256: pkg.packageSha256,
+  source: "workspace" as const,
+  removalPolicy: "user_removable" as const,
   target: "workspace" as const,
 });
 
@@ -130,6 +132,33 @@ test("replaces managed directories atomically and creates a pre-change backup", 
   expect(await readFile(join(rootDir, "replace-me", "SKILL.md"), "utf8")).toContain("# Second");
   await expect(readFile(join(rootDir, "replace-me", "stale.txt"), "utf8")).rejects.toThrow();
   expect(await readFile(join(result.backupDir ?? "", "SKILL.md"), "utf8")).toContain("# First");
+});
+
+test("skips unchanged managed directories without backup churn", async () => {
+  const workspaceRoot = await tempDir("veslo-materializer-idempotent-");
+  const dataDir = await tempDir("veslo-materializer-idempotent-data-");
+  const pkg = await archive("stable-skill", "# Stable\n");
+
+  const first = await materializeWorkspaceSkillSet({
+    workspaceRoot,
+    dataDir,
+    skills: [materialization("stable-skill", pkg)],
+    loadPackage: async () => pkg,
+  });
+  const markerPath = join(workspaceManagedSkillsRoot(workspaceRoot), "stable-skill", ".veslo-managed.json");
+  const markerBefore = await readFile(markerPath, "utf8");
+
+  const second = await materializeWorkspaceSkillSet({
+    workspaceRoot,
+    dataDir,
+    skills: [materialization("stable-skill", pkg)],
+    loadPackage: async () => pkg,
+  });
+
+  expect(first.backupDirs).toEqual([]);
+  expect(second.backupDirs).toEqual([]);
+  expect(second.materializedSkills).toEqual([{ skillDir: join(workspaceManagedSkillsRoot(workspaceRoot), "stable-skill") }]);
+  expect(await readFile(markerPath, "utf8")).toBe(markerBefore);
 });
 
 test("refuses to overwrite an unmanaged skill directory", async () => {

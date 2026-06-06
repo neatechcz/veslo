@@ -64,6 +64,17 @@ const archive = async (name: string): Promise<SkillPackageArchive> => {
   };
 };
 
+type MaterializedSkillPayload = {
+  installationId: string;
+  skillId: string;
+  name: string;
+  versionId: string;
+  packageSha256: string;
+  source: string;
+  removalPolicy: string;
+  target: string;
+};
+
 async function startFixture(input: { registryBaseUrl?: string } = {}) {
   const workspaceRoot = await tempDir("veslo-skill-materialization-route-");
   const dataDir = await tempDir("veslo-skill-materialization-data-");
@@ -148,11 +159,27 @@ test("GET /skills/materialization returns personal global materialization status
       status: string;
       materializedSkills: unknown[];
       registryConfigured: boolean;
+      reloadRequired: boolean;
+      platformManaged?: {
+        synced: boolean;
+        desiredSkills: Array<{ name: string; source: string; removalPolicy: string }>;
+      };
     };
     expect(payload.scope).toBe("personal-global");
-    expect(payload.status).toBe("not-configured");
+    expect(payload.status).toBe("pending");
     expect(payload.materializedSkills).toEqual([]);
     expect(payload.registryConfigured).toBe(false);
+    expect(payload.reloadRequired).toBe(true);
+    expect(payload.platformManaged).toMatchObject({
+      synced: false,
+      desiredSkills: [
+        {
+          name: "veslo-automations",
+          source: "platform",
+          removalPolicy: "locked",
+        },
+      ],
+    });
   } finally {
     if (previousHome === undefined) {
       delete process.env.HOME;
@@ -190,7 +217,17 @@ test("POST /skills/materialization/sync-global materializes platform automations
       status: string;
       synced: boolean;
       registryConfigured: boolean;
-      materializedSkills: Array<{ installationId: string; skillId: string; name: string; versionId: string; packageSha256: string; target: string }>;
+      materializedSkills: Array<{
+        installationId: string;
+        skillId: string;
+        name: string;
+        versionId: string;
+        packageSha256: string;
+        target: string;
+        source: string;
+        removalPolicy: string;
+      }>;
+      backupDirs: string[];
     };
     expect(payload).toMatchObject({
       scope: "personal-global",
@@ -205,11 +242,36 @@ test("POST /skills/materialization/sync-global materializes platform automations
       versionId: platformSkill.versionId,
       packageSha256: platformSkill.packageSha256,
       target: "personal-global",
+      source: "platform",
+      removalPolicy: "locked",
     }]);
+    expect(payload.backupDirs).toEqual([]);
     const skillPath = join(homeRoot, ".config", "opencode", "skills", "veslo-managed", "veslo-automations", "SKILL.md");
     const skillMarkdown = await readFile(skillPath, "utf8");
     expect(skillMarkdown).toContain("veslo_create_automation");
     expect(skillMarkdown).toContain("nextRunAt");
+
+    const readResponse = await fetch(
+      `http://127.0.0.1:${server.port}/skills/user-global/veslo-automations?path=${encodeURIComponent(skillPath)}`,
+      {
+        headers: { Authorization: "Bearer client-token" },
+      },
+    );
+    expect(readResponse.status).toBe(200);
+    const readPayload = await readResponse.json() as { item: { scope: string; path: string }; content: string };
+    expect(readPayload.item).toMatchObject({
+      scope: "global",
+      path: skillPath,
+    });
+    expect(readPayload.content).toContain("veslo_create_automation");
+
+    const secondResponse = await fetch(`http://127.0.0.1:${server.port}/skills/materialization/sync-global`, {
+      method: "POST",
+      headers: { "x-veslo-host-token": "host-token" },
+    });
+    expect(secondResponse.status).toBe(200);
+    const secondPayload = await secondResponse.json() as { backupDirs: string[] };
+    expect(secondPayload.backupDirs).toEqual([]);
   } finally {
     if (previousHome === undefined) {
       delete process.env.HOME;
@@ -267,7 +329,91 @@ test("POST /skills/materialization/sync-global rejects unmanaged user-global ves
   }
 });
 
-test("exact delete rejects materialized platform automations skill", async () => {
+test("POST /skills/materialization/sync-global rejects unmanaged skill inside target managed root", async () => {
+  const previousHome = process.env.HOME;
+  const previousXdgConfigHome = process.env.XDG_CONFIG_HOME;
+  const homeRoot = await tempDir("veslo-platform-managed-root-conflict-home-");
+  process.env.HOME = homeRoot;
+  process.env.XDG_CONFIG_HOME = join(homeRoot, ".config");
+
+  try {
+    const unmanagedDir = join(homeRoot, ".config", "opencode", "skills", "veslo-managed", "veslo-automations");
+    await mkdir(unmanagedDir, { recursive: true });
+    await writeFile(
+      join(unmanagedDir, "SKILL.md"),
+      "---\nname: veslo-automations\ndescription: unmanaged in managed root\n---\n\n# User version\n",
+      "utf8",
+    );
+    const { server } = await startFixture();
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/skills/materialization/sync-global`, {
+      method: "POST",
+      headers: { "x-veslo-host-token": "host-token" },
+    });
+
+    expect(response.status).toBe(409);
+    const payload = await response.json() as { code: string; message: string; details?: { conflicts?: Array<{ path: string }> } };
+    expect(payload.code).toBe("managed_skill_name_conflict");
+    expect(payload.message).toContain("veslo-automations");
+    expect(payload.details?.conflicts?.[0]?.path).toBe(join(unmanagedDir, "SKILL.md"));
+    expect(await readFile(join(unmanagedDir, "SKILL.md"), "utf8")).toContain("# User version");
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+    if (previousXdgConfigHome === undefined) {
+      delete process.env.XDG_CONFIG_HOME;
+    } else {
+      process.env.XDG_CONFIG_HOME = previousXdgConfigHome;
+    }
+  }
+});
+
+test("POST /skills/materialization/sync-global rejects unmanaged global skill in non-target veslo-managed domain", async () => {
+  const previousHome = process.env.HOME;
+  const previousXdgConfigHome = process.env.XDG_CONFIG_HOME;
+  const homeRoot = await tempDir("veslo-platform-other-root-conflict-home-");
+  process.env.HOME = homeRoot;
+  process.env.XDG_CONFIG_HOME = join(homeRoot, ".config");
+
+  try {
+    const unmanagedDir = join(homeRoot, ".claude", "skills", "veslo-managed", "veslo-automations");
+    await mkdir(unmanagedDir, { recursive: true });
+    await writeFile(
+      join(unmanagedDir, "SKILL.md"),
+      "---\nname: veslo-automations\ndescription: unmanaged in another root\n---\n\n# Other root\n",
+      "utf8",
+    );
+    const { server } = await startFixture();
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/skills/materialization/sync-global`, {
+      method: "POST",
+      headers: { "x-veslo-host-token": "host-token" },
+    });
+
+    expect(response.status).toBe(409);
+    const payload = await response.json() as { code: string; details?: { conflicts?: Array<{ path: string }> } };
+    expect(payload.code).toBe("managed_skill_name_conflict");
+    expect(payload.details?.conflicts?.[0]?.path).toBe(join(unmanagedDir, "SKILL.md"));
+    await expect(stat(join(homeRoot, ".config", "opencode", "skills", "veslo-managed", "veslo-automations")))
+      .rejects.toThrow();
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+    if (previousXdgConfigHome === undefined) {
+      delete process.env.XDG_CONFIG_HOME;
+    } else {
+      process.env.XDG_CONFIG_HOME = previousXdgConfigHome;
+    }
+  }
+});
+
+test("exact delete and batch remove reject materialized platform automations skill", async () => {
   const previousHome = process.env.HOME;
   const previousXdgConfigHome = process.env.XDG_CONFIG_HOME;
   const homeRoot = await tempDir("veslo-platform-delete-home-");
@@ -295,6 +441,48 @@ test("exact delete rejects materialized platform automations skill", async () =>
     const payload = await deleteResponse.json() as { code: string };
     expect(payload.code).toBe("managed_skill_read_only");
     expect(await readFile(skillPath, "utf8")).toContain("veslo_create_automation");
+
+    const batchResponse = await fetch(`http://127.0.0.1:${server.port}/skills/batch-remove`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-veslo-host-token": "host-token",
+      },
+      body: JSON.stringify({
+        items: [
+          {
+            name: "veslo-automations",
+            scope: "user-global",
+            path: skillPath,
+          },
+        ],
+      }),
+    });
+    expect(batchResponse.status).toBe(200);
+    const batchPayload = await batchResponse.json() as {
+      ok: boolean;
+      results: Array<{
+        ok: boolean;
+        index: number;
+        name?: string;
+        scope?: string;
+        code: string;
+        message: string;
+        status: number;
+      }>;
+    };
+    expect(batchPayload.ok).toBe(false);
+    expect(batchPayload.results).toEqual([
+      {
+        ok: false,
+        index: 0,
+        name: "veslo-automations",
+        scope: "user-global",
+        code: "managed_skill_read_only",
+        message: "Managed materialized skills must be edited through the registry",
+        status: 409,
+      },
+    ]);
   } finally {
     if (previousHome === undefined) {
       delete process.env.HOME;
@@ -318,6 +506,100 @@ test("POST /workspace/:id/skills/materialization/sync requires host auth", async
   });
 
   expect(response.status).toBe(401);
+});
+
+test("POST workspace materialization sync rejects platform name conflicts before workspace writes", async () => {
+  const previousHome = process.env.HOME;
+  const previousXdgConfigHome = process.env.XDG_CONFIG_HOME;
+  const homeRoot = await tempDir("veslo-workspace-platform-conflict-home-");
+  process.env.HOME = homeRoot;
+  process.env.XDG_CONFIG_HOME = join(homeRoot, ".config");
+
+  try {
+    const workspacePkg = await archive("registry-tool");
+    const conflictingGlobalPkg = await archive("veslo-automations");
+    const registry = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (url.pathname === "/v1/workspaces/ws_1/skill-set") {
+          return Response.json({
+            workspaceId: "ws_1",
+            skills: [
+              {
+                installationId: "install_workspace",
+                skillId: "skill_workspace",
+                versionId: "version_workspace",
+                enabled: true,
+                source: "workspace",
+                installedAt: "2026-05-26T12:00:00.000Z",
+              },
+            ],
+          });
+        }
+        if (url.pathname === "/v1/skill-installations") {
+          return Response.json({
+            installations: [
+              {
+                installationId: "install_conflicting_global",
+                skillId: "skill_conflicting_global",
+                versionId: "version_conflicting_global",
+                enabled: true,
+                source: "personal",
+                installedAt: "2026-05-26T12:00:00.000Z",
+              },
+            ],
+            nextCursor: null,
+          });
+        }
+        if (url.pathname === "/v1/skill-rollout-policies") {
+          return Response.json({ policies: [], nextCursor: null });
+        }
+        if (url.pathname === "/v1/skill-versions/version_workspace/package") {
+          return Response.json({ versionId: "version_workspace", skillId: "skill_workspace", package: workspacePkg });
+        }
+        if (url.pathname === "/v1/skill-versions/version_conflicting_global/package") {
+          return Response.json({
+            versionId: "version_conflicting_global",
+            skillId: "skill_conflicting_global",
+            package: conflictingGlobalPkg,
+          });
+        }
+        return Response.json({ error: "not_found" }, { status: 404 });
+      },
+    });
+    runningServers.push(registry as { stop?: (closeActiveConnections?: boolean) => void });
+    const { server, workspaceRoot } = await startFixture({ registryBaseUrl: `http://127.0.0.1:${registry.port}` });
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/skills/materialization/sync`, {
+      method: "POST",
+      headers: {
+        "x-veslo-host-token": "host-token",
+        "x-veslo-den-user-id": "user_1",
+      },
+    });
+
+    expect(response.status).toBe(409);
+    const payload = await response.json() as { code: string; message: string };
+    expect(payload.code).toBe("managed_skill_name_conflict");
+    expect(payload.message).toContain("veslo-automations");
+    await expect(stat(join(workspaceRoot, ".opencode", "skills", "veslo-managed", "registry-tool")))
+      .rejects.toThrow();
+    await expect(stat(join(homeRoot, ".config", "opencode", "skills", "veslo-managed", "veslo-automations")))
+      .rejects.toThrow();
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+    if (previousXdgConfigHome === undefined) {
+      delete process.env.XDG_CONFIG_HOME;
+    } else {
+      process.env.XDG_CONFIG_HOME = previousXdgConfigHome;
+    }
+  }
 });
 
 test("POST /skills/materialization/sync-global downloads personal global packages", async () => {
@@ -409,7 +691,7 @@ test("POST /skills/materialization/sync-global downloads personal global package
       scope: string;
       status: string;
       synced: boolean;
-      materializedSkills: Array<{ installationId: string; skillId: string; name: string; versionId: string; packageSha256: string; target: string }>;
+      materializedSkills: MaterializedSkillPayload[];
     };
     expect(payload.scope).toBe("personal-global");
     expect(payload.status).toBe("synced");
@@ -420,6 +702,8 @@ test("POST /skills/materialization/sync-global downloads personal global package
       name: "global-tool",
       versionId: "version_global",
       packageSha256: pkg.packageSha256,
+      source: "personal",
+      removalPolicy: "user_removable",
       target: "personal-global",
     }, {
       installationId: "rollout:rollout_global",
@@ -427,6 +711,8 @@ test("POST /skills/materialization/sync-global downloads personal global package
       name: "global-rollout-tool",
       versionId: "version_global_rollout",
       packageSha256: rolloutPkg.packageSha256,
+      source: "platform",
+      removalPolicy: "locked",
       target: "personal-global",
     }, {
       installationId: platformSkill.installationId,
@@ -434,6 +720,8 @@ test("POST /skills/materialization/sync-global downloads personal global package
       name: VESLO_AUTOMATIONS_PLATFORM_SKILL.name,
       versionId: platformSkill.versionId,
       packageSha256: platformSkill.packageSha256,
+      source: "platform",
+      removalPolicy: "locked",
       target: "personal-global",
     }]);
     expect(
@@ -568,7 +856,7 @@ test("POST /workspace/:id/skills/materialization/sync downloads desired packages
   const payload = await response.json() as {
     status: string;
     synced: boolean;
-    materializedSkills: Array<{ installationId: string; skillId: string; name: string; versionId: string; packageSha256: string; target: string }>;
+    materializedSkills: MaterializedSkillPayload[];
   };
   expect(payload.status).toBe("synced");
   expect(payload.synced).toBe(true);
@@ -578,6 +866,8 @@ test("POST /workspace/:id/skills/materialization/sync downloads desired packages
     name: "registry-tool",
     versionId: "version_1",
     packageSha256: pkg.packageSha256,
+    source: "workspace",
+    removalPolicy: "user_removable",
     target: "workspace",
   }, {
     installationId: "rollout:rollout_workspace",
@@ -585,6 +875,8 @@ test("POST /workspace/:id/skills/materialization/sync downloads desired packages
     name: "registry-rollout-tool",
     versionId: "version_rollout",
     packageSha256: rolloutPkg.packageSha256,
+    source: "organization",
+    removalPolicy: "admin_removable",
     target: "workspace",
   }]);
   expect(await readFile(join(workspaceRoot, ".opencode", "skills", "veslo-managed", "registry-tool", "SKILL.md"), "utf8"))
@@ -1338,7 +1630,7 @@ test("POST workspace materialization sync resolves org skill sets, writes lockfi
 
     expect(response.status).toBe(200);
     const payload = await response.json() as {
-      materializedSkills: Array<{ installationId: string; skillId: string; name: string; versionId: string; packageSha256: string; target: string }>;
+      materializedSkills: MaterializedSkillPayload[];
       lockfilePath?: string;
     };
     expect(payload.materializedSkills).toEqual([{
@@ -1347,6 +1639,8 @@ test("POST workspace materialization sync resolves org skill sets, writes lockfi
       name: "shared-tool",
       versionId: "version_org",
       packageSha256: orgPkg.packageSha256,
+      source: "organization",
+      removalPolicy: "user_removable",
       target: "workspace",
     }]);
     expect(payload.lockfilePath).toBe(join(workspaceRoot, ".opencode", "veslo.skills.lock.json"));

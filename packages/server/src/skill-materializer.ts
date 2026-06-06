@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Dirent } from "node:fs";
 import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import { resolveVesloDataDir } from "./audit.js";
 import { ApiError } from "./errors.js";
@@ -10,7 +10,11 @@ import { validateSkillPackageManifest } from "./skill-package-model.js";
 import type { SkillPackageArchive } from "./skill-packages.js";
 import { unpackSkillPackage } from "./skill-packages.js";
 import { SKILL_ENTRYPOINT } from "./skills.js";
-import type { WorkspaceSkillMaterialization } from "./types.js";
+import type {
+  ManagedSkillSource,
+  WorkspaceSkillMaterialization,
+  WorkspaceSkillRolloutRemovalPolicy,
+} from "./types.js";
 import { exists } from "./utils.js";
 import { validateSkillName } from "./validators.js";
 import { projectSkillsDir } from "./workspace-files.js";
@@ -60,6 +64,8 @@ export type MaterializePersonalGlobalSkillSetInput = Omit<MaterializeSkillSetInp
 const ROOT_MARKER_FILE = ".veslo-materialization.json";
 const SKILL_MARKER_FILE = ".veslo-managed.json";
 const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
+const MANAGED_SKILL_SOURCES = new Set<ManagedSkillSource>(["personal", "workspace", "organization", "platform"]);
+const REMOVAL_POLICIES = new Set<WorkspaceSkillRolloutRemovalPolicy>(["user_removable", "admin_removable", "locked"]);
 
 const normalizeSha256 = (value: string): string => {
   const normalized = value.trim().toLowerCase();
@@ -69,13 +75,31 @@ const normalizeSha256 = (value: string): string => {
   return normalized;
 };
 
+const normalizeSource = (value: unknown, target: WorkspaceSkillMaterialization["target"]): ManagedSkillSource => {
+  if (typeof value === "string" && MANAGED_SKILL_SOURCES.has(value as ManagedSkillSource)) {
+    return value as ManagedSkillSource;
+  }
+  return target === "personal-global" ? "personal" : "workspace";
+};
+
+const normalizeRemovalPolicy = (value: unknown): WorkspaceSkillRolloutRemovalPolicy => {
+  if (typeof value === "string" && REMOVAL_POLICIES.has(value as WorkspaceSkillRolloutRemovalPolicy)) {
+    return value as WorkspaceSkillRolloutRemovalPolicy;
+  }
+  return "user_removable";
+};
+
 const normalizeSkill = (skill: WorkspaceSkillMaterialization): WorkspaceSkillMaterialization => {
   const name = skill.name.trim();
   validateSkillName(name);
+  const target = skill.target === "personal-global" ? "personal-global" : "workspace";
   return {
     ...skill,
     name,
     packageSha256: normalizeSha256(skill.packageSha256),
+    target,
+    source: normalizeSource(skill.source, target),
+    removalPolicy: normalizeRemovalPolicy(skill.removalPolicy),
   };
 };
 
@@ -117,6 +141,8 @@ const validateManifestEntry = (value: unknown): SkillMaterializationManifestEntr
     versionId: String(record.versionId ?? "").trim(),
     packageSha256: String(record.packageSha256 ?? "").trim(),
     target: record.target === "personal-global" ? "personal-global" : "workspace",
+    source: normalizeSource(record.source, record.target === "personal-global" ? "personal-global" : "workspace"),
+    removalPolicy: normalizeRemovalPolicy(record.removalPolicy),
   });
   const skillDir = String(record.skillDir ?? "").trim();
   const materializedAt = String(record.materializedAt ?? "").trim();
@@ -205,6 +231,22 @@ const targetIsManaged = async (
   return manifest?.entries.some((entry) => entry.name === skill.name && entry.skillDir === targetDir) ?? false;
 };
 
+const materializationFieldsMatch = (
+  entry: WorkspaceSkillMaterialization,
+  skill: WorkspaceSkillMaterialization,
+): boolean => {
+  const left = normalizeSkill(entry);
+  const right = normalizeSkill(skill);
+  return left.installationId === right.installationId &&
+    left.skillId === right.skillId &&
+    left.name === right.name &&
+    left.versionId === right.versionId &&
+    left.packageSha256 === right.packageSha256 &&
+    left.target === right.target &&
+    left.source === right.source &&
+    left.removalPolicy === right.removalPolicy;
+};
+
 const backupRoot = (dataDirOverride?: string): string => join(dataDir(dataDirOverride), "skill-materialization-backups");
 
 const createBackup = async (targetDir: string, skillName: string, dataDirOverride?: string): Promise<string | undefined> => {
@@ -258,12 +300,21 @@ const findUnmanagedPersonalGlobalSkillConflicts = async (
   if (desiredNames.size === 0) return [];
 
   const globalRoots = Array.from(new Set([dirname(rootDir), ...(unmanagedSkillRoots ?? [])].map((root) => root.trim()).filter(Boolean)));
-  const managedRootName = basename(rootDir);
+  const resolvedManagedRoot = resolve(rootDir);
+  const existingManifest = await readSkillMaterializationManifest(rootDir);
   const conflicts: Array<{ name: string; path: string }> = [];
   const addConflictIfSkillExists = async (name: string, skillDir: string) => {
     const skillPath = join(skillDir, SKILL_ENTRYPOINT);
     if (await exists(skillPath)) conflicts.push({ name, path: skillPath });
   };
+
+  for (const skill of skills) {
+    const targetDir = join(rootDir, skill.name);
+    const skillPath = join(targetDir, SKILL_ENTRYPOINT);
+    if ((await exists(skillPath)) && !(await targetIsManaged(targetDir, skill, existingManifest))) {
+      conflicts.push({ name: skill.name, path: skillPath });
+    }
+  }
 
   for (const globalRoot of globalRoots) {
     for (const name of desiredNames) {
@@ -279,8 +330,9 @@ const findUnmanagedPersonalGlobalSkillConflicts = async (
     }
 
     for (const entry of entries) {
-      if (!entry.isDirectory() || entry.name === managedRootName) continue;
+      if (!entry.isDirectory()) continue;
       const domainDir = join(globalRoot, entry.name);
+      if (resolve(domainDir) === resolvedManagedRoot) continue;
       let subEntries: Dirent[];
       try {
         subEntries = await readdir(domainDir, { withFileTypes: true });
@@ -321,9 +373,24 @@ export async function materializeSkillPackageToRoot(
   const rootDir = input.rootDir;
   const targetDir = join(rootDir, skill.name);
   const existingManifest = await readSkillMaterializationManifest(rootDir);
+  const existingMarker = await readSkillMarker(targetDir).catch(() => null);
 
   if ((await exists(targetDir)) && !(await targetIsManaged(targetDir, skill, existingManifest))) {
     throw new Error(`Refusing to overwrite unmanaged skill directory: ${targetDir}`);
+  }
+
+  if (existingMarker && materializationFieldsMatch(existingMarker, skill)) {
+    const entry = {
+      ...manifestEntryForSkill(rootDir, skill, existingMarker.materializedAt),
+      skillDir: existingMarker.skillDir || targetDir,
+      materializedAt: existingMarker.materializedAt,
+    };
+    const mergedEntries = [
+      ...(existingManifest?.entries.filter((existing) => existing.name !== skill.name) ?? []),
+      entry,
+    ];
+    await writeSkillMaterializationManifest(rootDir, mergedEntries);
+    return { skillDir: targetDir };
   }
 
   const backupDir = await createBackup(targetDir, skill.name, input.dataDir);
@@ -377,7 +444,13 @@ const materializeSkillSetToRoot = async (
     removedSkillNames.push(entry.name);
   }
 
-  const finalEntries = desiredSkills.map((skill) => manifestEntryForSkill(rootDir, skill));
+  const finalEntries = desiredSkills.map((skill) => {
+    const previous = previousManifest?.entries.find((entry) => entry.name === skill.name);
+    if (previous && materializationFieldsMatch(previous, skill)) {
+      return manifestEntryForSkill(rootDir, skill, previous.materializedAt);
+    }
+    return manifestEntryForSkill(rootDir, skill);
+  });
   await writeSkillMaterializationManifest(rootDir, finalEntries);
 
   return {
