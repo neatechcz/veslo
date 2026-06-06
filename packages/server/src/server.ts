@@ -6566,25 +6566,24 @@ function createRoutes(
   addRoute(routes, "GET", "/workspace/:id/skills/:name", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const includeGlobal = ctx.url.searchParams.get("includeGlobal") === "true";
+    const includeDisabled = ctx.url.searchParams.get("includeDisabled") === "true";
     const name = String(ctx.params.name ?? "").trim();
     if (!name) {
       throw new ApiError(400, "invalid_skill_name", "Skill name is required");
     }
+    const items = await listWorkspaceRuntimeSkills(workspace, { includeGlobal, includeDisabled });
     const instancePath = ctx.url.searchParams.get("path")?.trim() ?? "";
     if (instancePath) {
+      const allowedItem = items.find((skill) => skill.name === name && resolve(skill.path) === resolve(instancePath));
+      if (!allowedItem) {
+        throw new ApiError(404, "skill_not_found", `Skill not found: ${name}`);
+      }
       const result = await readSkillAtPath(workspace.path, { name, path: instancePath });
       return jsonResponse({
-        item: {
-          name,
-          path: result.path,
-          description: "",
-          scope: "project",
-        },
+        item: allowedItem,
         content: result.content,
       });
     }
-    const includeDisabled = ctx.url.searchParams.get("includeDisabled") === "true";
-    const items = await listWorkspaceRuntimeSkills(workspace, { includeGlobal, includeDisabled });
     const item = items.find((skill) => skill.name === name);
     if (!item) {
       throw new ApiError(404, "skill_not_found", `Skill not found: ${name}`);

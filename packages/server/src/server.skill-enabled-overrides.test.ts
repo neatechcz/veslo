@@ -280,6 +280,41 @@ test("GET /workspace/:id/skills includeDisabled returns disabled skills with ena
   });
 });
 
+test("GET /workspace/:id/skills/:name exact path respects disabled filtering", async () => {
+  const { dataDir, workspaceRoot, server } = await startFixture();
+  const disabledPath = await createWorkspaceSkill(workspaceRoot, "disabled-read-skill");
+  await setSkillEnabledState({
+    dataDir,
+    target: {
+      name: "disabled-read-skill",
+      scope: "workspace",
+      workspaceId: "ws_1",
+      path: disabledPath,
+    },
+    enabled: false,
+    actor: { type: "host" },
+  });
+
+  const blocked = await fetch(
+    `http://127.0.0.1:${server.port}/workspace/ws_1/skills/disabled-read-skill?path=${encodeURIComponent(disabledPath)}`,
+    { headers: clientHeaders },
+  );
+  expect(blocked.status).toBe(404);
+
+  const inventory = await fetch(
+    `http://127.0.0.1:${server.port}/workspace/ws_1/skills/disabled-read-skill?includeDisabled=true&path=${encodeURIComponent(disabledPath)}`,
+    { headers: clientHeaders },
+  );
+  const body = await readJson(inventory);
+  expect(inventory.status).toBe(200);
+  expect(body.item).toMatchObject({
+    name: "disabled-read-skill",
+    path: disabledPath,
+    enabled: false,
+    disabledReason: "user",
+  });
+});
+
 test("POST /workspace/:id/skills/resolve ignores disabled skills", async () => {
   const { dataDir, workspaceRoot, server } = await startFixture();
   const disabledPath = await createWorkspaceSkill(
