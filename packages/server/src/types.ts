@@ -341,6 +341,35 @@ export interface Actor {
   scope?: TokenScope;
 }
 
+export type SkillEnabledScope = "workspace" | "user-global" | "organization" | "platform";
+
+export type SkillEnabledRegistryIdentity = {
+  skillId?: string;
+  installationId?: string;
+  policyId?: string;
+  versionId?: string;
+  source?: ManagedSkillSource;
+};
+
+export type DisabledSkillTarget = {
+  name: string;
+  scope: SkillEnabledScope;
+  workspaceId?: string;
+  path?: string;
+  registry?: SkillEnabledRegistryIdentity;
+};
+
+export type DisabledSkillRecord = DisabledSkillTarget & {
+  id: string;
+  disabledAt: string;
+  disabledBy?: Actor;
+};
+
+export type SkillEnabledOverridesDocument = {
+  schemaVersion: 1;
+  disabled: DisabledSkillRecord[];
+};
+
 export interface ApprovalRequest {
   id: string;
   workspaceId: string;
