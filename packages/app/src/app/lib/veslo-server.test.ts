@@ -898,7 +898,19 @@ test("skill materialization helpers call workspace and global status and sync en
           status: "current",
           registryConfigured: true,
           rootDir: "/home/user/.config/opencode/skills/veslo-managed",
-          materializedSkills: [],
+          materializedSkills: [
+            {
+              name: "veslo-automations",
+              packageSha256: "b".repeat(64),
+              source: "platform",
+              removalPolicy: "locked",
+            },
+          ],
+          platformManaged: {
+            enabled: true,
+            synced: false,
+            desiredSkills: ["veslo-automations"],
+          },
           reloadRequired: false,
         }),
         { status: 200, headers: { "content-type": "application/json" } },
@@ -978,6 +990,13 @@ test("skill materialization helpers call workspace and global status and sync en
     });
 
     assert.equal(globalStatus.scope, "personal-global");
+    assert.deepEqual(globalStatus.platformManaged, {
+      enabled: true,
+      synced: false,
+      desiredSkills: ["veslo-automations"],
+    });
+    assert.equal(globalStatus.materializedSkills[0]?.source, "platform");
+    assert.equal(globalStatus.materializedSkills[0]?.removalPolicy, "locked");
     assert.equal(globalSync.status, "synced");
     assert.equal(status.status, "current");
     assert.equal(sync.status, "pending");

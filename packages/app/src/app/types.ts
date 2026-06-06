@@ -262,6 +262,7 @@ export type HubSkillInstallTarget =
   | { scope: "workspace"; workspaceId: string };
 
 export type ManagedSkillSource = "personal" | "workspace" | "organization" | "platform";
+export type WorkspaceSkillRolloutRemovalPolicy = "user_removable" | "admin_removable" | "locked";
 
 export type SkillInventoryLifecycle = "active" | "removed";
 
@@ -272,7 +273,7 @@ export type SkillInventoryRegistryMetadata = {
   versionId?: string;
   packageSha256?: string;
   source?: ManagedSkillSource;
-  removalPolicy?: "user_removable" | "admin_removable" | "locked";
+  removalPolicy?: WorkspaceSkillRolloutRemovalPolicy;
 };
 
 export type SkillInventoryScope = "workspace" | "user-global" | "organization";
@@ -358,6 +359,8 @@ export type WorkspaceSkillMaterialization = {
   name: string;
   versionId: string;
   packageSha256: string;
+  source: ManagedSkillSource;
+  removalPolicy: WorkspaceSkillRolloutRemovalPolicy;
   target: "workspace" | "personal-global";
 };
 

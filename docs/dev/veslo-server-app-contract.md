@@ -149,6 +149,14 @@ Server-controlled registry package materialization is a local server responsibil
 - `POST /workspace/:id/skills/materialization/sync`
   Requires host or owner auth. Downloads the desired registry workspace skill set and matching selected-workspace rollout policies, validates package archives, writes server-controlled runtime skill directories, returns any resolver `conflicts`, and returns `pending` without mutating files when the caller reports an active run.
 
+Before starting or switching a local runtime, the app must check
+`GET /skills/materialization` and run `POST /skills/materialization/sync-global`
+when the global status is pending or reload-required, including the no-registry
+platform-managed case. This global check happens before the workspace
+materialization status can skip because no registry is configured. If a run is
+active, the app sends `activeRun: true` so the server records pending sync
+instead of mutating managed skill files.
+
 Rollout policy resolution must enforce target exclusivity: the same effective
 skill/audience cannot be materialized as both a user skill and a workspace skill.
 If registry state contains both because of legacy data or a race, the server

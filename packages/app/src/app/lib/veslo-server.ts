@@ -478,6 +478,8 @@ export type VesloSkillMaterializationEntry = {
   name: string;
   versionId?: string;
   packageSha256: string;
+  source?: VesloSkillRegistryInstallation["source"];
+  removalPolicy?: VesloSkillRegistryRolloutRemovalPolicy;
   target?: "workspace" | "personal-global";
   skillDir?: string;
   materializedAt?: string;
@@ -505,6 +507,11 @@ export type VesloSkillMaterializationStatus = {
 
 export type VesloGlobalSkillMaterializationStatus = Omit<VesloSkillMaterializationStatus, "workspaceId"> & {
   scope: "personal-global";
+  platformManaged?: {
+    enabled: boolean;
+    synced: boolean;
+    desiredSkills: string[];
+  };
 };
 
 export type VesloSkillMaterializationSyncOptions = {

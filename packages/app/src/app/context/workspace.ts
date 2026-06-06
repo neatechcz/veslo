@@ -612,6 +612,48 @@ export function createWorkspaceStore(options: {
         denOrgId: denAuth?.orgId?.trim() || undefined,
         denUserId: denAuth?.user?.id?.trim() || undefined,
       };
+      const activeRun = Boolean(workspaceBusy()[workspace.id]);
+
+      try {
+        const globalStatus = await client.getGlobalSkillMaterializationStatus();
+        const globalSyncRequired =
+          globalStatus.reloadRequired === true ||
+          globalStatus.status === "pending" ||
+          (globalStatus.platformManaged?.enabled === true && globalStatus.platformManaged.synced !== true);
+        if (globalSyncRequired) {
+          if (activeRun) {
+            await client.syncGlobalSkillMaterialization({ ...materializationAuth, activeRun: true });
+            wsDebug("skills:materialization:global:pending:active-run", {
+              workspaceId,
+              reason: context?.reason ?? null,
+              status: globalStatus.status,
+              platformManaged: globalStatus.platformManaged ?? null,
+            });
+          } else {
+            const globalResult = await client.syncGlobalSkillMaterialization(materializationAuth);
+            wsDebug("skills:materialization:global:synced", {
+              workspaceId,
+              reason: context?.reason ?? null,
+              status: globalResult.status,
+              synced: globalResult.synced,
+              reloadRequired: globalResult.reloadRequired ?? false,
+              materializedCount: globalResult.materializedSkills.length,
+              platformManaged: globalResult.platformManaged ?? null,
+            });
+            if (globalResult.synced || globalResult.reloadRequired === true) {
+              options.refreshSkills({ force: true }).catch(e => reportError(e, "workspace.refreshSkills"));
+            }
+          }
+        }
+      } catch (error) {
+        if (!(error instanceof VesloServerError && error.status === 404)) {
+          throw error;
+        }
+        wsDebug("skills:materialization:global:skip:unsupported-server", {
+          workspaceId,
+          reason: context?.reason ?? null,
+        });
+      }
 
       const status = await client.getWorkspaceSkillMaterializationStatus(workspaceId);
       if (!status.registryConfigured) {
@@ -622,7 +664,6 @@ export function createWorkspaceStore(options: {
         return true;
       }
 
-      const activeRun = Boolean(workspaceBusy()[workspace.id]);
       if (activeRun) {
         await client.syncWorkspaceSkillMaterialization(workspaceId, { ...materializationAuth, activeRun: true });
         wsDebug("skills:materialization:pending:active-run", {
