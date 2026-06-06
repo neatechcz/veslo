@@ -47,6 +47,10 @@ const defaultSpecs = [
   './specs/language-persistence.spec.ts',
 ];
 
+function selectedSpecsInclude(fileName: string): boolean {
+  return process.argv.some((arg) => arg.includes(fileName));
+}
+
 export const config = {
   runner: 'local',
 
@@ -86,6 +90,9 @@ export const config = {
   ],
 
   onPrepare: async () => {
+    if (selectedSpecsInclude('veslo-automations.e2e.ts')) {
+      process.env.E2E_SEED_AUTOMATIONS_SECONDARY_WORKSPACE ||= '1';
+    }
     await startApp(WEBDRIVER_PORT);
   },
 

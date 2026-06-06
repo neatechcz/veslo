@@ -124,12 +124,22 @@ message in the edit modal without losing local form state.
 
 Reuse the existing Automations page rather than creating a separate route.
 
-Recommended layout:
+Use the app's current visual language, matching the approved Pencil frame
+`Global Automations App Visual Design CZ`:
+
+- IBM Plex Sans / IBM Plex Mono typography, not an external admin-dashboard
+  style
+- Radix gray surfaces (`gray-1`/`gray-2`), subtle `gray-4` borders, and the
+  existing `Button` component hierarchy
+- the current light Veslo app/sidebar/navigation structure rather than a dark
+  enterprise sidebar
+- rounded cards/list rows consistent with the current Automations page, not a
+  dense hard-edged data table
 
 - header with app-wide status and last refresh time
 - compact summary counts by status
 - workspace filter, status filter, and search
-- list/table of automation cards with visible workspace name/path
+- list of automation cards with visible workspace name/path
 - create button that opens a workspace-aware create modal
 - edit action on every automation card
 

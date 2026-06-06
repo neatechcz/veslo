@@ -309,6 +309,10 @@ async function resolveVesloServerPortForLaunch(env: NodeJS.ProcessEnv = process.
 
 const ENTERPRISE_CREATOR_SEED_MARKER = '.veslo-enterprise-creators';
 
+function shouldSeedAutomationsSecondaryWorkspace(env: NodeJS.ProcessEnv): boolean {
+  return env.E2E_SEED_AUTOMATIONS_SECONDARY_WORKSPACE?.trim() === '1';
+}
+
 export function seedDefaultWorkspaceState(root: string, env: NodeJS.ProcessEnv): void {
   const workspacePath = join(root, 'workspaces', 'visual-workspace');
   mkdirSync(workspacePath, { recursive: true });
@@ -319,20 +323,38 @@ export function seedDefaultWorkspaceState(root: string, env: NodeJS.ProcessEnv):
     'skipped for deterministic e2e fixture\n',
   );
 
-  const workspaceState = {
-    version: 4,
-    activeId: 'e2e-visual-workspace',
-    workspaces: [{
-      id: 'e2e-visual-workspace',
-      name: 'Visual Workspace',
-      path: workspacePath,
+  const secondaryAutomationWorkspacePath = join(root, 'workspaces', 'automations-secondary-workspace');
+  const workspaces = [{
+    id: 'e2e-visual-workspace',
+    name: 'Visual Workspace',
+    path: workspacePath,
+    preset: 'starter',
+    workspaceType: 'local',
+    remoteType: 'opencode',
+    baseUrl: null,
+    directory: null,
+    displayName: 'Visual Workspace',
+  }];
+
+  if (shouldSeedAutomationsSecondaryWorkspace(env)) {
+    mkdirSync(secondaryAutomationWorkspacePath, { recursive: true });
+    workspaces.push({
+      id: 'e2e-automations-secondary-workspace',
+      name: 'Automations Secondary Workspace',
+      path: secondaryAutomationWorkspacePath,
       preset: 'starter',
       workspaceType: 'local',
       remoteType: 'opencode',
       baseUrl: null,
       directory: null,
-      displayName: 'Visual Workspace',
-    }],
+      displayName: 'Automations Secondary Workspace',
+    });
+  }
+
+  const workspaceState = {
+    version: 4,
+    activeId: 'e2e-visual-workspace',
+    workspaces,
   };
 
   const xdgData = env.XDG_DATA_HOME ?? join(root, '.local', 'share');

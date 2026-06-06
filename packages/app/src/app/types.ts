@@ -77,6 +77,23 @@ export type VesloAutomationUpdatePayload = Partial<{
   status: VesloAutomationStatus;
 }>;
 
+export type AutomationWorkspaceSummary = {
+  appWorkspaceId: string;
+  serverWorkspaceId: string | null;
+  name: string;
+  path?: string | null;
+  workspaceType: "local" | "remote";
+  status: "ready" | "unavailable" | "error";
+  error?: string | null;
+};
+
+export type WorkspaceAutomationItem = {
+  key: string;
+  workspace: AutomationWorkspaceSummary;
+  automation: VesloAutomation;
+  runs: VesloAutomationRun[];
+};
+
 export type SidebarSessionItem = {
   id: string;
   title: string;

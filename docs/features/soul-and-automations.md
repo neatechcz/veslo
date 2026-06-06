@@ -8,12 +8,24 @@ The Automations UI lives in `packages/app/src/app/pages/scheduled.tsx`.
 
 Current responsibilities:
 
-- list Veslo server-managed automations
-- show Veslo server readiness
-- create, delete, and manually run automations
+- list Veslo server-managed automations across every app workspace that can be
+  mapped to a Veslo server workspace
+- show Veslo server readiness and per-workspace mapping or fetch diagnostics
+- create, fully edit, cancel/delete, and manually run automations
+- allow management of automations that belong to inactive workspaces
 - offer templates
 
 The page is a management and launch surface. It is not the scheduler implementation itself.
+
+Like Soul and Skills, Automations uses app-side aggregation instead of asking the
+server for an implicit active workspace view. The app resolves its workspace list
+to server workspace IDs, fetches automations and recent run history for each
+mapped workspace, and keeps partial results visible when one workspace cannot be
+mapped or fetched. Every create, update, delete/cancel, and manual-run mutation
+must send the owning server workspace ID explicitly, so inactive workspaces remain
+editable without activating them first. New automations default to the active
+workspace when that workspace is mapped and ready, otherwise to the first ready
+workspace in the aggregated list.
 
 ## Veslo Automations
 

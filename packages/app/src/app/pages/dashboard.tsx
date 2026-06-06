@@ -16,9 +16,10 @@ import type {
   SkillSaveResult,
   StartupPreference,
   LoadedSessionPrefetchInterestChangeHandler,
-  VesloAutomation,
+  AutomationWorkspaceSummary,
   VesloAutomationCreatePayload,
-  VesloAutomationRun,
+  VesloAutomationUpdatePayload,
+  WorkspaceAutomationItem,
   WorkspaceConnectionState,
   WorkspaceSessionGroup,
   View,
@@ -189,17 +190,19 @@ export type DashboardViewProps = {
   editWorkspaceConnection: (workspaceId: string) => void;
   forgetWorkspace: (workspaceId: string) => void;
   stopSandbox: (workspaceId: string) => void;
-  automations: VesloAutomation[];
-  automationRunsById: Record<string, VesloAutomationRun[]>;
+  automationItems: WorkspaceAutomationItem[];
+  automationWorkspaces: AutomationWorkspaceSummary[];
+  defaultAutomationWorkspaceId: string | null;
   scheduledJobsSource: "local" | "remote";
   scheduledJobsSourceReady: boolean;
   scheduledJobsStatus: string | null;
   scheduledJobsBusy: boolean;
   scheduledJobsUpdatedAt: number | null;
   refreshScheduledJobs: (options?: { force?: boolean }) => void;
-  createAutomation: (payload: VesloAutomationCreatePayload) => Promise<void> | void;
-  deleteAutomation: (automationId: string) => Promise<void> | void;
-  runAutomation: (automationId: string) => Promise<void> | void;
+  createAutomation: (workspaceId: string, payload: VesloAutomationCreatePayload) => Promise<void> | void;
+  updateAutomation: (workspaceId: string, automationId: string, payload: VesloAutomationUpdatePayload) => Promise<void> | void;
+  deleteAutomation: (workspaceId: string, automationId: string) => Promise<void> | void;
+  runAutomation: (workspaceId: string, automationId: string) => Promise<void> | void;
   soulOverview: VesloSoulOverviewResponse | null;
   soulOverviewError: string | null;
   soulOverviewBusy: boolean;
@@ -1602,8 +1605,9 @@ export default function DashboardView(props: DashboardViewProps) {
           <Switch>
             <Match when={props.tab === "scheduled"}>
               <ScheduledTasksView
-                automations={props.automations}
-                automationRunsById={props.automationRunsById}
+                automationItems={props.automationItems}
+                automationWorkspaces={props.automationWorkspaces}
+                defaultAutomationWorkspaceId={props.defaultAutomationWorkspaceId}
                 source={props.scheduledJobsSource}
                 sourceReady={props.scheduledJobsSourceReady}
                 status={props.scheduledJobsStatus}
@@ -1611,6 +1615,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 lastUpdatedAt={props.scheduledJobsUpdatedAt}
                 refreshJobs={props.refreshScheduledJobs}
                 createAutomation={props.createAutomation}
+                updateAutomation={props.updateAutomation}
                 deleteAutomation={props.deleteAutomation}
                 runAutomation={props.runAutomation}
                 newTaskDisabled={props.newTaskDisabled}
