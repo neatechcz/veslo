@@ -11,6 +11,11 @@ import type {
 import { formatRelativeTime, isTauriRuntime } from "../utils";
 import { currentLocale, t } from "../../i18n";
 import { createAsyncAction } from "../hooks/create-async-action";
+import {
+  buildSchedule,
+  resolveLocalScheduleTimezone,
+  scheduledDayOptions,
+} from "./scheduled-automation-schedule";
 
 import Button from "../components/button";
 import {
@@ -130,16 +135,6 @@ const automationTemplates: AutomationTemplate[] = [
   },
 ];
 
-const dayOptions = [
-  { id: "mo", labelKey: "scheduled.day_mo", cron: "1", weekday: 1 },
-  { id: "tu", labelKey: "scheduled.day_tu", cron: "2", weekday: 2 },
-  { id: "we", labelKey: "scheduled.day_we", cron: "3", weekday: 3 },
-  { id: "th", labelKey: "scheduled.day_th", cron: "4", weekday: 4 },
-  { id: "fr", labelKey: "scheduled.day_fr", cron: "5", weekday: 5 },
-  { id: "sa", labelKey: "scheduled.day_sa", cron: "6", weekday: 6 },
-  { id: "su", labelKey: "scheduled.day_su", cron: "0", weekday: 0 },
-];
-
 const pad2 = (value: number) => String(value).padStart(2, "0");
 
 const toRelative = (value?: string | null, locale?: string) => {
@@ -148,62 +143,6 @@ const toRelative = (value?: string | null, locale?: string) => {
   const parsed = Date.parse(value);
   if (!Number.isFinite(parsed)) return neverLabel;
   return formatRelativeTime(parsed);
-};
-
-const parseTimeValue = (value: string) => {
-  const [hourRaw, minuteRaw] = value.split(":");
-  const hour = Number.parseInt(hourRaw ?? "", 10);
-  const minute = Number.parseInt(minuteRaw ?? "", 10);
-  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
-  return { hour: Math.min(23, Math.max(0, hour)), minute: Math.min(59, Math.max(0, minute)) };
-};
-
-const buildCronFromDaily = (timeValue: string, days: string[]) => {
-  const time = parseTimeValue(timeValue);
-  if (!time || !days.length) return "";
-  if (days.length === dayOptions.length) return `${time.minute} ${time.hour} * * *`;
-  const daySpec = dayOptions
-    .filter((day) => days.includes(day.id))
-    .map((day) => day.cron)
-    .join(",");
-  return daySpec ? `${time.minute} ${time.hour} * * ${daySpec}` : "";
-};
-
-const buildSchedule = (
-  mode: "daily" | "interval" | "oneShot",
-  options: {
-    timeValue: string;
-    days: string[];
-    intervalHours: number;
-    runAtDate: string;
-    runAtTime: string;
-    quickMinutes: number;
-  },
-): VesloAutomationSchedule | null => {
-  if (mode === "interval") {
-    const hours = Math.max(1, Math.round(options.intervalHours));
-    return { kind: "interval", seconds: hours * 60 * 60 };
-  }
-
-  if (mode === "oneShot") {
-    if (options.quickMinutes > 0) {
-      return { kind: "oneShot", runAt: new Date(Date.now() + options.quickMinutes * 60 * 1000).toISOString() };
-    }
-    if (!options.runAtDate || !options.runAtTime) return null;
-    const parsed = new Date(`${options.runAtDate}T${options.runAtTime}`);
-    if (Number.isNaN(parsed.getTime())) return null;
-    return { kind: "oneShot", runAt: parsed.toISOString() };
-  }
-
-  const time = parseTimeValue(options.timeValue);
-  if (!time || !options.days.length) return null;
-  if (options.days.length === dayOptions.length) return { kind: "daily", hour: time.hour, minute: time.minute };
-  if (options.days.length === 1) {
-    const day = dayOptions.find((item) => item.id === options.days[0]);
-    return day ? { kind: "weekly", weekday: day.weekday, hour: time.hour, minute: time.minute } : null;
-  }
-  const cron = buildCronFromDaily(options.timeValue, options.days);
-  return cron ? { kind: "cron", expression: cron } : null;
 };
 
 const describeSchedule = (schedule: VesloAutomationSchedule, locale?: string) => {
@@ -219,7 +158,16 @@ const describeSchedule = (schedule: VesloAutomationSchedule, locale?: string) =>
     return tr("scheduled.every_day_at", { time: `${pad2(schedule.hour)}:${pad2(schedule.minute)}` });
   }
   if (schedule.kind === "weekly") {
-    const dayKey = ["scheduled.day_sun", "scheduled.day_mon", "scheduled.day_tue", "scheduled.day_wed", "scheduled.day_thu", "scheduled.day_fri", "scheduled.day_sat"][schedule.weekday] ?? "scheduled.custom_schedule";
+    const dayKey = [
+      "",
+      "scheduled.day_mon",
+      "scheduled.day_tue",
+      "scheduled.day_wed",
+      "scheduled.day_thu",
+      "scheduled.day_fri",
+      "scheduled.day_sat",
+      "scheduled.day_sun",
+    ][schedule.weekday] ?? "scheduled.custom_schedule";
     return `${tr(dayKey)} ${tr("scheduled.at_time", { time: `${pad2(schedule.hour)}:${pad2(schedule.minute)}` }).toLowerCase()}`;
   }
   if (schedule.kind === "interval") {
@@ -437,7 +385,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   const [schedulerInstallRequested, setSchedulerInstallRequested] = createSignal(false);
   const [createModalOpen, setCreateModalOpen] = createSignal(false);
   const [automationName, setAutomationName] = createSignal(tr("scheduled.default_name"));
-  const [automationProject, setAutomationProject] = createSignal(props.activeWorkspaceRoot);
+  const [automationProject, setAutomationProject] = createSignal("");
   const [automationPrompt, setAutomationPrompt] = createSignal(tr("scheduled.default_prompt"));
   const [scheduleMode, setScheduleMode] = createSignal<"daily" | "interval" | "oneShot">("daily");
   const [scheduleTime, setScheduleTime] = createSignal("09:00");
@@ -453,9 +401,11 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   const runAction = createAsyncAction();
   const deleteAction = createAsyncAction();
   const legacyDeleteAction = createAsyncAction();
+  const scheduleTimezone = createMemo(() => resolveLocalScheduleTimezone());
 
   const automationDisabled = createMemo(() => props.newTaskDisabled || !props.sourceReady || props.busy);
   const schedulerGateActive = createMemo(() => {
+    if (props.sourceReady) return false;
     if (props.source !== "local") return false;
     if (!isTauriRuntime() || props.isWindows) return false;
     return !props.schedulerInstalled || schedulerInstallRequested();
@@ -476,7 +426,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
       runAtDate: runAtDate(),
       runAtTime: runAtTime(),
       quickMinutes: quickMinutes(),
-    }),
+    }, scheduleTimezone()),
   );
   const canCreateAutomation = createMemo(() => {
     return automationName().trim().length > 0 && automationPrompt().trim().length > 0 && Boolean(selectedSchedule()) && !automationDisabled();
@@ -491,8 +441,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
 
   const openCreateModal = () => {
     if (automationDisabled()) return;
-    const root = props.activeWorkspaceRoot.trim();
-    if (root) setAutomationProject(root);
+    if (!automationProject().trim()) setAutomationProject(automationName().trim());
     setCreateModalOpen(true);
   };
 
@@ -507,8 +456,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
       setScheduleTime(template.scheduleTime ?? "09:00");
       setScheduleDays(template.scheduleDays ?? ["mo", "tu", "we", "th", "fr"]);
     }
-    const root = props.activeWorkspaceRoot.trim();
-    if (root) setAutomationProject(root);
+    setAutomationProject(tr(template.nameKey));
     setCreateModalOpen(true);
   };
 
@@ -527,7 +475,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
     const schedule = selectedSchedule();
     if (!schedule || !canCreateAutomation()) return;
     await createAction.execute(async () => {
-      const targetTitle = automationProject().trim();
+      const targetTitle = automationProject().trim() || automationName().trim();
       await props.createAutomation({
         name: automationName().trim(),
         prompt: automationPrompt().trim(),
@@ -802,12 +750,12 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                   />
                 </div>
                 <div>
-                  <label class="mb-2 block text-[11px] font-bold uppercase text-gray-8">{tr("scheduled.label_projects")}</label>
+                  <label class="mb-2 block text-[11px] font-bold uppercase text-gray-8">{tr("scheduled.label_fallback_title")}</label>
                   <input
                     type="text"
                     value={automationProject()}
                     onInput={(event) => setAutomationProject(event.currentTarget.value)}
-                    placeholder={tr("scheduled.placeholder_folder")}
+                    placeholder={tr("scheduled.placeholder_fallback_title")}
                     class="w-full rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:border-blue-7 focus:outline-none focus:ring-1 focus:ring-blue-9/20"
                   />
                 </div>
@@ -859,7 +807,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                           <Clock size={16} class="text-gray-8" />
                         </div>
                         <div class="flex flex-wrap gap-1">
-                          <For each={dayOptions}>
+                          <For each={scheduledDayOptions}>
                             {(day) => (
                               <button
                                 type="button"
