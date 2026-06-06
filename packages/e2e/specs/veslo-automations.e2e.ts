@@ -1,6 +1,7 @@
 import { expect } from "@wdio/globals";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { navigateToHash, waitForHashRoute } from "../helpers/app-launcher.js";
 
 type TauriInvokeResult<T> = {
   ok: boolean;
@@ -106,7 +107,27 @@ type VesloConnection = {
   hostToken: string;
 };
 
+type AutomationCardSnapshot = {
+  automationId: string;
+  workspaceId: string;
+  text: string;
+};
+
+type ScheduledAutomationsPageSnapshot = {
+  url: string;
+  windowHandleCount: number | null;
+  hash: string;
+  title: string;
+  body: string;
+  refreshDisabled: boolean | null;
+  workspaceOptions: string[];
+  cards: AutomationCardSnapshot[];
+  errors: string[];
+};
+
 const isolatedProfileRoot = () => join(process.cwd(), ".tmp-veslo-home");
+const secondaryAutomationWorkspaceRoot = () =>
+  join(isolatedProfileRoot(), "workspaces", "automations-secondary-workspace");
 const personalGlobalManagedSkillPath = () =>
   join(
     isolatedProfileRoot(),
@@ -128,6 +149,10 @@ function trimBaseUrl(value: string | null | undefined): string {
 
 function normalizePath(value: string | null | undefined): string {
   return trimText(value).replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function workspaceDirectory(workspace: WorkspaceInfo): string {
+  return trimText(workspace.directory) || trimText(workspace.path);
 }
 
 function futureIso(delayMs: number): string {
@@ -173,6 +198,16 @@ async function readActiveWorkspace(): Promise<WorkspaceInfo> {
     throw new Error(`Active workspace is not ready (activeId=${bootstrap.activeId ?? "none"}).`);
   }
   return activeWorkspace;
+}
+
+async function readSecondaryAutomationWorkspace(): Promise<WorkspaceInfo> {
+  const directory = secondaryAutomationWorkspaceRoot();
+  const bootstrap = await tauriInvoke<WorkspaceBootstrap>("workspace_bootstrap");
+  const workspace = bootstrap.workspaces.find((candidate) => normalizePath(candidate.path) === normalizePath(directory));
+  if (!workspace) {
+    throw new Error("Secondary automations workspace fixture was not seeded.");
+  }
+  return workspace;
 }
 
 async function waitForLocalVesloServerReady(timeout = 60_000): Promise<VesloConnection> {
@@ -238,6 +273,33 @@ async function fetchJson<T>(
 
 async function fetchWorkspaces(connection: VesloConnection): Promise<WorkspaceListResponse> {
   return fetchJson<WorkspaceListResponse>(connection, "/workspaces");
+}
+
+async function waitForServerWorkspaceByDirectory(
+  connection: VesloConnection,
+  directory: string,
+  timeout = 90_000,
+): Promise<WorkspaceInfo> {
+  let latest: WorkspaceInfo | null = null;
+  const normalizedDirectory = normalizePath(directory);
+
+  await browser.waitUntil(
+    async () => {
+      const payload = await fetchWorkspaces(connection).catch(() => null);
+      latest = payload?.items?.find((workspace) =>
+        normalizePath(workspace.directory) === normalizedDirectory ||
+        normalizePath(workspace.path) === normalizedDirectory
+      ) ?? null;
+      return Boolean(latest?.id);
+    },
+    {
+      timeout,
+      interval: 500,
+      timeoutMsg: `Veslo server workspace for ${directory} was not listed.`,
+    },
+  );
+
+  return latest!;
 }
 
 async function waitForServerWorkspaceOpenCodeUrl(
@@ -392,7 +454,200 @@ async function restartVesloServerAndReconnect(): Promise<VesloConnection> {
   return waitForLocalVesloServerReady();
 }
 
+async function ensureVesloServerConnection(): Promise<VesloConnection> {
+  try {
+    return await waitForLocalVesloServerReady(30_000);
+  } catch {
+    return restartVesloServerAndReconnect();
+  }
+}
+
+async function readScheduledAutomationsPageSnapshot(): Promise<ScheduledAutomationsPageSnapshot> {
+  const domSnapshot = await browser.execute(() => {
+    const e2eWindow = window as typeof window & { __vesloE2eErrors?: string[] };
+    const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="scheduled-automation-card"]')).map((card) => ({
+      automationId: card.dataset.automationId ?? "",
+      workspaceId: card.dataset.automationWorkspaceId ?? "",
+      text: card.innerText,
+    }));
+    const refresh = document.querySelector<HTMLButtonElement>('[data-testid="scheduled-automations-refresh"]');
+    const workspaceSelect = document.querySelector<HTMLSelectElement>('select');
+    return {
+      hash: window.location.hash,
+      title: document.title,
+      body: document.body.innerText.slice(0, 3000),
+      refreshDisabled: refresh ? refresh.disabled : null,
+      workspaceOptions: workspaceSelect ? Array.from(workspaceSelect.options).map((option) => `${option.value}:${option.text}`) : [],
+      cards,
+      errors: e2eWindow.__vesloE2eErrors ?? [],
+    };
+  });
+  const url = await browser.getUrl().catch(() => "");
+  const handles = await browser.getWindowHandles().catch(() => null);
+  return {
+    ...domSnapshot,
+    url,
+    windowHandleCount: handles?.length ?? null,
+  };
+}
+
+async function waitForAutomationCards(automationNames: string[]): Promise<AutomationCardSnapshot[]> {
+  let latestSnapshot: ScheduledAutomationsPageSnapshot = {
+    url: "",
+    windowHandleCount: null,
+    hash: "",
+    title: "",
+    body: "",
+    refreshDisabled: null,
+    workspaceOptions: [],
+    cards: [],
+    errors: [],
+  };
+  await browser.waitUntil(
+    async () => {
+      latestSnapshot = await readScheduledAutomationsPageSnapshot();
+      return automationNames.every((name) => latestSnapshot.cards.some((card) => card.text.includes(name)));
+    },
+    {
+      timeout: 20_000,
+      interval: 500,
+      timeoutMsg: `Automation cards did not include ${automationNames.join(", ")}. Latest snapshot=${JSON.stringify(latestSnapshot)}`,
+    },
+  );
+  return latestSnapshot.cards;
+}
+
+async function clickAutomationEdit(automationId: string): Promise<void> {
+  await browser.waitUntil(
+    async () => browser.execute((targetAutomationId) => {
+      const card = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="scheduled-automation-card"]'))
+        .find((candidate) => candidate.dataset.automationId === targetAutomationId);
+      const editButton = card?.querySelector<HTMLButtonElement>('[data-testid="scheduled-automation-edit"]') ?? null;
+      return Boolean(editButton && !editButton.disabled);
+    }, automationId),
+    {
+      timeout: 10_000,
+      interval: 250,
+      timeoutMsg: `Automation ${automationId} edit button did not become enabled.`,
+    },
+  );
+
+  const clicked = await browser.execute((targetAutomationId) => {
+    const card = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="scheduled-automation-card"]'))
+      .find((candidate) => candidate.dataset.automationId === targetAutomationId);
+    const editButton = card?.querySelector<HTMLButtonElement>('[data-testid="scheduled-automation-edit"]') ?? null;
+    if (!editButton || editButton.disabled) return false;
+    editButton?.click();
+    return Boolean(editButton);
+  }, automationId);
+
+  expect(clicked).toBe(true);
+}
+
+async function waitForScheduledAutomationsPage(): Promise<void> {
+  try {
+    await $('[data-testid="scheduled-automations-page"]').waitForExist({ timeout: 15_000 });
+    await browser.execute(() => {
+      const e2eWindow = window as typeof window & {
+        __vesloE2eErrors?: string[];
+        __vesloE2eErrorCaptureInstalled?: boolean;
+      };
+      if (e2eWindow.__vesloE2eErrorCaptureInstalled) return;
+      e2eWindow.__vesloE2eErrorCaptureInstalled = true;
+      e2eWindow.__vesloE2eErrors = [];
+      window.addEventListener("error", (event) => {
+        e2eWindow.__vesloE2eErrors?.push(event.message || String(event.error ?? "window error"));
+      });
+      window.addEventListener("unhandledrejection", (event) => {
+        const reason = event.reason;
+        e2eWindow.__vesloE2eErrors?.push(reason instanceof Error ? reason.message : String(reason));
+      });
+    });
+  } catch (error) {
+    const snapshot = await browser.execute(() => ({
+      hash: window.location.hash,
+      title: document.title,
+      body: document.body.innerText.slice(0, 2000),
+    })).catch((snapshotError) => ({
+      hash: "unavailable",
+      title: "unavailable",
+      body: snapshotError instanceof Error ? snapshotError.message : String(snapshotError),
+    }));
+    throw new Error(
+      `Scheduled automations page did not render. Snapshot=${JSON.stringify(snapshot)}`,
+      { cause: error },
+    );
+  }
+}
+
 describe("Veslo automations desktop flow", () => {
+  it("shows and edits automations from inactive workspaces on the global page", async () => {
+    const secondaryWorkspace = await readSecondaryAutomationWorkspace();
+    const activeWorkspace = await readActiveWorkspace();
+    const activeDirectory = workspaceDirectory(activeWorkspace);
+    const secondaryDirectory = workspaceDirectory(secondaryWorkspace);
+    const runSuffix = Date.now();
+
+    const connection = await ensureVesloServerConnection();
+    const activeServerWorkspace = await waitForServerWorkspaceByDirectory(connection, activeDirectory);
+    const secondaryServerWorkspace = await waitForServerWorkspaceByDirectory(connection, secondaryDirectory);
+    expect(activeServerWorkspace.id).not.toBe(secondaryServerWorkspace.id);
+
+    const activeAutomationName = `E2E active automation ${runSuffix}`;
+    const inactiveAutomationName = `E2E inactive automation ${runSuffix}`;
+    const editedInactiveAutomationName = `E2E inactive edited ${runSuffix}`;
+    const futureRunAt = futureIso(30 * 60 * 1000);
+
+    const activeAutomation = await createAutomation(connection, activeServerWorkspace.id, {
+      id: `e2e_active_workspace_${runSuffix}`,
+      name: activeAutomationName,
+      runAt: futureRunAt,
+      prompt: "This active workspace automation should appear on the global Automations page.",
+    });
+    const inactiveAutomation = await createAutomation(connection, secondaryServerWorkspace.id, {
+      id: `e2e_inactive_workspace_${runSuffix}`,
+      name: inactiveAutomationName,
+      runAt: futureRunAt,
+      prompt: "This inactive workspace automation should remain editable from the global Automations page.",
+    });
+
+    await navigateToHash("/dashboard/scheduled");
+    await waitForHashRoute("#/dashboard/scheduled", 10_000);
+    await waitForScheduledAutomationsPage();
+    const refreshButton = await $('[data-testid="scheduled-automations-refresh"]');
+    await refreshButton.waitForEnabled({ timeout: 10_000 });
+    await refreshButton.click();
+
+    const cards = await waitForAutomationCards([activeAutomationName, inactiveAutomationName]);
+    expect(cards.find((card) => card.automationId === activeAutomation.id)?.workspaceId).toBe(activeServerWorkspace.id);
+    expect(cards.find((card) => card.automationId === inactiveAutomation.id)?.workspaceId).toBe(secondaryServerWorkspace.id);
+
+    await clickAutomationEdit(inactiveAutomation.id);
+    await $('[data-testid="scheduled-automation-edit-modal"]').waitForExist({ timeout: 10_000 });
+    const nameInput = await $('[data-testid="scheduled-automation-edit-name"]');
+    await nameInput.setValue(editedInactiveAutomationName);
+    await $('[data-testid="scheduled-automation-edit-save"]').click();
+
+    await browser.waitUntil(
+      async () => {
+        const automations = await listAutomations(connection, secondaryServerWorkspace.id);
+        return automations.some((automation) =>
+          automation.id === inactiveAutomation.id &&
+          automation.name === editedInactiveAutomationName
+        );
+      },
+      {
+        timeout: 20_000,
+        interval: 500,
+        timeoutMsg: "Inactive workspace automation edit was not persisted through the server API.",
+      },
+    );
+
+    const updatedCards = await waitForAutomationCards([activeAutomationName, editedInactiveAutomationName]);
+    expect(updatedCards.find((card) => card.automationId === inactiveAutomation.id)?.text)
+      .toContain(editedInactiveAutomationName);
+  });
+
   it("runs persisted one-shot automations and keeps future automations after server restart", async () => {
     const { workspace, connection } = await ensureActiveEngineReady();
     const workspaceId = workspace.id;

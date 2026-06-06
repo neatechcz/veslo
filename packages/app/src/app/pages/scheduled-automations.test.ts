@@ -76,6 +76,24 @@ test("ScheduledTasksView defaults new automations to the active ready workspace 
   assert.match(app, /activeWorkspaceId = workspaceStore\.activeWorkspaceId\(\)\.trim\(\)/);
   assert.match(app, /workspace\.appWorkspaceId === activeWorkspaceId/);
   assert.match(app, /defaultAutomationWorkspaceId:\s*activeAutomationWorkspace\(\)\?\.serverWorkspaceId \?\? null/);
+  assert.ok(
+    app.indexOf("const workspaceStore = createWorkspaceStore") < app.indexOf("const activeAutomationWorkspace = createMemo"),
+    "activeAutomationWorkspace must be declared after workspaceStore is initialized",
+  );
+});
+
+test("ScheduledTasksView exposes stable hooks for desktop automation management E2E", () => {
+  const source = scheduledSource();
+
+  assert.match(source, /data-testid="scheduled-automations-page"/);
+  assert.match(source, /data-testid="scheduled-automations-refresh"/);
+  assert.match(source, /data-testid="scheduled-automation-card"/);
+  assert.match(source, /data-automation-id=\{automation\(\)\.id\}/);
+  assert.match(source, /data-automation-workspace-id=\{workspace\(\)\.serverWorkspaceId/);
+  assert.match(source, /data-testid="scheduled-automation-edit"/);
+  assert.match(source, /data-testid="scheduled-automation-edit-modal"/);
+  assert.match(source, /data-testid="scheduled-automation-edit-name"/);
+  assert.match(source, /data-testid="scheduled-automation-edit-save"/);
 });
 
 test("App refreshes automations for all mapped workspaces", () => {

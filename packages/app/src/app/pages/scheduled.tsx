@@ -240,7 +240,12 @@ const AutomationCard = (props: {
   const workspace = () => props.item.workspace;
 
   return (
-    <div class="flex flex-col gap-4 rounded-2xl border border-gray-4 bg-gray-1 p-5 shadow-sm">
+    <div
+      data-testid="scheduled-automation-card"
+      data-automation-id={automation().id}
+      data-automation-workspace-id={workspace().serverWorkspaceId ?? ""}
+      class="flex flex-col gap-4 rounded-2xl border border-gray-4 bg-gray-1 p-5 shadow-sm"
+    >
       <div class="flex flex-wrap items-start justify-between gap-4">
         <div class="flex min-w-0 items-start gap-3">
           <div class={`flex h-8 w-8 items-center justify-center rounded-lg border bg-gray-1 ${statusTone(automation().status)}`}>
@@ -267,6 +272,7 @@ const AutomationCard = (props: {
         <div class="flex items-center gap-2">
           <button
             type="button"
+            data-testid="scheduled-automation-run"
             onClick={props.onRun}
             disabled={props.busy || automation().status === "cancelled" || !workspace().serverWorkspaceId}
             class={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
@@ -280,6 +286,7 @@ const AutomationCard = (props: {
           </button>
           <button
             type="button"
+            data-testid="scheduled-automation-edit"
             onClick={props.onEdit}
             disabled={props.busy || !workspace().serverWorkspaceId}
             class={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
@@ -292,6 +299,7 @@ const AutomationCard = (props: {
           </button>
           <button
             type="button"
+            data-testid="scheduled-automation-delete"
             onClick={props.onDelete}
             disabled={props.busy || automation().status === "cancelled" || !workspace().serverWorkspaceId}
             class={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
@@ -597,7 +605,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   };
 
   return (
-    <section class="space-y-8">
+    <section data-testid="scheduled-automations-page" class="space-y-8">
       <div class="flex flex-wrap items-center justify-between gap-4">
         <div>
           <div class="flex items-center gap-2">
@@ -612,6 +620,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
         <div class="flex items-center gap-3">
           <button
             type="button"
+            data-testid="scheduled-automations-refresh"
             onClick={() => props.refreshJobs({ force: true })}
             disabled={props.busy}
             class={`flex items-center gap-1.5 text-xs font-medium transition-colors ${
@@ -979,7 +988,10 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
 
       <Show when={editTarget()}>
         <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-4 backdrop-blur-[2px]">
-          <div class="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-gray-6 bg-gray-1 shadow-2xl">
+          <div
+            data-testid="scheduled-automation-edit-modal"
+            class="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-gray-6 bg-gray-1 shadow-2xl"
+          >
             <div class="space-y-6 p-8">
               <div class="flex items-start justify-between gap-4">
                 <div>
@@ -1006,6 +1018,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                 <div>
                   <label class="mb-2 block text-[11px] font-bold uppercase text-gray-8">{tr("scheduled.label_name")}</label>
                   <input
+                    data-testid="scheduled-automation-edit-name"
                     type="text"
                     value={automationName()}
                     onInput={(event) => setAutomationName(event.currentTarget.value)}
@@ -1177,7 +1190,12 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
               <Button variant="outline" onClick={() => setEditTarget(null)} disabled={updateAction.busy()}>
                 {tr("scheduled.cancel")}
               </Button>
-              <Button variant="primary" onClick={() => void handleUpdateAutomation()} disabled={updateAction.busy()}>
+              <Button
+                variant="primary"
+                data-testid="scheduled-automation-edit-save"
+                onClick={() => void handleUpdateAutomation()}
+                disabled={updateAction.busy()}
+              >
                 {updateAction.busy() ? tr("scheduled.saving") : tr("scheduled.save_changes")}
               </Button>
             </div>

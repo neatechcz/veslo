@@ -3477,15 +3477,6 @@ export default function App() {
   const [selectedMcp, setSelectedMcp] = createSignal<string | null>(null);
   const [automationItems, setAutomationItems] = createSignal<WorkspaceAutomationItem[]>([]);
   const [automationWorkspaces, setAutomationWorkspaces] = createSignal<AutomationWorkspaceSummary[]>([]);
-  const activeAutomationWorkspace = createMemo(() => {
-    const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
-    if (!activeWorkspaceId) return null;
-    return automationWorkspaces().find((workspace) =>
-      workspace.appWorkspaceId === activeWorkspaceId &&
-      workspace.status === "ready" &&
-      Boolean(workspace.serverWorkspaceId)
-    ) ?? null;
-  });
   const [scheduledJobsStatus, setScheduledJobsStatus] = createSignal<string | null>(null);
   const [scheduledJobsBusy, setScheduledJobsBusy] = createSignal(false);
   const [scheduledJobsUpdatedAt, setScheduledJobsUpdatedAt] = createSignal<number | null>(null);
@@ -3914,6 +3905,15 @@ export default function App() {
       // with the user's session selection and caused race conditions.
       sessionStore.hydrateTranscriptSnapshot(snapshot);
     },
+  });
+  const activeAutomationWorkspace = createMemo(() => {
+    const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
+    if (!activeWorkspaceId) return null;
+    return automationWorkspaces().find((workspace) =>
+      workspace.appWorkspaceId === activeWorkspaceId &&
+      workspace.status === "ready" &&
+      Boolean(workspace.serverWorkspaceId)
+    ) ?? null;
   });
   const composerTargetWorkspaceLabel = (workspace: WorkspaceInfo) =>
     workspace.displayName?.trim() ||
