@@ -72,6 +72,7 @@ pub struct OrchestratorSpawnOptions {
     pub opencode_username: Option<String>,
     pub opencode_password: Option<String>,
     pub cors: Option<String>,
+    pub veslo_server_state_path: Option<String>,
 }
 
 pub fn resolve_orchestrator_data_dir() -> String {
@@ -198,6 +199,19 @@ pub fn request_orchestrator_shutdown(data_dir: &str) -> Result<bool, String> {
     Ok(true)
 }
 
+pub fn build_orchestrator_env_overrides(
+    veslo_server_state_path: Option<&Path>,
+) -> Vec<(String, String)> {
+    veslo_server_state_path
+        .map(|path| {
+            vec![(
+                "VESLO_SERVER_STATE_PATH".to_string(),
+                path.to_string_lossy().to_string(),
+            )]
+        })
+        .unwrap_or_default()
+}
+
 pub fn spawn_orchestrator_daemon(
     app: &AppHandle,
     options: &OrchestratorSpawnOptions,
@@ -269,6 +283,11 @@ pub fn spawn_orchestrator_daemon(
         command = command.env("PATH", path_env);
     }
 
+    let veslo_server_state_path = options.veslo_server_state_path.as_deref().map(Path::new);
+    for (key, value) in build_orchestrator_env_overrides(veslo_server_state_path) {
+        command = command.env(key, value);
+    }
+
     for (key, value) in crate::bun_env::bun_env_overrides() {
         command = command.env(key, value);
     }
@@ -280,12 +299,25 @@ pub fn spawn_orchestrator_daemon(
 
 #[cfg(test)]
 mod tests {
-    use super::request_orchestrator_shutdown;
+    use super::{build_orchestrator_env_overrides, request_orchestrator_shutdown};
     use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
     use uuid::Uuid;
+
+    #[test]
+    fn orchestrator_env_overrides_include_veslo_server_state_path_when_available() {
+        let state_path = std::env::temp_dir()
+            .join("veslo-orchestrator-env-test")
+            .join("veslo-server-plugin-state.json");
+
+        let env = build_orchestrator_env_overrides(Some(&state_path));
+
+        assert!(env.iter().any(|(key, value)| {
+            key == "VESLO_SERVER_STATE_PATH" && value == state_path.to_string_lossy().as_ref()
+        }));
+    }
 
     #[test]
     fn request_shutdown_returns_false_without_state() {

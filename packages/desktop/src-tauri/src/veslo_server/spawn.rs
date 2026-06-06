@@ -11,6 +11,9 @@ const DEFAULT_VESLO_PORT: u16 = 8787;
 const DEFAULT_MANAGED_AI_BASE_URL: &str = "https://ai.veslo.work";
 const VESLO_SERVER_DEV_WATCH_ENV: &str = "VESLO_SERVER_DEV_WATCH";
 const VESLO_SERVER_DEV_DIR_ENV: &str = "VESLO_SERVER_DEV_DIR";
+const VESLO_DESKTOP_SERVER_PORT_ENV: &str = "VESLO_DESKTOP_SERVER_PORT";
+const PORT_RESTART_RETRY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+const PORT_RESTART_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
 fn parse_dev_watch_flag(value: Option<&str>) -> bool {
     matches!(
@@ -75,12 +78,53 @@ fn validate_managed_opencode_base_url(opencode_base_url: Option<&str>) -> Result
     ))
 }
 
+#[cfg(test)]
 pub fn resolve_veslo_port() -> Result<u16, String> {
-    TcpListener::bind(("0.0.0.0", DEFAULT_VESLO_PORT))
-        .map(|_| DEFAULT_VESLO_PORT)
-        .map_err(|error| {
-            format!("Veslo server fixed port {DEFAULT_VESLO_PORT} is unavailable: {error}")
-        })
+    let port = configured_veslo_port()?;
+    bind_veslo_port(port)
+}
+
+fn bind_veslo_port(port: u16) -> Result<u16, String> {
+    TcpListener::bind(("0.0.0.0", port))
+        .map(|_| port)
+        .map_err(|error| format!("Veslo server port {port} is unavailable: {error}"))
+}
+
+pub fn resolve_veslo_port_after_restart() -> Result<u16, String> {
+    let port = configured_veslo_port()?;
+    let deadline = std::time::Instant::now() + PORT_RESTART_RETRY_TIMEOUT;
+    loop {
+        match bind_veslo_port(port) {
+            Ok(resolved) => return Ok(resolved),
+            Err(error) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(PORT_RESTART_RETRY_INTERVAL);
+                if std::time::Instant::now() >= deadline {
+                    return Err(error);
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn configured_veslo_port() -> Result<u16, String> {
+    let raw = match env::var(VESLO_DESKTOP_SERVER_PORT_ENV) {
+        Ok(value) => value,
+        Err(_) => return Ok(DEFAULT_VESLO_PORT),
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(DEFAULT_VESLO_PORT);
+    }
+    let port = trimmed.parse::<u16>().map_err(|_| {
+        format!("Invalid {VESLO_DESKTOP_SERVER_PORT_ENV}: expected TCP port, got {trimmed}")
+    })?;
+    if port == 0 {
+        return Err(format!(
+            "Invalid {VESLO_DESKTOP_SERVER_PORT_ENV}: desktop server port must be greater than 0"
+        ));
+    }
+    Ok(port)
 }
 
 pub fn build_veslo_args(
@@ -245,6 +289,31 @@ pub fn spawn_veslo_server(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: String) -> Self {
+            let previous = env::var(key).ok();
+            env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => env::set_var(self.key, value),
+                None => env::remove_var(self.key),
+            }
+        }
+    }
 
     #[test]
     fn parses_dev_watch_flag_truthy_values() {
@@ -283,6 +352,42 @@ mod tests {
             error.contains(&DEFAULT_VESLO_PORT.to_string()),
             "fixed-port contention errors should name the configured Veslo server port: {error}"
         );
+    }
+
+    #[test]
+    fn resolve_veslo_port_uses_env_override_for_e2e_isolation() {
+        let _lock = ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("reserve candidate port");
+        let port = listener.local_addr().expect("read candidate port").port();
+        drop(listener);
+        let _guard = EnvGuard::set(VESLO_DESKTOP_SERVER_PORT_ENV, port.to_string());
+
+        assert_eq!(resolve_veslo_port().expect("resolve override port"), port);
+    }
+
+    #[test]
+    fn resolve_veslo_port_after_restart_waits_for_previous_listener() {
+        let _lock = ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("reserve candidate port");
+        let port = listener.local_addr().expect("read candidate port").port();
+        let _guard = EnvGuard::set(VESLO_DESKTOP_SERVER_PORT_ENV, port.to_string());
+
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            drop(listener);
+        });
+
+        assert_eq!(
+            resolve_veslo_port_after_restart().expect("resolve released restart port"),
+            port
+        );
+        releaser.join().expect("listener releaser joins");
     }
 
     #[test]

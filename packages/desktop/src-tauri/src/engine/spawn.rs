@@ -6,6 +6,7 @@ use tauri::{AppHandle, Manager};
 use crate::paths::{candidate_xdg_config_dirs, candidate_xdg_data_dirs, maybe_infer_xdg_home};
 use crate::paths::{prepended_path_env, sidecar_path_candidates};
 use crate::supervised_process::{self, CommandEvent, SupervisedCommandChild};
+use crate::veslo_server::persisted_veslo_server_plugin_state_path;
 
 pub fn find_free_port() -> Result<u16, String> {
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(|e| e.to_string())?;
@@ -25,6 +26,22 @@ pub fn build_engine_args(bind_host: &str, port: u16) -> Vec<String> {
         "--cors".to_string(),
         "*".to_string(),
     ]
+}
+
+pub fn build_engine_env_overrides(veslo_server_state_path: Option<&Path>) -> Vec<(String, String)> {
+    let mut env = vec![
+        ("OPENCODE_CLIENT".to_string(), "veslo".to_string()),
+        ("VESLO".to_string(), "1".to_string()),
+    ];
+
+    if let Some(path) = veslo_server_state_path {
+        env.push((
+            "VESLO_SERVER_STATE_PATH".to_string(),
+            path.to_string_lossy().to_string(),
+        ));
+    }
+
+    env
 }
 
 pub fn spawn_engine(
@@ -73,8 +90,10 @@ pub fn spawn_engine(
         command = command.env("XDG_CONFIG_HOME", xdg_config_home);
     }
 
-    command = command.env("OPENCODE_CLIENT", "veslo");
-    command = command.env("VESLO", "1");
+    let veslo_server_state_path = persisted_veslo_server_plugin_state_path(app).ok();
+    for (key, value) in build_engine_env_overrides(veslo_server_state_path.as_deref()) {
+        command = command.env(key, value);
+    }
 
     for (key, value) in crate::bun_env::bun_env_overrides() {
         command = command.env(key, value);
@@ -105,4 +124,22 @@ pub fn spawn_engine(
     command
         .spawn()
         .map_err(|e| format!("Failed to start opencode: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn engine_env_overrides_include_veslo_server_state_path_when_available() {
+        let state_path = std::env::temp_dir()
+            .join("veslo-engine-env-test")
+            .join("veslo-server-plugin-state.json");
+
+        let env = build_engine_env_overrides(Some(&state_path));
+
+        assert!(env.iter().any(|(key, value)| {
+            key == "VESLO_SERVER_STATE_PATH" && value == state_path.to_string_lossy().as_ref()
+        }));
+    }
 }

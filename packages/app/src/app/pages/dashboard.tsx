@@ -7,7 +7,6 @@ import type {
   PluginScope,
   SettingsTab,
   SessionArchiveItem,
-  ScheduledJob,
   SidebarSubagentDecoration,
   HubMcpCard,
   HubSkillCard,
@@ -17,6 +16,9 @@ import type {
   SkillSaveResult,
   StartupPreference,
   LoadedSessionPrefetchInterestChangeHandler,
+  VesloAutomation,
+  VesloAutomationCreatePayload,
+  VesloAutomationRun,
   WorkspaceConnectionState,
   WorkspaceSessionGroup,
   View,
@@ -187,15 +189,17 @@ export type DashboardViewProps = {
   editWorkspaceConnection: (workspaceId: string) => void;
   forgetWorkspace: (workspaceId: string) => void;
   stopSandbox: (workspaceId: string) => void;
-  scheduledJobs: ScheduledJob[];
+  automations: VesloAutomation[];
+  automationRunsById: Record<string, VesloAutomationRun[]>;
   scheduledJobsSource: "local" | "remote";
   scheduledJobsSourceReady: boolean;
-  schedulerPluginInstalled: boolean;
   scheduledJobsStatus: string | null;
   scheduledJobsBusy: boolean;
   scheduledJobsUpdatedAt: number | null;
   refreshScheduledJobs: (options?: { force?: boolean }) => void;
-  deleteScheduledJob: (name: string) => Promise<void> | void;
+  createAutomation: (payload: VesloAutomationCreatePayload) => Promise<void> | void;
+  deleteAutomation: (automationId: string) => Promise<void> | void;
+  runAutomation: (automationId: string) => Promise<void> | void;
   soulOverview: VesloSoulOverviewResponse | null;
   soulOverviewError: string | null;
   soulOverviewBusy: boolean;
@@ -1599,22 +1603,18 @@ export default function DashboardView(props: DashboardViewProps) {
           <Switch>
             <Match when={props.tab === "scheduled"}>
               <ScheduledTasksView
-                jobs={props.scheduledJobs}
+                automations={props.automations}
+                automationRunsById={props.automationRunsById}
                 source={props.scheduledJobsSource}
                 sourceReady={props.scheduledJobsSourceReady}
                 status={props.scheduledJobsStatus}
                 busy={props.scheduledJobsBusy}
                 lastUpdatedAt={props.scheduledJobsUpdatedAt}
                 refreshJobs={props.refreshScheduledJobs}
-                deleteJob={props.deleteScheduledJob}
-                isWindows={props.isWindows}
-                activeWorkspaceRoot={props.activeWorkspaceRoot}
-                createSessionAndOpen={props.createSessionAndOpen}
-                setPrompt={props.setPrompt}
+                createAutomation={props.createAutomation}
+                deleteAutomation={props.deleteAutomation}
+                runAutomation={props.runAutomation}
                 newTaskDisabled={props.newTaskDisabled}
-                schedulerInstalled={props.schedulerPluginInstalled}
-                canEditPlugins={props.canEditPlugins}
-                addPlugin={props.addPlugin}
                 reloadWorkspaceEngine={props.reloadWorkspaceEngine}
                 reloadBusy={props.reloadBusy}
                 canReloadWorkspace={props.canReloadWorkspace}

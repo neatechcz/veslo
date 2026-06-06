@@ -1,0 +1,96 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+import { buildSchedule } from "./scheduled-automation-schedule";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const scheduledSource = () => readFileSync(join(__dirname, "scheduled.tsx"), "utf8");
+const scheduleHelperSource = () => readFileSync(join(__dirname, "scheduled-automation-schedule.ts"), "utf8");
+
+test("ScheduledTasksView keeps server automations on API handlers instead of prompt/session routing", () => {
+  const source = scheduledSource();
+
+  assert.match(source, /automations:\s*VesloAutomation\[\]/);
+  assert.match(source, /createAutomation:\s*\(/);
+  assert.match(source, /runAutomation:\s*\(/);
+  assert.match(source, /deleteAutomation:\s*\(/);
+  assert.doesNotMatch(source, /ScheduledJob/);
+  assert.doesNotMatch(source, /legacyScheduledJobs/);
+  assert.doesNotMatch(source, /deleteLegacyJob/);
+  assert.doesNotMatch(source, /schedulerInstalled/);
+
+  const primaryCreate = source.match(/const handleCreateAutomation[\s\S]*?};/);
+  assert.ok(primaryCreate);
+  assert.match(primaryCreate[0], /props\.createAutomation/);
+  assert.doesNotMatch(primaryCreate[0], /props\.setPrompt|props\.createSessionAndOpen/);
+
+  const primaryRun = source.match(/const runAutomationNow[\s\S]*?};/);
+  assert.ok(primaryRun);
+  assert.match(primaryRun[0], /props\.runAutomation/);
+  assert.doesNotMatch(primaryRun[0], /props\.setPrompt|props\.createSessionAndOpen/);
+});
+
+test("ScheduledTasksView builds server-compatible weekly schedules without raw scheduler UI", () => {
+  const source = scheduledSource();
+  const helperSource = scheduleHelperSource();
+
+  assert.match(helperSource, /id:\s*"su"[\s\S]*?weekday:\s*7/);
+  assert.doesNotMatch(helperSource, /id:\s*"su"[\s\S]*?weekday:\s*0/);
+  assert.match(source, /scheduled\.label_fallback_title/);
+  assert.doesNotMatch(source, /scheduled\.label_projects|scheduled\.placeholder_folder/);
+  assert.doesNotMatch(source, /LegacyJobCard|legacyDelete|legacy_scheduler|legacy_jobs|delete_desc_local/);
+  assert.doesNotMatch(source, /raw scheduler|local scheduler|opencode-scheduler/i);
+});
+
+test("ScheduledTasksView uses server readiness fallback instead of Scheduler fallback", () => {
+  const source = scheduledSource();
+  const gate = source.match(/<Show when=\{serverUnavailable\(\)\}>[\s\S]*?<\/Show>/);
+  assert.ok(gate, "server readiness fallback is missing");
+  assert.match(gate[0], /scheduled\.server_unavailable_title/);
+  assert.match(gate[0], /scheduled\.server_unavailable_hint/);
+  assert.doesNotMatch(gate[0], /scheduled\.install_scheduler|scheduler|opencode-scheduler/i);
+});
+
+test("buildSchedule preserves local timezone for recurring wall-clock schedules", () => {
+  const baseOptions = {
+    timeValue: "09:00",
+    days: ["mo", "tu", "we", "th", "fr", "sa", "su"],
+    intervalHours: 6,
+    runAtDate: "2026-06-07",
+    runAtTime: "09:00",
+    quickMinutes: 0,
+  };
+
+  assert.deepEqual(buildSchedule("daily", baseOptions, "Europe/Prague"), {
+    kind: "daily",
+    hour: 9,
+    minute: 0,
+    timezone: "Europe/Prague",
+  });
+
+  assert.deepEqual(buildSchedule("daily", { ...baseOptions, days: ["su"] }, "Europe/Prague"), {
+    kind: "weekly",
+    weekday: 7,
+    hour: 9,
+    minute: 0,
+    timezone: "Europe/Prague",
+  });
+
+  assert.deepEqual(buildSchedule("daily", { ...baseOptions, days: ["mo", "we", "fr"] }, "Europe/Prague"), {
+    kind: "cron",
+    expression: "0 9 * * 1,3,5",
+    timezone: "Europe/Prague",
+  });
+
+  assert.deepEqual(buildSchedule("interval", baseOptions, "Europe/Prague"), {
+    kind: "interval",
+    seconds: 21600,
+  });
+
+  const oneShot = buildSchedule("oneShot", baseOptions, "Europe/Prague");
+  assert.equal(oneShot?.kind, "oneShot");
+  assert.equal("timezone" in (oneShot ?? {}), false);
+});

@@ -1,20 +1,58 @@
 # Soul and Automations
 
-This document describes the shipped Soul and scheduled-job behavior relevant to coding work.
+This document describes the shipped Soul and automation behavior relevant to coding work.
 
-## Scheduled Jobs
+## Automations UI
 
-The scheduled-jobs UI lives in `packages/app/src/app/pages/scheduled.tsx`.
+The Automations UI lives in `packages/app/src/app/pages/scheduled.tsx`.
 
 Current responsibilities:
 
-- list scheduled jobs
-- show source and scheduler readiness
-- delete jobs
+- list Veslo server-managed automations
+- show Veslo server readiness
+- create, delete, and manually run automations
 - offer templates
-- trigger run-now style entry points back into session flows
 
 The page is a management and launch surface. It is not the scheduler implementation itself.
+
+## Veslo Automations
+
+Veslo automations are persistent workspace definitions managed by Veslo server.
+They can be one-shot or recurring. Each automation stores its prompt, schedule,
+target session hints, enabled state, lifecycle status, next scheduled run time,
+and completed run history.
+
+Supported public behavior:
+
+- One-shot automations run once and then remain visible as completed history.
+- Recurring automations compute and persist the next future run after a
+  successful scheduled occurrence.
+- Paused, disabled, failed, completed, and cancelled automations do not continue
+  scheduling until reactivated where applicable.
+- Manual run executes immediately through the workspace OpenCode upstream and
+  records a run entry without erasing prior history. Target agent, model, and
+  variant hints are forwarded when present.
+- Deleting an automation cancels the active definition but preserves its run
+  history for completed/history views.
+
+Automation reads are available to viewer-level clients. Creating, updating,
+cancelling, and manual runs require collaborator access.
+
+Agent-facing automation tools are provisioned as Veslo-managed OpenCode plugins.
+They read the running Veslo server state from the desktop-provided environment
+and call the server automation routes. Agents must not create separate OS jobs or
+write scheduler files directly for Veslo automations.
+The Automations UI must treat local Veslo server readiness as the unlock for new
+automations. It must not prompt users to install external scheduler plugins to
+unlock server-managed automations, and it must not render raw job lists.
+
+The server also materializes a platform-managed, locked user-global
+`veslo-automations` skill under the `veslo-managed` skill root. The skill directs
+agents to use `veslo_create_automation`, `veslo_list_automations`,
+`veslo_run_automation`, `veslo_update_automation`, and
+`veslo_delete_automation` for persistent one-shot and recurring automations.
+Inventory/materialization metadata reports this skill as platform sourced and
+locked so normal user removal controls stay disabled.
 
 ## Soul
 

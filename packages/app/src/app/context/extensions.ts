@@ -16,7 +16,9 @@ import type {
   SkillCard,
   SkillInstance,
   SkillInventoryItem,
+  ManagedSkillSource,
   SkillSaveResult,
+  WorkspaceSkillRolloutRemovalPolicy,
 } from "../types";
 import { addOpencodeCacheHint, isTauriRuntime } from "../utils";
 import {
@@ -501,6 +503,8 @@ export function createExtensionsStore(options: {
       name?: string;
       versionId?: string;
       packageSha256?: string;
+      source?: string;
+      removalPolicy?: string;
       target?: string;
       skillDir?: string;
     };
@@ -540,10 +544,26 @@ export function createExtensionsStore(options: {
     ): SkillInventorySkillInput["registry"] | null => {
       const installationId = entry.installationId?.trim() ?? "";
       if (!installationId) return null;
+      const normalizeMaterializationSource = (): ManagedSkillSource => {
+        const source = entry.source?.trim();
+        if (source === "personal" || source === "workspace" || source === "organization" || source === "platform") {
+          return source;
+        }
+        return entry.target === "workspace" ? "workspace" : "personal";
+      };
+      const normalizeMaterializationRemovalPolicy = (): WorkspaceSkillRolloutRemovalPolicy => {
+        const removalPolicy = entry.removalPolicy?.trim();
+        if (removalPolicy === "user_removable" || removalPolicy === "admin_removable" || removalPolicy === "locked") {
+          return removalPolicy;
+        }
+        return "user_removable";
+      };
       const common = {
         ...(entry.skillId?.trim() ? { skillId: entry.skillId.trim() } : {}),
         ...(entry.versionId?.trim() ? { versionId: entry.versionId.trim() } : {}),
         ...(entry.packageSha256?.trim() ? { packageSha256: entry.packageSha256.trim() } : {}),
+        source: normalizeMaterializationSource(),
+        removalPolicy: normalizeMaterializationRemovalPolicy(),
       };
       if (installationId.startsWith("rollout:")) {
         const policyId = installationId.slice("rollout:".length).trim();
@@ -552,8 +572,6 @@ export function createExtensionsStore(options: {
       return {
         ...common,
         installationId,
-        source: entry.target === "workspace" ? "workspace" : "personal",
-        removalPolicy: "user_removable",
       };
     };
 
@@ -609,8 +627,8 @@ export function createExtensionsStore(options: {
           ...skill,
           path,
           registry: {
-            ...registry,
             ...skill.registry,
+            ...registry,
           },
           writable: false,
         };

@@ -26,6 +26,7 @@ export interface SkillRemovalJournalContext {
 }
 
 const userHomeDir = (): string => process.env.HOME?.trim() || homedir();
+const userConfigHomeDir = (): string => process.env.XDG_CONFIG_HOME?.trim() || join(userHomeDir(), ".config");
 
 async function findWorkspaceRoots(workspaceRoot: string): Promise<string[]> {
   const roots: string[] = [];
@@ -193,12 +194,13 @@ export const workspaceSkillRootsForMutation = async (workspaceRoot: string): Pro
   ]);
 };
 
-export const userGlobalSkillRootsForMutation = (): string[] => [
+export const userGlobalSkillRootsForMutation = (): string[] => Array.from(new Set([
+  join(userConfigHomeDir(), "opencode", "skills"),
   join(userHomeDir(), ".config", "opencode", "skills"),
   join(userHomeDir(), ".claude", "skills"),
   join(userHomeDir(), ".agents", "skills"),
   join(userHomeDir(), ".agent", "skills"),
-];
+]));
 
 async function resolveExistingWorkspaceSkillTarget(
   workspaceRoot: string,
@@ -232,6 +234,7 @@ async function resolveExistingWorkspaceSkillTarget(
 async function resolveExistingUserGlobalSkillTarget(
   name: string,
   instancePath?: string,
+  options: { allowManaged?: boolean } = {},
 ): Promise<{ skillPath: string; skillRoot: string }> {
   validateSkillName(name);
   const roots = userGlobalSkillRootsForMutation().map((root) => resolve(root));
@@ -249,7 +252,7 @@ async function resolveExistingUserGlobalSkillTarget(
     throw new ApiError(400, "invalid_skill_path", "Skill instance path must be inside a user-global skill root");
   }
   const relativeToRoot = relative(owningRoot, target).replace(/\\/g, "/");
-  if (relativeToRoot === `veslo-managed/${name}/${SKILL_ENTRYPOINT}` || relativeToRoot.startsWith("veslo-managed/")) {
+  if (!options.allowManaged && (relativeToRoot === `veslo-managed/${name}/${SKILL_ENTRYPOINT}` || relativeToRoot.startsWith("veslo-managed/"))) {
     throw new ApiError(409, "managed_skill_read_only", "Managed materialized skills must be edited through the registry");
   }
   if (!(await exists(target))) {
@@ -304,6 +307,18 @@ export async function readSkillAtPath(
   return {
     path: skillPath,
     content: await readFile(skillPath, "utf8"),
+  };
+}
+
+export async function readGlobalSkillAtPath(
+  payload: { name: string; path: string },
+): Promise<{ path: string; content: string }> {
+  const target = await resolveExistingUserGlobalSkillTarget(payload.name.trim(), payload.path, {
+    allowManaged: true,
+  });
+  return {
+    path: target.skillPath,
+    content: await readFile(target.skillPath, "utf8"),
   };
 }
 

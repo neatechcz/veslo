@@ -32,6 +32,46 @@ test("workspace materialization sync forwards the signed-in Den API base", () =>
   );
 });
 
+test("runtime-start materialization sync checks global platform-managed status before no-registry workspace skip", () => {
+  const syncStart = source.indexOf("async function syncWorkspaceSkillMaterializationBeforeRuntime(");
+  assert.notStrictEqual(syncStart, -1, "syncWorkspaceSkillMaterializationBeforeRuntime is missing");
+  const syncEnd = source.indexOf("async function activateWorkspace(", syncStart);
+  assert.notStrictEqual(syncEnd, -1, "activateWorkspace should follow the sync helper");
+  const syncSource = source.slice(syncStart, syncEnd);
+
+  const globalStatusIdx = syncSource.indexOf("await client.getGlobalSkillMaterializationStatus()");
+  const workspaceStatusIdx = syncSource.indexOf("await client.getWorkspaceSkillMaterializationStatus(workspaceId)");
+  const noRegistrySkipIdx = syncSource.indexOf('wsDebug("skills:materialization:skip:not-configured"');
+  const globalSyncIdx = syncSource.indexOf("await client.syncGlobalSkillMaterialization(materializationAuth)");
+
+  assert.notStrictEqual(globalStatusIdx, -1, "runtime-start sync should read global materialization status");
+  assert.notStrictEqual(globalSyncIdx, -1, "runtime-start sync should perform global materialization sync when pending");
+  assert.notStrictEqual(workspaceStatusIdx, -1, "runtime-start sync should still read workspace materialization status");
+  assert.notStrictEqual(noRegistrySkipIdx, -1, "runtime-start sync should still skip workspace sync when no registry is configured");
+  assert.ok(
+    globalStatusIdx < workspaceStatusIdx,
+    "global status must be checked before workspace status so no-registry platform-managed pending state is not skipped",
+  );
+  assert.ok(
+    globalSyncIdx < noRegistrySkipIdx,
+    "global sync must run before the no-registry workspace skip branch",
+  );
+});
+
+test("active runtime starts request pending global materialization instead of mutating", () => {
+  const syncStart = source.indexOf("async function syncWorkspaceSkillMaterializationBeforeRuntime(");
+  assert.notStrictEqual(syncStart, -1, "syncWorkspaceSkillMaterializationBeforeRuntime is missing");
+  const syncEnd = source.indexOf("async function activateWorkspace(", syncStart);
+  assert.notStrictEqual(syncEnd, -1, "activateWorkspace should follow the sync helper");
+  const syncSource = source.slice(syncStart, syncEnd);
+
+  assert.match(
+    syncSource,
+    /const activeRun = Boolean\(workspaceBusy\(\)\[workspace\.id\]\)[\s\S]*syncGlobalSkillMaterialization\(\{ \.\.\.materializationAuth, activeRun: true \}\)/s,
+    "active workspace runs must request pending global materialization before runtime mutation",
+  );
+});
+
 test("local materialization sync starts the managed server before using the fallback client", () => {
   const syncStart = source.indexOf("async function syncWorkspaceSkillMaterializationBeforeRuntime(");
   assert.notStrictEqual(syncStart, -1, "syncWorkspaceSkillMaterializationBeforeRuntime is missing");

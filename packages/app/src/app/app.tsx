@@ -227,8 +227,10 @@ import type {
   SessionErrorTurn,
   UpdateHandle,
   OpencodeConnectStatus,
-  ScheduledJob,
   SuggestedPlugin,
+  VesloAutomation,
+  VesloAutomationCreatePayload,
+  VesloAutomationRun,
 } from "./types";
 import {
   clearStartupPreference,
@@ -306,8 +308,6 @@ import {
   readOpencodeConfig,
   writeOpencodeConfig,
   engineInfo,
-  schedulerDeleteJob,
-  schedulerListJobs,
   vesloServerInfo,
   vesloServerRestart,
   orchestratorStatus,
@@ -3472,7 +3472,8 @@ export default function App() {
   const [mcpStatuses, setMcpStatuses] = createSignal<McpStatusMap>({});
   const [mcpConnectingName, setMcpConnectingName] = createSignal<string | null>(null);
   const [selectedMcp, setSelectedMcp] = createSignal<string | null>(null);
-  const [scheduledJobs, setScheduledJobs] = createSignal<ScheduledJob[]>([]);
+  const [automations, setAutomations] = createSignal<VesloAutomation[]>([]);
+  const [automationRunsById, setAutomationRunsById] = createSignal<Record<string, VesloAutomationRun[]>>({});
   const [scheduledJobsStatus, setScheduledJobsStatus] = createSignal<string | null>(null);
   const [scheduledJobsBusy, setScheduledJobsBusy] = createSignal(false);
   const [scheduledJobsUpdatedAt, setScheduledJobsUpdatedAt] = createSignal<number | null>(null);
@@ -5430,7 +5431,14 @@ export default function App() {
           const response = await client.listWorkspaces();
           if (cancelled) return;
           const items = Array.isArray(response.items) ? response.items : [];
-          const match = items.find((entry) => normalizeDirectoryPath(entry.path) === root);
+          const match = items.find((entry) => {
+            const candidates = [
+              normalizeDirectoryPath(entry.path),
+              normalizeDirectoryPath(entry.directory ?? ""),
+              normalizeDirectoryPath(entry.opencode?.directory ?? ""),
+            ].filter(Boolean);
+            return candidates.includes(root);
+          });
           setVesloServerWorkspaceId(match?.id ?? null);
         } catch {
           if (!cancelled) setVesloServerWorkspaceId(null);
@@ -7113,9 +7121,7 @@ export default function App() {
   } = workspaceStore;
 
   // Scheduler helpers - must be defined after workspaceStore
-  const resolveVesloScheduler = () => {
-    const isRemoteWorkspace = workspaceStore.activeWorkspaceDisplay().workspaceType === "remote";
-    if (!isRemoteWorkspace) return null;
+  const resolveVesloAutomations = () => {
     const client = vesloServerClient();
     const workspaceId = vesloServerWorkspaceId();
     if (vesloServerStatus() !== "connected" || !client || !workspaceId) return null;
@@ -7127,105 +7133,88 @@ export default function App() {
   });
 
   const scheduledJobsSourceReady = createMemo(() => {
-    if (scheduledJobsSource() !== "remote") return true;
     const client = vesloServerClient();
     const workspaceId = vesloServerWorkspaceId();
     return vesloServerStatus() === "connected" && Boolean(client && workspaceId);
   });
 
-  const schedulerPluginInstalled = createMemo(() => isPluginInstalledByName("opencode-scheduler"));
-
   const refreshScheduledJobs = async (options?: { force?: boolean }) => {
     if (scheduledJobsBusy() && !options?.force) return;
 
-    if (scheduledJobsSource() === "remote") {
-      const scheduler = resolveVesloScheduler();
-      if (!scheduler) {
-        setScheduledJobs([]);
-        const status =
-          vesloServerStatus() === "disconnected"
-            ? "Veslo server unavailable. Connect to sync scheduled tasks."
-            : vesloServerStatus() === "limited"
-              ? "Veslo server needs a token to load scheduled tasks."
-              : "Veslo server not ready.";
-        setScheduledJobsStatus(status);
-        return;
-      }
+    setScheduledJobsBusy(true);
+    setScheduledJobsStatus(null);
 
-      setScheduledJobsBusy(true);
-      setScheduledJobsStatus(null);
-
+    const automationClient = resolveVesloAutomations();
+    if (automationClient) {
       try {
-        const response = await scheduler.client.listScheduledJobs(scheduler.workspaceId);
-        const jobs = Array.isArray(response.items) ? response.items : [];
-        setScheduledJobs(jobs);
+        const response = await automationClient.client.listAutomations(automationClient.workspaceId);
+        const items = Array.isArray(response.items) ? response.items : [];
+        setAutomations(items);
         setScheduledJobsUpdatedAt(Date.now());
+
+        const runEntries = await Promise.all(
+          items.map(async (automation) => {
+            try {
+              const runs = await automationClient.client.listAutomationRuns(automationClient.workspaceId, automation.id);
+              return [automation.id, Array.isArray(runs.items) ? runs.items : []] as const;
+            } catch {
+              return [automation.id, []] as const;
+            }
+          }),
+        );
+        setAutomationRunsById(Object.fromEntries(runEntries));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        setScheduledJobs([]);
-        setScheduledJobsStatus(message || "Failed to load scheduled tasks.");
+        setAutomations([]);
+        setAutomationRunsById({});
+        setScheduledJobsStatus(message || "Failed to load automations.");
       } finally {
         setScheduledJobsBusy(false);
       }
       return;
     }
 
-    if (!isTauriRuntime()) {
-      setScheduledJobs([]);
-      setScheduledJobsStatus(null);
-      return;
-    }
+    setAutomations([]);
+    setAutomationRunsById({});
 
-    if (isWindowsPlatform()) {
-      setScheduledJobs([]);
-      setScheduledJobsStatus(null);
-      return;
-    }
-
-    if (!schedulerPluginInstalled()) {
-      setScheduledJobs([]);
-      setScheduledJobsStatus(null);
-      return;
-    }
-
-    setScheduledJobsBusy(true);
-    setScheduledJobsStatus(null);
-
-    try {
-      const root = workspaceStore.activeWorkspaceRoot().trim();
-      const jobs = await schedulerListJobs(root || undefined);
-      setScheduledJobs(jobs);
-      setScheduledJobsUpdatedAt(Date.now());
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setScheduledJobs([]);
-      setScheduledJobsStatus(message || "Failed to load scheduled tasks.");
-    } finally {
-      setScheduledJobsBusy(false);
-    }
+    const status =
+      vesloServerStatus() === "disconnected"
+        ? "Veslo server unavailable. Connect to sync automations."
+        : vesloServerStatus() === "limited"
+          ? "Veslo server needs a token to load automations."
+          : "Veslo server not ready.";
+    setScheduledJobsStatus(status);
+    setScheduledJobsBusy(false);
   };
 
-  const deleteScheduledJob = async (name: string) => {
-    if (scheduledJobsSource() === "remote") {
-      const scheduler = resolveVesloScheduler();
-      if (!scheduler) {
-        throw new Error("Veslo server unavailable. Connect to sync scheduled tasks.");
-      }
-      const response = await scheduler.client.deleteScheduledJob(scheduler.workspaceId, name);
-      setScheduledJobs((current) => current.filter((entry) => entry.slug !== response.job.slug));
-      return;
-    }
+  const createAutomation = async (payload: VesloAutomationCreatePayload) => {
+    const automationClient = resolveVesloAutomations();
+    if (!automationClient) throw new Error("Veslo server unavailable. Connect to sync automations.");
+    const response = await automationClient.client.createAutomation(automationClient.workspaceId, payload);
+    setAutomations((current) => [response.automation, ...current.filter((item) => item.id !== response.automation.id)]);
+    setScheduledJobsUpdatedAt(Date.now());
+  };
 
-    if (!isTauriRuntime()) {
-      throw new Error("Scheduled tasks require the desktop app.");
-    }
-    if (isWindowsPlatform()) {
-      throw new Error("Scheduler is not supported on Windows yet.");
-    }
-    const root = workspaceStore.activeWorkspaceRoot().trim();
-    const job = await schedulerDeleteJob(name, root || undefined);
-    setScheduledJobs((current) => current.filter((entry) => entry.slug !== job.slug));
-    return;
+  const deleteAutomation = async (automationId: string) => {
+    const automationClient = resolveVesloAutomations();
+    if (!automationClient) throw new Error("Veslo server unavailable. Connect to sync automations.");
+    const response = await automationClient.client.deleteAutomation(automationClient.workspaceId, automationId);
+    setAutomations((current) => current.map((item) => (item.id === response.automation.id ? response.automation : item)));
+    setScheduledJobsUpdatedAt(Date.now());
+  };
+
+  const runAutomation = async (automationId: string) => {
+    const automationClient = resolveVesloAutomations();
+    if (!automationClient) throw new Error("Veslo server unavailable. Connect to sync automations.");
+    const response = await automationClient.client.runAutomation(automationClient.workspaceId, automationId);
+    setAutomationRunsById((current) => ({
+      ...current,
+      [automationId]: [response.run, ...(current[automationId] ?? []).filter((run) => run.id !== response.run.id)],
+    }));
+    setAutomations((current) =>
+      current.map((item) => (item.id === automationId ? { ...item, lastRunId: response.run.id, updatedAt: response.run.finishedAt ?? response.run.startedAt ?? item.updatedAt } : item)),
+    );
+    setScheduledJobsUpdatedAt(Date.now());
   };
 
   const resolveSoulWorkspaceMap = async () => {
@@ -10232,16 +10221,18 @@ export default function App() {
       editWorkspaceConnection: openWorkspaceConnectionSettings,
       forgetWorkspace: workspaceStore.forgetWorkspace,
       stopSandbox: workspaceStore.stopSandbox,
-      scheduledJobs: scheduledJobs(),
+      automations: automations(),
+      automationRunsById: automationRunsById(),
       scheduledJobsSource: scheduledJobsSource(),
       scheduledJobsSourceReady: scheduledJobsSourceReady(),
-      schedulerPluginInstalled: schedulerPluginInstalled(),
       scheduledJobsStatus: scheduledJobsStatus(),
       scheduledJobsBusy: scheduledJobsBusy(),
       scheduledJobsUpdatedAt: scheduledJobsUpdatedAt(),
       refreshScheduledJobs: (options?: { force?: boolean }) =>
         refreshScheduledJobs(options).catch(e => reportError(e, "scheduled.refresh")),
-      deleteScheduledJob,
+      createAutomation,
+      deleteAutomation,
+      runAutomation,
       soulOverview: soulOverview(),
       soulOverviewError: soulOverviewError(),
       soulOverviewBusy: soulOverviewBusy(),

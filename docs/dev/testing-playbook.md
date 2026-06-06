@@ -87,7 +87,7 @@ cd ../e2e
 pnpm test --spec ./specs/<target>.spec.ts
 ```
 
-The E2E launcher uses an isolated app profile under `packages/e2e/.tmp-veslo-home` by default so local desktop state does not leak into tests. Set `E2E_USE_EXISTING_PROFILE=1` only when a test explicitly needs the current user profile.
+The E2E launcher uses an isolated app profile under `packages/e2e/.tmp-veslo-home` by default so local desktop state does not leak into tests. It also assigns an isolated local Veslo server port so a user-launched production app on `8787` does not block desktop tests; set `E2E_VESLO_SERVER_PORT` only when a focused test needs a stable port. Set `E2E_USE_EXISTING_PROFILE=1` only when a test explicitly needs the current user profile.
 
 For Windows sidecar-launch changes, also run the clean-profile runtime probe after the Tauri E2E build:
 
@@ -137,10 +137,12 @@ The live spec disables WebdriverIO spec retries while `E2E_LIVE_FEEDBACK_YOUTRAC
 Run server tests if relevant, and rebuild the server binary used by orchestrator-driven flows:
 
 ```bash
-pnpm --filter openwork-server build:bin
+pnpm --filter veslo-server build:bin
 ```
 
 If app behavior depends on that server change, verify the app against the rebuilt binary.
+Desktop E2E builds also run `packages/desktop/scripts/prepare-sidecar.mjs`, which rebuilds the bundled
+`veslo-server` sidecar from current server sources so the Tauri runtime does not reuse a stale local sidecar.
 
 ### Orchestrator changes
 

@@ -66,6 +66,20 @@ test('resolveWebDriverPort allows E2E runs to move off a stale default port', ()
   assert.equal(resolveWebDriverPort({ E2E_WEBDRIVER_PORT: '4455' }), 4455);
 });
 
+test('createAppLaunchEnv can move the desktop Veslo server off the fixed production port', () => {
+  const env = createAppLaunchEnv(
+    {},
+    {
+      port: 4445,
+      opencodeHome: '/tmp/opencode-home',
+      snapshotPath: '/tmp/opencode-home/.veslo/den-auth.json',
+      vesloServerPort: 61234,
+    },
+  );
+
+  assert.equal(env.VESLO_DESKTOP_SERVER_PORT, '61234');
+});
+
 test('resolveLaunchTimeout gives cold desktop starts enough time by default', () => {
   assert.equal(resolveLaunchTimeout({}), 120000);
 });

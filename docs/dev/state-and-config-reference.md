@@ -6,6 +6,7 @@ This document describes the main persistence and config surfaces used by Veslo.
 
 - App-global UI preferences: browser storage keys in the Solid app.
 - Workspace-scoped config: `.opencode/veslo.json`.
+- Workspace automation state: `.opencode/veslo/automations.json`.
 - OpenCode config: `opencode.json` or `opencode.jsonc`.
 - Server connection state: browser storage keys managed by `veslo-server.ts`.
 - Den auth state: browser storage keys managed by `den-auth.ts`.
@@ -110,7 +111,7 @@ Invite-link and bundle-link parsing also lives in `veslo-server.ts`. Incoming qu
 
 The desktop shell also persists the managed local `veslo-server` process snapshot in the app-local data directory so a new app process can recover a still-running server. For the live managed child, native `veslo_server_info` reports process ownership and keeps the recorded URL/token/PID while the child is alive; HTTP health is polled separately by the frontend. Persisted snapshots from a previous app process still require a successful `/health` check before recovery and are cleaned up when stale.
 
-Desktop-managed local Veslo server uses the fixed port `8787`. The desktop runtime must not fall back to a dynamic port when `8787` is unavailable; port contention is a startup/recovery failure that must be resolved by stopping or recovering the process that owns the fixed port. Same-machine app code that derives a local Veslo server URL from an OpenCode URL should normalize back to `http://127.0.0.1:8787` for the managed server.
+Desktop-managed local Veslo server uses the fixed port `8787`. The desktop runtime must not fall back to a dynamic port when `8787` is unavailable; port contention is a startup/recovery failure that must be resolved by stopping or recovering the process that owns the fixed port. The desktop E2E harness is the exception: it sets `VESLO_DESKTOP_SERVER_PORT` through its launcher, using `E2E_VESLO_SERVER_PORT` when provided or otherwise an auto-selected free port, so tests can run next to a user-launched production app without claiming `8787`. Same-machine app code that derives a local Veslo server URL from an OpenCode URL should normalize back to `http://127.0.0.1:8787` for the managed server outside this explicit harness override.
 
 Managed local sidecars distinguish internal runtime URLs from advertised connect URLs. Same-machine communication between the desktop shell, `veslo-server`, `veslo-orchestrator`, OpenCode, and `veslo-code-router` uses loopback OpenCode URLs such as `http://127.0.0.1:<port>`. LAN or mDNS connect URLs are for external clients only; they must not be passed as the local `--opencode-base-url` or `--opencode-url`, because sleep/resume and network changes can invalidate those addresses while the local OpenCode process remains healthy.
 
@@ -233,6 +234,35 @@ Meaning:
   Whether queued reloads should apply automatically when the workspace is idle.
 - `reload.resume`
   Whether Veslo should try to restore session continuity after an automatic reload.
+
+## Workspace Automation State
+
+Persistent Veslo automations live in:
+
+- `<workspace>/.opencode/veslo/automations.json`
+
+The file stores automation definitions and run history together under schema
+version 1. Definitions include `name`, `prompt`, `schedule`, `target`,
+`enabled`, `status`, `nextRunAt`, and timestamps. Runs are append-or-replace
+history records keyed by run id and are not removed when an automation is
+completed or cancelled.
+
+The local `veslo-server` process owns runtime scheduling. On startup it creates
+an automation runner only for writable, authorized configured workspaces, reads
+the canonical store, initializes missing `nextRunAt` values for active enabled
+automations, recovers recent due runs, skips stale missed runs after the runner
+grace window, and sends prompts to the workspace OpenCode upstream. Mutating
+automation routes refresh the runner for that workspace after the store write.
+
+Legacy Agent Lab scheduler data may still exist at:
+
+- `<workspace>/.opencode/veslo/agentlab/automations.json`
+
+When the canonical automation file is absent, server reads migrate valid legacy
+items into `.opencode/veslo/automations.json` and preserve legacy last-run
+metadata as run history. The legacy file is left in place for compatibility; the
+canonical file becomes the source of truth after migration. Read-only server
+instances return the migrated view without writing the canonical file.
 
 ## OpenCode Config
 

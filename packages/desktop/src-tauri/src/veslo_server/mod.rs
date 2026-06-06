@@ -18,9 +18,10 @@ pub mod manager;
 pub mod spawn;
 
 use manager::VesloServerManager;
-use spawn::{resolve_veslo_port, spawn_veslo_server};
+use spawn::{resolve_veslo_port_after_restart, spawn_veslo_server};
 
 const PERSISTED_STATE_FILE_NAME: &str = "veslo-server-state.json";
+const PERSISTED_PLUGIN_STATE_FILE_NAME: &str = "veslo-server-plugin-state.json";
 
 fn resolve_workspace_ids(app: &AppHandle, workspace_paths: &[String]) -> Vec<Option<String>> {
     let state = load_workspace_state(app).ok();
@@ -55,8 +56,14 @@ pub struct PersistedVesloServerState {
     pub mdns_url: Option<String>,
     pub lan_url: Option<String>,
     pub client_token: Option<String>,
-    pub host_token: Option<String>,
     pub pid: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedVesloServerPluginState {
+    pub base_url: Option<String>,
+    pub client_token: Option<String>,
 }
 
 fn generate_token() -> String {
@@ -83,14 +90,41 @@ fn persisted_state_path(dir: &Path) -> PathBuf {
     dir.join(PERSISTED_STATE_FILE_NAME)
 }
 
+fn persisted_plugin_state_path(dir: &Path) -> PathBuf {
+    dir.join(PERSISTED_PLUGIN_STATE_FILE_NAME)
+}
+
+fn persisted_state_dir_override() -> Option<PathBuf> {
+    crate::paths::app_local_data_dir_override()
+}
+
 fn persisted_state_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    if let Some(override_dir) = crate::paths::app_local_data_dir_override() {
+    if let Some(override_dir) = persisted_state_dir_override() {
         return Ok(override_dir);
     }
 
     app.path()
         .app_local_data_dir()
         .map_err(|e| format!("Failed to resolve app local data dir: {e}"))
+}
+
+#[allow(dead_code)]
+pub fn persisted_veslo_server_state_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(persisted_state_path(&persisted_state_dir(app)?))
+}
+
+pub fn persisted_veslo_server_plugin_state_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(persisted_plugin_state_path(&persisted_state_dir(app)?))
+}
+
+#[cfg(test)]
+fn persisted_veslo_server_state_path_from_override() -> Option<PathBuf> {
+    persisted_state_dir_override().map(|dir| persisted_state_path(&dir))
+}
+
+#[cfg(test)]
+fn persisted_veslo_server_plugin_state_path_from_override() -> Option<PathBuf> {
+    persisted_state_dir_override().map(|dir| persisted_plugin_state_path(&dir))
 }
 
 pub(crate) fn server_health_ok(base_url: &str) -> bool {
@@ -132,7 +166,7 @@ fn persisted_state_to_info_with_health(
         mdns_url: state.mdns_url.clone(),
         lan_url: state.lan_url.clone(),
         client_token: state.client_token.clone(),
-        host_token: state.host_token.clone(),
+        host_token: None,
         pid: state.pid,
         last_stdout: None,
         last_stderr: None,
@@ -162,6 +196,7 @@ fn read_persisted_veslo_server_info_with_cleanup(
             }
         }
         let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(persisted_plugin_state_path(dir));
     }
     Ok(info)
 }
@@ -224,11 +259,68 @@ pub fn recover_persisted_veslo_server_info(
 pub fn clear_persisted_veslo_server_info(app: &AppHandle) -> Result<(), String> {
     let dir = persisted_state_dir(app)?;
     let path = persisted_state_path(&dir);
+    let plugin_path = persisted_plugin_state_path(&dir);
     match fs::remove_file(&path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(format!("Failed to remove {}: {error}", path.display())),
+    }?;
+    match fs::remove_file(&plugin_path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "Failed to remove {}: {error}",
+            plugin_path.display()
+        )),
     }
+}
+
+fn write_token_state_file(path: &Path, payload: &str) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::io::Write as _;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
+        file.write_all(payload.as_bytes())
+            .map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
+        let mut permissions = file
+            .metadata()
+            .map_err(|e| format!("Failed to stat {}: {e}", path.display()))?
+            .permissions();
+        permissions.set_mode(0o600);
+        fs::set_permissions(path, permissions)
+            .map_err(|e| format!("Failed to chmod {}: {e}", path.display()))?;
+        return Ok(());
+    }
+
+    #[cfg(not(unix))]
+    {
+        fs::write(path, payload).map_err(|e| format!("Failed to write {}: {e}", path.display()))
+    }
+}
+
+fn persist_veslo_server_plugin_state(dir: &Path, info: &VesloServerInfo) -> Result<(), String> {
+    fs::create_dir_all(dir).map_err(|e| {
+        format!(
+            "Failed to create persisted state dir {}: {e}",
+            dir.display()
+        )
+    })?;
+    let path = persisted_plugin_state_path(dir);
+    let state = PersistedVesloServerPluginState {
+        base_url: info.base_url.clone(),
+        client_token: info.client_token.clone(),
+    };
+    let payload = serde_json::to_string_pretty(&state)
+        .map_err(|e| format!("Failed to serialize {}: {e}", path.display()))?;
+    write_token_state_file(&path, &payload)
 }
 
 fn persist_veslo_server_info(app: &AppHandle, info: &VesloServerInfo) -> Result<(), String> {
@@ -248,15 +340,12 @@ fn persist_veslo_server_info(app: &AppHandle, info: &VesloServerInfo) -> Result<
         mdns_url: info.mdns_url.clone(),
         lan_url: info.lan_url.clone(),
         client_token: info.client_token.clone(),
-        host_token: info.host_token.clone(),
         pid: info.pid,
     };
-    fs::write(
-        &path,
-        serde_json::to_string_pretty(&state)
-            .map_err(|e| format!("Failed to serialize {}: {e}", path.display()))?,
-    )
-    .map_err(|e| format!("Failed to write {}: {e}", path.display()))
+    let payload = serde_json::to_string_pretty(&state)
+        .map_err(|e| format!("Failed to serialize {}: {e}", path.display()))?;
+    write_token_state_file(&path, &payload)?;
+    persist_veslo_server_plugin_state(&dir, info)
 }
 
 pub fn start_veslo_server(
@@ -275,7 +364,7 @@ pub fn start_veslo_server(
     VesloServerManager::stop_locked(&mut state);
 
     let host = "0.0.0.0".to_string();
-    let port = resolve_veslo_port()?;
+    let port = resolve_veslo_port_after_restart()?;
     let client_token = generate_token();
     let host_token = generate_token();
     let active_workspace = workspace_paths
@@ -335,16 +424,151 @@ pub fn start_veslo_server(
 #[cfg(test)]
 mod tests {
     use super::{
-        read_persisted_veslo_server_info, read_persisted_veslo_server_info_with_cleanup,
-        PersistedVesloServerState,
+        persist_veslo_server_plugin_state, persisted_veslo_server_plugin_state_path_from_override,
+        persisted_veslo_server_state_path_from_override, read_persisted_veslo_server_info,
+        read_persisted_veslo_server_info_with_cleanup, PersistedVesloServerState,
     };
+    use crate::types::VesloServerInfo;
     use std::fs;
     use std::io::ErrorKind;
     use std::io::Read;
     use std::io::Write;
     use std::net::TcpListener;
+    use std::sync::{Mutex, OnceLock};
     use std::thread;
     use uuid::Uuid;
+
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    struct EnvGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: String) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.prev.take() {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    #[test]
+    fn persisted_server_state_path_uses_app_local_data_override() {
+        let _lock = ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let dir = std::env::temp_dir().join(format!("veslo-server-state-path-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create test dir");
+        let _guard = EnvGuard::set(
+            "VESLO_APP_LOCAL_DATA_DIR",
+            dir.to_string_lossy().to_string(),
+        );
+
+        let path =
+            persisted_veslo_server_state_path_from_override().expect("resolve override state path");
+
+        assert_eq!(path, dir.join("veslo-server-state.json"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn persisted_plugin_state_path_uses_app_local_data_override() {
+        let _lock = ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let dir =
+            std::env::temp_dir().join(format!("veslo-server-plugin-state-path-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create test dir");
+        let _guard = EnvGuard::set(
+            "VESLO_APP_LOCAL_DATA_DIR",
+            dir.to_string_lossy().to_string(),
+        );
+
+        let path = persisted_veslo_server_plugin_state_path_from_override()
+            .expect("resolve plugin state path");
+
+        assert_eq!(path, dir.join("veslo-server-plugin-state.json"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn persist_plugin_state_writes_only_base_url_and_client_token() {
+        let dir =
+            std::env::temp_dir().join(format!("veslo-server-plugin-state-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create test dir");
+        let info = VesloServerInfo {
+            running: true,
+            host: Some("0.0.0.0".to_string()),
+            port: Some(8787),
+            base_url: Some("http://127.0.0.1:8787".to_string()),
+            connect_url: Some("http://127.0.0.1:8787".to_string()),
+            mdns_url: None,
+            lan_url: None,
+            client_token: Some("client-token".to_string()),
+            host_token: Some("host-token".to_string()),
+            pid: Some(12345),
+            last_stdout: None,
+            last_stderr: None,
+        };
+
+        persist_veslo_server_plugin_state(&dir, &info).expect("persist plugin state");
+
+        let path = dir.join("veslo-server-plugin-state.json");
+        let payload = fs::read_to_string(&path).expect("read plugin state");
+        let parsed: serde_json::Value = serde_json::from_str(&payload).expect("parse plugin state");
+        assert_eq!(parsed["baseUrl"], "http://127.0.0.1:8787");
+        assert_eq!(parsed["clientToken"], "client-token");
+        assert!(parsed.get("hostToken").is_none());
+        assert!(!payload.contains("host-token"));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&path)
+                .expect("plugin state metadata")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn persisted_server_state_serialization_omits_host_token() {
+        let state = PersistedVesloServerState {
+            host: Some("0.0.0.0".to_string()),
+            port: Some(8787),
+            base_url: Some("http://127.0.0.1:8787".to_string()),
+            connect_url: Some("http://127.0.0.1:8787".to_string()),
+            mdns_url: None,
+            lan_url: None,
+            client_token: Some("client-token".to_string()),
+            pid: Some(12345),
+        };
+
+        let payload = serde_json::to_string_pretty(&state).expect("serialize state");
+
+        assert!(payload.contains("clientToken"));
+        assert!(payload.contains("client-token"));
+        assert!(!payload.contains("hostToken"));
+        assert!(!payload.contains("host-token"));
+    }
 
     #[test]
     fn read_persisted_server_info_returns_none_without_state() {
@@ -393,12 +617,13 @@ mod tests {
             mdns_url: None,
             lan_url: None,
             client_token: Some("client-token".to_string()),
-            host_token: Some("host-token".to_string()),
             pid: Some(12345),
         };
+        let mut payload = serde_json::to_value(&state).expect("serialize state to legacy payload");
+        payload["hostToken"] = serde_json::Value::String("host-token".to_string());
         fs::write(
             dir.join("veslo-server-state.json"),
-            serde_json::to_string_pretty(&state).expect("serialize state"),
+            serde_json::to_string_pretty(&payload).expect("serialize legacy state"),
         )
         .expect("write state file");
 
@@ -411,7 +636,7 @@ mod tests {
             Some(expected_base_url.as_str())
         );
         assert_eq!(recovered.client_token.as_deref(), Some("client-token"));
-        assert_eq!(recovered.host_token.as_deref(), Some("host-token"));
+        assert_eq!(recovered.host_token.as_deref(), None);
         assert!(recovered.running);
 
         handle.join().expect("health thread");
@@ -430,7 +655,6 @@ mod tests {
             mdns_url: None,
             lan_url: None,
             client_token: Some("client-token".to_string()),
-            host_token: Some("host-token".to_string()),
             pid: Some(4242),
         };
         fs::write(
@@ -438,6 +662,11 @@ mod tests {
             serde_json::to_string_pretty(&state).expect("serialize state"),
         )
         .expect("write state file");
+        fs::write(
+            dir.join("veslo-server-plugin-state.json"),
+            r#"{"baseUrl":"http://127.0.0.1:8787","clientToken":"client-token"}"#,
+        )
+        .expect("write plugin state file");
 
         let mut recycled_pids = Vec::new();
         let recovered = read_persisted_veslo_server_info_with_cleanup(
@@ -453,6 +682,7 @@ mod tests {
         assert!(recovered.is_none());
         assert_eq!(recycled_pids, vec![4242]);
         assert!(!dir.join("veslo-server-state.json").exists());
+        assert!(!dir.join("veslo-server-plugin-state.json").exists());
 
         let _ = fs::remove_dir_all(dir);
     }
@@ -470,7 +700,6 @@ mod tests {
             mdns_url: None,
             lan_url: None,
             client_token: Some("client-token".to_string()),
-            host_token: Some("host-token".to_string()),
             pid: Some(4242),
         };
         fs::write(
@@ -478,6 +707,11 @@ mod tests {
             serde_json::to_string_pretty(&state).expect("serialize state"),
         )
         .expect("write state file");
+        fs::write(
+            dir.join("veslo-server-plugin-state.json"),
+            r#"{"baseUrl":"http://127.0.0.1:8787","clientToken":"client-token"}"#,
+        )
+        .expect("write plugin state file");
 
         let recovered = read_persisted_veslo_server_info_with_cleanup(
             &dir,
@@ -488,6 +722,7 @@ mod tests {
 
         assert!(recovered.is_none());
         assert!(!dir.join("veslo-server-state.json").exists());
+        assert!(!dir.join("veslo-server-plugin-state.json").exists());
 
         let _ = fs::remove_dir_all(dir);
     }

@@ -13,6 +13,7 @@ The app treats Veslo server as the canonical workspace-control API for:
 - audit trail
 - import/export
 - reload requests
+- persistent automations and automation run history
 - capabilities discovery
 - OpenCode and OpenCode Router proxying
 
@@ -140,23 +141,48 @@ organization-owner or skill-admin rights through the registry context.
 Server-controlled registry package materialization is a local server responsibility:
 
 - `GET /skills/materialization`
-  Requires client auth. Returns local server-controlled user skill materialization status.
+  Requires client auth. Returns local server-controlled user skill materialization status, including platform-managed desired state. When platform-managed skills are not yet materialized, the response is `pending` with `reloadRequired: true` even if no registry is configured.
 - `POST /skills/materialization/sync-global`
-  Requires host or owner auth. Downloads desired user-skill registry installations and matching user-global rollout policies, validates package archives, writes server-controlled user skill directories, returns any resolver `conflicts`, and returns `pending` without mutating files when the caller reports an active run.
+  Requires host or owner auth. Materializes platform-managed personal-global skills even when no registry is configured. When registry is configured, also downloads desired user-skill registry installations and matching user-global rollout policies, validates package archives, writes server-controlled user skill directories, returns any resolver `conflicts`, and returns `pending` without mutating files when the caller reports an active run.
 - `GET /workspace/:id/skills/materialization`
   Requires client auth. Returns local server-controlled skill materialization status for the workspace.
 - `POST /workspace/:id/skills/materialization/sync`
   Requires host or owner auth. Downloads the desired registry workspace skill set and matching selected-workspace rollout policies, validates package archives, writes server-controlled runtime skill directories, returns any resolver `conflicts`, and returns `pending` without mutating files when the caller reports an active run.
+
+Before starting or switching a local runtime, the app must check
+`GET /skills/materialization` and run `POST /skills/materialization/sync-global`
+when the global status is pending or reload-required, including the no-registry
+platform-managed case. This global check happens before the workspace
+materialization status can skip because no registry is configured. If a run is
+active, the app sends `activeRun: true` so the server records pending sync
+instead of mutating managed skill files.
 
 Rollout policy resolution must enforce target exclusivity: the same effective
 skill/audience cannot be materialized as both a user skill and a workspace skill.
 If registry state contains both because of legacy data or a race, the server
 returns a conflict and avoids writing both targets.
 
+Veslo ships a platform-managed locked personal-global `veslo-automations` skill.
+It is materialized under `veslo-managed` and teaches agents to use the Veslo
+automation wrapper tools instead of writing external scheduler files. If an
+unmanaged user-global skill with the same name already exists in any supported
+global skill root, including an unmanaged directory under the target
+`veslo-managed` root, sync rejects the materialization with a conflict instead
+of creating an ambiguous duplicate.
+Materialization entries include `source` and `removalPolicy`; the platform
+automation skill is reported as `source: platform` and `removalPolicy: locked`.
+
 ## Skill Removal and Restore
 
 Local filesystem skill removal is recoverable and server-backed. The app should
 call these routes instead of deleting skill directories directly:
+
+- `GET /skills/user-global/:name?path=...`
+  Requires client or host auth. Reads an exact user-global skill path, including
+  managed `veslo-managed` paths, without allowing mutation.
+  User-global exact paths honor the same OpenCode global root precedence as
+  materialization: `XDG_CONFIG_HOME/opencode/skills` when `XDG_CONFIG_HOME` is
+  set, with the legacy HOME-based root still recognized for existing skills.
 
 - `DELETE /workspace/:id/skills/:name`
   Requires collaborator client auth plus any host approval required for the
@@ -207,6 +233,51 @@ Common app flows:
   Ask the engine to reread config for a workspace.
 
 Use workspace-scoped URLs whenever possible, including the mounted `/w/:id/...` forms.
+
+## Automations Contract
+
+Veslo server is the app-facing API for workspace automations. The app should use
+these routes instead of writing automation JSON directly:
+
+- `GET /workspace/:id/automations`
+  Requires client auth. Viewer, collaborator, and owner tokens can read. Returns
+  `{ items, updatedAt }`; reading migrates legacy Agent Lab automation state
+  into the canonical automation store when needed. On read-only servers, legacy
+  items are returned as an in-memory view and the canonical file is not written.
+- `POST /workspace/:id/automations`
+  Requires collaborator client auth. Creates an automation from `name`,
+  `prompt`, `schedule`, optional `target`, and optional `enabled`/`status`.
+  Active enabled automations return a persisted `automation.nextRunAt`. A
+  caller-supplied duplicate automation id is rejected with a conflict response.
+- `PATCH /workspace/:id/automations/:automationId`
+  Requires collaborator client auth. Updates name, prompt, schedule, target, and
+  pause/resume/cancel state. Paused, disabled, completed, failed, and cancelled
+  automations do not have a scheduled `nextRunAt`. Terminal states are not
+  reactivated by bare `enabled: true`; reactivation requires explicit active
+  status and an updated future one-shot or recurring schedule.
+- `DELETE /workspace/:id/automations/:automationId`
+  Requires collaborator client auth. Cancels the automation by marking it
+  disabled with `status: "cancelled"` and `nextRunAt: null`; run history is
+  preserved.
+- `POST /workspace/:id/automations/:automationId/run`
+  Requires collaborator client auth. Runs the automation immediately through the
+  workspace OpenCode upstream and returns `{ run }`. Target `agent`, `model`,
+  and `variant` values are forwarded to the OpenCode prompt request when set.
+- `GET /workspace/:id/automations/:automationId/runs`
+  Requires client auth. Viewer, collaborator, and owner tokens can read run
+  history. Returns `{ items }`.
+
+Automation mutation routes record audit actions `automations.create`,
+`automations.update`, `automations.delete`, and `automations.run`. The server
+refreshes the in-process automation runner after create/update/delete so local
+schedules reflect persisted state.
+
+Agent Lab compatibility routes under
+`/workspace/:id/agentlab/automations...` remain available for older callers.
+They read through the canonical automation store and legacy migration path
+where practical, but list only legacy-compatible schedules (`interval`, `daily`,
+`weekly`) and report failed manual runs as failures. New app work should target
+`/workspace/:id/automations`.
 
 ## Capability Discovery
 

@@ -1,9 +1,20 @@
-import { For, Show, createMemo, createSignal } from "solid-js";
+import { For, Match, Show, Switch, createMemo, createSignal } from "solid-js";
 
-import type { ScheduledJob } from "../types";
-import { formatRelativeTime, isTauriRuntime } from "../utils";
+import type {
+  VesloAutomation,
+  VesloAutomationCreatePayload,
+  VesloAutomationRun,
+  VesloAutomationSchedule,
+  VesloAutomationStatus,
+} from "../types";
+import { formatRelativeTime } from "../utils";
 import { currentLocale, t } from "../../i18n";
 import { createAsyncAction } from "../hooks/create-async-action";
+import {
+  buildSchedule,
+  resolveLocalScheduleTimezone,
+  scheduledDayOptions,
+} from "./scheduled-automation-schedule";
 
 import Button from "../components/button";
 import {
@@ -15,9 +26,7 @@ import {
   MessageSquare,
   Plus,
   Play,
-  PlugZap,
   RefreshCw,
-  Terminal,
   Trash2,
   TrendingUp,
   Trophy,
@@ -25,166 +34,21 @@ import {
 } from "lucide-solid";
 
 export type ScheduledTasksViewProps = {
-  jobs: ScheduledJob[];
+  automations: VesloAutomation[];
+  automationRunsById: Record<string, VesloAutomationRun[]>;
   source: "local" | "remote";
   sourceReady: boolean;
   status: string | null;
   busy: boolean;
   lastUpdatedAt: number | null;
   refreshJobs: (options?: { force?: boolean }) => void;
-  deleteJob: (name: string) => Promise<void> | void;
-  isWindows: boolean;
-  activeWorkspaceRoot: string;
-  createSessionAndOpen: () => void;
-  setPrompt: (value: string) => void;
+  createAutomation: (payload: VesloAutomationCreatePayload) => Promise<void> | void;
+  deleteAutomation: (automationId: string) => Promise<void> | void;
+  runAutomation: (automationId: string) => Promise<void> | void;
   newTaskDisabled: boolean;
-  schedulerInstalled: boolean;
-  canEditPlugins: boolean;
-  addPlugin: (pluginNameOverride?: string) => void;
   reloadWorkspaceEngine: () => Promise<void>;
   reloadBusy: boolean;
   canReloadWorkspace: boolean;
-};
-
-const toRelative = (value?: string | null, locale?: string) => {
-  const neverLabel = t("scheduled.never", (locale as any) ?? currentLocale());
-  if (!value) return neverLabel;
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) return neverLabel;
-  return formatRelativeTime(parsed);
-};
-
-const pad2 = (value: number) => String(value).padStart(2, "0");
-
-const parseCronNumbers = (value: string) => {
-  const trimmed = value.trim();
-  if (!trimmed) return [] as number[];
-  const parts = trimmed.split(",");
-  const values = new Set<number>();
-  for (const part of parts) {
-    const segment = part.trim();
-    if (!segment) continue;
-    if (segment.includes("-")) {
-      const [startRaw, endRaw] = segment.split("-");
-      const start = Number.parseInt(startRaw ?? "", 10);
-      const end = Number.parseInt(endRaw ?? "", 10);
-      if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
-      const lo = Math.min(start, end);
-      const hi = Math.max(start, end);
-      for (let i = lo; i <= hi; i += 1) values.add(i);
-      continue;
-    }
-    const num = Number.parseInt(segment, 10);
-    if (!Number.isFinite(num)) continue;
-    values.add(num);
-  }
-  return Array.from(values).sort((a, b) => a - b);
-};
-
-const humanizeCron = (cron: string, locale?: string) => {
-  const tr = (key: string, replacements?: Record<string, string>) => {
-    let val = locale ? t(key, locale as any) : t(key);
-    if (replacements) {
-      for (const [k, v] of Object.entries(replacements)) {
-        val = val.replace(`{${k}}`, v);
-      }
-    }
-    return val;
-  };
-
-  const parts = cron.trim().split(/\s+/);
-  if (parts.length < 5) return tr("scheduled.custom_schedule");
-  const [minuteRaw, hourRaw, dom, mon, dowRaw] = parts;
-  if (!minuteRaw || !hourRaw || !dom || !mon || !dowRaw) return tr("scheduled.custom_schedule");
-
-  // Every N hours
-  if (minuteRaw === "0" && hourRaw.startsWith("*/") && dom === "*" && mon === "*" && dowRaw === "*") {
-    const interval = Number.parseInt(hourRaw.slice(2), 10);
-    if (Number.isFinite(interval) && interval > 0) {
-      return interval === 1 ? tr("scheduled.every_hour") : tr("scheduled.every_n_hours", { n: String(interval) });
-    }
-  }
-
-  // Daily / weekly at a fixed time
-  const hour = Number.parseInt(hourRaw, 10);
-  const minute = Number.parseInt(minuteRaw, 10);
-  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return tr("scheduled.custom_schedule");
-  if (dom !== "*" || mon !== "*") return tr("scheduled.custom_schedule");
-
-  const timeLabel = `${pad2(hour)}:${pad2(minute)}`;
-
-  if (dowRaw === "*") {
-    return tr("scheduled.every_day_at", { time: timeLabel });
-  }
-
-  const days = parseCronNumbers(dowRaw);
-  const normalized = new Set(days.map((d) => (d === 7 ? 0 : d)));
-  const allDays = [0, 1, 2, 3, 4, 5, 6];
-  const weekdayDays = [1, 2, 3, 4, 5];
-  const weekendDays = [0, 6];
-
-  const includesAll = allDays.every((d) => normalized.has(d));
-  if (includesAll) return tr("scheduled.every_day_at", { time: timeLabel });
-
-  const includesWeekdays = weekdayDays.every((d) => normalized.has(d)) && !weekendDays.some((d) => normalized.has(d));
-  if (includesWeekdays) return tr("scheduled.weekdays_at", { time: timeLabel });
-
-  const includesWeekends = weekendDays.every((d) => normalized.has(d)) && !weekdayDays.some((d) => normalized.has(d));
-  if (includesWeekends) return tr("scheduled.weekends_at", { time: timeLabel });
-
-  const dayKeys: Record<number, string> = {
-    0: "scheduled.day_sun",
-    1: "scheduled.day_mon",
-    2: "scheduled.day_tue",
-    3: "scheduled.day_wed",
-    4: "scheduled.day_thu",
-    5: "scheduled.day_fri",
-    6: "scheduled.day_sat",
-  };
-  const list = Array.from(normalized)
-    .filter((d) => d >= 0 && d <= 6)
-    .sort((a, b) => a - b)
-    .map((d) => tr(dayKeys[d] ?? ""))
-    .join(", ");
-  if (!list) return tr("scheduled.at_time", { time: timeLabel });
-  return `${list} ${tr("scheduled.at_time", { time: timeLabel }).toLowerCase()}`;
-};
-
-const taskSummary = (job: ScheduledJob, locale?: string) => {
-  const tr = (key: string) => (locale ? t(key, locale as any) : t(key));
-  const run = job.run;
-  if (run?.command) {
-    const args = run.arguments ? ` ${run.arguments}` : "";
-    return { label: tr("scheduled.command_label"), value: `${run.command}${args}`, mono: true };
-  }
-  const prompt = run?.prompt ?? job.prompt;
-  if (prompt) {
-    return { label: tr("scheduled.prompt_label"), value: prompt, mono: false };
-  }
-  return { label: tr("scheduled.task_label"), value: tr("scheduled.no_prompt_found"), mono: false };
-};
-
-const statusLabel = (status?: string | null, locale?: string) => {
-  const tr = (key: string) => (locale ? t(key, locale as any) : t(key));
-  if (!status) return tr("scheduled.not_run_yet");
-  if (status === "running") return tr("scheduled.status_running");
-  if (status === "success") return tr("scheduled.status_success");
-  if (status === "failed") return tr("scheduled.status_failed");
-  return status;
-};
-
-const statusTone = (status?: string | null) => {
-  if (status === "success") return "border-emerald-7/60 bg-emerald-3/60 text-emerald-11";
-  if (status === "failed") return "border-red-7/60 bg-red-3/60 text-red-11";
-  if (status === "running") return "border-amber-7/60 bg-amber-3/60 text-amber-11";
-  return "border-gray-6 bg-gray-2 text-gray-9";
-};
-
-const statusIconTone = (status?: string | null) => {
-  if (status === "success") return "border-emerald-6 text-emerald-10";
-  if (status === "failed") return "border-red-6 text-red-10";
-  if (status === "running") return "border-amber-6 text-amber-10";
-  return "border-gray-6 text-gray-9";
 };
 
 type AutomationTemplate = {
@@ -261,76 +125,77 @@ const automationTemplates: AutomationTemplate[] = [
   },
 ];
 
-const dayOptions = [
-  { id: "mo", labelKey: "scheduled.day_mo", cron: "1" },
-  { id: "tu", labelKey: "scheduled.day_tu", cron: "2" },
-  { id: "we", labelKey: "scheduled.day_we", cron: "3" },
-  { id: "th", labelKey: "scheduled.day_th", cron: "4" },
-  { id: "fr", labelKey: "scheduled.day_fr", cron: "5" },
-  { id: "sa", labelKey: "scheduled.day_sa", cron: "6" },
-  { id: "su", labelKey: "scheduled.day_su", cron: "0" },
-];
+const pad2 = (value: number) => String(value).padStart(2, "0");
 
-const normalizeSentence = (value: string) => {
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-  if (/[.!?]$/.test(trimmed)) return trimmed;
-  return `${trimmed}.`;
+const toRelative = (value?: string | null, locale?: string) => {
+  const neverLabel = t("scheduled.never", (locale as any) ?? currentLocale());
+  if (!value) return neverLabel;
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return neverLabel;
+  return formatRelativeTime(parsed);
 };
 
-const buildCronFromDaily = (timeValue: string, days: string[]) => {
-  const [hour, minute] = timeValue.split(":");
-  if (!hour || !minute) return "";
-  const hourValue = Number.parseInt(hour, 10);
-  const minuteValue = Number.parseInt(minute, 10);
-  if (!Number.isFinite(hourValue) || !Number.isFinite(minuteValue)) return "";
-  if (!days.length) return "";
-  if (days.length === dayOptions.length) {
-    return `${minuteValue} ${hourValue} * * *`;
+const describeSchedule = (schedule: VesloAutomationSchedule, locale?: string) => {
+  const tr = (key: string, replacements?: Record<string, string>) => {
+    let value = locale ? t(key, locale as any) : t(key);
+    for (const [name, replacement] of Object.entries(replacements ?? {})) {
+      value = value.replace(`{${name}}`, replacement);
+    }
+    return value;
+  };
+
+  if (schedule.kind === "daily") {
+    return tr("scheduled.every_day_at", { time: `${pad2(schedule.hour)}:${pad2(schedule.minute)}` });
   }
-  const daySpec = dayOptions
-    .filter((day) => days.includes(day.id))
-    .map((day) => day.cron)
-    .join(",");
-  if (!daySpec) return "";
-  return `${minuteValue} ${hourValue} * * ${daySpec}`;
+  if (schedule.kind === "weekly") {
+    const dayKey = [
+      "",
+      "scheduled.day_mon",
+      "scheduled.day_tue",
+      "scheduled.day_wed",
+      "scheduled.day_thu",
+      "scheduled.day_fri",
+      "scheduled.day_sat",
+      "scheduled.day_sun",
+    ][schedule.weekday] ?? "scheduled.custom_schedule";
+    return `${tr(dayKey)} ${tr("scheduled.at_time", { time: `${pad2(schedule.hour)}:${pad2(schedule.minute)}` }).toLowerCase()}`;
+  }
+  if (schedule.kind === "interval") {
+    const hours = Math.max(1, Math.round(schedule.seconds / 3600));
+    return hours === 1 ? tr("scheduled.every_hour") : tr("scheduled.every_n_hours", { n: String(hours) });
+  }
+  if (schedule.kind === "oneShot") {
+    return tr("scheduled.one_shot_at", { time: new Date(schedule.runAt).toLocaleString(locale) });
+  }
+  return `${tr("scheduled.cron_label")} ${schedule.expression}`;
 };
 
-const buildCronFromInterval = (hours: number) => {
-  if (!Number.isFinite(hours) || hours <= 0) return "";
-  const interval = Math.max(1, Math.round(hours));
-  return `0 */${interval} * * *`;
+const automationStatusLabel = (status: VesloAutomationStatus, locale?: string) => {
+  const tr = (key: string) => (locale ? t(key, locale as any) : t(key));
+  if (status === "active") return tr("scheduled.status_active");
+  if (status === "paused") return tr("scheduled.status_paused");
+  if (status === "completed") return tr("scheduled.status_completed");
+  if (status === "cancelled") return tr("scheduled.status_cancelled");
+  return tr("scheduled.status_failed");
 };
 
-const buildAutomationPrompt = (
-  options: {
-    name: string;
-    prompt: string;
-    schedule: string;
-    workdir: string;
-  },
-  tr: (key: string, replacements?: Record<string, string>) => string,
-) => {
-  const name = options.name.trim();
-  const schedule = options.schedule.trim();
-  const prompt = normalizeSentence(options.prompt);
-  if (!schedule || !prompt) return "";
-  const workdir = options.workdir.trim();
-  const nameSegment = name
-    ? tr("scheduled.create_prompt_name_segment", { name })
-    : "";
-  const workdirSegment = workdir
-    ? tr("scheduled.create_prompt_workdir_segment", { workdir })
-    : "";
-  return tr("scheduled.create_prompt_template", {
-    nameSegment,
-    schedule,
-    prompt,
-    workdirSegment,
-  }).trim();
+const statusTone = (status?: string | null) => {
+  if (status === "active" || status === "success") return "border-emerald-7/60 bg-emerald-3/60 text-emerald-11";
+  if (status === "failed" || status === "cancelled") return "border-red-7/60 bg-red-3/60 text-red-11";
+  if (status === "paused" || status === "running" || status === "queued") return "border-amber-7/60 bg-amber-3/60 text-amber-11";
+  if (status === "completed") return "border-blue-7/60 bg-blue-3/60 text-blue-11";
+  return "border-gray-6 bg-gray-2 text-gray-9";
 };
 
-const AutomationCard = (props: {
+const latestRunFor = (automation: VesloAutomation, runs: VesloAutomationRun[]) => {
+  if (automation.lastRunId) {
+    const matched = runs.find((run) => run.id === automation.lastRunId);
+    if (matched) return matched;
+  }
+  return [...runs].sort((a, b) => Date.parse(b.finishedAt ?? b.startedAt ?? b.scheduledFor) - Date.parse(a.finishedAt ?? a.startedAt ?? a.scheduledFor))[0] ?? null;
+};
+
+const AutomationTemplateCard = (props: {
   icon: any;
   description: string;
   tone?: string;
@@ -347,9 +212,7 @@ const AutomationCard = (props: {
         props.disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"
       } border-gray-4 hover:border-gray-5`}
     >
-      <div class={`mb-4 flex h-8 w-8 items-center justify-center rounded-lg border border-gray-3 bg-gray-1 ${
-        props.tone ?? ""
-      }`}>
+      <div class={`mb-4 flex h-8 w-8 items-center justify-center rounded-lg border border-gray-3 bg-gray-1 ${props.tone ?? ""}`}>
         <Icon size={18} />
       </div>
       <p class="text-[13px] text-gray-10 leading-relaxed group-hover:text-gray-12">{props.description}</p>
@@ -357,50 +220,42 @@ const AutomationCard = (props: {
   );
 };
 
-const AutomationJobCard = (props: {
-  job: ScheduledJob;
-  supported: boolean;
+const AutomationCard = (props: {
+  automation: VesloAutomation;
+  runs: VesloAutomationRun[];
   busy: boolean;
   onDelete: () => void;
   onRun: () => void;
 }) => {
   const locale = () => currentLocale();
   const tr = (key: string) => t(key, locale());
-  const summary = () => taskSummary(props.job, locale());
-  const status = () => props.job.lastRunStatus;
-  const scheduleLabel = () => humanizeCron(props.job.schedule, locale());
+  const latestRun = createMemo(() => latestRunFor(props.automation, props.runs));
+  const target = () => props.automation.target;
+
   return (
     <div class="flex flex-col gap-4 rounded-2xl border border-gray-4 bg-gray-1 p-5 shadow-sm">
       <div class="flex flex-wrap items-start justify-between gap-4">
         <div class="flex min-w-0 items-start gap-3">
-          <div
-            class={`flex h-8 w-8 items-center justify-center rounded-lg border bg-gray-1 ${statusIconTone(
-              status()
-            )}`}
-          >
+          <div class={`flex h-8 w-8 items-center justify-center rounded-lg border bg-gray-1 ${statusTone(props.automation.status)}`}>
             <Calendar size={18} />
           </div>
           <div class="min-w-0">
             <div class="flex flex-wrap items-center gap-2">
-              <h3 class="text-sm font-semibold text-gray-12 truncate">{props.job.name}</h3>
-              <span
-                class={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${statusTone(
-                  status()
-                )}`}
-              >
-                {statusLabel(status(), locale())}
+              <h3 class="text-sm font-semibold text-gray-12 truncate">{props.automation.name}</h3>
+              <span class={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase ${statusTone(props.automation.status)}`}>
+                {automationStatusLabel(props.automation.status, locale())}
               </span>
             </div>
-            <div class="mt-1 text-xs text-gray-9">{scheduleLabel()}</div>
+            <div class="mt-1 text-xs text-gray-9">{describeSchedule(props.automation.schedule, locale())}</div>
           </div>
         </div>
         <div class="flex items-center gap-2">
           <button
             type="button"
             onClick={props.onRun}
-            disabled={!props.supported || props.busy}
+            disabled={props.busy || props.automation.status === "cancelled"}
             class={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
-              !props.supported || props.busy
+              props.busy || props.automation.status === "cancelled"
                 ? "border-gray-5 text-gray-8"
                 : "border-gray-5 text-gray-10 hover:bg-gray-2/70 hover:text-gray-12"
             }`}
@@ -411,9 +266,9 @@ const AutomationJobCard = (props: {
           <button
             type="button"
             onClick={props.onDelete}
-            disabled={!props.supported || props.busy}
+            disabled={props.busy || props.automation.status === "cancelled"}
             class={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
-              !props.supported || props.busy
+              props.busy || props.automation.status === "cancelled"
                 ? "border-gray-5 text-gray-8"
                 : "border-red-6 text-red-10 hover:bg-red-3"
             }`}
@@ -426,49 +281,38 @@ const AutomationJobCard = (props: {
 
       <div class="grid gap-3 md:grid-cols-2">
         <div class="rounded-xl border border-gray-4 bg-gray-2/60 px-3 py-3">
-          <div class="text-[10px] uppercase tracking-wide text-gray-8">{summary().label}</div>
-          <div
-            class={`mt-1 text-sm text-gray-12 break-words ${summary().mono ? "font-mono" : ""}`}
-          >
-            {summary().value}
-          </div>
+          <div class="text-[10px] uppercase text-gray-8">{tr("scheduled.prompt_label")}</div>
+          <div class="mt-1 line-clamp-3 break-words text-sm text-gray-12">{props.automation.prompt}</div>
         </div>
         <div class="rounded-xl border border-gray-4 bg-gray-2/60 px-3 py-3 space-y-2">
-          <div class="text-[10px] uppercase tracking-wide text-gray-8">{tr("scheduled.run_context")}</div>
-          <div class="space-y-2 text-xs text-gray-9">
-            <div class="flex items-center gap-2">
+          <div class="text-[10px] uppercase text-gray-8">{tr("scheduled.run_context")}</div>
+          <Show when={target()?.fallbackTitle ?? target()?.preferredSessionId} fallback={<div class="text-xs text-gray-9">{tr("scheduled.default")}</div>}>
+            <div class="flex items-center gap-2 text-xs text-gray-9">
               <FolderOpen size={14} class="text-gray-8" />
-              <span class="font-mono text-gray-12 break-all">
-                {props.job.workdir ?? tr("scheduled.default")}
-              </span>
+              <span class="break-all text-gray-12">{target()?.fallbackTitle ?? target()?.preferredSessionId}</span>
             </div>
-            <Show when={props.job.run?.attachUrl ?? props.job.attachUrl}>
-              <div class="flex items-center gap-2">
-                <Terminal size={14} class="text-gray-8" />
-                <span class="font-mono text-gray-12 break-all">
-                  {props.job.run?.attachUrl ?? props.job.attachUrl}
-                </span>
-              </div>
-            </Show>
-            <Show when={props.job.source}>
-              <div class="text-[11px] text-gray-8">{tr("scheduled.source_label")} {props.job.source}</div>
-            </Show>
-          </div>
+          </Show>
+          <Show when={target()?.agent}>
+            <div class="text-xs text-gray-9">{tr("scheduled.agent")} <span class="text-gray-12">{target()?.agent}</span></div>
+          </Show>
+          <Show when={target()?.model}>
+            <div class="text-xs text-gray-9">{tr("scheduled.model")} <span class="text-gray-12">{target()?.model}</span></div>
+          </Show>
         </div>
       </div>
 
       <div class="flex flex-wrap items-center gap-4 text-xs text-gray-9">
         <div class="flex items-center gap-1">
           <Clock size={12} />
-          {tr("scheduled.last_run")} {toRelative(props.job.lastRunAt, locale())}
+          {tr("scheduled.next_run")} {toRelative(props.automation.nextRunAt, locale())}
         </div>
-        <div>{tr("scheduled.created")} {toRelative(props.job.createdAt, locale())}</div>
-        <Show when={props.job.run?.agent}>
-          <div>{tr("scheduled.agent")} {props.job.run?.agent}</div>
-        </Show>
-        <Show when={props.job.run?.model}>
-          <div>{tr("scheduled.model")} {props.job.run?.model}</div>
-        </Show>
+        <div>
+          {tr("scheduled.last_run")}{" "}
+          <Show when={latestRun()} fallback={toRelative(null, locale())}>
+            {(run) => `${toRelative(run().finishedAt ?? run().startedAt ?? run().scheduledFor, locale())} (${run().status})`}
+          </Show>
+        </div>
+        <div>{tr("scheduled.created")} {toRelative(props.automation.createdAt, locale())}</div>
       </div>
     </div>
   );
@@ -478,132 +322,69 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   const locale = () => currentLocale();
   const tr = (key: string, replacements?: Record<string, string>) => {
     let value = t(key, locale());
-    if (!replacements) return value;
-    for (const [name, replacement] of Object.entries(replacements)) {
+    for (const [name, replacement] of Object.entries(replacements ?? {})) {
       value = value.replace(`{${name}}`, replacement);
     }
     return value;
   };
-  const [installingScheduler, setInstallingScheduler] = createSignal(false);
-  const [schedulerInstallRequested, setSchedulerInstallRequested] = createSignal(false);
-  const supported = createMemo(() => {
-    if (props.source === "remote") return props.sourceReady;
-    return (
-      isTauriRuntime() &&
-      !props.isWindows &&
-      props.schedulerInstalled &&
-      !schedulerInstallRequested()
-    );
-  });
-  const schedulerGateActive = createMemo(() => {
-    if (props.source !== "local") return false;
-    if (!isTauriRuntime() || props.isWindows) return false;
-    return !props.schedulerInstalled || schedulerInstallRequested();
-  });
-  const schedulerGateMode = createMemo(() => (props.schedulerInstalled ? "reload" : "install"));
-  const automationDisabled = createMemo(() => props.newTaskDisabled || schedulerGateActive());
-  const supportNote = createMemo(() => {
-    if (props.source === "remote") {
-      return props.sourceReady ? null : tr("scheduled.support_remote");
-    }
-    if (!isTauriRuntime()) return tr("scheduled.support_desktop");
-    if (props.isWindows) return tr("scheduled.support_windows");
-    if (!props.schedulerInstalled || schedulerInstallRequested()) return null;
-    return null;
-  });
-  const sourceDescription = createMemo(() =>
-    props.source === "remote"
-      ? tr("scheduled.source_remote_desc")
-      : tr("scheduled.source_local_desc")
-  );
-  const sourceLabel = createMemo(() =>
-    props.source === "remote" ? tr("scheduled.from_veslo") : tr("scheduled.from_local")
-  );
-  const schedulerLabel = createMemo(() => (props.source === "remote" ? tr("scheduled.scheduler_veslo") : tr("scheduled.scheduler_local")));
-  const schedulerHint = createMemo(() =>
-    props.source === "remote" ? tr("scheduled.hint_remote") : tr("scheduled.hint_local")
-  );
-  const schedulerUnavailableHint = createMemo(() =>
-    props.source === "remote" ? tr("scheduled.unavailable_remote") : tr("scheduled.unavailable_local")
-  );
-  const deleteDescription = createMemo(() =>
-    props.source === "remote"
-      ? tr("scheduled.delete_desc_remote")
-      : tr("scheduled.delete_desc_local")
-  );
 
-  const lastUpdatedLabel = createMemo(() => {
-    if (!props.lastUpdatedAt) return tr("scheduled.not_synced");
-    return formatRelativeTime(props.lastUpdatedAt);
-  });
-
-  const [deleteTarget, setDeleteTarget] = createSignal<ScheduledJob | null>(null);
-  const deleteAction = createAsyncAction();
   const [createModalOpen, setCreateModalOpen] = createSignal(false);
   const [automationName, setAutomationName] = createSignal(tr("scheduled.default_name"));
-  const [automationProject, setAutomationProject] = createSignal(props.activeWorkspaceRoot);
+  const [automationProject, setAutomationProject] = createSignal("");
   const [automationPrompt, setAutomationPrompt] = createSignal(tr("scheduled.default_prompt"));
-  const [scheduleMode, setScheduleMode] = createSignal<"daily" | "interval">("daily");
+  const [scheduleMode, setScheduleMode] = createSignal<"daily" | "interval" | "oneShot">("daily");
   const [scheduleTime, setScheduleTime] = createSignal("09:00");
   const [scheduleDays, setScheduleDays] = createSignal(["mo", "tu", "we", "th", "fr"]);
   const [intervalHours, setIntervalHours] = createSignal(6);
+  const [runAtDate, setRunAtDate] = createSignal(new Date().toISOString().slice(0, 10));
+  const [runAtTime, setRunAtTime] = createSignal("09:00");
+  const [quickMinutes, setQuickMinutes] = createSignal(0);
+  const [statusFilter, setStatusFilter] = createSignal<"active" | "paused" | "completed" | "failed">("active");
+  const [deleteTarget, setDeleteTarget] = createSignal<VesloAutomation | null>(null);
+  const createAction = createAsyncAction();
+  const runAction = createAsyncAction();
+  const deleteAction = createAsyncAction();
+  const scheduleTimezone = createMemo(() => resolveLocalScheduleTimezone());
 
-  const confirmDelete = async () => {
-    const target = deleteTarget();
-    if (!target) return;
-    await deleteAction.execute(async () => {
-      await props.deleteJob(target.slug);
-      setDeleteTarget(null);
-    });
-  };
-
-  const cronExpression = createMemo(() => {
-    if (scheduleMode() === "interval") {
-      return buildCronFromInterval(intervalHours());
-    }
-    return buildCronFromDaily(scheduleTime(), scheduleDays());
-  });
-
-  const createPromptValue = createMemo(() =>
-    buildAutomationPrompt(
-      {
-        name: automationName(),
-        prompt: automationPrompt(),
-        schedule: cronExpression(),
-        workdir: automationProject(),
-      },
-      tr,
-    )
+  const automationDisabled = createMemo(() => props.newTaskDisabled || !props.sourceReady || props.busy);
+  const serverUnavailable = createMemo(() => !props.sourceReady);
+  const sourceDescription = createMemo(() =>
+    props.sourceReady
+      ? tr("scheduled.source_server_desc")
+      : props.source === "remote"
+        ? tr("scheduled.support_remote")
+        : tr("scheduled.support_local_server"),
   );
-
-  const canCreateAutomation = createMemo(() => !!createPromptValue());
-
-  const handleInstallScheduler = async () => {
-    if (installingScheduler() || !props.canEditPlugins) return;
-    setInstallingScheduler(true);
-    setSchedulerInstallRequested(true);
-    try {
-      await Promise.resolve(props.addPlugin("opencode-scheduler"));
-    } finally {
-      setInstallingScheduler(false);
-    }
-  };
+  const lastUpdatedLabel = createMemo(() => props.lastUpdatedAt ? formatRelativeTime(props.lastUpdatedAt) : tr("scheduled.not_synced"));
+  const selectedSchedule = createMemo(() =>
+    buildSchedule(scheduleMode(), {
+      timeValue: scheduleTime(),
+      days: scheduleDays(),
+      intervalHours: intervalHours(),
+      runAtDate: runAtDate(),
+      runAtTime: runAtTime(),
+      quickMinutes: quickMinutes(),
+    }, scheduleTimezone()),
+  );
+  const canCreateAutomation = createMemo(() => {
+    return automationName().trim().length > 0 && automationPrompt().trim().length > 0 && Boolean(selectedSchedule()) && !automationDisabled();
+  });
+  const statusGroups = createMemo(() => ({
+    active: props.automations.filter((automation) => automation.status === "active"),
+    paused: props.automations.filter((automation) => automation.status === "paused"),
+    completed: props.automations.filter((automation) => automation.status === "completed"),
+    failed: props.automations.filter((automation) => automation.status === "failed" || automation.status === "cancelled"),
+  }));
+  const visibleAutomations = createMemo(() => statusGroups()[statusFilter()]);
 
   const openCreateModal = () => {
     if (automationDisabled()) return;
-    const root = props.activeWorkspaceRoot.trim();
-    if (!automationProject().trim() && root) {
-      setAutomationProject(root);
-    }
+    if (!automationProject().trim()) setAutomationProject(automationName().trim());
     setCreateModalOpen(true);
   };
 
   const openCreateModalFromTemplate = (template: AutomationTemplate) => {
     if (automationDisabled()) return;
-    const root = props.activeWorkspaceRoot.trim();
-    if (root) {
-      setAutomationProject(root);
-    }
     setAutomationName(tr(template.nameKey));
     setAutomationPrompt(tr(template.promptKey));
     setScheduleMode(template.scheduleMode);
@@ -613,70 +394,45 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
       setScheduleTime(template.scheduleTime ?? "09:00");
       setScheduleDays(template.scheduleDays ?? ["mo", "tu", "we", "th", "fr"]);
     }
+    setAutomationProject(tr(template.nameKey));
     setCreateModalOpen(true);
   };
 
-  const handleCreateAutomation = () => {
-    if (automationDisabled()) return;
-    const promptValue = createPromptValue();
-    if (!promptValue) return;
-    props.setPrompt(promptValue);
-    props.createSessionAndOpen();
-    setCreateModalOpen(false);
+  const handleCreateAutomation = async () => {
+    const schedule = selectedSchedule();
+    if (!schedule || !canCreateAutomation()) return;
+    await createAction.execute(async () => {
+      const targetTitle = automationProject().trim() || automationName().trim();
+      await props.createAutomation({
+        name: automationName().trim(),
+        prompt: automationPrompt().trim(),
+        schedule,
+        target: targetTitle ? { fallbackTitle: targetTitle } : undefined,
+      });
+      setCreateModalOpen(false);
+    });
   };
 
-  const runAutomationNow = (job: ScheduledJob) => {
-    const run = job.run;
-    const workdir = (job.workdir ?? props.activeWorkspaceRoot ?? "").trim();
-    const schedule = humanizeCron(job.schedule, locale());
+  const runAutomationNow = async (automation: VesloAutomation) => {
+    await runAction.execute(async () => {
+      await props.runAutomation(automation.id);
+    });
+  };
 
-    if (run?.prompt || job.prompt) {
-      const promptBody = (run?.prompt ?? job.prompt ?? "").trim();
-      const workdirHint = workdir
-        ? tr("scheduled.run_now_workdir_hint", { workdir })
-        : "";
-      props.setPrompt(
-        tr("scheduled.run_now_with_prompt", {
-          name: job.name,
-          schedule,
-          prompt: promptBody,
-          workdirHint,
-        }).trim()
-      );
-      props.createSessionAndOpen();
-      return;
-    }
-
-    if (run?.command) {
-      const args = run.arguments ? ` ${run.arguments}` : "";
-      const cmd = `${run.command}${args}`.trim();
-      const workdirHint = workdir
-        ? tr("scheduled.run_now_workdir_hint", { workdir })
-        : "";
-      props.setPrompt(
-        tr("scheduled.run_now_with_command", {
-          name: job.name,
-          schedule,
-          command: cmd,
-          workdirHint,
-        }).trim()
-      );
-      props.createSessionAndOpen();
-      return;
-    }
-
-    props.setPrompt(tr("scheduled.run_now_simple", { name: job.name, schedule }));
-    props.createSessionAndOpen();
+  const confirmDelete = async () => {
+    const target = deleteTarget();
+    if (!target) return;
+    await deleteAction.execute(async () => {
+      await props.deleteAutomation(target.id);
+      setDeleteTarget(null);
+    });
   };
 
   const toggleDay = (id: string) => {
     setScheduleDays((current) => {
       const next = new Set(current);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return Array.from(next);
     });
   };
@@ -684,87 +440,62 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   const updateIntervalHours = (value: string) => {
     const parsed = Number.parseInt(value, 10);
     if (!Number.isFinite(parsed)) return;
-    const bounded = Math.min(24, Math.max(1, parsed));
-    setIntervalHours(bounded);
+    setIntervalHours(Math.min(24, Math.max(1, parsed)));
   };
 
   return (
-    <section class="space-y-10">
-      <div class="flex flex-wrap items-center justify-end gap-4">
-        <button
-          type="button"
-          onClick={() => props.refreshJobs({ force: true })}
-          disabled={!supported() || props.busy}
-          class={`flex items-center gap-1.5 text-xs font-medium transition-colors ${
-            !supported() || props.busy
-              ? "text-gray-8"
-              : "text-gray-9 hover:text-gray-12"
-          }`}
-        >
-          <RefreshCw size={14} />
-          {props.busy ? tr("scheduled.refreshing") : tr("scheduled.refresh")}
-        </button>
-        <button
-          type="button"
-          onClick={openCreateModal}
-          disabled={automationDisabled()}
-          class={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-            automationDisabled()
-              ? "bg-gray-3 text-gray-8"
-              : "bg-gray-12 text-gray-1 hover:bg-gray-11"
-          }`}
-        >
-          <Plus size={14} />
-          {tr("scheduled.new_automation")}
-        </button>
+    <section class="space-y-8">
+      <div class="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <div class="flex items-center gap-2">
+            <h2 class="text-2xl font-semibold text-gray-12">{tr("scheduled.title")}</h2>
+            <span class="rounded border border-gray-4 px-1.5 py-0.5 text-[10px] font-bold uppercase text-gray-8">
+              {tr("scheduled.beta")}
+            </span>
+          </div>
+          <p class="mt-2 text-sm text-gray-9">{sourceDescription()}</p>
+          <div class="mt-1 text-xs text-gray-8">{tr("scheduled.last_updated")} {lastUpdatedLabel()}</div>
+        </div>
+        <div class="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => props.refreshJobs({ force: true })}
+            disabled={props.busy}
+            class={`flex items-center gap-1.5 text-xs font-medium transition-colors ${
+              props.busy ? "text-gray-8" : "text-gray-9 hover:text-gray-12"
+            }`}
+          >
+            <RefreshCw size={14} />
+            {props.busy ? tr("scheduled.refreshing") : tr("scheduled.refresh")}
+          </button>
+          <button
+            type="button"
+            onClick={openCreateModal}
+            disabled={automationDisabled()}
+            class={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+              automationDisabled() ? "bg-gray-3 text-gray-8" : "bg-gray-12 text-gray-1 hover:bg-gray-11"
+            }`}
+          >
+            <Plus size={14} />
+            {tr("scheduled.new_automation")}
+          </button>
+        </div>
       </div>
 
-      <div class="pt-8 text-center">
-        <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-gray-4 bg-gray-1 shadow-sm">
-          <Terminal size={28} class="text-gray-9" />
-        </div>
-        <div class="flex items-center justify-center gap-2">
-          <h2 class="text-2xl font-semibold text-gray-12">{tr("scheduled.title")}</h2>
-          <span class="rounded border border-gray-4 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-tight text-gray-8">
-            {tr("scheduled.beta")}
-          </span>
-        </div>
-        <p class="mt-2 text-sm text-gray-9">{sourceDescription()}</p>
-      </div>
-
-      <Show when={schedulerGateActive()}>
-        <div class="rounded-2xl border border-gray-5 bg-gradient-to-b from-gray-1 to-gray-2/70 px-5 py-5 shadow-sm">
+      <Show when={serverUnavailable()}>
+        <div class="rounded-2xl border border-gray-5 bg-gray-2/70 px-5 py-5 shadow-sm">
           <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div class="flex items-start gap-3">
               <div class="flex h-10 w-10 items-center justify-center rounded-xl border border-gray-4 bg-gray-1">
-                <PlugZap size={18} class="text-gray-10" />
+                <RefreshCw size={18} class="text-gray-10" />
               </div>
               <div>
-                <div class="text-sm font-semibold text-gray-12">
-                  {schedulerGateMode() === "reload"
-                    ? tr("scheduled.reload_to_activate")
-                    : tr("scheduled.install_to_unlock")}
-                </div>
-                <div class="mt-1 text-xs text-gray-9">
-                  {schedulerGateMode() === "reload"
-                    ? tr("scheduled.reload_hint")
-                    : tr("scheduled.install_hint")}
-                </div>
+                <div class="text-sm font-semibold text-gray-12">{tr("scheduled.server_unavailable_title")}</div>
+                <div class="mt-1 text-xs text-gray-9">{tr("scheduled.server_unavailable_hint")}</div>
               </div>
             </div>
             <div class="flex flex-wrap items-center gap-2">
-              <Button
-                variant="secondary"
-                onClick={handleInstallScheduler}
-                disabled={!props.canEditPlugins || installingScheduler()}
-              >
-                {installingScheduler() ? tr("scheduled.installing") : tr("scheduled.install_scheduler")}
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => void props.reloadWorkspaceEngine()}
-                disabled={!props.canReloadWorkspace || props.reloadBusy || !props.schedulerInstalled}
-              >
+              <Button variant="outline" onClick={() => void props.reloadWorkspaceEngine()} disabled={!props.canReloadWorkspace || props.reloadBusy}>
                 {props.reloadBusy ? tr("scheduled.reloading") : tr("scheduled.reload_veslo")}
               </Button>
             </div>
@@ -772,35 +503,46 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
         </div>
       </Show>
 
-      <Show when={supportNote()}>
-        <div class="rounded-xl border border-gray-4 bg-gray-2/60 px-5 py-4 text-sm text-gray-10">
-          {supportNote()}
+      <Show when={props.status || createAction.error() || runAction.error() || deleteAction.error()}>
+        <div class="rounded-xl border border-red-7/40 bg-red-3/60 px-5 py-4 text-sm text-red-11">
+          {props.status ?? createAction.error() ?? runAction.error() ?? deleteAction.error()}
         </div>
       </Show>
 
-      <Show when={props.status}>
-        <div class="rounded-xl border border-red-7/40 bg-red-3/60 px-5 py-4 text-sm text-red-11">
-          {props.status}
-        </div>
-      </Show>
-
-      <Show when={deleteAction.error()}>
-        <div class="rounded-xl border border-red-7/40 bg-red-3/60 px-5 py-4 text-sm text-red-11">
-          {deleteAction.error()}
-        </div>
-      </Show>
+      <div class="flex flex-wrap gap-2">
+        <For
+          each={[
+            { id: "active" as const, label: tr("scheduled.status_active"), count: statusGroups().active.length },
+            { id: "paused" as const, label: tr("scheduled.status_paused"), count: statusGroups().paused.length },
+            { id: "completed" as const, label: tr("scheduled.status_completed"), count: statusGroups().completed.length },
+            { id: "failed" as const, label: tr("scheduled.status_failed_cancelled"), count: statusGroups().failed.length },
+          ]}
+        >
+          {(item) => (
+            <button
+              type="button"
+              onClick={() => setStatusFilter(item.id)}
+              class={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+                statusFilter() === item.id
+                  ? "border-gray-12 bg-gray-12 text-gray-1"
+                  : "border-gray-5 text-gray-9 hover:bg-gray-2 hover:text-gray-12"
+              }`}
+            >
+              {item.label} <span class="opacity-70">{item.count}</span>
+            </button>
+          )}
+        </For>
+      </div>
 
       <Show
-        when={props.jobs.length > 0}
+        when={props.automations.length > 0}
         fallback={
-          <div class={`space-y-4 ${schedulerGateActive() ? "opacity-60 pointer-events-none" : ""}`}>
-            <div class="text-center text-sm text-gray-9">
-              {tr("scheduled.no_automations")}
-            </div>
-            <div class="grid w-full max-w-5xl mx-auto grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div class="space-y-4">
+            <div class="text-center text-sm text-gray-9">{tr("scheduled.no_automations")}</div>
+            <div class="grid w-full grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               <For each={automationTemplates}>
                 {(card) => (
-                  <AutomationCard
+                  <AutomationTemplateCard
                     icon={card.icon}
                     description={tr(card.descriptionKey)}
                     tone={card.tone}
@@ -813,32 +555,30 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
           </div>
         }
       >
-        <div class={`grid w-full grid-cols-1 gap-4 ${schedulerGateActive() ? "opacity-60 pointer-events-none" : ""}`}>
-          <For each={props.jobs}>
-            {(job) => (
-              <AutomationJobCard
-                job={job}
-                supported={supported()}
-                busy={props.busy || deleteAction.busy()}
-                onDelete={() => setDeleteTarget(job)}
-                onRun={() => runAutomationNow(job)}
-              />
-            )}
-          </For>
-        </div>
+        <Show when={visibleAutomations().length > 0} fallback={<div class="rounded-xl border border-gray-4 bg-gray-2/60 px-5 py-4 text-sm text-gray-9">{tr("scheduled.no_filtered_automations")}</div>}>
+          <div class="grid w-full grid-cols-1 gap-4">
+            <For each={visibleAutomations()}>
+              {(automation) => (
+                <AutomationCard
+                  automation={automation}
+                  runs={props.automationRunsById[automation.id] ?? []}
+                  busy={props.busy || runAction.busy() || deleteAction.busy()}
+                  onDelete={() => setDeleteTarget(automation)}
+                  onRun={() => void runAutomationNow(automation)}
+                />
+              )}
+            </For>
+          </div>
+        </Show>
       </Show>
 
       <Show when={deleteTarget()}>
-        <div class="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm flex items-center justify-center p-4">
-          <div class="bg-gray-1 border border-gray-6 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden">
-            <div class="p-6 space-y-4">
-              <div class="flex items-start justify-between gap-4">
-                <div>
-                  <h3 class="text-lg font-semibold text-gray-12">{tr("scheduled.delete_title")}</h3>
-                  <p class="text-sm text-gray-9 mt-1">{deleteDescription()}</p>
-                </div>
-              </div>
-              <div class="rounded-xl bg-gray-2 border border-gray-6 p-3 text-xs text-gray-9 font-mono break-all">
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-4 backdrop-blur-sm">
+          <div class="w-full max-w-md overflow-hidden rounded-2xl border border-gray-6 bg-gray-1 shadow-2xl">
+            <div class="space-y-4 p-6">
+              <h3 class="text-lg font-semibold text-gray-12">{tr("scheduled.delete_title")}</h3>
+              <p class="text-sm text-gray-9">{tr("scheduled.delete_desc_server")}</p>
+              <div class="rounded-xl border border-gray-6 bg-gray-2 p-3 font-mono text-xs text-gray-9 break-all">
                 {deleteTarget()?.name}
               </div>
               <div class="flex justify-end gap-2">
@@ -855,15 +595,13 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
       </Show>
 
       <Show when={createModalOpen()}>
-        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-[2px] p-4">
-          <div class="w-full max-w-2xl rounded-3xl bg-gray-1 shadow-2xl overflow-hidden border border-gray-6">
-            <div class="p-8 space-y-6">
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-4 backdrop-blur-[2px]">
+          <div class="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-gray-6 bg-gray-1 shadow-2xl">
+            <div class="space-y-6 p-8">
               <div class="flex items-start justify-between gap-4">
                 <div>
                   <h2 class="text-xl font-semibold text-gray-12">{tr("scheduled.create_title")}</h2>
-                  <p class="text-xs text-gray-9 mt-2">
-                    {tr("scheduled.create_description")}
-                  </p>
+                  <p class="mt-2 text-xs text-gray-9">{tr("scheduled.create_description_server")}</p>
                 </div>
                 <button
                   type="button"
@@ -876,74 +614,89 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
 
               <div class="space-y-6">
                 <div>
-                  <label class="mb-2 block text-[11px] font-bold uppercase tracking-wider text-gray-8">
-                    {tr("scheduled.label_name")}
-                  </label>
+                  <label class="mb-2 block text-[11px] font-bold uppercase text-gray-8">{tr("scheduled.label_name")}</label>
                   <input
                     type="text"
                     value={automationName()}
                     onInput={(event) => setAutomationName(event.currentTarget.value)}
-                    class="w-full rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:outline-none focus:ring-1 focus:ring-blue-9/20 focus:border-blue-7"
+                    class="w-full rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:border-blue-7 focus:outline-none focus:ring-1 focus:ring-blue-9/20"
                   />
                 </div>
                 <div>
-                  <label class="mb-2 block text-[11px] font-bold uppercase tracking-wider text-gray-8">
-                    {tr("scheduled.label_projects")}
-                  </label>
+                  <label class="mb-2 block text-[11px] font-bold uppercase text-gray-8">{tr("scheduled.label_fallback_title")}</label>
                   <input
                     type="text"
                     value={automationProject()}
                     onInput={(event) => setAutomationProject(event.currentTarget.value)}
-                    placeholder={tr("scheduled.placeholder_folder")}
-                    class="w-full rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:outline-none focus:ring-1 focus:ring-blue-9/20 focus:border-blue-7"
+                    placeholder={tr("scheduled.placeholder_fallback_title")}
+                    class="w-full rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:border-blue-7 focus:outline-none focus:ring-1 focus:ring-blue-9/20"
                   />
                 </div>
                 <div>
-                  <label class="mb-2 block text-[11px] font-bold uppercase tracking-wider text-gray-8">
-                    {tr("scheduled.label_prompt")}
-                  </label>
-                  <div class="rounded-xl border border-gray-6 bg-gray-2 p-3">
-                    <textarea
-                      rows={4}
-                      value={automationPrompt()}
-                      onInput={(event) => setAutomationPrompt(event.currentTarget.value)}
-                      class="w-full resize-none bg-transparent text-sm text-gray-12 focus:outline-none"
-                    />
-                  </div>
+                  <label class="mb-2 block text-[11px] font-bold uppercase text-gray-8">{tr("scheduled.label_prompt")}</label>
+                  <textarea
+                    rows={4}
+                    value={automationPrompt()}
+                    onInput={(event) => setAutomationPrompt(event.currentTarget.value)}
+                    class="w-full resize-none rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:border-blue-7 focus:outline-none focus:ring-1 focus:ring-blue-9/20"
+                  />
                 </div>
                 <div>
-                  <div class="mb-2 flex items-center justify-between">
-                    <label class="block text-[11px] font-bold uppercase tracking-wider text-gray-8">
-                      {tr("scheduled.label_schedule")}
-                    </label>
+                  <div class="mb-2 flex items-center justify-between gap-3">
+                    <label class="block text-[11px] font-bold uppercase text-gray-8">{tr("scheduled.label_schedule")}</label>
                     <div class="flex rounded-lg bg-gray-3 p-0.5">
-                      <button
-                        type="button"
-                        onClick={() => setScheduleMode("daily")}
-                        class={`px-3 py-1 text-[10px] font-bold rounded-md transition-colors ${
-                          scheduleMode() === "daily"
-                            ? "bg-gray-1 text-gray-12 shadow-sm"
-                            : "text-gray-9"
-                        }`}
+                      <For
+                        each={[
+                          { id: "daily" as const, label: tr("scheduled.mode_daily") },
+                          { id: "interval" as const, label: tr("scheduled.mode_interval") },
+                          { id: "oneShot" as const, label: tr("scheduled.mode_one_shot") },
+                        ]}
                       >
-                        {tr("scheduled.mode_daily")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setScheduleMode("interval")}
-                        class={`px-3 py-1 text-[10px] font-bold rounded-md transition-colors ${
-                          scheduleMode() === "interval"
-                            ? "bg-gray-1 text-gray-12 shadow-sm"
-                            : "text-gray-9"
-                        }`}
-                      >
-                        {tr("scheduled.mode_interval")}
-                      </button>
+                        {(item) => (
+                          <button
+                            type="button"
+                            onClick={() => setScheduleMode(item.id)}
+                            class={`rounded-md px-3 py-1 text-[10px] font-bold transition-colors ${
+                              scheduleMode() === item.id ? "bg-gray-1 text-gray-12 shadow-sm" : "text-gray-9"
+                            }`}
+                          >
+                            {item.label}
+                          </button>
+                        )}
+                      </For>
                     </div>
                   </div>
-                  <Show
-                    when={scheduleMode() === "daily"}
-                    fallback={
+
+                  <Switch>
+                    <Match when={scheduleMode() === "daily"}>
+                      <div class="flex flex-wrap items-center gap-3">
+                        <div class="flex items-center justify-between rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12">
+                          <input
+                            type="time"
+                            value={scheduleTime()}
+                            onInput={(event) => setScheduleTime(event.currentTarget.value)}
+                            class="bg-transparent focus:outline-none"
+                          />
+                          <Clock size={16} class="text-gray-8" />
+                        </div>
+                        <div class="flex flex-wrap gap-1">
+                          <For each={scheduledDayOptions}>
+                            {(day) => (
+                              <button
+                                type="button"
+                                onClick={() => toggleDay(day.id)}
+                                class={`h-8 w-8 rounded-full text-[10px] font-bold transition-colors ${
+                                  scheduleDays().includes(day.id) ? "bg-gray-12 text-gray-1" : "bg-gray-3 text-gray-9"
+                                }`}
+                              >
+                                {tr(day.labelKey)}
+                              </button>
+                            )}
+                          </For>
+                        </div>
+                      </div>
+                    </Match>
+                    <Match when={scheduleMode() === "interval"}>
                       <div class="flex flex-wrap items-center gap-3">
                         <div class="flex items-center gap-2 rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12">
                           <span>{tr("scheduled.every")}</span>
@@ -958,67 +711,62 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                           <span>{tr("scheduled.hours")}</span>
                         </div>
                       </div>
-                    }
-                  >
-                    <div class="flex flex-wrap items-center gap-3">
-                      <div class="flex items-center justify-between rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12">
+                    </Match>
+                    <Match when={scheduleMode() === "oneShot"}>
+                      <div class="flex flex-wrap items-center gap-3">
+                        <input
+                          type="date"
+                          value={runAtDate()}
+                          onInput={(event) => setRunAtDate(event.currentTarget.value)}
+                          class="rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:outline-none"
+                        />
                         <input
                           type="time"
-                          value={scheduleTime()}
-                          onInput={(event) => setScheduleTime(event.currentTarget.value)}
-                          class="bg-transparent focus:outline-none"
+                          value={runAtTime()}
+                          onInput={(event) => setRunAtTime(event.currentTarget.value)}
+                          class="rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:outline-none"
                         />
-                        <Clock size={16} class="text-gray-8" />
+                        <div class="flex items-center gap-2 rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12">
+                          <span>{tr("scheduled.quick_minutes")}</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={1440}
+                            value={quickMinutes()}
+                            onInput={(event) => setQuickMinutes(Math.max(0, Number.parseInt(event.currentTarget.value, 10) || 0))}
+                            class="w-20 bg-transparent text-right focus:outline-none"
+                          />
+                        </div>
                       </div>
-                      <div class="flex flex-wrap gap-1">
-                        <For each={dayOptions}>
-                          {(day) => (
-                            <button
-                              type="button"
-                              onClick={() => toggleDay(day.id)}
-                              class={`h-8 w-8 rounded-full text-[10px] font-bold transition-colors ${
-                                scheduleDays().includes(day.id)
-                                  ? "bg-gray-12 text-gray-1"
-                                  : "bg-gray-3 text-gray-9"
-                              }`}
-                            >
-                              {tr(day.labelKey)}
-                            </button>
-                          )}
-                        </For>
+                    </Match>
+                  </Switch>
+
+                  <Show when={selectedSchedule()}>
+                    {(schedule) => (
+                      <div class="mt-2 text-[11px] text-gray-8">
+                        {tr("scheduled.schedule_preview")} <span class="text-gray-12">{describeSchedule(schedule(), locale())}</span>
                       </div>
-                    </div>
-                  </Show>
-                  <Show when={cronExpression()}>
-                    <div class="mt-2 text-[11px] text-gray-8">
-                      {tr("scheduled.cron_label")} <span class="font-mono text-gray-12">{cronExpression()}</span>
-                    </div>
+                    )}
                   </Show>
                 </div>
               </div>
             </div>
-            <div class="flex items-center justify-between gap-4 border-t border-gray-6 bg-gray-2/60 px-8 py-4">
-              <div class="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => setCreateModalOpen(false)}
-                  class="px-4 py-2 text-xs font-medium text-gray-8 transition-colors hover:text-gray-12"
-                >
-                  {tr("scheduled.cancel")}
-                </button>
-                <button
+            <div class="flex items-center justify-end gap-3 border-t border-gray-6 bg-gray-2/60 px-8 py-4">
+              <button type="button" onClick={() => setCreateModalOpen(false)} class="px-4 py-2 text-xs font-medium text-gray-8 transition-colors hover:text-gray-12">
+                {tr("scheduled.cancel")}
+              </button>
+              <button
                 type="button"
-                onClick={handleCreateAutomation}
-                disabled={!canCreateAutomation() || automationDisabled()}
-                class={`px-4 py-2 text-xs font-medium rounded-lg transition-colors ${
-                  !canCreateAutomation() || automationDisabled()
-                    ? "bg-gray-3 text-gray-8 cursor-not-allowed"
+                onClick={() => void handleCreateAutomation()}
+                disabled={!canCreateAutomation() || createAction.busy()}
+                class={`rounded-lg px-4 py-2 text-xs font-medium transition-colors ${
+                  !canCreateAutomation() || createAction.busy()
+                    ? "cursor-not-allowed bg-gray-3 text-gray-8"
                     : "bg-gray-12 text-gray-1 hover:bg-gray-11"
                 }`}
               >
-                {tr("scheduled.create")}
-                </button>
-              </div>
+                {createAction.busy() ? tr("scheduled.creating") : tr("scheduled.create")}
+              </button>
             </div>
           </div>
         </div>

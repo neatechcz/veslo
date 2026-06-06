@@ -22,6 +22,7 @@ import {
   deleteSkillAtPathRecoverable,
   deleteSkillRecoverable,
   listSkills,
+  readGlobalSkillAtPath,
   readSkillAtPath,
   updateSkillAtPath,
   upsertSkill,
@@ -95,6 +96,7 @@ import {
   readSkillMaterializationManifest,
   workspaceManagedSkillsRoot,
 } from "./skill-materializer.js";
+import { getPlatformManagedPersonalGlobalSkillSet } from "./platform-managed-skills.js";
 import type { SkillSetMaterializationResult } from "./skill-materializer.js";
 import type {
   RegistrySkillPackageArchive,
@@ -130,6 +132,27 @@ import { FileSessionStore } from "./file-sessions.js";
 import { createSessionArchiveStore } from "./session-archives.js";
 import { deriveLatestRunArtifactsResponse } from "./session-artifacts.js";
 import { createSessionTranscriptPrefetchStore } from "./session-transcript-prefetch.js";
+import {
+  type AutomationExecutionInput,
+  type AutomationExecutionResult,
+  type AutomationRunner,
+  createAutomationRunner,
+} from "./automation-runner.js";
+import {
+  type AutomationSchedule,
+  type AutomationRun,
+  type AutomationStatus,
+  type AutomationTarget,
+  type VesloAutomation,
+  computeNextAutomationRunAt,
+  parseAutomationSchedule,
+  parseAutomationStatus,
+} from "./automations.js";
+import {
+  mutateAutomationStore,
+  readAutomationStore,
+  resolveAutomationsPath,
+} from "./automation-store.js";
 import pkg from "../package.json" with { type: "json" };
 
 const SERVER_VERSION = pkg.version;
@@ -152,6 +175,7 @@ const AI_GATEWAY_UPSTREAM_RESPONSE_SNIPPET_MAX = 1000;
 const OPENCODE_JSON_DEFAULT_RESPONSE_MAX_BYTES = 1024 * 1024;
 const OPENCODE_TRANSCRIPT_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
 const OPENCODE_JSON_FETCH_DEFAULT_TIMEOUT_MS = 5_000;
+const AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS = 30_000;
 export const REDACTED_SECRET_VALUE = "[REDACTED]";
 const GATEWAY_CALLER_AUTH_HEADER = "x-veslo-gateway-authorization";
 const GATEWAY_ACCESS_TOKEN_HEADER = "x-veslo-gateway-token";
@@ -425,6 +449,7 @@ interface RequestContext {
   approvals: ApprovalService;
   reloadEvents: ReloadEventStore;
   tokens: TokenService;
+  automationRunner: AutomationRunner;
   actor?: Actor;
 }
 
@@ -489,7 +514,16 @@ export function startServer(config: ServerConfig) {
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
-  const routes = createRoutes(config, approvals, tokens);
+  const runnerWorkspaces = config.readOnly
+    ? []
+    : config.workspaces
+      .filter((workspace) => isAuthorizedRootSync(resolve(workspace.path), config.authorizedRoots))
+      .map((workspace) => ({ ...workspace, path: resolve(workspace.path) }));
+  const automationRunner = createAutomationRunner({
+    workspaces: runnerWorkspaces,
+    execute: createOpenCodeAutomationExecutor(config),
+  });
+  const routes = createRoutes(config, approvals, tokens, automationRunner);
   const baseLogger = createServerLogger(config);
 
   const debugLogPipeline: DebugLogPipeline = createDebugLogPipeline({
@@ -748,6 +782,7 @@ export function startServer(config: ServerConfig) {
           approvals,
           reloadEvents,
           tokens,
+          automationRunner,
           actor,
         });
         return finalize(response);
@@ -767,9 +802,31 @@ export function startServer(config: ServerConfig) {
 
   (serverOptions as { idleTimeout?: number }).idleTimeout = 120;
 
-  const server = Bun.serve(serverOptions);
+  type StoppableServer = ReturnType<typeof Bun.serve> & { stop: (closeActiveConnections?: boolean) => void };
+  const server = Bun.serve(serverOptions) as StoppableServer;
+  void automationRunner.start().catch((error) => {
+    logger.log("error", "automation runner start failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+
+  const originalStop = server.stop.bind(server);
+  server.stop = (closeActiveConnections?: boolean) => {
+    automationRunner.stop();
+    return originalStop(closeActiveConnections);
+  };
 
   return server;
+}
+
+function isAuthorizedRootSync(workspacePath: string, roots: string[]): boolean {
+  const resolvedWorkspace = resolve(workspacePath);
+  for (const root of roots) {
+    const resolvedRoot = resolve(root);
+    if (resolvedWorkspace === resolvedRoot) return true;
+    if (resolvedWorkspace.startsWith(resolvedRoot + sep)) return true;
+  }
+  return false;
 }
 
 function matchRoute(routes: Route[], method: string, path: string) {
@@ -906,6 +963,72 @@ async function fetchOpencodeJson(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function createOpenCodeAutomationExecutor(
+  config: ServerConfig,
+): (input: AutomationExecutionInput) => Promise<AutomationExecutionResult> {
+  return async (input) => {
+    const workspace = await resolveWorkspace(config, input.workspaceId);
+
+    const preferredSessionId = input.target.preferredSessionId?.trim() || "";
+    if (preferredSessionId) {
+      try {
+        const existing = await fetchOpencodeJson(
+          workspace,
+          `/session/${encodeURIComponent(preferredSessionId)}`,
+          { method: "GET", timeoutMs: AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS },
+        );
+        const existingId = typeof existing?.id === "string" ? existing.id.trim() : "";
+        if (existingId) {
+          await postAutomationPrompt(workspace, existingId, input.prompt, input.target);
+          return { sessionId: existingId, createdSession: false };
+        }
+      } catch {
+        // Missing or inaccessible preferred sessions fall back to a fresh session.
+      }
+    }
+
+    const created = await fetchOpencodeJson(workspace, "/session", {
+      method: "POST",
+      body: { title: input.target.fallbackTitle?.trim() || `Automation: ${input.automation.name}` },
+      timeoutMs: AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS,
+    });
+    const sessionId = typeof created?.id === "string" ? created.id.trim() : "";
+    if (!sessionId) {
+      throw new ApiError(502, "opencode_failed", "OpenCode session did not return an id");
+    }
+    await postAutomationPrompt(workspace, sessionId, input.prompt, input.target);
+    return { sessionId, createdSession: true };
+  };
+}
+
+async function postAutomationPrompt(
+  workspace: WorkspaceInfo,
+  sessionId: string,
+  prompt: string,
+  target: AutomationTarget,
+): Promise<void> {
+  const body: Record<string, unknown> = {
+    parts: [{ type: "text", text: prompt }],
+  };
+  const agent = target.agent?.trim();
+  if (agent) {
+    body.agent = agent;
+  }
+  const model = typeof target.model === "string" ? target.model.trim() : "";
+  if (model) {
+    body.model = model;
+  }
+  const variant = typeof target.variant === "string" ? target.variant.trim() : "";
+  if (variant) {
+    body.variant = variant;
+  }
+  await fetchOpencodeJson(workspace, `/session/${encodeURIComponent(sessionId)}/prompt_async`, {
+    method: "POST",
+    body,
+    timeoutMs: AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS,
+  });
 }
 
 function buildOpenCodeRouterProxyUrl(baseUrl: string, path: string, search: string) {
@@ -2342,6 +2465,8 @@ function materializationEntryPayload(entry: WorkspaceSkillMaterialization & {
     name: entry.name,
     versionId: entry.versionId,
     packageSha256: entry.packageSha256,
+    source: entry.source,
+    removalPolicy: entry.removalPolicy,
     target: entry.target,
     ...(entry.skillDir ? { skillDir: entry.skillDir } : {}),
     ...(entry.materializedAt ? { materializedAt: entry.materializedAt } : {}),
@@ -2355,6 +2480,8 @@ function materializationSummaryPayload(entry: WorkspaceSkillMaterialization) {
     name: entry.name,
     versionId: entry.versionId,
     packageSha256: entry.packageSha256,
+    source: entry.source,
+    removalPolicy: entry.removalPolicy,
     target: entry.target,
   };
 }
@@ -2362,6 +2489,19 @@ function materializationSummaryPayload(entry: WorkspaceSkillMaterialization) {
 async function buildSoulMaterializationStatus(workspace: WorkspaceInfo): Promise<SoulMaterializationResult | undefined> {
   return readSoulMaterializationStatus(workspace.path);
 }
+
+const materializationMatchesDesired = (
+  entry: WorkspaceSkillMaterialization,
+  desired: WorkspaceSkillMaterialization,
+): boolean =>
+  entry.installationId === desired.installationId &&
+  entry.skillId === desired.skillId &&
+  entry.name === desired.name &&
+  entry.versionId === desired.versionId &&
+  entry.packageSha256 === desired.packageSha256 &&
+  entry.source === desired.source &&
+  entry.removalPolicy === desired.removalPolicy &&
+  entry.target === desired.target;
 
 async function buildWorkspaceSkillMaterializationStatus(config: ServerConfig, workspace: WorkspaceInfo) {
   const rootDir = workspaceManagedSkillsRoot(workspace.path);
@@ -2381,13 +2521,23 @@ async function buildGlobalSkillMaterializationStatus(config: ServerConfig) {
   const rootDir = personalGlobalManagedSkillsRoot();
   const manifest = await readSkillMaterializationManifest(rootDir);
   const registryConfigured = Boolean(skillRegistryBaseUrl(config));
+  const platformSkillSet = await getPlatformManagedPersonalGlobalSkillSet();
+  const platformSynced = platformSkillSet.skills.every((skill) =>
+    manifest?.entries.some((entry) => materializationMatchesDesired(entry, skill)) ?? false
+  );
+  const platformPending = platformSkillSet.skills.length > 0 && !platformSynced;
   return {
     scope: "personal-global",
-    status: registryConfigured ? "pending" : "not-configured",
+    status: registryConfigured || platformPending ? "pending" : "synced",
     registryConfigured,
     rootDir,
     materializedSkills: manifest?.entries.map(materializationEntryPayload) ?? [],
-    reloadRequired: registryConfigured,
+    platformManaged: {
+      enabled: platformSkillSet.skills.length > 0,
+      synced: platformSynced,
+      desiredSkills: platformSkillSet.skills.map(materializationSummaryPayload),
+    },
+    reloadRequired: registryConfigured || platformPending,
   };
 }
 
@@ -2399,6 +2549,8 @@ function desiredSkillSetRevision(materializations: WorkspaceSkillMaterialization
       name: entry.name,
       versionId: entry.versionId,
       packageSha256: entry.packageSha256,
+      source: entry.source,
+      removalPolicy: entry.removalPolicy,
       target: entry.target,
     }))
     .sort((left, right) => left.name.localeCompare(right.name) || left.installationId.localeCompare(right.installationId));
@@ -2490,6 +2642,23 @@ function registryRolloutPolicyAppliesToMaterialization(input: {
   return policy.audience === "all-platform-users";
 }
 
+function assertNoPlatformManagedPersonalGlobalNameConflicts(input: {
+  materializations: WorkspaceSkillMaterialization[];
+  platformSkills: WorkspaceSkillMaterialization[];
+}) {
+  const platformNames = new Set(input.platformSkills.map((skill) => skill.name));
+  const duplicate = input.materializations.find((skill) =>
+    skill.target === "personal-global" && platformNames.has(skill.name)
+  );
+  if (!duplicate) return;
+  throw new ApiError(
+    409,
+    "managed_skill_name_conflict",
+    `Platform-managed skill ${duplicate.name} conflicts with registry-managed personal-global skill ${duplicate.installationId}`,
+    { name: duplicate.name, installationId: duplicate.installationId },
+  );
+}
+
 async function fetchRegistryWorkspaceMaterializations(
   ctx: RequestContext,
   workspace: WorkspaceInfo,
@@ -2507,6 +2676,7 @@ async function fetchRegistryWorkspaceMaterializations(
   }
 
   const registryInput = skillRegistryRequestInput(ctx);
+  const platformSkillSet = await getPlatformManagedPersonalGlobalSkillSet();
   const skillSet = await getWorkspaceSkillSetFromRegistry({
     ...registryInput,
     workspaceId: workspace.id,
@@ -2515,6 +2685,9 @@ async function fetchRegistryWorkspaceMaterializations(
   const registryInstallations: WorkspaceSkillRegistryInstallation[] = [];
   const rolloutPolicies: WorkspaceSkillRolloutPolicy[] = [];
   const packagesByInstallationId = new Map<string, SkillPackageArchive>();
+  for (const [installationId, archive] of platformSkillSet.archivesByInstallationId) {
+    packagesByInstallationId.set(installationId, archive);
+  }
   const seenInstallationIds = new Set<string>();
   const personalGlobalWorkspace: WorkspaceInfo = {
     id: "personal-global",
@@ -2612,7 +2785,13 @@ async function fetchRegistryWorkspaceMaterializations(
     localUnmanagedSkills: [],
     policy: {},
   });
-  const materializations = resolution.requiredMaterializations;
+  assertNoPlatformManagedPersonalGlobalNameConflicts({
+    materializations: resolution.requiredMaterializations,
+    platformSkills: platformSkillSet.skills,
+  });
+  const materializations = personalGlobalSyncRequired
+    ? [...resolution.requiredMaterializations, ...platformSkillSet.skills]
+    : resolution.requiredMaterializations;
 
   return {
     materializations,
@@ -2632,8 +2811,13 @@ async function fetchRegistryPersonalGlobalMaterializations(
   packagesByInstallationId: Map<string, SkillPackageArchive>;
 }> {
   const baseUrl = skillRegistryRequestBaseUrl(ctx);
+  const platformSkillSet = await getPlatformManagedPersonalGlobalSkillSet();
   if (!baseUrl) {
-    throw new ApiError(503, "skill_registry_misconfigured", "Skill registry base URL is missing");
+    return {
+      materializations: platformSkillSet.skills,
+      conflicts: [],
+      packagesByInstallationId: platformSkillSet.archivesByInstallationId,
+    };
   }
 
   const registryInput = skillRegistryRequestInput(ctx);
@@ -2646,6 +2830,9 @@ async function fetchRegistryPersonalGlobalMaterializations(
   const registryInstallations: WorkspaceSkillRegistryInstallation[] = [];
   const rolloutPolicies: WorkspaceSkillRolloutPolicy[] = [];
   const packagesByInstallationId = new Map<string, SkillPackageArchive>();
+  for (const [installationId, archive] of platformSkillSet.archivesByInstallationId) {
+    packagesByInstallationId.set(installationId, archive);
+  }
   const personalGlobalWorkspace: WorkspaceInfo = {
     id: "personal-global",
     name: "Personal global skills",
@@ -2710,7 +2897,11 @@ async function fetchRegistryPersonalGlobalMaterializations(
     localUnmanagedSkills: [],
     policy: {},
   });
-  const materializations = resolution.requiredMaterializations;
+  assertNoPlatformManagedPersonalGlobalNameConflicts({
+    materializations: resolution.requiredMaterializations,
+    platformSkills: platformSkillSet.skills,
+  });
+  const materializations = [...resolution.requiredMaterializations, ...platformSkillSet.skills];
 
   return { materializations, conflicts: resolution.conflicts, packagesByInstallationId };
 }
@@ -2906,7 +3097,239 @@ function requireBodyObject(body: Record<string, unknown>, field: string): Record
   return value as Record<string, unknown>;
 }
 
-function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: TokenService): Route[] {
+function requireNonEmptyPayloadString(value: unknown, name: string): string {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (!trimmed) {
+    throw new ApiError(400, "invalid_payload", `${name} is required`);
+  }
+  return trimmed;
+}
+
+function optionalPayloadString(value: unknown, name: string): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value !== "string") {
+    throw new ApiError(400, "invalid_payload", `${name} must be a string or null`);
+  }
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function optionalNullablePayloadString(value: unknown, name: string): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value !== "string") {
+    throw new ApiError(400, "invalid_payload", `${name} must be a string or null`);
+  }
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function parseAutomationTargetPayload(value: unknown, previous: AutomationTarget = {}): AutomationTarget {
+  if (value === undefined) return previous;
+  if (value === null) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ApiError(400, "invalid_payload", "target must be an object or null");
+  }
+  const target = value as Record<string, unknown>;
+  const next: AutomationTarget = { ...previous };
+  const preferredSessionId = optionalPayloadString(target.preferredSessionId, "target.preferredSessionId");
+  const fallbackTitle = optionalPayloadString(target.fallbackTitle, "target.fallbackTitle");
+  const agent = optionalPayloadString(target.agent, "target.agent");
+  const model = optionalNullablePayloadString(target.model, "target.model");
+  const variant = optionalNullablePayloadString(target.variant, "target.variant");
+  if (preferredSessionId !== undefined) {
+    if (preferredSessionId) next.preferredSessionId = preferredSessionId;
+    else delete next.preferredSessionId;
+  }
+  if (fallbackTitle !== undefined) {
+    if (fallbackTitle) next.fallbackTitle = fallbackTitle;
+    else delete next.fallbackTitle;
+  }
+  if (agent !== undefined) {
+    if (agent) next.agent = agent;
+    else delete next.agent;
+  }
+  if (model !== undefined) next.model = model;
+  if (variant !== undefined) next.variant = variant;
+  return next;
+}
+
+function parseOptionalAutomationStatus(value: unknown): AutomationStatus | undefined {
+  if (value === undefined || value === null) return undefined;
+  return parseAutomationStatus(value);
+}
+
+function resolveAutomationState(
+  input: { enabled?: unknown; status?: unknown },
+  previous: { enabled: boolean; status: AutomationStatus },
+): { enabled: boolean; status: AutomationStatus } {
+  if (input.enabled !== undefined && typeof input.enabled !== "boolean") {
+    throw new ApiError(400, "invalid_payload", "enabled must be a boolean");
+  }
+  const explicitStatus = parseOptionalAutomationStatus(input.status);
+  let enabled = typeof input.enabled === "boolean" ? input.enabled : previous.enabled;
+  let status = explicitStatus ?? previous.status;
+
+  if (explicitStatus) {
+    enabled = explicitStatus === "active";
+  } else if (typeof input.enabled === "boolean") {
+    status = input.enabled ? "active" : "paused";
+  }
+
+  if (status !== "active") {
+    enabled = false;
+  }
+  if (status === "active" && !enabled) {
+    status = "paused";
+  }
+  return { enabled, status };
+}
+
+function isTerminalAutomationStatus(status: AutomationStatus): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
+}
+
+function canReactivateWithSchedule(schedule: AutomationSchedule): boolean {
+  if (schedule.kind !== "oneShot") {
+    return true;
+  }
+  return Date.parse(schedule.runAt) > Date.now();
+}
+
+function nextAutomationRunAt(
+  schedule: AutomationSchedule,
+  state: { enabled: boolean; status: AutomationStatus },
+): string | null {
+  if (!state.enabled || state.status !== "active") {
+    return null;
+  }
+  return computeNextAutomationRunAt(schedule, Date.now());
+}
+
+function validateAutomationId(value: unknown): string {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) {
+    throw new ApiError(400, "invalid_payload", "automation id is required");
+  }
+  if (raw.length > 80) {
+    throw new ApiError(400, "invalid_payload", "automation id is too long");
+  }
+  if (!/^[a-zA-Z0-9_-]+$/.test(raw)) {
+    throw new ApiError(400, "invalid_payload", "automation id must match /^[a-zA-Z0-9_-]+$/");
+  }
+  return raw;
+}
+
+function createAutomationFromPayload(
+  workspace: WorkspaceInfo,
+  body: Record<string, unknown>,
+): VesloAutomation {
+  const name = requireNonEmptyPayloadString(body.name, "name");
+  const prompt = requireNonEmptyPayloadString(body.prompt, "prompt");
+  const schedule = parseAutomationSchedule(body.schedule);
+  const state = resolveAutomationState(
+    { enabled: body.enabled, status: body.status },
+    { enabled: true, status: "active" },
+  );
+  const now = new Date().toISOString();
+  const id = body.id === undefined || body.id === null
+    ? `automation_${shortId().replace(/-/g, "")}`
+    : validateAutomationId(body.id);
+
+  return {
+    id,
+    workspaceId: workspace.id,
+    name,
+    enabled: state.enabled,
+    status: state.status,
+    schedule,
+    prompt,
+    target: parseAutomationTargetPayload(body.target),
+    createdAt: now,
+    updatedAt: now,
+    nextRunAt: nextAutomationRunAt(schedule, state),
+    completedAt: null,
+    lastRunId: null,
+  };
+}
+
+function updateAutomationFromPayload(
+  existing: VesloAutomation,
+  body: Record<string, unknown>,
+): VesloAutomation {
+  const name = body.name === undefined ? existing.name : requireNonEmptyPayloadString(body.name, "name");
+  const prompt = body.prompt === undefined ? existing.prompt : requireNonEmptyPayloadString(body.prompt, "prompt");
+  const schedule = body.schedule === undefined ? existing.schedule : parseAutomationSchedule(body.schedule);
+  const wantsActive = body.enabled === true || body.status === "active";
+  if (isTerminalAutomationStatus(existing.status) && wantsActive) {
+    const allowed = body.status === "active" && body.schedule !== undefined && canReactivateWithSchedule(schedule);
+    if (!allowed) {
+      throw new ApiError(
+        409,
+        "automation_terminal",
+        "Terminal automations require an explicit active status and updated future or recurring schedule to reactivate",
+      );
+    }
+  }
+  const state = resolveAutomationState(
+    { enabled: body.enabled, status: body.status },
+    { enabled: existing.enabled, status: existing.status },
+  );
+  return {
+    ...existing,
+    name,
+    prompt,
+    schedule,
+    enabled: state.enabled,
+    status: state.status,
+    target: parseAutomationTargetPayload(body.target, existing.target),
+    updatedAt: new Date().toISOString(),
+    nextRunAt: nextAutomationRunAt(schedule, state),
+    completedAt: state.status === "completed" ? existing.completedAt ?? new Date().toISOString() : existing.completedAt ?? null,
+  };
+}
+
+function toLegacyAgentLabAutomation(
+  automation: VesloAutomation,
+  runs: AutomationRun[],
+): AgentLabAutomation {
+  const lastRun = automation.lastRunId
+    ? runs.find((run) => run.id === automation.lastRunId)
+    : [...runs].reverse().find((run) => run.automationId === automation.id);
+  return {
+    id: automation.id,
+    name: automation.name,
+    enabled: automation.enabled,
+    schedule: automation.schedule as AgentLabSchedule,
+    prompt: automation.prompt,
+    createdAt: Date.parse(automation.createdAt),
+    updatedAt: Date.parse(automation.updatedAt),
+    lastRunAt: lastRun?.finishedAt ? Date.parse(lastRun.finishedAt) : undefined,
+    lastRunSessionId: lastRun?.sessionId ?? undefined,
+  };
+}
+
+function isLegacyAgentLabSchedule(schedule: AutomationSchedule): schedule is AgentLabSchedule {
+  return schedule.kind === "interval" || schedule.kind === "daily" || schedule.kind === "weekly";
+}
+
+function legacyAgentLabStoreFromAutomations(store: { updatedAt: string; items: VesloAutomation[]; runs: AutomationRun[] }): AgentLabAutomationStore {
+  return {
+    schemaVersion: 1,
+    updatedAt: Date.parse(store.updatedAt),
+    items: store.items
+      .filter((item) => isLegacyAgentLabSchedule(item.schedule))
+      .map((item) => toLegacyAgentLabAutomation(item, store.runs)),
+  };
+}
+
+function createRoutes(
+  config: ServerConfig,
+  approvals: ApprovalService,
+  tokens: TokenService,
+  automationRunner: AutomationRunner,
+): Route[] {
   const routes: Route[] = [];
   const serverDataDir = resolveVesloDataDir();
   const fileSessions = new FileSessionStore();
@@ -3367,6 +3790,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     if (deleted) {
       // Only remove exact matches; authorizedRoots can contain broader entries.
       config.authorizedRoots = config.authorizedRoots.filter((root) => resolve(root) !== resolve(workspace.path));
+      ctx.automationRunner.removeWorkspace(workspace.id);
     }
 
     await recordAudit(workspace.path, {
@@ -5702,6 +6126,28 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     });
   });
 
+  addRoute(routes, "GET", "/skills/user-global/:name", "none", async (ctx) => {
+    await requireHostOrClient(ctx.request, config, ctx.tokens);
+    const name = String(ctx.params.name ?? "").trim();
+    if (!name) {
+      throw new ApiError(400, "invalid_skill_name", "Skill name is required");
+    }
+    const instancePath = trimmedSearchParam(ctx.url.searchParams, "path");
+    if (!instancePath) {
+      throw new ApiError(400, "invalid_skill_path", "User-global exact skill read requires path");
+    }
+    const result = await readGlobalSkillAtPath({ name, path: instancePath });
+    return jsonResponse({
+      item: {
+        name,
+        path: result.path,
+        description: "",
+        scope: "global",
+      },
+      content: result.content,
+    });
+  });
+
   addRoute(routes, "DELETE", "/skills/user-global/:name", "none", async (ctx) => {
     ensureWritable(config);
     const actor = await requireHostOrClient(ctx.request, config, ctx.tokens);
@@ -5778,6 +6224,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     const result = await materializePersonalGlobalSkillSet({
       skills: materializations,
       loadPackage,
+      unmanagedSkillRoots: userGlobalSkillRootsForMutation(),
     });
 
     await recordAudit(result.rootDir, {
@@ -5803,7 +6250,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       status: "synced",
       synced: true,
       reloadRequired: true,
-      registryConfigured: true,
+      registryConfigured: Boolean(skillRegistryBaseUrl(config)),
       rootDir: result.rootDir,
       materializedSkills: materializations.map(materializationSummaryPayload),
       conflicts,
@@ -5942,6 +6389,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       personalGlobalResult = await materializePersonalGlobalSkillSet({
         skills: personalGlobalMaterializations,
         loadPackage,
+        unmanagedSkillRoots: userGlobalSkillRootsForMutation(),
       });
     }
     const responseMaterializations = [
@@ -6426,10 +6874,180 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     return jsonResponse({ ok: true });
   });
 
+  addRoute(routes, "GET", "/workspace/:id/automations", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const store = await readAutomationStore(workspace.path, workspace.id, { migrateLegacy: !config.readOnly });
+    return jsonResponse({ items: store.items, updatedAt: store.updatedAt });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/automations", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const automation = createAutomationFromPayload(workspace, body);
+    const path = resolveAutomationsPath(workspace.path);
+
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "automations.create",
+      summary: `Create automation ${automation.name}`,
+      paths: [path],
+    });
+
+    await mutateAutomationStore(workspace.path, workspace.id, (store) => {
+      if (store.items.some((item) => item.id === automation.id)) {
+        throw new ApiError(409, "automation_conflict", "Automation id already exists");
+      }
+      return { ...store, updatedAt: automation.updatedAt, items: [automation, ...store.items] };
+    });
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "automations.create",
+      target: path,
+      summary: `Created automation ${automation.name}`,
+      timestamp: Date.now(),
+    });
+    await ctx.automationRunner.refreshWorkspace(workspace.id);
+    return jsonResponse({ automation }, 201);
+  });
+
+  addRoute(routes, "PATCH", "/workspace/:id/automations/:automationId", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const automationId = validateAutomationId(ctx.params.automationId);
+    const body = await readJsonBody(ctx.request);
+    const path = resolveAutomationsPath(workspace.path);
+
+    let automation: VesloAutomation | null = null;
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "automations.update",
+      summary: `Update automation ${automationId}`,
+      paths: [path],
+    });
+    await mutateAutomationStore(workspace.path, workspace.id, (store) => {
+      const items = store.items.map((item) => {
+        if (item.id !== automationId) return item;
+        automation = updateAutomationFromPayload(item, body);
+        return automation;
+      });
+      if (!automation) {
+        throw new ApiError(404, "automation_not_found", "Automation not found");
+      }
+      return { ...store, updatedAt: automation.updatedAt, items };
+    });
+    const updatedAutomation = automation as VesloAutomation | null;
+    if (!updatedAutomation) {
+      throw new ApiError(404, "automation_not_found", "Automation not found");
+    }
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "automations.update",
+      target: path,
+      summary: `Updated automation ${updatedAutomation.name}`,
+      timestamp: Date.now(),
+    });
+    await ctx.automationRunner.refreshWorkspace(workspace.id);
+    return jsonResponse({ automation: updatedAutomation });
+  });
+
+  addRoute(routes, "DELETE", "/workspace/:id/automations/:automationId", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const automationId = validateAutomationId(ctx.params.automationId);
+    const path = resolveAutomationsPath(workspace.path);
+
+    let automation: VesloAutomation | null = null;
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "automations.delete",
+      summary: `Cancel automation ${automationId}`,
+      paths: [path],
+    });
+    await mutateAutomationStore(workspace.path, workspace.id, (store) => {
+      const updatedAt = new Date().toISOString();
+      const items = store.items.map((item) => {
+        if (item.id !== automationId) return item;
+        automation = {
+          ...item,
+          enabled: false,
+          status: "cancelled",
+          nextRunAt: null,
+          updatedAt,
+        };
+        return automation;
+      });
+      if (!automation) {
+        throw new ApiError(404, "automation_not_found", "Automation not found");
+      }
+      return { ...store, updatedAt, items };
+    });
+    const cancelledAutomation = automation as VesloAutomation | null;
+    if (!cancelledAutomation) {
+      throw new ApiError(404, "automation_not_found", "Automation not found");
+    }
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "automations.delete",
+      target: path,
+      summary: `Cancelled automation ${cancelledAutomation.name}`,
+      timestamp: Date.now(),
+    });
+    await ctx.automationRunner.refreshWorkspace(workspace.id);
+    return jsonResponse({ automation: cancelledAutomation });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/automations/:automationId/run", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const automationId = validateAutomationId(ctx.params.automationId);
+    const path = resolveAutomationsPath(workspace.path);
+
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "automations.run",
+      summary: `Run automation ${automationId}`,
+      paths: [path],
+    });
+    const run = await ctx.automationRunner.runNow(workspace.id, automationId);
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "automations.run",
+      target: path,
+      summary: `Ran automation ${automationId}`,
+      timestamp: Date.now(),
+    });
+    return jsonResponse({ run });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/automations/:automationId/runs", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const automationId = validateAutomationId(ctx.params.automationId);
+    const store = await readAutomationStore(workspace.path, workspace.id, { migrateLegacy: !config.readOnly });
+    const items = store.runs.filter((run) => run.automationId === automationId);
+    if (!store.items.some((item) => item.id === automationId) && items.length === 0) {
+      throw new ApiError(404, "automation_not_found", "Automation not found");
+    }
+    return jsonResponse({ items });
+  });
+
   addRoute(routes, "GET", "/workspace/:id/agentlab/automations", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    const store = await readAgentLabAutomations(workspace.path);
-    return jsonResponse({ items: store.items, updatedAt: store.updatedAt });
+    const store = await readAutomationStore(workspace.path, workspace.id, { migrateLegacy: !config.readOnly });
+    const legacy = legacyAgentLabStoreFromAutomations(store);
+    return jsonResponse({ items: legacy.items, updatedAt: legacy.updatedAt });
   });
 
   addRoute(routes, "POST", "/workspace/:id/agentlab/automations", "client", async (ctx) => {
@@ -6437,65 +7055,38 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
-
-    const name = typeof body.name === "string" ? body.name.trim() : "";
-    const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
-    const enabled = typeof body.enabled === "boolean" ? body.enabled : true;
-    if (!name) {
-      throw new ApiError(400, "invalid_payload", "name is required");
-    }
-    if (!prompt) {
-      throw new ApiError(400, "invalid_payload", "prompt is required");
-    }
-
-    const schedule = parseAgentLabSchedule(body.schedule);
-    const id = body.id ? validateAgentLabAutomationId(body.id) : `agentlab_${shortId().replace(/-/g, "")}`;
-
-    const path = resolveAgentLabAutomationsPath(workspace.path);
+    const automation = createAutomationFromPayload(workspace, {
+      ...body,
+      id: body.id ? validateAgentLabAutomationId(body.id) : `agentlab_${shortId().replace(/-/g, "")}`,
+    });
+    const path = resolveAutomationsPath(workspace.path);
     await requireApproval(ctx, {
       workspaceId: workspace.id,
-      action: "agentlab.automations.upsert",
-      summary: `Upsert automation ${name}`,
+      action: "automations.create",
+      summary: `Upsert automation ${automation.name}`,
       paths: [path],
     });
 
-    const store = await readAgentLabAutomations(workspace.path);
-    const now = Date.now();
-    const existingIndex = store.items.findIndex((item) => item.id === id);
-    if (existingIndex !== -1) {
-      const prev = store.items[existingIndex];
-      store.items[existingIndex] = {
-        ...prev,
-        id,
-        name,
-        enabled,
-        schedule,
-        prompt,
-        updatedAt: now,
-      };
-    } else {
-      store.items.unshift({
-        id,
-        name,
-        enabled,
-        schedule,
-        prompt,
-        createdAt: now,
-        updatedAt: now,
-      });
-    }
-    await writeAgentLabAutomations(workspace.path, store);
+    await mutateAutomationStore(workspace.path, workspace.id, (store) => {
+      const existing = store.items.find((item) => item.id === automation.id);
+      const nextAutomation = existing
+        ? { ...automation, createdAt: existing.createdAt, lastRunId: existing.lastRunId ?? null }
+        : automation;
+      const items = store.items.filter((item) => item.id !== automation.id);
+      return { ...store, updatedAt: nextAutomation.updatedAt, items: [nextAutomation, ...items] };
+    });
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
-      action: "agentlab.automations.upsert",
+      action: "automations.create",
       target: path,
-      summary: `Upserted automation ${name}`,
-      timestamp: now,
+      summary: `Upserted automation ${automation.name}`,
+      timestamp: Date.now(),
     });
+    await ctx.automationRunner.refreshWorkspace(workspace.id);
 
-    const next = await readAgentLabAutomations(workspace.path);
+    const next = legacyAgentLabStoreFromAutomations(await readAutomationStore(workspace.path, workspace.id));
     return jsonResponse({ items: next.items, updatedAt: next.updatedAt }, 201);
   });
 
@@ -6505,79 +7096,75 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const automationId = validateAgentLabAutomationId(ctx.params.automationId);
 
-    const path = resolveAgentLabAutomationsPath(workspace.path);
+    const path = resolveAutomationsPath(workspace.path);
     await requireApproval(ctx, {
       workspaceId: workspace.id,
-      action: "agentlab.automations.delete",
-      summary: `Delete automation ${automationId}`,
+      action: "automations.delete",
+      summary: `Cancel automation ${automationId}`,
       paths: [path],
     });
 
-    const store = await readAgentLabAutomations(workspace.path);
-    const before = store.items.length;
-    store.items = store.items.filter((item) => item.id !== automationId);
-    if (store.items.length === before) {
-      throw new ApiError(404, "automation_not_found", "Automation not found");
-    }
-    await writeAgentLabAutomations(workspace.path, store);
+    let automation: VesloAutomation | null = null;
+    await mutateAutomationStore(workspace.path, workspace.id, (store) => {
+      const updatedAt = new Date().toISOString();
+      const items = store.items.map((item) => {
+        if (item.id !== automationId) return item;
+        automation = { ...item, enabled: false, status: "cancelled", nextRunAt: null, updatedAt };
+        return automation;
+      });
+      if (!automation) {
+        throw new ApiError(404, "automation_not_found", "Automation not found");
+      }
+      return { ...store, updatedAt, items };
+    });
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
-      action: "agentlab.automations.delete",
+      action: "automations.delete",
       target: path,
-      summary: `Deleted automation ${automationId}`,
+      summary: `Cancelled automation ${automationId}`,
       timestamp: Date.now(),
     });
+    await ctx.automationRunner.refreshWorkspace(workspace.id);
     return jsonResponse({ ok: true });
   });
 
   addRoute(routes, "POST", "/workspace/:id/agentlab/automations/:automationId/run", "client", async (ctx) => {
+    ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const automationId = validateAgentLabAutomationId(ctx.params.automationId);
-
-    const store = await readAgentLabAutomations(workspace.path);
-    const automation = store.items.find((item) => item.id === automationId);
-    if (!automation) {
-      throw new ApiError(404, "automation_not_found", "Automation not found");
-    }
-
-    const now = Date.now();
-    const created = await fetchOpencodeJson(workspace, "/session", {
-      method: "POST",
-      body: { title: `Automation: ${automation.name}` },
-    });
-    const sessionId = typeof created?.id === "string" ? created.id : String(created?.id ?? "");
-    if (!sessionId.trim()) {
-      throw new ApiError(502, "opencode_failed", "OpenCode session did not return an id");
-    }
-
-    await fetchOpencodeJson(workspace, `/session/${encodeURIComponent(sessionId)}/prompt_async`, {
-      method: "POST",
-      body: {
-        parts: [{ type: "text", text: automation.prompt }],
-      },
-    });
-
-    automation.lastRunAt = now;
-    automation.lastRunSessionId = sessionId;
-    automation.updatedAt = now;
-    if (!config.readOnly) {
-      await writeAgentLabAutomations(workspace.path, store);
-    }
+    const path = resolveAutomationsPath(workspace.path);
+    const run = await ctx.automationRunner.runNow(workspace.id, automationId);
 
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
-      action: "agentlab.automations.run",
-      target: resolveAgentLabAutomationsPath(workspace.path),
-      summary: `Ran automation ${automation.name}`,
-      timestamp: now,
+      action: "automations.run",
+      target: path,
+      summary: `Ran automation ${automationId}`,
+      timestamp: Date.now(),
     });
 
-    return jsonResponse({ ok: true, automationId, sessionId, ranAt: now });
+    if (run.status === "failed") {
+      return jsonResponse({
+        ok: false,
+        automationId,
+        sessionId: run.sessionId,
+        ranAt: run.finishedAt ? Date.parse(run.finishedAt) : Date.now(),
+        run,
+      }, 502);
+    }
+
+    return jsonResponse({
+      ok: true,
+      automationId,
+      sessionId: run.sessionId,
+      ranAt: run.finishedAt ? Date.parse(run.finishedAt) : Date.now(),
+      run,
+    });
   });
 
   addRoute(routes, "GET", "/workspace/:id/agentlab/automations/logs", "client", async (ctx) => {
@@ -7110,21 +7697,11 @@ async function resolveWorkspace(config: ServerConfig, id: string): Promise<Works
     throw new ApiError(404, "workspace_not_found", "Workspace not found");
   }
   const resolvedWorkspace = resolve(workspace.path);
-  const authorized = await isAuthorizedRoot(resolvedWorkspace, config.authorizedRoots);
+  const authorized = isAuthorizedRootSync(resolvedWorkspace, config.authorizedRoots);
   if (!authorized) {
     throw new ApiError(403, "workspace_unauthorized", "Workspace is not authorized");
   }
   return { ...workspace, path: resolvedWorkspace };
-}
-
-async function isAuthorizedRoot(workspacePath: string, roots: string[]): Promise<boolean> {
-  const resolvedWorkspace = resolve(workspacePath);
-  for (const root of roots) {
-    const resolvedRoot = resolve(root);
-    if (resolvedWorkspace === resolvedRoot) return true;
-    if (resolvedWorkspace.startsWith(resolvedRoot + sep)) return true;
-  }
-  return false;
 }
 
 function ensureWritable(config: ServerConfig): void {

@@ -43,3 +43,19 @@ test("local Veslo server ensure only deduplicates after a successful ensure", ()
     "local server ensure deduplication should be recorded only after a successful ensure",
   );
 });
+
+test("local Veslo workspace readiness matches all server path candidates", () => {
+  const resolutionEffectStart = source.indexOf("const vesloUrl = vesloServerUrl().trim();");
+  assert.notStrictEqual(resolutionEffectStart, -1, "Veslo workspace resolution effect is missing");
+
+  const localBranchStart = source.indexOf('if (active.workspaceType === "local") {', resolutionEffectStart);
+  assert.notStrictEqual(localBranchStart, -1, "local Veslo workspace resolution branch is missing");
+
+  const localBranchEnd = source.indexOf("void resolveWorkspace();", localBranchStart);
+  assert.notStrictEqual(localBranchEnd, -1, "local Veslo workspace resolution branch end marker is missing");
+  const localBranch = source.slice(localBranchStart, localBranchEnd);
+
+  assert.match(localBranch, /entry\.path/);
+  assert.match(localBranch, /entry\.directory/);
+  assert.match(localBranch, /entry\.opencode\?\.directory/);
+});
