@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use tauri::async_runtime::Receiver;
 use tauri::AppHandle;
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
-use tauri_plugin_shell::ShellExt;
+
+use crate::supervised_process::{self, CommandEvent, SupervisedCommandChild};
 
 const DEFAULT_VESLO_PORT: u16 = 8787;
 const DEFAULT_MANAGED_AI_BASE_URL: &str = "https://ai.veslo.work";
@@ -180,7 +180,7 @@ pub fn spawn_veslo_server(
     opencode_username: Option<&str>,
     opencode_password: Option<&str>,
     opencode_router_health_port: Option<u16>,
-) -> Result<(Receiver<CommandEvent>, CommandChild), String> {
+) -> Result<(Receiver<CommandEvent>, SupervisedCommandChild), String> {
     validate_managed_opencode_base_url(opencode_base_url)?;
 
     let server_args = build_veslo_args(
@@ -197,14 +197,13 @@ pub fn spawn_veslo_server(
 
     let mut command = if use_dev_watch {
         let dev_watch_dir = resolve_dev_watch_dir();
-        app.shell()
-            .command("bun")
+        supervised_process::command(app, "bun")
             .args(build_veslo_server_dev_watch_args(server_args))
             .current_dir(&dev_watch_dir)
     } else {
-        let command = match app.shell().sidecar("veslo-server") {
+        let command = match supervised_process::sidecar(app, "veslo-server") {
             Ok(command) => command,
-            Err(_) => app.shell().command("veslo-server"),
+            Err(_) => supervised_process::command(app, "veslo-server"),
         };
         let cwd = workspace_paths
             .first()

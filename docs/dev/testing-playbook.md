@@ -89,6 +89,15 @@ pnpm test --spec ./specs/<target>.spec.ts
 
 The E2E launcher uses an isolated app profile under `packages/e2e/.tmp-veslo-home` by default so local desktop state does not leak into tests. Set `E2E_USE_EXISTING_PROFILE=1` only when a test explicitly needs the current user profile.
 
+For Windows sidecar-launch changes, also run the clean-profile runtime probe after the Tauri E2E build:
+
+```bash
+cd packages/e2e
+node --import=tsx/esm ./windows-veslo-runtime-probe.mjs
+```
+
+The probe restarts the managed Veslo server in the real desktop runtime and reports `visibleSidecarWindows`. On Windows, `visibleSidecarWindows.windows` must be empty. Antivirus or SmartScreen prompts are separate from this terminal-window check and should be recorded independently.
+
 For visual snapshot updates, run:
 
 ```bash

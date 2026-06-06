@@ -114,6 +114,8 @@ Desktop-managed local Veslo server uses the fixed port `8787`. The desktop runti
 
 Managed local sidecars distinguish internal runtime URLs from advertised connect URLs. Same-machine communication between the desktop shell, `veslo-server`, `veslo-orchestrator`, OpenCode, and `veslo-code-router` uses loopback OpenCode URLs such as `http://127.0.0.1:<port>`. LAN or mDNS connect URLs are for external clients only; they must not be passed as the local `--opencode-base-url` or `--opencode-url`, because sleep/resume and network changes can invalidate those addresses while the local OpenCode process remains healthy.
 
+Desktop-managed OpenCode, Veslo server, Veslo orchestrator, and OpenCode Router processes launch through the desktop supervised-process wrapper. On Windows, that wrapper applies the hidden-process creation flags before spawn so first launch, restart, and fallback command startup do not create visible console windows. Sidecar stdout/stderr still flows through the debug-log forwarding path below.
+
 ## Desktop Debug Log Forwarder
 
 The Tauri shell forwards stdout/stderr from every supervised sidecar (`veslo-server`, `opencode-router`, `veslo-orchestrator`, `engine`) into the veslo-server debug log pipeline. Implementation lives in `packages/desktop/src-tauri/src/debug_logs_forwarder.rs`.

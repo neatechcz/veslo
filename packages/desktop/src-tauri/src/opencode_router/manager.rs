@@ -1,8 +1,7 @@
 use std::sync::{Arc, Mutex};
 
-use tauri_plugin_shell::process::CommandChild;
-
 use crate::process_supervisor::{kill_running_child, resolve_running_pid, SupervisedChild};
+use crate::supervised_process::SupervisedCommandChild;
 use crate::types::OpenCodeRouterInfo;
 
 #[derive(Default)]
@@ -12,7 +11,7 @@ pub struct OpenCodeRouterManager {
 
 #[derive(Default)]
 pub struct OpenCodeRouterState {
-    pub child: Option<CommandChild>,
+    pub child: Option<SupervisedCommandChild>,
     pub child_exited: bool,
     pub version: Option<String>,
     pub workspace_path: Option<String>,
@@ -23,10 +22,10 @@ pub struct OpenCodeRouterState {
 }
 
 impl SupervisedChild for OpenCodeRouterState {
-    fn child(&self) -> &Option<CommandChild> {
+    fn child(&self) -> &Option<SupervisedCommandChild> {
         &self.child
     }
-    fn take_child(&mut self) -> Option<CommandChild> {
+    fn take_child(&mut self) -> Option<SupervisedCommandChild> {
         self.child.take()
     }
     fn child_exited(&self) -> bool {
