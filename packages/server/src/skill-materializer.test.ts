@@ -161,6 +161,62 @@ test("skips unchanged managed directories without backup churn", async () => {
   expect(await readFile(markerPath, "utf8")).toBe(markerBefore);
 });
 
+test("repairs mutated managed package files even when marker fields match", async () => {
+  const workspaceRoot = await tempDir("veslo-materializer-mutated-");
+  const dataDir = await tempDir("veslo-materializer-mutated-data-");
+  const pkg = await archive("stable-skill", "# Stable\n", [
+    archiveFile("examples/example.txt", "example\n"),
+  ]);
+
+  await materializeWorkspaceSkillSet({
+    workspaceRoot,
+    dataDir,
+    skills: [materialization("stable-skill", pkg)],
+    loadPackage: async () => pkg,
+  });
+
+  const skillDir = join(workspaceManagedSkillsRoot(workspaceRoot), "stable-skill");
+  await writeFile(join(skillDir, "SKILL.md"), "# User mutation\n", "utf8");
+  await writeFile(join(skillDir, "examples", "example.txt"), "changed\n", "utf8");
+
+  const result = await materializeWorkspaceSkillSet({
+    workspaceRoot,
+    dataDir,
+    skills: [materialization("stable-skill", pkg)],
+    loadPackage: async () => pkg,
+  });
+
+  expect(result.backupDirs.length).toBe(1);
+  expect(await readFile(join(skillDir, "SKILL.md"), "utf8")).toContain("# Stable");
+  expect(await readFile(join(skillDir, "examples", "example.txt"), "utf8")).toBe("example\n");
+});
+
+test("repairs missing managed entrypoint even when marker fields match", async () => {
+  const workspaceRoot = await tempDir("veslo-materializer-missing-entry-");
+  const dataDir = await tempDir("veslo-materializer-missing-entry-data-");
+  const pkg = await archive("stable-skill", "# Stable\n");
+
+  await materializeWorkspaceSkillSet({
+    workspaceRoot,
+    dataDir,
+    skills: [materialization("stable-skill", pkg)],
+    loadPackage: async () => pkg,
+  });
+
+  const skillDir = join(workspaceManagedSkillsRoot(workspaceRoot), "stable-skill");
+  await rm(join(skillDir, "SKILL.md"), { force: true });
+
+  const result = await materializeWorkspaceSkillSet({
+    workspaceRoot,
+    dataDir,
+    skills: [materialization("stable-skill", pkg)],
+    loadPackage: async () => pkg,
+  });
+
+  expect(result.backupDirs.length).toBe(1);
+  expect(await readFile(join(skillDir, "SKILL.md"), "utf8")).toContain("# Stable");
+});
+
 test("refuses to overwrite an unmanaged skill directory", async () => {
   const rootDir = join(await tempDir("veslo-materializer-unmanaged-"), "skills", "veslo-managed");
   await mkdir(join(rootDir, "unsafe"), { recursive: true });

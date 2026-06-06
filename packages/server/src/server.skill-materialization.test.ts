@@ -497,6 +497,59 @@ test("exact delete and batch remove reject materialized platform automations ski
   }
 });
 
+test("exact user-global read and delete handle XDG_CONFIG_HOME managed skills", async () => {
+  const previousHome = process.env.HOME;
+  const previousXdgConfigHome = process.env.XDG_CONFIG_HOME;
+  const homeRoot = await tempDir("veslo-platform-xdg-home-");
+  const xdgRoot = await tempDir("veslo-platform-xdg-config-");
+  process.env.HOME = homeRoot;
+  process.env.XDG_CONFIG_HOME = xdgRoot;
+
+  try {
+    const { server } = await startFixture();
+    const syncResponse = await fetch(`http://127.0.0.1:${server.port}/skills/materialization/sync-global`, {
+      method: "POST",
+      headers: { "x-veslo-host-token": "host-token" },
+    });
+    expect(syncResponse.status).toBe(200);
+
+    const skillPath = join(xdgRoot, "opencode", "skills", "veslo-managed", "veslo-automations", "SKILL.md");
+    const readResponse = await fetch(
+      `http://127.0.0.1:${server.port}/skills/user-global/veslo-automations?path=${encodeURIComponent(skillPath)}`,
+      {
+        headers: { Authorization: "Bearer client-token" },
+      },
+    );
+
+    expect(readResponse.status).toBe(200);
+    const readPayload = await readResponse.json() as { item: { path: string }; content: string };
+    expect(readPayload.item.path).toBe(skillPath);
+    expect(readPayload.content).toContain("veslo_create_automation");
+
+    const deleteResponse = await fetch(
+      `http://127.0.0.1:${server.port}/skills/user-global/veslo-automations?path=${encodeURIComponent(skillPath)}`,
+      {
+        method: "DELETE",
+        headers: { "x-veslo-host-token": "host-token" },
+      },
+    );
+    expect(deleteResponse.status).toBe(409);
+    const deletePayload = await deleteResponse.json() as { code: string };
+    expect(deletePayload.code).toBe("managed_skill_read_only");
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+    if (previousXdgConfigHome === undefined) {
+      delete process.env.XDG_CONFIG_HOME;
+    } else {
+      process.env.XDG_CONFIG_HOME = previousXdgConfigHome;
+    }
+  }
+});
+
 test("POST /workspace/:id/skills/materialization/sync requires host auth", async () => {
   const { server } = await startFixture({ registryBaseUrl: "http://127.0.0.1:9" });
 

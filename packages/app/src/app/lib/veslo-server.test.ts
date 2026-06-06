@@ -909,7 +909,18 @@ test("skill materialization helpers call workspace and global status and sync en
           platformManaged: {
             enabled: true,
             synced: false,
-            desiredSkills: ["veslo-automations"],
+            desiredSkills: [
+              {
+                installationId: "platform_install_veslo_automations",
+                skillId: "platform_skill_veslo_automations",
+                name: "veslo-automations",
+                versionId: "platform_version_veslo_automations_v1",
+                packageSha256: "b".repeat(64),
+                source: "platform",
+                removalPolicy: "locked",
+                target: "personal-global",
+              },
+            ],
           },
           reloadRequired: false,
         }),
@@ -993,8 +1004,22 @@ test("skill materialization helpers call workspace and global status and sync en
     assert.deepEqual(globalStatus.platformManaged, {
       enabled: true,
       synced: false,
-      desiredSkills: ["veslo-automations"],
+      desiredSkills: [
+        {
+          installationId: "platform_install_veslo_automations",
+          skillId: "platform_skill_veslo_automations",
+          name: "veslo-automations",
+          versionId: "platform_version_veslo_automations_v1",
+          packageSha256: "b".repeat(64),
+          source: "platform",
+          removalPolicy: "locked",
+          target: "personal-global",
+        },
+      ],
     });
+    assert.equal(globalStatus.platformManaged?.desiredSkills[0]?.name, "veslo-automations");
+    assert.equal(globalStatus.platformManaged?.desiredSkills[0]?.source, "platform");
+    assert.equal(globalStatus.platformManaged?.desiredSkills[0]?.removalPolicy, "locked");
     assert.equal(globalStatus.materializedSkills[0]?.source, "platform");
     assert.equal(globalStatus.materializedSkills[0]?.removalPolicy, "locked");
     assert.equal(globalSync.status, "synced");

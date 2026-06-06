@@ -180,6 +180,9 @@ call these routes instead of deleting skill directories directly:
 - `GET /skills/user-global/:name?path=...`
   Requires client or host auth. Reads an exact user-global skill path, including
   managed `veslo-managed` paths, without allowing mutation.
+  User-global exact paths honor the same OpenCode global root precedence as
+  materialization: `XDG_CONFIG_HOME/opencode/skills` when `XDG_CONFIG_HOME` is
+  set, with the legacy HOME-based root still recognized for existing skills.
 
 - `DELETE /workspace/:id/skills/:name`
   Requires collaborator client auth plus any host approval required for the

@@ -26,6 +26,7 @@ export interface SkillRemovalJournalContext {
 }
 
 const userHomeDir = (): string => process.env.HOME?.trim() || homedir();
+const userConfigHomeDir = (): string => process.env.XDG_CONFIG_HOME?.trim() || join(userHomeDir(), ".config");
 
 async function findWorkspaceRoots(workspaceRoot: string): Promise<string[]> {
   const roots: string[] = [];
@@ -193,12 +194,13 @@ export const workspaceSkillRootsForMutation = async (workspaceRoot: string): Pro
   ]);
 };
 
-export const userGlobalSkillRootsForMutation = (): string[] => [
+export const userGlobalSkillRootsForMutation = (): string[] => Array.from(new Set([
+  join(userConfigHomeDir(), "opencode", "skills"),
   join(userHomeDir(), ".config", "opencode", "skills"),
   join(userHomeDir(), ".claude", "skills"),
   join(userHomeDir(), ".agents", "skills"),
   join(userHomeDir(), ".agent", "skills"),
-];
+]));
 
 async function resolveExistingWorkspaceSkillTarget(
   workspaceRoot: string,

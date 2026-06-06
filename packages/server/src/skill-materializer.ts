@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Dirent } from "node:fs";
 import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -271,6 +271,23 @@ const assertArchiveMatchesSkill = (archive: SkillPackageArchive, skill: Workspac
   };
 };
 
+const fileSha256 = (bytes: Buffer): string => createHash("sha256").update(bytes).digest("hex");
+
+const archiveFilesMatchTarget = async (targetDir: string, archive: SkillPackageArchive): Promise<boolean> => {
+  for (const file of archive.files) {
+    let bytes: Buffer;
+    try {
+      bytes = await readFile(join(targetDir, file.path));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+    if (bytes.byteLength !== file.sizeBytes) return false;
+    if (fileSha256(bytes) !== normalizeSha256(file.sha256)) return false;
+  }
+  return true;
+};
+
 const manifestEntryForSkill = (
   rootDir: string,
   skill: WorkspaceSkillMaterialization,
@@ -379,7 +396,7 @@ export async function materializeSkillPackageToRoot(
     throw new Error(`Refusing to overwrite unmanaged skill directory: ${targetDir}`);
   }
 
-  if (existingMarker && materializationFieldsMatch(existingMarker, skill)) {
+  if (existingMarker && materializationFieldsMatch(existingMarker, skill) && await archiveFilesMatchTarget(targetDir, archive)) {
     const entry = {
       ...manifestEntryForSkill(rootDir, skill, existingMarker.materializedAt),
       skillDir: existingMarker.skillDir || targetDir,

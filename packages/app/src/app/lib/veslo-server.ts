@@ -510,7 +510,7 @@ export type VesloGlobalSkillMaterializationStatus = Omit<VesloSkillMaterializati
   platformManaged?: {
     enabled: boolean;
     synced: boolean;
-    desiredSkills: string[];
+    desiredSkills: VesloSkillMaterializationEntry[];
   };
 };
 
