@@ -35,7 +35,7 @@ def parse_simple_frontmatter(frontmatter_text):
             index += 1
             continue
         if line.startswith((" ", "\t")):
-            raise ValueError(f"Unexpected indented frontmatter line: {line}")
+            raise ValueError("PyYAML is required for complex frontmatter")
         if ":" not in line:
             raise ValueError(f"Invalid frontmatter line: {line}")
 
@@ -53,6 +53,9 @@ def parse_simple_frontmatter(frontmatter_text):
                 index += 1
             frontmatter[key] = "\n".join(block).strip()
             continue
+
+        if index + 1 < len(lines) and lines[index + 1].startswith((" ", "\t")):
+            raise ValueError("PyYAML is required for complex frontmatter")
 
         frontmatter[key] = parse_scalar(raw_value)
         index += 1
