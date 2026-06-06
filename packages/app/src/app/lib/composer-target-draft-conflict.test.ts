@@ -31,6 +31,13 @@ test("composerDraftHasMeaningfulContent ignores whitespace-only text", () => {
 
 test("composerDraftHasMeaningfulContent treats text content as meaningful", () => {
   assert.equal(composerDraftHasMeaningfulContent(draft("Ship it")), true);
+  assert.equal(
+    composerDraftHasMeaningfulContent({
+      ...draft(" \n "),
+      resolvedText: "Resolved content",
+    }),
+    true,
+  );
 });
 
 test("composerDraftHasMeaningfulContent treats attachments as meaningful", () => {
@@ -38,6 +45,16 @@ test("composerDraftHasMeaningfulContent treats attachments as meaningful", () =>
     composerDraftHasMeaningfulContent({
       ...draft(""),
       attachments: [fileAttachment("brief.txt")],
+    }),
+    true,
+  );
+});
+
+test("composerDraftHasMeaningfulContent treats non-text parts as meaningful", () => {
+  assert.equal(
+    composerDraftHasMeaningfulContent({
+      ...draft(""),
+      parts: [{ type: "file", path: "/tmp/brief.md", label: "brief.md" }],
     }),
     true,
   );
@@ -81,5 +98,12 @@ test("draftPreviewText compacts whitespace and falls back to the first attachmen
       attachments: [fileAttachment("brief.pdf")],
     }),
     "brief.pdf",
+  );
+  assert.equal(
+    draftPreviewText({
+      ...draft(""),
+      parts: [{ type: "agent", name: "builder" }],
+    }),
+    "Příloha nebo odkaz",
   );
 });
