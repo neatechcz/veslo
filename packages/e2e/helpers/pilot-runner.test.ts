@@ -9,6 +9,7 @@ import {
   resolvePilotBinary,
   resolvePilotScenarioSelection,
   scenarioSelectionNeedsSkillEnableInventoryFixture,
+  scenarioSelectionNeedsManagedAiGatewayFixture,
   scenarioSelectionNeedsSkillRegistryAuthFixture,
   scenarioSelectionNeedsAutomationSecondaryWorkspace,
 } from './pilot-runner.js';
@@ -90,6 +91,21 @@ test('skills enabled-state pilot scenario requests the skill inventory fixture',
   );
   assert.equal(
     scenarioSelectionNeedsSkillEnableInventoryFixture(resolvePilotScenarioSelection({ scenario: ['navigation'] }, e2eRoot)),
+    false,
+  );
+});
+
+test('message send degraded registry pilot scenario requests the managed AI fixture', () => {
+  const e2eRoot = '/repo/packages/e2e';
+
+  assert.equal(
+    scenarioSelectionNeedsManagedAiGatewayFixture(
+      resolvePilotScenarioSelection({ scenario: ['message-send-registry-degraded'] }, e2eRoot),
+    ),
+    true,
+  );
+  assert.equal(
+    scenarioSelectionNeedsManagedAiGatewayFixture(resolvePilotScenarioSelection({ scenario: ['smoke'] }, e2eRoot)),
     false,
   );
 });

@@ -423,7 +423,11 @@ document.body.append(completeMarker);
     } catch (error) {
       const errorMarker = document.createElement("pre");
       errorMarker.dataset.testid = "automation-pilot-error";
-      errorMarker.textContent = error?.stack || error?.message || String(error);
+      errorMarker.textContent = JSON.stringify({
+        message: error?.message || String(error),
+        stack: error?.stack || null,
+        body: document.body.innerText.replace(/\s+/g, " ").trim().slice(0, 3000),
+      }, null, 2);
       document.body.append(errorMarker);
     }
   })();
@@ -444,7 +448,10 @@ action = "eval"
 script = '''
 const error = document.querySelector('[data-testid="automation-pilot-error"]');
 if (error) {
-  throw new Error(error.textContent || "Automation pilot task failed");
+  const detail = (error.textContent || "No error details were captured.")
+    .replace(/[\u0080-\uffff]/g, "?")
+    .slice(0, 4000);
+  throw new Error(`Automation pilot task failed: ${detail}`);
 }
 true;
 '''

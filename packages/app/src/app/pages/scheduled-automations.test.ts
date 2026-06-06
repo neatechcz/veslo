@@ -105,6 +105,15 @@ test("App refreshes automations for all mapped workspaces", () => {
   assert.doesNotMatch(source, /const automationClient = resolveVesloAutomations\(\);[\s\S]*listAutomations\(automationClient\.workspaceId\)/);
 });
 
+test("App only treats remote automation workspace ids as ready when the connected server lists them", () => {
+  const source = appSource();
+
+  assert.match(source, /const listedServerWorkspaceIds = new Set\(items\.map\(\(item\) => item\.id\)\)/);
+  assert.match(source, /listedServerWorkspaceIds\.has\(storedServerWorkspaceId\)/);
+  assert.match(source, /findServerWorkspaceByDirectory\(items, workspace\.directory \?\? workspace\.path \?\? ""\)/);
+  assert.doesNotMatch(source, /serverWorkspaceId =\s*\n\s*workspace\.vesloWorkspaceId\?\.trim\(\)/);
+});
+
 test("ScheduledTasksView builds server-compatible weekly schedules without raw scheduler UI", () => {
   const source = scheduledSource();
   const helperSource = scheduleHelperSource();

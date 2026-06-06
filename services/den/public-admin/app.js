@@ -398,6 +398,15 @@ function applyAdminCapabilities() {
       els.userPlatformAdmin.checked = false;
     }
   }
+  if (els.userName) {
+    els.userName.disabled = !canManagePlatform;
+  }
+  if (els.userDisableButton) {
+    els.userDisableButton.classList.toggle("hidden", !canManagePlatform);
+  }
+  if (els.userDeleteButton) {
+    els.userDeleteButton.classList.toggle("hidden", !canManagePlatform);
+  }
   if (els.organizationSeatLimit) {
     els.organizationSeatLimit.disabled = !canManagePlatform;
   }
@@ -674,6 +683,8 @@ async function bootstrapSession() {
   populateOrganizationOptions();
   if (!canAccessPage(state.page)) {
     setActivePage(firstAllowedPage());
+  } else {
+    setActivePage(state.page);
   }
   setStatus(
     "Signed in",
@@ -1391,6 +1402,7 @@ function renderAlerts() {
     els.alertDetail.innerHTML = `
       <p class="eyebrow">Runbook</p>
       <h3>${escapeHtml(selected.title)}</h3>
+      <p class="editor-note">${escapeHtml(selected.runbook || "No runbook provided.")}</p>
       <div class="stack">
         <div class="detail-line"><span>Affected credential</span><strong>${escapeHtml(credential?.name || "Unassigned")}</strong></div>
         <div class="detail-line"><span>Affected routes</span><strong>${escapeHtml(String(selected.affectedSessions))}</strong></div>
@@ -1521,6 +1533,7 @@ function populateUserEditor(user) {
   els.userEditorStatus.textContent = isCreate ? "Create user" : userStatus(user);
   els.userEditorTitle.textContent = isCreate ? "New user" : (user?.name || user?.email || "User");
   els.userName.value = user?.name || "";
+  els.userName.disabled = state.session?.platformAdmin !== true;
   els.userEmail.value = user?.email || "";
   els.userEmail.disabled = !isCreate;
   els.userOrg.disabled = false;

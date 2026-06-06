@@ -7144,6 +7144,24 @@ export default function App() {
     workspace.path?.trim() ||
     workspace.id;
 
+  const serverWorkspaceDirectoryCandidates = (
+    workspace: { path?: string | null; directory?: string | null; opencode?: { directory?: string | null } | null },
+  ) =>
+    [
+      normalizeDirectoryPath(workspace.path ?? ""),
+      normalizeDirectoryPath(workspace.directory ?? ""),
+      normalizeDirectoryPath(workspace.opencode?.directory ?? ""),
+    ].filter(Boolean);
+
+  const findServerWorkspaceByDirectory = (
+    workspaces: Array<{ id: string; path?: string | null; directory?: string | null; opencode?: { directory?: string | null } | null }>,
+    directory: string | null | undefined,
+  ) => {
+    const key = normalizeDirectoryPath(directory ?? "");
+    if (!key) return null;
+    return workspaces.find((entry) => serverWorkspaceDirectoryCandidates(entry).includes(key)) ?? null;
+  };
+
   const resolveAutomationWorkspaceMap = async (): Promise<AutomationWorkspaceSummary[]> => {
     const client = vesloServerClient();
     const appWorkspaces = workspaceStore.workspaces();
@@ -7165,9 +7183,11 @@ export default function App() {
 
     const idByLocalPath = new Map<string, string>();
     for (const item of items) {
-      const path = normalizeDirectoryPath(item.path ?? "");
-      if (path) idByLocalPath.set(path, item.id);
+      for (const path of serverWorkspaceDirectoryCandidates(item)) {
+        idByLocalPath.set(path, item.id);
+      }
     }
+    const listedServerWorkspaceIds = new Set(items.map((item) => item.id));
 
     return appWorkspaces.map((workspace) => {
       let serverWorkspaceId: string | null = null;
@@ -7176,20 +7196,19 @@ export default function App() {
         const key = normalizeDirectoryPath(workspace.path ?? "");
         serverWorkspaceId = key ? idByLocalPath.get(key) ?? null : null;
       } else if (workspace.remoteType === "veslo") {
-        serverWorkspaceId =
+        const storedServerWorkspaceId =
           workspace.vesloWorkspaceId?.trim() ||
           parseVesloWorkspaceIdFromUrl(workspace.vesloHostUrl ?? "") ||
           parseVesloWorkspaceIdFromUrl(workspace.baseUrl ?? "") ||
           null;
 
+        serverWorkspaceId =
+          storedServerWorkspaceId && listedServerWorkspaceIds.has(storedServerWorkspaceId)
+            ? storedServerWorkspaceId
+            : null;
+
         if (!serverWorkspaceId) {
-          const directoryHint = normalizeDirectoryPath(workspace.directory ?? workspace.path ?? "");
-          const match = items.find((entry) => {
-            const entryPath = normalizeDirectoryPath(
-              (entry.opencode?.directory ?? entry.directory ?? entry.path ?? "") as string,
-            );
-            return Boolean(entryPath && directoryHint && entryPath === directoryHint);
-          });
+          const match = findServerWorkspaceByDirectory(items, workspace.directory ?? workspace.path ?? "");
           serverWorkspaceId = match?.id ?? null;
         }
       }

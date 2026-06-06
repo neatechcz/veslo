@@ -49,6 +49,7 @@ a {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
   min-height: 100vh;
+  min-width: 0;
 }
 
 .sidebar {
@@ -198,6 +199,15 @@ a {
 .content {
   padding: 28px;
   overflow: auto;
+  min-width: 0;
+}
+
+.app-grid,
+.panel,
+.page,
+.hero-panel {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .topbar {
@@ -606,6 +616,15 @@ td span,
   justify-content: space-between;
   gap: 12px;
   align-items: center;
+  min-width: 0;
+}
+
+.list-card > *,
+.metric-card,
+.chart-card,
+.detail-card,
+.toolbar > * {
+  min-width: 0;
 }
 
 .list-card.active,
@@ -699,6 +718,20 @@ td span,
   pointer-events: none;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 24%);
   mask: linear-gradient(180deg, rgba(0, 0, 0, 0.4), transparent);
+}
+
+@media (max-width: 1400px) {
+  .usage-grid {
+    grid-template-columns: minmax(0, 1.5fr) minmax(180px, 1fr);
+  }
+
+  .chart-card {
+    grid-column: 1 / -1;
+  }
+
+  .hero-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 1180px) {
