@@ -16,7 +16,7 @@ const organizations: OrganizationAccessSummary[] = [
     slug: "alpha",
     ownerUserId: "user-owner",
     membershipId: "membership-alpha",
-    role: "owner",
+    role: "organization_admin",
   },
   {
     id: "org-beta",
@@ -67,14 +67,15 @@ test("pickActiveOrganization rejects organizations the user does not belong to",
   })
 })
 
-test("hasRequiredOrgRole enforces owner-only operations", () => {
-  assert.equal(hasRequiredOrgRole("owner", "owner"), true)
-  assert.equal(hasRequiredOrgRole("owner", "member"), true)
+test("hasRequiredOrgRole enforces organization admin operations", () => {
+  assert.equal(hasRequiredOrgRole("organization_admin", "organization_admin"), true)
+  assert.equal(hasRequiredOrgRole("organization_admin", "member"), true)
+  assert.equal(hasRequiredOrgRole("owner", "organization_admin"), true)
   assert.equal(hasRequiredOrgRole("member", "member"), true)
-  assert.equal(hasRequiredOrgRole("member", "owner"), false)
+  assert.equal(hasRequiredOrgRole("member", "organization_admin"), false)
 })
 
-test("canDeleteWorker allows creator, owner, and platform admin", () => {
+test("canDeleteWorker allows creator, organization admin, and platform admin", () => {
   assert.equal(canDeleteWorker({
     actorUserId: "user-member",
     actorRole: "member",
@@ -84,7 +85,7 @@ test("canDeleteWorker allows creator, owner, and platform admin", () => {
 
   assert.equal(canDeleteWorker({
     actorUserId: "user-owner",
-    actorRole: "owner",
+    actorRole: "organization_admin",
     createdByUserId: "someone-else",
     isPlatformAdmin: false,
   }), true)
@@ -114,7 +115,7 @@ test("canRevealWorkerHostToken follows privileged access rules", () => {
 
   assert.equal(canRevealWorkerHostToken({
     actorUserId: "user-owner",
-    actorRole: "owner",
+    actorRole: "organization_admin",
     createdByUserId: "someone-else",
     isPlatformAdmin: false,
   }), true)
@@ -134,22 +135,22 @@ test("canRevealWorkerHostToken follows privileged access rules", () => {
   }), false)
 })
 
-test("wouldLeaveOrganizationWithoutOwner protects the final owner", () => {
+test("wouldLeaveOrganizationWithoutOwner allows removing organization admins", () => {
   assert.equal(wouldLeaveOrganizationWithoutOwner({
     ownerCount: 1,
-    targetRole: "owner",
+    targetRole: "organization_admin",
     nextRole: null,
-  }), true)
+  }), false)
 
   assert.equal(wouldLeaveOrganizationWithoutOwner({
     ownerCount: 1,
-    targetRole: "owner",
+    targetRole: "organization_admin",
     nextRole: "member",
-  }), true)
+  }), false)
 
   assert.equal(wouldLeaveOrganizationWithoutOwner({
     ownerCount: 2,
-    targetRole: "owner",
+    targetRole: "organization_admin",
     nextRole: "member",
   }), false)
 

@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm"
 import { db } from "../db/index.js"
 import { OrgMembershipTable, OrgRole, OrgTable, PlatformRoleTable } from "../db/schema.js"
 import { ensureDefaultOrg } from "../orgs.js"
-import { hasRequiredOrgRole, pickActiveOrganization, type OrganizationAccessSummary } from "./access.js"
+import { hasRequiredOrgRole, pickActiveOrganization, toCurrentOrgRole, type OrganizationAccessSummary } from "./access.js"
 import { requireSession, type SessionContext } from "./session.js"
 
 export const ORG_HEADER_NAME = "x-veslo-org-id"
@@ -159,7 +159,7 @@ export async function requireOrganizationAccess(
       session,
       organization,
       membershipId: membership?.membershipId ?? null,
-      orgRole: membership?.role ?? null,
+      orgRole: membership ? toCurrentOrgRole(membership.role) : null,
       isPlatformAdmin: platformAdmin,
     }
   }
@@ -187,7 +187,7 @@ export async function requireOrganizationAccess(
       ownerUserId: picked.organization.ownerUserId,
     },
     membershipId: picked.organization.membershipId,
-    orgRole: picked.organization.role,
+    orgRole: toCurrentOrgRole(picked.organization.role),
     isPlatformAdmin: platformAdmin,
   }
 }
@@ -198,6 +198,6 @@ export function serializeOrganization(entry: OrganizationSummary) {
     name: entry.name,
     slug: entry.slug,
     ownerUserId: entry.ownerUserId,
-    role: entry.role,
+    role: toCurrentOrgRole(entry.role),
   }
 }

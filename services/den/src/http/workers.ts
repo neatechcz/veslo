@@ -10,7 +10,7 @@ import { env } from "../env.js"
 import { requireVerifiedEmail } from "./email-verification.js"
 import { decryptWorkerToken, encryptWorkerToken } from "../security/token-crypto.js"
 import { asyncRoute, isTransientDbConnectionError } from "./errors.js"
-import { canDeleteWorker, canRevealWorkerHostToken } from "./access.js"
+import { canDeleteWorker, canRevealWorkerHostToken, isOrganizationAdminRole } from "./access.js"
 import { requireOrganizationAccess } from "./org-auth.js"
 import { requireSession } from "./session.js"
 import { deprovisionWorker, provisionWorker } from "../workers/provisioner.js"
@@ -627,7 +627,7 @@ workersRouter.delete("/:id", asyncRoute(async (req, res) => {
     workerId: worker.id,
     payload: {
       deletedByUserId: context.session.user.id,
-      via: context.isPlatformAdmin && context.orgRole !== "owner" ? "platform_admin" : context.orgRole ?? "member",
+      via: context.isPlatformAdmin && !isOrganizationAdminRole(context.orgRole) ? "platform_admin" : context.orgRole ?? "member",
     },
   })
 

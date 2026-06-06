@@ -21,6 +21,7 @@ import {
   WorkerTable,
 } from "../db/schema.js"
 import { env } from "../env.js"
+import { toCurrentOrgRole } from "./access.js"
 import { resolveMembershipOrganizations, isPlatformAdmin } from "./org-auth.js"
 import { requireSession } from "./session.js"
 import { createAdminRouter, type AdminRouteDeps, type AdminSessionSnapshot, type AdminUserMembership, type AdminUserRecord } from "./admin.js"
@@ -71,7 +72,7 @@ export async function requirePlatformAdminSnapshot(req: express.Request, res: ex
       name: entry.name,
       slug: entry.slug,
       ownerUserId: entry.ownerUserId,
-      role: entry.role,
+      role: toCurrentOrgRole(entry.role),
     })),
   }
 }
@@ -216,7 +217,10 @@ const createUserSchema = {
     return typeof input === "string" && input.trim() ? input.trim() : null
   },
   orgRole(input: unknown) {
-    return input === "owner" || input === "member" ? input : "member"
+    if (input === "organization_admin" || input === "owner") {
+      return "organization_admin"
+    }
+    return input === "member" ? input : "member"
   },
 }
 
