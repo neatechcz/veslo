@@ -192,6 +192,7 @@ export type DashboardViewProps = {
   stopSandbox: (workspaceId: string) => void;
   automationItems: WorkspaceAutomationItem[];
   automationWorkspaces: AutomationWorkspaceSummary[];
+  defaultAutomationWorkspaceId: string | null;
   scheduledJobsSource: "local" | "remote";
   scheduledJobsSourceReady: boolean;
   scheduledJobsStatus: string | null;
@@ -1606,6 +1607,7 @@ export default function DashboardView(props: DashboardViewProps) {
               <ScheduledTasksView
                 automationItems={props.automationItems}
                 automationWorkspaces={props.automationWorkspaces}
+                defaultAutomationWorkspaceId={props.defaultAutomationWorkspaceId}
                 source={props.scheduledJobsSource}
                 sourceReady={props.scheduledJobsSourceReady}
                 status={props.scheduledJobsStatus}

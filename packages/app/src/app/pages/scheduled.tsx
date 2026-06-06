@@ -39,6 +39,7 @@ import {
 export type ScheduledTasksViewProps = {
   automationItems: WorkspaceAutomationItem[];
   automationWorkspaces: AutomationWorkspaceSummary[];
+  defaultAutomationWorkspaceId: string | null;
   source: "local" | "remote";
   sourceReady: boolean;
   status: string | null;
@@ -384,7 +385,10 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
 
   const automationDisabled = createMemo(() => props.newTaskDisabled || !props.sourceReady || props.busy);
   const readyWorkspaces = createMemo(() => props.automationWorkspaces.filter((workspace) => workspace.status === "ready" && workspace.serverWorkspaceId));
-  const defaultWorkspaceId = createMemo(() => readyWorkspaces()[0]?.serverWorkspaceId ?? "");
+  const defaultWorkspaceId = createMemo(() => {
+    const preferredWorkspace = readyWorkspaces().find((workspace) => workspace.serverWorkspaceId === props.defaultAutomationWorkspaceId);
+    return preferredWorkspace?.serverWorkspaceId ?? readyWorkspaces()[0]?.serverWorkspaceId ?? "";
+  });
   const serverUnavailable = createMemo(() => !props.sourceReady);
   const sourceDescription = createMemo(() =>
     props.sourceReady

@@ -64,6 +64,20 @@ test("ScheduledTasksView provides app-style workspace filtering and cards", () =
   assert.doesNotMatch(source, /<table|<thead|<tbody/);
 });
 
+test("ScheduledTasksView defaults new automations to the active ready workspace when available", () => {
+  const source = scheduledSource();
+  const app = appSource();
+
+  assert.match(source, /defaultAutomationWorkspaceId:\s*string\s*\|\s*null/);
+  assert.match(source, /props\.defaultAutomationWorkspaceId/);
+  assert.match(source, /readyWorkspaces\(\)\.find\(\(workspace\) => workspace\.serverWorkspaceId === props\.defaultAutomationWorkspaceId\)/);
+  assert.match(source, /readyWorkspaces\(\)\[0\]\?\.serverWorkspaceId/);
+  assert.match(app, /activeAutomationWorkspace/);
+  assert.match(app, /activeWorkspaceId = workspaceStore\.activeWorkspaceId\(\)\.trim\(\)/);
+  assert.match(app, /workspace\.appWorkspaceId === activeWorkspaceId/);
+  assert.match(app, /defaultAutomationWorkspaceId:\s*activeAutomationWorkspace\(\)\?\.serverWorkspaceId \?\? null/);
+});
+
 test("App refreshes automations for all mapped workspaces", () => {
   const source = appSource();
 
