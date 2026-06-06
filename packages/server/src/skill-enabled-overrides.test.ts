@@ -202,6 +202,35 @@ test("disabled records do not expose actor token hashes", async () => {
   expect(persisted).not.toContain("secret-token-hash");
 });
 
+test("long remote actor client ids do not invalidate persisted disabled records", async () => {
+  const dataDir = await tempDir();
+  const longClientId = "client_" + "x".repeat(300);
+
+  await setSkillEnabledState({
+    dataDir,
+    target: {
+      name: "research-helper",
+      scope: "workspace",
+      workspaceId: "ws_1",
+      path: "/workspace/.opencode/skills/research-helper/SKILL.md",
+    },
+    enabled: false,
+    actor: { type: "remote", tokenHash: "secret-token-hash", scope: "owner", clientId: longClientId },
+  });
+
+  const records = await listDisabledSkills({ dataDir, workspaceId: "ws_1" });
+  const persisted = await readFile(join(dataDir, "skill-enabled-overrides.json"), "utf8");
+
+  expect(records).toHaveLength(1);
+  expect(records[0]?.name).toBe("research-helper");
+  expect(records[0]?.disabledBy?.length ?? 0).toBeLessThanOrEqual(256);
+  expect(persisted).not.toContain(longClientId);
+  expect(JSON.stringify(records)).not.toContain("tokenHash");
+  expect(JSON.stringify(records)).not.toContain("secret-token-hash");
+  expect(persisted).not.toContain("tokenHash");
+  expect(persisted).not.toContain("secret-token-hash");
+});
+
 test("setSkillEnabledState rejects relative skill paths", async () => {
   const dataDir = await tempDir();
 

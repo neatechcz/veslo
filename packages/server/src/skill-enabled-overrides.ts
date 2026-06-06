@@ -33,6 +33,7 @@ const STORE_FILE = "skill-enabled-overrides.json";
 const SCOPES = new Set<SkillEnabledScope>(["workspace", "user-global", "organization", "platform"]);
 const REGISTRY_SOURCES = new Set(["personal", "workspace", "organization", "platform"]);
 const TOKEN_SCOPES = new Set<TokenScope>(["owner", "collaborator", "viewer"]);
+const DISABLED_BY_MAX_LENGTH = 256;
 const mutationQueues = new Map<string, Promise<void>>();
 
 export async function listDisabledSkills(input: {
@@ -284,23 +285,33 @@ function normalizeActorIdentity(actor: unknown): string {
     throw new ApiError(400, "invalid_payload", "actor is invalid");
   }
 
-  const clientId = normalizeOptionalString(actor.clientId, "actor.clientId");
+  const clientId = normalizeOptionalString(actor.clientId, "actor.clientId", 4096);
   const scope = normalizeOptionalString(actor.scope, "actor.scope") as TokenScope | undefined;
   if (scope && !TOKEN_SCOPES.has(scope)) {
     throw new ApiError(400, "invalid_payload", "actor.scope is invalid");
   }
 
   if (actor.type === "host") return "host";
-  return ["remote", clientId ? `client:${clientId}` : undefined, scope ? `scope:${scope}` : undefined]
+  return ["remote", clientId ? `client:${hashIdentity(clientId)}` : undefined, scope ? `scope:${scope}` : undefined]
     .filter(Boolean)
     .join(":");
 }
 
 function normalizeStoredDisabledBy(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined;
-  if (typeof value === "string") return normalizeOptionalString(value, "disabledBy", 256);
+  if (typeof value === "string") return normalizeStoredIdentityString(value);
   if (isRecord(value)) return normalizeActorIdentity(value);
   return undefined;
+}
+
+function hashIdentity(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 16);
+}
+
+function normalizeStoredIdentityString(value: string): string | undefined {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.includes("\0")) return undefined;
+  return trimmed.length > DISABLED_BY_MAX_LENGTH ? trimmed.slice(0, DISABLED_BY_MAX_LENGTH) : trimmed;
 }
 
 function normalizeOptionalString(value: unknown, field: string, maxLength = 2048): string | undefined {
