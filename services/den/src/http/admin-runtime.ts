@@ -115,6 +115,41 @@ function readOrgRole(value: unknown): (typeof OrgRole)[number] | null {
   return value === "member" ? "member" : null
 }
 
+export function canAdminUpdateOrganizationSeatLimitPayload(
+  input: Pick<AdminSessionSnapshot, "platformAdmin">,
+  body: unknown,
+) {
+  if (!hasOwnProperty(body, "seatLimit")) {
+    return true
+  }
+  return canAdminEditOrganizationSeatLimit(input)
+}
+
+export type AdminUserUpdatePayloadScopeResult =
+  | { ok: true; role?: (typeof OrgRole)[number] }
+  | { ok: false; status: 400 | 403; error: "invalid_role" | "platform_admin_required" }
+
+export function evaluateAdminUserUpdatePayloadScope(
+  snapshot: Pick<AdminSessionSnapshot, "platformAdmin">,
+  body: unknown,
+): AdminUserUpdatePayloadScopeResult {
+  if (snapshot.platformAdmin) {
+    return { ok: true }
+  }
+
+  if (hasOwnProperty(body, "name") || hasOwnProperty(body, "platformAdmin")) {
+    return { ok: false, status: 403, error: "platform_admin_required" }
+  }
+
+  const source = isRecord(body) ? body : {}
+  const role = readOrgRole(source.orgRole ?? source.role)
+  if (!role) {
+    return { ok: false, status: 400, error: "invalid_role" }
+  }
+
+  return { ok: true, role }
+}
+
 function readSeatLimit(value: unknown): number | null | "invalid" {
   if (value === null || value === undefined || value === "") {
     return null
@@ -741,7 +776,7 @@ async function updateAdminOrganization(req: express.Request, res: express.Respon
   }
 
   if (hasOwnProperty(req.body, "seatLimit")) {
-    if (!canAdminEditOrganizationSeatLimit(context.snapshot)) {
+    if (!canAdminUpdateOrganizationSeatLimitPayload(context.snapshot, req.body)) {
       res.status(403).json({ error: "seat_limit_platform_admin_required" })
       return null
     }
@@ -1378,12 +1413,12 @@ async function updateAdminUser(req: express.Request, res: express.Response) {
   }
 
   if (!snapshot.platformAdmin) {
-    if (hasOwnProperty(req.body, "name") || hasOwnProperty(req.body, "platformAdmin")) {
-      res.status(403).json({ error: "platform_admin_required" })
+    const payloadScope = evaluateAdminUserUpdatePayloadScope(snapshot, req.body)
+    if (!payloadScope.ok) {
+      res.status(payloadScope.status).json({ error: payloadScope.error })
       return null
     }
-
-    const role = readOrgRole((req.body ?? {}).orgRole ?? (req.body ?? {}).role)
+    const role = "role" in payloadScope ? payloadScope.role : null
     if (!role) {
       res.status(400).json({ error: "invalid_role" })
       return null

@@ -4,6 +4,8 @@ import type { AddressInfo } from "node:net"
 import test from "node:test"
 import express from "express"
 
+import { errorMiddleware } from "../src/http/errors.js"
+
 Object.assign(process.env, {
   DATABASE_URL: "mysql://root:root@127.0.0.1:3306/veslo_den",
   BETTER_AUTH_SECRET: "12345678901234567890123456789012",
@@ -44,6 +46,93 @@ function createCredentialRecord() {
     linkedAlertIds: [],
   }
 }
+
+async function listen(app: express.Express) {
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+  const { port } = server.address() as AddressInfo
+  return {
+    server,
+    baseUrl: `http://127.0.0.1:${port}`,
+  }
+}
+
+test("OpenAI OAuth UI routes forward thrown session failures to error middleware", async () => {
+  const unhandledRejections: unknown[] = []
+  const onUnhandledRejection = (error: unknown) => {
+    unhandledRejections.push(error)
+  }
+  process.on("unhandledRejection", onUnhandledRejection)
+
+  try {
+    for (const routePath of [
+      "/admin/api/credentials/openai/oauth/start",
+      "/admin/api/credentials/openai/oauth/exchange",
+    ]) {
+      const app = express()
+      app.use(express.json())
+      app.use(
+        createManagedAiAdminUiRouter({
+          async getAdminSession() {
+            throw new Error("session lookup failed")
+          },
+          openAiOAuth: {
+            async startAuthorization() {
+              throw new Error("unused")
+            },
+            async exchangeCode() {
+              throw new Error("unused")
+            },
+            async refreshToken() {
+              throw new Error("unused")
+            },
+          },
+          alerts: {
+            async listAlerts() {
+              return []
+            },
+          },
+          audit: {
+            async recordEvent() {
+              return
+            },
+          },
+          credentials: {
+            async listAdminCredentials() {
+              return []
+            },
+          } as any,
+          secrets: {} as any,
+        }),
+      )
+      app.use(errorMiddleware)
+
+      const { server, baseUrl } = await listen(app)
+      try {
+        const signal = AbortSignal.timeout(250)
+        const response = await fetch(`${baseUrl}${routePath}`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ code: "openai_code_123", state: "signed_state" }),
+          signal,
+        }).catch((error: unknown) => error)
+
+        assert.ok(response instanceof Response, `expected error middleware response for ${routePath}`)
+        assert.equal(response.status, 500)
+        assert.deepEqual(await response.json(), { error: "internal_error" })
+      } finally {
+        server.close()
+        await once(server, "close")
+      }
+    }
+
+    assert.deepEqual(unhandledRejections, [])
+  } finally {
+    process.off("unhandledRejection", onUnhandledRejection)
+  }
+})
 
 test("POST /admin/api/credentials/openai/oauth/start returns an authorize url with a server-signed state", async () => {
   const calls: Array<{ state: string }> = []

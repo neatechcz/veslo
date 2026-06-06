@@ -4,6 +4,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import express from "express"
 
+import { asyncRoute } from "../../http/errors.js"
 import type {
   AdminAlertRecord,
   AdminAuditRecord,
@@ -783,7 +784,7 @@ export function createManagedAiAdminUiRouter(deps: ManagedAiAdminUiOptions) {
   const publicDir = path.resolve(path.dirname(currentFile), "../../../public-admin")
   const indexPath = path.join(publicDir, "index.html")
 
-  router.post("/admin/api/credentials/openai/oauth/start", async (req, res) => {
+  router.post("/admin/api/credentials/openai/oauth/start", asyncRoute(async (req, res) => {
     const session = await deps.getAdminSession(req, res)
     if (!session) {
       return
@@ -799,9 +800,9 @@ export function createManagedAiAdminUiRouter(deps: ManagedAiAdminUiOptions) {
     } catch (error) {
       handleRouteError(res, error, "openai_oauth_start_failed")
     }
-  })
+  }))
 
-  router.post("/admin/api/credentials/openai/oauth/exchange", async (req, res) => {
+  router.post("/admin/api/credentials/openai/oauth/exchange", asyncRoute(async (req, res) => {
     const session = await deps.getAdminSession(req, res)
     if (!session) {
       return
@@ -860,7 +861,7 @@ export function createManagedAiAdminUiRouter(deps: ManagedAiAdminUiOptions) {
     } catch (error) {
       handleRouteError(res, error, "openai_oauth_exchange_failed")
     }
-  })
+  }))
 
   router.use("/admin", express.static(publicDir, { index: false }))
 

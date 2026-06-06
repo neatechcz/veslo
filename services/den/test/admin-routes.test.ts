@@ -6,6 +6,7 @@ import express from "express"
 
 import { createAdminRouter } from "../src/http/admin.js"
 import { errorMiddleware } from "../src/http/errors.js"
+import { createManagedAiAdminRouteDeps } from "../src/managed-ai/http/admin.js"
 
 function buildSession() {
   return {
@@ -182,6 +183,19 @@ test("admin router exposes organization, member, domain, and invite endpoints", 
           }],
         }
       },
+      async createOrganizationMember(req) {
+        calls.push(`createMember:${req.params.orgId}:${req.body.email}:${req.body.role}`)
+        return {
+          member: {
+            membershipId: "membership_2",
+            userId: "user_member_2",
+            name: "Created Member",
+            email: req.body.email,
+            role: req.body.role ?? "member",
+            createdAt: "2026-06-06T08:05:00.000Z",
+          },
+        }
+      },
       async updateOrganizationMember(req) {
         calls.push(`updateMember:${req.params.orgId}:${req.params.memberId}:${req.body.role}`)
         return {
@@ -331,6 +345,23 @@ test("admin router exposes organization, member, domain, and invite endpoints", 
     assert.equal(membersResponse.status, 200)
     assert.equal((await membersResponse.json()).members[0].membershipId, "membership_1")
 
+    const memberCreateResponse = await fetch(`${baseUrl}/organizations/org_1/members`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "created@example.com", role: "member" }),
+    })
+    assert.equal(memberCreateResponse.status, 201)
+    assert.deepEqual(await memberCreateResponse.json(), {
+      member: {
+        membershipId: "membership_2",
+        userId: "user_member_2",
+        name: "Created Member",
+        email: "created@example.com",
+        role: "member",
+        createdAt: "2026-06-06T08:05:00.000Z",
+      },
+    })
+
     const memberPatchResponse = await fetch(`${baseUrl}/organizations/org_1/members/membership_1`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -411,6 +442,7 @@ test("admin router exposes organization, member, domain, and invite endpoints", 
       "getOrganization:org_1",
       "updateOrganization:org_1:25",
       "listMembers:org_1",
+      "createMember:org_1:created@example.com:member",
       "updateMember:org_1:membership_1:organization_admin",
       "deleteMember:org_1:membership_1",
       "listDomains:org_1",
@@ -421,6 +453,73 @@ test("admin router exposes organization, member, domain, and invite endpoints", 
       "createInvite:org_1:invited@example.com",
       "revokeInvite:org_1:invite_1",
     ])
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("managed AI admin routes stop when the platform-only session gate rejects the request", async () => {
+  const calls: string[] = []
+  const app = express()
+  app.use(express.json())
+  app.use(
+    "/admin/api",
+    createAdminRouter({
+      async getSessionSnapshot() {
+        return {
+          ...buildSession(),
+          platformAdmin: false,
+          organizations: [{
+            id: "org_1",
+            name: "Personal",
+            slug: "personal",
+            ownerUserId: "user_admin_1",
+            role: "organization_admin" as const,
+          }],
+        }
+      },
+      ...createManagedAiAdminRouteDeps({
+        async getAdminSession(_req, res) {
+          calls.push("getAdminSession")
+          res.status(403).json({ error: "forbidden" })
+          return null
+        },
+        aiAccess: {} as any,
+        alerts: {
+          async listAlerts() {
+            calls.push("listAlerts")
+            return []
+          },
+        },
+        audit: {
+          async recordEvent() {
+            return
+          },
+          async listEvents() {
+            return []
+          },
+        },
+        credentials: {
+          async listAdminCredentials() {
+            calls.push("listCredentials")
+            return []
+          },
+        } as any,
+        leases: {} as any,
+        secrets: {} as any,
+        usage: {} as any,
+      }),
+    }),
+  )
+
+  const { server, baseUrl } = await listen(app)
+  try {
+    const response = await fetch(`${baseUrl}/admin/api/credentials`)
+
+    assert.equal(response.status, 403)
+    assert.deepEqual(await response.json(), { error: "forbidden" })
+    assert.deepEqual(calls, ["getAdminSession"])
   } finally {
     server.close()
     await once(server, "close")

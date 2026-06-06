@@ -39,6 +39,20 @@ test("only platform admins can edit organization seat limits", () => {
   assert.equal(adminRuntime.canAdminEditOrganizationSeatLimit({ platformAdmin: false }), false)
 })
 
+test("organization admin seat limit update payloads require platform admin scope", () => {
+  assert.equal(typeof adminRuntime.canAdminUpdateOrganizationSeatLimitPayload, "function")
+  const canAdminUpdateOrganizationSeatLimitPayload =
+    adminRuntime.canAdminUpdateOrganizationSeatLimitPayload as (
+      snapshot: { platformAdmin: boolean },
+      body: unknown,
+    ) => boolean
+
+  assert.equal(canAdminUpdateOrganizationSeatLimitPayload({ platformAdmin: true }, { seatLimit: 25 }), true)
+  assert.equal(canAdminUpdateOrganizationSeatLimitPayload({ platformAdmin: false }, { seatLimit: 25 }), false)
+  assert.equal(canAdminUpdateOrganizationSeatLimitPayload({ platformAdmin: false }, { seatLimit: null }), false)
+  assert.equal(canAdminUpdateOrganizationSeatLimitPayload({ platformAdmin: false }, { name: "Personal" }), true)
+})
+
 test("admin runtime organization access helper distinguishes platform, org admin, and member scope", () => {
   assert.equal(typeof adminRuntime.canAdminAccessOrganization, "function")
   const canAdminAccessOrganization = adminRuntime.canAdminAccessOrganization as (snapshot: {
@@ -62,6 +76,48 @@ test("admin runtime organization access helper distinguishes platform, org admin
     platformAdmin: false,
     organizations: [{ id: "org_own", role: "member" }],
   }, "org_own"), false)
+  assert.equal(canAdminAccessOrganization({
+    platformAdmin: false,
+    organizations: [{ id: "org_own", role: "owner" }],
+  }, "org_own"), true)
+  assert.equal(canAdminAccessOrganization({
+    platformAdmin: false,
+    organizations: [{ id: "org_own", role: "organization_admin" }],
+  }, null), false)
+})
+
+test("organization admin user update payloads are limited to scoped membership role changes", () => {
+  assert.equal(typeof adminRuntime.evaluateAdminUserUpdatePayloadScope, "function")
+  const evaluateAdminUserUpdatePayloadScope =
+    adminRuntime.evaluateAdminUserUpdatePayloadScope as (
+      snapshot: { platformAdmin: boolean },
+      body: unknown,
+    ) => { ok: true; role?: "member" | "organization_admin" } | { ok: false; status: number; error: string }
+
+  assert.deepEqual(evaluateAdminUserUpdatePayloadScope(
+    { platformAdmin: false },
+    { orgId: "org_own", role: "organization_admin" },
+  ), { ok: true, role: "organization_admin" })
+  assert.deepEqual(evaluateAdminUserUpdatePayloadScope(
+    { platformAdmin: false },
+    { orgId: "org_own", orgRole: "member" },
+  ), { ok: true, role: "member" })
+  assert.deepEqual(evaluateAdminUserUpdatePayloadScope(
+    { platformAdmin: false },
+    { orgId: "org_own", role: "member", platformAdmin: true },
+  ), { ok: false, status: 403, error: "platform_admin_required" })
+  assert.deepEqual(evaluateAdminUserUpdatePayloadScope(
+    { platformAdmin: false },
+    { orgId: "org_own", role: "member", name: "Renamed User" },
+  ), { ok: false, status: 403, error: "platform_admin_required" })
+  assert.deepEqual(evaluateAdminUserUpdatePayloadScope(
+    { platformAdmin: false },
+    { orgId: "org_own" },
+  ), { ok: false, status: 400, error: "invalid_role" })
+  assert.deepEqual(evaluateAdminUserUpdatePayloadScope(
+    { platformAdmin: true },
+    { platformAdmin: true, name: "Platform User" },
+  ), { ok: true })
 })
 
 test("admin invite creation stores only a derived token hash while returning the raw token once", async () => {
