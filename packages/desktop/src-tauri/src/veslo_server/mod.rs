@@ -56,7 +56,6 @@ pub struct PersistedVesloServerState {
     pub mdns_url: Option<String>,
     pub lan_url: Option<String>,
     pub client_token: Option<String>,
-    pub host_token: Option<String>,
     pub pid: Option<u32>,
 }
 
@@ -167,7 +166,7 @@ fn persisted_state_to_info_with_health(
         mdns_url: state.mdns_url.clone(),
         lan_url: state.lan_url.clone(),
         client_token: state.client_token.clone(),
-        host_token: state.host_token.clone(),
+        host_token: None,
         pid: state.pid,
         last_stdout: None,
         last_stderr: None,
@@ -341,7 +340,6 @@ fn persist_veslo_server_info(app: &AppHandle, info: &VesloServerInfo) -> Result<
         mdns_url: info.mdns_url.clone(),
         lan_url: info.lan_url.clone(),
         client_token: info.client_token.clone(),
-        host_token: info.host_token.clone(),
         pid: info.pid,
     };
     let payload = serde_json::to_string_pretty(&state)
@@ -552,6 +550,27 @@ mod tests {
     }
 
     #[test]
+    fn persisted_server_state_serialization_omits_host_token() {
+        let state = PersistedVesloServerState {
+            host: Some("0.0.0.0".to_string()),
+            port: Some(8787),
+            base_url: Some("http://127.0.0.1:8787".to_string()),
+            connect_url: Some("http://127.0.0.1:8787".to_string()),
+            mdns_url: None,
+            lan_url: None,
+            client_token: Some("client-token".to_string()),
+            pid: Some(12345),
+        };
+
+        let payload = serde_json::to_string_pretty(&state).expect("serialize state");
+
+        assert!(payload.contains("clientToken"));
+        assert!(payload.contains("client-token"));
+        assert!(!payload.contains("hostToken"));
+        assert!(!payload.contains("host-token"));
+    }
+
+    #[test]
     fn read_persisted_server_info_returns_none_without_state() {
         let dir =
             std::env::temp_dir().join(format!("veslo-server-state-missing-{}", Uuid::new_v4()));
@@ -598,12 +617,13 @@ mod tests {
             mdns_url: None,
             lan_url: None,
             client_token: Some("client-token".to_string()),
-            host_token: Some("host-token".to_string()),
             pid: Some(12345),
         };
+        let mut payload = serde_json::to_value(&state).expect("serialize state to legacy payload");
+        payload["hostToken"] = serde_json::Value::String("host-token".to_string());
         fs::write(
             dir.join("veslo-server-state.json"),
-            serde_json::to_string_pretty(&state).expect("serialize state"),
+            serde_json::to_string_pretty(&payload).expect("serialize legacy state"),
         )
         .expect("write state file");
 
@@ -616,7 +636,7 @@ mod tests {
             Some(expected_base_url.as_str())
         );
         assert_eq!(recovered.client_token.as_deref(), Some("client-token"));
-        assert_eq!(recovered.host_token.as_deref(), Some("host-token"));
+        assert_eq!(recovered.host_token.as_deref(), None);
         assert!(recovered.running);
 
         handle.join().expect("health thread");
@@ -635,7 +655,6 @@ mod tests {
             mdns_url: None,
             lan_url: None,
             client_token: Some("client-token".to_string()),
-            host_token: Some("host-token".to_string()),
             pid: Some(4242),
         };
         fs::write(
@@ -643,6 +662,11 @@ mod tests {
             serde_json::to_string_pretty(&state).expect("serialize state"),
         )
         .expect("write state file");
+        fs::write(
+            dir.join("veslo-server-plugin-state.json"),
+            r#"{"baseUrl":"http://127.0.0.1:8787","clientToken":"client-token"}"#,
+        )
+        .expect("write plugin state file");
 
         let mut recycled_pids = Vec::new();
         let recovered = read_persisted_veslo_server_info_with_cleanup(
@@ -658,6 +682,7 @@ mod tests {
         assert!(recovered.is_none());
         assert_eq!(recycled_pids, vec![4242]);
         assert!(!dir.join("veslo-server-state.json").exists());
+        assert!(!dir.join("veslo-server-plugin-state.json").exists());
 
         let _ = fs::remove_dir_all(dir);
     }
@@ -675,7 +700,6 @@ mod tests {
             mdns_url: None,
             lan_url: None,
             client_token: Some("client-token".to_string()),
-            host_token: Some("host-token".to_string()),
             pid: Some(4242),
         };
         fs::write(
@@ -683,6 +707,11 @@ mod tests {
             serde_json::to_string_pretty(&state).expect("serialize state"),
         )
         .expect("write state file");
+        fs::write(
+            dir.join("veslo-server-plugin-state.json"),
+            r#"{"baseUrl":"http://127.0.0.1:8787","clientToken":"client-token"}"#,
+        )
+        .expect("write plugin state file");
 
         let recovered = read_persisted_veslo_server_info_with_cleanup(
             &dir,
@@ -693,6 +722,7 @@ mod tests {
 
         assert!(recovered.is_none());
         assert!(!dir.join("veslo-server-state.json").exists());
+        assert!(!dir.join("veslo-server-plugin-state.json").exists());
 
         let _ = fs::remove_dir_all(dir);
     }
