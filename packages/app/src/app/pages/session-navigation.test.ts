@@ -92,6 +92,18 @@ const sendPromptSource =
     ? appSource.slice(sendPromptStart, sendPromptEnd)
     : "";
 
+function assertScopedWorkspaceGuardBeforeClient(source: string, name: string): void {
+  const guardIndex = source.search(/if \(!\(await ensureSelectedSessionWorkspaceActiveForSend\((?:id|sessionID)\)\)\) (?:\{[\s\S]*?return|return)/s);
+  assert.notEqual(guardIndex, -1, `${name} should return when scoped workspace activation fails`);
+
+  const clientIndex = source.search(/\b(?:const|let)\s+\w+\s*=\s*client\(\)/);
+  if (clientIndex === -1) return;
+  assert.ok(
+    guardIndex < clientIndex,
+    `${name} should activate the scoped workspace before using the active runtime client`,
+  );
+}
+
 const openPendingDraftWithWorkspaceActivation = () => {
   const fn = (
     sessionNavigation as typeof sessionNavigation & {
@@ -244,11 +256,7 @@ test("cross-workspace browse mode activates the selected workspace before sessio
     ["renameSessionTitle", renameSessionTitleSource],
   ] as const) {
     assert.notEqual(source, "", `${name} source should exist`);
-    assert.match(
-      source,
-      /if \(!\(await ensureSelectedSessionWorkspaceActiveForSend\((?:id|sessionID)\)\)\) \{[\s\S]*return/s,
-      `${name} should activate the scoped workspace before using the active runtime client`,
-    );
+    assertScopedWorkspaceGuardBeforeClient(source, name);
   }
 });
 
