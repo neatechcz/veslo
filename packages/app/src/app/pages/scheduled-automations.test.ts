@@ -9,11 +9,12 @@ import { buildSchedule } from "./scheduled-automation-schedule";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const scheduledSource = () => readFileSync(join(__dirname, "scheduled.tsx"), "utf8");
 const scheduleHelperSource = () => readFileSync(join(__dirname, "scheduled-automation-schedule.ts"), "utf8");
+const appSource = () => readFileSync(join(__dirname, "../app.tsx"), "utf8");
 
 test("ScheduledTasksView keeps server automations on API handlers instead of prompt/session routing", () => {
   const source = scheduledSource();
 
-  assert.match(source, /automations:\s*VesloAutomation\[\]/);
+  assert.match(source, /automationItems:\s*WorkspaceAutomationItem\[\]/);
   assert.match(source, /createAutomation:\s*\(/);
   assert.match(source, /runAutomation:\s*\(/);
   assert.match(source, /deleteAutomation:\s*\(/);
@@ -31,6 +32,45 @@ test("ScheduledTasksView keeps server automations on API handlers instead of pro
   assert.ok(primaryRun);
   assert.match(primaryRun[0], /props\.runAutomation/);
   assert.doesNotMatch(primaryRun[0], /props\.setPrompt|props\.createSessionAndOpen/);
+});
+
+test("ScheduledTasksView uses workspace-aware automation items", () => {
+  const source = scheduledSource();
+
+  assert.match(source, /WorkspaceAutomationItem/);
+  assert.match(source, /AutomationWorkspaceSummary/);
+  assert.match(source, /automationItems:\s*WorkspaceAutomationItem\[\]/);
+  assert.doesNotMatch(source, /automations:\s*VesloAutomation\[\]/);
+});
+
+test("ScheduledTasksView mutation handlers include workspace context", () => {
+  const source = scheduledSource();
+
+  assert.match(source, /createAutomation:\s*\(workspaceId:\s*string,/);
+  assert.match(source, /updateAutomation:\s*\(workspaceId:\s*string,\s*automationId:\s*string,/);
+  assert.match(source, /deleteAutomation:\s*\(workspaceId:\s*string,\s*automationId:\s*string/);
+  assert.match(source, /runAutomation:\s*\(workspaceId:\s*string,\s*automationId:\s*string/);
+  assert.match(source, /props\.updateAutomation/);
+});
+
+test("ScheduledTasksView provides app-style workspace filtering and cards", () => {
+  const source = scheduledSource();
+
+  assert.match(source, /workspaceFilter/);
+  assert.match(source, /searchQuery/);
+  assert.match(source, /scheduled\.all_workspaces/);
+  assert.match(source, /item\.workspace\.name/);
+  assert.match(source, /rounded-2xl border border-gray-4 bg-gray-1/);
+  assert.doesNotMatch(source, /<table|<thead|<tbody/);
+});
+
+test("App refreshes automations for all mapped workspaces", () => {
+  const source = appSource();
+
+  assert.match(source, /resolveAutomationWorkspaceMap/);
+  assert.match(source, /setAutomationItems/);
+  assert.match(source, /Promise\.all\([\s\S]*listAutomations/);
+  assert.doesNotMatch(source, /const automationClient = resolveVesloAutomations\(\);[\s\S]*listAutomations\(automationClient\.workspaceId\)/);
 });
 
 test("ScheduledTasksView builds server-compatible weekly schedules without raw scheduler UI", () => {

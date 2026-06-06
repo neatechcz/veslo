@@ -1,11 +1,14 @@
 import { For, Match, Show, Switch, createMemo, createSignal } from "solid-js";
 
 import type {
+  AutomationWorkspaceSummary,
   VesloAutomation,
   VesloAutomationCreatePayload,
   VesloAutomationRun,
   VesloAutomationSchedule,
   VesloAutomationStatus,
+  VesloAutomationUpdatePayload,
+  WorkspaceAutomationItem,
 } from "../types";
 import { formatRelativeTime } from "../utils";
 import { currentLocale, t } from "../../i18n";
@@ -34,17 +37,18 @@ import {
 } from "lucide-solid";
 
 export type ScheduledTasksViewProps = {
-  automations: VesloAutomation[];
-  automationRunsById: Record<string, VesloAutomationRun[]>;
+  automationItems: WorkspaceAutomationItem[];
+  automationWorkspaces: AutomationWorkspaceSummary[];
   source: "local" | "remote";
   sourceReady: boolean;
   status: string | null;
   busy: boolean;
   lastUpdatedAt: number | null;
   refreshJobs: (options?: { force?: boolean }) => void;
-  createAutomation: (payload: VesloAutomationCreatePayload) => Promise<void> | void;
-  deleteAutomation: (automationId: string) => Promise<void> | void;
-  runAutomation: (automationId: string) => Promise<void> | void;
+  createAutomation: (workspaceId: string, payload: VesloAutomationCreatePayload) => Promise<void> | void;
+  updateAutomation: (workspaceId: string, automationId: string, payload: VesloAutomationUpdatePayload) => Promise<void> | void;
+  deleteAutomation: (workspaceId: string, automationId: string) => Promise<void> | void;
+  runAutomation: (workspaceId: string, automationId: string) => Promise<void> | void;
   newTaskDisabled: boolean;
   reloadWorkspaceEngine: () => Promise<void>;
   reloadBusy: boolean;
@@ -221,41 +225,51 @@ const AutomationTemplateCard = (props: {
 };
 
 const AutomationCard = (props: {
-  automation: VesloAutomation;
-  runs: VesloAutomationRun[];
+  item: WorkspaceAutomationItem;
   busy: boolean;
   onDelete: () => void;
+  onEdit: () => void;
   onRun: () => void;
 }) => {
   const locale = () => currentLocale();
   const tr = (key: string) => t(key, locale());
-  const latestRun = createMemo(() => latestRunFor(props.automation, props.runs));
-  const target = () => props.automation.target;
+  const automation = () => props.item.automation;
+  const latestRun = createMemo(() => latestRunFor(automation(), props.item.runs));
+  const target = () => automation().target;
+  const workspace = () => props.item.workspace;
 
   return (
     <div class="flex flex-col gap-4 rounded-2xl border border-gray-4 bg-gray-1 p-5 shadow-sm">
       <div class="flex flex-wrap items-start justify-between gap-4">
         <div class="flex min-w-0 items-start gap-3">
-          <div class={`flex h-8 w-8 items-center justify-center rounded-lg border bg-gray-1 ${statusTone(props.automation.status)}`}>
+          <div class={`flex h-8 w-8 items-center justify-center rounded-lg border bg-gray-1 ${statusTone(automation().status)}`}>
             <Calendar size={18} />
           </div>
           <div class="min-w-0">
             <div class="flex flex-wrap items-center gap-2">
-              <h3 class="text-sm font-semibold text-gray-12 truncate">{props.automation.name}</h3>
-              <span class={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase ${statusTone(props.automation.status)}`}>
-                {automationStatusLabel(props.automation.status, locale())}
+              <h3 class="text-sm font-semibold text-gray-12 truncate">{automation().name}</h3>
+              <span class={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase ${statusTone(automation().status)}`}>
+                {automationStatusLabel(automation().status, locale())}
               </span>
             </div>
-            <div class="mt-1 text-xs text-gray-9">{describeSchedule(props.automation.schedule, locale())}</div>
+            <div class="mt-1 text-xs text-gray-9">{describeSchedule(automation().schedule, locale())}</div>
+            <div class="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-gray-8">
+              <span>{tr("scheduled.workspace_label")} <span class="font-medium text-gray-11">{workspace().name}</span></span>
+              <Show when={workspace().status !== "ready"}>
+                <span class="rounded-full border border-amber-7/50 bg-amber-3/60 px-2 py-0.5 text-amber-11">
+                  {workspace().status}
+                </span>
+              </Show>
+            </div>
           </div>
         </div>
         <div class="flex items-center gap-2">
           <button
             type="button"
             onClick={props.onRun}
-            disabled={props.busy || props.automation.status === "cancelled"}
+            disabled={props.busy || automation().status === "cancelled" || !workspace().serverWorkspaceId}
             class={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
-              props.busy || props.automation.status === "cancelled"
+              props.busy || automation().status === "cancelled" || !workspace().serverWorkspaceId
                 ? "border-gray-5 text-gray-8"
                 : "border-gray-5 text-gray-10 hover:bg-gray-2/70 hover:text-gray-12"
             }`}
@@ -265,10 +279,22 @@ const AutomationCard = (props: {
           </button>
           <button
             type="button"
-            onClick={props.onDelete}
-            disabled={props.busy || props.automation.status === "cancelled"}
+            onClick={props.onEdit}
+            disabled={props.busy || !workspace().serverWorkspaceId}
             class={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
-              props.busy || props.automation.status === "cancelled"
+              props.busy || !workspace().serverWorkspaceId
+                ? "border-gray-5 text-gray-8"
+                : "border-gray-5 text-gray-10 hover:bg-gray-2/70 hover:text-gray-12"
+            }`}
+          >
+            {tr("scheduled.edit")}
+          </button>
+          <button
+            type="button"
+            onClick={props.onDelete}
+            disabled={props.busy || automation().status === "cancelled" || !workspace().serverWorkspaceId}
+            class={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+              props.busy || automation().status === "cancelled" || !workspace().serverWorkspaceId
                 ? "border-gray-5 text-gray-8"
                 : "border-red-6 text-red-10 hover:bg-red-3"
             }`}
@@ -282,7 +308,7 @@ const AutomationCard = (props: {
       <div class="grid gap-3 md:grid-cols-2">
         <div class="rounded-xl border border-gray-4 bg-gray-2/60 px-3 py-3">
           <div class="text-[10px] uppercase text-gray-8">{tr("scheduled.prompt_label")}</div>
-          <div class="mt-1 line-clamp-3 break-words text-sm text-gray-12">{props.automation.prompt}</div>
+          <div class="mt-1 line-clamp-3 break-words text-sm text-gray-12">{automation().prompt}</div>
         </div>
         <div class="rounded-xl border border-gray-4 bg-gray-2/60 px-3 py-3 space-y-2">
           <div class="text-[10px] uppercase text-gray-8">{tr("scheduled.run_context")}</div>
@@ -304,7 +330,7 @@ const AutomationCard = (props: {
       <div class="flex flex-wrap items-center gap-4 text-xs text-gray-9">
         <div class="flex items-center gap-1">
           <Clock size={12} />
-          {tr("scheduled.next_run")} {toRelative(props.automation.nextRunAt, locale())}
+          {tr("scheduled.next_run")} {toRelative(automation().nextRunAt, locale())}
         </div>
         <div>
           {tr("scheduled.last_run")}{" "}
@@ -312,7 +338,7 @@ const AutomationCard = (props: {
             {(run) => `${toRelative(run().finishedAt ?? run().startedAt ?? run().scheduledFor, locale())} (${run().status})`}
           </Show>
         </div>
-        <div>{tr("scheduled.created")} {toRelative(props.automation.createdAt, locale())}</div>
+        <div>{tr("scheduled.created")} {toRelative(automation().createdAt, locale())}</div>
       </div>
     </div>
   );
@@ -329,9 +355,16 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   };
 
   const [createModalOpen, setCreateModalOpen] = createSignal(false);
+  const [editTarget, setEditTarget] = createSignal<WorkspaceAutomationItem | null>(null);
   const [automationName, setAutomationName] = createSignal(tr("scheduled.default_name"));
   const [automationProject, setAutomationProject] = createSignal("");
   const [automationPrompt, setAutomationPrompt] = createSignal(tr("scheduled.default_prompt"));
+  const [automationWorkspaceId, setAutomationWorkspaceId] = createSignal("");
+  const [automationAgent, setAutomationAgent] = createSignal("");
+  const [automationModel, setAutomationModel] = createSignal("");
+  const [automationVariant, setAutomationVariant] = createSignal("");
+  const [automationStatus, setAutomationStatus] = createSignal<VesloAutomationStatus>("active");
+  const [automationEnabled, setAutomationEnabled] = createSignal(true);
   const [scheduleMode, setScheduleMode] = createSignal<"daily" | "interval" | "oneShot">("daily");
   const [scheduleTime, setScheduleTime] = createSignal("09:00");
   const [scheduleDays, setScheduleDays] = createSignal(["mo", "tu", "we", "th", "fr"]);
@@ -340,13 +373,18 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   const [runAtTime, setRunAtTime] = createSignal("09:00");
   const [quickMinutes, setQuickMinutes] = createSignal(0);
   const [statusFilter, setStatusFilter] = createSignal<"active" | "paused" | "completed" | "failed">("active");
-  const [deleteTarget, setDeleteTarget] = createSignal<VesloAutomation | null>(null);
+  const [workspaceFilter, setWorkspaceFilter] = createSignal("all");
+  const [searchQuery, setSearchQuery] = createSignal("");
+  const [deleteTarget, setDeleteTarget] = createSignal<WorkspaceAutomationItem | null>(null);
   const createAction = createAsyncAction();
+  const updateAction = createAsyncAction();
   const runAction = createAsyncAction();
   const deleteAction = createAsyncAction();
   const scheduleTimezone = createMemo(() => resolveLocalScheduleTimezone());
 
   const automationDisabled = createMemo(() => props.newTaskDisabled || !props.sourceReady || props.busy);
+  const readyWorkspaces = createMemo(() => props.automationWorkspaces.filter((workspace) => workspace.status === "ready" && workspace.serverWorkspaceId));
+  const defaultWorkspaceId = createMemo(() => readyWorkspaces()[0]?.serverWorkspaceId ?? "");
   const serverUnavailable = createMemo(() => !props.sourceReady);
   const sourceDescription = createMemo(() =>
     props.sourceReady
@@ -367,18 +405,81 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
     }, scheduleTimezone()),
   );
   const canCreateAutomation = createMemo(() => {
-    return automationName().trim().length > 0 && automationPrompt().trim().length > 0 && Boolean(selectedSchedule()) && !automationDisabled();
+    return automationName().trim().length > 0 && automationPrompt().trim().length > 0 && Boolean(selectedSchedule()) && Boolean(automationWorkspaceId()) && !automationDisabled();
   });
   const statusGroups = createMemo(() => ({
-    active: props.automations.filter((automation) => automation.status === "active"),
-    paused: props.automations.filter((automation) => automation.status === "paused"),
-    completed: props.automations.filter((automation) => automation.status === "completed"),
-    failed: props.automations.filter((automation) => automation.status === "failed" || automation.status === "cancelled"),
+    active: props.automationItems.filter((item) => item.automation.status === "active"),
+    paused: props.automationItems.filter((item) => item.automation.status === "paused"),
+    completed: props.automationItems.filter((item) => item.automation.status === "completed"),
+    failed: props.automationItems.filter((item) => item.automation.status === "failed" || item.automation.status === "cancelled"),
   }));
-  const visibleAutomations = createMemo(() => statusGroups()[statusFilter()]);
+  const visibleItems = createMemo(() => {
+    const query = searchQuery().trim().toLowerCase();
+    return statusGroups()[statusFilter()].filter((item) => {
+      if (workspaceFilter() !== "all" && item.workspace.serverWorkspaceId !== workspaceFilter()) return false;
+      if (!query) return true;
+      return [
+        item.automation.name,
+        item.automation.prompt,
+        item.workspace.name,
+        item.workspace.path ?? "",
+      ].some((value) => value.toLowerCase().includes(query));
+    });
+  });
+
+  const resetScheduleForm = () => {
+    setScheduleMode("daily");
+    setScheduleTime("09:00");
+    setScheduleDays(["mo", "tu", "we", "th", "fr"]);
+    setIntervalHours(6);
+    setRunAtDate(new Date().toISOString().slice(0, 10));
+    setRunAtTime("09:00");
+    setQuickMinutes(0);
+  };
+
+  const loadScheduleForm = (schedule: VesloAutomationSchedule) => {
+    if (schedule.kind === "daily") {
+      setScheduleMode("daily");
+      setScheduleTime(`${pad2(schedule.hour)}:${pad2(schedule.minute)}`);
+      setScheduleDays(["mo", "tu", "we", "th", "fr"]);
+      return;
+    }
+    if (schedule.kind === "weekly") {
+      const day = scheduledDayOptions.find((option) => option.weekday === schedule.weekday)?.id;
+      setScheduleMode("daily");
+      setScheduleTime(`${pad2(schedule.hour)}:${pad2(schedule.minute)}`);
+      setScheduleDays(day ? [day] : ["mo", "tu", "we", "th", "fr"]);
+      return;
+    }
+    if (schedule.kind === "interval") {
+      setScheduleMode("interval");
+      setIntervalHours(Math.max(1, Math.round(schedule.seconds / 3600)));
+      return;
+    }
+    if (schedule.kind === "oneShot") {
+      const parsed = new Date(schedule.runAt);
+      setScheduleMode("oneShot");
+      if (Number.isFinite(parsed.getTime())) {
+        setRunAtDate(parsed.toISOString().slice(0, 10));
+        setRunAtTime(parsed.toISOString().slice(11, 16));
+      }
+      return;
+    }
+    resetScheduleForm();
+  };
 
   const openCreateModal = () => {
     if (automationDisabled()) return;
+    const workspaceId = defaultWorkspaceId();
+    setAutomationWorkspaceId(workspaceId);
+    setAutomationName(tr("scheduled.default_name"));
+    setAutomationPrompt(tr("scheduled.default_prompt"));
+    setAutomationAgent("");
+    setAutomationModel("");
+    setAutomationVariant("");
+    setAutomationStatus("active");
+    setAutomationEnabled(true);
+    resetScheduleForm();
     if (!automationProject().trim()) setAutomationProject(automationName().trim());
     setCreateModalOpen(true);
   };
@@ -395,7 +496,28 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
       setScheduleDays(template.scheduleDays ?? ["mo", "tu", "we", "th", "fr"]);
     }
     setAutomationProject(tr(template.nameKey));
+    setAutomationWorkspaceId(defaultWorkspaceId());
+    setAutomationAgent("");
+    setAutomationModel("");
+    setAutomationVariant("");
+    setAutomationStatus("active");
+    setAutomationEnabled(true);
     setCreateModalOpen(true);
+  };
+
+  const openEditModal = (item: WorkspaceAutomationItem) => {
+    const target = item.automation.target;
+    setEditTarget(item);
+    setAutomationWorkspaceId(item.workspace.serverWorkspaceId ?? "");
+    setAutomationName(item.automation.name);
+    setAutomationPrompt(item.automation.prompt);
+    setAutomationProject(target?.fallbackTitle ?? target?.preferredSessionId ?? item.automation.name);
+    setAutomationAgent(target?.agent ?? "");
+    setAutomationModel(target?.model ?? "");
+    setAutomationVariant(target?.variant ?? "");
+    setAutomationStatus(item.automation.status);
+    setAutomationEnabled(item.automation.enabled);
+    loadScheduleForm(item.automation.schedule);
   };
 
   const handleCreateAutomation = async () => {
@@ -403,27 +525,54 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
     if (!schedule || !canCreateAutomation()) return;
     await createAction.execute(async () => {
       const targetTitle = automationProject().trim() || automationName().trim();
-      await props.createAutomation({
+      await props.createAutomation(automationWorkspaceId(), {
         name: automationName().trim(),
         prompt: automationPrompt().trim(),
         schedule,
         target: targetTitle ? { fallbackTitle: targetTitle } : undefined,
-      });
+        });
       setCreateModalOpen(false);
     });
   };
 
-  const runAutomationNow = async (automation: VesloAutomation) => {
+  const handleUpdateAutomation = async () => {
+    const target = editTarget();
+    const schedule = selectedSchedule();
+    const workspaceId = target?.workspace.serverWorkspaceId;
+    if (!target || !workspaceId || !schedule || automationName().trim().length === 0 || automationPrompt().trim().length === 0) return;
+    await updateAction.execute(async () => {
+      const targetPayload = {
+        fallbackTitle: automationProject().trim() || undefined,
+        agent: automationAgent().trim() || undefined,
+        model: automationModel().trim() || null,
+        variant: automationVariant().trim() || null,
+      };
+      await props.updateAutomation(workspaceId, target.automation.id, {
+        name: automationName().trim(),
+        prompt: automationPrompt().trim(),
+        schedule,
+        enabled: automationEnabled(),
+        status: automationStatus(),
+        target: Object.values(targetPayload).some((value) => value) ? targetPayload : null,
+      });
+      setEditTarget(null);
+    });
+  };
+
+  const runAutomationNow = async (item: WorkspaceAutomationItem) => {
+    const workspaceId = item.workspace.serverWorkspaceId;
+    if (!workspaceId) return;
     await runAction.execute(async () => {
-      await props.runAutomation(automation.id);
+      await props.runAutomation(workspaceId, item.automation.id);
     });
   };
 
   const confirmDelete = async () => {
     const target = deleteTarget();
-    if (!target) return;
+    const workspaceId = target?.workspace.serverWorkspaceId;
+    if (!target || !workspaceId) return;
     await deleteAction.execute(async () => {
-      await props.deleteAutomation(target.id);
+      await props.deleteAutomation(workspaceId, target.automation.id);
       setDeleteTarget(null);
     });
   };
@@ -503,9 +652,45 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
         </div>
       </Show>
 
-      <Show when={props.status || createAction.error() || runAction.error() || deleteAction.error()}>
+      <Show when={props.status || createAction.error() || updateAction.error() || runAction.error() || deleteAction.error()}>
         <div class="rounded-xl border border-red-7/40 bg-red-3/60 px-5 py-4 text-sm text-red-11">
-          {props.status ?? createAction.error() ?? runAction.error() ?? deleteAction.error()}
+          {props.status ?? createAction.error() ?? updateAction.error() ?? runAction.error() ?? deleteAction.error()}
+        </div>
+      </Show>
+
+      <div class="flex flex-wrap items-center gap-3">
+        <input
+          type="search"
+          value={searchQuery()}
+          onInput={(event) => setSearchQuery(event.currentTarget.value)}
+          placeholder={tr("scheduled.search_placeholder")}
+          class="min-w-[220px] flex-1 rounded-xl border border-gray-4 bg-gray-1 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-8 focus:border-gray-7 focus:outline-none"
+        />
+        <select
+          value={workspaceFilter()}
+          onChange={(event) => setWorkspaceFilter(event.currentTarget.value)}
+          class="rounded-xl border border-gray-4 bg-gray-1 px-3 py-2 text-sm text-gray-12 focus:border-gray-7 focus:outline-none"
+        >
+          <option value="all">{tr("scheduled.all_workspaces")}</option>
+          <For each={readyWorkspaces()}>
+            {(workspace) => (
+              <option value={workspace.serverWorkspaceId ?? ""}>
+                {workspace.name}
+              </option>
+            )}
+          </For>
+        </select>
+      </div>
+
+      <Show when={props.automationWorkspaces.some((workspace) => workspace.status !== "ready")}>
+        <div class="space-y-2">
+          <For each={props.automationWorkspaces.filter((workspace) => workspace.status !== "ready")}>
+            {(workspace) => (
+              <div class="rounded-xl border border-amber-7/40 bg-amber-3/50 px-4 py-3 text-xs text-amber-12">
+                <span class="font-semibold">{workspace.name}</span>: {workspace.error ?? tr("scheduled.workspace_unavailable")}
+              </div>
+            )}
+          </For>
         </div>
       </Show>
 
@@ -535,7 +720,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
       </div>
 
       <Show
-        when={props.automations.length > 0}
+        when={props.automationItems.length > 0}
         fallback={
           <div class="space-y-4">
             <div class="text-center text-sm text-gray-9">{tr("scheduled.no_automations")}</div>
@@ -555,16 +740,16 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
           </div>
         }
       >
-        <Show when={visibleAutomations().length > 0} fallback={<div class="rounded-xl border border-gray-4 bg-gray-2/60 px-5 py-4 text-sm text-gray-9">{tr("scheduled.no_filtered_automations")}</div>}>
+        <Show when={visibleItems().length > 0} fallback={<div class="rounded-xl border border-gray-4 bg-gray-2/60 px-5 py-4 text-sm text-gray-9">{tr("scheduled.no_filtered_automations")}</div>}>
           <div class="grid w-full grid-cols-1 gap-4">
-            <For each={visibleAutomations()}>
-              {(automation) => (
+            <For each={visibleItems()}>
+              {(item) => (
                 <AutomationCard
-                  automation={automation}
-                  runs={props.automationRunsById[automation.id] ?? []}
+                  item={item}
                   busy={props.busy || runAction.busy() || deleteAction.busy()}
-                  onDelete={() => setDeleteTarget(automation)}
-                  onRun={() => void runAutomationNow(automation)}
+                  onDelete={() => setDeleteTarget(item)}
+                  onEdit={() => openEditModal(item)}
+                  onRun={() => void runAutomationNow(item)}
                 />
               )}
             </For>
@@ -579,7 +764,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
               <h3 class="text-lg font-semibold text-gray-12">{tr("scheduled.delete_title")}</h3>
               <p class="text-sm text-gray-9">{tr("scheduled.delete_desc_server")}</p>
               <div class="rounded-xl border border-gray-6 bg-gray-2 p-3 font-mono text-xs text-gray-9 break-all">
-                {deleteTarget()?.name}
+                {deleteTarget()?.automation.name}
               </div>
               <div class="flex justify-end gap-2">
                 <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleteAction.busy()}>
@@ -613,6 +798,22 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
               </div>
 
               <div class="space-y-6">
+                <div>
+                  <label class="mb-2 block text-[11px] font-bold uppercase text-gray-8">{tr("scheduled.workspace_label")}</label>
+                  <select
+                    value={automationWorkspaceId()}
+                    onChange={(event) => setAutomationWorkspaceId(event.currentTarget.value)}
+                    class="w-full rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:border-blue-7 focus:outline-none focus:ring-1 focus:ring-blue-9/20"
+                  >
+                    <For each={readyWorkspaces()}>
+                      {(workspace) => (
+                        <option value={workspace.serverWorkspaceId ?? ""}>
+                          {workspace.name}
+                        </option>
+                      )}
+                    </For>
+                  </select>
+                </div>
                 <div>
                   <label class="mb-2 block text-[11px] font-bold uppercase text-gray-8">{tr("scheduled.label_name")}</label>
                   <input
@@ -767,6 +968,214 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
               >
                 {createAction.busy() ? tr("scheduled.creating") : tr("scheduled.create")}
               </button>
+            </div>
+          </div>
+        </div>
+      </Show>
+
+      <Show when={editTarget()}>
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-4 backdrop-blur-[2px]">
+          <div class="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-gray-6 bg-gray-1 shadow-2xl">
+            <div class="space-y-6 p-8">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <h2 class="text-xl font-semibold text-gray-12">{tr("scheduled.edit_title")}</h2>
+                  <p class="mt-2 text-xs text-gray-9">
+                    {tr("scheduled.edit_description")}{" "}
+                    <span class="font-semibold text-gray-12">{editTarget()?.workspace.name}</span>
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditTarget(null)}
+                  class="rounded-full p-1 text-gray-8 transition-colors hover:bg-gray-2 hover:text-gray-12"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div class="rounded-xl border border-blue-7/30 bg-blue-3/40 px-4 py-3 text-xs text-blue-12">
+                {tr("scheduled.owning_workspace_hint")} <span class="font-semibold">{editTarget()?.workspace.name}</span>
+              </div>
+
+              <div class="grid gap-4 md:grid-cols-2">
+                <div>
+                  <label class="mb-2 block text-[11px] font-bold uppercase text-gray-8">{tr("scheduled.label_name")}</label>
+                  <input
+                    type="text"
+                    value={automationName()}
+                    onInput={(event) => setAutomationName(event.currentTarget.value)}
+                    class="w-full rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:border-blue-7 focus:outline-none focus:ring-1 focus:ring-blue-9/20"
+                  />
+                </div>
+                <div>
+                  <label class="mb-2 block text-[11px] font-bold uppercase text-gray-8">{tr("scheduled.label_fallback_title")}</label>
+                  <input
+                    type="text"
+                    value={automationProject()}
+                    onInput={(event) => setAutomationProject(event.currentTarget.value)}
+                    class="w-full rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:border-blue-7 focus:outline-none focus:ring-1 focus:ring-blue-9/20"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label class="mb-2 block text-[11px] font-bold uppercase text-gray-8">{tr("scheduled.label_prompt")}</label>
+                <textarea
+                  rows={4}
+                  value={automationPrompt()}
+                  onInput={(event) => setAutomationPrompt(event.currentTarget.value)}
+                  class="w-full resize-none rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:border-blue-7 focus:outline-none focus:ring-1 focus:ring-blue-9/20"
+                />
+              </div>
+
+              <div class="grid gap-4 md:grid-cols-3">
+                <div>
+                  <label class="mb-2 block text-[11px] font-bold uppercase text-gray-8">{tr("scheduled.agent")}</label>
+                  <input
+                    type="text"
+                    value={automationAgent()}
+                    onInput={(event) => setAutomationAgent(event.currentTarget.value)}
+                    class="w-full rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:border-blue-7 focus:outline-none focus:ring-1 focus:ring-blue-9/20"
+                  />
+                </div>
+                <div>
+                  <label class="mb-2 block text-[11px] font-bold uppercase text-gray-8">{tr("scheduled.model")}</label>
+                  <input
+                    type="text"
+                    value={automationModel()}
+                    onInput={(event) => setAutomationModel(event.currentTarget.value)}
+                    class="w-full rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:border-blue-7 focus:outline-none focus:ring-1 focus:ring-blue-9/20"
+                  />
+                </div>
+                <div>
+                  <label class="mb-2 block text-[11px] font-bold uppercase text-gray-8">{tr("scheduled.variant")}</label>
+                  <input
+                    type="text"
+                    value={automationVariant()}
+                    onInput={(event) => setAutomationVariant(event.currentTarget.value)}
+                    class="w-full rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:border-blue-7 focus:outline-none focus:ring-1 focus:ring-blue-9/20"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <div class="mb-2 flex items-center justify-between gap-3">
+                  <label class="block text-[11px] font-bold uppercase text-gray-8">{tr("scheduled.label_schedule")}</label>
+                  <div class="flex rounded-lg bg-gray-3 p-0.5">
+                    <For
+                      each={[
+                        { id: "daily" as const, label: tr("scheduled.mode_daily") },
+                        { id: "interval" as const, label: tr("scheduled.mode_interval") },
+                        { id: "oneShot" as const, label: tr("scheduled.mode_one_shot") },
+                      ]}
+                    >
+                      {(item) => (
+                        <button
+                          type="button"
+                          onClick={() => setScheduleMode(item.id)}
+                          class={`rounded-md px-3 py-1 text-[10px] font-bold transition-colors ${
+                            scheduleMode() === item.id ? "bg-gray-1 text-gray-12 shadow-sm" : "text-gray-9"
+                          }`}
+                        >
+                          {item.label}
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </div>
+
+                <Switch>
+                  <Match when={scheduleMode() === "daily"}>
+                    <div class="flex flex-wrap items-center gap-3">
+                      <input
+                        type="time"
+                        value={scheduleTime()}
+                        onInput={(event) => setScheduleTime(event.currentTarget.value)}
+                        class="rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:outline-none"
+                      />
+                      <div class="flex flex-wrap gap-1">
+                        <For each={scheduledDayOptions}>
+                          {(day) => (
+                            <button
+                              type="button"
+                              onClick={() => toggleDay(day.id)}
+                              class={`h-8 w-8 rounded-full text-[10px] font-bold transition-colors ${
+                                scheduleDays().includes(day.id) ? "bg-gray-12 text-gray-1" : "bg-gray-3 text-gray-9"
+                              }`}
+                            >
+                              {tr(day.labelKey)}
+                            </button>
+                          )}
+                        </For>
+                      </div>
+                    </div>
+                  </Match>
+                  <Match when={scheduleMode() === "interval"}>
+                    <div class="flex items-center gap-2 rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12">
+                      <span>{tr("scheduled.every")}</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={24}
+                        value={intervalHours()}
+                        onInput={(event) => updateIntervalHours(event.currentTarget.value)}
+                        class="w-16 bg-transparent text-right focus:outline-none"
+                      />
+                      <span>{tr("scheduled.hours")}</span>
+                    </div>
+                  </Match>
+                  <Match when={scheduleMode() === "oneShot"}>
+                    <div class="flex flex-wrap items-center gap-3">
+                      <input
+                        type="date"
+                        value={runAtDate()}
+                        onInput={(event) => setRunAtDate(event.currentTarget.value)}
+                        class="rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:outline-none"
+                      />
+                      <input
+                        type="time"
+                        value={runAtTime()}
+                        onInput={(event) => setRunAtTime(event.currentTarget.value)}
+                        class="rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:outline-none"
+                      />
+                    </div>
+                  </Match>
+                </Switch>
+              </div>
+
+              <div class="grid gap-4 md:grid-cols-2">
+                <div>
+                  <label class="mb-2 block text-[11px] font-bold uppercase text-gray-8">{tr("scheduled.status_label")}</label>
+                  <select
+                    value={automationStatus()}
+                    onChange={(event) => setAutomationStatus(event.currentTarget.value as VesloAutomationStatus)}
+                    class="w-full rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:border-blue-7 focus:outline-none focus:ring-1 focus:ring-blue-9/20"
+                  >
+                    <option value="active">{tr("scheduled.status_active")}</option>
+                    <option value="paused">{tr("scheduled.status_paused")}</option>
+                    <option value="completed">{tr("scheduled.status_completed")}</option>
+                    <option value="cancelled">{tr("scheduled.status_cancelled")}</option>
+                    <option value="failed">{tr("scheduled.status_failed")}</option>
+                  </select>
+                </div>
+                <label class="flex items-end gap-2 pb-2 text-sm text-gray-11">
+                  <input
+                    type="checkbox"
+                    checked={automationEnabled()}
+                    onChange={(event) => setAutomationEnabled(event.currentTarget.checked)}
+                  />
+                  {tr("scheduled.enabled_label")}
+                </label>
+              </div>
+            </div>
+            <div class="flex items-center justify-end gap-3 border-t border-gray-6 bg-gray-2/60 px-8 py-4">
+              <Button variant="outline" onClick={() => setEditTarget(null)} disabled={updateAction.busy()}>
+                {tr("scheduled.cancel")}
+              </Button>
+              <Button variant="primary" onClick={() => void handleUpdateAutomation()} disabled={updateAction.busy()}>
+                {updateAction.busy() ? tr("scheduled.saving") : tr("scheduled.save_changes")}
+              </Button>
             </div>
           </div>
         </div>
