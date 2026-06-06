@@ -2,7 +2,7 @@ import { readdir, readFile, writeFile, mkdir, rm } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
-import type { SkillItem } from "./types.js";
+import type { DisabledSkillRecord, SkillItem } from "./types.js";
 import { parseFrontmatter, buildFrontmatter } from "./frontmatter.js";
 import { exists } from "./utils.js";
 import { validateDescription, validateSkillName } from "./validators.js";
@@ -119,7 +119,63 @@ async function listSkillsInDir(dir: string, scope: "project" | "global"): Promis
   return items;
 }
 
-export async function listSkills(workspaceRoot: string, includeGlobal: boolean): Promise<SkillItem[]> {
+export type ListSkillsOptions = {
+  includeGlobal: boolean;
+  includeDisabled?: boolean;
+  disabledSkills?: DisabledSkillRecord[];
+  workspaceId?: string;
+};
+
+function normalizeListSkillsOptions(includeGlobalOrOptions: boolean | ListSkillsOptions): ListSkillsOptions {
+  if (typeof includeGlobalOrOptions === "boolean") {
+    return { includeGlobal: includeGlobalOrOptions };
+  }
+  return {
+    includeGlobal: includeGlobalOrOptions.includeGlobal,
+    includeDisabled: includeGlobalOrOptions.includeDisabled,
+    disabledSkills: includeGlobalOrOptions.disabledSkills,
+    workspaceId: includeGlobalOrOptions.workspaceId,
+  };
+}
+
+function disabledRecordMatchesSkill(
+  record: DisabledSkillRecord,
+  item: SkillItem,
+  workspaceId: string | undefined,
+): boolean {
+  if (record.path) {
+    if (resolve(record.path) !== resolve(item.path)) return false;
+    return !record.workspaceId || !workspaceId || record.workspaceId === workspaceId;
+  }
+
+  if (record.name !== item.name) return false;
+  const scope = item.scope === "project" ? "workspace" : "user-global";
+  if (record.scope !== scope) return false;
+  if (scope === "workspace") {
+    return Boolean(workspaceId) && record.workspaceId === workspaceId;
+  }
+  return true;
+}
+
+function applyDisabledSkillRecords(
+  items: SkillItem[],
+  options: Pick<ListSkillsOptions, "disabledSkills" | "workspaceId">,
+): SkillItem[] {
+  const disabledSkills = options.disabledSkills ?? [];
+  if (disabledSkills.length === 0) return items;
+  return items.map((item) => {
+    const disabled = disabledSkills.some((record) => disabledRecordMatchesSkill(record, item, options.workspaceId));
+    return disabled
+      ? { ...item, enabled: false as const, disabledReason: "user" as const }
+      : item;
+  });
+}
+
+export async function listSkills(
+  workspaceRoot: string,
+  includeGlobalOrOptions: boolean | ListSkillsOptions,
+): Promise<SkillItem[]> {
+  const options = normalizeListSkillsOptions(includeGlobalOrOptions);
   const roots = await findWorkspaceRoots(workspaceRoot);
   const items: SkillItem[] = [];
   for (const root of roots) {
@@ -129,7 +185,7 @@ export async function listSkills(workspaceRoot: string, includeGlobal: boolean):
     items.push(...(await listSkillsInDir(claudeDir, "project")));
   }
 
-  if (includeGlobal) {
+  if (options.includeGlobal) {
     const homeDir = userHomeDir();
     const globalOpenCode = join(homeDir, ".config", "opencode", "skills");
     const globalClaude = join(homeDir, ".claude", "skills");
@@ -141,8 +197,10 @@ export async function listSkills(workspaceRoot: string, includeGlobal: boolean):
     items.push(...(await listSkillsInDir(globalAgentLegacy, "global")));
   }
 
+  const markedItems = applyDisabledSkillRecords(items, options);
+  const filteredItems = options.includeDisabled ? markedItems : markedItems.filter((item) => item.enabled !== false);
   const seen = new Set<string>();
-  return items.filter((item) => {
+  return filteredItems.filter((item) => {
     if (seen.has(item.name)) return false;
     seen.add(item.name);
     return true;

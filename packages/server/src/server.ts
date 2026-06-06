@@ -13,6 +13,7 @@ import type {
   TokenScope,
   WorkspaceSkillConflict,
   WorkspaceSkillMaterialization,
+  DisabledSkillTarget,
 } from "./types.js";
 import { ApprovalService } from "./approvals.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
@@ -37,6 +38,10 @@ import {
   type SkillRemovalRecord,
   type SkillRemovalScope,
 } from "./skill-removal-journal.js";
+import {
+  listDisabledSkills,
+  setSkillEnabledState,
+} from "./skill-enabled-overrides.js";
 import { fetchOrgMcpCatalog, fetchOrgSkillsCatalog } from "./den-catalog.js";
 import {
   getOrganizationSoul,
@@ -6126,6 +6131,51 @@ function createRoutes(
     });
   });
 
+  addRoute(routes, "GET", "/skills/disabled", "client", async (ctx) => {
+    const workspaceId = trimmedSearchParam(ctx.url.searchParams, "workspaceId");
+    const items = await listDisabledSkills({
+      dataDir: serverDataDir,
+      workspaceId,
+      includeGlobal: true,
+    });
+    return jsonResponse({ items });
+  });
+
+  addRoute(routes, "PATCH", "/skills/enabled-state", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const body = await readJsonBody(ctx.request);
+    const target = requireBodyObject(body, "target") as unknown as DisabledSkillTarget;
+    const enabled = optionalBodyBoolean(body, "enabled");
+    if (enabled === undefined) {
+      throw new ApiError(400, "invalid_enabled", "enabled is required");
+    }
+
+    const result = await setSkillEnabledState({
+      dataDir: serverDataDir,
+      target,
+      enabled,
+      actor: ctx.actor ?? { type: "remote" },
+    });
+
+    const workspaceId = typeof target.workspaceId === "string" ? target.workspaceId.trim() : "";
+    if (workspaceId) {
+      try {
+        const workspace = await resolveWorkspace(config, workspaceId);
+        emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
+          type: "skill",
+          name: typeof target.name === "string" ? target.name.trim() || undefined : undefined,
+          action: "updated",
+          path: typeof target.path === "string" ? target.path.trim() || undefined : undefined,
+        });
+      } catch {
+        // The store mutation already succeeded; unresolved workspace ids simply skip reload signaling.
+      }
+    }
+
+    return jsonResponse(result);
+  });
+
   addRoute(routes, "GET", "/skills/user-global/:name", "none", async (ctx) => {
     await requireHostOrClient(ctx.request, config, ctx.tokens);
     const name = String(ctx.params.name ?? "").trim();
@@ -6309,10 +6359,28 @@ function createRoutes(
     return jsonResponse({ items });
   });
 
+  const listWorkspaceRuntimeSkills = async (
+    workspace: WorkspaceInfo,
+    options: { includeGlobal: boolean; includeDisabled?: boolean },
+  ) => {
+    const disabledSkills = await listDisabledSkills({
+      dataDir: serverDataDir,
+      workspaceId: workspace.id,
+      includeGlobal: true,
+    });
+    return listSkills(workspace.path, {
+      includeGlobal: options.includeGlobal,
+      includeDisabled: options.includeDisabled,
+      disabledSkills,
+      workspaceId: workspace.id,
+    });
+  };
+
   addRoute(routes, "GET", "/workspace/:id/skills", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const includeGlobal = ctx.url.searchParams.get("includeGlobal") === "true";
-    const items = await listSkills(workspace.path, includeGlobal);
+    const includeDisabled = ctx.url.searchParams.get("includeDisabled") === "true";
+    const items = await listWorkspaceRuntimeSkills(workspace, { includeGlobal, includeDisabled });
     return jsonResponse({ items });
   });
 
@@ -6324,7 +6392,7 @@ function createRoutes(
     const threshold = typeof body.threshold === "number" ? body.threshold : undefined;
     const ambiguityDelta = typeof body.ambiguityDelta === "number" ? body.ambiguityDelta : undefined;
     const maxCandidates = typeof body.maxCandidates === "number" ? body.maxCandidates : undefined;
-    const skills = await listSkills(workspace.path, includeGlobal);
+    const skills = await listWorkspaceRuntimeSkills(workspace, { includeGlobal });
     const result = resolveSkillMatch({
       text,
       skills,
@@ -6515,7 +6583,8 @@ function createRoutes(
         content: result.content,
       });
     }
-    const items = await listSkills(workspace.path, includeGlobal);
+    const includeDisabled = ctx.url.searchParams.get("includeDisabled") === "true";
+    const items = await listWorkspaceRuntimeSkills(workspace, { includeGlobal, includeDisabled });
     const item = items.find((skill) => skill.name === name);
     if (!item) {
       throw new ApiError(404, "skill_not_found", `Skill not found: ${name}`);

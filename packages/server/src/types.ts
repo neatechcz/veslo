@@ -161,6 +161,8 @@ export interface SkillItem {
   path: string;
   description: string;
   scope: "project" | "global";
+  enabled?: boolean;
+  disabledReason?: "user";
   trigger?: string;
   disableModelInvocation?: boolean;
   userInvocable?: boolean;

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, expect, test } from "bun:test";
 
 import { listSkills } from "./skills.js";
+import type { DisabledSkillRecord } from "./types.js";
 
 const tempDirs: string[] = [];
 
@@ -88,4 +89,59 @@ test("listSkills returns shared parser metadata for local skills", async () => {
     whenToUse: "Prefer this for source-backed requests.",
     paths: ["docs/**"],
   });
+});
+
+test("listSkills filters disabled skills before de-duping duplicate names", async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-skills-disabled-dedupe-"));
+  const homeDir = await mkdtemp(join(tmpdir(), "veslo-skills-disabled-dedupe-home-"));
+  tempDirs.push(workspaceRoot, homeDir);
+
+  await mkdir(join(workspaceRoot, ".git"), { recursive: true });
+  await mkdir(join(workspaceRoot, ".opencode", "skills", "shared-skill"), { recursive: true });
+  await writeFile(
+    join(workspaceRoot, ".opencode", "skills", "shared-skill", "SKILL.md"),
+    "---\nname: shared-skill\ndescription: Disabled workspace skill\n---\n\n# Workspace\n",
+    "utf8",
+  );
+  await mkdir(join(homeDir, ".config", "opencode", "skills", "shared-skill"), { recursive: true });
+  await writeFile(
+    join(homeDir, ".config", "opencode", "skills", "shared-skill", "SKILL.md"),
+    "---\nname: shared-skill\ndescription: Enabled global skill\n---\n\n# Global\n",
+    "utf8",
+  );
+
+  const previousHome = process.env.HOME;
+  process.env.HOME = homeDir;
+  try {
+    const disabledSkills: DisabledSkillRecord[] = [
+      {
+        id: "workspace:ws_1:shared-skill",
+        name: "shared-skill",
+        scope: "workspace",
+        workspaceId: "ws_1",
+        path: join(workspaceRoot, ".opencode", "skills", "shared-skill", "SKILL.md"),
+        disabledAt: new Date(0).toISOString(),
+      },
+    ];
+
+    const items = await listSkills(workspaceRoot, {
+      includeGlobal: true,
+      disabledSkills,
+      workspaceId: "ws_1",
+    });
+
+    expect(items.map((item) => ({ name: item.name, scope: item.scope, path: item.path }))).toEqual([
+      {
+        name: "shared-skill",
+        scope: "global",
+        path: join(homeDir, ".config", "opencode", "skills", "shared-skill", "SKILL.md"),
+      },
+    ]);
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+  }
 });
