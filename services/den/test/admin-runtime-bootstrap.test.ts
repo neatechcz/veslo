@@ -158,8 +158,10 @@ test("admin invite resend rotates only the derived token hash while returning th
 
   assert.match(resendInviteSource, /inviteToken/)
   assert.match(resendInviteSource, /token_hash:\s*hashOrganizationInviteToken\(inviteToken\)/)
-  assert.match(resendInviteSource, /evaluateAdminInviteResendStatus\(invite\.status\)/)
+  assert.match(resendInviteSource, /const resendNow = new Date\(\)/)
+  assert.match(resendInviteSource, /evaluateAdminInviteResendStatus\(invite\.status,\s*invite\.expires_at,\s*resendNow\)/)
   assert.match(resendInviteSource, /eq\(OrganizationInviteTable\.status,\s*"pending"\)/)
+  assert.match(resendInviteSource, /gt\(OrganizationInviteTable\.expires_at,\s*resendNow\)/)
   assert.match(resendInviteSource, /extractAffectedRows\(result\) === 0/)
   assert.match(resendInviteSource, /inviteToken/)
   assert.doesNotMatch(resendInviteSource, /token_hash:\s*inviteToken/)
@@ -169,20 +171,34 @@ test("admin invite resend status guard only allows pending invites", () => {
   assert.equal(typeof adminRuntime.evaluateAdminInviteResendStatus, "function")
   const evaluateAdminInviteResendStatus = adminRuntime.evaluateAdminInviteResendStatus as (
     status: "pending" | "accepted" | "expired" | "revoked",
+    expiresAt?: Date | null,
+    now?: Date,
   ) => { ok: true } | { ok: false; status: number; error: string }
+  const now = new Date("2026-06-06T12:00:00.000Z")
 
-  assert.deepEqual(evaluateAdminInviteResendStatus("pending"), { ok: true })
-  assert.deepEqual(evaluateAdminInviteResendStatus("accepted"), {
+  assert.deepEqual(evaluateAdminInviteResendStatus("pending", null, now), { ok: true })
+  assert.deepEqual(evaluateAdminInviteResendStatus("pending", new Date("2026-06-06T12:00:00.001Z"), now), { ok: true })
+  assert.deepEqual(evaluateAdminInviteResendStatus("pending", new Date("2026-06-06T12:00:00.000Z"), now), {
+    ok: false,
+    status: 409,
+    error: "invite_expired",
+  })
+  assert.deepEqual(evaluateAdminInviteResendStatus("pending", new Date("2026-06-06T11:59:59.999Z"), now), {
+    ok: false,
+    status: 409,
+    error: "invite_expired",
+  })
+  assert.deepEqual(evaluateAdminInviteResendStatus("accepted", null, now), {
     ok: false,
     status: 409,
     error: "invite_already_accepted",
   })
-  assert.deepEqual(evaluateAdminInviteResendStatus("revoked"), {
+  assert.deepEqual(evaluateAdminInviteResendStatus("revoked", null, now), {
     ok: false,
     status: 409,
     error: "invite_already_revoked",
   })
-  assert.deepEqual(evaluateAdminInviteResendStatus("expired"), {
+  assert.deepEqual(evaluateAdminInviteResendStatus("expired", null, now), {
     ok: false,
     status: 409,
     error: "invite_expired",

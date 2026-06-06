@@ -1,5 +1,5 @@
 import express from "express"
-import { and, eq, inArray, sql } from "drizzle-orm"
+import { and, eq, gt, inArray, isNull, or, sql } from "drizzle-orm"
 import { randomBytes, randomUUID } from "node:crypto"
 
 import { recordAuditEvent } from "../audit.js"
@@ -157,8 +157,13 @@ export type AdminInviteResendStatusResult =
 
 export function evaluateAdminInviteResendStatus(
   inviteStatus: (typeof OrganizationInviteTable.$inferSelect)["status"],
+  expiresAt: Date | null = null,
+  now = new Date(),
 ): AdminInviteResendStatusResult {
   if (inviteStatus === "pending") {
+    if (expiresAt && expiresAt <= now) {
+      return { ok: false, status: 409, error: "invite_expired" }
+    }
     return { ok: true }
   }
   if (inviteStatus === "accepted") {
@@ -1350,7 +1355,8 @@ async function resendAdminOrganizationInvite(req: express.Request, res: express.
     res.status(404).json({ error: "invite_not_found" })
     return null
   }
-  const statusScope = evaluateAdminInviteResendStatus(invite.status)
+  const resendNow = new Date()
+  const statusScope = evaluateAdminInviteResendStatus(invite.status, invite.expires_at, resendNow)
   if (!statusScope.ok) {
     res.status(statusScope.status).json({ error: statusScope.error })
     return null
@@ -1364,19 +1370,22 @@ async function resendAdminOrganizationInvite(req: express.Request, res: express.
   }
 
   const inviteToken = randomBytes(24).toString("base64url")
-  const updatedAt = new Date()
   const result = await db
     .update(OrganizationInviteTable)
     .set({
       token_hash: hashOrganizationInviteToken(inviteToken),
       status: "pending",
       expires_at: expiresAt,
-      updated_at: updatedAt,
+      updated_at: resendNow,
     })
     .where(and(
       eq(OrganizationInviteTable.org_id, context.organization.id),
       eq(OrganizationInviteTable.id, inviteId),
       eq(OrganizationInviteTable.status, "pending"),
+      or(
+        isNull(OrganizationInviteTable.expires_at),
+        gt(OrganizationInviteTable.expires_at, resendNow),
+      ),
     ))
 
   if (extractAffectedRows(result) === 0) {
