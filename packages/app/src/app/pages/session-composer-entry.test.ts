@@ -13,6 +13,9 @@ const readOptionalSource = (path: string) => {
 const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 const sessionSource = readFileSync(new URL("./session.tsx", import.meta.url), "utf8");
 const typesSource = readFileSync(new URL("../types.ts", import.meta.url), "utf8");
+const csSource = readFileSync(new URL("../../i18n/locales/cs.ts", import.meta.url), "utf8");
+const enSource = readFileSync(new URL("../../i18n/locales/en.ts", import.meta.url), "utf8");
+const zhSource = readFileSync(new URL("../../i18n/locales/zh.ts", import.meta.url), "utf8");
 const pickerSource = readOptionalSource("../components/session/composer-target-picker.tsx");
 const conflictSource = readOptionalSource("../components/session/composer-target-conflict-modal.tsx");
 
@@ -70,4 +73,13 @@ test("session empty state renders target picker above centered composer", () => 
   assert.match(sessionSource, /entryPlacement="center"/);
   assert.doesNotMatch(sessionSource, /handleBrowserAutomationQuickstart/);
   assert.doesNotMatch(sessionSource, /handleSoulQuickstart/);
+});
+
+test("composer target copy is localized in primary locales", () => {
+  for (const source of [csSource, enSource, zhSource]) {
+    assert.match(source, /"session\.target_chat_label":/);
+    assert.match(source, /"session\.target_draft_badge":/);
+    assert.match(source, /"session\.target_conflict_title":/);
+    assert.match(source, /"session\.target_conflict_escape_hint":/);
+  }
 });
