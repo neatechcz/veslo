@@ -183,6 +183,37 @@ export async function completeSignupAfterUserCreate(input: CompleteSignupAfterUs
   return { activatedOrganizationMembership: false, createDefaultOrganization: false }
 }
 
+export type RunSignupAfterUserCreateSideEffectsInput = CompleteSignupAfterUserCreateInput & {
+  name: string
+  ensureDefaultOrg(userId: string, name: string): Promise<unknown>
+  assignManagedAiAccess(userId: string): Promise<unknown>
+  cleanupCreatedAuthUser(userId: string): Promise<void>
+}
+
+export async function runSignupAfterUserCreateSideEffects(input: RunSignupAfterUserCreateSideEffectsInput) {
+  let signupResult: Awaited<ReturnType<typeof completeSignupAfterUserCreate>>
+  let hasActiveMembership = false
+
+  try {
+    signupResult = await completeSignupAfterUserCreate(input)
+    hasActiveMembership = signupResult.activatedOrganizationMembership
+
+    if (signupResult.createDefaultOrganization) {
+      await input.ensureDefaultOrg(input.user.id, input.name)
+      hasActiveMembership = true
+    }
+  } catch (error) {
+    await input.cleanupCreatedAuthUser(input.user.id)
+    throw error
+  }
+
+  if (hasActiveMembership) {
+    await input.assignManagedAiAccess(input.user.id)
+  }
+
+  return signupResult
+}
+
 async function resolveAllowedDomain(
   email: string,
   dependencies: Pick<EmailSignupAccessDependencies, "resolveEnabledOrganizationDomainForEmail">,

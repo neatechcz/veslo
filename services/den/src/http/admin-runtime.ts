@@ -28,6 +28,7 @@ import { createAdminRouter, type AdminRouteDeps, type AdminSessionSnapshot, type
 import { createManagedAiAdminRouteDeps } from "../managed-ai/http/admin.js"
 import type { RuntimeState } from "../managed-ai/runtime/default-runtime.js"
 import { createOrActivateOrganizationMembership } from "../org-admin/repository.js"
+import { createAdminProvisioningSignupHeaders } from "../auth/admin-provisioning.js"
 
 type ListedUserRow = {
   id: string
@@ -181,6 +182,7 @@ async function createUserViaAuth(req: express.Request, body: { email: string; na
       Origin: baseUrl,
       Referer: `${baseUrl}/`,
       Cookie: req.header("cookie") ?? "",
+      ...createAdminProvisioningSignupHeaders(),
     },
     body: JSON.stringify({
       email: body.email,

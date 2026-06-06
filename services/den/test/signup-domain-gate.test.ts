@@ -1,6 +1,16 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { completeSignupAfterUserCreate, decideSignupAccess, resolveEmailSignupAccess } from "../src/auth/signup-gate.js"
+import {
+  completeSignupAfterUserCreate,
+  decideSignupAccess,
+  runSignupAfterUserCreateSideEffects,
+  resolveEmailSignupAccess,
+} from "../src/auth/signup-gate.js"
+import {
+  ADMIN_PROVISIONING_SIGNUP_HEADER,
+  createAdminProvisioningSignupHeaders,
+  isAdminProvisioningSignupRequest,
+} from "../src/auth/admin-provisioning.js"
 import { OrganizationAdminRepositoryError, type OrganizationAdminInviteRecord } from "../src/org-admin/repository.js"
 
 test("enabled organization domain auto-activates when a seat is available", () => {
@@ -163,6 +173,106 @@ test("social post-create without authorized signup access does not authorize def
   })
 
   assert.deepEqual(result, { activatedOrganizationMembership: false, createDefaultOrganization: false })
+})
+
+test("post-create activation failure cleans up the just-created auth user before rethrowing", async () => {
+  const activationError = new Error("seat activation failed")
+  const calls: string[] = []
+
+  await assert.rejects(
+    runSignupAfterUserCreateSideEffects({
+      user: { id: "user_1", email: "user@neatech.cz" },
+      name: "User One",
+      inviteToken: null,
+      createMembershipId: () => "membership_1",
+      resolveEnabledOrganizationDomainForEmail: async () => ({
+        id: "domain_1",
+        orgId: "org_1",
+        domain: "neatech.cz",
+        enabled: true,
+        selfSignupEnabled: true,
+        organization: { id: "org_1", seatLimit: 10 },
+      }),
+      createOrActivateOrganizationMembership: async () => {
+        calls.push("activate")
+        throw activationError
+      },
+      acceptOrganizationInvite: async () => {
+        throw new Error("invite should not be accepted")
+      },
+      ensureDefaultOrg: async () => {
+        calls.push("default-org")
+        throw new Error("default org should not be created")
+      },
+      assignManagedAiAccess: async () => {
+        calls.push("managed-ai")
+        return false
+      },
+      cleanupCreatedAuthUser: async (userId) => {
+        calls.push(`cleanup:${userId}`)
+      },
+    }),
+    activationError,
+  )
+
+  assert.deepEqual(calls, ["activate", "cleanup:user_1"])
+})
+
+test("post-create managed AI assignment runs after active membership creation succeeds", async () => {
+  const calls: string[] = []
+
+  const result = await runSignupAfterUserCreateSideEffects({
+    user: { id: "user_1", email: "user@neatech.cz" },
+    name: "User One",
+    inviteToken: null,
+    createMembershipId: () => "membership_1",
+    resolveEnabledOrganizationDomainForEmail: async () => ({
+      id: "domain_1",
+      orgId: "org_1",
+      domain: "neatech.cz",
+      enabled: true,
+      selfSignupEnabled: true,
+      organization: { id: "org_1", seatLimit: 10 },
+    }),
+    createOrActivateOrganizationMembership: async (input) => {
+      calls.push("activate")
+      return {
+        id: input.membershipId,
+        orgId: input.orgId,
+        userId: input.userId,
+        role: input.role,
+        status: "active",
+        createdAt: new Date("2026-06-06T08:00:00.000Z"),
+      }
+    },
+    acceptOrganizationInvite: async () => {
+      throw new Error("invite should not be accepted")
+    },
+    ensureDefaultOrg: async () => {
+      throw new Error("default org should not be created")
+    },
+    assignManagedAiAccess: async () => {
+      calls.push("managed-ai")
+      return true
+    },
+    cleanupCreatedAuthUser: async () => {
+      calls.push("cleanup")
+    },
+  })
+
+  assert.deepEqual(result, { activatedOrganizationMembership: true, createDefaultOrganization: false })
+  assert.deepEqual(calls, ["activate", "managed-ai"])
+})
+
+test("forged external admin provisioning header does not bypass signup authorization", () => {
+  const forgedRequest = {
+    headers: {
+      [ADMIN_PROVISIONING_SIGNUP_HEADER]: "external-forgery",
+    },
+  }
+
+  assert.equal(isAdminProvisioningSignupRequest(forgedRequest), false)
+  assert.equal(isAdminProvisioningSignupRequest({ headers: createAdminProvisioningSignupHeaders() }), true)
 })
 
 function createInviteRecord(overrides: Partial<OrganizationAdminInviteRecord> = {}): OrganizationAdminInviteRecord {

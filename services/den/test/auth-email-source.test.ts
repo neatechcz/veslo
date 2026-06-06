@@ -44,19 +44,33 @@ test("email signup route is gated before Better Auth creates a user", () => {
 })
 
 test("auth user create hook gates before insert, activates organization access, and assigns managed AI last", () => {
-  assert.equal(source.includes("completeSignupAfterUserCreate"), true)
+  assert.equal(source.includes("runSignupAfterUserCreateSideEffects"), true)
   assert.equal(source.includes("authorizeSignupBeforeUserCreate"), true)
   assert.doesNotMatch(source, /pendingEmailSignupAccess/)
   assert.match(source, /before: async/)
-  assert.match(source, /if \(signupResult\.createDefaultOrganization\)/)
+  assert.match(source, /cleanupCreatedAuthUser/)
   assert.match(source, /ensureDefaultOrg/)
   assert.match(source, /maybeAssignDefaultManagedAiAccessForNewUser/)
   const beforeHookIndex = source.indexOf("before: async")
   const afterHookIndex = source.indexOf("after: async")
   assert.ok(beforeHookIndex >= 0)
   assert.ok(afterHookIndex > beforeHookIndex)
-  assert.ok(source.indexOf("authorizeSignupBeforeUserCreate", beforeHookIndex) < source.indexOf("completeSignupAfterUserCreate", afterHookIndex))
-  assert.ok(source.lastIndexOf("completeSignupAfterUserCreate") < source.lastIndexOf("maybeAssignDefaultManagedAiAccessForNewUser"))
+  assert.ok(source.indexOf("authorizeSignupBeforeUserCreate", beforeHookIndex) < source.indexOf("runSignupAfterUserCreateSideEffects", afterHookIndex))
+  assert.ok(source.lastIndexOf("runSignupAfterUserCreateSideEffects") < source.lastIndexOf("maybeAssignDefaultManagedAiAccessForNewUser"))
+})
+
+test("auth activation cleanup removes only Better Auth rows for the created user", () => {
+  const cleanupIndex = source.indexOf("async function cleanupCreatedAuthUser")
+  assert.ok(cleanupIndex >= 0)
+  const cleanupSource = source.slice(cleanupIndex)
+
+  assert.equal(cleanupSource.includes("db.transaction"), true)
+  assert.equal(cleanupSource.includes("schema.AuthSessionTable"), true)
+  assert.equal(cleanupSource.includes("schema.AuthAccountTable"), true)
+  assert.equal(cleanupSource.includes("schema.AuthVerificationTable"), true)
+  assert.equal(cleanupSource.includes("schema.AuthUserTable"), true)
+  assert.equal(cleanupSource.includes("schema.OrgMembershipTable"), false)
+  assert.equal(cleanupSource.includes("schema.OrgTable"), false)
 })
 
 test("auth setup docs and sample config include email delivery settings", () => {

@@ -1,6 +1,7 @@
 import { APIError, betterAuth } from "better-auth"
 import { drizzleAdapter } from "better-auth/adapters/drizzle"
 import { bearer } from "better-auth/plugins/bearer"
+import { eq } from "drizzle-orm"
 import { randomUUID } from "node:crypto"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { db } from "./db/index.js"
@@ -10,10 +11,11 @@ import { fireAndForgetAuthEmail, sendResetPasswordAuthEmail, sendVerificationAut
 import { env, isAuthEmailConfigured } from "./env.js"
 import { ensureDefaultOrg } from "./orgs.js"
 import {
-  completeSignupAfterUserCreate,
   resolveEmailSignupAccess,
+  runSignupAfterUserCreateSideEffects,
   type SignupAccessError,
 } from "./auth/signup-gate.js"
+import { isAdminProvisioningSignupRequest } from "./auth/admin-provisioning.js"
 import { normalizeInviteEmail } from "./org-admin/policy.js"
 import {
   acceptOrganizationInvite,
@@ -91,6 +93,10 @@ export const auth = betterAuth({
     user: {
       create: {
         before: async (user, context) => {
+          if (isAdminProvisioningSignupRequest(context)) {
+            return
+          }
+
           await authorizeSignupBeforeUserCreate({
             email: typeof user.email === "string" ? user.email : null,
             inviteToken: readInviteTokenFromAuthContext(context),
@@ -98,21 +104,21 @@ export const auth = betterAuth({
         },
         after: async (user, context) => {
           const name = user.name ?? user.email ?? "Personal"
-          const signupResult = await completeSignupAfterUserCreate({
+          await runSignupAfterUserCreateSideEffects({
             user: {
               id: user.id,
               email: user.email,
             },
+            name,
             inviteToken: readInviteTokenFromAuthContext(context),
             createMembershipId: randomUUID,
             resolveEnabledOrganizationDomainForEmail,
             createOrActivateOrganizationMembership,
             acceptOrganizationInvite,
+            ensureDefaultOrg,
+            assignManagedAiAccess: maybeAssignDefaultManagedAiAccessForNewUser,
+            cleanupCreatedAuthUser,
           })
-          if (signupResult.createDefaultOrganization) {
-            await ensureDefaultOrg(user.id, name)
-          }
-          await maybeAssignDefaultManagedAiAccessForNewUser(user.id)
         },
       },
     },
@@ -139,6 +145,10 @@ export function createAuthNodeHandler(baseHandler: AuthNodeHandler, guard = guar
 }
 
 export async function guardEmailSignupRequest(_req: AuthNodeRequest, rawBody: string): Promise<EmailSignupGuardResult> {
+  if (isAdminProvisioningSignupRequest(_req)) {
+    return { ok: true }
+  }
+
   const parsed = parseEmailSignupBody(rawBody)
   if (!parsed) {
     return { ok: false, status: 400, error: "invalid_signup_request" }
@@ -278,6 +288,27 @@ function sendAuthSignupError(res: ServerResponse, status: number, error: string)
   res.statusCode = status
   res.setHeader("Content-Type", "application/json")
   res.end(JSON.stringify({ error }))
+}
+
+async function cleanupCreatedAuthUser(userId: string) {
+  await db.transaction(async (tx) => {
+    const users = await tx
+      .select({
+        email: schema.AuthUserTable.email,
+      })
+      .from(schema.AuthUserTable)
+      .where(eq(schema.AuthUserTable.id, userId))
+      .limit(1)
+
+    const email = users[0]?.email ?? null
+
+    await tx.delete(schema.AuthSessionTable).where(eq(schema.AuthSessionTable.userId, userId))
+    await tx.delete(schema.AuthAccountTable).where(eq(schema.AuthAccountTable.userId, userId))
+    if (email) {
+      await tx.delete(schema.AuthVerificationTable).where(eq(schema.AuthVerificationTable.identifier, email))
+    }
+    await tx.delete(schema.AuthUserTable).where(eq(schema.AuthUserTable.id, userId))
+  })
 }
 
 function throwSignupAccessApiError(error: SignupAccessError): never {

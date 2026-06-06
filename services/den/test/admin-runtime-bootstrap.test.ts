@@ -22,3 +22,11 @@ test("admin runtime forwards managed AI Codex status provider into route deps", 
 
   assert.match(source, /codexStatusProvider:\s*options\.managedAi\.codexStatusProvider/)
 })
+
+test("admin-created users use the internal provisioning override for email signup", async () => {
+  const source = await readFile(new URL("../src/http/admin-runtime.ts", import.meta.url), "utf8")
+  const signupFetch = source.match(/fetch\(`\$\{baseUrl\}\/api\/auth\/sign-up\/email`, \{[\s\S]*?body:/)?.[0] ?? ""
+
+  assert.match(source, /createAdminProvisioningSignupHeaders/)
+  assert.match(signupFetch, /\.\.\.createAdminProvisioningSignupHeaders\(\)/)
+})
