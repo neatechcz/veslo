@@ -402,6 +402,7 @@ async function ensureTables() {
         \`name\` varchar(255) NOT NULL,
         \`slug\` varchar(255) NOT NULL,
         \`owner_user_id\` varchar(64) NOT NULL,
+        \`seat_limit\` int unsigned,
         \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
         \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
         CONSTRAINT \`org_id\` PRIMARY KEY(\`id\`),
@@ -415,13 +416,59 @@ async function ensureTables() {
         \`id\` varchar(64) NOT NULL,
         \`org_id\` varchar(64) NOT NULL,
         \`user_id\` varchar(64) NOT NULL,
-        \`role\` enum('owner','member') NOT NULL,
+        \`role\` enum('member','organization_admin') NOT NULL,
+        \`status\` enum('active','disabled','removed') NOT NULL DEFAULT 'active',
         \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
         CONSTRAINT \`org_membership_id\` PRIMARY KEY(\`id\`)
       )
     `)
     await ensureIndex("org_membership", "org_membership_org_id", ["org_id"])
     await ensureIndex("org_membership", "org_membership_user_id", ["user_id"])
+    await ensureIndex("org_membership", "org_membership_org_status", ["org_id", "status"])
+    await ensureIndex("org_membership", "org_membership_user_status", ["user_id", "status"])
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`organization_domain\` (
+        \`id\` varchar(64) NOT NULL,
+        \`org_id\` varchar(64) NOT NULL,
+        \`domain\` varchar(255) NOT NULL,
+        \`enabled\` boolean NOT NULL DEFAULT true,
+        \`self_signup_enabled\` boolean NOT NULL DEFAULT false,
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        CONSTRAINT \`organization_domain_id\` PRIMARY KEY(\`id\`)
+      )
+    `)
+    await ensureIndex("organization_domain", "organization_domain_domain", ["domain"], true)
+    await ensureIndex("organization_domain", "organization_domain_org_id", ["org_id"])
+    await ensureIndex("organization_domain", "organization_domain_org_enabled", ["org_id", "enabled"])
+    await ensureIndex("organization_domain", "organization_domain_self_signup", ["self_signup_enabled"])
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`organization_invite\` (
+        \`id\` varchar(64) NOT NULL,
+        \`org_id\` varchar(64) NOT NULL,
+        \`email\` varchar(255) NOT NULL,
+        \`role\` enum('member','organization_admin') NOT NULL DEFAULT 'member',
+        \`status\` enum('pending','accepted','expired','revoked') NOT NULL DEFAULT 'pending',
+        \`token_hash\` varchar(255) NOT NULL,
+        \`invited_by_user_id\` varchar(64) NOT NULL,
+        \`accepted_by_user_id\` varchar(64),
+        \`expires_at\` timestamp(3),
+        \`accepted_at\` timestamp(3),
+        \`revoked_at\` timestamp(3),
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        CONSTRAINT \`organization_invite_id\` PRIMARY KEY(\`id\`)
+      )
+    `)
+    await ensureIndex("organization_invite", "organization_invite_token_hash", ["token_hash"], true)
+    await ensureIndex("organization_invite", "organization_invite_org_id", ["org_id"])
+    await ensureIndex("organization_invite", "organization_invite_org_status", ["org_id", "status"])
+    await ensureIndex("organization_invite", "organization_invite_email", ["email"])
+    await ensureIndex("organization_invite", "organization_invite_email_status", ["email", "status"])
+    await ensureIndex("organization_invite", "organization_invite_invited_by", ["invited_by_user_id"])
+    await ensureIndex("organization_invite", "organization_invite_accepted_by", ["accepted_by_user_id"])
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`platform_role\` (
