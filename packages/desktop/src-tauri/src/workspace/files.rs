@@ -30,8 +30,6 @@ const DEFAULT_SOUL_USER: &str = r#"# User Memory
 <!-- Veslo will append new facts below. -->
 "#;
 
-const SOUL_INSTRUCTIONS: &[&str] = &[".opencode/soul-company.md", ".opencode/soul-user.md"];
-
 /// Seed soul template files into app_data_dir/templates/ if they don't exist.
 pub fn seed_soul_templates(templates_dir: &Path) -> Result<(), String> {
     fs::create_dir_all(templates_dir)
@@ -50,41 +48,6 @@ pub fn seed_soul_templates(templates_dir: &Path) -> Result<(), String> {
     }
 
     Ok(())
-}
-
-/// Copy soul files into workspace .opencode/ from templates (or inline defaults).
-fn seed_soul_files(opencode_dir: &Path, templates_dir: Option<&Path>) -> Result<(), String> {
-    let files: &[(&str, &str)] = &[
-        ("soul-company.md", DEFAULT_SOUL_COMPANY),
-        ("soul-user.md", DEFAULT_SOUL_USER),
-    ];
-
-    for (filename, default_content) in files {
-        let dest = opencode_dir.join(filename);
-        if dest.exists() {
-            continue;
-        }
-
-        let content = templates_dir
-            .map(|dir| dir.join(filename))
-            .filter(|path| path.exists())
-            .and_then(|path| fs::read_to_string(&path).ok());
-
-        let content = content.as_deref().unwrap_or(default_content);
-        fs::write(&dest, content).map_err(|e| format!("Failed to write {filename}: {e}"))?;
-    }
-
-    Ok(())
-}
-
-fn merge_instructions(existing: Vec<String>, required: &[&str]) -> Vec<String> {
-    let mut out = existing;
-    for instruction in required {
-        if !out.iter().any(|entry| entry == instruction) {
-            out.push(instruction.to_string());
-        }
-    }
-    out
 }
 
 pub fn merge_plugins(existing: Vec<String>, required: &[&str]) -> Vec<String> {
@@ -544,10 +507,9 @@ pub fn ensure_workspace_files(
 ) -> Result<(), String> {
     let root = PathBuf::from(workspace_path);
 
-    // Seed soul files into .opencode/ before anything else that reads config
     let opencode_dir = root.join(".opencode");
     fs::create_dir_all(&opencode_dir).map_err(|e| format!("Failed to create .opencode: {e}"))?;
-    seed_soul_files(&opencode_dir, templates_dir)?;
+    let _ = templates_dir;
 
     let skill_root = root.join(".opencode").join("skills");
     fs::create_dir_all(&skill_root)
@@ -691,32 +653,6 @@ pub fn ensure_workspace_files(
         }
     }
 
-    // Ensure soul files are listed in instructions
-    if let Some(obj) = config.as_object_mut() {
-        let instructions_value = obj
-            .get("instructions")
-            .cloned()
-            .unwrap_or_else(|| serde_json::json!([]));
-
-        let existing_instructions: Vec<String> = match instructions_value {
-            serde_json::Value::Array(arr) => arr
-                .into_iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect(),
-            serde_json::Value::String(s) => vec![s],
-            _ => vec![],
-        };
-
-        let merged = merge_instructions(existing_instructions.clone(), SOUL_INSTRUCTIONS);
-        if merged != existing_instructions {
-            config_changed = true;
-        }
-        obj.insert(
-            "instructions".to_string(),
-            serde_json::Value::Array(merged.into_iter().map(serde_json::Value::String).collect()),
-        );
-    }
-
     if config_changed {
         fs::write(
             &config_path,
@@ -801,6 +737,36 @@ mod tests {
         assert!(!skills_dir.join("skill-creator").exists());
         assert!(!skills_dir.join("plugin-creator").exists());
         assert!(!skills_dir.join("agent-creator").exists());
+    }
+
+    #[test]
+    fn ensure_workspace_files_does_not_seed_runtime_soul_files_or_old_instructions() {
+        let root = temp_workspace_root("no-runtime-soul-seed");
+        let root_str = root.to_string_lossy().to_string();
+
+        ensure_workspace_files(&root_str, "starter", None, None).expect("seed workspace files");
+
+        assert!(!root.join(".opencode").join("soul-company.md").exists());
+        assert!(!root.join(".opencode").join("soul-user.md").exists());
+
+        let config_raw =
+            fs::read_to_string(root.join("opencode.jsonc")).expect("read generated config");
+        let config: serde_json::Value =
+            serde_json::from_str(&config_raw).expect("parse generated config");
+        let instructions = config
+            .get("instructions")
+            .and_then(|value| value.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        assert!(!instructions.contains(&serde_json::Value::String(
+            ".opencode/soul-company.md".to_string()
+        )));
+        assert!(!instructions.contains(&serde_json::Value::String(
+            ".opencode/soul-user.md".to_string()
+        )));
+
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]

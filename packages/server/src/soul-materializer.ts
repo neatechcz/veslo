@@ -51,7 +51,7 @@ export type SoulMaterializationManifest = {
 export type SoulMaterializationConflict = {
   path: string;
   relativePath: string;
-  reason: "unmanaged_target_exists";
+  reason: "unmanaged_target_exists" | "managed_target_modified" | "managed_target_missing";
 };
 
 type SoulMaterializationFileResult = SoulMaterializationManifestFile & {
@@ -80,7 +80,12 @@ export type SoulMaterializationFailure = {
   conflicts?: SoulMaterializationConflict[];
   pending: boolean;
   manualSyncRequired: false;
-  requiresAction: "preserve_unmanaged_soul_file" | "fix_opencode_config" | "fix_soul_manifest" | "inspect_materialization_error";
+  requiresAction:
+    | "preserve_unmanaged_soul_file"
+    | "restore_managed_soul_file"
+    | "fix_opencode_config"
+    | "fix_soul_manifest"
+    | "inspect_materialization_error";
 };
 
 export type SoulMaterializationResult = SoulMaterializationSuccess | SoulMaterializationFailure;
@@ -114,6 +119,53 @@ export async function readSoulMaterializationManifest(
   return validateSoulMaterializationManifest(JSON.parse(await readFile(path, "utf8")));
 }
 
+export async function readSoulMaterializationStatus(
+  workspaceRoot: string,
+): Promise<SoulMaterializationResult | undefined> {
+  const manifestPath = soulMaterializationManifestPath(workspaceRoot);
+  let manifest: SoulMaterializationManifest | null;
+  try {
+    manifest = await readSoulMaterializationManifest(workspaceRoot);
+  } catch (error) {
+    return failure("manifest_error", {
+      message: errorMessage(error, "Soul materialization manifest is invalid"),
+      path: manifestPath,
+      requiresAction: "fix_soul_manifest",
+    });
+  }
+  if (!manifest) return undefined;
+
+  const conflicts = await managedFileConflicts(workspaceRoot, manifest);
+  if (conflicts.length > 0) {
+    return conflictFailure(conflicts);
+  }
+
+  const files = manifest.files.map((file) => ({
+    ...file,
+    absolutePath: join(workspaceRoot, file.path),
+  }));
+  const contents = await Promise.all(files.map(async (file) => {
+    try {
+      return normalizeExistingManagedContent(await readFile(file.absolutePath, "utf8"));
+    } catch {
+      return "";
+    }
+  }));
+
+  return {
+    ok: true,
+    status: "current",
+    workspaceRoot,
+    effectiveContent: contents.filter((content) => content.length > 0).join("\n\n"),
+    manifestPath,
+    instructionsPath: opencodeConfigPath(workspaceRoot),
+    files,
+    pending: false,
+    reloadRequired: true,
+    manualSyncRequired: false,
+  };
+}
+
 export async function materializeEffectiveSoul(input: MaterializeEffectiveSoulInput): Promise<SoulMaterializationResult> {
   const workspaceRoot = input.workspaceRoot;
   const manifestPath = soulMaterializationManifestPath(workspaceRoot);
@@ -135,13 +187,9 @@ export async function materializeEffectiveSoul(input: MaterializeEffectiveSoulIn
     });
   }
 
-  const conflicts = await targetConflicts(snapshots, previousManifest);
+  const conflicts = await targetConflicts(workspaceRoot, snapshots, previousManifest);
   if (conflicts.length > 0) {
-    return failure("conflict", {
-      message: "Refusing to overwrite unmanaged Soul runtime files.",
-      conflicts,
-      requiresAction: "preserve_unmanaged_soul_file",
-    });
+    return conflictFailure(conflicts);
   }
 
   try {
@@ -208,6 +256,7 @@ function buildSourceSnapshots(input: MaterializeEffectiveSoulInput): SourceSnaps
 }
 
 async function targetConflicts(
+  workspaceRoot: string,
   snapshots: SourceSnapshot[],
   manifest: SoulMaterializationManifest | null,
 ): Promise<SoulMaterializationConflict[]> {
@@ -218,15 +267,73 @@ async function targetConflicts(
   );
   const conflicts: SoulMaterializationConflict[] = [];
   for (const snapshot of snapshots) {
-    if (!(await exists(snapshot.absolutePath))) continue;
-    if (managedPaths.has(snapshot.relativePath)) continue;
+    const targetExists = await exists(snapshot.absolutePath);
+    if (managedPaths.has(snapshot.relativePath)) {
+      if (!targetExists) {
+        conflicts.push({
+          path: snapshot.absolutePath,
+          relativePath: snapshot.relativePath,
+          reason: "managed_target_missing",
+        });
+        continue;
+      }
+      const entry = manifest?.files.find((file) => file.path === snapshot.relativePath);
+      if (entry && !(await existingFileMatchesManifest(snapshot.absolutePath, entry))) {
+        conflicts.push({
+          path: snapshot.absolutePath,
+          relativePath: snapshot.relativePath,
+          reason: "managed_target_modified",
+        });
+      }
+      continue;
+    }
+    if (!targetExists) continue;
     conflicts.push({
       path: snapshot.absolutePath,
       relativePath: snapshot.relativePath,
       reason: "unmanaged_target_exists",
     });
   }
+  for (const conflict of await managedFileConflicts(workspaceRoot, manifest, managedPaths)) {
+    if (!conflicts.some((existing) => existing.relativePath === conflict.relativePath)) {
+      conflicts.push(conflict);
+    }
+  }
   return conflicts;
+}
+
+async function managedFileConflicts(
+  workspaceRoot: string,
+  manifest: SoulMaterializationManifest | null,
+  onlyPaths?: Set<string>,
+): Promise<SoulMaterializationConflict[]> {
+  const conflicts: SoulMaterializationConflict[] = [];
+  for (const entry of manifest?.files ?? []) {
+    if (onlyPaths && !onlyPaths.has(entry.path)) continue;
+    const absolutePath = join(workspaceRoot, entry.path);
+    if (!(await exists(absolutePath))) {
+      conflicts.push({
+        path: absolutePath,
+        relativePath: entry.path,
+        reason: "managed_target_missing",
+      });
+      continue;
+    }
+    if (!(await existingFileMatchesManifest(absolutePath, entry))) {
+      conflicts.push({
+        path: absolutePath,
+        relativePath: entry.path,
+        reason: "managed_target_modified",
+      });
+    }
+  }
+  return conflicts;
+}
+
+async function existingFileMatchesManifest(path: string, entry: SoulMaterializationManifestFile): Promise<boolean> {
+  const content = await readFile(path, "utf8");
+  if (sha256(content) === entry.contentSha256) return true;
+  return sha256(normalizeExistingManagedContent(content)) === entry.contentSha256;
 }
 
 async function ensureSoulInstructions(configPath: string): Promise<void> {
@@ -261,7 +368,7 @@ function manifestFileForSnapshot(snapshot: SourceSnapshot, materializedAt: strin
     documentId: document?.id ?? null,
     currentVersionId: document?.currentVersionId ?? null,
     sourceVersionId: snapshot.versionId,
-    contentSha256: sha256(snapshot.content),
+    contentSha256: sha256(normalizeManagedFileContent(snapshot.content)),
     managedBy: MANAGED_BY,
     materializedAt,
   };
@@ -292,8 +399,15 @@ function manifestForFiles(
 
 async function writeManagedFile(path: string, content: string): Promise<void> {
   await ensureDir(dirname(path));
-  const normalized = content.length > 0 && !content.endsWith("\n") ? `${content}\n` : content;
-  await writeFile(path, normalized, "utf8");
+  await writeFile(path, normalizeManagedFileContent(content), "utf8");
+}
+
+function normalizeManagedFileContent(content: string): string {
+  return content.length > 0 && !content.endsWith("\n") ? `${content}\n` : content;
+}
+
+function normalizeExistingManagedContent(content: string): string {
+  return content.endsWith("\n") ? content.slice(0, -1) : content;
 }
 
 function validateSoulMaterializationManifest(value: unknown): SoulMaterializationManifest {
@@ -400,4 +514,15 @@ function failure(
     manualSyncRequired: false,
     ...input,
   };
+}
+
+function conflictFailure(conflicts: SoulMaterializationConflict[]): SoulMaterializationFailure {
+  const requiresAction = conflicts.every((conflict) => conflict.reason === "managed_target_missing")
+    ? "restore_managed_soul_file"
+    : "preserve_unmanaged_soul_file";
+  return failure("conflict", {
+    message: "Refusing to overwrite Soul runtime files without confirmed Veslo ownership.",
+    conflicts,
+    requiresAction,
+  });
 }

@@ -63,8 +63,7 @@ import {
 } from "./soul-memory.js";
 import {
   materializeEffectiveSoul,
-  readSoulMaterializationManifest,
-  soulMaterializationManifestPath,
+  readSoulMaterializationStatus,
   type SoulMaterializationResult,
 } from "./soul-materializer.js";
 import {
@@ -178,6 +177,39 @@ type LogAttributes = Record<string, unknown>;
 type ServerLogger = {
   log: (level: LogLevel, message: string, attributes?: LogAttributes) => void;
 };
+
+type SoulMaterializationTestHookInput = {
+  workspaceId: string;
+  overrides: Partial<Record<SoulScope, SoulDocument | null>>;
+};
+
+let soulMaterializationTestHookForTests: ((input: SoulMaterializationTestHookInput) => Promise<void>) | null = null;
+const soulMaterializationLocks = new Map<string, Promise<void>>();
+
+export function setSoulMaterializationTestHookForTests(
+  hook: ((input: SoulMaterializationTestHookInput) => Promise<void>) | null,
+): void {
+  soulMaterializationTestHookForTests = hook;
+}
+
+async function withSoulMaterializationLock<T>(workspaceId: string, run: () => Promise<T>): Promise<T> {
+  const previous = soulMaterializationLocks.get(workspaceId)?.catch(() => undefined) ?? Promise.resolve();
+  let releaseCurrent!: () => void;
+  const current = new Promise<void>((resolveCurrent) => {
+    releaseCurrent = resolveCurrent;
+  });
+  const queued = previous.then(() => current);
+  soulMaterializationLocks.set(workspaceId, queued);
+  await previous;
+  try {
+    return await run();
+  } finally {
+    releaseCurrent();
+    if (soulMaterializationLocks.get(workspaceId) === queued) {
+      soulMaterializationLocks.delete(workspaceId);
+    }
+  }
+}
 
 function normalizeConfigKey(input: string): string {
   return input.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -2234,24 +2266,28 @@ async function materializeSoulForWorkspace(
   overrides: Partial<Record<SoulScope, SoulDocument | null>> = {},
   options: { workspaceActive?: boolean } = {},
 ): Promise<SoulMaterializationResult> {
-  const den = soulDenContext(ctx);
-  const hasOverride = (scope: SoulScope) => Object.prototype.hasOwnProperty.call(overrides, scope);
-  const organization = hasOverride("organization")
-    ? overrides.organization ?? null
-    : await readCachedSoulForMaterialization(dataDir, "organization", den.orgId);
-  const user = hasOverride("user")
-    ? overrides.user ?? null
-    : await readCachedSoulForMaterialization(dataDir, "user", den.userId);
-  const workspaceDocument = hasOverride("workspace")
-    ? overrides.workspace ?? null
-    : await readCachedSoulForMaterialization(dataDir, "workspace", workspace.id);
+  return withSoulMaterializationLock(workspace.id, async () => {
+    const den = soulDenContext(ctx);
+    const hasOverride = (scope: SoulScope) => Object.prototype.hasOwnProperty.call(overrides, scope);
+    const organization = hasOverride("organization")
+      ? overrides.organization ?? null
+      : await readCachedSoulForMaterialization(dataDir, "organization", den.orgId);
+    const user = hasOverride("user")
+      ? overrides.user ?? null
+      : await readCachedSoulForMaterialization(dataDir, "user", den.userId);
+    const workspaceDocument = hasOverride("workspace")
+      ? overrides.workspace ?? null
+      : await readCachedSoulForMaterialization(dataDir, "workspace", workspace.id);
 
-  return materializeEffectiveSoul({
-    workspaceRoot: workspace.path,
-    organization,
-    user,
-    workspace: workspaceDocument,
-    workspaceActive: options.workspaceActive,
+    await soulMaterializationTestHookForTests?.({ workspaceId: workspace.id, overrides });
+
+    return materializeEffectiveSoul({
+      workspaceRoot: workspace.path,
+      organization,
+      user,
+      workspace: workspaceDocument,
+      workspaceActive: options.workspaceActive,
+    });
   });
 }
 
@@ -2324,47 +2360,7 @@ function materializationSummaryPayload(entry: WorkspaceSkillMaterialization) {
 }
 
 async function buildSoulMaterializationStatus(workspace: WorkspaceInfo): Promise<SoulMaterializationResult | undefined> {
-  const manifestPath = soulMaterializationManifestPath(workspace.path);
-  try {
-    const manifest = await readSoulMaterializationManifest(workspace.path);
-    if (!manifest) return undefined;
-    const files = manifest.files.map((file) => ({
-      ...file,
-      absolutePath: join(workspace.path, file.path),
-    }));
-    const contents = await Promise.all(
-      files.map(async (file) => {
-        try {
-          const content = await readFile(file.absolutePath, "utf8");
-          return content.endsWith("\n") ? content.slice(0, -1) : content;
-        } catch {
-          return "";
-        }
-      }),
-    );
-    return {
-      ok: true,
-      status: "current",
-      workspaceRoot: workspace.path,
-      effectiveContent: contents.filter((content) => content.length > 0).join("\n\n"),
-      manifestPath,
-      instructionsPath: opencodeConfigPath(workspace.path),
-      files,
-      pending: false,
-      reloadRequired: true,
-      manualSyncRequired: false,
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      reason: "manifest_error",
-      message: error instanceof Error ? error.message : "Soul materialization manifest is invalid",
-      path: manifestPath,
-      pending: false,
-      manualSyncRequired: false,
-      requiresAction: "fix_soul_manifest",
-    };
-  }
+  return readSoulMaterializationStatus(workspace.path);
 }
 
 async function buildWorkspaceSkillMaterializationStatus(config: ServerConfig, workspace: WorkspaceInfo) {

@@ -144,6 +144,49 @@ test("existing unmanaged Soul target files are not overwritten and return action
   expect(await readFile(join(workspaceRoot, ".opencode", "soul-user.md"), "utf8")).toBe("User-authored memory\n");
 });
 
+test("manifest-owned files with local edits are not overwritten", async () => {
+  const workspaceRoot = await tempDir("veslo-soul-materializer-drift-");
+  const initial = soulDocs();
+  await materializeEffectiveSoul({ workspaceRoot, ...initial });
+  await writeFile(join(workspaceRoot, ".opencode", "soul-user.md"), "Local edit\n", "utf8");
+
+  const updatedUser = document({
+    scope: "user",
+    ownerId: "user_1",
+    versionId: "user_v2",
+    content: "Updated user memory",
+  });
+  const result = await materializeEffectiveSoul({ workspaceRoot, ...initial, user: updatedUser });
+
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected materialization drift conflict");
+  expect(result.reason).toBe("conflict");
+  expect(result.requiresAction).toBe("preserve_unmanaged_soul_file");
+  expect(result.conflicts).toContainEqual(expect.objectContaining({
+    relativePath: ".opencode/soul-user.md",
+    reason: "managed_target_modified",
+  }));
+  expect(await readFile(join(workspaceRoot, ".opencode", "soul-user.md"), "utf8")).toBe("Local edit\n");
+});
+
+test("manifest-owned missing files return actionable status instead of silently recreating", async () => {
+  const workspaceRoot = await tempDir("veslo-soul-materializer-missing-");
+  const docs = soulDocs();
+  await materializeEffectiveSoul({ workspaceRoot, ...docs });
+  await rm(join(workspaceRoot, ".opencode", "soul-user.md"), { force: true });
+
+  const result = await materializeEffectiveSoul({ workspaceRoot, ...docs });
+
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected materialization missing-file conflict");
+  expect(result.reason).toBe("conflict");
+  expect(result.requiresAction).toBe("restore_managed_soul_file");
+  expect(result.conflicts).toContainEqual(expect.objectContaining({
+    relativePath: ".opencode/soul-user.md",
+    reason: "managed_target_missing",
+  }));
+});
+
 test("opencode instructions include all three Soul files while preserving existing instructions", async () => {
   const workspaceRoot = await tempDir("veslo-soul-materializer-instructions-");
   await writeFile(
@@ -225,6 +268,82 @@ test("workspace Heartbeat turns on when Workspace Soul is created through the ro
   expect(payload.materialization?.ok).toBe(true);
   expect(payload.materialization?.manualSyncRequired).not.toBe(true);
   expect(payload.materialization?.requiresAction).not.toBe("manual_sync");
+});
+
+test("workspace Soul status reports drift for modified materialized files", async () => {
+  const dataDir = await tempDir("veslo-soul-materializer-status-data-");
+  const workspaceRoot = await tempDir("veslo-soul-materializer-status-workspace-");
+  const previousDataDir = process.env.VESLO_DATA_DIR;
+  process.env.VESLO_DATA_DIR = dataDir;
+  const server = startServer({
+    host: "127.0.0.1",
+    port: 0,
+    token: "client-token",
+    hostToken: "host-token",
+    approval: { mode: "auto", timeoutMs: 1_000 },
+    corsOrigins: ["*"],
+    configPath: join(dataDir, "server.json"),
+    workspaces: [{
+      id: "ws_1",
+      name: "Workspace",
+      path: workspaceRoot,
+      workspaceType: "local",
+    }],
+    authorizedRoots: [workspaceRoot],
+    readOnly: false,
+    startedAt: Date.now(),
+    tokenSource: "cli",
+    hostTokenSource: "cli",
+    logFormat: "pretty",
+    logRequests: false,
+    debugLogs: {
+      enabled: false,
+      ingestUrl: null,
+      ingestToken: null,
+      batchMaxEvents: 200,
+      batchMaxBytes: 256 * 1024,
+      spoolMaxBytes: 100 * 1024 * 1024,
+      flushIntervalMs: 5000,
+    },
+  });
+  runningServers.push(server as { stop?: (closeActiveConnections?: boolean) => void });
+  if (previousDataDir === undefined) {
+    delete process.env.VESLO_DATA_DIR;
+  } else {
+    process.env.VESLO_DATA_DIR = previousDataDir;
+  }
+
+  const patch = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/soul`, {
+    method: "PATCH",
+    headers: {
+      Authorization: "Bearer client-token",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ content: "Workspace memory", changeSummary: "Seed", baseVersionId: null }),
+  });
+  expect(patch.status).toBe(200);
+  await writeFile(join(workspaceRoot, ".opencode", "soul-workspace.md"), "Local edit\n", "utf8");
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/soul`, {
+    headers: { Authorization: "Bearer client-token" },
+  });
+
+  expect(response.status).toBe(200);
+  const payload = await response.json() as {
+    materialization?: {
+      ok: boolean;
+      reason?: string;
+      requiresAction?: string;
+      conflicts?: Array<{ relativePath: string; reason: string }>;
+    };
+  };
+  expect(payload.materialization?.ok).toBe(false);
+  expect(payload.materialization?.reason).toBe("conflict");
+  expect(payload.materialization?.requiresAction).toBe("preserve_unmanaged_soul_file");
+  expect(payload.materialization?.conflicts).toContainEqual(expect.objectContaining({
+    relativePath: ".opencode/soul-workspace.md",
+    reason: "managed_target_modified",
+  }));
 });
 
 test("materializer does not expose manual sync as required user action", async () => {

@@ -1,15 +1,16 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "bun:test";
 
-import { startServer } from "./server.js";
+import { setSoulMaterializationTestHookForTests, startServer } from "./server.js";
 import type { SoulDocument } from "./soul-memory.js";
 
 const runningServers: Array<{ stop?: (closeActiveConnections?: boolean) => void }> = [];
 const tempDirs: string[] = [];
 
 afterEach(async () => {
+  setSoulMaterializationTestHookForTests(null);
   while (runningServers.length > 0) {
     const server = runningServers.pop();
     try {
@@ -538,6 +539,67 @@ test("workspace soul routes work for configured workspaces that are not active",
   const read = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_inactive/soul`, { headers: clientHeaders });
   expect(read.status).toBe(200);
   expect(await read.json()).toEqual(updatePayload);
+});
+
+test("concurrent Soul materializations preserve newest scope content", async () => {
+  const updatedUser = document({
+    scope: "user",
+    ownerId: "user_1",
+    versionId: "user_v1",
+    content: "Newest user memory",
+  });
+  let userDenSeen!: () => void;
+  const userDenRequestReceived = new Promise<void>((resolve) => {
+    userDenSeen = resolve;
+  });
+  const den = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (request) => {
+      const url = new URL(request.url);
+      if (url.pathname === "/v1/soul/user" && request.method === "PATCH") {
+        userDenSeen();
+        return Response.json(updatedUser);
+      }
+      return Response.json({ code: "not_found" }, { status: 404 });
+    },
+  });
+  runningServers.push(den as { stop?: (closeActiveConnections?: boolean) => void });
+  const server = await startFixture({ denApiBase: `http://127.0.0.1:${den.port}` });
+  const workspaceRoot = tempDirs[tempDirs.length - 2]!;
+  let releaseWorkspaceMaterialization: (() => void) | null = null;
+  const workspaceMaterializationPaused = new Promise<void>((resolve) => {
+    setSoulMaterializationTestHookForTests(async ({ overrides }) => {
+      if (!overrides.workspace) return;
+      resolve();
+      await new Promise<void>((release) => {
+        releaseWorkspaceMaterialization = release;
+      });
+    });
+  });
+
+  const workspacePatch = fetch(`http://127.0.0.1:${server.port}/workspace/ws_active/soul`, {
+    method: "PATCH",
+    headers: { ...denHeaders, "content-type": "application/json" },
+    body: JSON.stringify({ content: "Workspace memory", changeSummary: "Create", baseVersionId: null }),
+  });
+  await workspaceMaterializationPaused;
+
+  const userPatch = fetch(`http://127.0.0.1:${server.port}/soul/user`, {
+    method: "PATCH",
+    headers: { ...denHeaders, "content-type": "application/json" },
+    body: JSON.stringify({ content: "Newest user memory", changeSummary: "Update user", baseVersionId: null }),
+  });
+  await userDenRequestReceived;
+
+  if (!releaseWorkspaceMaterialization) throw new Error("Workspace materialization did not pause");
+  const releasePausedWorkspaceMaterialization: () => void = releaseWorkspaceMaterialization;
+  releasePausedWorkspaceMaterialization();
+  expect((await userPatch).status).toBe(200);
+  const workspaceResponse = await workspacePatch;
+  expect(workspaceResponse.status).toBe(200);
+
+  expect(await readFile(join(workspaceRoot, ".opencode", "soul-user.md"), "utf8")).toBe("Newest user memory\n");
 });
 
 test("POST /workspace/:id/soul/heartbeat-toggle toggles workspace Heartbeat", async () => {
