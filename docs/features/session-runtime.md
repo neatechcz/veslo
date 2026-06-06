@@ -104,6 +104,15 @@ The collapsed group summarizes both action rows and intermediate comments. Expan
 
 `showThinking=false` hides model reasoning content and reasoning technical details only. It must not hide progress actions, non-final assistant comments, tool summaries, or other non-reasoning progress details that regular users need in order to understand what happened during the run.
 
+## Timeline Media Evidence
+
+The session timeline can show image evidence attached to the step or message where it mattered.
+
+- `Analyzed` means the image was passed to a vision-capable model as image input.
+- `Created` means a concrete action in the current run created or modified a bitmap image.
+- Discovery-only file listing, globbing, and search do not create media evidence.
+- Timeline media evidence is derived UI state. It is not a durable gallery and does not scan arbitrary workspace images.
+
 ## Pending Drafts
 
 Unstarted sessions are modeled as pending drafts.
