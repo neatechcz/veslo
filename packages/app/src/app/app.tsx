@@ -2008,9 +2008,9 @@ export default function App() {
       if (!activated) return { status: "blocked", message: t("session.target_not_available", currentLocale()) };
       const summary = await putPendingDraftForTarget(target, currentDraft);
       if (!summary) return { status: "blocked", message: t("session.target_not_available", currentLocale()) };
+      setComposerDraftBySessionId((current) => setSessionComposerDraft(current, { storageKey: target.id }, currentDraft));
       setActivePendingDraftKey(target.id);
       setActivePendingDraftMeta(summary);
-      setComposerDraftBySessionId((current) => setSessionComposerDraft(current, { storageKey: target.id }, currentDraft));
       setView("session");
       return { status: "switched" };
     }
@@ -2018,9 +2018,9 @@ export default function App() {
     if (shouldLoadExisting && destinationSummary && destinationDraft) {
       const activated = await activateTargetWorkspace(target, destinationSummary);
       if (!activated) return { status: "blocked", message: t("session.target_not_available", currentLocale()) };
+      setComposerDraftBySessionId((current) => setSessionComposerDraft(current, { storageKey: target.id }, destinationDraft));
       setActivePendingDraftKey(target.id);
       setActivePendingDraftMeta(destinationSummary);
-      setComposerDraftBySessionId((current) => setSessionComposerDraft(current, { storageKey: target.id }, destinationDraft));
       setView("session");
       return { status: "switched" };
     }
@@ -2030,9 +2030,9 @@ export default function App() {
     if (!activated) return { status: "blocked", message: t("session.target_not_available", currentLocale()) };
     const summary = await putPendingDraftForTarget(target, emptyDraft);
     if (!summary) return { status: "blocked", message: t("session.target_not_available", currentLocale()) };
+    setComposerDraftBySessionId((current) => setSessionComposerDraft(current, { storageKey: target.id }, emptyDraft));
     setActivePendingDraftKey(target.id);
     setActivePendingDraftMeta(summary);
-    setComposerDraftBySessionId((current) => setSessionComposerDraft(current, { storageKey: target.id }, emptyDraft));
     setView("session");
     return { status: "switched" };
   };
@@ -3932,13 +3932,14 @@ export default function App() {
       id: chatId,
       kind: "chat",
       label: t("session.target_chat_label", currentLocale()),
-      description: t("session.target_chat_description", currentLocale()),
+      description: "",
       draftStatus: hasDraft(chatId) ? "draft" : null,
     }];
 
     for (const workspace of workspaceStore.workspaces()) {
       const directory = normalizeDirectoryPath(workspace.directory?.trim() || workspace.path?.trim() || "");
       if (!workspace.id || !directory) continue;
+      if (workspaceStore.isPrivateWorkspacePath(directory)) continue;
       const id = resolvePendingDraftKey({ kind: "directory", workspaceId: workspace.id, directory });
       options.push({
         id,

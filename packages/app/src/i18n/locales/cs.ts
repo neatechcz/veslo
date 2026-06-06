@@ -198,7 +198,7 @@ export default {
   "session.insert_prompt": "Vložit prompt",
   "session.placeholder": "Zeptejte se Veslo...",
   "session.composer_disclaimer": "AI se může mýlit. Použijte vlastní úsudek a ověřte si informace.",
-  "session.target_chat_label": "Chat",
+  "session.target_chat_label": "[Pouze chat]",
   "session.target_chat_description": "Soukromý prostor bez projektu",
   "session.target_choose_workspace_label": "Slash workspace",
   "session.target_choose_workspace_description": "Vybrat jiný workspace...",

@@ -82,7 +82,7 @@ export default function ComposerTargetPicker(props: ComposerTargetPickerProps) {
       <Show when={open()}>
         <div
           role="menu"
-          class="absolute left-0 top-full z-30 mt-2 w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-lg border border-gray-6 bg-gray-1 shadow-xl backdrop-blur-md"
+          class="absolute left-0 top-full z-30 mt-2 w-[min(22rem,calc(100vw-2rem))] max-h-[min(24rem,calc(100vh-10rem))] overflow-y-auto overscroll-contain rounded-lg border border-gray-6 bg-gray-1 shadow-xl backdrop-blur-md"
         >
           <For each={props.options}>
             {(option) => {
@@ -95,6 +95,7 @@ export default function ComposerTargetPicker(props: ComposerTargetPickerProps) {
                   data-testid="composer-target-option"
                   data-composer-target-kind={option.kind}
                   data-composer-target-id={option.id}
+                  data-composer-target-directory={option.kind === "workspace" ? (option.directory ?? "") : undefined}
                   disabled={props.disabled}
                   onClick={() => selectOption(option.id)}
                   class="flex w-full items-start gap-3 px-3 py-2.5 text-left transition-colors hover:bg-dls-hover focus:bg-dls-hover focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
@@ -114,7 +115,11 @@ export default function ComposerTargetPicker(props: ComposerTargetPickerProps) {
                         </span>
                       </Show>
                     </span>
-                    <span class="mt-0.5 block break-words font-product type-ui-xs text-dls-secondary">{option.description}</span>
+                    <Show when={option.kind !== "workspace" && option.description.trim()}>
+                      {(description) => (
+                        <span class="mt-0.5 block break-words font-product type-ui-xs text-dls-secondary">{description()}</span>
+                      )}
+                    </Show>
                   </span>
                   <span class="flex h-5 w-5 shrink-0 items-center justify-center text-dls-accent">
                     <Show when={selected()}>

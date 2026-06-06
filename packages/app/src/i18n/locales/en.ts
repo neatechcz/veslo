@@ -198,7 +198,7 @@ export default {
   "session.insert_prompt": "Insert prompt",
   "session.placeholder": "Ask Veslo...",
   "session.composer_disclaimer": "AI can be wrong. Use your judgment and verify critical info.",
-  "session.target_chat_label": "Chat",
+  "session.target_chat_label": "[Pouze chat]",
   "session.target_chat_description": "Private space without a project",
   "session.target_choose_workspace_label": "Slash workspace",
   "session.target_choose_workspace_description": "Choose another workspace...",

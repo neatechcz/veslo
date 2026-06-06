@@ -204,7 +204,7 @@ export default {
   "session.insert_prompt": "插入提示",
   "session.placeholder": "向 Veslo 提问...",
   "session.composer_disclaimer": "AI 可能会出错。请自行判断并核实关键信息。",
-  "session.target_chat_label": "聊天",
+  "session.target_chat_label": "[Pouze chat]",
   "session.target_chat_description": "没有项目的私人空间",
   "session.target_choose_workspace_label": "Slash 工作区",
   "session.target_choose_workspace_description": "选择另一个工作区...",

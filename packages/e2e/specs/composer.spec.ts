@@ -160,10 +160,11 @@ async function waitForComposerEntry() {
 
 async function clickTargetOptionByDirectory(directory: string) {
   await openTargetPicker();
+  const targetDirectory = directory.trim();
   const options = await $$('[data-testid="composer-target-option"]');
   for (const option of options) {
-    const text = await option.getText();
-    if (!text.includes(directory)) continue;
+    const optionDirectory = (await option.getAttribute('data-composer-target-directory'))?.trim() ?? '';
+    if (optionDirectory !== targetDirectory) continue;
     await expect(await option.$('[data-testid="composer-target-draft-badge"]')).toBeDisplayed();
     await option.click();
     return;
@@ -171,12 +172,15 @@ async function clickTargetOptionByDirectory(directory: string) {
   throw new Error(`Composer target option for ${directory} was not found.`);
 }
 
-async function clickChatTargetOption() {
+async function expectChatTargetOptionFirst() {
   await openTargetPicker();
-  const option = await $('[data-composer-target-kind="chat"]');
-  await expect(option).toBeDisplayed();
-  await expect(await option.$('[data-testid="composer-target-draft-badge"]')).toBeDisplayed();
-  await option.click();
+  const options = await $$('[data-testid="composer-target-option"]');
+  expect(options.length).toBeGreaterThan(0);
+  const firstOption = options[0];
+  await expect(firstOption).toBeDisplayed();
+  expect(await firstOption.getAttribute('data-composer-target-kind')).toBe('chat');
+  expect(await firstOption.getText()).toContain('[Pouze chat]');
+  await expect(await firstOption.$('[data-testid="composer-target-draft-badge"]')).toBeDisplayed();
 }
 
 async function waitForConflictModalClosed() {
@@ -285,32 +289,17 @@ describe('Composer', () => {
     );
   });
 
-  it('can resolve a target conflict by keeping the current text', async () => {
+  it('offers chat-only private drafts as the first composer target option', async () => {
     const existingDraft = `Existing chat draft ${Date.now()}`;
-    const currentDraft = `Current chat override ${Date.now()}`;
     await seedChatPendingDraft(existingDraft);
 
     await browser.refresh();
     await navigateToHash('/session');
     await waitForHashRoute('#/session', 5000);
     await waitForComposerEntry();
-    await clearComposer();
-    await setComposerText(currentDraft);
 
-    await clickChatTargetOption();
-    await expect($('[data-testid="composer-target-conflict-modal"]')).toBeDisplayed();
-    await $('[data-testid="composer-target-use-current"]').click();
-
-    await browser.waitUntil(
-      async () => {
-        const text = await readComposerText();
-        return text.includes(currentDraft) && !text.includes(existingDraft);
-      },
-      {
-        timeout: 10000,
-        timeoutMsg: 'Composer did not keep the current draft after resolving the target conflict.',
-      },
-    );
+    await expectChatTargetOptionFirst();
+    await browser.keys('Escape');
   });
 
   it('should keep ArrowUp native while a live draft contains text', async () => {

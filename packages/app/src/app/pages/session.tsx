@@ -4303,7 +4303,7 @@ export default function SessionView(props: SessionViewProps) {
                   </h2>
                   <Show when={composerResetKey()} keyed>
                     {(_composerKey) => (
-                      <div class="w-full">
+                      <div class="w-full text-left">
                         <Composer
                           entryPlacement="center"
                           initialDraft={props.composerDraft}
