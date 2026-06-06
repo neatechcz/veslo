@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -8,6 +9,9 @@ import {
   readGlobalSidebarDockedPrefs,
   writeGlobalSidebarDockedPrefs,
 } from "./global-sidebar-prefs.js";
+
+const dashboardSource = readFileSync(new URL("../../pages/dashboard.tsx", import.meta.url), "utf8");
+const sessionSource = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
 
 const createMemoryStorage = (initial?: Record<string, string>) => {
   const map = new Map<string, string>(Object.entries(initial ?? {}));
@@ -24,10 +28,11 @@ const createMemoryStorage = (initial?: Record<string, string>) => {
   };
 };
 
-test("defaults to left-visible global prefs when storage is empty", () => {
+test("defaults to left-visible and right-collapsed global prefs when storage is empty", () => {
   const storage = createMemoryStorage();
   const value = readGlobalSidebarDockedPrefs(storage);
-  assert.deepEqual(value, DEFAULT_GLOBAL_SIDEBAR_DOCKED_VISIBILITY);
+  assert.deepEqual(value, { left: true, right: false });
+  assert.deepEqual(DEFAULT_GLOBAL_SIDEBAR_DOCKED_VISIBILITY, { left: true, right: false });
 });
 
 test("reads global prefs directly when present", () => {
@@ -65,3 +70,30 @@ test("write helper persists normalized booleans", () => {
   assert.equal(snapshot[GLOBAL_SIDEBAR_DOCKED_PREF_KEY], JSON.stringify({ left: true, right: false }));
 });
 
+test("dashboard and session views use shared global sidebar prefs", () => {
+  for (const [name, source] of [
+    ["dashboard", dashboardSource],
+    ["session", sessionSource],
+  ] as const) {
+    assert.match(
+      source,
+      /readGlobalSidebarDockedPrefs/,
+      `${name} view should read docked sidebar visibility through the shared helper`,
+    );
+    assert.match(
+      source,
+      /writeGlobalSidebarDockedPrefs/,
+      `${name} view should write docked sidebar visibility through the shared helper`,
+    );
+    assert.doesNotMatch(
+      source,
+      /const DEFAULT_SIDEBAR_DOCKED_VISIBILITY/,
+      `${name} view should not keep a duplicate first-run sidebar default`,
+    );
+    assert.doesNotMatch(
+      source,
+      /const readSidebarDockedVisibility/,
+      `${name} view should not keep a duplicate sidebar preference reader`,
+    );
+  }
+});

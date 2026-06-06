@@ -128,9 +128,12 @@ import {
   writeLeftSidebarWidth,
 } from "../components/layout/left-sidebar-width-prefs";
 import {
+  readGlobalSidebarDockedPrefs,
+  writeGlobalSidebarDockedPrefs,
+} from "../components/layout/global-sidebar-prefs";
+import {
   createInitialSidebarLayoutState,
   toggleSidebarFromButton,
-  type SidebarDockedVisibility,
   type SidebarLayoutState,
   type SidebarSide,
 } from "../components/session/sidebar-layout-model";
@@ -381,48 +384,11 @@ const STREAM_SCROLL_MIN_INTERVAL_MS = 90;
 const STREAM_RENDER_BATCH_MS = 220;
 const MAIN_THREAD_LAG_INTERVAL_MS = 200;
 const MAIN_THREAD_LAG_WARN_MS = 180;
-const SIDEBAR_DOCKED_VISIBILITY_KEY = "veslo.global.sidebar.docked.v1";
-const LEGACY_SIDEBAR_DOCKED_VISIBILITY_KEY = "veslo.session.sidebar.docked.v1";
-const DEFAULT_SIDEBAR_DOCKED_VISIBILITY: SidebarDockedVisibility = {
-  left: true,
-  right: true,
-};
 const interpolate = (template: string, values: Record<string, string | number>) =>
   Object.entries(values).reduce(
     (result, [key, value]) => result.replaceAll(`{${key}}`, String(value)),
     template,
   );
-
-const readSidebarDockedVisibility = (): SidebarDockedVisibility => {
-  if (typeof window === "undefined") return { ...DEFAULT_SIDEBAR_DOCKED_VISIBILITY };
-  try {
-    const raw = window.localStorage.getItem(SIDEBAR_DOCKED_VISIBILITY_KEY);
-    const legacyRaw = !raw ? window.localStorage.getItem(LEGACY_SIDEBAR_DOCKED_VISIBILITY_KEY) : null;
-    const value = raw ?? legacyRaw;
-    if (!value) return { ...DEFAULT_SIDEBAR_DOCKED_VISIBILITY };
-    const parsed = JSON.parse(value) as Partial<SidebarDockedVisibility> | null;
-    if (!parsed || typeof parsed !== "object") return { ...DEFAULT_SIDEBAR_DOCKED_VISIBILITY };
-    const normalized = {
-      left: typeof parsed.left === "boolean" ? parsed.left : DEFAULT_SIDEBAR_DOCKED_VISIBILITY.left,
-      right: typeof parsed.right === "boolean" ? parsed.right : DEFAULT_SIDEBAR_DOCKED_VISIBILITY.right,
-    };
-    if (!raw && legacyRaw) {
-      window.localStorage.setItem(SIDEBAR_DOCKED_VISIBILITY_KEY, JSON.stringify(normalized));
-    }
-    return normalized;
-  } catch {
-    return { ...DEFAULT_SIDEBAR_DOCKED_VISIBILITY };
-  }
-};
-
-const writeSidebarDockedVisibility = (value: SidebarDockedVisibility) => {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(SIDEBAR_DOCKED_VISIBILITY_KEY, JSON.stringify(value));
-  } catch {
-    // ignore
-  }
-};
 
 type CommandPaletteMode = "root" | "sessions";
 
@@ -481,7 +447,7 @@ export default function SessionView(props: SessionViewProps) {
   const [leftSidebarWidth, setLeftSidebarWidth] = createSignal(readLeftSidebarWidth());
   const [leftSidebarResizing, setLeftSidebarResizing] = createSignal(false);
   const [sidebarLayoutState, setSidebarLayoutState] = createSignal<SidebarLayoutState>(
-    createInitialSidebarLayoutState(readSidebarDockedVisibility()),
+    createInitialSidebarLayoutState(readGlobalSidebarDockedPrefs()),
   );
   const selectedSessionSidebarItem = createMemo(() => {
     const id = props.selectedSessionId?.trim() ?? "";
@@ -629,7 +595,7 @@ export default function SessionView(props: SessionViewProps) {
     setSidebarLayoutState((current) => {
       const toggled = toggleSidebarFromButton(current, side);
       if (current.mode === "wide" && toggled.mode === "wide") {
-        writeSidebarDockedVisibility(toggled.dockedPreference);
+        writeGlobalSidebarDockedPrefs(toggled.dockedPreference);
       }
       if (measuredRootWidth <= 0) return toggled;
       return reconcileSidebarLayoutForRootWidth(toggled, measuredRootWidth, leftSidebarWidth());
