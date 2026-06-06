@@ -4,6 +4,9 @@ import type {
   ArtifactItem,
   DashboardTab,
   ComposerDraft,
+  ComposerTargetOption,
+  ComposerTargetSwitchResolution,
+  ComposerTargetSwitchResult,
   MessageGroup,
   MessageWithParts,
   McpServerEntry,
@@ -168,6 +171,12 @@ function recordSendTrace(event: string, payload?: Record<string, unknown>) {
 export type SessionViewProps = {
   selectedSessionId: string | null;
   activePendingDraftKey: string | null;
+  composerTargetOptions: ComposerTargetOption[];
+  activeComposerTargetId: string | null;
+  switchComposerTarget: (
+    targetId: string,
+    resolution?: ComposerTargetSwitchResolution,
+  ) => Promise<ComposerTargetSwitchResult>;
   setView: (view: View, sessionId?: string) => void;
   setSessionBrowseScope: (scope: SessionBrowseScope) => void;
   tab: DashboardTab;

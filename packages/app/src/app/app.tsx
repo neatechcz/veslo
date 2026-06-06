@@ -219,6 +219,8 @@ import type {
   ComposerAttachment,
   ComposerDraft,
   ComposerPart,
+  ComposerTargetOption,
+  ComposerTargetSwitchResult,
   ProviderListItem,
   SessionErrorTurn,
   UpdateHandle,
@@ -1730,6 +1732,9 @@ export default function App() {
   });
 
   const [composerDraftBySessionId, setComposerDraftBySessionId] = createSignal<Record<string, ComposerDraft>>({});
+  const composerTargetOptions = createMemo<ComposerTargetOption[]>(() => []);
+  const activeComposerTargetId = createMemo(() => activePendingDraftKey());
+  const switchComposerTarget = async (): Promise<ComposerTargetSwitchResult> => ({ status: "cancelled" });
   const currentComposerStorageKey = createMemo(() => {
     const sessionId = selectedSessionId();
     if (sessionId) {
@@ -10005,6 +10010,9 @@ export default function App() {
   const sessionProps = () => ({
     selectedSessionId: activeSessionId(),
     activePendingDraftKey: activePendingDraftKey(),
+    composerTargetOptions: composerTargetOptions(),
+    activeComposerTargetId: activeComposerTargetId(),
+    switchComposerTarget,
     setView,
     setSessionBrowseScope,
     tab: tab(),

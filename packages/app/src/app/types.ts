@@ -134,6 +134,33 @@ export type SlashCommandOption = {
   source?: "command" | "mcp" | "skill";
 };
 
+export type ComposerTargetKind = "chat" | "workspace" | "choose-workspace";
+
+export type ComposerTargetOption = {
+  id: string;
+  kind: ComposerTargetKind;
+  label: string;
+  description: string;
+  workspaceId?: string;
+  directory?: string | null;
+  draftStatus?: "draft" | null;
+};
+
+export type ComposerTargetConflict = {
+  targetId: string;
+  targetLabel: string;
+  currentPreview: string;
+  destinationPreview: string;
+};
+
+export type ComposerTargetSwitchResolution = "use-current" | "load-existing";
+
+export type ComposerTargetSwitchResult =
+  | { status: "switched" }
+  | { status: "cancelled" }
+  | { status: "blocked"; message: string }
+  | { status: "conflict"; conflict: ComposerTargetConflict };
+
 export type ComposerDraft = {
   mode: PromptMode;
   parts: ComposerPart[];
