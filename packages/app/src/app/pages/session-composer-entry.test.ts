@@ -47,6 +47,7 @@ test("switchComposerTarget blocks when an existing destination draft cannot be l
 
 test("switchComposerTarget routes picked workspaces through safe switching", () => {
   assert.match(appSource, /selectComposerWorkspaceTargetFromPicker/);
+  assert.match(appSource, /targetId: target\.id/);
   assert.doesNotMatch(
     appSource,
     /if \(target\.kind === "choose-workspace"\) \{\s*const result = await openDirectorySessionFromPicker\(\);/s,

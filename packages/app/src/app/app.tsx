@@ -2049,7 +2049,7 @@ export default function App() {
       return {
         status: "conflict",
         conflict: {
-          targetId,
+          targetId: target.id,
           targetLabel: target.label,
           currentPreview: decision.currentPreview,
           destinationPreview: decision.destinationPreview,
