@@ -37,9 +37,33 @@ function adminSession(): AdminSessionSnapshot {
         name: "Admin Org",
         slug: "admin-org",
         ownerUserId: "user_admin",
-        role: "owner",
+        role: "organization_admin",
       },
     ],
+  }
+}
+
+function orgAdminSession() {
+  return {
+    user: {
+      id: "user_org_admin",
+      email: "org-admin@example.test",
+      emailVerified: true,
+      name: "Org Admin",
+    },
+    platformAdmin: false,
+    activeOrgId: "org_1",
+    organizations: [
+      {
+        id: "org_1",
+        name: "Acme",
+        slug: "acme",
+        ownerUserId: "user_org_admin",
+        role: "organization_admin",
+      },
+    ],
+    capabilities: ["organization", "users"],
+    allowedPages: ["organization", "users"],
   }
 }
 
@@ -75,6 +99,48 @@ function createAdminServiceStub(overrides: Partial<AdminService> = {}): AdminSer
       return null
     },
     async updateUser(_token: string, _userId: string, _input: UpdateUserInput) {
+      throw new Error("unused")
+    },
+    async listOrganizations() {
+      return { organizations: [] }
+    },
+    async getOrganization() {
+      throw new Error("unused")
+    },
+    async updateOrganization() {
+      throw new Error("unused")
+    },
+    async listOrganizationMembers() {
+      return { members: [] }
+    },
+    async createOrganizationMember() {
+      throw new Error("unused")
+    },
+    async updateOrganizationMember() {
+      throw new Error("unused")
+    },
+    async deleteOrganizationMember() {
+      return
+    },
+    async listOrganizationDomains() {
+      return { domains: [] }
+    },
+    async createOrganizationDomain() {
+      throw new Error("unused")
+    },
+    async updateOrganizationDomain() {
+      throw new Error("unused")
+    },
+    async deleteOrganizationDomain() {
+      return
+    },
+    async listOrganizationInvites() {
+      return { invites: [] }
+    },
+    async createOrganizationInvite() {
+      throw new Error("unused")
+    },
+    async revokeOrganizationInvite() {
       throw new Error("unused")
     },
     async getUserAiAccess() {
@@ -456,6 +522,88 @@ test("GET /admin/users includes admin-managed ai access controls in the user edi
   }
 })
 
+test("GET /admin includes an Organization admin page alongside existing platform pages", async () => {
+  const app = createApp({ admin: createAdminServiceStub() })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/organization`, {
+      headers: {
+        cookie: ADMIN_COOKIE,
+      },
+    })
+
+    assert.equal(response.status, 200)
+    const html = await response.text()
+    assert.match(html, /data-route="organization"/)
+    assert.match(html, /data-page="organization"/)
+    assert.match(html, /Organization details/i)
+    assert.match(html, /Enabled domains/i)
+    assert.match(html, /Pending invites/i)
+    assert.match(html, /id="organization-save-button"/)
+    assert.match(html, /id="organization-seat-limit"/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js gates organization-admin navigation and platform-only loads by DEN capabilities", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+
+    assert.equal(response.status, 200)
+    const script = await response.text()
+    assert.match(script, /const DEFAULT_PAGES = \["organization", "credentials", "sessions", "usage", "alerts", "users", "audit"\]/)
+    assert.match(script, /function allowedPages\(\)/)
+    assert.match(script, /function hasCapability\(capability\)/)
+    assert.match(script, /function applyAdminCapabilities\(\)/)
+    assert.match(script, /runAllowedLoad\("organization", loadOrganization\)/)
+    assert.match(script, /runAllowedLoad\("users", loadUsers\)/)
+    assert.match(script, /runAllowedLoad\("credentials", loadCredentials\)/)
+    assert.match(script, /if \(!hasCapability\("managedAiUserAccess"\)\) \{[\s\S]*return null/)
+    assert.match(script, /if \(!hasCapability\("managedAiUserAccess"\)\) \{[\s\S]*return;/)
+    assert.match(script, /setActivePage\(firstAllowedPage\(\)\)/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js saves organization membership changes only from the user Save action", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+
+    assert.equal(response.status, 200)
+    const script = await response.text()
+    assert.match(script, /function normalizeOrganizationRoleInput\(value\)/)
+    assert.match(script, /orgRole:\s*normalizeOrganizationRoleInput\(els\.userRole\.value\)/)
+    assert.match(
+      script,
+      /await fetchJson\(`\/users\/\$\{encodeURIComponent\(user\.id\)\}`,[\s\S]*body: JSON\.stringify\(\{[\s\S]*orgId: payload\.orgId,[\s\S]*orgRole: payload\.orgRole,/,
+    )
+    assert.match(script, /<option value="organization_admin">Organization admin<\/option>/)
+    assert.doesNotMatch(script, /userRole\.addEventListener\("change"[\s\S]*fetchJson/)
+    assert.doesNotMatch(script, /userPlatformAdmin\.addEventListener\("change"[\s\S]*fetchJson/)
+    assert.doesNotMatch(script, /userOrg\.addEventListener\("change"[\s\S]*fetchJson/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
 test("GET /admin/usage includes a credential usage section", async () => {
   const app = createApp({ admin: createAdminServiceStub() })
   const server = app.listen(0, "127.0.0.1")
@@ -474,6 +622,247 @@ test("GET /admin/usage includes a credential usage section", async () => {
     assert.match(html, /Credential usage/i)
     assert.match(html, /id="usage-credential-table-body"/)
     assert.match(html, /Codex limits/i)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("organization admins are forbidden from platform-only gateway admin API routes", async () => {
+  const app = createApp({
+    admin: createAdminServiceStub({
+      async getSession() {
+        return orgAdminSession() as unknown as AdminSessionSnapshot
+      },
+    }),
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  const blockedRoutes = [
+    ["GET", "/admin/api/credentials"],
+    ["GET", "/admin/api/credentials/cred_1/models"],
+    ["POST", "/admin/api/credentials"],
+    ["DELETE", "/admin/api/credentials/cred_1"],
+    ["POST", "/admin/api/credentials/cred_1/revoke"],
+    ["POST", "/admin/api/credentials/cred_1/drain"],
+    ["POST", "/admin/api/credentials/cred_1/rotate"],
+    ["GET", "/admin/api/sessions"],
+    ["GET", "/admin/api/usage"],
+    ["GET", "/admin/api/alerts"],
+    ["POST", "/admin/api/alerts/alert_1/acknowledge"],
+    ["POST", "/admin/api/alerts/alert_1/resolve"],
+    ["GET", "/admin/api/audit"],
+    ["GET", "/admin/api/users/user_1/ai-access"],
+    ["PUT", "/admin/api/users/user_1/ai-access"],
+  ] as const
+
+  try {
+    const { port } = server.address() as AddressInfo
+    for (const [method, path] of blockedRoutes) {
+      const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+        method,
+        headers: {
+          cookie: ADMIN_COOKIE,
+          "content-type": "application/json",
+        },
+        body: method === "GET" ? undefined : JSON.stringify({}),
+      })
+      assert.equal(response.status, 403, `${method} ${path}`)
+      assert.deepEqual(await response.json(), { error: "forbidden" }, `${method} ${path}`)
+    }
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("organization admins can access session, users, and organization gateway admin API routes", async () => {
+  const app = createApp({
+    admin: {
+      ...createAdminServiceStub({
+        async getSession() {
+          return orgAdminSession() as unknown as AdminSessionSnapshot
+        },
+        async listUsers() {
+          return [{
+            id: "user_1",
+            name: "Member",
+            email: "member@example.test",
+            emailVerified: true,
+            platformAdmin: false,
+            disabled: false,
+            memberships: [{
+              membershipId: "member_1",
+              orgId: "org_1",
+              orgName: "Acme",
+              orgSlug: "acme",
+              role: "member",
+            }],
+          }]
+        },
+      }),
+      async listOrganizations() {
+        return {
+          organizations: [{
+            id: "org_1",
+            name: "Acme",
+            slug: "acme",
+            ownerUserId: "user_org_admin",
+            seatLimit: 10,
+          }],
+        }
+      },
+      async listOrganizationDomains() {
+        return { domains: [] }
+      },
+      async listOrganizationInvites() {
+        return { invites: [] }
+      },
+    } as any,
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const sessionResponse = await fetch(`http://127.0.0.1:${port}/admin/api/session`, {
+      headers: { cookie: ADMIN_COOKIE },
+    })
+    assert.equal(sessionResponse.status, 200)
+    assert.deepEqual((await sessionResponse.json()).allowedPages, ["organization", "users"])
+
+    const usersResponse = await fetch(`http://127.0.0.1:${port}/admin/api/users`, {
+      headers: { cookie: ADMIN_COOKIE },
+    })
+    assert.equal(usersResponse.status, 200)
+    assert.equal((await usersResponse.json()).users.length, 1)
+
+    const organizationsResponse = await fetch(`http://127.0.0.1:${port}/admin/api/organizations`, {
+      headers: { cookie: ADMIN_COOKIE },
+    })
+    assert.equal(organizationsResponse.status, 200)
+    assert.deepEqual((await organizationsResponse.json()).organizations.map((entry: { id: string }) => entry.id), ["org_1"])
+
+    const domainsResponse = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/domains`, {
+      headers: { cookie: ADMIN_COOKIE },
+    })
+    assert.equal(domainsResponse.status, 200)
+    assert.deepEqual(await domainsResponse.json(), { domains: [] })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("PATCH /admin/api/users forwards organization membership fields on Save", async () => {
+  let capturedInput: unknown = null
+  const app = createApp({
+    admin: createAdminServiceStub({
+      async updateUser(_token, userId, input) {
+        capturedInput = input
+        return {
+          id: userId,
+          name: "Member",
+          email: "member@example.test",
+          emailVerified: true,
+          platformAdmin: false,
+          disabled: false,
+          memberships: [{
+            membershipId: "member_1",
+            orgId: "org_1",
+            orgName: "Acme",
+            orgSlug: "acme",
+            role: "organization_admin",
+          }],
+        } as never
+      },
+    }),
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_1`, {
+      method: "PATCH",
+      headers: {
+        cookie: ADMIN_COOKIE,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Member",
+        platformAdmin: false,
+        orgId: "org_1",
+        orgRole: "organization_admin",
+      }),
+    })
+
+    assert.equal(response.status, 200)
+    assert.deepEqual(capturedInput, {
+      name: "Member",
+      platformAdmin: false,
+      orgId: "org_1",
+      orgRole: "organization_admin",
+    })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("POST /admin/api/users forwards organization_admin role on create", async () => {
+  let capturedInput: unknown = null
+  const app = createApp({
+    admin: createAdminServiceStub({
+      async createUser(_token, input) {
+        capturedInput = input
+        return {
+          id: "user_1",
+          name: input.name,
+          email: input.email,
+          emailVerified: false,
+          platformAdmin: false,
+          disabled: false,
+          memberships: [{
+            membershipId: "member_1",
+            orgId: "org_1",
+            orgName: "Acme",
+            orgSlug: "acme",
+            role: "organization_admin",
+          }],
+        } as never
+      },
+    }),
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users`, {
+      method: "POST",
+      headers: {
+        cookie: ADMIN_COOKIE,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        email: "member@example.test",
+        name: "Member",
+        platformAdmin: false,
+        orgId: "org_1",
+        orgRole: "organization_admin",
+      }),
+    })
+
+    assert.equal(response.status, 201)
+    assert.deepEqual(capturedInput, {
+      email: "member@example.test",
+      name: "Member",
+      platformAdmin: false,
+      orgId: "org_1",
+      orgRole: "organization_admin",
+    })
   } finally {
     server.close()
     await once(server, "close")

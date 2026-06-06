@@ -53,6 +53,18 @@ test("organization admin seat limit update payloads require platform admin scope
   assert.equal(canAdminUpdateOrganizationSeatLimitPayload({ platformAdmin: false }, { name: "Personal" }), true)
 })
 
+test("admin organization updates persist editable name and slug fields", async () => {
+  const source = await readFile(new URL("../src/http/admin-runtime.ts", import.meta.url), "utf8")
+  const updateSource = source.match(/async function updateAdminOrganization[\s\S]*?async function listAdminOrganizationMembers/)?.[0] ?? ""
+
+  assert.match(updateSource, /const nextName = hasOwnProperty\(req\.body, "name"\)[\s\S]*readBodyString\(\(req\.body \?\? \{}\)\.name\)/)
+  assert.match(updateSource, /const nextSlug = hasOwnProperty\(req\.body, "slug"\)[\s\S]*readBodyString\(\(req\.body \?\? \{}\)\.slug\)/)
+  assert.match(updateSource, /const persistedName = nextName \?\? context\.organization\.name/)
+  assert.match(updateSource, /const persistedSlug = nextSlug \?\? context\.organization\.slug/)
+  assert.match(updateSource, /set\(\{[\s\S]*name: persistedName,[\s\S]*slug: persistedSlug,[\s\S]*seat_limit: seatLimit/)
+  assert.match(updateSource, /changedFields/)
+})
+
 test("admin runtime organization access helper distinguishes platform, org admin, and member scope", () => {
   assert.equal(typeof adminRuntime.canAdminAccessOrganization, "function")
   const canAdminAccessOrganization = adminRuntime.canAdminAccessOrganization as (snapshot: {
@@ -118,6 +130,17 @@ test("organization admin user update payloads are limited to scoped membership r
     { platformAdmin: true },
     { platformAdmin: true, name: "Platform User" },
   ), { ok: true })
+})
+
+test("platform admin user updates persist organization membership role changes from Save payloads", async () => {
+  const source = await readFile(new URL("../src/http/admin-runtime.ts", import.meta.url), "utf8")
+  const updateSource = source.match(/async function updateAdminUser[\s\S]*?async function disableAdminUser/)?.[0] ?? ""
+
+  assert.match(updateSource, /const nextOrgId = hasOwnProperty\(req\.body, "orgId"\)/)
+  assert.match(updateSource, /const nextOrgRole = hasOwnProperty\(req\.body, "orgRole"\)/)
+  assert.match(updateSource, /loadOrganizationRecord\(nextOrgId\)/)
+  assert.match(updateSource, /createOrActivateOrganizationMembership/)
+  assert.match(updateSource, /db\.update\(OrgMembershipTable\)\.set\(\{ role: nextOrgRole \}\)/)
 })
 
 test("admin invite creation stores only a derived token hash while returning the raw token once", async () => {

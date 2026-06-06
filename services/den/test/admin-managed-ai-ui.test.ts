@@ -120,6 +120,30 @@ test("GET /admin/credentials serves the DEN admin shell with Codex inference con
   }
 })
 
+test("GET /admin/organization serves the DEN admin shell with organization management", async () => {
+  const app = createUiApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/organization`)
+
+    assert.equal(response.status, 200)
+    const html = await response.text()
+    assert.match(html, /data-route="organization"/)
+    assert.match(html, /data-page="organization"/)
+    assert.match(html, /Organization details/i)
+    assert.match(html, /Enabled domains/i)
+    assert.match(html, /Pending invites/i)
+    assert.match(html, /id="organization-save-button"/)
+    assert.match(html, /id="organization-seat-limit"/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
 test("GET /admin/app.js uses DEN desktop auth and OpenAI OAuth credential routes", async () => {
   const app = createUiApp()
   const server = app.listen(0, "127.0.0.1")
@@ -178,6 +202,18 @@ test("GET /admin/app.js uses DEN desktop auth and OpenAI OAuth credential routes
     assert.match(script, /availableCredentials/)
     assert.match(script, /user-ai-access-credential/)
     assert.match(script, /Select assigned credential/)
+    assert.match(script, /const DEFAULT_PAGES = \["organization", "credentials", "sessions", "usage", "alerts", "users", "audit"\]/)
+    assert.match(script, /function allowedPages\(\)/)
+    assert.match(script, /function hasCapability\(capability\)/)
+    assert.match(script, /function applyAdminCapabilities\(\)/)
+    assert.match(script, /runAllowedLoad\("organization", loadOrganization\)/)
+    assert.match(script, /runAllowedLoad\("users", loadUsers\)/)
+    assert.match(script, /runAllowedLoad\("credentials", loadCredentials\)/)
+    assert.match(script, /if \(!hasCapability\("managedAiUserAccess"\)\) \{[\s\S]*return null/)
+    assert.match(script, /if \(!hasCapability\("managedAiUserAccess"\)\) \{[\s\S]*return;/)
+    assert.match(script, /function normalizeOrganizationRoleInput\(value\)/)
+    assert.match(script, /orgRole:\s*normalizeOrganizationRoleInput\(els\.userRole\.value\)/)
+    assert.match(script, /<option value="organization_admin">Organization admin<\/option>/)
     assert.match(script, /provider:\s*typeof entry\.provider === "string" \? entry\.provider\.trim\(\) : ""/)
     assert.match(script, /function currentUserAiAccessAvailableCredentials\(userId,\s*provider = ""\)[\s\S]*entry\.provider === provider/)
     assert.match(script, /selectedProvider === "codex_oauth" \|\| selectedProvider === "openai_compatible"/)

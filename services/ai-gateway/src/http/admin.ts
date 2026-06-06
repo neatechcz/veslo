@@ -31,6 +31,32 @@ import { MySqlUsageRepository } from "../usage/mysql-repository.js";
 import { CachedCodexCredentialStatusProvider, UnavailableCodexCredentialStatusProvider, type CodexCredentialStatusProvider, type CodexUsageStatus } from "../usage/codex-status.js";
 import type { AggregateUsageInput, UsageAggregateResponse, UsageCredentialAggregate, UsageGroupBy as RepositoryUsageGroupBy, UsageRepository } from "../usage/repository.js";
 
+const OrganizationAdminCapabilities = ["organization", "users"] as const;
+const PlatformAdminCapabilities = [
+  ...OrganizationAdminCapabilities,
+  "credentials",
+  "sessions",
+  "usage",
+  "alerts",
+  "audit",
+  "debugLogs",
+  "managedAiUserAccess",
+] as const;
+const OrganizationAdminAllowedPages = ["organization", "users"] as const;
+const PlatformAdminAllowedPages = [
+  ...OrganizationAdminAllowedPages,
+  "credentials",
+  "sessions",
+  "usage",
+  "alerts",
+  "audit",
+] as const;
+
+export type AdminCapability = (typeof PlatformAdminCapabilities)[number];
+export type AdminAllowedPage = (typeof PlatformAdminAllowedPages)[number];
+export type AdminOrganizationRole = "organization_admin" | "owner" | "member";
+export type CurrentAdminOrganizationRole = "organization_admin" | "member";
+
 export type AdminSessionUser = {
   id: string;
   email: string | null;
@@ -43,7 +69,7 @@ export type AdminSessionOrganization = {
   name: string;
   slug: string;
   ownerUserId: string;
-  role: "owner" | "member";
+  role: CurrentAdminOrganizationRole;
 };
 
 export type AdminSessionSnapshot = {
@@ -51,6 +77,8 @@ export type AdminSessionSnapshot = {
   platformAdmin: boolean;
   activeOrgId: string | null;
   organizations: AdminSessionOrganization[];
+  capabilities?: AdminCapability[];
+  allowedPages?: AdminAllowedPage[];
 };
 
 export type AdminUserRecord = {
@@ -65,8 +93,53 @@ export type AdminUserRecord = {
     orgId: string;
     orgName: string;
     orgSlug: string;
-    role: "owner" | "member";
+    role: CurrentAdminOrganizationRole;
   }>;
+};
+
+export type AdminOrganizationRecord = {
+  id: string;
+  name: string;
+  slug: string;
+  ownerUserId: string;
+  seatLimit: number | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type AdminOrganizationMemberRecord = {
+  membershipId: string;
+  userId: string;
+  name: string;
+  email: string;
+  role: CurrentAdminOrganizationRole;
+  status?: "active" | "disabled" | "removed";
+  createdAt: string;
+};
+
+export type AdminOrganizationDomainRecord = {
+  id: string;
+  orgId: string;
+  domain: string;
+  enabled: boolean;
+  selfSignupEnabled: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type AdminOrganizationInviteRecord = {
+  id: string;
+  orgId: string;
+  email: string;
+  role: CurrentAdminOrganizationRole;
+  status: "pending" | "accepted" | "expired" | "revoked";
+  invitedByUserId: string | null;
+  acceptedByUserId: string | null;
+  expiresAt: string | null;
+  acceptedAt: string | null;
+  revokedAt: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type CredentialRecord = AdminCredentialRecord & {
@@ -163,12 +236,46 @@ export type CreateUserInput = {
   name: string;
   platformAdmin: boolean;
   orgId?: string | null;
-  orgRole?: "owner" | "member";
+  orgRole?: AdminOrganizationRole;
 };
 
 export type UpdateUserInput = {
   name?: string;
   platformAdmin?: boolean;
+  orgId?: string | null;
+  orgRole?: AdminOrganizationRole;
+};
+
+export type UpdateOrganizationInput = {
+  name?: string;
+  slug?: string;
+  seatLimit?: number | null;
+};
+
+export type CreateOrganizationDomainInput = {
+  domain: string;
+  enabled: boolean;
+  selfSignupEnabled: boolean;
+};
+
+export type UpdateOrganizationDomainInput = {
+  enabled?: boolean;
+  selfSignupEnabled?: boolean;
+};
+
+export type CreateOrganizationInviteInput = {
+  email: string;
+  role: AdminOrganizationRole;
+  expiresAt?: string | null;
+};
+
+export type CreateOrganizationMemberInput = {
+  email: string;
+  role: AdminOrganizationRole;
+};
+
+export type UpdateOrganizationMemberInput = {
+  role: AdminOrganizationRole;
 };
 
 export type CreateCredentialInput = {
@@ -190,6 +297,20 @@ export interface AdminService {
   createUser(token: string, input: CreateUserInput): Promise<AdminUserRecord>;
   getEligibleCodexCredentialForAutoAssign(): Promise<EligibleCodexCredential | null>;
   updateUser(token: string, userId: string, input: UpdateUserInput): Promise<AdminUserRecord>;
+  listOrganizations(token: string): Promise<{ organizations: AdminOrganizationRecord[] }>;
+  getOrganization(token: string, orgId: string): Promise<{ organization: AdminOrganizationRecord }>;
+  updateOrganization(token: string, orgId: string, input: UpdateOrganizationInput): Promise<{ organization: AdminOrganizationRecord }>;
+  listOrganizationMembers(token: string, orgId: string): Promise<{ members: AdminOrganizationMemberRecord[] }>;
+  createOrganizationMember(token: string, orgId: string, input: CreateOrganizationMemberInput): Promise<{ member: AdminOrganizationMemberRecord }>;
+  updateOrganizationMember(token: string, orgId: string, memberId: string, input: UpdateOrganizationMemberInput): Promise<{ member: AdminOrganizationMemberRecord }>;
+  deleteOrganizationMember(token: string, orgId: string, memberId: string): Promise<void>;
+  listOrganizationDomains(token: string, orgId: string): Promise<{ domains: AdminOrganizationDomainRecord[] }>;
+  createOrganizationDomain(token: string, orgId: string, input: CreateOrganizationDomainInput): Promise<{ domain: AdminOrganizationDomainRecord }>;
+  updateOrganizationDomain(token: string, orgId: string, domainId: string, input: UpdateOrganizationDomainInput): Promise<{ domain: AdminOrganizationDomainRecord }>;
+  deleteOrganizationDomain(token: string, orgId: string, domainId: string): Promise<void>;
+  listOrganizationInvites(token: string, orgId: string): Promise<{ invites: AdminOrganizationInviteRecord[] }>;
+  createOrganizationInvite(token: string, orgId: string, input: CreateOrganizationInviteInput): Promise<{ invite: AdminOrganizationInviteRecord }>;
+  revokeOrganizationInvite(token: string, orgId: string, inviteId: string): Promise<{ invite: AdminOrganizationInviteRecord }>;
   getUserAiAccess(
     token: string,
     userId: string,
@@ -233,6 +354,20 @@ type DenAdminApi = {
   listUsers(token: string): Promise<AdminUserRecord[]>;
   createUser(token: string, input: CreateUserInput): Promise<AdminUserRecord>;
   updateUser(token: string, userId: string, input: UpdateUserInput): Promise<AdminUserRecord>;
+  listOrganizations(token: string): Promise<{ organizations: AdminOrganizationRecord[] }>;
+  getOrganization(token: string, orgId: string): Promise<{ organization: AdminOrganizationRecord }>;
+  updateOrganization(token: string, orgId: string, input: UpdateOrganizationInput): Promise<{ organization: AdminOrganizationRecord }>;
+  listOrganizationMembers(token: string, orgId: string): Promise<{ members: AdminOrganizationMemberRecord[] }>;
+  createOrganizationMember(token: string, orgId: string, input: CreateOrganizationMemberInput): Promise<{ member: AdminOrganizationMemberRecord }>;
+  updateOrganizationMember(token: string, orgId: string, memberId: string, input: UpdateOrganizationMemberInput): Promise<{ member: AdminOrganizationMemberRecord }>;
+  deleteOrganizationMember(token: string, orgId: string, memberId: string): Promise<void>;
+  listOrganizationDomains(token: string, orgId: string): Promise<{ domains: AdminOrganizationDomainRecord[] }>;
+  createOrganizationDomain(token: string, orgId: string, input: CreateOrganizationDomainInput): Promise<{ domain: AdminOrganizationDomainRecord }>;
+  updateOrganizationDomain(token: string, orgId: string, domainId: string, input: UpdateOrganizationDomainInput): Promise<{ domain: AdminOrganizationDomainRecord }>;
+  deleteOrganizationDomain(token: string, orgId: string, domainId: string): Promise<void>;
+  listOrganizationInvites(token: string, orgId: string): Promise<{ invites: AdminOrganizationInviteRecord[] }>;
+  createOrganizationInvite(token: string, orgId: string, input: CreateOrganizationInviteInput): Promise<{ invite: AdminOrganizationInviteRecord }>;
+  revokeOrganizationInvite(token: string, orgId: string, inviteId: string): Promise<{ invite: AdminOrganizationInviteRecord }>;
   disableUser(token: string, userId: string): Promise<AdminUserRecord>;
   enableUser(token: string, userId: string): Promise<AdminUserRecord>;
   deleteUser(token: string, userId: string): Promise<void>;
@@ -757,6 +892,34 @@ class DenAdminClient {
     return payload;
   }
 
+  private adminHeaders(token: string, jsonBody = false): HeadersInit {
+    return {
+      ...(jsonBody ? { "content-type": "application/json" } : {}),
+      accept: "application/json",
+      authorization: `Bearer ${token}`,
+    };
+  }
+
+  private async requestNoContent(pathname: string, token: string) {
+    const response = await fetch(`${this.denApiBase}${pathname}`, {
+      method: "DELETE",
+      headers: this.adminHeaders(token),
+    });
+
+    if (response.status === 204) {
+      return;
+    }
+
+    const payload = await response.json().catch(() => null);
+    const message =
+      typeof payload?.error === "string"
+        ? payload.error
+        : typeof payload?.message === "string"
+          ? payload.message
+          : "request_failed";
+    throw new HttpError(message, response.status);
+  }
+
   async startBrowserAuth(input: BrowserAuthStartInput) {
     const payload = await this.requestJson("/v1/desktop-auth/start", {
       method: "POST",
@@ -797,19 +960,13 @@ class DenAdminClient {
 
   async getSession(token: string) {
     return this.requestJson("/v1/admin/session", {
-      headers: {
-        accept: "application/json",
-        authorization: `Bearer ${token}`,
-      },
+      headers: this.adminHeaders(token),
     }) as Promise<AdminSessionSnapshot>;
   }
 
   async listUsers(token: string) {
     const payload = await this.requestJson("/v1/admin/users", {
-      headers: {
-        accept: "application/json",
-        authorization: `Bearer ${token}`,
-      },
+      headers: this.adminHeaders(token),
     }) as { users: AdminUserRecord[] };
     return payload.users;
   }
@@ -817,11 +974,7 @@ class DenAdminClient {
   async createUser(token: string, input: CreateUserInput) {
     const payload = await this.requestJson("/v1/admin/users", {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json",
-        authorization: `Bearer ${token}`,
-      },
+      headers: this.adminHeaders(token, true),
       body: JSON.stringify(input),
     }) as { user: AdminUserRecord };
     return payload.user;
@@ -830,23 +983,124 @@ class DenAdminClient {
   async updateUser(token: string, userId: string, input: UpdateUserInput) {
     const payload = await this.requestJson(`/v1/admin/users/${encodeURIComponent(userId)}`, {
       method: "PATCH",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json",
-        authorization: `Bearer ${token}`,
-      },
+      headers: this.adminHeaders(token, true),
       body: JSON.stringify(input),
     }) as { user: AdminUserRecord };
     return payload.user;
   }
 
+  async listOrganizations(token: string) {
+    return this.requestJson("/v1/admin/organizations", {
+      headers: this.adminHeaders(token),
+    }) as Promise<{ organizations: AdminOrganizationRecord[] }>;
+  }
+
+  async getOrganization(token: string, orgId: string) {
+    return this.requestJson(`/v1/admin/organizations/${encodeURIComponent(orgId)}`, {
+      headers: this.adminHeaders(token),
+    }) as Promise<{ organization: AdminOrganizationRecord }>;
+  }
+
+  async updateOrganization(token: string, orgId: string, input: UpdateOrganizationInput) {
+    return this.requestJson(`/v1/admin/organizations/${encodeURIComponent(orgId)}`, {
+      method: "PATCH",
+      headers: this.adminHeaders(token, true),
+      body: JSON.stringify(input),
+    }) as Promise<{ organization: AdminOrganizationRecord }>;
+  }
+
+  async listOrganizationMembers(token: string, orgId: string) {
+    return this.requestJson(`/v1/admin/organizations/${encodeURIComponent(orgId)}/members`, {
+      headers: this.adminHeaders(token),
+    }) as Promise<{ members: AdminOrganizationMemberRecord[] }>;
+  }
+
+  async createOrganizationMember(token: string, orgId: string, input: CreateOrganizationMemberInput) {
+    return this.requestJson(`/v1/admin/organizations/${encodeURIComponent(orgId)}/members`, {
+      method: "POST",
+      headers: this.adminHeaders(token, true),
+      body: JSON.stringify(input),
+    }) as Promise<{ member: AdminOrganizationMemberRecord }>;
+  }
+
+  async updateOrganizationMember(token: string, orgId: string, memberId: string, input: UpdateOrganizationMemberInput) {
+    return this.requestJson(
+      `/v1/admin/organizations/${encodeURIComponent(orgId)}/members/${encodeURIComponent(memberId)}`,
+      {
+        method: "PATCH",
+        headers: this.adminHeaders(token, true),
+        body: JSON.stringify(input),
+      },
+    ) as Promise<{ member: AdminOrganizationMemberRecord }>;
+  }
+
+  async deleteOrganizationMember(token: string, orgId: string, memberId: string) {
+    await this.requestNoContent(
+      `/v1/admin/organizations/${encodeURIComponent(orgId)}/members/${encodeURIComponent(memberId)}`,
+      token,
+    );
+  }
+
+  async listOrganizationDomains(token: string, orgId: string) {
+    return this.requestJson(`/v1/admin/organizations/${encodeURIComponent(orgId)}/domains`, {
+      headers: this.adminHeaders(token),
+    }) as Promise<{ domains: AdminOrganizationDomainRecord[] }>;
+  }
+
+  async createOrganizationDomain(token: string, orgId: string, input: CreateOrganizationDomainInput) {
+    return this.requestJson(`/v1/admin/organizations/${encodeURIComponent(orgId)}/domains`, {
+      method: "POST",
+      headers: this.adminHeaders(token, true),
+      body: JSON.stringify(input),
+    }) as Promise<{ domain: AdminOrganizationDomainRecord }>;
+  }
+
+  async updateOrganizationDomain(token: string, orgId: string, domainId: string, input: UpdateOrganizationDomainInput) {
+    return this.requestJson(
+      `/v1/admin/organizations/${encodeURIComponent(orgId)}/domains/${encodeURIComponent(domainId)}`,
+      {
+        method: "PATCH",
+        headers: this.adminHeaders(token, true),
+        body: JSON.stringify(input),
+      },
+    ) as Promise<{ domain: AdminOrganizationDomainRecord }>;
+  }
+
+  async deleteOrganizationDomain(token: string, orgId: string, domainId: string) {
+    await this.requestNoContent(
+      `/v1/admin/organizations/${encodeURIComponent(orgId)}/domains/${encodeURIComponent(domainId)}`,
+      token,
+    );
+  }
+
+  async listOrganizationInvites(token: string, orgId: string) {
+    return this.requestJson(`/v1/admin/organizations/${encodeURIComponent(orgId)}/invites`, {
+      headers: this.adminHeaders(token),
+    }) as Promise<{ invites: AdminOrganizationInviteRecord[] }>;
+  }
+
+  async createOrganizationInvite(token: string, orgId: string, input: CreateOrganizationInviteInput) {
+    return this.requestJson(`/v1/admin/organizations/${encodeURIComponent(orgId)}/invites`, {
+      method: "POST",
+      headers: this.adminHeaders(token, true),
+      body: JSON.stringify(input),
+    }) as Promise<{ invite: AdminOrganizationInviteRecord }>;
+  }
+
+  async revokeOrganizationInvite(token: string, orgId: string, inviteId: string) {
+    return this.requestJson(
+      `/v1/admin/organizations/${encodeURIComponent(orgId)}/invites/${encodeURIComponent(inviteId)}/revoke`,
+      {
+        method: "POST",
+        headers: this.adminHeaders(token),
+      },
+    ) as Promise<{ invite: AdminOrganizationInviteRecord }>;
+  }
+
   async disableUser(token: string, userId: string) {
     const payload = await this.requestJson(`/v1/admin/users/${encodeURIComponent(userId)}/disable`, {
       method: "POST",
-      headers: {
-        accept: "application/json",
-        authorization: `Bearer ${token}`,
-      },
+      headers: this.adminHeaders(token),
     }) as { user: AdminUserRecord };
     return payload.user;
   }
@@ -854,10 +1108,7 @@ class DenAdminClient {
   async enableUser(token: string, userId: string) {
     const payload = await this.requestJson(`/v1/admin/users/${encodeURIComponent(userId)}/enable`, {
       method: "POST",
-      headers: {
-        accept: "application/json",
-        authorization: `Bearer ${token}`,
-      },
+      headers: this.adminHeaders(token),
     }) as { user: AdminUserRecord };
     return payload.user;
   }
@@ -865,10 +1116,7 @@ class DenAdminClient {
   async deleteUser(token: string, userId: string) {
     const response = await fetch(`${this.denApiBase}/v1/admin/users/${encodeURIComponent(userId)}`, {
       method: "DELETE",
-      headers: {
-        accept: "application/json",
-        authorization: `Bearer ${token}`,
-      },
+      headers: this.adminHeaders(token),
     });
 
     if (response.status === 204) {
@@ -1196,6 +1444,14 @@ export function createDefaultAdminService(
     throw new HttpError(result.reason, status);
   }
 
+  function requireDenOrganizationProxy<T extends keyof DenAdminApi>(methodName: T): NonNullable<DenAdminApi[T]> {
+    const method = denClient[methodName];
+    if (typeof method !== "function") {
+      throw new HttpError("organization_proxy_unavailable", 503);
+    }
+    return method.bind(denClient) as NonNullable<DenAdminApi[T]>;
+  }
+
   async function withCredentialUsage(
     usage: UsageAggregateResponse,
     credentials: CredentialRecord[],
@@ -1323,6 +1579,48 @@ export function createDefaultAdminService(
         summary: `Updated user ${updated.email}.`,
       });
       return updated;
+    },
+    listOrganizations(token) {
+      return requireDenOrganizationProxy("listOrganizations")(token);
+    },
+    getOrganization(token, orgId) {
+      return requireDenOrganizationProxy("getOrganization")(token, orgId);
+    },
+    updateOrganization(token, orgId, input) {
+      return requireDenOrganizationProxy("updateOrganization")(token, orgId, input);
+    },
+    listOrganizationMembers(token, orgId) {
+      return requireDenOrganizationProxy("listOrganizationMembers")(token, orgId);
+    },
+    createOrganizationMember(token, orgId, input) {
+      return requireDenOrganizationProxy("createOrganizationMember")(token, orgId, input);
+    },
+    updateOrganizationMember(token, orgId, memberId, input) {
+      return requireDenOrganizationProxy("updateOrganizationMember")(token, orgId, memberId, input);
+    },
+    deleteOrganizationMember(token, orgId, memberId) {
+      return requireDenOrganizationProxy("deleteOrganizationMember")(token, orgId, memberId);
+    },
+    listOrganizationDomains(token, orgId) {
+      return requireDenOrganizationProxy("listOrganizationDomains")(token, orgId);
+    },
+    createOrganizationDomain(token, orgId, input) {
+      return requireDenOrganizationProxy("createOrganizationDomain")(token, orgId, input);
+    },
+    updateOrganizationDomain(token, orgId, domainId, input) {
+      return requireDenOrganizationProxy("updateOrganizationDomain")(token, orgId, domainId, input);
+    },
+    deleteOrganizationDomain(token, orgId, domainId) {
+      return requireDenOrganizationProxy("deleteOrganizationDomain")(token, orgId, domainId);
+    },
+    listOrganizationInvites(token, orgId) {
+      return requireDenOrganizationProxy("listOrganizationInvites")(token, orgId);
+    },
+    createOrganizationInvite(token, orgId, input) {
+      return requireDenOrganizationProxy("createOrganizationInvite")(token, orgId, input);
+    },
+    revokeOrganizationInvite(token, orgId, inviteId) {
+      return requireDenOrganizationProxy("revokeOrganizationInvite")(token, orgId, inviteId);
     },
     async getUserAiAccess(_token, userId) {
       const availableCredentials = await listAvailableAssignmentCredentials();
@@ -2010,6 +2308,150 @@ function normalizeGroupBy(value: unknown): UsageGroupBy {
   return value === "credential" || value === "user" || value === "org" ? value : "total";
 }
 
+function defaultAdminCapabilities(platformAdmin: boolean): AdminCapability[] {
+  return [...(platformAdmin ? PlatformAdminCapabilities : OrganizationAdminCapabilities)];
+}
+
+function defaultAdminAllowedPages(platformAdmin: boolean): AdminAllowedPage[] {
+  return [...(platformAdmin ? PlatformAdminAllowedPages : OrganizationAdminAllowedPages)];
+}
+
+function adminSessionCapabilities(session: AdminSessionSnapshot | undefined): AdminCapability[] {
+  if (!session) {
+    return [];
+  }
+  return Array.isArray(session.capabilities) && session.capabilities.length > 0
+    ? session.capabilities
+    : defaultAdminCapabilities(session.platformAdmin);
+}
+
+function adminSessionAllowedPages(session: AdminSessionSnapshot | undefined): AdminAllowedPage[] {
+  if (!session) {
+    return [];
+  }
+  return Array.isArray(session.allowedPages) && session.allowedPages.length > 0
+    ? session.allowedPages
+    : defaultAdminAllowedPages(session.platformAdmin);
+}
+
+function hasAdminCapability(session: AdminSessionSnapshot | undefined, capability: AdminCapability): boolean {
+  return adminSessionCapabilities(session).includes(capability);
+}
+
+function requireAdminCapability(res: express.Response, capability: AdminCapability): boolean {
+  const session = res.locals.adminSession as AdminSessionSnapshot | undefined;
+  if (hasAdminCapability(session, capability)) {
+    return true;
+  }
+
+  res.status(403).json({ error: "forbidden" });
+  return false;
+}
+
+function pageFromAdminPath(pathname: string): AdminAllowedPage | "overview" {
+  const path = pathname.replace(/\/+$/, "");
+  if (!path || path === "/admin") {
+    return "overview";
+  }
+  const page = path.split("/").pop() ?? "";
+  return PlatformAdminAllowedPages.includes(page as AdminAllowedPage)
+    ? page as AdminAllowedPage
+    : "overview";
+}
+
+function firstAllowedAdminPage(session: AdminSessionSnapshot | undefined): AdminAllowedPage {
+  return adminSessionAllowedPages(session)[0] ?? "organization";
+}
+
+function hasOwn(input: unknown, key: string): boolean {
+  return typeof input === "object" && input !== null && Object.prototype.hasOwnProperty.call(input, key);
+}
+
+function readTrimmedString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function parseOrganizationRoleInput(value: unknown): CurrentAdminOrganizationRole | undefined {
+  if (value === "organization_admin" || value === "owner") {
+    return "organization_admin";
+  }
+  if (value === "member") {
+    return "member";
+  }
+  return undefined;
+}
+
+function readOrganizationRoleInput(value: unknown, fallback: CurrentAdminOrganizationRole): CurrentAdminOrganizationRole {
+  return parseOrganizationRoleInput(value) ?? fallback;
+}
+
+function readOrganizationUpdateInput(body: unknown): UpdateOrganizationInput {
+  const input: UpdateOrganizationInput = {};
+  if (hasOwn(body, "name")) {
+    input.name = readTrimmedString((body as { name?: unknown }).name) ?? "";
+  }
+  if (hasOwn(body, "slug")) {
+    input.slug = readTrimmedString((body as { slug?: unknown }).slug) ?? "";
+  }
+  if (hasOwn(body, "seatLimit")) {
+    const value = (body as { seatLimit?: unknown }).seatLimit;
+    if (value === null || value === undefined || value === "") {
+      input.seatLimit = null;
+    } else {
+      const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        throw new HttpError("invalid_seat_limit", 400);
+      }
+      input.seatLimit = parsed;
+    }
+  }
+  return input;
+}
+
+function readDomainCreateInput(body: unknown): CreateOrganizationDomainInput {
+  return {
+    domain: readTrimmedString((body as { domain?: unknown } | null)?.domain) ?? "",
+    enabled: (body as { enabled?: unknown } | null)?.enabled !== false,
+    selfSignupEnabled: (body as { selfSignupEnabled?: unknown } | null)?.selfSignupEnabled === true,
+  };
+}
+
+function readDomainUpdateInput(body: unknown): UpdateOrganizationDomainInput {
+  const input: UpdateOrganizationDomainInput = {};
+  if (hasOwn(body, "enabled")) {
+    input.enabled = (body as { enabled?: unknown }).enabled === true;
+  }
+  if (hasOwn(body, "selfSignupEnabled")) {
+    input.selfSignupEnabled = (body as { selfSignupEnabled?: unknown }).selfSignupEnabled === true;
+  }
+  return input;
+}
+
+function readInviteCreateInput(body: unknown): CreateOrganizationInviteInput {
+  return {
+    email: readTrimmedString((body as { email?: unknown } | null)?.email) ?? "",
+    role: readOrganizationRoleInput((body as { role?: unknown; orgRole?: unknown } | null)?.role ?? (body as { orgRole?: unknown } | null)?.orgRole, "member"),
+    expiresAt: hasOwn(body, "expiresAt")
+      ? readTrimmedString((body as { expiresAt?: unknown }).expiresAt) ?? null
+      : undefined,
+  };
+}
+
+function readMemberCreateInput(body: unknown): CreateOrganizationMemberInput {
+  return {
+    email: readTrimmedString((body as { email?: unknown } | null)?.email) ?? "",
+    role: readOrganizationRoleInput((body as { role?: unknown; orgRole?: unknown } | null)?.role ?? (body as { orgRole?: unknown } | null)?.orgRole, "member"),
+  };
+}
+
+function readMemberUpdateInput(body: unknown): UpdateOrganizationMemberInput {
+  const role = parseOrganizationRoleInput((body as { role?: unknown; orgRole?: unknown } | null)?.role ?? (body as { orgRole?: unknown } | null)?.orgRole);
+  if (!role) {
+    throw new HttpError("invalid_role", 400);
+  }
+  return { role };
+}
+
 function mapHttpError(error: unknown, res: express.Response) {
   if (error instanceof HttpError) {
     res.status(error.status).json({ error: error.message });
@@ -2129,7 +2571,273 @@ export function createAdminRouter(adminService: AdminService) {
     res.json(res.locals.adminSession);
   });
 
+  router.get("/admin/api/organizations", async (req, res) => {
+    if (!requireAdminCapability(res, "organization")) {
+      return;
+    }
+
+    try {
+      const payload = await adminService.listOrganizations(res.locals.adminToken as string);
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "organization_list_failed" });
+    }
+  });
+
+  router.get("/admin/api/organizations/:orgId", async (req, res) => {
+    if (!requireAdminCapability(res, "organization")) {
+      return;
+    }
+
+    try {
+      const payload = await adminService.getOrganization(res.locals.adminToken as string, req.params.orgId);
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "organization_lookup_failed" });
+    }
+  });
+
+  router.patch("/admin/api/organizations/:orgId", async (req, res) => {
+    if (!requireAdminCapability(res, "organization")) {
+      return;
+    }
+
+    try {
+      const payload = await adminService.updateOrganization(
+        res.locals.adminToken as string,
+        req.params.orgId,
+        readOrganizationUpdateInput(req.body),
+      );
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "organization_update_failed" });
+    }
+  });
+
+  router.get("/admin/api/organizations/:orgId/members", async (req, res) => {
+    if (!requireAdminCapability(res, "organization")) {
+      return;
+    }
+
+    try {
+      const payload = await adminService.listOrganizationMembers(res.locals.adminToken as string, req.params.orgId);
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "organization_member_list_failed" });
+    }
+  });
+
+  router.post("/admin/api/organizations/:orgId/members", async (req, res) => {
+    if (!requireAdminCapability(res, "organization")) {
+      return;
+    }
+
+    try {
+      const payload = await adminService.createOrganizationMember(
+        res.locals.adminToken as string,
+        req.params.orgId,
+        readMemberCreateInput(req.body),
+      );
+      res.status(201).json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "organization_member_create_failed" });
+    }
+  });
+
+  router.patch("/admin/api/organizations/:orgId/members/:memberId", async (req, res) => {
+    if (!requireAdminCapability(res, "organization")) {
+      return;
+    }
+
+    try {
+      const payload = await adminService.updateOrganizationMember(
+        res.locals.adminToken as string,
+        req.params.orgId,
+        req.params.memberId,
+        readMemberUpdateInput(req.body),
+      );
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "organization_member_update_failed" });
+    }
+  });
+
+  router.delete("/admin/api/organizations/:orgId/members/:memberId", async (req, res) => {
+    if (!requireAdminCapability(res, "organization")) {
+      return;
+    }
+
+    try {
+      await adminService.deleteOrganizationMember(
+        res.locals.adminToken as string,
+        req.params.orgId,
+        req.params.memberId,
+      );
+      res.status(204).end();
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "organization_member_delete_failed" });
+    }
+  });
+
+  router.get("/admin/api/organizations/:orgId/domains", async (req, res) => {
+    if (!requireAdminCapability(res, "organization")) {
+      return;
+    }
+
+    try {
+      const payload = await adminService.listOrganizationDomains(res.locals.adminToken as string, req.params.orgId);
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "organization_domain_list_failed" });
+    }
+  });
+
+  router.post("/admin/api/organizations/:orgId/domains", async (req, res) => {
+    if (!requireAdminCapability(res, "organization")) {
+      return;
+    }
+
+    try {
+      const payload = await adminService.createOrganizationDomain(
+        res.locals.adminToken as string,
+        req.params.orgId,
+        readDomainCreateInput(req.body),
+      );
+      res.status(201).json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "organization_domain_create_failed" });
+    }
+  });
+
+  router.patch("/admin/api/organizations/:orgId/domains/:domainId", async (req, res) => {
+    if (!requireAdminCapability(res, "organization")) {
+      return;
+    }
+
+    try {
+      const payload = await adminService.updateOrganizationDomain(
+        res.locals.adminToken as string,
+        req.params.orgId,
+        req.params.domainId,
+        readDomainUpdateInput(req.body),
+      );
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "organization_domain_update_failed" });
+    }
+  });
+
+  router.delete("/admin/api/organizations/:orgId/domains/:domainId", async (req, res) => {
+    if (!requireAdminCapability(res, "organization")) {
+      return;
+    }
+
+    try {
+      await adminService.deleteOrganizationDomain(
+        res.locals.adminToken as string,
+        req.params.orgId,
+        req.params.domainId,
+      );
+      res.status(204).end();
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "organization_domain_delete_failed" });
+    }
+  });
+
+  router.get("/admin/api/organizations/:orgId/invites", async (req, res) => {
+    if (!requireAdminCapability(res, "organization")) {
+      return;
+    }
+
+    try {
+      const payload = await adminService.listOrganizationInvites(res.locals.adminToken as string, req.params.orgId);
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "organization_invite_list_failed" });
+    }
+  });
+
+  router.post("/admin/api/organizations/:orgId/invites", async (req, res) => {
+    if (!requireAdminCapability(res, "organization")) {
+      return;
+    }
+
+    try {
+      const payload = await adminService.createOrganizationInvite(
+        res.locals.adminToken as string,
+        req.params.orgId,
+        readInviteCreateInput(req.body),
+      );
+      res.status(201).json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "organization_invite_create_failed" });
+    }
+  });
+
+  router.post("/admin/api/organizations/:orgId/invites/:inviteId/revoke", async (req, res) => {
+    if (!requireAdminCapability(res, "organization")) {
+      return;
+    }
+
+    try {
+      const payload = await adminService.revokeOrganizationInvite(
+        res.locals.adminToken as string,
+        req.params.orgId,
+        req.params.inviteId,
+      );
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "organization_invite_revoke_failed" });
+    }
+  });
+
   router.get("/admin/api/credentials", async (req, res) => {
+    if (!requireAdminCapability(res, "credentials")) {
+      return;
+    }
+
     try {
       const includeDeleted = req.query.includeDeleted === "true" || req.query.includeDeleted === "1";
       const payload = await adminService.listCredentials(res.locals.adminToken as string, { includeDeleted });
@@ -2143,6 +2851,10 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.get("/admin/api/credentials/:credentialId/models", async (req, res) => {
+    if (!requireAdminCapability(res, "credentials")) {
+      return;
+    }
+
     try {
       const payload = await adminService.listCredentialModels(
         res.locals.adminToken as string,
@@ -2158,6 +2870,10 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.post("/admin/api/credentials", async (req, res) => {
+    if (!requireAdminCapability(res, "credentials")) {
+      return;
+    }
+
     try {
       const payload = await adminService.createCredential(
         res.locals.adminToken as string,
@@ -2179,6 +2895,10 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.delete("/admin/api/credentials/:credentialId", async (req, res) => {
+    if (!requireAdminCapability(res, "credentials")) {
+      return;
+    }
+
     try {
       const payload = await adminService.deleteCredential(
         res.locals.adminToken as string,
@@ -2195,6 +2915,10 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.post("/admin/api/credentials/:credentialId/revoke", async (req, res) => {
+    if (!requireAdminCapability(res, "credentials")) {
+      return;
+    }
+
     try {
       const payload = await adminService.revokeCredential(
         res.locals.adminToken as string,
@@ -2211,6 +2935,10 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.post("/admin/api/credentials/:credentialId/drain", async (req, res) => {
+    if (!requireAdminCapability(res, "credentials")) {
+      return;
+    }
+
     try {
       const payload = await adminService.drainCredential(
         res.locals.adminToken as string,
@@ -2227,6 +2955,10 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.post("/admin/api/credentials/:credentialId/rotate", async (req, res) => {
+    if (!requireAdminCapability(res, "credentials")) {
+      return;
+    }
+
     try {
       const payload = await adminService.rotateCredential(
         res.locals.adminToken as string,
@@ -2243,6 +2975,10 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.get("/admin/api/sessions", async (req, res) => {
+    if (!requireAdminCapability(res, "sessions")) {
+      return;
+    }
+
     try {
       const payload = await adminService.listSessions(res.locals.adminToken as string);
       res.json(payload);
@@ -2255,6 +2991,10 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.get("/admin/api/usage", async (req, res) => {
+    if (!requireAdminCapability(res, "usage")) {
+      return;
+    }
+
     try {
       const payload = await adminService.getUsage(res.locals.adminToken as string, {
         groupBy: normalizeGroupBy(req.query.groupBy),
@@ -2272,6 +3012,10 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.get("/admin/api/alerts", async (req, res) => {
+    if (!requireAdminCapability(res, "alerts")) {
+      return;
+    }
+
     try {
       const payload = await adminService.listAlerts(res.locals.adminToken as string);
       res.json(payload);
@@ -2284,6 +3028,10 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.post("/admin/api/alerts/:alertId/acknowledge", async (req, res) => {
+    if (!requireAdminCapability(res, "alerts")) {
+      return;
+    }
+
     try {
       const payload = await adminService.acknowledgeAlert(
         res.locals.adminToken as string,
@@ -2300,6 +3048,10 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.post("/admin/api/alerts/:alertId/resolve", async (req, res) => {
+    if (!requireAdminCapability(res, "alerts")) {
+      return;
+    }
+
     try {
       const payload = await adminService.resolveAlert(
         res.locals.adminToken as string,
@@ -2316,6 +3068,10 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.get("/admin/api/audit", async (req, res) => {
+    if (!requireAdminCapability(res, "audit")) {
+      return;
+    }
+
     try {
       const payload = await adminService.listAudit(res.locals.adminToken as string);
       res.json(payload);
@@ -2346,7 +3102,7 @@ export function createAdminRouter(adminService: AdminService) {
         name: typeof req.body?.name === "string" ? req.body.name.trim() : "",
         platformAdmin: req.body?.platformAdmin === true,
         orgId: typeof req.body?.orgId === "string" ? req.body.orgId.trim() : null,
-        orgRole: req.body?.orgRole === "owner" ? "owner" : "member",
+        orgRole: readOrganizationRoleInput(req.body?.orgRole, "member"),
       });
       res.status(201).json({ user });
     } catch (error) {
@@ -2359,10 +3115,22 @@ export function createAdminRouter(adminService: AdminService) {
 
   router.patch("/admin/api/users/:userId", async (req, res) => {
     try {
-      const user = await adminService.updateUser(res.locals.adminToken as string, req.params.userId, {
+      const input: UpdateUserInput = {
         name: typeof req.body?.name === "string" ? req.body.name.trim() : undefined,
         platformAdmin: typeof req.body?.platformAdmin === "boolean" ? req.body.platformAdmin : undefined,
-      });
+      };
+      if (hasOwn(req.body, "orgId")) {
+        input.orgId = typeof req.body?.orgId === "string" && req.body.orgId.trim() ? req.body.orgId.trim() : null;
+      }
+      if (hasOwn(req.body, "orgRole")) {
+        const role = parseOrganizationRoleInput(req.body?.orgRole);
+        if (!role) {
+          throw new HttpError("invalid_role", 400);
+        }
+        input.orgRole = role;
+      }
+
+      const user = await adminService.updateUser(res.locals.adminToken as string, req.params.userId, input);
       res.json({ user });
     } catch (error) {
       if (mapHttpError(error, res)) {
@@ -2373,6 +3141,10 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.get("/admin/api/users/:userId/ai-access", async (req, res) => {
+    if (!requireAdminCapability(res, "managedAiUserAccess")) {
+      return;
+    }
+
     try {
       const payload = await adminService.getUserAiAccess(res.locals.adminToken as string, req.params.userId);
       res.json(payload);
@@ -2385,6 +3157,10 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.put("/admin/api/users/:userId/ai-access", async (req, res) => {
+    if (!requireAdminCapability(res, "managedAiUserAccess")) {
+      return;
+    }
+
     try {
       const payload = await adminService.upsertUserAiAccess(res.locals.adminToken as string, req.params.userId, {
         enabled: req.body?.enabled === true,
@@ -2533,7 +3309,17 @@ export function createAdminRouter(adminService: AdminService) {
 
       try {
         res.locals.adminToken = token;
-        res.locals.adminSession = await adminService.getSession(token);
+        const session = await adminService.getSession(token);
+        res.locals.adminSession = session;
+        const requestedPage = pageFromAdminPath(req.path);
+        const allowedPages = adminSessionAllowedPages(session);
+        if (
+          (requestedPage === "overview" && !session.platformAdmin) ||
+          (requestedPage !== "overview" && !allowedPages.includes(requestedPage))
+        ) {
+          res.redirect(302, `/admin/${firstAllowedAdminPage(session)}`);
+          return;
+        }
         sendAdminShell(req, res);
       } catch (error) {
         res.append("Set-Cookie", serializeAdminCookieClear(req, ADMIN_AUTH_COOKIE_NAME));

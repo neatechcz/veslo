@@ -682,6 +682,12 @@ const updateUserSchema = {
   platformAdmin(input: unknown) {
     return typeof input === "boolean" ? input : null
   },
+  orgId(input: unknown) {
+    return readBodyString(input)
+  },
+  orgRole(input: unknown) {
+    return readOrgRole(input)
+  },
 }
 
 function pickAuditOrgId(snapshot: AdminSessionSnapshot) {
@@ -775,24 +781,60 @@ async function updateAdminOrganization(req: express.Request, res: express.Respon
     return null
   }
 
+  const nextName = hasOwnProperty(req.body, "name")
+    ? readBodyString((req.body ?? {}).name)
+    : context.organization.name
+  const nextSlug = hasOwnProperty(req.body, "slug")
+    ? readBodyString((req.body ?? {}).slug)
+    : context.organization.slug
+  let seatLimit = context.organization.seatLimit
+  const changedFields: string[] = []
+
+  if (hasOwnProperty(req.body, "name")) {
+    if (!nextName) {
+      res.status(400).json({ error: "invalid_organization_name" })
+      return null
+    }
+    changedFields.push("name")
+  }
+
+  if (hasOwnProperty(req.body, "slug")) {
+    if (!nextSlug) {
+      res.status(400).json({ error: "invalid_organization_slug" })
+      return null
+    }
+    changedFields.push("slug")
+  }
+
   if (hasOwnProperty(req.body, "seatLimit")) {
     if (!canAdminUpdateOrganizationSeatLimitPayload(context.snapshot, req.body)) {
       res.status(403).json({ error: "seat_limit_platform_admin_required" })
       return null
     }
 
-    const seatLimit = readSeatLimit((req.body ?? {}).seatLimit)
-    if (seatLimit === "invalid") {
+    const parsedSeatLimit = readSeatLimit((req.body ?? {}).seatLimit)
+    if (parsedSeatLimit === "invalid") {
       res.status(400).json({ error: "invalid_seat_limit" })
       return null
     }
 
+    seatLimit = parsedSeatLimit
+    changedFields.push("seatLimit")
+  }
+
+  if (changedFields.length > 0) {
+    const persistedName = nextName ?? context.organization.name
+    const persistedSlug = nextSlug ?? context.organization.slug
+
     await db
       .update(OrgTable)
-      .set({ seat_limit: seatLimit })
+      .set({ name: persistedName, slug: persistedSlug, seat_limit: seatLimit })
       .where(eq(OrgTable.id, context.organization.id))
 
     await recordAdminOrganizationAudit(context.snapshot, context.organization.id, "admin.organization.updated", {
+      changedFields,
+      name: persistedName,
+      slug: persistedSlug,
       seatLimit,
     })
   }
@@ -1455,6 +1497,22 @@ async function updateAdminUser(req: express.Request, res: express.Response) {
 
   const nextName = updateUserSchema.name((req.body ?? {}).name)
   const nextPlatformAdmin = updateUserSchema.platformAdmin((req.body ?? {}).platformAdmin)
+  const nextOrgId = hasOwnProperty(req.body, "orgId")
+    ? updateUserSchema.orgId((req.body ?? {}).orgId)
+    : null
+  const nextOrgRole = hasOwnProperty(req.body, "orgRole")
+    ? updateUserSchema.orgRole((req.body ?? {}).orgRole)
+    : null
+
+  if (hasOwnProperty(req.body, "orgId") && !nextOrgId) {
+    res.status(400).json({ error: "invalid_org_id" })
+    return null
+  }
+
+  if (hasOwnProperty(req.body, "orgRole") && !nextOrgRole) {
+    res.status(400).json({ error: "invalid_role" })
+    return null
+  }
 
   const existing = await db
     .select({
@@ -1492,6 +1550,34 @@ async function updateAdminUser(req: express.Request, res: express.Response) {
     }
   }
 
+  if (nextOrgId && nextOrgRole) {
+    const organization = await loadOrganizationRecord(nextOrgId)
+    if (!organization) {
+      res.status(404).json({ error: "organization_not_found" })
+      return null
+    }
+
+    const existingMembership = await loadOrganizationMemberByUserId(nextOrgId, userId)
+    if (existingMembership) {
+      await db.update(OrgMembershipTable).set({ role: nextOrgRole }).where(eq(OrgMembershipTable.id, existingMembership.membershipId))
+    } else {
+      try {
+        await createOrActivateOrganizationMembership({
+          membershipId: randomUUID(),
+          orgId: nextOrgId,
+          userId,
+          role: nextOrgRole,
+        })
+      } catch (error) {
+        if (error instanceof OrganizationAdminRepositoryError && error.code === "seat_limit_reached") {
+          res.status(409).json({ error: "seat_limit_reached" })
+          return null
+        }
+        throw error
+      }
+    }
+  }
+
   const users = await loadAdminUsers()
   const updated = users.find((entry) => entry.id === userId) ?? null
   if (updated) {
@@ -1499,6 +1585,8 @@ async function updateAdminUser(req: express.Request, res: express.Response) {
       targetUserId: userId,
       nameChanged: nextName !== null,
       platformAdmin: nextPlatformAdmin,
+      orgId: nextOrgId,
+      orgRole: nextOrgRole,
     })
   }
   return updated
