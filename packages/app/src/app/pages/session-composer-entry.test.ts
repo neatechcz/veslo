@@ -22,3 +22,11 @@ test("app builds target options from workspaces and pending drafts", () => {
   assert.match(appSource, /kind: "chat"/);
   assert.match(appSource, /kind: "workspace"/);
 });
+
+test("switchComposerTarget returns conflict before mutating active draft", () => {
+  assert.match(appSource, /resolveComposerTargetConflict\(\{/);
+  assert.match(appSource, /status: "conflict"/);
+  assert.match(appSource, /resolution === "use-current"/);
+  assert.match(appSource, /resolution === "load-existing"/);
+  assert.match(appSource, /setActivePendingDraftKey\(target\.id\)/);
+});
