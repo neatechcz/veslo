@@ -384,7 +384,7 @@ export type SkillInventoryRegistryMetadata = {
   removalPolicy?: WorkspaceSkillRolloutRemovalPolicy;
 };
 
-export type SkillInventoryScope = "workspace" | "user-global" | "organization";
+export type SkillInventoryScope = "workspace" | "user-global" | "organization" | "platform";
 
 export type SkillInventoryStatus = "global" | "workspace-only" | "mixed" | "hub-only";
 
@@ -416,6 +416,8 @@ export type SkillInstance = {
     orgId?: string;
     removalId?: string;
   };
+  enabled: boolean;
+  disabledReason?: "user";
   readable: boolean;
   writable: boolean;
 };

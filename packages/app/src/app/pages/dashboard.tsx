@@ -246,6 +246,7 @@ export type DashboardViewProps = {
   saveSkill: (input: { name: string; path?: string; content: string; description?: string }) => Promise<SkillSaveResult>;
   readSkillInstance: (target: SkillMutationTarget) => Promise<{ name: string; path: string; content: string } | null>;
   saveSkillInstance: (target: SkillMutationTarget, content: string) => Promise<SkillSaveResult>;
+  setSkillInstanceEnabled: (target: SkillMutationTarget, enabled: boolean) => Promise<SkillSaveResult>;
   deleteSkillInstance: (target: SkillMutationTarget) => Promise<void>;
   removeSkillInstance: (target: SkillMutationTarget) => Promise<SkillSaveResult>;
   batchRemoveSkillInstances: (targets: SkillMutationTarget[]) => Promise<SkillSaveResult>;
@@ -1667,6 +1668,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 saveSkill={props.saveSkill}
                 readSkillInstance={props.readSkillInstance}
                 saveSkillInstance={props.saveSkillInstance}
+                setSkillInstanceEnabled={props.setSkillInstanceEnabled}
                 deleteSkillInstance={props.deleteSkillInstance}
                 removeSkillInstance={props.removeSkillInstance}
                 batchRemoveSkillInstances={props.batchRemoveSkillInstances}

@@ -19,6 +19,8 @@ export type SkillInventorySkillInput = {
   removeReason?: SkillInstance["removeReason"];
   registry?: SkillInstance["registry"];
   restoreTarget?: SkillInstance["restoreTarget"];
+  enabled?: boolean;
+  disabledReason?: SkillInstance["disabledReason"];
   readable?: boolean;
   writable?: boolean;
 };
@@ -63,7 +65,7 @@ const SKILL_SOURCES = new Set<SkillInstance["source"]>([
   "unknown",
 ]);
 
-const SKILL_SCOPES = new Set<SkillInventoryScope>(["workspace", "user-global", "organization"]);
+const SKILL_SCOPES = new Set<SkillInventoryScope>(["workspace", "user-global", "organization", "platform"]);
 
 const normalizeText = (value: string | undefined): string | undefined => {
   const normalized = value?.trim().replace(/\s+/g, " ");
@@ -134,6 +136,8 @@ const normalizeSkillInstance = (
   const scope = normalizeScope(skill.scope, options.scope);
   const lifecycle = skill.lifecycle === "removed" ? "removed" : "active";
   const defaultWritable = !isManagedMaterializedSkillPath(path);
+  const readOnlyScope = scope === "organization" || scope === "platform";
+  const enabled = skill.enabled !== false;
 
   return {
     id: instanceId(scope, scope === "workspace" ? options.workspaceId : undefined, name, path),
@@ -151,8 +155,10 @@ const normalizeSkillInstance = (
     removeReason: skill.removeReason,
     registry: skill.registry,
     restoreTarget: skill.restoreTarget,
-    readable: skill.readable ?? true,
-    writable: lifecycle === "removed" ? false : skill.writable ?? defaultWritable,
+    enabled,
+    disabledReason: enabled ? undefined : skill.disabledReason ?? "user",
+    readable: readOnlyScope ? false : skill.readable ?? true,
+    writable: readOnlyScope || lifecycle === "removed" ? false : skill.writable ?? defaultWritable,
   };
 };
 

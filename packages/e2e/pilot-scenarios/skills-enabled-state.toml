@@ -1,0 +1,238 @@
+[scenario]
+name = "skills-enabled-state"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "navigate to skills"
+action = "eval"
+script = '''
+const oldUrl = window.location.href;
+window.location.hash = "/dashboard/skills";
+window.dispatchEvent(new HashChangeEvent("hashchange", {
+  oldURL: oldUrl,
+  newURL: window.location.href,
+}));
+true;
+'''
+
+[[step]]
+name = "skills route active"
+action = "assert-url"
+expected = "/dashboard/skills"
+timeout_ms = 10000
+
+[[step]]
+name = "skills page exists"
+action = "wait"
+target = '[data-testid="skills-page"]'
+timeout_ms = 15000
+
+[[step]]
+name = "refresh skills inventory"
+action = "eval"
+script = '''
+document.querySelector('[data-testid="skills-refresh-button"]')?.click();
+true;
+'''
+
+[[step]]
+name = "scope filter exposes managed scopes"
+action = "eval"
+script = '''
+const select = Array.from(document.querySelectorAll("select")).find((candidate) => {
+  const values = Array.from(candidate.options).map((option) => option.value);
+  return values.includes("user-global") && values.includes("workspace");
+});
+if (!(select instanceof HTMLSelectElement)) {
+  throw new Error("Skills scope filter was not found");
+}
+const values = Array.from(select.options).map((option) => option.value);
+for (const value of ["user-global", "workspace", "organization", "platform"]) {
+  if (!values.includes(value)) {
+    throw new Error(`Skills scope filter is missing ${value}. Values=${JSON.stringify(values)}`);
+  }
+}
+true;
+'''
+
+[[step]]
+name = "global skill row is enabled"
+action = "wait"
+target = '[data-testid="skill-inventory-card"][data-skill-inventory-name="e2e-enable-global-skill"][data-skill-inventory-scope="user-global"] [data-testid="skill-enabled-switch"][aria-checked="true"], [data-testid="skill-inventory-table-row"][data-skill-inventory-name="e2e-enable-global-skill"][data-skill-inventory-scope="user-global"] [data-testid="skill-enabled-switch"][aria-checked="true"]'
+timeout_ms = 60000
+
+[[step]]
+name = "refresh after workspace bootstrap"
+action = "eval"
+script = '''
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+await sleep(8000);
+const workspaceButton = Array.from(document.querySelectorAll("button")).find((button) => {
+  const text = `${button.textContent ?? ""} ${button.title ?? ""} ${button.getAttribute("aria-label") ?? ""}`;
+  return text.includes("visual-workspace") || text.includes("Visual Workspace");
+});
+workspaceButton?.click();
+const refresh = document.querySelector('[data-testid="skills-refresh-button"]');
+if (!(refresh instanceof HTMLButtonElement)) throw new Error("Skills refresh button was not found");
+if (refresh.disabled) throw new Error("Skills refresh button stayed disabled after workspace bootstrap wait");
+refresh.click();
+true;
+'''
+
+[[step]]
+name = "workspace skill row is enabled"
+action = "wait"
+target = '[data-testid="skill-inventory-card"][data-skill-inventory-name="e2e-enable-workspace-skill"][data-skill-inventory-scope="workspace"] [data-testid="skill-enabled-switch"][aria-checked="true"], [data-testid="skill-inventory-table-row"][data-skill-inventory-name="e2e-enable-workspace-skill"][data-skill-inventory-scope="workspace"] [data-testid="skill-enabled-switch"][aria-checked="true"]'
+timeout_ms = 60000
+
+[[step]]
+name = "organization skill row is enabled"
+action = "wait"
+target = '[data-testid="skill-inventory-card"][data-skill-inventory-name="e2e-enable-org-skill"][data-skill-inventory-scope="organization"] [data-testid="skill-enabled-switch"][aria-checked="true"], [data-testid="skill-inventory-table-row"][data-skill-inventory-name="e2e-enable-org-skill"][data-skill-inventory-scope="organization"] [data-testid="skill-enabled-switch"][aria-checked="true"]'
+timeout_ms = 60000
+
+[[step]]
+name = "platform skill row is enabled"
+action = "wait"
+target = '[data-testid="skill-inventory-card"][data-skill-inventory-name="e2e-enable-platform-skill"][data-skill-inventory-scope="platform"] [data-testid="skill-enabled-switch"][aria-checked="true"], [data-testid="skill-inventory-table-row"][data-skill-inventory-name="e2e-enable-platform-skill"][data-skill-inventory-scope="platform"] [data-testid="skill-enabled-switch"][aria-checked="true"]'
+timeout_ms = 60000
+
+[[step]]
+name = "disable global skill"
+action = "eval"
+script = '''
+const selector = '[data-testid="skill-inventory-card"][data-skill-inventory-name="e2e-enable-global-skill"][data-skill-inventory-scope="user-global"], [data-testid="skill-inventory-table-row"][data-skill-inventory-name="e2e-enable-global-skill"][data-skill-inventory-scope="user-global"]';
+const button = document.querySelector(selector)?.querySelector('[data-testid="skill-enabled-switch"]');
+if (!(button instanceof HTMLButtonElement)) throw new Error("Global skill switch was not found");
+button.click();
+true;
+'''
+
+[[step]]
+name = "global skill is disabled"
+action = "wait"
+target = '[data-testid="skill-inventory-card"][data-skill-inventory-name="e2e-enable-global-skill"][data-skill-inventory-scope="user-global"] [data-testid="skill-enabled-switch"][aria-checked="false"], [data-testid="skill-inventory-table-row"][data-skill-inventory-name="e2e-enable-global-skill"][data-skill-inventory-scope="user-global"] [data-testid="skill-enabled-switch"][aria-checked="false"]'
+timeout_ms = 45000
+
+[[step]]
+name = "disable workspace skill"
+action = "eval"
+script = '''
+const selector = '[data-testid="skill-inventory-card"][data-skill-inventory-name="e2e-enable-workspace-skill"][data-skill-inventory-scope="workspace"], [data-testid="skill-inventory-table-row"][data-skill-inventory-name="e2e-enable-workspace-skill"][data-skill-inventory-scope="workspace"]';
+const button = document.querySelector(selector)?.querySelector('[data-testid="skill-enabled-switch"]');
+if (!(button instanceof HTMLButtonElement)) throw new Error("Workspace skill switch was not found");
+button.click();
+true;
+'''
+
+[[step]]
+name = "workspace skill is disabled"
+action = "wait"
+target = '[data-testid="skill-inventory-card"][data-skill-inventory-name="e2e-enable-workspace-skill"][data-skill-inventory-scope="workspace"] [data-testid="skill-enabled-switch"][aria-checked="false"], [data-testid="skill-inventory-table-row"][data-skill-inventory-name="e2e-enable-workspace-skill"][data-skill-inventory-scope="workspace"] [data-testid="skill-enabled-switch"][aria-checked="false"]'
+timeout_ms = 45000
+
+[[step]]
+name = "disable organization skill"
+action = "eval"
+script = '''
+const selector = '[data-testid="skill-inventory-card"][data-skill-inventory-name="e2e-enable-org-skill"][data-skill-inventory-scope="organization"], [data-testid="skill-inventory-table-row"][data-skill-inventory-name="e2e-enable-org-skill"][data-skill-inventory-scope="organization"]';
+const button = document.querySelector(selector)?.querySelector('[data-testid="skill-enabled-switch"]');
+if (!(button instanceof HTMLButtonElement)) throw new Error("Organization skill switch was not found");
+button.click();
+true;
+'''
+
+[[step]]
+name = "organization skill is disabled"
+action = "wait"
+target = '[data-testid="skill-inventory-card"][data-skill-inventory-name="e2e-enable-org-skill"][data-skill-inventory-scope="organization"] [data-testid="skill-enabled-switch"][aria-checked="false"], [data-testid="skill-inventory-table-row"][data-skill-inventory-name="e2e-enable-org-skill"][data-skill-inventory-scope="organization"] [data-testid="skill-enabled-switch"][aria-checked="false"]'
+timeout_ms = 45000
+
+[[step]]
+name = "disable platform skill"
+action = "eval"
+script = '''
+const selector = '[data-testid="skill-inventory-card"][data-skill-inventory-name="e2e-enable-platform-skill"][data-skill-inventory-scope="platform"], [data-testid="skill-inventory-table-row"][data-skill-inventory-name="e2e-enable-platform-skill"][data-skill-inventory-scope="platform"]';
+const button = document.querySelector(selector)?.querySelector('[data-testid="skill-enabled-switch"]');
+if (!(button instanceof HTMLButtonElement)) throw new Error("Platform skill switch was not found");
+button.click();
+true;
+'''
+
+[[step]]
+name = "platform skill is disabled"
+action = "wait"
+target = '[data-testid="skill-inventory-card"][data-skill-inventory-name="e2e-enable-platform-skill"][data-skill-inventory-scope="platform"] [data-testid="skill-enabled-switch"][aria-checked="false"], [data-testid="skill-inventory-table-row"][data-skill-inventory-name="e2e-enable-platform-skill"][data-skill-inventory-scope="platform"] [data-testid="skill-enabled-switch"][aria-checked="false"]'
+timeout_ms = 45000
+
+[[step]]
+name = "open organization detail"
+action = "eval"
+script = '''
+const selector = '[data-testid="skill-inventory-card"][data-skill-inventory-name="e2e-enable-org-skill"][data-skill-inventory-scope="organization"], [data-testid="skill-inventory-table-row"][data-skill-inventory-name="e2e-enable-org-skill"][data-skill-inventory-scope="organization"]';
+const button = document.querySelector(selector)?.querySelector('[data-testid="skill-inventory-detail-button"]');
+if (!(button instanceof HTMLButtonElement)) throw new Error("Organization detail button was not found");
+button.click();
+true;
+'''
+
+[[step]]
+name = "organization detail is visible"
+action = "wait"
+target = '[data-testid="skill-detail-drawer"]'
+timeout_ms = 10000
+
+[[step]]
+name = "organization detail is read-only"
+action = "eval"
+script = '''
+const drawer = document.querySelector('[data-testid="skill-detail-drawer"]');
+if (!(drawer instanceof HTMLElement)) throw new Error("Organization detail drawer was not found");
+const buttonTexts = Array.from(drawer.querySelectorAll("button")).map((candidate) =>
+  (candidate.textContent ?? "").replace(/\s+/g, " ").trim()
+);
+if (document.querySelector("textarea") || buttonTexts.includes("Edit") || buttonTexts.includes("Upravit")) {
+  throw new Error(`Organization managed detail exposed source editing. Buttons=${JSON.stringify(buttonTexts)}`);
+}
+drawer.querySelector("button[aria-label]")?.click();
+true;
+'''
+
+[[step]]
+name = "open platform detail"
+action = "eval"
+script = '''
+const selector = '[data-testid="skill-inventory-card"][data-skill-inventory-name="e2e-enable-platform-skill"][data-skill-inventory-scope="platform"], [data-testid="skill-inventory-table-row"][data-skill-inventory-name="e2e-enable-platform-skill"][data-skill-inventory-scope="platform"]';
+const button = document.querySelector(selector)?.querySelector('[data-testid="skill-inventory-detail-button"]');
+if (!(button instanceof HTMLButtonElement)) throw new Error("Platform detail button was not found");
+button.click();
+true;
+'''
+
+[[step]]
+name = "platform detail is visible"
+action = "wait"
+target = '[data-testid="skill-detail-drawer"]'
+timeout_ms = 10000
+
+[[step]]
+name = "platform detail is read-only"
+action = "eval"
+script = '''
+const drawer = document.querySelector('[data-testid="skill-detail-drawer"]');
+if (!(drawer instanceof HTMLElement)) throw new Error("Platform detail drawer was not found");
+const buttonTexts = Array.from(drawer.querySelectorAll("button")).map((candidate) =>
+  (candidate.textContent ?? "").replace(/\s+/g, " ").trim()
+);
+if (document.querySelector("textarea") || buttonTexts.includes("Edit") || buttonTexts.includes("Upravit")) {
+  throw new Error(`Platform managed detail exposed source editing. Buttons=${JSON.stringify(buttonTexts)}`);
+}
+true;
+'''

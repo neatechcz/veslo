@@ -308,9 +308,144 @@ async function resolveVesloServerPortForLaunch(env: NodeJS.ProcessEnv = process.
 }
 
 const ENTERPRISE_CREATOR_SEED_MARKER = '.veslo-enterprise-creators';
+const SKILL_ENABLE_FIXTURE_MARKER = '.veslo-skill-enable-inventory';
+const E2E_SKILL_ENABLE_GENERATED_AT = '2026-06-06T00:00:00.000Z';
 
 function shouldSeedAutomationsSecondaryWorkspace(env: NodeJS.ProcessEnv): boolean {
   return env.E2E_SEED_AUTOMATIONS_SECONDARY_WORKSPACE?.trim() === '1';
+}
+
+function shouldSeedSkillEnableInventory(env: NodeJS.ProcessEnv): boolean {
+  return env.E2E_SEED_SKILL_ENABLE_INVENTORY?.trim() === '1';
+}
+
+function fixtureSkillMarkdown(name: string, description: string): string {
+  return [
+    '---',
+    `name: ${name}`,
+    `description: ${description}`,
+    '---',
+    '',
+    `# ${name}`,
+    '',
+    description,
+    '',
+    '## When to use',
+    `- ${description}`,
+    '',
+  ].join('\n');
+}
+
+function writeSkillFixture(root: string, name: string, description: string): string {
+  const skillDir = join(root, name);
+  rmSync(skillDir, { recursive: true, force: true });
+  mkdirSync(skillDir, { recursive: true });
+  writeFileSync(join(skillDir, 'SKILL.md'), fixtureSkillMarkdown(name, description));
+  return skillDir;
+}
+
+function fixturePackageSha256(name: string, source: string): string {
+  return createHash('sha256').update(`${source}:${name}`).digest('hex');
+}
+
+type SkillEnableMaterializationSeed = {
+  installationId: string;
+  skillId: string;
+  name: string;
+  versionId: string;
+  source: 'organization' | 'platform';
+  target: 'workspace' | 'personal-global';
+  removalPolicy: 'locked';
+  packageSha256: string;
+  skillDir: string;
+  materializedAt: string;
+};
+
+function writeManagedSkillMarker(entry: SkillEnableMaterializationSeed): void {
+  writeFileSync(
+    join(entry.skillDir, '.veslo-managed.json'),
+    `${JSON.stringify({ schemaVersion: 1, ...entry }, null, 2)}\n`,
+  );
+}
+
+function writeSkillMaterializationManifest(rootDir: string, entries: SkillEnableMaterializationSeed[]): void {
+  mkdirSync(rootDir, { recursive: true });
+  writeFileSync(
+    join(rootDir, '.veslo-materialization.json'),
+    `${JSON.stringify({
+      schemaVersion: 1,
+      generatedAt: E2E_SKILL_ENABLE_GENERATED_AT,
+      entries,
+    }, null, 2)}\n`,
+  );
+}
+
+function seedSkillEnableInventoryFixture(input: {
+  root: string;
+  workspacePath: string;
+  env: NodeJS.ProcessEnv;
+}): void {
+  const configRoot = input.env.XDG_CONFIG_HOME?.trim() || join(input.root, '.config');
+  const globalSkillsRoot = join(configRoot, 'opencode', 'skills');
+  const workspaceSkillsRoot = join(input.workspacePath, '.opencode', 'skills');
+  const workspaceManagedRoot = join(workspaceSkillsRoot, 'veslo-managed');
+  const globalManagedRoot = join(globalSkillsRoot, 'veslo-managed');
+
+  mkdirSync(globalSkillsRoot, { recursive: true });
+  mkdirSync(workspaceSkillsRoot, { recursive: true });
+
+  writeSkillFixture(
+    globalSkillsRoot,
+    'e2e-enable-global-skill',
+    'Global fixture skill for the enable switch desktop pilot scenario.',
+  );
+  writeSkillFixture(
+    workspaceSkillsRoot,
+    'e2e-enable-workspace-skill',
+    'Workspace fixture skill for the enable switch desktop pilot scenario.',
+  );
+
+  const organizationSkillDir = writeSkillFixture(
+    workspaceManagedRoot,
+    'e2e-enable-org-skill',
+    'Organization managed fixture skill for the enable switch desktop pilot scenario.',
+  );
+  const platformSkillDir = writeSkillFixture(
+    globalManagedRoot,
+    'e2e-enable-platform-skill',
+    'Platform managed fixture skill for the enable switch desktop pilot scenario.',
+  );
+
+  const organizationEntry: SkillEnableMaterializationSeed = {
+    installationId: 'install_e2e_enable_org_skill',
+    skillId: 'skill_e2e_enable_org_skill',
+    name: 'e2e-enable-org-skill',
+    versionId: 'version_e2e_enable_org_skill_1',
+    packageSha256: fixturePackageSha256('e2e-enable-org-skill', 'organization'),
+    source: 'organization',
+    target: 'workspace',
+    removalPolicy: 'locked',
+    skillDir: organizationSkillDir,
+    materializedAt: E2E_SKILL_ENABLE_GENERATED_AT,
+  };
+  const platformEntry: SkillEnableMaterializationSeed = {
+    installationId: 'install_e2e_enable_platform_skill',
+    skillId: 'skill_e2e_enable_platform_skill',
+    name: 'e2e-enable-platform-skill',
+    versionId: 'version_e2e_enable_platform_skill_1',
+    packageSha256: fixturePackageSha256('e2e-enable-platform-skill', 'platform'),
+    source: 'platform',
+    target: 'personal-global',
+    removalPolicy: 'locked',
+    skillDir: platformSkillDir,
+    materializedAt: E2E_SKILL_ENABLE_GENERATED_AT,
+  };
+
+  writeManagedSkillMarker(organizationEntry);
+  writeManagedSkillMarker(platformEntry);
+  writeSkillMaterializationManifest(workspaceManagedRoot, [organizationEntry]);
+  writeSkillMaterializationManifest(globalManagedRoot, [platformEntry]);
+  writeFileSync(join(input.workspacePath, '.opencode', SKILL_ENABLE_FIXTURE_MARKER), 'enabled\n');
 }
 
 export function seedDefaultWorkspaceState(root: string, env: NodeJS.ProcessEnv): void {
@@ -322,6 +457,9 @@ export function seedDefaultWorkspaceState(root: string, env: NodeJS.ProcessEnv):
     join(opencodePath, ENTERPRISE_CREATOR_SEED_MARKER),
     'skipped for deterministic e2e fixture\n',
   );
+  if (shouldSeedSkillEnableInventory(env)) {
+    seedSkillEnableInventoryFixture({ root, workspacePath, env });
+  }
 
   const secondaryAutomationWorkspacePath = join(root, 'workspaces', 'automations-secondary-workspace');
   const workspaces = [{

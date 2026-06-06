@@ -8,6 +8,7 @@ import {
   pilotReadinessProbeCommands,
   resolvePilotBinary,
   resolvePilotScenarioSelection,
+  scenarioSelectionNeedsSkillEnableInventoryFixture,
   scenarioSelectionNeedsSkillRegistryAuthFixture,
   scenarioSelectionNeedsAutomationSecondaryWorkspace,
 } from './pilot-runner.js';
@@ -76,6 +77,19 @@ test('soul dashboard pilot scenario requests skill registry Den auth fixture', (
   );
   assert.equal(
     scenarioSelectionNeedsSkillRegistryAuthFixture(resolvePilotScenarioSelection({ scenario: ['navigation'] }, e2eRoot)),
+    false,
+  );
+});
+
+test('skills enabled-state pilot scenario requests the skill inventory fixture', () => {
+  const e2eRoot = '/repo/packages/e2e';
+
+  assert.equal(
+    scenarioSelectionNeedsSkillEnableInventoryFixture(resolvePilotScenarioSelection({ scenario: ['skills-enabled-state'] }, e2eRoot)),
+    true,
+  );
+  assert.equal(
+    scenarioSelectionNeedsSkillEnableInventoryFixture(resolvePilotScenarioSelection({ scenario: ['navigation'] }, e2eRoot)),
     false,
   );
 });

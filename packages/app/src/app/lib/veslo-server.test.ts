@@ -1511,6 +1511,90 @@ test("skill removal helpers call local server routes with host and client auth",
   }
 });
 
+test("skill enabled override helpers call disabled list and patch routes", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; headers: Headers; body: string | null }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+      body: typeof init?.body === "string" ? init.body : null,
+    });
+    return new Response(
+      JSON.stringify({
+        items: [
+          {
+            id: "disabled-platform",
+            name: "platform-helper",
+            scope: "platform",
+            path: "/Users/example/.config/opencode/skills/veslo-managed/platform-helper/SKILL.md",
+            disabledAt: "2026-06-06T10:00:00.000Z",
+          },
+        ],
+        ok: true,
+        enabled: false,
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example/",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+
+    const disabled = await client.listDisabledSkills({ workspaceId: "workspace a" });
+    const result = await client.setSkillEnabledState({
+      enabled: false,
+      target: {
+        name: "platform-helper",
+        scope: "platform",
+        path: "/Users/example/.config/opencode/skills/veslo-managed/platform-helper/SKILL.md",
+        registry: {
+          policyId: "policy_platform_helper",
+          source: "platform",
+        },
+      },
+    });
+
+    assert.equal(disabled.items[0]?.scope, "platform");
+    assert.equal(result.enabled, false);
+    assert.deepEqual(calls.map((call) => ({ url: call.url, method: call.method, body: call.body })), [
+      {
+        url: "https://veslo.example/skills/disabled?workspaceId=workspace+a",
+        method: "GET",
+        body: null,
+      },
+      {
+        url: "https://veslo.example/skills/enabled-state",
+        method: "PATCH",
+        body: JSON.stringify({
+          enabled: false,
+          target: {
+            name: "platform-helper",
+            scope: "platform",
+            path: "/Users/example/.config/opencode/skills/veslo-managed/platform-helper/SKILL.md",
+            registry: {
+              policyId: "policy_platform_helper",
+              source: "platform",
+            },
+          },
+        }),
+      },
+    ]);
+    for (const call of calls) {
+      assert.equal(call.headers.get("authorization"), "Bearer token-123");
+      assert.equal(call.headers.get("x-veslo-host-token"), "host-token-123");
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("listHubMcp forwards den auth context headers when provided", async () => {
   const previousFetch = globalThis.fetch;
   const calls: Array<{ url: string; headers: Headers }> = [];

@@ -10,6 +10,7 @@
     "test:pilot": "node --import=tsx/esm ./helpers/pilot-runner.ts",
     "test:pilot:smoke": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario smoke",
     "test:pilot:navigation": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario navigation",
+    "test:pilot:skills-enabled-state": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario skills-enabled-state",
     "test:pilot:soul-dashboard": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario soul-dashboard",
     "test:legacy-wdio": "node -e \"throw new Error('Legacy WDIO specs are not a Veslo runtime gate. Convert the target spec to tauri-pilot before running it.')\"",
     "test:update-baselines": "node -e \"throw new Error('Visual WDIO baselines are legacy. Convert the visual check to tauri-pilot screenshots before updating baselines.')\"",

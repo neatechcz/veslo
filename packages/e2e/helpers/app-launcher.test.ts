@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -130,6 +130,38 @@ test('seedDefaultWorkspaceState skips network-backed enterprise creators for det
       existsSync(join(root, 'workspaces', 'visual-workspace', '.opencode', '.veslo-enterprise-creators')),
       true,
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('seedDefaultWorkspaceState can seed all skill enable inventory scopes', () => {
+  const root = mkdtempSync(join(tmpdir(), 'veslo-e2e-home-'));
+  const configRoot = join(root, '.config');
+  try {
+    seedDefaultWorkspaceState(root, {
+      E2E_SEED_SKILL_ENABLE_INVENTORY: '1',
+      XDG_CONFIG_HOME: configRoot,
+    });
+
+    const workspacePath = join(root, 'workspaces', 'visual-workspace');
+    const globalSkillsRoot = join(configRoot, 'opencode', 'skills');
+    const workspaceSkillsRoot = join(workspacePath, '.opencode', 'skills');
+    const platformManifest = JSON.parse(
+      readFileSync(join(globalSkillsRoot, 'veslo-managed', '.veslo-materialization.json'), 'utf8'),
+    ) as { entries: Array<{ name: string; source: string; target: string }> };
+    const organizationManifest = JSON.parse(
+      readFileSync(join(workspaceSkillsRoot, 'veslo-managed', '.veslo-materialization.json'), 'utf8'),
+    ) as { entries: Array<{ name: string; source: string; target: string }> };
+
+    assert.equal(existsSync(join(globalSkillsRoot, 'e2e-enable-global-skill', 'SKILL.md')), true);
+    assert.equal(existsSync(join(workspaceSkillsRoot, 'e2e-enable-workspace-skill', 'SKILL.md')), true);
+    assert.deepEqual(platformManifest.entries.map((entry) => [entry.name, entry.source, entry.target]), [
+      ['e2e-enable-platform-skill', 'platform', 'personal-global'],
+    ]);
+    assert.deepEqual(organizationManifest.entries.map((entry) => [entry.name, entry.source, entry.target]), [
+      ['e2e-enable-org-skill', 'organization', 'workspace'],
+    ]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

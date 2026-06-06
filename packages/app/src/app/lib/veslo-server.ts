@@ -129,6 +129,7 @@ export type VesloSkillResolveResult = {
 };
 
 export type VesloSkillRemovalScope = "workspace" | "user-global";
+export type VesloSkillEnabledScope = "workspace" | "user-global" | "organization" | "platform";
 
 export type VesloSkillRemovalItem = {
   id: string;
@@ -145,6 +146,38 @@ export type VesloSkillRemovalItem = {
 
 export type VesloSkillRemovalsResponse = {
   items: VesloSkillRemovalItem[];
+};
+
+export type VesloSkillEnabledRegistryIdentity = {
+  skillId?: string;
+  installationId?: string;
+  policyId?: string;
+  versionId?: string;
+  source?: "personal" | "workspace" | "organization" | "platform";
+};
+
+export type VesloSkillEnabledTarget = {
+  name: string;
+  scope: VesloSkillEnabledScope;
+  workspaceId?: string;
+  path?: string;
+  registry?: VesloSkillEnabledRegistryIdentity;
+};
+
+export type VesloDisabledSkillRecord = VesloSkillEnabledTarget & {
+  id: string;
+  disabledAt: string;
+  disabledBy?: string;
+};
+
+export type VesloDisabledSkillsResponse = {
+  items: VesloDisabledSkillRecord[];
+};
+
+export type VesloSkillEnabledStateResponse = {
+  ok: true;
+  enabled: boolean;
+  record?: VesloDisabledSkillRecord;
 };
 
 export type VesloSkillRemovalMutationResult = {
@@ -2632,14 +2665,34 @@ export function createVesloServerClient(options: {
         `/workspace/${workspaceId}/plugins/${encodeURIComponent(name)}`,
         { token, hostToken, method: "DELETE" },
       ),
-    listSkills: (workspaceId: string, options?: { includeGlobal?: boolean }) => {
-      const query = options?.includeGlobal ? "?includeGlobal=true" : "";
+    listSkills: (workspaceId: string, options?: { includeGlobal?: boolean; includeDisabled?: boolean }) => {
+      const queryParams = new URLSearchParams();
+      if (options?.includeGlobal) queryParams.set("includeGlobal", "true");
+      if (options?.includeDisabled) queryParams.set("includeDisabled", "true");
+      const query = queryParams.toString();
       return requestJson<{ items: VesloSkillItem[] }>(
         baseUrl,
-        `/workspace/${workspaceId}/skills${query}`,
+        `/workspace/${workspaceId}/skills${query ? `?${query}` : ""}`,
         { token, hostToken },
       );
     },
+    listDisabledSkills: (options?: { workspaceId?: string }) => {
+      const queryParams = new URLSearchParams();
+      if (options?.workspaceId?.trim()) queryParams.set("workspaceId", options.workspaceId.trim());
+      const query = queryParams.toString();
+      return requestJson<VesloDisabledSkillsResponse>(
+        baseUrl,
+        `/skills/disabled${query ? `?${query}` : ""}`,
+        { token, hostToken },
+      );
+    },
+    setSkillEnabledState: (payload: { target: VesloSkillEnabledTarget; enabled: boolean }) =>
+      requestJson<VesloSkillEnabledStateResponse>(baseUrl, "/skills/enabled-state", {
+        token,
+        hostToken,
+        method: "PATCH",
+        body: payload,
+      }),
     resolveSkill: (
       workspaceId: string,
       payload: {

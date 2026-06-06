@@ -85,6 +85,10 @@ export function scenarioSelectionNeedsSkillRegistryAuthFixture(scenarios: string
   return scenarios.some((scenario) => scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/soul-dashboard.toml'));
 }
 
+export function scenarioSelectionNeedsSkillEnableInventoryFixture(scenarios: string[]): boolean {
+  return scenarios.some((scenario) => scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/skills-enabled-state.toml'));
+}
+
 export async function runPilotCommand(options: RunPilotCommandOptions): Promise<void> {
   const binary = options.binary ?? resolvePilotBinary(options.env);
   const socket = options.socket ?? resolvePilotSocketPath({ runtimeDir: resolvePilotRuntimeDir() });
@@ -173,6 +177,9 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
   }
   if (scenarioSelectionNeedsSkillRegistryAuthFixture(scenarios)) {
     process.env.E2E_SKILL_REGISTRY_AUTH_BASE ||= 'fixture';
+  }
+  if (scenarioSelectionNeedsSkillEnableInventoryFixture(scenarios)) {
+    process.env.E2E_SEED_SKILL_ENABLE_INVENTORY ||= '1';
   }
 
   await startApp();

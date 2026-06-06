@@ -53,6 +53,7 @@ import { isTauriRuntime } from "../utils";
 type InstallResult = { ok: boolean; message: string };
 type ActionSkillCard = SkillCard & { mutationTarget: SkillMutationTarget };
 type InventoryViewMode = "cards" | "table";
+type InventoryScopeFilter = "all" | SkillInstance["scope"];
 type WorkspaceInstallAction = {
   name: string;
   source: "detail" | "selection";
@@ -128,6 +129,7 @@ export type SkillsViewProps = {
   saveSkill: (input: { name: string; path?: string; content: string; description?: string }) => Promise<SkillSaveResult>;
   readSkillInstance: (target: SkillMutationTarget) => Promise<{ name: string; path: string; content: string } | null>;
   saveSkillInstance: (target: SkillMutationTarget, content: string) => Promise<SkillSaveResult>;
+  setSkillInstanceEnabled: (target: SkillMutationTarget, enabled: boolean) => Promise<SkillSaveResult>;
   deleteSkillInstance: (target: SkillMutationTarget) => Promise<void>;
   removeSkillInstance: (target: SkillMutationTarget) => Promise<SkillSaveResult>;
   batchRemoveSkillInstances: (targets: SkillMutationTarget[]) => Promise<SkillSaveResult>;
@@ -173,6 +175,7 @@ export default function SkillsView(props: SkillsViewProps) {
           description: skill.description,
           trigger: skill.trigger,
           source: "unknown",
+          enabled: true,
           readable: true,
           writable: true,
         },
@@ -203,9 +206,10 @@ export default function SkillsView(props: SkillsViewProps) {
   const restoreOpen = createMemo(() => restoreTarget() != null);
   const [removePending, setRemovePending] = createSignal(false);
   const [restorePending, setRestorePending] = createSignal(false);
+  const [enabledMutationIds, setEnabledMutationIds] = createSignal<string[]>([]);
   const skillMutationBusy = createMemo(() => props.busy || removePending() || restorePending());
   const [searchQuery, setSearchQuery] = createSignal("");
-  const [inventoryScopeFilter, setInventoryScopeFilter] = createSignal<"all" | "user-global" | "workspace">("all");
+  const [inventoryScopeFilter, setInventoryScopeFilter] = createSignal<InventoryScopeFilter>("all");
   const [inventoryWorkspaceFilter, setInventoryWorkspaceFilter] = createSignal("all");
   const [inventoryIncludeDeleted, setInventoryIncludeDeleted] = createSignal(false);
   const [inventoryViewMode, setInventoryViewMode] = createSignal<InventoryViewMode>("cards");
@@ -525,6 +529,7 @@ export default function SkillsView(props: SkillsViewProps) {
     inventoryTableRows().map((row) => skillInventoryInstanceId(row.instance))
   );
   const selectedInventoryIdSet = createMemo(() => new Set(selectedInventoryIds()));
+  const enabledMutationIdSet = createMemo(() => new Set(enabledMutationIds()));
   const selectedInventoryCount = createMemo(() =>
     selectedInventoryIds().filter((id) => currentInventorySelectionIds().includes(id)).length
   );
@@ -731,14 +736,79 @@ export default function SkillsView(props: SkillsViewProps) {
     toggleInventorySelection(id, !selectedInventoryIdSet().has(id));
   };
 
+  const scopeLabelForInstance = (instance: SkillInstance) => {
+    if (instance.scope === "user-global") return translate("skills.filter_scope_global");
+    if (instance.scope === "organization") return translate("skills.detail_scope_organization");
+    if (instance.scope === "platform") return translate("skills.detail_scope_platform");
+    return translate("skills.filter_scope_workspace");
+  };
+
+  const detailLocationScopeForInstance = (instance: SkillInstance): SkillDetailLocation["scope"] => {
+    if (instance.scope === "user-global") return "global";
+    if (instance.scope === "organization" || instance.scope === "platform") return instance.scope;
+    return "workspace";
+  };
+
+  const skillEnabledPending = (instance: SkillInstance) => enabledMutationIdSet().has(instance.id);
+  const canToggleSkillEnabled = (instance: SkillInstance) => inventoryInstanceLifecycle(instance) === "active";
+  const skillEnabledTitle = (instance: SkillInstance) => {
+    if (skillEnabledPending(instance)) return translate("skills.enable_state_saving");
+    return instance.enabled === false ? translate("skills.enable_skill") : translate("skills.disable_skill");
+  };
+
+  const toggleSkillInstanceEnabled = async (instance: SkillInstance, enabled: boolean) => {
+    if (!canToggleSkillEnabled(instance) || skillEnabledPending(instance)) return;
+    const id = instance.id;
+    setEnabledMutationIds((current) => current.includes(id) ? current : [...current, id]);
+    try {
+      const result = await props.setSkillInstanceEnabled(skillMutationTargetFromInstance(instance), enabled);
+      setToast(result.message ?? translate(result.ok ? "ui.indirect.saved_1caget" : "skills.failed_to_load"));
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : translate("skills.failed_to_load"));
+    } finally {
+      setEnabledMutationIds((current) => current.filter((candidate) => candidate !== id));
+      props.refreshSkillInventory({ force: true });
+    }
+  };
+
+  const renderSkillEnabledSwitch = (input: { item: SkillInventoryItem; instance: SkillInstance }) => {
+    const checked = () => input.instance.enabled !== false;
+    const pending = () => skillEnabledPending(input.instance);
+    const disabled = () => pending() || !canToggleSkillEnabled(input.instance);
+    const title = () => skillEnabledTitle(input.instance);
+    return (
+      <button
+        type="button"
+        role="switch"
+        data-testid="skill-enabled-switch"
+        aria-checked={checked()}
+        aria-label={title()}
+        title={title()}
+        disabled={disabled()}
+        class={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+          checked()
+            ? "border-[rgba(var(--dls-accent-rgb),0.45)] bg-[rgba(var(--dls-accent-rgb),0.28)]"
+            : "border-dls-border bg-dls-hover"
+        }`}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          void toggleSkillInstanceEnabled(input.instance, !checked());
+        }}
+      >
+        <span
+          class={`absolute h-4 w-4 rounded-full bg-dls-surface shadow-sm transition-transform ${
+            checked() ? "translate-x-[18px]" : "translate-x-[2px]"
+          }`}
+        />
+      </button>
+    );
+  };
+
   const skillDetailLocationFromInstance = (instance: SkillInstance): SkillDetailLocation => ({
     id: instance.id,
-    label: instance.scope === "user-global"
-      ? translate("skills.all_workspaces")
-      : instance.scope === "organization"
-        ? translate("skills.detail_scope_organization")
-        : workspaceLabelForInstance(instance),
-    scope: instance.scope === "user-global" ? "global" : instance.scope === "organization" ? "organization" : "workspace",
+    label: instance.scope === "workspace" ? workspaceLabelForInstance(instance) : scopeLabelForInstance(instance),
+    scope: detailLocationScopeForInstance(instance),
     path: instance.path,
     writable: instance.writable,
     active: selectedDetail()?.instance.id === instance.id,
@@ -781,8 +851,8 @@ export default function SkillsView(props: SkillsViewProps) {
     if (!detail) return null;
     return {
       id: detail.instance.id,
-      label: detail.instance.scope === "user-global" ? translate("skills.all_workspaces") : workspaceLabelForInstance(detail.instance),
-      scope: detail.instance.scope === "user-global" ? "global" : "workspace",
+      label: detail.instance.scope === "workspace" ? workspaceLabelForInstance(detail.instance) : scopeLabelForInstance(detail.instance),
+      scope: detailLocationScopeForInstance(detail.instance),
       path: detail.instance.path,
       workspaceId: detail.instance.workspaceId ?? null,
     };
@@ -1518,6 +1588,11 @@ export default function SkillsView(props: SkillsViewProps) {
                   {translate("skills.removed_status")}
                 </span>
               </Show>
+              <Show when={input.instance.enabled === false && lifecycle() === "active"}>
+                <span class="shrink-0 rounded-full border border-dls-border bg-dls-hover px-2 py-0.5 type-ui-xs text-dls-secondary">
+                  {translate("skills.disabled_status")}
+                </span>
+              </Show>
               <button
                 type="button"
                 class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-dls-border bg-dls-hover text-dls-secondary transition-colors hover:bg-dls-active hover:text-dls-text disabled:opacity-40"
@@ -1544,6 +1619,7 @@ export default function SkillsView(props: SkillsViewProps) {
           </div>
         </div>
         <div class="flex items-center gap-1">
+          {renderSkillEnabledSwitch({ item: input.item, instance: input.instance })}
           <button
             type="button"
             data-testid="skill-inventory-detail-button"
@@ -1657,11 +1733,13 @@ export default function SkillsView(props: SkillsViewProps) {
           value={inventoryScopeFilter()}
           aria-label={translate("skills.filter_scope")}
           class="font-product type-ui-xs rounded-lg border border-dls-border bg-dls-surface px-2 py-1.5 text-dls-text"
-          onChange={(event) => setInventoryScopeFilter(event.currentTarget.value as "all" | "user-global" | "workspace")}
+          onChange={(event) => setInventoryScopeFilter(event.currentTarget.value as InventoryScopeFilter)}
         >
           <option value="all">{translate("skills.filter_scope_all")}</option>
           <option value="user-global">{translate("skills.filter_scope_global")}</option>
           <option value="workspace">{translate("skills.filter_scope_workspace")}</option>
+          <option value="organization">{translate("skills.detail_scope_organization")}</option>
+          <option value="platform">{translate("skills.detail_scope_platform")}</option>
         </select>
         <select
           value={inventoryWorkspaceFilter()}
@@ -1905,11 +1983,7 @@ export default function SkillsView(props: SkillsViewProps) {
                         uninstallDisabledReason({ item: row.item, instance: row.instance }) ?? translate("skills.uninstall");
                       const restoreTitle = () =>
                         restoreDisabledReason({ item: row.item, instance: row.instance }) ?? translate("skills.restore_skill");
-                      const scopeLabel = () => {
-                        if (row.instance.scope === "user-global") return translate("skills.filter_scope_global");
-                        if (row.instance.scope === "organization") return translate("skills.detail_scope_organization");
-                        return translate("skills.filter_scope_workspace");
-                      };
+                      const scopeLabel = () => scopeLabelForInstance(row.instance);
                       return (
                         <tr
                           class="border-b border-dls-border last:border-0 hover:bg-dls-hover"
@@ -1937,6 +2011,11 @@ export default function SkillsView(props: SkillsViewProps) {
                                   {translate("skills.removed_status")}
                                 </span>
                               </Show>
+                              <Show when={row.instance.enabled === false && lifecycle() === "active"}>
+                                <span class="shrink-0 rounded-full border border-dls-border bg-dls-hover px-2 py-0.5 type-ui-xs text-dls-secondary">
+                                  {translate("skills.disabled_status")}
+                                </span>
+                              </Show>
                             </div>
                             <Show when={row.instance.description ?? row.item.description}>
                               {(description) => <div class="truncate type-ui-xs text-dls-secondary">{description()}</div>}
@@ -1951,6 +2030,7 @@ export default function SkillsView(props: SkillsViewProps) {
                           <td class="px-3 py-2 type-ui-sm text-dls-secondary">{row.instance.source}</td>
                           <td class="px-3 py-2">
                             <div class="flex justify-end gap-1">
+                              {renderSkillEnabledSwitch({ item: row.item, instance: row.instance })}
                               <button
                                 type="button"
                                 data-testid="skill-inventory-detail-button"

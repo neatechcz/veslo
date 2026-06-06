@@ -38,7 +38,7 @@ export type SkillDetailAction = "copy" | "move" | "publish" | "requestApproval" 
 export type SkillDetailLocation = {
   id: string;
   label: string;
-  scope: "global" | "workspace" | "organization";
+  scope: "global" | "workspace" | "organization" | "platform";
   path: string;
   writable?: boolean;
   active?: boolean;
@@ -127,6 +127,8 @@ export default function SkillDetailDrawer(props: SkillDetailDrawerProps) {
         return translate("skills.detail_scope_workspace");
       case "organization":
         return translate("skills.detail_scope_organization");
+      case "platform":
+        return translate("skills.detail_scope_platform");
     }
   };
 
