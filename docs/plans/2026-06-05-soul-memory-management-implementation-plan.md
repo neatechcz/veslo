@@ -82,7 +82,7 @@ test("restoreSoulVersion creates a new current version instead of mutating histo
 
 **Step 2: Run tests and verify they fail**
 
-Run: `pnpm --filter openwork-server test -- soul-memory.test.ts`
+Run: `pnpm --filter veslo-server test -- soul-memory.test.ts`
 
 Expected: fail because `soul-memory.ts` does not exist.
 
@@ -125,7 +125,7 @@ Implement:
 
 **Step 4: Run tests and verify they pass**
 
-Run: `pnpm --filter openwork-server test -- soul-memory.test.ts`
+Run: `pnpm --filter veslo-server test -- soul-memory.test.ts`
 
 Expected: pass.
 
@@ -165,7 +165,7 @@ const fetchImpl = async (url: string, init?: RequestInit) => {
 
 **Step 2: Run tests and verify they fail**
 
-Run: `pnpm --filter openwork-server test -- soul-den-client.test.ts soul-cache.test.ts`
+Run: `pnpm --filter veslo-server test -- soul-den-client.test.ts soul-cache.test.ts`
 
 Expected: fail because modules do not exist.
 
@@ -219,7 +219,7 @@ Cache rules:
 
 **Step 5: Run tests and verify they pass**
 
-Run: `pnpm --filter openwork-server test -- soul-den-client.test.ts soul-cache.test.ts`
+Run: `pnpm --filter veslo-server test -- soul-den-client.test.ts soul-cache.test.ts`
 
 Expected: pass.
 
@@ -251,7 +251,7 @@ Test app-facing routes:
 
 **Step 2: Run tests and verify they fail**
 
-Run: `pnpm --filter openwork-server test -- soul-routes.test.ts`
+Run: `pnpm --filter veslo-server test -- soul-routes.test.ts`
 
 Expected: fail because routes do not exist.
 
@@ -304,7 +304,7 @@ Either remove the current heartbeat-dashboard usage or keep old endpoints behind
 
 **Step 6: Run tests and verify they pass**
 
-Run: `pnpm --filter openwork-server test -- soul-routes.test.ts`
+Run: `pnpm --filter veslo-server test -- soul-routes.test.ts`
 
 Expected: pass.
 
@@ -335,7 +335,7 @@ Test:
 
 **Step 2: Run tests and verify they fail**
 
-Run: `pnpm --filter openwork-server test -- soul-materializer.test.ts`
+Run: `pnpm --filter veslo-server test -- soul-materializer.test.ts`
 
 Expected: fail because materializer does not exist.
 
@@ -369,7 +369,7 @@ If a workspace is busy, mark reload/materialization pending, matching skill mate
 
 **Step 5: Run tests and verify they pass**
 
-Run: `pnpm --filter openwork-server test -- soul-materializer.test.ts`
+Run: `pnpm --filter veslo-server test -- soul-materializer.test.ts`
 
 Expected: pass.
 
@@ -687,7 +687,7 @@ App tests:
 Run:
 
 ```bash
-pnpm --filter openwork-server test -- soul-memory.test.ts soul-routes.test.ts
+pnpm --filter veslo-server test -- soul-memory.test.ts soul-routes.test.ts
 pnpm --filter @neatech/veslo-ui test -- soul-editor.test.ts
 ```
 
@@ -798,7 +798,7 @@ Cover:
 Run:
 
 ```bash
-pnpm --filter openwork-server test -- soul-memory.test.ts soul-den-client.test.ts soul-cache.test.ts soul-routes.test.ts soul-materializer.test.ts
+pnpm --filter veslo-server test -- soul-memory.test.ts soul-den-client.test.ts soul-cache.test.ts soul-routes.test.ts soul-materializer.test.ts
 pnpm --filter @neatech/veslo-ui test -- soul-state.test.ts soul-layout-contract.test.ts soul-editor.test.ts soul-localization.test.ts
 ```
 
@@ -809,7 +809,7 @@ Expected: pass.
 Because `packages/server/src` changed, run:
 
 ```bash
-pnpm --filter openwork-server build:bin
+pnpm --filter veslo-server build:bin
 ```
 
 Expected: binary build succeeds.

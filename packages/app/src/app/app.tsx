@@ -350,6 +350,7 @@ import {
   clearVesloServerSettings,
   type VesloAuditEntry,
   type VesloSoulHeartbeatEntry,
+  type VesloSoulOverviewResponse,
   type VesloSoulStatus,
   type VesloSessionArchiveRecord,
   type VesloSessionLatestRunArtifacts,
@@ -3478,6 +3479,9 @@ export default function App() {
   const [soulStatusByWorkspaceId, setSoulStatusByWorkspaceId] = createSignal<
     Record<string, VesloSoulStatus | null>
   >({});
+  const [soulOverview, setSoulOverview] = createSignal<VesloSoulOverviewResponse | null>(null);
+  const [soulOverviewError, setSoulOverviewError] = createSignal<string | null>(null);
+  const [soulOverviewBusy, setSoulOverviewBusy] = createSignal(false);
   const [activeSoulHeartbeats, setActiveSoulHeartbeats] = createSignal<VesloSoulHeartbeatEntry[]>([]);
   const [soulStatusBusy, setSoulStatusBusy] = createSignal(false);
   const [soulHeartbeatsBusy, setSoulHeartbeatsBusy] = createSignal(false);
@@ -7281,17 +7285,49 @@ export default function App() {
     return map;
   };
 
-  const refreshSoulData = async (options?: { force?: boolean }) => {
-    if (soulStatusBusy() && !options?.force) return;
+  let soulOverviewRefreshSeq = 0;
+  const refreshSoulOverview = async (client: VesloServerClient) => {
+    const requestSeq = ++soulOverviewRefreshSeq;
+    setSoulOverviewBusy(true);
+    const isCurrentRequest = () =>
+      requestSeq === soulOverviewRefreshSeq && vesloServerClient() === client && vesloServerStatus() === "connected";
+    try {
+      const overview = await client.getSoulOverview(skillRegistryMaterializationAuthContext());
+      if (!isCurrentRequest()) {
+        return;
+      }
+      setSoulOverview(overview);
+      setSoulOverviewError(null);
+    } catch (error) {
+      if (!isCurrentRequest()) {
+        return;
+      }
+      const message = error instanceof Error ? error.message : "Failed to load Soul overview.";
+      setSoulOverview(null);
+      setSoulOverviewError(message);
+    } finally {
+      if (isCurrentRequest()) {
+        setSoulOverviewBusy(false);
+      }
+    }
+  };
 
+  const refreshSoulData = async (options?: { force?: boolean }) => {
     const client = vesloServerClient();
     if (!client || vesloServerStatus() !== "connected") {
+      soulOverviewRefreshSeq += 1;
+      setSoulOverview(null);
+      setSoulOverviewError(null);
+      setSoulOverviewBusy(false);
       setSoulStatusByWorkspaceId({});
       setActiveSoulHeartbeats([]);
       setSoulHeartbeatsBusy(false);
       setSoulError(null);
       return;
     }
+
+    void refreshSoulOverview(client);
+    if (soulStatusBusy() && !options?.force) return;
 
     setSoulStatusBusy(true);
     setSoulError(null);
@@ -7346,6 +7382,7 @@ export default function App() {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load soul status.";
+      setSoulOverview(null);
       setSoulStatusByWorkspaceId({});
       setActiveSoulHeartbeats([]);
       setSoulHeartbeatsBusy(false);
@@ -7366,6 +7403,7 @@ export default function App() {
     const status = vesloServerStatus();
     const hasClient = Boolean(vesloServerClient());
     const activeWorkspaceId = workspaceStore.activeWorkspaceId();
+    const denRevision = denAuthRevision();
     const workspacesKey = workspaceStore
       .workspaces()
       .map((workspace) => {
@@ -7375,7 +7413,7 @@ export default function App() {
         return [workspace.id, workspace.workspaceType, workspace.remoteType ?? "", root, workspace.vesloWorkspaceId ?? ""].join("|");
       })
       .join(";");
-    const key = [status, hasClient ? "1" : "0", activeWorkspaceId, workspacesKey].join("::");
+    const key = [status, hasClient ? "1" : "0", activeWorkspaceId, workspacesKey, denRevision].join("::");
     if (key === lastSoulRefreshKey) return;
     lastSoulRefreshKey = key;
     void refreshSoulData().catch(e => reportError(e, "soul.refresh"));
@@ -10204,6 +10242,12 @@ export default function App() {
       refreshScheduledJobs: (options?: { force?: boolean }) =>
         refreshScheduledJobs(options).catch(e => reportError(e, "scheduled.refresh")),
       deleteScheduledJob,
+      soulOverview: soulOverview(),
+      soulOverviewError: soulOverviewError(),
+      soulOverviewBusy: soulOverviewBusy(),
+      soulClient: vesloServerClient(),
+      soulServerConnected: vesloServerStatus() === "connected",
+      soulAuthContext: skillRegistryMaterializationAuthContext(),
       soulStatusByWorkspaceId: soulStatusByWorkspaceId(),
       activeSoulStatus: activeSoulStatus(),
       activeSoulHeartbeats: activeSoulHeartbeats(),

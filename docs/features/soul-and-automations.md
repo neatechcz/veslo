@@ -22,11 +22,12 @@ The Soul UI lives in `packages/app/src/app/pages/soul.tsx`.
 
 Current Soul behavior includes:
 
-- soul health status
-- heartbeat recency
-- setup audit checklist
-- steering hints such as loose ends and next action
-- run heartbeat now flow
+- source overview with Organization first, User second, and workspace sources in one table
+- selectable source detail for organization, user, and workspace Soul documents
+- textarea editing for sources the current account can edit
+- server-synced version history, version preview, and restore
+- workspace heartbeat status and on/off toggle
+- actionable materialization diagnostics when the server reports a runtime conflict or write/config problem
 
 ## Soul Setup Expectations
 
@@ -39,11 +40,11 @@ Soul setup relies on a combination of:
 - heartbeat log existing
 - at least one successful heartbeat as proof
 
-This is surfaced as a setup audit rather than a hidden implementation detail.
+The source editor treats runtime materialization as automatic. If materialization reports a conflict or status that needs action, the UI should show actionable diagnostics rather than exposing a manual sync choice.
 
 ## Heartbeat Triggering
 
-The UI can trigger a Soul heartbeat through a workspace prompt flow. The page also polls for updated heartbeat status after trigger attempts.
+Workspace Soul heartbeat can be toggled from the selected workspace source. There is no organization heartbeat endpoint; organization-level heartbeat suggestions, if surfaced, must be review-oriented rather than auto-applied by the UI.
 
 If heartbeat runtime semantics change, keep this doc aligned with the actual page behavior and any scheduler dependency changes.
 

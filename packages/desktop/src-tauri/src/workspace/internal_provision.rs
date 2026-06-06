@@ -171,10 +171,10 @@ fn managed_veslo_agent_instructions_block() -> String {
          - **Workspace** — user may have multiple workspaces; respect workspace boundaries.\n\
          \n\
          ### User Memory\n\
-         - When the user says \"remember this\", \"zapamatuj si\", or \"ulož si\", persist the information to `.opencode/soul-user.md`.\n\
-         - Read the file first, append new entries, then write it back. Do not overwrite existing content.\n\
-         - Keep entries concise — one line per fact, grouped logically.\n\
-         - Never store credentials, tokens, or API keys in this file.\n\
+         - The materialized Soul files are read-only runtime output owned by Veslo. Do not edit `.opencode/soul-company.md`, `.opencode/soul-user.md`, or `.opencode/soul-workspace.md` directly.\n\
+         - When the user says \"remember this\", \"zapamatuj si\", or \"ulož si\", save the memory through the Soul memory API or ask the user to save it in Veslo.\n\
+         - Keep memory entries concise and scoped to the right Soul level.\n\
+         - Never store credentials, tokens, or API keys in Soul memory.\n\
          {end}",
         start = AGENT_BLOCK_START,
         end = AGENT_BLOCK_END,
@@ -1115,6 +1115,14 @@ mod tests {
         .unwrap();
         assert!(veslo_agent.contains("Output Hygiene"));
         assert!(veslo_agent.contains("Do not print raw JSON"));
+        assert!(veslo_agent.contains(
+            "materialized Soul files are read-only runtime output owned by Veslo"
+        ));
+        assert!(veslo_agent
+            .contains("save the memory through the Soul memory API or ask the user to save it in Veslo"));
+        assert!(!veslo_agent.contains("persist the information to `.opencode/soul-user.md`"));
+        assert!(!veslo_agent
+            .contains("Read the file first, append new entries, then write it back"));
 
         fs::remove_dir_all(workspace_root).unwrap();
     }

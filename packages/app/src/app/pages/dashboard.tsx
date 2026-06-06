@@ -37,7 +37,9 @@ import {
 } from "../lib/veslo-server";
 import type {
   VesloAuditEntry,
+  VesloSoulAuthContext,
   VesloSoulHeartbeatEntry,
+  VesloSoulOverviewResponse,
   VesloSoulStatus,
   VesloServerClient,
   VesloServerCapabilities,
@@ -194,6 +196,12 @@ export type DashboardViewProps = {
   scheduledJobsUpdatedAt: number | null;
   refreshScheduledJobs: (options?: { force?: boolean }) => void;
   deleteScheduledJob: (name: string) => Promise<void> | void;
+  soulOverview: VesloSoulOverviewResponse | null;
+  soulOverviewError: string | null;
+  soulOverviewBusy: boolean;
+  soulClient: VesloServerClient | null;
+  soulServerConnected: boolean;
+  soulAuthContext: VesloSoulAuthContext;
   soulStatusByWorkspaceId: Record<string, VesloSoulStatus | null>;
   activeSoulStatus: VesloSoulStatus | null;
   activeSoulHeartbeats: VesloSoulHeartbeatEntry[];
@@ -1614,16 +1622,13 @@ export default function DashboardView(props: DashboardViewProps) {
             </Match>
             <Match when={props.tab === "soul"}>
               <SoulView
-                workspaceName={props.activeWorkspaceDisplay.name}
-                workspaceRoot={props.activeWorkspaceRoot}
-                status={props.activeSoulStatus}
-                heartbeats={props.activeSoulHeartbeats}
-                loading={props.soulStatusBusy}
-                loadingHeartbeats={props.soulHeartbeatsBusy}
-                error={props.soulError}
-                newTaskDisabled={props.newTaskDisabled}
+                soulOverview={props.soulOverview}
+                soulOverviewError={props.soulOverviewError}
+                soulOverviewBusy={props.soulOverviewBusy}
+                client={props.soulClient}
+                serverConnected={props.soulServerConnected}
+                authContext={props.soulAuthContext}
                 refresh={props.refreshSoulData}
-                runSoulPrompt={props.runSoulPrompt}
               />
             </Match>
             <Match when={props.tab === "skills"}>

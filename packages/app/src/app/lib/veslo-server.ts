@@ -986,6 +986,143 @@ export type VesloSoulStatus = {
   heartbeatPath: string;
 };
 
+export type VesloSoulScope = "organization" | "user" | "workspace";
+export type VesloSoulVersionSource = "manual" | "api" | "heartbeat" | "restore" | "system";
+
+export type VesloSoulVersion = {
+  id: string;
+  content: string;
+  changeSummary: string;
+  createdAt: string;
+  createdBy: string;
+  source: VesloSoulVersionSource;
+  baseVersionId: string | null;
+  restoreSourceVersionId: string | null;
+};
+
+export type VesloSoulDocument = {
+  id: string;
+  scope: VesloSoulScope;
+  ownerId: string;
+  currentVersionId: string | null;
+  heartbeatEnabled: boolean;
+  versions: VesloSoulVersion[];
+};
+
+export type VesloSoulSummary = {
+  scope: VesloSoulScope;
+  ownerId: string;
+  title: string;
+  currentVersionId: string | null;
+  updatedAt: string | null;
+  updatedBy: string | null;
+  status: "active" | "pending" | "conflict" | "not_configured" | string;
+  heartbeatEnabled: boolean;
+  pendingSuggestionCount: number;
+  canEdit: boolean;
+};
+
+export type VesloSoulMaterializationConflict = {
+  path: string;
+  relativePath: string;
+  reason: "unmanaged_target_exists" | "managed_target_modified" | "managed_target_missing" | string;
+};
+
+export type VesloSoulMaterializationFile = {
+  path: string;
+  scope: VesloSoulScope;
+  ownerId: string | null;
+  documentId: string | null;
+  currentVersionId: string | null;
+  sourceVersionId: string | null;
+  contentSha256: string;
+  managedBy: string;
+  materializedAt: string;
+  absolutePath?: string;
+};
+
+export type VesloSoulMaterializationResult =
+  | {
+      ok: true;
+      status: "current" | string;
+      workspaceRoot: string;
+      effectiveContent: string;
+      manifestPath: string;
+      instructionsPath: string;
+      files: VesloSoulMaterializationFile[];
+      pending: boolean;
+      reloadRequired: boolean;
+      manualSyncRequired: false;
+      requiresAction?: never;
+    }
+  | {
+      ok: false;
+      reason: "conflict" | "config_error" | "manifest_error" | "write_error" | string;
+      message: string;
+      path?: string;
+      conflicts?: VesloSoulMaterializationConflict[];
+      pending: boolean;
+      manualSyncRequired: false;
+      requiresAction:
+        | "preserve_unmanaged_soul_file"
+        | "restore_managed_soul_file"
+        | "fix_opencode_config"
+        | "fix_soul_manifest"
+        | "inspect_materialization_error"
+        | string;
+    };
+
+export type VesloSoulReadResponse = {
+  document: VesloSoulDocument | null;
+  summary: VesloSoulSummary;
+  materialization?: VesloSoulMaterializationResult;
+  pendingEdits?: unknown[];
+  denSynced?: boolean;
+};
+
+export type VesloSoulOverviewResponse = {
+  organization: VesloSoulSummary;
+  user: VesloSoulSummary;
+  workspaces: VesloSoulSummary[];
+};
+
+export type VesloWorkspaceSoulsResponse = {
+  workspaces: VesloSoulSummary[];
+};
+
+export type VesloSoulVersionsResponse = {
+  versions: VesloSoulVersion[];
+  nextCursor?: string | null;
+  denSynced?: boolean;
+};
+
+export type VesloSoulVersionResponse = {
+  version: VesloSoulVersion;
+  denSynced?: boolean;
+};
+
+export type VesloSoulAuthContext = VesloSkillRegistryAuthContext;
+
+export type VesloSoulVersionListOptions = VesloSoulAuthContext & {
+  workspaceId?: string;
+  cursor?: string;
+  limit?: number;
+};
+
+export type VesloSoulVersionGetOptions = VesloSoulAuthContext & {
+  workspaceId?: string;
+};
+
+export type VesloSoulUpdateInput = VesloSoulAuthContext & {
+  content: string;
+  changeSummary: string;
+  baseVersionId: string | null;
+};
+
+export type VesloSoulRestoreInput = VesloSoulAuthContext & {
+  changeSummary?: string;
+};
+
 export type VesloWorkspaceSystemProvisionResult = {
   ok: boolean;
   workspaceId: string;
@@ -1814,6 +1951,29 @@ function buildSkillRegistryRolloutPoliciesPath(params?: VesloSkillRegistryListRo
   return `/v1/skill-rollout-policies${suffix ? `?${suffix}` : ""}`;
 }
 
+function buildSoulVersionsPath(scope: VesloSoulScope, options?: VesloSoulVersionListOptions) {
+  const search = new URLSearchParams();
+  if (scope === "workspace") {
+    setTrimmedSearchParam(search, "workspaceId", options?.workspaceId);
+  } else {
+    setTrimmedSearchParam(search, "cursor", options?.cursor);
+    if (typeof options?.limit === "number" && Number.isSafeInteger(options.limit) && options.limit > 0) {
+      search.set("limit", String(options.limit));
+    }
+  }
+  const suffix = search.toString();
+  return `/soul/${encodeURIComponent(scope)}/versions${suffix ? `?${suffix}` : ""}`;
+}
+
+function buildSoulVersionPath(scope: VesloSoulScope, versionId: string, options?: VesloSoulVersionGetOptions) {
+  const search = new URLSearchParams();
+  if (scope === "workspace") {
+    setTrimmedSearchParam(search, "workspaceId", options?.workspaceId);
+  }
+  const suffix = search.toString();
+  return `/soul/${encodeURIComponent(scope)}/versions/${encodeURIComponent(versionId)}${suffix ? `?${suffix}` : ""}`;
+}
+
 function buildSkillRemovalsPath(params?: {
   scope?: VesloSkillRemovalScope;
   workspaceId?: string;
@@ -2077,6 +2237,7 @@ export function createVesloServerClient(options: {
     skillRegistrySearch: 10_000,
     skillRegistryMutation: 30_000,
     skillMaterialization: 30_000,
+    soulMemory: 30_000,
   };
 
   return {
@@ -2988,6 +3149,146 @@ export function createVesloServerClient(options: {
           token,
           hostToken,
           method: "DELETE",
+        },
+      ),
+    getSoulOverview: (options?: VesloSoulAuthContext) =>
+      requestJson<VesloSoulOverviewResponse>(baseUrl, "/soul", {
+        token,
+        hostToken,
+        extraHeaders: buildDenContextHeaders(options),
+        timeoutMs: timeouts.soulMemory,
+      }),
+    getOrganizationSoul: (options?: VesloSoulAuthContext) =>
+      requestJson<VesloSoulReadResponse>(baseUrl, "/soul/organization", {
+        token,
+        hostToken,
+        extraHeaders: buildDenContextHeaders(options),
+        timeoutMs: timeouts.soulMemory,
+      }),
+    getUserSoul: (options?: VesloSoulAuthContext) =>
+      requestJson<VesloSoulReadResponse>(baseUrl, "/soul/user", {
+        token,
+        hostToken,
+        extraHeaders: buildDenContextHeaders(options),
+        timeoutMs: timeouts.soulMemory,
+      }),
+    listWorkspaceSouls: (options?: VesloSoulAuthContext) =>
+      requestJson<VesloWorkspaceSoulsResponse>(baseUrl, "/soul/workspaces", {
+        token,
+        hostToken,
+        extraHeaders: buildDenContextHeaders(options),
+        timeoutMs: timeouts.soulMemory,
+      }),
+    getWorkspaceSoul: (workspaceId: string, options?: VesloSoulAuthContext) =>
+      requestJson<VesloSoulReadResponse>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/soul`, {
+        token,
+        hostToken,
+        extraHeaders: buildDenContextHeaders(options),
+        timeoutMs: timeouts.soulMemory,
+      }),
+    listSoulVersions: (scope: VesloSoulScope, options?: VesloSoulVersionListOptions) =>
+      requestJson<VesloSoulVersionsResponse>(baseUrl, buildSoulVersionsPath(scope, options), {
+        token,
+        hostToken,
+        extraHeaders: buildDenContextHeaders(options),
+        timeoutMs: timeouts.soulMemory,
+      }),
+    getSoulVersion: (scope: VesloSoulScope, versionId: string, options?: VesloSoulVersionGetOptions) =>
+      requestJson<VesloSoulVersionResponse>(baseUrl, buildSoulVersionPath(scope, versionId, options), {
+        token,
+        hostToken,
+        extraHeaders: buildDenContextHeaders(options),
+        timeoutMs: timeouts.soulMemory,
+      }),
+    updateOrganizationSoul: (input: VesloSoulUpdateInput) =>
+      requestJson<VesloSoulReadResponse>(baseUrl, "/soul/organization", {
+        token,
+        hostToken,
+        method: "PATCH",
+        body: {
+          content: input.content,
+          changeSummary: input.changeSummary,
+          baseVersionId: input.baseVersionId,
+        },
+        extraHeaders: buildDenContextHeaders(input),
+        timeoutMs: timeouts.soulMemory,
+      }),
+    updateUserSoul: (input: VesloSoulUpdateInput) =>
+      requestJson<VesloSoulReadResponse>(baseUrl, "/soul/user", {
+        token,
+        hostToken,
+        method: "PATCH",
+        body: {
+          content: input.content,
+          changeSummary: input.changeSummary,
+          baseVersionId: input.baseVersionId,
+        },
+        extraHeaders: buildDenContextHeaders(input),
+        timeoutMs: timeouts.soulMemory,
+      }),
+    restoreOrganizationSoulVersion: (versionId: string, input?: VesloSoulRestoreInput) =>
+      requestJson<VesloSoulReadResponse>(
+        baseUrl,
+        `/soul/organization/versions/${encodeURIComponent(versionId)}/restore`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: input ? { changeSummary: input.changeSummary } : undefined,
+          extraHeaders: buildDenContextHeaders(input),
+          timeoutMs: timeouts.soulMemory,
+        },
+      ),
+    restoreUserSoulVersion: (versionId: string, input?: VesloSoulRestoreInput) =>
+      requestJson<VesloSoulReadResponse>(
+        baseUrl,
+        `/soul/user/versions/${encodeURIComponent(versionId)}/restore`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: input ? { changeSummary: input.changeSummary } : undefined,
+          extraHeaders: buildDenContextHeaders(input),
+          timeoutMs: timeouts.soulMemory,
+        },
+      ),
+    updateWorkspaceSoul: (workspaceId: string, input: VesloSoulUpdateInput) =>
+      requestJson<VesloSoulReadResponse>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/soul`, {
+        token,
+        hostToken,
+        method: "PATCH",
+        body: {
+          content: input.content,
+          changeSummary: input.changeSummary,
+          baseVersionId: input.baseVersionId,
+        },
+        extraHeaders: buildDenContextHeaders(input),
+        timeoutMs: timeouts.soulMemory,
+      }),
+    restoreWorkspaceSoulVersion: (workspaceId: string, versionId: string, input?: VesloSoulRestoreInput) =>
+      requestJson<VesloSoulReadResponse>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/soul/versions/${encodeURIComponent(versionId)}/restore`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: input ? { changeSummary: input.changeSummary } : undefined,
+          extraHeaders: buildDenContextHeaders(input),
+          timeoutMs: timeouts.soulMemory,
+        },
+      ),
+    setWorkspaceSoulHeartbeat: (workspaceId: string, enabled: boolean, options?: VesloSoulAuthContext) =>
+      requestJson<VesloSoulReadResponse>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/soul/heartbeat-toggle`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: { enabled },
+          extraHeaders: buildDenContextHeaders(options),
+          timeoutMs: timeouts.soulMemory,
         },
       ),
     getSoulStatus: (workspaceId: string) =>
