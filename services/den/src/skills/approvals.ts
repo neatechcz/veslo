@@ -1,5 +1,9 @@
 import { SkillRegistryStoreError, type SkillRegistryRouteContext } from "./store.js"
 
+function isOrganizationAdminRole(role: SkillRegistryRouteContext["orgRole"]) {
+  return role === "owner" || role === "organization_admin"
+}
+
 export function requireOrgSkillAdmin(context: SkillRegistryRouteContext, orgId?: string | null) {
   if (context.isPlatformAdmin) {
     return
@@ -7,7 +11,7 @@ export function requireOrgSkillAdmin(context: SkillRegistryRouteContext, orgId?:
   if (!orgId || context.orgId !== orgId) {
     throw new SkillRegistryStoreError(403, "organization_forbidden")
   }
-  if (context.orgRole !== "owner") {
+  if (!isOrganizationAdminRole(context.orgRole)) {
     throw new SkillRegistryStoreError(403, "insufficient_role")
   }
 }
@@ -25,7 +29,7 @@ export function requireWorkspaceSkillAdmin(context: SkillRegistryRouteContext, o
   if (!orgId || context.orgId !== orgId) {
     throw new SkillRegistryStoreError(403, "organization_forbidden")
   }
-  if (context.orgRole !== "owner") {
+  if (!isOrganizationAdminRole(context.orgRole)) {
     throw new SkillRegistryStoreError(403, "insufficient_role")
   }
 }

@@ -1,8 +1,10 @@
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
 import test from "node:test"
 import {
   OrganizationAdminRepositoryError,
   createOrganizationAdminRepository,
+  extractAffectedRows,
   type OrganizationAdminDataStore,
   type OrganizationAdminDomainRecord,
   type OrganizationAdminInviteRecord,
@@ -20,15 +22,20 @@ function createMemoryRepository(input: {
   domains?: OrganizationAdminDomainRecord[]
   memberships?: OrganizationAdminMembershipRecord[]
   invites?: OrganizationAdminInviteRecord[]
+  operations?: string[]
 } = {}) {
   const organizations = [...(input.organizations ?? [])]
   const domains = [...(input.domains ?? [])]
   const memberships = [...(input.memberships ?? [])]
   const invites = [...(input.invites ?? [])]
+  const operations = input.operations ?? []
   let nextInvite = 1
   let nextMembership = 1
 
   const store: OrganizationAdminDataStore = {
+    async lockOrganizationForSeatActivation(orgId) {
+      operations.push(`lock:${orgId}`)
+    },
     async findOrganizationById(orgId) {
       return organizations.find((entry) => entry.id === orgId) ?? null
     },
@@ -36,6 +43,7 @@ function createMemoryRepository(input: {
       return domains.find((entry) => entry.domain === domain) ?? null
     },
     async countActiveOrganizationSeats(orgId) {
+      operations.push(`count:${orgId}`)
       return memberships.filter((entry) => entry.orgId === orgId && entry.status === "active").length
     },
     async insertInvite(invite) {
@@ -59,6 +67,7 @@ function createMemoryRepository(input: {
       return invites.find((entry) => entry.tokenHash === tokenHash) ?? null
     },
     async createOrActivateMembership(input) {
+      operations.push(`activate:${input.orgId}:${input.userId}`)
       const existing = memberships.find((entry) => entry.orgId === input.orgId && entry.userId === input.userId)
       if (existing) {
         existing.role = input.role
@@ -102,6 +111,7 @@ function createMemoryRepository(input: {
   return {
     invites,
     memberships,
+    operations,
     repository: createOrganizationAdminRepository(store),
   }
 }
@@ -223,6 +233,52 @@ test("invite activation checks seat limit at activation time", async () => {
   )
 })
 
+test("shared membership activation enforces seat limits", async () => {
+  const { repository } = createMemoryRepository({
+    organizations: [{ id: "org_1", seatLimit: 1 }],
+    memberships: [{
+      id: "membership_active",
+      orgId: "org_1",
+      userId: "user_active",
+      role: "member",
+      status: "active",
+      createdAt: new Date("2026-06-06T08:00:00.000Z"),
+    }],
+  })
+
+  await assert.rejects(
+    repository.createOrActivateOrganizationMembership({
+      membershipId: "membership_new",
+      orgId: "org_1",
+      userId: "user_new",
+      role: "member",
+    }),
+    (error) => {
+      assertErrorCode(error, "seat_limit_reached")
+      return true
+    },
+  )
+})
+
+test("shared membership activation locks organization before counting seats and activating", async () => {
+  const { operations, repository } = createMemoryRepository({
+    organizations: [{ id: "org_1", seatLimit: 2 }],
+  })
+
+  await repository.createOrActivateOrganizationMembership({
+    membershipId: "membership_new",
+    orgId: "org_1",
+    userId: "user_new",
+    role: "member",
+  })
+
+  assert.deepEqual(operations, [
+    "lock:org_1",
+    "count:org_1",
+    "activate:org_1:user_new",
+  ])
+})
+
 test("invite cannot be accepted twice", async () => {
   const { invites, repository } = createMemoryRepository({
     organizations: [{ id: "org_1", seatLimit: 2 }],
@@ -256,4 +312,47 @@ test("invite cannot be accepted twice", async () => {
       return true
     },
   )
+})
+
+test("invite acceptance locks organization before counting seats and activating", async () => {
+  const { operations, repository } = createMemoryRepository({
+    organizations: [{ id: "org_1", seatLimit: 2 }],
+  })
+  await repository.createOrganizationInvite({
+    orgId: "org_1",
+    email: "invited@neatech.cz",
+    role: "member",
+    tokenHash: "token_1",
+    invitedByUserId: "admin_1",
+  })
+
+  await repository.acceptOrganizationInvite({
+    tokenHash: "token_1",
+    userId: "user_invited",
+    now: new Date("2026-06-06T08:10:00.000Z"),
+  })
+
+  assert.deepEqual(operations, [
+    "lock:org_1",
+    "count:org_1",
+    "activate:org_1:user_invited",
+  ])
+})
+
+test("extractAffectedRows handles common MySQL mutation results", () => {
+  assert.equal(extractAffectedRows([{ affectedRows: 1 }]), 1)
+  assert.equal(extractAffectedRows({ affectedRows: 0 }), 0)
+  assert.equal(extractAffectedRows(undefined), null)
+})
+
+test("HTTP organization member creation routes through shared activation policy", () => {
+  const source = readFileSync(new URL("../src/http/orgs.ts", import.meta.url), "utf8")
+  assert.match(source, /createOrActivateOrganizationMembership/)
+  assert.doesNotMatch(source, /db\.insert\(OrgMembershipTable\)\.values/)
+})
+
+test("admin runtime organization assignment routes through shared activation policy", () => {
+  const source = readFileSync(new URL("../src/http/admin-runtime.ts", import.meta.url), "utf8")
+  assert.match(source, /createOrActivateOrganizationMembership/)
+  assert.doesNotMatch(source, /db\.insert\(OrgMembershipTable\)\.values/)
 })

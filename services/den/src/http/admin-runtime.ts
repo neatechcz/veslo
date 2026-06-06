@@ -27,6 +27,7 @@ import { requireSession } from "./session.js"
 import { createAdminRouter, type AdminRouteDeps, type AdminSessionSnapshot, type AdminUserMembership, type AdminUserRecord } from "./admin.js"
 import { createManagedAiAdminRouteDeps } from "../managed-ai/http/admin.js"
 import type { RuntimeState } from "../managed-ai/runtime/default-runtime.js"
+import { createOrActivateOrganizationMembership } from "../org-admin/repository.js"
 
 type ListedUserRow = {
   id: string
@@ -334,10 +335,10 @@ async function createAdminUser(req: express.Request, res: express.Response) {
           .limit(1)
 
         if (membershipRows.length === 0) {
-          await db.insert(OrgMembershipTable).values({
-            id: randomUUID(),
-            org_id: orgId,
-            user_id: userId,
+          await createOrActivateOrganizationMembership({
+            membershipId: randomUUID(),
+            orgId,
+            userId,
             role: orgRole,
           })
         }

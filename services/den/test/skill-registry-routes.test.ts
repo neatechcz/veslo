@@ -15,7 +15,7 @@ import { buildSkillRegistryPackageArchive } from "../src/skills/packages.js"
 type TestSession = {
   userId: string
   orgId?: string | null
-  orgRole?: "member" | "owner" | null
+  orgRole?: "member" | "owner" | "organization_admin" | null
   isPlatformAdmin?: boolean
 }
 
@@ -38,7 +38,9 @@ async function startServer(store = new InMemorySkillRegistryStore()) {
         const context: TestSession = {
           userId,
           orgId: req.header("x-test-org-id") ?? null,
-          orgRole: req.header("x-test-org-role") === "owner" ? "owner" : "member",
+          orgRole: req.header("x-test-org-role") === "owner" || req.header("x-test-org-role") === "organization_admin"
+            ? req.header("x-test-org-role")
+            : "member",
           isPlatformAdmin: req.header("x-test-platform-admin") === "1",
         }
         return context
@@ -969,6 +971,34 @@ test("rollout policy mutations require org admin and locked policies block user 
   }
 })
 
+test("organization admins can create organization rollout policies", async () => {
+  const server = await startServer()
+  try {
+    const owner = { userId: "owner_1", orgId: "org_1", orgRole: "owner" as const }
+    const organizationAdmin = { userId: "admin_1", orgId: "org_1", orgRole: "organization_admin" as const }
+    const { skill, version } = await createApprovedOrgSkillVersion(server, owner, "organization-admin-rollout-tool")
+
+    const { response, body } = await jsonRequest(server.baseUrl, "/skill-rollout-policies", {
+      method: "POST",
+      body: JSON.stringify({
+        skillId: skill.id,
+        versionId: version.id,
+        target: "user-global",
+        audience: "user",
+        userId: "member_1",
+        catalogScope: "organization",
+        orgId: "org_1",
+      }),
+      session: organizationAdmin,
+    })
+
+    assert.equal(response.status, 201)
+    assert.equal(body.policy.orgId, "org_1")
+  } finally {
+    await server.close()
+  }
+})
+
 test("package upload creates an immutable content-addressed version", async () => {
   const server = await startServer()
   try {
@@ -1318,6 +1348,33 @@ test("org and workspace installation mutations require an owner or platform admi
       },
     )
     assert.equal(memberRestore.status, 403)
+  } finally {
+    await server.close()
+  }
+})
+
+test("organization admins can mutate org and workspace skill installations", async () => {
+  const server = await startServer()
+  try {
+    const owner = { userId: "owner_1", orgId: "org_1", orgRole: "owner" as const }
+    const organizationAdmin = { userId: "admin_1", orgId: "org_1", orgRole: "organization_admin" as const }
+    const { skill, version } = await createApprovedOrgSkillVersion(server, owner, "organization-admin-install-tool")
+
+    const { response, body } = await jsonRequest(server.baseUrl, "/skill-installations", {
+      method: "POST",
+      body: JSON.stringify({
+        scope: "workspace",
+        orgId: "org_1",
+        workspaceId: "workspace_a",
+        skillId: skill.id,
+        versionId: version.id,
+      }),
+      session: organizationAdmin,
+    })
+
+    assert.equal(response.status, 201)
+    assert.equal(body.installation.skillId, skill.id)
+    assert.equal(body.installation.enabled, true)
   } finally {
     await server.close()
   }

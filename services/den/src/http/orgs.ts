@@ -5,6 +5,7 @@ import { z } from "zod"
 import { recordAuditEvent } from "../audit.js"
 import { db } from "../db/index.js"
 import { AuthUserTable, OrgMembershipTable, OrgRole, OrgTable } from "../db/schema.js"
+import { OrganizationAdminRepositoryError, createOrActivateOrganizationMembership } from "../org-admin/repository.js"
 import { requireVerifiedEmail } from "./email-verification.js"
 import { asyncRoute } from "./errors.js"
 import { resolveMembershipOrganizations, requireOrganizationAccess, serializeOrganization, readRequestedOrganizationId, isPlatformAdmin } from "./org-auth.js"
@@ -181,12 +182,20 @@ orgsRouter.post("/:orgId/members", asyncRoute(async (req, res) => {
   }
 
   const membershipId = randomUUID()
-  await db.insert(OrgMembershipTable).values({
-    id: membershipId,
-    org_id: context.organization.id,
-    user_id: user.id,
-    role: parsed.data.role,
-  })
+  try {
+    await createOrActivateOrganizationMembership({
+      membershipId,
+      orgId: context.organization.id,
+      userId: user.id,
+      role: parsed.data.role,
+    })
+  } catch (error) {
+    if (error instanceof OrganizationAdminRepositoryError && error.code === "seat_limit_reached") {
+      res.status(409).json({ error: "seat_limit_reached" })
+      return
+    }
+    throw error
+  }
 
   const created = await loadOrganizationMember(context.organization.id, membershipId)
   if (!created) {

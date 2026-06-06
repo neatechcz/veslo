@@ -69,6 +69,7 @@ export type OrganizationAdminResolvedDomain = OrganizationAdminDomainRecord & {
 
 export type OrganizationAdminDataStore = {
   findOrganizationById(orgId: string): Promise<OrganizationAdminOrganizationRecord | null>
+  lockOrganizationForSeatActivation?(orgId: string): Promise<void>
   findDomainByDomain(domain: string): Promise<OrganizationAdminDomainRecord | null>
   countActiveOrganizationSeats(orgId: string): Promise<number>
   insertInvite(input: OrganizationAdminInviteRecord): Promise<OrganizationAdminInviteRecord>
@@ -109,6 +110,12 @@ export type OrganizationAdminRepository = {
   resolveEnabledOrganizationDomainForEmail(email: string): Promise<OrganizationAdminResolvedDomain>
   countActiveOrganizationSeats(orgId: string): Promise<number>
   assertCanActivateOrganizationSeat(orgId: string): Promise<void>
+  createOrActivateOrganizationMembership(input: {
+    membershipId: string
+    orgId: string
+    userId: string
+    role: (typeof OrgRole)[number]
+  }): Promise<OrganizationAdminMembershipRecord>
   createOrganizationInvite(input: CreateOrganizationInviteInput): Promise<OrganizationAdminInviteRecord>
   acceptOrganizationInvite(input: AcceptOrganizationInviteInput): Promise<{
     invite: OrganizationAdminInviteRecord
@@ -132,6 +139,7 @@ export function createOrganizationAdminRepository(
   const now = options.now ?? (() => new Date())
 
   async function assertCanActivateOrganizationSeatWithStore(activeStore: OrganizationAdminDataStore, orgId: string) {
+    await activeStore.lockOrganizationForSeatActivation?.(orgId)
     const organization = await activeStore.findOrganizationById(orgId)
     if (!organization) {
       throw new OrganizationAdminRepositoryError("domain_not_allowed")
@@ -172,6 +180,14 @@ export function createOrganizationAdminRepository(
 
     assertCanActivateOrganizationSeat(orgId) {
       return assertCanActivateOrganizationSeatWithStore(store, orgId)
+    },
+
+    async createOrActivateOrganizationMembership(input) {
+      const transaction = store.transaction ?? (<T>(callback: (activeStore: OrganizationAdminDataStore) => Promise<T>) => callback(store))
+      return transaction(async (activeStore) => {
+        await assertCanActivateOrganizationSeatWithStore(activeStore, input.orgId)
+        return activeStore.createOrActivateMembership(input)
+      })
     },
 
     async createOrganizationInvite(input) {
@@ -270,6 +286,10 @@ export function createDrizzleOrganizationAdminStore(database: any): Organization
         id: rows[0].id,
         seatLimit: rows[0].seatLimit ?? null,
       } : null
+    },
+
+    async lockOrganizationForSeatActivation(orgId) {
+      await database.execute(sql`select ${OrgTable.id} from ${OrgTable} where ${OrgTable.id} = ${orgId} for update`)
     },
 
     async findDomainByDomain(domain) {
@@ -443,6 +463,15 @@ export async function assertCanActivateOrganizationSeat(orgId: string) {
   return (await getDefaultRepository()).assertCanActivateOrganizationSeat(orgId)
 }
 
+export async function createOrActivateOrganizationMembership(input: {
+  membershipId: string
+  orgId: string
+  userId: string
+  role: (typeof OrgRole)[number]
+}) {
+  return (await getDefaultRepository()).createOrActivateOrganizationMembership(input)
+}
+
 export async function createOrganizationInvite(input: CreateOrganizationInviteInput) {
   return (await getDefaultRepository()).createOrganizationInvite(input)
 }
@@ -502,7 +531,7 @@ function mapMembershipRow(row: typeof OrgMembershipTable.$inferSelect): Organiza
   }
 }
 
-function extractAffectedRows(result: unknown) {
+export function extractAffectedRows(result: unknown) {
   const candidate = Array.isArray(result) ? result[0] : result
   if (candidate && typeof candidate === "object" && "affectedRows" in candidate) {
     return Number(candidate.affectedRows ?? 0)
