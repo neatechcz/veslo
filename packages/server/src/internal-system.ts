@@ -749,6 +749,7 @@ import { tool } from "@opencode-ai/plugin";
  */
 
 const AUTOMATIONS_ROUTE_TEMPLATE = "/workspace/\${workspaceId}/automations";
+const TIMEZONE_CAPABLE_SCHEDULES = new Set(["oneShot", "cron", "daily", "weekly"]);
 
 function cleanString(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -895,6 +896,20 @@ function createTarget(args, context) {
   return { target };
 }
 
+function withTopLevelTimezone(schedule, timezone) {
+  const normalizedTimezone = cleanString(timezone);
+  if (!normalizedTimezone || !schedule || typeof schedule !== "object" || Array.isArray(schedule)) {
+    return schedule;
+  }
+  if (schedule.kind === "interval" || !TIMEZONE_CAPABLE_SCHEDULES.has(schedule.kind)) {
+    return schedule;
+  }
+  if (Object.prototype.hasOwnProperty.call(schedule, "timezone")) {
+    return schedule;
+  }
+  return { ...schedule, timezone: normalizedTimezone };
+}
+
 function definedPatch(args, keys) {
   const out = {};
   for (const key of keys) {
@@ -931,6 +946,7 @@ export default async (ctx) => {
           name: tool.schema.string().describe("Short automation name."),
           prompt: tool.schema.string().describe("Prompt to run when the automation fires."),
           schedule: tool.schema.any().describe("Automation schedule object: oneShot, interval, daily, weekly, or cron."),
+          timezone: tool.schema.string().optional().describe("Optional timezone for oneShot, cron, daily, or weekly schedules when schedule.timezone is absent."),
           target: tool.schema.any().optional().describe("Optional target overrides such as preferredSessionId, fallbackTitle, agent, model, or variant."),
           enabled: tool.schema.boolean().optional().describe("Whether the automation starts enabled."),
           status: tool.schema.enum(["active", "paused", "completed", "failed", "cancelled"]).optional().describe("Initial automation status."),
@@ -944,7 +960,7 @@ export default async (ctx) => {
               ...definedPatch(args, ["id", "enabled", "status"]),
               name: args.name,
               prompt: args.prompt,
-              schedule: args.schedule,
+              schedule: withTopLevelTimezone(args.schedule, args.timezone),
               target: target.target,
             };
             const data = await vesloRequest(state, workspaceId, "", { method: "POST", body });

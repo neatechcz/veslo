@@ -93,6 +93,10 @@ You are Veslo.
       expect(automationPlugin).toContain("veslo_delete_automation");
       expect(automationPlugin).toContain("VESLO_SERVER_STATE_PATH");
       expect(automationPlugin).toContain("/workspace/${workspaceId}/automations");
+      expect(automationPlugin).toContain("timezone: tool.schema.string().optional()");
+      expect(automationPlugin).toContain("schedule: withTopLevelTimezone(args.schedule, args.timezone)");
+      expect(automationPlugin).toContain("const TIMEZONE_CAPABLE_SCHEDULES");
+      expect(automationPlugin).toContain('schedule.kind === "interval"');
       for (const forbidden of [
         "launchctl",
         "crontab",
