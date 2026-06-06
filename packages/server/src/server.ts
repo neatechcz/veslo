@@ -146,6 +146,7 @@ const AI_GATEWAY_UPSTREAM_RESPONSE_SNIPPET_MAX = 1000;
 const OPENCODE_JSON_DEFAULT_RESPONSE_MAX_BYTES = 1024 * 1024;
 const OPENCODE_TRANSCRIPT_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
 const OPENCODE_JSON_FETCH_DEFAULT_TIMEOUT_MS = 5_000;
+const AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS = 30_000;
 export const REDACTED_SECRET_VALUE = "[REDACTED]";
 const GATEWAY_CALLER_AUTH_HEADER = "x-veslo-gateway-authorization";
 const GATEWAY_ACCESS_TOKEN_HEADER = "x-veslo-gateway-token";
@@ -914,7 +915,7 @@ function createOpenCodeAutomationExecutor(
         const existing = await fetchOpencodeJson(
           workspace,
           `/session/${encodeURIComponent(preferredSessionId)}`,
-          { method: "GET" },
+          { method: "GET", timeoutMs: AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS },
         );
         const existingId = typeof existing?.id === "string" ? existing.id.trim() : "";
         if (existingId) {
@@ -929,6 +930,7 @@ function createOpenCodeAutomationExecutor(
     const created = await fetchOpencodeJson(workspace, "/session", {
       method: "POST",
       body: { title: input.target.fallbackTitle?.trim() || `Automation: ${input.automation.name}` },
+      timeoutMs: AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS,
     });
     const sessionId = typeof created?.id === "string" ? created.id.trim() : "";
     if (!sessionId) {
@@ -963,6 +965,7 @@ async function postAutomationPrompt(
   await fetchOpencodeJson(workspace, `/session/${encodeURIComponent(sessionId)}/prompt_async`, {
     method: "POST",
     body,
+    timeoutMs: AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS,
   });
 }
 

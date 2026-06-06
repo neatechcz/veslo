@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { join, resolve, dirname, win32, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { prepareDesktopAuthSeed } from './desktop-auth-seed.js';
@@ -56,6 +57,7 @@ type TerminateAppProcessResult = {
 type AppLaunchEnvOptions = {
   platform?: NodeJS.Platform;
   port: number;
+  vesloServerPort?: number;
   opencodeHome: string;
   snapshotPath: string;
 };
@@ -233,6 +235,7 @@ export function createAppLaunchEnv(
     VESLO_APP_DATA_DIR: vesloAppDataDir,
     VESLO_APP_LOCAL_DATA_DIR: vesloAppLocalDataDir,
     VESLO_DEN_AUTH_SNAPSHOT_PATH: options.snapshotPath,
+    ...(options.vesloServerPort ? { VESLO_DESKTOP_SERVER_PORT: String(options.vesloServerPort) } : {}),
   };
 
   if (platform === 'win32') {
@@ -247,6 +250,46 @@ export function createAppLaunchEnv(
   }
 
   return env;
+}
+
+function parseTcpPort(raw: string | undefined, label: string): number | null {
+  const trimmed = raw?.trim() ?? '';
+  if (!trimmed) return null;
+  const port = Number(trimmed);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid ${label}: ${trimmed}`);
+  }
+  return port;
+}
+
+async function findFreeTcpPort(): Promise<number> {
+  return new Promise((resolvePort, reject) => {
+    const server = createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const port = typeof address === 'object' && address ? address.port : 0;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        if (!port) {
+          reject(new Error('Unable to reserve a free Veslo server port for E2E.'));
+          return;
+        }
+        resolvePort(port);
+      });
+    });
+  });
+}
+
+async function resolveVesloServerPortForLaunch(env: NodeJS.ProcessEnv = process.env): Promise<number> {
+  return (
+    parseTcpPort(env.E2E_VESLO_SERVER_PORT, 'E2E_VESLO_SERVER_PORT') ??
+    parseTcpPort(env.VESLO_DESKTOP_SERVER_PORT, 'VESLO_DESKTOP_SERVER_PORT') ??
+    await findFreeTcpPort()
+  );
 }
 
 const ENTERPRISE_CREATOR_SEED_MARKER = '.veslo-enterprise-creators';
@@ -380,6 +423,7 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
   }
 
   const tmpDir = join(resolveDesktopRoot(), '..', 'e2e', '.tmp-opencode-home');
+  const vesloServerPort = await resolveVesloServerPortForLaunch();
   let env: NodeJS.ProcessEnv;
 
   if (CUSTOM_OPENCODE_HOME) {
@@ -388,6 +432,7 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
     });
     env = createAppLaunchEnv(seedEnv, {
       port,
+      vesloServerPort,
       opencodeHome: CUSTOM_OPENCODE_HOME,
       snapshotPath,
     });
@@ -399,6 +444,7 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
     const snapshotPath = prepareDesktopAuthSeed(tmpDir, seedEnv);
     env = createAppLaunchEnv(seedEnv, {
       port,
+      vesloServerPort,
       opencodeHome: tmpDir,
       snapshotPath,
     });
@@ -414,6 +460,7 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
     env = {
       ...process.env,
       TAURI_WEBDRIVER_PORT: String(port),
+      VESLO_DESKTOP_SERVER_PORT: String(vesloServerPort),
     } as NodeJS.ProcessEnv;
     if (process.platform === 'linux') {
       delete env.WAYLAND_DISPLAY;
@@ -421,6 +468,7 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
     }
     console.log('[e2e] Using the app\'s existing profile and OPENCODE_HOME.');
   }
+  console.log(`[e2e] Veslo server port: ${vesloServerPort}`);
 
   appProcess = spawn(binaryPath, [], {
     env: {

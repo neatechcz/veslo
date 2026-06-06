@@ -412,6 +412,30 @@ test("manual run forwards target agent model and variant to OpenCode prompt", as
   });
 });
 
+test("automation execution allows cold OpenCode session startup beyond the generic fetch timeout", async () => {
+  const previousTimeout = process.env.VESLO_OPENCODE_JSON_FETCH_TIMEOUT_MS;
+  process.env.VESLO_OPENCODE_JSON_FETCH_TIMEOUT_MS = "10";
+  try {
+    const fixture = await startFixture({ sessionDelayMs: 250 });
+    const created = await fixture.createAutomation();
+
+    const response = await fixture.clientFetch(`/workspace/ws_1/automations/${created.id}/run`, {
+      method: "POST",
+    });
+    const payload = await response.json() as { run?: AutomationRun };
+
+    expect(response.status).toBe(200);
+    expect(payload.run?.status).toBe("success");
+    expect(payload.run?.sessionId).toBe("ses_new");
+  } finally {
+    if (previousTimeout === undefined) {
+      delete process.env.VESLO_OPENCODE_JSON_FETCH_TIMEOUT_MS;
+    } else {
+      process.env.VESLO_OPENCODE_JSON_FETCH_TIMEOUT_MS = previousTimeout;
+    }
+  }
+});
+
 test("legacy Agent Lab list filters schedules old clients do not understand", async () => {
   const fixture = await startFixture();
   await writeAutomationStore(fixture.workspaceRoot, {
@@ -452,6 +476,7 @@ test("legacy Agent Lab run reports failed runner result instead of ok true", asy
 type FixtureOptions = {
   readOnly?: boolean;
   failPrompt?: boolean;
+  sessionDelayMs?: number;
   configPath?: string;
   beforeStart?: (workspaceRoot: string) => Promise<void>;
   extraWorkspaces?: Array<{
@@ -477,7 +502,12 @@ async function startFixture(options: FixtureOptions = {}) {
       openCodeCalls.push({ method: request.method, pathname: url.pathname, body });
 
       if (request.method === "GET" && url.pathname === "/session/ses_existing") return json(200, { id: "ses_existing" });
-      if (request.method === "POST" && url.pathname === "/session") return json(200, { id: "ses_new" });
+      if (request.method === "POST" && url.pathname === "/session") {
+        if (options.sessionDelayMs) {
+          await new Promise((resolve) => setTimeout(resolve, options.sessionDelayMs));
+        }
+        return json(200, { id: "ses_new" });
+      }
       if (request.method === "POST" && url.pathname === "/session/ses_new/prompt_async") {
         return options.failPrompt ? json(500, { code: "failed" }) : json(200, { ok: true });
       }

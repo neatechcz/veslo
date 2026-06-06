@@ -18,7 +18,7 @@ pub mod manager;
 pub mod spawn;
 
 use manager::VesloServerManager;
-use spawn::{resolve_veslo_port, spawn_veslo_server};
+use spawn::{resolve_veslo_port_after_restart, spawn_veslo_server};
 
 const PERSISTED_STATE_FILE_NAME: &str = "veslo-server-state.json";
 const PERSISTED_PLUGIN_STATE_FILE_NAME: &str = "veslo-server-plugin-state.json";
@@ -364,7 +364,7 @@ pub fn start_veslo_server(
     VesloServerManager::stop_locked(&mut state);
 
     let host = "0.0.0.0".to_string();
-    let port = resolve_veslo_port()?;
+    let port = resolve_veslo_port_after_restart()?;
     let client_token = generate_token();
     let host_token = generate_token();
     let active_workspace = workspace_paths
