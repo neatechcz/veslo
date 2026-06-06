@@ -6922,8 +6922,6 @@ export default function App() {
   };
 
   const refreshSoulData = async (options?: { force?: boolean }) => {
-    if (soulStatusBusy() && !options?.force) return;
-
     const client = vesloServerClient();
     if (!client || vesloServerStatus() !== "connected") {
       soulOverviewRefreshSeq += 1;
@@ -6937,11 +6935,12 @@ export default function App() {
       return;
     }
 
+    void refreshSoulOverview(client);
+    if (soulStatusBusy() && !options?.force) return;
+
     setSoulStatusBusy(true);
     setSoulError(null);
     try {
-      void refreshSoulOverview(client);
-
       const workspaceMap = await resolveSoulWorkspaceMap();
       const workspaceIds = Object.entries(workspaceMap);
 
