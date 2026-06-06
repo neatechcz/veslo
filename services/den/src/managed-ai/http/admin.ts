@@ -22,6 +22,7 @@ import {
   type AutoAssignedCodexCredentialRotationService,
 } from "../access/auto-assignment-rotation.js"
 import type { AiAccessProvider, AiAccessRepository, UpsertUserAiAccessPolicyInput, UserAiAccessPolicyRecord } from "../access/repository.js"
+import { buildCodexCapacityAlerts } from "../alerts/codex-capacity-alerts.js"
 import type { AlertRecord, AlertRepository } from "../alerts/repository.js"
 import type { AuditRepository } from "../audit/repository.js"
 import type { OpenAiOAuthClient } from "../credentials/openai-oauth.js"
@@ -333,6 +334,23 @@ export function createManagedAiAdminRouteDeps(
           })),
       ),
     }
+  }
+
+  async function listCodexCapacityAlerts(): Promise<AlertRecord[]> {
+    const credentials = await listCredentialsWithAlerts()
+    return buildCodexCapacityAlerts(
+      buildCodexCapacityOverview(
+        credentials
+          .filter((credential) => credential.provider === "codex_oauth")
+          .map((credential) => ({
+            id: credential.id,
+            name: credential.name,
+            state: credential.state,
+            upstreamStatus: credential.upstreamStatus ?? null,
+          })),
+      ),
+      now(),
+    )
   }
 
   async function listAvailableAssignmentCredentials(): Promise<AdminCredentialOption[] | undefined> {
@@ -698,8 +716,12 @@ export function createManagedAiAdminRouteDeps(
       }
 
       try {
+        const [capacityAlerts, repositoryAlerts] = await Promise.all([
+          listCodexCapacityAlerts(),
+          deps.alerts.listAlerts(),
+        ])
         return {
-          alerts: (await deps.alerts.listAlerts()) as AdminAlertRecord[],
+          alerts: [...capacityAlerts, ...repositoryAlerts] as AdminAlertRecord[],
         }
       } catch (error) {
         return handleRouteError(res, error, "alert_list_failed")

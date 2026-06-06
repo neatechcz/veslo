@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { createAutoAssignedCodexCredentialRotationService, type AutoAssignedCodexCredentialRotationService } from "../access/auto-assignment-rotation.js";
 import type { AlertRecord, AlertRepository } from "../alerts/repository.js";
+import { buildCodexCapacityAlerts } from "../alerts/codex-capacity-alerts.js";
 import type { AiAccessProvider, AiAccessRepository, UpsertUserAiAccessPolicyInput, UserAiAccessPolicyRecord } from "../access/repository.js";
 import { MySqlAiAccessRepository } from "../access/mysql-repository.js";
 import { MySqlAlertRepository } from "../alerts/mysql-repository.js";
@@ -1582,6 +1583,15 @@ export function createDefaultAdminService(
     };
   }
 
+  async function listCodexCapacityAlerts(): Promise<AlertRecord[]> {
+    const credentials = await withCodexUpstreamStatus(
+      await getCredentialReadRepository().listAdminCredentials(),
+      codexStatusProvider,
+    );
+    const capacityCredentials = await toCodexCapacityCredentials(credentials, codexStatusProvider);
+    return buildCodexCapacityAlerts(buildCodexCapacityOverview(capacityCredentials), now());
+  }
+
   return {
     async startBrowserAuth(input) {
       return denClient.startBrowserAuth(input);
@@ -1894,7 +1904,11 @@ export function createDefaultAdminService(
       );
     },
     async listAlerts() {
-      return { alerts: await getAlertRepository().listAlerts() };
+      const [capacityAlerts, repositoryAlerts] = await Promise.all([
+        listCodexCapacityAlerts(),
+        getAlertRepository().listAlerts(),
+      ]);
+      return { alerts: [...capacityAlerts, ...repositoryAlerts] };
     },
     async acknowledgeAlert(_token, alertId, actorUserId) {
       const acknowledge = getAlertRepository().acknowledgeAlert;

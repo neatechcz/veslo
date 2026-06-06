@@ -1000,3 +1000,71 @@ test("GET /admin/api/alerts and /admin/api/audit return managed ai read models",
     await once(server, "close")
   }
 })
+
+test("GET /admin/api/alerts includes synthetic Codex capacity threshold alerts", async () => {
+  const app = createReadModelApp({
+    credentials: [
+      createCredential("cred_codex_1", {
+        provider: "codex_oauth",
+        name: "Codex Team One",
+        activeLeases: 0,
+        totalTokens: 0,
+      }),
+      createCredential("cred_codex_2", {
+        provider: "codex_oauth",
+        name: "Codex Team Two",
+        activeLeases: 0,
+        totalTokens: 0,
+      }),
+    ],
+    codexStatusProvider: {
+      async getStatus() {
+        return {
+          ...createCodexStatus(),
+          checkedAt: "2026-06-06T12:00:00.000Z",
+          limits: {
+            fiveHour: {
+              label: "5h",
+              usedPercent: 95,
+              windowMinutes: 300,
+              resetAt: null,
+            },
+            weekly: {
+              label: "Weekly",
+              usedPercent: 80,
+              windowMinutes: 10080,
+              resetAt: null,
+            },
+          },
+        }
+      },
+    },
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/alerts`)
+
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.deepEqual(body.alerts.map((alert: { id: string; severity: string }) => ({
+      id: alert.id,
+      severity: alert.severity,
+    })).slice(0, 2), [
+      {
+        id: "alert_codex_capacity_five_hour_95",
+        severity: "critical",
+      },
+      {
+        id: "alert_codex_capacity_weekly_80",
+        severity: "medium",
+      },
+    ])
+    assert.match(body.alerts[0].runbook, /Codex Team One.*5h 5% remaining.*weekly 20% remaining/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})

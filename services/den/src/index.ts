@@ -7,8 +7,10 @@ import { fromNodeHeaders, toNodeHandler } from "better-auth/node"
 import { sql } from "drizzle-orm"
 import { auth, createAuthNodeHandler, guardEmailSignupRequest } from "./auth.js"
 import { db } from "./db/index.js"
+import { AdminUserStateTable, AuthUserTable, PlatformRoleTable } from "./db/schema.js"
 import { createDbDebugLogStore, createDebugLogService } from "./debug-logs/repository.js"
 import { extractMetadataRows, shouldWidenVarcharColumn } from "./db/schema-reconcile.js"
+import { isAdminAlertEmailConfigured, sendAdminAlertEmail } from "./email/admin-alert-mailer.js"
 import { env } from "./env.js"
 import { createDbFeedbackProjectorStore, createFeedbackProjector } from "./feedback/projector.js"
 import { createDebugLogsIngestRouter } from "./http/debug-logs.js"
@@ -16,7 +18,7 @@ import { asyncRoute, errorMiddleware } from "./http/errors.js"
 import { requireSession } from "./http/session.js"
 import { desktopAuthRouter } from "./http/desktop-auth.js"
 import { desktopAuthV2Router } from "./http/desktop-auth-v2.js"
-import { createAdminRuntimeRouter, requirePlatformAdminSnapshot } from "./http/admin-runtime.js"
+import { createAdminRuntimeRouter, isBootstrapPlatformAdminEmail, requirePlatformAdminSnapshot } from "./http/admin-runtime.js"
 import { createFeedbackRouter } from "./http/feedback.js"
 import { createManagedAiAdminUiRouter } from "./managed-ai/http/admin.js"
 import {
@@ -31,7 +33,10 @@ import {
   createDefaultProxyDependencies,
   createDefaultRuntimeState,
   createDefaultUserCredentialDependencies,
+  type RuntimeState,
 } from "./managed-ai/runtime/default-runtime.js"
+import { runCodexCapacityAlertMonitor } from "./managed-ai/alerts/codex-capacity-monitor.js"
+import { buildCodexCapacityOverview } from "./managed-ai/usage/codex-capacity.js"
 import { orgsRouter } from "./http/orgs.js"
 import { orgMcpCatalogRouter } from "./http/org-mcp-catalog.js"
 import { orgSkillsCatalogRouter } from "./http/org-skills-catalog.js"
@@ -42,6 +47,7 @@ const app = express()
 const MANAGED_AI_PROXY_JSON_LIMIT = "10mb"
 const FEEDBACK_PROJECTOR_DUE_RETRY_INTERVAL_MS = 60_000
 const DEBUG_LOG_RETENTION_INTERVAL_MS = 86_400_000
+const MANAGED_AI_CODEX_CAPACITY_ALERT_INTERVAL_MS = 5 * 60_000
 const managedAiRuntime = env.managedAi.enabled ? createDefaultRuntimeState() : null
 const managedAiProxyJsonParser = express.json({ limit: MANAGED_AI_PROXY_JSON_LIMIT })
 const currentFile = fileURLToPath(import.meta.url)
@@ -208,6 +214,82 @@ function startDebugLogRetentionLoop(service: typeof debugLogService) {
 
   runPurge()
   const interval = setInterval(runPurge, DEBUG_LOG_RETENTION_INTERVAL_MS)
+  unrefTimer(interval)
+}
+
+async function listPlatformAdminAlertRecipients(): Promise<string[]> {
+  const [users, platformRoles, userStates] = await Promise.all([
+    db
+      .select({
+        id: AuthUserTable.id,
+        email: AuthUserTable.email,
+      })
+      .from(AuthUserTable),
+    db
+      .select({
+        userId: PlatformRoleTable.user_id,
+      })
+      .from(PlatformRoleTable),
+    db
+      .select({
+        userId: AdminUserStateTable.user_id,
+        disabled: AdminUserStateTable.disabled,
+      })
+      .from(AdminUserStateTable),
+  ])
+
+  const platformAdminIds = new Set(platformRoles.map((entry) => entry.userId))
+  const disabledUserIds = new Set(userStates.filter((entry) => entry.disabled === true).map((entry) => entry.userId))
+  return users
+    .filter((user) => !disabledUserIds.has(user.id))
+    .filter((user) => platformAdminIds.has(user.id) || isBootstrapPlatformAdminEmail(user.email))
+    .map((user) => user.email.trim().toLowerCase())
+    .filter(Boolean)
+}
+
+async function loadManagedAiCodexCapacityOverview(runtime: RuntimeState) {
+  const listAdminCredentials = runtime.credentials.listAdminCredentials
+  if (!listAdminCredentials) {
+    return buildCodexCapacityOverview([])
+  }
+
+  const credentials = await listAdminCredentials.call(runtime.credentials)
+  const capacityCredentials = await Promise.all(
+    credentials
+      .filter((credential) => credential.provider === "codex_oauth")
+      .map(async (credential) => ({
+        id: credential.id,
+        name: credential.name,
+        state: credential.state,
+        upstreamStatus: await runtime.codexStatusProvider.getStatus({
+          credentialId: credential.id,
+          credentialName: credential.name,
+        }).catch(() => null),
+      })),
+  )
+  return buildCodexCapacityOverview(capacityCredentials)
+}
+
+function startManagedAiCodexCapacityAlertLoop(runtime: RuntimeState) {
+  if (!isAdminAlertEmailConfigured()) {
+    console.warn("[den] managed-ai Codex capacity alert emails disabled: Lettr email env is not configured")
+    return
+  }
+
+  const runMonitor = () => {
+    void runCodexCapacityAlertMonitor({
+      loadCapacityOverview: () => loadManagedAiCodexCapacityOverview(runtime),
+      listAdminRecipients: listPlatformAdminAlertRecipients,
+      sendEmail: sendAdminAlertEmail,
+      audit: runtime.audit,
+    }).catch((error) => {
+      const message = error instanceof Error ? error.stack ?? error.message : String(error)
+      console.error(`[den] managed-ai Codex capacity alert monitor failed: ${message}`)
+    })
+  }
+
+  runMonitor()
+  const interval = setInterval(runMonitor, MANAGED_AI_CODEX_CAPACITY_ALERT_INTERVAL_MS)
   unrefTimer(interval)
 }
 
@@ -851,6 +933,9 @@ async function bootstrap() {
   startDebugLogRetentionLoop(debugLogService)
   if (env.managedAi.enabled) {
     console.log("[den] managed-ai runtime enabled")
+    if (managedAiRuntime) {
+      startManagedAiCodexCapacityAlertLoop(managedAiRuntime)
+    }
   }
   app.listen(env.port, () => {
     console.log(`den listening on ${env.port} (provisioner=${env.provisionerMode})`)

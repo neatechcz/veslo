@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import test from "node:test";
 
 import { buildAlertRecord } from "../src/alerts/mysql-repository.js";
-import { createDefaultAdminService, type AdminSessionSnapshot } from "../src/http/admin.js";
+import { createDefaultAdminService, type AdminSessionSnapshot, type CredentialRecord } from "../src/http/admin.js";
 import { createApp } from "../src/index.js";
 
 const AUTHORIZATION = { authorization: "Bearer admin-token" };
@@ -55,6 +55,26 @@ function createDenClient(session = createSession()) {
   };
 }
 
+function createCredential(id: string, overrides: Partial<CredentialRecord> = {}): CredentialRecord {
+  return {
+    id,
+    name: `Credential ${id}`,
+    provider: "codex_oauth",
+    type: "oauth",
+    state: "healthy",
+    scope: "user_admin",
+    activeLeases: 0,
+    alertCount: 0,
+    lastRefreshAt: "2026-04-02T10:00:00.000Z",
+    lastFailureAt: null,
+    cachedTokens: 0,
+    totalTokens: 0,
+    nextRotationAt: null,
+    linkedAlertIds: [],
+    ...overrides,
+  };
+}
+
 test("/admin/api/alerts returns repository-backed alerts instead of fixtures", async () => {
   const expected = [
     {
@@ -81,6 +101,11 @@ test("/admin/api/alerts returns repository-backed alerts instead of fixtures", a
           return expected;
         },
       },
+      credentialReadRepository: {
+        async listAdminCredentials() {
+          return [];
+        },
+      },
     } as never,
   );
   const app = createApp({ admin: service });
@@ -95,6 +120,84 @@ test("/admin/api/alerts returns repository-backed alerts instead of fixtures", a
 
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), { alerts: expected });
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("/admin/api/alerts includes synthetic Codex capacity threshold alerts", async () => {
+  const service = createDefaultAdminService(
+    "http://den.example.test",
+    {
+      denClient: createDenClient(),
+      alertRepository: {
+        async listAlerts() {
+          return [];
+        },
+      },
+      credentialReadRepository: {
+        async listAdminCredentials() {
+          return [
+            createCredential("cred_codex_1", { name: "Codex Team One" }),
+            createCredential("cred_codex_2", { name: "Codex Team Two" }),
+          ];
+        },
+      },
+      codexStatusProvider: {
+        async getStatus() {
+          return {
+            available: true,
+            source: "codex_exec_rate_limits",
+            label: "Codex limits available",
+            detail: null,
+            checkedAt: "2026-06-06T12:00:00.000Z",
+            limits: {
+              fiveHour: {
+                label: "5h",
+                usedPercent: 95,
+                windowMinutes: 300,
+                resetAt: null,
+              },
+              weekly: {
+                label: "Weekly",
+                usedPercent: 80,
+                windowMinutes: 10080,
+                resetAt: null,
+              },
+            },
+          };
+        },
+      },
+      now: () => new Date("2026-06-06T12:00:00.000Z"),
+    } as never,
+  );
+  const app = createApp({ admin: service });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/alerts`, {
+      headers: AUTHORIZATION,
+    });
+
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.deepEqual(body.alerts.map((alert: { id: string; severity: string }) => ({
+      id: alert.id,
+      severity: alert.severity,
+    })), [
+      {
+        id: "alert_codex_capacity_five_hour_95",
+        severity: "critical",
+      },
+      {
+        id: "alert_codex_capacity_weekly_80",
+        severity: "medium",
+      },
+    ]);
+    assert.match(body.alerts[0].runbook, /Codex Team One.*5h 5% remaining.*weekly 20% remaining/);
   } finally {
     server.close();
     await once(server, "close");
