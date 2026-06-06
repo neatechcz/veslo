@@ -3993,34 +3993,6 @@ export default function App() {
   });
   const activeComposerTargetId = createMemo(() => activePendingDraftKey() ?? activeWorkspaceComposerTargetId());
 
-  let lastLocalVesloEnsureKey = "";
-  createEffect(() => {
-    if (!isTauriRuntime()) return;
-    if (startupPreference() === "server") return;
-    if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") return;
-
-    const nextKey = [
-      workspaceStore.activeWorkspaceId().trim(),
-      workspaceStore.activeWorkspaceRoot().trim(),
-      baseUrl().trim(),
-    ].join("::");
-    if (!nextKey.replace(/:/g, "")) return;
-    if (nextKey === lastLocalVesloEnsureKey) return;
-
-    const scheduledKey = nextKey;
-    void ensureLocalVesloServerRunning()
-      .then((ok) => {
-        if (ok) {
-          lastLocalVesloEnsureKey = scheduledKey;
-        }
-      })
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : safeStringify(error);
-        setError(addOpencodeCacheHint(message));
-        reportError(error, "veslo-server.ensure.effect");
-      });
-  });
-
   type PendingSkillRegistryReplay = {
     eventId: string;
   };
@@ -6845,6 +6817,34 @@ export default function App() {
 
     return ensureLocalVesloServerRunningInFlight;
   };
+
+  let lastLocalVesloEnsureKey = "";
+  createEffect(() => {
+    if (!isTauriRuntime()) return;
+    if (startupPreference() === "server") return;
+    if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") return;
+
+    const nextKey = [
+      workspaceStore.activeWorkspaceId().trim(),
+      workspaceStore.activeWorkspaceRoot().trim(),
+      baseUrl().trim(),
+    ].join("::");
+    if (!nextKey.replace(/:/g, "")) return;
+    if (nextKey === lastLocalVesloEnsureKey) return;
+
+    const scheduledKey = nextKey;
+    void ensureLocalVesloServerRunning()
+      .then((ok) => {
+        if (ok) {
+          lastLocalVesloEnsureKey = scheduledKey;
+        }
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : safeStringify(error);
+        setError(addOpencodeCacheHint(message));
+        reportError(error, "veslo-server.ensure.effect");
+      });
+  });
 
   const restartLocalServer = async () => {
     const activeWorkspace = workspaceStore.activeWorkspaceDisplay();

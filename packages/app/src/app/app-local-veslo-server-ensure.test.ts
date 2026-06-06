@@ -28,7 +28,7 @@ test("local Veslo server ensure only deduplicates after a successful ensure", ()
   const ensureIdx = source.indexOf(ensureCall, effectStart);
   assert.notStrictEqual(ensureIdx, -1, "local Veslo server ensure call is missing");
 
-  const effectEnd = source.indexOf("type PendingSkillRegistryReplay", ensureIdx);
+  const effectEnd = source.indexOf("const restartLocalServer = async () => {", ensureIdx);
   assert.notStrictEqual(effectEnd, -1, "local Veslo server ensure effect end marker is missing");
   const effectSource = source.slice(effectStart, effectEnd);
 
@@ -58,4 +58,17 @@ test("local Veslo workspace readiness matches all server path candidates", () =>
   assert.match(localBranch, /entry\.path/);
   assert.match(localBranch, /entry\.directory/);
   assert.match(localBranch, /entry\.opencode\?\.directory/);
+});
+
+test("local Veslo server ensure effect is registered after the real implementation is assigned", () => {
+  const effectStart = source.indexOf('let lastLocalVesloEnsureKey = "";');
+  assert.notStrictEqual(effectStart, -1, "local Veslo server ensure effect is missing");
+
+  const assignmentStart = source.indexOf("ensureLocalVesloServerRunning = async (options) => {");
+  assert.notStrictEqual(assignmentStart, -1, "local Veslo server ensure assignment is missing");
+
+  assert.ok(
+    effectStart > assignmentStart,
+    "local Veslo server ensure effect must not call the initial no-op implementation",
+  );
 });
