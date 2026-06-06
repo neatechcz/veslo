@@ -181,7 +181,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build());
 
     #[cfg(all(debug_assertions, feature = "e2e"))]
-    let builder = builder.plugin(tauri_plugin_webdriver::init());
+    let builder = builder.plugin(tauri_plugin_pilot::init());
 
     let app = builder
         .manage(EngineManager::default())

@@ -1,6 +1,8 @@
 .tmp-opencode-home/
 .tmp-veslo-home/
+.tmp-tauri-pilot-runtime/
 .tmp-live-feedback-youtrack/
 .tmp-opencode-home-live/
+tauri-pilot-failures/
 __snapshots__/**/actual/
 __snapshots__/**/diff/

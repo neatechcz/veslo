@@ -10,7 +10,7 @@ Use this matrix to decide what must be rebuilt after a code change.
 | `packages/app/src` with desktop-only behavior assumptions | Run through Tauri desktop runtime | Browser-only checks are not authoritative |
 | `packages/server/src` | `pnpm --filter veslo-server build:bin` | Orchestrator uses the built server binary, not TS sources |
 | `packages/desktop/src-tauri` | Rebuild desktop runtime | Native commands and shell behavior live in Tauri |
-| `packages/e2e` | Re-run targeted WebdriverIO spec | Snapshots and runtime expectations changed |
+| `packages/e2e` | Re-run targeted `tauri-pilot` scenario | Runtime expectations changed |
 | `packages/orchestrator/src` | Re-run orchestrator tests and relevant host flows | Sidecar orchestration is CLI-owned |
 | shared docs only | No binary rebuild required | Documentation-only change |
 
@@ -42,12 +42,14 @@ cd packages/desktop
 pnpm tauri build --debug --no-bundle --config src-tauri/tauri.dev.conf.json -- --features e2e
 ```
 
-### WebdriverIO
+### tauri-pilot
 
 ```bash
 cd packages/e2e
-pnpm test --spec ./specs/<target>.spec.ts
+pnpm test -- --scenario <name-or-path>
 ```
+
+Legacy WebdriverIO specs are not a runtime gate. Convert the target behavior to `tauri-pilot` before relying on it for validation.
 
 ## When in Doubt
 

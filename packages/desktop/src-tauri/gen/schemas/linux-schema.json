@@ -3045,10 +3045,10 @@
           "markdownDescription": "Denies the install command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the plugin",
+          "description": "Default permissions for tauri-plugin-pilot (allows eval callback)",
           "type": "string",
-          "const": "webdriver:default",
-          "markdownDescription": "Default permissions for the plugin"
+          "const": "pilot:default",
+          "markdownDescription": "Default permissions for tauri-plugin-pilot (allows eval callback)"
         }
       ]
     },

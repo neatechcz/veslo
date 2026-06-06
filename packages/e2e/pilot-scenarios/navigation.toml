@@ -1,0 +1,47 @@
+[scenario]
+name = "navigation"
+fail_fast = true
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "navigate to settings hash"
+action = "eval"
+script = """
+const oldUrl = window.location.href;
+window.location.hash = '/dashboard/settings';
+window.dispatchEvent(new HashChangeEvent('hashchange', {
+  oldURL: oldUrl,
+  newURL: window.location.href,
+}));
+true;
+"""
+
+[[step]]
+name = "settings route active"
+action = "assert-url"
+expected = "/dashboard/settings"
+timeout_ms = 10000
+
+[[step]]
+name = "navigate to session hash"
+action = "eval"
+script = """
+const oldUrl = window.location.href;
+window.location.hash = '/session';
+window.dispatchEvent(new HashChangeEvent('hashchange', {
+  oldURL: oldUrl,
+  newURL: window.location.href,
+}));
+true;
+"""
+
+[[step]]
+name = "session route active"
+action = "assert-url"
+expected = "/session"
+timeout_ms = 10000
