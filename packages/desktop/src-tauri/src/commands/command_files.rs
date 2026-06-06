@@ -1,7 +1,7 @@
-use std::env;
 use std::fs;
 use std::path::PathBuf;
 
+use crate::paths::xdg_config_home;
 use crate::types::{ExecResult, OpencodeCommand};
 use crate::workspace::commands::{sanitize_command_name, serialize_command_frontmatter};
 
@@ -16,13 +16,8 @@ fn resolve_commands_dir(scope: &str, project_dir: &str) -> Result<PathBuf, Strin
                 .join("commands"))
         }
         "global" => {
-            let base = if let Ok(dir) = env::var("XDG_CONFIG_HOME") {
-                PathBuf::from(dir)
-            } else if let Ok(home) = env::var("HOME") {
-                PathBuf::from(home).join(".config")
-            } else {
-                return Err("Unable to resolve config directory".to_string());
-            };
+            let base =
+                xdg_config_home().ok_or_else(|| "Unable to resolve config directory".to_string())?;
             Ok(base.join("opencode").join("commands"))
         }
         _ => Err("scope must be 'workspace' or 'global'".to_string()),
@@ -111,4 +106,30 @@ pub fn opencode_command_delete(
         stdout: format!("Deleted {}", file_path.display()),
         stderr: String::new(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::env_guard::EnvVarGuard;
+
+    #[test]
+    fn global_commands_resolve_from_userprofile_when_home_is_missing() {
+        let _env = EnvVarGuard::apply_many(&[
+            ("XDG_CONFIG_HOME", None),
+            ("HOME", None),
+            ("USERPROFILE", Some("C:\\Users\\marcel")),
+        ]);
+
+        let path = resolve_commands_dir("global", "")
+            .expect("global commands should resolve from USERPROFILE");
+
+        assert_eq!(
+            path,
+            PathBuf::from("C:\\Users\\marcel")
+                .join(".config")
+                .join("opencode")
+                .join("commands")
+        );
+    }
 }

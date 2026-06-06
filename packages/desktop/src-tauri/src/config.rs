@@ -1,7 +1,7 @@
-use std::env;
 use std::fs;
 use std::path::PathBuf;
 
+use crate::paths::xdg_config_home;
 use crate::types::{ExecResult, OpencodeConfigFile};
 
 fn opencode_config_candidates(
@@ -17,13 +17,8 @@ fn opencode_config_candidates(
             Ok((root.join("opencode.jsonc"), root.join("opencode.json")))
         }
         "global" => {
-            let base = if let Ok(dir) = env::var("XDG_CONFIG_HOME") {
-                PathBuf::from(dir)
-            } else if let Ok(home) = env::var("HOME") {
-                PathBuf::from(home).join(".config")
-            } else {
-                return Err("Unable to resolve config directory".to_string());
-            };
+            let base =
+                xdg_config_home().ok_or_else(|| "Unable to resolve config directory".to_string())?;
 
             let root = base.join("opencode");
             Ok((root.join("opencode.jsonc"), root.join("opencode.json")))
@@ -86,4 +81,30 @@ pub fn write_opencode_config(
         stdout: format!("Wrote {}", path.display()),
         stderr: String::new(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::env_guard::EnvVarGuard;
+
+    #[test]
+    fn global_config_resolves_from_userprofile_when_home_is_missing() {
+        let _env = EnvVarGuard::apply_many(&[
+            ("XDG_CONFIG_HOME", None),
+            ("HOME", None),
+            ("USERPROFILE", Some("C:\\Users\\marcel")),
+        ]);
+
+        let path = resolve_opencode_config_path("global", "")
+            .expect("global config should resolve from USERPROFILE");
+
+        assert_eq!(
+            path,
+            PathBuf::from("C:\\Users\\marcel")
+                .join(".config")
+                .join("opencode")
+                .join("opencode.jsonc")
+        );
+    }
 }
