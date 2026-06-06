@@ -1,6 +1,6 @@
 const STORAGE_KEY = "veslo.ai-gateway.admin.token";
 const BROWSER_AUTH_STORAGE_KEY = "veslo.ai-gateway.admin.browser-auth";
-const DEFAULT_PAGES = ["organization", "credentials", "sessions", "usage", "alerts", "users", "audit"];
+const DEFAULT_PAGES = ["organization", "credentials", "usage", "alerts", "users", "audit"];
 const AUTH_STATE_BYTES = 32;
 const AUTH_CODE_VERIFIER_BYTES = 32;
 const CODEX_EXHAUSTED_REASON = "all_codex_credentials_exhausted";
@@ -12,7 +12,6 @@ const state = {
   session: null,
   user: null,
   credentials: [],
-  sessions: [],
   alerts: [],
   audit: [],
   users: [],
@@ -28,7 +27,6 @@ const state = {
   },
   showDeletedCredentials: false,
   selectedCredentialId: null,
-  selectedSessionId: null,
   selectedAlertId: null,
   selectedAuditId: null,
   selectedUserId: null,
@@ -82,8 +80,6 @@ const els = {
   credentialsShowDeleted: document.getElementById("credentials-show-deleted"),
   credentialsTableBody: document.getElementById("credentials-table-body"),
   credentialDetail: document.getElementById("credential-detail"),
-  sessionList: document.getElementById("session-list"),
-  sessionDetail: document.getElementById("session-detail"),
   usageGroupBy: document.getElementById("usage-group-by"),
   usageCredentialFilter: document.getElementById("usage-filter-credential"),
   usageUserFilter: document.getElementById("usage-filter-user"),
@@ -559,12 +555,11 @@ function setActivePage(page) {
   els.createUserButton.classList.toggle("hidden", page !== "users");
 
   const titles = {
-    overview: ["AI Gateway control plane", "Overview", "Inspect credentials, sessions, usage, alerts, users, and audit events from one place."],
+    overview: ["AI Gateway control plane", "Overview", "Inspect credentials, usage, alerts, users, and audit events from one place."],
     organization: ["AI Gateway control plane", "Organization", "Manage organization details, domains, and pending invites."],
     credentials: ["AI Gateway control plane", "Credentials", "Inspect provider keys, linked alerts, and rotation state."],
-    sessions: ["AI Gateway control plane", "Sessions", "Review sticky leases, rebinding history, and worker ownership."],
     usage: ["AI Gateway control plane", "Usage", "Analyze total token usage first, then break it down by credential, user, or org."],
-    alerts: ["AI Gateway control plane", "Alerts", "Triage credential failures, usage spikes, and session anomalies."],
+    alerts: ["AI Gateway control plane", "Alerts", "Triage credential failures, usage spikes, and routing anomalies."],
     users: ["AI Gateway control plane", "Users", "Create, edit, disable, or remove users from the directory."],
     audit: ["AI Gateway control plane", "Audit", "Filter by actor, action, or entity and inspect detailed change history."],
   };
@@ -778,7 +773,6 @@ async function signOut() {
   state.session = null;
   state.user = null;
   state.credentials = [];
-  state.sessions = [];
   state.alerts = [];
   state.audit = [];
   state.users = [];
@@ -787,7 +781,6 @@ async function signOut() {
   state.organizationInvites = [];
   state.usage = null;
   state.selectedCredentialId = null;
-  state.selectedSessionId = null;
   state.selectedAlertId = null;
   state.selectedAuditId = null;
   state.selectedUserId = null;
@@ -801,7 +794,6 @@ async function loadAllData() {
   await Promise.all([
     runAllowedLoad("organization", loadOrganization),
     runAllowedLoad("credentials", loadCredentials),
-    runAllowedLoad("sessions", loadSessions),
     runAllowedLoad("alerts", loadAlerts),
     runAllowedLoad("users", loadUsers),
     runAllowedLoad("audit", loadAudit),
@@ -858,19 +850,6 @@ async function loadCredentials() {
     renderCredentials();
   } catch (error) {
     console.error("loadCredentials failed", error);
-  }
-}
-
-async function loadSessions() {
-  try {
-    const payload = await fetchJson("/sessions");
-    state.sessions = Array.isArray(payload?.sessions) ? payload.sessions : [];
-    if (!state.selectedSessionId || !state.sessions.some((entry) => entry.id === state.selectedSessionId)) {
-      state.selectedSessionId = state.sessions[0]?.id || null;
-    }
-    renderSessions();
-  } catch (error) {
-    console.error("loadSessions failed", error);
   }
 }
 
@@ -1007,8 +986,8 @@ async function loadUsage() {
 
 function renderOverview() {
   const metrics = [
-    String(state.sessions.length),
-    String(state.credentials.filter((entry) => entry.state !== "healthy").length),
+    String(state.credentials.filter((entry) => !entry.deletedAt).length),
+    String(state.credentials.filter((entry) => !entry.deletedAt && entry.state !== "healthy").length),
     String(state.users.length),
   ];
   els.heroMetrics.forEach((node, index) => {
@@ -1138,37 +1117,6 @@ function renderCredentialActionButtons(credential) {
     <button class="button button-secondary button-danger" type="button" data-credential-action="delete">Delete</button>
     <button class="button button-primary" type="button" data-route-alerts>Open alerts</button>
   `;
-}
-
-function renderSessions() {
-  els.sessionList.innerHTML = state.sessions.map((entry) => `
-    <article class="list-card ${entry.id === state.selectedSessionId ? "active" : ""}" data-session-id="${escapeHtml(entry.id)}">
-      <div>
-        <strong>${escapeHtml(entry.id)}</strong>
-        <p>${escapeHtml(entry.userLabel)}, ${escapeHtml(entry.projectLabel)}, worker ${escapeHtml(entry.workerLabel)}</p>
-      </div>
-      <span class="status-chip">${escapeHtml(entry.state)}</span>
-    </article>
-  `).join("") || `<article class="list-card active"><div><strong>No sessions</strong><p>There are no tracked session leases yet.</p></div></article>`;
-
-  const selected = state.sessions.find((entry) => entry.id === state.selectedSessionId) || state.sessions[0];
-  if (selected) {
-    const credential = state.credentials.find((entry) => entry.id === selected.credentialId);
-    els.sessionDetail.innerHTML = `
-      <p class="eyebrow">Selected session</p>
-      <h3>${escapeHtml(selected.id)}</h3>
-      <div class="timeline">
-        <div><span>Current state</span><strong>${escapeHtml(selected.state)}</strong></div>
-        <div><span>Active binding</span><strong>${escapeHtml(credential?.name || selected.credentialId)}</strong></div>
-        <div><span>Last failover</span><strong>${escapeHtml(formatDate(selected.lastFailoverAt))}</strong></div>
-        <div><span>Last seen</span><strong>${escapeHtml(formatDate(selected.lastSeenAt))}</strong></div>
-      </div>
-      <div class="button-row">
-        <button class="button button-secondary" type="button">Open trace</button>
-        <button class="button button-primary" type="button">Watch session</button>
-      </div>
-    `;
-  }
 }
 
 function renderUsage() {
@@ -1406,7 +1354,7 @@ function renderAlerts() {
       <h3>${escapeHtml(selected.title)}</h3>
       <div class="stack">
         <div class="detail-line"><span>Affected credential</span><strong>${escapeHtml(credential?.name || "Unassigned")}</strong></div>
-        <div class="detail-line"><span>Affected sessions</span><strong>${escapeHtml(String(selected.affectedSessions))}</strong></div>
+        <div class="detail-line"><span>Affected routes</span><strong>${escapeHtml(String(selected.affectedSessions))}</strong></div>
         <div class="detail-line"><span>Owner</span><strong>${escapeHtml(selected.owner || "Unassigned")}</strong></div>
         <div class="detail-line"><span>Status</span><strong>${escapeHtml(selected.status)}</strong></div>
       </div>
@@ -1656,7 +1604,6 @@ function enterCreateMode() {
 async function refreshCredentialOperations() {
   await Promise.all([
     loadCredentials(),
-    loadSessions(),
     loadAlerts(),
     loadAudit(),
   ]);
@@ -1838,9 +1785,9 @@ async function runCredentialAction(action) {
   }
 
   const confirmationMessages = {
-    drain: `Drain ${credential.name}? New sessions will stop using this credential.`,
-    rotate: `Rotate ${credential.name}? Active sessions will move to another healthy credential if one is available.`,
-    revoke: `Revoke ${credential.name}? Existing sessions may lose access if no replacement is available.`,
+    drain: `Drain ${credential.name}? New requests will stop using this credential.`,
+    rotate: `Rotate ${credential.name}? Active routes will move to another healthy credential if one is available.`,
+    revoke: `Revoke ${credential.name}? Existing routes may lose access if no replacement is available.`,
     delete: `Delete ${credential.name}? This moves it to Show Deleted and prevents future assignment or use.`,
   };
 
@@ -2266,13 +2213,6 @@ function bindActions() {
     if (routeAlerts) {
       openAlertsForSelectedCredential();
     }
-  });
-
-  els.sessionList.addEventListener("click", (event) => {
-    const row = event.target.closest("[data-session-id]");
-    if (!row) return;
-    state.selectedSessionId = row.dataset.sessionId;
-    renderSessions();
   });
 
   els.alertList.addEventListener("click", (event) => {

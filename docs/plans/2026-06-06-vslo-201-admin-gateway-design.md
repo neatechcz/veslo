@@ -22,18 +22,19 @@ Use one admin shell under `ai.veslo.work/admin`.
 
 Platform admin navigation:
 
+- Organization
 - Credentials
-- Sessions
 - Usage
 - Alerts
 - Users
-- Organizations
 - Audit
 
 Organization admin navigation:
 
 - Users
 - Organization
+
+Do not add a Sessions page to the Admin Gateway UI. Backend `admin/api/sessions` and lease/session runtime data may remain available to the gateway for capacity calculations, routing impact, and alert metadata, but sessions are not a primary admin navigation destination or reporting page.
 
 Do not add top-level `Domains` or `Approvals` navigation. Domains belong inside organization detail. The simplified approved onboarding model does not need a primary approval queue.
 
@@ -72,7 +73,7 @@ Organization admins:
 - can edit organization domains and onboarding policy for their organization,
 - can see seat usage and seat limit,
 - cannot edit the seat limit,
-- cannot see credentials, sessions, global usage, global alerts, global audit, platform admin settings, credential secrets, or managed-AI pool configuration.
+- cannot see credentials, global usage, global alerts, global audit, platform admin settings, credential secrets, or managed-AI pool configuration.
 
 Organization admin removal is allowed. The last-admin guard applies only to platform admins.
 
@@ -171,6 +172,8 @@ The AI Gateway admin service becomes the facade over:
 - DEN admin APIs for auth, users, organizations, domains, invites, memberships, platform roles, and seat limits.
 - AI Gateway repositories for credentials, leases/sessions, managed-AI access, usage, alerts, and managed-AI audit.
 
+Lease/session records are backend runtime data. They may inform capacity state and alert impact metadata, but the approved Admin Gateway UI does not expose a Sessions page.
+
 The admin session returned to the shell should expose capabilities, not only `platformAdmin`.
 
 Session shape should include:
@@ -183,7 +186,7 @@ Session shape should include:
 
 Route gates:
 
-- platform-admin-only for credentials, sessions, global usage, global alerts, global audit, platform roles, seat limit edits, and managed-AI credential/model assignment.
+- platform-admin-only for credentials, global usage, global alerts, global audit, platform roles, seat limit edits, and managed-AI credential/model assignment.
 - platform-admin or scoped organization-admin for organization users, invites, domains, and organization settings that are not platform-only.
 
 Organization-admin calls must always be scoped to the caller's organization server-side.
@@ -280,7 +283,7 @@ Top-level Capacity Overview:
 - overall Codex pool state: healthy, warning, or critical,
 - number of usable Codex credentials,
 - number of exhausted, unavailable, unhealthy, draining, or revoked credentials,
-- active sessions,
+- current pool demand derived from backend lease/session data,
 - active users and organizations using the pool,
 - next recommended action.
 
@@ -308,7 +311,7 @@ Credential drill-down rows should show:
 - eligibility state,
 - 5h used/remaining/reset,
 - weekly used/remaining/reset,
-- active leases,
+- active lease count used for routing impact,
 - total recorded tokens,
 - cached tokens,
 - last status check,
@@ -384,7 +387,7 @@ Email content:
 
 - alert severity and title,
 - affected pool or credential,
-- impacted users, orgs, and sessions when known,
+- impacted users and organizations, plus backend-known lease/session impact metadata when available,
 - 5h and weekly capacity summary,
 - credential breakdown with each credential's state and capacity,
 - reset times,
@@ -437,7 +440,8 @@ Implementation that changes durable behavior must also update canonical docs in 
 ## Non-Goals
 
 - Do not create a second admin application outside `ai.veslo.work/admin`.
-- Do not make organization admins see managed-AI credentials, global usage, alerts, sessions, or audit.
+- Do not make organization admins see managed-AI credentials, global usage, alerts, audit, or managed-AI pool configuration.
+- Do not create a Sessions page in the Admin Gateway UI.
 - Do not use pending approval as the default domain-signup model.
 - Do not autosave form fields.
 - Do not duplicate DEN-owned organization data into the AI Gateway database.

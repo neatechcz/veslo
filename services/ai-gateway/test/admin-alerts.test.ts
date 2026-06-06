@@ -96,7 +96,7 @@ test("/admin/api/alerts returns repository-backed alerts instead of fixtures", a
       firstSeenAt: "2026-04-03T10:00:00.000Z",
       lastSeenAt: "2026-04-03T10:00:00.000Z",
       owner: null,
-      runbook: "Inspect quota pressure and rotate session load across healthy credentials.",
+      runbook: "Inspect quota pressure and rebalance routing across healthy credentials.",
     },
   ];
 
@@ -226,7 +226,7 @@ test("/admin/api/alerts returns repository alerts when Codex capacity probing fa
       firstSeenAt: "2026-04-03T10:00:00.000Z",
       lastSeenAt: "2026-04-03T10:00:00.000Z",
       owner: null,
-      runbook: "Inspect quota pressure and rotate session load across healthy credentials.",
+      runbook: "Inspect quota pressure and rebalance routing across healthy credentials.",
     },
   ];
 
@@ -286,7 +286,7 @@ test("/admin/api/alerts returns repository alerts when Codex capacity probing st
       firstSeenAt: "2026-04-03T10:00:00.000Z",
       lastSeenAt: "2026-04-03T10:00:00.000Z",
       owner: null,
-      runbook: "Inspect quota pressure and rotate session load across healthy credentials.",
+      runbook: "Inspect quota pressure and rebalance routing across healthy credentials.",
     },
   ];
 
@@ -385,7 +385,7 @@ test("buildAlertRecord classifies auth, rate-limit, and unusual-activity signals
     firstSeenAt: "2026-04-03T09:05:00.000Z",
     lastSeenAt: "2026-04-03T09:05:00.000Z",
     owner: null,
-    runbook: "Inspect quota pressure and rotate session load across healthy credentials.",
+    runbook: "Inspect quota pressure and rebalance routing across healthy credentials.",
   });
   assert.deepEqual(unusualActivityAlert, {
     id: "alert_health_spike",

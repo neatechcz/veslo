@@ -149,7 +149,7 @@ function createAlert(id: string, status: AlertRecord["status"]): AlertRecord {
     firstSeenAt: "2026-04-03T10:00:00.000Z",
     lastSeenAt: "2026-04-03T10:05:00.000Z",
     owner: status === "active" ? null : "admin@example.test",
-    runbook: "Inspect quota pressure and rotate session load across healthy credentials.",
+    runbook: "Inspect quota pressure and rebalance routing across healthy credentials.",
   };
 }
 

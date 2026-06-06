@@ -144,6 +144,7 @@ test("Codex capacity alerting emits critical visibility alert when no functional
   assert.match(alerts[0]?.runbook ?? "", /server cannot see Codex limits/i)
   assert.match(alerts[0]?.runbook ?? "", /Codex Unknown.*limits unknown/)
   assert.match(alerts[0]?.runbook ?? "", /Codex Unavailable.*status unavailable/)
+  assert.doesNotMatch(alerts[0]?.runbook ?? "", /new sessions/i)
 })
 
 test("Codex capacity emails are urgent for 95 percent and critical for 100 percent or invisible limits", () => {

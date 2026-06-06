@@ -10,7 +10,6 @@ export const OrganizationAdminCapabilities = ["organization", "users"] as const
 export const PlatformAdminCapabilities = [
   ...OrganizationAdminCapabilities,
   "credentials",
-  "sessions",
   "usage",
   "alerts",
   "audit",
@@ -21,7 +20,6 @@ export const OrganizationAdminAllowedPages = ["organization", "users"] as const
 export const PlatformAdminAllowedPages = [
   ...OrganizationAdminAllowedPages,
   "credentials",
-  "sessions",
   "usage",
   "alerts",
   "audit",

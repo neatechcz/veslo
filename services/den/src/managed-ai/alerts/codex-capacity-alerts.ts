@@ -88,7 +88,7 @@ function buildLimitVisibilityAlert(capacity: CodexCapacityOverview, timestamp: s
     runbook: [
       "The server cannot see Codex limits for any functional Codex credential.",
       credentialInventorySummary(capacity),
-      "Check Codex auth.json access, Codex CLI status probing, and server egress before new sessions exhaust silently.",
+      "Check Codex auth.json access, Codex CLI status probing, and server egress before new requests exhaust the pool silently.",
     ].join(" "),
   }
 }
