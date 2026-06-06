@@ -40,7 +40,7 @@ test("expanded timeline rows expose secondary detail and disclosure", () => {
   );
   assert.match(
     source,
-    /<details class="mt-2">/,
-    "technical detail should be hidden behind a details disclosure",
+    /aria-expanded=\{timelineDetailExpanded\(rowDetailId\)\}/,
+    "technical detail should be hidden behind a controlled disclosure",
   );
 });

@@ -108,6 +108,8 @@ Assistant activity between a user message and the final assistant answer is trea
 
 The collapsed group summarizes both action rows and intermediate comments. Expanding it preserves original order and shows non-final assistant text comments directly as normal assistant-visible text without card framing. Tool/action rows, subagent rows, and verification rows stay as nested collapsed progress items so the user can expand only the detail they want to inspect. Intermediate comments are normal assistant-visible text, not model thinking.
 
+User-open progress groups, nested action sections, and technical detail disclosures are UI-owned state. Streaming assistant comments, reasoning visibility changes, tool status updates, or later actions in the same turn must not collapse them while the corresponding progress row still exists.
+
 `showThinking=false` hides model reasoning content and reasoning technical details only. It must not hide progress actions, non-final assistant comments, tool summaries, or other non-reasoning progress details that regular users need in order to understand what happened during the run.
 
 ## Timeline Media Evidence

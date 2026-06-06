@@ -280,6 +280,8 @@ export type SessionViewProps = {
   setExpandedStepIds: (updater: (current: Set<string>) => Set<string>) => Set<string>;
   expandedTimelineSectionIds: Set<string>;
   setExpandedTimelineSectionIds: (updater: (current: Set<string>) => Set<string>) => Set<string>;
+  expandedTimelineDetailIds: Set<string>;
+  setExpandedTimelineDetailIds: (updater: (current: Set<string>) => Set<string>) => Set<string>;
   expandedSidebarSections: SidebarSectionState;
   setExpandedSidebarSections: (
     updater: (current: SidebarSectionState) => SidebarSectionState,
@@ -4363,6 +4365,8 @@ export default function SessionView(props: SessionViewProps) {
             setExpandedStepIds={props.setExpandedStepIds}
             expandedTimelineSectionIds={props.expandedTimelineSectionIds}
             setExpandedTimelineSectionIds={props.setExpandedTimelineSectionIds}
+            expandedTimelineDetailIds={props.expandedTimelineDetailIds}
+            setExpandedTimelineDetailIds={props.setExpandedTimelineDetailIds}
             openSessionById={(sessionId) => props.setView("session", sessionId)}
             searchMatchMessageIds={searchMatchMessageIds()}
             activeSearchMessageId={activeSearchHit()?.messageId ?? null}

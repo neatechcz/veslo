@@ -184,9 +184,10 @@ function progressGroupFromEntries(entries: AssistantGroupEntry[]): ProgressGroup
   if (!items.length) return null;
 
   const messageIds = Array.from(new Set(items.map((item) => item.messageId).filter(Boolean)));
+  const anchorId = messageIds[0] ?? "group";
   return {
     kind: "progress-group",
-    id: `progress-${messageIds.join("-") || "group"}`,
+    id: `progress-${anchorId}`,
     items,
     messageIds,
     isUser: false,

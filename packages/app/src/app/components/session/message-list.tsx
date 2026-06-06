@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
-import { Bot, Check, ChevronDown, ChevronRight, CircleAlert, Copy, Eye, File, FileEdit, FolderSearch, Pencil, Search, Sparkles, Terminal } from "lucide-solid";
+import { Bot, Check, ChevronRight, CircleAlert, Copy, Eye, File, FileEdit, FolderSearch, Pencil, Search, Sparkles, Terminal } from "lucide-solid";
 import { createVirtualizer } from "@tanstack/solid-virtual";
 
 import {
@@ -48,6 +48,8 @@ export type MessageListProps = {
   setExpandedStepIds: (updater: (current: Set<string>) => Set<string>) => void;
   expandedTimelineSectionIds: Set<string>;
   setExpandedTimelineSectionIds: (updater: (current: Set<string>) => Set<string>) => void;
+  expandedTimelineDetailIds: Set<string>;
+  setExpandedTimelineDetailIds: (updater: (current: Set<string>) => Set<string>) => void;
   openSessionById?: (sessionId: string) => void;
   searchMatchMessageIds?: ReadonlySet<string>;
   activeSearchMessageId?: string | null;
@@ -245,6 +247,19 @@ function getTaskStepInfo(part: Part): TaskStepInfo {
   if (!info.isTask) return { isTask: false, isInternal: false };
   const agentType = info.subagentType && !info.internal ? formatAgentType(info.subagentType) : undefined;
   return { isTask: true, agentType, sessionId: info.sessionId, isInternal: info.internal };
+}
+
+function partExpansionKey(part: Part | undefined, fallback: string): string {
+  if (!part) return fallback;
+  const record = part as { id?: unknown; messageID?: unknown; tool?: unknown; type?: unknown };
+  const partId = typeof record.id === "string" && record.id.trim() ? record.id.trim() : "";
+  if (partId) return partId;
+
+  const messageId = typeof record.messageID === "string" && record.messageID.trim() ? record.messageID.trim() : "";
+  if (!messageId) return fallback;
+
+  const toolName = typeof record.tool === "string" && record.tool.trim() ? record.tool.trim() : "";
+  return [messageId, part.type, toolName, fallback].filter(Boolean).join(":");
 }
 
 export default function MessageList(props: MessageListProps) {
@@ -1041,6 +1056,35 @@ export default function MessageList(props: MessageListProps) {
     };
     const singleSectionMode = () => timelineSections().length === 1;
     const sectionExpanded = (sectionId: string) => timelineDetailState().openSectionIds.has(sectionId);
+    const timelineDetailId = (entry: TimelineRowView) =>
+      `${containerProps.id}:row-detail:${partExpansionKey(entry.part, entry.id)}`;
+    const timelineDetailExpanded = (rowDetailId: string) => props.expandedTimelineDetailIds.has(rowDetailId);
+    const toggleTimelineDetail = (rowDetailId: string) => {
+      props.setExpandedTimelineDetailIds((current) => {
+        const next = new Set(current);
+        if (next.has(rowDetailId)) {
+          next.delete(rowDetailId);
+        } else {
+          next.add(rowDetailId);
+        }
+        return next;
+      });
+    };
+    createEffect(() => {
+      const detailPrefix = `${containerProps.id}:row-detail:`;
+      const validDetailIds = new Set(
+        timelineSections().flatMap((section) => section.rows.map((entry) => timelineDetailId(entry))),
+      );
+      props.setExpandedTimelineDetailIds((current) => {
+        const next = new Set<string>();
+        current.forEach((id) => {
+          if (!id.startsWith(detailPrefix) || validDetailIds.has(id)) {
+            next.add(id);
+          }
+        });
+        return sameStringSet(current, next) ? current : next;
+      });
+    });
     const sectionDisplayCategory = (section: TimelineSectionView): TimelineRowType | TimelineSectionKind => {
       if (section.labelKind === "thinking") return "note";
       if (section.labelKind === "subagents") return "task";
@@ -1272,15 +1316,60 @@ export default function MessageList(props: MessageListProps) {
                                       </Show>
 
                                       <Show when={canShowTimelineTechnicalDetail(entry)}>
-                                        <details class="mt-2">
-                                          <summary class="font-product type-ui-xs inline-flex cursor-pointer list-none items-center gap-1 text-gray-10 hover:text-gray-11">
-                                            <ChevronDown size={12} class="shrink-0" />
-                                            {tr("session.timeline_technical_detail")}
-                                          </summary>
-                                          <pre class="font-mono type-ui-xs mt-1 whitespace-pre-wrap break-all rounded-xl bg-gray-2 px-2 py-1 text-gray-10">
-                                            <code>{row.technicalDetail}</code>
-                                          </pre>
-                                        </details>
+                                        {(() => {
+                                          const rowDetailId = timelineDetailId(entry);
+                                          const detailCopyId = `${rowDetailId}:copy`;
+                                          const detailCopyLabel =
+                                            copyingId() === detailCopyId
+                                              ? __vesloT("common.copied", __vesloCurrentLocale())
+                                              : __vesloT("common.copy", __vesloCurrentLocale());
+                                          return (
+                                            <div class="mt-2">
+                                              <button
+                                                type="button"
+                                                class="font-product type-ui-xs inline-flex cursor-pointer items-center gap-1 text-gray-10 hover:text-gray-11"
+                                                aria-expanded={timelineDetailExpanded(rowDetailId)}
+                                                onClick={(event) => {
+                                                  event.preventDefault();
+                                                  event.stopPropagation();
+                                                  toggleTimelineDetail(rowDetailId);
+                                                }}
+                                              >
+                                                <ChevronRight
+                                                  size={12}
+                                                  class={`shrink-0 transition-transform duration-200 ${timelineDetailExpanded(rowDetailId) ? "rotate-90" : ""}`}
+                                                />
+                                                {tr("session.timeline_technical_detail")}
+                                              </button>
+                                              <Show when={timelineDetailExpanded(rowDetailId)}>
+                                                <div class="mt-1 flex items-start gap-2 rounded-xl bg-gray-2 px-2 py-1">
+                                                  <pre
+                                                    data-testid="session-timeline-technical-detail-value"
+                                                    class="min-w-0 flex-1 select-text whitespace-pre-wrap break-all bg-transparent p-0 font-mono type-ui-xs text-gray-10"
+                                                  >
+                                                    <code>{row.technicalDetail}</code>
+                                                  </pre>
+                                                  <button
+                                                    type="button"
+                                                    data-testid="session-timeline-technical-detail-copy"
+                                                    class="mt-0.5 shrink-0 rounded p-1 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text select-none"
+                                                    title={detailCopyLabel}
+                                                    aria-label={detailCopyLabel}
+                                                    onClick={(event) => {
+                                                      event.preventDefault();
+                                                      event.stopPropagation();
+                                                      handleCopy(String(row.technicalDetail ?? ""), detailCopyId);
+                                                    }}
+                                                  >
+                                                    <Show when={copyingId() === detailCopyId} fallback={<Copy size={12} />}>
+                                                      <Check size={12} class="text-green-10" />
+                                                    </Show>
+                                                  </button>
+                                                </div>
+                                              </Show>
+                                            </div>
+                                          );
+                                        })()}
                                       </Show>
                                     </div>
                                   </div>
