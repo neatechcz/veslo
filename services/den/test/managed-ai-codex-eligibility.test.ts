@@ -167,6 +167,19 @@ test("unavailable status with transient ERROR stderr is eligible", () => {
   })
 })
 
+test("unavailable status with Codex usage-limit stderr is exhausted", () => {
+  const eligibility = evaluateCodexCredentialEligibility(
+    unavailableStatus(
+      "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 8:38 AM.",
+    ),
+    NOW,
+  )
+
+  assert.equal(eligibility.eligible, false)
+  assert.equal(eligibility.state, "exhausted")
+  assert.equal(eligibility.resetAt, null)
+})
+
 test("unavailable status with generic probe failure is eligible", () => {
   const eligibility = evaluateCodexCredentialEligibility(
     unavailableStatus("Codex status probe timed out."),
