@@ -149,7 +149,7 @@ export default {
   "session.open": "打开",
   "session.media_evidence_analyzed": "已分析",
   "session.media_evidence_created": "已创建",
-  "session.media_evidence_close": "关闭",
+  "session.media_evidence_close": "关闭图片预览",
   "session.media_evidence_download": "下载",
   "session.media_evidence_open": "打开",
   "session.media_evidence_image_created_one": "已创建 {count} 张图片",

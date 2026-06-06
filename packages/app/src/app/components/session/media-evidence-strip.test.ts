@@ -11,6 +11,15 @@ test("MediaEvidenceStrip exposes stable selectors", () => {
   assert.match(source, /data-testid="media-evidence-strip"/);
   assert.match(source, /data-testid="media-evidence-tile"/);
   assert.match(source, /data-testid="media-evidence-detail"/);
+  assert.match(source, /data-testid="media-evidence-full-list"/);
+  assert.match(source, /data-testid="media-evidence-list-tile"/);
+});
+
+test("MediaEvidenceStrip detail view keeps overflow evidence reachable", () => {
+  const source = stripSource();
+
+  assert.match(source, /<For each=\{props\.evidence\}>/);
+  assert.match(source, /setSelectedId\(item\.id\)/);
 });
 
 test("message-list renders media evidence on timeline rows", () => {

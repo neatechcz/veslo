@@ -1301,7 +1301,7 @@ export default {
   "session.timeline_status_running": "Running",
   "session.media_evidence_analyzed": "Analyzed",
   "session.media_evidence_created": "Created",
-  "session.media_evidence_close": "Close",
+  "session.media_evidence_close": "Close image preview",
   "session.media_evidence_download": "Download",
   "session.media_evidence_open": "Open",
   "session.media_evidence_image_created_one": "{count} image created",

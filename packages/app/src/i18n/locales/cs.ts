@@ -1297,7 +1297,7 @@ export default {
   "session.timeline_status_running": "Běží",
   "session.media_evidence_analyzed": "Analyzováno",
   "session.media_evidence_created": "Vytvořeno",
-  "session.media_evidence_close": "Zavřít",
+  "session.media_evidence_close": "Zavřít náhled obrázku",
   "session.media_evidence_download": "Stáhnout",
   "session.media_evidence_open": "Otevřít",
   "session.media_evidence_image_created_one": "{count} vytvořený obrázek",

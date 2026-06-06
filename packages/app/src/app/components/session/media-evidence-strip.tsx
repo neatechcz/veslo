@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { Download, ExternalLink, Image as ImageIcon, X } from "lucide-solid";
 
 import { currentLocale, t } from "../../../i18n";
@@ -22,11 +22,15 @@ function kindLabel(kind: MediaEvidence["kind"]): string {
 }
 
 function detailMeta(item: MediaEvidence): string {
-  return [kindLabel(item.kind), item.mime, item.status].filter(Boolean).join(" · ");
+  return [kindLabel(item.kind), item.mime, statusLabel(item.status)].filter(Boolean).join(" · ");
 }
 
 function downloadName(item: MediaEvidence): string {
   return item.title.trim() || "media-evidence";
+}
+
+function statusLabel(status: MediaEvidence["status"]): string {
+  return status.replace(/([A-Z])/g, " $1").toLowerCase();
 }
 
 export default function MediaEvidenceStrip(props: MediaEvidenceStripProps) {
@@ -48,6 +52,16 @@ export default function MediaEvidenceStrip(props: MediaEvidenceStripProps) {
   const openOverflow = () => {
     setSelectedId(props.evidence[visibleEvidence().length]?.id ?? visibleEvidence()[0]?.id ?? null);
   };
+  createEffect(() => {
+    if (!selected()) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSelectedId(null);
+      }
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    onCleanup(() => window.removeEventListener("keydown", closeOnEscape));
+  });
 
   return (
     <Show when={props.evidence.length > 0}>
@@ -156,6 +170,46 @@ export default function MediaEvidenceStrip(props: MediaEvidenceStripProps) {
                     />
                   </Show>
                 </div>
+
+                <Show when={props.evidence.length > 1}>
+                  <div class="mt-3 flex gap-1.5 overflow-x-auto pb-1" data-testid="media-evidence-full-list">
+                    <For each={props.evidence}>
+                      {(item) => {
+                        const active = () => selectedId() === item.id;
+                        return (
+                          <button
+                            type="button"
+                            class={`relative h-12 w-12 shrink-0 overflow-hidden rounded-lg border bg-gray-2 text-gray-9 transition-colors ${
+                              active() ? "border-blue-8 ring-2 ring-blue-7/30" : "border-gray-6 hover:border-gray-8 hover:text-gray-12"
+                            }`}
+                            title={`${item.title} · ${detailMeta(item)}`}
+                            aria-label={`${item.title} · ${detailMeta(item)}`}
+                            aria-pressed={active()}
+                            data-testid="media-evidence-list-tile"
+                            onClick={() => setSelectedId(item.id)}
+                          >
+                            <Show
+                              when={canPreview(item)}
+                              fallback={(
+                                <div class="flex h-full w-full items-center justify-center bg-gray-3">
+                                  <ImageIcon size={16} />
+                                </div>
+                              )}
+                            >
+                              <img
+                                src={item.src}
+                                alt={item.title}
+                                class="h-full w-full object-cover"
+                                loading="lazy"
+                                onError={() => markPreviewFailed(item.id)}
+                              />
+                            </Show>
+                          </button>
+                        );
+                      }}
+                    </For>
+                  </div>
+                </Show>
 
                 <Show when={item().path}>
                   {(path) => (
