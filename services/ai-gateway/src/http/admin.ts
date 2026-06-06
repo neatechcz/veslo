@@ -3114,11 +3114,20 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.patch("/admin/api/users/:userId", async (req, res) => {
+    const session = res.locals.adminSession as AdminSessionSnapshot | undefined;
+    if (session?.platformAdmin !== true && (hasOwn(req.body, "name") || hasOwn(req.body, "platformAdmin"))) {
+      res.status(403).json({ error: "forbidden" });
+      return;
+    }
+
     try {
-      const input: UpdateUserInput = {
-        name: typeof req.body?.name === "string" ? req.body.name.trim() : undefined,
-        platformAdmin: typeof req.body?.platformAdmin === "boolean" ? req.body.platformAdmin : undefined,
-      };
+      const input: UpdateUserInput = {};
+      if (hasOwn(req.body, "name")) {
+        input.name = typeof req.body?.name === "string" ? req.body.name.trim() : undefined;
+      }
+      if (hasOwn(req.body, "platformAdmin")) {
+        input.platformAdmin = typeof req.body?.platformAdmin === "boolean" ? req.body.platformAdmin : undefined;
+      }
       if (hasOwn(req.body, "orgId")) {
         input.orgId = typeof req.body?.orgId === "string" && req.body.orgId.trim() ? req.body.orgId.trim() : null;
       }

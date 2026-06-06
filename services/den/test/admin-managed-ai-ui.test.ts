@@ -214,6 +214,16 @@ test("GET /admin/app.js uses DEN desktop auth and OpenAI OAuth credential routes
     assert.match(script, /function normalizeOrganizationRoleInput\(value\)/)
     assert.match(script, /orgRole:\s*normalizeOrganizationRoleInput\(els\.userRole\.value\)/)
     assert.match(script, /<option value="organization_admin">Organization admin<\/option>/)
+    assert.match(script, /function buildUserUpdatePayload\(payload\)/)
+    assert.match(
+      script,
+      /if \(state\.session\?\.platformAdmin !== true\) \{[\s\S]*return \{[\s\S]*orgId: payload\.orgId,[\s\S]*orgRole: payload\.orgRole,[\s\S]*\}/,
+    )
+    assert.match(
+      script,
+      /await fetchJson\(`\/users\/\$\{encodeURIComponent\(user\.id\)\}`,[\s\S]*body: JSON\.stringify\(buildUserUpdatePayload\(payload\)\)/,
+    )
+    assert.match(script, /createUserButtonInline[\s\S]*data-platform-only/)
     assert.match(script, /provider:\s*typeof entry\.provider === "string" \? entry\.provider\.trim\(\) : ""/)
     assert.match(script, /function currentUserAiAccessAvailableCredentials\(userId,\s*provider = ""\)[\s\S]*entry\.provider === provider/)
     assert.match(script, /selectedProvider === "codex_oauth" \|\| selectedProvider === "openai_compatible"/)

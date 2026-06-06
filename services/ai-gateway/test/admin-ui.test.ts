@@ -590,11 +590,17 @@ test("GET /admin/app.js saves organization membership changes only from the user
     const script = await response.text()
     assert.match(script, /function normalizeOrganizationRoleInput\(value\)/)
     assert.match(script, /orgRole:\s*normalizeOrganizationRoleInput\(els\.userRole\.value\)/)
+    assert.match(script, /function buildUserUpdatePayload\(payload\)/)
     assert.match(
       script,
-      /await fetchJson\(`\/users\/\$\{encodeURIComponent\(user\.id\)\}`,[\s\S]*body: JSON\.stringify\(\{[\s\S]*orgId: payload\.orgId,[\s\S]*orgRole: payload\.orgRole,/,
+      /if \(state\.session\?\.platformAdmin !== true\) \{[\s\S]*return \{[\s\S]*orgId: payload\.orgId,[\s\S]*orgRole: payload\.orgRole,[\s\S]*\}/,
+    )
+    assert.match(
+      script,
+      /await fetchJson\(`\/users\/\$\{encodeURIComponent\(user\.id\)\}`,[\s\S]*body: JSON\.stringify\(buildUserUpdatePayload\(payload\)\)/,
     )
     assert.match(script, /<option value="organization_admin">Organization admin<\/option>/)
+    assert.match(script, /createUserButtonInline[\s\S]*data-platform-only/)
     assert.doesNotMatch(script, /userRole\.addEventListener\("change"[\s\S]*fetchJson/)
     assert.doesNotMatch(script, /userPlatformAdmin\.addEventListener\("change"[\s\S]*fetchJson/)
     assert.doesNotMatch(script, /userOrg\.addEventListener\("change"[\s\S]*fetchJson/)
@@ -805,6 +811,102 @@ test("PATCH /admin/api/users forwards organization membership fields on Save", a
       orgId: "org_1",
       orgRole: "organization_admin",
     })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("organization admin user Save payloads update only membership fields", async () => {
+  let capturedInput: unknown = null
+  const app = createApp({
+    admin: createAdminServiceStub({
+      async getSession() {
+        return orgAdminSession() as unknown as AdminSessionSnapshot
+      },
+      async updateUser(_token, userId, input) {
+        capturedInput = input
+        return {
+          id: userId,
+          name: "Member",
+          email: "member@example.test",
+          emailVerified: true,
+          platformAdmin: false,
+          disabled: false,
+          memberships: [{
+            membershipId: "member_1",
+            orgId: "org_1",
+            orgName: "Acme",
+            orgSlug: "acme",
+            role: "organization_admin",
+          }],
+        } as never
+      },
+    }),
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_1`, {
+      method: "PATCH",
+      headers: {
+        cookie: ADMIN_COOKIE,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        orgId: "org_1",
+        orgRole: "organization_admin",
+      }),
+    })
+
+    assert.equal(response.status, 200)
+    assert.deepEqual(capturedInput, {
+      orgId: "org_1",
+      orgRole: "organization_admin",
+    })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("organization admin user Save payloads reject platform-only fields", async () => {
+  let updateCalled = false
+  const app = createApp({
+    admin: createAdminServiceStub({
+      async getSession() {
+        return orgAdminSession() as unknown as AdminSessionSnapshot
+      },
+      async updateUser() {
+        updateCalled = true
+        throw new Error("platform-only payload should not be forwarded")
+      },
+    }),
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_1`, {
+      method: "PATCH",
+      headers: {
+        cookie: ADMIN_COOKIE,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Member",
+        platformAdmin: false,
+        orgId: "org_1",
+        orgRole: "organization_admin",
+      }),
+    })
+
+    assert.equal(response.status, 403)
+    assert.deepEqual(await response.json(), { error: "forbidden" })
+    assert.equal(updateCalled, false)
   } finally {
     server.close()
     await once(server, "close")

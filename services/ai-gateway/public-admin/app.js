@@ -49,7 +49,7 @@ const els = {
   signOutButton: document.getElementById("sign-out-button"),
   refreshButton: document.getElementById("refresh-button"),
   createUserButton: document.getElementById("create-user-button"),
-  createUserButtonInline: document.getElementById("create-user-button-inline"),
+  createUserButtonInline: document.querySelector('[data-platform-only][id="create-user-button-inline"]'),
   pageTitle: document.getElementById("page-title"),
   pageDescription: document.getElementById("page-description"),
   pageEyebrow: document.getElementById("page-eyebrow"),
@@ -343,6 +343,22 @@ function normalizeOrganizationRoleInput(value) {
 
 function organizationRoleOptionsMarkup() {
   return `<option value="organization_admin">Organization admin</option><option value="member">Member</option>`;
+}
+
+function buildUserUpdatePayload(payload) {
+  if (state.session?.platformAdmin !== true) {
+    return {
+      orgId: payload.orgId,
+      orgRole: payload.orgRole,
+    };
+  }
+
+  return {
+    name: payload.name,
+    platformAdmin: payload.platformAdmin,
+    orgId: payload.orgId,
+    orgRole: payload.orgRole,
+  };
 }
 
 function normalizeAiAccess(payload) {
@@ -2014,12 +2030,7 @@ async function saveUser() {
       }
       await fetchJson(`/users/${encodeURIComponent(user.id)}`, {
         method: "PATCH",
-        body: JSON.stringify({
-          name: payload.name,
-          platformAdmin: payload.platformAdmin,
-          orgId: payload.orgId,
-          orgRole: payload.orgRole,
-        }),
+        body: JSON.stringify(buildUserUpdatePayload(payload)),
       });
     }
 
