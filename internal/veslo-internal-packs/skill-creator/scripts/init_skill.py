@@ -7,7 +7,7 @@ Usage:
 
 Examples:
     init_skill.py my-workspace-skill --path .opencode/skills
-    init_skill.py my-user-skill --path ~/.opencode/skills
+    init_skill.py my-user-skill --path ~/.config/opencode/skills
     init_skill.py my-registry-skill --path /tmp/veslo-skill-authoring
 """
 
@@ -292,7 +292,7 @@ def main():
         print("  - Must match directory name exactly")
         print("\nExamples:")
         print("  init_skill.py my-workspace-skill --path .opencode/skills")
-        print("  init_skill.py my-user-skill --path ~/.opencode/skills")
+        print("  init_skill.py my-user-skill --path ~/.config/opencode/skills")
         print("  init_skill.py my-registry-skill --path /tmp/veslo-skill-authoring")
         sys.exit(1)
 
