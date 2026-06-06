@@ -788,6 +788,8 @@ Create tests proving:
 
 - 80 percent pool usage creates warning,
 - 90 percent pool usage creates critical,
+- 95 percent pool usage creates a distinct urgent alert,
+- 95 percent pool usage creates an immediate expanded email delivery intent to every platform admin recipient,
 - 100 percent pool usage creates a distinct exhausted critical alert,
 - 100 percent pool usage creates an immediate expanded email delivery intent,
 - Codex limit visibility failure creates a distinct critical alert,
@@ -795,7 +797,8 @@ Create tests proving:
 - 5h and weekly alerts have distinct keys,
 - alert dedupe updates an existing alert instead of creating duplicates,
 - warning-to-critical worsening re-notifies,
-- critical-to-exhausted worsening re-notifies,
+- critical-to-urgent worsening re-notifies,
+- urgent-to-exhausted worsening re-notifies,
 - resolved alert reopens on later worsening.
 
 **Step 2: Run tests to verify they fail**
@@ -849,6 +852,8 @@ Use stable alert keys for the new conditions:
 
 - `capacity.codex.pool.5h.exhausted`
 - `capacity.codex.pool.weekly.exhausted`
+- `capacity.codex.pool.5h.urgent`
+- `capacity.codex.pool.weekly.urgent`
 - `capacity.codex.limits.unavailable`
 
 **Step 5: Implement repository**
@@ -875,7 +880,7 @@ Use env-based configuration. Add env fields in `services/ai-gateway/src/env.ts`:
 
 Do not print secrets.
 
-Email tests must prove that 100 percent pool exhaustion and Codex limit visibility failures use the expanded high-priority template. The template should include an urgent subject, pool status, current routing impact, 5h and weekly capacity summary, credential breakdown, unknown or stale credentials, last successful limit read, safe failure reason, and recommended recovery action.
+Email tests must prove that 95 percent pool capacity, 100 percent pool exhaustion, and Codex limit visibility failures use the expanded high-priority template. For 95 percent alerts, assert that every platform admin recipient is included, with optional explicit recipients added on top. The template should include an urgent subject, pool status, current routing impact, 5h and weekly capacity summary, credential breakdown, unknown or stale credentials, last successful limit read, safe failure reason, and recommended recovery action.
 
 **Step 7: Wire alert generation**
 
@@ -1215,5 +1220,6 @@ git commit -m "fix: stabilize VSLO-201 admin gateway"
 - Last-admin guard applies only to platform admins.
 - Unknown Codex capacity is not included in pool percentage denominators.
 - Alert emails must include credential breakdown for capacity alerts.
-- Alerting must include 80 percent, 90 percent, and 100 percent capacity thresholds.
+- Alerting must include 80 percent, 90 percent, 95 percent, and 100 percent capacity thresholds.
+- 95 percent capacity must send urgent email to every platform admin recipient.
 - Codex limit visibility failure must page admins with an expanded high-priority email.

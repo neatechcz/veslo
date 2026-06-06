@@ -322,10 +322,13 @@ Pool threshold alerts:
 
 - warning at 80 percent used capacity for functional measurable credentials,
 - critical at 90 percent used capacity,
+- urgent admin email at 95 percent used capacity,
 - critical exhausted alert at 100 percent used capacity,
 - thresholds apply separately to 5h and weekly windows,
 - critical when the server cannot read Codex limits for the pool,
 - critical when every automatically usable Codex credential is exhausted or unavailable for routing.
+
+The 95 percent threshold is a separate urgent notification state from the 90 percent critical alert. It must create or update a distinct alert key and trigger immediate high-priority email delivery to every platform admin recipient.
 
 The 100 percent alert is a separate, worsening state from the 90 percent alert. It must create or update a distinct alert key and trigger immediate admin email delivery.
 
@@ -350,6 +353,8 @@ Alert keys should be stable, such as:
 
 - `capacity.codex.pool.5h.warning`
 - `capacity.codex.pool.weekly.critical`
+- `capacity.codex.pool.5h.urgent`
+- `capacity.codex.pool.weekly.urgent`
 - `capacity.codex.pool.5h.exhausted`
 - `capacity.codex.pool.weekly.exhausted`
 - `capacity.codex.limits.unavailable`
@@ -361,6 +366,7 @@ Alert keys should be stable, such as:
 Send email at least for:
 
 - critical credential alerts,
+- urgent 95 percent pool capacity alerts,
 - critical pool exhausted alerts,
 - critical Codex limit visibility alerts,
 - warning alerts that remain active long enough or worsen,
@@ -371,6 +377,8 @@ Recipients:
 - platform admins by default,
 - optional explicit recipients later,
 - not organization admins for managed-AI pool alerts.
+
+For 95 percent, 100 percent, and Codex limit visibility failure emails, delivery must include every platform admin recipient, with optional explicit recipients added on top.
 
 Email content:
 
@@ -383,7 +391,7 @@ Email content:
 - admin link to the relevant detail,
 - recommended next action.
 
-For 100 percent exhausted capacity and Codex limit visibility failures, send an expanded high-priority email immediately. It should be deliberately hard to miss: urgent subject, top summary, current routing impact, 5h and weekly pool status, every credential's state and limit capacity when known, unknown or stale credentials, last successful limit read, current failure reason when safe, and the recommended recovery action.
+For 95 percent capacity, 100 percent exhausted capacity, and Codex limit visibility failures, send an expanded high-priority email immediately. It should be deliberately hard to miss: urgent subject, top summary, current routing impact, 5h and weekly pool status, every credential's state and limit capacity when known, unknown or stale credentials, last successful limit read, current failure reason when safe, and the recommended recovery action.
 
 Store delivery attempts with at least pending/sent/failed state, timestamp, recipient, and error detail.
 
@@ -418,10 +426,10 @@ Required coverage:
 - API/integration tests for seat limit enforcement,
 - API/integration tests for last-platform-admin guard,
 - repository/policy tests for domain matching and invite activation,
-- repository/policy tests for 80/90/100 percent capacity thresholds,
+- repository/policy tests for 80/90/95/100 percent capacity thresholds,
 - repository/policy tests for Codex limit visibility failure alerts,
 - repository/policy tests for alert dedupe and status transitions,
-- email tests for alert delivery attempts, credential breakdown payloads, 100 percent capacity emails, and Codex limit visibility failure emails,
+- email tests for alert delivery attempts, credential breakdown payloads, 95 percent urgent emails, 100 percent capacity emails, and Codex limit visibility failure emails,
 - usage read-model tests for 5h/weekly remaining capacity and unknown-capacity handling.
 
 Implementation that changes durable behavior must also update canonical docs in `docs/dev/` or `docs/features/`.
