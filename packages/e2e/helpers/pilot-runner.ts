@@ -77,6 +77,10 @@ export function resolvePilotScenarioSelection(
   });
 }
 
+export function scenarioSelectionNeedsAutomationSecondaryWorkspace(scenarios: string[]): boolean {
+  return scenarios.some((scenario) => scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/automations.toml'));
+}
+
 export async function runPilotCommand(options: RunPilotCommandOptions): Promise<void> {
   const binary = options.binary ?? resolvePilotBinary(options.env);
   const socket = options.socket ?? resolvePilotSocketPath({ runtimeDir: resolvePilotRuntimeDir() });
@@ -88,12 +92,12 @@ export async function runPilotCommand(options: RunPilotCommandOptions): Promise<
       env: options.env ?? process.env,
       stdio: options.inheritStdio ? 'inherit' : ['ignore', 'pipe', 'pipe'],
     });
-    const output: Buffer[] = [];
-    const errors: Buffer[] = [];
+    const output: Uint8Array[] = [];
+    const errors: Uint8Array[] = [];
     let timeout: NodeJS.Timeout | null = null;
 
-    child.stdout?.on('data', (chunk: Buffer) => output.push(chunk));
-    child.stderr?.on('data', (chunk: Buffer) => errors.push(chunk));
+    child.stdout?.on('data', (chunk: Uint8Array) => output.push(chunk));
+    child.stderr?.on('data', (chunk: Uint8Array) => errors.push(chunk));
 
     if (options.timeoutMs) {
       timeout = setTimeout(() => {
@@ -158,6 +162,10 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
     if (!existsSync(scenario)) {
       throw new Error(`tauri-pilot scenario not found: ${scenario}`);
     }
+  }
+
+  if (scenarioSelectionNeedsAutomationSecondaryWorkspace(scenarios)) {
+    process.env.E2E_SEED_AUTOMATIONS_SECONDARY_WORKSPACE ||= '1';
   }
 
   await startApp();

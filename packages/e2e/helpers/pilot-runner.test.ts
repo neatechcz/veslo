@@ -8,6 +8,7 @@ import {
   pilotReadinessProbeCommands,
   resolvePilotBinary,
   resolvePilotScenarioSelection,
+  scenarioSelectionNeedsAutomationSecondaryWorkspace,
 } from './pilot-runner.js';
 
 test('resolvePilotBinary defaults to tauri-pilot and supports local overrides', () => {
@@ -49,5 +50,18 @@ test('resolvePilotScenarioSelection supports focused scenario names without re-e
   assert.deepEqual(
     resolvePilotScenarioSelection({ scenario: ['smoke'] }, e2eRoot).map((scenario) => scenario.replaceAll('\\', '/')),
     [join(e2eRoot, 'pilot-scenarios', 'smoke.toml').replaceAll('\\', '/')],
+  );
+});
+
+test('automation pilot scenario requests the secondary workspace fixture', () => {
+  const e2eRoot = '/repo/packages/e2e';
+
+  assert.equal(
+    scenarioSelectionNeedsAutomationSecondaryWorkspace(resolvePilotScenarioSelection({ scenario: ['automations'] }, e2eRoot)),
+    true,
+  );
+  assert.equal(
+    scenarioSelectionNeedsAutomationSecondaryWorkspace(resolvePilotScenarioSelection({ scenario: ['smoke'] }, e2eRoot)),
+    false,
   );
 });

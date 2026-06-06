@@ -1,0 +1,450 @@
+[scenario]
+name = "automations"
+fail_fast = true
+global_timeout_ms = 260000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "start global automations pilot task"
+action = "eval"
+timeout_ms = 240000
+script = '''
+const completeSelector = '[data-testid="automation-pilot-complete"]';
+const errorSelector = '[data-testid="automation-pilot-error"]';
+document.querySelector(completeSelector)?.remove();
+document.querySelector(errorSelector)?.remove();
+
+if (!window.__vesloAutomationPilotStarted) {
+  window.__vesloAutomationPilotStarted = true;
+  window.__vesloAutomationPilotPromise = (async () => {
+    try {
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const trimText = (value) => String(value ?? "").trim();
+const trimBaseUrl = (value) => trimText(value).replace(/\/+$/, "");
+const normalizePath = (value) => trimText(value).replace(/\\/g, "/").replace(/\/+$/, "");
+const futureIso = (delayMs) => new Date(Date.now() + delayMs).toISOString();
+
+const assert = (condition, message) => {
+  if (!condition) throw new Error(message);
+};
+
+const waitUntil = async (predicate, options) => {
+  const timeout = options?.timeout ?? 10000;
+  const interval = options?.interval ?? 250;
+  const message = options?.message ?? "Condition was not met";
+  const deadline = Date.now() + timeout;
+  let latest;
+
+  while (Date.now() < deadline) {
+    latest = await predicate();
+    if (latest) return latest;
+    await sleep(interval);
+  }
+
+  throw new Error(`${message}. Latest=${JSON.stringify(latest)}`);
+};
+
+const tauriInvoke = async (command, payload = {}) => {
+  const invoke = window.__TAURI_INTERNALS__?.invoke;
+  assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
+  return await invoke(command, payload);
+};
+
+const workspaceDirectory = (workspace) => trimText(workspace?.directory) || trimText(workspace?.path);
+
+const waitForLocalVesloServerReady = async (timeout = 60000) => {
+  let latest = null;
+  return await waitUntil(async () => {
+    latest = await tauriInvoke("veslo_server_info").catch(() => null);
+    const baseUrl = trimBaseUrl(latest?.baseUrl);
+    const clientToken = trimText(latest?.clientToken);
+    const hostToken = trimText(latest?.hostToken);
+    if (!latest?.running || !baseUrl || !clientToken || !hostToken) return false;
+
+    const response = await fetch(`${baseUrl}/health`).catch(() => null);
+    if (!response?.ok) return false;
+    const payload = await response.json().catch(() => null);
+    if (payload?.ok !== true) return false;
+
+    return { baseUrl, clientToken, hostToken };
+  }, {
+    timeout,
+    interval: 500,
+    message: `Local Veslo server did not become ready. Server info=${JSON.stringify(latest)}`,
+  });
+};
+
+const restartVesloServerAndReconnect = async () => {
+  await tauriInvoke("veslo_server_restart");
+  return await waitForLocalVesloServerReady();
+};
+
+const ensureVesloServerConnection = async () => {
+  try {
+    return await waitForLocalVesloServerReady(30000);
+  } catch {
+    return await restartVesloServerAndReconnect();
+  }
+};
+
+const fetchJson = async (connection, path, init = {}) => {
+  const response = await fetch(`${connection.baseUrl}${path}`, {
+    ...init,
+    headers: {
+      authorization: `Bearer ${connection.clientToken}`,
+      accept: "application/json",
+      ...(init.body ? { "content-type": "application/json" } : {}),
+      ...(init.headers ?? {}),
+    },
+  });
+  const text = await response.text();
+  const payload = text.trim() ? JSON.parse(text) : null;
+  if (!response.ok) {
+    throw new Error(`Request ${init.method ?? "GET"} ${path} failed with ${response.status}: ${text}`);
+  }
+  return payload;
+};
+
+const fetchWorkspaces = (connection) => fetchJson(connection, "/workspaces");
+
+const waitForServerWorkspaceByDirectory = async (connection, directory) => {
+  const normalizedDirectory = normalizePath(directory);
+  return await waitUntil(async () => {
+    const payload = await fetchWorkspaces(connection).catch(() => null);
+    return payload?.items?.find((workspace) =>
+      normalizePath(workspace.directory) === normalizedDirectory ||
+      normalizePath(workspace.path) === normalizedDirectory
+    ) ?? false;
+  }, {
+    timeout: 90000,
+    interval: 500,
+    message: `Veslo server workspace for ${directory} was not listed`,
+  });
+};
+
+const waitForServerWorkspaceOpenCodeUrl = async (connection, workspaceId) => {
+  return await waitUntil(async () => {
+    const payload = await fetchWorkspaces(connection).catch(() => null);
+    const workspace = payload?.items?.find((item) => item.id === workspaceId) ?? null;
+    return trimBaseUrl(workspace?.baseUrl) ? workspace : false;
+  }, {
+    timeout: 90000,
+    interval: 500,
+    message: `Veslo server workspace ${workspaceId} did not expose an OpenCode baseUrl`,
+  });
+};
+
+const createAutomation = async (connection, workspaceId, input) => {
+  const payload = await fetchJson(connection, `/workspace/${encodeURIComponent(workspaceId)}/automations`, {
+    method: "POST",
+    body: JSON.stringify({
+      id: input.id,
+      name: input.name,
+      prompt: input.prompt,
+      schedule: { kind: "oneShot", runAt: input.runAt },
+      target: { fallbackTitle: input.name },
+    }),
+  });
+  return payload.automation;
+};
+
+const listAutomations = async (connection, workspaceId) => {
+  const payload = await fetchJson(connection, `/workspace/${encodeURIComponent(workspaceId)}/automations`);
+  return Array.isArray(payload.items) ? payload.items : [];
+};
+
+const listAutomationRuns = async (connection, workspaceId, automationId) => {
+  const payload = await fetchJson(
+    connection,
+    `/workspace/${encodeURIComponent(workspaceId)}/automations/${encodeURIComponent(automationId)}/runs`,
+  );
+  return Array.isArray(payload.items) ? payload.items : [];
+};
+
+const waitForCompletedAutomation = async (connection, workspaceId, automationId) => {
+  let latestAutomation = null;
+  let latestRuns = [];
+  await waitUntil(async () => {
+    const automations = await listAutomations(connection, workspaceId);
+    latestAutomation = automations.find((automation) => automation.id === automationId) ?? null;
+    latestRuns = latestAutomation ? await listAutomationRuns(connection, workspaceId, automationId) : [];
+    const successfulRun = latestRuns.find((run) => run.status === "success" && trimText(run.sessionId));
+    return Boolean(latestAutomation?.status === "completed" && latestAutomation.completedAt && successfulRun);
+  }, {
+    timeout: 120000,
+    interval: 1000,
+    message: `Automation ${automationId} did not complete successfully. Automation=${JSON.stringify(latestAutomation)} runs=${JSON.stringify(latestRuns)}`,
+  });
+  const run = latestRuns.find((item) => item.status === "success" && trimText(item.sessionId));
+  assert(latestAutomation && run, `Automation ${automationId} completed wait ended without a successful run.`);
+  return { automation: latestAutomation, run };
+};
+
+const readAutomationCards = () =>
+  Array.from(document.querySelectorAll('[data-testid="scheduled-automation-card"]')).map((card) => ({
+    automationId: card.dataset.automationId ?? "",
+    workspaceId: card.dataset.automationWorkspaceId ?? "",
+    text: card.innerText,
+  }));
+
+const waitForAutomationCards = async (automationNames) => {
+  let latestCards = [];
+  await waitUntil(() => {
+    latestCards = readAutomationCards();
+    return automationNames.every((name) => latestCards.some((card) => card.text.includes(name)));
+  }, {
+    timeout: 20000,
+    interval: 500,
+    message: `Automation cards did not include ${automationNames.join(", ")}. Body=${document.body.innerText.slice(0, 2000)}`,
+  });
+  return latestCards;
+};
+
+const clickAutomationEdit = async (automationId) => {
+  await waitUntil(() => {
+    const card = readAutomationCards().find((candidate) => candidate.automationId === automationId);
+    if (!card) return false;
+    const element = Array.from(document.querySelectorAll('[data-testid="scheduled-automation-card"]'))
+      .find((candidate) => candidate.dataset.automationId === automationId);
+    const editButton = element?.querySelector('[data-testid="scheduled-automation-edit"]') ?? null;
+    return Boolean(editButton && !editButton.disabled);
+  }, {
+    timeout: 10000,
+    interval: 250,
+    message: `Automation ${automationId} edit button did not become enabled`,
+  });
+  const card = Array.from(document.querySelectorAll('[data-testid="scheduled-automation-card"]'))
+    .find((candidate) => candidate.dataset.automationId === automationId);
+  const editButton = card?.querySelector('[data-testid="scheduled-automation-edit"]') ?? null;
+  assert(editButton && !editButton.disabled, `Automation ${automationId} edit button is not clickable.`);
+  editButton.click();
+};
+
+const bootstrap = await tauriInvoke("workspace_bootstrap");
+const activeWorkspace = bootstrap.workspaces.find((workspace) => workspace.id === bootstrap.activeId);
+assert(activeWorkspace, `Active workspace is not ready (activeId=${bootstrap.activeId ?? "none"}).`);
+const secondaryWorkspace = bootstrap.workspaces.find((workspace) =>
+  normalizePath(workspace.path).endsWith("/automations-secondary-workspace") ||
+  trimText(workspace.displayName) === "Automations Secondary Workspace"
+);
+assert(secondaryWorkspace, "Secondary automations workspace fixture was not seeded.");
+
+const activeDirectory = workspaceDirectory(activeWorkspace);
+const secondaryDirectory = workspaceDirectory(secondaryWorkspace);
+assert(activeDirectory, "Active workspace directory is not ready.");
+assert(secondaryDirectory, "Secondary workspace directory is not ready.");
+
+const connection = await ensureVesloServerConnection();
+const activeServerWorkspace = await waitForServerWorkspaceByDirectory(connection, activeDirectory);
+const secondaryServerWorkspace = await waitForServerWorkspaceByDirectory(connection, secondaryDirectory);
+assert(activeServerWorkspace.id !== secondaryServerWorkspace.id, "Active and secondary server workspaces must be distinct.");
+
+const uiSuffix = Date.now();
+const activeAutomationName = `E2E active automation ${uiSuffix}`;
+const inactiveAutomationName = `E2E inactive automation ${uiSuffix}`;
+const editedInactiveAutomationName = `E2E inactive edited ${uiSuffix}`;
+const uiFutureRunAt = futureIso(30 * 60 * 1000);
+
+const activeAutomation = await createAutomation(connection, activeServerWorkspace.id, {
+  id: `e2e_active_workspace_${uiSuffix}`,
+  name: activeAutomationName,
+  runAt: uiFutureRunAt,
+  prompt: "This active workspace automation should appear on the global Automations page.",
+});
+const inactiveAutomation = await createAutomation(connection, secondaryServerWorkspace.id, {
+  id: `e2e_inactive_workspace_${uiSuffix}`,
+  name: inactiveAutomationName,
+  runAt: uiFutureRunAt,
+  prompt: "This inactive workspace automation should remain editable from the global Automations page.",
+});
+
+const oldUrl = window.location.href;
+window.location.hash = "/dashboard/scheduled";
+window.dispatchEvent(new HashChangeEvent("hashchange", {
+  oldURL: oldUrl,
+  newURL: window.location.href,
+}));
+await waitUntil(() => window.location.hash.includes("/dashboard/scheduled"), {
+  timeout: 10000,
+  message: "Scheduled route did not become active",
+});
+await waitUntil(() => document.querySelector('[data-testid="scheduled-automations-page"]'), {
+  timeout: 15000,
+  message: `Scheduled automations page did not render. Body=${document.body.innerText.slice(0, 2000)}`,
+});
+
+const refreshButton = await waitUntil(() => {
+  const button = document.querySelector('[data-testid="scheduled-automations-refresh"]');
+  return button && !button.disabled ? button : false;
+}, {
+  timeout: 10000,
+  interval: 250,
+  message: "Scheduled automations refresh button did not become enabled",
+});
+refreshButton.click();
+
+const cards = await waitForAutomationCards([activeAutomationName, inactiveAutomationName]);
+assert(
+  cards.find((card) => card.automationId === activeAutomation.id)?.workspaceId === activeServerWorkspace.id,
+  "Active workspace automation card did not retain its server workspace id.",
+);
+assert(
+  cards.find((card) => card.automationId === inactiveAutomation.id)?.workspaceId === secondaryServerWorkspace.id,
+  "Inactive workspace automation card did not retain its server workspace id.",
+);
+
+await clickAutomationEdit(inactiveAutomation.id);
+const editModal = await waitUntil(() => document.querySelector('[data-testid="scheduled-automation-edit-modal"]'), {
+  timeout: 10000,
+  interval: 250,
+  message: "Inactive workspace automation edit modal did not open",
+});
+assert(editModal, "Inactive workspace automation edit modal did not open.");
+const nameInput = document.querySelector('[data-testid="scheduled-automation-edit-name"]');
+assert(nameInput, "Inactive workspace automation name input is missing.");
+const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+if (valueSetter) {
+  valueSetter.call(nameInput, editedInactiveAutomationName);
+} else {
+  nameInput.value = editedInactiveAutomationName;
+}
+nameInput.dispatchEvent(new Event("input", { bubbles: true }));
+const saveButton = document.querySelector('[data-testid="scheduled-automation-edit-save"]');
+assert(saveButton && !saveButton.disabled, "Inactive workspace automation save button is not enabled.");
+saveButton.click();
+
+await waitUntil(async () => {
+  const automations = await listAutomations(connection, secondaryServerWorkspace.id);
+  return automations.some((automation) =>
+    automation.id === inactiveAutomation.id &&
+    automation.name === editedInactiveAutomationName
+  );
+}, {
+  timeout: 20000,
+  interval: 500,
+  message: "Inactive workspace automation edit was not persisted through the server API",
+});
+
+const updatedCards = await waitForAutomationCards([activeAutomationName, editedInactiveAutomationName]);
+assert(
+  updatedCards.find((card) => card.automationId === inactiveAutomation.id)?.text.includes(editedInactiveAutomationName),
+  "Inactive workspace automation card did not show the edited name.",
+);
+
+await tauriInvoke("engine_start", {
+  projectDir: activeDirectory,
+  preferSidecar: true,
+  runtime: "veslo-orchestrator",
+  workspacePaths: [activeDirectory],
+});
+await waitUntil(async () => {
+  const info = await tauriInvoke("engine_info").catch(() => null);
+  return Boolean(
+    info?.running &&
+    trimBaseUrl(info.baseUrl) &&
+    normalizePath(info.projectDir) === normalizePath(activeDirectory)
+  );
+}, {
+  timeout: 180000,
+  interval: 500,
+  message: `Active OpenCode engine did not become ready for ${activeDirectory}`,
+});
+
+const runtimeConnection = await restartVesloServerAndReconnect();
+await waitForServerWorkspaceOpenCodeUrl(runtimeConnection, activeServerWorkspace.id);
+const globalSyncResponse = await fetch(`${runtimeConnection.baseUrl}/skills/materialization/sync-global`, {
+  method: "POST",
+  headers: {
+    "x-veslo-host-token": runtimeConnection.hostToken,
+    accept: "application/json",
+  },
+});
+const globalSync = await globalSyncResponse.json();
+assert(globalSyncResponse.status === 200, `Global skill materialization sync failed: ${JSON.stringify(globalSync)}`);
+assert(globalSync.synced === true, "Global skill materialization did not report synced=true.");
+assert(
+  Array.isArray(globalSync.materializedSkills) &&
+  globalSync.materializedSkills.some((skill) =>
+    skill.name === "veslo-automations" &&
+    skill.target === "personal-global" &&
+    skill.source === "platform" &&
+    skill.removalPolicy === "locked"
+  ),
+  `Platform automations skill was not materialized as personal-global locked skill: ${JSON.stringify(globalSync.materializedSkills)}`,
+);
+
+const runSuffix = Date.now();
+const dueRunAt = futureIso(4000);
+const dueAutomation = await createAutomation(runtimeConnection, activeServerWorkspace.id, {
+  id: `e2e_one_shot_due_${runSuffix}`,
+  name: `E2E one-shot due ${runSuffix}`,
+  runAt: dueRunAt,
+  prompt: "Create a very short acknowledgement that this Veslo automation ran.",
+});
+assert(dueAutomation.nextRunAt === dueRunAt, "Due one-shot automation did not keep the requested nextRunAt.");
+
+const completed = await waitForCompletedAutomation(runtimeConnection, activeServerWorkspace.id, dueAutomation.id);
+assert(completed.automation.status === "completed", "Due one-shot automation did not become completed.");
+assert(completed.automation.lastRunId === completed.run.id, "Due one-shot automation did not record the successful run id.");
+assert(completed.run.status === "success", "Due one-shot automation run did not succeed.");
+assert(trimText(completed.run.sessionId), "Due one-shot automation run did not create or reuse a session.");
+
+const futureRunAt = futureIso(10 * 60 * 1000);
+const futureAutomation = await createAutomation(runtimeConnection, activeServerWorkspace.id, {
+  id: `e2e_one_shot_future_${runSuffix}`,
+  name: `E2E one-shot future ${runSuffix}`,
+  runAt: futureRunAt,
+  prompt: "This future automation should survive a Veslo server restart.",
+});
+assert(futureAutomation.status === "active", "Future one-shot automation was not active after creation.");
+assert(futureAutomation.nextRunAt === futureRunAt, "Future one-shot automation did not keep the requested nextRunAt.");
+
+const restartedConnection = await restartVesloServerAndReconnect();
+await waitForServerWorkspaceOpenCodeUrl(restartedConnection, activeServerWorkspace.id);
+const automationsAfterRestart = await listAutomations(restartedConnection, activeServerWorkspace.id);
+const futureAfterRestart = automationsAfterRestart.find((automation) => automation.id === futureAutomation.id);
+assert(futureAfterRestart?.status === "active", "Future one-shot automation did not remain active after server restart.");
+assert(futureAfterRestart?.nextRunAt === futureRunAt, "Future one-shot automation nextRunAt changed after server restart.");
+assert(
+  futureAfterRestart?.schedule?.kind === "oneShot" &&
+  futureAfterRestart.schedule.runAt === futureRunAt,
+  "Future one-shot automation schedule changed after server restart.",
+);
+
+const completeMarker = document.createElement("div");
+completeMarker.dataset.testid = "automation-pilot-complete";
+completeMarker.textContent = "complete";
+document.body.append(completeMarker);
+    } catch (error) {
+      const errorMarker = document.createElement("pre");
+      errorMarker.dataset.testid = "automation-pilot-error";
+      errorMarker.textContent = error?.stack || error?.message || String(error);
+      document.body.append(errorMarker);
+    }
+  })();
+}
+
+true;
+'''
+
+[[step]]
+name = "global automations pilot task finished"
+action = "wait"
+target = "[data-testid=\"automation-pilot-complete\"], [data-testid=\"automation-pilot-error\"]"
+timeout_ms = 240000
+
+[[step]]
+name = "global automations pilot task succeeded"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="automation-pilot-error"]');
+if (error) {
+  throw new Error(error.textContent || "Automation pilot task failed");
+}
+true;
+'''
