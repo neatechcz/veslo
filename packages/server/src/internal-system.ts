@@ -755,6 +755,10 @@ function cleanString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function normalizeDirectoryPath(value) {
+  return cleanString(value).replace(/\\\\/g, "/").replace(/\\/+$/, "");
+}
+
 function firstWorkspaceIdCandidate(value) {
   if (!value || typeof value !== "object") return "";
   const direct =
@@ -776,29 +780,104 @@ function firstWorkspaceIdCandidate(value) {
   return "";
 }
 
-async function resolveWorkspaceId(args, context, client) {
+function firstDirectoryCandidate(value) {
+  if (!value || typeof value !== "object") return "";
+  const direct =
+    cleanString(value.directory) ||
+    cleanString(value.cwd) ||
+    cleanString(value.workdir) ||
+    cleanString(value.path) ||
+    cleanString(value.workspace && value.workspace.directory) ||
+    cleanString(value.workspace && value.workspace.path) ||
+    cleanString(value.workspace && value.workspace.opencode && value.workspace.opencode.directory) ||
+    cleanString(value.project && value.project.directory) ||
+    cleanString(value.project && value.project.path);
+  if (direct) return direct;
+  if (value.data && typeof value.data === "object") {
+    return firstDirectoryCandidate(value.data);
+  }
+  if (value.session && typeof value.session === "object") {
+    return firstDirectoryCandidate(value.session);
+  }
+  return "";
+}
+
+async function readOpenCodeSession(context, client) {
+  const sessionID = cleanString(context && context.sessionID);
+  if (!sessionID || !client || !client.session || typeof client.session.get !== "function") {
+    return null;
+  }
+  try {
+    return await client.session.get({ path: { sessionID } });
+  } catch {
+    return null;
+  }
+}
+
+function workspaceDirectoryCandidates(workspace) {
+  if (!workspace || typeof workspace !== "object") return [];
+  return [
+    workspace.path,
+    workspace.directory,
+    workspace.opencode && workspace.opencode.directory,
+    workspace.workspace && workspace.workspace.path,
+    workspace.workspace && workspace.workspace.directory,
+    workspace.workspace && workspace.workspace.opencode && workspace.workspace.opencode.directory,
+  ]
+    .map(normalizeDirectoryPath)
+    .filter(Boolean);
+}
+
+function matchWorkspaceByDirectory(workspaces, directory) {
+  const target = normalizeDirectoryPath(directory);
+  if (!target || !Array.isArray(workspaces)) return "";
+  const matches = [];
+  for (const workspace of workspaces) {
+    const id = cleanString(workspace && workspace.id);
+    if (!id) continue;
+    if (workspaceDirectoryCandidates(workspace).some((candidate) => candidate === target)) {
+      matches.push(id);
+    }
+  }
+  return Array.from(new Set(matches)).length === 1 ? matches[0] : "";
+}
+
+function activeWorkspaceIdWhenSafe(workspacesPayload) {
+  const activeId = cleanString(workspacesPayload && workspacesPayload.activeId);
+  const items = Array.isArray(workspacesPayload && workspacesPayload.items) ? workspacesPayload.items : [];
+  if (!activeId || items.length !== 1) return "";
+  return cleanString(items[0] && items[0].id) === activeId ? activeId : "";
+}
+
+async function fetchWorkspaces(state) {
+  return await vesloFetchJson(state, "/workspaces", { method: "GET" });
+}
+
+async function resolveWorkspaceId(args, context, client, state) {
   const explicit = cleanString(args.workspaceId);
   if (explicit) return explicit;
 
   const fromContext = firstWorkspaceIdCandidate(context);
   if (fromContext) return fromContext;
 
-  const sessionID = cleanString(context && context.sessionID);
-  if (sessionID && client && client.session && typeof client.session.get === "function") {
-    try {
-      const session = await client.session.get({ path: { sessionID } });
-      const fromSession = firstWorkspaceIdCandidate(session);
-      if (fromSession) return fromSession;
-    } catch {
-      // Fall through to the clear workspaceId error below.
-    }
+  const session = await readOpenCodeSession(context, client);
+  const fromSession = firstWorkspaceIdCandidate(session);
+  if (fromSession) return fromSession;
+
+  const directory = firstDirectoryCandidate(context) || firstDirectoryCandidate(session);
+  if (state) {
+    const workspaces = await fetchWorkspaces(state);
+    const fromDirectory = matchWorkspaceByDirectory(workspaces.items, directory);
+    if (fromDirectory) return fromDirectory;
+    const fromActive = activeWorkspaceIdWhenSafe(workspaces);
+    if (fromActive) return fromActive;
   }
 
   return "";
 }
 
 function missingWorkspaceIdError() {
-  return "Error: workspaceId is required. Provide workspaceId explicitly; Veslo could not infer it from the current OpenCode session.";
+  return "Error: workspaceId is required. Provide workspaceId explicitly; Veslo could not match the current OpenCode directory to a workspace.";
 }
 
 async function readServerState() {
@@ -828,12 +907,8 @@ async function readServerState() {
   return { baseUrl, clientToken };
 }
 
-function automationsPath(workspaceId) {
-  return "/workspace/" + encodeURIComponent(workspaceId) + "/automations";
-}
-
-async function vesloRequest(state, workspaceId, suffix, options) {
-  const response = await fetch(state.baseUrl + automationsPath(workspaceId) + suffix, {
+async function vesloFetchJson(state, path, options) {
+  const response = await fetch(state.baseUrl + path, {
     method: options.method,
     headers: {
       Authorization: "Bearer " + state.clientToken,
@@ -855,6 +930,14 @@ async function vesloRequest(state, workspaceId, suffix, options) {
 
   if (response.status === 204) return {};
   return await response.json();
+}
+
+function automationsPath(workspaceId) {
+  return "/workspace/" + encodeURIComponent(workspaceId) + "/automations";
+}
+
+async function vesloRequest(state, workspaceId, suffix, options) {
+  return await vesloFetchJson(state, automationsPath(workspaceId) + suffix, options);
 }
 
 function summarizeAutomation(automation) {
@@ -922,7 +1005,7 @@ async function withVesloWorkspace(args, context, client, action) {
   const state = await readServerState();
   if (state.error) return state.error;
 
-  const workspaceId = await resolveWorkspaceId(args, context, client);
+  const workspaceId = await resolveWorkspaceId(args, context, client, state);
   if (!workspaceId) return missingWorkspaceIdError();
 
   try {

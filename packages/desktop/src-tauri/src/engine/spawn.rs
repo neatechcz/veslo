@@ -7,7 +7,7 @@ use tauri_plugin_shell::ShellExt;
 
 use crate::paths::{candidate_xdg_config_dirs, candidate_xdg_data_dirs, maybe_infer_xdg_home};
 use crate::paths::{prepended_path_env, sidecar_path_candidates};
-use crate::veslo_server::persisted_veslo_server_state_path;
+use crate::veslo_server::persisted_veslo_server_plugin_state_path;
 
 pub fn find_free_port() -> Result<u16, String> {
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(|e| e.to_string())?;
@@ -92,7 +92,7 @@ pub fn spawn_engine(
         command = command.env("XDG_CONFIG_HOME", xdg_config_home);
     }
 
-    let veslo_server_state_path = persisted_veslo_server_state_path(app).ok();
+    let veslo_server_state_path = persisted_veslo_server_plugin_state_path(app).ok();
     for (key, value) in build_engine_env_overrides(veslo_server_state_path.as_deref()) {
         command = command.env(key, value);
     }
@@ -136,7 +136,7 @@ mod tests {
     fn engine_env_overrides_include_veslo_server_state_path_when_available() {
         let state_path = std::env::temp_dir()
             .join("veslo-engine-env-test")
-            .join("veslo-server-state.json");
+            .join("veslo-server-plugin-state.json");
 
         let env = build_engine_env_overrides(Some(&state_path));
 

@@ -15,7 +15,7 @@ use crate::orchestrator::{self, OrchestratorSpawnOptions};
 use crate::types::{EngineDoctorResult, EngineInfo, EngineRuntime, ExecResult};
 use crate::utils::truncate_output;
 use crate::veslo_server::{
-    manager::VesloServerManager, persisted_veslo_server_state_path, start_veslo_server,
+    manager::VesloServerManager, persisted_veslo_server_plugin_state_path, start_veslo_server,
 };
 use serde_json::json;
 use std::time::Duration;
@@ -488,7 +488,7 @@ pub fn engine_start(
             .unwrap_or(2);
         let daemon_host = "127.0.0.1".to_string();
         let opencode_bin = program.to_string_lossy().to_string();
-        let veslo_server_state_path = persisted_veslo_server_state_path(&app)
+        let veslo_server_state_path = persisted_veslo_server_plugin_state_path(&app)
             .ok()
             .map(|path| path.to_string_lossy().to_string());
 

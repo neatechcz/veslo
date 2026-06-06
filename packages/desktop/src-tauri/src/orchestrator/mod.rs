@@ -305,7 +305,7 @@ mod tests {
     fn orchestrator_env_overrides_include_veslo_server_state_path_when_available() {
         let state_path = std::env::temp_dir()
             .join("veslo-orchestrator-env-test")
-            .join("veslo-server-state.json");
+            .join("veslo-server-plugin-state.json");
 
         let env = build_orchestrator_env_overrides(Some(&state_path));
 
