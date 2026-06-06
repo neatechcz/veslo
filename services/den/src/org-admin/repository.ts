@@ -106,6 +106,12 @@ export type AcceptOrganizationInviteInput = {
   now?: Date
 }
 
+export type ResolveValidOrganizationInviteForSignupInput = {
+  email: string
+  tokenHash: string
+  now?: Date
+}
+
 export type OrganizationAdminRepository = {
   resolveEnabledOrganizationDomainForEmail(email: string): Promise<OrganizationAdminResolvedDomain>
   countActiveOrganizationSeats(orgId: string): Promise<number>
@@ -117,6 +123,7 @@ export type OrganizationAdminRepository = {
     role: (typeof OrgRole)[number]
   }): Promise<OrganizationAdminMembershipRecord>
   createOrganizationInvite(input: CreateOrganizationInviteInput): Promise<OrganizationAdminInviteRecord>
+  resolveValidOrganizationInviteForSignup(input: ResolveValidOrganizationInviteForSignupInput): Promise<OrganizationAdminInviteRecord>
   acceptOrganizationInvite(input: AcceptOrganizationInviteInput): Promise<{
     invite: OrganizationAdminInviteRecord
     membership: OrganizationAdminMembershipRecord
@@ -212,6 +219,28 @@ export function createOrganizationAdminRepository(
         createdAt,
         updatedAt: createdAt,
       })
+    },
+
+    async resolveValidOrganizationInviteForSignup(input) {
+      const email = normalizeInviteEmail(input.email)
+      if (!email) {
+        throw new OrganizationAdminRepositoryError("invite_not_found")
+      }
+
+      const invite = await store.findInviteByTokenHash(input.tokenHash)
+      if (!invite || invite.status === "revoked" || invite.email !== email) {
+        throw new OrganizationAdminRepositoryError("invite_not_found")
+      }
+      if (invite.status === "accepted") {
+        throw new OrganizationAdminRepositoryError("invite_already_used")
+      }
+
+      const resolveNow = input.now ?? now()
+      if (invite.status === "expired" || (invite.expiresAt && invite.expiresAt <= resolveNow)) {
+        throw new OrganizationAdminRepositoryError("invite_expired")
+      }
+
+      return invite
     },
 
     async acceptOrganizationInvite(input) {
@@ -474,6 +503,10 @@ export async function createOrActivateOrganizationMembership(input: {
 
 export async function createOrganizationInvite(input: CreateOrganizationInviteInput) {
   return (await getDefaultRepository()).createOrganizationInvite(input)
+}
+
+export async function resolveValidOrganizationInviteForSignup(input: ResolveValidOrganizationInviteForSignupInput) {
+  return (await getDefaultRepository()).resolveValidOrganizationInviteForSignup(input)
 }
 
 export async function acceptOrganizationInvite(input: AcceptOrganizationInviteInput) {

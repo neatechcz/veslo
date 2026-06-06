@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url"
 const currentFile = fileURLToPath(import.meta.url)
 const serviceRoot = path.resolve(path.dirname(currentFile), "..")
 const source = readFileSync(path.join(serviceRoot, "src", "auth.ts"), "utf8")
+const indexSource = readFileSync(path.join(serviceRoot, "src", "index.ts"), "utf8")
 const envSource = readFileSync(path.join(serviceRoot, "src", "env.ts"), "utf8")
 const envExampleSource = readFileSync(path.join(serviceRoot, ".env.example"), "utf8")
 const readmeSource = readFileSync(path.join(serviceRoot, "README.md"), "utf8")
@@ -33,6 +34,21 @@ test("auth config gates email callbacks behind explicit auth email configuration
   assert.equal(source.includes("emailAndPassword: {"), true)
   assert.equal(source.includes("enabled: true"), true)
   assert.equal(source.includes("requireEmailVerification: false"), true)
+})
+
+test("email signup route is gated before Better Auth creates a user", () => {
+  assert.equal(source.includes("guardEmailSignupRequest"), true)
+  assert.equal(indexSource.includes("createAuthNodeHandler"), true)
+  assert.equal(indexSource.includes("guardEmailSignupRequest"), true)
+  assert.doesNotMatch(indexSource, /app\.all\("\/api\/auth\/\*", toNodeHandler\(auth\)\)/)
+})
+
+test("auth post-create hook activates organization membership before managed AI and only creates default org as fallback", () => {
+  assert.equal(source.includes("completeSignupAfterUserCreate"), true)
+  assert.match(source, /if \(!signupResult\.activatedOrganizationMembership\)/)
+  assert.match(source, /ensureDefaultOrg/)
+  assert.match(source, /maybeAssignDefaultManagedAiAccessForNewUser/)
+  assert.ok(source.lastIndexOf("completeSignupAfterUserCreate") < source.lastIndexOf("maybeAssignDefaultManagedAiAccessForNewUser"))
 })
 
 test("auth setup docs and sample config include email delivery settings", () => {

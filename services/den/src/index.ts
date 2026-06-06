@@ -5,7 +5,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { fromNodeHeaders, toNodeHandler } from "better-auth/node"
 import { sql } from "drizzle-orm"
-import { auth } from "./auth.js"
+import { auth, createAuthNodeHandler, guardEmailSignupRequest } from "./auth.js"
 import { db } from "./db/index.js"
 import { createDbDebugLogStore, createDebugLogService } from "./debug-logs/repository.js"
 import { extractMetadataRows, shouldWidenVarcharColumn } from "./db/schema-reconcile.js"
@@ -90,7 +90,7 @@ if (corsOrigins.length > 0) {
 
 // Better Auth reads the raw request body itself — mount BEFORE express.json()
 // so the body stream isn't consumed by Express's JSON parser first
-app.all("/api/auth/*", toNodeHandler(auth))
+app.all("/api/auth/*", createAuthNodeHandler(toNodeHandler(auth), guardEmailSignupRequest))
 app.use("/v1", feedbackRouter)
 app.use("/v1/internal", debugLogsIngestRouter)
 if (managedAiRuntime) {
