@@ -36,6 +36,7 @@ const defaultSpecs = [
   './specs/settings-gear-navigation.spec.ts',
   './specs/sidebar-primary-actions-overflow.spec.ts',
   './specs/sidebar-primary-actions-pointer-navigation.spec.ts',
+  './specs/soul-dashboard.spec.ts',
   './specs/smoke.spec.ts',
   './specs/typography.spec.ts',
   './specs/veslo-server-startup.spec.ts',

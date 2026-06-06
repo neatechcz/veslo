@@ -212,3 +212,44 @@ test("managed materialized skill instances are read-only until registry mutation
 
   assert.equal(items[0]?.workspaceInstances[0]?.writable, false);
 });
+
+test("platform inventory instances preserve platform scope enabled state and stay read-only", () => {
+  const items = buildSkillInventory({
+    globalSkills: [
+      {
+        name: "platform-helper",
+        path: "/Users/example/.config/opencode/skills/veslo-managed/platform-helper/SKILL.md",
+        scope: "platform",
+        enabled: false,
+        disabledReason: "user",
+        readable: true,
+        writable: true,
+        registry: {
+          policyId: "policy_platform_helper",
+          source: "platform",
+          removalPolicy: "locked",
+        },
+      },
+    ],
+    workspaceSkillsByWorkspaceId: {},
+    hubSkills: [],
+  });
+
+  const instance = items[0]?.globalInstance;
+  assert.ok(instance);
+  assert.equal(instance.scope, "platform");
+  assert.equal(instance.enabled, false);
+  assert.equal(instance.disabledReason, "user");
+  assert.equal(instance.readable, false);
+  assert.equal(instance.writable, false);
+  assert.deepEqual(skillMutationTargetFromInstance(instance), {
+    name: "platform-helper",
+    path: "/Users/example/.config/opencode/skills/veslo-managed/platform-helper/SKILL.md",
+    scope: "platform",
+    registry: {
+      policyId: "policy_platform_helper",
+      source: "platform",
+      removalPolicy: "locked",
+    },
+  });
+});

@@ -1,6 +1,6 @@
 const STORAGE_KEY = "veslo.ai-gateway.admin.token";
 const BROWSER_AUTH_STORAGE_KEY = "veslo.ai-gateway.admin.browser-auth";
-const DEFAULT_PAGES = ["credentials", "sessions", "usage", "alerts", "users", "audit"];
+const DEFAULT_PAGES = ["organization", "credentials", "usage", "alerts", "users", "audit"];
 const AUTH_STATE_BYTES = 32;
 const AUTH_CODE_VERIFIER_BYTES = 32;
 const CODEX_EXHAUSTED_REASON = "all_codex_credentials_exhausted";
@@ -12,10 +12,12 @@ const state = {
   session: null,
   user: null,
   credentials: [],
-  sessions: [],
   alerts: [],
   audit: [],
   users: [],
+  organizations: [],
+  organizationDomains: [],
+  organizationInvites: [],
   usage: null,
   usageFilters: {
     groupBy: "total",
@@ -25,10 +27,10 @@ const state = {
   },
   showDeletedCredentials: false,
   selectedCredentialId: null,
-  selectedSessionId: null,
   selectedAlertId: null,
   selectedAuditId: null,
   selectedUserId: null,
+  selectedOrganizationId: null,
   userMode: "edit",
   userAiAccessByUserId: {},
   userAiAccessAvailableCredentialsByUserId: {},
@@ -45,12 +47,30 @@ const els = {
   signOutButton: document.getElementById("sign-out-button"),
   refreshButton: document.getElementById("refresh-button"),
   createUserButton: document.getElementById("create-user-button"),
-  createUserButtonInline: document.getElementById("create-user-button-inline"),
+  createUserButtonInline: document.querySelector('[data-platform-only][id="create-user-button-inline"]'),
   pageTitle: document.getElementById("page-title"),
   pageDescription: document.getElementById("page-description"),
   pageEyebrow: document.getElementById("page-eyebrow"),
   navItems: Array.from(document.querySelectorAll("[data-route]")),
   pages: Array.from(document.querySelectorAll("[data-page]")),
+  platformAdminControls: Array.from(document.querySelectorAll("[data-platform-admin-control]")),
+  aiAccessControls: Array.from(document.querySelectorAll("[data-ai-access-control]")),
+  seatLimitControls: Array.from(document.querySelectorAll("[data-seat-limit-control]")),
+  organizationEditorTitle: document.getElementById("organization-editor-title"),
+  organizationName: document.getElementById("organization-name"),
+  organizationSlug: document.getElementById("organization-slug"),
+  organizationSeatLimit: document.getElementById("organization-seat-limit"),
+  organizationSaveButton: document.getElementById("organization-save-button"),
+  organizationSaveStatus: document.getElementById("organization-save-status"),
+  organizationDomainInput: document.getElementById("organization-domain-input"),
+  organizationDomainEnabled: document.getElementById("organization-domain-enabled"),
+  organizationDomainSelfSignup: document.getElementById("organization-domain-self-signup"),
+  organizationDomainAddButton: document.getElementById("organization-domain-add-button"),
+  organizationDomainList: document.getElementById("organization-domain-list"),
+  organizationInviteEmail: document.getElementById("organization-invite-email"),
+  organizationInviteRole: document.getElementById("organization-invite-role"),
+  organizationInviteSendButton: document.getElementById("organization-invite-send-button"),
+  organizationInviteList: document.getElementById("organization-invite-list"),
   credentialCreateProvider: document.getElementById("credential-create-provider"),
   credentialCreateName: document.getElementById("credential-create-name"),
   credentialCreateBaseUrl: document.getElementById("credential-create-base-url"),
@@ -60,8 +80,6 @@ const els = {
   credentialsShowDeleted: document.getElementById("credentials-show-deleted"),
   credentialsTableBody: document.getElementById("credentials-table-body"),
   credentialDetail: document.getElementById("credential-detail"),
-  sessionList: document.getElementById("session-list"),
-  sessionDetail: document.getElementById("session-detail"),
   usageGroupBy: document.getElementById("usage-group-by"),
   usageCredentialFilter: document.getElementById("usage-filter-credential"),
   usageUserFilter: document.getElementById("usage-filter-user"),
@@ -71,6 +89,13 @@ const els = {
   usageTotalRequests: document.getElementById("usage-total-requests"),
   usageTopCredential: document.getElementById("usage-top-credential"),
   usageSeries: document.getElementById("usage-series"),
+  usageCapacityFiveHour: document.getElementById("usage-capacity-five-hour"),
+  usageCapacityFiveHourNote: document.getElementById("usage-capacity-five-hour-note"),
+  usageCapacityWeekly: document.getElementById("usage-capacity-weekly"),
+  usageCapacityWeeklyNote: document.getElementById("usage-capacity-weekly-note"),
+  usageCapacityMeasured: document.getElementById("usage-capacity-measured"),
+  usageCapacityMeasuredNote: document.getElementById("usage-capacity-measured-note"),
+  usageCapacityCredentials: document.getElementById("usage-capacity-credentials"),
   usageCredentialTableBody: document.getElementById("usage-credential-table-body"),
   alertList: document.getElementById("alert-list"),
   alertDetail: document.getElementById("alert-detail"),
@@ -248,6 +273,97 @@ function formatDate(value) {
   });
 }
 
+function allowedPages() {
+  if (Array.isArray(state.session?.allowedPages) && state.session.allowedPages.length > 0) {
+    return state.session.allowedPages.filter((entry) => DEFAULT_PAGES.includes(entry));
+  }
+  return state.session?.platformAdmin ? DEFAULT_PAGES : ["organization", "users"];
+}
+
+function hasCapability(capability) {
+  if (Array.isArray(state.session?.capabilities)) {
+    return state.session.capabilities.includes(capability);
+  }
+  if (state.session?.platformAdmin) {
+    return true;
+  }
+  return capability === "organization" || capability === "users";
+}
+
+function firstAllowedPage() {
+  return allowedPages()[0] || "organization";
+}
+
+function canAccessPage(page) {
+  if (page === "overview") {
+    return state.session?.platformAdmin === true;
+  }
+  return allowedPages().includes(page);
+}
+
+async function runAllowedLoad(page, loader) {
+  if (!canAccessPage(page)) {
+    return;
+  }
+  await loader();
+}
+
+function applyAdminCapabilities() {
+  const allowed = new Set(allowedPages());
+  const canManagePlatform = state.session?.platformAdmin === true;
+  const canManageAiAccess = hasCapability("managedAiUserAccess");
+
+  els.navItems.forEach((item) => {
+    const route = item.dataset.route || "";
+    item.classList.toggle("hidden", !allowed.has(route));
+  });
+  els.pages.forEach((panel) => {
+    const page = panel.dataset.page || "";
+    if (page !== "overview" && !allowed.has(page)) {
+      panel.classList.add("hidden");
+    }
+  });
+  els.platformAdminControls.forEach((node) => node.classList.toggle("hidden", !canManagePlatform));
+  els.aiAccessControls.forEach((node) => node.classList.toggle("hidden", !canManageAiAccess));
+  els.seatLimitControls.forEach((node) => node.classList.toggle("hidden", !canManagePlatform));
+  if (els.userPlatformAdmin) {
+    els.userPlatformAdmin.disabled = !canManagePlatform;
+    if (!canManagePlatform) {
+      els.userPlatformAdmin.checked = false;
+    }
+  }
+  if (els.organizationSeatLimit) {
+    els.organizationSeatLimit.disabled = !canManagePlatform;
+  }
+  if (els.createUserButtonInline) {
+    els.createUserButtonInline.classList.toggle("hidden", !canManagePlatform);
+  }
+}
+
+function normalizeOrganizationRoleInput(value) {
+  return value === "organization_admin" || value === "owner" ? "organization_admin" : "member";
+}
+
+function organizationRoleOptionsMarkup() {
+  return `<option value="organization_admin">Organization admin</option><option value="member">Member</option>`;
+}
+
+function buildUserUpdatePayload(payload) {
+  if (state.session?.platformAdmin !== true) {
+    return {
+      orgId: payload.orgId,
+      orgRole: payload.orgRole,
+    };
+  }
+
+  return {
+    name: payload.name,
+    platformAdmin: payload.platformAdmin,
+    orgId: payload.orgId,
+    orgRole: payload.orgRole,
+  };
+}
+
 function normalizeAiAccess(payload) {
   if (!payload || typeof payload !== "object") {
     return {
@@ -417,10 +533,14 @@ function showLogin(message = "") {
 function showApp() {
   els.loginPanel.classList.add("hidden");
   els.appPanel.classList.remove("hidden");
-  els.createUserButton.classList.toggle("hidden", state.page !== "users");
+  applyAdminCapabilities();
+  els.createUserButton.classList.toggle("hidden", state.page !== "users" || state.session?.platformAdmin !== true);
 }
 
 function setActivePage(page) {
+  if (state.session && !canAccessPage(page)) {
+    page = firstAllowedPage();
+  }
   state.page = page;
   const nextPath = page === "overview" ? "/admin" : `/admin/${page}`;
   const nextUrl = `${nextPath}${location.search}${location.hash}`;
@@ -435,11 +555,11 @@ function setActivePage(page) {
   els.createUserButton.classList.toggle("hidden", page !== "users");
 
   const titles = {
-    overview: ["AI Gateway control plane", "Overview", "Inspect credentials, sessions, usage, alerts, users, and audit events from one place."],
+    overview: ["AI Gateway control plane", "Overview", "Inspect credentials, usage, alerts, users, and audit events from one place."],
+    organization: ["AI Gateway control plane", "Organization", "Manage organization details, domains, and pending invites."],
     credentials: ["AI Gateway control plane", "Credentials", "Inspect provider keys, linked alerts, and rotation state."],
-    sessions: ["AI Gateway control plane", "Sessions", "Review sticky leases, rebinding history, and worker ownership."],
     usage: ["AI Gateway control plane", "Usage", "Analyze total token usage first, then break it down by credential, user, or org."],
-    alerts: ["AI Gateway control plane", "Alerts", "Triage credential failures, usage spikes, and session anomalies."],
+    alerts: ["AI Gateway control plane", "Alerts", "Triage credential failures, usage spikes, and routing anomalies."],
     users: ["AI Gateway control plane", "Users", "Create, edit, disable, or remove users from the directory."],
     audit: ["AI Gateway control plane", "Audit", "Filter by actor, action, or entity and inspect detailed change history."],
   };
@@ -448,6 +568,8 @@ function setActivePage(page) {
   els.pageEyebrow.textContent = eyebrow;
   els.pageTitle.textContent = title;
   els.pageDescription.textContent = description;
+  applyAdminCapabilities();
+  els.createUserButton.classList.toggle("hidden", page !== "users" || state.session?.platformAdmin !== true);
 }
 
 async function api(path, options = {}) {
@@ -509,14 +631,26 @@ async function bootstrapSession() {
 
   state.session = payload;
   state.user = payload?.user || null;
-  setStatus("Signed in", state.user ? `${state.user.name || state.user.email} · platform admin` : "platform admin");
-  showApp();
   populateOrganizationOptions();
+  if (!canAccessPage(state.page)) {
+    setActivePage(firstAllowedPage());
+  }
+  setStatus(
+    "Signed in",
+    state.user
+      ? `${state.user.name || state.user.email} · ${state.session.platformAdmin ? "platform admin" : "organization admin"}`
+      : state.session.platformAdmin ? "platform admin" : "organization admin",
+  );
+  showApp();
   await loadAllData();
 }
 
 function populateOrganizationOptions() {
   const organizations = Array.isArray(state.session?.organizations) ? state.session.organizations : [];
+  state.organizations = organizations;
+  if (!state.selectedOrganizationId || !organizations.some((entry) => entry.id === state.selectedOrganizationId)) {
+    state.selectedOrganizationId = state.session?.activeOrgId || organizations[0]?.id || null;
+  }
   els.userOrg.innerHTML = organizations.length
     ? organizations.map((entry) => `<option value="${escapeHtml(entry.id)}">${escapeHtml(entry.name)}</option>`).join("")
     : `<option value="">No organization</option>`;
@@ -639,16 +773,18 @@ async function signOut() {
   state.session = null;
   state.user = null;
   state.credentials = [];
-  state.sessions = [];
   state.alerts = [];
   state.audit = [];
   state.users = [];
+  state.organizations = [];
+  state.organizationDomains = [];
+  state.organizationInvites = [];
   state.usage = null;
   state.selectedCredentialId = null;
-  state.selectedSessionId = null;
   state.selectedAlertId = null;
   state.selectedAuditId = null;
   state.selectedUserId = null;
+  state.selectedOrganizationId = null;
   state.userMode = "edit";
   localStorage.removeItem(STORAGE_KEY);
   window.location.assign("/admin");
@@ -656,14 +792,51 @@ async function signOut() {
 
 async function loadAllData() {
   await Promise.all([
-    loadCredentials(),
-    loadSessions(),
-    loadAlerts(),
-    loadUsers(),
-    loadAudit(),
-    loadUsage(),
+    runAllowedLoad("organization", loadOrganization),
+    runAllowedLoad("credentials", loadCredentials),
+    runAllowedLoad("alerts", loadAlerts),
+    runAllowedLoad("users", loadUsers),
+    runAllowedLoad("audit", loadAudit),
+    runAllowedLoad("usage", loadUsage),
   ]);
   renderOverview();
+}
+
+function currentOrganizationId() {
+  return state.selectedOrganizationId || state.session?.activeOrgId || state.organizations[0]?.id || null;
+}
+
+function currentOrganization() {
+  const orgId = currentOrganizationId();
+  return state.organizations.find((entry) => entry.id === orgId) || state.session?.organizations?.find((entry) => entry.id === orgId) || null;
+}
+
+async function loadOrganization() {
+  try {
+    const payload = await fetchJson("/organizations");
+    state.organizations = Array.isArray(payload?.organizations) ? payload.organizations : [];
+    if (!state.selectedOrganizationId || !state.organizations.some((entry) => entry.id === state.selectedOrganizationId)) {
+      state.selectedOrganizationId = state.session?.activeOrgId || state.organizations[0]?.id || null;
+    }
+
+    const orgId = currentOrganizationId();
+    if (orgId) {
+      const [domainsPayload, invitesPayload] = await Promise.all([
+        fetchJson(`/organizations/${encodeURIComponent(orgId)}/domains`),
+        fetchJson(`/organizations/${encodeURIComponent(orgId)}/invites`),
+      ]);
+      state.organizationDomains = Array.isArray(domainsPayload?.domains) ? domainsPayload.domains : [];
+      state.organizationInvites = Array.isArray(invitesPayload?.invites) ? invitesPayload.invites : [];
+    } else {
+      state.organizationDomains = [];
+      state.organizationInvites = [];
+    }
+
+    renderOrganization();
+  } catch (error) {
+    console.error("loadOrganization failed", error);
+    setOrganizationSaveStatus(`Unable to load organization: ${error instanceof Error ? error.message : "unknown_error"}`, "error");
+  }
 }
 
 async function loadCredentials() {
@@ -677,19 +850,6 @@ async function loadCredentials() {
     renderCredentials();
   } catch (error) {
     console.error("loadCredentials failed", error);
-  }
-}
-
-async function loadSessions() {
-  try {
-    const payload = await fetchJson("/sessions");
-    state.sessions = Array.isArray(payload?.sessions) ? payload.sessions : [];
-    if (!state.selectedSessionId || !state.sessions.some((entry) => entry.id === state.selectedSessionId)) {
-      state.selectedSessionId = state.sessions[0]?.id || null;
-    }
-    renderSessions();
-  } catch (error) {
-    console.error("loadSessions failed", error);
   }
 }
 
@@ -720,6 +880,10 @@ async function loadAudit() {
 }
 
 async function loadUserAiAccess(userId) {
+  if (!hasCapability("managedAiUserAccess")) {
+    return null;
+  }
+
   const resolvedUserId = typeof userId === "string" ? userId.trim() : "";
   if (!resolvedUserId) {
     return null;
@@ -735,6 +899,10 @@ async function loadUserAiAccess(userId) {
 }
 
 async function saveUserAiAccess(userId, input = null) {
+  if (!hasCapability("managedAiUserAccess")) {
+    return;
+  }
+
   const resolvedUserId = typeof userId === "string" ? userId.trim() : "";
   if (!resolvedUserId) {
     return;
@@ -774,7 +942,7 @@ async function loadUsers() {
       state.userMode = "create";
     }
     renderUsers();
-    if (state.userMode !== "create" && state.selectedUserId) {
+    if (state.userMode !== "create" && state.selectedUserId && hasCapability("managedAiUserAccess")) {
       await loadUserAiAccess(state.selectedUserId);
       const user = currentUser();
       if (user) {
@@ -818,8 +986,8 @@ async function loadUsage() {
 
 function renderOverview() {
   const metrics = [
-    String(state.sessions.length),
-    String(state.credentials.filter((entry) => entry.state !== "healthy").length),
+    String(state.credentials.filter((entry) => !entry.deletedAt).length),
+    String(state.credentials.filter((entry) => !entry.deletedAt && entry.state !== "healthy").length),
     String(state.users.length),
   ];
   els.heroMetrics.forEach((node, index) => {
@@ -827,6 +995,64 @@ function renderOverview() {
       node.textContent = metrics[index];
     }
   });
+}
+
+function renderOrganization() {
+  const organization = currentOrganization();
+  if (!organization) {
+    els.organizationEditorTitle.textContent = "No organization";
+    els.organizationName.value = "";
+    els.organizationSlug.value = "";
+    els.organizationSeatLimit.value = "";
+    els.organizationDomainList.innerHTML = `<article class="list-card active"><div><strong>No organization</strong><p>No organization is available for this session.</p></div></article>`;
+    els.organizationInviteList.innerHTML = `<article class="list-card active"><div><strong>No pending invites</strong><p>Select an organization first.</p></div></article>`;
+    return;
+  }
+
+  els.organizationEditorTitle.textContent = organization.name || organization.slug || organization.id;
+  els.organizationName.value = organization.name || "";
+  els.organizationSlug.value = organization.slug || "";
+  els.organizationSeatLimit.value = organization.seatLimit === null || organization.seatLimit === undefined
+    ? ""
+    : String(organization.seatLimit);
+  els.organizationSeatLimit.disabled = state.session?.platformAdmin !== true;
+
+  els.organizationDomainList.innerHTML = state.organizationDomains.map((domain) => `
+    <article class="list-card active" data-domain-id="${escapeHtml(domain.id)}">
+      <div>
+        <strong>${escapeHtml(domain.domain)}</strong>
+        <p>${domain.enabled ? "Enabled" : "Disabled"} · ${domain.selfSignupEnabled ? "Self signup enabled" : "Self signup disabled"}</p>
+        <label class="switch-row">
+          <span>Enabled</span>
+          <input type="checkbox" data-domain-enabled ${domain.enabled ? "checked" : ""} />
+        </label>
+        <label class="switch-row">
+          <span>Self signup</span>
+          <input type="checkbox" data-domain-self-signup ${domain.selfSignupEnabled ? "checked" : ""} />
+        </label>
+      </div>
+      <span class="button-row">
+        <button class="button button-secondary" type="button" data-domain-save>Save</button>
+        <button class="button button-secondary" type="button" data-domain-delete>Remove</button>
+      </span>
+    </article>
+  `).join("") || `<article class="list-card active"><div><strong>No domains</strong><p>Add a domain to enable organization matching.</p></div></article>`;
+
+  const pendingInvites = state.organizationInvites.filter((invite) => invite.status === "pending");
+  els.organizationInviteList.innerHTML = pendingInvites.map((invite) => `
+    <article class="list-card active" data-invite-id="${escapeHtml(invite.id)}">
+      <div>
+        <strong>${escapeHtml(invite.email)}</strong>
+        <p>${escapeHtml(normalizeOrganizationRoleInput(invite.role))} · expires ${escapeHtml(formatDate(invite.expiresAt))}</p>
+      </div>
+      <span class="button-row">
+        <button class="button button-secondary" type="button" data-invite-resend>Resend</button>
+        <button class="button button-secondary" type="button" data-invite-revoke>Revoke</button>
+      </span>
+    </article>
+  `).join("") || `<article class="list-card active"><div><strong>No pending invites</strong><p>Pending invites will appear here.</p></div></article>`;
+
+  applyAdminCapabilities();
 }
 
 function renderCredentials() {
@@ -894,43 +1120,12 @@ function renderCredentialActionButtons(credential) {
   `;
 }
 
-function renderSessions() {
-  els.sessionList.innerHTML = state.sessions.map((entry) => `
-    <article class="list-card ${entry.id === state.selectedSessionId ? "active" : ""}" data-session-id="${escapeHtml(entry.id)}">
-      <div>
-        <strong>${escapeHtml(entry.id)}</strong>
-        <p>${escapeHtml(entry.userLabel)}, ${escapeHtml(entry.projectLabel)}, worker ${escapeHtml(entry.workerLabel)}</p>
-      </div>
-      <span class="status-chip">${escapeHtml(entry.state)}</span>
-    </article>
-  `).join("") || `<article class="list-card active"><div><strong>No sessions</strong><p>There are no tracked session leases yet.</p></div></article>`;
-
-  const selected = state.sessions.find((entry) => entry.id === state.selectedSessionId) || state.sessions[0];
-  if (selected) {
-    const credential = state.credentials.find((entry) => entry.id === selected.credentialId);
-    els.sessionDetail.innerHTML = `
-      <p class="eyebrow">Selected session</p>
-      <h3>${escapeHtml(selected.id)}</h3>
-      <div class="timeline">
-        <div><span>Current state</span><strong>${escapeHtml(selected.state)}</strong></div>
-        <div><span>Active binding</span><strong>${escapeHtml(credential?.name || selected.credentialId)}</strong></div>
-        <div><span>Last failover</span><strong>${escapeHtml(formatDate(selected.lastFailoverAt))}</strong></div>
-        <div><span>Last seen</span><strong>${escapeHtml(formatDate(selected.lastSeenAt))}</strong></div>
-      </div>
-      <div class="button-row">
-        <button class="button button-secondary" type="button">Open trace</button>
-        <button class="button button-primary" type="button">Watch session</button>
-      </div>
-    `;
-  }
-}
-
 function renderUsage() {
   if (!state.usage) {
     return;
   }
 
-  const { credentialUsage = [], filters, series, summary, topCredentials } = state.usage;
+  const { capacity, credentialUsage = [], filters, series, summary, topCredentials } = state.usage;
   els.usageGroupBy.value = state.usageFilters.groupBy;
   els.usageCredentialFilter.innerHTML = `<option value="">All credentials</option>${filters.credentials.map((entry) => `<option value="${escapeHtml(entry.id)}"${entry.id === state.usageFilters.credentialId ? " selected" : ""}>${escapeHtml(entry.label)}</option>`).join("")}`;
   els.usageUserFilter.innerHTML = `<option value="">All users</option>${filters.users.map((entry) => `<option value="${escapeHtml(entry.id)}"${entry.id === state.usageFilters.userId ? " selected" : ""}>${escapeHtml(entry.label)}</option>`).join("")}`;
@@ -955,6 +1150,8 @@ function renderUsage() {
     </article>
   `).join("") || `<article class="list-card active"><div><strong>No usage</strong><p>No usage matched the selected filters.</p></div></article>`;
 
+  renderUsageCapacity(capacity);
+
   els.usageCredentialTableBody.innerHTML = credentialUsage.map((credential) => {
     const upstreamStatus = formatCredentialUpstreamStatus(credential);
     return `<tr>
@@ -970,6 +1167,63 @@ function renderUsage() {
       <td><span class="status-chip ${escapeHtml(upstreamStatus.tone)}">${escapeHtml(upstreamStatus.label)}</span><span>${escapeHtml(upstreamStatus.detail)}</span><span>${escapeHtml(upstreamStatus.limitSummary)}</span></td>
     </tr>`;
   }).join("") || `<tr><td colspan="10">No credential usage matched the selected filters.</td></tr>`;
+}
+
+function renderUsageCapacity(capacity) {
+  const codex = capacity?.codexCredentials ?? { total: 0, measurable: 0, unavailable: 0 };
+  const fiveHour = capacity?.fiveHour ?? null;
+  const weekly = capacity?.weekly ?? null;
+
+  els.usageCapacityFiveHour.textContent = formatCapacityRemaining(fiveHour?.remainingPercent);
+  els.usageCapacityFiveHourNote.textContent = formatCapacityWindowNote(fiveHour);
+  els.usageCapacityWeekly.textContent = formatCapacityRemaining(weekly?.remainingPercent);
+  els.usageCapacityWeeklyNote.textContent = formatCapacityWindowNote(weekly);
+  els.usageCapacityMeasured.textContent = `${formatNumber(codex.measurable)}/${formatNumber(codex.total)}`;
+  els.usageCapacityMeasuredNote.textContent = formatCapacityMeasuredNote(codex);
+
+  const credentials = Array.isArray(capacity?.credentials) ? capacity.credentials : [];
+  els.usageCapacityCredentials.innerHTML = credentials.map((credential) => {
+    const tone = credential.limitsAvailable ? "success" : credential.statusAvailable ? "warning" : "danger";
+    const label = credential.limitsAvailable ? "Limits visible" : credential.statusAvailable ? "Limits unknown" : "Status unavailable";
+    return `
+      <article class="list-card active">
+        <div>
+          <strong>${escapeHtml(credential.name || credential.id)}</strong>
+          <p>5h ${escapeHtml(formatCapacityRemaining(credential.fiveHourRemainingPercent))} · Weekly ${escapeHtml(formatCapacityRemaining(credential.weeklyRemainingPercent))}</p>
+        </div>
+        <span class="status-chip ${escapeHtml(tone)}">${escapeHtml(label)}</span>
+      </article>
+    `;
+  }).join("") || `<article class="list-card active"><div><strong>No Codex capacity data</strong><p>No functional Codex credentials reported visible limits.</p></div></article>`;
+}
+
+function formatCapacityMeasuredNote(codex) {
+  if (!codex || codex.total === 0) {
+    return "No functional Codex credentials";
+  }
+
+  const notes = [];
+  if (codex.unknown > 0) {
+    notes.push(`${formatNumber(codex.unknown)} credential limit status unknown`);
+  }
+  if (codex.unavailable > 0) {
+    notes.push(`${formatNumber(codex.unavailable)} credential status unavailable`);
+  }
+  return notes.length > 0 ? notes.join(" · ") : "All Codex credential limits visible";
+}
+
+function formatCapacityRemaining(value) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? `${Math.round(value)}% remaining`
+    : "Unknown";
+}
+
+function formatCapacityWindowNote(window) {
+  if (!window || typeof window.measurableCredentials !== "number" || window.measurableCredentials === 0) {
+    return "No visible Codex limit data";
+  }
+  const used = typeof window.usedPercent === "number" ? `${Math.round(window.usedPercent)}% used` : "usage unknown";
+  return `${used} across ${formatNumber(window.measurableCredentials)} measured credential${window.measurableCredentials === 1 ? "" : "s"}`;
 }
 
 function formatProviderName(provider) {
@@ -1101,7 +1355,7 @@ function renderAlerts() {
       <h3>${escapeHtml(selected.title)}</h3>
       <div class="stack">
         <div class="detail-line"><span>Affected credential</span><strong>${escapeHtml(credential?.name || "Unassigned")}</strong></div>
-        <div class="detail-line"><span>Affected sessions</span><strong>${escapeHtml(String(selected.affectedSessions))}</strong></div>
+        <div class="detail-line"><span>Affected routes</span><strong>${escapeHtml(String(selected.affectedSessions))}</strong></div>
         <div class="detail-line"><span>Owner</span><strong>${escapeHtml(selected.owner || "Unassigned")}</strong></div>
         <div class="detail-line"><span>Status</span><strong>${escapeHtml(selected.status)}</strong></div>
       </div>
@@ -1230,36 +1484,43 @@ function populateUserEditor(user) {
   els.userName.value = user?.name || "";
   els.userEmail.value = user?.email || "";
   els.userEmail.disabled = !isCreate;
-  els.userOrg.disabled = !isCreate;
-  els.userRole.disabled = !isCreate;
+  els.userOrg.disabled = false;
+  els.userRole.disabled = false;
   els.userPlatformAdmin.checked = user?.platformAdmin === true;
+  if (state.session?.platformAdmin !== true) {
+    els.userPlatformAdmin.checked = false;
+    els.userPlatformAdmin.disabled = true;
+  }
   els.userSendInvite.checked = true;
   els.userSendInvite.disabled = !isCreate;
   if (membership?.orgId) {
     els.userOrg.value = membership.orgId;
-    els.userRole.value = membership.role;
+    els.userRole.value = normalizeOrganizationRoleInput(membership.role);
   } else if (els.userOrg.options.length > 0) {
     els.userOrg.selectedIndex = 0;
     els.userRole.value = "member";
   }
   els.userDisableButton.textContent = user?.disabled ? "Enable user" : "Disable user";
-  els.userDisableButton.disabled = isCreate || !user;
-  els.userDeleteButton.disabled = isCreate || !user;
-  els.userAiAccessEnabled.checked = aiAccess.enabled;
-  els.userAiAccessEnabled.disabled = isCreate || !user;
-  els.userAiAccessProvider.value = aiAccess.provider || "";
-  els.userAiAccessProvider.disabled = isCreate || !user;
-  renderAiAccessCredentialOptions(user, aiAccess);
-  els.userAiAccessDefaultModel.value = aiAccess.defaultModel || "";
-  els.userAiAccessDefaultModel.disabled = isCreate || !user;
-  els.userAiAccessAllowedModels.value = formatAllowedModels(aiAccess.allowedModels);
-  els.userAiAccessAllowedModels.disabled = isCreate || !user;
-  updateAiAccessStatusText(user, aiAccess);
-  if (!isCreate && isAiAccessModelCatalogProvider(aiAccess.provider) && aiAccess.credentialId) {
+  els.userDisableButton.disabled = isCreate || !user || state.session?.platformAdmin !== true;
+  els.userDeleteButton.disabled = isCreate || !user || state.session?.platformAdmin !== true;
+  if (hasCapability("managedAiUserAccess")) {
+    els.userAiAccessEnabled.checked = aiAccess.enabled;
+    els.userAiAccessEnabled.disabled = isCreate || !user;
+    els.userAiAccessProvider.value = aiAccess.provider || "";
+    els.userAiAccessProvider.disabled = isCreate || !user;
+    renderAiAccessCredentialOptions(user, aiAccess);
+    els.userAiAccessDefaultModel.value = aiAccess.defaultModel || "";
+    els.userAiAccessDefaultModel.disabled = isCreate || !user;
+    els.userAiAccessAllowedModels.value = formatAllowedModels(aiAccess.allowedModels);
+    els.userAiAccessAllowedModels.disabled = isCreate || !user;
+    updateAiAccessStatusText(user, aiAccess);
+  }
+  if (hasCapability("managedAiUserAccess") && !isCreate && isAiAccessModelCatalogProvider(aiAccess.provider) && aiAccess.credentialId) {
     void refreshSelectedAiAccessModels();
   } else {
     setAiAccessModelOptions([]);
   }
+  applyAdminCapabilities();
 }
 
 function renderUsers() {
@@ -1329,6 +1590,10 @@ function renderAudit() {
 }
 
 function enterCreateMode() {
+  if (state.session?.platformAdmin !== true) {
+    return;
+  }
+
   state.userMode = "create";
   state.selectedUserId = null;
   setActivePage("users");
@@ -1340,7 +1605,6 @@ function enterCreateMode() {
 async function refreshCredentialOperations() {
   await Promise.all([
     loadCredentials(),
-    loadSessions(),
     loadAlerts(),
     loadAudit(),
   ]);
@@ -1348,7 +1612,7 @@ async function refreshCredentialOperations() {
 }
 
 async function refreshSelectedUserAiAccessOptions() {
-  if (state.userMode === "create" || !state.selectedUserId) {
+  if (!hasCapability("managedAiUserAccess") || state.userMode === "create" || !state.selectedUserId) {
     return;
   }
 
@@ -1360,6 +1624,10 @@ async function refreshSelectedUserAiAccessOptions() {
 }
 
 async function refreshSelectedAiAccessModels() {
+  if (!hasCapability("managedAiUserAccess")) {
+    return;
+  }
+
   const selectedProvider = els.userAiAccessProvider.value || "";
   const credentialId = selectedAiAccessCredentialId();
   if ((selectedProvider !== "codex_oauth" && selectedProvider !== "openai_compatible") || !credentialId) {
@@ -1402,6 +1670,15 @@ function setUserSaveStatus(message, tone = "neutral") {
     return;
   }
   els.userSaveStatus.dataset.tone = tone;
+}
+
+function setOrganizationSaveStatus(message, tone = "neutral") {
+  els.organizationSaveStatus.textContent = message;
+  if (tone === "neutral") {
+    delete els.organizationSaveStatus.dataset.tone;
+    return;
+  }
+  els.organizationSaveStatus.dataset.tone = tone;
 }
 
 function resetCredentialCreateForm() {
@@ -1511,9 +1788,9 @@ async function runCredentialAction(action) {
   }
 
   const confirmationMessages = {
-    drain: `Drain ${credential.name}? New sessions will stop using this credential.`,
-    rotate: `Rotate ${credential.name}? Active sessions will move to another healthy credential if one is available.`,
-    revoke: `Revoke ${credential.name}? Existing sessions may lose access if no replacement is available.`,
+    drain: `Drain ${credential.name}? New requests will stop using this credential.`,
+    rotate: `Rotate ${credential.name}? Active routes will move to another healthy credential if one is available.`,
+    revoke: `Revoke ${credential.name}? Existing routes may lose access if no replacement is available.`,
     delete: `Delete ${credential.name}? This moves it to Show Deleted and prevents future assignment or use.`,
     reconnect: `Reconnect ${credential.name}? Paste a fresh Codex auth.json from a dedicated server-only login.`,
   };
@@ -1570,13 +1847,206 @@ async function runAlertAction(action) {
   }
 }
 
+async function saveOrganization() {
+  const orgId = currentOrganizationId();
+  if (!orgId) {
+    return;
+  }
+
+  const payload = {
+    name: els.organizationName.value.trim(),
+    slug: els.organizationSlug.value.trim(),
+  };
+  if (state.session?.platformAdmin === true) {
+    payload.seatLimit = els.organizationSeatLimit.value.trim() ? Number(els.organizationSeatLimit.value) : null;
+  }
+
+  try {
+    els.organizationSaveButton.disabled = true;
+    setOrganizationSaveStatus("Saving organization...", "pending");
+    const saved = await fetchJson(`/organizations/${encodeURIComponent(orgId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+    const organization = saved?.organization;
+    if (organization?.id) {
+      const index = state.organizations.findIndex((entry) => entry.id === organization.id);
+      if (index >= 0) {
+        state.organizations[index] = organization;
+      } else {
+        state.organizations.push(organization);
+      }
+    }
+    renderOrganization();
+    setOrganizationSaveStatus("Organization saved.", "success");
+  } catch (error) {
+    setOrganizationSaveStatus(
+      `Unable to save organization: ${error instanceof Error ? error.message : "unknown_error"}`,
+      "error",
+    );
+  } finally {
+    els.organizationSaveButton.disabled = false;
+  }
+}
+
+async function createOrganizationDomain() {
+  const orgId = currentOrganizationId();
+  if (!orgId) {
+    return;
+  }
+
+  try {
+    els.organizationDomainAddButton.disabled = true;
+    setOrganizationSaveStatus("Adding domain...", "pending");
+    await fetchJson(`/organizations/${encodeURIComponent(orgId)}/domains`, {
+      method: "POST",
+      body: JSON.stringify({
+        domain: els.organizationDomainInput.value.trim(),
+        enabled: els.organizationDomainEnabled.checked,
+        selfSignupEnabled: els.organizationDomainSelfSignup.checked,
+      }),
+    });
+    els.organizationDomainInput.value = "";
+    await loadOrganization();
+    setOrganizationSaveStatus("Domain added.", "success");
+  } catch (error) {
+    setOrganizationSaveStatus(
+      `Unable to add domain: ${error instanceof Error ? error.message : "unknown_error"}`,
+      "error",
+    );
+  } finally {
+    els.organizationDomainAddButton.disabled = false;
+  }
+}
+
+async function saveOrganizationDomain(card) {
+  const orgId = currentOrganizationId();
+  const domainId = card?.dataset?.domainId;
+  if (!orgId || !domainId) {
+    return;
+  }
+
+  try {
+    setOrganizationSaveStatus("Saving domain...", "pending");
+    await fetchJson(`/organizations/${encodeURIComponent(orgId)}/domains/${encodeURIComponent(domainId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        enabled: card.querySelector("[data-domain-enabled]")?.checked === true,
+        selfSignupEnabled: card.querySelector("[data-domain-self-signup]")?.checked === true,
+      }),
+    });
+    await loadOrganization();
+    setOrganizationSaveStatus("Domain saved.", "success");
+  } catch (error) {
+    setOrganizationSaveStatus(
+      `Unable to save domain: ${error instanceof Error ? error.message : "unknown_error"}`,
+      "error",
+    );
+  }
+}
+
+async function deleteOrganizationDomain(card) {
+  const orgId = currentOrganizationId();
+  const domainId = card?.dataset?.domainId;
+  if (!orgId || !domainId) {
+    return;
+  }
+
+  try {
+    setOrganizationSaveStatus("Removing domain...", "pending");
+    await fetchJson(`/organizations/${encodeURIComponent(orgId)}/domains/${encodeURIComponent(domainId)}`, {
+      method: "DELETE",
+    });
+    await loadOrganization();
+    setOrganizationSaveStatus("Domain removed.", "success");
+  } catch (error) {
+    setOrganizationSaveStatus(
+      `Unable to remove domain: ${error instanceof Error ? error.message : "unknown_error"}`,
+      "error",
+    );
+  }
+}
+
+async function createOrganizationInvite() {
+  const orgId = currentOrganizationId();
+  if (!orgId) {
+    return;
+  }
+
+  try {
+    els.organizationInviteSendButton.disabled = true;
+    setOrganizationSaveStatus("Sending invite...", "pending");
+    await fetchJson(`/organizations/${encodeURIComponent(orgId)}/invites`, {
+      method: "POST",
+      body: JSON.stringify({
+        email: els.organizationInviteEmail.value.trim(),
+        role: normalizeOrganizationRoleInput(els.organizationInviteRole.value),
+      }),
+    });
+    els.organizationInviteEmail.value = "";
+    await loadOrganization();
+    setOrganizationSaveStatus("Invite sent.", "success");
+  } catch (error) {
+    setOrganizationSaveStatus(
+      `Unable to send invite: ${error instanceof Error ? error.message : "unknown_error"}`,
+      "error",
+    );
+  } finally {
+    els.organizationInviteSendButton.disabled = false;
+  }
+}
+
+async function resendOrganizationInvite(card) {
+  const orgId = currentOrganizationId();
+  const inviteId = card?.dataset?.inviteId;
+  if (!orgId || !inviteId) {
+    return;
+  }
+
+  try {
+    setOrganizationSaveStatus("Resending invite...", "pending");
+    await fetchJson(`/organizations/${encodeURIComponent(orgId)}/invites/${encodeURIComponent(inviteId)}/resend`, {
+      method: "POST",
+    });
+    await loadOrganization();
+    setOrganizationSaveStatus("Invite resent.", "success");
+  } catch (error) {
+    setOrganizationSaveStatus(
+      `Unable to resend invite: ${error instanceof Error ? error.message : "unknown_error"}`,
+      "error",
+    );
+  }
+}
+
+async function revokeOrganizationInvite(card) {
+  const orgId = currentOrganizationId();
+  const inviteId = card?.dataset?.inviteId;
+  if (!orgId || !inviteId) {
+    return;
+  }
+
+  try {
+    setOrganizationSaveStatus("Revoking invite...", "pending");
+    await fetchJson(`/organizations/${encodeURIComponent(orgId)}/invites/${encodeURIComponent(inviteId)}/revoke`, {
+      method: "POST",
+    });
+    await loadOrganization();
+    setOrganizationSaveStatus("Invite revoked.", "success");
+  } catch (error) {
+    setOrganizationSaveStatus(
+      `Unable to revoke invite: ${error instanceof Error ? error.message : "unknown_error"}`,
+      "error",
+    );
+  }
+}
+
 async function saveUser() {
   const payload = {
     email: els.userEmail.value.trim(),
     name: els.userName.value.trim(),
     platformAdmin: els.userPlatformAdmin.checked,
     orgId: els.userOrg.value || null,
-    orgRole: els.userRole.value === "owner" ? "owner" : "member",
+    orgRole: normalizeOrganizationRoleInput(els.userRole.value),
   };
   const aiAccessInput = {
     ...readAiAccessFormValue(),
@@ -1593,7 +2063,9 @@ async function saveUser() {
         state.userMode = "edit";
         state.selectedUserId = existingUser.id;
         renderUsers();
-        await loadUserAiAccess(existingUser.id);
+        if (hasCapability("managedAiUserAccess")) {
+          await loadUserAiAccess(existingUser.id);
+        }
         populateUserEditor(existingUser);
         setUserSaveStatus("That email already exists. Showing the existing user record instead.", "error");
         return;
@@ -1613,23 +2085,26 @@ async function saveUser() {
       }
       await fetchJson(`/users/${encodeURIComponent(user.id)}`, {
         method: "PATCH",
-        body: JSON.stringify({
-          name: payload.name,
-          platformAdmin: payload.platformAdmin,
-        }),
+        body: JSON.stringify(buildUserUpdatePayload(payload)),
       });
     }
 
     await loadUsers();
     const selectedUser = currentUser();
-    if (selectedUser?.id) {
-      if (!wasCreating && selectedUser?.id) {
+    if (!wasCreating && selectedUser?.id) {
+      if (hasCapability("managedAiUserAccess")) {
         await saveUserAiAccess(selectedUser.id, aiAccessInput);
       }
-      await loadUserAiAccess(selectedUser.id);
+    }
+    if (selectedUser?.id) {
+      if (hasCapability("managedAiUserAccess")) {
+        await loadUserAiAccess(selectedUser.id);
+      }
       populateUserEditor(selectedUser);
     }
-    await loadAudit();
+    if (hasCapability("audit")) {
+      await loadAudit();
+    }
     setUserSaveStatus(
       wasCreating
         ? "User created. Review AI access separately if needed."
@@ -1647,6 +2122,10 @@ async function saveUser() {
 }
 
 async function toggleUserDisabled() {
+  if (state.session?.platformAdmin !== true) {
+    return;
+  }
+
   const user = currentUser();
   if (!user) {
     return;
@@ -1665,6 +2144,10 @@ async function toggleUserDisabled() {
 }
 
 async function deleteUser() {
+  if (state.session?.platformAdmin !== true) {
+    return;
+  }
+
   const user = currentUser();
   if (!user) {
     return;
@@ -1716,6 +2199,9 @@ function bindActions() {
   els.refreshButton.addEventListener("click", () => void bootstrapSession());
   els.createUserButton.addEventListener("click", enterCreateMode);
   els.createUserButtonInline.addEventListener("click", enterCreateMode);
+  els.organizationSaveButton.addEventListener("click", () => void saveOrganization());
+  els.organizationDomainAddButton.addEventListener("click", () => void createOrganizationDomain());
+  els.organizationInviteSendButton.addEventListener("click", () => void createOrganizationInvite());
   els.credentialCreateProvider.addEventListener("change", updateCredentialCreateFields);
   els.credentialCreateSubmit.addEventListener("click", () => void createCredential());
   els.credentialsShowDeleted.addEventListener("change", () => {
@@ -1746,13 +2232,6 @@ function bindActions() {
     }
   });
 
-  els.sessionList.addEventListener("click", (event) => {
-    const row = event.target.closest("[data-session-id]");
-    if (!row) return;
-    state.selectedSessionId = row.dataset.sessionId;
-    renderSessions();
-  });
-
   els.alertList.addEventListener("click", (event) => {
     const card = event.target.closest("[data-alert-id]");
     if (!card) return;
@@ -1781,7 +2260,7 @@ function bindActions() {
     state.userMode = "edit";
     state.selectedUserId = card.dataset.userId;
     renderUsers();
-    if (state.selectedUserId) {
+    if (state.selectedUserId && hasCapability("managedAiUserAccess")) {
       void loadUserAiAccess(state.selectedUserId)
         .then(() => {
           const user = currentUser();
@@ -1792,6 +2271,30 @@ function bindActions() {
         .catch(() => {
           els.userAiAccessStatus.textContent = "Unable to load AI access assignment.";
         });
+    }
+  });
+
+  els.organizationDomainList.addEventListener("click", (event) => {
+    const card = event.target.closest("[data-domain-id]");
+    if (!card) return;
+    if (event.target.closest("[data-domain-save]")) {
+      void saveOrganizationDomain(card);
+      return;
+    }
+    if (event.target.closest("[data-domain-delete]")) {
+      void deleteOrganizationDomain(card);
+    }
+  });
+
+  els.organizationInviteList.addEventListener("click", (event) => {
+    const card = event.target.closest("[data-invite-id]");
+    if (!card) return;
+    if (event.target.closest("[data-invite-resend]")) {
+      void resendOrganizationInvite(card);
+      return;
+    }
+    if (event.target.closest("[data-invite-revoke]")) {
+      void revokeOrganizationInvite(card);
     }
   });
 
@@ -1806,6 +2309,9 @@ function bindActions() {
   els.userStatusFilter.addEventListener("change", renderUsers);
   els.userRoleFilter.addEventListener("change", renderUsers);
   els.userAiAccessProvider.addEventListener("change", () => {
+    if (!hasCapability("managedAiUserAccess")) {
+      return;
+    }
     const user = currentUser();
     const aiAccess = user?.id ? currentUserAiAccess(user.id) : normalizeAiAccess(null);
     renderAiAccessCredentialOptions(user, aiAccess);
@@ -1813,6 +2319,9 @@ function bindActions() {
     void refreshSelectedAiAccessModels();
   });
   els.userAiAccessCredential.addEventListener("change", () => {
+    if (!hasCapability("managedAiUserAccess")) {
+      return;
+    }
     void refreshSelectedAiAccessModels();
   });
   els.auditSearch.addEventListener("input", renderAudit);

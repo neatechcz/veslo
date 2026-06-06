@@ -161,17 +161,30 @@ export interface SkillItem {
   path: string;
   description: string;
   scope: "project" | "global";
+  enabled?: boolean;
+  disabledReason?: "user";
   trigger?: string;
   disableModelInvocation?: boolean;
   userInvocable?: boolean;
   aliases?: string[];
   whenToUse?: string;
   paths?: string[];
+  registry?: SkillItemRegistryMetadata;
 }
 
 export type ManagedSkillSource = "personal" | "workspace" | "organization" | "platform";
 
 export type WorkspaceSkillWorkspaceScope = "personal" | "organization";
+
+export type SkillItemRegistryMetadata = {
+  skillId?: string;
+  installationId?: string;
+  policyId?: string;
+  versionId?: string;
+  packageSha256?: string;
+  source?: ManagedSkillSource;
+  removalPolicy?: WorkspaceSkillRolloutRemovalPolicy;
+};
 
 export type WorkspaceSkillSetWorkspace = {
   id: string;
@@ -245,6 +258,7 @@ export type ResolvedWorkspaceSkill = {
   packageSha256: string;
   source: ManagedSkillSource;
   target: "workspace" | "personal-global";
+  removalPolicy: WorkspaceSkillRolloutRemovalPolicy;
 };
 
 export type WorkspaceSkillMaterialization = {
@@ -253,7 +267,9 @@ export type WorkspaceSkillMaterialization = {
   name: string;
   versionId: string;
   packageSha256: string;
+  source: ManagedSkillSource;
   target: "workspace" | "personal-global";
+  removalPolicy: WorkspaceSkillRolloutRemovalPolicy;
 };
 
 export type WorkspaceSkillConflict = {
@@ -338,6 +354,35 @@ export interface Actor {
   tokenHash?: string;
   scope?: TokenScope;
 }
+
+export type SkillEnabledScope = "workspace" | "user-global" | "organization" | "platform";
+
+export type SkillEnabledRegistryIdentity = {
+  skillId?: string;
+  installationId?: string;
+  policyId?: string;
+  versionId?: string;
+  source?: ManagedSkillSource;
+};
+
+export type DisabledSkillTarget = {
+  name: string;
+  scope: SkillEnabledScope;
+  workspaceId?: string;
+  path?: string;
+  registry?: SkillEnabledRegistryIdentity;
+};
+
+export type DisabledSkillRecord = DisabledSkillTarget & {
+  id: string;
+  disabledAt: string;
+  disabledBy?: string;
+};
+
+export type SkillEnabledOverridesDocument = {
+  schemaVersion: 1;
+  disabled: DisabledSkillRecord[];
+};
 
 export interface ApprovalRequest {
   id: string;

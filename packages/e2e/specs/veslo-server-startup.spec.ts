@@ -177,25 +177,32 @@ describe('Veslo server startup handshake', () => {
       workspacePaths: [directory],
     });
 
-    let engineInfo: EngineInfo | null = null;
-    let routerInfo: OpenCodeRouterInfo | null = null;
-    let serverInfo: VesloServerInfo | null = null;
+    const readySidecars: {
+      value?: {
+        engineInfo: EngineInfo;
+        routerInfo: OpenCodeRouterInfo;
+        serverInfo: VesloServerInfo;
+      };
+    } = {};
 
     await browser.waitUntil(
       async () => {
         try {
-          engineInfo = await tauriInvoke<EngineInfo>('engine_info');
-          routerInfo = await tauriInvoke<OpenCodeRouterInfo>('opencodeRouter_info');
-          serverInfo = await tauriInvoke<VesloServerInfo>('veslo_server_info');
+          const engineInfo = await tauriInvoke<EngineInfo>('engine_info');
+          const routerInfo = await tauriInvoke<OpenCodeRouterInfo>('opencodeRouter_info');
+          const serverInfo = await tauriInvoke<VesloServerInfo>('veslo_server_info');
 
-          return (
+          const ready =
             engineInfo.running &&
             routerInfo.running &&
             serverInfo.running &&
             isLoopbackHttpUrl(engineInfo.baseUrl) &&
             isLoopbackHttpUrl(routerInfo.opencodeUrl) &&
-            isLoopbackHttpUrl(serverInfo.baseUrl)
-          );
+            isLoopbackHttpUrl(serverInfo.baseUrl);
+          if (ready) {
+            readySidecars.value = { engineInfo, routerInfo, serverInfo };
+          }
+          return ready;
         } catch {
           return false;
         }
@@ -206,6 +213,12 @@ describe('Veslo server startup handshake', () => {
         timeoutMsg: 'Desktop local OpenCode sidecars did not report loopback URLs in time.',
       },
     );
+
+    if (!readySidecars.value) {
+      throw new Error('Desktop local OpenCode sidecars became ready without status details.');
+    }
+
+    const { engineInfo, routerInfo, serverInfo } = readySidecars.value;
 
     expect(engineInfo?.runtime).toBe('veslo-orchestrator');
     expectLoopbackHttpUrl(engineInfo?.baseUrl, 'engine baseUrl');

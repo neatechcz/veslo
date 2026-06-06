@@ -2,17 +2,8 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import test from "node:test"
 
-test("Den deploy workflow keeps YouTrack projector configuration in Render env sync", () => {
-  const workflowSource = readFileSync(new URL("../../../.github/workflows/deploy-den.yml", import.meta.url), "utf8")
-
-  for (const key of [
-    "DEN_YOUTRACK_PROJECT_KEY",
-    "DEN_YOUTRACK_URL",
-    "DEN_YOUTRACK_TOKEN",
-    "DEN_YOUTRACK_TIMEOUT_MS",
-  ]) {
-    assert.match(workflowSource, new RegExp(`${key}:`))
-  }
+test("owned-server compose keeps YouTrack projector configuration in DEN env", () => {
+  const composeSource = readFileSync(new URL("../../../packaging/owned-server/compose.yml", import.meta.url), "utf8")
 
   for (const key of [
     "YOUTRACK_PROJECT_KEY",
@@ -20,15 +11,18 @@ test("Den deploy workflow keeps YouTrack projector configuration in Render env s
     "YOUTRACK_TOKEN",
     "YOUTRACK_TIMEOUT_MS",
   ]) {
-    assert.match(workflowSource, new RegExp(`"key": "${key}"`))
+    assert.match(composeSource, new RegExp(`${key}:\\s*\\$\\{${key}:-`))
   }
-
-  assert.match(workflowSource, /existing_env_values/)
 })
 
-test("Den deploy workflow fails before deploy when YouTrack projector REST config is missing", () => {
-  const workflowSource = readFileSync(new URL("../../../.github/workflows/deploy-den.yml", import.meta.url), "utf8")
+test("owned-server env templates expose YouTrack projector REST config", () => {
+  const productionTemplate = readFileSync(new URL("../../../packaging/owned-server/env.example", import.meta.url), "utf8")
+  const stagingTemplate = readFileSync(new URL("../../../packaging/owned-server/env.staging.example", import.meta.url), "utf8")
 
-  assert.match(workflowSource, /has_youtrack_rest_config/)
-  assert.match(workflowSource, /Missing YouTrack projector REST config/)
+  for (const source of [productionTemplate, stagingTemplate]) {
+    assert.match(source, /^YOUTRACK_PROJECT_KEY=/m)
+    assert.match(source, /^YOUTRACK_URL=/m)
+    assert.match(source, /^YOUTRACK_TOKEN=/m)
+    assert.match(source, /^YOUTRACK_TIMEOUT_MS=/m)
+  }
 })

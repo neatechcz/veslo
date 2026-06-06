@@ -1,9 +1,9 @@
 use std::sync::{Arc, Mutex};
 
 use tauri::async_runtime::Receiver;
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 
 use crate::debug_logs_forwarder::{DebugLogsForwarder, LogStream};
+use crate::supervised_process::{CommandEvent, SupervisedCommandChild};
 use crate::utils::truncate_output;
 
 pub type SupervisorForwarder = (Arc<DebugLogsForwarder>, &'static str);
@@ -11,8 +11,8 @@ pub type SupervisorForwarder = (Arc<DebugLogsForwarder>, &'static str);
 const OUTPUT_BUFFER_LIMIT: usize = 8000;
 
 pub trait SupervisedChild {
-    fn child(&self) -> &Option<CommandChild>;
-    fn take_child(&mut self) -> Option<CommandChild>;
+    fn child(&self) -> &Option<SupervisedCommandChild>;
+    fn take_child(&mut self) -> Option<SupervisedCommandChild>;
     fn child_exited(&self) -> bool;
     fn set_child_exited(&mut self, value: bool);
     fn last_stdout(&self) -> Option<&str>;

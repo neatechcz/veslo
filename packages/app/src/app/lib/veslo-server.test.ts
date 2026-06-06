@@ -194,6 +194,49 @@ test("non-archive requests do not include the account id header", async () => {
   }
 });
 
+test("automation requests encode workspace and automation ids", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method?: string }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({ url: String(input), method: init?.method });
+    return new Response(JSON.stringify({ items: [], updatedAt: "2026-06-05T10:00:00.000Z" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+    });
+
+    await client.listAutomations("ws 1");
+    await client.createAutomation("ws 1", {
+      name: "Daily plan",
+      prompt: "Plan the day",
+      schedule: { kind: "daily", hour: 8, minute: 30 },
+    });
+    await client.updateAutomation("ws 1", "auto 1", { enabled: false, status: "paused" });
+    await client.runAutomation("ws 1", "auto 1");
+    await client.listAutomationRuns("ws 1", "auto 1");
+
+    assert.deepEqual(
+      calls.map((call) => ({ url: call.url, method: call.method ?? "GET" })),
+      [
+        { url: "https://veslo.example/workspace/ws%201/automations", method: "GET" },
+        { url: "https://veslo.example/workspace/ws%201/automations", method: "POST" },
+        { url: "https://veslo.example/workspace/ws%201/automations/auto%201", method: "PATCH" },
+        { url: "https://veslo.example/workspace/ws%201/automations/auto%201/run", method: "POST" },
+        { url: "https://veslo.example/workspace/ws%201/automations/auto%201/runs", method: "GET" },
+      ],
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("requestManagedAiAccessBundle fetches the raw managed gateway bundle with the DEN bearer token", async () => {
   const previousFetch = globalThis.fetch;
   const calls: Array<{ url: string; method?: string; headers: Headers; body: string | null }> = [];
@@ -287,6 +330,232 @@ test("listHubSkills forwards den auth context headers when provided", async () =
     assert.equal(calls[0]?.headers.get("authorization"), "Bearer token-123");
     assert.equal(calls[0]?.headers.get("x-veslo-den-token"), "den-token");
     assert.equal(calls[0]?.headers.get("x-veslo-den-org-id"), "org_123");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("Soul read methods forward Den context headers", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method?: string; headers: Headers; body: string | null }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method,
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+      body: typeof init?.body === "string" ? init.body : null,
+    });
+    return new Response(JSON.stringify({ organization: null, user: null, workspaces: [], versions: [], version: null }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+    const den = {
+      denApiBase: "https://api.veslo.work",
+      denToken: "den-token",
+      denOrgId: "org_1",
+      denUserId: "user_1",
+    };
+
+    await client.getSoulOverview(den);
+    await client.getOrganizationSoul(den);
+    await client.getUserSoul(den);
+    await client.listSoulVersions("organization", { ...den, cursor: "next/cursor", limit: 25 });
+    await client.getSoulVersion("user", "version_1", den);
+
+    assert.deepEqual(calls.map((call) => `${call.method ?? "GET"} ${call.url}`), [
+      "GET https://veslo.example/soul",
+      "GET https://veslo.example/soul/organization",
+      "GET https://veslo.example/soul/user",
+      "GET https://veslo.example/soul/organization/versions?cursor=next%2Fcursor&limit=25",
+      "GET https://veslo.example/soul/user/versions/version_1",
+    ]);
+    for (const call of calls) {
+      assert.equal(call.headers.get("authorization"), "Bearer token-123");
+      assert.equal(call.headers.get("x-veslo-host-token"), "host-token-123");
+      assert.equal(call.headers.get("x-veslo-den-api-base"), "https://api.veslo.work");
+      assert.equal(call.headers.get("x-veslo-den-token"), "den-token");
+      assert.equal(call.headers.get("x-veslo-den-org-id"), "org_1");
+      assert.equal(call.headers.get("x-veslo-den-user-id"), "user_1");
+      assert.equal(call.body, null);
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("Soul workspace read methods include workspace routes and version query", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method?: string; body: string | null }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method,
+      body: typeof init?.body === "string" ? init.body : null,
+    });
+    return new Response(JSON.stringify({ workspaces: [], document: null, summary: null, versions: [], version: null }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+    });
+
+    await client.listWorkspaceSouls();
+    await client.getWorkspaceSoul("workspace 1");
+    await client.listSoulVersions("workspace", { workspaceId: "workspace 1" });
+    await client.getSoulVersion("workspace", "version 1", { workspaceId: "workspace 1" });
+
+    assert.deepEqual(calls.map((call) => `${call.method ?? "GET"} ${call.url}`), [
+      "GET https://veslo.example/soul/workspaces",
+      "GET https://veslo.example/workspace/workspace%201/soul",
+      "GET https://veslo.example/soul/workspace/versions?workspaceId=workspace+1",
+      "GET https://veslo.example/soul/workspace/versions/version%201?workspaceId=workspace+1",
+    ]);
+    assert.deepEqual(calls.map((call) => call.body), [null, null, null, null]);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("Soul mutation methods send exact bodies and Den context", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method?: string; headers: Headers; body: string | null }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method,
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+      body: typeof init?.body === "string" ? init.body : null,
+    });
+    return new Response(JSON.stringify({ document: null, summary: null }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+    });
+    const den = {
+      denApiBase: "https://api.veslo.work",
+      denToken: "den-token",
+      denOrgId: "org_1",
+      denUserId: "user_1",
+    };
+
+    await client.updateOrganizationSoul({
+      ...den,
+      content: "# Org",
+      changeSummary: "Update org",
+      baseVersionId: null,
+    });
+    await client.updateUserSoul({
+      ...den,
+      content: "# User",
+      changeSummary: "Update user",
+      baseVersionId: "user_v1",
+    });
+    await client.restoreOrganizationSoulVersion("org_v1", { ...den, changeSummary: "Restore org" });
+    await client.restoreUserSoulVersion("user_v1", { ...den, changeSummary: "Restore user" });
+
+    assert.deepEqual(calls.map((call) => `${call.method ?? "GET"} ${call.url}`), [
+      "PATCH https://veslo.example/soul/organization",
+      "PATCH https://veslo.example/soul/user",
+      "POST https://veslo.example/soul/organization/versions/org_v1/restore",
+      "POST https://veslo.example/soul/user/versions/user_v1/restore",
+    ]);
+    assert.deepEqual(JSON.parse(calls[0]?.body ?? "{}"), {
+      content: "# Org",
+      changeSummary: "Update org",
+      baseVersionId: null,
+    });
+    assert.deepEqual(JSON.parse(calls[1]?.body ?? "{}"), {
+      content: "# User",
+      changeSummary: "Update user",
+      baseVersionId: "user_v1",
+    });
+    assert.deepEqual(JSON.parse(calls[2]?.body ?? "{}"), { changeSummary: "Restore org" });
+    assert.deepEqual(JSON.parse(calls[3]?.body ?? "{}"), { changeSummary: "Restore user" });
+    for (const call of calls) {
+      assert.equal(call.headers.get("x-veslo-den-api-base"), "https://api.veslo.work");
+      assert.equal(call.headers.get("x-veslo-den-token"), "den-token");
+      assert.equal(call.headers.get("x-veslo-den-org-id"), "org_1");
+      assert.equal(call.headers.get("x-veslo-den-user-id"), "user_1");
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("Soul workspace mutations send update restore and heartbeat bodies", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method?: string; headers: Headers; body: string | null }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method,
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+      body: typeof init?.body === "string" ? init.body : null,
+    });
+    return new Response(JSON.stringify({ document: null, summary: null }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+    });
+
+    await client.updateWorkspaceSoul("workspace 1", {
+      content: "# Workspace",
+      changeSummary: "Update workspace",
+      baseVersionId: null,
+    });
+    await client.restoreWorkspaceSoulVersion("workspace 1", "workspace_v1", {
+      changeSummary: "Restore workspace",
+    });
+    await client.setWorkspaceSoulHeartbeat("workspace 1", true, {
+      denToken: "den-token",
+      denOrgId: "org_1",
+      denUserId: "user_1",
+    });
+
+    assert.deepEqual(calls.map((call) => `${call.method ?? "GET"} ${call.url}`), [
+      "PATCH https://veslo.example/workspace/workspace%201/soul",
+      "POST https://veslo.example/workspace/workspace%201/soul/versions/workspace_v1/restore",
+      "POST https://veslo.example/workspace/workspace%201/soul/heartbeat-toggle",
+    ]);
+    assert.deepEqual(JSON.parse(calls[0]?.body ?? "{}"), {
+      content: "# Workspace",
+      changeSummary: "Update workspace",
+      baseVersionId: null,
+    });
+    assert.deepEqual(JSON.parse(calls[1]?.body ?? "{}"), { changeSummary: "Restore workspace" });
+    assert.deepEqual(JSON.parse(calls[2]?.body ?? "{}"), { enabled: true });
+    assert.equal(calls[2]?.headers.get("x-veslo-den-token"), "den-token");
+    assert.equal(calls[2]?.headers.get("x-veslo-den-org-id"), "org_1");
+    assert.equal(calls[2]?.headers.get("x-veslo-den-user-id"), "user_1");
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -898,7 +1167,30 @@ test("skill materialization helpers call workspace and global status and sync en
           status: "current",
           registryConfigured: true,
           rootDir: "/home/user/.config/opencode/skills/veslo-managed",
-          materializedSkills: [],
+          materializedSkills: [
+            {
+              name: "veslo-automations",
+              packageSha256: "b".repeat(64),
+              source: "platform",
+              removalPolicy: "locked",
+            },
+          ],
+          platformManaged: {
+            enabled: true,
+            synced: false,
+            desiredSkills: [
+              {
+                installationId: "platform_install_veslo_automations",
+                skillId: "platform_skill_veslo_automations",
+                name: "veslo-automations",
+                versionId: "platform_version_veslo_automations_v1",
+                packageSha256: "b".repeat(64),
+                source: "platform",
+                removalPolicy: "locked",
+                target: "personal-global",
+              },
+            ],
+          },
           reloadRequired: false,
         }),
         { status: 200, headers: { "content-type": "application/json" } },
@@ -978,6 +1270,27 @@ test("skill materialization helpers call workspace and global status and sync en
     });
 
     assert.equal(globalStatus.scope, "personal-global");
+    assert.deepEqual(globalStatus.platformManaged, {
+      enabled: true,
+      synced: false,
+      desiredSkills: [
+        {
+          installationId: "platform_install_veslo_automations",
+          skillId: "platform_skill_veslo_automations",
+          name: "veslo-automations",
+          versionId: "platform_version_veslo_automations_v1",
+          packageSha256: "b".repeat(64),
+          source: "platform",
+          removalPolicy: "locked",
+          target: "personal-global",
+        },
+      ],
+    });
+    assert.equal(globalStatus.platformManaged?.desiredSkills[0]?.name, "veslo-automations");
+    assert.equal(globalStatus.platformManaged?.desiredSkills[0]?.source, "platform");
+    assert.equal(globalStatus.platformManaged?.desiredSkills[0]?.removalPolicy, "locked");
+    assert.equal(globalStatus.materializedSkills[0]?.source, "platform");
+    assert.equal(globalStatus.materializedSkills[0]?.removalPolicy, "locked");
     assert.equal(globalSync.status, "synced");
     assert.equal(status.status, "current");
     assert.equal(sync.status, "pending");
@@ -1187,6 +1500,90 @@ test("skill removal helpers call local server routes with host and client auth",
         url: "https://veslo.example/skill-removals/removal_1/restore",
         method: "POST",
         body: null,
+      },
+    ]);
+    for (const call of calls) {
+      assert.equal(call.headers.get("authorization"), "Bearer token-123");
+      assert.equal(call.headers.get("x-veslo-host-token"), "host-token-123");
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("skill enabled override helpers call disabled list and patch routes", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; headers: Headers; body: string | null }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+      body: typeof init?.body === "string" ? init.body : null,
+    });
+    return new Response(
+      JSON.stringify({
+        items: [
+          {
+            id: "disabled-platform",
+            name: "platform-helper",
+            scope: "platform",
+            path: "/Users/example/.config/opencode/skills/veslo-managed/platform-helper/SKILL.md",
+            disabledAt: "2026-06-06T10:00:00.000Z",
+          },
+        ],
+        ok: true,
+        enabled: false,
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example/",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+
+    const disabled = await client.listDisabledSkills({ workspaceId: "workspace a" });
+    const result = await client.setSkillEnabledState({
+      enabled: false,
+      target: {
+        name: "platform-helper",
+        scope: "platform",
+        path: "/Users/example/.config/opencode/skills/veslo-managed/platform-helper/SKILL.md",
+        registry: {
+          policyId: "policy_platform_helper",
+          source: "platform",
+        },
+      },
+    });
+
+    assert.equal(disabled.items[0]?.scope, "platform");
+    assert.equal(result.enabled, false);
+    assert.deepEqual(calls.map((call) => ({ url: call.url, method: call.method, body: call.body })), [
+      {
+        url: "https://veslo.example/skills/disabled?workspaceId=workspace+a",
+        method: "GET",
+        body: null,
+      },
+      {
+        url: "https://veslo.example/skills/enabled-state",
+        method: "PATCH",
+        body: JSON.stringify({
+          enabled: false,
+          target: {
+            name: "platform-helper",
+            scope: "platform",
+            path: "/Users/example/.config/opencode/skills/veslo-managed/platform-helper/SKILL.md",
+            registry: {
+              policyId: "policy_platform_helper",
+              source: "platform",
+            },
+          },
+        }),
       },
     ]);
     for (const call of calls) {

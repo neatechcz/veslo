@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, expect, test } from "bun:test";
 
 import { listSkills } from "./skills.js";
+import type { DisabledSkillRecord } from "./types.js";
 
 const tempDirs: string[] = [];
 
@@ -88,4 +89,143 @@ test("listSkills returns shared parser metadata for local skills", async () => {
     whenToUse: "Prefer this for source-backed requests.",
     paths: ["docs/**"],
   });
+});
+
+test("listSkills filters disabled skills before de-duping duplicate names", async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-skills-disabled-dedupe-"));
+  const homeDir = await mkdtemp(join(tmpdir(), "veslo-skills-disabled-dedupe-home-"));
+  tempDirs.push(workspaceRoot, homeDir);
+
+  await mkdir(join(workspaceRoot, ".git"), { recursive: true });
+  await mkdir(join(workspaceRoot, ".opencode", "skills", "shared-skill"), { recursive: true });
+  await writeFile(
+    join(workspaceRoot, ".opencode", "skills", "shared-skill", "SKILL.md"),
+    "---\nname: shared-skill\ndescription: Disabled workspace skill\n---\n\n# Workspace\n",
+    "utf8",
+  );
+  await mkdir(join(homeDir, ".config", "opencode", "skills", "shared-skill"), { recursive: true });
+  await writeFile(
+    join(homeDir, ".config", "opencode", "skills", "shared-skill", "SKILL.md"),
+    "---\nname: shared-skill\ndescription: Enabled global skill\n---\n\n# Global\n",
+    "utf8",
+  );
+
+  const previousHome = process.env.HOME;
+  process.env.HOME = homeDir;
+  try {
+    const disabledSkills: DisabledSkillRecord[] = [
+      {
+        id: "workspace:ws_1:shared-skill",
+        name: "shared-skill",
+        scope: "workspace",
+        workspaceId: "ws_1",
+        path: join(workspaceRoot, ".opencode", "skills", "shared-skill", "SKILL.md"),
+        disabledAt: new Date(0).toISOString(),
+      },
+    ];
+
+    const items = await listSkills(workspaceRoot, {
+      includeGlobal: true,
+      disabledSkills,
+      workspaceId: "ws_1",
+    });
+
+    expect(items.map((item) => ({ name: item.name, scope: item.scope, path: item.path }))).toEqual([
+      {
+        name: "shared-skill",
+        scope: "global",
+        path: join(homeDir, ".config", "opencode", "skills", "shared-skill", "SKILL.md"),
+      },
+    ]);
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+  }
+});
+
+test("listSkills path matching keeps disabled scope boundaries", async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-skills-disabled-scope-"));
+  tempDirs.push(workspaceRoot);
+
+  await mkdir(join(workspaceRoot, ".git"), { recursive: true });
+  await mkdir(join(workspaceRoot, ".opencode", "skills", "workspace-skill"), { recursive: true });
+  const workspaceSkillPath = join(workspaceRoot, ".opencode", "skills", "workspace-skill", "SKILL.md");
+  await writeFile(
+    workspaceSkillPath,
+    "---\nname: workspace-skill\ndescription: Workspace skill\n---\n\n# Workspace\n",
+    "utf8",
+  );
+
+  const items = await listSkills(workspaceRoot, {
+    includeGlobal: false,
+    disabledSkills: [
+      {
+        id: "wrong-scope",
+        name: "workspace-skill",
+        scope: "user-global",
+        path: workspaceSkillPath,
+        disabledAt: new Date(0).toISOString(),
+      },
+    ],
+    workspaceId: "ws_1",
+  });
+
+  expect(items).toHaveLength(1);
+  expect(items[0]?.enabled).not.toBe(false);
+});
+
+test("listSkills path matching applies platform disabled records to materialized global skills", async () => {
+  const previousHome = process.env.HOME;
+  const homeDir = await mkdtemp(join(tmpdir(), "veslo-skills-disabled-platform-home-"));
+  const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-skills-disabled-platform-workspace-"));
+  tempDirs.push(homeDir, workspaceRoot);
+  process.env.HOME = homeDir;
+
+  try {
+    await mkdir(join(workspaceRoot, ".git"), { recursive: true });
+    const skillDir = join(homeDir, ".config", "opencode", "skills", "platform-skill");
+    await mkdir(skillDir, { recursive: true });
+    const skillPath = join(skillDir, "SKILL.md");
+    await writeFile(
+      skillPath,
+      "---\nname: platform-skill\ndescription: Platform skill\n---\n\n# Platform\n",
+      "utf8",
+    );
+
+    const disabledSkills = [
+      {
+        id: "platform-disabled",
+        name: "platform-skill",
+        scope: "platform" as const,
+        path: skillPath,
+        disabledAt: new Date(0).toISOString(),
+      },
+    ];
+
+    const filtered = await listSkills(workspaceRoot, {
+      includeGlobal: true,
+      disabledSkills,
+      workspaceId: "ws_1",
+    });
+    expect(filtered).toEqual([]);
+
+    const included = await listSkills(workspaceRoot, {
+      includeGlobal: true,
+      includeDisabled: true,
+      disabledSkills,
+      workspaceId: "ws_1",
+    });
+    expect(included).toHaveLength(1);
+    expect(included[0]?.enabled).toBe(false);
+    expect(included[0]?.disabledReason).toBe("user");
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+  }
 });

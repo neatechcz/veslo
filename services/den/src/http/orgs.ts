@@ -5,11 +5,12 @@ import { z } from "zod"
 import { recordAuditEvent } from "../audit.js"
 import { db } from "../db/index.js"
 import { AuthUserTable, OrgMembershipTable, OrgRole, OrgTable } from "../db/schema.js"
+import { OrganizationAdminRepositoryError, createOrActivateOrganizationMembership } from "../org-admin/repository.js"
 import { requireVerifiedEmail } from "./email-verification.js"
 import { asyncRoute } from "./errors.js"
 import { resolveMembershipOrganizations, requireOrganizationAccess, serializeOrganization, readRequestedOrganizationId, isPlatformAdmin } from "./org-auth.js"
 import { requireSession } from "./session.js"
-import { wouldLeaveOrganizationWithoutOwner } from "./access.js"
+import { isOrganizationAdminRole } from "./access.js"
 
 const addMemberSchema = z.object({
   email: z.string().email(),
@@ -83,7 +84,7 @@ async function pickReplacementOwnerUserId(orgId: string, excludedUserId: string)
     .from(OrgMembershipTable)
     .where(and(
       eq(OrgMembershipTable.org_id, orgId),
-      eq(OrgMembershipTable.role, "owner"),
+      eq(OrgMembershipTable.role, "organization_admin"),
       ne(OrgMembershipTable.user_id, excludedUserId),
     ))
     .limit(1)
@@ -119,7 +120,7 @@ orgsRouter.get("/", asyncRoute(async (req, res) => {
 orgsRouter.get("/:orgId/members", asyncRoute(async (req, res) => {
   const context = await requireOrganizationAccess(req, res, {
     orgId: req.params.orgId,
-    minimumRole: "owner",
+    minimumRole: "organization_admin",
   })
   if (!context) {
     return
@@ -134,7 +135,7 @@ orgsRouter.get("/:orgId/members", asyncRoute(async (req, res) => {
 orgsRouter.post("/:orgId/members", asyncRoute(async (req, res) => {
   const context = await requireOrganizationAccess(req, res, {
     orgId: req.params.orgId,
-    minimumRole: "owner",
+    minimumRole: "organization_admin",
   })
   if (!context) {
     return
@@ -181,12 +182,20 @@ orgsRouter.post("/:orgId/members", asyncRoute(async (req, res) => {
   }
 
   const membershipId = randomUUID()
-  await db.insert(OrgMembershipTable).values({
-    id: membershipId,
-    org_id: context.organization.id,
-    user_id: user.id,
-    role: parsed.data.role,
-  })
+  try {
+    await createOrActivateOrganizationMembership({
+      membershipId,
+      orgId: context.organization.id,
+      userId: user.id,
+      role: parsed.data.role,
+    })
+  } catch (error) {
+    if (error instanceof OrganizationAdminRepositoryError && error.code === "seat_limit_reached") {
+      res.status(409).json({ error: "seat_limit_reached" })
+      return
+    }
+    throw error
+  }
 
   const created = await loadOrganizationMember(context.organization.id, membershipId)
   if (!created) {
@@ -202,7 +211,7 @@ orgsRouter.post("/:orgId/members", asyncRoute(async (req, res) => {
       addedMembershipId: membershipId,
       addedUserId: user.id,
       role: parsed.data.role,
-      via: context.isPlatformAdmin && context.orgRole !== "owner" ? "platform_admin" : "owner",
+      via: context.isPlatformAdmin && !isOrganizationAdminRole(context.orgRole) ? "platform_admin" : "organization_admin",
     },
   })
 
@@ -214,7 +223,7 @@ orgsRouter.post("/:orgId/members", asyncRoute(async (req, res) => {
 orgsRouter.patch("/:orgId/members/:memberId", asyncRoute(async (req, res) => {
   const context = await requireOrganizationAccess(req, res, {
     orgId: req.params.orgId,
-    minimumRole: "owner",
+    minimumRole: "organization_admin",
   })
   if (!context) {
     return
@@ -244,15 +253,6 @@ orgsRouter.patch("/:orgId/members/:memberId", asyncRoute(async (req, res) => {
   }
 
   const members = await loadOrganizationMembers(context.organization.id)
-  const ownerCount = members.filter((entry) => entry.role === "owner").length
-  if (wouldLeaveOrganizationWithoutOwner({
-    ownerCount,
-    targetRole: target.role,
-    nextRole: parsed.data.role,
-  })) {
-    res.status(409).json({ error: "last_owner_required" })
-    return
-  }
 
   await db.transaction(async (tx) => {
     await tx
@@ -260,8 +260,8 @@ orgsRouter.patch("/:orgId/members/:memberId", asyncRoute(async (req, res) => {
       .set({ role: parsed.data.role })
       .where(eq(OrgMembershipTable.id, target.membershipId))
 
-    if (target.userId === context.organization.ownerUserId && parsed.data.role !== "owner") {
-      const replacementUserId = members.find((entry) => entry.role === "owner" && entry.userId !== target.userId)?.userId ?? null
+    if (target.userId === context.organization.ownerUserId && parsed.data.role !== "organization_admin") {
+      const replacementUserId = members.find((entry) => entry.role === "organization_admin" && entry.userId !== target.userId)?.userId ?? null
       if (replacementUserId) {
         await tx
           .update(OrgTable)
@@ -286,7 +286,7 @@ orgsRouter.patch("/:orgId/members/:memberId", asyncRoute(async (req, res) => {
       userId: target.userId,
       previousRole: target.role,
       nextRole: parsed.data.role,
-      via: context.isPlatformAdmin && context.orgRole !== "owner" ? "platform_admin" : "owner",
+      via: context.isPlatformAdmin && !isOrganizationAdminRole(context.orgRole) ? "platform_admin" : "organization_admin",
     },
   })
 
@@ -298,7 +298,7 @@ orgsRouter.patch("/:orgId/members/:memberId", asyncRoute(async (req, res) => {
 orgsRouter.delete("/:orgId/members/:memberId", asyncRoute(async (req, res) => {
   const context = await requireOrganizationAccess(req, res, {
     orgId: req.params.orgId,
-    minimumRole: "owner",
+    minimumRole: "organization_admin",
   })
   if (!context) {
     return
@@ -314,19 +314,8 @@ orgsRouter.delete("/:orgId/members/:memberId", asyncRoute(async (req, res) => {
     return
   }
 
-  const members = await loadOrganizationMembers(context.organization.id)
-  const ownerCount = members.filter((entry) => entry.role === "owner").length
-  if (wouldLeaveOrganizationWithoutOwner({
-    ownerCount,
-    targetRole: target.role,
-    nextRole: null,
-  })) {
-    res.status(409).json({ error: "last_owner_required" })
-    return
-  }
-
   const replacementOwnerUserId =
-    target.userId === context.organization.ownerUserId && target.role === "owner"
+    target.userId === context.organization.ownerUserId && target.role === "organization_admin"
       ? await pickReplacementOwnerUserId(context.organization.id, target.userId)
       : null
 
@@ -349,7 +338,7 @@ orgsRouter.delete("/:orgId/members/:memberId", asyncRoute(async (req, res) => {
       membershipId: target.membershipId,
       userId: target.userId,
       role: target.role,
-      via: context.isPlatformAdmin && context.orgRole !== "owner" ? "platform_admin" : "owner",
+      via: context.isPlatformAdmin && !isOrganizationAdminRole(context.orgRole) ? "platform_admin" : "organization_admin",
     },
   })
 

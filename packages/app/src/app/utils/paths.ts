@@ -10,6 +10,9 @@ export function isTauriRuntime() {
   if (candidateWindow.__TAURI_INTERNALS__ != null) {
     return true;
   }
+  if (candidateWindow.isTauri === true || (globalThis as any).isTauri === true) {
+    return true;
+  }
 
   const hostname =
     typeof candidateWindow.location?.hostname === "string"

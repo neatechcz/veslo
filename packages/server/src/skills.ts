@@ -2,7 +2,7 @@ import { readdir, readFile, writeFile, mkdir, rm } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
-import type { SkillItem } from "./types.js";
+import type { DisabledSkillRecord, SkillItem } from "./types.js";
 import { parseFrontmatter, buildFrontmatter } from "./frontmatter.js";
 import { exists } from "./utils.js";
 import { validateDescription, validateSkillName } from "./validators.js";
@@ -17,6 +17,9 @@ import {
 } from "./skill-metadata.js";
 
 export const SKILL_ENTRYPOINT = "SKILL.md";
+const MANAGED_MARKER_FILE = ".veslo-managed.json";
+const MANAGED_SKILL_SOURCES = new Set(["personal", "workspace", "organization", "platform"]);
+const SKILL_REMOVAL_POLICIES = new Set(["user_removable", "admin_removable", "locked"]);
 
 export interface SkillRemovalJournalContext {
   dataDir?: string;
@@ -26,6 +29,7 @@ export interface SkillRemovalJournalContext {
 }
 
 const userHomeDir = (): string => process.env.HOME?.trim() || homedir();
+const userConfigHomeDir = (): string => process.env.XDG_CONFIG_HOME?.trim() || join(userHomeDir(), ".config");
 
 async function findWorkspaceRoots(workspaceRoot: string): Promise<string[]> {
   const roots: string[] = [];
@@ -42,6 +46,62 @@ async function findWorkspaceRoots(workspaceRoot: string): Promise<string[]> {
 }
 
 export const extractTriggerFromBody = extractTriggerFromSkillBody;
+
+const markerString = (value: unknown, key: string): string | undefined => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const candidate = (value as Record<string, unknown>)[key];
+  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : undefined;
+};
+
+const markerSource = (
+  marker: unknown,
+  fallbackScope: "project" | "global",
+): NonNullable<SkillItem["registry"]>["source"] | undefined => {
+  const source = markerString(marker, "source");
+  if (source && MANAGED_SKILL_SOURCES.has(source)) {
+    return source as NonNullable<SkillItem["registry"]>["source"];
+  }
+  const target = markerString(marker, "target");
+  if (target === "workspace") return "workspace";
+  if (target === "personal-global") return "personal";
+  return fallbackScope === "project" ? "workspace" : "personal";
+};
+
+const markerRemovalPolicy = (marker: unknown): NonNullable<SkillItem["registry"]>["removalPolicy"] | undefined => {
+  const removalPolicy = markerString(marker, "removalPolicy");
+  if (removalPolicy && SKILL_REMOVAL_POLICIES.has(removalPolicy)) {
+    return removalPolicy as NonNullable<SkillItem["registry"]>["removalPolicy"];
+  }
+  return "user_removable";
+};
+
+async function registryMetadataFromManagedMarker(
+  skillDir: string,
+  scope: "project" | "global",
+): Promise<SkillItem["registry"] | undefined> {
+  let marker: unknown;
+  try {
+    marker = JSON.parse(await readFile(join(skillDir, MANAGED_MARKER_FILE), "utf8"));
+  } catch {
+    return undefined;
+  }
+
+  const rawInstallationId = markerString(marker, "installationId");
+  if (!rawInstallationId) return undefined;
+  const registry: NonNullable<SkillItem["registry"]> = {
+    ...(markerString(marker, "skillId") ? { skillId: markerString(marker, "skillId") } : {}),
+    ...(markerString(marker, "versionId") ? { versionId: markerString(marker, "versionId") } : {}),
+    ...(markerString(marker, "packageSha256") ? { packageSha256: markerString(marker, "packageSha256") } : {}),
+    source: markerSource(marker, scope),
+    removalPolicy: markerRemovalPolicy(marker),
+  };
+
+  if (rawInstallationId.startsWith("rollout:")) {
+    const policyId = rawInstallationId.slice("rollout:".length).trim();
+    return policyId ? { ...registry, policyId } : undefined;
+  }
+  return { ...registry, installationId: rawInstallationId };
+}
 
 async function parseSkillEntry(
   skillPath: string,
@@ -75,6 +135,7 @@ async function parseSkillEntry(
     aliases: metadata.aliases,
     whenToUse: metadata.whenToUse,
     paths: metadata.paths,
+    registry: await registryMetadataFromManagedMarker(dirname(skillPath), scope),
   };
 }
 
@@ -118,7 +179,64 @@ async function listSkillsInDir(dir: string, scope: "project" | "global"): Promis
   return items;
 }
 
-export async function listSkills(workspaceRoot: string, includeGlobal: boolean): Promise<SkillItem[]> {
+export type ListSkillsOptions = {
+  includeGlobal: boolean;
+  includeDisabled?: boolean;
+  disabledSkills?: DisabledSkillRecord[];
+  workspaceId?: string;
+};
+
+function normalizeListSkillsOptions(includeGlobalOrOptions: boolean | ListSkillsOptions): ListSkillsOptions {
+  if (typeof includeGlobalOrOptions === "boolean") {
+    return { includeGlobal: includeGlobalOrOptions };
+  }
+  return {
+    includeGlobal: includeGlobalOrOptions.includeGlobal,
+    includeDisabled: includeGlobalOrOptions.includeDisabled,
+    disabledSkills: includeGlobalOrOptions.disabledSkills,
+    workspaceId: includeGlobalOrOptions.workspaceId,
+  };
+}
+
+export function disabledRecordMatchesSkill(
+  record: DisabledSkillRecord,
+  item: SkillItem,
+  workspaceId: string | undefined,
+): boolean {
+  const scope = item.scope === "project" ? "workspace" : "user-global";
+  if (record.path) {
+    if (resolve(record.path) !== resolve(item.path)) return false;
+    if (record.scope !== scope && record.scope !== "organization" && record.scope !== "platform") return false;
+    return !record.workspaceId || !workspaceId || record.workspaceId === workspaceId;
+  }
+
+  if (record.name !== item.name) return false;
+  if (record.scope !== scope) return false;
+  if (scope === "workspace") {
+    return Boolean(workspaceId) && record.workspaceId === workspaceId;
+  }
+  return true;
+}
+
+function applyDisabledSkillRecords(
+  items: SkillItem[],
+  options: Pick<ListSkillsOptions, "disabledSkills" | "workspaceId">,
+): SkillItem[] {
+  const disabledSkills = options.disabledSkills ?? [];
+  if (disabledSkills.length === 0) return items;
+  return items.map((item) => {
+    const disabled = disabledSkills.some((record) => disabledRecordMatchesSkill(record, item, options.workspaceId));
+    return disabled
+      ? { ...item, enabled: false as const, disabledReason: "user" as const }
+      : item;
+  });
+}
+
+export async function listSkills(
+  workspaceRoot: string,
+  includeGlobalOrOptions: boolean | ListSkillsOptions,
+): Promise<SkillItem[]> {
+  const options = normalizeListSkillsOptions(includeGlobalOrOptions);
   const roots = await findWorkspaceRoots(workspaceRoot);
   const items: SkillItem[] = [];
   for (const root of roots) {
@@ -128,7 +246,7 @@ export async function listSkills(workspaceRoot: string, includeGlobal: boolean):
     items.push(...(await listSkillsInDir(claudeDir, "project")));
   }
 
-  if (includeGlobal) {
+  if (options.includeGlobal) {
     const homeDir = userHomeDir();
     const globalOpenCode = join(homeDir, ".config", "opencode", "skills");
     const globalClaude = join(homeDir, ".claude", "skills");
@@ -140,8 +258,10 @@ export async function listSkills(workspaceRoot: string, includeGlobal: boolean):
     items.push(...(await listSkillsInDir(globalAgentLegacy, "global")));
   }
 
+  const markedItems = applyDisabledSkillRecords(items, options);
+  const filteredItems = options.includeDisabled ? markedItems : markedItems.filter((item) => item.enabled !== false);
   const seen = new Set<string>();
-  return items.filter((item) => {
+  return filteredItems.filter((item) => {
     if (seen.has(item.name)) return false;
     seen.add(item.name);
     return true;
@@ -193,12 +313,13 @@ export const workspaceSkillRootsForMutation = async (workspaceRoot: string): Pro
   ]);
 };
 
-export const userGlobalSkillRootsForMutation = (): string[] => [
+export const userGlobalSkillRootsForMutation = (): string[] => Array.from(new Set([
+  join(userConfigHomeDir(), "opencode", "skills"),
   join(userHomeDir(), ".config", "opencode", "skills"),
   join(userHomeDir(), ".claude", "skills"),
   join(userHomeDir(), ".agents", "skills"),
   join(userHomeDir(), ".agent", "skills"),
-];
+]));
 
 async function resolveExistingWorkspaceSkillTarget(
   workspaceRoot: string,
@@ -232,6 +353,7 @@ async function resolveExistingWorkspaceSkillTarget(
 async function resolveExistingUserGlobalSkillTarget(
   name: string,
   instancePath?: string,
+  options: { allowManaged?: boolean } = {},
 ): Promise<{ skillPath: string; skillRoot: string }> {
   validateSkillName(name);
   const roots = userGlobalSkillRootsForMutation().map((root) => resolve(root));
@@ -249,7 +371,7 @@ async function resolveExistingUserGlobalSkillTarget(
     throw new ApiError(400, "invalid_skill_path", "Skill instance path must be inside a user-global skill root");
   }
   const relativeToRoot = relative(owningRoot, target).replace(/\\/g, "/");
-  if (relativeToRoot === `veslo-managed/${name}/${SKILL_ENTRYPOINT}` || relativeToRoot.startsWith("veslo-managed/")) {
+  if (!options.allowManaged && (relativeToRoot === `veslo-managed/${name}/${SKILL_ENTRYPOINT}` || relativeToRoot.startsWith("veslo-managed/"))) {
     throw new ApiError(409, "managed_skill_read_only", "Managed materialized skills must be edited through the registry");
   }
   if (!(await exists(target))) {
@@ -304,6 +426,18 @@ export async function readSkillAtPath(
   return {
     path: skillPath,
     content: await readFile(skillPath, "utf8"),
+  };
+}
+
+export async function readGlobalSkillAtPath(
+  payload: { name: string; path: string },
+): Promise<{ path: string; content: string }> {
+  const target = await resolveExistingUserGlobalSkillTarget(payload.name.trim(), payload.path, {
+    allowManaged: true,
+  });
+  return {
+    path: target.skillPath,
+    content: await readFile(target.skillPath, "utf8"),
   };
 }
 

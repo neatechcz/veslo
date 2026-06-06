@@ -1,8 +1,7 @@
 use std::sync::{Arc, Mutex};
 
-use tauri_plugin_shell::process::CommandChild;
-
 use crate::orchestrator;
+use crate::supervised_process::SupervisedCommandChild;
 
 #[derive(Default)]
 pub struct OrchestratorManager {
@@ -11,7 +10,7 @@ pub struct OrchestratorManager {
 
 #[derive(Default)]
 pub struct OrchestratorState {
-    pub child: Option<CommandChild>,
+    pub child: Option<SupervisedCommandChild>,
     pub child_exited: bool,
     pub data_dir: Option<String>,
     pub last_stdout: Option<String>,

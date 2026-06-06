@@ -62,8 +62,11 @@ Submit behavior:
 - while that pending send is still starting a local workspace/runtime, the footer indicator label is `Loading`/`Nahrávám`; once workspace warmup is done and the backend is simply producing the assistant turn, the same indicator returns to `Responding`/`Odpovídám`
 - first-send workspace and session materialization is scoped to the session run state; it must not hold the global app busy/navigation lock or force the user back to chat if they navigate elsewhere while the handoff is still pending
 - when a local workspace is in browsing mode, the OpenCode runtime warmup needed before a send must also stay outside the global app busy/navigation lock; the warmup may delay that send, but the rest of the app remains usable
+- remote skill registry/Den failures during local runtime warmup are degraded telemetry conditions, not prompt-send failures, as long as local materialized skill state can still be used safely
+- browsing-mode runtime warmup must preserve the currently selected session route even when the engine has to cold-start instead of reattaching to an existing runtime
 - the Composer clears immediately and remains available for a separate new draft, including while a new session is still being materialized
 - attachment staging, pending-session creation, and message handoff continue in the backend/session layer after the Composer releases the submitted draft
+- after a pending chat is materialized into a real session, attachment staging must resolve the active workspace against the live Veslo server workspace list before opening a file session; for local desktop workspaces, a missing server workspace is recovered once by refreshing the local server/workspace state before the agent/model prompt starts
 - if handoff fails before a real message exists, the temporary user message stays in the timeline with failed status instead of being restored into the Composer automatically
 - failed pending submitted messages can be changed only through the explicit edit pencil, which removes that pending timeline message and loads that exact draft into the Composer
 - the Composer is not an automatic rollback buffer for pre-real-message submit failures because the user may already be composing a different message or working in a different pending session
@@ -78,6 +81,8 @@ Main source of truth:
 When a session is running or streaming, plain Enter and the queue send button add the draft to a session-local queue instead of interrupting the active run. Ctrl/Meta+Enter and send-now bypass the queue and submit immediately.
 
 Stopping a run pauses the current session queue before the abort can make the session idle. The queue resumes when the user sends a queued Enter draft or after an accepted send-now draft finishes. When a non-idle session returns to idle and the queue is not paused, Veslo drains the first queued or retryable queued draft.
+
+Plain Escape while a run is active is a two-step stop shortcut. The first eligible Escape changes the streaming stop button from the square icon to `Esc` and does not abort the run. The next eligible Escape confirms the stop and uses the same abort path as the stop button. Escape used by command palette, search, side overlays, modals, or other handled UI must not arm or confirm the stop shortcut.
 
 Queued drafts can be edited, canceled, and reordered before they are sent. Saving an edited queued draft with Enter updates the queued item; saving with send-now submits it immediately.
 
@@ -103,6 +108,15 @@ The collapsed group summarizes both action rows and intermediate comments. Expan
 
 `showThinking=false` hides model reasoning content and reasoning technical details only. It must not hide progress actions, non-final assistant comments, tool summaries, or other non-reasoning progress details that regular users need in order to understand what happened during the run.
 
+## Timeline Media Evidence
+
+The session timeline can show image evidence attached to the step or message where it mattered.
+
+- `Analyzed` means the image was passed to a vision-capable model as image input.
+- `Created` means a concrete action in the current run created or modified a bitmap image.
+- Discovery-only file listing, globbing, and search do not create media evidence.
+- Timeline media evidence is derived UI state. It is not a durable gallery and does not scan arbitrary workspace images.
+
 ## Pending Drafts
 
 Unstarted sessions are modeled as pending drafts.
@@ -110,9 +124,12 @@ Unstarted sessions are modeled as pending drafts.
 Current behavior:
 
 - pending drafts are durable local state
+- empty pending sessions show a centered composer entry instead of the full conversation layout
 - pending drafts do not appear in the sidebar until the user presses `Run`; when the pending draft is for a newly registered local directory, the directory itself can appear immediately as an empty project/workspace row in by-project mode
 - `Chat` reopens the one existing unpublished private draft instead of creating another unpublished private workspace
 - project `+` actions reopen the pending draft for that project directory when one already exists
+- the composer target picker can switch the centered entry between the private chat draft and workspace pending drafts
+- when switching targets would collide with an existing draft, Veslo requires an explicit choice between keeping the current text for the destination or loading the existing destination draft
 - a real OpenCode session is materialized only when the pending draft is sent successfully
 
 ## Titlebar Context
@@ -169,6 +186,8 @@ The same local server boundary keeps full-body parsing byte-limited. Provider er
 Session transcript prefetch is bounded by both entry count and estimated bytes per workspace. Large tool outputs or message parts can evict older warm transcript snapshots even when the session-count limit has not been reached.
 
 Managed-AI usage is attributed by request, user, org, session, and credential. Accounting stores input tokens, output tokens, cached tokens, and total tokens from the routed provider response.
+
+Managed-AI admin usage also reports Codex capacity from functional Codex credentials. The capacity overview tracks remaining five-hour and weekly limits, separates measured, unknown, and unavailable Codex status, and feeds admin alerts at 80%, 90%, 95%, and 100% usage. The 95% and 100% thresholds generate admin alert emails, with 100% treated as critical. If the server cannot see Codex limits for any functional credential, it generates a critical visibility alert email that includes the affected Codex credentials and their known or unknown capacity state. Email delivery is de-duplicated per alert and recipient, while synthetic capacity alerts in the admin alert list are best-effort so stored alert history remains available if Codex status probing is unavailable.
 
 OpenAI-compatible custom providers are admin-managed. The desktop app receives provider `openai_compatible` and a model id in the read-only AI access policy, writes local OpenCode routing for `@ai-sdk/openai-compatible`, and sends prompts through the local Veslo server route `/ai-gateway/providers/openai_compatible/v1/chat/completions`. The managed-AI service that receives the request, DEN or standalone AI Gateway, resolves the assigned platform credential, reads the encrypted base URL and API key, forwards to `${baseUrl}/chat/completions`, and records usage against provider `openai_compatible`.
 

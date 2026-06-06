@@ -1,6 +1,7 @@
 import type { Part } from "@opencode-ai/sdk/v2/client";
 import { getBasename as basename } from "../../utils/workspace-path";
 import { currentLocale, t } from "../../../i18n";
+import { buildMediaEvidenceForParts, type MediaEvidence } from "./media-evidence-model.js";
 
 export type TimelineSectionKind = "plan" | "explore" | "action" | "verify" | "issues";
 
@@ -26,6 +27,7 @@ export type TimelineRowModel = {
   secondary?: string;
   status?: "done" | "running" | "error" | "pass";
   technicalDetail?: string;
+  mediaEvidence?: MediaEvidence[];
 };
 
 export type TimelineSectionModel = {
@@ -45,10 +47,11 @@ export type TimelineDetailModel = {
 type BuildTimelineDetailModelInput = {
   parts: Part[];
   latestLabel?: string;
+  workspaceRoot?: string;
 };
 
 type BuildCollapsedSummaryInput = {
-  sections: Array<Pick<TimelineSectionModel, "summary">>;
+  sections: Array<Pick<TimelineSectionModel, "summary"> & Partial<Pick<TimelineSectionModel, "rows">>>;
   latestLabel?: string;
 };
 
@@ -72,14 +75,20 @@ const SECTION_TITLE_KEYS: Record<TimelineSectionKind, string> = {
   issues: "timeline.section.issues",
 };
 
-function tr(key: string, replacements?: Record<string, string>): string {
-  let value = t(key, currentLocale());
+type TimelineLocale = ReturnType<typeof currentLocale>;
+
+function trForLocale(key: string, locale: TimelineLocale, replacements?: Record<string, string>): string {
+  let value = t(key, locale);
   if (replacements) {
     for (const [placeholder, replacement] of Object.entries(replacements)) {
       value = value.replaceAll(`{${placeholder}}`, replacement);
     }
   }
   return value;
+}
+
+function tr(key: string, replacements?: Record<string, string>): string {
+  return trForLocale(key, currentLocale(), replacements);
 }
 
 function normalizeText(value: unknown): string {
@@ -425,6 +434,35 @@ function countRows(rows: TimelineRowModel[], kinds: readonly TimelineRowType[]) 
   return rows.filter((row) => set.has(row.rowType)).length;
 }
 
+function countMediaEvidence(rows: TimelineRowModel[], kind: MediaEvidence["kind"]): number {
+  return rows.reduce(
+    (total, row) => total + (row.mediaEvidence ?? []).filter((item) => item.kind === kind).length,
+    0,
+  );
+}
+
+function summarizeMediaEvidenceCount(count: number, kind: MediaEvidence["kind"], locale: TimelineLocale = currentLocale()): string {
+  if (count <= 0) return "";
+  if (kind === "created") {
+    return trForLocale(count === 1 ? "session.media_evidence_image_created_one" : "session.media_evidence_image_created_other", locale, {
+      count: String(count),
+    });
+  }
+  return trForLocale(count === 1 ? "session.media_evidence_image_analyzed_one" : "session.media_evidence_image_analyzed_other", locale, {
+    count: String(count),
+  });
+}
+
+function summaryLooksEnglish(value: string): boolean {
+  return /\b(?:action|actions|file|files|image|images|issue|issues|list|lists|search|searches|verification)\b/i.test(value);
+}
+
+function mediaEvidenceSummaryLocale(summaries: string[]): TimelineLocale {
+  const locale = currentLocale();
+  if (locale === "en") return locale;
+  return summaries.some(summaryLooksEnglish) ? "en" : locale;
+}
+
 function summarizeSection(kind: TimelineSectionKind, rows: TimelineRowModel[]): string {
   if (!rows.length) return "";
 
@@ -480,7 +518,12 @@ function summarizeLatestLabel(sections: TimelineSectionModel[]): string | undefi
 
 export function buildCollapsedSummary(input: BuildCollapsedSummaryInput): string {
   const summaries = input.sections.map((section) => normalizeText(section.summary)).filter(Boolean);
-  const base = summaries.join(" · ");
+  const rows = input.sections.flatMap((section) => section.rows ?? []);
+  const mediaSummaryLocale = mediaEvidenceSummaryLocale(summaries);
+  const createdImages = summarizeMediaEvidenceCount(countMediaEvidence(rows, "created"), "created", mediaSummaryLocale);
+  const analyzedImages = summarizeMediaEvidenceCount(countMediaEvidence(rows, "analyzed"), "analyzed", mediaSummaryLocale);
+  const items = [...summaries, createdImages, analyzedImages].filter(Boolean);
+  const base = items.join(" · ");
   if (input.latestLabel && summaries.length <= 1) {
     const latest = tr("timeline.latest_label", { label: input.latestLabel });
     return base ? `${base} · ${latest}` : latest;
@@ -513,7 +556,13 @@ export function buildTimelineDetailModel(input: BuildTimelineDetailModelInput): 
   for (let index = 0; index < parts.length; index += 1) {
     const part = parts[index];
     const kind = classifyPartKind(part, previousKind);
-    const row = normalizeStaleRunningReasoningRow(buildRowModel(part, kind), part, index, parts.length);
+    const baseRow = normalizeStaleRunningReasoningRow(buildRowModel(part, kind), part, index, parts.length);
+    const mediaEvidence = buildMediaEvidenceForParts({
+      parts: [part],
+      sourceId: `${part.type}:${index}`,
+      workspaceRoot: input.workspaceRoot,
+    });
+    const row = mediaEvidence.length > 0 ? { ...baseRow, mediaEvidence } : baseRow;
     appendSection(kind, row);
     previousKind = kind;
   }

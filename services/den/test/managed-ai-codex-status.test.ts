@@ -57,6 +57,56 @@ test("parseRateLimitsFromSessionLog reads Codex token_count rate limits", () => 
   })
 })
 
+test("parseRateLimitsFromSessionLog reads current Codex payload rate limits", () => {
+  const sessionLog = [
+    JSON.stringify({
+      timestamp: "2026-06-06T03:46:56.983Z",
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: {
+          total_token_usage: {
+            input_tokens: 18976,
+            cached_input_tokens: 3456,
+            output_tokens: 612,
+            reasoning_output_tokens: 516,
+            total_tokens: 19588,
+          },
+          model_context_window: 258400,
+        },
+        rate_limits: {
+          limit_id: "codex",
+          primary: {
+            used_percent: 8,
+            window_minutes: 300,
+            resets_at: 1780735110,
+          },
+          secondary: {
+            used_percent: 46,
+            window_minutes: 10080,
+            resets_at: 1781147826,
+          },
+          plan_type: "pro",
+        },
+      },
+    }),
+  ].join("\n")
+
+  assert.deepEqual(parseRateLimitsFromSessionLog(sessionLog), {
+    primary: {
+      used_percent: 8,
+      window_minutes: 300,
+      resets_at: 1780735110,
+    },
+    secondary: {
+      used_percent: 46,
+      window_minutes: 10080,
+      resets_at: 1781147826,
+    },
+    plan_type: "pro",
+  })
+})
+
 test("parseRateLimitsFromSessionLog finds nested Codex rate limits with string numbers", () => {
   const sessionLog = [
     JSON.stringify({
@@ -151,6 +201,37 @@ test("CachedCodexCredentialStatusProvider reports healthy probes with unknown li
   assert.equal(status.label, "Codex OK, limits unknown")
   assert.equal(status.detail, "codex | OK | tokens used | 1,499")
   assert.equal(status.limits?.fiveHour, null)
+  assert.equal(status.limits?.weekly, null)
+})
+
+test("CachedCodexCredentialStatusProvider maps Codex usage-limit stderr to exhausted 5h limits", async () => {
+  const detail =
+    "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 8:38 AM."
+  const provider = new CachedCodexCredentialStatusProvider({
+    ttlMs: 5 * 60 * 1000,
+    now: () => new Date("2026-06-06T06:24:41.343Z"),
+    loadCredentialAuthJson: async () => JSON.stringify({ auth_mode: "chatgpt", tokens: { refresh_token: "rt" } }),
+    probe: async () => ({
+      checkedAt: "2026-06-06T06:24:41.343Z",
+      rateLimits: null,
+      ok: false,
+      detail,
+    }),
+  })
+
+  const status = await provider.getStatus({
+    credentialId: "cred_codex_1",
+    credentialName: "Vaclav CODEX",
+  })
+
+  assert.equal(status.available, true)
+  assert.equal(status.source, "codex_exec_rate_limits")
+  assert.equal(status.label, "Codex limits available")
+  assert.equal(status.detail, detail)
+  assert.equal(status.limits?.fiveHour?.label, "5h")
+  assert.equal(status.limits?.fiveHour?.usedPercent, 100)
+  assert.equal(status.limits?.fiveHour?.windowMinutes, 300)
+  assert.equal(status.limits?.fiveHour?.resetAt, null)
   assert.equal(status.limits?.weekly, null)
 })
 

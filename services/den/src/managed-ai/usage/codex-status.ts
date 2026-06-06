@@ -137,8 +137,13 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
             credentialName: input.credentialName,
             authJson,
           });
+          const usageLimitStatus = result.rateLimits
+            ? null
+            : codexUsageStatusFromUsageLimitFailure(result.detail, result.checkedAt);
           status = result.rateLimits
             ? codexUsageStatusFromRateLimits(result.rateLimits, result.checkedAt, result.detail)
+            : usageLimitStatus
+              ? usageLimitStatus
             : result.ok === true
               ? codexUsageStatusUnknownLimits(result.checkedAt, result.detail)
               : unavailableStatus(result.detail || "Codex probe did not return rate limits.", result.checkedAt);
@@ -223,6 +228,34 @@ function codexUsageStatusUnknownLimits(checkedAt: string, detail?: string | null
       weekly: null,
     },
   };
+}
+
+function codexUsageStatusFromUsageLimitFailure(
+  detail: string | null | undefined,
+  checkedAt: string,
+): CodexUsageStatus | null {
+  const normalized = detail?.trim();
+  if (!normalized || !isCodexUsageLimitFailure(normalized)) {
+    return null;
+  }
+
+  return codexUsageStatusFromRateLimits(
+    {
+      primary: {
+        used_percent: 100,
+        window_minutes: 300,
+        resets_at: null,
+      },
+      secondary: null,
+      plan_type: null,
+    },
+    checkedAt,
+    normalized,
+  );
+}
+
+function isCodexUsageLimitFailure(statusText: string): boolean {
+  return /you(?:'|’)?ve hit your usage limit|hit your usage limit/i.test(statusText);
 }
 
 export function parseRateLimitsFromSessionLog(text: string): CodexRateLimitsSnapshot | null {

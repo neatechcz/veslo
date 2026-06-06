@@ -55,7 +55,7 @@ If only Vite runs, desktop runtime is not fully started; stop it and use the des
 If changes touched `packages/server/src`, rebuild server binary before relying on orchestrator-backed flows:
 
 ```bash
-pnpm --filter openwork-server build:bin
+pnpm --filter veslo-server build:bin
 ```
 
 Then run the standard dev startup flow above.

@@ -51,7 +51,7 @@ function createAlert(id: string, status: "acknowledged" | "resolved") {
     firstSeenAt: "2026-04-03T10:00:00.000Z",
     lastSeenAt: "2026-04-03T10:05:00.000Z",
     owner: "admin@example.test",
-    runbook: "Inspect quota pressure and rotate session load across healthy credentials.",
+    runbook: "Inspect quota pressure and rebalance routing across healthy credentials.",
   }
 }
 
@@ -172,7 +172,7 @@ test("POST /admin/api/credentials actions forward to the managed ai handler", as
         entityType: "credential",
         entityId: "cred_openai_1",
         result: "ok",
-        summary: "Rotated active sessions off credential cred_openai_1.",
+        summary: "Rotated active routes off credential cred_openai_1.",
       },
     ])
   } finally {

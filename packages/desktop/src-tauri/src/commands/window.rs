@@ -1,4 +1,6 @@
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager};
+use tauri::{AppHandle, Manager};
+#[cfg(all(debug_assertions, feature = "e2e"))]
+use tauri::{LogicalPosition, LogicalSize};
 
 /// Set window decorations (titlebar) visibility.
 /// When `decorations` is false, the native titlebar is hidden.

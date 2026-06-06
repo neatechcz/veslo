@@ -110,16 +110,39 @@ test("composer exposes button intents for queue and streaming send-now", () => {
   );
 });
 
+test("composer shows Escape confirmation on the streaming stop button", () => {
+  assert.match(
+    composerSource,
+    /stopShortcutConfirmPending\?: boolean;/,
+    "composer should accept the Escape stop confirmation state from the session view",
+  );
+
+  assert.match(
+    composerSource,
+    /props\.stopShortcutConfirmPending[\s\S]*translate\("session\.stop_escape_confirm_label"\)[\s\S]*translate\("session\.stop_label"\)/,
+    "streaming stop button should expose a localized confirmation title before falling back to Stop",
+  );
+
+  assert.match(
+    composerSource,
+    /when=\{props\.stopShortcutConfirmPending\}[\s\S]*fallback=\{<Square size=\{14\} fill="currentColor" \/>\}[\s\S]*>Esc<\/span>/,
+    "streaming stop button should replace the square icon with the Esc confirmation label",
+  );
+});
+
 test("composer send intent labels are localized", () => {
   assert.match(enSource, /"session\.send_now_label": "Send now"/);
   assert.match(enSource, /"session\.send_now_title": "Steer agent now"/);
   assert.match(enSource, /"session\.queue_message_label": "Queue message"/);
+  assert.match(enSource, /"session\.stop_escape_confirm_label": "Press Esc again to stop"/);
 
   assert.match(csSource, /"session\.send_now_label": "Poslat hned"/);
   assert.match(csSource, /"session\.send_now_title": "Nasměrovat agenta teď"/);
   assert.match(csSource, /"session\.queue_message_label": "Zařadit zprávu"/);
+  assert.match(csSource, /"session\.stop_escape_confirm_label": "Dalším Esc zastavíte běh"/);
 
   assert.match(zhSource, /"session\.send_now_label": "立即发送"/);
   assert.match(zhSource, /"session\.send_now_title": "立即引导代理"/);
   assert.match(zhSource, /"session\.queue_message_label": "加入队列"/);
+  assert.match(zhSource, /"session\.stop_escape_confirm_label": "再次按 Esc 停止"/);
 });

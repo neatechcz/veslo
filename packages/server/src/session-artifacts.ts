@@ -539,6 +539,7 @@ function shouldReplaceArtifact(current: SessionArtifactItem, next: SessionArtifa
 function shouldDropGenericFileArtifact(path: string): boolean {
   if (path === ".opencode") return true;
   if (basename(path).toLowerCase() === "agents.md") return true;
+  if (/^\.opencode\/agents\/.+\.md$/i.test(path)) return true;
   if (/^\.opencode\/skills\/.+\/skill\.md$/i.test(path)) return true;
   if (/^\.opencode\/veslo\/internal\//i.test(path)) return true;
   return false;

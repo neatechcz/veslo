@@ -6,9 +6,16 @@
   "scripts": {
     "check:live-admin-user": "node --import=tsx/esm ./scripts/check-live-admin-user.ts",
     "seed:live-auth": "node --import=tsx/esm ./scripts/seed-live-den-auth.ts",
-    "test": "wdio run wdio.conf.ts",
-    "test:update-baselines": "wdio run wdio.conf.ts --update-visual-baseline",
-    "test:feedback-youtrack-live": "wdio run wdio.conf.ts --spec ./specs/feedback-youtrack-live.spec.ts"
+    "test": "node --import=tsx/esm ./helpers/pilot-runner.ts",
+    "test:pilot": "node --import=tsx/esm ./helpers/pilot-runner.ts",
+    "test:pilot:core-platform-skills": "node --import=tsx/esm ./specs/core-platform-skills.pilot.ts",
+    "test:pilot:smoke": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario smoke",
+    "test:pilot:navigation": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario navigation",
+    "test:pilot:skills-enabled-state": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario skills-enabled-state",
+    "test:pilot:soul-dashboard": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario soul-dashboard",
+    "test:legacy-wdio": "node -e \"throw new Error('Legacy WDIO specs are not a Veslo runtime gate. Convert the target spec to tauri-pilot before running it.')\"",
+    "test:update-baselines": "node -e \"throw new Error('Visual WDIO baselines are legacy. Convert the visual check to tauri-pilot screenshots before updating baselines.')\"",
+    "test:feedback-youtrack-live": "node -e \"throw new Error('The live feedback WDIO spec is legacy. Convert it to tauri-pilot before using it as validation.')\""
   },
   "devDependencies": {
     "@wdio/cli": "^9.6",
@@ -19,6 +26,7 @@
     "@wdio/visual-service": "^6",
     "webdriverio": "^9.6",
     "@types/mocha": "^10",
+    "@types/node": "^22.10.2",
     "typescript": "^5.6",
     "tsx": "^4"
   }

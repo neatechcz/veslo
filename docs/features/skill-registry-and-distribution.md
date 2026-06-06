@@ -111,6 +111,8 @@ The local Veslo server materializes server-controlled workspace skills into `.op
 
 Registry search can be reached through the local server at `/v1/skills/search` when the desktop app needs server-side registry auth and validation. Registry update polling can be reached through `/v1/skill-registry-events`; app clients should invalidate inventory for all visible events, mark active workspace updates as pending reload, and materialize idle workspace or personal-global updates through the local server. Workspace runtime sync uses `/workspace/:id/skills/materialization`; personal-global sync uses `/skills/materialization`. Registry writes are proxied through local host or owner-authenticated routes for skill creation, immutable version publishing, installation create/update/delete/restore, rollout policy create/update/delete, review request create/approve/reject, and workspace skill-set replacement. Filesystem materialization writes require host or owner auth and active runs should return a pending reload state instead of mutating files.
 
+Runtime warmup must treat remote registry or Den unavailability as a degraded registry state, not as a hard prompt-send blocker. Local materialization write/config/runtime errors can still block startup because the runtime would be unsafe or inconsistent, but registry fetch/search/sync failures caused by an unavailable remote control plane should be logged and reported while the existing local skill state continues to be used for the send.
+
 Rollout policy events are registry events. A user-global rollout can be
 materialized by `/skills/materialization/sync-global`; a selected-workspace
 rollout can be materialized by `/workspace/:id/skills/materialization/sync`.

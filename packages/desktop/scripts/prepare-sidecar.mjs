@@ -377,8 +377,9 @@ const parseChecksum = (content, assetName) => {
 };
 
 let didBuildVesloServer = false;
-const shouldBuildVesloServer =
-  forceBuild || !existsSync(vesloServerBuildPath) || isStubBinary(vesloServerBuildPath);
+// veslo-server is first-party code. Its package version does not change for every
+// local server edit, so an existing sidecar can otherwise silently go stale.
+const shouldBuildVesloServer = true;
 const bunWindowsBaselineExecutable = ensureWindowsBaselineBunExecutable();
 const buildEnv = bunWindowsBaselineExecutable
   ? { ...process.env, BUN_WINDOWS_X64_BASELINE_EXECUTABLE: bunWindowsBaselineExecutable }

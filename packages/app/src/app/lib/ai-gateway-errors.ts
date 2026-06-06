@@ -25,7 +25,12 @@ type ManagedAiFailure = {
   reason: string | null;
 };
 
-const managedCodexFailureCodes = ["no_eligible_codex_credentials", "assigned_credential_unavailable"] as const;
+const managedCodexFailureCodes = [
+  "no_eligible_codex_credentials",
+  "no_eligible_bindings",
+  "no_eligible_binding",
+  "assigned_credential_unavailable",
+] as const;
 
 const isManagedCodexFailureCode = (value: string | null) =>
   managedCodexFailureCodes.some((code) => value === code);

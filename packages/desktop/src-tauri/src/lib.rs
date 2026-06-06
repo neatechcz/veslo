@@ -11,6 +11,7 @@ mod orchestrator;
 mod paths;
 mod platform;
 mod process_supervisor;
+mod supervised_process;
 mod types;
 mod updater;
 mod utils;
@@ -182,7 +183,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build());
 
     #[cfg(all(debug_assertions, feature = "e2e"))]
-    let builder = builder.plugin(tauri_plugin_webdriver::init());
+    let builder = builder.plugin(tauri_plugin_pilot::init());
 
     let app = builder
         .setup(|app| {

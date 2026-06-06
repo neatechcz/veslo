@@ -4,8 +4,8 @@ use std::net::TcpListener;
 
 use tauri::async_runtime::Receiver;
 use tauri::AppHandle;
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
-use tauri_plugin_shell::ShellExt;
+
+use crate::supervised_process::{self, CommandEvent, SupervisedCommandChild};
 
 pub const DEFAULT_OPENCODE_ROUTER_HEALTH_PORT: u16 = 3005;
 
@@ -38,12 +38,12 @@ pub fn spawn_opencode_router(
     opencode_username: Option<&str>,
     opencode_password: Option<&str>,
     health_port: u16,
-) -> Result<(Receiver<CommandEvent>, CommandChild), String> {
-    let command = match app.shell().sidecar("veslo-code-router") {
+) -> Result<(Receiver<CommandEvent>, SupervisedCommandChild), String> {
+    let command = match supervised_process::sidecar(app, "veslo-code-router") {
         Ok(command) => command,
-        Err(_) => match app.shell().sidecar("opencode-router") {
+        Err(_) => match supervised_process::sidecar(app, "opencode-router") {
             Ok(command) => command,
-            Err(_) => app.shell().command("opencode-router"),
+            Err(_) => supervised_process::command(app, "opencode-router"),
         },
     };
 

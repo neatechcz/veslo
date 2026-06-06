@@ -22,7 +22,9 @@ const timestamps = {
     .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
 }
 
-export const OrgRole = ["owner", "member"] as const
+export const OrgRole = ["member", "organization_admin"] as const
+export const OrganizationMembershipStatus = ["active", "disabled", "removed"] as const
+export const OrganizationInviteStatus = ["pending", "accepted", "expired", "revoked"] as const
 export const PlatformRole = ["platform_admin"] as const
 export const WorkerDestination = ["local", "cloud"] as const
 export const WorkerStatus = ["provisioning", "healthy", "failed", "stopped"] as const
@@ -120,6 +122,7 @@ export const OrgTable = mysqlTable(
     name: varchar("name", { length: 255 }).notNull(),
     slug: varchar("slug", { length: 255 }).notNull(),
     owner_user_id: varchar("owner_user_id", { length: 64 }).notNull(),
+    seat_limit: int("seat_limit", { unsigned: true }),
     ...timestamps,
   },
   (table) => [uniqueIndex("org_slug").on(table.slug), index("org_owner_user_id").on(table.owner_user_id)],
@@ -132,9 +135,60 @@ export const OrgMembershipTable = mysqlTable(
     org_id: varchar("org_id", { length: 64 }).notNull(),
     user_id: varchar("user_id", { length: 64 }).notNull(),
     role: mysqlEnum("role", OrgRole).notNull(),
+    status: mysqlEnum("status", OrganizationMembershipStatus).notNull().default("active"),
     created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
-  (table) => [index("org_membership_org_id").on(table.org_id), index("org_membership_user_id").on(table.user_id)],
+  (table) => [
+    index("org_membership_org_id").on(table.org_id),
+    index("org_membership_user_id").on(table.user_id),
+    index("org_membership_org_status").on(table.org_id, table.status),
+    index("org_membership_user_status").on(table.user_id, table.status),
+  ],
+)
+
+export const OrganizationDomainTable = mysqlTable(
+  "organization_domain",
+  {
+    id: id().primaryKey(),
+    org_id: varchar("org_id", { length: 64 }).notNull(),
+    domain: varchar("domain", { length: 255 }).notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    self_signup_enabled: boolean("self_signup_enabled").notNull().default(false),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("organization_domain_domain").on(table.domain),
+    index("organization_domain_org_id").on(table.org_id),
+    index("organization_domain_org_enabled").on(table.org_id, table.enabled),
+    index("organization_domain_self_signup").on(table.self_signup_enabled),
+  ],
+)
+
+export const OrganizationInviteTable = mysqlTable(
+  "organization_invite",
+  {
+    id: id().primaryKey(),
+    org_id: varchar("org_id", { length: 64 }).notNull(),
+    email: varchar("email", { length: 255 }).notNull(),
+    role: mysqlEnum("role", OrgRole).notNull().default("member"),
+    status: mysqlEnum("status", OrganizationInviteStatus).notNull().default("pending"),
+    token_hash: varchar("token_hash", { length: 255 }).notNull(),
+    invited_by_user_id: varchar("invited_by_user_id", { length: 64 }).notNull(),
+    accepted_by_user_id: varchar("accepted_by_user_id", { length: 64 }),
+    expires_at: timestamp("expires_at", { fsp: 3 }),
+    accepted_at: timestamp("accepted_at", { fsp: 3 }),
+    revoked_at: timestamp("revoked_at", { fsp: 3 }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("organization_invite_token_hash").on(table.token_hash),
+    index("organization_invite_org_id").on(table.org_id),
+    index("organization_invite_org_status").on(table.org_id, table.status),
+    index("organization_invite_email").on(table.email),
+    index("organization_invite_email_status").on(table.email, table.status),
+    index("organization_invite_invited_by").on(table.invited_by_user_id),
+    index("organization_invite_accepted_by").on(table.accepted_by_user_id),
+  ],
 )
 
 export const PlatformRoleTable = mysqlTable(

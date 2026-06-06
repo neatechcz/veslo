@@ -34,9 +34,11 @@ pgrep -fl "pnpm -w dev:ui|pnpm --filter @neatech/veslo-ui dev|pnpm --filter @nea
 
 If a match looks like a user-launched production/bundled app or otherwise cannot be identified as an internally started dev/test runtime, stop and report what is running instead of force-killing it.
 
-Existing WebDriver reuse is not the default desktop test flow. Attach to an existing WebDriver server only when the user explicitly asks for a debug attach workflow.
+Existing `tauri-pilot` app/socket reuse is not the default desktop test flow. Attach to an existing socket only when the user explicitly asks for a debug attach workflow.
 
-The WebdriverIO launcher waits for the Tauri process it started to exit during teardown and escalates to a force kill if the process ignores the graceful stop signal. This harness cleanup does not replace the preflight above; clear matching Veslo dev/test processes before each desktop runtime launch.
+The `tauri-pilot` launcher waits for the Tauri process it started to exit during teardown and escalates to a force kill if the process ignores the graceful stop signal. This harness cleanup does not replace the preflight above; clear matching Veslo dev/test processes before each desktop runtime launch.
+
+Legacy WebdriverIO specs under `packages/e2e/specs` are historical only. Do not run them as the desktop validation gate. If a task needs behavior currently covered only by a legacy WDIO spec, first convert that scenario to `tauri-pilot`, then run the pilot scenario against the real Tauri runtime.
 
 ## Fast Checks by Surface
 
@@ -84,26 +86,57 @@ cd packages/desktop
 pnpm tauri build --debug --no-bundle --config src-tauri/tauri.dev.conf.json -- --features e2e
 
 cd ../e2e
-pnpm test --spec ./specs/<target>.spec.ts
+pnpm test
 ```
+
+`tauri-pilot` is the desktop test driver. The E2E build includes `tauri-plugin-pilot` behind the `e2e` Cargo feature, and `packages/e2e` launches the debug Tauri binary with a deterministic `TAURI_PILOT_SOCKET`. Install the matching CLI when the environment does not already provide it:
 
 The E2E launcher uses an isolated app profile under `packages/e2e/.tmp-veslo-home` by default so local desktop state does not leak into tests. Set `E2E_USE_EXISTING_PROFILE=1` only when a test explicitly needs the current user profile.
 
-For visual snapshot updates, run:
+For core platform skill materialization coverage, build with the pilot-enabled E2E config and run the targeted pilot script:
+
+Prerequisite: the `tauri-pilot` CLI must be on `PATH`. If it is installed elsewhere, set `E2E_TAURI_PILOT_BIN=/absolute/path/to/tauri-pilot`.
 
 ```bash
-cd packages/e2e
-pnpm test:update-baselines --spec ./specs/visual-regression.spec.ts
-pnpm test --spec ./specs/visual-regression.spec.ts
+# First run the Desktop Test Runtime Preflight above.
+
+pnpm --filter veslo-server build:bin
+VESLO_SIDECAR_FORCE_BUILD=1 pnpm --filter @neatech/veslo run prepare:sidecar
+
+cd packages/desktop
+pnpm tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json -- --features e2e
+
+cd ../e2e
+pnpm test:pilot:core-platform-skills
 ```
 
-The second command is required proof that the refreshed baselines pass in normal comparison mode.
+The pilot config uses the isolated `com.neatech.veslo.e2e` app identifier and enables `pilot:default` only for the E2E build. Do not add pilot permissions to the default desktop capability.
+
+For Windows sidecar-launch changes, also run the clean-profile runtime probe after the Tauri E2E build:
+
+```bash
+cargo install tauri-pilot-cli --version 0.7.1 --locked
+```
+
+Focused pilot scenarios can be run from `packages/e2e`:
+
+```bash
+pnpm test:pilot:smoke
+pnpm test:pilot:navigation
+pnpm test -- --scenario <name-or-path>
+```
+
+The E2E launcher uses an isolated app profile under `packages/e2e/.tmp-veslo-home` by default so local desktop state does not leak into tests. It also assigns an isolated local Veslo server port so a user-launched production app on `8787` does not block desktop tests; set `E2E_VESLO_SERVER_PORT` only when a focused test needs a stable port. Set `E2E_USE_EXISTING_PROFILE=1` only when a test explicitly needs the current user profile.
+
+The previous Windows sidecar runtime probe was WebDriver-based and is legacy. Convert it to `tauri-pilot` before using it for Windows validation.
+
+The previous visual snapshot flow was WebdriverIO-based and is legacy. Convert the visual check to `tauri-pilot` screenshot assertions before refreshing or relying on baselines.
 
 ### Live feedback-to-YouTrack smoke
 
 Use this only when a real feedback report and a real YouTrack issue are acceptable. This is not a CI gate.
 
-The live smoke uses the desktop WebdriverIO harness to click the feedback UI, submit a unique report, confirm that the UI shows the returned YouTrack task number, and then poll YouTrack through REST until the projected issue appears.
+The previous live smoke used the desktop WebdriverIO harness to click the feedback UI, submit a unique report, confirm that the UI shows the returned YouTrack task number, and then poll YouTrack through REST until the projected issue appeared. It must be converted to `tauri-pilot` before it is used again as validation.
 
 Requirements:
 
@@ -115,23 +148,17 @@ Requirements:
 
 When `E2E_DEN_AUTH_JSON` is provided, the live spec treats it as authoritative and does not replace loopback Den auth from the desktop snapshot. This allows a Coding Agent run to point the real desktop UI at a locally started Den instance whose projector uses the configured YouTrack REST API.
 
-Run from `packages/e2e`:
-
-```bash
-E2E_LIVE_FEEDBACK_YOUTRACK=1 E2E_USE_EXISTING_PROFILE=1 pnpm test:feedback-youtrack-live
-```
-
-The live spec disables WebdriverIO spec retries while `E2E_LIVE_FEEDBACK_YOUTRACK=1` is set so a transient failure does not create duplicate YouTrack issues. It writes the latest run metadata to `packages/e2e/.tmp-live-feedback-youtrack/latest.json`.
+The legacy `test:feedback-youtrack-live` script intentionally fails with a conversion message. Port the flow to `tauri-pilot` before running a live feedback-to-YouTrack validation.
 
 ### Server changes in `packages/server/src`
 
 Run server tests if relevant, and rebuild the server binary used by orchestrator-driven flows:
 
 ```bash
-pnpm --filter openwork-server build:bin
+pnpm --filter veslo-server build:bin
 ```
 
-If app behavior depends on that server change, verify the app against the rebuilt binary.
+If app behavior depends on that server change, refresh the desktop sidecar with `VESLO_SIDECAR_FORCE_BUILD=1 pnpm --filter @neatech/veslo run prepare:sidecar` and verify the app against the rebuilt binary.
 
 ### Orchestrator changes
 
@@ -149,7 +176,7 @@ For a broad app-level check from the repo root:
 pnpm test:e2e
 ```
 
-This is still not a replacement for the Tauri + WebdriverIO runtime gate when the user asked to test the real app.
+This is still not a replacement for the Tauri + `tauri-pilot` runtime gate when the user asked to test the real app.
 
 ## High-Risk Flow Validation
 

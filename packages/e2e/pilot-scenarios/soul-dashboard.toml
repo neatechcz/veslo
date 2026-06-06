@@ -1,0 +1,311 @@
+[scenario]
+name = "soul-dashboard"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "navigate to soul dashboard"
+action = "eval"
+script = '''
+const oldUrl = window.location.href;
+window.location.hash = "/dashboard/soul";
+window.dispatchEvent(new HashChangeEvent("hashchange", {
+  oldURL: oldUrl,
+  newURL: window.location.href,
+}));
+true;
+'''
+
+[[step]]
+name = "soul route active"
+action = "assert-url"
+expected = "/dashboard/soul"
+timeout_ms = 10000
+
+[[step]]
+name = "organization source can be opened"
+action = "wait"
+target = "[data-testid=\"soul-organization-source-open\"]"
+timeout_ms = 30000
+
+[[step]]
+name = "soul page is idle"
+action = "eval"
+script = '''
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const waitUntil = async (predicate, options = {}) => {
+  const timeout = options.timeout ?? 8000;
+  const interval = options.interval ?? 250;
+  const message = options.message ?? "Condition was not met";
+  const deadline = Date.now() + timeout;
+  let latest = null;
+
+  while (Date.now() < deadline) {
+    latest = await predicate();
+    if (latest) return latest;
+    await sleep(interval);
+  }
+
+  throw new Error(`${message}. Latest=${JSON.stringify(latest)}`);
+};
+const pageIsIdle = () => {
+  const text = document.body.textContent ?? "";
+  return ![
+    "Refreshing Soul sources",
+    "Obnovuji Soul zdroje",
+    "Loading Soul details",
+    "Načítám detaily Soul",
+    "Loading version history",
+    "Načítám historii verzí",
+  ].some((message) => text.includes(message));
+};
+await waitUntil(pageIsIdle, {
+  message: "Soul page did not finish loading before opening modal",
+});
+true;
+'''
+
+[[step]]
+name = "open organization soul modal"
+action = "eval"
+script = '''
+document.querySelector('[data-testid="soul-source-modal-close"]')?.click();
+const button = document.querySelector('[data-testid="soul-organization-source-open"]');
+if (!(button instanceof HTMLElement)) throw new Error("Organization Soul open button was not found");
+button.click();
+true;
+'''
+
+[[step]]
+name = "organization soul modal is visible"
+action = "wait"
+target = "[data-testid=\"soul-source-modal\"]"
+timeout_ms = 10000
+
+[[step]]
+name = "organization soul modal is idle"
+action = "eval"
+script = '''
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const waitUntil = async (predicate, options = {}) => {
+  const timeout = options.timeout ?? 8000;
+  const interval = options.interval ?? 250;
+  const message = options.message ?? "Condition was not met";
+  const deadline = Date.now() + timeout;
+  let latest = null;
+  while (Date.now() < deadline) {
+    latest = await predicate();
+    if (latest) return latest;
+    await sleep(interval);
+  }
+  throw new Error(`${message}. Latest=${JSON.stringify(latest)}`);
+};
+const pageIsIdle = () => {
+  const text = document.body.textContent ?? "";
+  return ![
+    "Refreshing Soul sources",
+    "Obnovuji Soul zdroje",
+    "Loading Soul details",
+    "Načítám detaily Soul",
+    "Loading version history",
+    "Načítám historii verzí",
+  ].some((message) => text.includes(message));
+};
+await waitUntil(pageIsIdle, {
+  message: "Soul modal did not finish loading",
+});
+true;
+'''
+
+[[step]]
+name = "organization editor is editable"
+action = "eval"
+script = '''
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const waitUntil = async (predicate, options = {}) => {
+  const timeout = options.timeout ?? 8000;
+  const interval = options.interval ?? 250;
+  const message = options.message ?? "Condition was not met";
+  const deadline = Date.now() + timeout;
+  let latest = null;
+  while (Date.now() < deadline) {
+    latest = await predicate();
+    if (latest) return latest;
+    await sleep(interval);
+  }
+  throw new Error(`${message}. Latest=${JSON.stringify(latest)}`);
+};
+const readEditState = () => {
+  const content = document.querySelector('[data-testid="soul-editor-content"]');
+  const summary = document.querySelector('[data-testid="soul-change-summary"]');
+  const save = document.querySelector('[data-testid="soul-save-button"]');
+  return {
+    hasContent: content instanceof HTMLTextAreaElement,
+    hasSummary: summary instanceof HTMLInputElement,
+    hasSave: save instanceof HTMLButtonElement,
+    readOnly: content instanceof HTMLTextAreaElement ? content.readOnly : true,
+    summaryDisabled: summary instanceof HTMLInputElement ? summary.disabled : true,
+  };
+};
+
+let stableReads = 0;
+let lastSignature = "";
+await waitUntil(() => {
+  const state = readEditState();
+  const ready = state.hasContent && state.hasSummary && state.hasSave && !state.readOnly && !state.summaryDisabled;
+  const signature = JSON.stringify(state);
+  if (ready && signature === lastSignature) {
+    stableReads += 1;
+  } else {
+    stableReads = ready ? 1 : 0;
+    lastSignature = signature;
+  }
+  return stableReads >= 3 ? state : false;
+}, {
+  interval: 250,
+  message: "Organization Soul editor did not become stable",
+});
+true;
+'''
+
+[[step]]
+name = "edit organization soul fields"
+action = "eval"
+script = '''
+const assert = (condition, message) => {
+  if (!condition) throw new Error(message);
+};
+const nextContent = "# Organization Soul\n\n- Tauri Pilot organization memory update";
+const nextSummary = "Tauri Pilot organization Soul update";
+const setNativeValue = (element, value) => {
+  assert(element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement, "Form element was not found");
+  const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
+  if (descriptor?.set) {
+    descriptor.set.call(element, value);
+  } else {
+    element.value = value;
+  }
+  element.focus();
+  element.dispatchEvent(new InputEvent("input", { bubbles: true, data: value, inputType: "insertText" }));
+  element.dispatchEvent(new Event("change", { bubbles: true }));
+};
+
+setNativeValue(document.querySelector('[data-testid="soul-editor-content"]'), nextContent);
+setNativeValue(document.querySelector('[data-testid="soul-change-summary"]'), nextSummary);
+true;
+'''
+
+[[step]]
+name = "organization save is enabled"
+action = "eval"
+script = '''
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const waitUntil = async (predicate, options = {}) => {
+  const timeout = options.timeout ?? 8000;
+  const interval = options.interval ?? 250;
+  const message = options.message ?? "Condition was not met";
+  const deadline = Date.now() + timeout;
+  let latest = null;
+  while (Date.now() < deadline) {
+    latest = await predicate();
+    if (latest) return latest;
+    await sleep(interval);
+  }
+  throw new Error(`${message}. Latest=${JSON.stringify(latest)}`);
+};
+const readEditState = () => {
+  const content = document.querySelector('[data-testid="soul-editor-content"]');
+  const summary = document.querySelector('[data-testid="soul-change-summary"]');
+  const save = document.querySelector('[data-testid="soul-save-button"]');
+  return {
+    content: content instanceof HTMLTextAreaElement ? content.value : "",
+    summary: summary instanceof HTMLInputElement ? summary.value : "",
+    saveDisabled: save instanceof HTMLButtonElement ? save.disabled : true,
+  };
+};
+const nextContent = "# Organization Soul\n\n- Tauri Pilot organization memory update";
+const nextSummary = "Tauri Pilot organization Soul update";
+await waitUntil(() => {
+  const state = readEditState();
+  return state.content === nextContent && state.summary === nextSummary && !state.saveDisabled ? state : false;
+}, {
+  message: "Organization Soul edit did not enable save",
+});
+true;
+'''
+
+[[step]]
+name = "save organization soul"
+action = "eval"
+script = '''
+const button = document.querySelector('[data-testid="soul-save-button"]');
+if (!(button instanceof HTMLElement)) throw new Error("Organization Soul save button was not found");
+button.click();
+true;
+'''
+
+[[step]]
+name = "organization save settles"
+action = "eval"
+script = '''
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const waitUntil = async (predicate, options = {}) => {
+  const timeout = options.timeout ?? 8000;
+  const interval = options.interval ?? 250;
+  const message = options.message ?? "Condition was not met";
+  const deadline = Date.now() + timeout;
+  let latest = null;
+  while (Date.now() < deadline) {
+    latest = await predicate();
+    if (latest) return latest;
+    await sleep(interval);
+  }
+  throw new Error(`${message}. Latest=${JSON.stringify(latest)}`);
+};
+const readEditState = () => {
+  const content = document.querySelector('[data-testid="soul-editor-content"]');
+  const save = document.querySelector('[data-testid="soul-save-button"]');
+  return {
+    content: content instanceof HTMLTextAreaElement ? content.value : "",
+    saveText: save instanceof HTMLButtonElement ? save.textContent ?? "" : "",
+  };
+};
+const nextSummary = "Tauri Pilot organization Soul update";
+await waitUntil(() => {
+  const modal = document.querySelector('[data-testid="soul-source-modal"]');
+  const state = readEditState();
+  const text = modal?.textContent ?? "";
+  if (text.includes("Soul Den") || text.includes("Failed to fetch")) {
+    throw new Error(`Organization Soul save surfaced an error: ${text}`);
+  }
+  return !state.saveText.includes("Saving") && text.includes(nextSummary) ? { text, state } : false;
+}, {
+  message: "Organization Soul save did not settle with a new version",
+});
+true;
+'''
+
+[[step]]
+name = "saved organization soul remains visible"
+action = "eval"
+script = '''
+const nextContent = "# Organization Soul\n\n- Tauri Pilot organization memory update";
+const nextSummary = "Tauri Pilot organization Soul update";
+const modal = document.querySelector('[data-testid="soul-source-modal"]');
+const content = document.querySelector('[data-testid="soul-editor-content"]');
+const modalText = modal?.textContent ?? "";
+if (modalText.includes("Soul Den")) throw new Error("Organization Soul save surfaced a Soul Den error");
+if (modalText.includes("Failed to fetch")) throw new Error("Organization Soul save surfaced a fetch error");
+if (!modalText.includes(nextSummary)) throw new Error("Saved Organization Soul version summary was not shown");
+if (!(content instanceof HTMLTextAreaElement) || content.value !== nextContent) {
+  throw new Error("Organization Soul editor did not keep saved content");
+}
+true;
+'''

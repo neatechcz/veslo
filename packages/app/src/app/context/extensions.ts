@@ -16,7 +16,9 @@ import type {
   SkillCard,
   SkillInstance,
   SkillInventoryItem,
+  ManagedSkillSource,
   SkillSaveResult,
+  WorkspaceSkillRolloutRemovalPolicy,
 } from "../types";
 import { addOpencodeCacheHint, isTauriRuntime } from "../utils";
 import {
@@ -54,6 +56,8 @@ import {
 import type {
   VesloServerCapabilities,
   VesloServerClient,
+  VesloDisabledSkillRecord,
+  VesloSkillBatchRemoveResponse,
   VesloSkillMaterializationRequestOptions,
   VesloSkillRemovalItem,
   VesloSkillRemovalScope,
@@ -501,7 +505,9 @@ export function createExtensionsStore(options: {
       name?: string;
       versionId?: string;
       packageSha256?: string;
+      source?: string;
       target?: string;
+      removalPolicy?: string;
       skillDir?: string;
     };
 
@@ -522,7 +528,7 @@ export function createExtensionsStore(options: {
 
     const getSkillMaterializationClient = (): SkillMaterializationClient | null => {
       const vesloClient = options.vesloServerClient();
-      if (options.vesloServerStatus() === "connected" && vesloClient) {
+      if (options.vesloServerStatus() !== "disconnected" && vesloClient) {
         return vesloClient as SkillMaterializationClient;
       }
       return null;
@@ -535,15 +541,41 @@ export function createExtensionsStore(options: {
       return `${normalized}/SKILL.md`;
     };
 
+    const inventoryScopeFromManagedSource = (
+      source: ManagedSkillSource | undefined,
+      fallback: SkillInventorySkillInput["scope"],
+    ): SkillInventorySkillInput["scope"] => {
+      if (source === "personal") return "user-global";
+      if (source === "workspace") return "workspace";
+      if (source === "organization" || source === "platform") return source;
+      return fallback;
+    };
+
     const registryMetadataFromMaterializationEntry = (
       entry: SkillMaterializationEntryLike,
     ): SkillInventorySkillInput["registry"] | null => {
       const installationId = entry.installationId?.trim() ?? "";
       if (!installationId) return null;
+      const normalizeMaterializationSource = (): ManagedSkillSource => {
+        const source = entry.source?.trim();
+        if (source === "personal" || source === "workspace" || source === "organization" || source === "platform") {
+          return source;
+        }
+        return entry.target === "workspace" ? "workspace" : "personal";
+      };
+      const normalizeMaterializationRemovalPolicy = (): WorkspaceSkillRolloutRemovalPolicy => {
+        const removalPolicy = entry.removalPolicy?.trim();
+        if (removalPolicy === "user_removable" || removalPolicy === "admin_removable" || removalPolicy === "locked") {
+          return removalPolicy;
+        }
+        return "user_removable";
+      };
       const common = {
         ...(entry.skillId?.trim() ? { skillId: entry.skillId.trim() } : {}),
         ...(entry.versionId?.trim() ? { versionId: entry.versionId.trim() } : {}),
         ...(entry.packageSha256?.trim() ? { packageSha256: entry.packageSha256.trim() } : {}),
+        source: normalizeMaterializationSource(),
+        removalPolicy: normalizeMaterializationRemovalPolicy(),
       };
       if (installationId.startsWith("rollout:")) {
         const policyId = installationId.slice("rollout:".length).trim();
@@ -552,8 +584,6 @@ export function createExtensionsStore(options: {
       return {
         ...common,
         installationId,
-        source: entry.target === "workspace" ? "workspace" : "personal",
-        removalPolicy: "user_removable",
       };
     };
 
@@ -596,6 +626,85 @@ export function createExtensionsStore(options: {
       }
     };
 
+    const loadDisabledSkillRecords = async (
+      workspacesForInventory: ReturnType<typeof getLocalSkillInventoryWorkspaces>,
+    ): Promise<VesloDisabledSkillRecord[]> => {
+      const vesloClient = options.vesloServerClient();
+      if (options.vesloServerStatus() !== "connected" || typeof vesloClient?.listDisabledSkills !== "function") {
+        return [];
+      }
+
+      const workspaceIds = Array.from(
+        new Set(
+          workspacesForInventory
+            .map((workspace) => workspace.id.trim())
+            .filter(Boolean),
+        ),
+      );
+
+      const requests = workspaceIds.length > 0 ? workspaceIds.map((workspaceId) => ({ workspaceId })) : [undefined];
+      const records: VesloDisabledSkillRecord[] = [];
+      for (const request of requests) {
+        try {
+          const response = await vesloClient.listDisabledSkills(request);
+          if (Array.isArray(response.items)) records.push(...response.items);
+        } catch {
+          // Disabled-state inventory is additive UI metadata; keep skills visible if the API is unavailable.
+        }
+      }
+
+      const byId = new Map<string, VesloDisabledSkillRecord>();
+      for (const record of records) {
+        if (record?.id) byId.set(record.id, record);
+      }
+      return Array.from(byId.values());
+    };
+
+    const skillInputScope = (
+      skill: SkillInventorySkillInput,
+      fallbackScope: NonNullable<SkillInventorySkillInput["scope"]>,
+    ): NonNullable<SkillInventorySkillInput["scope"]> =>
+      skill.scope ?? inventoryScopeFromManagedSource(skill.registry?.source, fallbackScope) ?? fallbackScope;
+
+    const disabledRecordMatchesSkillInput = (
+      record: VesloDisabledSkillRecord,
+      skill: SkillInventorySkillInput,
+      fallbackScope: NonNullable<SkillInventorySkillInput["scope"]>,
+      workspaceId?: string,
+    ) => {
+      const scope = skillInputScope(skill, fallbackScope);
+      if (record.scope !== scope) return false;
+      if (record.scope === "workspace" && record.workspaceId?.trim() && record.workspaceId.trim() !== workspaceId) {
+        return false;
+      }
+
+      const recordPath = materializedSkillEntryPath(record.path);
+      const skillPath = materializedSkillEntryPath(skill.path);
+      if (recordPath && skillPath && recordPath === skillPath) return true;
+
+      const recordRegistry = record.registry;
+      const skillRegistry = skill.registry;
+      if (recordRegistry?.policyId && recordRegistry.policyId === skillRegistry?.policyId) return true;
+      if (recordRegistry?.installationId && recordRegistry.installationId === skillRegistry?.installationId) return true;
+
+      return record.name?.trim() === skill.name?.trim();
+    };
+
+    const attachDisabledSkillState = (
+      skills: SkillInventorySkillInput[],
+      disabledRecords: VesloDisabledSkillRecord[],
+      fallbackScope: NonNullable<SkillInventorySkillInput["scope"]>,
+      workspaceId?: string,
+    ): SkillInventorySkillInput[] => {
+      if (!disabledRecords.length) return skills;
+      return skills.map((skill) => {
+        const disabled = disabledRecords.some((record) =>
+          disabledRecordMatchesSkillInput(record, skill, fallbackScope, workspaceId),
+        );
+        return disabled ? { ...skill, enabled: false, disabledReason: "user" } : skill;
+      });
+    };
+
     const attachMaterializationRegistryMetadata = (
       skills: SkillInventorySkillInput[],
       registryByPath: Map<string, NonNullable<SkillInventorySkillInput["registry"]>>,
@@ -609,9 +718,10 @@ export function createExtensionsStore(options: {
           ...skill,
           path,
           registry: {
-            ...registry,
             ...skill.registry,
+            ...registry,
           },
+          scope: inventoryScopeFromManagedSource(registry.source, skill.scope),
           writable: false,
         };
       });
@@ -671,8 +781,10 @@ export function createExtensionsStore(options: {
       if (refreshSkillInventoryInFlight) {
         const inFlightContextKey = refreshSkillInventoryInFlightContextKey;
         const inFlightRefresh = refreshSkillInventoryPromise;
+        const rerunAfterInFlight = forceRefresh;
         const result = inFlightRefresh ? await inFlightRefresh : "stale";
-        forceRefresh = false;
+        forceRefresh = rerunAfterInFlight;
+        if (rerunAfterInFlight) continue;
         if (result === "failed" || result === "aborted") {
           if (inFlightContextKey && getCurrentSkillInventoryRefreshContextKey() !== inFlightContextKey) continue;
           return;
@@ -713,12 +825,18 @@ export function createExtensionsStore(options: {
           const inventoryHubContext = resolveHubSkillsRefreshContext();
           const hasMatchingHubSkills = hubSkillsLoaded && hubSkillsContextKey === inventoryHubContext.contextKey;
           const inventoryContextAtStart = getSkillInventoryContextKey(localWorkspaces, inventoryHubContext.contextKey);
+          const disabledSkillRecords = await loadDisabledSkillRecords(localWorkspaces);
+          if (refreshSkillInventoryAborted) return "aborted";
 
           const listScopedSkills = options.listLocalSkillsScoped ?? listLocalSkillsScopedCommand;
           const removalClient = getSkillRemovalClient();
-          const globalSkills = attachMaterializationRegistryMetadata(
-            await listScopedSkills("", "global"),
-            await loadGlobalMaterializationRegistryIndex(),
+          const globalSkills = attachDisabledSkillState(
+            attachMaterializationRegistryMetadata(
+              await listScopedSkills("", "global"),
+              await loadGlobalMaterializationRegistryIndex(),
+            ),
+            disabledSkillRecords,
+            "user-global",
           );
           globalSkills.push(...(await listRemovedSkillInputs(removalClient, { scope: "user-global" })));
           if (refreshSkillInventoryAborted) return "aborted";
@@ -726,9 +844,14 @@ export function createExtensionsStore(options: {
           const workspaceSkillsByWorkspaceId: BuildSkillInventoryInput["workspaceSkillsByWorkspaceId"] = {};
 
           for (const workspace of localWorkspaces) {
-            const skills = attachMaterializationRegistryMetadata(
-              await listScopedSkills(workspace.path, "workspace"),
-              await loadWorkspaceMaterializationRegistryIndex(workspace.id),
+            const skills = attachDisabledSkillState(
+              attachMaterializationRegistryMetadata(
+                await listScopedSkills(workspace.path, "workspace"),
+                await loadWorkspaceMaterializationRegistryIndex(workspace.id),
+              ),
+              disabledSkillRecords,
+              "workspace",
+              workspace.id,
             );
             skills.push(...(await listRemovedSkillInputs(removalClient, {
               scope: "workspace",
@@ -965,6 +1088,7 @@ export function createExtensionsStore(options: {
               description: entry.description,
               path: entry.path,
               trigger: entry.trigger,
+              registry: entry.registry,
             }))
           : [];
         setSkills(next);
@@ -1015,6 +1139,7 @@ export function createExtensionsStore(options: {
               description: entry.description,
               path: entry.path,
               trigger: entry.trigger,
+              registry: entry.registry,
             }))
           : [];
 
@@ -1862,7 +1987,7 @@ export function createExtensionsStore(options: {
   };
 
   const managedSkillTargetAffectsActiveRuntime = (target: ManagedSkillMutationTarget) => {
-    if (target.scope === "user-global") return true;
+    if (target.scope === "user-global" || target.scope === "platform") return true;
     if (target.scope !== "workspace" && target.scope !== "organization") return false;
     const targetWorkspaceId = target.workspaceId?.trim() || target.restoreTarget?.workspaceId?.trim() || "";
     if (!targetWorkspaceId) return target.scope === "workspace" || target.scope === "organization";
@@ -1870,6 +1995,55 @@ export function createExtensionsStore(options: {
     const vesloWorkspaceId = options.vesloServerWorkspaceId()?.trim() ?? "";
     return targetWorkspaceId === activeWorkspaceId || Boolean(vesloWorkspaceId && targetWorkspaceId === vesloWorkspaceId);
   };
+
+  async function setSkillInstanceEnabled(target: SkillMutationTarget, enabled: boolean): Promise<SkillSaveResult> {
+    const name = target.name.trim();
+    const path = skillEntryFilePathForMutationPath(target.path);
+    if (!name || !path) {
+      const message = translate("skills.failed_load_skill");
+      setSkillsStatus(message);
+      return { ok: false, message };
+    }
+
+    const vesloClient = options.vesloServerClient();
+    if (
+      options.vesloServerStatus() !== "connected" ||
+      !vesloClient ||
+      typeof vesloClient.setSkillEnabledState !== "function"
+    ) {
+      return managedSkillMutationUnavailable(translate("skills.recoverable_remove_server_required"));
+    }
+
+    options.setBusy(true);
+    options.setError(null);
+    setSkillsStatus(null);
+
+    try {
+      await vesloClient.setSkillEnabledState({
+        enabled,
+        target: {
+          name,
+          scope: target.scope,
+          path,
+          ...(target.workspaceId ? { workspaceId: target.workspaceId } : {}),
+          ...(target.registry ? { registry: target.registry } : {}),
+        },
+      });
+      options.markReloadRequired?.("skills", { type: "skill", name, action: "updated" });
+      await refreshSkills({ force: true });
+      await refreshSkillInventory({ force: true });
+      const message = __vesloIndirectT("ui.indirect.saved_1caget", __vesloIndirectLocale());
+      setSkillsStatus(message);
+      return { ok: true, message };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      const hintedMessage = addOpencodeCacheHint(message);
+      options.setError(hintedMessage);
+      return { ok: false, message: hintedMessage };
+    } finally {
+      options.setBusy(false);
+    }
+  }
 
   const syncMaterializationAfterManagedSkillMutation = async (target: ManagedSkillMutationTarget) => {
     const client = managedSkillMaterializationClient();
@@ -2137,7 +2311,7 @@ export function createExtensionsStore(options: {
               : {}),
           };
         }),
-      });
+      }) as VesloSkillBatchRemoveResponse;
       const baseMessage = response.ok
         ? translate("skills.bulk_removed")
         : translate("skills.bulk_remove_partial");
@@ -2625,6 +2799,7 @@ export function createExtensionsStore(options: {
     saveSkill,
     readSkillInstance,
     saveSkillInstance,
+    setSkillInstanceEnabled,
     deleteSkillInstance,
     removeSkillInstance,
     batchRemoveSkillInstances,

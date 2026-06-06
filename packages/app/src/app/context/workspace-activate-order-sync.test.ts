@@ -130,3 +130,21 @@ test("workspace activation delegates local runtime reuse and restart flows to th
     "browsing-mode engine attach should use the shared helper's quiet reconnect path",
   );
 });
+
+test("browsing-mode cold engine attach preserves the current session view", () => {
+  const ensureStart = source.indexOf("async function ensureEngineForWorkspace()");
+  assert.notStrictEqual(ensureStart, -1, "ensureEngineForWorkspace is missing");
+  const ensureSource = source.slice(ensureStart);
+
+  const coldStartIdx = ensureSource.indexOf("ok = await localRuntimeLifecycle.startHost({");
+  assert.notStrictEqual(coldStartIdx, -1, "browsing-mode cold-start fallback should be present");
+  const coldStartEnd = ensureSource.indexOf("});", coldStartIdx);
+  assert.notStrictEqual(coldStartEnd, -1, "browsing-mode cold-start fallback call should close");
+  const coldStartSource = ensureSource.slice(coldStartIdx, coldStartEnd);
+
+  assert.match(
+    coldStartSource,
+    /connectMode: "quiet"/,
+    "browsing-mode cold-start fallback must reconnect quietly so sending from a browsed private chat does not clear selectedSessionId",
+  );
+});

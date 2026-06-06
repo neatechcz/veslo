@@ -48,6 +48,7 @@ const instance = (
   description: `${input.name} description`,
   trigger: `${input.name} trigger`,
   source: "opencode",
+  enabled: true,
   readable: true,
   writable: true,
   ...input,

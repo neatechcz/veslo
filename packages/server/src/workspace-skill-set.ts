@@ -99,6 +99,7 @@ const toResolvedSkill = (installation: WorkspaceSkillRegistryInstallation): Reso
     packageSha256: resolved.packageSha256,
     source: installation.source,
     target: materializationTargetForSource(installation.source),
+    removalPolicy: "user_removable",
   };
 };
 
@@ -118,13 +119,15 @@ const toCandidateFromRollout = (policy: WorkspaceSkillRolloutPolicy): ManagedCan
   removalPolicy: policy.removalPolicy,
 });
 
-const toMaterialization = (skill: ResolvedWorkspaceSkill): WorkspaceSkillMaterialization => ({
+const toMaterialization = (skill: ManagedCandidate): WorkspaceSkillMaterialization => ({
   installationId: skill.installationId,
   skillId: skill.skillId,
   name: skill.name,
   versionId: skill.versionId,
   packageSha256: skill.packageSha256,
+  source: skill.source,
   target: skill.target,
+  removalPolicy: skill.removalPolicy,
 });
 
 function isRolloutInScope(
@@ -157,7 +160,7 @@ function targetConflictPriority(skill: ManagedCandidate): number {
 function resolveTargetConflicts(
   candidates: ManagedCandidate[],
   conflicts: WorkspaceSkillConflict[],
-): ResolvedWorkspaceSkill[] {
+): ManagedCandidate[] {
   const bySkill = new Map<string, ManagedCandidate[]>();
   for (const candidate of candidates) {
     const existing = bySkill.get(candidate.skillId) ?? [];
@@ -165,7 +168,7 @@ function resolveTargetConflicts(
     bySkill.set(candidate.skillId, existing);
   }
 
-  const resolved: ResolvedWorkspaceSkill[] = [];
+  const resolved: ManagedCandidate[] = [];
   for (const group of bySkill.values()) {
     const targets = new Set(group.map((candidate) => candidate.target));
     if (targets.size < 2) {

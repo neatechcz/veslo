@@ -13,6 +13,87 @@ export type Client = ReturnType<typeof createClient>;
 
 export type ProviderListItem = ProviderListResponse["all"][number];
 
+export type VesloAutomationSchedule =
+  | { kind: "oneShot"; runAt: string; timezone?: string }
+  | { kind: "cron"; expression: string; timezone?: string }
+  | { kind: "interval"; seconds: number }
+  | { kind: "daily"; hour: number; minute: number; timezone?: string }
+  | { kind: "weekly"; weekday: number; hour: number; minute: number; timezone?: string };
+
+export type VesloAutomationStatus = "active" | "paused" | "completed" | "failed" | "cancelled";
+
+export type VesloAutomationRunStatus = "queued" | "running" | "success" | "failed" | "skipped";
+
+export type VesloAutomationTarget = {
+  preferredSessionId?: string;
+  fallbackTitle?: string;
+  agent?: string;
+  model?: string | null;
+  variant?: string | null;
+};
+
+export type VesloAutomation = {
+  id: string;
+  workspaceId: string;
+  name: string;
+  enabled: boolean;
+  status: VesloAutomationStatus;
+  schedule: VesloAutomationSchedule;
+  prompt: string;
+  target?: VesloAutomationTarget;
+  createdAt: string;
+  updatedAt: string;
+  nextRunAt?: string | null;
+  completedAt?: string | null;
+  lastRunId?: string | null;
+};
+
+export type VesloAutomationRun = {
+  id: string;
+  automationId: string;
+  scheduledFor: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  status: VesloAutomationRunStatus;
+  sessionId?: string | null;
+  createdSession: boolean;
+  error?: string | null;
+};
+
+export type VesloAutomationCreatePayload = {
+  name: string;
+  schedule: VesloAutomationSchedule;
+  prompt: string;
+  target?: VesloAutomationTarget;
+  enabled?: boolean;
+};
+
+export type VesloAutomationUpdatePayload = Partial<{
+  name: string;
+  schedule: VesloAutomationSchedule;
+  prompt: string;
+  target: VesloAutomationTarget | null;
+  enabled: boolean;
+  status: VesloAutomationStatus;
+}>;
+
+export type AutomationWorkspaceSummary = {
+  appWorkspaceId: string;
+  serverWorkspaceId: string | null;
+  name: string;
+  path?: string | null;
+  workspaceType: "local" | "remote";
+  status: "ready" | "unavailable" | "error";
+  error?: string | null;
+};
+
+export type WorkspaceAutomationItem = {
+  key: string;
+  workspace: AutomationWorkspaceSummary;
+  automation: VesloAutomation;
+  runs: VesloAutomationRun[];
+};
+
 export type SidebarSessionItem = {
   id: string;
   title: string;
@@ -134,6 +215,33 @@ export type SlashCommandOption = {
   source?: "command" | "mcp" | "skill";
 };
 
+export type ComposerTargetKind = "chat" | "workspace" | "choose-workspace";
+
+export type ComposerTargetOption = {
+  id: string;
+  kind: ComposerTargetKind;
+  label: string;
+  description: string;
+  workspaceId?: string;
+  directory?: string | null;
+  draftStatus?: "draft" | null;
+};
+
+export type ComposerTargetConflict = {
+  targetId: string;
+  targetLabel: string;
+  currentPreview: string;
+  destinationPreview: string;
+};
+
+export type ComposerTargetSwitchResolution = "use-current" | "load-existing";
+
+export type ComposerTargetSwitchResult =
+  | { status: "switched" }
+  | { status: "cancelled" }
+  | { status: "blocked"; message: string }
+  | { status: "conflict"; conflict: ComposerTargetConflict };
+
 export type ComposerDraft = {
   mode: PromptMode;
   parts: ComposerPart[];
@@ -215,6 +323,7 @@ export type SkillCard = {
   path: string;
   description?: string;
   trigger?: string;
+  registry?: SkillInventoryRegistryMetadata;
 };
 
 export type SkillSaveResult = {
@@ -262,6 +371,7 @@ export type HubSkillInstallTarget =
   | { scope: "workspace"; workspaceId: string };
 
 export type ManagedSkillSource = "personal" | "workspace" | "organization" | "platform";
+export type WorkspaceSkillRolloutRemovalPolicy = "user_removable" | "admin_removable" | "locked";
 
 export type SkillInventoryLifecycle = "active" | "removed";
 
@@ -272,10 +382,10 @@ export type SkillInventoryRegistryMetadata = {
   versionId?: string;
   packageSha256?: string;
   source?: ManagedSkillSource;
-  removalPolicy?: "user_removable" | "admin_removable" | "locked";
+  removalPolicy?: WorkspaceSkillRolloutRemovalPolicy;
 };
 
-export type SkillInventoryScope = "workspace" | "user-global" | "organization";
+export type SkillInventoryScope = "workspace" | "user-global" | "organization" | "platform";
 
 export type SkillInventoryStatus = "global" | "workspace-only" | "mixed" | "hub-only";
 
@@ -307,6 +417,8 @@ export type SkillInstance = {
     orgId?: string;
     removalId?: string;
   };
+  enabled: boolean;
+  disabledReason?: "user";
   readable: boolean;
   writable: boolean;
 };
@@ -358,6 +470,8 @@ export type WorkspaceSkillMaterialization = {
   name: string;
   versionId: string;
   packageSha256: string;
+  source: ManagedSkillSource;
+  removalPolicy: WorkspaceSkillRolloutRemovalPolicy;
   target: "workspace" | "personal-global";
 };
 

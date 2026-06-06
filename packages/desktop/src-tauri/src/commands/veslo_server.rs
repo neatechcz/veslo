@@ -27,6 +27,39 @@ fn active_local_workspace_path(state: &WorkspaceState) -> Option<String> {
         })
 }
 
+fn push_unique_workspace_path(paths: &mut Vec<String>, path: &str) {
+    let trimmed = path.trim();
+    if trimmed.is_empty() || paths.iter().any(|entry| entry == trimmed) {
+        return;
+    }
+    paths.push(trimmed.to_string());
+}
+
+fn local_workspace_paths_for_server_restart(
+    state: &WorkspaceState,
+    engine_workspace_path: Option<&str>,
+) -> Vec<String> {
+    let mut paths = Vec::new();
+
+    if let Some(path) = engine_workspace_path {
+        push_unique_workspace_path(&mut paths, path);
+    }
+
+    if paths.is_empty() {
+        if let Some(path) = active_local_workspace_path(state) {
+            push_unique_workspace_path(&mut paths, &path);
+        }
+    }
+
+    for workspace in &state.workspaces {
+        if workspace.workspace_type == WorkspaceType::Local {
+            push_unique_workspace_path(&mut paths, &workspace.path);
+        }
+    }
+
+    paths
+}
+
 fn sanitize_live_info_with_health(
     info: VesloServerInfo,
     _health_check: impl Fn(&str) -> bool,
@@ -90,14 +123,14 @@ pub fn veslo_server_restart(
     let engine_workspace_path = engine_workspace_path
         .map(|path| path.trim().to_string())
         .filter(|path| !path.is_empty());
-    let workspace_path = match engine_workspace_path {
-        Some(path) => path,
-        None => {
-            let workspace_state = load_workspace_state(&app)?;
-            active_local_workspace_path(&workspace_state)
-                .ok_or_else(|| "No active local workspace available".to_string())?
-        }
-    };
+    let workspace_state = load_workspace_state(&app)?;
+    let workspace_paths = local_workspace_paths_for_server_restart(
+        &workspace_state,
+        engine_workspace_path.as_deref(),
+    );
+    if workspace_paths.is_empty() {
+        return Err("No active local workspace available".to_string());
+    }
 
     let engine_attached = engine_opencode_url
         .as_deref()
@@ -128,7 +161,7 @@ pub fn veslo_server_restart(
     start_veslo_server(
         &app,
         &manager,
-        &[workspace_path],
+        &workspace_paths,
         opencode_url.as_deref(),
         opencode_username.as_deref(),
         opencode_password.as_deref(),
@@ -138,7 +171,10 @@ pub fn veslo_server_restart(
 
 #[cfg(test)]
 mod tests {
-    use super::{active_local_workspace_path, sanitize_live_info_with_health};
+    use super::{
+        active_local_workspace_path, local_workspace_paths_for_server_restart,
+        sanitize_live_info_with_health,
+    };
     use crate::types::{
         RemoteType, VesloServerInfo, WorkspaceInfo, WorkspaceState, WorkspaceType,
         WORKSPACE_STATE_VERSION,
@@ -179,6 +215,45 @@ mod tests {
         assert_eq!(
             active_local_workspace_path(&state).as_deref(),
             Some("C:\\workspaces\\private")
+        );
+    }
+
+    #[test]
+    fn local_workspace_paths_for_server_restart_keeps_active_workspace_first() {
+        let state = WorkspaceState {
+            version: WORKSPACE_STATE_VERSION,
+            active_id: "ws-b".to_string(),
+            workspaces: vec![
+                workspace("ws-a", "/workspace-a", WorkspaceType::Local),
+                workspace("ws-b", "/workspace-b", WorkspaceType::Local),
+                workspace(
+                    "ws-remote",
+                    "https://example.invalid",
+                    WorkspaceType::Remote,
+                ),
+            ],
+        };
+
+        assert_eq!(
+            local_workspace_paths_for_server_restart(&state, None),
+            vec!["/workspace-b".to_string(), "/workspace-a".to_string()],
+        );
+    }
+
+    #[test]
+    fn local_workspace_paths_for_server_restart_keeps_attached_engine_path_first() {
+        let state = WorkspaceState {
+            version: WORKSPACE_STATE_VERSION,
+            active_id: "ws-a".to_string(),
+            workspaces: vec![
+                workspace("ws-a", "/workspace-a", WorkspaceType::Local),
+                workspace("ws-b", "/workspace-b", WorkspaceType::Local),
+            ],
+        };
+
+        assert_eq!(
+            local_workspace_paths_for_server_restart(&state, Some("/workspace-b")),
+            vec!["/workspace-b".to_string(), "/workspace-a".to_string()],
         );
     }
 

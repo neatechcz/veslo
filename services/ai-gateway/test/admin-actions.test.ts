@@ -92,6 +92,51 @@ function createUnusedDenClient() {
     async updateUser() {
       throw new Error("unused");
     },
+    async listOrganizations() {
+      return { organizations: [] };
+    },
+    async getOrganization() {
+      throw new Error("unused");
+    },
+    async updateOrganization() {
+      throw new Error("unused");
+    },
+    async listOrganizationMembers() {
+      return { members: [] };
+    },
+    async createOrganizationMember() {
+      throw new Error("unused");
+    },
+    async updateOrganizationMember() {
+      throw new Error("unused");
+    },
+    async deleteOrganizationMember() {
+      return;
+    },
+    async listOrganizationDomains() {
+      return { domains: [] };
+    },
+    async createOrganizationDomain() {
+      throw new Error("unused");
+    },
+    async updateOrganizationDomain() {
+      throw new Error("unused");
+    },
+    async deleteOrganizationDomain() {
+      return;
+    },
+    async listOrganizationInvites() {
+      return { invites: [] };
+    },
+    async createOrganizationInvite() {
+      throw new Error("unused");
+    },
+    async resendOrganizationInvite() {
+      throw new Error("unused");
+    },
+    async revokeOrganizationInvite() {
+      throw new Error("unused");
+    },
     async disableUser() {
       throw new Error("unused");
     },
@@ -116,7 +161,7 @@ function createAlert(id: string, status: AlertRecord["status"]): AlertRecord {
     firstSeenAt: "2026-04-03T10:00:00.000Z",
     lastSeenAt: "2026-04-03T10:05:00.000Z",
     owner: status === "active" ? null : "admin@example.test",
-    runbook: "Inspect quota pressure and rotate session load across healthy credentials.",
+    runbook: "Inspect quota pressure and rebalance routing across healthy credentials.",
   };
 }
 

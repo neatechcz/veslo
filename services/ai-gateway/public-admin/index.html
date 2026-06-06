@@ -23,8 +23,8 @@
         </div>
 
         <nav class="nav" aria-label="Admin sections">
+          <a href="/admin/organization" data-route="organization" class="nav-item">Organization</a>
           <a href="/admin/credentials" data-route="credentials" class="nav-item">Credentials</a>
-          <a href="/admin/sessions" data-route="sessions" class="nav-item">Sessions</a>
           <a href="/admin/usage" data-route="usage" class="nav-item">Usage</a>
           <a href="/admin/alerts" data-route="alerts" class="nav-item">Alerts</a>
           <a href="/admin/users" data-route="users" class="nav-item">Users</a>
@@ -45,7 +45,6 @@
           <div class="stack tight">
             <div class="pill-row"><span class="dot good"></span> Gateway healthy</div>
             <div class="pill-row"><span class="dot warn"></span> 2 credential alerts</div>
-            <div class="pill-row"><span class="dot info"></span> 18 active sessions</div>
           </div>
         </section>
       </aside>
@@ -55,7 +54,7 @@
           <div>
             <p class="eyebrow" id="page-eyebrow">AI Gateway control plane</p>
             <h1 id="page-title">Overview</h1>
-            <p class="page-description" id="page-description">Inspect credentials, sessions, usage, alerts, users, and audit events from one place.</p>
+            <p class="page-description" id="page-description">Inspect credentials, usage, alerts, users, and audit events from one place.</p>
           </div>
           <div class="topbar-actions">
             <button id="refresh-button" class="button button-secondary" type="button">Refresh</button>
@@ -87,9 +86,9 @@
             </div>
             <div class="hero-metrics">
               <article class="metric-card">
-                <span class="metric-label">Active leases</span>
+                <span class="metric-label">Credentials</span>
                 <strong>18</strong>
-                <span class="metric-note">Sticky bindings in healthy state</span>
+                <span class="metric-note">Provider bindings in the shared pool</span>
               </article>
               <article class="metric-card">
                 <span class="metric-label">Unhealthy credentials</span>
@@ -101,6 +100,90 @@
                 <strong>41</strong>
                 <span class="metric-note">13 platform admins in directory</span>
               </article>
+            </div>
+          </section>
+
+          <section class="panel page page-organization hidden" data-page="organization">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Organization</p>
+                <h2>Organization details</h2>
+              </div>
+              <button id="organization-save-button" class="button button-primary" type="button">Save organization</button>
+            </div>
+            <div class="split-layout organization-layout">
+              <aside class="detail-card organization-editor">
+                <p class="eyebrow">Details</p>
+                <h3 id="organization-editor-title">Organization</h3>
+                <form class="editor-form">
+                  <label>
+                    <span>Name</span>
+                    <input id="organization-name" class="input" type="text" />
+                  </label>
+                  <label>
+                    <span>Slug</span>
+                    <input id="organization-slug" class="input" type="text" />
+                  </label>
+                  <label data-seat-limit-control>
+                    <span>Seat limit</span>
+                    <input id="organization-seat-limit" class="input" type="number" min="0" />
+                  </label>
+                </form>
+                <p id="organization-save-status" class="editor-note muted">No pending changes.</p>
+              </aside>
+              <div class="stack">
+                <section class="detail-card">
+                  <div class="section-head compact">
+                    <div>
+                      <p class="eyebrow">Domains</p>
+                      <h3>Enabled domains</h3>
+                    </div>
+                  </div>
+                  <div class="credential-create-grid">
+                    <label>
+                      <span>Domain</span>
+                      <input id="organization-domain-input" class="input" type="text" placeholder="example.com" />
+                    </label>
+                    <label class="switch-row">
+                      <span>Enabled</span>
+                      <input id="organization-domain-enabled" type="checkbox" checked />
+                    </label>
+                    <label class="switch-row">
+                      <span>Self signup</span>
+                      <input id="organization-domain-self-signup" type="checkbox" />
+                    </label>
+                  </div>
+                  <div class="button-row">
+                    <button id="organization-domain-add-button" class="button button-secondary" type="button">Add domain</button>
+                  </div>
+                  <div id="organization-domain-list" class="list-cards"></div>
+                </section>
+                <section class="detail-card">
+                  <div class="section-head compact">
+                    <div>
+                      <p class="eyebrow">Invites</p>
+                      <h3>Pending invites</h3>
+                    </div>
+                  </div>
+                  <div class="credential-create-grid">
+                    <label>
+                      <span>Email</span>
+                      <input id="organization-invite-email" class="input" type="email" placeholder="teammate@example.com" />
+                    </label>
+                    <label>
+                      <span>Organization role</span>
+                      <select id="organization-invite-role" class="input">
+                        <option value="member">Member</option>
+                        <option value="organization_admin">Organization admin</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div class="button-row">
+                    <button id="organization-invite-send-button" class="button button-secondary" type="button">Send invite</button>
+                  </div>
+                  <div id="organization-invite-list" class="list-cards"></div>
+                </section>
+              </div>
             </div>
           </section>
 
@@ -239,66 +322,6 @@
             </div>
           </section>
 
-          <section class="panel page page-sessions hidden" data-page="sessions">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Sessions</p>
-                <h2>Sticky lease roster</h2>
-              </div>
-              <span class="status-chip success">18 active</span>
-            </div>
-            <div class="split-layout">
-              <div>
-                <div class="toolbar">
-                  <input class="input" type="search" name="session-search" placeholder="Search session, user, or worker" />
-                  <select class="input" name="session-status-filter">
-                    <option>All states</option>
-                    <option>Healthy</option>
-                    <option>Rebinding</option>
-                    <option>Failed</option>
-                  </select>
-                </div>
-                <div id="session-list" class="list-cards">
-                  <article class="list-card active">
-                    <div>
-                      <strong>session_2841</strong>
-                      <p>Vaclav Soukup, project Atlas, worker `design-bot`</p>
-                    </div>
-                    <span class="status-chip success">Healthy</span>
-                  </article>
-                  <article class="list-card">
-                    <div>
-                      <strong>session_1884</strong>
-                      <p>Alicia, project Billing, worker `watchdog`</p>
-                    </div>
-                    <span class="status-chip warning">Rebinding</span>
-                  </article>
-                  <article class="list-card">
-                    <div>
-                      <strong>session_5510</strong>
-                      <p>Martin, project Docs, worker `writer`</p>
-                    </div>
-                    <span class="status-chip danger">Failed</span>
-                  </article>
-                </div>
-              </div>
-              <aside id="session-detail" class="detail-card session-detail">
-                <p class="eyebrow">Selected session</p>
-                <h3>session_2841</h3>
-                <div class="timeline">
-                  <div><span>Lease created</span><strong>09:12</strong></div>
-                  <div><span>Active binding</span><strong>OpenAI org key</strong></div>
-                  <div><span>Last failover</span><strong>Not needed</strong></div>
-                  <div><span>Usage this session</span><strong>18,240 tokens</strong></div>
-                </div>
-                <div class="button-row">
-                  <button class="button button-secondary" type="button">Open trace</button>
-                  <button class="button button-primary" type="button">Watch session</button>
-                </div>
-              </aside>
-            </div>
-          </section>
-
           <section class="panel page page-usage hidden" data-page="usage">
             <div class="section-head">
               <div>
@@ -351,7 +374,7 @@
               <article class="metric-card tall">
                 <span class="metric-label">Prompt tokens</span>
                 <strong id="usage-total-tokens">821k</strong>
-                <span class="metric-note">Collected across sessions, users, and orgs</span>
+                <span class="metric-note">Collected across credentials, users, and orgs</span>
               </article>
               <article class="metric-card tall">
                 <span class="metric-label">Requests</span>
@@ -365,6 +388,33 @@
               </article>
             </div>
             <div id="usage-series" class="list-cards"></div>
+            <section class="usage-credential-card">
+              <div class="section-head compact">
+                <div>
+                  <p class="eyebrow">Capacity overview</p>
+                  <h3>Codex remaining limits</h3>
+                </div>
+                <span class="status-chip info">Functional credentials only</span>
+              </div>
+              <div class="hero-metrics">
+                <article class="metric-card">
+                  <span class="metric-label">5h remaining</span>
+                  <strong id="usage-capacity-five-hour">Unknown</strong>
+                  <span class="metric-note" id="usage-capacity-five-hour-note">Waiting for Codex limit status</span>
+                </article>
+                <article class="metric-card">
+                  <span class="metric-label">Weekly remaining</span>
+                  <strong id="usage-capacity-weekly">Unknown</strong>
+                  <span class="metric-note" id="usage-capacity-weekly-note">Waiting for Codex limit status</span>
+                </article>
+                <article class="metric-card">
+                  <span class="metric-label">Measured credentials</span>
+                  <strong id="usage-capacity-measured">0/0</strong>
+                  <span class="metric-note" id="usage-capacity-measured-note">No Codex credentials measured</span>
+                </article>
+              </div>
+              <div id="usage-capacity-credentials" class="list-cards"></div>
+            </section>
             <section class="usage-credential-card">
               <div class="section-head compact">
                 <div>
@@ -418,7 +468,7 @@
                     <strong>Credential outage</strong>
                     <span class="status-chip danger">Critical</span>
                   </div>
-                  <p>OpenAI org key has failed 11 refresh attempts and now impacts 6 sessions.</p>
+                  <p>OpenAI org key has failed 11 refresh attempts and now impacts 6 active routes.</p>
                   <div class="alert-meta">
                     <span>Credential: OpenAI org key</span>
                     <span>First seen: 09:12</span>
@@ -432,7 +482,7 @@
                   <p>Anthropic shared key exceeded baseline on worker `assistant-runner`.</p>
                   <div class="alert-meta">
                     <span>Credential: Anthropic shared key</span>
-                    <span>Session: 4</span>
+                    <span>Routes: 4</span>
                   </div>
                 </article>
               </div>
@@ -441,8 +491,8 @@
                 <h3>Credential outage</h3>
                 <div class="stack">
                   <div class="detail-line"><span>Affected credential</span><strong>OpenAI org key</strong></div>
-                  <div class="detail-line"><span>Affected sessions</span><strong>6</strong></div>
-                  <div class="detail-line"><span>Recommended action</span><strong>Rebind sessions</strong></div>
+                  <div class="detail-line"><span>Affected routes</span><strong>6</strong></div>
+                  <div class="detail-line"><span>Recommended action</span><strong>Rebalance routes</strong></div>
                 </div>
                 <div class="button-row">
                   <button class="button button-secondary" type="button">Acknowledge</button>
@@ -459,7 +509,7 @@
                 <p class="eyebrow">Users</p>
                 <h2>Directory and account management</h2>
               </div>
-              <button id="create-user-button-inline" class="button button-primary" type="button">Create user</button>
+              <button id="create-user-button-inline" class="button button-primary" type="button" data-platform-admin-control data-platform-only>Create user</button>
             </div>
             <div class="split-layout users-layout">
               <div>
@@ -522,11 +572,11 @@
                   <label>
                     <span>Organization role</span>
                     <select id="user-role" class="input">
-                      <option selected>owner</option>
-                      <option>member</option>
+                      <option value="organization_admin" selected>Organization admin</option>
+                      <option value="member">Member</option>
                     </select>
                   </label>
-                  <label class="switch-row">
+                  <label class="switch-row" data-platform-admin-control>
                     <span>Platform admin</span>
                     <input id="user-platform-admin" type="checkbox" checked />
                   </label>
@@ -534,7 +584,7 @@
                     <span>Send invite email immediately</span>
                     <input id="user-send-invite" type="checkbox" checked />
                   </label>
-                  <section class="editor-section">
+                  <section class="editor-section" data-ai-access-control>
                     <div>
                       <p class="eyebrow">AI access</p>
                       <h4>Admin-managed AI access</h4>
@@ -618,7 +668,7 @@
                       <option>All entities</option>
                       <option>User</option>
                       <option>Credential</option>
-                      <option>Session</option>
+                      <option>Route</option>
                     </select>
                   </label>
                 </div>
@@ -644,8 +694,8 @@
                 </article>
                 <article class="audit-row">
                   <div>
-                    <strong>Session rebinding</strong>
-                    <p>session_1884 switched to Anthropic shared key after failure classification.</p>
+                    <strong>Route rebinding</strong>
+                    <p>route_1884 switched to Anthropic shared key after failure classification.</p>
                   </div>
                   <span>13:31</span>
                 </article>

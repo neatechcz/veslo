@@ -32,6 +32,15 @@ export function evaluateCodexCredentialEligibility(
     };
   }
 
+  if (isCodexUsageLimitFailure(statusText)) {
+    return {
+      eligible: false,
+      state: "exhausted",
+      reason: "5h Codex limit is exhausted.",
+      resetAt: null,
+    };
+  }
+
   if (!status.available && !isHealthyProbeStatus(statusText) && !isGenericProbeFailure(statusText)) {
     return {
       eligible: false,
@@ -60,6 +69,10 @@ function isHealthyProbeStatus(statusText: string): boolean {
 function isGenericProbeFailure(statusText: string): boolean {
   return /Codex status probe (?:failed|timed out|exited with code)|Codex probe failed|Codex probe did not return rate limits|Codex rate limit snapshot was not found|ENOTEMPTY: directory not empty|ERROR:/i
     .test(statusText);
+}
+
+function isCodexUsageLimitFailure(statusText: string): boolean {
+  return /you(?:'|’)?ve hit your usage limit|hit your usage limit/i.test(statusText);
 }
 
 function isWindowCurrentlyExhausted(window: CodexUsageLimitWindow, now: Date): boolean {

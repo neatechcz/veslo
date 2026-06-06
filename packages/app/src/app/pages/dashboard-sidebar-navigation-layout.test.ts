@@ -3,6 +3,10 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("./dashboard.tsx", import.meta.url), "utf8");
+const sidebarDashboardNavSource = readFileSync(
+  new URL("../components/session/sidebar-dashboard-nav.tsx", import.meta.url),
+  "utf8",
+);
 
 const leftSidebarStart = source.indexOf('<Show when={leftSidebarVisible()}>');
 const mainStart = source.indexOf('<main class="flex-1 flex flex-col overflow-hidden bg-dls-surface pt-12">');
@@ -22,6 +26,15 @@ test("dashboard relocates the product nav into the left sidebar above settings",
 test("dashboard uses compact sizing for the relocated left-sidebar nav items", () => {
   assert.doesNotMatch(source, /const navItem =/);
   assert.match(leftSidebar, /<SidebarDashboardNav[\s\S]*onSelect=\{handleDashboardTabSelection\}/);
+});
+
+test("dashboard left sidebar omits Soul and Extensions links", () => {
+  assert.match(sidebarDashboardNavSource, /props\.onSelect\("scheduled"\)/);
+  assert.match(sidebarDashboardNavSource, /props\.onSelect\("skills"\)/);
+  assert.doesNotMatch(sidebarDashboardNavSource, /props\.onSelect\("soul"\)/);
+  assert.doesNotMatch(sidebarDashboardNavSource, /props\.onSelect\("mcp"\)/);
+  assert.doesNotMatch(sidebarDashboardNavSource, /t\("nav\.soul"/);
+  assert.doesNotMatch(sidebarDashboardNavSource, /t\("nav\.extensions"/);
 });
 
 test("dashboard keeps the right sidebar reserved for advanced nav only", () => {

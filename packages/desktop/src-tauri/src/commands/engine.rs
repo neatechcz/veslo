@@ -12,12 +12,14 @@ use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::opencode_router::spawn::resolve_opencode_router_health_port;
 use crate::orchestrator::manager::OrchestratorManager;
 use crate::orchestrator::{self, OrchestratorSpawnOptions};
+use crate::supervised_process::CommandEvent;
 use crate::types::{EngineDoctorResult, EngineInfo, EngineRuntime, ExecResult};
 use crate::utils::truncate_output;
-use crate::veslo_server::{manager::VesloServerManager, start_veslo_server};
+use crate::veslo_server::{
+    manager::VesloServerManager, persisted_veslo_server_plugin_state_path, start_veslo_server,
+};
 use serde_json::json;
 use std::time::Duration;
-use tauri_plugin_shell::process::CommandEvent;
 use uuid::Uuid;
 
 #[derive(Default)]
@@ -486,6 +488,9 @@ pub fn engine_start(
             .unwrap_or(2);
         let daemon_host = "127.0.0.1".to_string();
         let opencode_bin = program.to_string_lossy().to_string();
+        let veslo_server_state_path = persisted_veslo_server_plugin_state_path(&app)
+            .ok()
+            .map(|path| path.to_string_lossy().to_string());
 
         let mut health = None;
         for attempt in 1..=max_start_attempts {
@@ -502,6 +507,7 @@ pub fn engine_start(
                 opencode_username: opencode_username.clone(),
                 opencode_password: opencode_password.clone(),
                 cors: Some("*".to_string()),
+                veslo_server_state_path: veslo_server_state_path.clone(),
             };
 
             let (mut rx, child) = orchestrator::spawn_orchestrator_daemon(&app, &spawn_options)?;

@@ -5,7 +5,6 @@ use std::time::{Duration, Instant};
 use std::sync::Arc;
 
 use tauri::{AppHandle, Manager, State};
-use tauri_plugin_shell::process::CommandEvent;
 
 use crate::debug_logs_forwarder::DebugLogsForwarder;
 use crate::opencode_router::manager::OpenCodeRouterManager;
@@ -13,6 +12,7 @@ use crate::opencode_router::spawn::{
     resolve_opencode_router_health_port, spawn_opencode_router, DEFAULT_OPENCODE_ROUTER_HEALTH_PORT,
 };
 use crate::process_supervisor::spawn_output_collector_with_forwarder;
+use crate::supervised_process::CommandEvent;
 use crate::types::OpenCodeRouterInfo;
 use crate::utils::truncate_output;
 

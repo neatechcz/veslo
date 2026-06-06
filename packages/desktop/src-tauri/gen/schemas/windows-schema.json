@@ -3091,6 +3091,12 @@
           "type": "string",
           "const": "updater:deny-install",
           "markdownDescription": "Denies the install command without any pre-configured scope."
+        },
+        {
+          "description": "Default permissions for tauri-plugin-pilot (allows eval callback)",
+          "type": "string",
+          "const": "pilot:default",
+          "markdownDescription": "Default permissions for tauri-plugin-pilot (allows eval callback)"
         }
       ]
     },

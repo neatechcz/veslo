@@ -15,10 +15,35 @@ test("AI Gateway package installs Codex CLI for the worker transport", async () 
   assert.equal(typeof packageJson.dependencies?.["@openai/codex"], "string")
 })
 
-test("Deploy AI Gateway workflow syncs Codex worker auth secret into Render env", async () => {
-  const workflow = await readFile(path.resolve(repoRoot, ".github/workflows/deploy-ai-gateway.yml"), "utf8")
+test("AI Gateway Codex CLI is new enough to expose subscription rate limit snapshots", async () => {
+  const packageJson = JSON.parse(await readFile(path.resolve(testDir, "../package.json"), "utf8")) as {
+    dependencies?: Record<string, string>
+  }
 
-  assert.match(workflow, /AI_GATEWAY_CODEX_HOME/)
-  assert.match(workflow, /AI_GATEWAY_CODEX_AUTH_JSON/)
-  assert.match(workflow, /secrets\.MANAGED_AI_CODEX_AUTH_JSON/)
+  assert.equal(compareSemver(packageJson.dependencies?.["@openai/codex"] ?? "0.0.0", "0.137.0") >= 0, true)
 })
+
+test("owned-server compose wires Codex worker state into AI Gateway", async () => {
+  const compose = await readFile(path.resolve(repoRoot, "packaging/owned-server/compose.yml"), "utf8")
+
+  assert.match(compose, /ai-gateway-codex-data:\/var\/lib\/veslo-ai-gateway\/codex/)
+  assert.match(compose, /AI_GATEWAY_CODEX_COMMAND:\s*\$\{AI_GATEWAY_CODEX_COMMAND:-codex\}/)
+  assert.match(compose, /AI_GATEWAY_CODEX_HOME:\s*\$\{AI_GATEWAY_CODEX_HOME:-\/var\/lib\/veslo-ai-gateway\/codex\}/)
+  assert.match(compose, /AI_GATEWAY_CODEX_AUTH_JSON:\s*\$\{AI_GATEWAY_CODEX_AUTH_JSON:-\}/)
+})
+
+function compareSemver(left: string, right: string): number {
+  const leftParts = readSemverParts(left)
+  const rightParts = readSemverParts(right)
+  for (let index = 0; index < 3; index += 1) {
+    const delta = leftParts[index]! - rightParts[index]!
+    if (delta !== 0) return delta
+  }
+  return 0
+}
+
+function readSemverParts(value: string): [number, number, number] {
+  const match = value.match(/^(\d+)\.(\d+)\.(\d+)/)
+  if (!match) return [0, 0, 0]
+  return [Number(match[1]), Number(match[2]), Number(match[3])]
+}

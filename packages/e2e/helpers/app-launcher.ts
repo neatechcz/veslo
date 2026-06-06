@@ -1,5 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { join, resolve, dirname, win32, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { prepareDesktopAuthSeed } from './desktop-auth-seed.js';
@@ -23,17 +25,19 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const DEFAULT_WEBDRIVER_PORT = 4445;
+const DEFAULT_PILOT_IDENTIFIER = 'com.neatech.veslo.dev';
 const DEFAULT_LAUNCH_TIMEOUT = 120_000;
-const WEBDRIVER_PORT = resolveWebDriverPort();
 const LAUNCH_TIMEOUT = resolveLaunchTimeout();
-const POLL_INTERVAL = 250;
 const REAL_PROFILE_ENV = process.env.E2E_USE_EXISTING_PROFILE?.trim() === '1';
 const CUSTOM_BINARY_PATH = process.env.E2E_TAURI_BINARY?.trim() ?? '';
 const CUSTOM_OPENCODE_HOME = process.env.E2E_OPENCODE_HOME?.trim() ?? '';
 const ISOLATED_PROFILE_ROOT = join(resolveDesktopRoot(), '..', 'e2e', '.tmp-veslo-home');
+const PILOT_RUNTIME_ID = createHash('sha1').update(resolveDesktopRoot()).digest('hex').slice(0, 12);
+const DEFAULT_PILOT_RUNTIME_DIR = join('/tmp', `veslo-pilot-${PILOT_RUNTIME_ID}`);
 const APP_IDENTIFIERS = [
   'com.neatech.veslo',
   'com.neatech.veslo.dev',
+  'com.neatech.veslo.e2e',
   'com.differentai.openwork',
   'com.differentai.openwork.dev',
 ] as const;
@@ -55,9 +59,21 @@ type TerminateAppProcessResult = {
 
 type AppLaunchEnvOptions = {
   platform?: NodeJS.Platform;
-  port: number;
+  vesloServerPort?: number;
   opencodeHome: string;
   snapshotPath: string;
+  pilotRuntimeDir?: string;
+};
+
+type ResolvePilotSocketPathOptions = {
+  env?: Record<string, string | undefined>;
+  platform?: NodeJS.Platform;
+  runtimeDir?: string;
+};
+
+type ResolvePilotRuntimeDirOptions = {
+  env?: Record<string, string | undefined>;
+  platform?: NodeJS.Platform;
 };
 
 export function resolveWebDriverPort(env: Record<string, string | undefined> = process.env): number {
@@ -72,6 +88,10 @@ export function resolveWebDriverPort(env: Record<string, string | undefined> = p
   return port;
 }
 
+export function resolvePilotIdentifier(env: Record<string, string | undefined> = process.env): string {
+  return env.E2E_TAURI_PILOT_IDENTIFIER?.trim() || DEFAULT_PILOT_IDENTIFIER;
+}
+
 export function resolveLaunchTimeout(env: Record<string, string | undefined> = process.env): number {
   const raw = env.E2E_LAUNCH_TIMEOUT?.trim();
   if (!raw) return DEFAULT_LAUNCH_TIMEOUT;
@@ -84,20 +104,37 @@ export function resolveLaunchTimeout(env: Record<string, string | undefined> = p
   return timeout;
 }
 
-async function fetchWebDriverStatus(port: number, timeoutMs: number): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
-  try {
-    return await fetch(`http://127.0.0.1:${port}/status`, {
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 function resolveDesktopRoot(): string {
   return resolve(join(__dirname, '..', '..', 'desktop'));
+}
+
+export function resolvePilotRuntimeDir(options: ResolvePilotRuntimeDirOptions = {}): string {
+  const env = options.env ?? process.env;
+  const explicit = env.E2E_TAURI_PILOT_RUNTIME_DIR?.trim();
+  if (explicit) return explicit;
+  if ((options.platform ?? process.platform) === 'win32') return '';
+  return DEFAULT_PILOT_RUNTIME_DIR;
+}
+
+export function resolvePilotSocketPath(options: ResolvePilotSocketPathOptions = {}): string {
+  const env = options.env ?? process.env;
+  const explicit = env.E2E_TAURI_PILOT_SOCKET?.trim() || env.TAURI_PILOT_SOCKET?.trim();
+  if (explicit) return explicit;
+
+  const platform = options.platform ?? process.platform;
+  const identifier = resolvePilotIdentifier(env);
+  if (platform === 'win32') {
+    return `\\\\.\\pipe\\tauri-pilot-${identifier}`;
+  }
+
+  const runtimeDir = options.runtimeDir ?? env.XDG_RUNTIME_DIR ?? resolvePilotRuntimeDir({ env, platform });
+  return join(runtimeDir, `tauri-pilot-${identifier}.sock`);
+}
+
+function preparePilotRuntimeDir(dir: string): void {
+  if (process.platform === 'win32') return;
+  mkdirSync(dir, { recursive: true });
+  chmodSync(dir, 0o700);
 }
 
 function resolveBinaryPath(): string {
@@ -125,33 +162,6 @@ function resolveBinaryPath(): string {
   }
 
   throw new Error(`Tauri binary not found at ${unbundledPath}. Run: pnpm tauri build --debug --no-bundle --config src-tauri/tauri.dev.conf.json -- --features e2e`);
-}
-
-async function pollStatus(port: number, timeout: number): Promise<void> {
-  const url = `http://127.0.0.1:${port}/status`;
-  const deadline = Date.now() + timeout;
-
-  while (Date.now() < deadline) {
-    try {
-      const remaining = Math.max(1, deadline - Date.now());
-      const res = await fetchWebDriverStatus(port, Math.min(POLL_INTERVAL, remaining));
-      if (res.ok) return;
-    } catch {
-      // Not ready yet
-    }
-    await new Promise(r => setTimeout(r, POLL_INTERVAL));
-  }
-
-  throw new Error(`WebDriver server did not respond on ${url} within ${timeout}ms`);
-}
-
-async function hasReadyWebDriverServer(port: number): Promise<boolean> {
-  try {
-    const res = await fetchWebDriverStatus(port, 1_000);
-    return res.ok;
-  } catch {
-    return false;
-  }
 }
 
 function childHasExited(child: ChildProcess): boolean {
@@ -225,20 +235,29 @@ export function createAppLaunchEnv(
   const vesloDataDir = joinForPlatform(options.opencodeHome, '.veslo');
   const vesloAppDataDir = joinForPlatform(vesloDataDir, 'app-data');
   const vesloAppLocalDataDir = joinForPlatform(vesloDataDir, 'app-local-data');
+  const pilotRuntimeDir = options.pilotRuntimeDir ?? resolvePilotRuntimeDir({ env: baseEnv, platform });
+  const pilotSocket = resolvePilotSocketPath({
+    env: baseEnv,
+    platform,
+    runtimeDir: pilotRuntimeDir,
+  });
   const env: NodeJS.ProcessEnv = {
     ...baseEnv,
-    TAURI_WEBDRIVER_PORT: String(options.port),
+    TAURI_PILOT_SOCKET: pilotSocket,
     OPENCODE_HOME: options.opencodeHome,
     VESLO_DATA_DIR: vesloDataDir,
     VESLO_APP_DATA_DIR: vesloAppDataDir,
     VESLO_APP_LOCAL_DATA_DIR: vesloAppLocalDataDir,
     VESLO_DEN_AUTH_SNAPSHOT_PATH: options.snapshotPath,
+    ...(options.vesloServerPort ? { VESLO_DESKTOP_SERVER_PORT: String(options.vesloServerPort) } : {}),
   };
 
   if (platform === 'win32') {
     env.APPDATA = win32.join(options.opencodeHome, 'AppData', 'Roaming');
     env.LOCALAPPDATA = win32.join(options.opencodeHome, 'AppData', 'Local');
     env.WEBVIEW2_USER_DATA_FOLDER = win32.join(options.opencodeHome, 'webview2');
+  } else {
+    env.XDG_RUNTIME_DIR = pilotRuntimeDir;
   }
 
   if (platform === 'linux') {
@@ -249,7 +268,186 @@ export function createAppLaunchEnv(
   return env;
 }
 
+function parseTcpPort(raw: string | undefined, label: string): number | null {
+  const trimmed = raw?.trim() ?? '';
+  if (!trimmed) return null;
+  const port = Number(trimmed);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid ${label}: ${trimmed}`);
+  }
+  return port;
+}
+
+async function findFreeTcpPort(): Promise<number> {
+  return new Promise((resolvePort, reject) => {
+    const server = createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const port = typeof address === 'object' && address ? address.port : 0;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        if (!port) {
+          reject(new Error('Unable to reserve a free Veslo server port for E2E.'));
+          return;
+        }
+        resolvePort(port);
+      });
+    });
+  });
+}
+
+async function resolveVesloServerPortForLaunch(env: NodeJS.ProcessEnv = process.env): Promise<number> {
+  return (
+    parseTcpPort(env.E2E_VESLO_SERVER_PORT, 'E2E_VESLO_SERVER_PORT') ??
+    parseTcpPort(env.VESLO_DESKTOP_SERVER_PORT, 'VESLO_DESKTOP_SERVER_PORT') ??
+    await findFreeTcpPort()
+  );
+}
+
 const ENTERPRISE_CREATOR_SEED_MARKER = '.veslo-enterprise-creators';
+const SKILL_ENABLE_FIXTURE_MARKER = '.veslo-skill-enable-inventory';
+const E2E_SKILL_ENABLE_GENERATED_AT = '2026-06-06T00:00:00.000Z';
+
+function shouldSeedAutomationsSecondaryWorkspace(env: NodeJS.ProcessEnv): boolean {
+  return env.E2E_SEED_AUTOMATIONS_SECONDARY_WORKSPACE?.trim() === '1';
+}
+
+function shouldSeedSkillEnableInventory(env: NodeJS.ProcessEnv): boolean {
+  return env.E2E_SEED_SKILL_ENABLE_INVENTORY?.trim() === '1';
+}
+
+function fixtureSkillMarkdown(name: string, description: string): string {
+  return [
+    '---',
+    `name: ${name}`,
+    `description: ${description}`,
+    '---',
+    '',
+    `# ${name}`,
+    '',
+    description,
+    '',
+    '## When to use',
+    `- ${description}`,
+    '',
+  ].join('\n');
+}
+
+function writeSkillFixture(root: string, name: string, description: string): string {
+  const skillDir = join(root, name);
+  rmSync(skillDir, { recursive: true, force: true });
+  mkdirSync(skillDir, { recursive: true });
+  writeFileSync(join(skillDir, 'SKILL.md'), fixtureSkillMarkdown(name, description));
+  return skillDir;
+}
+
+function fixturePackageSha256(name: string, source: string): string {
+  return createHash('sha256').update(`${source}:${name}`).digest('hex');
+}
+
+type SkillEnableMaterializationSeed = {
+  installationId: string;
+  skillId: string;
+  name: string;
+  versionId: string;
+  source: 'organization' | 'platform';
+  target: 'workspace' | 'personal-global';
+  removalPolicy: 'locked';
+  packageSha256: string;
+  skillDir: string;
+  materializedAt: string;
+};
+
+function writeManagedSkillMarker(entry: SkillEnableMaterializationSeed): void {
+  writeFileSync(
+    join(entry.skillDir, '.veslo-managed.json'),
+    `${JSON.stringify({ schemaVersion: 1, ...entry }, null, 2)}\n`,
+  );
+}
+
+function writeSkillMaterializationManifest(rootDir: string, entries: SkillEnableMaterializationSeed[]): void {
+  mkdirSync(rootDir, { recursive: true });
+  writeFileSync(
+    join(rootDir, '.veslo-materialization.json'),
+    `${JSON.stringify({
+      schemaVersion: 1,
+      generatedAt: E2E_SKILL_ENABLE_GENERATED_AT,
+      entries,
+    }, null, 2)}\n`,
+  );
+}
+
+function seedSkillEnableInventoryFixture(input: {
+  root: string;
+  workspacePath: string;
+  env: NodeJS.ProcessEnv;
+}): void {
+  const configRoot = input.env.XDG_CONFIG_HOME?.trim() || join(input.root, '.config');
+  const globalSkillsRoot = join(configRoot, 'opencode', 'skills');
+  const workspaceSkillsRoot = join(input.workspacePath, '.opencode', 'skills');
+  const workspaceManagedRoot = join(workspaceSkillsRoot, 'veslo-managed');
+  const globalManagedRoot = join(globalSkillsRoot, 'veslo-managed');
+
+  mkdirSync(globalSkillsRoot, { recursive: true });
+  mkdirSync(workspaceSkillsRoot, { recursive: true });
+
+  writeSkillFixture(
+    globalSkillsRoot,
+    'e2e-enable-global-skill',
+    'Global fixture skill for the enable switch desktop pilot scenario.',
+  );
+  writeSkillFixture(
+    workspaceSkillsRoot,
+    'e2e-enable-workspace-skill',
+    'Workspace fixture skill for the enable switch desktop pilot scenario.',
+  );
+
+  const organizationSkillDir = writeSkillFixture(
+    workspaceManagedRoot,
+    'e2e-enable-org-skill',
+    'Organization managed fixture skill for the enable switch desktop pilot scenario.',
+  );
+  const platformSkillDir = writeSkillFixture(
+    globalManagedRoot,
+    'e2e-enable-platform-skill',
+    'Platform managed fixture skill for the enable switch desktop pilot scenario.',
+  );
+
+  const organizationEntry: SkillEnableMaterializationSeed = {
+    installationId: 'install_e2e_enable_org_skill',
+    skillId: 'skill_e2e_enable_org_skill',
+    name: 'e2e-enable-org-skill',
+    versionId: 'version_e2e_enable_org_skill_1',
+    packageSha256: fixturePackageSha256('e2e-enable-org-skill', 'organization'),
+    source: 'organization',
+    target: 'workspace',
+    removalPolicy: 'locked',
+    skillDir: organizationSkillDir,
+    materializedAt: E2E_SKILL_ENABLE_GENERATED_AT,
+  };
+  const platformEntry: SkillEnableMaterializationSeed = {
+    installationId: 'install_e2e_enable_platform_skill',
+    skillId: 'skill_e2e_enable_platform_skill',
+    name: 'e2e-enable-platform-skill',
+    versionId: 'version_e2e_enable_platform_skill_1',
+    packageSha256: fixturePackageSha256('e2e-enable-platform-skill', 'platform'),
+    source: 'platform',
+    target: 'personal-global',
+    removalPolicy: 'locked',
+    skillDir: platformSkillDir,
+    materializedAt: E2E_SKILL_ENABLE_GENERATED_AT,
+  };
+
+  writeManagedSkillMarker(organizationEntry);
+  writeManagedSkillMarker(platformEntry);
+  writeSkillMaterializationManifest(workspaceManagedRoot, [organizationEntry]);
+  writeSkillMaterializationManifest(globalManagedRoot, [platformEntry]);
+  writeFileSync(join(input.workspacePath, '.opencode', SKILL_ENABLE_FIXTURE_MARKER), 'enabled\n');
+}
 
 export function seedDefaultWorkspaceState(root: string, env: NodeJS.ProcessEnv): void {
   const workspacePath = join(root, 'workspaces', 'visual-workspace');
@@ -260,21 +458,42 @@ export function seedDefaultWorkspaceState(root: string, env: NodeJS.ProcessEnv):
     join(opencodePath, ENTERPRISE_CREATOR_SEED_MARKER),
     'skipped for deterministic e2e fixture\n',
   );
+  if (shouldSeedSkillEnableInventory(env)) {
+    seedSkillEnableInventoryFixture({ root, workspacePath, env });
+  }
 
-  const workspaceState = {
-    version: 4,
-    activeId: 'e2e-visual-workspace',
-    workspaces: [{
-      id: 'e2e-visual-workspace',
-      name: 'Visual Workspace',
-      path: workspacePath,
+  const secondaryAutomationWorkspacePath = join(root, 'workspaces', 'automations-secondary-workspace');
+  const workspaces = [{
+    id: 'e2e-visual-workspace',
+    name: 'Visual Workspace',
+    path: workspacePath,
+    preset: 'starter',
+    workspaceType: 'local',
+    remoteType: 'opencode',
+    baseUrl: null,
+    directory: null,
+    displayName: 'Visual Workspace',
+  }];
+
+  if (shouldSeedAutomationsSecondaryWorkspace(env)) {
+    mkdirSync(secondaryAutomationWorkspacePath, { recursive: true });
+    workspaces.push({
+      id: 'e2e-automations-secondary-workspace',
+      name: 'Automations Secondary Workspace',
+      path: secondaryAutomationWorkspacePath,
       preset: 'starter',
       workspaceType: 'local',
       remoteType: 'opencode',
       baseUrl: null,
       directory: null,
-      displayName: 'Visual Workspace',
-    }],
+      displayName: 'Automations Secondary Workspace',
+    });
+  }
+
+  const workspaceState = {
+    version: 4,
+    activeId: 'e2e-visual-workspace',
+    workspaces,
   };
 
   const xdgData = env.XDG_DATA_HOME ?? join(root, '.local', 'share');
@@ -323,28 +542,21 @@ async function stopManagedAiGatewayFixtureIfRunning(): Promise<void> {
 }
 
 export async function ensureWebDriverReady(
-  port: number = WEBDRIVER_PORT,
-  timeout: number = Math.max(POLL_INTERVAL, Math.min(5_000, LAUNCH_TIMEOUT)),
+  _port: number = DEFAULT_WEBDRIVER_PORT,
+  _timeout: number = Math.min(5_000, LAUNCH_TIMEOUT),
 ): Promise<void> {
-  await pollStatus(port, timeout);
+  throw new Error(
+    'WebDriver has been replaced by tauri-pilot for Veslo desktop E2E. Convert this legacy WDIO test to a tauri-pilot scenario before running it.',
+  );
 }
 
-export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
-  if (await hasReadyWebDriverServer(port)) {
-    if (shouldUseManagedAiGatewayFixture()) {
-      throw new Error(
-        `Refusing to reuse an existing WebDriver server on port ${port} while E2E_MANAGED_AI_GATEWAY_FIXTURE=1. Stop the existing desktop app before running the managed AI fixture spec.`,
-      );
-    }
-    console.log(`[e2e] Reusing existing WebDriver server on port ${port}.`);
-    appProcess = null;
-    appProcessOwnedByHarness = false;
-    return;
-  }
-
+export async function startApp(_legacyWebDriverPort?: number): Promise<void> {
   const binaryPath = resolveBinaryPath();
+  const pilotRuntimeDir = resolvePilotRuntimeDir();
+  preparePilotRuntimeDir(pilotRuntimeDir);
+  const pilotSocket = resolvePilotSocketPath({ runtimeDir: pilotRuntimeDir });
   console.log(`[e2e] Launching Tauri binary: ${binaryPath}`);
-  console.log(`[e2e] WebDriver port: ${port}`);
+  console.log(`[e2e] tauri-pilot socket: ${pilotSocket}`);
   const skillRegistryFixtureBaseUrl = process.env.E2E_SKILL_REGISTRY_FIXTURE?.trim() === '0'
     ? null
     : await startSkillRegistryFixture();
@@ -380,6 +592,7 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
   }
 
   const tmpDir = join(resolveDesktopRoot(), '..', 'e2e', '.tmp-opencode-home');
+  const vesloServerPort = await resolveVesloServerPortForLaunch();
   let env: NodeJS.ProcessEnv;
 
   if (CUSTOM_OPENCODE_HOME) {
@@ -387,9 +600,10 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
       preserveExisting: true,
     });
     env = createAppLaunchEnv(seedEnv, {
-      port,
+      vesloServerPort,
       opencodeHome: CUSTOM_OPENCODE_HOME,
       snapshotPath,
+      pilotRuntimeDir,
     });
     seedDefaultWorkspaceState(CUSTOM_OPENCODE_HOME, env);
     console.log(`[e2e] Using custom OPENCODE_HOME: ${CUSTOM_OPENCODE_HOME}`);
@@ -398,9 +612,10 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
     rmSync(tmpDir, { recursive: true, force: true });
     const snapshotPath = prepareDesktopAuthSeed(tmpDir, seedEnv);
     env = createAppLaunchEnv(seedEnv, {
-      port,
+      vesloServerPort,
       opencodeHome: tmpDir,
       snapshotPath,
+      pilotRuntimeDir,
     });
     env.HOME = ISOLATED_PROFILE_ROOT;
     env.USERPROFILE = ISOLATED_PROFILE_ROOT;
@@ -413,14 +628,19 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
   } else {
     env = {
       ...process.env,
-      TAURI_WEBDRIVER_PORT: String(port),
+      TAURI_PILOT_SOCKET: pilotSocket,
+      VESLO_DESKTOP_SERVER_PORT: String(vesloServerPort),
     } as NodeJS.ProcessEnv;
+    if (process.platform !== 'win32') {
+      env.XDG_RUNTIME_DIR = pilotRuntimeDir;
+    }
     if (process.platform === 'linux') {
       delete env.WAYLAND_DISPLAY;
       env.GDK_BACKEND = 'x11';
     }
     console.log('[e2e] Using the app\'s existing profile and OPENCODE_HOME.');
   }
+  console.log(`[e2e] Veslo server port: ${vesloServerPort}`);
 
   appProcess = spawn(binaryPath, [], {
     env: {
@@ -454,23 +674,6 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
     appProcess = null;
     appProcessOwnedByHarness = false;
   });
-
-  try {
-    console.log(`[e2e] Waiting for WebDriver server on port ${port}...`);
-    await pollStatus(port, LAUNCH_TIMEOUT);
-    console.log(`[e2e] WebDriver server is ready.`);
-  } catch (error) {
-    if (!appProcess) {
-      await stopManagedAiGatewayFixtureIfRunning();
-      await stopSkillRegistryFixture();
-      throw new Error(
-        `Spawned Tauri app exited before WebDriver became ready. ` +
-        `If Veslo is already running, run it with the e2e WebDriver build or stop it before launching tests.`,
-      );
-    }
-    await stopApp();
-    throw error;
-  }
 }
 
 export async function stopApp(): Promise<void> {

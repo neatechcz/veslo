@@ -1,12 +1,16 @@
 import type { OrgRole } from "../db/schema.js"
 
+export type CurrentOrgRole = (typeof OrgRole)[number]
+export type LegacyOrgRole = "owner"
+export type CompatibleOrgRole = CurrentOrgRole | LegacyOrgRole
+
 export type OrganizationAccessSummary = {
   id: string
   name: string
   slug: string
   ownerUserId: string
   membershipId: string
-  role: (typeof OrgRole)[number]
+  role: CompatibleOrgRole
 }
 
 type ActiveOrganizationResult =
@@ -20,8 +24,16 @@ type ActiveOrganizationResult =
       status: 400 | 403 | 404
     }
 
-export function hasRequiredOrgRole(actual: (typeof OrgRole)[number], required: (typeof OrgRole)[number]) {
-  if (actual === "owner") {
+export function isOrganizationAdminRole(role: CompatibleOrgRole | null | undefined) {
+  return role === "organization_admin" || role === "owner"
+}
+
+export function toCurrentOrgRole(role: CompatibleOrgRole): CurrentOrgRole {
+  return isOrganizationAdminRole(role) ? "organization_admin" : "member"
+}
+
+export function hasRequiredOrgRole(actual: CompatibleOrgRole, required: CompatibleOrgRole) {
+  if (isOrganizationAdminRole(actual)) {
     return true
   }
 
@@ -72,7 +84,7 @@ export function pickActiveOrganization(
 
 export function canDeleteWorker(input: {
   actorUserId: string
-  actorRole: (typeof OrgRole)[number] | null
+  actorRole: CompatibleOrgRole | null
   createdByUserId: string | null
   isPlatformAdmin: boolean
 }) {
@@ -80,7 +92,7 @@ export function canDeleteWorker(input: {
     return true
   }
 
-  if (input.actorRole === "owner") {
+  if (isOrganizationAdminRole(input.actorRole)) {
     return true
   }
 
@@ -89,7 +101,7 @@ export function canDeleteWorker(input: {
 
 export function canRevealWorkerHostToken(input: {
   actorUserId: string
-  actorRole: (typeof OrgRole)[number] | null
+  actorRole: CompatibleOrgRole | null
   createdByUserId: string | null
   isPlatformAdmin: boolean
 }) {
@@ -98,16 +110,9 @@ export function canRevealWorkerHostToken(input: {
 
 export function wouldLeaveOrganizationWithoutOwner(input: {
   ownerCount: number
-  targetRole: (typeof OrgRole)[number]
-  nextRole: (typeof OrgRole)[number] | null
+  targetRole: CompatibleOrgRole
+  nextRole: CompatibleOrgRole | null
 }) {
-  if (input.targetRole !== "owner") {
-    return false
-  }
-
-  if (input.nextRole === "owner") {
-    return false
-  }
-
-  return input.ownerCount <= 1
+  void input
+  return false
 }

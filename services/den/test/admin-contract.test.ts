@@ -18,7 +18,7 @@ test("serializeAdminSessionSnapshot exposes platform admin identity and org cont
     platformAdmin: true,
     activeOrgId: "org_alpha",
     organizations: [
-      { id: "org_alpha", name: "Alpha", slug: "alpha", ownerUserId: "usr_admin", role: "owner" },
+      { id: "org_alpha", name: "Alpha", slug: "alpha", ownerUserId: "usr_admin", role: "organization_admin" },
     ],
   })
 
@@ -32,8 +32,59 @@ test("serializeAdminSessionSnapshot exposes platform admin identity and org cont
     platformAdmin: true,
     activeOrgId: "org_alpha",
     organizations: [
-      { id: "org_alpha", name: "Alpha", slug: "alpha", ownerUserId: "usr_admin", role: "owner" },
+      { id: "org_alpha", name: "Alpha", slug: "alpha", ownerUserId: "usr_admin", role: "organization_admin" },
     ],
+    capabilities: [
+      "organization",
+      "users",
+      "credentials",
+      "usage",
+      "alerts",
+      "audit",
+      "debugLogs",
+      "managedAiUserAccess",
+    ],
+    allowedPages: [
+      "organization",
+      "users",
+      "credentials",
+      "usage",
+      "alerts",
+      "audit",
+      "debug-logs",
+    ],
+  })
+})
+
+test("serializeAdminSessionSnapshot limits organization admin capabilities to organization and users", () => {
+  const snapshot = serializeAdminSessionSnapshot({
+    user: {
+      id: "usr_org_admin",
+      email: "admin@example.com",
+      emailVerified: true,
+      name: "Org Admin",
+    },
+    platformAdmin: false,
+    activeOrgId: "org_alpha",
+    organizations: [
+      { id: "org_alpha", name: "Alpha", slug: "alpha", ownerUserId: "usr_org_admin", role: "organization_admin" },
+    ],
+  })
+
+  assert.deepEqual(snapshot, {
+    user: {
+      id: "usr_org_admin",
+      email: "admin@example.com",
+      emailVerified: true,
+      name: "Org Admin",
+    },
+    platformAdmin: false,
+    activeOrgId: "org_alpha",
+    organizations: [
+      { id: "org_alpha", name: "Alpha", slug: "alpha", ownerUserId: "usr_org_admin", role: "organization_admin" },
+    ],
+    capabilities: ["organization", "users"],
+    allowedPages: ["organization", "users"],
   })
 })
 

@@ -51,6 +51,18 @@ test("isTauriRuntime treats tauri.localhost as desktop runtime even when interna
   assert.equal(result, true);
 });
 
+test("isTauriRuntime treats the Tauri runtime flag as desktop runtime on localhost dev URLs", () => {
+  const result = withMockWindow(
+    {
+      isTauri: true,
+      location: { hostname: "localhost", protocol: "http:" },
+    },
+    () => isTauriRuntime(),
+  );
+
+  assert.equal(result, true);
+});
+
 test("isTauriRuntime stays false for regular browser hosts without Tauri internals", () => {
   const result = withMockWindow(
     {

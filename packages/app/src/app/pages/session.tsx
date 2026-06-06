@@ -4,6 +4,10 @@ import type {
   ArtifactItem,
   DashboardTab,
   ComposerDraft,
+  ComposerTargetConflict,
+  ComposerTargetOption,
+  ComposerTargetSwitchResolution,
+  ComposerTargetSwitchResult,
   MessageGroup,
   MessageWithParts,
   McpServerEntry,
@@ -32,12 +36,10 @@ import { acquireBlankNativeWindowTitleLease } from "../lib/native-window-title-l
 import { AI_ACCESS_LOADING_MESSAGE } from "../lib/ai-access";
 
 import {
-  Box,
   ChevronDown,
   Check,
   Circle,
   Cpu,
-  HeartPulse,
   HardDrive,
   History,
   ListTodo,
@@ -52,7 +54,6 @@ import {
   SlidersHorizontal,
   Undo2,
   X,
-  Zap,
 } from "lucide-solid";
 
 import Button from "../components/button";
@@ -82,20 +83,18 @@ import {
   isTauriRuntime,
   isWindowsPlatform,
   normalizeDirectoryPath,
-  parseTemplateFrontmatter,
 } from "../utils";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
 import { normalizeLocalFilePath } from "../lib/local-file-path";
-import { shouldStopRunOnEscape } from "./session-shortcuts";
+import { resolveEscapeStopShortcut } from "./session-shortcuts";
 import { currentLocale, t } from "../../i18n";
 import type { UpdateDownloadRetryInfo } from "../context/updater";
-
-import browserSetupTemplate from "../data/commands/browser-setup.md?raw";
-import soulSetupTemplate from "../data/commands/give-me-a-soul.md?raw";
 
 import MessageList, { type PendingMessageState } from "../components/session/message-list";
 import Composer from "../components/session/composer";
 import type { ComposerSendOptions } from "../components/session/composer";
+import ComposerTargetConflictModal from "../components/session/composer-target-conflict-modal";
+import ComposerTargetPicker from "../components/session/composer-target-picker";
 import QueuedMessageList from "../components/session/queued-message-list";
 import { getEditableUserMessageDraft, type EditableUserMessageDraft } from "../components/session/message-editability";
 import {
@@ -169,6 +168,12 @@ function recordSendTrace(event: string, payload?: Record<string, unknown>) {
 export type SessionViewProps = {
   selectedSessionId: string | null;
   activePendingDraftKey: string | null;
+  composerTargetOptions: ComposerTargetOption[];
+  activeComposerTargetId: string | null;
+  switchComposerTarget: (
+    targetId: string,
+    resolution?: ComposerTargetSwitchResolution,
+  ) => Promise<ComposerTargetSwitchResult>;
   setView: (view: View, sessionId?: string) => void;
   setSessionBrowseScope: (scope: SessionBrowseScope) => void;
   tab: DashboardTab;
@@ -365,21 +370,6 @@ type SkillsSetBundleV1 = {
   };
 };
 
-const BROWSER_AUTOMATION_QUICKSTART_PROMPT = (() => {
-  const parsed = parseTemplateFrontmatter(browserSetupTemplate);
-  return (parsed?.body ?? browserSetupTemplate).trim();
-})();
-
-const SOUL_SETUP_TEMPLATE = (() => {
-  const parsed = parseTemplateFrontmatter(soulSetupTemplate);
-  const name = parsed?.data?.name?.trim() || "give-me-a-soul";
-  const description =
-    parsed?.data?.description?.trim() ||
-    "Enable optional soul mode with persistent memory and scheduled check-ins";
-  const body = (parsed?.body ?? soulSetupTemplate).trim();
-  return { name, description, body };
-})();
-
 const INITIAL_MESSAGE_WINDOW = 140;
 const MESSAGE_WINDOW_LOAD_CHUNK = 120;
 const MAX_SEARCH_MESSAGE_CHARS = 4_000;
@@ -457,6 +447,7 @@ export default function SessionView(props: SessionViewProps) {
   const topInitializedSessionIds = new Set<string>();
 
   const [toastMessage, setToastMessage] = createSignal<string | null>(null);
+  const [composerTargetConflict, setComposerTargetConflict] = createSignal<ComposerTargetConflict | null>(null);
   const [renameModalOpen, setRenameModalOpen] = createSignal(false);
   const [renameTitle, setRenameTitle] = createSignal("");
   const [renameBusy, setRenameBusy] = createSignal(false);
@@ -752,6 +743,17 @@ export default function SessionView(props: SessionViewProps) {
     workspace.name?.trim() ||
     workspace.path?.trim() ||
     tr("sidebar.workspace_fallback");
+  const activeComposerTargetOption = createMemo(() =>
+    props.composerTargetOptions.find((option) => option.id === props.activeComposerTargetId) ??
+    props.composerTargetOptions[0] ??
+    null,
+  );
+  const composerEntryTargetName = createMemo(() => activeComposerTargetOption()?.label ?? workspaceLabel(props.activeWorkspaceDisplay));
+  const composerEntryHeading = createMemo(() => {
+    const target = activeComposerTargetOption();
+    if (target?.kind === "chat") return tr("session.target_heading_chat");
+    return formatTr("session.target_heading_workspace", { name: composerEntryTargetName() });
+  });
   const todoList = createMemo(() => props.todos.filter((todo) => todo.content.trim()));
   const todoCount = createMemo(() => todoList().length);
   const todoCompletedCount = createMemo(() =>
@@ -1063,11 +1065,12 @@ export default function SessionView(props: SessionViewProps) {
   // (idle → running, browsing → engine start).  The memo path is
   // reliable because SolidJS memos propagate synchronously.
   const effectiveRenderedMessages = renderedMessages;
-  const showQuickstartEmptyState = createMemo(() =>
+  const showComposerEntryState = createMemo(() =>
     effectiveRenderedMessages().length === 0 &&
     !showWorkspaceSetupEmptyState() &&
     !showSessionLoadingState(),
   );
+  const composerResetKey = createMemo(() => `${props.activeComposerTargetId ?? "__no-target"}:${props.selectedSessionId ?? "__no-session"}`);
 
   createEffect(() => {
     const next = renderedMessages();
@@ -1632,8 +1635,10 @@ export default function SessionView(props: SessionViewProps) {
   const [editingQueuedDraftId, setEditingQueuedDraftId] = createSignal<string | null>(null);
   const [editingTranscriptMessageId, setEditingTranscriptMessageId] = createSignal<string | null>(null);
   const [abortBusy, setAbortBusy] = createSignal(false);
+  const [escapeStopConfirmationPending, setEscapeStopConfirmationPending] = createSignal(false);
   const [todoExpanded, setTodoExpanded] = createSignal(false);
   let queueDrainAttemptInFlight = false;
+  let escapeStopConfirmationSessionId = props.selectedSessionId;
 
   const queuedDrafts = createMemo(() => queuedDraftsBySessionKey()[currentSessionQueueKey()] ?? []);
   const queuePaused = createMemo(() => Boolean(queuePausedAfterStopBySessionKey()[currentSessionQueueKey()]));
@@ -1774,6 +1779,17 @@ export default function SessionView(props: SessionViewProps) {
 
   const showRunIndicator = createMemo(() => runPhase() !== "idle");
   const showFooterRunIndicator = createMemo(() => showRunIndicator());
+  createEffect(() => {
+    const sessionId = props.selectedSessionId;
+    if (sessionId === escapeStopConfirmationSessionId) return;
+    escapeStopConfirmationSessionId = sessionId;
+    setEscapeStopConfirmationPending(false);
+  });
+  createEffect(() => {
+    if (!showRunIndicator() || abortBusy() || commandPaletteOpen() || searchOpen() || overlayOpenSide()) {
+      setEscapeStopConfirmationPending(false);
+    }
+  });
   const workspaceSendWarmupActive = createMemo(() => {
     const submitted = optimisticSubmittedDraft();
     if (!submitted || submitted.state !== "sending") return false;
@@ -2193,21 +2209,28 @@ export default function SessionView(props: SessionViewProps) {
         }
       }
 
-      if (
-        shouldStopRunOnEscape({
-          key: event.key,
-          defaultPrevented: event.defaultPrevented,
-          metaKey: event.metaKey,
-          ctrlKey: event.ctrlKey,
-          altKey: event.altKey,
-          shiftKey: event.shiftKey,
-          commandPaletteOpen: commandPaletteOpen(),
-          searchOpen: searchOpen(),
-          showRunIndicator: showRunIndicator(),
-          abortBusy: abortBusy(),
-        })
-      ) {
+      if (overlayOpenSide()) return;
+
+      const escapeStopAction = resolveEscapeStopShortcut({
+        key: event.key,
+        defaultPrevented: event.defaultPrevented,
+        metaKey: event.metaKey,
+        ctrlKey: event.ctrlKey,
+        altKey: event.altKey,
+        shiftKey: event.shiftKey,
+        commandPaletteOpen: commandPaletteOpen(),
+        searchOpen: searchOpen(),
+        showRunIndicator: showRunIndicator(),
+        abortBusy: abortBusy(),
+        confirmationPending: escapeStopConfirmationPending(),
+      });
+      if (escapeStopAction !== "ignore") {
         event.preventDefault();
+        if (escapeStopAction === "request-confirmation") {
+          setEscapeStopConfirmationPending(true);
+          return;
+        }
+        setEscapeStopConfirmationPending(false);
         void cancelRun();
       }
     };
@@ -2406,6 +2429,7 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const cancelRun = async () => {
+    setEscapeStopConfirmationPending(false);
     if (abortBusy()) return;
 
     setQueuePausedForCurrentSession(true);
@@ -2443,6 +2467,7 @@ export default function SessionView(props: SessionViewProps) {
     }
 
     if (abortBusy()) return;
+    setEscapeStopConfirmationPending(false);
     setAbortBusy(true);
     setToastMessage(tr("session.trying_again"));
     try {
@@ -3512,54 +3537,29 @@ export default function SessionView(props: SessionViewProps) {
     return sendPromptImmediate(draft, { reason: "normal" });
   };
 
-  const handleBrowserAutomationQuickstart = () => {
-    const text =
-      BROWSER_AUTOMATION_QUICKSTART_PROMPT ||
-      "Try Chrome DevTools MCP now. If it is unavailable, explain how to connect Control Chrome in Veslo and ask me to retry.";
-    handleSendPrompt({
-      mode: "prompt",
-      text,
-      resolvedText: text,
-      parts: [{ type: "text", text }],
-      attachments: [],
-    });
-  };
-
-  const handleSoulQuickstart = async () => {
-    const name = SOUL_SETUP_TEMPLATE.name;
-    const slashCommand = `/${name}`;
-    try {
-      const commands = await props.listCommands();
-      const hasCommand = commands.some((cmd) => cmd.name === name);
-      if (hasCommand) {
-        handleSendPrompt({
-          mode: "prompt",
-          text: slashCommand,
-          resolvedText: slashCommand,
-          parts: [{ type: "text", text: slashCommand }],
-          attachments: [],
-          command: { name, arguments: "" },
-        });
-        return;
-      }
-    } catch {
-      // Fall back to prompt-based setup below.
-    }
-
-    const text =
-      currentLocale() === "cs"
-        ? tr("session.quickstart_soul_prompt")
-        : SOUL_SETUP_TEMPLATE.body || tr("session.quickstart_soul_prompt");
-    handleSendPrompt({
-      mode: "prompt",
-      text,
-      resolvedText: text,
-      parts: [{ type: "text", text }],
-      attachments: [],
-    });
-  };
-
   const isSandboxWorkspace = createMemo(() => Boolean((props.activeWorkspaceDisplay as any)?.sandboxContainerName?.trim()));
+
+  const handleComposerTargetSelect = async (targetId: string) => {
+    const result = await props.switchComposerTarget(targetId);
+    if (result.status === "conflict") {
+      setComposerTargetConflict(result.conflict);
+      return;
+    }
+    if (result.status === "blocked") setToastMessage(result.message);
+  };
+
+  const resolveComposerTargetConflictModal = async (resolution: ComposerTargetSwitchResolution) => {
+    const conflict = composerTargetConflict();
+    if (!conflict) return;
+    const result = await props.switchComposerTarget(conflict.targetId, resolution);
+    if (result.status === "conflict") {
+      setComposerTargetConflict(result.conflict);
+      return;
+    }
+    setComposerTargetConflict(null);
+    if (result.status === "blocked") setToastMessage(result.message);
+  };
+
   let pendingSessionLoadAttempt = 0;
 
   const handleDraftChange = (draft: ComposerDraft) => {
@@ -3913,10 +3913,6 @@ export default function SessionView(props: SessionViewProps) {
     })();
   };
 
-  const soulModeEnabled = createMemo(() =>
-    Boolean(props.soulStatusByWorkspaceId[props.activeWorkspaceId]?.enabled)
-  );
-
   const runtimeAvailableWithoutClient = createMemo(() => {
     if (props.clientConnected) return false;
     if (props.vesloServerStatus !== "connected") return false;
@@ -3924,7 +3920,6 @@ export default function SessionView(props: SessionViewProps) {
     return (props.workspaceConnectionStateById[props.activeWorkspaceId]?.status ?? "idle") === "connected";
   });
 
-  const soulNavIconClass = () => (soulModeEnabled() ? "soul-nav-icon-active" : "");
   const leftSidebarContent = () => (
     <>
       <div class="flex min-h-0 flex-1 flex-col">
@@ -4031,14 +4026,7 @@ export default function SessionView(props: SessionViewProps) {
         </div>
         <SidebarDashboardNav
           currentTab={props.tab}
-          onSelect={(tab) => {
-            if (tab === "soul") {
-              openSoul();
-              return;
-            }
-            openDashboardTab(tab);
-          }}
-          soulIconClass={soulNavIconClass()}
+          onSelect={openDashboardTab}
         />
       </div>
       <SidebarStatusControls
@@ -4285,45 +4273,65 @@ export default function SessionView(props: SessionViewProps) {
                 </div>
               </div>
             </Show>
-            <Show when={showQuickstartEmptyState()}>
-              <div class="text-center py-16 px-6 space-y-6">
-                <div class="w-16 h-16 bg-dls-hover rounded-3xl mx-auto flex items-center justify-center border border-dls-border">
-                  <Zap class="text-dls-secondary" />
+            <Show when={showComposerEntryState()}>
+              <div class="mx-auto flex min-h-[min(34rem,calc(100vh-14rem))] w-full max-w-[960px] flex-col justify-center px-4 py-12">
+                <div class="mx-auto flex w-full max-w-[960px] flex-col items-center gap-5 text-center">
+                  <ComposerTargetPicker
+                    options={props.composerTargetOptions}
+                    activeTargetId={props.activeComposerTargetId}
+                    disabled={props.busy}
+                    onSelect={(targetId) => {
+                      void handleComposerTargetSelect(targetId);
+                    }}
+                  />
+                  <h2
+                    data-testid="composer-entry-target-heading"
+                    class="font-product type-title-md w-full max-w-[960px] text-balance text-dls-text"
+                  >
+                    {composerEntryHeading()}
+                  </h2>
+                  <Show when={composerResetKey()} keyed>
+                    {(_composerKey) => (
+                      <div class="w-full text-left">
+                        <Composer
+                          entryPlacement="center"
+                          initialDraft={props.composerDraft}
+                          prompt={props.composerDraft.text}
+                          developerMode={props.developerMode}
+                          busy={props.busy}
+                          isStreaming={showRunIndicator()}
+                          stopShortcutConfirmPending={escapeStopConfirmationPending()}
+                          compactWidth={useCompactCenterColumn()}
+                          onSend={handleSendPrompt}
+                          onStop={cancelRun}
+                          onDraftChange={handleDraftChange}
+                          selectedAgent={props.selectedSessionAgent}
+                          onSelectAgent={(agent) => {
+                            applySessionAgent(agent);
+                          }}
+                          showNotionBanner={props.showTryNotionPrompt}
+                          onNotionBannerClick={props.onTryNotionPrompt}
+                          toast={toastMessage()}
+                          onToast={(message) => setToastMessage(message)}
+                          listAgents={props.listAgents}
+                          recentFiles={props.workingFiles}
+                          searchFiles={props.searchFiles}
+                          listCommands={props.listCommands}
+                          isRemoteWorkspace={props.activeWorkspaceDisplay.workspaceType === "remote"}
+                          isSandboxWorkspace={isSandboxWorkspace()}
+                          localWorkspacePath={props.activeWorkspaceRoot}
+                          canChooseSessionFolder={props.canChooseSessionFolder}
+                          onChooseSessionFolder={chooseFolderForSession}
+                          attachmentsEnabled={attachmentsEnabled()}
+                          attachmentsDisabledReason={attachmentsDisabledReason()}
+                          engineReady={props.engineReady}
+                        />
+                      </div>
+                    )}
+                  </Show>
                 </div>
-              <div class="space-y-2">
-                <h3 class="font-product type-title-sm">{tr("session.quickstart_title")}</h3>
-                <p class="font-reading type-reading-md text-dls-secondary max-w-sm mx-auto">
-                  {tr("session.quickstart_description")}
-                </p>
               </div>
-              <div class="grid gap-3 sm:grid-cols-2 max-w-2xl mx-auto text-left">
-                <button
-                  type="button"
-                  class="rounded-2xl border border-dls-border bg-dls-hover p-4 transition-all hover:bg-dls-active hover:border-gray-7"
-                  onClick={() => {
-                    void handleBrowserAutomationQuickstart();
-                  }}
-                >
-                  <div class="font-product type-ui-md font-semibold text-dls-text">{tr("session.quickstart_browser_title")}</div>
-                  <div class="font-reading type-ui-sm mt-1 text-dls-secondary">
-                    {tr("session.quickstart_browser_description")}
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  class="rounded-2xl border border-dls-border bg-dls-hover p-4 transition-all hover:bg-dls-active hover:border-gray-7"
-                  onClick={() => {
-                    void handleSoulQuickstart();
-                  }}
-                >
-                  <div class="font-product type-ui-md font-semibold text-dls-text">{tr("session.quickstart_soul_title")}</div>
-                  <div class="font-reading type-ui-sm mt-1 text-dls-secondary">
-                    {tr("session.quickstart_soul_description")}
-                  </div>
-                </button>
-              </div>
-            </div>
-          </Show>
+            </Show>
 
           <Show when={hiddenMessageCount() > 0 || hasServerEarlierMessages()}>
             <div class="mb-4 flex justify-center">
@@ -4485,8 +4493,8 @@ export default function SessionView(props: SessionViewProps) {
         </div>
       </Show>
 
-      <Show when={!showWorkspaceSetupEmptyState()}>
-        <Show when={props.selectedSessionId ?? "__no-session"} keyed>
+      <Show when={!showWorkspaceSetupEmptyState() && !showComposerEntryState()}>
+        <Show when={composerResetKey()} keyed>
           {(_sessionKey) => (
             <>
               <Show when={props.aiAccessBlockedReason}>
@@ -4510,6 +4518,7 @@ export default function SessionView(props: SessionViewProps) {
                 developerMode={props.developerMode}
                 busy={props.busy || aiAccessLoading()}
                 isStreaming={showRunIndicator()}
+                stopShortcutConfirmPending={escapeStopConfirmationPending()}
                 compactTopSpacing={todoCount() > 0}
                 compactWidth={useCompactCenterColumn()}
                 onSend={handleSendPrompt}
@@ -4547,6 +4556,14 @@ export default function SessionView(props: SessionViewProps) {
           )}
         </Show>
       </Show>
+
+      <ComposerTargetConflictModal
+        conflict={composerTargetConflict()}
+        onResolve={(resolution) => {
+          void resolveComposerTargetConflictModal(resolution);
+        }}
+        onCancel={() => setComposerTargetConflict(null)}
+      />
 
       </main>
 

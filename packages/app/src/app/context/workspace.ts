@@ -102,6 +102,15 @@ function _wsLog(msg: string, data?: unknown) {
   try { (window as any).__wsActivateLog = ((window as any).__wsActivateLog || "") + line + "\n"; } catch {}
 }
 
+function isSkillRegistryMaterializationError(error: unknown): boolean {
+  if (error instanceof VesloServerError) {
+    if (error.code.trim().startsWith("skill_registry_")) return true;
+    return error.message.includes("Skill registry") || error.message.includes("skill registry");
+  }
+  const message = error instanceof Error ? error.message : safeStringify(error);
+  return message.includes("Skill registry") || message.includes("skill registry");
+}
+
 export function createWorkspaceStore(options: {
   startupPreference: () => StartupPreference | null;
   setStartupPreference: (value: StartupPreference | null) => void;
@@ -617,6 +626,48 @@ export function createWorkspaceStore(options: {
         denOrgId: denAuth?.orgId?.trim() || undefined,
         denUserId: denAuth?.user?.id?.trim() || undefined,
       };
+      const activeRun = Boolean(workspaceBusy()[workspace.id]);
+
+      try {
+        const globalStatus = await client.getGlobalSkillMaterializationStatus();
+        const globalSyncRequired =
+          globalStatus.reloadRequired === true ||
+          globalStatus.status === "pending" ||
+          (globalStatus.platformManaged?.enabled === true && globalStatus.platformManaged.synced !== true);
+        if (globalSyncRequired) {
+          if (activeRun) {
+            await client.syncGlobalSkillMaterialization({ ...materializationAuth, activeRun: true });
+            wsDebug("skills:materialization:global:pending:active-run", {
+              workspaceId,
+              reason: context?.reason ?? null,
+              status: globalStatus.status,
+              platformManaged: globalStatus.platformManaged ?? null,
+            });
+          } else {
+            const globalResult = await client.syncGlobalSkillMaterialization(materializationAuth);
+            wsDebug("skills:materialization:global:synced", {
+              workspaceId,
+              reason: context?.reason ?? null,
+              status: globalResult.status,
+              synced: globalResult.synced,
+              reloadRequired: globalResult.reloadRequired ?? false,
+              materializedCount: globalResult.materializedSkills.length,
+              platformManaged: globalResult.platformManaged ?? null,
+            });
+            if (globalResult.synced || globalResult.reloadRequired === true) {
+              options.refreshSkills({ force: true }).catch(e => reportError(e, "workspace.refreshSkills"));
+            }
+          }
+        }
+      } catch (error) {
+        if (!(error instanceof VesloServerError && error.status === 404)) {
+          throw error;
+        }
+        wsDebug("skills:materialization:global:skip:unsupported-server", {
+          workspaceId,
+          reason: context?.reason ?? null,
+        });
+      }
 
       const status = await client.getWorkspaceSkillMaterializationStatus(workspaceId);
       if (!status.registryConfigured) {
@@ -627,7 +678,6 @@ export function createWorkspaceStore(options: {
         return true;
       }
 
-      const activeRun = Boolean(workspaceBusy()[workspace.id]);
       if (activeRun) {
         await client.syncWorkspaceSkillMaterialization(workspaceId, { ...materializationAuth, activeRun: true });
         wsDebug("skills:materialization:pending:active-run", {
@@ -668,6 +718,15 @@ export function createWorkspaceStore(options: {
         return true;
       }
       const message = error instanceof Error ? error.message : safeStringify(error);
+      if (isSkillRegistryMaterializationError(error)) {
+        wsDebug("skills:materialization:degraded", {
+          workspaceId,
+          reason: context?.reason ?? null,
+          message,
+        });
+        reportError(error, "workspace.skillMaterialization");
+        return true;
+      }
       wsDebug("skills:materialization:failed", {
         workspaceId,
         reason: context?.reason ?? null,

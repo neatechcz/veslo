@@ -77,7 +77,9 @@ describe("resolveWorkspaceSkillSet", () => {
         versionId: "research_v1",
         packageSha256:
           "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        source: "personal",
         target: "personal-global",
+        removalPolicy: "user_removable",
       },
     ]);
     expect(result.conflicts).toEqual([]);
@@ -235,7 +237,9 @@ describe("resolveWorkspaceSkillSet", () => {
         versionId: "office-writer_v1",
         packageSha256:
           "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        source: "organization",
         target: "personal-global",
+        removalPolicy: "locked",
       },
     ]);
 

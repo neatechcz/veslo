@@ -54,11 +54,12 @@ Frontmatter parsování: `server/src/frontmatter.ts`.
 - `duplicate-pr` — primary
 - `docs`, `css` — primary
 
-### Interní subagenti (`server/src/internal-system.ts:15-22`):
-```typescript
-const INTERNAL_PACKS = ["docx", "pdf", "pptx", "xlsx", "skill-creator"] as const;
-```
-Generuje `veslo-internal-*` agenty s `temperature: 0.1`, `mode: subagent`, `hidden: true`.
+### Platform core skilly
+
+Dokumentové workflow a tvorba skillů jsou distribuované jako běžné read-only
+platform skilly po přihlášení. Veslo už pro tyto případy nevytváří samostatné
+workspace agenty ani pluginový router; agent pracuje se stejným seznamem skillů
+jako u ostatních platform-wide distribucí.
 
 ### Hlavní veslo agent (workspace):
 - `storage/veslo-test1-K/.opencode/agents/veslo.md` — `temperature: 0.2`
@@ -117,7 +118,7 @@ subtask: false
 | `app/src/app/components/session/composer.tsx` | UI výběr agenta, @mention |
 | `app/src/app/pages/session-shortcuts.ts` | Shift+Tab cyklování |
 | `app/src/app/app.tsx` | `listAgents()`, `setSessionAgent()`, API volání |
-| `server/src/internal-system.ts` | Interní subagenti, delegáti |
+| `server/src/internal-system.ts` | Workspace instrukce a cleanup starších managed artifactů |
 | `server/src/commands.ts` | Commands s agent/model override |
 | `server/src/frontmatter.ts` | YAML frontmatter parser |
 | `app/src/app/types.ts` | `ModelRef`, `ComposerPart` |

@@ -4,6 +4,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import express from "express"
 
+import { asyncRoute } from "../../http/errors.js"
 import type {
   AdminAlertRecord,
   AdminAuditRecord,
@@ -21,6 +22,7 @@ import {
   type AutoAssignedCodexCredentialRotationService,
 } from "../access/auto-assignment-rotation.js"
 import type { AiAccessProvider, AiAccessRepository, UpsertUserAiAccessPolicyInput, UserAiAccessPolicyRecord } from "../access/repository.js"
+import { buildCodexCapacityAlerts } from "../alerts/codex-capacity-alerts.js"
 import type { AlertRecord, AlertRepository } from "../alerts/repository.js"
 import type { AuditRepository } from "../audit/repository.js"
 import type { OpenAiOAuthClient } from "../credentials/openai-oauth.js"
@@ -33,12 +35,15 @@ import {
   isManagedAiProvider,
 } from "../providers/ids.js"
 import { evaluateCodexCredentialEligibility } from "../usage/codex-eligibility.js"
+import { buildCodexCapacityOverview } from "../usage/codex-capacity.js"
 import {
   CachedCodexCredentialStatusProvider,
   type CodexCredentialStatusProvider,
   type CodexUsageStatus,
 } from "../usage/codex-status.js"
 import type { UsageAggregateResponse, UsageCredentialAggregate, UsageRepository } from "../usage/repository.js"
+
+const DEFAULT_CODEX_CAPACITY_ALERT_READ_TIMEOUT_MS = 2500
 
 class HttpError extends Error {
   constructor(
@@ -320,6 +325,51 @@ export function createManagedAiAdminRouteDeps(
         label: credentialLabels.get(entry.id) ?? entry.label,
       })),
       credentialUsage,
+      capacity: buildCodexCapacityOverview(
+        credentials
+          .filter((credential) => credential.provider === "codex_oauth")
+          .map((credential) => ({
+            id: credential.id,
+            name: credential.name,
+            state: credential.state,
+            upstreamStatus: credential.upstreamStatus ?? null,
+          })),
+      ),
+    }
+  }
+
+  async function listCodexCapacityAlerts(): Promise<AlertRecord[]> {
+    const listAdminCredentials = deps.credentials.listAdminCredentials
+    if (!listAdminCredentials) {
+      return []
+    }
+
+    const credentials = await withCodexUpstreamStatus(await listAdminCredentials.call(deps.credentials))
+    return buildCodexCapacityAlerts(
+      buildCodexCapacityOverview(
+        credentials
+          .filter((credential) => credential.provider === "codex_oauth")
+          .map((credential) => ({
+            id: credential.id,
+            name: credential.name,
+            state: credential.state,
+            upstreamStatus: credential.upstreamStatus ?? null,
+          })),
+      ),
+      now(),
+    )
+  }
+
+  async function listCodexCapacityAlertsBestEffort(): Promise<AlertRecord[]> {
+    try {
+      return await withTimeout(
+        listCodexCapacityAlerts(),
+        readCodexCapacityAlertReadTimeoutMs(),
+        "codex_capacity_alerts_timeout",
+      )
+    } catch (error) {
+      console.error("managed_ai_admin_codex_capacity_alerts_failed", error)
+      return []
     }
   }
 
@@ -623,7 +673,7 @@ export function createManagedAiAdminRouteDeps(
           entityType: "credential",
           entityId: credentialId,
           result: "ok",
-          summary: `Rotated active sessions off credential ${credentialId}.`,
+          summary: `Rotated active routes off credential ${credentialId}.`,
         })
         return {
           credential: await getCredentialOrThrow(credentialId),
@@ -686,8 +736,12 @@ export function createManagedAiAdminRouteDeps(
       }
 
       try {
+        const [capacityAlerts, repositoryAlerts] = await Promise.all([
+          listCodexCapacityAlertsBestEffort(),
+          deps.alerts.listAlerts(),
+        ])
         return {
-          alerts: (await deps.alerts.listAlerts()) as AdminAlertRecord[],
+          alerts: [...capacityAlerts, ...repositoryAlerts] as AdminAlertRecord[],
         }
       } catch (error) {
         return handleRouteError(res, error, "alert_list_failed")
@@ -783,7 +837,7 @@ export function createManagedAiAdminUiRouter(deps: ManagedAiAdminUiOptions) {
   const publicDir = path.resolve(path.dirname(currentFile), "../../../public-admin")
   const indexPath = path.join(publicDir, "index.html")
 
-  router.post("/admin/api/credentials/openai/oauth/start", async (req, res) => {
+  router.post("/admin/api/credentials/openai/oauth/start", asyncRoute(async (req, res) => {
     const session = await deps.getAdminSession(req, res)
     if (!session) {
       return
@@ -799,9 +853,9 @@ export function createManagedAiAdminUiRouter(deps: ManagedAiAdminUiOptions) {
     } catch (error) {
       handleRouteError(res, error, "openai_oauth_start_failed")
     }
-  })
+  }))
 
-  router.post("/admin/api/credentials/openai/oauth/exchange", async (req, res) => {
+  router.post("/admin/api/credentials/openai/oauth/exchange", asyncRoute(async (req, res) => {
     const session = await deps.getAdminSession(req, res)
     if (!session) {
       return
@@ -860,7 +914,7 @@ export function createManagedAiAdminUiRouter(deps: ManagedAiAdminUiOptions) {
     } catch (error) {
       handleRouteError(res, error, "openai_oauth_exchange_failed")
     }
-  })
+  }))
 
   router.use("/admin", express.static(publicDir, { index: false }))
 
@@ -1371,6 +1425,34 @@ function openAiStateSecret() {
     throw new HttpError("managed_ai_secret_key_not_configured", 500)
   }
   return secret
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), timeoutMs)
+    unrefTimer(timeout)
+  })
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeout) {
+      clearTimeout(timeout)
+    }
+  })
+}
+
+function readCodexCapacityAlertReadTimeoutMs(): number {
+  const raw = Number(process.env.MANAGED_AI_CODEX_CAPACITY_ALERT_READ_TIMEOUT_MS)
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_CODEX_CAPACITY_ALERT_READ_TIMEOUT_MS
+}
+
+function unrefTimer(handle: unknown) {
+  if (!handle || typeof handle !== "object") {
+    return
+  }
+  const unref = (handle as { unref?: unknown }).unref
+  if (typeof unref === "function") {
+    unref.call(handle)
+  }
 }
 
 function _toAdminCredentialRecord(record: CredentialRecord): AdminCredentialRecord {

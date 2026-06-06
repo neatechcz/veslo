@@ -26,7 +26,7 @@ export async function ensureDefaultOrg(userId: string, name: string) {
     id: randomUUID(),
     org_id: orgId,
     user_id: userId,
-    role: "owner",
+    role: "organization_admin",
   })
   return orgId
 }

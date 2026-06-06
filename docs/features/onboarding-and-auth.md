@@ -45,6 +45,8 @@ Password reset also stays in the browser handoff flow. The reset page keeps the 
 
 The hosted desktop onboarding page also caches the current desktop auth transaction context in browser session storage. If a later auth or verification return lands back on the onboarding page without the original transaction query, the hosted page restores that context before attempting the desktop handoff. This keeps the original desktop auth transaction alive across browser-managed redirects.
 
+DEN signup is gated before Better Auth creates the user, including email/password and social provider signups. An enabled organization domain with self-signup enabled can auto-activate a member only while the organization has an available seat. If the email domain is missing, disabled, or invite-only, signup requires a valid pending organization invite for that email, and invite signup checks that organization's seat capacity before user creation. Domain-joined and invite-joined signups receive active organization membership and do not get a personal default organization.
+
 Key persistent settings:
 
 - `veslo.den.auth`

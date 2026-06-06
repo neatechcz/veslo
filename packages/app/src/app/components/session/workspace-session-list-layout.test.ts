@@ -211,7 +211,48 @@ test("by-project sidebar renders private chats as a bottom section", () => {
   assert.match(source, /style=\{\{ cursor: "ns-resize" \}\}/);
   assert.match(source, /document\.documentElement\.style\.cursor = "ns-resize";/);
   assert.doesNotMatch(source, /cursor-row-resize/);
-  assert.match(source, /data-sidebar-chat-collapsed="true"[\s\S]*onPointerDown=\{handleChatSidebarResizeStart\}/);
+  assert.match(
+    source,
+    /data-sidebar-chat-collapsed="true"[\s\S]*class="mt-2 flex h-11 w-full shrink-0 items-center justify-between gap-2 border-t border-gray-6\/70 px-1\.5 pt-2"[\s\S]*class="inline-flex h-8 min-w-0 flex-1[\s\S]*disabled:opacity-60"[\s\S]*onClick=\{startQuickChatFromCollapsed\}/,
+    "collapsed Chats wrapper should reserve enough height for its h-8 controls",
+  );
+  assert.match(
+    source,
+    /data-sidebar-chat-collapsed="true"[\s\S]*onClick=\{startQuickChatFromCollapsed\}[\s\S]*disabled=\{!props\.onQuickNewSession\}[\s\S]*aria-label=\{tr\("sidebar\.new_chat"\)\}[\s\S]*title=\{tr\("sidebar\.new_chat"\)\}[\s\S]*<Plus size=\{12\} \/>[\s\S]*<span>\{tr\("sidebar\.chat"\)\}<\/span>/,
+    "collapsed Chats should expose a compact + Chat button",
+  );
+  assert.doesNotMatch(
+    source,
+    /data-sidebar-chat-collapsed="true"[\s\S]*data-tooltip=\{tr\("sidebar\.new_chat"\)\}/,
+    "collapsed + Chat should not use the custom tooltip attribute",
+  );
+  const collapsedChatStart = source.indexOf('data-sidebar-chat-collapsed="true"');
+  const collapsedQuickChatClick = source.indexOf("onClick={startQuickChatFromCollapsed}", collapsedChatStart);
+  const collapsedQuickChatEnd = source.indexOf("</button>", collapsedQuickChatClick);
+  assert.notEqual(collapsedChatStart, -1, "collapsed Chats markup should be present");
+  assert.notEqual(collapsedQuickChatClick, -1, "collapsed + Chat button should be present");
+  assert.notEqual(collapsedQuickChatEnd, -1, "collapsed + Chat button markup should close");
+  const collapsedQuickChatButtonSource = source.slice(collapsedChatStart, collapsedQuickChatEnd);
+  assert.doesNotMatch(
+    collapsedQuickChatButtonSource,
+    /sidebarControlTooltipClass/,
+    "collapsed + Chat should not use the custom tooltip class",
+  );
+  assert.match(
+    source,
+    /data-sidebar-chat-expand-button="true"[\s\S]*data-sidebar-chat-collapsed-resize-handle="true"[\s\S]*onPointerDown=\{handleChatSidebarResizeStart\}[\s\S]*onClick=\{expandChatSidebar\}[\s\S]*aria-label=\{tr\("sidebar\.chats"\)\}[\s\S]*title=\{tr\("sidebar\.chats"\)\}[\s\S]*<ChevronUp size=\{11\} \/>/,
+    "collapsed Chats should keep a separate expand button on the right",
+  );
+  assert.doesNotMatch(
+    source,
+    /data-sidebar-chat-collapsed="true"[\s\S]*<span class="truncate">\{tr\("sidebar\.chats"\)\}<\/span>/,
+    "collapsed Chats should not show the old Chats label in place of + Chat",
+  );
+  assert.match(
+    source,
+    /const startQuickChatFromCollapsed = \(\) => \{\s*applyResolvedChatSidebarResize\(compactChatSidebarHeight\(chatSidebarAvailableHeight\(\)\), false, true\);\s*startQuickChat\(\);\s*\};/,
+    "collapsed + Chat should resize to compact height before creating a chat",
+  );
   assert.match(source, /tr\("sidebar\.chats"\)/);
   assert.match(source, /tr\("sidebar\.new_chat"\)/);
   assert.match(source, /ChevronUp/);
@@ -229,4 +270,27 @@ test("by-project sidebar renders private chats as a bottom section", () => {
   assert.match(source, /void loadMoreProjectRowsForGroup\(chatGroup\(\)\);/);
   assert.match(source, /resetProjectVisibleRowsForGroup\(chatGroup\(\)\)/);
   assert.match(source, /showWorkspaceMenu: false/);
+});
+
+test("project create-session actions use visible button chrome", () => {
+  assert.match(
+    source,
+    /const projectCreateSessionButtonClass =[\s\S]*h-7 w-7[\s\S]*rounded-full[\s\S]*border border-gray-6[\s\S]*bg-gray-1[\s\S]*shadow-sm[\s\S]*hover:border-gray-7[\s\S]*hover:bg-gray-2[\s\S]*hover:text-gray-12[\s\S]*focus-visible:outline-none[\s\S]*focus-visible:ring-2[\s\S]*focus-visible:ring-\[rgba\(var\(--dls-accent-rgb\),0\.2\)\]/,
+    "project plus actions should use a shared button-like class",
+  );
+  assert.match(
+    source,
+    /class=\{projectCreateSessionButtonClass\}[\s\S]*aria-label=\{tr\("sidebar\.create_session_in_project"\)\}[\s\S]*<Plus size=\{14\} \/>/,
+    "project plus actions should render as the shared button",
+  );
+  assert.equal(
+    (source.match(/class=\{projectCreateSessionButtonClass\}/g) ?? []).length,
+    2,
+    "both project plus call sites should use the shared button class",
+  );
+  assert.doesNotMatch(
+    source,
+    /class="p-1 rounded-md text-gray-8 hover:text-gray-11 hover:bg-gray-3"[\s\S]*<Plus size=\{14\} \/>/,
+    "project plus actions should not remain bare p-1 icon buttons",
+  );
 });

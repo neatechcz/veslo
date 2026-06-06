@@ -5,7 +5,7 @@ import Button from "./button";
 import { currentLocale, t } from "../../i18n";
 
 export type SkillVersionApprovalStatus = "approved" | "pending" | "rejected";
-export type SkillVersionTargetScope = "global" | "workspace" | "organization";
+export type SkillVersionTargetScope = "global" | "workspace" | "organization" | "platform";
 
 export type SkillVersionTargetMetadata = {
   id: string;
@@ -45,6 +45,7 @@ type SkillVersionTargetLabels = {
   global: string;
   workspace: string;
   organization: string;
+  platform: string;
 };
 
 export const SKILL_VERSION_APPROVAL_STATUSES = ["approved", "pending", "rejected"] as const;
@@ -111,6 +112,7 @@ export default function SkillVersionHistory(props: SkillVersionHistoryProps) {
     global: translate("skills.detail_scope_global"),
     workspace: translate("skills.detail_scope_workspace"),
     organization: translate("skills.detail_scope_organization"),
+    platform: translate("skills.detail_scope_platform"),
   }));
 
   const statusLabel = (status: SkillVersionApprovalStatus) => {
