@@ -2130,10 +2130,7 @@ function emitReloadEvent(
   reason: ReloadReason,
   trigger?: ReloadTrigger,
 ) {
-  void reloadEvents;
-  void workspace;
-  void reason;
-  void trigger;
+  reloadEvents.recordDebounced(workspace.id, reason, trigger);
 }
 
 function buildConfigTrigger(path: string): ReloadTrigger {
@@ -4880,8 +4877,12 @@ function createRoutes(
 
   addRoute(routes, "GET", "/workspace/:id/events", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    void ctx;
-    return jsonResponse({ items: [], cursor: 0, workspaceId: workspace.id, disabled: true });
+    const since = parseInteger(trimmedSearchParam(ctx.url.searchParams, "since"));
+    return jsonResponse({
+      items: ctx.reloadEvents.list(workspace.id, since ?? undefined),
+      cursor: ctx.reloadEvents.cursor(),
+      workspaceId: workspace.id,
+    });
   });
 
   addRoute(routes, "POST", "/workspace/:id/engine/reload", "client", async (ctx) => {
@@ -6133,6 +6134,9 @@ function createRoutes(
 
   addRoute(routes, "GET", "/skills/disabled", "client", async (ctx) => {
     const workspaceId = trimmedSearchParam(ctx.url.searchParams, "workspaceId");
+    if (workspaceId) {
+      await resolveWorkspace(config, workspaceId);
+    }
     const items = await listDisabledSkills({
       dataDir: serverDataDir,
       workspaceId,
@@ -6151,6 +6155,8 @@ function createRoutes(
       throw new ApiError(400, "invalid_enabled", "enabled is required");
     }
 
+    const workspaceId = typeof target.workspaceId === "string" ? target.workspaceId.trim() : "";
+    const workspace = workspaceId ? await resolveWorkspace(config, workspaceId) : null;
     const result = await setSkillEnabledState({
       dataDir: serverDataDir,
       target,
@@ -6158,18 +6164,17 @@ function createRoutes(
       actor: ctx.actor ?? { type: "remote" },
     });
 
-    const workspaceId = typeof target.workspaceId === "string" ? target.workspaceId.trim() : "";
-    if (workspaceId) {
-      try {
-        const workspace = await resolveWorkspace(config, workspaceId);
-        emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
-          type: "skill",
-          name: typeof target.name === "string" ? target.name.trim() || undefined : undefined,
-          action: "updated",
-          path: typeof target.path === "string" ? target.path.trim() || undefined : undefined,
-        });
-      } catch {
-        // The store mutation already succeeded; unresolved workspace ids simply skip reload signaling.
+    const reloadTrigger: ReloadTrigger = {
+      type: "skill",
+      name: typeof target.name === "string" ? target.name.trim() || undefined : undefined,
+      action: "updated",
+      path: typeof target.path === "string" ? target.path.trim() || undefined : undefined,
+    };
+    if (workspace) {
+      emitReloadEvent(ctx.reloadEvents, workspace, "skills", reloadTrigger);
+    } else if (target.scope === "user-global") {
+      for (const configuredWorkspace of config.workspaces) {
+        emitReloadEvent(ctx.reloadEvents, configuredWorkspace, "skills", reloadTrigger);
       }
     }
 

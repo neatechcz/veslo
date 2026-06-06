@@ -166,6 +166,16 @@ test("GET /skills/disabled returns disabled records", async () => {
   ]);
 });
 
+test("GET /skills/disabled rejects unknown workspace ids", async () => {
+  const { server } = await startFixture();
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/skills/disabled?workspaceId=missing`, {
+    headers: clientHeaders,
+  });
+
+  expect(response.status).toBe(404);
+});
+
 test("PATCH /skills/enabled-state disables a workspace skill", async () => {
   const { dataDir, workspaceRoot, server } = await startFixture();
   const skillPath = await createWorkspaceSkill(workspaceRoot, "patch-disabled-skill");
@@ -271,6 +281,82 @@ test("PATCH /skills/enabled-state is blocked when the server is read-only", asyn
   });
 
   expect(response.status).toBe(403);
+});
+
+test("PATCH /skills/enabled-state rejects unknown workspace ids before persisting", async () => {
+  const { dataDir, workspaceRoot, server } = await startFixture();
+  const skillPath = await createWorkspaceSkill(workspaceRoot, "unknown-workspace-skill");
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/skills/enabled-state`, {
+    method: "PATCH",
+    headers: {
+      ...clientHeaders,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      enabled: false,
+      target: {
+        name: "unknown-workspace-skill",
+        scope: "workspace",
+        workspaceId: "missing",
+        path: skillPath,
+      },
+    }),
+  });
+
+  expect(response.status).toBe(404);
+  expect(await listDisabledSkills({ dataDir, workspaceId: "missing" })).toEqual([]);
+});
+
+test("PATCH /skills/enabled-state emits reload events for user-global skill changes", async () => {
+  const previousHome = process.env.HOME;
+  const homeDir = await tempDir("veslo-skill-enabled-route-global-home-");
+  process.env.HOME = homeDir;
+  try {
+    const { server } = await startFixture();
+    const skillPath = await createGlobalSkill(homeDir, "global-event-skill");
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/skills/enabled-state`, {
+      method: "PATCH",
+      headers: {
+        ...clientHeaders,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        enabled: false,
+        target: {
+          name: "global-event-skill",
+          scope: "user-global",
+          path: skillPath,
+        },
+      }),
+    });
+    expect(response.status).toBe(200);
+
+    const eventsResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/events`, {
+      headers: clientHeaders,
+    });
+    const eventsPayload = await readJson(eventsResponse) as {
+      items?: Array<{ reason?: string; trigger?: { name?: string; action?: string } }>;
+    };
+
+    expect(eventsResponse.status).toBe(200);
+    expect(eventsPayload.items).toMatchObject([
+      {
+        reason: "skills",
+        trigger: {
+          name: "global-event-skill",
+          action: "updated",
+        },
+      },
+    ]);
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+  }
 });
 
 test("GET /workspace/:id/skills excludes disabled skills by default", async () => {

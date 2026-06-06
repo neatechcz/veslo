@@ -143,13 +143,14 @@ function disabledRecordMatchesSkill(
   item: SkillItem,
   workspaceId: string | undefined,
 ): boolean {
+  const scope = item.scope === "project" ? "workspace" : "user-global";
   if (record.path) {
+    if (record.scope !== scope) return false;
     if (resolve(record.path) !== resolve(item.path)) return false;
     return !record.workspaceId || !workspaceId || record.workspaceId === workspaceId;
   }
 
   if (record.name !== item.name) return false;
-  const scope = item.scope === "project" ? "workspace" : "user-global";
   if (record.scope !== scope) return false;
   if (scope === "workspace") {
     return Boolean(workspaceId) && record.workspaceId === workspaceId;

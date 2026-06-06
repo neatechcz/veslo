@@ -145,3 +145,34 @@ test("listSkills filters disabled skills before de-duping duplicate names", asyn
     }
   }
 });
+
+test("listSkills path matching keeps disabled scope boundaries", async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-skills-disabled-scope-"));
+  tempDirs.push(workspaceRoot);
+
+  await mkdir(join(workspaceRoot, ".git"), { recursive: true });
+  await mkdir(join(workspaceRoot, ".opencode", "skills", "workspace-skill"), { recursive: true });
+  const workspaceSkillPath = join(workspaceRoot, ".opencode", "skills", "workspace-skill", "SKILL.md");
+  await writeFile(
+    workspaceSkillPath,
+    "---\nname: workspace-skill\ndescription: Workspace skill\n---\n\n# Workspace\n",
+    "utf8",
+  );
+
+  const items = await listSkills(workspaceRoot, {
+    includeGlobal: false,
+    disabledSkills: [
+      {
+        id: "wrong-scope",
+        name: "workspace-skill",
+        scope: "user-global",
+        path: workspaceSkillPath,
+        disabledAt: new Date(0).toISOString(),
+      },
+    ],
+    workspaceId: "ws_1",
+  });
+
+  expect(items).toHaveLength(1);
+  expect(items[0]?.enabled).not.toBe(false);
+});
