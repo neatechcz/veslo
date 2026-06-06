@@ -23,6 +23,10 @@ export type SidebarSessionItem = {
     created?: number | null;
   };
   directory?: string | null;
+  conversationId?: string | null;
+  opencodeSessionId?: string | null;
+  parentConversationId?: string | null;
+  branchId?: string | null;
 };
 
 export type SidebarSubagentDecoration = {
@@ -35,6 +39,7 @@ export type LoadedSidebarPrefetchInterest = {
   selectedSessionId: string | null;
   loadedTopLevelSessionIds: string[];
   expandedSubagentSessionIds: string[];
+  sessionDirectoriesById: Record<string, string>;
 };
 
 export type LoadedSessionPrefetchInterestChangeHandler = (

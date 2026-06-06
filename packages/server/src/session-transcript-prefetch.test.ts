@@ -147,6 +147,51 @@ describe("session transcript prefetch core", () => {
     expect(store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-a" })?.sessionId).toBe("sess-a");
   });
 
+  test("keeps warm snapshots isolated by directory", async () => {
+    const calls: Array<{ sessionId: string; directory: string | null | undefined }> = [];
+    const store = createSessionTranscriptPrefetchStore({
+      loadTranscript: async ({ workspaceId, sessionId, directory }) => {
+        calls.push({ sessionId, directory });
+        return {
+          workspaceId,
+          sessionId,
+          messages: [{ directory }],
+          partsByMessageId: {},
+        };
+      },
+      autoPrefetchOnInterest: false,
+    });
+
+    const interest = await store.updateInterest({
+      workspaceId: "ws_local",
+      clickedSessionId: null,
+      selectedSessionId: null,
+      expandedSubagentSessionIds: [],
+      loadedTopLevelSessionIds: ["sess-a", "sess-a"],
+      sessionDirectoriesById: {
+        "sess-a": "/work/a",
+      },
+      limit: 140,
+    });
+
+    expect(interest.queuedSessionIds).toEqual(["sess-a"]);
+    await store.prefetchWorkspace("ws_local");
+
+    await store.getOrLoad({ workspaceId: "ws_local", sessionId: "sess-a", limit: 140, directory: "/work/b" });
+
+    expect(calls).toEqual([
+      { sessionId: "sess-a", directory: "/work/a" },
+      { sessionId: "sess-a", directory: "/work/b" },
+    ]);
+    expect(
+      store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-a", directory: "/work/a" })?.directory,
+    ).toBe("/work/a");
+    expect(
+      store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-a", directory: "/work/b" })?.directory,
+    ).toBe("/work/b");
+    expect(store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-a" })).toBeNull();
+  });
+
   test("evicts least-recently-accessed entries when workspace cache is bounded", async () => {
     const store = createSessionTranscriptPrefetchStore({
       maxEntriesPerWorkspace: 2,

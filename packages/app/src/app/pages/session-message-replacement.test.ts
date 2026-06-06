@@ -52,15 +52,15 @@ test("replacement send path reverts to the original message before sending the e
     /async function sendPrompt\(\s*draft\?: ComposerDraft,\s*options: \{ targetSessionId\?: string \| null \} = \{\},\s*\): Promise<boolean> \{/,
     "app send API should not accept a replacement message id; edited transcript sends must create a new backend message after revert",
   );
-  const promptAsyncStart = appSource.indexOf("const result = await c.session.promptAsync({");
-  const promptAsyncEnd = appSource.indexOf("        });", promptAsyncStart);
-  assert.notEqual(promptAsyncStart, -1, "promptAsync send branch should exist");
-  assert.notEqual(promptAsyncEnd, -1, "promptAsync send branch should have a clear request object");
+  const promptAsyncStart = appSource.indexOf('kind: "prompt_async",');
+  const promptAsyncEnd = appSource.indexOf("          },", promptAsyncStart);
+  assert.notEqual(promptAsyncStart, -1, "conversation prompt send branch should exist");
+  assert.notEqual(promptAsyncEnd, -1, "conversation prompt send branch should have a clear request object");
   const promptAsyncCall = appSource.slice(promptAsyncStart, promptAsyncEnd);
   assert.doesNotMatch(
     promptAsyncCall,
     /\bmessageID\b/,
-    "normal promptAsync sends, including transcript replacements after revert, should let OpenCode allocate a fresh message id",
+    "normal conversation prompt sends, including transcript replacements after revert, should let OpenCode allocate a fresh message id",
   );
   assert.match(
     sessionSource,

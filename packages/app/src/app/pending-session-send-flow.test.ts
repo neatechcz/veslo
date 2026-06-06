@@ -7,8 +7,8 @@ const appSource = readFileSync(new URL("./app.tsx", import.meta.url), "utf8");
 test("successful pending draft sends consume the pending draft only after the prompt handoff succeeds", () => {
   assert.match(
     appSource,
-    /const result = await c\.session\.promptAsync\(\{[\s\S]*assertNoClientError\(result\);\s*\}\s*if \(pendingDraftSendState\) \{[\s\S]*const pendingDraftStorageKey = pendingDraftSendState\.key;[\s\S]*const pendingDraftId = pendingDraftSendState\.draftId;[\s\S]*if \(pendingDraftId && isTauriRuntime\(\)\) \{[\s\S]*await pendingSessionDraftsDelete\(pendingDraftId\);[\s\S]*\}[\s\S]*clearActivePendingDraftState\(\);[\s\S]*setComposerDraftBySessionId\(\(current\) => deleteSessionComposerDraft\(current, \{ storageKey: pendingDraftStorageKey \}\)\);[\s\S]*\}\s*finishPerf\(perfEnabled, "session\.prompt", "done", startedAt, \{[\s\S]*\}\);\s*return true;/s,
-    "pending drafts should be deleted and cleared only after the real session prompt handoff succeeds",
+    /await runConversationOrLegacy\(\s*\{[\s\S]*kind: "prompt_async",[\s\S]*\},[\s\S]*\);\s*\}\s*if \(pendingDraftSendState\) \{[\s\S]*const pendingDraftStorageKey = pendingDraftSendState\.key;[\s\S]*const pendingDraftId = pendingDraftSendState\.draftId;[\s\S]*if \(pendingDraftId && isTauriRuntime\(\)\) \{[\s\S]*await pendingSessionDraftsDelete\(pendingDraftId\);[\s\S]*\}[\s\S]*clearActivePendingDraftState\(\);[\s\S]*setComposerDraftBySessionId\(\(current\) => deleteSessionComposerDraft\(current, \{ storageKey: pendingDraftStorageKey \}\)\);[\s\S]*\}\s*finishPerf\(perfEnabled, "session\.prompt", "done", startedAt, \{[\s\S]*\}\);\s*return true;/s,
+    "pending drafts should be deleted and cleared only after the conversation prompt handoff succeeds",
   );
 });
 
@@ -44,7 +44,7 @@ test("pending draft cleanup failures are handled separately from prompt handoff 
 
 test("slash command sends preassign the message id used for optimistic display", () => {
   const commandBranchStart = appSource.indexOf("// Slash command: route through session.command() API");
-  const commandBranchEnd = appSource.indexOf("      } else {", commandBranchStart);
+  const commandBranchEnd = appSource.indexOf("        commandMessageIDToClear = null;", commandBranchStart);
   assert.notEqual(commandBranchStart, -1, "sendPrompt should have a slash command branch");
   assert.notEqual(commandBranchEnd, -1, "slash command branch should end before promptAsync branch");
 
@@ -52,9 +52,9 @@ test("slash command sends preassign the message id used for optimistic display",
   assert.match(commandBranch, /commandMessageIDToClear = createClientMessageID\(\);/);
   assert.match(
     commandBranch,
-    /sessionStore\.setCommandDisplay\(commandMessageIDToClear,\s*command\.name,\s*command\.arguments\);/,
+    /sessionStore\.setCommandDisplay\(commandMessageID,\s*command\.name,\s*command\.arguments\);/,
   );
-  assert.match(commandBranch, /messageID:\s*commandMessageIDToClear/);
+  assert.match(commandBranch, /messageID:\s*commandMessageID/);
 });
 
 test("failed slash command sends clear the preassigned command display alias", () => {

@@ -3575,8 +3575,8 @@ export default function SessionView(props: SessionViewProps) {
       "";
 
     // Show loading overlay immediately when switching to a different session.
+    const session = group?.sessions.find((s) => s.id === sessionId);
     if (shouldShowOverlay) {
-      const session = group?.sessions.find((s) => s.id === sessionId);
       const workspaceName = group?.workspace.displayName ?? group?.workspace.name ?? "";
       const sessionTitle = session?.title ?? "";
       props.setPendingSessionLoad({
@@ -3598,6 +3598,9 @@ export default function SessionView(props: SessionViewProps) {
           sessionId: nextSessionId,
           workspaceId,
           workspaceRoot: workspaceRoot,
+          directory: session?.directory ?? workspaceRoot,
+          conversationId: session?.conversationId ?? null,
+          opencodeSessionId: session?.opencodeSessionId ?? nextSessionId,
         });
         props.setView("session", nextSessionId);
       },

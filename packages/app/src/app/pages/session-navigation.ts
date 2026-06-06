@@ -13,6 +13,9 @@ export type SessionBrowseScope = {
   sessionId: string;
   workspaceId: string;
   workspaceRoot: string;
+  directory?: string | null;
+  conversationId?: string | null;
+  opencodeSessionId?: string | null;
 };
 
 export type CreateSessionWithWorkspaceActivationInput = {

@@ -930,6 +930,7 @@ export type VesloSessionLatestRunArtifacts = {
 export type VesloSessionTranscriptSnapshot = {
   workspaceId: string;
   sessionId: string;
+  directory?: string;
   conversationId?: string;
   opencodeSessionId?: string;
   limit: number;
@@ -945,6 +946,8 @@ export type VesloSessionTranscriptPrefetchInput = {
   selectedSessionId?: string | null;
   loadedTopLevelSessionIds: string[];
   expandedSubagentSessionIds: string[];
+  directory?: string | null;
+  sessionDirectoriesById?: Record<string, string | null | undefined>;
   limit?: number;
 };
 
@@ -963,6 +966,32 @@ export type VesloConversationList = {
     branchId?: string | null;
   }>;
   source?: "sqlite" | "unavailable";
+};
+
+export type VesloConversationCreateResult = Session & {
+  workspaceId: string;
+  conversationId: string;
+  opencodeSessionId: string;
+  parentConversationId?: string | null;
+  branchId?: string | null;
+};
+
+export type VesloConversationRunKind = "prompt_async" | "command" | "shell" | "summarize";
+
+export type VesloConversationRunInput = Record<string, unknown> & {
+  kind: VesloConversationRunKind;
+  directory?: string | null;
+};
+
+export type VesloConversationRunResult = {
+  ok: boolean;
+  workspaceId: string;
+  conversationId: string;
+  opencodeSessionId: string;
+  runId: string;
+  status: "submitted";
+  kind: VesloConversationRunKind;
+  upstream?: unknown;
 };
 
 export type VesloInboxItem = {
@@ -2108,6 +2137,8 @@ export function createVesloServerClient(options: {
     deleteSession: 12_000,
     sessionArtifacts: 10_000,
     sessionTranscript: 10_000,
+    conversationCreate: 30_000,
+    conversationRun: 30_000,
     status: 6_000,
     config: 10_000,
     opencodeRouter: 10_000,
@@ -2223,6 +2254,33 @@ export function createVesloServerClient(options: {
         { token, hostToken, timeoutMs: timeouts.sessionTranscript },
       );
     },
+    createConversation: (workspaceId: string, input?: { directory?: string | null; title?: string | null }) =>
+      requestJson<VesloConversationCreateResult>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/conversations`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: {
+            ...(input?.directory?.trim() ? { directory: input.directory.trim() } : {}),
+            ...(input?.title?.trim() ? { title: input.title.trim() } : {}),
+          },
+          timeoutMs: timeouts.conversationCreate,
+        },
+      ),
+    runConversation: (workspaceId: string, conversationId: string, input: VesloConversationRunInput) =>
+      requestJson<VesloConversationRunResult>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/conversations/${encodeURIComponent(conversationId)}/runs`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: input,
+          timeoutMs: timeouts.conversationRun,
+        },
+      ),
     getSessionLatestRunArtifacts: (workspaceId: string, sessionId: string) =>
       requestJson<VesloSessionLatestRunArtifacts>(
         baseUrl,

@@ -1462,6 +1462,7 @@ export default function WorkspaceSessionList(props: Props) {
       .map((row) => ({
         workspaceId: row.workspace.id,
         sessionId: row.session.id,
+        directory: row.session.directory ?? row.projectRoot,
         updatedAt: row.updatedAt,
       }));
     const expandedSubagentRows = currentRows
@@ -1469,6 +1470,7 @@ export default function WorkspaceSessionList(props: Props) {
       .map((row) => ({
         workspaceId: row.workspace.id,
         sessionId: row.session.id,
+        directory: row.session.directory ?? row.projectRoot,
         updatedAt: row.updatedAt,
       }));
     const loadedInterest = deriveLoadedSidebarPrefetchInterest({
@@ -1485,6 +1487,7 @@ export default function WorkspaceSessionList(props: Props) {
         selectedSessionId: null,
         loadedTopLevelSessionIds: [],
         expandedSubagentSessionIds: [],
+        sessionDirectoriesById: {},
       };
       const signature = JSON.stringify(interest);
       if (lastReportedLoadedInterestByWorkspace.get(workspaceId) === signature) continue;
@@ -1500,6 +1503,7 @@ export default function WorkspaceSessionList(props: Props) {
         selectedSessionId: null,
         loadedTopLevelSessionIds: [],
         expandedSubagentSessionIds: [],
+        sessionDirectoriesById: {},
       });
     }
   });
@@ -1512,6 +1516,7 @@ export default function WorkspaceSessionList(props: Props) {
         selectedSessionId: null,
         loadedTopLevelSessionIds: [],
         expandedSubagentSessionIds: [],
+        sessionDirectoriesById: {},
       });
     }
     lastReportedLoadedInterestByWorkspace.clear();
