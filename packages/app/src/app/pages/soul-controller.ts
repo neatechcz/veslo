@@ -116,7 +116,9 @@ export function createSoulEditorController<TSource extends SoulEditorSource>(
   const selectedSource = createMemo(() => input.sources().find((source) => source.key === selectedSourceKey()) ?? null);
   const selectedDetail = createMemo(() => (detailSourceKey() === selectedSourceKey() ? detail() : null));
   const displaySummary = createMemo(() => selectedDetail()?.summary ?? selectedSource()?.summary ?? null);
-  const currentBaseVersionId = createMemo(() => selectedDetail()?.document?.currentVersionId ?? null);
+  const currentBaseVersionId = createMemo(() =>
+    selectedDetail()?.document?.currentVersionId ?? selectedSource()?.summary?.currentVersionId ?? null,
+  );
   const selectedVersionIsCurrent = createMemo(() => {
     const versionId = selectedVersionId();
     return Boolean(versionId && versionId === currentBaseVersionId());

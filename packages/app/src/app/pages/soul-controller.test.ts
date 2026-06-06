@@ -389,6 +389,28 @@ test("Soul editor controller disables restore for current version and restores a
   });
 });
 
+test("Soul editor controller treats overview current version as current while detail is loading", behaviorTestOptions, async () => {
+  const sourceList = sources().filter((source) => source.scope === "user");
+  const detail = deferred<VesloSoulReadResponse>();
+  const { client } = makeClient(sourceList);
+  (client as unknown as { getUserSoul: VesloServerClient["getUserSoul"] }).getUserSoul = async () => detail.promise;
+
+  await createRoot(async (dispose) => {
+    try {
+      const controller = createController({ sourceList, client });
+      await flush();
+
+      await controller.previewVersion("user-v1");
+
+      assert.equal(controller.currentBaseVersionId(), "user-v1");
+      assert.equal(controller.restoreDisabled(), true);
+    } finally {
+      detail.resolve(readResponse(sourceList[0], "Current user"));
+      dispose();
+    }
+  });
+});
+
 test("Soul editor controller keeps restore pending state scoped to source and request", behaviorTestOptions, async () => {
   const sourceList = sources({ orgCanEdit: true });
   const orgRestore = deferred<VesloSoulReadResponse>();
