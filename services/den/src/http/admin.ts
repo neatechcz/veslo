@@ -4,6 +4,31 @@ import type { DebugLogDetail, DebugLogListEntry } from "../debug-logs/types.js"
 import type { ManagedAiProvider } from "../managed-ai/providers/ids.js"
 import type { CodexUsageStatus } from "../managed-ai/usage/codex-status.js"
 
+export const OrganizationAdminCapabilities = ["organization", "users"] as const
+export const PlatformAdminCapabilities = [
+  ...OrganizationAdminCapabilities,
+  "credentials",
+  "sessions",
+  "usage",
+  "alerts",
+  "audit",
+  "debugLogs",
+  "managedAiUserAccess",
+] as const
+export const OrganizationAdminAllowedPages = ["organization", "users"] as const
+export const PlatformAdminAllowedPages = [
+  ...OrganizationAdminAllowedPages,
+  "credentials",
+  "sessions",
+  "usage",
+  "alerts",
+  "audit",
+  "debug-logs",
+] as const
+
+export type AdminCapability = (typeof PlatformAdminCapabilities)[number]
+export type AdminAllowedPage = (typeof PlatformAdminAllowedPages)[number]
+
 export type AdminSessionOrganization = {
   id: string
   name: string
@@ -22,6 +47,8 @@ export type AdminSessionSnapshot = {
   platformAdmin: boolean
   activeOrgId: string | null
   organizations: AdminSessionOrganization[]
+  capabilities?: AdminCapability[]
+  allowedPages?: AdminAllowedPage[]
 }
 
 export type AdminUserMembership = {
@@ -51,6 +78,51 @@ export type AdminUserAiAccessRecord = {
   defaultModel: string | null
   allowedModels: string[]
   updatedAt: string
+}
+
+export type AdminOrganizationRecord = {
+  id: string
+  name: string
+  slug: string
+  ownerUserId: string
+  seatLimit: number | null
+  createdAt?: Date | string
+  updatedAt?: Date | string
+}
+
+export type AdminOrganizationMemberRecord = {
+  membershipId: string
+  userId: string
+  name: string
+  email: string
+  role: (typeof OrgRole)[number]
+  status?: "active" | "disabled" | "removed"
+  createdAt: Date | string
+}
+
+export type AdminOrganizationDomainRecord = {
+  id: string
+  orgId: string
+  domain: string
+  enabled: boolean
+  selfSignupEnabled: boolean
+  createdAt?: Date | string
+  updatedAt?: Date | string
+}
+
+export type AdminOrganizationInviteRecord = {
+  id: string
+  orgId: string
+  email: string
+  role: (typeof OrgRole)[number]
+  status: "pending" | "accepted" | "expired" | "revoked"
+  invitedByUserId: string
+  acceptedByUserId: string | null
+  expiresAt: Date | string | null
+  acceptedAt: Date | string | null
+  revokedAt: Date | string | null
+  createdAt: Date | string
+  updatedAt: Date | string
 }
 
 export type AdminCredentialOption = {
@@ -168,6 +240,62 @@ export type AdminAuditRecord = {
 
 export type AdminRouteDeps = {
   getSessionSnapshot: (req: express.Request, res: express.Response) => Promise<AdminSessionSnapshot | null>
+  listOrganizations?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<{ organizations: AdminOrganizationRecord[] } | null>
+  getOrganization?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<{ organization: AdminOrganizationRecord } | null>
+  updateOrganization?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<{ organization: AdminOrganizationRecord } | null>
+  listOrganizationMembers?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<{ members: AdminOrganizationMemberRecord[] } | null>
+  createOrganizationMember?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<{ member: AdminOrganizationMemberRecord } | null>
+  updateOrganizationMember?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<{ member: AdminOrganizationMemberRecord } | null>
+  deleteOrganizationMember?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<{ ok: true } | null>
+  listOrganizationDomains?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<{ domains: AdminOrganizationDomainRecord[] } | null>
+  createOrganizationDomain?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<{ domain: AdminOrganizationDomainRecord } | null>
+  updateOrganizationDomain?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<{ domain: AdminOrganizationDomainRecord } | null>
+  deleteOrganizationDomain?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<{ ok: true } | null>
+  listOrganizationInvites?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<{ invites: AdminOrganizationInviteRecord[] } | null>
+  createOrganizationInvite?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<{ invite: AdminOrganizationInviteRecord; inviteToken: string } | null>
+  revokeOrganizationInvite?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<{ invite: AdminOrganizationInviteRecord } | null>
   listUsers?: (req: express.Request, res: express.Response) => Promise<AdminUserRecord[] | null>
   createUser?: (req: express.Request, res: express.Response) => Promise<AdminUserRecord | null>
   updateUser?: (req: express.Request, res: express.Response) => Promise<AdminUserRecord | null>
@@ -237,12 +365,22 @@ export type AdminRouteDeps = {
   ) => Promise<{ filename: string; body: string } | null>
 }
 
+export function getDefaultAdminCapabilities(platformAdmin: boolean): AdminCapability[] {
+  return [...(platformAdmin ? PlatformAdminCapabilities : OrganizationAdminCapabilities)]
+}
+
+export function getDefaultAdminAllowedPages(platformAdmin: boolean): AdminAllowedPage[] {
+  return [...(platformAdmin ? PlatformAdminAllowedPages : OrganizationAdminAllowedPages)]
+}
+
 export function serializeAdminSessionSnapshot(input: AdminSessionSnapshot) {
   return {
     user: input.user,
     platformAdmin: input.platformAdmin,
     activeOrgId: input.activeOrgId,
     organizations: input.organizations,
+    capabilities: input.capabilities ?? getDefaultAdminCapabilities(input.platformAdmin),
+    allowedPages: input.allowedPages ?? getDefaultAdminAllowedPages(input.platformAdmin),
   }
 }
 
@@ -268,6 +406,202 @@ export function createAdminRouter(deps: AdminRouteDeps) {
     }
 
     res.json(serializeAdminSessionSnapshot(snapshot))
+  })
+
+  router.get("/organizations", async (req, res) => {
+    if (!deps.listOrganizations) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.listOrganizations(req, res)
+    if (!payload) {
+      return
+    }
+
+    res.json(payload)
+  })
+
+  router.get("/organizations/:orgId", async (req, res) => {
+    if (!deps.getOrganization) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.getOrganization(req, res)
+    if (!payload) {
+      return
+    }
+
+    res.json(payload)
+  })
+
+  router.patch("/organizations/:orgId", async (req, res) => {
+    if (!deps.updateOrganization) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.updateOrganization(req, res)
+    if (!payload) {
+      return
+    }
+
+    res.json(payload)
+  })
+
+  router.get("/organizations/:orgId/members", async (req, res) => {
+    if (!deps.listOrganizationMembers) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.listOrganizationMembers(req, res)
+    if (!payload) {
+      return
+    }
+
+    res.json(payload)
+  })
+
+  router.post("/organizations/:orgId/members", async (req, res) => {
+    if (!deps.createOrganizationMember) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.createOrganizationMember(req, res)
+    if (!payload) {
+      return
+    }
+
+    res.status(201).json(payload)
+  })
+
+  router.patch("/organizations/:orgId/members/:memberId", async (req, res) => {
+    if (!deps.updateOrganizationMember) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.updateOrganizationMember(req, res)
+    if (!payload) {
+      return
+    }
+
+    res.json(payload)
+  })
+
+  router.delete("/organizations/:orgId/members/:memberId", async (req, res) => {
+    if (!deps.deleteOrganizationMember) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const deleted = await deps.deleteOrganizationMember(req, res)
+    if (!deleted) {
+      return
+    }
+
+    res.status(204).end()
+  })
+
+  router.get("/organizations/:orgId/domains", async (req, res) => {
+    if (!deps.listOrganizationDomains) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.listOrganizationDomains(req, res)
+    if (!payload) {
+      return
+    }
+
+    res.json(payload)
+  })
+
+  router.post("/organizations/:orgId/domains", async (req, res) => {
+    if (!deps.createOrganizationDomain) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.createOrganizationDomain(req, res)
+    if (!payload) {
+      return
+    }
+
+    res.status(201).json(payload)
+  })
+
+  router.patch("/organizations/:orgId/domains/:domainId", async (req, res) => {
+    if (!deps.updateOrganizationDomain) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.updateOrganizationDomain(req, res)
+    if (!payload) {
+      return
+    }
+
+    res.json(payload)
+  })
+
+  router.delete("/organizations/:orgId/domains/:domainId", async (req, res) => {
+    if (!deps.deleteOrganizationDomain) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const deleted = await deps.deleteOrganizationDomain(req, res)
+    if (!deleted) {
+      return
+    }
+
+    res.status(204).end()
+  })
+
+  router.get("/organizations/:orgId/invites", async (req, res) => {
+    if (!deps.listOrganizationInvites) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.listOrganizationInvites(req, res)
+    if (!payload) {
+      return
+    }
+
+    res.json(payload)
+  })
+
+  router.post("/organizations/:orgId/invites", async (req, res) => {
+    if (!deps.createOrganizationInvite) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.createOrganizationInvite(req, res)
+    if (!payload) {
+      return
+    }
+
+    res.status(201).json(payload)
+  })
+
+  router.post("/organizations/:orgId/invites/:inviteId/revoke", async (req, res) => {
+    if (!deps.revokeOrganizationInvite) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.revokeOrganizationInvite(req, res)
+    if (!payload) {
+      return
+    }
+
+    res.json(payload)
   })
 
   router.get("/users", async (req, res) => {

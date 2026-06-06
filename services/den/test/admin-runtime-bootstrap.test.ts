@@ -23,6 +23,22 @@ test("admin runtime forwards managed AI Codex status provider into route deps", 
   assert.match(source, /codexStatusProvider:\s*options\.managedAi\.codexStatusProvider/)
 })
 
+test("admin runtime session resolver allows organization admins while managed AI stays platform-only", async () => {
+  const source = await readFile(new URL("../src/http/admin-runtime.ts", import.meta.url), "utf8")
+
+  assert.equal(typeof adminRuntime.requireAdminSessionSnapshot, "function")
+  assert.match(source, /export async function requireAdminSessionSnapshot/)
+  assert.match(source, /isOrganizationAdminRole/)
+  assert.match(source, /getSessionSnapshot:\s*requireAdminSessionSnapshot/)
+  assert.match(source, /getAdminSession:\s*requirePlatformAdminSnapshot/)
+})
+
+test("only platform admins can edit organization seat limits", () => {
+  assert.equal(typeof adminRuntime.canAdminEditOrganizationSeatLimit, "function")
+  assert.equal(adminRuntime.canAdminEditOrganizationSeatLimit({ platformAdmin: true }), true)
+  assert.equal(adminRuntime.canAdminEditOrganizationSeatLimit({ platformAdmin: false }), false)
+})
+
 test("admin-created users use the internal provisioning override for email signup", async () => {
   const source = await readFile(new URL("../src/http/admin-runtime.ts", import.meta.url), "utf8")
   const signupFetch = source.match(/fetch\(`\$\{baseUrl\}\/api\/auth\/sign-up\/email`, \{[\s\S]*?body:/)?.[0] ?? ""
