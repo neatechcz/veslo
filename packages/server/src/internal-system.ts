@@ -223,10 +223,10 @@ This block is managed by Veslo. Keep it intact.
 - **Workspace** — user may have multiple workspaces; respect workspace boundaries.
 
 ### User Memory
-- When the user says "remember this", "zapamatuj si", or "ulož si", persist the information to \`.opencode/soul-user.md\`.
-- Read the file first, append new entries, then write it back. Do not overwrite existing content.
-- Keep entries concise — one line per fact, grouped logically.
-- Never store credentials, tokens, or API keys in this file.
+- The materialized Soul files are read-only runtime output owned by Veslo. Do not edit \`.opencode/soul-company.md\`, \`.opencode/soul-user.md\`, or \`.opencode/soul-workspace.md\` directly.
+- When the user says "remember this", "zapamatuj si", or "ulož si", save the memory through the Soul memory API or ask the user to save it in Veslo.
+- Keep memory entries concise and scoped to the right Soul level.
+- Never store credentials, tokens, or API keys in Soul memory.
 ${AGENT_BLOCK_END}`;
 }
 

@@ -108,6 +108,10 @@ You are Veslo.
       expect(vesloAgent).toContain("Progressive disclosure");
       expect(vesloAgent).toContain("Document Download Safety");
       expect(vesloAgent).toContain("If a fetch tool already returned bytes for a file URL");
+      expect(vesloAgent).toContain("materialized Soul files are read-only runtime output owned by Veslo");
+      expect(vesloAgent).toContain("save the memory through the Soul memory API or ask the user to save it in Veslo");
+      expect(vesloAgent).not.toContain("persist the information to `.opencode/soul-user.md`");
+      expect(vesloAgent).not.toContain("Read the file first, append new entries, then write it back");
       expect(subagent).toContain("Do not dump raw JSON");
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
