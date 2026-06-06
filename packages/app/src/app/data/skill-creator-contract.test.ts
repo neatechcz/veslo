@@ -19,6 +19,9 @@ test("installable skill creator requires an explicit Veslo skill scope", () => {
 
 test("installable skill creator does not describe organization or public skills as immediate installs", () => {
   assert.match(template, /Do not claim organization or public skills are distributed/);
+  assert.match(template, /Do not treat organization or public skills as immediate installs/);
+  assert.match(template, /pending organization approval/);
+  assert.match(template, /pending platform approval/);
   assert.doesNotMatch(template, /only in this workspace/);
   assert.doesNotMatch(template, /workspace-only/);
 });

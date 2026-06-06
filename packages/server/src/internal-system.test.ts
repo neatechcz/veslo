@@ -75,6 +75,8 @@ You are Veslo.
         "utf8",
       );
       expect(skillCreatorSubagent).toContain("Do not assume workspace scope");
+      expect(skillCreatorSubagent).toContain("user skill");
+      expect(skillCreatorSubagent).toContain("workspace skill");
       expect(skillCreatorSubagent).toContain("organization skill");
       expect(skillCreatorSubagent).toContain("public skill");
       expect(skillCreatorSubagent).not.toContain("Create or update skills only in this workspace");
