@@ -17,7 +17,7 @@ from pathlib import Path
 
 SKILL_TEMPLATE = """---
 name: {skill_name}
-description: [TODO: Explain what this Veslo skill does and when an agent should use it. Include concrete trigger phrases, scenarios, file types, or tasks.]
+description: "TODO: Explain what this Veslo skill does and when an agent should use it. Include concrete trigger phrases, scenarios, file types, or tasks."
 ---
 
 # {skill_title}
