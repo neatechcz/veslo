@@ -78,6 +78,26 @@ test("SoulView opens source editing and history in a modal from every source row
   assert.doesNotMatch(soulSource, /sources:\s*sourceOptions/);
 });
 
+test("Soul source modal uses an opaque centered panel shell", () => {
+  const overlayIndex = soulSource.indexOf('<div class="fixed inset-0 z-50');
+  const modalIndex = soulSource.indexOf('data-testid="soul-source-modal"');
+  const detailIndex = soulSource.indexOf('data-testid="soul-source-detail"');
+
+  assert.ok(overlayIndex >= 0, "Soul modal overlay should have a stable fixed shell");
+  assert.ok(modalIndex > overlayIndex, "Soul modal panel should render inside the overlay");
+  assert.ok(detailIndex > modalIndex, "Soul editor content should render inside the modal panel");
+
+  const overlayShell = soulSource.slice(overlayIndex, modalIndex);
+  const modalShell = soulSource.slice(modalIndex, detailIndex);
+
+  assert.match(overlayShell, /items-center/);
+  assert.match(overlayShell, /justify-center/);
+  assert.match(overlayShell, /backdrop-blur-sm/);
+  assert.match(modalShell, /bg-dls-surface/);
+  assert.match(modalShell, /shadow-2xl/);
+  assert.doesNotMatch(modalShell, /bg-dls-bg/);
+});
+
 test("SoulView hides private workspace Soul rows from the workspace source table", () => {
   assert.match(soulSource, /workspaces:\s*WorkspaceInfo\[\];/);
   assert.match(soulSource, /isPrivateWorkspacePath:\s*\(folder:\s*string \| null \| undefined\) => boolean;/);

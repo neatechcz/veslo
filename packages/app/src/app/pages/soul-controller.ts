@@ -80,6 +80,11 @@ const authContextKey = (authContext: VesloSoulAuthContext) =>
     authContext.denUserId ?? "",
   ].join("\u0000");
 
+const sourceLoadKey = (source: SoulEditorSource) =>
+  source.scope === "workspace"
+    ? [source.key, source.scope, source.workspaceId].join("\u0000")
+    : [source.key, source.scope].join("\u0000");
+
 export function createSoulEditorController<TSource extends SoulEditorSource>(
   input: SoulEditorControllerInput<TSource>,
 ) {
@@ -112,6 +117,8 @@ export function createSoulEditorController<TSource extends SoulEditorSource>(
   let previewRequestSeq = 0;
   let saveRequestSeq = 0;
   let restoreRequestSeq = 0;
+  let activeLoadKey: string | null = null;
+  let activeLoadClient: VesloServerClient | null = null;
 
   const selectedSource = createMemo(() => input.sources().find((source) => source.key === selectedSourceKey()) ?? null);
   const selectedDetail = createMemo(() => (detailSourceKey() === selectedSourceKey() ? detail() : null));
@@ -275,8 +282,10 @@ export function createSoulEditorController<TSource extends SoulEditorSource>(
     const source = selectedSource();
     const client = input.client();
     const connected = input.serverConnected();
-    authContextKey(input.authContext());
+    const contextKey = authContextKey(input.authContext());
     if (!source || !client || !connected) {
+      activeLoadKey = null;
+      activeLoadClient = null;
       detailRequestSeq += 1;
       historyRequestSeq += 1;
       previewRequestSeq += 1;
@@ -296,6 +305,12 @@ export function createSoulEditorController<TSource extends SoulEditorSource>(
       setPreviewError(null);
       return;
     }
+    const nextLoadKey = `${sourceLoadKey(source)}\u0000${contextKey}`;
+    if (activeLoadKey === nextLoadKey && activeLoadClient === client) {
+      return;
+    }
+    activeLoadKey = nextLoadKey;
+    activeLoadClient = client;
     reloadSelectedSource(source, client);
   });
 

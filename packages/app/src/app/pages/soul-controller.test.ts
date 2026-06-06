@@ -339,6 +339,68 @@ test("Soul editor controller keeps save pending state scoped to source and reque
   });
 });
 
+test("Soul editor controller does not reload detail when the selected source summary refreshes", behaviorTestOptions, async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const [sourceList, setSourceList] = createSignal(sources({ orgCanEdit: true }));
+      let detailLoads = 0;
+      let historyLoads = 0;
+      const client = {
+        ...makeClient(sourceList()).client,
+        getOrganizationSoul: async () => {
+          detailLoads += 1;
+          return readResponse(sourceList()[0], "Current org");
+        },
+        listSoulVersions: async () => {
+          historyLoads += 1;
+          return { versions: [version("org-v1", "Current org", "Current")] };
+        },
+      } as Partial<VesloServerClient> as VesloServerClient;
+
+      const controller = createSoulEditorController({
+        sources: sourceList,
+        client: () => client,
+        serverConnected: () => true,
+        authContext: () => authContext,
+        refresh: () => {},
+        defaultChangeSummary: () => "Update Soul content",
+        defaultRestoreSummary: () => "Restore selected Soul version",
+        detailErrorMessage: () => "Failed to load Soul details.",
+        historyErrorMessage: () => "Failed to load version history.",
+        previewErrorMessage: () => "Failed to load version preview.",
+      });
+      await flush();
+
+      assert.equal(controller.selectedSourceKey(), "organization");
+      assert.equal(controller.detailLoading(), false);
+      assert.equal(detailLoads, 1);
+      assert.equal(historyLoads, 1);
+
+      setSourceList((current) =>
+        current.map((source) =>
+          source.key === "organization" && source.summary
+            ? {
+                ...source,
+                summary: {
+                  ...source.summary,
+                  updatedAt: "2026-06-06T10:01:00.000Z",
+                },
+              }
+            : source,
+        ),
+      );
+      await flush();
+
+      assert.equal(controller.detailLoading(), false);
+      assert.equal(detailLoads, 1);
+      assert.equal(historyLoads, 1);
+      assert.equal(controller.content(), "Current org");
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("Soul editor controller toggles workspace heartbeat through the workspace endpoint", behaviorTestOptions, async () => {
   const { client, calls } = makeClient(sources({ workspaceHeartbeat: true }));
 
