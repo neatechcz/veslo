@@ -322,6 +322,48 @@ async function ensureVarcharColumnMinimumLength(
   )
 }
 
+async function getColumnType(table: string, columnName: string) {
+  const metadataResult = await db.execute(sql`
+    SELECT COLUMN_TYPE
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = ${table}
+      AND COLUMN_NAME = ${columnName}
+    LIMIT 1
+  `)
+
+  const metadataRow = extractMetadataRows(metadataResult)[0]
+  if (!metadataRow) {
+    return null
+  }
+
+  const columnType = readRowValueCaseInsensitive(metadataRow, "COLUMN_TYPE")
+  return typeof columnType === "string" ? columnType.trim().toLowerCase() : null
+}
+
+async function reconcileOrgMembershipRoleColumn() {
+  const columnType = await getColumnType("org_membership", "role")
+  if (columnType === "enum('member','organization_admin')") {
+    return
+  }
+
+  await db.execute(
+    sql.raw(
+      `ALTER TABLE ${quoteIdentifier("org_membership")} MODIFY COLUMN ${quoteIdentifier("role")} enum('owner','member','organization_admin') NOT NULL`,
+    ),
+  )
+  await db.execute(sql`
+    UPDATE \`org_membership\`
+    SET \`role\` = 'organization_admin'
+    WHERE \`role\` = 'owner'
+  `)
+  await db.execute(
+    sql.raw(
+      `ALTER TABLE ${quoteIdentifier("org_membership")} MODIFY COLUMN ${quoteIdentifier("role")} enum('member','organization_admin') NOT NULL`,
+    ),
+  )
+}
+
 async function ensureTables() {
   try {
     // Auth tables (Better Auth requires these with snake_case columns)
@@ -409,7 +451,6 @@ async function ensureTables() {
         CONSTRAINT \`org_slug\` UNIQUE(\`slug\`)
       )
     `)
-    await ensureIndex("org", "org_owner_user_id", ["owner_user_id"])
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`org_membership\` (
@@ -422,6 +463,11 @@ async function ensureTables() {
         CONSTRAINT \`org_membership_id\` PRIMARY KEY(\`id\`)
       )
     `)
+    await ensureColumn("org", "seat_limit", "int unsigned")
+    await ensureColumn("org_membership", "status", "enum('active','disabled','removed') NOT NULL DEFAULT 'active'")
+    await reconcileOrgMembershipRoleColumn()
+
+    await ensureIndex("org", "org_owner_user_id", ["owner_user_id"])
     await ensureIndex("org_membership", "org_membership_org_id", ["org_id"])
     await ensureIndex("org_membership", "org_membership_user_id", ["user_id"])
     await ensureIndex("org_membership", "org_membership_org_status", ["org_id", "status"])

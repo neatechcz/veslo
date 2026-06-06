@@ -41,3 +41,24 @@ test("admin gateway organization bootstrap DDL matches the schema foundation", (
   assert.match(bootstrapSource, /ensureIndex\("organization_invite", "organization_invite_org_status", \["org_id", "status"\]\)/)
   assert.match(bootstrapSource, /ensureIndex\("organization_invite", "organization_invite_email_status", \["email", "status"\]\)/)
 })
+
+test("admin gateway organization bootstrap reconciles old org table shapes before status indexes", () => {
+  assert.match(bootstrapSource, /ensureColumn\("org", "seat_limit", "int unsigned"\)/)
+  assert.match(
+    bootstrapSource,
+    /ensureColumn\("org_membership", "status", "enum\('active','disabled','removed'\) NOT NULL DEFAULT 'active'"\)/,
+  )
+  assert.match(bootstrapSource, /MODIFY COLUMN \$\{quoteIdentifier\("role"\)\} enum\('owner','member','organization_admin'\) NOT NULL/)
+  assert.match(bootstrapSource, /UPDATE \\?`org_membership\\?`\s+SET \\?`role\\?` = 'organization_admin'\s+WHERE \\?`role\\?` = 'owner'/)
+  assert.match(bootstrapSource, /MODIFY COLUMN \$\{quoteIdentifier\("role"\)\} enum\('member','organization_admin'\) NOT NULL/)
+
+  const statusColumnOffset = bootstrapSource.indexOf(
+    `ensureColumn("org_membership", "status", "enum('active','disabled','removed') NOT NULL DEFAULT 'active'")`,
+  )
+  const statusIndexOffset = bootstrapSource.indexOf(
+    `ensureIndex("org_membership", "org_membership_org_status", ["org_id", "status"])`,
+  )
+  assert.ok(statusColumnOffset >= 0)
+  assert.ok(statusIndexOffset >= 0)
+  assert.ok(statusColumnOffset < statusIndexOffset)
+})
