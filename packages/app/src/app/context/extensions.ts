@@ -627,8 +627,8 @@ export function createExtensionsStore(options: {
           ...skill,
           path,
           registry: {
-            ...registry,
             ...skill.registry,
+            ...registry,
           },
           writable: false,
         };
