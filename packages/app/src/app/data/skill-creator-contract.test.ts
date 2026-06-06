@@ -17,6 +17,19 @@ test("installable skill creator requires an explicit Veslo skill scope", () => {
   assert.match(template, /removalPolicy: "locked"/);
 });
 
+test("installable skill creator asks for scope before path or API advice", () => {
+  const scopeQuestion = template.indexOf(
+    "Where should this skill live: user skill, workspace skill, organization skill, or public skill?",
+  );
+  const pathAdvice = template.indexOf(".opencode/skills");
+  const apiAdvice = template.indexOf("POST /v1/skills");
+  const firstAdvice = Math.min(...[pathAdvice, apiAdvice].filter((index) => index >= 0));
+
+  assert.notEqual(scopeQuestion, -1);
+  assert.notEqual(firstAdvice, Infinity);
+  assert.ok(scopeQuestion < firstAdvice);
+});
+
 test("installable skill creator does not describe organization or public skills as immediate installs", () => {
   assert.match(template, /Do not claim organization or public skills are distributed/);
   assert.match(template, /Do not treat organization or public skills as immediate installs/);

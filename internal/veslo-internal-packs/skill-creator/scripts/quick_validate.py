@@ -4,10 +4,61 @@ Quick validation script for skills - minimal version
 """
 
 import sys
-import os
 import re
-import yaml
 from pathlib import Path
+
+try:
+    import yaml
+except ModuleNotFoundError:
+    yaml = None
+
+
+def parse_scalar(value):
+    """Parse the small YAML scalar subset used by skill frontmatter."""
+    value = value.strip()
+    if value in {"true", "false"}:
+        return value == "true"
+    if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+        return value[1:-1]
+    return value
+
+
+def parse_simple_frontmatter(frontmatter_text):
+    """Fallback parser for simple skill frontmatter when PyYAML is unavailable."""
+    frontmatter = {}
+    lines = frontmatter_text.splitlines()
+    index = 0
+
+    while index < len(lines):
+        line = lines[index]
+        if not line.strip():
+            index += 1
+            continue
+        if line.startswith((" ", "\t")):
+            raise ValueError(f"Unexpected indented frontmatter line: {line}")
+        if ":" not in line:
+            raise ValueError(f"Invalid frontmatter line: {line}")
+
+        key, raw_value = line.split(":", 1)
+        key = key.strip()
+        raw_value = raw_value.strip()
+        if not key:
+            raise ValueError("Frontmatter key cannot be empty")
+
+        if raw_value in {"|", ">"}:
+            index += 1
+            block = []
+            while index < len(lines) and (not lines[index].strip() or lines[index].startswith((" ", "\t"))):
+                block.append(lines[index].lstrip())
+                index += 1
+            frontmatter[key] = "\n".join(block).strip()
+            continue
+
+        frontmatter[key] = parse_scalar(raw_value)
+        index += 1
+
+    return frontmatter
+
 
 def validate_skill(skill_path):
     """Basic validation of a skill"""
@@ -32,14 +83,23 @@ def validate_skill(skill_path):
 
     # Parse YAML frontmatter
     try:
-        frontmatter = yaml.safe_load(frontmatter_text)
+        frontmatter = yaml.safe_load(frontmatter_text) if yaml else parse_simple_frontmatter(frontmatter_text)
         if not isinstance(frontmatter, dict):
             return False, "Frontmatter must be a YAML dictionary"
-    except yaml.YAMLError as e:
+    except Exception as e:
         return False, f"Invalid YAML in frontmatter: {e}"
 
     # Define allowed properties
-    ALLOWED_PROPERTIES = {'name', 'description', 'license', 'allowed-tools', 'metadata', 'compatibility'}
+    ALLOWED_PROPERTIES = {
+        'name',
+        'description',
+        'license',
+        'allowed-tools',
+        'metadata',
+        'compatibility',
+        'veslo_internal_pack',
+        'veslo_internal_snapshot',
+    }
 
     # Check for unexpected properties (excluding nested keys under metadata)
     unexpected_keys = set(frontmatter.keys()) - ALLOWED_PROPERTIES

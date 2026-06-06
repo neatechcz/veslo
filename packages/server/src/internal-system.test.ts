@@ -69,6 +69,8 @@ You are Veslo.
       );
       expect(skillCreatorSkill).toContain('scope: "system"');
       expect(skillCreatorSkill).toContain('removalPolicy: "locked"');
+      expect(skillCreatorSkill).not.toContain("Create or update skills only in this workspace");
+      expect(skillCreatorSkill).not.toContain("Do not write company-global/shared skills in this flow");
 
       const skillCreatorSubagent = await readFile(
         join(workspaceRoot, ".opencode", "agents", "veslo-internal-skill-creator.md"),
