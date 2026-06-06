@@ -81,6 +81,10 @@ export function scenarioSelectionNeedsAutomationSecondaryWorkspace(scenarios: st
   return scenarios.some((scenario) => scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/automations.toml'));
 }
 
+export function scenarioSelectionNeedsSkillRegistryAuthFixture(scenarios: string[]): boolean {
+  return scenarios.some((scenario) => scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/soul-dashboard.toml'));
+}
+
 export async function runPilotCommand(options: RunPilotCommandOptions): Promise<void> {
   const binary = options.binary ?? resolvePilotBinary(options.env);
   const socket = options.socket ?? resolvePilotSocketPath({ runtimeDir: resolvePilotRuntimeDir() });
@@ -166,6 +170,9 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
 
   if (scenarioSelectionNeedsAutomationSecondaryWorkspace(scenarios)) {
     process.env.E2E_SEED_AUTOMATIONS_SECONDARY_WORKSPACE ||= '1';
+  }
+  if (scenarioSelectionNeedsSkillRegistryAuthFixture(scenarios)) {
+    process.env.E2E_SKILL_REGISTRY_AUTH_BASE ||= 'fixture';
   }
 
   await startApp();

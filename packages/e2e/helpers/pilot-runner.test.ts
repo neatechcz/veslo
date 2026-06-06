@@ -8,6 +8,7 @@ import {
   pilotReadinessProbeCommands,
   resolvePilotBinary,
   resolvePilotScenarioSelection,
+  scenarioSelectionNeedsSkillRegistryAuthFixture,
   scenarioSelectionNeedsAutomationSecondaryWorkspace,
 } from './pilot-runner.js';
 
@@ -62,6 +63,19 @@ test('automation pilot scenario requests the secondary workspace fixture', () =>
   );
   assert.equal(
     scenarioSelectionNeedsAutomationSecondaryWorkspace(resolvePilotScenarioSelection({ scenario: ['smoke'] }, e2eRoot)),
+    false,
+  );
+});
+
+test('soul dashboard pilot scenario requests skill registry Den auth fixture', () => {
+  const e2eRoot = '/repo/packages/e2e';
+
+  assert.equal(
+    scenarioSelectionNeedsSkillRegistryAuthFixture(resolvePilotScenarioSelection({ scenario: ['soul-dashboard'] }, e2eRoot)),
+    true,
+  );
+  assert.equal(
+    scenarioSelectionNeedsSkillRegistryAuthFixture(resolvePilotScenarioSelection({ scenario: ['navigation'] }, e2eRoot)),
     false,
   );
 });
