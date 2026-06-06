@@ -1,5 +1,5 @@
 import { Show, createSignal } from "solid-js";
-import { Box, ChevronDown, ChevronUp, HeartPulse, History, Zap } from "lucide-solid";
+import { ChevronDown, ChevronUp, History, Zap } from "lucide-solid";
 
 import type { DashboardTab } from "../../types";
 import { currentLocale, t } from "../../../i18n";
@@ -11,7 +11,6 @@ import {
 type SidebarDashboardNavProps = {
   currentTab: DashboardTab;
   onSelect: (tab: DashboardTab) => void;
-  soulIconClass?: string;
 };
 
 const buttonClass = (active: boolean) =>
@@ -22,7 +21,7 @@ const buttonClass = (active: boolean) =>
   }`;
 
 const isActiveTab = (currentTab: DashboardTab, tab: DashboardTab) =>
-  currentTab === tab || (tab === "mcp" && currentTab === "plugins");
+  currentTab === tab;
 
 export default function SidebarDashboardNav(props: SidebarDashboardNavProps) {
   const [collapsed, setCollapsed] = createSignal(readSidebarDashboardNavCollapsed());
@@ -52,27 +51,11 @@ export default function SidebarDashboardNav(props: SidebarDashboardNavProps) {
           </button>
           <button
             type="button"
-            class={buttonClass(isActiveTab(props.currentTab, "soul"))}
-            onClick={() => props.onSelect("soul")}
-          >
-            <HeartPulse size={18} class={props.soulIconClass} />
-            {t("nav.soul", currentLocale())}
-          </button>
-          <button
-            type="button"
             class={buttonClass(isActiveTab(props.currentTab, "skills"))}
             onClick={() => props.onSelect("skills")}
           >
             <Zap size={18} />
             {t("nav.skills", currentLocale())}
-          </button>
-          <button
-            type="button"
-            class={buttonClass(isActiveTab(props.currentTab, "mcp"))}
-            onClick={() => props.onSelect("mcp")}
-          >
-            <Box size={18} />
-            {t("nav.extensions", currentLocale())}
           </button>
         </div>
       </Show>

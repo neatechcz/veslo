@@ -35,12 +35,10 @@ import {
 import { acquireBlankNativeWindowTitleLease } from "../lib/native-window-title-lease";
 
 import {
-  Box,
   ChevronDown,
   Check,
   Circle,
   Cpu,
-  HeartPulse,
   HardDrive,
   History,
   ListTodo,
@@ -3912,10 +3910,6 @@ export default function SessionView(props: SessionViewProps) {
     })();
   };
 
-  const soulModeEnabled = createMemo(() =>
-    Boolean(props.soulStatusByWorkspaceId[props.activeWorkspaceId]?.enabled)
-  );
-
   const runtimeAvailableWithoutClient = createMemo(() => {
     if (props.clientConnected) return false;
     if (props.vesloServerStatus !== "connected") return false;
@@ -3923,7 +3917,6 @@ export default function SessionView(props: SessionViewProps) {
     return (props.workspaceConnectionStateById[props.activeWorkspaceId]?.status ?? "idle") === "connected";
   });
 
-  const soulNavIconClass = () => (soulModeEnabled() ? "soul-nav-icon-active" : "");
   const leftSidebarContent = () => (
     <>
       <div class="flex min-h-0 flex-1 flex-col">
@@ -4030,14 +4023,7 @@ export default function SessionView(props: SessionViewProps) {
         </div>
         <SidebarDashboardNav
           currentTab={props.tab}
-          onSelect={(tab) => {
-            if (tab === "soul") {
-              openSoul();
-              return;
-            }
-            openDashboardTab(tab);
-          }}
-          soulIconClass={soulNavIconClass()}
+          onSelect={openDashboardTab}
         />
       </div>
       <SidebarStatusControls

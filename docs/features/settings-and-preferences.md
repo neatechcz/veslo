@@ -16,7 +16,7 @@ Current visible tabs:
 - `mcp` link tab
 
 The `scheduled`, `soul`, `skills`, and `mcp` entries are navigation links, not Settings-owned content.
-They route to the same dashboard destinations as the left menu and must preserve the left-menu ordering and behavior.
+They route to their existing dashboard destinations. The desktop/session left menu exposes only the high-frequency dashboard links (`scheduled` and `skills`), so Settings remains the full cross-dashboard tab rail for `scheduled`, `soul`, `skills`, and `mcp`.
 
 Settings-owned content is limited to the `general` and `archived` tabs. Support and diagnostics controls can still exist behind internal gating, but they are not exposed as visible Settings tabs in the default product surface.
 
@@ -90,7 +90,9 @@ These are primarily debugging and support surfaces. If behavior changes, update 
 Settings includes link tabs for Automations, Soul, Skills, and Extensions.
 Those entries are aliases to the existing dashboard pages, so their page content,
 state, and source-of-truth behavior remain owned by the same destinations that
-are reachable from the left menu.
+they route to. Automations and Skills are also reachable from the left menu;
+Soul and Extensions remain reachable from Settings link tabs and direct dashboard
+routes.
 The same tab rail is also shown on those destination pages so users can move
 between Settings-owned tabs and dashboard destinations without returning to the
 left menu.
