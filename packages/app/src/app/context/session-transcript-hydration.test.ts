@@ -88,8 +88,13 @@ test("app hydrates transcript snapshots returned by veslo prefetch calls", () =>
   );
   assert.match(
     source,
-    /for \(const item of result\.items\) \{\s*hydrateTranscriptSnapshot\(item\);/s,
+    /for \(const item of result\.items\) \{[\s\S]*hydrateTranscriptSnapshot\(item\);/s,
     "prefetch responses should hydrate every returned transcript snapshot",
+  );
+  assert.match(
+    source,
+    /rememberConversationScopeFromTranscript\(workspaceId,\s*undefined,\s*item\);/s,
+    "prefetch responses should register conversation scope sidecars before hydration",
   );
   assert.match(
     source,
@@ -100,5 +105,10 @@ test("app hydrates transcript snapshots returned by veslo prefetch calls", () =>
     source,
     /hydrateTranscriptSnapshot\(snapshot\);/,
     "direct transcript fetches should hydrate before returning",
+  );
+  assert.match(
+    source,
+    /rememberConversationScopeFromTranscript\(workspaceId,\s*directory,\s*snapshot\);/s,
+    "direct transcript fetches should register conversation scope sidecars",
   );
 });

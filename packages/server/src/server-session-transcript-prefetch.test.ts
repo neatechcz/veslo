@@ -245,6 +245,28 @@ describe("session transcript prefetch routes", () => {
     );
     expect(rejectedConversationsResponse.status).toBe(403);
 
+    const rejectedPrefetchResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/sessions/transcript-prefetch`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          clickedSessionId: null,
+          selectedSessionId: "sess-a",
+          loadedTopLevelSessionIds: ["sess-a"],
+          expandedSubagentSessionIds: [],
+          sessionDirectoriesById: {
+            "sess-a": join(tmpdir(), "veslo-outside"),
+          },
+          limit: 12,
+        }),
+      },
+    );
+    expect(rejectedPrefetchResponse.status).toBe(403);
+
     const prefetchResponse = await fetch(
       `http://127.0.0.1:${server.port}/workspace/ws_1/sessions/transcript-prefetch`,
       {
@@ -258,6 +280,14 @@ describe("session transcript prefetch routes", () => {
           selectedSessionId: "sess-a",
           loadedTopLevelSessionIds: ["sess-a", "sess-b"],
           expandedSubagentSessionIds: ["sub-2", "sub-1"],
+          directory: workspaceRoot,
+          sessionDirectoriesById: {
+            "sess-clicked": workspaceRoot,
+            "sess-a": workspaceRoot,
+            "sess-b": workspaceRoot,
+            "sub-2": workspaceRoot,
+            "sub-1": workspaceRoot,
+          },
           limit: 12,
         }),
       },
@@ -342,6 +372,10 @@ describe("session transcript prefetch routes", () => {
           selectedSessionId: "sess-a",
           loadedTopLevelSessionIds: ["sess-a"],
           expandedSubagentSessionIds: [],
+          directory: workspaceRoot,
+          sessionDirectoriesById: {
+            "sess-a": workspaceRoot,
+          },
           limit: 12,
         }),
       },
@@ -350,11 +384,12 @@ describe("session transcript prefetch routes", () => {
     expect(warmPrefetchResponse.status).toBe(200);
     const warmPrefetchPayload = await warmPrefetchResponse.json() as {
       queuedSessionIds: string[];
-      items: Array<{ sessionId: string; limit: number; messages: unknown[] }>;
+      items: Array<{ sessionId: string; directory?: string; limit: number; messages: unknown[] }>;
     };
     expect(warmPrefetchPayload.queuedSessionIds).toEqual([]);
     expect(warmPrefetchPayload.items.length).toBe(1);
     expect(warmPrefetchPayload.items[0]?.sessionId).toBe("sess-a");
+    expect(warmPrefetchPayload.items[0]?.directory).toBe(workspaceRoot);
     expect(warmPrefetchPayload.items[0]?.limit).toBe(12);
     expect(warmPrefetchPayload.items[0]?.messages.length).toBe(12);
     expect(upstreamHits).toBe(0);

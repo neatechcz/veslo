@@ -268,12 +268,17 @@ export function createConversationReadStore(): ConversationReadStore {
         const messages = messageRows
           .map(normalizeMessage)
           .filter((message): message is Record<string, unknown> => Boolean(message));
+        const messageIds = new Set(
+          messages
+            .map((message) => (typeof message.id === "string" ? message.id.trim() : ""))
+            .filter(Boolean),
+        );
         const partsByMessageId: Record<string, unknown[]> = {};
         for (const row of partRows) {
           const part = normalizePart(row);
           if (!part) continue;
           const messageId = typeof part.messageID === "string" ? part.messageID.trim() : "";
-          if (!messageId) continue;
+          if (!messageId || !messageIds.has(messageId)) continue;
           if (!partsByMessageId[messageId]) partsByMessageId[messageId] = [];
           partsByMessageId[messageId].push(part);
         }

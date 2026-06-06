@@ -4,6 +4,7 @@ import type { LoadedSidebarPrefetchInterest as LoadedSidebarPrefetchInterestType
 type LoadedSidebarPrefetchRow = {
   workspaceId: string;
   sessionId: string;
+  directory?: string | null;
   updatedAt: number;
 };
 
@@ -16,6 +17,7 @@ const createInterest = (): WorkspaceInterest => ({
   selectedSessionId: null,
   loadedTopLevelSessionIds: [],
   expandedSubagentSessionIds: [],
+  sessionDirectoriesById: {},
 });
 
 const ensureWorkspaceInterest = (
@@ -43,6 +45,17 @@ const recordSessionWorkspace = (
   const workspaces = sessionWorkspaces.get(normalizedSessionId) ?? new Set<string>();
   workspaces.add(normalizedWorkspaceId);
   sessionWorkspaces.set(normalizedSessionId, workspaces);
+};
+
+const recordSessionDirectory = (
+  interest: WorkspaceInterest,
+  sessionId: string,
+  directory: string | null | undefined,
+) => {
+  const normalizedSessionId = normalizeId(sessionId);
+  const normalizedDirectory = normalizeId(directory);
+  if (!normalizedSessionId || !normalizedDirectory) return;
+  interest.sessionDirectoriesById[normalizedSessionId] = normalizedDirectory;
 };
 
 const findUniqueWorkspaceForSession = (
@@ -73,6 +86,7 @@ export function deriveLoadedSidebarPrefetchInterest(input: {
     recordSessionWorkspace(sessionWorkspaces, sessionId, workspaceId);
     const interest = ensureWorkspaceInterest(interests, workspaceId);
     if (!interest) continue;
+    recordSessionDirectory(interest, sessionId, row.directory);
     const seenTopLevelSessionIds = seenTopLevelSessionIdsByWorkspace.get(workspaceId) ?? new Set<string>();
     if (!seenTopLevelSessionIds.has(sessionId)) {
       seenTopLevelSessionIds.add(sessionId);
@@ -90,7 +104,8 @@ export function deriveLoadedSidebarPrefetchInterest(input: {
     const bucket = expandedByWorkspace.get(workspaceId) ?? [];
     bucket.push({ workspaceId, sessionId, updatedAt: Number.isFinite(row.updatedAt) ? row.updatedAt : 0, index });
     expandedByWorkspace.set(workspaceId, bucket);
-    ensureWorkspaceInterest(interests, workspaceId);
+    const interest = ensureWorkspaceInterest(interests, workspaceId);
+    if (interest) recordSessionDirectory(interest, sessionId, row.directory);
   });
 
   const clickedWorkspaceId = input.clickedSessionId

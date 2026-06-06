@@ -462,6 +462,7 @@ export default function DashboardView(props: DashboardViewProps) {
 
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
     const group = props.workspaceSessionGroups.find((g) => g.workspace.id === workspaceId);
+    const session = group?.sessions.find((item) => item.id === sessionId);
     const workspaceRoot =
       group?.workspace.directory?.trim() ||
       group?.workspace.path?.trim() ||
@@ -478,6 +479,9 @@ export default function DashboardView(props: DashboardViewProps) {
           sessionId: nextSessionId,
           workspaceId,
           workspaceRoot: workspaceRoot,
+          directory: session?.directory ?? workspaceRoot,
+          conversationId: session?.conversationId ?? null,
+          opencodeSessionId: session?.opencodeSessionId ?? nextSessionId,
         });
         props.setView("session", nextSessionId);
       },
