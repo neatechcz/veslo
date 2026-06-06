@@ -197,6 +197,7 @@ export type DashboardViewProps = {
   deleteScheduledJob: (name: string) => Promise<void> | void;
   soulOverview: VesloSoulOverviewResponse | null;
   soulOverviewError: string | null;
+  soulOverviewBusy: boolean;
   soulStatusByWorkspaceId: Record<string, VesloSoulStatus | null>;
   activeSoulStatus: VesloSoulStatus | null;
   activeSoulHeartbeats: VesloSoulHeartbeatEntry[];
@@ -1617,16 +1618,10 @@ export default function DashboardView(props: DashboardViewProps) {
             </Match>
             <Match when={props.tab === "soul"}>
               <SoulView
-                workspaceName={props.activeWorkspaceDisplay.name}
-                workspaceRoot={props.activeWorkspaceRoot}
-                status={props.activeSoulStatus}
-                heartbeats={props.activeSoulHeartbeats}
-                loading={props.soulStatusBusy}
-                loadingHeartbeats={props.soulHeartbeatsBusy}
-                error={props.soulError}
-                newTaskDisabled={props.newTaskDisabled}
+                soulOverview={props.soulOverview}
+                soulOverviewError={props.soulOverviewError}
+                soulOverviewBusy={props.soulOverviewBusy}
                 refresh={props.refreshSoulData}
-                runSoulPrompt={props.runSoulPrompt}
               />
             </Match>
             <Match when={props.tab === "skills"}>

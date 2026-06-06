@@ -3165,6 +3165,7 @@ export default function App() {
   >({});
   const [soulOverview, setSoulOverview] = createSignal<VesloSoulOverviewResponse | null>(null);
   const [soulOverviewError, setSoulOverviewError] = createSignal<string | null>(null);
+  const [soulOverviewBusy, setSoulOverviewBusy] = createSignal(false);
   const [activeSoulHeartbeats, setActiveSoulHeartbeats] = createSignal<VesloSoulHeartbeatEntry[]>([]);
   const [soulStatusBusy, setSoulStatusBusy] = createSignal(false);
   const [soulHeartbeatsBusy, setSoulHeartbeatsBusy] = createSignal(false);
@@ -6896,20 +6897,27 @@ export default function App() {
   let soulOverviewRefreshSeq = 0;
   const refreshSoulOverview = async (client: VesloServerClient) => {
     const requestSeq = ++soulOverviewRefreshSeq;
+    setSoulOverviewBusy(true);
+    const isCurrentRequest = () =>
+      requestSeq === soulOverviewRefreshSeq && vesloServerClient() === client && vesloServerStatus() === "connected";
     try {
       const overview = await client.getSoulOverview(skillRegistryMaterializationAuthContext());
-      if (requestSeq !== soulOverviewRefreshSeq || vesloServerClient() !== client || vesloServerStatus() !== "connected") {
+      if (!isCurrentRequest()) {
         return;
       }
       setSoulOverview(overview);
       setSoulOverviewError(null);
     } catch (error) {
-      if (requestSeq !== soulOverviewRefreshSeq || vesloServerClient() !== client || vesloServerStatus() !== "connected") {
+      if (!isCurrentRequest()) {
         return;
       }
       const message = error instanceof Error ? error.message : "Failed to load Soul overview.";
       setSoulOverview(null);
       setSoulOverviewError(message);
+    } finally {
+      if (isCurrentRequest()) {
+        setSoulOverviewBusy(false);
+      }
     }
   };
 
@@ -6921,6 +6929,7 @@ export default function App() {
       soulOverviewRefreshSeq += 1;
       setSoulOverview(null);
       setSoulOverviewError(null);
+      setSoulOverviewBusy(false);
       setSoulStatusByWorkspaceId({});
       setActiveSoulHeartbeats([]);
       setSoulHeartbeatsBusy(false);
@@ -9832,6 +9841,7 @@ export default function App() {
       deleteScheduledJob,
       soulOverview: soulOverview(),
       soulOverviewError: soulOverviewError(),
+      soulOverviewBusy: soulOverviewBusy(),
       soulStatusByWorkspaceId: soulStatusByWorkspaceId(),
       activeSoulStatus: activeSoulStatus(),
       activeSoulHeartbeats: activeSoulHeartbeats(),
