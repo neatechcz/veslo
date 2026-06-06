@@ -22,6 +22,7 @@
         </div>
 
         <nav class="nav" aria-label="Admin sections">
+          <a href="/admin/organization" data-route="organization" class="nav-item">Organization</a>
           <a href="/admin/credentials" data-route="credentials" class="nav-item">Credentials</a>
           <a href="/admin/sessions" data-route="sessions" class="nav-item">Sessions</a>
           <a href="/admin/usage" data-route="usage" class="nav-item">Usage</a>
@@ -100,6 +101,90 @@
                 <strong>41</strong>
                 <span class="metric-note">13 platform admins in directory</span>
               </article>
+            </div>
+          </section>
+
+          <section class="panel page page-organization hidden" data-page="organization">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Organization</p>
+                <h2>Organization details</h2>
+              </div>
+              <button id="organization-save-button" class="button button-primary" type="button">Save organization</button>
+            </div>
+            <div class="split-layout organization-layout">
+              <aside class="detail-card organization-editor">
+                <p class="eyebrow">Details</p>
+                <h3 id="organization-editor-title">Organization</h3>
+                <form class="editor-form">
+                  <label>
+                    <span>Name</span>
+                    <input id="organization-name" class="input" type="text" />
+                  </label>
+                  <label>
+                    <span>Slug</span>
+                    <input id="organization-slug" class="input" type="text" />
+                  </label>
+                  <label data-seat-limit-control>
+                    <span>Seat limit</span>
+                    <input id="organization-seat-limit" class="input" type="number" min="0" />
+                  </label>
+                </form>
+                <p id="organization-save-status" class="editor-note muted">No pending changes.</p>
+              </aside>
+              <div class="stack">
+                <section class="detail-card">
+                  <div class="section-head compact">
+                    <div>
+                      <p class="eyebrow">Domains</p>
+                      <h3>Enabled domains</h3>
+                    </div>
+                  </div>
+                  <div class="credential-create-grid">
+                    <label>
+                      <span>Domain</span>
+                      <input id="organization-domain-input" class="input" type="text" placeholder="example.com" />
+                    </label>
+                    <label class="switch-row">
+                      <span>Enabled</span>
+                      <input id="organization-domain-enabled" type="checkbox" checked />
+                    </label>
+                    <label class="switch-row">
+                      <span>Self signup</span>
+                      <input id="organization-domain-self-signup" type="checkbox" />
+                    </label>
+                  </div>
+                  <div class="button-row">
+                    <button id="organization-domain-add-button" class="button button-secondary" type="button">Add domain</button>
+                  </div>
+                  <div id="organization-domain-list" class="list-cards"></div>
+                </section>
+                <section class="detail-card">
+                  <div class="section-head compact">
+                    <div>
+                      <p class="eyebrow">Invites</p>
+                      <h3>Pending invites</h3>
+                    </div>
+                  </div>
+                  <div class="credential-create-grid">
+                    <label>
+                      <span>Email</span>
+                      <input id="organization-invite-email" class="input" type="email" placeholder="teammate@example.com" />
+                    </label>
+                    <label>
+                      <span>Organization role</span>
+                      <select id="organization-invite-role" class="input">
+                        <option value="member">Member</option>
+                        <option value="organization_admin">Organization admin</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div class="button-row">
+                    <button id="organization-invite-send-button" class="button button-secondary" type="button">Send invite</button>
+                  </div>
+                  <div id="organization-invite-list" class="list-cards"></div>
+                </section>
+              </div>
             </div>
           </section>
 
@@ -402,27 +487,63 @@
               </article>
             </div>
             <div id="usage-series" class="list-cards"></div>
-            <div class="table-shell">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Credential</th>
-                    <th>Provider</th>
-                    <th>Status</th>
-                    <th>Requests</th>
-                    <th>Cached tokens</th>
-                    <th>Total tokens</th>
-                    <th>Active leases</th>
-                    <th>Last used</th>
-                    <th>Eligibility</th>
-                    <th>Upstream status</th>
-                  </tr>
-                </thead>
-                <tbody id="usage-credential-table-body">
-                  <tr><td colspan="10">No credential usage matched the selected filters.</td></tr>
-                </tbody>
-              </table>
-            </div>
+            <section class="usage-credential-card">
+              <div class="section-head compact">
+                <div>
+                  <p class="eyebrow">Capacity overview</p>
+                  <h3>Codex remaining limits</h3>
+                </div>
+                <span class="status-chip info">Functional credentials only</span>
+              </div>
+              <div class="hero-metrics">
+                <article class="metric-card">
+                  <span class="metric-label">5h remaining</span>
+                  <strong id="usage-capacity-five-hour">Unknown</strong>
+                  <span class="metric-note" id="usage-capacity-five-hour-note">Waiting for Codex limit status</span>
+                </article>
+                <article class="metric-card">
+                  <span class="metric-label">Weekly remaining</span>
+                  <strong id="usage-capacity-weekly">Unknown</strong>
+                  <span class="metric-note" id="usage-capacity-weekly-note">Waiting for Codex limit status</span>
+                </article>
+                <article class="metric-card">
+                  <span class="metric-label">Measured credentials</span>
+                  <strong id="usage-capacity-measured">0/0</strong>
+                  <span class="metric-note" id="usage-capacity-measured-note">No Codex credentials measured</span>
+                </article>
+              </div>
+              <div id="usage-capacity-credentials" class="list-cards"></div>
+            </section>
+            <section class="usage-credential-card">
+              <div class="section-head compact">
+                <div>
+                  <p class="eyebrow">Credential usage</p>
+                  <h3>Recorded usage and Codex limits</h3>
+                </div>
+                <span class="status-chip info">Codex limits best effort</span>
+              </div>
+              <div class="table-shell">
+                <table class="credential-usage-table">
+                  <thead>
+                    <tr>
+                      <th>Credential</th>
+                      <th>Provider</th>
+                      <th>Status</th>
+                      <th>Requests</th>
+                      <th>Cached tokens</th>
+                      <th>Total tokens</th>
+                      <th>Active leases</th>
+                      <th>Last used</th>
+                      <th>Eligibility</th>
+                      <th>Upstream status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="usage-credential-table-body">
+                    <tr><td colspan="10">No credential usage matched the selected filters.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
           </section>
 
           <section class="panel page page-alerts hidden" data-page="alerts">
@@ -485,7 +606,7 @@
                 <p class="eyebrow">Users</p>
                 <h2>Directory and account management</h2>
               </div>
-              <button id="create-user-button-inline" class="button button-primary" type="button">Create user</button>
+              <button id="create-user-button-inline" class="button button-primary" type="button" data-platform-admin-control data-platform-only>Create user</button>
             </div>
             <div class="split-layout users-layout">
               <div>
@@ -548,11 +669,11 @@
                   <label>
                     <span>Organization role</span>
                     <select id="user-role" class="input">
-                      <option selected>owner</option>
-                      <option>member</option>
+                      <option value="organization_admin" selected>Organization admin</option>
+                      <option value="member">Member</option>
                     </select>
                   </label>
-                  <label class="switch-row">
+                  <label class="switch-row" data-platform-admin-control>
                     <span>Platform admin</span>
                     <input id="user-platform-admin" type="checkbox" checked />
                   </label>
@@ -560,7 +681,7 @@
                     <span>Send invite email immediately</span>
                     <input id="user-send-invite" type="checkbox" checked />
                   </label>
-                  <section class="editor-section">
+                  <section class="editor-section" data-ai-access-control>
                     <div>
                       <p class="eyebrow">AI access</p>
                       <h4>Admin-managed AI access</h4>

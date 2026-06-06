@@ -114,6 +114,33 @@ test("GET /admin/credentials serves the DEN admin shell with Codex inference con
     assert.match(html, /<th>Last refresh<\/th>\s*<th>Cached tokens<\/th>\s*<th>Eligibility<\/th>\s*<th>Codex limits<\/th>/)
     assert.match(html, /<th>Last used<\/th>\s*<th>Eligibility<\/th>\s*<th>Upstream status<\/th>/)
     assert.match(html, /id="usage-credential-table-body"/)
+    assert.match(html, /id="usage-capacity-five-hour"/)
+    assert.match(html, /id="usage-capacity-weekly"/)
+    assert.match(html, /id="usage-capacity-credentials"/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/organization serves the DEN admin shell with organization management", async () => {
+  const app = createUiApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/organization`)
+
+    assert.equal(response.status, 200)
+    const html = await response.text()
+    assert.match(html, /data-route="organization"/)
+    assert.match(html, /data-page="organization"/)
+    assert.match(html, /Organization details/i)
+    assert.match(html, /Enabled domains/i)
+    assert.match(html, /Pending invites/i)
+    assert.match(html, /id="organization-save-button"/)
+    assert.match(html, /id="organization-seat-limit"/)
   } finally {
     server.close()
     await once(server, "close")
@@ -149,6 +176,11 @@ test("GET /admin/app.js uses DEN desktop auth and OpenAI OAuth credential routes
     assert.match(script, /Anthropic legacy fallback/)
     assert.match(script, /cachedTokens/)
     assert.match(script, /totalTokens/)
+    assert.match(script, /capacity/)
+    assert.match(script, /function renderUsageCapacity\(capacity\)/)
+    assert.match(script, /formatCapacityRemaining/)
+    assert.match(script, /fiveHourRemainingPercent/)
+    assert.match(script, /weeklyRemainingPercent/)
     assert.match(script, /if \(provider === "openai_compatible"\) return "OpenAI-compatible provider"/)
     assert.match(script, /formatCredentialUpstreamStatus/)
     assert.match(script, /formatCredentialLimitSummary/)
@@ -178,6 +210,32 @@ test("GET /admin/app.js uses DEN desktop auth and OpenAI OAuth credential routes
     assert.match(script, /availableCredentials/)
     assert.match(script, /user-ai-access-credential/)
     assert.match(script, /Select assigned credential/)
+    assert.match(script, /const DEFAULT_PAGES = \["organization", "credentials", "sessions", "usage", "alerts", "users", "audit"\]/)
+    assert.match(script, /function allowedPages\(\)/)
+    assert.match(script, /function hasCapability\(capability\)/)
+    assert.match(script, /function applyAdminCapabilities\(\)/)
+    assert.match(script, /runAllowedLoad\("organization", loadOrganization\)/)
+    assert.match(script, /runAllowedLoad\("users", loadUsers\)/)
+    assert.match(script, /runAllowedLoad\("credentials", loadCredentials\)/)
+    assert.match(script, /if \(!hasCapability\("managedAiUserAccess"\)\) \{[\s\S]*return null/)
+    assert.match(script, /if \(!hasCapability\("managedAiUserAccess"\)\) \{[\s\S]*return;/)
+    assert.match(script, /function normalizeOrganizationRoleInput\(value\)/)
+    assert.match(script, /orgRole:\s*normalizeOrganizationRoleInput\(els\.userRole\.value\)/)
+    assert.match(script, /<option value="organization_admin">Organization admin<\/option>/)
+    assert.match(script, /function buildUserUpdatePayload\(payload\)/)
+    assert.match(script, /data-invite-resend/)
+    assert.match(script, /async function resendOrganizationInvite\(card\)/)
+    assert.match(script, /\/invites\/\$\{encodeURIComponent\(inviteId\)\}\/resend/)
+    assert.match(script, /event\.target\.closest\("\[data-invite-resend\]"\)/)
+    assert.match(
+      script,
+      /if \(state\.session\?\.platformAdmin !== true\) \{[\s\S]*return \{[\s\S]*orgId: payload\.orgId,[\s\S]*orgRole: payload\.orgRole,[\s\S]*\}/,
+    )
+    assert.match(
+      script,
+      /await fetchJson\(`\/users\/\$\{encodeURIComponent\(user\.id\)\}`,[\s\S]*body: JSON\.stringify\(buildUserUpdatePayload\(payload\)\)/,
+    )
+    assert.match(script, /createUserButtonInline[\s\S]*data-platform-only/)
     assert.match(script, /provider:\s*typeof entry\.provider === "string" \? entry\.provider\.trim\(\) : ""/)
     assert.match(script, /function currentUserAiAccessAvailableCredentials\(userId,\s*provider = ""\)[\s\S]*entry\.provider === provider/)
     assert.match(script, /selectedProvider === "codex_oauth" \|\| selectedProvider === "openai_compatible"/)

@@ -1610,7 +1610,7 @@ function enforceRolloutPolicyManagementAccess(
   if (!policy.orgId || context.orgId !== policy.orgId) {
     throw new SkillRegistryStoreError(403, "organization_forbidden")
   }
-  if (context.orgRole !== "owner") {
+  if (!isOrganizationAdminRole(context.orgRole)) {
     throw new SkillRegistryStoreError(403, "insufficient_role")
   }
 }
@@ -1621,7 +1621,7 @@ function canManageRolloutPolicy(
 ) {
   if (context.isPlatformAdmin) return true
   if (policy.catalog_scope === "platform") return false
-  return Boolean(policy.owner_org_id && context.orgId === policy.owner_org_id && context.orgRole === "owner")
+  return Boolean(policy.owner_org_id && context.orgId === policy.owner_org_id && isOrganizationAdminRole(context.orgRole))
 }
 
 function enforceRolloutPolicyRemovalAccess(context: SkillRegistryRouteContext, policy: RolloutPolicyRow) {
@@ -1883,7 +1883,7 @@ function canManageInstallation(
       return installation.owner_user_id === context.userId
     case "org":
     case "workspace":
-      return Boolean(context.orgId && installation.org_id === context.orgId && context.orgRole === "owner")
+      return Boolean(context.orgId && installation.org_id === context.orgId && isOrganizationAdminRole(context.orgRole))
   }
 }
 
@@ -1891,7 +1891,7 @@ function canReadVersion(context: SkillRegistryRouteContext, skill: SkillRow, ver
   if (!isManagedSkillScope(skill.scope) || version.status === "approved") return true
   if (context.isPlatformAdmin) return true
   if (skill.scope === "org") {
-    return Boolean(context.orgId && context.orgId === skill.org_id && context.orgRole === "owner")
+    return Boolean(context.orgId && context.orgId === skill.org_id && isOrganizationAdminRole(context.orgRole))
   }
   return false
 }
@@ -1936,7 +1936,7 @@ function installationSourceForScope(scope: SkillScope): RegistrySkillInstallatio
 
 function rolesForContext(context: SkillRegistryRouteContext): SkillRegistryRetentionRole[] {
   const roles: SkillRegistryRetentionRole[] = ["member"]
-  if (context.orgRole === "owner") roles.push("owner")
+  if (isOrganizationAdminRole(context.orgRole)) roles.push("owner")
   if (context.isPlatformAdmin) roles.push("platform_admin")
   return roles
 }
@@ -1959,9 +1959,13 @@ function enforceReviewResolutionAccess(context: SkillRegistryRouteContext, reque
   if (request.scope === "system") {
     throw new SkillRegistryStoreError(403, "forbidden")
   }
-  if (!request.org_id || context.orgId !== request.org_id || context.orgRole !== "owner") {
+  if (!request.org_id || context.orgId !== request.org_id || !isOrganizationAdminRole(context.orgRole)) {
     throw new SkillRegistryStoreError(403, "insufficient_role")
   }
+}
+
+function isOrganizationAdminRole(role: SkillRegistryRouteContext["orgRole"]) {
+  return role === "owner" || role === "organization_admin"
 }
 
 function enforcePendingReviewRequest(request: ReviewRequestRow) {

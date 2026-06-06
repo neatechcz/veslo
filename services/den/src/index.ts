@@ -5,10 +5,12 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { fromNodeHeaders, toNodeHandler } from "better-auth/node"
 import { sql } from "drizzle-orm"
-import { auth } from "./auth.js"
+import { auth, createAuthNodeHandler, guardEmailSignupRequest } from "./auth.js"
 import { db } from "./db/index.js"
+import { AdminUserStateTable, AuthUserTable, PlatformRoleTable } from "./db/schema.js"
 import { createDbDebugLogStore, createDebugLogService } from "./debug-logs/repository.js"
 import { extractMetadataRows, shouldWidenVarcharColumn } from "./db/schema-reconcile.js"
+import { isAdminAlertEmailConfigured, sendAdminAlertEmail } from "./email/admin-alert-mailer.js"
 import { env } from "./env.js"
 import { createDbFeedbackProjectorStore, createFeedbackProjector } from "./feedback/projector.js"
 import { createDebugLogsIngestRouter } from "./http/debug-logs.js"
@@ -16,7 +18,7 @@ import { asyncRoute, errorMiddleware } from "./http/errors.js"
 import { requireSession } from "./http/session.js"
 import { desktopAuthRouter } from "./http/desktop-auth.js"
 import { desktopAuthV2Router } from "./http/desktop-auth-v2.js"
-import { createAdminRuntimeRouter, requirePlatformAdminSnapshot } from "./http/admin-runtime.js"
+import { createAdminRuntimeRouter, isBootstrapPlatformAdminEmail, requirePlatformAdminSnapshot } from "./http/admin-runtime.js"
 import { createFeedbackRouter } from "./http/feedback.js"
 import { createManagedAiAdminUiRouter } from "./managed-ai/http/admin.js"
 import {
@@ -31,7 +33,10 @@ import {
   createDefaultProxyDependencies,
   createDefaultRuntimeState,
   createDefaultUserCredentialDependencies,
+  type RuntimeState,
 } from "./managed-ai/runtime/default-runtime.js"
+import { createCodexCapacityAlertMonitorRunner } from "./managed-ai/alerts/codex-capacity-monitor.js"
+import { buildCodexCapacityOverview } from "./managed-ai/usage/codex-capacity.js"
 import { orgsRouter } from "./http/orgs.js"
 import { orgMcpCatalogRouter } from "./http/org-mcp-catalog.js"
 import { orgSkillsCatalogRouter } from "./http/org-skills-catalog.js"
@@ -42,6 +47,7 @@ const app = express()
 const MANAGED_AI_PROXY_JSON_LIMIT = "10mb"
 const FEEDBACK_PROJECTOR_DUE_RETRY_INTERVAL_MS = 60_000
 const DEBUG_LOG_RETENTION_INTERVAL_MS = 86_400_000
+const MANAGED_AI_CODEX_CAPACITY_ALERT_INTERVAL_MS = 5 * 60_000
 const managedAiRuntime = env.managedAi.enabled ? createDefaultRuntimeState() : null
 const managedAiProxyJsonParser = express.json({ limit: MANAGED_AI_PROXY_JSON_LIMIT })
 const currentFile = fileURLToPath(import.meta.url)
@@ -90,7 +96,7 @@ if (corsOrigins.length > 0) {
 
 // Better Auth reads the raw request body itself — mount BEFORE express.json()
 // so the body stream isn't consumed by Express's JSON parser first
-app.all("/api/auth/*", toNodeHandler(auth))
+app.all("/api/auth/*", createAuthNodeHandler(toNodeHandler(auth), guardEmailSignupRequest))
 app.use("/v1", feedbackRouter)
 app.use("/v1/internal", debugLogsIngestRouter)
 if (managedAiRuntime) {
@@ -211,6 +217,83 @@ function startDebugLogRetentionLoop(service: typeof debugLogService) {
   unrefTimer(interval)
 }
 
+async function listPlatformAdminAlertRecipients(): Promise<string[]> {
+  const [users, platformRoles, userStates] = await Promise.all([
+    db
+      .select({
+        id: AuthUserTable.id,
+        email: AuthUserTable.email,
+      })
+      .from(AuthUserTable),
+    db
+      .select({
+        userId: PlatformRoleTable.user_id,
+      })
+      .from(PlatformRoleTable),
+    db
+      .select({
+        userId: AdminUserStateTable.user_id,
+        disabled: AdminUserStateTable.disabled,
+      })
+      .from(AdminUserStateTable),
+  ])
+
+  const platformAdminIds = new Set(platformRoles.map((entry) => entry.userId))
+  const disabledUserIds = new Set(userStates.filter((entry) => entry.disabled === true).map((entry) => entry.userId))
+  return users
+    .filter((user) => !disabledUserIds.has(user.id))
+    .filter((user) => platformAdminIds.has(user.id) || isBootstrapPlatformAdminEmail(user.email))
+    .map((user) => user.email.trim().toLowerCase())
+    .filter(Boolean)
+}
+
+async function loadManagedAiCodexCapacityOverview(runtime: RuntimeState) {
+  const listAdminCredentials = runtime.credentials.listAdminCredentials
+  if (!listAdminCredentials) {
+    return buildCodexCapacityOverview([])
+  }
+
+  const credentials = await listAdminCredentials.call(runtime.credentials)
+  const capacityCredentials = await Promise.all(
+    credentials
+      .filter((credential) => credential.provider === "codex_oauth")
+      .map(async (credential) => ({
+        id: credential.id,
+        name: credential.name,
+        state: credential.state,
+        upstreamStatus: await runtime.codexStatusProvider.getStatus({
+          credentialId: credential.id,
+          credentialName: credential.name,
+        }).catch(() => null),
+      })),
+  )
+  return buildCodexCapacityOverview(capacityCredentials)
+}
+
+function startManagedAiCodexCapacityAlertLoop(runtime: RuntimeState) {
+  if (!isAdminAlertEmailConfigured()) {
+    console.warn("[den] managed-ai Codex capacity alert emails disabled: Lettr email env is not configured")
+    return
+  }
+
+  const runMonitor = createCodexCapacityAlertMonitorRunner({
+    loadCapacityOverview: () => loadManagedAiCodexCapacityOverview(runtime),
+    listAdminRecipients: listPlatformAdminAlertRecipients,
+    sendEmail: sendAdminAlertEmail,
+    audit: runtime.audit,
+  })
+  const runMonitorBestEffort = () => {
+    void runMonitor().catch((error) => {
+      const message = error instanceof Error ? error.stack ?? error.message : String(error)
+      console.error(`[den] managed-ai Codex capacity alert monitor failed: ${message}`)
+    })
+  }
+
+  runMonitorBestEffort()
+  const interval = setInterval(runMonitorBestEffort, MANAGED_AI_CODEX_CAPACITY_ALERT_INTERVAL_MS)
+  unrefTimer(interval)
+}
+
 const identifierPattern = /^[a-zA-Z0-9_]+$/
 
 function quoteIdentifier(value: string) {
@@ -322,6 +405,48 @@ async function ensureVarcharColumnMinimumLength(
   )
 }
 
+async function getColumnType(table: string, columnName: string) {
+  const metadataResult = await db.execute(sql`
+    SELECT COLUMN_TYPE
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = ${table}
+      AND COLUMN_NAME = ${columnName}
+    LIMIT 1
+  `)
+
+  const metadataRow = extractMetadataRows(metadataResult)[0]
+  if (!metadataRow) {
+    return null
+  }
+
+  const columnType = readRowValueCaseInsensitive(metadataRow, "COLUMN_TYPE")
+  return typeof columnType === "string" ? columnType.trim().toLowerCase() : null
+}
+
+async function reconcileOrgMembershipRoleColumn() {
+  const columnType = await getColumnType("org_membership", "role")
+  if (columnType === "enum('member','organization_admin')") {
+    return
+  }
+
+  await db.execute(
+    sql.raw(
+      `ALTER TABLE ${quoteIdentifier("org_membership")} MODIFY COLUMN ${quoteIdentifier("role")} enum('owner','member','organization_admin') NOT NULL`,
+    ),
+  )
+  await db.execute(sql`
+    UPDATE \`org_membership\`
+    SET \`role\` = 'organization_admin'
+    WHERE \`role\` = 'owner'
+  `)
+  await db.execute(
+    sql.raw(
+      `ALTER TABLE ${quoteIdentifier("org_membership")} MODIFY COLUMN ${quoteIdentifier("role")} enum('member','organization_admin') NOT NULL`,
+    ),
+  )
+}
+
 async function ensureTables() {
   try {
     // Auth tables (Better Auth requires these with snake_case columns)
@@ -402,26 +527,77 @@ async function ensureTables() {
         \`name\` varchar(255) NOT NULL,
         \`slug\` varchar(255) NOT NULL,
         \`owner_user_id\` varchar(64) NOT NULL,
+        \`seat_limit\` int unsigned,
         \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
         \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
         CONSTRAINT \`org_id\` PRIMARY KEY(\`id\`),
         CONSTRAINT \`org_slug\` UNIQUE(\`slug\`)
       )
     `)
-    await ensureIndex("org", "org_owner_user_id", ["owner_user_id"])
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`org_membership\` (
         \`id\` varchar(64) NOT NULL,
         \`org_id\` varchar(64) NOT NULL,
         \`user_id\` varchar(64) NOT NULL,
-        \`role\` enum('owner','member') NOT NULL,
+        \`role\` enum('member','organization_admin') NOT NULL,
+        \`status\` enum('active','disabled','removed') NOT NULL DEFAULT 'active',
         \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
         CONSTRAINT \`org_membership_id\` PRIMARY KEY(\`id\`)
       )
     `)
+    await ensureColumn("org", "seat_limit", "int unsigned")
+    await ensureColumn("org_membership", "status", "enum('active','disabled','removed') NOT NULL DEFAULT 'active'")
+    await reconcileOrgMembershipRoleColumn()
+
+    await ensureIndex("org", "org_owner_user_id", ["owner_user_id"])
     await ensureIndex("org_membership", "org_membership_org_id", ["org_id"])
     await ensureIndex("org_membership", "org_membership_user_id", ["user_id"])
+    await ensureIndex("org_membership", "org_membership_org_status", ["org_id", "status"])
+    await ensureIndex("org_membership", "org_membership_user_status", ["user_id", "status"])
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`organization_domain\` (
+        \`id\` varchar(64) NOT NULL,
+        \`org_id\` varchar(64) NOT NULL,
+        \`domain\` varchar(255) NOT NULL,
+        \`enabled\` boolean NOT NULL DEFAULT true,
+        \`self_signup_enabled\` boolean NOT NULL DEFAULT false,
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        CONSTRAINT \`organization_domain_id\` PRIMARY KEY(\`id\`)
+      )
+    `)
+    await ensureIndex("organization_domain", "organization_domain_domain", ["domain"], true)
+    await ensureIndex("organization_domain", "organization_domain_org_id", ["org_id"])
+    await ensureIndex("organization_domain", "organization_domain_org_enabled", ["org_id", "enabled"])
+    await ensureIndex("organization_domain", "organization_domain_self_signup", ["self_signup_enabled"])
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`organization_invite\` (
+        \`id\` varchar(64) NOT NULL,
+        \`org_id\` varchar(64) NOT NULL,
+        \`email\` varchar(255) NOT NULL,
+        \`role\` enum('member','organization_admin') NOT NULL DEFAULT 'member',
+        \`status\` enum('pending','accepted','expired','revoked') NOT NULL DEFAULT 'pending',
+        \`token_hash\` varchar(255) NOT NULL,
+        \`invited_by_user_id\` varchar(64) NOT NULL,
+        \`accepted_by_user_id\` varchar(64),
+        \`expires_at\` timestamp(3),
+        \`accepted_at\` timestamp(3),
+        \`revoked_at\` timestamp(3),
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        CONSTRAINT \`organization_invite_id\` PRIMARY KEY(\`id\`)
+      )
+    `)
+    await ensureIndex("organization_invite", "organization_invite_token_hash", ["token_hash"], true)
+    await ensureIndex("organization_invite", "organization_invite_org_id", ["org_id"])
+    await ensureIndex("organization_invite", "organization_invite_org_status", ["org_id", "status"])
+    await ensureIndex("organization_invite", "organization_invite_email", ["email"])
+    await ensureIndex("organization_invite", "organization_invite_email_status", ["email", "status"])
+    await ensureIndex("organization_invite", "organization_invite_invited_by", ["invited_by_user_id"])
+    await ensureIndex("organization_invite", "organization_invite_accepted_by", ["accepted_by_user_id"])
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`platform_role\` (
@@ -758,6 +934,9 @@ async function bootstrap() {
   startDebugLogRetentionLoop(debugLogService)
   if (env.managedAi.enabled) {
     console.log("[den] managed-ai runtime enabled")
+    if (managedAiRuntime) {
+      startManagedAiCodexCapacityAlertLoop(managedAiRuntime)
+    }
   }
   app.listen(env.port, () => {
     console.log(`den listening on ${env.port} (provisioner=${env.provisionerMode})`)
