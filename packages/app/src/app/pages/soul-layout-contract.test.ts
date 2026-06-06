@@ -185,6 +185,12 @@ test("SoulView keeps runtime materialization automatic and shows diagnostics onl
   assert.doesNotMatch(zhSource, /手动同步|立即同步/i);
 });
 
+test("Soul materialization diagnostics avoid runtime terminology in user-facing copy", () => {
+  assert.doesNotMatch(enSource, /"soul\.materialization_status":\s*"Runtime status"/);
+  assert.doesNotMatch(csSource, /"soul\.materialization_status":\s*"Stav runtime"/);
+  assert.doesNotMatch(zhSource, /"soul\.materialization_status":\s*"运行状态"/);
+});
+
 test("Soul user source copy reflects that the editor is available now", () => {
   assert.doesNotMatch(enSource, /Editor controls will arrive in a later task/);
   assert.doesNotMatch(csSource, /Editační ovládání přijde v dalším úkolu/);
