@@ -994,6 +994,17 @@ export type VesloConversationRunResult = {
   upstream?: unknown;
 };
 
+export type VesloConversationAbortResult = {
+  ok: boolean;
+  workspaceId: string;
+  conversationId: string;
+  opencodeSessionId: string;
+  runId: string;
+  status: "submitted";
+  kind: "abort";
+  upstream?: unknown;
+};
+
 export type VesloInboxItem = {
   id: string;
   name?: string;
@@ -2139,6 +2150,7 @@ export function createVesloServerClient(options: {
     sessionTranscript: 10_000,
     conversationCreate: 30_000,
     conversationRun: 30_000,
+    conversationAbort: 10_000,
     status: 6_000,
     config: 10_000,
     opencodeRouter: 10_000,
@@ -2279,6 +2291,21 @@ export function createVesloServerClient(options: {
           method: "POST",
           body: input,
           timeoutMs: timeouts.conversationRun,
+        },
+      ),
+    abortConversation: (workspaceId: string, conversationId: string, input: { directory?: string | null; runId: string }) =>
+      requestJson<VesloConversationAbortResult>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/conversations/${encodeURIComponent(conversationId)}/abort`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: {
+            runId: input.runId,
+            ...(input.directory?.trim() ? { directory: input.directory.trim() } : {}),
+          },
+          timeoutMs: timeouts.conversationAbort,
         },
       ),
     getSessionLatestRunArtifacts: (workspaceId: string, sessionId: string) =>
