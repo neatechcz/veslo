@@ -1743,64 +1743,6 @@ export default function App() {
   });
 
   const [composerDraftBySessionId, setComposerDraftBySessionId] = createSignal<Record<string, ComposerDraft>>({});
-  const composerTargetWorkspaceLabel = (workspace: WorkspaceInfo) =>
-    workspace.displayName?.trim() ||
-    workspace.vesloWorkspaceName?.trim() ||
-    workspace.name?.trim() ||
-    workspace.vesloHostUrl?.trim() ||
-    workspace.baseUrl?.trim() ||
-    workspace.path?.trim() ||
-    workspace.id;
-  const composerTargetOptions = createMemo<ComposerTargetOption[]>(() => {
-    const summaries = pendingDraftSummaries();
-    const hasDraft = (key: string) =>
-      summaries.some((draft) => {
-        try {
-          return resolvePendingDraftKey({
-            kind: draft.kind,
-            workspaceId: draft.workspaceId,
-            directory: draft.directory ?? null,
-            privateWorkspaceId: draft.privateWorkspaceId ?? null,
-          }) === key;
-        } catch {
-          return false;
-        }
-      });
-
-    const chatId = resolvePendingDraftKey({ kind: "new-private" });
-    const options: ComposerTargetOption[] = [{
-      id: chatId,
-      kind: "chat",
-      label: t("session.target_chat_label", currentLocale()),
-      description: t("session.target_chat_description", currentLocale()),
-      draftStatus: hasDraft(chatId) ? "draft" : null,
-    }];
-
-    for (const workspace of workspaceStore.workspaces()) {
-      const directory = normalizeDirectoryPath(workspace.directory?.trim() || workspace.path?.trim() || "");
-      if (!workspace.id || !directory) continue;
-      const id = resolvePendingDraftKey({ kind: "directory", workspaceId: workspace.id, directory });
-      options.push({
-        id,
-        kind: "workspace",
-        workspaceId: workspace.id,
-        directory,
-        label: composerTargetWorkspaceLabel(workspace),
-        description: directory,
-        draftStatus: hasDraft(id) ? "draft" : null,
-      });
-    }
-
-    options.push({
-      id: "__choose-workspace__",
-      kind: "choose-workspace",
-      label: t("session.target_choose_workspace_label", currentLocale()),
-      description: t("session.target_choose_workspace_description", currentLocale()),
-    });
-
-    return options;
-  });
-  const activeComposerTargetId = createMemo(() => activePendingDraftKey());
   const findComposerTargetOption = (targetId: string): ComposerTargetOption | null => {
     const id = targetId.trim();
     if (!id) return null;
@@ -2034,7 +1976,7 @@ export default function App() {
       target = pickedTarget;
     }
 
-    if (target.id === activeComposerTargetId()) return { status: "switched" };
+    if (target.id === activePendingDraftKey()) return { status: "switched" };
     if (!isTauriRuntime()) return { status: "blocked", message: t("session.target_not_available", currentLocale()) };
 
     const currentDraft = composerDraft();
@@ -3956,6 +3898,81 @@ export default function App() {
       sessionStore.hydrateTranscriptSnapshot(snapshot);
     },
   });
+  const composerTargetWorkspaceLabel = (workspace: WorkspaceInfo) =>
+    workspace.displayName?.trim() ||
+    workspace.vesloWorkspaceName?.trim() ||
+    workspace.name?.trim() ||
+    workspace.vesloHostUrl?.trim() ||
+    workspace.baseUrl?.trim() ||
+    workspace.path?.trim() ||
+    workspace.id;
+  const composerTargetOptions = createMemo<ComposerTargetOption[]>(() => {
+    const summaries = pendingDraftSummaries();
+    const hasDraft = (key: string) =>
+      summaries.some((draft) => {
+        try {
+          return resolvePendingDraftKey({
+            kind: draft.kind,
+            workspaceId: draft.workspaceId,
+            directory: draft.directory ?? null,
+            privateWorkspaceId: draft.privateWorkspaceId ?? null,
+          }) === key;
+        } catch {
+          return false;
+        }
+      });
+
+    const chatId = resolvePendingDraftKey({ kind: "new-private" });
+    const options: ComposerTargetOption[] = [{
+      id: chatId,
+      kind: "chat",
+      label: t("session.target_chat_label", currentLocale()),
+      description: t("session.target_chat_description", currentLocale()),
+      draftStatus: hasDraft(chatId) ? "draft" : null,
+    }];
+
+    for (const workspace of workspaceStore.workspaces()) {
+      const directory = normalizeDirectoryPath(workspace.directory?.trim() || workspace.path?.trim() || "");
+      if (!workspace.id || !directory) continue;
+      const id = resolvePendingDraftKey({ kind: "directory", workspaceId: workspace.id, directory });
+      options.push({
+        id,
+        kind: "workspace",
+        workspaceId: workspace.id,
+        directory,
+        label: composerTargetWorkspaceLabel(workspace),
+        description: directory,
+        draftStatus: hasDraft(id) ? "draft" : null,
+      });
+    }
+
+    options.push({
+      id: "__choose-workspace__",
+      kind: "choose-workspace",
+      label: t("session.target_choose_workspace_label", currentLocale()),
+      description: t("session.target_choose_workspace_description", currentLocale()),
+    });
+
+    return options;
+  });
+  const activeWorkspaceComposerTargetId = createMemo(() => {
+    const chatId = resolvePendingDraftKey({ kind: "new-private" });
+    const workspaceId = workspaceStore.activeWorkspaceId().trim();
+    const active = workspaceStore.activeWorkspaceDisplay();
+    const directory = normalizeDirectoryPath(
+      active.directory?.trim() ||
+      active.path?.trim() ||
+      workspaceStore.activeWorkspaceRoot().trim() ||
+      "",
+    );
+
+    if (!workspaceId || !directory || workspaceStore.isPrivateWorkspacePath(directory)) {
+      return chatId;
+    }
+
+    return resolvePendingDraftKey({ kind: "directory", workspaceId, directory });
+  });
+  const activeComposerTargetId = createMemo(() => activePendingDraftKey() ?? activeWorkspaceComposerTargetId());
 
   let lastLocalVesloEnsureKey = "";
   createEffect(() => {

@@ -42,6 +42,48 @@ export function draftPreviewText(draft: ComposerDraft | null | undefined): strin
   return draft.parts.some((part) => part.type !== "text") ? "Příloha nebo odkaz" : "";
 }
 
+function draftEquivalenceSignature(draft: ComposerDraft | null | undefined): string {
+  if (!draft) {
+    return "";
+  }
+
+  return JSON.stringify({
+    mode: draft.mode,
+    text: compactWhitespace(draft.text),
+    resolvedText: compactWhitespace(draft.resolvedText ?? ""),
+    command: draft.command
+      ? {
+          name: draft.command.name,
+          arguments: draft.command.arguments,
+        }
+      : null,
+    parts: draft.parts.map((part) => {
+      if (part.type === "text") {
+        return { type: part.type, text: compactWhitespace(part.text) };
+      }
+      if (part.type === "agent") {
+        return { type: part.type, name: part.name };
+      }
+      if (part.type === "file") {
+        return { type: part.type, path: part.path, label: part.label ?? "" };
+      }
+      return {
+        type: part.type,
+        id: part.id,
+        label: part.label,
+        text: part.text,
+        lines: part.lines,
+      };
+    }),
+    attachments: draft.attachments.map((attachment) => ({
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      size: attachment.size,
+      kind: attachment.kind,
+    })),
+  });
+}
+
 export function resolveComposerTargetConflict(input: {
   current: ComposerDraft;
   destination: ComposerDraft | null;
@@ -64,7 +106,7 @@ export function resolveComposerTargetConflict(input: {
   const currentPreview = draftPreviewText(input.current);
   const destinationPreview = draftPreviewText(input.destination);
 
-  if (currentPreview === destinationPreview) {
+  if (draftEquivalenceSignature(input.current) === draftEquivalenceSignature(input.destination)) {
     return { kind: "load-destination" };
   }
 

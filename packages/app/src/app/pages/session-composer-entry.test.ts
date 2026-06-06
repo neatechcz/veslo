@@ -36,12 +36,19 @@ test("app builds target options from workspaces and pending drafts", () => {
   assert.match(appSource, /kind: "workspace"/);
 });
 
+test("app defaults composer target display to the active workspace when no pending draft is selected", () => {
+  assert.match(appSource, /const activeWorkspaceComposerTargetId = createMemo\(\(\) => \{/);
+  assert.match(appSource, /return resolvePendingDraftKey\(\{ kind: "directory", workspaceId, directory \}\);/);
+  assert.match(appSource, /const activeComposerTargetId = createMemo\(\(\) => activePendingDraftKey\(\) \?\? activeWorkspaceComposerTargetId\(\)\);/);
+});
+
 test("switchComposerTarget returns conflict before mutating active draft", () => {
   assert.match(appSource, /resolveComposerTargetConflict\(\{/);
   assert.match(appSource, /status: "conflict"/);
   assert.match(appSource, /resolution === "use-current"/);
   assert.match(appSource, /resolution === "load-existing"/);
   assert.match(appSource, /setActivePendingDraftKey\(target\.id\)/);
+  assert.match(appSource, /if \(target\.id === activePendingDraftKey\(\)\) return \{ status: "switched" \};/);
 });
 
 test("switchComposerTarget blocks when an existing destination draft cannot be loaded", () => {
@@ -60,8 +67,11 @@ test("switchComposerTarget routes picked workspaces through safe switching", () 
 test("target picker and conflict modal expose stable test hooks", () => {
   assert.match(pickerSource, /data-testid="composer-target-picker"/);
   assert.match(pickerSource, /data-testid="composer-target-option"/);
+  assert.match(pickerSource, /data-composer-target-kind=\{option\.kind\}/);
+  assert.match(pickerSource, /data-testid="composer-target-draft-badge"/);
   assert.match(pickerSource, /session\.target_draft_badge/);
   assert.match(conflictSource, /data-testid="composer-target-conflict-modal"/);
+  assert.match(conflictSource, /data-testid="composer-target-conflict-close"/);
   assert.match(conflictSource, /data-testid="composer-target-use-current"/);
   assert.match(conflictSource, /data-testid="composer-target-load-existing"/);
   assert.match(conflictSource, /session\.target_conflict_escape_hint/);

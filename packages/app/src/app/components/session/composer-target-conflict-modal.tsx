@@ -46,6 +46,7 @@ export default function ComposerTargetConflictModal(props: ComposerTargetConflic
                 </span>
                 <button
                   type="button"
+                  data-testid="composer-target-conflict-close"
                   onClick={props.onCancel}
                   aria-label={translate("session.target_conflict_escape_hint")}
                   class="inline-flex h-8 w-8 items-center justify-center rounded-lg text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.2)]"

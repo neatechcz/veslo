@@ -93,6 +93,8 @@ export default function ComposerTargetPicker(props: ComposerTargetPickerProps) {
                   role="menuitemradio"
                   aria-checked={selected()}
                   data-testid="composer-target-option"
+                  data-composer-target-kind={option.kind}
+                  data-composer-target-id={option.id}
                   disabled={props.disabled}
                   onClick={() => selectOption(option.id)}
                   class="flex w-full items-start gap-3 px-3 py-2.5 text-left transition-colors hover:bg-dls-hover focus:bg-dls-hover focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
@@ -104,7 +106,10 @@ export default function ComposerTargetPicker(props: ComposerTargetPickerProps) {
                     <span class="flex min-w-0 items-center gap-2">
                       <span class="truncate font-product type-ui-sm font-semibold text-dls-text">{option.label}</span>
                       <Show when={option.draftStatus === "draft"}>
-                        <span class="shrink-0 rounded-md border border-amber-7 bg-amber-3 px-1.5 py-0.5 font-product text-[11px] font-semibold leading-4 text-amber-11">
+                        <span
+                          data-testid="composer-target-draft-badge"
+                          class="shrink-0 rounded-md border border-amber-7 bg-amber-3 px-1.5 py-0.5 font-product text-[11px] font-semibold leading-4 text-amber-11"
+                        >
                           {translate("session.target_draft_badge")}
                         </span>
                       </Show>

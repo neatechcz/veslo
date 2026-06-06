@@ -81,6 +81,57 @@ test("resolveComposerTargetConflict loads destination when previews match", () =
   });
 });
 
+test("resolveComposerTargetConflict reports conflict when same visible text has different attachments", () => {
+  assert.deepEqual(
+    resolveComposerTargetConflict({
+      current: {
+        ...draft("same"),
+        attachments: [fileAttachment("brief.pdf")],
+      },
+      destination: draft("same"),
+    }),
+    {
+      kind: "conflict",
+      currentPreview: "same",
+      destinationPreview: "same",
+    },
+  );
+});
+
+test("resolveComposerTargetConflict reports conflict when same visible text has different structured parts", () => {
+  assert.deepEqual(
+    resolveComposerTargetConflict({
+      current: {
+        ...draft("same"),
+        parts: [{ type: "paste", id: "paste-1", label: "pasted text", text: "same", lines: 1 }],
+      },
+      destination: draft("same"),
+    }),
+    {
+      kind: "conflict",
+      currentPreview: "same",
+      destinationPreview: "same",
+    },
+  );
+});
+
+test("resolveComposerTargetConflict reports conflict when same visible text has a command", () => {
+  assert.deepEqual(
+    resolveComposerTargetConflict({
+      current: {
+        ...draft("/review"),
+        command: { name: "review", arguments: "" },
+      },
+      destination: draft("/review"),
+    }),
+    {
+      kind: "conflict",
+      currentPreview: "/review",
+      destinationPreview: "/review",
+    },
+  );
+});
+
 test("resolveComposerTargetConflict reports conflict for different current and destination content", () => {
   assert.deepEqual(resolveComposerTargetConflict({ current: draft("new"), destination: draft("old") }), {
     kind: "conflict",
