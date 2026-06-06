@@ -35,7 +35,7 @@ import {
   createDefaultUserCredentialDependencies,
   type RuntimeState,
 } from "./managed-ai/runtime/default-runtime.js"
-import { runCodexCapacityAlertMonitor } from "./managed-ai/alerts/codex-capacity-monitor.js"
+import { createCodexCapacityAlertMonitorRunner } from "./managed-ai/alerts/codex-capacity-monitor.js"
 import { buildCodexCapacityOverview } from "./managed-ai/usage/codex-capacity.js"
 import { orgsRouter } from "./http/orgs.js"
 import { orgMcpCatalogRouter } from "./http/org-mcp-catalog.js"
@@ -276,20 +276,21 @@ function startManagedAiCodexCapacityAlertLoop(runtime: RuntimeState) {
     return
   }
 
-  const runMonitor = () => {
-    void runCodexCapacityAlertMonitor({
-      loadCapacityOverview: () => loadManagedAiCodexCapacityOverview(runtime),
-      listAdminRecipients: listPlatformAdminAlertRecipients,
-      sendEmail: sendAdminAlertEmail,
-      audit: runtime.audit,
-    }).catch((error) => {
+  const runMonitor = createCodexCapacityAlertMonitorRunner({
+    loadCapacityOverview: () => loadManagedAiCodexCapacityOverview(runtime),
+    listAdminRecipients: listPlatformAdminAlertRecipients,
+    sendEmail: sendAdminAlertEmail,
+    audit: runtime.audit,
+  })
+  const runMonitorBestEffort = () => {
+    void runMonitor().catch((error) => {
       const message = error instanceof Error ? error.stack ?? error.message : String(error)
       console.error(`[den] managed-ai Codex capacity alert monitor failed: ${message}`)
     })
   }
 
-  runMonitor()
-  const interval = setInterval(runMonitor, MANAGED_AI_CODEX_CAPACITY_ALERT_INTERVAL_MS)
+  runMonitorBestEffort()
+  const interval = setInterval(runMonitorBestEffort, MANAGED_AI_CODEX_CAPACITY_ALERT_INTERVAL_MS)
   unrefTimer(interval)
 }
 

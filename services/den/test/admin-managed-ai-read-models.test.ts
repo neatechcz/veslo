@@ -253,6 +253,14 @@ function createReadModelApp(options: {
   return app
 }
 
+function muteConsoleError(): () => void {
+  const original = console.error
+  console.error = () => undefined
+  return () => {
+    console.error = original
+  }
+}
+
 test("GET /admin/api/credentials returns repository-backed credentials", async () => {
   const app = createReadModelApp()
   const server = app.listen(0, "127.0.0.1")
@@ -1064,6 +1072,83 @@ test("GET /admin/api/alerts includes synthetic Codex capacity threshold alerts",
     ])
     assert.match(body.alerts[0].runbook, /Codex Team One.*5h 5% remaining.*weekly 20% remaining/)
   } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/api/alerts returns repository alerts when Codex capacity probing fails", async () => {
+  const restoreConsole = muteConsoleError()
+  const app = createReadModelApp({
+    credentials: [
+      createCredential("cred_codex_1", {
+        provider: "codex_oauth",
+        name: "Codex Team One",
+        activeLeases: 0,
+        totalTokens: 0,
+      }),
+    ],
+    codexStatusProvider: {
+      async getStatus() {
+        throw new Error("codex status unavailable")
+      },
+    },
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/alerts`)
+
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), {
+      alerts: [createAlert("alert_health_1")],
+    })
+  } finally {
+    restoreConsole()
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/api/alerts returns repository alerts when Codex capacity probing stalls", async () => {
+  const restoreConsole = muteConsoleError()
+  const previousTimeout = process.env.MANAGED_AI_CODEX_CAPACITY_ALERT_READ_TIMEOUT_MS
+  process.env.MANAGED_AI_CODEX_CAPACITY_ALERT_READ_TIMEOUT_MS = "20"
+  const app = createReadModelApp({
+    credentials: [
+      createCredential("cred_codex_1", {
+        provider: "codex_oauth",
+        name: "Codex Team One",
+        activeLeases: 0,
+        totalTokens: 0,
+      }),
+    ],
+    codexStatusProvider: {
+      async getStatus() {
+        return new Promise(() => undefined)
+      },
+    },
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/alerts`)
+
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), {
+      alerts: [createAlert("alert_health_1")],
+    })
+  } finally {
+    if (previousTimeout === undefined) {
+      delete process.env.MANAGED_AI_CODEX_CAPACITY_ALERT_READ_TIMEOUT_MS
+    } else {
+      process.env.MANAGED_AI_CODEX_CAPACITY_ALERT_READ_TIMEOUT_MS = previousTimeout
+    }
+    restoreConsole()
     server.close()
     await once(server, "close")
   }

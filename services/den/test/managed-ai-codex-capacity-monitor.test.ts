@@ -1,7 +1,10 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { runCodexCapacityAlertMonitor } from "../src/managed-ai/alerts/codex-capacity-monitor.js"
+import {
+  createCodexCapacityAlertMonitorRunner,
+  runCodexCapacityAlertMonitor,
+} from "../src/managed-ai/alerts/codex-capacity-monitor.js"
 import type { AlertRecord } from "../src/managed-ai/alerts/repository.js"
 import type { AuditEventRecord, RecordAuditEventInput } from "../src/managed-ai/audit/repository.js"
 import type { CodexCapacityOverview } from "../src/managed-ai/usage/codex-capacity.js"
@@ -63,6 +66,18 @@ function createAuditEvent(overrides: Partial<AuditEventRecord> = {}): AuditEvent
   }
 }
 
+function toAuditEvent(input: RecordAuditEventInput, index: number): AuditEventRecord {
+  return createAuditEvent({
+    id: `audit_${index}`,
+    timestamp: "2026-06-06T12:00:00.000Z",
+    action: input.action,
+    entityType: input.entityType,
+    entityId: input.entityId,
+    result: input.result,
+    summary: input.summary ?? "",
+  })
+}
+
 test("Codex capacity monitor emails every admin recipient for urgent and critical alerts", async () => {
   const sent: Array<{ to: string; subject: string; text: string }> = []
   const auditEvents: RecordAuditEventInput[] = []
@@ -106,18 +121,42 @@ test("Codex capacity monitor emails every admin recipient for urgent and critica
   assert.deepEqual(auditEvents.map((event) => ({
     action: event.action,
     entityType: event.entityType,
-    entityId: event.entityId,
     result: event.result,
-  })), [{
-    action: "codex_capacity_alert.email.sent",
-    entityType: "codex_capacity_alert",
-    entityId: "alert_codex_capacity_five_hour_95",
-    result: "ok",
-  }])
+  })), [
+    {
+      action: "codex_capacity_alert.email.sent",
+      entityType: "codex_capacity_alert_email",
+      result: "ok",
+    },
+    {
+      action: "codex_capacity_alert.email.sent",
+      entityType: "codex_capacity_alert_email",
+      result: "ok",
+    },
+  ])
+  assert.notEqual(auditEvents[0]?.entityId, auditEvents[1]?.entityId)
 })
 
-test("Codex capacity monitor deduplicates already emailed alert ids", async () => {
+test("Codex capacity monitor deduplicates already emailed alert recipients", async () => {
   const sent: Array<{ to: string; subject: string; text: string }> = []
+  const auditEvents: RecordAuditEventInput[] = []
+
+  await runCodexCapacityAlertMonitor({
+    loadCapacityOverview: async () => createCapacity(),
+    listAdminRecipients: async () => ["admin-one@example.test"],
+    sendEmail: async () => {
+      return
+    },
+    audit: {
+      async listEvents() {
+        return []
+      },
+      async recordEvent(input) {
+        auditEvents.push(input)
+      },
+    },
+    now: () => new Date("2026-06-06T12:00:00.000Z"),
+  })
 
   const result = await runCodexCapacityAlertMonitor({
     loadCapacityOverview: async () => createCapacity(),
@@ -127,10 +166,10 @@ test("Codex capacity monitor deduplicates already emailed alert ids", async () =
     },
     audit: {
       async listEvents() {
-        return [createAuditEvent()]
+        return auditEvents.map(toAuditEvent)
       },
       async recordEvent() {
-        assert.fail("deduped alert should not record a new send")
+        assert.fail("deduped recipient should not record a new send")
       },
     },
     now: () => new Date("2026-06-06T12:00:00.000Z"),
@@ -142,6 +181,101 @@ test("Codex capacity monitor deduplicates already emailed alert ids", async () =
     recipients: 1,
   })
   assert.deepEqual(sent, [])
+})
+
+test("Codex capacity monitor retries only recipients that failed before send completion", async () => {
+  const auditEvents: RecordAuditEventInput[] = []
+  const firstAttempts: string[] = []
+
+  await assert.rejects(
+    runCodexCapacityAlertMonitor({
+      loadCapacityOverview: async () => createCapacity(),
+      listAdminRecipients: async () => ["admin-one@example.test", "admin-two@example.test"],
+      sendEmail: async (input) => {
+        firstAttempts.push(input.to)
+        if (input.to === "admin-two@example.test") {
+          throw new Error("smtp unavailable")
+        }
+      },
+      audit: {
+        async listEvents() {
+          return []
+        },
+        async recordEvent(input) {
+          auditEvents.push(input)
+        },
+      },
+      now: () => new Date("2026-06-06T12:00:00.000Z"),
+    }),
+    /smtp unavailable/,
+  )
+
+  assert.deepEqual(firstAttempts, ["admin-one@example.test", "admin-two@example.test"])
+
+  const retryAttempts: string[] = []
+  const result = await runCodexCapacityAlertMonitor({
+    loadCapacityOverview: async () => createCapacity(),
+    listAdminRecipients: async () => ["admin-one@example.test", "admin-two@example.test"],
+    sendEmail: async (input) => {
+      retryAttempts.push(input.to)
+    },
+    audit: {
+      async listEvents() {
+        return auditEvents.map(toAuditEvent)
+      },
+      async recordEvent(input) {
+        auditEvents.push(input)
+      },
+    },
+    now: () => new Date("2026-06-06T12:01:00.000Z"),
+  })
+
+  assert.deepEqual(retryAttempts, ["admin-two@example.test"])
+  assert.deepEqual(result, {
+    evaluatedAlerts: 1,
+    emailsSent: 1,
+    recipients: 2,
+  })
+})
+
+test("Codex capacity monitor runner skips overlapping runs", async () => {
+  let releaseLoad: (() => void) | null = null
+  let loadCalls = 0
+  const runner = createCodexCapacityAlertMonitorRunner({
+    loadCapacityOverview: async () => {
+      loadCalls += 1
+      await new Promise<void>((resolve) => {
+        releaseLoad = resolve
+      })
+      return createCapacity()
+    },
+    listAdminRecipients: async () => ["admin-one@example.test"],
+    sendEmail: async () => {
+      return
+    },
+    audit: {
+      async listEvents() {
+        return []
+      },
+      async recordEvent() {
+        return
+      },
+    },
+    now: () => new Date("2026-06-06T12:00:00.000Z"),
+  })
+
+  const firstRun = runner()
+  const secondRun = await runner()
+  releaseLoad?.()
+  await firstRun
+
+  assert.equal(loadCalls, 1)
+  assert.deepEqual(secondRun, {
+    evaluatedAlerts: 0,
+    emailsSent: 0,
+    recipients: 0,
+    skipped: true,
+  })
 })
 
 test("Codex capacity monitor sends critical email when Codex limits are not visible", async () => {

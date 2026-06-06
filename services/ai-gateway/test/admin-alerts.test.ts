@@ -75,6 +75,14 @@ function createCredential(id: string, overrides: Partial<CredentialRecord> = {})
   };
 }
 
+function muteConsoleError(): () => void {
+  const original = console.error;
+  console.error = () => undefined;
+  return () => {
+    console.error = original;
+  };
+}
+
 test("/admin/api/alerts returns repository-backed alerts instead of fixtures", async () => {
   const expected = [
     {
@@ -199,6 +207,129 @@ test("/admin/api/alerts includes synthetic Codex capacity threshold alerts", asy
     ]);
     assert.match(body.alerts[0].runbook, /Codex Team One.*5h 5% remaining.*weekly 20% remaining/);
   } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("/admin/api/alerts returns repository alerts when Codex capacity probing fails", async () => {
+  const restoreConsole = muteConsoleError();
+  const expected = [
+    {
+      id: "alert_repo_1",
+      title: "Provider rate limits increasing",
+      severity: "high" as const,
+      source: "provider-rate-limit",
+      status: "active" as const,
+      credentialId: "cred_openai_1",
+      affectedSessions: 3,
+      firstSeenAt: "2026-04-03T10:00:00.000Z",
+      lastSeenAt: "2026-04-03T10:00:00.000Z",
+      owner: null,
+      runbook: "Inspect quota pressure and rotate session load across healthy credentials.",
+    },
+  ];
+
+  const service = createDefaultAdminService(
+    "http://den.example.test",
+    {
+      denClient: createDenClient(),
+      alertRepository: {
+        async listAlerts() {
+          return expected;
+        },
+      },
+      credentialReadRepository: {
+        async listAdminCredentials() {
+          return [createCredential("cred_codex_1", { name: "Codex Team One" })];
+        },
+      },
+      codexStatusProvider: {
+        async getStatus() {
+          throw new Error("codex status unavailable");
+        },
+      },
+    } as never,
+  );
+  const app = createApp({ admin: service });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/alerts`, {
+      headers: AUTHORIZATION,
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { alerts: expected });
+  } finally {
+    restoreConsole();
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("/admin/api/alerts returns repository alerts when Codex capacity probing stalls", async () => {
+  const restoreConsole = muteConsoleError();
+  const previousTimeout = process.env.AI_GATEWAY_CODEX_CAPACITY_ALERT_READ_TIMEOUT_MS;
+  process.env.AI_GATEWAY_CODEX_CAPACITY_ALERT_READ_TIMEOUT_MS = "20";
+  const expected = [
+    {
+      id: "alert_repo_1",
+      title: "Provider rate limits increasing",
+      severity: "high" as const,
+      source: "provider-rate-limit",
+      status: "active" as const,
+      credentialId: "cred_openai_1",
+      affectedSessions: 3,
+      firstSeenAt: "2026-04-03T10:00:00.000Z",
+      lastSeenAt: "2026-04-03T10:00:00.000Z",
+      owner: null,
+      runbook: "Inspect quota pressure and rotate session load across healthy credentials.",
+    },
+  ];
+
+  const service = createDefaultAdminService(
+    "http://den.example.test",
+    {
+      denClient: createDenClient(),
+      alertRepository: {
+        async listAlerts() {
+          return expected;
+        },
+      },
+      credentialReadRepository: {
+        async listAdminCredentials() {
+          return [createCredential("cred_codex_1", { name: "Codex Team One" })];
+        },
+      },
+      codexStatusProvider: {
+        async getStatus() {
+          return new Promise(() => undefined);
+        },
+      },
+    } as never,
+  );
+  const app = createApp({ admin: service });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/alerts`, {
+      headers: AUTHORIZATION,
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { alerts: expected });
+  } finally {
+    if (previousTimeout === undefined) {
+      delete process.env.AI_GATEWAY_CODEX_CAPACITY_ALERT_READ_TIMEOUT_MS;
+    } else {
+      process.env.AI_GATEWAY_CODEX_CAPACITY_ALERT_READ_TIMEOUT_MS = previousTimeout;
+    }
+    restoreConsole();
     server.close();
     await once(server, "close");
   }

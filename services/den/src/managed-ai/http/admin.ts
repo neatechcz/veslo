@@ -43,6 +43,8 @@ import {
 } from "../usage/codex-status.js"
 import type { UsageAggregateResponse, UsageCredentialAggregate, UsageRepository } from "../usage/repository.js"
 
+const DEFAULT_CODEX_CAPACITY_ALERT_READ_TIMEOUT_MS = 2500
+
 class HttpError extends Error {
   constructor(
     message: string,
@@ -337,7 +339,12 @@ export function createManagedAiAdminRouteDeps(
   }
 
   async function listCodexCapacityAlerts(): Promise<AlertRecord[]> {
-    const credentials = await listCredentialsWithAlerts()
+    const listAdminCredentials = deps.credentials.listAdminCredentials
+    if (!listAdminCredentials) {
+      return []
+    }
+
+    const credentials = await withCodexUpstreamStatus(await listAdminCredentials.call(deps.credentials))
     return buildCodexCapacityAlerts(
       buildCodexCapacityOverview(
         credentials
@@ -351,6 +358,19 @@ export function createManagedAiAdminRouteDeps(
       ),
       now(),
     )
+  }
+
+  async function listCodexCapacityAlertsBestEffort(): Promise<AlertRecord[]> {
+    try {
+      return await withTimeout(
+        listCodexCapacityAlerts(),
+        readCodexCapacityAlertReadTimeoutMs(),
+        "codex_capacity_alerts_timeout",
+      )
+    } catch (error) {
+      console.error("managed_ai_admin_codex_capacity_alerts_failed", error)
+      return []
+    }
   }
 
   async function listAvailableAssignmentCredentials(): Promise<AdminCredentialOption[] | undefined> {
@@ -717,7 +737,7 @@ export function createManagedAiAdminRouteDeps(
 
       try {
         const [capacityAlerts, repositoryAlerts] = await Promise.all([
-          listCodexCapacityAlerts(),
+          listCodexCapacityAlertsBestEffort(),
           deps.alerts.listAlerts(),
         ])
         return {
@@ -1405,6 +1425,34 @@ function openAiStateSecret() {
     throw new HttpError("managed_ai_secret_key_not_configured", 500)
   }
   return secret
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), timeoutMs)
+    unrefTimer(timeout)
+  })
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeout) {
+      clearTimeout(timeout)
+    }
+  })
+}
+
+function readCodexCapacityAlertReadTimeoutMs(): number {
+  const raw = Number(process.env.MANAGED_AI_CODEX_CAPACITY_ALERT_READ_TIMEOUT_MS)
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_CODEX_CAPACITY_ALERT_READ_TIMEOUT_MS
+}
+
+function unrefTimer(handle: unknown) {
+  if (!handle || typeof handle !== "object") {
+    return
+  }
+  const unref = (handle as { unref?: unknown }).unref
+  if (typeof unref === "function") {
+    unref.call(handle)
+  }
 }
 
 function _toAdminCredentialRecord(record: CredentialRecord): AdminCredentialRecord {

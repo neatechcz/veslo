@@ -388,6 +388,7 @@ const ADMIN_PENDING_AUTH_COOKIE_NAME = "veslo.ai-gateway.admin.browser-auth";
 const ADMIN_AUTH_COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 const ADMIN_PENDING_AUTH_COOKIE_MAX_AGE_SECONDS = 10 * 60;
 const ADMIN_AUTH_RANDOM_BYTES = 32;
+const DEFAULT_CODEX_CAPACITY_ALERT_READ_TIMEOUT_MS = 2500;
 
 type PendingAdminBrowserAuth = {
   sessionId: string;
@@ -1592,6 +1593,19 @@ export function createDefaultAdminService(
     return buildCodexCapacityAlerts(buildCodexCapacityOverview(capacityCredentials), now());
   }
 
+  async function listCodexCapacityAlertsBestEffort(): Promise<AlertRecord[]> {
+    try {
+      return await withTimeout(
+        listCodexCapacityAlerts(),
+        readCodexCapacityAlertReadTimeoutMs(),
+        "codex_capacity_alerts_timeout",
+      );
+    } catch (error) {
+      console.error("ai_gateway_admin_codex_capacity_alerts_failed", error);
+      return [];
+    }
+  }
+
   return {
     async startBrowserAuth(input) {
       return denClient.startBrowserAuth(input);
@@ -1905,7 +1919,7 @@ export function createDefaultAdminService(
     },
     async listAlerts() {
       const [capacityAlerts, repositoryAlerts] = await Promise.all([
-        listCodexCapacityAlerts(),
+        listCodexCapacityAlertsBestEffort(),
         getAlertRepository().listAlerts(),
       ]);
       return { alerts: [...capacityAlerts, ...repositoryAlerts] };
@@ -3486,6 +3500,34 @@ export function createAdminRouter(adminService: AdminService) {
   router.use("/admin", express.static(publicDir, { index: false }));
 
   return router;
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+    unrefTimer(timeout);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  });
+}
+
+function readCodexCapacityAlertReadTimeoutMs(): number {
+  const raw = Number(process.env.AI_GATEWAY_CODEX_CAPACITY_ALERT_READ_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_CODEX_CAPACITY_ALERT_READ_TIMEOUT_MS;
+}
+
+function unrefTimer(handle: unknown) {
+  if (!handle || typeof handle !== "object") {
+    return;
+  }
+  const unref = (handle as { unref?: unknown }).unref;
+  if (typeof unref === "function") {
+    unref.call(handle);
+  }
 }
 
 function parseCredentialProvider(value: unknown): LeaseProvider | null {
