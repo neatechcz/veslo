@@ -314,6 +314,35 @@ test("invite cannot be accepted twice", async () => {
   )
 })
 
+test("invite acceptance rejects mismatched signup email before consuming token", async () => {
+  const { invites, memberships, repository } = createMemoryRepository({
+    organizations: [{ id: "org_1", seatLimit: 2 }],
+  })
+  await repository.createOrganizationInvite({
+    orgId: "org_1",
+    email: "invited@neatech.cz",
+    role: "member",
+    tokenHash: "token_1",
+    invitedByUserId: "admin_1",
+  })
+
+  await assert.rejects(
+    repository.acceptOrganizationInvite({
+      tokenHash: "token_1",
+      userId: "user_other",
+      email: "other@neatech.cz",
+      now: new Date("2026-06-06T08:10:00.000Z"),
+    }),
+    (error) => {
+      assertErrorCode(error, "invite_not_found")
+      return true
+    },
+  )
+
+  assert.equal(invites[0].status, "pending")
+  assert.deepEqual(memberships, [])
+})
+
 test("signup invite resolution requires pending invite for matching email", async () => {
   const { repository } = createMemoryRepository({
     organizations: [{ id: "org_1", seatLimit: 2 }],

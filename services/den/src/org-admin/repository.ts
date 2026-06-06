@@ -103,6 +103,7 @@ export type CreateOrganizationInviteInput = {
 export type AcceptOrganizationInviteInput = {
   tokenHash: string
   userId: string
+  email?: string | null
   now?: Date
 }
 
@@ -257,6 +258,12 @@ export function createOrganizationAdminRepository(
         }
         if (invite.status === "expired" || (invite.expiresAt && invite.expiresAt <= acceptNow)) {
           throw new OrganizationAdminRepositoryError("invite_expired")
+        }
+        if (input.email !== undefined) {
+          const email = normalizeInviteEmail(input.email)
+          if (!email || invite.email !== email) {
+            throw new OrganizationAdminRepositoryError("invite_not_found")
+          }
         }
 
         await assertCanActivateOrganizationSeatWithStore(activeStore, invite.orgId)

@@ -1,4 +1,4 @@
-import { betterAuth } from "better-auth"
+import { APIError, betterAuth } from "better-auth"
 import { drizzleAdapter } from "better-auth/adapters/drizzle"
 import { bearer } from "better-auth/plugins/bearer"
 import { randomUUID } from "node:crypto"
@@ -12,11 +12,12 @@ import { ensureDefaultOrg } from "./orgs.js"
 import {
   completeSignupAfterUserCreate,
   resolveEmailSignupAccess,
-  type SignupAccessDecision,
+  type SignupAccessError,
 } from "./auth/signup-gate.js"
 import { normalizeInviteEmail } from "./org-admin/policy.js"
 import {
   acceptOrganizationInvite,
+  assertCanActivateOrganizationSeat,
   countActiveOrganizationSeats,
   createOrActivateOrganizationMembership,
   resolveEnabledOrganizationDomainForEmail,
@@ -29,14 +30,19 @@ type AuthNodeRequest = IncomingMessage & {
 }
 
 type AuthNodeHandler = (req: AuthNodeRequest, res: ServerResponse) => unknown
-type SignupAccessError = Extract<SignupAccessDecision, { ok: false }>["error"]
 
 type EmailSignupGuardResult =
   | { ok: true }
   | { ok: false; status: number; error: "invalid_signup_request" | SignupAccessError }
 
-const pendingEmailSignupAccess = new Map<string, { inviteToken: string | null; expiresAt: number }>()
-const PENDING_EMAIL_SIGNUP_TTL_MS = 5 * 60 * 1000
+const SIGNUP_INVITE_TOKEN_HEADER = "x-veslo-signup-invite-token"
+
+const signupAccessDependencies = {
+  resolveEnabledOrganizationDomainForEmail,
+  countActiveOrganizationSeats,
+  assertCanActivateOrganizationSeat,
+  resolveValidOrganizationInviteForSignup,
+}
 
 const socialProviders = env.github.clientId && env.github.clientSecret
   ? {
@@ -84,20 +90,26 @@ export const auth = betterAuth({
   databaseHooks: {
     user: {
       create: {
-        after: async (user) => {
+        before: async (user, context) => {
+          await authorizeSignupBeforeUserCreate({
+            email: typeof user.email === "string" ? user.email : null,
+            inviteToken: readInviteTokenFromAuthContext(context),
+          })
+        },
+        after: async (user, context) => {
           const name = user.name ?? user.email ?? "Personal"
           const signupResult = await completeSignupAfterUserCreate({
             user: {
               id: user.id,
               email: user.email,
             },
-            inviteToken: consumePendingEmailSignupInviteToken(user.email),
+            inviteToken: readInviteTokenFromAuthContext(context),
             createMembershipId: randomUUID,
             resolveEnabledOrganizationDomainForEmail,
             createOrActivateOrganizationMembership,
             acceptOrganizationInvite,
           })
-          if (!signupResult.activatedOrganizationMembership) {
+          if (signupResult.createDefaultOrganization) {
             await ensureDefaultOrg(user.id, name)
           }
           await maybeAssignDefaultManagedAiAccessForNewUser(user.id)
@@ -120,6 +132,7 @@ export function createAuthNodeHandler(baseHandler: AuthNodeHandler, guard = guar
       return
     }
 
+    setRequestSignupInviteToken(req, parseEmailSignupBody(rawBody)?.inviteToken ?? null)
     req.body = rawBody
     return baseHandler(req, res)
   }
@@ -134,11 +147,7 @@ export async function guardEmailSignupRequest(_req: AuthNodeRequest, rawBody: st
   const decision = await resolveEmailSignupAccess({
     email: parsed.email,
     inviteToken: parsed.inviteToken,
-    dependencies: {
-      resolveEnabledOrganizationDomainForEmail,
-      countActiveOrganizationSeats,
-      resolveValidOrganizationInviteForSignup,
-    },
+    dependencies: signupAccessDependencies,
   })
   if (!decision.ok) {
     return {
@@ -148,8 +157,22 @@ export async function guardEmailSignupRequest(_req: AuthNodeRequest, rawBody: st
     }
   }
 
-  rememberPendingEmailSignup(parsed.email, parsed.inviteToken)
   return { ok: true }
+}
+
+async function authorizeSignupBeforeUserCreate(input: {
+  email: string | null | undefined
+  inviteToken: string | null
+}) {
+  const decision = await resolveEmailSignupAccess({
+    email: input.email ?? "",
+    inviteToken: input.inviteToken,
+    dependencies: signupAccessDependencies,
+  })
+  if (!decision.ok) {
+    throwSignupAccessApiError(decision.error)
+  }
+  return decision
 }
 
 function isBetterAuthEmailSignupRequest(req: AuthNodeRequest) {
@@ -204,29 +227,62 @@ function readInviteToken(body: Record<string, unknown>) {
   return null
 }
 
-function rememberPendingEmailSignup(email: string, inviteToken: string | null) {
-  pendingEmailSignupAccess.set(email, {
-    inviteToken,
-    expiresAt: Date.now() + PENDING_EMAIL_SIGNUP_TTL_MS,
-  })
+function readInviteTokenFromAuthContext(context: unknown) {
+  if (!isRecord(context)) {
+    return null
+  }
+
+  if (isRecord(context.body)) {
+    const token = readInviteToken(context.body)
+    if (token) {
+      return token
+    }
+  }
+
+  if (context.path !== "/sign-up/email") {
+    return null
+  }
+
+  const getHeader = context.getHeader
+  if (typeof getHeader !== "function") {
+    return null
+  }
+
+  return decodeSignupInviteTokenHeader(getHeader(SIGNUP_INVITE_TOKEN_HEADER))
 }
 
-function consumePendingEmailSignupInviteToken(email: string | null | undefined) {
-  const normalizedEmail = normalizeInviteEmail(email)
-  if (!normalizedEmail) {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
+}
+
+function setRequestSignupInviteToken(req: AuthNodeRequest, inviteToken: string | null) {
+  const headers = req.headers as Record<string, string | string[] | undefined>
+  if (!inviteToken) {
+    delete headers[SIGNUP_INVITE_TOKEN_HEADER]
+    return
+  }
+
+  headers[SIGNUP_INVITE_TOKEN_HEADER] = Buffer.from(inviteToken, "utf8").toString("base64url")
+}
+
+function decodeSignupInviteTokenHeader(value: string | null | undefined) {
+  if (!value) {
     return null
   }
 
-  const pending = pendingEmailSignupAccess.get(normalizedEmail) ?? null
-  pendingEmailSignupAccess.delete(normalizedEmail)
-  if (!pending || pending.expiresAt < Date.now()) {
-    return null
-  }
-  return pending.inviteToken
+  const decoded = Buffer.from(value, "base64url").toString("utf8").trim()
+  return decoded || null
 }
 
 function sendAuthSignupError(res: ServerResponse, status: number, error: string) {
   res.statusCode = status
   res.setHeader("Content-Type", "application/json")
   res.end(JSON.stringify({ error }))
+}
+
+function throwSignupAccessApiError(error: SignupAccessError): never {
+  throw new APIError(error === "seat_limit_reached" ? "CONFLICT" : "FORBIDDEN", {
+    message: error,
+    code: error,
+  })
 }

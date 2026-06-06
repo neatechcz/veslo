@@ -43,11 +43,19 @@ test("email signup route is gated before Better Auth creates a user", () => {
   assert.doesNotMatch(indexSource, /app\.all\("\/api\/auth\/\*", toNodeHandler\(auth\)\)/)
 })
 
-test("auth post-create hook activates organization membership before managed AI and only creates default org as fallback", () => {
+test("auth user create hook gates before insert, activates organization access, and assigns managed AI last", () => {
   assert.equal(source.includes("completeSignupAfterUserCreate"), true)
-  assert.match(source, /if \(!signupResult\.activatedOrganizationMembership\)/)
+  assert.equal(source.includes("authorizeSignupBeforeUserCreate"), true)
+  assert.doesNotMatch(source, /pendingEmailSignupAccess/)
+  assert.match(source, /before: async/)
+  assert.match(source, /if \(signupResult\.createDefaultOrganization\)/)
   assert.match(source, /ensureDefaultOrg/)
   assert.match(source, /maybeAssignDefaultManagedAiAccessForNewUser/)
+  const beforeHookIndex = source.indexOf("before: async")
+  const afterHookIndex = source.indexOf("after: async")
+  assert.ok(beforeHookIndex >= 0)
+  assert.ok(afterHookIndex > beforeHookIndex)
+  assert.ok(source.indexOf("authorizeSignupBeforeUserCreate", beforeHookIndex) < source.indexOf("completeSignupAfterUserCreate", afterHookIndex))
   assert.ok(source.lastIndexOf("completeSignupAfterUserCreate") < source.lastIndexOf("maybeAssignDefaultManagedAiAccessForNewUser"))
 })
 
