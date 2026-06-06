@@ -60,6 +60,24 @@ test("update preference persistence waits for startup preference hydration", () 
   );
 });
 
+test("startup update check waits for preferences and updater environment", () => {
+  const startupUpdateCheckEffect = source.match(
+    /createEffect\(\(\) => \{[\s\S]*?if \(launchUpdateCheckTriggered\(\)\) return;[\s\S]*?checkForUpdates\(\{ quiet: true \}\)/,
+  )?.[0] ?? "";
+
+  assert.ok(startupUpdateCheckEffect, "app should define the startup update check effect");
+  assert.match(
+    startupUpdateCheckEffect,
+    /if \(!updateAutoCheck\(\)\) return;/,
+    "startup update check should honor stored auto-check preferences before contacting the update endpoint",
+  );
+  assert.match(
+    startupUpdateCheckEffect,
+    /const env = updateEnv\(\);[\s\S]*?if \(!env\) return;[\s\S]*?if \(!env\.supported\) return;/,
+    "startup update check should wait for updater environment and skip unsupported runtimes",
+  );
+});
+
 test("session archive loader retries the same client after server readiness changes", () => {
   const archiveLoadEffect = source.match(
     /let lastSessionArchiveClientKey = "";[\s\S]*?let sessionArchiveMigrationRunning = false;/m,

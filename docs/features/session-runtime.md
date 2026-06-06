@@ -62,6 +62,7 @@ Submit behavior:
 - while that pending send is still starting a local workspace/runtime, the footer indicator label is `Loading`/`Nahrávám`; once workspace warmup is done and the backend is simply producing the assistant turn, the same indicator returns to `Responding`/`Odpovídám`
 - first-send workspace and session materialization is scoped to the session run state; it must not hold the global app busy/navigation lock or force the user back to chat if they navigate elsewhere while the handoff is still pending
 - when a local workspace is in browsing mode, the OpenCode runtime warmup needed before a send must also stay outside the global app busy/navigation lock; the warmup may delay that send, but the rest of the app remains usable
+- remote skill registry/Den failures during local runtime warmup are degraded telemetry conditions, not prompt-send failures, as long as local materialized skill state can still be used safely
 - browsing-mode runtime warmup must preserve the currently selected session route even when the engine has to cold-start instead of reattaching to an existing runtime
 - the Composer clears immediately and remains available for a separate new draft, including while a new session is still being materialized
 - attachment staging, pending-session creation, and message handoff continue in the backend/session layer after the Composer releases the submitted draft

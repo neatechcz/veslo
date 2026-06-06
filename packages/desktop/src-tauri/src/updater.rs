@@ -107,6 +107,13 @@ pub fn updater_environment() -> UpdaterEnvironment {
     let mut supported = true;
     let mut reason: Option<String> = None;
 
+    if std::env::var_os("VESLO_DISABLE_UPDATER").is_some()
+        || std::env::var_os("VESLO_E2E_DISABLE_UPDATER").is_some()
+    {
+        supported = false;
+        reason = Some("Updates are disabled for this runtime.".to_string());
+    }
+
     if let Some(exe) = executable_path.as_ref() {
         if is_mac_dmg_or_translocated(exe) {
             supported = false;

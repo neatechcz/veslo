@@ -157,6 +157,12 @@ materialization status can skip because no registry is configured. If a run is
 active, the app sends `activeRun: true` so the server records pending sync
 instead of mutating managed skill files.
 
+If registry-backed materialization fails because the remote registry or Den
+control plane is unavailable, prompt send warmup should continue with the
+existing local materialized skill state and report the registry failure as
+degraded telemetry. Local write/config/runtime failures remain blocking because
+they can leave the runtime skill set unsafe or inconsistent.
+
 Rollout policy resolution must enforce target exclusivity: the same effective
 skill/audience cannot be materialized as both a user skill and a workspace skill.
 If registry state contains both because of legacy data or a race, the server

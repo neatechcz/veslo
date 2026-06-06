@@ -72,6 +72,25 @@ test("active runtime starts request pending global materialization instead of mu
   );
 });
 
+test("registry materialization failures do not block runtime warmup", () => {
+  const syncStart = source.indexOf("async function syncWorkspaceSkillMaterializationBeforeRuntime(");
+  assert.notStrictEqual(syncStart, -1, "syncWorkspaceSkillMaterializationBeforeRuntime is missing");
+  const syncEnd = source.indexOf("async function activateWorkspace(", syncStart);
+  assert.notStrictEqual(syncEnd, -1, "activateWorkspace should follow the sync helper");
+  const syncSource = source.slice(syncStart, syncEnd);
+
+  assert.match(
+    source,
+    /function isSkillRegistryMaterializationError\([\s\S]*skill_registry[\s\S]*Skill registry/s,
+    "workspace runtime warmup should classify registry/materialization failures separately from local runtime failures",
+  );
+  assert.match(
+    syncSource,
+    /if \(isSkillRegistryMaterializationError\(error\)\) \{[\s\S]*wsDebug\("skills:materialization:degraded"[\s\S]*return true;[\s\S]*\}/s,
+    "remote registry failures should degrade skill sync without rejecting the prompt send",
+  );
+});
+
 test("local materialization sync starts the managed server before using the fallback client", () => {
   const syncStart = source.indexOf("async function syncWorkspaceSkillMaterializationBeforeRuntime(");
   assert.notStrictEqual(syncStart, -1, "syncWorkspaceSkillMaterializationBeforeRuntime is missing");

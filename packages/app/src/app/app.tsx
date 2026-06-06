@@ -9943,6 +9943,11 @@ export default function App() {
     if (booting()) return;
     if (!isTauriRuntime()) return;
     if (launchUpdateCheckTriggered()) return;
+    if (!updateAutoCheck()) return;
+
+    const env = updateEnv();
+    if (!env) return;
+    if (!env.supported) return;
 
     const state = updateStatus();
     if (state.state === "checking" || state.state === "downloading") return;
