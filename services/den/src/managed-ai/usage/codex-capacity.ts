@@ -28,6 +28,7 @@ export type CodexCapacityOverview = {
   codexCredentials: {
     total: number
     measurable: number
+    unknown: number
     unavailable: number
   }
   fiveHour: CodexCapacityWindow
@@ -36,15 +37,18 @@ export type CodexCapacityOverview = {
 }
 
 export function buildCodexCapacityOverview(credentials: CodexCapacityCredential[]): CodexCapacityOverview {
-  const codexCredentials = credentials.filter((credential) => credential.state === "healthy" && credential.upstreamStatus !== null)
+  const codexCredentials = credentials.filter((credential) => credential.state === "healthy")
   const records = codexCredentials.map(toCapacityCredentialRecord)
   const measurable = records.filter((record) => record.limitsAvailable).length
+  const unknown = records.filter((record) => record.statusAvailable && !record.limitsAvailable).length
+  const unavailable = records.filter((record) => !record.statusAvailable).length
 
   return {
     codexCredentials: {
       total: codexCredentials.length,
       measurable,
-      unavailable: codexCredentials.length - measurable,
+      unknown,
+      unavailable,
     },
     fiveHour: summarizeWindow(records, "fiveHourRemainingPercent"),
     weekly: summarizeWindow(records, "weeklyRemainingPercent"),

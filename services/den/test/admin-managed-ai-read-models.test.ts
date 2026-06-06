@@ -111,6 +111,7 @@ function createUsageResponse() {
       codexCredentials: {
         total: 0,
         measurable: 0,
+        unknown: 0,
         unavailable: 0,
       },
       fiveHour: {
@@ -428,6 +429,7 @@ test("GET /admin/api/usage includes rich credential usage with cached tokens and
       codexCredentials: {
         total: 1,
         measurable: 1,
+        unknown: 0,
         unavailable: 0,
       },
       fiveHour: {
@@ -489,6 +491,176 @@ test("GET /admin/api/usage includes rich credential usage with cached tokens and
   }
 })
 
+test("GET /admin/api/usage keeps capacity overview based on the full Codex pool under usage filters", async () => {
+  const usage = {
+    ...createUsageResponse(),
+    groupBy: "user" as const,
+    credentialUsage: [
+      {
+        id: "cred_codex_1",
+        label: "cred_codex_1",
+        cachedTokens: 9,
+        totalTokens: 90,
+        totalRequests: 2,
+      },
+    ],
+    topCredentials: [{ id: "cred_codex_1", label: "cred_codex_1", totalTokens: 90 }],
+  }
+  const app = createReadModelApp({
+    credentials: [
+      createCredential("cred_codex_1", {
+        provider: "codex_oauth",
+        activeLeases: 0,
+        totalTokens: 0,
+      }),
+      createCredential("cred_codex_2", {
+        provider: "codex_oauth",
+        activeLeases: 0,
+        totalTokens: 0,
+      }),
+    ],
+    usage,
+    codexStatusProvider: {
+      async getStatus(input) {
+        return {
+          ...createCodexStatus(),
+          limits: {
+            fiveHour: {
+              label: "5h",
+              usedPercent: input.credentialId === "cred_codex_1" ? 20 : 80,
+              windowMinutes: 300,
+              resetAt: "2026-04-30T18:00:00.000Z",
+            },
+            weekly: {
+              label: "Weekly",
+              usedPercent: input.credentialId === "cred_codex_1" ? 40 : 60,
+              windowMinutes: 10080,
+              resetAt: "2026-05-01T12:00:00.000Z",
+            },
+          },
+        }
+      },
+    },
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/usage?groupBy=user&userId=user_admin`)
+
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.deepEqual(body.credentialUsage.map((entry: { id: string }) => entry.id), ["cred_codex_1"])
+    assert.deepEqual(body.capacity.codexCredentials, {
+      total: 2,
+      measurable: 2,
+      unknown: 0,
+      unavailable: 0,
+    })
+    assert.deepEqual(body.capacity.fiveHour, {
+      usedPercent: 50,
+      remainingPercent: 50,
+      measurableCredentials: 2,
+    })
+    assert.deepEqual(body.capacity.weekly, {
+      usedPercent: 50,
+      remainingPercent: 50,
+      measurableCredentials: 2,
+    })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/api/usage separates unknown and unavailable Codex capacity from measurable remaining capacity", async () => {
+  const app = createReadModelApp({
+    credentials: [
+      createCredential("cred_codex_measured", {
+        provider: "codex_oauth",
+        activeLeases: 0,
+        totalTokens: 0,
+      }),
+      createCredential("cred_codex_unknown", {
+        provider: "codex_oauth",
+        activeLeases: 0,
+        totalTokens: 0,
+      }),
+      createCredential("cred_codex_unavailable", {
+        provider: "codex_oauth",
+        activeLeases: 0,
+        totalTokens: 0,
+      }),
+    ],
+    usage: {
+      ...createUsageResponse(),
+      groupBy: "credential" as const,
+    },
+    codexStatusProvider: {
+      async getStatus(input) {
+        if (input.credentialId === "cred_codex_unknown") {
+          return {
+            ...createCodexStatus(),
+            source: "codex_exec_no_rate_limits",
+            label: "Codex OK, limits unknown",
+            limits: null,
+          }
+        }
+        if (input.credentialId === "cred_codex_unavailable") {
+          return null
+        }
+        return {
+          ...createCodexStatus(),
+          limits: {
+            fiveHour: {
+              label: "5h",
+              usedPercent: 80,
+              windowMinutes: 300,
+              resetAt: "2026-04-30T18:00:00.000Z",
+            },
+            weekly: {
+              label: "Weekly",
+              usedPercent: 95,
+              windowMinutes: 10080,
+              resetAt: "2026-05-01T12:00:00.000Z",
+            },
+          },
+        }
+      },
+    },
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/usage?groupBy=credential`)
+
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.deepEqual(body.capacity.codexCredentials, {
+      total: 3,
+      measurable: 1,
+      unknown: 1,
+      unavailable: 1,
+    })
+    assert.deepEqual(body.capacity.fiveHour, {
+      usedPercent: 80,
+      remainingPercent: 20,
+      measurableCredentials: 1,
+    })
+    assert.deepEqual(body.capacity.weekly, {
+      usedPercent: 95,
+      remainingPercent: 5,
+      measurableCredentials: 1,
+    })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
 test("GET /admin/api/usage excludes non-functional Codex credentials from capacity overview", async () => {
   const app = createReadModelApp({
     credentials: [
@@ -533,6 +705,7 @@ test("GET /admin/api/usage excludes non-functional Codex credentials from capaci
     assert.deepEqual(body.capacity.codexCredentials, {
       total: 1,
       measurable: 1,
+      unknown: 0,
       unavailable: 0,
     })
     assert.deepEqual(body.capacity.credentials.map((entry: { id: string }) => entry.id), ["cred_codex_healthy"])

@@ -323,13 +323,13 @@ export function createManagedAiAdminRouteDeps(
       })),
       credentialUsage,
       capacity: buildCodexCapacityOverview(
-        credentialUsage
+        credentials
           .filter((credential) => credential.provider === "codex_oauth")
           .map((credential) => ({
             id: credential.id,
             name: credential.name,
             state: credential.state,
-            upstreamStatus: credential.upstreamStatus,
+            upstreamStatus: credential.upstreamStatus ?? null,
           })),
       ),
     }

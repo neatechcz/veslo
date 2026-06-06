@@ -1230,23 +1230,37 @@ function renderUsageCapacity(capacity) {
   els.usageCapacityWeekly.textContent = formatCapacityRemaining(weekly?.remainingPercent);
   els.usageCapacityWeeklyNote.textContent = formatCapacityWindowNote(weekly);
   els.usageCapacityMeasured.textContent = `${formatNumber(codex.measurable)}/${formatNumber(codex.total)}`;
-  els.usageCapacityMeasuredNote.textContent = codex.unavailable > 0
-    ? `${formatNumber(codex.unavailable)} Codex credential status unknown`
-    : "All Codex credential limits visible";
+  els.usageCapacityMeasuredNote.textContent = formatCapacityMeasuredNote(codex);
 
   const credentials = Array.isArray(capacity?.credentials) ? capacity.credentials : [];
   els.usageCapacityCredentials.innerHTML = credentials.map((credential) => {
-    const tone = credential.limitsAvailable ? "success" : "warning";
+    const tone = credential.limitsAvailable ? "success" : credential.statusAvailable ? "warning" : "danger";
+    const label = credential.limitsAvailable ? "Limits visible" : credential.statusAvailable ? "Limits unknown" : "Status unavailable";
     return `
       <article class="list-card active">
         <div>
           <strong>${escapeHtml(credential.name || credential.id)}</strong>
           <p>5h ${escapeHtml(formatCapacityRemaining(credential.fiveHourRemainingPercent))} · Weekly ${escapeHtml(formatCapacityRemaining(credential.weeklyRemainingPercent))}</p>
         </div>
-        <span class="status-chip ${escapeHtml(tone)}">${escapeHtml(credential.limitsAvailable ? "Limits visible" : "Limits unknown")}</span>
+        <span class="status-chip ${escapeHtml(tone)}">${escapeHtml(label)}</span>
       </article>
     `;
   }).join("") || `<article class="list-card active"><div><strong>No Codex capacity data</strong><p>No functional Codex credentials reported visible limits.</p></div></article>`;
+}
+
+function formatCapacityMeasuredNote(codex) {
+  if (!codex || codex.total === 0) {
+    return "No functional Codex credentials";
+  }
+
+  const notes = [];
+  if (codex.unknown > 0) {
+    notes.push(`${formatNumber(codex.unknown)} credential limit status unknown`);
+  }
+  if (codex.unavailable > 0) {
+    notes.push(`${formatNumber(codex.unavailable)} credential status unavailable`);
+  }
+  return notes.length > 0 ? notes.join(" · ") : "All Codex credential limits visible";
 }
 
 function formatCapacityRemaining(value) {

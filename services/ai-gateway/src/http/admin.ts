@@ -27,7 +27,7 @@ import { formatAiGatewayProviderLabel, isAiGatewayProvider } from "../providers/
 import { OpenAiCompatibleTransport } from "../providers/openai-compatible-transport.js";
 import { ProviderTransportError, type OpenAiCompatibleProviderTransport } from "../providers/transport.js";
 import { evaluateCodexCredentialEligibility } from "../usage/codex-eligibility.js";
-import { buildCodexCapacityOverview, type CodexCapacityOverview } from "../usage/codex-capacity.js";
+import { buildCodexCapacityOverview, type CodexCapacityCredential, type CodexCapacityOverview } from "../usage/codex-capacity.js";
 import { MySqlUsageRepository } from "../usage/mysql-repository.js";
 import { CachedCodexCredentialStatusProvider, UnavailableCodexCredentialStatusProvider, type CodexCredentialStatusProvider, type CodexUsageStatus } from "../usage/codex-status.js";
 import type { AggregateUsageInput, UsageAggregateResponse, UsageCredentialAggregate, UsageGroupBy as RepositoryUsageGroupBy, UsageRepository } from "../usage/repository.js";
@@ -1471,6 +1471,34 @@ export function createDefaultAdminService(
     return method.bind(denClient) as NonNullable<DenAdminApi[T]>;
   }
 
+  async function toCodexCapacityCredentials(
+    credentials: CredentialRecord[],
+    statusProvider: CodexCredentialStatusProvider,
+  ): Promise<CodexCapacityCredential[]> {
+    return Promise.all(
+      credentials
+        .filter((credential) => credential.provider === "codex_oauth")
+        .map(async (credential) => {
+          let upstreamStatus: CodexUsageStatus | null = null;
+          if (Object.hasOwn(credential, "upstreamStatus")) {
+            upstreamStatus = credential.upstreamStatus ?? null;
+          } else {
+            upstreamStatus = await statusProvider.getStatus({
+              credentialId: credential.id,
+              credentialName: credential.name,
+            });
+          }
+
+          return {
+            id: credential.id,
+            name: credential.name,
+            state: credential.state,
+            upstreamStatus,
+          };
+        }),
+    );
+  }
+
   async function withCredentialUsage(
     usage: UsageAggregateResponse,
     credentials: CredentialRecord[],
@@ -1530,6 +1558,8 @@ export function createDefaultAdminService(
       credentialUsage = [];
     }
 
+    const capacityCredentials = await toCodexCapacityCredentials(credentials, statusProvider);
+
     return {
       ...usage,
       filters: {
@@ -1548,16 +1578,7 @@ export function createDefaultAdminService(
         label: credentialLabels.get(entry.id) ?? entry.label,
       })),
       credentialUsage,
-      capacity: buildCodexCapacityOverview(
-        credentialUsage
-          .filter((credential) => credential.provider === "codex_oauth")
-          .map((credential) => ({
-            id: credential.id,
-            name: credential.name,
-            state: credential.state,
-            upstreamStatus: credential.upstreamStatus,
-          })),
-      ),
+      capacity: buildCodexCapacityOverview(capacityCredentials),
     };
   }
 
