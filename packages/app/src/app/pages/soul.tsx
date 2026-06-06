@@ -1,4 +1,4 @@
-import { For, Show, createMemo } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import {
   AlertTriangle,
   Building2,
@@ -11,6 +11,7 @@ import {
   Save,
   User,
   Warehouse,
+  X,
 } from "lucide-solid";
 
 import type {
@@ -19,6 +20,7 @@ import type {
   VesloSoulOverviewResponse,
   VesloSoulSummary,
 } from "../lib/veslo-server";
+import type { WorkspaceInfo } from "../lib/tauri";
 import { formatRelativeTime } from "../utils";
 import { currentLocale, t } from "../../i18n";
 import { createSoulEditorController, type SoulEditorSource } from "./soul-controller";
@@ -31,6 +33,8 @@ type SoulViewProps = {
   serverConnected: boolean;
   authContext: VesloSoulAuthContext;
   refresh: (options?: { force?: boolean }) => void;
+  workspaces: WorkspaceInfo[];
+  isPrivateWorkspacePath: (folder: string | null | undefined) => boolean;
 };
 
 type SoulSource = SoulEditorSource & {
@@ -65,7 +69,14 @@ export default function SoulView(props: SoulViewProps) {
 
   const organizationSummary = createMemo(() => props.soulOverview?.organization ?? null);
   const userSummary = createMemo(() => props.soulOverview?.user ?? null);
-  const workspaceSummaries = createMemo(() => props.soulOverview?.workspaces ?? []);
+  const workspaceById = createMemo(() => new Map(props.workspaces.map((workspace) => [workspace.id, workspace])));
+  const workspaceSummaries = createMemo(() =>
+    (props.soulOverview?.workspaces ?? []).filter((summary) => {
+      const workspace = workspaceById().get(summary.ownerId);
+      return !(workspace?.workspaceType === "local" && props.isPrivateWorkspacePath(workspace.path));
+    }),
+  );
+  const [openSourceKey, setOpenSourceKey] = createSignal<string | null>(null);
 
   const statusLabel = (status: string) => {
     switch (status) {
@@ -130,9 +141,34 @@ export default function SoulView(props: SoulViewProps) {
 
   const primarySources = createMemo(() => sourceOptions().filter((source) => source.scope !== "workspace"));
   const workspaceSources = createMemo(() => sourceOptions().filter((source) => source.scope === "workspace"));
+  const activeModalSource = createMemo(() => sourceOptions().find((source) => source.key === openSourceKey()) ?? null);
+  const modalSourceOptions = createMemo(() => {
+    const source = activeModalSource();
+    return source ? [source] : [];
+  });
+  const openSoulModal = (sourceKey: string) => setOpenSourceKey(sourceKey);
+  const closeSoulModal = () => setOpenSourceKey(null);
+
+  createEffect(() => {
+    const key = openSourceKey();
+    if (key && !sourceOptions().some((source) => source.key === key)) {
+      closeSoulModal();
+    }
+  });
+
+  createEffect(() => {
+    if (!activeModalSource() || typeof window === "undefined") return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeSoulModal();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+  });
 
   const controller = createSoulEditorController<SoulSource>({
-    sources: sourceOptions,
+    sources: modalSourceOptions,
     client: () => props.client,
     serverConnected: () => props.serverConnected,
     authContext: () => props.authContext,
@@ -145,7 +181,6 @@ export default function SoulView(props: SoulViewProps) {
   });
 
   const selectedSourceKey = controller.selectedSourceKey;
-  const setSelectedSourceKey = controller.setSelectedSourceKey;
   const selectedSource = controller.selectedSource;
   const displaySummary = controller.displaySummary;
   const selectedVersionIsCurrent = controller.selectedVersionIsCurrent;
@@ -198,19 +233,17 @@ export default function SoulView(props: SoulViewProps) {
 
   const sourceButton = (source: SoulSource) => {
     const Icon = source.icon;
-    const selected = () => selectedSourceKey() === source.key;
+    const selected = () => openSourceKey() === source.key;
     const summary = () => source.summary;
 
     return (
-      <button
-        type="button"
+      <div
         data-testid={source.testId}
-        class={`w-full rounded-xl border p-4 text-left transition-colors ${
+        class={`w-full rounded-xl border p-4 text-left ${
           selected()
             ? "border-blue-8 bg-blue-3/25"
-            : "border-dls-border bg-dls-surface hover:border-blue-7/50 hover:bg-dls-hover/40"
+            : "border-dls-border bg-dls-surface"
         }`}
-        onClick={() => setSelectedSourceKey(source.key)}
       >
         <div class="flex items-start justify-between gap-4">
           <div class="min-w-0">
@@ -261,7 +294,23 @@ export default function SoulView(props: SoulViewProps) {
             </div>
           )}
         </Show>
-      </button>
+        <div class="mt-4 flex justify-end">
+          <button
+            type="button"
+            data-testid={
+              source.scope === "organization"
+                ? "soul-organization-source-open"
+                : source.scope === "user"
+                  ? "soul-user-source-open"
+                  : `${source.testId}-open`
+            }
+            class="rounded-lg border border-dls-border px-2.5 py-1 text-xs font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+            onClick={() => openSoulModal(source.key)}
+          >
+            {translate("soul.open_source")}
+          </button>
+        </div>
+      </div>
     );
   };
 
@@ -341,7 +390,7 @@ export default function SoulView(props: SoulViewProps) {
                   {(source) => {
                     const summary = source.summary;
                     return (
-                      <tr class={selectedSourceKey() === source.key ? "bg-blue-3/20 text-dls-text" : "text-dls-text"}>
+                      <tr class={openSourceKey() === source.key ? "bg-blue-3/20 text-dls-text" : "text-dls-text"}>
                         <td class="max-w-[16rem] px-4 py-3">
                           <div class="truncate font-medium">{sourceName(summary)}</div>
                           <div class="truncate text-xs text-dls-secondary">{summary?.ownerId}</div>
@@ -357,10 +406,11 @@ export default function SoulView(props: SoulViewProps) {
                         <td class="px-4 py-3 text-right">
                           <button
                             type="button"
+                            data-testid={`${source.testId}-open`}
                             class="rounded-lg border border-dls-border px-2.5 py-1 text-xs font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
-                            onClick={() => setSelectedSourceKey(source.key)}
+                            onClick={() => openSoulModal(source.key)}
                           >
-                            {selectedSourceKey() === source.key ? translate("soul.selected") : translate("soul.open_source")}
+                            {openSourceKey() === source.key ? translate("soul.selected") : translate("soul.open_source")}
                           </button>
                         </td>
                       </tr>
@@ -373,7 +423,35 @@ export default function SoulView(props: SoulViewProps) {
         </Show>
       </section>
 
-      <div class="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(22rem,0.85fr)]">
+      <Show when={activeModalSource()}>
+        {(modalSource) => (
+          <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div
+              data-testid="soul-source-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="soul-source-modal-title"
+              class="flex max-h-[calc(100vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-dls-border bg-dls-bg shadow-xl"
+            >
+              <div class="flex items-start justify-between gap-4 border-b border-dls-border bg-dls-surface px-4 py-3">
+                <div class="min-w-0">
+                  <div class="text-[11px] uppercase tracking-wide text-dls-secondary">{translate("soul.source_details")}</div>
+                  <h2 id="soul-source-modal-title" class="mt-1 truncate text-base font-semibold text-dls-text">
+                    {modalSource().label}
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  data-testid="soul-source-modal-close"
+                  class="inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-dls-border text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+                  aria-label={translate("common.close")}
+                  onClick={closeSoulModal}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div class="min-h-0 overflow-y-auto p-4">
+                <div class="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(22rem,0.85fr)]">
         <section data-testid="soul-source-detail" class="rounded-xl border border-dls-border bg-dls-surface">
           <div class="flex flex-wrap items-start justify-between gap-3 border-b border-dls-border px-4 py-3">
             <div>
@@ -652,7 +730,12 @@ export default function SoulView(props: SoulViewProps) {
             </div>
           </div>
         </section>
-      </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </Show>
     </section>
   );
 }

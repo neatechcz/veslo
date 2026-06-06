@@ -1629,6 +1629,8 @@ export default function DashboardView(props: DashboardViewProps) {
                 serverConnected={props.soulServerConnected}
                 authContext={props.soulAuthContext}
                 refresh={props.refreshSoulData}
+                workspaces={props.workspaces}
+                isPrivateWorkspacePath={props.isPrivateWorkspacePath}
               />
             </Match>
             <Match when={props.tab === "skills"}>

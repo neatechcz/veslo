@@ -61,7 +61,10 @@ The Soul UI lives in `packages/app/src/app/pages/soul.tsx`.
 Current Soul behavior includes:
 
 - source overview with Organization first, User second, and workspace sources in one table
-- selectable source detail for organization, user, and workspace Soul documents
+- workspace source rows exclude private workspaces
+- explicit Open actions for organization, user, and workspace Soul documents
+- modal source detail for organization, user, and workspace Soul documents
+- modal close through the close button or Escape
 - textarea editing for sources the current account can edit
 - server-synced version history, version preview, and restore
 - workspace heartbeat status and on/off toggle
