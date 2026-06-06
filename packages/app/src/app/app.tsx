@@ -346,6 +346,7 @@ import {
   clearVesloServerSettings,
   type VesloAuditEntry,
   type VesloSoulHeartbeatEntry,
+  type VesloSoulOverviewResponse,
   type VesloSoulStatus,
   type VesloSessionArchiveRecord,
   type VesloSessionLatestRunArtifacts,
@@ -3162,6 +3163,8 @@ export default function App() {
   const [soulStatusByWorkspaceId, setSoulStatusByWorkspaceId] = createSignal<
     Record<string, VesloSoulStatus | null>
   >({});
+  const [soulOverview, setSoulOverview] = createSignal<VesloSoulOverviewResponse | null>(null);
+  const [soulOverviewError, setSoulOverviewError] = createSignal<string | null>(null);
   const [activeSoulHeartbeats, setActiveSoulHeartbeats] = createSignal<VesloSoulHeartbeatEntry[]>([]);
   const [soulStatusBusy, setSoulStatusBusy] = createSignal(false);
   const [soulHeartbeatsBusy, setSoulHeartbeatsBusy] = createSignal(false);
@@ -6895,6 +6898,8 @@ export default function App() {
 
     const client = vesloServerClient();
     if (!client || vesloServerStatus() !== "connected") {
+      setSoulOverview(null);
+      setSoulOverviewError(null);
       setSoulStatusByWorkspaceId({});
       setActiveSoulHeartbeats([]);
       setSoulHeartbeatsBusy(false);
@@ -6905,6 +6910,16 @@ export default function App() {
     setSoulStatusBusy(true);
     setSoulError(null);
     try {
+      try {
+        const overview = await client.getSoulOverview(skillRegistryMaterializationAuthContext());
+        setSoulOverview(overview);
+        setSoulOverviewError(null);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to load Soul overview.";
+        setSoulOverview(null);
+        setSoulOverviewError(message);
+      }
+
       const workspaceMap = await resolveSoulWorkspaceMap();
       const workspaceIds = Object.entries(workspaceMap);
 
@@ -6955,6 +6970,7 @@ export default function App() {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load soul status.";
+      setSoulOverview(null);
       setSoulStatusByWorkspaceId({});
       setActiveSoulHeartbeats([]);
       setSoulHeartbeatsBusy(false);
@@ -6975,6 +6991,7 @@ export default function App() {
     const status = vesloServerStatus();
     const hasClient = Boolean(vesloServerClient());
     const activeWorkspaceId = workspaceStore.activeWorkspaceId();
+    const denRevision = denAuthRevision();
     const workspacesKey = workspaceStore
       .workspaces()
       .map((workspace) => {
@@ -6984,7 +7001,7 @@ export default function App() {
         return [workspace.id, workspace.workspaceType, workspace.remoteType ?? "", root, workspace.vesloWorkspaceId ?? ""].join("|");
       })
       .join(";");
-    const key = [status, hasClient ? "1" : "0", activeWorkspaceId, workspacesKey].join("::");
+    const key = [status, hasClient ? "1" : "0", activeWorkspaceId, workspacesKey, denRevision].join("::");
     if (key === lastSoulRefreshKey) return;
     lastSoulRefreshKey = key;
     void refreshSoulData().catch(e => reportError(e, "soul.refresh"));
@@ -9800,6 +9817,8 @@ export default function App() {
       refreshScheduledJobs: (options?: { force?: boolean }) =>
         refreshScheduledJobs(options).catch(e => reportError(e, "scheduled.refresh")),
       deleteScheduledJob,
+      soulOverview: soulOverview(),
+      soulOverviewError: soulOverviewError(),
       soulStatusByWorkspaceId: soulStatusByWorkspaceId(),
       activeSoulStatus: activeSoulStatus(),
       activeSoulHeartbeats: activeSoulHeartbeats(),
