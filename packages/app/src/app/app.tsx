@@ -1300,6 +1300,67 @@ export default function App() {
       selectedScope: selectedBrowseScopeInput(),
     });
   };
+  type DisplayedConversationGuard = {
+    sessionId: string;
+    workspaceId: string;
+    conversationId: string;
+    opencodeSessionId: string;
+  };
+  const captureDisplayedConversationGuard = (sessionId: string): DisplayedConversationGuard => {
+    const id = sessionId.trim();
+    const scope = id ? resolveSelectedSessionBrowseScope(id) : null;
+    return {
+      sessionId: id,
+      workspaceId: scope?.workspaceId?.trim() || workspaceStoreRef?.activeWorkspaceId().trim() || "",
+      conversationId: scope?.conversationId?.trim() || "",
+      opencodeSessionId: scope?.opencodeSessionId?.trim() || id,
+    };
+  };
+  const displayedConversationStillMatches = (guard: DisplayedConversationGuard): boolean => {
+    const currentSessionId = selectedSessionId()?.trim() || "";
+    if (!guard.sessionId || !currentSessionId) return false;
+    const currentScope = resolveSelectedSessionBrowseScope(currentSessionId);
+    const currentWorkspaceId = currentScope?.workspaceId?.trim() || workspaceStoreRef?.activeWorkspaceId().trim() || "";
+    if (guard.workspaceId && currentWorkspaceId && guard.workspaceId !== currentWorkspaceId) return false;
+    if (guard.conversationId) {
+      return currentSessionId === guard.conversationId || currentScope?.conversationId?.trim() === guard.conversationId;
+    }
+    const currentOpenCodeSessionId = currentScope?.opencodeSessionId?.trim() || currentSessionId;
+    return currentSessionId === guard.sessionId || currentOpenCodeSessionId === guard.opencodeSessionId;
+  };
+  const latestConversationRunIdByScope = new Map<string, string>();
+  const conversationRunScopeKey = (workspaceId: string, conversationId: string) => {
+    const workspaceKey = workspaceId.trim();
+    const conversationKey = conversationId.trim();
+    return workspaceKey && conversationKey ? `${workspaceKey}\0${conversationKey}` : "";
+  };
+  const rememberLatestConversationRunId = (input: {
+    workspaceId: string;
+    conversationId?: string | null;
+    opencodeSessionId?: string | null;
+    uiSessionId?: string | null;
+    runId?: string | null;
+  }) => {
+    const runId = input.runId?.trim();
+    if (!runId) return;
+    for (const id of [input.conversationId, input.opencodeSessionId, input.uiSessionId]) {
+      const key = id ? conversationRunScopeKey(input.workspaceId, id) : "";
+      if (key) latestConversationRunIdByScope.set(key, runId);
+    }
+  };
+  const resolveLatestConversationRunId = (input: {
+    workspaceId: string;
+    conversationId?: string | null;
+    opencodeSessionId?: string | null;
+    uiSessionId?: string | null;
+  }) => {
+    for (const id of [input.conversationId, input.opencodeSessionId, input.uiSessionId]) {
+      const key = id ? conversationRunScopeKey(input.workspaceId, id) : "";
+      const runId = key ? latestConversationRunIdByScope.get(key) : undefined;
+      if (runId) return runId;
+    }
+    return "";
+  };
   const setSessionBrowseScope = (scope: SessionBrowseScope) => {
     const sessionId = scope.sessionId.trim();
     const workspaceId = scope.workspaceId.trim();
@@ -1813,6 +1874,58 @@ export default function App() {
       conversationId: result.conversationId,
       opencodeSessionId: result.opencodeSessionId,
     });
+    rememberLatestConversationRunId({
+      workspaceId,
+      conversationId: result.conversationId,
+      opencodeSessionId: result.opencodeSessionId,
+      uiSessionId: normalizedSessionId,
+      runId: result.runId,
+    });
+    return result;
+  };
+
+  const abortConversationFromVesloWriteApi = async (sessionId: string) => {
+    const normalizedSessionId = sessionId.trim();
+    if (!normalizedSessionId) {
+      throw new Error("Session id is required.");
+    }
+    const scope = resolveSelectedSessionBrowseScope(normalizedSessionId);
+    const workspaceId = scope?.workspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
+    if (!workspaceId) {
+      throw new Error("Workspace id is required for conversation abort.");
+    }
+    const workspaceRoot = scope?.workspaceRoot?.trim() || workspaceStore.activeWorkspaceRoot().trim();
+    const directory = scope?.directory?.trim() || sessionDirectoryOverrideById()[normalizedSessionId]?.trim() || workspaceRoot;
+    if (!directory) {
+      throw new Error("Conversation directory is required.");
+    }
+    const conversationId = scope?.conversationId?.trim() || normalizedSessionId;
+    const runId = resolveLatestConversationRunId({
+      workspaceId,
+      conversationId,
+      opencodeSessionId: scope?.opencodeSessionId,
+      uiSessionId: normalizedSessionId,
+    });
+    if (!runId) {
+      throw new Error("Conversation run id is not available for abort.");
+    }
+
+    const serverClient = await resolvePassiveConversationReadClient();
+    if (!serverClient) return null;
+    const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(serverClient, workspaceId, directory);
+    if (!serverWorkspaceId) return null;
+    const result = await serverClient.abortConversation(serverWorkspaceId, conversationId, {
+      directory,
+      runId,
+    });
+    rememberConversationScope({
+      sessionId: result.opencodeSessionId || normalizedSessionId,
+      workspaceId,
+      workspaceRoot: resolveWorkspaceRootForConversationScope(workspaceId, directory),
+      directory,
+      conversationId: result.conversationId,
+      opencodeSessionId: result.opencodeSessionId,
+    });
     return result;
   };
 
@@ -1870,8 +1983,8 @@ export default function App() {
     // engine. engineReady() flips to true only after sendPrompt has driven
     // the engine through ensureEngineForWorkspace.
     engineReady: () => engineReady(),
-    onSessionBusyChange: (sessionId, busy) => {
-      const wsId = workspaceStore.activeWorkspaceId().trim();
+    onSessionBusyChange: (sessionId, busy, sourceWorkspaceId) => {
+      const wsId = sourceWorkspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
       if (!wsId) return;
       if (busy) workspaceStore.markWorkspaceBusy(wsId, sessionId);
       else workspaceStore.clearWorkspaceBusy(wsId, sessionId);
@@ -3097,9 +3210,23 @@ export default function App() {
       return false;
     }
 
+    const displayedConversationGuard = captureDisplayedConversationGuard(sessionID);
+    const sendTargetStillDisplayed = () => displayedConversationStillMatches(displayedConversationGuard);
+    const reportSendErrorToDisplayedTarget = (message: string) => {
+      if (!sendTargetStillDisplayed()) {
+        recordSendTrace("sendPrompt:error-skipped-stale-display", {
+          sessionID,
+          message,
+        });
+        return;
+      }
+      setError(addOpencodeCacheHint(message));
+      sessionStore.appendSessionErrorTurn(sessionID, addOpencodeCacheHint(message));
+    };
     const model = modelForSession(sessionID);
     let promptSystem: string | undefined;
     const restorePendingDraftAfterSendFailure = () => {
+      if (!sendTargetStillDisplayed()) return;
       if (pendingDraftSendState) {
         setActivePendingDraftKey(pendingDraftSendState.key);
         setActivePendingDraftMeta(pendingDraftSendState.meta);
@@ -3117,7 +3244,9 @@ export default function App() {
       });
       if (routedDraft.error) {
         restorePendingDraftAfterSendFailure();
-        setError(routedDraft.error);
+        if (sendTargetStillDisplayed()) {
+          setError(routedDraft.error);
+        }
         stopSendPromptBusy();
         return false;
       }
@@ -3125,7 +3254,9 @@ export default function App() {
       promptSystem = routedDraft.system;
     } catch (error) {
       restorePendingDraftAfterSendFailure();
-      setError(error instanceof Error ? error.message : safeStringify(error));
+      if (sendTargetStillDisplayed()) {
+        setError(error instanceof Error ? error.message : safeStringify(error));
+      }
       stopSendPromptBusy();
       return false;
     }
@@ -3310,6 +3441,7 @@ export default function App() {
       if (pendingDraftSendState) {
         const pendingDraftStorageKey = pendingDraftSendState.key;
         const pendingDraftId = pendingDraftSendState.draftId;
+        const clearDisplayedPendingDraftState = sendTargetStillDisplayed();
         if (pendingDraftId && isTauriRuntime()) {
           try {
             const deleted = await pendingSessionDraftsDelete(pendingDraftId);
@@ -3325,7 +3457,9 @@ export default function App() {
           }
         }
         await refreshPendingDraftSummaries();
-        clearActivePendingDraftState();
+        if (clearDisplayedPendingDraftState) {
+          clearActivePendingDraftState();
+        }
         setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, { storageKey: pendingDraftStorageKey }));
       }
 
@@ -3369,8 +3503,7 @@ export default function App() {
         sessionID,
         message,
       });
-      setError(addOpencodeCacheHint(message));
-      sessionStore.appendSessionErrorTurn(sessionID, addOpencodeCacheHint(message));
+      reportSendErrorToDisplayedTarget(message);
       return false;
     } finally {
       releasePromptSendInFlight();
@@ -3381,14 +3514,60 @@ export default function App() {
   async function abortSession(sessionID?: string) {
     const id = (sessionID ?? selectedSessionId() ?? "").trim();
     if (!id) return;
+    const scope = resolveSelectedSessionBrowseScope(id);
+    const abortSessionViaScopedLegacy = async (): Promise<boolean> => {
+      if (!scope?.workspaceId) return false;
+      const opencodeSessionId = scope.opencodeSessionId?.trim() || id;
+      if (!opencodeSessionId || opencodeSessionId === scope.conversationId?.trim()) return false;
+      const scopedEntry = workspaceRouting.entry(scope.workspaceId);
+      const scopedClient =
+        scopedEntry?.client ??
+        (scope.workspaceId === workspaceStore.activeWorkspaceId().trim() ? routedClient() : null);
+      if (!scopedClient) return false;
+      await abortSessionTyped(scopedClient, opencodeSessionId, {
+        directory: scope.directory?.trim() || undefined,
+      });
+      return true;
+    };
+    try {
+      const result = await abortConversationFromVesloWriteApi(id);
+      if (result) return;
+      recordSendTrace("abortSession:conversation-abort-unavailable", {
+        sessionID: id,
+        hasConversationScope: Boolean(scope?.conversationId),
+      });
+      if (scope?.conversationId) {
+        throw new Error("Conversation service is unavailable for this scoped conversation.");
+      }
+    } catch (error) {
+      recordSendTrace("abortSession:conversation-abort-error", {
+        sessionID: id,
+        hasConversationScope: Boolean(scope?.conversationId),
+        message: messageFromUnknownError(error),
+      });
+      if (scope?.conversationId) {
+        // Abort is a safe/idempotent stop operation. If the local app lost the
+        // submitted runId after reload, still stop the scoped OpenCode session
+        // through the exact workspace client instead of failing closed.
+        if (await abortSessionViaScopedLegacy()) {
+          recordSendTrace("abortSession:scoped-legacy-fallback", { sessionID: id });
+          return;
+        }
+        throw error;
+      }
+      console.warn("[conversation-abort] falling back to OpenCode SDK", error);
+    }
+
     if (!(await ensureSelectedSessionWorkspaceActiveForSend(id))) {
       return;
     }
+
     const c = routedClient();
     if (!c) return;
     // OpenCode exposes session.abort which interrupts the active prompt/run.
     // We intentionally don't mutate global busy state here; the SessionView
     // provides local UX (button disabled + toast) for cancellation.
+    recordSendTrace("abortSession:legacy-fallback", { sessionID: id });
     await abortSessionTyped(c, id);
   }
 

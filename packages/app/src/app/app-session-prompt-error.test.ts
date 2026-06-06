@@ -4,7 +4,7 @@ import test from "node:test";
 
 const source = readFileSync(new URL("./app.tsx", import.meta.url), "utf8");
 
-test("prompt send failures set the visible session error state before recording the synthetic error turn", () => {
+test("prompt send failures only update the still-displayed conversation error state", () => {
   const catchStart = source.indexOf("    } catch (e) {", source.indexOf('finishPerf(perfEnabled, "session.prompt", "done"'));
   const finallyStart = source.indexOf("    } finally {", catchStart);
   assert.notEqual(catchStart, -1, "sendPrompt catch block should exist");
@@ -13,7 +13,18 @@ test("prompt send failures set the visible session error state before recording 
   const catchBlock = source.slice(catchStart, finallyStart);
   assert.match(
     catchBlock,
-    /const message = e instanceof Error \? e\.message : safeStringify\(e\);[\s\S]*setError\(addOpencodeCacheHint\(message\)\);[\s\S]*sessionStore\.appendSessionErrorTurn\(sessionID, addOpencodeCacheHint\(message\)\);/s,
-    "sendPrompt catch should drive props.error so the run footer enters a terminal failed state",
+    /const message = e instanceof Error \? e\.message : safeStringify\(e\);[\s\S]*reportSendErrorToDisplayedTarget\(message\);/s,
+    "sendPrompt catch should route failure UI through the displayed conversation guard",
+  );
+
+  const helperStart = source.indexOf("    const reportSendErrorToDisplayedTarget = (message: string) => {");
+  const helperEnd = source.indexOf("    const model = modelForSession(sessionID);", helperStart);
+  assert.notEqual(helperStart, -1, "displayed-target error helper should exist");
+  assert.notEqual(helperEnd, -1, "displayed-target error helper should end before model resolution");
+  const helperSource = source.slice(helperStart, helperEnd);
+  assert.match(
+    helperSource,
+    /if \(!sendTargetStillDisplayed\(\)\) \{[\s\S]*recordSendTrace\("sendPrompt:error-skipped-stale-display"[\s\S]*return;[\s\S]*\}[\s\S]*setError\(addOpencodeCacheHint\(message\)\);[\s\S]*sessionStore\.appendSessionErrorTurn\(sessionID, addOpencodeCacheHint\(message\)\);/s,
+    "stale sends should not write the active error banner or synthetic error turn",
   );
 });

@@ -43,7 +43,26 @@ const useTempVesloDataDir = async () => {
   return dataDir;
 };
 
-const startTestServer = (input: { workspaceRoot: string; upstreamPort: number }) => {
+const startTestServer = (input: {
+  workspaceRoot: string;
+  upstreamPort: number;
+  workspaces?: Array<{ id: string; name: string; path: string; baseUrl?: string }>;
+}) => {
+  const workspaces = input.workspaces?.map((workspace) => ({
+    id: workspace.id,
+    name: workspace.name,
+    path: workspace.path,
+    workspaceType: "local" as const,
+    baseUrl: workspace.baseUrl ?? `http://127.0.0.1:${input.upstreamPort}`,
+  })) ?? [
+    {
+      id: "ws_1",
+      name: "Workspace",
+      path: input.workspaceRoot,
+      workspaceType: "local" as const,
+      baseUrl: `http://127.0.0.1:${input.upstreamPort}`,
+    },
+  ];
   const server = startServer({
     host: "127.0.0.1",
     port: 0,
@@ -51,16 +70,8 @@ const startTestServer = (input: { workspaceRoot: string; upstreamPort: number })
     hostToken: "host-token",
     approval: { mode: "auto", timeoutMs: 1_000 },
     corsOrigins: ["*"],
-    workspaces: [
-      {
-        id: "ws_1",
-        name: "Workspace",
-        path: input.workspaceRoot,
-        workspaceType: "local",
-        baseUrl: `http://127.0.0.1:${input.upstreamPort}`,
-      },
-    ],
-    authorizedRoots: [input.workspaceRoot],
+    workspaces,
+    authorizedRoots: workspaces.map((workspace) => workspace.path),
     readOnly: false,
     startedAt: Date.now(),
     tokenSource: "cli",
@@ -92,6 +103,8 @@ describe("conversation routes", () => {
     const receivedDirectoryHeaders: string[] = [];
     const receivedRunPaths: string[] = [];
     const receivedRunDirectories: string[] = [];
+    const receivedAbortPaths: string[] = [];
+    const receivedAbortDirectories: string[] = [];
     const upstream = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
@@ -116,6 +129,12 @@ describe("conversation routes", () => {
           receivedRunDirectories.push(request.headers.get("x-opencode-directory") ?? "");
           const receivedBody = await request.json() as Record<string, unknown>;
           receivedBodies.push(receivedBody);
+          return Response.json({ ok: true });
+        }
+        if (request.method === "POST" && url.pathname === "/session/sess-created/abort") {
+          upstreamHits += 1;
+          receivedAbortPaths.push(`${url.pathname}${url.search}`);
+          receivedAbortDirectories.push(request.headers.get("x-opencode-directory") ?? "");
           return Response.json({ ok: true });
         }
         return Response.json({ error: "unexpected upstream route" }, { status: 404 });
@@ -189,6 +208,8 @@ describe("conversation routes", () => {
         body: JSON.stringify({
           kind: "prompt_async",
           directory: workspaceRoot,
+          sessionID: "must-not-forward",
+          extra: "must-not-forward",
           parts: [{ type: "text", text: "Hello" }],
         }),
       },
@@ -198,6 +219,7 @@ describe("conversation routes", () => {
       ok: boolean;
       conversationId: string;
       opencodeSessionId: string;
+      runId: string;
       status: string;
       kind: string;
     };
@@ -210,6 +232,88 @@ describe("conversation routes", () => {
     expect(receivedRunDirectories[0]).toBe(workspaceRoot);
     expect(receivedBodies[1]?.parts).toEqual([{ type: "text", text: "Hello" }]);
     expect(receivedBodies[1]?.directory).toBeUndefined();
+    expect(receivedBodies[1]?.kind).toBeUndefined();
+    expect(receivedBodies[1]?.sessionID).toBeUndefined();
+    expect(receivedBodies[1]?.extra).toBeUndefined();
+
+    const abortResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(payload.conversationId)}/abort`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          directory: workspaceRoot,
+          runId: runPayload.runId,
+        }),
+      },
+    );
+    expect(abortResponse.status).toBe(200);
+    const abortPayload = await abortResponse.json() as {
+      ok: boolean;
+      conversationId: string;
+      opencodeSessionId: string;
+      runId: string;
+      status: string;
+      kind: string;
+    };
+    expect(abortPayload.ok).toBe(true);
+    expect(abortPayload.conversationId).toBe(payload.conversationId);
+    expect(abortPayload.opencodeSessionId).toBe("sess-created");
+    expect(abortPayload.runId).toBe(runPayload.runId);
+    expect(abortPayload.status).toBe("submitted");
+    expect(abortPayload.kind).toBe("abort");
+    expect(receivedAbortPaths[0]).toBe(`/session/sess-created/abort?directory=${encodeURIComponent(workspaceRoot)}`);
+    expect(receivedAbortDirectories[0]).toBe(workspaceRoot);
+
+    const missingRunIdAbortResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(payload.conversationId)}/abort`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          directory: workspaceRoot,
+        }),
+      },
+    );
+    expect(missingRunIdAbortResponse.status).toBe(400);
+
+    const missingDirectoryAbortResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(payload.conversationId)}/abort`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          runId: runPayload.runId,
+        }),
+      },
+    );
+    expect(missingDirectoryAbortResponse.status).toBe(400);
+
+    const missingDirectoryRunResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(payload.conversationId)}/runs`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          kind: "prompt_async",
+          parts: [{ type: "text", text: "Hello" }],
+        }),
+      },
+    );
+    expect(missingDirectoryRunResponse.status).toBe(400);
+    expect(upstreamHits).toBe(3);
   });
 
   test("POST /workspace/:id/conversations rejects directories outside the workspace before engine contact", async () => {
@@ -246,5 +350,97 @@ describe("conversation routes", () => {
 
     expect(response.status).toBe(403);
     expect(upstreamHits).toBe(0);
+  });
+
+  test("POST /workspace/:id/conversations/:conversationId/runs rejects conversation ids from another workspace before engine contact", async () => {
+    const workspaceRootA = await mkdtemp(join(tmpdir(), "veslo-server-conversations-workspace-a-"));
+    const workspaceRootB = await mkdtemp(join(tmpdir(), "veslo-server-conversations-workspace-b-"));
+    tempDirs.push(workspaceRootA, workspaceRootB);
+    await useTempVesloDataDir();
+
+    let upstreamHits = 0;
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        upstreamHits += 1;
+        if (request.method === "POST" && url.pathname === "/session") {
+          const receivedBody = await request.json() as Record<string, unknown>;
+          return Response.json({
+            id: "sess-created-a",
+            title: receivedBody.title,
+            directory: receivedBody.directory,
+            parentID: null,
+            time: { created: 111, updated: 222 },
+          });
+        }
+        return Response.json({ error: "run must not reach upstream" }, { status: 500 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const server = startTestServer({
+      workspaceRoot: workspaceRootA,
+      upstreamPort: upstream.port,
+      workspaces: [
+        { id: "ws_a", name: "Workspace A", path: workspaceRootA },
+        { id: "ws_b", name: "Workspace B", path: workspaceRootB },
+      ],
+    });
+
+    const createResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_a/conversations`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          directory: workspaceRootA,
+          title: "Workspace A Conversation",
+        }),
+      },
+    );
+    expect(createResponse.status).toBe(201);
+    const created = await createResponse.json() as { conversationId: string };
+    expect(created.conversationId).toMatch(/^conv-/);
+    expect(upstreamHits).toBe(1);
+
+    const runResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_b/conversations/${encodeURIComponent(created.conversationId)}/runs`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          kind: "prompt_async",
+          directory: workspaceRootB,
+          parts: [{ type: "text", text: "Should not run" }],
+        }),
+      },
+    );
+    expect(runResponse.status).toBe(404);
+    expect(upstreamHits).toBe(1);
+
+    const abortResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_b/conversations/${encodeURIComponent(created.conversationId)}/abort`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          directory: workspaceRootB,
+          runId: "run-from-workspace-a",
+        }),
+      },
+    );
+    expect(abortResponse.status).toBe(404);
+    expect(upstreamHits).toBe(1);
   });
 });

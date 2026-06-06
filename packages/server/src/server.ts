@@ -2160,6 +2160,18 @@ function buildConversationRunBody(kind: "prompt_async" | "command" | "shell" | "
   return result;
 }
 
+function isVesloConversationId(input: string): boolean {
+  return /^conv-[0-9a-f]{20}$/i.test(input.trim());
+}
+
+function requireConversationRunId(body: Record<string, unknown>): string {
+  const runId = optionalBodyString(body, "runId");
+  if (!runId) {
+    throw new ApiError(400, "invalid_payload", "runId is required");
+  }
+  return runId;
+}
+
 function parseCatalogPathFilter(input: string | null): string | null {
   if (!input) return null;
   const trimmed = input.trim();
@@ -3531,6 +3543,9 @@ function createRoutes(
       directory: input.directory,
       sessionOrConversationId: input.sessionOrConversationId,
     });
+    if (!binding && isVesloConversationId(input.sessionOrConversationId)) {
+      throw new ApiError(404, "conversation_not_found", "Conversation was not found in this workspace");
+    }
     const opencodeSessionId = binding?.engineSessionId ?? input.sessionOrConversationId;
     const snapshot = await sessionTranscriptPrefetch.getOrLoad({
       workspaceId: input.workspace.id,
@@ -3549,6 +3564,38 @@ function createRoutes(
       fetchedAt: snapshot.fetchedAt,
       staleAt: snapshot.staleAt,
       source: snapshot.source,
+    };
+  };
+
+  const resolveConversationExecutionTarget = async (input: {
+    workspace: WorkspaceInfo;
+    sessionOrConversationId: string;
+    requestedDirectory: string | undefined;
+    missingDirectoryMessage: string;
+  }) => {
+    if (!input.requestedDirectory) {
+      throw new ApiError(400, "invalid_directory", input.missingDirectoryMessage);
+    }
+    const directory = await resolveConversationReadDirectory(
+      input.workspace,
+      input.requestedDirectory,
+    );
+    if (!directory) {
+      throw new ApiError(400, "invalid_directory", "Conversation directory is required");
+    }
+    const binding = await conversationService.resolveOpenCodeSessionForRead({
+      workspaceId: input.workspace.id,
+      directory,
+      sessionOrConversationId: input.sessionOrConversationId,
+    });
+    if (!binding && isVesloConversationId(input.sessionOrConversationId)) {
+      throw new ApiError(404, "conversation_not_found", "Conversation was not found in this workspace");
+    }
+    return {
+      directory,
+      binding,
+      opencodeSessionId: binding?.engineSessionId ?? input.sessionOrConversationId,
+      conversationId: binding?.conversationId ?? input.sessionOrConversationId,
     };
   };
 
@@ -4222,41 +4269,69 @@ function createRoutes(
     }
     const body = await readJsonBody(ctx.request);
     const kind = parseConversationRunKind(body.kind);
-    const directory = await resolveConversationReadDirectory(
+    const target = await resolveConversationExecutionTarget({
       workspace,
-      optionalBodyNullableString(body, "directory") ?? null,
-    );
-    if (!directory) {
-      throw new ApiError(400, "invalid_directory", "Conversation directory is required");
-    }
-    const binding = await conversationService.resolveOpenCodeSessionForRead({
-      workspaceId: workspace.id,
-      directory,
       sessionOrConversationId,
+      requestedDirectory: optionalBodyString(body, "directory"),
+      missingDirectoryMessage: "Conversation run directory is required",
     });
-    const opencodeSessionId = binding?.engineSessionId ?? sessionOrConversationId;
     const query = new URLSearchParams();
-    query.set("directory", directory);
+    query.set("directory", target.directory);
     const path =
       kind === "prompt_async"
-        ? `/session/${encodeURIComponent(opencodeSessionId)}/prompt_async?${query.toString()}`
+        ? `/session/${encodeURIComponent(target.opencodeSessionId)}/prompt_async?${query.toString()}`
         : kind === "command"
-          ? `/session/${encodeURIComponent(opencodeSessionId)}/command?${query.toString()}`
+          ? `/session/${encodeURIComponent(target.opencodeSessionId)}/command?${query.toString()}`
           : kind === "shell"
-            ? `/session/${encodeURIComponent(opencodeSessionId)}/shell?${query.toString()}`
-            : `/session/${encodeURIComponent(opencodeSessionId)}/summarize?${query.toString()}`;
-    const upstream = await fetchOpencodeJson({ ...workspace, directory }, path, {
+            ? `/session/${encodeURIComponent(target.opencodeSessionId)}/shell?${query.toString()}`
+            : `/session/${encodeURIComponent(target.opencodeSessionId)}/summarize?${query.toString()}`;
+    const upstream = await fetchOpencodeJson({ ...workspace, directory: target.directory }, path, {
       method: "POST",
       body: buildConversationRunBody(kind, body),
     });
     return jsonResponse({
       ok: true,
       workspaceId: workspace.id,
-      conversationId: binding?.conversationId ?? sessionOrConversationId,
-      opencodeSessionId,
+      conversationId: target.conversationId,
+      opencodeSessionId: target.opencodeSessionId,
       runId: shortId(),
       status: "submitted",
       kind,
+      upstream,
+    });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/conversations/:conversationId/abort", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const sessionOrConversationId = (ctx.params.conversationId ?? "").trim();
+    if (!sessionOrConversationId) {
+      throw new ApiError(400, "invalid_payload", "conversationId is required");
+    }
+    const body = await readJsonBody(ctx.request);
+    const runId = requireConversationRunId(body);
+    const target = await resolveConversationExecutionTarget({
+      workspace,
+      sessionOrConversationId,
+      requestedDirectory: optionalBodyString(body, "directory"),
+      missingDirectoryMessage: "Conversation abort directory is required",
+    });
+    const query = new URLSearchParams();
+    query.set("directory", target.directory);
+    const upstream = await fetchOpencodeJson(
+      { ...workspace, directory: target.directory },
+      `/session/${encodeURIComponent(target.opencodeSessionId)}/abort?${query.toString()}`,
+      { method: "POST" },
+    );
+    return jsonResponse({
+      ok: true,
+      workspaceId: workspace.id,
+      conversationId: target.conversationId,
+      opencodeSessionId: target.opencodeSessionId,
+      runId,
+      status: "submitted",
+      kind: "abort",
       upstream,
     });
   });

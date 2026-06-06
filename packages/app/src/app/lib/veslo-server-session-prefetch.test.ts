@@ -41,6 +41,7 @@ test("veslo server client exposes transcript prefetch methods", async () => {
     assert.equal(typeof (client as { prefetchSessionTranscripts?: unknown }).prefetchSessionTranscripts, "function");
     assert.equal(typeof (client as { listConversations?: unknown }).listConversations, "function");
     assert.equal(typeof (client as { runConversation?: unknown }).runConversation, "function");
+    assert.equal(typeof (client as { abortConversation?: unknown }).abortConversation, "function");
     assert.equal(typeof (client as { getSessionTranscript?: unknown }).getSessionTranscript, "function");
 
     const prefetch = await (client as {
@@ -88,11 +89,21 @@ test("veslo server client exposes transcript prefetch methods", async () => {
       directory: "/tmp/work space",
       parts: [{ type: "text", text: "Hello" }],
     });
+    const abort = await (client as {
+      abortConversation: (
+        workspaceId: string,
+        conversationId: string,
+        input: { directory?: string | null; runId: string },
+      ) => Promise<unknown>;
+    }).abortConversation("ws 1", "conv/a", {
+      directory: "/tmp/work space",
+      runId: "run-123",
+    });
     const transcript = await (client as {
       getSessionTranscript: (workspaceId: string, sessionId: string, limit?: number, directory?: string) => Promise<unknown>;
     }).getSessionTranscript("ws 1", "sess/a", 12, "/tmp/work space");
 
-    assert.equal(calls.length, 4);
+    assert.equal(calls.length, 5);
 
     assert.equal(calls[0]?.url, "http://127.0.0.1:8787/workspace/ws%201/sessions/transcript-prefetch");
     assert.equal(calls[0]?.method, "POST");
@@ -126,14 +137,23 @@ test("veslo server client exposes transcript prefetch methods", async () => {
       parts: [{ type: "text", text: "Hello" }],
     });
 
-    assert.equal(calls[3]?.url, "http://127.0.0.1:8787/workspace/ws%201/sessions/sess%2Fa/transcript?limit=12&directory=%2Ftmp%2Fwork+space");
-    assert.equal(calls[3]?.method, "GET");
+    assert.equal(calls[3]?.url, "http://127.0.0.1:8787/workspace/ws%201/conversations/conv%2Fa/abort");
+    assert.equal(calls[3]?.method, "POST");
     assert.equal(calls[3]?.headers.get("authorization"), "Bearer token-123");
-    assert.equal(calls[3]?.body, null);
+    assert.deepEqual(JSON.parse(calls[3]?.body ?? "{}"), {
+      directory: "/tmp/work space",
+      runId: "run-123",
+    });
+
+    assert.equal(calls[4]?.url, "http://127.0.0.1:8787/workspace/ws%201/sessions/sess%2Fa/transcript?limit=12&directory=%2Ftmp%2Fwork+space");
+    assert.equal(calls[4]?.method, "GET");
+    assert.equal(calls[4]?.headers.get("authorization"), "Bearer token-123");
+    assert.equal(calls[4]?.body, null);
 
     assert.equal(typeof prefetch, "object");
     assert.equal(typeof conversations, "object");
     assert.equal(typeof run, "object");
+    assert.equal(typeof abort, "object");
     assert.equal(typeof transcript, "object");
   } finally {
     globalThis.fetch = previousFetch;

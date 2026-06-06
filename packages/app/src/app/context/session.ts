@@ -192,13 +192,13 @@ export function createSessionStore(options: {
    * never accidentally cold-spawns sandbox-exec + opencode serve.
    */
   engineReady?: () => boolean;
-  onSessionBusyChange?: (sessionId: string, busy: boolean) => void;
+  onSessionBusyChange?: (sessionId: string, busy: boolean, workspaceId?: string) => void;
   onAssistantResponseObserved?: (sessionId: string) => void;
 }) {
 
-  const notifySessionBusy = (sessionId: string, status: string) => {
+  const notifySessionBusy = (sessionId: string, status: string, workspaceId?: string) => {
     if (!options.onSessionBusyChange) return;
-    options.onSessionBusyChange(sessionId, status !== "idle");
+    options.onSessionBusyChange(sessionId, status !== "idle", workspaceId);
   };
 
   const sessionDebugEnabled = () => options.developerMode();
@@ -1283,6 +1283,20 @@ export function createSessionStore(options: {
     return false;
   };
 
+  const notifyBackgroundSessionBusy = (event: OpencodeEvent, workspaceId: string) => {
+    if (!workspaceId || !event.properties || typeof event.properties !== "object") return;
+    const record = event.properties as Record<string, unknown>;
+    const sessionID = extractSessionId(record);
+    if (!sessionID) return;
+    if (event.type === "session.status") {
+      notifySessionBusy(sessionID, normalizeSessionStatus(record.status), workspaceId);
+      return;
+    }
+    if (event.type === "session.idle" || event.type === "session.error") {
+      notifySessionBusy(sessionID, "idle", workspaceId);
+    }
+  };
+
   const applyEvent = async (event: OpencodeEvent, sourceWsId: string = "") => {
     // VSLO-86 F4Ú12 — SSE multiplex: each per-workspace stream tags events
     // with its source workspace id. Background workspaces (source !== active)
@@ -1292,9 +1306,10 @@ export function createSessionStore(options: {
     if (sourceWsId) {
       const activeWsId = options.routing.activeWorkspaceId();
       if (activeWsId && sourceWsId !== activeWsId) {
-        // Background event for a non-active workspace. Skip — the active
-        // store stays consistent. When the user switches back to this
-        // workspace, loadSessions() will re-fetch the latest state.
+        // Background event for a non-active workspace. Keep the workspace-level
+        // run indicator current, but skip the single active-session store. When
+        // the user switches back, loadSessions() re-fetches the full state.
+        notifyBackgroundSessionBusy(event, sourceWsId);
         return;
       }
     }
@@ -1390,7 +1405,7 @@ export function createSessionStore(options: {
         if (sessionID && isKnownSessionId(sessionID)) {
           const normalized = normalizeSessionStatus(record.status);
           setStore("sessionStatus", sessionID, normalized);
-          notifySessionBusy(sessionID, normalized);
+          notifySessionBusy(sessionID, normalized, sourceWsId);
           if (sessionID === options.selectedSessionId() && normalized !== "idle") {
             options.setError(null);
           }
@@ -1404,7 +1419,7 @@ export function createSessionStore(options: {
         const sessionID = extractSessionId(record);
         if (sessionID && isKnownSessionId(sessionID)) {
           setStore("sessionStatus", sessionID, "idle");
-          notifySessionBusy(sessionID, "idle");
+          notifySessionBusy(sessionID, "idle", sourceWsId);
           // VSLO-171.F3Ú6: SSE event handler will dispatch on per-workspace
           // client (from event payload workspaceId) once SSE multiplex lands.
           const c = options.client();
@@ -1430,7 +1445,7 @@ export function createSessionStore(options: {
         const sessionID = extractSessionId(record);
         if (sessionID) {
           setStore("sessionStatus", sessionID, "idle");
-          notifySessionBusy(sessionID, "idle");
+          notifySessionBusy(sessionID, "idle", sourceWsId);
         }
         const errorObj = record.error as Record<string, unknown> | undefined;
         if (errorObj) {
@@ -1748,10 +1763,10 @@ export function createSessionStore(options: {
           const fetched = unwrap(await c.session.get({ sessionID })) as Record<string, unknown>;
           const normalized = normalizeSessionStatus(fetched?.status);
           setStore("sessionStatus", sessionID, normalized);
-          notifySessionBusy(sessionID, normalized);
+          notifySessionBusy(sessionID, normalized, sourceWsId);
         } catch {
           setStore("sessionStatus", sessionID, "idle");
-          notifySessionBusy(sessionID, "idle");
+          notifySessionBusy(sessionID, "idle", sourceWsId);
           continue;
         }
 
