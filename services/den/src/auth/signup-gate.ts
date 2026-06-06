@@ -69,7 +69,7 @@ export type EmailSignupAccessInput = {
 
 function inviteTokenLookupHashes(inviteToken: string) {
   const hashedToken = hashOrganizationInviteToken(inviteToken)
-  return hashedToken === inviteToken ? [hashedToken] : [hashedToken, inviteToken]
+  return /^[0-9a-f]{64}$/i.test(inviteToken) ? [hashedToken] : [hashedToken, inviteToken]
 }
 
 function shouldTryLegacyRawInviteToken(error: unknown): error is OrganizationAdminRepositoryError {

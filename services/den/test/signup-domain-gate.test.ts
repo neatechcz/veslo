@@ -233,6 +233,39 @@ test("invite signup accepts legacy pending invites stored with raw token hashes"
   assert.equal(capturedTokenHashes[1], "legacy_raw_invite_token")
 })
 
+test("invite signup rejects submitted stored token hashes as bearer invite tokens", async () => {
+  const storedTokenHash = "a".repeat(64)
+  const capturedTokenHashes: string[] = []
+  const decision = await resolveEmailSignupAccess({
+    email: "invited@example.test",
+    inviteToken: storedTokenHash,
+    dependencies: {
+      resolveEnabledOrganizationDomainForEmail: async () => {
+        throw new OrganizationAdminRepositoryError("domain_not_allowed")
+      },
+      countActiveOrganizationSeats: async () => {
+        throw new Error("domain seat count should not be used for invite signup")
+      },
+      assertCanActivateOrganizationSeat: async () => undefined,
+      resolveValidOrganizationInviteForSignup: async (input: { email: string; tokenHash: string }) => {
+        capturedTokenHashes.push(input.tokenHash)
+        if (input.tokenHash === storedTokenHash) {
+          return createInviteRecord({
+            orgId: "org_1",
+            email: input.email,
+            tokenHash: input.tokenHash,
+          })
+        }
+        throw new OrganizationAdminRepositoryError("invite_not_found")
+      },
+    },
+  })
+
+  assert.deepEqual(decision, { ok: false, error: "domain_not_allowed" })
+  assert.equal(capturedTokenHashes.length, 1)
+  assert.notEqual(capturedTokenHashes[0], storedTokenHash)
+})
+
 test("post-create invite acceptance receives a stable hash instead of the raw invite token", async () => {
   const acceptedTokenHashes: string[] = []
   const input = {
@@ -310,6 +343,53 @@ test("post-create invite acceptance accepts legacy pending invites stored with r
   assert.equal(acceptedTokenHashes.length, 2)
   assert.notEqual(acceptedTokenHashes[0], "legacy_raw_invite_token")
   assert.equal(acceptedTokenHashes[1], "legacy_raw_invite_token")
+})
+
+test("post-create invite acceptance rejects submitted stored token hashes as bearer invite tokens", async () => {
+  const storedTokenHash = "b".repeat(64)
+  const acceptedTokenHashes: string[] = []
+
+  await assert.rejects(
+    completeSignupAfterUserCreate({
+      user: { id: "user_1", email: "invited@example.test" },
+      inviteToken: storedTokenHash,
+      createMembershipId: () => "membership_1",
+      resolveEnabledOrganizationDomainForEmail: async () => {
+        throw new OrganizationAdminRepositoryError("domain_not_allowed")
+      },
+      createOrActivateOrganizationMembership: async () => {
+        throw new Error("domain membership should not be activated")
+      },
+      acceptOrganizationInvite: async (acceptInput: { tokenHash: string; userId: string; email: string }) => {
+        acceptedTokenHashes.push(acceptInput.tokenHash)
+        if (acceptInput.tokenHash === storedTokenHash) {
+          return {
+            invite: createInviteRecord({
+              email: acceptInput.email,
+              tokenHash: acceptInput.tokenHash,
+            }),
+            membership: {
+              id: "membership_hash",
+              orgId: "org_1",
+              userId: acceptInput.userId,
+              role: "member" as const,
+              status: "active" as const,
+              createdAt: new Date("2026-06-06T08:00:00.000Z"),
+            },
+          }
+        }
+        throw new OrganizationAdminRepositoryError("invite_not_found")
+      },
+    }),
+    (error) => {
+      assert.ok(error instanceof OrganizationAdminRepositoryError)
+      assert.equal(error.code, "invite_not_found")
+      return true
+    },
+  )
+
+  assert.equal(acceptedTokenHashes.length, 1)
+  assert.notEqual(acceptedTokenHashes[0], storedTokenHash)
 })
 
 test("social post-create without authorized signup access does not authorize default org fallback", async () => {
