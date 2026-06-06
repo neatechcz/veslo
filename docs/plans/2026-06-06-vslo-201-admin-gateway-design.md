@@ -295,9 +295,13 @@ Each capacity card should show:
 - percent used and percent remaining,
 - number of credentials included,
 - number of functional credentials with unknown capacity,
+- limit telemetry state: current, stale, or unavailable,
+- last successful Codex limit read time when known,
 - nearest reset time.
 
 Credentials with unknown limits should not be included in the percentage denominator. Show them separately as functional but unknown capacity, so the percentage is not falsely optimistic.
+
+If the server cannot read Codex limits at all, that is not the same as a credential with unknown capacity. The Usage page should show the pool capacity state as unavailable, keep the last successful snapshot visible if one exists, and make the loss of limit telemetry the top recommended action.
 
 Credential drill-down rows should show:
 
@@ -318,8 +322,14 @@ Pool threshold alerts:
 
 - warning at 80 percent used capacity for functional measurable credentials,
 - critical at 90 percent used capacity,
+- critical exhausted alert at 100 percent used capacity,
 - thresholds apply separately to 5h and weekly windows,
+- critical when the server cannot read Codex limits for the pool,
 - critical when every automatically usable Codex credential is exhausted or unavailable for routing.
+
+The 100 percent alert is a separate, worsening state from the 90 percent alert. It must create or update a distinct alert key and trigger immediate admin email delivery.
+
+The Codex limit visibility alert is also separate from normal unknown-capacity credentials. It should fire when the gateway cannot access the Codex limit source for the pool, or when all functional credentials fail limit refresh because the limit source is unavailable. It should include the last successful read time, failure reason when safe to expose, and whether routing is continuing with stale or unknown capacity data.
 
 Credential alerts:
 
@@ -340,6 +350,9 @@ Alert keys should be stable, such as:
 
 - `capacity.codex.pool.5h.warning`
 - `capacity.codex.pool.weekly.critical`
+- `capacity.codex.pool.5h.exhausted`
+- `capacity.codex.pool.weekly.exhausted`
+- `capacity.codex.limits.unavailable`
 - `capacity.codex.credential.<credentialId>.5h.warning`
 - `credential.<credentialId>.auth.invalid_grant`
 
@@ -349,6 +362,7 @@ Send email at least for:
 
 - critical credential alerts,
 - critical pool exhausted alerts,
+- critical Codex limit visibility alerts,
 - warning alerts that remain active long enough or worsen,
 - invalid grant, revoked token, and other auth failures.
 
@@ -369,6 +383,8 @@ Email content:
 - admin link to the relevant detail,
 - recommended next action.
 
+For 100 percent exhausted capacity and Codex limit visibility failures, send an expanded high-priority email immediately. It should be deliberately hard to miss: urgent subject, top summary, current routing impact, 5h and weekly pool status, every credential's state and limit capacity when known, unknown or stale credentials, last successful limit read, current failure reason when safe, and the recommended recovery action.
+
 Store delivery attempts with at least pending/sent/failed state, timestamp, recipient, and error detail.
 
 ## Error Handling
@@ -384,6 +400,7 @@ Core errors:
 - `stale_update`
 - `alert_email_failed`
 - `capacity_unknown`
+- `codex_limits_unavailable`
 
 On Save errors, keep the form open and preserve unsaved changes. On command action errors, do not mutate local UI state and show the reason.
 
@@ -401,9 +418,10 @@ Required coverage:
 - API/integration tests for seat limit enforcement,
 - API/integration tests for last-platform-admin guard,
 - repository/policy tests for domain matching and invite activation,
-- repository/policy tests for 80/90 percent capacity thresholds,
+- repository/policy tests for 80/90/100 percent capacity thresholds,
+- repository/policy tests for Codex limit visibility failure alerts,
 - repository/policy tests for alert dedupe and status transitions,
-- email tests for alert delivery attempts and credential breakdown payloads,
+- email tests for alert delivery attempts, credential breakdown payloads, 100 percent capacity emails, and Codex limit visibility failure emails,
 - usage read-model tests for 5h/weekly remaining capacity and unknown-capacity handling.
 
 Implementation that changes durable behavior must also update canonical docs in `docs/dev/` or `docs/features/`.

@@ -687,6 +687,22 @@ test("keeps functional unknown-capacity credentials out of percentage denominato
   assert.equal(summary.fiveHour.measurableCredentials, 0)
   assert.equal(summary.fiveHour.unknownFunctionalCredentials, 1)
 })
+
+test("reports Codex limit visibility failure separately from unknown credential capacity", () => {
+  const summary = summarizeCodexCapacity({
+    credentials: [],
+    limitReadError: {
+      code: "codex_limits_unavailable",
+      message: "Codex limits endpoint returned 403",
+      occurredAt: "2026-06-06T10:00:00.000Z",
+    },
+    lastSuccessfulLimitReadAt: "2026-06-06T09:00:00.000Z",
+  })
+
+  assert.equal(summary.limitVisibility.status, "unavailable")
+  assert.equal(summary.limitVisibility.errorCode, "codex_limits_unavailable")
+  assert.equal(summary.limitVisibility.lastSuccessfulReadAt, "2026-06-06T09:00:00.000Z")
+})
 ```
 
 **Step 2: Run test to verify it fails**
@@ -708,6 +724,8 @@ Implement:
 - `summarizeCodexCapacity(input)`
 - per-window aggregation for 5h and weekly,
 - unknown functional credential handling,
+- limit visibility state: `current`, `stale`, or `unavailable`,
+- last successful Codex limit read time and safe failure reason,
 - excluded credential reason mapping.
 
 **Step 4: Add capacity to admin usage response**
@@ -719,6 +737,7 @@ Add admin read model tests proving:
 - capacity summary is present,
 - 5h and weekly windows are separate,
 - unknown-capacity credentials are listed separately,
+- Codex limit visibility failure is represented separately from unknown credential capacity,
 - excluded credentials include reason.
 
 **Step 5: Add UI rendering**
@@ -729,6 +748,7 @@ In admin UI:
 - add weekly capacity remaining card,
 - show included credential count,
 - show unknown functional credential count,
+- show Codex limit telemetry state and last successful read time,
 - show credential breakdown in Usage table.
 
 **Step 6: Run tests**
@@ -768,9 +788,14 @@ Create tests proving:
 
 - 80 percent pool usage creates warning,
 - 90 percent pool usage creates critical,
+- 100 percent pool usage creates a distinct exhausted critical alert,
+- 100 percent pool usage creates an immediate expanded email delivery intent,
+- Codex limit visibility failure creates a distinct critical alert,
+- Codex limit visibility failure creates an immediate expanded email delivery intent,
 - 5h and weekly alerts have distinct keys,
 - alert dedupe updates an existing alert instead of creating duplicates,
 - warning-to-critical worsening re-notifies,
+- critical-to-exhausted worsening re-notifies,
 - resolved alert reopens on later worsening.
 
 **Step 2: Run tests to verify they fail**
@@ -811,6 +836,7 @@ Create `services/ai-gateway/src/alerts/policy.ts`.
 Inputs:
 
 - Codex capacity summary,
+- Codex limit visibility status,
 - credential health events,
 - current credential states.
 
@@ -818,6 +844,12 @@ Outputs:
 
 - alert upsert requests,
 - delivery intent requests.
+
+Use stable alert keys for the new conditions:
+
+- `capacity.codex.pool.5h.exhausted`
+- `capacity.codex.pool.weekly.exhausted`
+- `capacity.codex.limits.unavailable`
 
 **Step 5: Implement repository**
 
@@ -842,6 +874,8 @@ Use env-based configuration. Add env fields in `services/ai-gateway/src/env.ts`:
 - `LETTR_API_KEY` or service-specific equivalent if sharing the existing provider config is acceptable.
 
 Do not print secrets.
+
+Email tests must prove that 100 percent pool exhaustion and Codex limit visibility failures use the expanded high-priority template. The template should include an urgent subject, pool status, current routing impact, 5h and weekly capacity summary, credential breakdown, unknown or stale credentials, last successful limit read, safe failure reason, and recommended recovery action.
 
 **Step 7: Wire alert generation**
 
@@ -948,6 +982,7 @@ Test stable errors:
 - `stale_update`
 - `alert_email_failed`
 - `capacity_unknown`
+- `codex_limits_unavailable`
 
 **Step 2: Run tests**
 
@@ -1087,6 +1122,7 @@ Document new persistence:
 - membership status,
 - alert persistence and delivery attempts,
 - capacity summary semantics.
+- Codex limit visibility failure semantics and high-priority alert email behavior.
 
 **Step 4: Update app map**
 
@@ -1179,3 +1215,5 @@ git commit -m "fix: stabilize VSLO-201 admin gateway"
 - Last-admin guard applies only to platform admins.
 - Unknown Codex capacity is not included in pool percentage denominators.
 - Alert emails must include credential breakdown for capacity alerts.
+- Alerting must include 80 percent, 90 percent, and 100 percent capacity thresholds.
+- Codex limit visibility failure must page admins with an expanded high-priority email.
