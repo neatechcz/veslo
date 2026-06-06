@@ -133,6 +133,24 @@ function createUsageResponse(groupBy: UsageResponse["groupBy"]): UsageResponse {
     topCredentials: [{ id: "cred_openai_1", label: "Credential cred_openai_1", totalTokens: 900 }],
     topUsers: [{ id: "user_admin", label: "Admin", totalTokens: 900 }],
     topOrgs: [],
+    capacity: {
+      codexCredentials: {
+        total: 0,
+        measurable: 0,
+        unavailable: 0,
+      },
+      fiveHour: {
+        usedPercent: null,
+        remainingPercent: null,
+        measurableCredentials: 0,
+      },
+      weekly: {
+        usedPercent: null,
+        remainingPercent: null,
+        measurableCredentials: 0,
+      },
+      credentials: [],
+    },
     credentialUsage: [
       {
         id: "cred_openai_1",
@@ -430,6 +448,32 @@ test("admin usage endpoint includes every credential with recorded usage and Cod
 
     assert.equal(response.status, 200)
     const body = await response.json()
+    assert.deepEqual(body.capacity, {
+      codexCredentials: {
+        total: 1,
+        measurable: 1,
+        unavailable: 0,
+      },
+      fiveHour: {
+        usedPercent: 100,
+        remainingPercent: 0,
+        measurableCredentials: 1,
+      },
+      weekly: {
+        usedPercent: 33,
+        remainingPercent: 67,
+        measurableCredentials: 1,
+      },
+      credentials: [{
+        id: "cred_codex_1",
+        name: "Credential cred_codex_1",
+        state: "healthy",
+        fiveHourRemainingPercent: 0,
+        weeklyRemainingPercent: 67,
+        statusAvailable: true,
+        limitsAvailable: true,
+      }],
+    })
     assert.deepEqual(body.credentialUsage, [
       {
         id: "cred_openai_1",
@@ -484,6 +528,187 @@ test("admin usage endpoint includes every credential with recorded usage and Cod
         },
       },
     ])
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("admin usage endpoint separates unknown Codex capacity from measurable remaining capacity", async () => {
+  const app = createAdminApp({
+    credentials: [
+      createCredential("cred_codex_1", {
+        provider: "codex_oauth",
+        activeLeases: 0,
+        cachedTokens: 0,
+        totalTokens: 0,
+      }),
+      createCredential("cred_codex_2", {
+        provider: "codex_oauth",
+        activeLeases: 0,
+        cachedTokens: 0,
+        totalTokens: 0,
+      }),
+    ],
+    usage: createUsageResponse("credential"),
+    codexStatusProvider: {
+      async getStatus(input) {
+        if (input.credentialId === "cred_codex_2") {
+          return {
+            available: false,
+            source: "unavailable",
+            label: "Codex limits unavailable",
+            detail: "Codex probe failed.",
+            checkedAt: "2026-04-26T12:01:00.000Z",
+            limits: null,
+          }
+        }
+        return {
+          available: true,
+          source: "codex_exec_rate_limits",
+          label: "Codex limits available",
+          detail: null,
+          checkedAt: "2026-04-26T12:00:00.000Z",
+          planType: "team",
+          limits: {
+            fiveHour: {
+              label: "5h",
+              usedPercent: 80,
+              windowMinutes: 300,
+              resetAt: "2026-04-30T18:00:00.000Z",
+            },
+            weekly: {
+              label: "Weekly",
+              usedPercent: 95,
+              windowMinutes: 10080,
+              resetAt: "2026-05-01T12:00:00.000Z",
+            },
+          },
+        }
+      },
+    },
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/usage?groupBy=credential`, {
+      headers: AUTHORIZATION,
+    })
+
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.deepEqual(body.capacity.codexCredentials, {
+      total: 2,
+      measurable: 1,
+      unavailable: 1,
+    })
+    assert.deepEqual(body.capacity.fiveHour, {
+      usedPercent: 80,
+      remainingPercent: 20,
+      measurableCredentials: 1,
+    })
+    assert.deepEqual(body.capacity.weekly, {
+      usedPercent: 95,
+      remainingPercent: 5,
+      measurableCredentials: 1,
+    })
+    assert.deepEqual(body.capacity.credentials.map((entry: { id: string; fiveHourRemainingPercent: number | null; weeklyRemainingPercent: number | null; statusAvailable: boolean; limitsAvailable: boolean }) => ({
+      id: entry.id,
+      fiveHourRemainingPercent: entry.fiveHourRemainingPercent,
+      weeklyRemainingPercent: entry.weeklyRemainingPercent,
+      statusAvailable: entry.statusAvailable,
+      limitsAvailable: entry.limitsAvailable,
+    })), [
+      {
+        id: "cred_codex_1",
+        fiveHourRemainingPercent: 20,
+        weeklyRemainingPercent: 5,
+        statusAvailable: true,
+        limitsAvailable: true,
+      },
+      {
+        id: "cred_codex_2",
+        fiveHourRemainingPercent: null,
+        weeklyRemainingPercent: null,
+        statusAvailable: false,
+        limitsAvailable: false,
+      },
+    ])
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("admin usage endpoint excludes non-functional Codex credentials from capacity overview", async () => {
+  const app = createAdminApp({
+    credentials: [
+      createCredential("cred_codex_healthy", {
+        provider: "codex_oauth",
+        activeLeases: 0,
+        totalTokens: 0,
+      }),
+      createCredential("cred_codex_unhealthy", {
+        provider: "codex_oauth",
+        state: "unhealthy",
+        activeLeases: 0,
+        totalTokens: 0,
+      }),
+    ],
+    usage: createUsageResponse("credential"),
+    codexStatusProvider: {
+      async getStatus() {
+        return {
+          available: true,
+          source: "codex_exec_rate_limits",
+          label: "Codex limits available",
+          detail: null,
+          checkedAt: "2026-04-26T12:00:00.000Z",
+          planType: "team",
+          limits: {
+            fiveHour: {
+              label: "5h",
+              usedPercent: 40,
+              windowMinutes: 300,
+              resetAt: "2026-04-30T18:00:00.000Z",
+            },
+            weekly: {
+              label: "Weekly",
+              usedPercent: 60,
+              windowMinutes: 10080,
+              resetAt: "2026-05-01T12:00:00.000Z",
+            },
+          },
+        }
+      },
+    },
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/usage?groupBy=credential`, {
+      headers: AUTHORIZATION,
+    })
+
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.deepEqual(body.credentialUsage.map((entry: { id: string; state: string }) => ({
+      id: entry.id,
+      state: entry.state,
+    })), [
+      { id: "cred_codex_healthy", state: "healthy" },
+      { id: "cred_codex_unhealthy", state: "unhealthy" },
+    ])
+    assert.deepEqual(body.capacity.codexCredentials, {
+      total: 1,
+      measurable: 1,
+      unavailable: 0,
+    })
+    assert.deepEqual(body.capacity.credentials.map((entry: { id: string }) => entry.id), ["cred_codex_healthy"])
   } finally {
     server.close()
     await once(server, "close")

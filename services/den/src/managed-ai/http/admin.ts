@@ -34,6 +34,7 @@ import {
   isManagedAiProvider,
 } from "../providers/ids.js"
 import { evaluateCodexCredentialEligibility } from "../usage/codex-eligibility.js"
+import { buildCodexCapacityOverview } from "../usage/codex-capacity.js"
 import {
   CachedCodexCredentialStatusProvider,
   type CodexCredentialStatusProvider,
@@ -321,6 +322,16 @@ export function createManagedAiAdminRouteDeps(
         label: credentialLabels.get(entry.id) ?? entry.label,
       })),
       credentialUsage,
+      capacity: buildCodexCapacityOverview(
+        credentialUsage
+          .filter((credential) => credential.provider === "codex_oauth")
+          .map((credential) => ({
+            id: credential.id,
+            name: credential.name,
+            state: credential.state,
+            upstreamStatus: credential.upstreamStatus,
+          })),
+      ),
     }
   }
 

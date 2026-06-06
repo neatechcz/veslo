@@ -100,6 +100,13 @@ const els = {
   usageTotalRequests: document.getElementById("usage-total-requests"),
   usageTopCredential: document.getElementById("usage-top-credential"),
   usageSeries: document.getElementById("usage-series"),
+  usageCapacityFiveHour: document.getElementById("usage-capacity-five-hour"),
+  usageCapacityFiveHourNote: document.getElementById("usage-capacity-five-hour-note"),
+  usageCapacityWeekly: document.getElementById("usage-capacity-weekly"),
+  usageCapacityWeeklyNote: document.getElementById("usage-capacity-weekly-note"),
+  usageCapacityMeasured: document.getElementById("usage-capacity-measured"),
+  usageCapacityMeasuredNote: document.getElementById("usage-capacity-measured-note"),
+  usageCapacityCredentials: document.getElementById("usage-capacity-credentials"),
   usageCredentialTableBody: document.getElementById("usage-credential-table-body"),
   alertList: document.getElementById("alert-list"),
   alertDetail: document.getElementById("alert-detail"),
@@ -1209,7 +1216,7 @@ function renderUsage() {
     return;
   }
 
-  const { credentialUsage = [], filters, series, summary, topCredentials } = state.usage;
+  const { capacity, credentialUsage = [], filters, series, summary, topCredentials } = state.usage;
   els.usageGroupBy.value = state.usageFilters.groupBy;
   els.usageCredentialFilter.innerHTML = `<option value="">All credentials</option>${filters.credentials.map((entry) => `<option value="${escapeHtml(entry.id)}"${entry.id === state.usageFilters.credentialId ? " selected" : ""}>${escapeHtml(entry.label)}</option>`).join("")}`;
   els.usageUserFilter.innerHTML = `<option value="">All users</option>${filters.users.map((entry) => `<option value="${escapeHtml(entry.id)}"${entry.id === state.usageFilters.userId ? " selected" : ""}>${escapeHtml(entry.label)}</option>`).join("")}`;
@@ -1234,6 +1241,8 @@ function renderUsage() {
     </article>
   `).join("") || `<article class="list-card active"><div><strong>No usage</strong><p>No usage matched the selected filters.</p></div></article>`;
 
+  renderUsageCapacity(capacity);
+
   els.usageCredentialTableBody.innerHTML = credentialUsage.map((credential) => {
     const upstreamStatus = formatCredentialUpstreamStatus(credential);
     return `<tr>
@@ -1249,6 +1258,49 @@ function renderUsage() {
       <td><span class="status-chip ${escapeHtml(upstreamStatus.tone)}">${escapeHtml(upstreamStatus.label)}</span><span>${escapeHtml(upstreamStatus.detail)}</span><span>${escapeHtml(upstreamStatus.limitSummary)}</span></td>
     </tr>`;
   }).join("") || `<tr><td colspan="10">No credential usage matched the selected filters.</td></tr>`;
+}
+
+function renderUsageCapacity(capacity) {
+  const codex = capacity?.codexCredentials ?? { total: 0, measurable: 0, unavailable: 0 };
+  const fiveHour = capacity?.fiveHour ?? null;
+  const weekly = capacity?.weekly ?? null;
+
+  els.usageCapacityFiveHour.textContent = formatCapacityRemaining(fiveHour?.remainingPercent);
+  els.usageCapacityFiveHourNote.textContent = formatCapacityWindowNote(fiveHour);
+  els.usageCapacityWeekly.textContent = formatCapacityRemaining(weekly?.remainingPercent);
+  els.usageCapacityWeeklyNote.textContent = formatCapacityWindowNote(weekly);
+  els.usageCapacityMeasured.textContent = `${formatNumber(codex.measurable)}/${formatNumber(codex.total)}`;
+  els.usageCapacityMeasuredNote.textContent = codex.unavailable > 0
+    ? `${formatNumber(codex.unavailable)} Codex credential status unknown`
+    : "All Codex credential limits visible";
+
+  const credentials = Array.isArray(capacity?.credentials) ? capacity.credentials : [];
+  els.usageCapacityCredentials.innerHTML = credentials.map((credential) => {
+    const tone = credential.limitsAvailable ? "success" : "warning";
+    return `
+      <article class="list-card active">
+        <div>
+          <strong>${escapeHtml(credential.name || credential.id)}</strong>
+          <p>5h ${escapeHtml(formatCapacityRemaining(credential.fiveHourRemainingPercent))} · Weekly ${escapeHtml(formatCapacityRemaining(credential.weeklyRemainingPercent))}</p>
+        </div>
+        <span class="status-chip ${escapeHtml(tone)}">${escapeHtml(credential.limitsAvailable ? "Limits visible" : "Limits unknown")}</span>
+      </article>
+    `;
+  }).join("") || `<article class="list-card active"><div><strong>No Codex capacity data</strong><p>No functional Codex credentials reported visible limits.</p></div></article>`;
+}
+
+function formatCapacityRemaining(value) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? `${Math.round(value)}% remaining`
+    : "Unknown";
+}
+
+function formatCapacityWindowNote(window) {
+  if (!window || typeof window.measurableCredentials !== "number" || window.measurableCredentials === 0) {
+    return "No visible Codex limit data";
+  }
+  const used = typeof window.usedPercent === "number" ? `${Math.round(window.usedPercent)}% used` : "usage unknown";
+  return `${used} across ${formatNumber(window.measurableCredentials)} measured credential${window.measurableCredentials === 1 ? "" : "s"}`;
 }
 
 function formatProviderName(provider) {

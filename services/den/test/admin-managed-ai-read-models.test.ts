@@ -107,6 +107,24 @@ function createUsageResponse() {
     topCredentials: [{ id: "cred_openai_1", label: "Credential cred_openai_1", totalTokens: 900 }],
     topUsers: [{ id: "user_admin", label: "Admin", totalTokens: 900 }],
     topOrgs: [],
+    capacity: {
+      codexCredentials: {
+        total: 0,
+        measurable: 0,
+        unavailable: 0,
+      },
+      fiveHour: {
+        usedPercent: null,
+        remainingPercent: null,
+        measurableCredentials: 0,
+      },
+      weekly: {
+        usedPercent: null,
+        remainingPercent: null,
+        measurableCredentials: 0,
+      },
+      credentials: [],
+    },
     credentialUsage: [],
   }
 }
@@ -406,6 +424,32 @@ test("GET /admin/api/usage includes rich credential usage with cached tokens and
 
     assert.equal(response.status, 200)
     const body = await response.json()
+    assert.deepEqual(body.capacity, {
+      codexCredentials: {
+        total: 1,
+        measurable: 1,
+        unavailable: 0,
+      },
+      fiveHour: {
+        usedPercent: 100,
+        remainingPercent: 0,
+        measurableCredentials: 1,
+      },
+      weekly: {
+        usedPercent: 33,
+        remainingPercent: 67,
+        measurableCredentials: 1,
+      },
+      credentials: [{
+        id: "cred_codex_1",
+        name: "Credential cred_codex_1",
+        state: "healthy",
+        fiveHourRemainingPercent: 0,
+        weeklyRemainingPercent: 67,
+        statusAvailable: true,
+        limitsAvailable: true,
+      }],
+    })
     assert.deepEqual(body.credentialUsage, [
       {
         id: "cred_openai_1",
@@ -439,6 +483,59 @@ test("GET /admin/api/usage includes rich credential usage with cached tokens and
         },
       },
     ])
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/api/usage excludes non-functional Codex credentials from capacity overview", async () => {
+  const app = createReadModelApp({
+    credentials: [
+      createCredential("cred_codex_healthy", {
+        provider: "codex_oauth",
+        activeLeases: 0,
+        totalTokens: 0,
+      }),
+      createCredential("cred_codex_unhealthy", {
+        provider: "codex_oauth",
+        state: "unhealthy",
+        activeLeases: 0,
+        totalTokens: 0,
+      }),
+    ],
+    usage: {
+      ...createUsageResponse(),
+      groupBy: "credential" as const,
+    },
+    codexStatusProvider: {
+      async getStatus() {
+        return createCodexStatus()
+      },
+    },
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/usage?groupBy=credential`)
+
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.deepEqual(body.credentialUsage.map((entry: { id: string; state: string }) => ({
+      id: entry.id,
+      state: entry.state,
+    })), [
+      { id: "cred_codex_healthy", state: "healthy" },
+      { id: "cred_codex_unhealthy", state: "unhealthy" },
+    ])
+    assert.deepEqual(body.capacity.codexCredentials, {
+      total: 1,
+      measurable: 1,
+      unavailable: 0,
+    })
+    assert.deepEqual(body.capacity.credentials.map((entry: { id: string }) => entry.id), ["cred_codex_healthy"])
   } finally {
     server.close()
     await once(server, "close")

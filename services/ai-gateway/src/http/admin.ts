@@ -27,6 +27,7 @@ import { formatAiGatewayProviderLabel, isAiGatewayProvider } from "../providers/
 import { OpenAiCompatibleTransport } from "../providers/openai-compatible-transport.js";
 import { ProviderTransportError, type OpenAiCompatibleProviderTransport } from "../providers/transport.js";
 import { evaluateCodexCredentialEligibility } from "../usage/codex-eligibility.js";
+import { buildCodexCapacityOverview, type CodexCapacityOverview } from "../usage/codex-capacity.js";
 import { MySqlUsageRepository } from "../usage/mysql-repository.js";
 import { CachedCodexCredentialStatusProvider, UnavailableCodexCredentialStatusProvider, type CodexCredentialStatusProvider, type CodexUsageStatus } from "../usage/codex-status.js";
 import type { AggregateUsageInput, UsageAggregateResponse, UsageCredentialAggregate, UsageGroupBy as RepositoryUsageGroupBy, UsageRepository } from "../usage/repository.js";
@@ -166,6 +167,7 @@ export type AdminCredentialUsageRecord = UsageCredentialAggregate & {
 
 export type UsageResponse = Omit<UsageAggregateResponse, "credentialUsage"> & {
   credentialUsage: AdminCredentialUsageRecord[];
+  capacity: CodexCapacityOverview;
 };
 
 export type AdminCredentialEligibility = {
@@ -1546,6 +1548,16 @@ export function createDefaultAdminService(
         label: credentialLabels.get(entry.id) ?? entry.label,
       })),
       credentialUsage,
+      capacity: buildCodexCapacityOverview(
+        credentialUsage
+          .filter((credential) => credential.provider === "codex_oauth")
+          .map((credential) => ({
+            id: credential.id,
+            name: credential.name,
+            state: credential.state,
+            upstreamStatus: credential.upstreamStatus,
+          })),
+      ),
     };
   }
 

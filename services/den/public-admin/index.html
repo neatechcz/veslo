@@ -487,27 +487,63 @@
               </article>
             </div>
             <div id="usage-series" class="list-cards"></div>
-            <div class="table-shell">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Credential</th>
-                    <th>Provider</th>
-                    <th>Status</th>
-                    <th>Requests</th>
-                    <th>Cached tokens</th>
-                    <th>Total tokens</th>
-                    <th>Active leases</th>
-                    <th>Last used</th>
-                    <th>Eligibility</th>
-                    <th>Upstream status</th>
-                  </tr>
-                </thead>
-                <tbody id="usage-credential-table-body">
-                  <tr><td colspan="10">No credential usage matched the selected filters.</td></tr>
-                </tbody>
-              </table>
-            </div>
+            <section class="usage-credential-card">
+              <div class="section-head compact">
+                <div>
+                  <p class="eyebrow">Capacity overview</p>
+                  <h3>Codex remaining limits</h3>
+                </div>
+                <span class="status-chip info">Functional credentials only</span>
+              </div>
+              <div class="hero-metrics">
+                <article class="metric-card">
+                  <span class="metric-label">5h remaining</span>
+                  <strong id="usage-capacity-five-hour">Unknown</strong>
+                  <span class="metric-note" id="usage-capacity-five-hour-note">Waiting for Codex limit status</span>
+                </article>
+                <article class="metric-card">
+                  <span class="metric-label">Weekly remaining</span>
+                  <strong id="usage-capacity-weekly">Unknown</strong>
+                  <span class="metric-note" id="usage-capacity-weekly-note">Waiting for Codex limit status</span>
+                </article>
+                <article class="metric-card">
+                  <span class="metric-label">Measured credentials</span>
+                  <strong id="usage-capacity-measured">0/0</strong>
+                  <span class="metric-note" id="usage-capacity-measured-note">No Codex credentials measured</span>
+                </article>
+              </div>
+              <div id="usage-capacity-credentials" class="list-cards"></div>
+            </section>
+            <section class="usage-credential-card">
+              <div class="section-head compact">
+                <div>
+                  <p class="eyebrow">Credential usage</p>
+                  <h3>Recorded usage and Codex limits</h3>
+                </div>
+                <span class="status-chip info">Codex limits best effort</span>
+              </div>
+              <div class="table-shell">
+                <table class="credential-usage-table">
+                  <thead>
+                    <tr>
+                      <th>Credential</th>
+                      <th>Provider</th>
+                      <th>Status</th>
+                      <th>Requests</th>
+                      <th>Cached tokens</th>
+                      <th>Total tokens</th>
+                      <th>Active leases</th>
+                      <th>Last used</th>
+                      <th>Eligibility</th>
+                      <th>Upstream status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="usage-credential-table-body">
+                    <tr><td colspan="10">No credential usage matched the selected filters.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
           </section>
 
           <section class="panel page page-alerts hidden" data-page="alerts">

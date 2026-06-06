@@ -2,6 +2,7 @@ import express from "express"
 import { OrgRole } from "../db/schema.js"
 import type { DebugLogDetail, DebugLogListEntry } from "../debug-logs/types.js"
 import type { ManagedAiProvider } from "../managed-ai/providers/ids.js"
+import type { CodexCapacityOverview } from "../managed-ai/usage/codex-capacity.js"
 import type { CodexUsageStatus } from "../managed-ai/usage/codex-status.js"
 import { asyncRoute } from "./errors.js"
 
@@ -211,6 +212,7 @@ export type AdminUsageResponse = {
   topUsers: Array<AdminUsageLabel & { totalTokens: number }>
   topOrgs: Array<AdminUsageLabel & { totalTokens: number }>
   credentialUsage: AdminCredentialUsageRecord[]
+  capacity: CodexCapacityOverview
 }
 
 export type AdminAlertRecord = {
