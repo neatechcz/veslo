@@ -63,7 +63,7 @@ const createGlobalSkill = async (
   return skillPath;
 };
 
-async function startFixture() {
+async function startFixture(options: { readOnly?: boolean } = {}) {
   const dataDir = await tempDir("veslo-skill-enabled-route-data-");
   const workspaceRoot = await tempDir("veslo-skill-enabled-route-workspace-");
   await mkdir(join(workspaceRoot, ".git"), { recursive: true });
@@ -87,7 +87,7 @@ async function startFixture() {
       },
     ],
     authorizedRoots: [workspaceRoot],
-    readOnly: false,
+    readOnly: options.readOnly ?? false,
     startedAt: Date.now(),
     tokenSource: "cli",
     hostTokenSource: "cli",
@@ -121,6 +121,19 @@ const clientHeaders = {
 const readJson = async (response: Response): Promise<Record<string, unknown>> => {
   return await response.json() as Record<string, unknown>;
 };
+
+async function issueToken(server: { port: number }, scope: "owner" | "collaborator" | "viewer"): Promise<string> {
+  const response = await fetch(`http://127.0.0.1:${server.port}/tokens`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-veslo-host-token": "host-token",
+    },
+    body: JSON.stringify({ scope }),
+  });
+  expect(response.status).toBe(201);
+  return (await response.json() as { token: string }).token;
+}
 
 test("GET /skills/disabled returns disabled records", async () => {
   const { dataDir, workspaceRoot, server } = await startFixture();
@@ -195,6 +208,69 @@ test("PATCH /skills/enabled-state disables a workspace skill", async () => {
       path: skillPath,
     },
   ]);
+});
+
+test("PATCH /skills/enabled-state requires collaborator client auth", async () => {
+  const { workspaceRoot, server } = await startFixture();
+  const skillPath = await createWorkspaceSkill(workspaceRoot, "auth-disabled-skill");
+
+  const unauthenticated = await fetch(`http://127.0.0.1:${server.port}/skills/enabled-state`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      enabled: false,
+      target: {
+        name: "auth-disabled-skill",
+        scope: "workspace",
+        workspaceId: "ws_1",
+        path: skillPath,
+      },
+    }),
+  });
+  expect(unauthenticated.status).toBe(401);
+
+  const viewerToken = await issueToken(server, "viewer");
+  const viewer = await fetch(`http://127.0.0.1:${server.port}/skills/enabled-state`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${viewerToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      enabled: false,
+      target: {
+        name: "auth-disabled-skill",
+        scope: "workspace",
+        workspaceId: "ws_1",
+        path: skillPath,
+      },
+    }),
+  });
+  expect(viewer.status).toBe(403);
+});
+
+test("PATCH /skills/enabled-state is blocked when the server is read-only", async () => {
+  const { workspaceRoot, server } = await startFixture({ readOnly: true });
+  const skillPath = await createWorkspaceSkill(workspaceRoot, "readonly-disabled-skill");
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/skills/enabled-state`, {
+    method: "PATCH",
+    headers: {
+      ...clientHeaders,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      enabled: false,
+      target: {
+        name: "readonly-disabled-skill",
+        scope: "workspace",
+        workspaceId: "ws_1",
+        path: skillPath,
+      },
+    }),
+  });
+
+  expect(response.status).toBe(403);
 });
 
 test("GET /workspace/:id/skills excludes disabled skills by default", async () => {
