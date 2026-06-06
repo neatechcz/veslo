@@ -112,6 +112,8 @@ User-open progress groups, nested action sections, and technical detail disclosu
 
 `showThinking=false` hides model reasoning content and reasoning technical details only. It must not hide progress actions, non-final assistant comments, tool summaries, or other non-reasoning progress details that regular users need in order to understand what happened during the run.
 
+Expanded intermediate comments and expanded technical detail values expose scoped copy controls. Their text values remain directly selectable, but copying a single value should not require selecting across the surrounding agent output.
+
 ## Timeline Media Evidence
 
 The session timeline can show image evidence attached to the step or message where it mattered.

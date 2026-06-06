@@ -772,19 +772,44 @@ export default function MessageList(props: MessageListProps) {
   const canShowTimelineTechnicalDetail = (entry: { part?: Part; row: TimelineRowModel }) =>
     Boolean(entry.row.technicalDetail) && (entry.part?.type !== "reasoning" || props.showThinking);
 
-  const ProgressComment = (commentProps: { item: ProgressCommentItem }) => (
-    <div data-testid="session-progress-comment" class="font-reading type-reading-md text-gray-12 antialiased">
-      <PartView
-        part={commentProps.item.part}
-        developerMode={props.developerMode}
-        showThinking={props.showThinking}
-        workspaceRoot={props.workspaceRoot}
-        tone="light"
-        renderMarkdown={true}
-        highlightQuery={props.searchHighlightQuery}
-      />
-    </div>
-  );
+  const ProgressComment = (commentProps: { item: ProgressCommentItem }) => {
+    const commentCopyId = () => `${commentProps.item.id}:copy`;
+    const copyLabel = () =>
+      copyingId() === commentCopyId()
+        ? __vesloT("common.copied", __vesloCurrentLocale())
+        : __vesloT("common.copy", __vesloCurrentLocale());
+    return (
+      <div data-testid="session-progress-comment" class="group/progress-comment flex items-start gap-2 font-reading type-reading-md text-gray-12 antialiased">
+        <div data-testid="session-progress-comment-value" class="min-w-0 flex-1 select-text">
+          <PartView
+            part={commentProps.item.part}
+            developerMode={props.developerMode}
+            showThinking={props.showThinking}
+            workspaceRoot={props.workspaceRoot}
+            tone="light"
+            renderMarkdown={true}
+            highlightQuery={props.searchHighlightQuery}
+          />
+        </div>
+        <button
+          type="button"
+          data-testid="session-progress-comment-copy"
+          class="mt-0.5 shrink-0 rounded p-1 text-dls-secondary opacity-100 transition-colors hover:bg-dls-hover hover:text-dls-text focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.24)] md:opacity-0 md:group-hover/progress-comment:opacity-100 md:group-focus-within/progress-comment:opacity-100 select-none"
+          title={copyLabel()}
+          aria-label={copyLabel()}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            handleCopy(partToText(commentProps.item.part), commentCopyId());
+          }}
+        >
+          <Show when={copyingId() === commentCopyId()} fallback={<Copy size={12} />}>
+            <Check size={12} class="text-green-10" />
+          </Show>
+        </button>
+      </div>
+    );
+  };
 
   const ProgressStepGroup = (stepProps: { item: ProgressStepItem }) => (
     <div data-testid="session-progress-step-group">
@@ -1352,7 +1377,7 @@ export default function MessageList(props: MessageListProps) {
                                                   <button
                                                     type="button"
                                                     data-testid="session-timeline-technical-detail-copy"
-                                                    class="mt-0.5 shrink-0 rounded p-1 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text select-none"
+                                                    class="mt-0.5 shrink-0 rounded p-1 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.24)] select-none"
                                                     title={detailCopyLabel}
                                                     aria-label={detailCopyLabel}
                                                     onClick={(event) => {
