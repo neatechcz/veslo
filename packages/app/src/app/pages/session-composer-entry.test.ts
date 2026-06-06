@@ -62,3 +62,11 @@ test("target picker and conflict modal expose stable test hooks", () => {
   assert.match(conflictSource, /data-testid="composer-target-load-existing"/);
   assert.match(conflictSource, /session\.target_conflict_escape_hint/);
 });
+
+test("session empty state renders target picker above centered composer", () => {
+  assert.match(sessionSource, /data-testid="composer-entry-target-heading"/);
+  assert.match(sessionSource, /<ComposerTargetPicker/);
+  assert.match(sessionSource, /entryPlacement="center"/);
+  assert.doesNotMatch(sessionSource, /handleBrowserAutomationQuickstart/);
+  assert.doesNotMatch(sessionSource, /handleSoulQuickstart/);
+});
