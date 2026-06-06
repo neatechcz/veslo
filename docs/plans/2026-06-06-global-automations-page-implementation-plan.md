@@ -336,8 +336,12 @@ Add:
 - workspace name/path on every automation card
 - workspace diagnostics for unmapped or failed workspaces
 
-Keep the page dense and management-oriented. Do not create a marketing-style
-landing section.
+Follow the approved Pencil direction, `Global Automations App Visual Design
+CZ`. Keep the app's existing visual system: IBM Plex Sans, Radix gray surfaces,
+subtle borders, existing `Button` variants, and rounded automation cards
+consistent with the current scheduled page. Do not convert the page into a dark
+sidebar admin dashboard or a hard-edged data table. Do not create a
+marketing-style landing section.
 
 **Step 4: Run tests**
 
