@@ -2000,6 +2000,9 @@ export default function App() {
     const currentDraft = composerDraft();
     const destinationSummary = findPendingDraftSummaryForTarget(target);
     const destinationDraft = destinationSummary ? await loadPendingDraftComposer(destinationSummary) : null;
+    if (destinationSummary && !destinationDraft) {
+      return { status: "blocked", message: t("session.target_not_available", currentLocale()) };
+    }
     const decision = resolveComposerTargetConflict({ current: currentDraft, destination: destinationDraft });
 
     if (decision.kind === "conflict" && !resolution) {

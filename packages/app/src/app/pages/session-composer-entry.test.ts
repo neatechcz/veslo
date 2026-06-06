@@ -30,3 +30,7 @@ test("switchComposerTarget returns conflict before mutating active draft", () =>
   assert.match(appSource, /resolution === "load-existing"/);
   assert.match(appSource, /setActivePendingDraftKey\(target\.id\)/);
 });
+
+test("switchComposerTarget blocks when an existing destination draft cannot be loaded", () => {
+  assert.match(appSource, /if \(destinationSummary && !destinationDraft\) \{/);
+});
