@@ -33,6 +33,20 @@ test("admin runtime session resolver allows organization admins while managed AI
   assert.match(source, /getAdminSession:\s*requirePlatformAdminSnapshot/)
 })
 
+test("admin session authorization reads memberships without provisioning a default organization", async () => {
+  const source = await readFile(new URL("../src/http/admin-runtime.ts", import.meta.url), "utf8")
+  const platformSnapshotSource =
+    source.match(/export async function requirePlatformAdminSnapshot[\s\S]*?export async function requireAdminSessionSnapshot/)?.[0] ?? ""
+  const adminSnapshotSource =
+    source.match(/export async function requireAdminSessionSnapshot[\s\S]*?async function loadUserMemberships/)?.[0] ?? ""
+
+  assert.match(source, /resolveUserOrganizations/)
+  assert.match(platformSnapshotSource, /resolveUserOrganizations\(session\.user\.id\)/)
+  assert.match(adminSnapshotSource, /resolveUserOrganizations\(session\.user\.id\)/)
+  assert.doesNotMatch(platformSnapshotSource, /resolveMembershipOrganizations/)
+  assert.doesNotMatch(adminSnapshotSource, /resolveMembershipOrganizations/)
+})
+
 test("only platform admins can edit organization seat limits", () => {
   assert.equal(typeof adminRuntime.canAdminEditOrganizationSeatLimit, "function")
   assert.equal(adminRuntime.canAdminEditOrganizationSeatLimit({ platformAdmin: true }), true)

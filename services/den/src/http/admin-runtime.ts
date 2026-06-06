@@ -24,7 +24,7 @@ import {
 } from "../db/schema.js"
 import { env } from "../env.js"
 import { isOrganizationAdminRole, toCurrentOrgRole } from "./access.js"
-import { readRequestedOrganizationId, resolveMembershipOrganizations, isPlatformAdmin } from "./org-auth.js"
+import { readRequestedOrganizationId, resolveUserOrganizations, isPlatformAdmin } from "./org-auth.js"
 import { requireSession } from "./session.js"
 import {
   createAdminRouter,
@@ -286,7 +286,7 @@ export async function requirePlatformAdminSnapshot(req: express.Request, res: ex
     return null
   }
 
-  const organizations = await resolveMembershipOrganizations(session)
+  const organizations = await resolveUserOrganizations(session.user.id)
 
   return {
     user: session.user,
@@ -309,7 +309,7 @@ export async function requireAdminSessionSnapshot(req: express.Request, res: exp
   }
 
   const platformAdmin = isBootstrapPlatformAdminEmail(session.user.email) || await isPlatformAdmin(session.user.id)
-  const memberships = await resolveMembershipOrganizations(session)
+  const memberships = await resolveUserOrganizations(session.user.id)
   const visibleOrganizations = platformAdmin
     ? memberships
     : memberships.filter((entry) => isOrganizationAdminRole(entry.role))
