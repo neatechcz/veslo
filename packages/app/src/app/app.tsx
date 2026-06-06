@@ -6893,11 +6893,32 @@ export default function App() {
     return map;
   };
 
+  let soulOverviewRefreshSeq = 0;
+  const refreshSoulOverview = async (client: VesloServerClient) => {
+    const requestSeq = ++soulOverviewRefreshSeq;
+    try {
+      const overview = await client.getSoulOverview(skillRegistryMaterializationAuthContext());
+      if (requestSeq !== soulOverviewRefreshSeq || vesloServerClient() !== client || vesloServerStatus() !== "connected") {
+        return;
+      }
+      setSoulOverview(overview);
+      setSoulOverviewError(null);
+    } catch (error) {
+      if (requestSeq !== soulOverviewRefreshSeq || vesloServerClient() !== client || vesloServerStatus() !== "connected") {
+        return;
+      }
+      const message = error instanceof Error ? error.message : "Failed to load Soul overview.";
+      setSoulOverview(null);
+      setSoulOverviewError(message);
+    }
+  };
+
   const refreshSoulData = async (options?: { force?: boolean }) => {
     if (soulStatusBusy() && !options?.force) return;
 
     const client = vesloServerClient();
     if (!client || vesloServerStatus() !== "connected") {
+      soulOverviewRefreshSeq += 1;
       setSoulOverview(null);
       setSoulOverviewError(null);
       setSoulStatusByWorkspaceId({});
@@ -6910,15 +6931,7 @@ export default function App() {
     setSoulStatusBusy(true);
     setSoulError(null);
     try {
-      try {
-        const overview = await client.getSoulOverview(skillRegistryMaterializationAuthContext());
-        setSoulOverview(overview);
-        setSoulOverviewError(null);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Failed to load Soul overview.";
-        setSoulOverview(null);
-        setSoulOverviewError(message);
-      }
+      void refreshSoulOverview(client);
 
       const workspaceMap = await resolveSoulWorkspaceMap();
       const workspaceIds = Object.entries(workspaceMap);

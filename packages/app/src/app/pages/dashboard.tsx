@@ -38,6 +38,7 @@ import {
 import type {
   VesloAuditEntry,
   VesloSoulHeartbeatEntry,
+  VesloSoulOverviewResponse,
   VesloSoulStatus,
   VesloServerClient,
   VesloServerCapabilities,
@@ -194,6 +195,8 @@ export type DashboardViewProps = {
   scheduledJobsUpdatedAt: number | null;
   refreshScheduledJobs: (options?: { force?: boolean }) => void;
   deleteScheduledJob: (name: string) => Promise<void> | void;
+  soulOverview: VesloSoulOverviewResponse | null;
+  soulOverviewError: string | null;
   soulStatusByWorkspaceId: Record<string, VesloSoulStatus | null>;
   activeSoulStatus: VesloSoulStatus | null;
   activeSoulHeartbeats: VesloSoulHeartbeatEntry[];
