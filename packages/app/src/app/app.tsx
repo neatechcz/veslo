@@ -1201,6 +1201,7 @@ export default function App() {
   const [activePendingDraftKey, setActivePendingDraftKey] = createSignal<string | null>(null);
   const [activePendingDraftMeta, setActivePendingDraftMeta] = createSignal<PendingSessionDraftSummary | null>(null);
   const [activePendingDraftStorageReady, setActivePendingDraftStorageReady] = createSignal(false);
+  const [pendingDraftSummaries, setPendingDraftSummaries] = createSignal<PendingSessionDraftSummary[]>([]);
   const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(
     null
   );
@@ -1317,6 +1318,14 @@ export default function App() {
     const next = readConsumedPendingDraftIds();
     if (!next.delete(trimmed)) return;
     writeConsumedPendingDraftIds(next);
+  };
+  const refreshPendingDraftSummaries = async () => {
+    if (!isTauriRuntime()) {
+      setPendingDraftSummaries([]);
+      return;
+    }
+    const summaries = (await pendingSessionDraftsList()).filter((draft) => !isConsumedPendingDraftId(draft.id));
+    setPendingDraftSummaries(summaries);
   };
   const formatPendingDraftAttachmentRestoreError = (
     attachmentFailures: { attachmentId: string; name: string; message: string }[],
@@ -1732,7 +1741,60 @@ export default function App() {
   });
 
   const [composerDraftBySessionId, setComposerDraftBySessionId] = createSignal<Record<string, ComposerDraft>>({});
-  const composerTargetOptions = createMemo<ComposerTargetOption[]>(() => []);
+  const workspaceLabel = (workspace: WorkspaceInfo) =>
+    workspace.displayName?.trim() ||
+    workspace.name?.trim() ||
+    workspace.vesloWorkspaceName?.trim() ||
+    workspace.id;
+  const composerTargetOptions = createMemo<ComposerTargetOption[]>(() => {
+    const summaries = pendingDraftSummaries();
+    const hasDraft = (key: string) =>
+      summaries.some((draft) => {
+        try {
+          return resolvePendingDraftKey({
+            kind: draft.kind,
+            workspaceId: draft.workspaceId,
+            directory: draft.directory ?? null,
+            privateWorkspaceId: draft.privateWorkspaceId ?? null,
+          }) === key;
+        } catch {
+          return false;
+        }
+      });
+
+    const chatId = resolvePendingDraftKey({ kind: "new-private" });
+    const options: ComposerTargetOption[] = [{
+      id: chatId,
+      kind: "chat",
+      label: t("session.target_chat_label", currentLocale()),
+      description: t("session.target_chat_description", currentLocale()),
+      draftStatus: hasDraft(chatId) ? "draft" : null,
+    }];
+
+    for (const workspace of workspaceStore.workspaces()) {
+      const directory = normalizeDirectoryPath(workspace.directory?.trim() || workspace.path?.trim() || "");
+      if (!workspace.id || !directory) continue;
+      const id = resolvePendingDraftKey({ kind: "directory", workspaceId: workspace.id, directory });
+      options.push({
+        id,
+        kind: "workspace",
+        workspaceId: workspace.id,
+        directory,
+        label: workspaceLabel(workspace),
+        description: directory,
+        draftStatus: hasDraft(id) ? "draft" : null,
+      });
+    }
+
+    options.push({
+      id: "__choose-workspace__",
+      kind: "choose-workspace",
+      label: t("session.target_choose_workspace_label", currentLocale()),
+      description: t("session.target_choose_workspace_description", currentLocale()),
+    });
+
+    return options;
+  });
   const activeComposerTargetId = createMemo(() => activePendingDraftKey());
   const switchComposerTarget = async (): Promise<ComposerTargetSwitchResult> => ({ status: "cancelled" });
   const currentComposerStorageKey = createMemo(() => {
@@ -2508,6 +2570,7 @@ export default function App() {
             reportError(error, "pendingDrafts.consume");
           }
         }
+        await refreshPendingDraftSummaries();
         clearActivePendingDraftState();
         setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, { storageKey: pendingDraftStorageKey }));
       }
@@ -8043,11 +8106,13 @@ export default function App() {
             if (!pendingWorkspaceId) {
               await pendingSessionDraftsDelete(existingPendingDraft.id);
               markPendingDraftConsumed(existingPendingDraft.id);
+              await refreshPendingDraftSummaries();
             } else {
               const activatedPendingWorkspace = await workspaceStore.activateWorkspace(pendingWorkspaceId);
               if (!activatedPendingWorkspace) {
                 await pendingSessionDraftsDelete(existingPendingDraft.id);
                 markPendingDraftConsumed(existingPendingDraft.id);
+                await refreshPendingDraftSummaries();
               } else {
                 setActivePendingDraftKey(newPrivatePendingDraftKey);
                 setActivePendingDraftMeta(existingPendingDraft);
@@ -8056,6 +8121,7 @@ export default function App() {
                   { storageKey: newPrivatePendingDraftKey },
                   pendingDraft.draft.composer,
                 ));
+                await refreshPendingDraftSummaries();
                 setView("session");
                 return;
               }
@@ -8063,6 +8129,7 @@ export default function App() {
           } else {
             await pendingSessionDraftsDelete(existingPendingDraft.id);
             markPendingDraftConsumed(existingPendingDraft.id);
+            await refreshPendingDraftSummaries();
           }
         }
 
@@ -8103,6 +8170,7 @@ export default function App() {
             { storageKey: newPrivatePendingDraftKey },
             emptyPendingDraft,
           ));
+          await refreshPendingDraftSummaries();
           setView("session");
           return;
         } catch (error) {
@@ -8160,6 +8228,7 @@ export default function App() {
           setComposerDraftBySessionId((current) =>
             setSessionComposerDraft(current, { storageKey: pendingDraftKey }, loadedPendingDraft.draft.composer),
           );
+          await refreshPendingDraftSummaries();
           setView("session");
           return pendingDraftKey;
         }
@@ -8186,6 +8255,7 @@ export default function App() {
       setComposerDraftBySessionId((current) =>
         setSessionComposerDraft(current, { storageKey: pendingDraftKey }, emptyPendingDraft),
       );
+      await refreshPendingDraftSummaries();
       setView("session");
       return pendingDraftKey;
     } catch (error) {
@@ -8551,6 +8621,12 @@ export default function App() {
       }
     }
     setActivePendingDraftStorageReady(true);
+    try {
+      await refreshPendingDraftSummaries();
+    } catch (error) {
+      reportError(error, "pendingDrafts.list");
+      setPendingDraftSummaries([]);
+    }
 
     const unsubscribeTheme = subscribeToSystemTheme((isDark) => {
       if (themeMode() !== "system") return;

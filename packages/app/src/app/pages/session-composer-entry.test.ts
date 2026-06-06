@@ -14,3 +14,11 @@ test("session view receives composer target picker state from app", () => {
   assert.match(appSource, /switchComposerTarget/);
   assert.match(sessionSource, /composerTargetOptions: ComposerTargetOption\[\];/);
 });
+
+test("app builds target options from workspaces and pending drafts", () => {
+  assert.match(appSource, /const \[pendingDraftSummaries, setPendingDraftSummaries\]/);
+  assert.match(appSource, /pendingSessionDraftsList\(\)/);
+  assert.match(appSource, /draftStatus: .*\? "draft" : null/s);
+  assert.match(appSource, /kind: "chat"/);
+  assert.match(appSource, /kind: "workspace"/);
+});
