@@ -1107,7 +1107,7 @@ export default {
   "soul.turn_heartbeat_on": "开启 heartbeat",
   "soul.updated": "更新时间",
   "soul.updated_by": "更新者",
-  "soul.user_description": "你的个人 Soul 来源。编辑控件会在后续任务中提供。",
+  "soul.user_description": "你的个人 Soul 来源。可在这里打开并维护你的个人记忆。",
   "soul.user_source": "User Soul",
   "soul.version_created": "创建时间",
   "soul.version_current": "当前",

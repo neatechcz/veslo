@@ -1499,7 +1499,7 @@ export default {
   "soul.turn_heartbeat_on": "Zapnout heartbeat",
   "soul.updated": "Aktualizováno",
   "soul.updated_by": "Aktualizoval(a)",
-  "soul.user_description": "Váš osobní Soul zdroj. Editační ovládání přijde v dalším úkolu.",
+  "soul.user_description": "Váš osobní Soul zdroj. Otevřete ho zde a udržujte vlastní paměť aktuální.",
   "soul.user_source": "User Soul",
   "soul.version_created": "Vytvořeno",
   "soul.version_current": "Aktuální",

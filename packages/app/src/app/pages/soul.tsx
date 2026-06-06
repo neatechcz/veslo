@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
+import { For, Show, createMemo } from "solid-js";
 import {
   AlertTriangle,
   Building2,
@@ -17,15 +17,11 @@ import type {
   VesloServerClient,
   VesloSoulAuthContext,
   VesloSoulOverviewResponse,
-  VesloSoulReadResponse,
-  VesloSoulScope,
   VesloSoulSummary,
-  VesloSoulVersion,
-  VesloSoulVersionGetOptions,
-  VesloSoulVersionListOptions,
 } from "../lib/veslo-server";
 import { formatRelativeTime } from "../utils";
 import { currentLocale, t } from "../../i18n";
+import { createSoulEditorController, type SoulEditorSource } from "./soul-controller";
 
 type SoulViewProps = {
   soulOverview: VesloSoulOverviewResponse | null;
@@ -37,23 +33,12 @@ type SoulViewProps = {
   refresh: (options?: { force?: boolean }) => void;
 };
 
-type BaseSoulSource = {
-  key: string;
+type SoulSource = SoulEditorSource & {
   testId: string;
   label: string;
   description: string;
   icon: typeof Building2;
-  summary: VesloSoulSummary | null;
 };
-
-type SoulSource =
-  | (BaseSoulSource & {
-      scope: "organization" | "user";
-    })
-  | (BaseSoulSource & {
-      scope: "workspace";
-      workspaceId: string;
-    });
 
 const relativeTime = (value?: string | null) => {
   if (!value) return t("soul.not_available", currentLocale());
@@ -75,55 +60,12 @@ const versionLabel = (summary?: VesloSoulSummary | null) =>
 const sourceName = (summary?: VesloSoulSummary | null) =>
   summary?.title?.trim() || summary?.ownerId?.trim() || t("soul.not_available", currentLocale());
 
-const versionContent = (response: VesloSoulReadResponse | null) => {
-  const document = response?.document;
-  if (!document) return "";
-  const versions = Array.isArray(document.versions) ? document.versions : [];
-  const currentVersionId = document.currentVersionId?.trim() ?? "";
-  const current = currentVersionId ? versions.find((version) => version.id === currentVersionId) : null;
-  return current?.content ?? versions[0]?.content ?? "";
-};
-
-const versionListOptions = (source: SoulSource, authContext: VesloSoulAuthContext): VesloSoulVersionListOptions =>
-  source.scope === "workspace" ? { ...authContext, workspaceId: source.workspaceId } : { ...authContext, limit: 50 };
-
-const versionGetOptions = (source: SoulSource, authContext: VesloSoulAuthContext): VesloSoulVersionGetOptions =>
-  source.scope === "workspace" ? { ...authContext, workspaceId: source.workspaceId } : authContext;
-
 export default function SoulView(props: SoulViewProps) {
   const translate = (key: string) => t(key, currentLocale());
 
   const organizationSummary = createMemo(() => props.soulOverview?.organization ?? null);
   const userSummary = createMemo(() => props.soulOverview?.user ?? null);
   const workspaceSummaries = createMemo(() => props.soulOverview?.workspaces ?? []);
-
-  const [selectedSourceKey, setSelectedSourceKey] = createSignal<string | null>(null);
-  const [detail, setDetail] = createSignal<VesloSoulReadResponse | null>(null);
-  const [detailSourceKey, setDetailSourceKey] = createSignal<string | null>(null);
-  const [detailLoading, setDetailLoading] = createSignal(false);
-  const [detailError, setDetailError] = createSignal<string | null>(null);
-  const [content, setContent] = createSignal("");
-  const [initialContent, setInitialContent] = createSignal("");
-  const [changeSummary, setChangeSummary] = createSignal("");
-  const [savePending, setSavePending] = createSignal(false);
-  const [saveError, setSaveError] = createSignal<string | null>(null);
-  const [versions, setVersions] = createSignal<VesloSoulVersion[]>([]);
-  const [historySourceKey, setHistorySourceKey] = createSignal<string | null>(null);
-  const [historyLoading, setHistoryLoading] = createSignal(false);
-  const [historyError, setHistoryError] = createSignal<string | null>(null);
-  const [selectedVersionId, setSelectedVersionId] = createSignal<string | null>(null);
-  const [selectedVersionPreview, setSelectedVersionPreview] = createSignal<VesloSoulVersion | null>(null);
-  const [previewLoading, setPreviewLoading] = createSignal(false);
-  const [previewError, setPreviewError] = createSignal<string | null>(null);
-  const [restoreChangeSummary, setRestoreChangeSummary] = createSignal("");
-  const [restorePendingVersionId, setRestorePendingVersionId] = createSignal<string | null>(null);
-  const [restoreError, setRestoreError] = createSignal<string | null>(null);
-  const [heartbeatPendingSourceKey, setHeartbeatPendingSourceKey] = createSignal<string | null>(null);
-  const [heartbeatError, setHeartbeatError] = createSignal<string | null>(null);
-
-  let detailRequestSeq = 0;
-  let historyRequestSeq = 0;
-  let previewRequestSeq = 0;
 
   const statusLabel = (status: string) => {
     switch (status) {
@@ -188,328 +130,62 @@ export default function SoulView(props: SoulViewProps) {
 
   const primarySources = createMemo(() => sourceOptions().filter((source) => source.scope !== "workspace"));
   const workspaceSources = createMemo(() => sourceOptions().filter((source) => source.scope === "workspace"));
-  const selectedSource = createMemo(() => sourceOptions().find((source) => source.key === selectedSourceKey()) ?? null);
-  const selectedDetail = createMemo(() => (detailSourceKey() === selectedSourceKey() ? detail() : null));
-  const displaySummary = createMemo(() => selectedDetail()?.summary ?? selectedSource()?.summary ?? null);
-  const currentBaseVersionId = createMemo(() => selectedDetail()?.document?.currentVersionId ?? null);
-  const selectedVersionIsCurrent = createMemo(() => {
-    const versionId = selectedVersionId();
-    return Boolean(versionId && versionId === currentBaseVersionId());
-  });
-  const selectedCanEdit = createMemo(() => {
-    const source = selectedSource();
-    if (!source) return false;
-    if (source.scope === "organization") {
-      return Boolean(source.summary?.canEdit ?? selectedDetail()?.summary.canEdit);
-    }
-    return Boolean(selectedDetail()?.summary.canEdit ?? source.summary?.canEdit);
-  });
-  const saveDisabled = createMemo(
-    () =>
-      !selectedCanEdit() ||
-      !props.client ||
-      !props.serverConnected ||
-      detailLoading() ||
-      savePending() ||
-      content() === initialContent(),
-  );
-  const selectedVersion = createMemo(() => versions().find((version) => version.id === selectedVersionId()) ?? null);
-  const materialization = createMemo(() => selectedDetail()?.materialization ?? null);
-  const materializationDiagnostic = createMemo(() => {
-    const current = materialization();
-    if (!current || current.ok) return null;
-    return current;
+
+  const controller = createSoulEditorController<SoulSource>({
+    sources: sourceOptions,
+    client: () => props.client,
+    serverConnected: () => props.serverConnected,
+    authContext: () => props.authContext,
+    refresh: props.refresh,
+    defaultChangeSummary: () => translate("soul.default_change_summary"),
+    defaultRestoreSummary: () => translate("soul.restore_default_summary"),
+    detailErrorMessage: () => translate("soul.detail_error"),
+    historyErrorMessage: () => translate("soul.history_error"),
+    previewErrorMessage: () => translate("soul.preview_error"),
   });
 
-  const authContextKey = createMemo(() =>
-    [
-      props.authContext.denApiBase ?? "",
-      props.authContext.denToken ?? "",
-      props.authContext.denOrgId ?? "",
-      props.authContext.denUserId ?? "",
-    ].join("\u0000"),
-  );
+  const selectedSourceKey = controller.selectedSourceKey;
+  const setSelectedSourceKey = controller.setSelectedSourceKey;
+  const selectedSource = controller.selectedSource;
+  const displaySummary = controller.displaySummary;
+  const selectedVersionIsCurrent = controller.selectedVersionIsCurrent;
+  const selectedCanEdit = controller.selectedCanEdit;
+  const saveDisabled = controller.saveDisabled;
+  const savePending = controller.selectedSavePending;
+  const saveError = controller.selectedSaveError;
+  const detailLoading = controller.detailLoading;
+  const detailError = controller.detailError;
+  const content = controller.content;
+  const setContent = controller.setContent;
+  const changeSummary = controller.changeSummary;
+  const setChangeSummary = controller.setChangeSummary;
+  const versions = controller.versions;
+  const currentBaseVersionId = controller.currentBaseVersionId;
+  const historyLoading = controller.historyLoading;
+  const historyError = controller.historyError;
+  const selectedVersionId = controller.selectedVersionId;
+  const selectedVersion = controller.selectedVersion;
+  const selectedVersionPreview = controller.selectedVersionPreview;
+  const previewLoading = controller.previewLoading;
+  const previewError = controller.previewError;
+  const previewVersion = controller.previewVersion;
+  const restoreChangeSummary = controller.restoreChangeSummary;
+  const setRestoreChangeSummary = controller.setRestoreChangeSummary;
+  const restorePendingVersionId = controller.selectedRestorePendingVersionId;
+  const restoreError = controller.selectedRestoreError;
+  const restoreDisabled = controller.restoreDisabled;
+  const materializationDiagnostic = controller.materializationDiagnostic;
+  const heartbeatPendingSourceKey = controller.heartbeatPendingSourceKey;
+  const heartbeatError = controller.heartbeatError;
+  const saveSelectedSoul = controller.saveSelectedSoul;
+  const restoreSelectedVersion = controller.restoreSelectedVersion;
+  const toggleWorkspaceHeartbeat = controller.toggleWorkspaceHeartbeat;
 
   const editabilityLabel = (summary?: VesloSoulSummary | null) =>
     (summary?.canEdit ?? selectedCanEdit()) ? translate("soul.editable") : translate("soul.read_only");
 
   const heartbeatLabel = (summary?: VesloSoulSummary | null) =>
     summary?.heartbeatEnabled ? translate("soul.heartbeat_enabled") : translate("soul.heartbeat_disabled");
-
-  const sourceStillSelected = (source: SoulSource, client: VesloServerClient) =>
-    selectedSourceKey() === source.key && props.client === client && props.serverConnected;
-
-  const applyDetailResponse = (response: VesloSoulReadResponse, sourceKey = selectedSourceKey()) => {
-    const nextContent = versionContent(response);
-    setDetail(response);
-    setDetailSourceKey(sourceKey);
-    setContent(nextContent);
-    setInitialContent(nextContent);
-    setChangeSummary("");
-  };
-
-  const readSoulSource = (client: VesloServerClient, source: SoulSource) => {
-    switch (source.scope) {
-      case "organization":
-        return client.getOrganizationSoul(props.authContext);
-      case "user":
-        return client.getUserSoul(props.authContext);
-      case "workspace":
-        return client.getWorkspaceSoul(source.workspaceId, props.authContext);
-    }
-  };
-
-  const loadSelectedDetail = async (source: SoulSource, client: VesloServerClient) => {
-    const requestSeq = ++detailRequestSeq;
-    if (detailSourceKey() !== source.key) {
-      setDetail(null);
-      setDetailSourceKey(null);
-      setContent("");
-      setInitialContent("");
-    }
-    setDetailLoading(true);
-    setDetailError(null);
-    setSaveError(null);
-    setHeartbeatError(null);
-    try {
-      const response = await readSoulSource(client, source);
-      if (requestSeq !== detailRequestSeq || !sourceStillSelected(source, client)) return;
-      applyDetailResponse(response, source.key);
-    } catch (error) {
-      if (requestSeq !== detailRequestSeq || !sourceStillSelected(source, client)) return;
-      setDetail(null);
-      setDetailSourceKey(null);
-      setContent("");
-      setInitialContent("");
-      setDetailError(error instanceof Error ? error.message : translate("soul.detail_error"));
-    } finally {
-      if (requestSeq === detailRequestSeq && sourceStillSelected(source, client)) {
-        setDetailLoading(false);
-      }
-    }
-  };
-
-  const loadSelectedHistory = async (source: SoulSource, client: VesloServerClient) => {
-    const requestSeq = ++historyRequestSeq;
-    if (historySourceKey() !== source.key) {
-      setVersions([]);
-      setHistorySourceKey(null);
-    }
-    setHistoryLoading(true);
-    setHistoryError(null);
-    setSelectedVersionId(null);
-    setSelectedVersionPreview(null);
-    setPreviewError(null);
-    try {
-      const response = await client.listSoulVersions(source.scope, versionListOptions(source, props.authContext));
-      if (requestSeq !== historyRequestSeq || !sourceStillSelected(source, client)) return;
-      setVersions(Array.isArray(response.versions) ? response.versions : []);
-      setHistorySourceKey(source.key);
-    } catch (error) {
-      if (requestSeq !== historyRequestSeq || !sourceStillSelected(source, client)) return;
-      setVersions([]);
-      setHistorySourceKey(null);
-      setHistoryError(error instanceof Error ? error.message : translate("soul.history_error"));
-    } finally {
-      if (requestSeq === historyRequestSeq && sourceStillSelected(source, client)) {
-        setHistoryLoading(false);
-      }
-    }
-  };
-
-  const reloadSelectedSource = (source: SoulSource, client: VesloServerClient) => {
-    void loadSelectedDetail(source, client);
-    void loadSelectedHistory(source, client);
-  };
-
-  createEffect(() => {
-    const sources = sourceOptions();
-    const current = selectedSourceKey();
-    if (!current || !sources.some((source) => source.key === current)) {
-      setSelectedSourceKey(sources[0]?.key ?? null);
-    }
-  });
-
-  createEffect(() => {
-    const source = selectedSource();
-    const client = props.client;
-    const connected = props.serverConnected;
-    authContextKey();
-    if (!source || !client || !connected) {
-      detailRequestSeq += 1;
-      historyRequestSeq += 1;
-      previewRequestSeq += 1;
-      setDetail(null);
-      setDetailSourceKey(null);
-      setDetailLoading(false);
-      setDetailError(null);
-      setContent("");
-      setInitialContent("");
-      setVersions([]);
-      setHistorySourceKey(null);
-      setHistoryLoading(false);
-      setHistoryError(null);
-      setSelectedVersionId(null);
-      setSelectedVersionPreview(null);
-      setPreviewLoading(false);
-      setPreviewError(null);
-      return;
-    }
-    reloadSelectedSource(source, client);
-  });
-
-  const changeSummaryValue = () => changeSummary().trim() || translate("soul.default_change_summary");
-  const restoreChangeSummaryValue = () => restoreChangeSummary().trim() || translate("soul.restore_default_summary");
-
-  const previewVersion = async (versionId: string) => {
-    const source = selectedSource();
-    const client = props.client;
-    if (!source || !client || !props.serverConnected) return;
-    const requestSeq = ++previewRequestSeq;
-    setSelectedVersionId(versionId);
-    setSelectedVersionPreview(versions().find((version) => version.id === versionId) ?? null);
-    setPreviewLoading(true);
-    setPreviewError(null);
-    try {
-      const response = await client.getSoulVersion(source.scope, versionId, versionGetOptions(source, props.authContext));
-      if (requestSeq !== previewRequestSeq || !sourceStillSelected(source, client) || selectedVersionId() !== versionId) {
-        return;
-      }
-      setSelectedVersionPreview(response.version);
-    } catch (error) {
-      if (requestSeq !== previewRequestSeq || !sourceStillSelected(source, client) || selectedVersionId() !== versionId) {
-        return;
-      }
-      setPreviewError(error instanceof Error ? error.message : translate("soul.preview_error"));
-    } finally {
-      if (requestSeq === previewRequestSeq && sourceStillSelected(source, client) && selectedVersionId() === versionId) {
-        setPreviewLoading(false);
-      }
-    }
-  };
-
-  const saveSelectedSoul = async () => {
-    const source = selectedSource();
-    const client = props.client;
-    if (!source || !client || saveDisabled()) return;
-    setSavePending(true);
-    setSaveError(null);
-    try {
-      const input = {
-        ...props.authContext,
-        content: content(),
-        changeSummary: changeSummaryValue(),
-        baseVersionId: currentBaseVersionId(),
-      };
-      let response: VesloSoulReadResponse;
-      switch (source.scope) {
-        case "organization":
-          response = await client.updateOrganizationSoul({
-            ...props.authContext,
-            content: content(),
-            changeSummary: changeSummaryValue(),
-            baseVersionId: currentBaseVersionId(),
-          });
-          break;
-        case "user":
-          response = await client.updateUserSoul({
-            ...props.authContext,
-            content: content(),
-            changeSummary: changeSummaryValue(),
-            baseVersionId: currentBaseVersionId(),
-          });
-          break;
-        case "workspace":
-          response = await client.updateWorkspaceSoul(source.workspaceId, {
-            ...input,
-            baseVersionId: currentBaseVersionId(),
-          });
-          break;
-      }
-      if (!sourceStillSelected(source, client)) return;
-      applyDetailResponse(response, source.key);
-      setSelectedVersionId(null);
-      setSelectedVersionPreview(null);
-      props.refresh({ force: true });
-      void loadSelectedHistory(source, client);
-    } catch (error) {
-      if (sourceStillSelected(source, client)) {
-        setSaveError(error instanceof Error ? error.message : translate("soul.detail_error"));
-      }
-    } finally {
-      setSavePending(false);
-    }
-  };
-
-  const restoreSelectedVersion = async (versionId: string) => {
-    const source = selectedSource();
-    const client = props.client;
-    if (!source || !client || !props.serverConnected || selectedVersionIsCurrent() || !selectedCanEdit()) return;
-    setRestorePendingVersionId(versionId);
-    setRestoreError(null);
-    try {
-      let response: VesloSoulReadResponse;
-      switch (source.scope) {
-        case "organization":
-          response = await client.restoreOrganizationSoulVersion(versionId, {
-            ...props.authContext,
-            changeSummary: restoreChangeSummaryValue(),
-          });
-          break;
-        case "user":
-          response = await client.restoreUserSoulVersion(versionId, {
-            ...props.authContext,
-            changeSummary: restoreChangeSummaryValue(),
-          });
-          break;
-        case "workspace":
-          response = await client.restoreWorkspaceSoulVersion(source.workspaceId, versionId, {
-            ...props.authContext,
-            changeSummary: restoreChangeSummaryValue(),
-          });
-          break;
-      }
-      if (!sourceStillSelected(source, client)) return;
-      applyDetailResponse(response, source.key);
-      setRestoreChangeSummary("");
-      setSelectedVersionId(null);
-      setSelectedVersionPreview(null);
-      props.refresh({ force: true });
-      reloadSelectedSource(source, client);
-    } catch (error) {
-      if (sourceStillSelected(source, client)) {
-        setRestoreError(error instanceof Error ? error.message : translate("soul.detail_error"));
-      }
-    } finally {
-      if (restorePendingVersionId() === versionId) {
-        setRestorePendingVersionId(null);
-      }
-    }
-  };
-
-  const toggleWorkspaceHeartbeat = async () => {
-    const source = selectedSource();
-    const client = props.client;
-    if (!source || source.scope !== "workspace" || !client || !props.serverConnected) return;
-    const nextEnabled = !(displaySummary()?.heartbeatEnabled ?? false);
-    setHeartbeatPendingSourceKey(source.key);
-    setHeartbeatError(null);
-    try {
-      const response = await client.setWorkspaceSoulHeartbeat(source.workspaceId, nextEnabled, props.authContext);
-      if (!sourceStillSelected(source, client)) return;
-      applyDetailResponse(response, source.key);
-      props.refresh({ force: true });
-      void loadSelectedHistory(source, client);
-    } catch (error) {
-      if (sourceStillSelected(source, client)) {
-        setHeartbeatError(error instanceof Error ? error.message : translate("soul.detail_error"));
-      }
-    } finally {
-      if (heartbeatPendingSourceKey() === source.key) {
-        setHeartbeatPendingSourceKey(null);
-      }
-    }
-  };
 
   const metadataCell = (label: string, value: string) => (
     <div class="min-w-0">
@@ -952,7 +628,7 @@ export default function SoulView(props: SoulViewProps) {
                     class="mt-1 w-full rounded-lg border border-dls-border bg-dls-surface px-3 py-2 text-sm text-dls-text outline-none transition-colors focus:border-blue-8 disabled:text-dls-secondary"
                     value={restoreChangeSummary()}
                     placeholder={translate("soul.restore_change_summary_placeholder")}
-                    disabled={!selectedCanEdit() || restorePendingVersionId() !== null || selectedVersionIsCurrent()}
+                    disabled={restoreDisabled()}
                     onInput={(event) => setRestoreChangeSummary(event.currentTarget.value)}
                   />
                 </label>
@@ -963,14 +639,7 @@ export default function SoulView(props: SoulViewProps) {
                   type="button"
                   data-testid="soul-restore-selected-version"
                   class="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-dls-border px-3 py-2 text-sm font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text disabled:border-gray-6 disabled:text-gray-8"
-                  disabled={
-                    !selectedVersionId() ||
-                    selectedVersionIsCurrent() ||
-                    !selectedCanEdit() ||
-                    !props.client ||
-                    !props.serverConnected ||
-                    restorePendingVersionId() !== null
-                  }
+                  disabled={restoreDisabled()}
                   onClick={() => {
                     const versionId = selectedVersionId();
                     if (versionId) void restoreSelectedVersion(versionId);

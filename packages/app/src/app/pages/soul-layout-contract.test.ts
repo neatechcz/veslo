@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const soulSource = readFileSync(new URL("./soul.tsx", import.meta.url), "utf8");
+const soulControllerSource = readFileSync(new URL("./soul-controller.ts", import.meta.url), "utf8");
 const dashboardSource = readFileSync(new URL("./dashboard.tsx", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 const vesloServerSource = readFileSync(new URL("../lib/veslo-server.ts", import.meta.url), "utf8");
@@ -126,44 +127,48 @@ test("SoulView loads selected source detail and version history through existing
   assert.match(soulSource, /client:\s*VesloServerClient\s*\|\s*null;/);
   assert.match(soulSource, /serverConnected:\s*boolean;/);
   assert.match(soulSource, /authContext:\s*VesloSoulAuthContext;/);
-  assert.match(soulSource, /getOrganizationSoul\(props\.authContext\)/);
-  assert.match(soulSource, /getUserSoul\(props\.authContext\)/);
-  assert.match(soulSource, /getWorkspaceSoul\(source\.workspaceId,\s*props\.authContext\)/);
-  assert.match(soulSource, /listSoulVersions\(source\.scope,\s*versionListOptions\(source,\s*props\.authContext\)\)/);
-  assert.match(soulSource, /getSoulVersion\(source\.scope,\s*versionId,\s*versionGetOptions\(source,\s*props\.authContext\)\)/);
+  assert.match(soulControllerSource, /getOrganizationSoul\(input\.authContext\(\)\)/);
+  assert.match(soulControllerSource, /getUserSoul\(input\.authContext\(\)\)/);
+  assert.match(soulControllerSource, /getWorkspaceSoul\(source\.workspaceId,\s*input\.authContext\(\)\)/);
+  assert.match(soulControllerSource, /listSoulVersions\(source\.scope,\s*soulVersionListOptions\(source,\s*input\.authContext\(\)\)\)/);
+  assert.match(soulControllerSource, /getSoulVersion\(source\.scope,\s*versionId,\s*soulVersionGetOptions\(source,\s*input\.authContext\(\)\)\)/);
 });
 
 test("SoulView save flow sends current baseVersionId and respects organization summary editability", () => {
-  assert.match(soulSource, /const selectedCanEdit = createMemo/);
+  assert.match(soulControllerSource, /const selectedCanEdit = createMemo/);
   assert.match(
-    soulSource,
+    soulControllerSource,
     /source\.scope === "organization"[\s\S]{0,180}source\.summary\?\.canEdit/,
     "organization editability should come from the selected overview summary",
   );
-  assert.match(soulSource, /const saveDisabled = createMemo/);
-  assert.match(soulSource, /!props\.client \|\| !props\.serverConnected/);
-  assert.match(soulSource, /detailLoading\(\) \|\| savePending\(\)/);
-  assert.match(soulSource, /content\(\) === initialContent\(\)/);
-  assert.match(soulSource, /baseVersionId:\s*currentBaseVersionId\(\)/);
-  assert.match(soulSource, /updateOrganizationSoul\(\{[\s\S]*baseVersionId:\s*currentBaseVersionId\(\)/);
-  assert.match(soulSource, /updateUserSoul\(\{[\s\S]*baseVersionId:\s*currentBaseVersionId\(\)/);
-  assert.match(soulSource, /updateWorkspaceSoul\(source\.workspaceId,\s*\{[\s\S]*baseVersionId:\s*currentBaseVersionId\(\)/);
+  assert.match(soulControllerSource, /const saveDisabled = createMemo/);
+  assert.match(soulControllerSource, /!input\.client\(\)\s*\|\|\s*!input\.serverConnected\(\)/);
+  assert.match(soulControllerSource, /detailLoading\(\)\s*\|\|\s*selectedSavePending\(\)/);
+  assert.match(soulControllerSource, /content\(\) === initialContent\(\)/);
+  assert.match(soulControllerSource, /baseVersionId:\s*currentBaseVersionId\(\)/);
+  assert.match(soulControllerSource, /updateOrganizationSoul\(mutationInput\)/);
+  assert.match(soulControllerSource, /updateUserSoul\(mutationInput\)/);
+  assert.match(soulControllerSource, /updateWorkspaceSoul\(source\.workspaceId,\s*mutationInput\)/);
+  assert.match(soulControllerSource, /savePendingBySource/);
+  assert.match(soulControllerSource, /requestId\s*=\s*\+\+saveRequestSeq/);
 });
 
 test("SoulView exposes version preview and restore without inventing endpoints", () => {
   assert.match(soulSource, /data-testid="soul-version-history"/);
   assert.match(soulSource, /selectedVersionId/);
   assert.match(soulSource, /selectedVersionPreview/);
-  assert.match(soulSource, /restoreOrganizationSoulVersion\(versionId,\s*\{/);
-  assert.match(soulSource, /restoreUserSoulVersion\(versionId,\s*\{/);
-  assert.match(soulSource, /restoreWorkspaceSoulVersion\(source\.workspaceId,\s*versionId,\s*\{/);
-  assert.match(soulSource, /changeSummary:\s*restoreChangeSummaryValue\(\)/);
+  assert.match(soulControllerSource, /restoreOrganizationSoulVersion\(versionId,\s*restoreInput\)/);
+  assert.match(soulControllerSource, /restoreUserSoulVersion\(versionId,\s*restoreInput\)/);
+  assert.match(soulControllerSource, /restoreWorkspaceSoulVersion\(source\.workspaceId,\s*versionId,\s*restoreInput\)/);
+  assert.match(soulControllerSource, /changeSummary:\s*restoreChangeSummaryValue\(\)/);
+  assert.match(soulControllerSource, /restorePendingBySource/);
+  assert.match(soulControllerSource, /requestId\s*=\s*\+\+restoreRequestSeq/);
   assert.doesNotMatch(vesloServerSource, /restoreSoulVersion:\s*\(/, "client should keep scope-specific restore methods");
 });
 
 test("SoulView exposes heartbeat toggle only for workspace Soul sources", () => {
-  assert.match(soulSource, /source\.scope !== "workspace"/);
-  assert.match(soulSource, /setWorkspaceSoulHeartbeat\(source\.workspaceId,\s*nextEnabled,\s*props\.authContext\)/);
+  assert.match(soulControllerSource, /source\.scope !== "workspace"/);
+  assert.match(soulControllerSource, /setWorkspaceSoulHeartbeat\(source\.workspaceId,\s*nextEnabled,\s*input\.authContext\(\)\)/);
   assert.match(soulSource, /heartbeatPendingSourceKey/);
   assert.match(soulSource, /data-testid="soul-workspace-heartbeat-toggle"/);
   assert.doesNotMatch(soulSource, /setOrganizationSoulHeartbeat|setUserSoulHeartbeat/);
@@ -171,11 +176,17 @@ test("SoulView exposes heartbeat toggle only for workspace Soul sources", () => 
 });
 
 test("SoulView keeps runtime materialization automatic and shows diagnostics only", () => {
-  assert.match(soulSource, /materialization/);
+  assert.match(soulControllerSource, /materialization/);
   assert.match(soulSource, /requiresAction/);
   assert.match(soulSource, /conflicts/);
   assert.doesNotMatch(soulSource, /manual sync|manualSync|sync toggle|syncSoul|runtime sync/i);
   assert.doesNotMatch(enSource, /manual sync|sync now|runtime sync/i);
   assert.doesNotMatch(csSource, /ruční synchronizaci|synchronizovat teď/i);
   assert.doesNotMatch(zhSource, /手动同步|立即同步/i);
+});
+
+test("Soul user source copy reflects that the editor is available now", () => {
+  assert.doesNotMatch(enSource, /Editor controls will arrive in a later task/);
+  assert.doesNotMatch(csSource, /Editační ovládání přijde v dalším úkolu/);
+  assert.doesNotMatch(zhSource, /编辑控件会在后续任务中提供/);
 });

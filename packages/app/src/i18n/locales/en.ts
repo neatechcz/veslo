@@ -1503,7 +1503,7 @@ export default {
   "soul.turn_heartbeat_on": "Turn heartbeat on",
   "soul.updated": "Updated",
   "soul.updated_by": "Updated by",
-  "soul.user_description": "Your personal Soul source. Editor controls will arrive in a later task.",
+  "soul.user_description": "Your personal Soul source. Open it here to keep your own memory current.",
   "soul.user_source": "User Soul",
   "soul.version_created": "Created",
   "soul.version_current": "Current",
