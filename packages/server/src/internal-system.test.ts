@@ -3,7 +3,11 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { INTERNAL_SYSTEM_VERSION, provisionWorkspaceInternalSystem } from "./internal-system.js";
+import {
+  INTERNAL_SYSTEM_VERSION,
+  provisionWorkspaceInternalSystem,
+  resolveVesloAppDataDir,
+} from "./internal-system.js";
 
 async function createWorkspaceRoot(label: string) {
   return await mkdtemp(join(tmpdir(), `veslo-internal-system-${label}-`));
@@ -56,6 +60,35 @@ async function loadGeneratedAutomationTools(workspaceRoot: string) {
 }
 
 describe("provisionWorkspaceInternalSystem", () => {
+  test("resolves desktop-provided app data directory before platform fallback", async () => {
+    const appDataDir = await createWorkspaceRoot("app-data-override");
+    const dataDir = await createWorkspaceRoot("data-dir-override");
+    const previousAppDataDir = process.env.VESLO_APP_DATA_DIR;
+    const previousDataDir = process.env.VESLO_DATA_DIR;
+
+    try {
+      process.env.VESLO_APP_DATA_DIR = appDataDir;
+      process.env.VESLO_DATA_DIR = dataDir;
+      expect(resolveVesloAppDataDir()).toBe(appDataDir);
+
+      delete process.env.VESLO_APP_DATA_DIR;
+      expect(resolveVesloAppDataDir()).toBe(join(dataDir, "app-data"));
+    } finally {
+      if (previousAppDataDir === undefined) {
+        delete process.env.VESLO_APP_DATA_DIR;
+      } else {
+        process.env.VESLO_APP_DATA_DIR = previousAppDataDir;
+      }
+      if (previousDataDir === undefined) {
+        delete process.env.VESLO_DATA_DIR;
+      } else {
+        process.env.VESLO_DATA_DIR = previousDataDir;
+      }
+      await rm(appDataDir, { recursive: true, force: true });
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
   test("writes internal packs, hidden agents, managed routing block, and manifest", async () => {
     const workspaceRoot = await createWorkspaceRoot("bootstrap");
 

@@ -5,7 +5,7 @@ use crate::fs::copy_dir_recursive;
 use include_dir::{include_dir, Dir};
 use serde::{Deserialize, Serialize};
 
-const INTERNAL_PACK_VERSION: &str = "2026-04-22.1";
+const INTERNAL_PACK_VERSION: &str = "2026-06-06.1";
 const INTERNAL_PACK_SOURCE: &str = "openwork-snapshot";
 const MANIFEST_SCHEMA_VERSION: u32 = 1;
 const ROUTING_BLOCK_VERSION: u32 = 3;
@@ -575,7 +575,7 @@ fn write_dir_recursive(
             .strip_prefix(base)
             .map_err(|e| format!("Failed to derive internal pack directory path: {e}"))?;
         let target_dir = destination_root.join(relative);
-        write_dir_recursive(child, base, &target_dir, stats)?;
+        write_dir_recursive(child, child.path(), &target_dir, stats)?;
     }
 
     Ok(())
@@ -1444,9 +1444,11 @@ Scope:
 
 Rules:
 - Only run for explicit requests to create/update reusable skills.
-- Create or update skills only in this workspace at `.opencode/skills/<name>/SKILL.md`.
+- Do not assume workspace scope.
+- Before giving path, API, install, or publishing advice, confirm where the skill should live: user skill, workspace skill, organization skill, or public skill.
+- Use the scope mapping in SKILL.md for registry-backed user skill, workspace skill, organization skill, and public skill workflows.
+- Create local files only for the confirmed target scope, and use registry review/rollout workflows when SKILL.md requires them.
 - Keep the resulting skill concise and runnable.
-- Do not write company-global/shared skills in this flow.
 - Do not dump raw JSON, manifests, tool payloads, or full generated file contents unless explicitly requested.
 - Do not expose internal implementation details unless explicitly requested in developer/debug mode.
 "#
@@ -1587,6 +1589,67 @@ mod tests {
         assert!(manifest.contains("veslo-automations.js"));
 
         fs::remove_dir_all(workspace_root).unwrap();
+    }
+
+    #[test]
+    fn provision_includes_registry_aware_skill_creator_agent() {
+        let workspace_root = temp_workspace_root("skill-creator-agent");
+
+        let result = provision_internal_workspace_assets(&workspace_root, None).unwrap();
+        assert_eq!(result.status, ProvisionStatus::Updated);
+
+        let agent = fs::read_to_string(
+            workspace_root
+                .join(".opencode")
+                .join("agents")
+                .join("veslo-internal-skill-creator.md"),
+        )
+        .unwrap();
+        assert!(agent.contains("Do not assume workspace scope"));
+        assert!(agent.contains("user skill"));
+        assert!(agent.contains("workspace skill"));
+        assert!(agent.contains("organization skill"));
+        assert!(agent.contains("public skill"));
+        assert!(!agent.contains("Create or update skills only in this workspace"));
+        assert!(!agent.contains("Do not write company-global/shared skills in this flow"));
+
+        let skill = fs::read_to_string(
+            workspace_root
+                .join(".opencode")
+                .join("veslo")
+                .join("internal")
+                .join("skill-creator")
+                .join("SKILL.md"),
+        )
+        .unwrap();
+        assert!(skill.contains("Veslo Registry-Aware Skill Creation"));
+        assert!(skill.contains("Mandatory scope gate"));
+        assert!(skill.contains("scope: \"system\""));
+        assert!(skill.contains("removalPolicy: \"locked\""));
+
+        fs::remove_dir_all(workspace_root).unwrap();
+    }
+
+    #[test]
+    fn provision_central_packs_preserves_internal_pack_tree() {
+        let app_data_dir = temp_workspace_root("central-pack-tree");
+
+        let central_root = provision_central_packs(&app_data_dir).unwrap();
+        let skill_creator = central_root.join("skill-creator");
+
+        assert!(skill_creator
+            .join("references")
+            .join("veslo-registry-workflows.md")
+            .exists());
+        assert!(skill_creator.join("scripts").join("quick_validate.py").exists());
+        assert!(!skill_creator.join("references").join("references").exists());
+        assert!(!skill_creator.join("scripts").join("scripts").exists());
+
+        let docx = central_root.join("docx");
+        assert!(docx.join("scripts").join("comment.py").exists());
+        assert!(!docx.join("scripts").join("scripts").exists());
+
+        fs::remove_dir_all(app_data_dir).unwrap();
     }
 
     #[test]

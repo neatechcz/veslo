@@ -1387,6 +1387,16 @@ export async function provisionWorkspaceInternalSystem(
  * appropriate paths on Linux/Windows, or undefined if unsupported.
  */
 export function resolveVesloAppDataDir(): string | undefined {
+  const explicitAppDataDir = process.env.VESLO_APP_DATA_DIR?.trim();
+  if (explicitAppDataDir) {
+    return explicitAppDataDir;
+  }
+
+  const explicitDataDir = process.env.VESLO_DATA_DIR?.trim();
+  if (explicitDataDir) {
+    return join(explicitDataDir, "app-data");
+  }
+
   const home = homedir();
   const os = platform();
   if (os === "darwin") {
