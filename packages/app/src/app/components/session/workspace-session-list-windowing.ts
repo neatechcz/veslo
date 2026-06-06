@@ -4,6 +4,7 @@ export const RECENT_OVERSCAN_ROWS = 3;
 export const RECENT_ESTIMATED_ROW_HEIGHT = 40;
 export const RECENT_LOAD_MORE_THRESHOLD_PX = 120;
 export const CHAT_SIDEBAR_DEFAULT_HEIGHT_PX = 288;
+export const CHAT_SIDEBAR_COMPACT_HEIGHT_PX = RECENT_ESTIMATED_ROW_HEIGHT * 3;
 export const CHAT_SIDEBAR_MIN_HEIGHT_PX = 56;
 export const CHAT_SIDEBAR_MAX_HEIGHT_PX = 480;
 export const CHAT_SIDEBAR_COLLAPSE_THRESHOLD_PX = 44;
@@ -124,6 +125,10 @@ export const clampChatSidebarHeight = (
     : computeChatSidebarMaxHeight(containerHeight);
   return Math.min(Math.max(safeHeight, CHAT_SIDEBAR_MIN_HEIGHT_PX), maxHeight);
 };
+
+export const compactChatSidebarHeight = (
+  containerHeight?: number,
+) => clampChatSidebarHeight(CHAT_SIDEBAR_COMPACT_HEIGHT_PX, containerHeight);
 
 export const restoreChatSidebarHeight = (
   height: number,
