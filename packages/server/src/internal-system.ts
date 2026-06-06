@@ -3,7 +3,7 @@ import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { exists, ensureDir } from "./utils.js";
 
-export const INTERNAL_SYSTEM_VERSION = "2026-04-22.1";
+export const INTERNAL_SYSTEM_VERSION = "2026-06-06.1";
 const INTERNAL_SYSTEM_SOURCE = "openwork-snapshot";
 const MANIFEST_SCHEMA_VERSION = 1;
 const ROUTING_BLOCK_VERSION = 3;
@@ -163,9 +163,11 @@ Scope:
 
 Rules:
 - Only run for explicit requests to create/update reusable skills.
-- Create or update skills only in this workspace at \`.opencode/skills/<name>/SKILL.md\`.
+- Do not assume workspace scope.
+- Before giving path, API, install, or publishing advice, confirm where the skill should live: user skill, workspace skill, organization skill, or public skill.
+- Use the scope mapping in SKILL.md for registry-backed user skill, workspace skill, organization skill, and public skill workflows.
+- Create local files only for the confirmed target scope, and use registry review/rollout workflows when SKILL.md requires them.
 - Keep the resulting skill concise and runnable.
-- Do not write company-global/shared skills in this flow.
 - Do not dump raw JSON, manifests, tool payloads, or full generated file contents unless explicitly requested.
 - Do not expose internal implementation details unless explicitly requested in developer/debug mode.
 `;

@@ -6,9 +6,9 @@ Usage:
     init_skill.py <skill-name> --path <path>
 
 Examples:
-    init_skill.py my-new-skill --path skills/public
-    init_skill.py my-api-helper --path skills/private
-    init_skill.py custom-skill --path /custom/location
+    init_skill.py my-workspace-skill --path .opencode/skills
+    init_skill.py my-user-skill --path ~/.config/opencode/skills
+    init_skill.py my-registry-skill --path /tmp/veslo-skill-authoring
 """
 
 import sys
@@ -17,14 +17,25 @@ from pathlib import Path
 
 SKILL_TEMPLATE = """---
 name: {skill_name}
-description: [TODO: Complete and informative explanation of what the skill does and when to use it. Include WHEN to use this skill - specific scenarios, file types, or tasks that trigger it.]
+description: [TODO: Explain what this Veslo skill does and when an agent should use it. Include concrete trigger phrases, scenarios, file types, or tasks.]
 ---
 
 # {skill_title}
 
 ## Overview
 
-[TODO: 1-2 sentences explaining what this skill enables]
+[TODO: 1-2 sentences explaining what this skill enables in Veslo]
+
+## Veslo Scope
+
+[TODO: Record the confirmed target scope: user skill, workspace skill, organization skill, or public skill.
+
+- User skill: author for the user skill root or prepare a user-owned registry package.
+- Workspace skill: author under the selected workspace skill root.
+- Organization skill: author locally, then prepare registry publish and organization review artifacts.
+- Public skill: author locally, then prepare registry publish and platform review artifacts.
+
+Delete this section if the scope is already captured elsewhere in the skill workflow.]
 
 ## Structuring This Skill
 
@@ -75,20 +86,20 @@ Executable code (Python/Bash/etc.) that can be run directly to perform specific 
 
 **Appropriate for:** Python scripts, shell scripts, or any executable code that performs automation, data processing, or specific operations.
 
-**Note:** Scripts may be executed without loading into context, but can still be read by Claude for patching or environment adjustments.
+**Note:** Scripts may be executed without loading into context, but can still be read by the agent for patching or environment adjustments.
 
 ### references/
-Documentation and reference material intended to be loaded into context to inform Claude's process and thinking.
+Documentation and reference material intended to be loaded into context to inform the agent's process and thinking.
 
 **Examples from other skills:**
 - Product management: `communication.md`, `context_building.md` - detailed workflow guides
 - BigQuery: API reference documentation and query examples
 - Finance: Schema documentation, company policies
 
-**Appropriate for:** In-depth documentation, API references, database schemas, comprehensive guides, or any detailed information that Claude should reference while working.
+**Appropriate for:** In-depth documentation, API references, database schemas, comprehensive guides, or any detailed information that the agent should reference while working.
 
 ### assets/
-Files not intended to be loaded into context, but rather used within the output Claude produces.
+Files not intended to be loaded into context, but rather used within the output the agent produces.
 
 **Examples from other skills:**
 - Brand styling: PowerPoint template files (.pptx), logo files
@@ -165,7 +176,7 @@ This placeholder represents where asset files would be stored.
 Replace with actual asset files (templates, images, fonts, etc.) or delete if not needed.
 
 Asset files are NOT intended to be loaded into context, but rather used within
-the output Claude produces.
+the output the agent produces.
 
 Example asset files from other skills:
 - Brand guidelines: logo.png, slides_template.pptx
@@ -263,9 +274,10 @@ def init_skill(skill_name, path):
     # Print next steps
     print(f"\n✅ Skill '{skill_name}' initialized successfully at {skill_dir}")
     print("\nNext steps:")
-    print("1. Edit SKILL.md to complete the TODO items and update the description")
+    print("1. Edit SKILL.md to complete the TODO items, scope, and trigger description")
     print("2. Customize or delete the example files in scripts/, references/, and assets/")
-    print("3. Run the validator when ready to check the skill structure")
+    print("3. Run scripts/quick_validate.py on the skill when ready")
+    print("4. For registry distribution, create/version/install or request review through Veslo registry APIs")
 
     return skill_dir
 
@@ -279,9 +291,9 @@ def main():
         print("  - Max 64 characters")
         print("  - Must match directory name exactly")
         print("\nExamples:")
-        print("  init_skill.py my-new-skill --path skills/public")
-        print("  init_skill.py my-api-helper --path skills/private")
-        print("  init_skill.py custom-skill --path /custom/location")
+        print("  init_skill.py my-workspace-skill --path .opencode/skills")
+        print("  init_skill.py my-user-skill --path ~/.config/opencode/skills")
+        print("  init_skill.py my-registry-skill --path /tmp/veslo-skill-authoring")
         sys.exit(1)
 
     skill_name = sys.argv[1]
