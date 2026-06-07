@@ -122,18 +122,17 @@ export function createSystemState(options: {
 
   const resetModalTextValue = resetModalText;
 
-  function restoreScheduledUpdateRetryForManualDownload() {
+  function restoreAutoDownloadToManualAvailability() {
     const state = updateStatus();
-    if (state.state !== "downloading" || state.retry?.kind !== "scheduled") return;
+    if (state.state !== "downloading") return;
 
     const pending = pendingUpdate();
-    if (!pending) return;
 
     setUpdateStatus(
       resolveAutoDownloadOptOutStatus({
         lastCheckedAt: state.lastCheckedAt,
-        version: pending.version,
-        notes: pending.notes,
+        version: pending?.version ?? state.version,
+        notes: pending?.notes ?? state.notes,
       }),
     );
   }
@@ -141,7 +140,7 @@ export function createSystemState(options: {
   const setUpdateAutoDownload: typeof setUpdateAutoDownloadSignal = (value) => {
     const next = setUpdateAutoDownloadSignal(value);
     if (!next) {
-      restoreScheduledUpdateRetryForManualDownload();
+      restoreAutoDownloadToManualAvailability();
     }
     return next;
   };
@@ -569,14 +568,15 @@ export function createSystemState(options: {
       }
 
       if (!pending) return;
+      const downloadPending = pending;
 
       setUpdateStatus({
         state: "downloading",
         lastCheckedAt,
-        version: pending.version,
+        version: downloadPending.version,
         totalBytes: null,
         downloadedBytes: 0,
-        notes: pending.notes,
+        notes: downloadPending.notes,
         retry:
           optionsDownload?.automatic && (optionsDownload.retryAttempt ?? 0) > 0
             ? {
@@ -602,7 +602,7 @@ export function createSystemState(options: {
         });
       }, 100);
 
-      await pending.update.download((event: any) => {
+      await downloadPending.update.download((event: any) => {
         if (!event || typeof event !== "object") return;
         const record = event as Record<string, any>;
 
@@ -625,11 +625,23 @@ export function createSystemState(options: {
         }
       });
 
+      if (optionsDownload?.automatic && !updateAutoDownload()) {
+        setUpdateStatus((current) => {
+          if (current.state !== "downloading") return current;
+          return resolveAutoDownloadOptOutStatus({
+            lastCheckedAt,
+            version: downloadPending.version,
+            notes: downloadPending.notes,
+          });
+        });
+        return;
+      }
+
       setUpdateStatus({
         state: "ready",
         lastCheckedAt,
-        version: pending.version,
-        notes: pending.notes,
+        version: downloadPending.version,
+        notes: downloadPending.notes,
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);

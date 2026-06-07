@@ -7,6 +7,12 @@ const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 const enLocaleSource = readFileSync(new URL("../../i18n/locales/en.ts", import.meta.url), "utf8");
 const csLocaleSource = readFileSync(new URL("../../i18n/locales/cs.ts", import.meta.url), "utf8");
 const generalSection = source.match(/<Match when=\{activeTab\(\) === "general"\}>[\s\S]*?<\/Match>/)?.[0] ?? "";
+const generalUpdateControlsStart = generalSection.indexOf('<div class="flex flex-wrap items-center gap-2">');
+const generalUpdateControlsEnd = generalSection.indexOf('<Show when={updateState() === "idle"', generalUpdateControlsStart);
+const generalUpdateControlsRow =
+  generalUpdateControlsStart >= 0 && generalUpdateControlsEnd >= 0
+    ? generalSection.slice(generalUpdateControlsStart, generalUpdateControlsEnd)
+    : "";
 const dashboardTabRailPath = new URL("../components/dashboard-tab-rail.tsx", import.meta.url);
 const dashboardTabRailSource = existsSync(dashboardTabRailPath) ? readFileSync(dashboardTabRailPath, "utf8") : "";
 
@@ -69,11 +75,30 @@ test("settings keeps compact update controls in general instead of a floating to
   assert.match(source, /translate\("settings\.install_restart"\)/);
   assert.match(source, /settings\.sidebar_update_preparing/);
   assert.match(source, /updateState\(\) === "available" && props\.updateAutoDownload/);
+  assert.match(generalUpdateControlsRow, /settings\.auto_update_label/, "general update action row should include the automatic update download switch");
+  assert.match(generalUpdateControlsRow, /onClick=\{props\.toggleUpdateAutoDownload\}/);
+  assert.doesNotMatch(source, /settings\.auto_update_hint/, "settings should not explain the automatic update download switch inline");
+  assert.doesNotMatch(source, /settings\.automatic_checks_label|settings\.automatic_checks_hint/);
+  assert.doesNotMatch(source, /props\.updateAutoCheck|props\.toggleUpdateAutoCheck/);
+  assert.match(
+    generalSection,
+    /<Show when=\{showGeneralUpdateControls\(\)\}>[\s\S]*onClick=\{props\.toggleUpdateAutoDownload\}/,
+    "general settings update card should wire the automatic update download switch",
+  );
   assert.match(
     source,
     /if \(updateState\(\) === "available" && !props\.updateAutoDownload\) \{[\s\S]*?props\.downloadUpdate\(\);/,
   );
+  assert.match(source, /settings\.pause_update_download/);
+  assert.match(source, /updateState\(\) === "downloading" && props\.updateAutoDownload/);
+  assert.match(source, /if \(updateState\(\) === "downloading" && props\.updateAutoDownload\) \{[\s\S]*?props\.toggleUpdateAutoDownload\(\);/);
   assert.doesNotMatch(source, /"Checking for updates"|"Up to date"|"Check"|"Download"|"Install"|"Retry"|"Last checked"/);
+});
+
+test("settings does not expose automatic context compaction as a menu option", () => {
+  assert.doesNotMatch(source, /ui\.literal\.auto_context_compaction_yefaae/);
+  assert.doesNotMatch(source, /ui\.literal\.automatically_compact_after_a_run_completes_1cibgg/);
+  assert.doesNotMatch(generalSection, /autoCompactContext|toggleAutoCompactContext/);
 });
 
 test("settings exposes updater download retry states", () => {

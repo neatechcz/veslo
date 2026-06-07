@@ -36,7 +36,7 @@ Common keys:
 - `veslo.engineRuntime`
 - `veslo.onboardingComplete`
 
-`veslo.updateAutoDownload` is default-on when absent. A stored `0` is an explicit opt-out and keeps the manual download flow. When enabled, failed automatic update downloads are retried with bounded backoff. The retry state is runtime-only; only the preference and last successful check time are stored.
+Automatic update checks are always enabled; legacy stored `veslo.updateAutoCheck=0` values are ignored and overwritten on the next preference persist. `veslo.updateAutoDownload` is default-on when absent. A stored `0` is an explicit opt-out and keeps the manual download flow. Turning auto-download off while an automatic download is active pauses the auto-download flow and restores the update to manual availability; a late automatic completion is ignored for UI state. When enabled, failed automatic update downloads are retried with bounded backoff. The retry state is runtime-only; only the preference and last successful check time are stored.
 
 `veslo.modelVariant` stores the app-global model variant / thinking effort. The built-in default is `xhigh` (Max). Existing stored values from before the Max-default migration are overwritten to `xhigh` once and marked by `veslo.modelVariant.maxDefaultMigration`; later user changes remain stored in `veslo.modelVariant`.
 

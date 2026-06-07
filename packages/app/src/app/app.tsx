@@ -10499,15 +10499,11 @@ export default function App() {
       aiAccessAllowedModels: managedAiAccess()?.allowedModels ?? [],
       showThinking: showThinking(),
       toggleShowThinking: () => setShowThinking((v) => !v),
-      autoCompactContext: autoCompactContext(),
-      toggleAutoCompactContext: () => setAutoCompactContext(true),
       hideTitlebar: hideTitlebar(),
       toggleHideTitlebar: () => setHideTitlebar((v) => !v),
       modelVariantLabel: formatModelVariantLabel(modelVariant()),
       modelVariant: normalizeModelVariant(modelVariant()) ?? "none",
       setModelVariant: (value: string) => setModelVariant(value),
-      updateAutoCheck: updateAutoCheck(),
-      toggleUpdateAutoCheck: () => setUpdateAutoCheck((v) => !v),
       updateAutoDownload: updateAutoDownload(),
       toggleUpdateAutoDownload: () =>
         setUpdateAutoDownload((v) => {

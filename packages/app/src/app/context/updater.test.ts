@@ -45,17 +45,17 @@ test("startup update preferences default to auto-check and auto-download enabled
   );
 });
 
-test("startup update preferences preserve explicit auto-download opt-out", () => {
+test("startup update preferences keep automatic checks enabled when auto-download is opted out", () => {
   assert.deepEqual(
     resolveUpdateStartupPreferences({
       storedAutoCheck: "0",
       storedAutoDownload: "0",
     }),
-    { autoCheck: false, autoDownload: false },
+    { autoCheck: true, autoDownload: false },
   );
 });
 
-test("startup update preferences let enabled auto-download imply auto-check", () => {
+test("startup update preferences ignore stored automatic-check opt-outs", () => {
   assert.deepEqual(
     resolveUpdateStartupPreferences({
       storedAutoCheck: "0",
