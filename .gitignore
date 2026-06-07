@@ -50,5 +50,7 @@ vendor/opencode/
 # Local evidence artifacts
 evidence/
 
-# Local Codex runtime artifact
-.codex
+# Local Codex runtime artifacts; keep the project Graphify hook tracked.
+.codex/*
+!.codex/
+!.codex/hooks.json

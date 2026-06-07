@@ -66,6 +66,7 @@ Use these for coding-agent work, implementation changes, and system maintenance.
 - `docs/dev/build-and-rebuild-matrix.md`
 - `docs/dev/development-startup.md`
 - `docs/dev/cloud-deployments.md`
+- `docs/dev/graphify-agent-workflow.md`
 - `docs/dev/release-skill.md`
 - `docs/dev/documentation-promotion.md`
 
