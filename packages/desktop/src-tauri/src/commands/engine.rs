@@ -647,6 +647,7 @@ pub fn engine_start(
         let veslo_server_state_path = persisted_veslo_server_plugin_state_path(&app)
             .ok()
             .map(|path| path.to_string_lossy().to_string());
+        let lifecycle_token = Uuid::new_v4().to_string();
 
         let mut health = None;
         for attempt in 1..=max_start_attempts {
@@ -662,6 +663,7 @@ pub fn engine_start(
                 opencode_port: Some(orchestrator_opencode_port),
                 opencode_username: opencode_username.clone(),
                 opencode_password: opencode_password.clone(),
+                lifecycle_token: Some(lifecycle_token.clone()),
                 cors: Some("*".to_string()),
                 veslo_server_state_path: veslo_server_state_path.clone(),
                 max_engines,
@@ -675,6 +677,7 @@ pub fn engine_start(
                 &data_dir,
                 opencode_username.as_deref(),
                 opencode_password.as_deref(),
+                Some(lifecycle_token.as_str()),
                 Some(project_dir.as_str()),
             );
 
@@ -880,6 +883,7 @@ pub fn engine_start(
         };
 
         let veslo_started_at = std::time::Instant::now();
+        let orchestrator_daemon_url = format!("http://127.0.0.1:{daemon_port}");
         let veslo_started = start_veslo_server(
             &app,
             &veslo_manager,
@@ -888,6 +892,8 @@ pub fn engine_start(
             opencode_username.as_deref(),
             opencode_password.as_deref(),
             opencode_router_health_port,
+            Some(orchestrator_daemon_url.as_str()),
+            Some(lifecycle_token.as_str()),
         );
         match &veslo_started {
             Ok(_) => {
@@ -1149,6 +1155,8 @@ pub fn engine_start(
         opencode_username.as_deref(),
         opencode_password.as_deref(),
         opencode_router_health_port,
+        None,
+        None,
     ) {
         state.last_stderr = Some(truncate_output(&format!("Veslo server: {error}"), 8000));
     }

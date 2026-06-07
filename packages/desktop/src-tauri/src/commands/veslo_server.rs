@@ -2,6 +2,7 @@ use tauri::{AppHandle, State};
 
 use crate::engine::manager::EngineManager;
 use crate::opencode_router::manager::OpenCodeRouterManager;
+use crate::orchestrator::{self, read_orchestrator_auth};
 use crate::veslo_server::manager::VesloServerManager;
 use crate::veslo_server::{
     clear_persisted_veslo_server_info, recover_persisted_veslo_server_info,
@@ -203,6 +204,17 @@ pub fn veslo_server_restart(
         .lock()
         .ok()
         .and_then(|state| state.health_port);
+    let lifecycle_config = opencode_url.as_deref().and_then(|url| {
+        let trimmed = url.trim();
+        let prefix = trimmed.find("/workspace/")?;
+        let daemon_url = trimmed[..prefix].trim_end_matches('/').to_string();
+        let auth = read_orchestrator_auth(&orchestrator::resolve_orchestrator_data_dir())?;
+        let token = auth
+            .lifecycle_token
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())?;
+        Some((daemon_url, token))
+    });
 
     start_veslo_server(
         &app,
@@ -212,6 +224,8 @@ pub fn veslo_server_restart(
         opencode_username.as_deref(),
         opencode_password.as_deref(),
         opencode_router_health_port,
+        lifecycle_config.as_ref().map(|(url, _)| url.as_str()),
+        lifecycle_config.as_ref().map(|(_, token)| token.as_str()),
     )
 }
 

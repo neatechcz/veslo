@@ -211,6 +211,8 @@ pub fn build_veslo_args(
     host_token: &str,
     opencode_base_url: Option<&str>,
     opencode_directory: Option<&str>,
+    orchestrator_daemon_url: Option<&str>,
+    orchestrator_lifecycle_token: Option<&str>,
 ) -> Vec<String> {
     let mut args = vec![
         "--host".to_string(),
@@ -259,6 +261,20 @@ pub fn build_veslo_args(
         }
     }
 
+    if let Some(url) = orchestrator_daemon_url {
+        if !url.trim().is_empty() {
+            args.push("--orchestrator-url".to_string());
+            args.push(url.to_string());
+        }
+    }
+
+    if let Some(token) = orchestrator_lifecycle_token {
+        if !token.trim().is_empty() {
+            args.push("--orchestrator-lifecycle-token".to_string());
+            args.push(token.to_string());
+        }
+    }
+
     args
 }
 
@@ -299,6 +315,8 @@ pub fn spawn_veslo_server(
     opencode_username: Option<&str>,
     opencode_password: Option<&str>,
     opencode_router_health_port: Option<u16>,
+    orchestrator_daemon_url: Option<&str>,
+    orchestrator_lifecycle_token: Option<&str>,
 ) -> Result<(Receiver<CommandEvent>, SupervisedCommandChild), String> {
     validate_managed_opencode_base_url(opencode_base_url)?;
 
@@ -311,6 +329,8 @@ pub fn spawn_veslo_server(
         host_token,
         opencode_base_url,
         opencode_directory,
+        orchestrator_daemon_url,
+        orchestrator_lifecycle_token,
     );
     let use_dev_watch = should_use_dev_watch_mode();
 
@@ -487,6 +507,8 @@ mod tests {
             "host-token",
             None,
             None,
+            None,
+            None,
         );
 
         assert!(args
@@ -495,6 +517,30 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|pair| pair == ["--workspace-id", "app-workspace-a"]));
+    }
+
+    #[test]
+    fn build_args_includes_orchestrator_lifecycle_config() {
+        let args = build_veslo_args(
+            "0.0.0.0",
+            8787,
+            &["/tmp/workspace-a".to_string()],
+            &[Some("app-workspace-a".to_string())],
+            "client-token",
+            "host-token",
+            Some("http://127.0.0.1:12345/workspace/ws-a/opencode"),
+            Some("/tmp/workspace-a"),
+            Some("http://127.0.0.1:12345"),
+            Some("lifecycle-token"),
+        );
+
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--orchestrator-url", "http://127.0.0.1:12345"]));
+        assert!(args.windows(2).any(|pair| pair == [
+            "--orchestrator-lifecycle-token",
+            "lifecycle-token"
+        ]));
     }
 
     #[test]

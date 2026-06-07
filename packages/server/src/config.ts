@@ -23,6 +23,8 @@ interface CliArgs {
   opencodeDirectory?: string;
   opencodeUsername?: string;
   opencodePassword?: string;
+  orchestratorDaemonUrl?: string;
+  orchestratorLifecycleToken?: string;
   workspaces: string[];
   workspaceIds: Array<string | undefined>;
   corsOrigins?: string[];
@@ -46,6 +48,8 @@ interface FileConfig {
   readOnly?: boolean;
   opencodeUsername?: string;
   opencodePassword?: string;
+  orchestratorDaemonUrl?: string;
+  orchestratorLifecycleToken?: string;
   denApiBase?: string;
   skillRegistryBaseUrl?: string;
   logFormat?: LogFormat;
@@ -178,6 +182,16 @@ export function parseCliArgs(argv: string[]): CliArgs {
       index += 1;
       continue;
     }
+    if (value === "--orchestrator-url") {
+      args.orchestratorDaemonUrl = argv[index + 1];
+      index += 1;
+      continue;
+    }
+    if (value === "--orchestrator-lifecycle-token") {
+      args.orchestratorLifecycleToken = argv[index + 1];
+      index += 1;
+      continue;
+    }
     if (value === "--workspace") {
       const path = argv[index + 1];
       if (path) {
@@ -230,6 +244,8 @@ export function printHelp(): void {
     "  --opencode-directory <path> OpenCode workspace directory to share",
     "  --opencode-username <user> OpenCode server username",
     "  --opencode-password <pass> OpenCode server password",
+    "  --orchestrator-url <url> Orchestrator daemon URL for run lifecycle",
+    "  --orchestrator-lifecycle-token <token> Orchestrator lifecycle token",
     "  --workspace <path>       Workspace root (repeatable)",
     "  --workspace-id <id>      Workspace id for the matching --workspace entry",
     "  --cors <origins>          Comma-separated origins or *",
@@ -270,6 +286,15 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
   const opencodeDirectory = cli.opencodeDirectory ?? envOpencodeDirectory;
   const opencodeUsername = cli.opencodeUsername ?? envOpencodeUsername ?? fileConfig.opencodeUsername;
   const opencodePassword = cli.opencodePassword ?? envOpencodePassword ?? fileConfig.opencodePassword;
+  const orchestratorDaemonUrl =
+    normalizeOptionalUrl(cli.orchestratorDaemonUrl) ??
+    normalizeOptionalUrl(process.env.VESLO_ORCHESTRATOR_URL) ??
+    normalizeOptionalUrl(fileConfig.orchestratorDaemonUrl);
+  const orchestratorLifecycleToken =
+    cli.orchestratorLifecycleToken?.trim() ||
+    process.env.VESLO_ORCHESTRATOR_LIFECYCLE_TOKEN?.trim() ||
+    fileConfig.orchestratorLifecycleToken?.trim() ||
+    undefined;
 
   if (workspaceConfigs.length > 0 && (opencodeBaseUrl || opencodeDirectory || opencodeUsername || opencodePassword)) {
     const allowDirectoryOverride = workspaceConfigs.length === 1 && opencodeDirectory;
@@ -401,5 +426,7 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     denApiBase,
     skillRegistryBaseUrl,
     skillRegistryToken,
+    orchestratorDaemonUrl,
+    orchestratorLifecycleToken,
   };
 }
