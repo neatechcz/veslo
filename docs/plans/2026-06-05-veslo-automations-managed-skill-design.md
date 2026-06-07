@@ -247,4 +247,3 @@ The implementation plan should decide:
 - The exact grace-window default and whether it should be configurable.
 - The exact API auth/permission gate names.
 - How much legacy scheduler UI remains visible during migration.
-

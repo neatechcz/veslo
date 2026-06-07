@@ -24,6 +24,7 @@ export type CodexUsageStatus = {
   source: CodexUsageStatusSource;
   label: string;
   detail?: string | null;
+  unsupportedModels?: string[];
   checkedAt?: string | null;
   planType?: string | null;
   limits?: {
@@ -142,6 +143,7 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
             authJson,
           });
           await this.persistUpdatedAuthJson(input.credentialId, authJson, result.updatedAuthJson);
+          const unsupportedModels = extractUnsupportedCodexModels(result.detail);
           const usageLimitStatus = result.rateLimits
             ? null
             : codexUsageStatusFromUsageLimitFailure(result.detail, result.checkedAt);
@@ -149,8 +151,8 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
             ? codexUsageStatusFromRateLimits(result.rateLimits, result.checkedAt, result.detail)
             : usageLimitStatus
               ? usageLimitStatus
-            : result.ok === true
-              ? codexUsageStatusUnknownLimits(result.checkedAt, result.detail)
+            : result.ok === true || unsupportedModels.length > 0
+              ? codexUsageStatusUnknownLimits(result.checkedAt, result.detail, unsupportedModels)
               : unavailableStatus(result.detail || "Codex probe did not return rate limits.", result.checkedAt);
         }
       } catch (error) {
@@ -234,18 +236,47 @@ export function codexUsageStatusFromRateLimits(
   };
 }
 
-function codexUsageStatusUnknownLimits(checkedAt: string, detail?: string | null): CodexUsageStatus {
+function codexUsageStatusUnknownLimits(
+  checkedAt: string,
+  detail?: string | null,
+  unsupportedModels: string[] = [],
+): CodexUsageStatus {
   return {
     available: true,
     source: "codex_exec_no_rate_limits",
     label: "Codex OK, limits unknown",
     detail: detail ?? null,
+    ...(unsupportedModels.length > 0 ? { unsupportedModels } : {}),
     checkedAt,
     limits: {
       fiveHour: null,
       weekly: null,
     },
   };
+}
+
+function extractUnsupportedCodexModels(detail: string | null | undefined): string[] {
+  const text = detail?.trim();
+  if (!text || !/model is not supported/i.test(text)) {
+    return [];
+  }
+
+  const models = new Set<string>();
+  const quotedPattern = /['"`]([a-z0-9][a-z0-9._:-]*)['"`]\s+model is not supported/gi;
+  for (const match of text.matchAll(quotedPattern)) {
+    if (match[1]) {
+      models.add(match[1]);
+    }
+  }
+
+  const unquotedPattern = /\b([a-z0-9][a-z0-9._:-]*)['"`]?\s+model is not supported/gi;
+  for (const match of text.matchAll(unquotedPattern)) {
+    if (match[1] && !["the", "a", "this"].includes(match[1].toLowerCase())) {
+      models.add(match[1]);
+    }
+  }
+
+  return Array.from(models);
 }
 
 function codexUsageStatusFromUsageLimitFailure(

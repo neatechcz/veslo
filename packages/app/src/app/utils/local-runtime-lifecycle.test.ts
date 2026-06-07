@@ -49,6 +49,7 @@ function createHarness(options?: {
     baseUrl: string;
     directory: string;
     auth?: OpencodeAuth;
+    context?: { reason?: string };
   }> = [];
 
   const runtime = options?.runtime ?? "direct";
@@ -104,9 +105,9 @@ function createHarness(options?: {
       serverConnections.push({ baseUrl, directory, context, auth, connectOptions });
       return options?.serverConnectResult ?? true;
     },
-    connectQuiet: async (baseUrl, directory, auth) => {
+    connectQuiet: async (baseUrl, directory, auth, context) => {
       calls.push(`connectQuiet:${directory}`);
-      quietConnections.push({ baseUrl, directory, auth });
+      quietConnections.push({ baseUrl, directory, auth, context });
       return options?.quietConnectResult ?? true;
     },
   });
@@ -153,6 +154,35 @@ test("startHost starts the engine once, derives auth, and reconnects through the
       },
       auth: { username: "demo-user", password: "demo-pass" },
       connectOptions: { navigate: false },
+    },
+  ]);
+});
+
+test("startHost can reconnect quietly for browsing-mode cold starts", async () => {
+  const harness = createHarness();
+
+  const ok = await harness.lifecycle.startHost({
+    workspacePath: "/tmp/demo",
+    workspaceId: "ws-demo",
+    reason: "browse-cold-start",
+    connectMode: "quiet",
+    navigate: false,
+  });
+
+  assert.equal(ok, true);
+  assert.deepEqual(harness.calls, [
+    "startEngine:/tmp/demo:direct",
+    "setEngine:/tmp/demo",
+    "setEngineAuth:demo-user",
+    "connectQuiet:/tmp/demo",
+  ]);
+  assert.deepEqual(harness.serverConnections, []);
+  assert.deepEqual(harness.quietConnections, [
+    {
+      baseUrl: "http://127.0.0.1:4096",
+      directory: "/tmp/demo",
+      auth: { username: "demo-user", password: "demo-pass" },
+      context: { reason: "browse-cold-start" },
     },
   ]);
 });
@@ -225,6 +255,7 @@ test("restartWorkspaceRuntime can reconnect quietly after orchestrator workspace
       baseUrl: "http://127.0.0.1:6100",
       directory: "/tmp/orchestrated",
       auth: { username: "demo-user", password: "demo-pass" },
+      context: { reason: "ensure-engine" },
     },
   ]);
 });

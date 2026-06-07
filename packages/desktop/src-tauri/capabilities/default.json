@@ -2,9 +2,10 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "veslo-default",
   "description": "Default Veslo capability (UI permissions)",
-  "windows": ["*"],
+  "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:app:deny-supports-multiple-windows",
     "core:webview:deny-internal-toggle-devtools",
     "core:webview:allow-set-webview-zoom",
     "core:window:allow-set-title",

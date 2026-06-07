@@ -693,6 +693,31 @@ test("CachedCodexCredentialStatusProvider reports healthy probes with unknown li
   assert.equal(status.limits?.weekly, null);
 });
 
+test("CachedCodexCredentialStatusProvider keeps credentials available when one Codex model is unsupported", async () => {
+  const provider = new CachedCodexCredentialStatusProvider({
+    ttlMs: 5 * 60 * 1000,
+    now: () => new Date("2026-06-04T15:14:57.039Z"),
+    loadCredentialAuthJson: async () => JSON.stringify({ auth_mode: "chatgpt", tokens: { refresh_token: "rt", account_id: "acct" } }),
+    probe: async () => ({
+      checkedAt: "2026-06-04T15:14:57.039Z",
+      rateLimits: null,
+      ok: false,
+      detail: "The 'gpt-5.3-codex' model is not supported when using Codex with a ChatGPT account.",
+    }),
+  });
+
+  const status = await provider.getStatus({
+    credentialId: "cred_codex_vaclav",
+    credentialName: "Vaclav CODEX",
+  });
+
+  assert.equal(status.available, true);
+  assert.equal(status.source, "codex_exec_no_rate_limits");
+  assert.equal(status.label, "Codex OK, limits unknown");
+  assert.equal(status.detail, "The 'gpt-5.3-codex' model is not supported when using Codex with a ChatGPT account.");
+  assert.deepEqual(status.unsupportedModels, ["gpt-5.3-codex"]);
+});
+
 async function makeTreeWritable(root: string): Promise<void> {
   await chmod(root, 0o700).catch(() => {});
   const entries = await readdir(root, { withFileTypes: true }).catch(() => []);

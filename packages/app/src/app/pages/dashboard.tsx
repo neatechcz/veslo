@@ -81,6 +81,10 @@ import {
   readLeftSidebarWidth,
   writeLeftSidebarWidth,
 } from "../components/layout/left-sidebar-width-prefs";
+import {
+  readGlobalSidebarDockedPrefs,
+  writeGlobalSidebarDockedPrefs,
+} from "../components/layout/global-sidebar-prefs";
 import { openSessionWithWorkspaceActivation, type SessionBrowseScope } from "./session-navigation";
 import {
   resolveDashboardTabSelectionAction,
@@ -381,49 +385,6 @@ export type DashboardViewProps = {
   onUnarchiveArchivedSession: (sessionId: string) => Promise<void> | void;
 };
 
-type SidebarDockedVisibility = {
-  left: boolean;
-  right: boolean;
-};
-
-const SIDEBAR_DOCKED_VISIBILITY_KEY = "veslo.global.sidebar.docked.v1";
-const LEGACY_SIDEBAR_DOCKED_VISIBILITY_KEY = "veslo.session.sidebar.docked.v1";
-const DEFAULT_SIDEBAR_DOCKED_VISIBILITY: SidebarDockedVisibility = {
-  left: true,
-  right: true,
-};
-
-const readSidebarDockedVisibility = (): SidebarDockedVisibility => {
-  if (typeof window === "undefined") return { ...DEFAULT_SIDEBAR_DOCKED_VISIBILITY };
-  try {
-    const raw = window.localStorage.getItem(SIDEBAR_DOCKED_VISIBILITY_KEY);
-    const legacyRaw = !raw ? window.localStorage.getItem(LEGACY_SIDEBAR_DOCKED_VISIBILITY_KEY) : null;
-    const value = raw ?? legacyRaw;
-    if (!value) return { ...DEFAULT_SIDEBAR_DOCKED_VISIBILITY };
-    const parsed = JSON.parse(value) as Partial<SidebarDockedVisibility> | null;
-    if (!parsed || typeof parsed !== "object") return { ...DEFAULT_SIDEBAR_DOCKED_VISIBILITY };
-    const normalized = {
-      left: typeof parsed.left === "boolean" ? parsed.left : DEFAULT_SIDEBAR_DOCKED_VISIBILITY.left,
-      right: typeof parsed.right === "boolean" ? parsed.right : DEFAULT_SIDEBAR_DOCKED_VISIBILITY.right,
-    };
-    if (!raw && legacyRaw) {
-      window.localStorage.setItem(SIDEBAR_DOCKED_VISIBILITY_KEY, JSON.stringify(normalized));
-    }
-    return normalized;
-  } catch {
-    return { ...DEFAULT_SIDEBAR_DOCKED_VISIBILITY };
-  }
-};
-
-const writeSidebarDockedVisibility = (value: SidebarDockedVisibility) => {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(SIDEBAR_DOCKED_VISIBILITY_KEY, JSON.stringify(value));
-  } catch {
-    // ignore
-  }
-};
-
 type SharedSkillItem = {
   name: string;
   description?: string;
@@ -560,7 +521,7 @@ export default function DashboardView(props: DashboardViewProps) {
   const [leftSidebarWidth, setLeftSidebarWidth] = createSignal(readLeftSidebarWidth());
   const [leftSidebarResizing, setLeftSidebarResizing] = createSignal(false);
   const [sidebarDockedVisibility, setSidebarDockedVisibility] = createSignal(
-    readSidebarDockedVisibility(),
+    readGlobalSidebarDockedPrefs(),
   );
 
   const leftSidebarVisible = createMemo(() => sidebarDockedVisibility().left);
@@ -568,11 +529,11 @@ export default function DashboardView(props: DashboardViewProps) {
 
   const toggleSidebarMenu = (side: "left" | "right") => {
     setSidebarDockedVisibility((current) => {
-      const next: SidebarDockedVisibility =
+      const next =
         side === "left"
           ? { left: !current.left, right: current.right }
           : { left: current.left, right: !current.right };
-      writeSidebarDockedVisibility(next);
+      writeGlobalSidebarDockedPrefs(next);
       return next;
     });
   };

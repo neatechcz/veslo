@@ -291,6 +291,10 @@ export type CreateCredentialInput = {
   baseUrl?: string | null;
 };
 
+export type ReconnectCredentialInput = {
+  secret: string;
+};
+
 export type ListCredentialsInput = {
   includeDeleted?: boolean;
 };
@@ -336,6 +340,7 @@ export interface AdminService {
   revokeCredential(_token: string, credentialId: string, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
   drainCredential(_token: string, credentialId: string, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
   rotateCredential(_token: string, credentialId: string, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
+  reconnectCredential(_token: string, credentialId: string, input: ReconnectCredentialInput, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
   deleteCredential(_token: string, credentialId: string, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
   listSessions(_token: string): Promise<{ sessions: SessionRecord[] }>;
   getUsage(_token: string, input: { groupBy: UsageGroupBy; credentialId: string | null; userId: string | null; orgId: string | null }): Promise<UsageResponse>;
@@ -419,6 +424,8 @@ type AdminCredentialActionRepository = {
   revokeCredential(credentialId: string): Promise<boolean>;
   drainCredential(credentialId: string): Promise<boolean>;
   rotateCredential(credentialId: string): Promise<boolean>;
+  reconnectCredential(credentialId: string): Promise<boolean>;
+  quarantineCredential(credentialId: string, reason: string): Promise<boolean>;
   deleteCredential(input: { credentialId: string; allowHealthyUnavailable?: boolean }): Promise<DeleteCredentialResult>;
 };
 
@@ -427,7 +434,9 @@ type AdminCredentialWriteRepository = {
 };
 
 type CredentialSecretLookupRepository = {
-  getCredentialRecordById(credentialId: string): Promise<Pick<GatewayCredentialRecord, "provider" | "secretRef"> | null>;
+  getCredentialRecordById(
+    credentialId: string,
+  ): Promise<(Pick<GatewayCredentialRecord, "provider" | "secretRef"> & { name?: string | null }) | null>;
 };
 
 type AdminReadModelDependencies = {
@@ -599,6 +608,14 @@ export class MySqlAdminCredentialActionRepository implements AdminCredentialActi
     }
 
     return this.transitionCredentialState(credentialId, "draining", "admin_rotate", credential);
+  }
+
+  async reconnectCredential(credentialId: string): Promise<boolean> {
+    return this.transitionCredentialState(credentialId, "healthy", "admin_reconnect");
+  }
+
+  async quarantineCredential(credentialId: string, reason: string): Promise<boolean> {
+    return this.transitionCredentialState(credentialId, "unhealthy", reason || "credential_quarantined");
   }
 
   async deleteCredential(input: { credentialId: string; allowHealthyUnavailable?: boolean }): Promise<DeleteCredentialResult> {
@@ -869,6 +886,11 @@ function readCodexCredentialEligibility(
     reason: normalizeCodexEligibilityReason(eligibility.reason),
     resetAt: "resetAt" in eligibility ? eligibility.resetAt : null,
   };
+}
+
+function isCodexRefreshTokenReuseStatus(upstreamStatus: CodexUsageStatus | null): boolean {
+  const statusText = [upstreamStatus?.label, upstreamStatus?.detail].filter(Boolean).join(" | ");
+  return /refresh token was already used|access token could not be refreshed/i.test(statusText);
 }
 
 function toIsoString(value: Date | string | null) {
@@ -1331,12 +1353,43 @@ export function createDefaultAdminService(
           credentialId: credential.id,
           credentialName: credential.name,
         });
+        const eligibility = readCodexCredentialEligibility(credential, upstreamStatus, now());
+        if (credential.state === "healthy" && isCodexRefreshTokenReuseStatus(upstreamStatus)) {
+          try {
+            const quarantined = await getCredentialActionRepository().quarantineCredential(
+              credential.id,
+              "codex_refresh_token_reused",
+            );
+            if (quarantined) {
+              await recordAuditEvent({
+                actorUserId: "admin-ui",
+                action: "credential.quarantine",
+                entityType: "credential",
+                entityId: credential.id,
+                result: "warning",
+                summary: `Quarantined Codex credential ${credential.id} after refresh token reuse was detected.`,
+              });
+              return {
+                ...credential,
+                state: "unhealthy",
+                cachedTokens: readCachedTokens(credential),
+                upstreamStatus,
+                eligibility,
+              };
+            }
+          } catch (error) {
+            console.error("admin_codex_credential_quarantine_failed", {
+              credentialId: credential.id,
+              error,
+            });
+          }
+        }
 
         return {
           ...credential,
           cachedTokens: readCachedTokens(credential),
           upstreamStatus,
-          eligibility: readCodexCredentialEligibility(credential, upstreamStatus, now()),
+          eligibility,
         };
       }),
     );
@@ -1778,10 +1831,16 @@ export function createDefaultAdminService(
       }
 
       if (credential.provider === "codex_oauth") {
+        const status = await codexStatusProvider.getStatus({
+          credentialId,
+          credentialName: credential.name?.trim() || credentialId,
+        }).catch(() => null);
+        const models = filterUnsupportedCodexModels(listCodexModelCatalog(), status);
+        const defaultModel = models.includes(CODEX_DEFAULT_MODEL) ? CODEX_DEFAULT_MODEL : models[0];
         return {
           credentialId,
-          models: listCodexModelCatalog(),
-          defaultModel: CODEX_DEFAULT_MODEL,
+          models,
+          ...(defaultModel ? { defaultModel } : {}),
         };
       }
 
@@ -1869,6 +1928,39 @@ export function createDefaultAdminService(
         entityId: credentialId,
         result: "ok",
         summary: `Rotated active routes off credential ${credentialId}.`,
+      });
+      return { credential: await getCredentialOrThrow(credentialId) };
+    },
+    async reconnectCredential(_token, credentialId, input, actorUserId) {
+      const credential = await getCredentialOrThrow(credentialId);
+      if (credential.provider !== "codex_oauth") {
+        throw new HttpError("credential_reconnect_unsupported_provider", 400);
+      }
+
+      const authJson = validateCodexAuthJson(typeof input.secret === "string" ? input.secret.trim() : "");
+      const storedCredential = await getCredentialSecretLookupRepository().getCredentialRecordById(credentialId);
+      if (!storedCredential) {
+        throw new HttpError("credential_not_found", 404);
+      }
+      if (storedCredential.provider !== "codex_oauth") {
+        throw new HttpError("credential_reconnect_unsupported_provider", 400);
+      }
+
+      await getSecretStore().replace(storedCredential.secretRef, {
+        kind: "codex_auth_json",
+        authJson,
+      });
+      const updated = await getCredentialActionRepository().reconnectCredential(credentialId);
+      if (!updated) {
+        throw new HttpError("credential_not_found", 404);
+      }
+      await recordAuditEvent({
+        actorUserId,
+        action: "credential.reconnect",
+        entityType: "credential",
+        entityId: credentialId,
+        result: "ok",
+        summary: `Reconnected Codex credential ${credentialId}.`,
       });
       return { credential: await getCredentialOrThrow(credentialId) };
     },
@@ -2114,6 +2206,18 @@ function normalizeDiscoveredModels(value: unknown): string[] {
   }
 
   return Array.from(unique);
+}
+
+function filterUnsupportedCodexModels(models: string[], upstreamStatus: CodexUsageStatus | null): string[] {
+  const unsupported = new Set(
+    (upstreamStatus?.unsupportedModels ?? [])
+      .map((model) => model.trim())
+      .filter(Boolean),
+  );
+  if (unsupported.size === 0) {
+    return models;
+  }
+  return models.filter((model) => !unsupported.has(model));
 }
 
 function mapOpenAiCompatibleModelDiscoveryError(error: unknown): HttpError {
@@ -3080,6 +3184,25 @@ export function createAdminRouter(adminService: AdminService) {
         return;
       }
       res.status(502).json({ error: "credential_rotate_failed" });
+    }
+  });
+
+  router.post("/admin/api/credentials/:credentialId/reconnect", async (req, res) => {
+    try {
+      const payload = await adminService.reconnectCredential(
+        res.locals.adminToken as string,
+        req.params.credentialId,
+        {
+          secret: typeof req.body?.secret === "string" ? req.body.secret.trim() : "",
+        },
+        getAdminActorUserId(res),
+      );
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "credential_reconnect_failed" });
     }
   });
 

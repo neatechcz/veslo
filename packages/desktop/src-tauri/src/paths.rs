@@ -71,6 +71,10 @@ pub fn candidate_xdg_config_dirs() -> Vec<PathBuf> {
     candidates
 }
 
+pub fn xdg_config_home() -> Option<PathBuf> {
+    env_path("XDG_CONFIG_HOME").or_else(|| candidate_xdg_config_dirs().into_iter().next())
+}
+
 pub fn maybe_infer_xdg_home(
     var_name: &str,
     candidates: Vec<PathBuf>,

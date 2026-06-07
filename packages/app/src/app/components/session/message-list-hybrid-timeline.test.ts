@@ -21,7 +21,7 @@ test("expanded timeline renders nested section toggles and technical detail disc
   assert.match(source, /For each=\{timelineSections\(\)\}/);
   assert.match(source, /toggleTimelineSection\(current, section\.id\)/);
   assert.match(source, /row\.technicalDetail/);
-  assert.match(source, /<details/);
+  assert.match(source, /session\.timeline_technical_detail/);
 });
 
 test("expanded timeline does not create an inner scroll container", () => {
@@ -107,4 +107,12 @@ test("message grouping respects thinking visibility for timeline steps", () => {
 test("timeline technical detail disclosure is controlled by the same toggle", () => {
   assert.match(source, /canShowTimelineTechnicalDetail\(entry\)/);
   assert.doesNotMatch(source, /props\.developerMode && entry\.part/);
+});
+
+test("timeline technical detail disclosure uses parent-owned expansion state", () => {
+  assert.match(source, /expandedTimelineDetailIds: Set<string>/);
+  assert.match(source, /setExpandedTimelineDetailIds: \(updater: \(current: Set<string>\) => Set<string>\) => void;/);
+  assert.match(source, /toggleTimelineDetail\(rowDetailId\)/);
+  assert.match(source, /aria-expanded=\{timelineDetailExpanded\(rowDetailId\)\}/);
+  assert.doesNotMatch(source, /<details class="mt-2">/);
 });

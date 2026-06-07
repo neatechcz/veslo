@@ -17,6 +17,8 @@ mod updater;
 mod utils;
 mod veslo_server;
 mod workspace;
+#[cfg(test)]
+mod single_window_config_tests;
 
 pub use types::*;
 
@@ -70,7 +72,7 @@ use commands::workspace::{
 use engine::manager::EngineManager;
 use opencode_router::manager::OpenCodeRouterManager;
 use orchestrator::manager::OrchestratorManager;
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, WebviewWindowBuilder};
 use veslo_server::manager::VesloServerManager;
 use workspace::watch::WorkspaceWatchState;
 
@@ -184,6 +186,17 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_pilot::init());
 
     let app = builder
+        .setup(|app| {
+            let window_config = app.config().app.windows.first().ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::NotFound, "missing main window config")
+            })?;
+
+            WebviewWindowBuilder::from_config(app.handle(), window_config)?
+                .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+                .build()?;
+
+            Ok(())
+        })
         .manage(EngineManager::default())
         .manage(OrchestratorManager::default())
         .manage(VesloServerManager::default())

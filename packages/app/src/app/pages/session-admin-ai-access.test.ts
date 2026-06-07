@@ -30,3 +30,21 @@ test("ai access blocking keeps the submitted draft as a failed pending message",
     "ai access blocking should leave the submitted draft visible as a failed pending message",
   );
 });
+
+test("transient ai access loading disables composer send before the draft is released", () => {
+  assert.match(
+    source,
+    /import\s+\{\s*AI_ACCESS_LOADING_MESSAGE\s*\}\s+from\s+"..\/lib\/ai-access";/,
+    "session should distinguish transient ai access loading from permanent admin blocks",
+  );
+  assert.match(
+    source,
+    /const aiAccessLoading = createMemo\(\(\) => props\.aiAccessBlockedReason === AI_ACCESS_LOADING_MESSAGE\);/,
+    "session should expose transient ai access loading as a readiness state",
+  );
+  assert.match(
+    source,
+    /<Composer[\s\S]*busy=\{props\.busy \|\| aiAccessLoading\(\)\}[\s\S]*onSend=\{handleSendPrompt\}/,
+    "composer should stay locked while managed ai access is still loading so it cannot clear the first prompt draft",
+  );
+});

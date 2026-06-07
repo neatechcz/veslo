@@ -30,10 +30,12 @@ export async function readSessionsFromDb(directory: string): Promise<DbSessionRo
 export async function readTranscriptFromDb(
   sessionId: string,
   limit?: number,
+  directory?: string,
 ): Promise<DbTranscriptResult> {
   return invoke<DbTranscriptResult>("opencode_db_read_transcript", {
     sessionId,
     limit: limit ?? null,
+    directory: directory ?? null,
   });
 }
 

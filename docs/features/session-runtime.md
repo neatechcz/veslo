@@ -49,6 +49,8 @@ The composer supports:
 
 Files pasted, dropped, or selected into the composer are inlined as attachment data only while they fit the 8 MB inline limit. When an oversized pasted or dropped file exposes a local path, the composer inserts a file reference instead and shows a toast with the file size and inline limit. On desktop macOS, pasted Finder files also consult the native pasteboard for file paths because WebKit can expose the file blob without the local path.
 
+Mentions are token-scoped composer input. A file mention opens only when `@` starts the current token, such as at the beginning of the draft or after whitespace; `@` characters embedded in URLs or email addresses remain plain text.
+
 Current keyboard behavior:
 
 - unmodified arrow keys can navigate composer history only from an empty live draft or after history navigation is already active
@@ -106,7 +108,13 @@ Assistant activity between a user message and the final assistant answer is trea
 
 The collapsed group summarizes both action rows and intermediate comments. Expanding it preserves original order and shows non-final assistant text comments directly as normal assistant-visible text without card framing. Tool/action rows, subagent rows, and verification rows stay as nested collapsed progress items so the user can expand only the detail they want to inspect. Intermediate comments are normal assistant-visible text, not model thinking.
 
+User-open progress groups, nested action sections, and technical detail disclosures are UI-owned state. Streaming assistant comments, reasoning visibility changes, tool status updates, or later actions in the same turn must not collapse them while the corresponding progress row still exists.
+
 `showThinking=false` hides model reasoning content and reasoning technical details only. It must not hide progress actions, non-final assistant comments, tool summaries, or other non-reasoning progress details that regular users need in order to understand what happened during the run.
+
+Expanded intermediate comments and expanded technical detail values expose scoped copy controls. Their text values remain directly selectable, but copying a single value should not require selecting across the surrounding agent output.
+
+Markdown code blocks in assistant messages, including `text`-labeled value boxes, expose an icon-only scoped copy control on block hover or focus that copies only the code block value.
 
 ## Timeline Media Evidence
 

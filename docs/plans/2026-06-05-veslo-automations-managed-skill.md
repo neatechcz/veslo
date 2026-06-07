@@ -928,4 +928,3 @@ git commit -m "fix: stabilize veslo automations verification"
 - Users cannot modify or delete the managed skill through normal local skill editing/removal flows.
 - Automations UI uses the new API as the primary source.
 - Server, app, and desktop E2E checks pass against the real Tauri runtime.
-

@@ -1111,6 +1111,7 @@ function renderCredentialActionButtons(credential) {
   }
 
   return `
+    ${credential.provider === "codex_oauth" ? `<button class="button button-secondary" type="button" data-credential-action="reconnect">Reconnect</button>` : ""}
     <button class="button button-secondary" type="button" data-credential-action="drain">Drain</button>
     <button class="button button-secondary" type="button" data-credential-action="rotate">Rotate</button>
     <button class="button button-secondary" type="button" data-credential-action="revoke">Revoke</button>
@@ -1773,7 +1774,9 @@ function credentialActionRequest(credentialId, action) {
   return {
     path: action === "delete"
       ? `/credentials/${encodedCredentialId}`
-      : `/credentials/${encodedCredentialId}/${action}`,
+      : action === "reconnect"
+        ? `/credentials/${encodedCredentialId}/reconnect`
+        : `/credentials/${encodedCredentialId}/${action}`,
     method: action === "delete" ? "DELETE" : "POST",
   };
 }
@@ -1789,6 +1792,7 @@ async function runCredentialAction(action) {
     rotate: `Rotate ${credential.name}? Active routes will move to another healthy credential if one is available.`,
     revoke: `Revoke ${credential.name}? Existing routes may lose access if no replacement is available.`,
     delete: `Delete ${credential.name}? This moves it to Show Deleted and prevents future assignment or use.`,
+    reconnect: `Reconnect ${credential.name}? Paste a fresh Codex auth.json from a dedicated server-only login.`,
   };
 
   const confirmed = window.confirm(confirmationMessages[action] || `Apply ${action} to ${credential.name}?`);
@@ -1796,17 +1800,30 @@ async function runCredentialAction(action) {
     return;
   }
 
+  let reconnectSecret = "";
+  if (action === "reconnect") {
+    reconnectSecret = window.prompt("Paste the fresh Codex auth.json for this credential.") || "";
+    if (!reconnectSecret.trim()) {
+      return;
+    }
+  }
+
   try {
     const request = credentialActionRequest(credential.id, action);
-    await fetchJson(request.path, {
-      method: request.method,
-    });
+    await fetchJson(request.path, action === "reconnect"
+      ? {
+          method: request.method,
+          body: JSON.stringify({ secret: reconnectSecret.trim() }),
+        }
+      : {
+          method: request.method,
+        });
     if (action === "delete") {
       state.showDeletedCredentials = true;
       els.credentialsShowDeleted.checked = true;
     }
     await refreshCredentialOperations();
-    if (action === "delete") {
+    if (action === "delete" || action === "reconnect") {
       await refreshSelectedUserAiAccessOptions();
     }
   } catch (error) {

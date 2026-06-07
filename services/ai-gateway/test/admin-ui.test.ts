@@ -1309,6 +1309,29 @@ test("GET /admin/app.js supports showing and soft-deleting credential archive re
   }
 })
 
+test("GET /admin/app.js supports reconnecting Codex credentials in place", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+
+    assert.equal(response.status, 200)
+    const script = await response.text()
+    assert.match(script, /credential\.provider === "codex_oauth"[\s\S]*data-credential-action="reconnect"/)
+    assert.match(script, /Reconnect \$\{credential\.name\}\? Paste a fresh Codex auth\.json/)
+    assert.match(script, /window\.prompt\("Paste the fresh Codex auth\.json/)
+    assert.match(script, /\/credentials\/\$\{encodedCredentialId\}\/reconnect/)
+    assert.match(script, /body:\s*JSON\.stringify\(\{\s*secret:\s*reconnectSecret/)
+    assert.match(script, /await refreshSelectedUserAiAccessOptions\(\)/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
 test("GET /admin/app.js surfaces inline user save and load failures", async () => {
   const app = createApp()
   const server = app.listen(0, "127.0.0.1")

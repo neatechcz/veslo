@@ -91,4 +91,3 @@ The comment should be simple and tester-oriented:
 - State that Windows local backend processes now start hidden.
 - Ask testers to check first install/first launch, normal relaunch, and idle behavior.
 - Mention that antivirus or SmartScreen prompts may still appear because they are vendor reputation checks, not Veslo terminal windows.
-

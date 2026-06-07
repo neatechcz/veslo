@@ -304,6 +304,12 @@ mod tests {
             env::set_var(key, value);
             Self { key, previous }
         }
+
+        fn unset(key: &'static str) -> Self {
+            let previous = env::var(key).ok();
+            env::remove_var(key);
+            Self { key, previous }
+        }
     }
 
     impl Drop for EnvGuard {
@@ -341,6 +347,11 @@ mod tests {
 
     #[test]
     fn resolve_veslo_port_reports_fixed_port_contention() {
+        let _lock = ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = EnvGuard::unset(VESLO_DESKTOP_SERVER_PORT_ENV);
         let fixed_port_guard = TcpListener::bind(("0.0.0.0", DEFAULT_VESLO_PORT)).ok();
 
         let error = resolve_veslo_port()
