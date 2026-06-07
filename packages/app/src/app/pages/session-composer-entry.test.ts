@@ -23,7 +23,11 @@ const composerTargetOptionsSource = appSource.slice(
   appSource.indexOf("const activeWorkspaceComposerTargetId = createMemo"),
 );
 const switchComposerTargetSource = appSource.slice(
-  appSource.indexOf("const switchComposerTarget = async"),
+  appSource.indexOf("const switchComposerTargetNow = async"),
+  appSource.indexOf("let composerTargetSwitchQueue: Promise<void> = Promise.resolve();"),
+);
+const switchComposerTargetQueueSource = appSource.slice(
+  appSource.indexOf("let composerTargetSwitchQueue: Promise<void> = Promise.resolve();"),
   appSource.indexOf("const currentComposerStorageKey = createMemo"),
 );
 
@@ -105,6 +109,55 @@ test("switchComposerTarget seeds the target draft before activating the target k
   assertComposerDraftSeededBeforeActivation(useCurrentBranchSource, "currentDraft");
   assertComposerDraftSeededBeforeActivation(loadExistingBranchSource, "destinationDraft");
   assertComposerDraftSeededBeforeActivation(emptyBranchSource, "emptyDraft");
+});
+
+test("switchComposerTarget moves current pending drafts instead of cloning them", () => {
+  assert.ok(switchComposerTargetSource, "composer target switching source should be present");
+  const useCurrentBranchSource = sourceBetween(
+    switchComposerTargetSource,
+    "if (shouldUseCurrent) {",
+    "if (shouldLoadExisting && destinationSummary && destinationDraft) {",
+  );
+
+  assert.match(
+    useCurrentBranchSource,
+    /const previousPendingDraftKey = currentComposerStorageKey\(\);[\s\S]*const previousPendingDraftMeta = activePendingDraftMeta\(\);/,
+    "target switches should snapshot the original composer storage before writing the destination",
+  );
+
+  const seedIndex = useCurrentBranchSource.indexOf("setSessionComposerDraft(current, { storageKey: target.id }, currentDraft)");
+  const activationIndex = useCurrentBranchSource.indexOf("setActivePendingDraftKey(target.id)");
+  const cleanupIndex = useCurrentBranchSource.indexOf("await consumeMovedPendingDraft({");
+
+  assert.ok(seedIndex >= 0, "current draft should be seeded into the destination key");
+  assert.ok(activationIndex >= 0, "destination key should be activated");
+  assert.ok(cleanupIndex >= 0, "original pending draft should be consumed after the move");
+  assert.ok(seedIndex < activationIndex, "destination draft must be seeded before activation");
+  assert.ok(activationIndex < cleanupIndex, "stale source writes must be invalidated before source cleanup");
+  assert.match(
+    useCurrentBranchSource,
+    /previousStorageKey: previousPendingDraftKey,[\s\S]*previousSummary: previousPendingDraftMeta,[\s\S]*nextStorageKey: target\.id,[\s\S]*nextSummary: summary,/s,
+    "move cleanup should know both the previous and destination pending identities",
+  );
+});
+
+test("switchComposerTarget serializes rapid target changes", () => {
+  assert.ok(switchComposerTargetQueueSource, "composer target switch queue should be present");
+  assert.match(
+    switchComposerTargetQueueSource,
+    /let composerTargetSwitchQueue: Promise<void> = Promise\.resolve\(\);/,
+    "target switches should have a shared queue",
+  );
+  assert.match(
+    switchComposerTargetQueueSource,
+    /const queuedSwitch = composerTargetSwitchQueue[\s\S]*\.then\(\(\) => switchComposerTargetNow\(targetId, resolution\)\);/,
+    "each target switch should run after the previous switch settles",
+  );
+  assert.match(
+    switchComposerTargetQueueSource,
+    /composerTargetSwitchQueue = queuedSwitch\.then\(\(\) => undefined, \(\) => undefined\);/,
+    "the queue should keep accepting switches after a failed operation",
+  );
 });
 
 test("switchComposerTarget blocks when an existing destination draft cannot be loaded", () => {

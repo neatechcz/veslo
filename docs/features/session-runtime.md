@@ -137,6 +137,7 @@ Current behavior:
 - `Chat` reopens the one existing unpublished private draft instead of creating another unpublished private workspace
 - project `+` actions reopen the pending draft for that project directory when one already exists
 - the composer target picker can switch the centered entry between the private chat draft and workspace pending drafts
+- when the target has no meaningful draft content, switching targets moves the current draft there and consumes the previous pending draft instead of cloning the same text into multiple empty workspaces
 - when switching targets would collide with an existing draft, Veslo requires an explicit choice between keeping the current text for the destination or loading the existing destination draft
 - a real OpenCode session is materialized only when the pending draft is sent successfully
 

@@ -1,0 +1,253 @@
+[scenario]
+name = "composer-draft-workspace-move"
+fail_fast = true
+global_timeout_ms = 240000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "seed second workspace"
+action = "eval"
+timeout_ms = 60000
+script = '''
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const trimText = (value) => String(value ?? "").trim();
+const normalizePath = (value) => trimText(value).replace(/\\/g, "/").replace(/\/+$/, "");
+const assert = (condition, message) => {
+  if (!condition) throw new Error(message);
+};
+const tauriInvoke = async (command, payload = {}) => {
+  const invoke = window.__TAURI_INTERNALS__?.invoke;
+  assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
+  return await invoke(command, payload);
+};
+
+const bootstrap = await tauriInvoke("workspace_bootstrap");
+const first = bootstrap.workspaces.find((workspace) => workspace.id === bootstrap.activeId) ?? bootstrap.workspaces[0];
+const firstDirectory = normalizePath(first?.directory || first?.path);
+assert(first?.id && firstDirectory, `Initial workspace is unavailable: ${JSON.stringify(bootstrap)}`);
+
+const parent = firstDirectory.replace(/\/[^/]+$/, "");
+const secondDirectory = `${parent}/draft-move-target-${Date.now()}`;
+await tauriInvoke("workspace_create", {
+  folderPath: secondDirectory,
+  name: "Draft Move Target",
+  preset: "starter",
+});
+const afterCreate = await tauriInvoke("workspace_bootstrap");
+const second = afterCreate.workspaces.find((workspace) => normalizePath(workspace.path || workspace.directory) === secondDirectory);
+assert(second?.id, `Second workspace was not registered: ${JSON.stringify(afterCreate)}`);
+
+await tauriInvoke("workspace_set_active", {
+  workspaceId: first.id,
+  promoteToFront: true,
+});
+
+const firstKey = `__pending-draft__:directory:${first.id}:${firstDirectory}`;
+const secondKey = `__pending-draft__:directory:${second.id}:${secondDirectory}`;
+window.localStorage.setItem(
+  "veslo.e2e.composerDraftWorkspaceMove",
+  JSON.stringify({
+    firstKey,
+    secondKey,
+    firstWorkspaceId: first.id,
+    secondWorkspaceId: second.id,
+    text: `draft move ${Date.now()}`,
+  }),
+);
+
+await sleep(100);
+window.location.reload();
+true;
+'''
+
+[[step]]
+name = "root exists after workspace seed"
+action = "wait"
+target = "#root"
+timeout_ms = 30000
+
+[[step]]
+name = "start draft move task"
+action = "eval"
+script = '''
+const completeSelector = '[data-testid="composer-draft-workspace-move-complete"]';
+const errorSelector = '[data-testid="composer-draft-workspace-move-error"]';
+document.querySelector(completeSelector)?.remove();
+document.querySelector(errorSelector)?.remove();
+
+const appendMarker = (selector, payload) => {
+  if (document.querySelector(completeSelector) || document.querySelector(errorSelector)) return;
+  const marker = document.createElement("pre");
+  marker.dataset.testid = selector === completeSelector
+    ? "composer-draft-workspace-move-complete"
+    : "composer-draft-workspace-move-error";
+  marker.textContent = JSON.stringify(payload, null, 2);
+  document.body.append(marker);
+};
+
+if (!window.__vesloComposerDraftWorkspaceMoveStarted) {
+  window.__vesloComposerDraftWorkspaceMoveStarted = true;
+  window.__vesloComposerDraftWorkspaceMovePromise = (async () => {
+    let latestDraftState = null;
+    let readDraftState = null;
+    try {
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const assert = (condition, message) => {
+        if (!condition) throw new Error(message);
+      };
+      const waitUntil = async (predicate, options = {}) => {
+        const timeout = options.timeout ?? 10000;
+        const interval = options.interval ?? 250;
+        const message = options.message ?? "Condition was not met";
+        const deadline = Date.now() + timeout;
+        let latest;
+        while (Date.now() < deadline) {
+          latest = await predicate();
+          if (latest) return latest;
+          await sleep(interval);
+        }
+        throw new Error(`${message}. Latest=${JSON.stringify(latest)}`);
+      };
+      const tauriInvoke = async (command, payload = {}) => {
+        const invoke = window.__TAURI_INTERNALS__?.invoke;
+        assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
+        return await invoke(command, payload);
+      };
+      const fixture = JSON.parse(window.localStorage.getItem("veslo.e2e.composerDraftWorkspaceMove") || "null");
+      assert(fixture?.firstKey && fixture?.secondKey && fixture?.text, "Draft move fixture was not seeded.");
+
+      const oldUrl = window.location.href;
+      window.location.hash = "/session";
+      window.dispatchEvent(new HashChangeEvent("hashchange", {
+        oldURL: oldUrl,
+        newURL: window.location.href,
+      }));
+
+      await waitUntil(() => document.querySelector('[data-testid="composer-target-picker"]'), {
+        timeout: 30000,
+        message: "Composer target picker did not render",
+      });
+      const editor = await waitUntil(() => document.querySelector('[role="textbox"][contenteditable="true"]'), {
+        timeout: 30000,
+        message: "Composer editor did not render",
+      });
+
+      editor.textContent = fixture.text;
+      editor.dispatchEvent(new InputEvent("input", { bubbles: true, data: fixture.text, inputType: "insertText" }));
+      editor.focus();
+      await sleep(900);
+
+      const clickTarget = async (targetId) => {
+        const picker = await waitUntil(() => {
+          const candidate = document.querySelector('[data-testid="composer-target-picker"]');
+          if (!candidate || candidate.disabled) return false;
+          return candidate;
+        }, {
+          timeout: 30000,
+          message: "Composer target picker did not become enabled",
+        });
+        picker.click();
+        const option = await waitUntil(() => {
+          const options = Array.from(document.querySelectorAll('[data-testid="composer-target-option"]'));
+          return options.find((candidate) => candidate.dataset.composerTargetId === targetId && !candidate.disabled) || false;
+        }, {
+          timeout: 30000,
+          message: `Composer target option ${targetId} did not become enabled`,
+        });
+        option.click();
+        await waitUntil(() => window.localStorage.getItem("veslo.active-pending-draft.v1") === targetId, {
+          timeout: 30000,
+          message: `Composer target ${targetId} did not become active`,
+        });
+        await sleep(300);
+      };
+
+      await clickTarget(fixture.secondKey);
+      assert(
+        (document.querySelector('[role="textbox"][contenteditable="true"]')?.textContent || "") === fixture.text,
+        "Draft text did not survive the first workspace switch.",
+      );
+
+      await clickTarget(fixture.firstKey);
+      assert(
+        (document.querySelector('[role="textbox"][contenteditable="true"]')?.textContent || "") === fixture.text,
+        "Draft text did not survive the second workspace switch.",
+      );
+
+      readDraftState = async () => {
+        const summaries = await tauriInvoke("pending_session_drafts_list");
+        const loaded = [];
+        for (const summary of summaries) {
+          const item = await tauriInvoke("pending_session_drafts_get", { draftId: summary.id });
+          loaded.push({
+            id: summary.id,
+            workspaceId: summary.workspaceId,
+            text: item?.draft?.composer?.text || "",
+          });
+        }
+        latestDraftState = {
+          activePendingKey: window.localStorage.getItem("veslo.active-pending-draft.v1"),
+          summaries,
+          loaded,
+        };
+        return latestDraftState;
+      };
+
+      const result = await waitUntil(async () => {
+        const { summaries, loaded } = await readDraftState();
+        const matching = loaded.filter((draft) => draft.text === fixture.text);
+        if (
+          matching.length === 1 &&
+          matching[0].workspaceId === fixture.firstWorkspaceId &&
+          !loaded.some((draft) => draft.workspaceId === fixture.secondWorkspaceId && draft.text === fixture.text)
+        ) {
+          return { summaries, loaded };
+        }
+        return false;
+      }, {
+        timeout: 30000,
+        interval: 500,
+        message: "Moved draft was not removed from the previous workspace",
+      });
+
+      appendMarker(completeSelector, result);
+    } catch (error) {
+      let draftState = null;
+      try {
+        draftState = typeof readDraftState === "function" ? await readDraftState() : null;
+      } catch (stateError) {
+        draftState = { error: stateError?.message || String(stateError) };
+      }
+      appendMarker(errorSelector, {
+        message: error?.message || String(error),
+        stack: error?.stack || null,
+        latestDraftState: draftState ?? latestDraftState ?? null,
+      });
+    }
+  })();
+}
+
+true;
+'''
+
+[[step]]
+name = "draft move task finished"
+action = "wait"
+target = "[data-testid=\"composer-draft-workspace-move-complete\"], [data-testid=\"composer-draft-workspace-move-error\"]"
+timeout_ms = 120000
+
+[[step]]
+name = "draft move succeeded"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="composer-draft-workspace-move-error"]');
+if (error) {
+  throw new Error(`Composer draft workspace move failed: ${(error.textContent || "").slice(0, 4000)}`);
+}
+true;
+'''

@@ -1912,6 +1912,42 @@ export default function App() {
 
     return null;
   };
+  const consumeMovedPendingDraft = async (input: {
+    previousStorageKey: string | null;
+    previousSummary: PendingSessionDraftSummary | null;
+    nextStorageKey: string;
+    nextSummary: PendingSessionDraftSummary;
+  }) => {
+    const previousStorageKey = input.previousStorageKey?.trim() ?? "";
+    const nextStorageKey = input.nextStorageKey.trim();
+    if (!previousStorageKey || !nextStorageKey || previousStorageKey === nextStorageKey) return;
+
+    const previousDraftId = input.previousSummary?.id.trim() ?? "";
+    const nextDraftId = input.nextSummary.id.trim();
+    pendingDraftPersistenceGeneration += 1;
+    setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, { storageKey: previousStorageKey }));
+
+    if (!previousDraftId || previousDraftId === nextDraftId || !isTauriRuntime()) return;
+
+    try {
+      const deleted = await pendingSessionDraftsDelete(previousDraftId);
+      if (!deleted) {
+        markPendingDraftConsumed(previousDraftId);
+        console.warn("[pendingDrafts.switch.move] failed to delete moved pending draft", { previousDraftId });
+      } else {
+        clearConsumedPendingDraftId(previousDraftId);
+      }
+    } catch (error) {
+      markPendingDraftConsumed(previousDraftId);
+      reportError(error, "pendingDrafts.switch.move");
+    }
+
+    try {
+      await refreshPendingDraftSummaries();
+    } catch (error) {
+      reportError(error, "pendingDrafts.switch.move.refresh");
+    }
+  };
   const activateTargetWorkspace = async (
     target: ComposerTargetOption,
     summary?: PendingSessionDraftSummary | null,
@@ -1967,7 +2003,7 @@ export default function App() {
       draftStatus: findPendingDraftSummaryForTarget(target) ? "draft" : null,
     };
   };
-  const switchComposerTarget = async (
+  const switchComposerTargetNow = async (
     targetId: string,
     resolution?: ComposerTargetSwitchResolution,
   ): Promise<ComposerTargetSwitchResult> => {
@@ -2008,6 +2044,8 @@ export default function App() {
     const shouldLoadExisting = resolution === "load-existing" || decision.kind === "load-destination";
 
     if (shouldUseCurrent) {
+      const previousPendingDraftKey = currentComposerStorageKey();
+      const previousPendingDraftMeta = activePendingDraftMeta();
       const activated = await activateTargetWorkspace(target, destinationSummary);
       if (!activated) return { status: "blocked", message: t("session.target_not_available", currentLocale()) };
       const summary = await putPendingDraftForTarget(target, currentDraft);
@@ -2016,6 +2054,12 @@ export default function App() {
       setActivePendingDraftKey(target.id);
       setActivePendingDraftMeta(summary);
       setView("session");
+      await consumeMovedPendingDraft({
+        previousStorageKey: previousPendingDraftKey,
+        previousSummary: previousPendingDraftMeta,
+        nextStorageKey: target.id,
+        nextSummary: summary,
+      });
       return { status: "switched" };
     }
 
@@ -2039,6 +2083,17 @@ export default function App() {
     setActivePendingDraftMeta(summary);
     setView("session");
     return { status: "switched" };
+  };
+  let composerTargetSwitchQueue: Promise<void> = Promise.resolve();
+  const switchComposerTarget = async (
+    targetId: string,
+    resolution?: ComposerTargetSwitchResolution,
+  ): Promise<ComposerTargetSwitchResult> => {
+    const queuedSwitch = composerTargetSwitchQueue
+      .catch(() => undefined)
+      .then(() => switchComposerTargetNow(targetId, resolution));
+    composerTargetSwitchQueue = queuedSwitch.then(() => undefined, () => undefined);
+    return await queuedSwitch;
   };
   const currentComposerStorageKey = createMemo(() => {
     const sessionId = selectedSessionId();
