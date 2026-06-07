@@ -109,3 +109,14 @@ test('message send degraded registry pilot scenario requests the managed AI fixt
     false,
   );
 });
+
+test('sidebar session retention pilot scenario requests the managed AI fixture', () => {
+  const e2eRoot = '/repo/packages/e2e';
+
+  assert.equal(
+    scenarioSelectionNeedsManagedAiGatewayFixture(
+      resolvePilotScenarioSelection({ scenario: ['sidebar-session-retention'] }, e2eRoot),
+    ),
+    true,
+  );
+});

@@ -36,7 +36,7 @@ Common keys:
 - `veslo.engineRuntime`
 - `veslo.onboardingComplete`
 
-`veslo.updateAutoDownload` is default-on when absent. A stored `0` is an explicit opt-out and keeps the manual download flow. When enabled, failed automatic update downloads are retried with bounded backoff. The retry state is runtime-only; only the preference and last successful check time are stored.
+Automatic update checks are always enabled; legacy stored `veslo.updateAutoCheck=0` values are ignored and overwritten on the next preference persist. `veslo.updateAutoDownload` is default-on when absent. A stored `0` is an explicit opt-out and keeps the manual download flow. Turning auto-download off while an automatic download is active pauses the auto-download flow and restores the update to manual availability; a late automatic completion is ignored for UI state. When enabled, failed automatic update downloads are retried with bounded backoff. The retry state is runtime-only; only the preference and last successful check time are stored.
 
 `veslo.modelVariant` stores the app-global model variant / thinking effort. The built-in default is `xhigh` (Max). Existing stored values from before the Max-default migration are overwritten to `xhigh` once and marked by `veslo.modelVariant.maxDefaultMigration`; later user changes remain stored in `veslo.modelVariant`.
 
@@ -116,6 +116,28 @@ Desktop-managed local Veslo server uses the fixed port `8787`. The desktop runti
 Managed local sidecars distinguish internal runtime URLs from advertised connect URLs. Same-machine communication between the desktop shell, `veslo-server`, `veslo-orchestrator`, OpenCode, and `veslo-code-router` uses loopback OpenCode URLs such as `http://127.0.0.1:<port>`. LAN or mDNS connect URLs are for external clients only; they must not be passed as the local `--opencode-base-url` or `--opencode-url`, because sleep/resume and network changes can invalidate those addresses while the local OpenCode process remains healthy.
 
 Desktop-managed OpenCode, Veslo server, Veslo orchestrator, and OpenCode Router processes launch through the desktop supervised-process wrapper. On Windows, that wrapper applies the hidden-process creation flags before spawn so first launch, restart, and fallback command startup do not create visible console windows. Sidecar stdout/stderr still flows through the debug-log forwarding path below.
+
+## OpenCode Workspace Runtime State
+
+The durable runtime contract for OpenCode workspace execution is
+`docs/dev/opencode-workspace-runtime-architecture.md`.
+
+State ownership summary:
+
+- the app owns prepared user intent and visible UI state,
+- Veslo server owns workspace-scoped conversations, run records, and
+  conversation-to-OpenCode-session bindings,
+- the orchestrator owns execution strategy and process routing,
+- the desktop shell owns the local Veslo server process lifecycle.
+
+An OpenCode session is created in a workspace directory and remains bound to
+that directory through the Veslo conversation. Workspace switching changes only
+the visible UI context; it must not retarget an existing conversation, run, or
+OpenCode session.
+
+The local Veslo server should be recoverable without an active workspace.
+`Invalid bearer token` between the app and local server is treated as stale
+local connection state, not as a failed message or failed conversation.
 
 ## Desktop Debug Log Forwarder
 
@@ -201,6 +223,16 @@ OpenCode JSON helper calls made by the local server use a bounded upstream timeo
 The desktop app recognizes managed Codex credential exhaustion or missing eligible binding inside these normalized errors and formats it as an actionable AI access failure. Prompt sends that hit this condition set the session run state to failed and insert the error into the transcript instead of leaving OpenCode's empty assistant turn looking like an active run.
 
 DEN managed-AI uses `MANAGED_AI_DATABASE_URL`. Standalone AI Gateway uses `AI_GATEWAY_DATABASE_URL`. Their assignment, credential, eligibility, and usage views match only when those services are intentionally pointed at the same managed-AI backing database and compatible config.
+
+Standalone AI Gateway sends Codex capacity alert e-mails from the backend monitor when all of these are configured:
+
+- `LETTR_API_KEY` - Lettr API key used by both DEN auth mail and AI Gateway alert mail.
+- `AUTH_EMAIL_ADDRESS` - sender address.
+- `AUTH_EMAIL_FROM_NAME` - optional sender display name.
+- `AI_GATEWAY_ALERT_EMAIL_RECIPIENTS` - comma or whitespace separated incident recipients. Configure this with the Platform Admin/ops recipients that must receive 95%, 100%, and Codex-limit-visibility alerts.
+- `AI_GATEWAY_CODEX_CAPACITY_ALERT_EMAIL_INTERVAL_MS` - optional monitor interval, default 300000.
+
+If any required e-mail sender setting or recipient list is empty, the standalone AI Gateway still shows alerts in `/admin/alerts` but logs that capacity alert e-mails are disabled. Successful delivery attempts are recorded as audit events with action `codex_capacity_alert.email.sent`; failed attempts are recorded with `codex_capacity_alert.email.failed`. The monitor suppresses repeat sends per alert and recipient for 24 hours.
 
 Managed-AI provider assignments may use `openai`, `anthropic`, `codex_oauth`, or `openai_compatible`. The desktop app treats these assignments as read-only policy and writes local OpenCode routing for the assigned provider. AI access rows also store `assignment_origin`: `auto_assigned` for DEN sign-up Codex defaults and `admin_assigned` for explicit admin edits or legacy rows. For `codex_oauth`, OpenCode still owns local tool execution and calls the local Veslo server route `/ai-gateway/providers/codex_oauth/v1`; the configured managed-AI service keeps the Codex OAuth auth JSON server-side, translates the OpenAI-compatible request to the ChatGPT Codex Responses endpoint, and translates the response back for OpenCode. Standalone AI Gateway admin model pickers use live upstream discovery for `openai_compatible` credentials and a gateway-owned Codex model catalog for `codex_oauth` credentials. Codex status probes run from temporary Codex homes with the bundled `@openai/codex` CLI pinned at `0.137.0` or newer so successful probes write subscription rate-limit snapshots into session logs; refreshed probe auth JSON is written back to the credential's encrypted secret when Codex rotates it. If a Codex status probe reports refresh-token reuse, the standalone admin service quarantines the credential as unhealthy; the admin Reconnect action replaces the stored auth JSON in place and marks the same credential healthy again. If a Codex status probe reports that a specific model is unsupported for the credential's ChatGPT account, the credential remains available and that model is filtered from the credential's admin model list. Any assigned Codex row can be repaired to another healthy eligible Codex credential on the next request when its assigned credential becomes unhealthy, revoked, missing, permanently unavailable, or exhausted; the original assignment origin is preserved after repair, and legacy repairs without a stored model use the Codex catalog default. For `openai_compatible`, OpenCode uses the local Veslo server route `/ai-gateway/providers/openai_compatible/v1`; the upstream custom base URL and API key remain server-side in the configured managed-AI service's encrypted secret store.
 

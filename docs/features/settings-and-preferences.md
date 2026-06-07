@@ -34,10 +34,10 @@ Examples:
 
 - theme mode
 - language
-- update check and default-on auto-download behavior
+- always-on update checks and default-on auto-download behavior
 
 These are app-level preferences, mostly stored in browser storage.
-Desktop update downloads are enabled by default; Settings can opt out to keep the manual download action.
+Desktop update checks are always enabled. Update downloads are enabled by default; Settings can opt out to keep the manual download action. If an automatic download is already running, Settings can pause it by turning automatic download off.
 When a desktop update has already been detected, the dashboard/session left menu also surfaces the update prompt with progress, a manual download action for opt-out users, and an install action once ready. Settings remains the detailed configuration and diagnostic surface for update checks.
 
 ## Archived Sessions

@@ -93,8 +93,6 @@ export type SettingsViewProps = {
   aiAccessAllowedModels: string[];
   showThinking: boolean;
   toggleShowThinking: () => void;
-  autoCompactContext: boolean;
-  toggleAutoCompactContext: () => void;
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
   modelVariantLabel: string;
@@ -106,8 +104,6 @@ export type SettingsViewProps = {
   setThemeMode: (value: "light" | "dark" | "system") => void;
   denKeepSignedIn: boolean;
   toggleDenKeepSignedIn: () => void;
-  updateAutoCheck: boolean;
-  toggleUpdateAutoCheck: () => void;
   updateAutoDownload: boolean;
   toggleUpdateAutoDownload: () => void;
   updateStatus: {
@@ -250,6 +246,7 @@ export default function SettingsView(props: SettingsViewProps) {
 
   const generalUpdateActionLabel = createMemo(() => {
     if (updateState() === "available" && !props.updateAutoDownload) return translate("settings.download_update");
+    if (updateState() === "downloading" && props.updateAutoDownload) return translate("settings.pause_update_download");
     if (updateState() === "ready") return translate("settings.install_restart");
     if (updateState() === "error" && updateRetry()?.kind === "exhausted") {
       return translate("settings.retry_update_download");
@@ -260,7 +257,8 @@ export default function SettingsView(props: SettingsViewProps) {
   });
 
   const generalUpdateDisabled = createMemo(() => {
-    if (updateState() === "checking" || updateState() === "downloading") return true;
+    if (updateState() === "checking") return true;
+    if (updateState() === "downloading") return !props.updateAutoDownload;
     if (updateState() === "ready" && props.anyActiveRuns) return true;
     return props.busy;
   });
@@ -274,6 +272,10 @@ export default function SettingsView(props: SettingsViewProps) {
 
   const handleGeneralUpdateAction = () => {
     if (generalUpdateDisabled()) return;
+    if (updateState() === "downloading" && props.updateAutoDownload) {
+      props.toggleUpdateAutoDownload();
+      return;
+    }
     if (updateState() === "available" && !props.updateAutoDownload) {
       props.downloadUpdate();
       return;
@@ -955,19 +957,6 @@ export default function SettingsView(props: SettingsViewProps) {
                 </Button>
               </div>
 
-              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
-                <div class="min-w-0">
-                  <div class="text-sm text-gray-12">{__vesloT("ui.literal.auto_context_compaction_yefaae", __vesloCurrentLocale())}</div>
-                  <div class="text-xs text-gray-7">{__vesloT("ui.literal.automatically_compact_after_a_run_completes_1cibgg", __vesloCurrentLocale())}</div>
-                </div>
-                <Button
-                  variant="outline"
-                  class="text-xs h-8 py-0 px-3 shrink-0"
-                  disabled
-                >
-                  {__vesloT("ui.literal.always_on_t4uqph", __vesloCurrentLocale())}</Button>
-              </div>
-
               <div class="bg-gray-1 p-3 rounded-xl border border-gray-6 space-y-2">
                 <div>
                   <div class="text-sm text-gray-12">{translate("session.thinking_effort")}</div>
@@ -1029,6 +1018,24 @@ export default function SettingsView(props: SettingsViewProps) {
                       </Button>
                     )}
                   </Show>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={props.updateAutoDownload}
+                    class="inline-flex h-8 max-w-full items-center justify-between gap-2 rounded-full border border-gray-6 bg-gray-1 px-3 text-left transition-colors hover:bg-gray-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)]"
+                    onClick={props.toggleUpdateAutoDownload}
+                  >
+                    <span class="min-w-0 whitespace-nowrap text-xs font-medium text-gray-12">{translate("settings.auto_update_label")}</span>
+                    <span class={`relative h-4 w-8 shrink-0 rounded-full border transition-colors ${
+                      props.updateAutoDownload
+                        ? "border-gray-12/20 bg-gray-12"
+                        : "border-gray-6 bg-gray-3"
+                    }`}>
+                      <span class={`absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-gray-1 shadow-sm transition-transform ${
+                        props.updateAutoDownload ? "translate-x-4" : "translate-x-0"
+                      }`} />
+                    </span>
+                  </button>
                 </div>
 
                 <Show when={updateState() === "idle" && updateLastCheckedAt()}>
@@ -1324,38 +1331,34 @@ export default function SettingsView(props: SettingsViewProps) {
                     when={props.updateEnv && props.updateEnv.supported === false}
                     fallback={
                       <>
-                        <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6">
-                          <div class="space-y-0.5">
-                            <div class="text-sm text-gray-12">{translate("settings.automatic_checks_label")}</div>
-                            <div class="text-xs text-gray-7">{translate("settings.automatic_checks_hint")}</div>
+                        <div class="flex items-center justify-between gap-3 bg-gray-1 p-3 rounded-xl border border-gray-6">
+                          <div class="min-w-0 text-sm text-gray-12">{translate("settings.auto_update_label")}</div>
+                          <div class="flex shrink-0 items-center gap-2">
+                            <Show when={updateState() === "downloading" && props.updateAutoDownload}>
+                              <Button
+                                variant="outline"
+                                class="h-8 rounded-full border-gray-6 px-3 py-0 text-xs"
+                                onClick={props.toggleUpdateAutoDownload}
+                              >
+                                {translate("settings.pause_update_download")}
+                              </Button>
+                            </Show>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={props.updateAutoDownload}
+                              class={`relative h-6 w-11 shrink-0 rounded-full border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)] ${
+                                props.updateAutoDownload
+                                  ? "border-gray-12/20 bg-gray-12"
+                                  : "border-gray-6 bg-gray-3 hover:bg-gray-4"
+                              }`}
+                              onClick={props.toggleUpdateAutoDownload}
+                            >
+                              <span class={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-gray-1 shadow-sm transition-transform ${
+                                props.updateAutoDownload ? "translate-x-5" : "translate-x-0"
+                              }`} />
+                            </button>
                           </div>
-                          <button
-                            class={`min-w-[70px] px-4 py-1.5 rounded-full text-xs font-medium border shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] transition-colors ${
-                              props.updateAutoCheck
-                                ? "bg-gray-12/12 text-gray-12 border-gray-6/30"
-                                : "bg-gray-1/70 text-gray-10 border-gray-6/60 hover:text-gray-12 hover:bg-gray-2/70"
-                            }`}
-                            onClick={props.toggleUpdateAutoCheck}
-                          >
-                            {props.updateAutoCheck ? translate("settings.on") : translate("settings.off")}
-                          </button>
-                        </div>
-
-                        <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6">
-                          <div class="space-y-0.5">
-                            <div class="text-sm text-gray-12">{translate("settings.auto_update_label")}</div>
-                            <div class="text-xs text-gray-7">{translate("settings.auto_update_hint")}</div>
-                          </div>
-                          <button
-                            class={`min-w-[70px] px-4 py-1.5 rounded-full text-xs font-medium border shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] transition-colors ${
-                              props.updateAutoDownload
-                                ? "bg-gray-12/12 text-gray-12 border-gray-6/30"
-                                : "bg-gray-1/70 text-gray-10 border-gray-6/60 hover:text-gray-12 hover:bg-gray-2/70"
-                            }`}
-                            onClick={props.toggleUpdateAutoDownload}
-                          >
-                            {props.updateAutoDownload ? translate("settings.on") : translate("settings.off")}
-                          </button>
                         </div>
 
                         <Show

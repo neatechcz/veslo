@@ -25,12 +25,20 @@ const state = {
     userId: "",
     orgId: "",
   },
+  credentialFilters: {
+    search: "",
+    provider: "",
+    state: "",
+  },
+  alertStatusFilter: "active",
   showDeletedCredentials: false,
   selectedCredentialId: null,
   selectedAlertId: null,
   selectedAuditId: null,
   selectedUserId: null,
   selectedOrganizationId: null,
+  selectedOrganizationDomainId: null,
+  organizationDomainMode: "create",
   userMode: "edit",
   userAiAccessByUserId: {},
   userAiAccessAvailableCredentialsByUserId: {},
@@ -62,23 +70,40 @@ const els = {
   organizationSeatLimit: document.getElementById("organization-seat-limit"),
   organizationSaveButton: document.getElementById("organization-save-button"),
   organizationSaveStatus: document.getElementById("organization-save-status"),
-  organizationDomainInput: document.getElementById("organization-domain-input"),
-  organizationDomainEnabled: document.getElementById("organization-domain-enabled"),
-  organizationDomainSelfSignup: document.getElementById("organization-domain-self-signup"),
+  organizationSelectorControl: document.getElementById("organization-selector-control"),
+  organizationSelectorInput: document.getElementById("organization-selector-input"),
+  organizationSelectorOptions: document.getElementById("organization-selector-options"),
   organizationDomainAddButton: document.getElementById("organization-domain-add-button"),
   organizationDomainList: document.getElementById("organization-domain-list"),
-  organizationInviteEmail: document.getElementById("organization-invite-email"),
-  organizationInviteRole: document.getElementById("organization-invite-role"),
   organizationInviteSendButton: document.getElementById("organization-invite-send-button"),
   organizationInviteList: document.getElementById("organization-invite-list"),
+  organizationDomainModal: document.getElementById("organization-domain-modal"),
+  organizationDomainModalTitle: document.getElementById("organization-domain-modal-title"),
+  organizationDomainModalClose: document.getElementById("organization-domain-modal-close"),
+  organizationDomainModalDomain: document.getElementById("organization-domain-modal-domain"),
+  organizationDomainModalEnabled: document.getElementById("organization-domain-modal-enabled"),
+  organizationDomainModalSelfSignup: document.getElementById("organization-domain-modal-self-signup"),
+  organizationDomainModalSave: document.getElementById("organization-domain-modal-save"),
+  organizationDomainModalStatus: document.getElementById("organization-domain-modal-status"),
+  organizationInviteModal: document.getElementById("organization-invite-modal"),
+  organizationInviteModalClose: document.getElementById("organization-invite-modal-close"),
+  organizationInviteModalEmail: document.getElementById("organization-invite-modal-email"),
+  organizationInviteModalRole: document.getElementById("organization-invite-modal-role"),
+  organizationInviteModalSend: document.getElementById("organization-invite-modal-send"),
+  organizationInviteModalStatus: document.getElementById("organization-invite-modal-status"),
   credentialCreateProvider: document.getElementById("credential-create-provider"),
   credentialCreateName: document.getElementById("credential-create-name"),
   credentialCreateBaseUrl: document.getElementById("credential-create-base-url"),
   credentialCreateSecret: document.getElementById("credential-create-secret"),
   credentialCreateSubmit: document.getElementById("credential-create-submit"),
   credentialCreateStatus: document.getElementById("credential-create-status"),
+  credentialSearch: document.getElementById("credential-search"),
+  credentialProviderFilter: document.getElementById("credential-provider-filter"),
+  credentialStateFilter: document.getElementById("credential-state-filter"),
   credentialsShowDeleted: document.getElementById("credentials-show-deleted"),
   credentialsTableBody: document.getElementById("credentials-table-body"),
+  credentialDetailModal: document.getElementById("credential-detail-modal"),
+  credentialDetailModalClose: document.getElementById("credential-detail-modal-close"),
   credentialDetail: document.getElementById("credential-detail"),
   usageGroupBy: document.getElementById("usage-group-by"),
   usageCredentialFilter: document.getElementById("usage-filter-credential"),
@@ -98,6 +123,9 @@ const els = {
   usageCapacityCredentials: document.getElementById("usage-capacity-credentials"),
   usageCredentialTableBody: document.getElementById("usage-credential-table-body"),
   alertList: document.getElementById("alert-list"),
+  alertStatusFilterButtons: Array.from(document.querySelectorAll("[data-alert-status-filter]")),
+  alertDetailModal: document.getElementById("alert-detail-modal"),
+  alertDetailModalClose: document.getElementById("alert-detail-modal-close"),
   alertDetail: document.getElementById("alert-detail"),
   userSearch: document.getElementById("user-search"),
   userStatusFilter: document.getElementById("user-status-filter"),
@@ -118,6 +146,8 @@ const els = {
   userAiAccessModelOptions: document.getElementById("user-ai-access-model-options"),
   userAiAccessAllowedModels: document.getElementById("user-ai-access-allowed-models"),
   userAiAccessStatus: document.getElementById("user-ai-access-status"),
+  userEditorModal: document.getElementById("user-editor-modal"),
+  userModalClose: document.getElementById("user-modal-close"),
   userDisableButton: document.getElementById("user-disable-button"),
   userDeleteButton: document.getElementById("user-delete-button"),
   userSaveButton: document.getElementById("user-save-button"),
@@ -127,6 +157,8 @@ const els = {
   auditActorFilter: document.getElementById("audit-actor-filter"),
   auditEntityFilter: document.getElementById("audit-entity-filter"),
   auditList: document.getElementById("audit-list"),
+  auditDetailModal: document.getElementById("audit-detail-modal"),
+  auditDetailModalClose: document.getElementById("audit-detail-modal-close"),
   auditDetail: document.getElementById("audit-detail"),
   heroMetrics: Array.from(document.querySelectorAll(".hero-metrics .metric-card strong")),
 };
@@ -136,6 +168,129 @@ function normalizePage(pathname) {
   if (!path || path === "/admin") return "overview";
   const page = path.split("/").pop();
   return DEFAULT_PAGES.includes(page) ? page : "overview";
+}
+
+function openModal(modal) {
+  if (!modal) {
+    return;
+  }
+
+  if (typeof modal.showModal === "function" && !modal.open) {
+    modal.showModal();
+    return;
+  }
+
+  modal.setAttribute("open", "");
+}
+
+function closeModal(modal) {
+  if (!modal) {
+    return;
+  }
+
+  if (typeof modal.close === "function") {
+    modal.close();
+    return;
+  }
+
+  modal.removeAttribute("open");
+}
+
+function closeAllModals() {
+  [
+    els.organizationDomainModal,
+    els.organizationInviteModal,
+    els.credentialDetailModal,
+    els.alertDetailModal,
+    els.userEditorModal,
+    els.auditDetailModal,
+  ].forEach((modal) => closeModal(modal));
+}
+
+function setDomainModalStatus(message, tone = "neutral") {
+  els.organizationDomainModalStatus.textContent = message;
+  els.organizationDomainModalStatus.dataset.tone = tone;
+}
+
+function setInviteModalStatus(message, tone = "neutral") {
+  els.organizationInviteModalStatus.textContent = message;
+  els.organizationInviteModalStatus.dataset.tone = tone;
+}
+
+function openOrganizationDomainModal(domainId = null) {
+  const domain = state.organizationDomains.find((entry) => entry.id === domainId) || null;
+  state.organizationDomainMode = domain ? "edit" : "create";
+  state.selectedOrganizationDomainId = domain?.id || null;
+  els.organizationDomainModalTitle.textContent = domain ? "Edit domain" : "Add domain";
+  els.organizationDomainModalDomain.value = domain?.domain || "";
+  els.organizationDomainModalDomain.disabled = Boolean(domain);
+  els.organizationDomainModalEnabled.checked = domain?.enabled ?? true;
+  els.organizationDomainModalSelfSignup.checked = domain?.selfSignupEnabled ?? false;
+  els.organizationDomainModalSave.textContent = domain ? "Save domain" : "Add domain";
+  setDomainModalStatus("Domain changes are applied through Save.");
+  if (typeof els.organizationDomainModal.showModal === "function" && !els.organizationDomainModal.open) {
+    els.organizationDomainModal.showModal();
+  } else {
+    openModal(els.organizationDomainModal);
+  }
+}
+
+function openOrganizationInviteModal() {
+  els.organizationInviteModalEmail.value = "";
+  els.organizationInviteModalRole.value = "member";
+  setInviteModalStatus("Invite is sent only when confirmed.");
+  if (typeof els.organizationInviteModal.showModal === "function" && !els.organizationInviteModal.open) {
+    els.organizationInviteModal.showModal();
+  } else {
+    openModal(els.organizationInviteModal);
+  }
+}
+
+function openCredentialDetail(credentialId) {
+  if (credentialId) {
+    state.selectedCredentialId = credentialId;
+  }
+  renderCredentials();
+  if (typeof els.credentialDetailModal.showModal === "function" && !els.credentialDetailModal.open) {
+    els.credentialDetailModal.showModal();
+  } else {
+    openModal(els.credentialDetailModal);
+  }
+}
+
+function openAlertDetail(alertId) {
+  if (alertId) {
+    state.selectedAlertId = alertId;
+  }
+  renderAlerts();
+  if (typeof els.alertDetailModal.showModal === "function" && !els.alertDetailModal.open) {
+    els.alertDetailModal.showModal();
+  } else {
+    openModal(els.alertDetailModal);
+  }
+}
+
+function openUserEditor(userId) {
+  state.userMode = userId ? "edit" : "create";
+  state.selectedUserId = userId || null;
+  renderUsers();
+  if (typeof els.userEditorModal.showModal === "function" && !els.userEditorModal.open) {
+    els.userEditorModal.showModal();
+  } else {
+    openModal(els.userEditorModal);
+  }
+}
+
+function openAuditDetail(auditId) {
+  if (auditId) {
+    state.selectedAuditId = auditId;
+  }
+  renderAudit();
+  if (typeof els.auditDetailModal.showModal === "function" && !els.auditDetailModal.open) {
+    els.auditDetailModal.showModal();
+  } else {
+    openModal(els.auditDetailModal);
+  }
 }
 
 function authStorage() {
@@ -301,6 +456,11 @@ function canAccessPage(page) {
   return allowedPages().includes(page);
 }
 
+function activateCurrentRoute() {
+  const requestedPage = normalizePage(location.pathname);
+  setActivePage(requestedPage);
+}
+
 async function runAllowedLoad(page, loader) {
   if (!canAccessPage(page)) {
     return;
@@ -315,7 +475,7 @@ function applyAdminCapabilities() {
 
   els.navItems.forEach((item) => {
     const route = item.dataset.route || "";
-    item.classList.toggle("hidden", !allowed.has(route));
+    item.classList.toggle("hidden", route === "overview" ? !canManagePlatform : !allowed.has(route));
   });
   els.pages.forEach((panel) => {
     const page = panel.dataset.page || "";
@@ -338,6 +498,15 @@ function applyAdminCapabilities() {
   if (els.createUserButtonInline) {
     els.createUserButtonInline.classList.toggle("hidden", !canManagePlatform);
   }
+  if (els.userRoleFilter) {
+    const selectedRoleFilter = els.userRoleFilter.value;
+    els.userRoleFilter.innerHTML = buildUserRoleFilterOptions();
+    const hasSelectedRoleFilter = Array.from(els.userRoleFilter.options)
+      .some((option) => option.value === selectedRoleFilter);
+    if (hasSelectedRoleFilter) {
+      els.userRoleFilter.value = selectedRoleFilter;
+    }
+  }
 }
 
 function normalizeOrganizationRoleInput(value) {
@@ -346,6 +515,13 @@ function normalizeOrganizationRoleInput(value) {
 
 function organizationRoleOptionsMarkup() {
   return `<option value="organization_admin">Organization admin</option><option value="member">Member</option>`;
+}
+
+function buildUserRoleFilterOptions() {
+  const platformAdminOption = state.session?.platformAdmin === true
+    ? `<option value="platform_admin">Platform admin</option>`
+    : "";
+  return `<option value="">Role</option>${platformAdminOption}<option value="member">Member</option>`;
 }
 
 function buildUserUpdatePayload(payload) {
@@ -498,8 +674,20 @@ function readAiAccessCredentialValue() {
 function summarizeUser(user) {
   const membership = user.memberships?.[0];
   const orgPart = membership ? `${membership.role} in ${membership.orgName}` : "no org membership";
+  if (state.session?.platformAdmin !== true) {
+    return orgPart;
+  }
   const rolePart = user.platformAdmin ? "Platform admin" : "Member";
   return `${rolePart} · ${orgPart}`;
+}
+
+function defaultUserSaveStatusMessage() {
+  if (state.userMode === "create") {
+    return "Fill in the profile and save to create the user.";
+  }
+  return hasCapability("managedAiUserAccess")
+    ? "Directory changes and AI access assignments are applied separately."
+    : "Organization membership changes are applied through Save.";
 }
 
 function userStatus(user) {
@@ -552,13 +740,13 @@ function setActivePage(page) {
     const active = panel.dataset.page === page || (page === "overview" && panel.dataset.page === "overview");
     panel.classList.toggle("hidden", !active);
   });
-  els.createUserButton.classList.toggle("hidden", page !== "users");
+  els.createUserButton.classList.toggle("hidden", page !== "users" || state.session?.platformAdmin !== true);
 
   const titles = {
     overview: ["AI Gateway control plane", "Overview", "Inspect credentials, usage, alerts, users, and audit events from one place."],
     organization: ["AI Gateway control plane", "Organization", "Manage organization details, domains, and pending invites."],
     credentials: ["AI Gateway control plane", "Credentials", "Inspect provider keys, linked alerts, and rotation state."],
-    usage: ["AI Gateway control plane", "Usage", "Analyze total token usage first, then break it down by credential, user, or org."],
+    usage: ["AI Gateway control plane", "Usage", "Watch Codex capacity first, then break usage down by credential, user, or org."],
     alerts: ["AI Gateway control plane", "Alerts", "Triage credential failures, usage spikes, and routing anomalies."],
     users: ["AI Gateway control plane", "Users", "Create, edit, disable, or remove users from the directory."],
     audit: ["AI Gateway control plane", "Audit", "Filter by actor, action, or entity and inspect detailed change history."],
@@ -643,6 +831,7 @@ async function bootstrapSession() {
   );
   showApp();
   await loadAllData();
+  activateCurrentRoute();
 }
 
 function populateOrganizationOptions() {
@@ -654,6 +843,7 @@ function populateOrganizationOptions() {
   els.userOrg.innerHTML = organizations.length
     ? organizations.map((entry) => `<option value="${escapeHtml(entry.id)}">${escapeHtml(entry.name)}</option>`).join("")
     : `<option value="">No organization</option>`;
+  renderOrganizationSelector();
 }
 
 async function startBrowserAuth() {
@@ -811,6 +1001,106 @@ function currentOrganization() {
   return state.organizations.find((entry) => entry.id === orgId) || state.session?.organizations?.find((entry) => entry.id === orgId) || null;
 }
 
+function organizationSelectorLabel(organization) {
+  const name = String(organization?.name || "").trim();
+  const slug = String(organization?.slug || "").trim();
+  const id = String(organization?.id || "").trim();
+  return [name || slug || id, slug, id]
+    .filter(Boolean)
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .join(" - ");
+}
+
+function normalizeSelectorText(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function findOrganizationFromSelectorValue(value) {
+  const normalized = normalizeSelectorText(value);
+  if (!normalized) {
+    return null;
+  }
+  return state.organizations.find((organization) => {
+    const candidates = [
+      organizationSelectorLabel(organization),
+      organization?.name,
+      organization?.slug,
+      organization?.id,
+    ].map(normalizeSelectorText);
+    return candidates.includes(normalized);
+  }) || null;
+}
+
+function renderOrganizationSelector() {
+  const canManagePlatform = state.session?.platformAdmin === true;
+  els.organizationSelectorControl.classList.toggle("hidden", !canManagePlatform);
+  if (!canManagePlatform) {
+    return;
+  }
+
+  const organizations = Array.isArray(state.organizations) ? state.organizations : [];
+  const selected = currentOrganization();
+  els.organizationSelectorOptions.innerHTML = organizations.map((organization) => `
+    <option value="${escapeHtml(organizationSelectorLabel(organization))}" label="${escapeHtml(organization.slug || organization.id)}"></option>
+  `).join("");
+  els.organizationSelectorInput.value = selected ? organizationSelectorLabel(selected) : "";
+  els.organizationSelectorInput.disabled = organizations.length <= 1;
+  els.organizationSelectorInput.title = organizations.length <= 1
+    ? "Only one organization is available."
+    : "Search by organization name, slug, or id.";
+}
+
+function hasOrganizationPendingChanges() {
+  const organization = currentOrganization();
+  if (!organization) {
+    return false;
+  }
+
+  const savedSeatLimit = organization.seatLimit === null || organization.seatLimit === undefined
+    ? ""
+    : String(organization.seatLimit);
+  const currentSeatLimit = els.organizationSeatLimit.value.trim();
+  return (
+    els.organizationName.value.trim() !== String(organization.name || "").trim() ||
+    els.organizationSlug.value.trim() !== String(organization.slug || "").trim() ||
+    (state.session?.platformAdmin === true && currentSeatLimit !== savedSeatLimit)
+  );
+}
+
+async function selectOrganizationFromSelector() {
+  if (state.session?.platformAdmin !== true) {
+    renderOrganizationSelector();
+    return;
+  }
+
+  const selected = findOrganizationFromSelectorValue(els.organizationSelectorInput.value);
+  const currentId = currentOrganizationId();
+  if (!selected) {
+    renderOrganizationSelector();
+    return;
+  }
+  if (selected.id === currentId) {
+    renderOrganizationSelector();
+    return;
+  }
+  if (
+    hasOrganizationPendingChanges() &&
+    !window.confirm("Discard unsaved organization changes before switching organization?")
+  ) {
+    renderOrganizationSelector();
+    return;
+  }
+
+  closeAllModals();
+  state.selectedOrganizationId = selected.id;
+  state.organizationDomains = [];
+  state.organizationInvites = [];
+  state.selectedOrganizationDomainId = null;
+  setOrganizationSaveStatus("Loading organization...", "pending");
+  await loadOrganization();
+  setOrganizationSaveStatus("No pending changes.");
+}
+
 async function loadOrganization() {
   try {
     const payload = await fetchJson("/organizations");
@@ -949,11 +1239,7 @@ async function loadUsers() {
         populateUserEditor(user);
       }
     }
-    setUserSaveStatus(
-      state.userMode === "create"
-        ? "Fill in the profile and save to create the user."
-        : "Directory changes and AI access assignments are applied separately.",
-    );
+    setUserSaveStatus(defaultUserSaveStatusMessage());
   } catch (error) {
     console.error("loadUsers failed", error);
     setUserSaveStatus(
@@ -1000,6 +1286,7 @@ function renderOverview() {
 function renderOrganization() {
   const organization = currentOrganization();
   if (!organization) {
+    renderOrganizationSelector();
     els.organizationEditorTitle.textContent = "No organization";
     els.organizationName.value = "";
     els.organizationSlug.value = "";
@@ -1009,6 +1296,7 @@ function renderOrganization() {
     return;
   }
 
+  renderOrganizationSelector();
   els.organizationEditorTitle.textContent = organization.name || organization.slug || organization.id;
   els.organizationName.value = organization.name || "";
   els.organizationSlug.value = organization.slug || "";
@@ -1022,17 +1310,9 @@ function renderOrganization() {
       <div>
         <strong>${escapeHtml(domain.domain)}</strong>
         <p>${domain.enabled ? "Enabled" : "Disabled"} · ${domain.selfSignupEnabled ? "Self signup enabled" : "Self signup disabled"}</p>
-        <label class="switch-row">
-          <span>Enabled</span>
-          <input type="checkbox" data-domain-enabled ${domain.enabled ? "checked" : ""} />
-        </label>
-        <label class="switch-row">
-          <span>Self signup</span>
-          <input type="checkbox" data-domain-self-signup ${domain.selfSignupEnabled ? "checked" : ""} />
-        </label>
       </div>
       <span class="button-row">
-        <button class="button button-secondary" type="button" data-domain-save>Save</button>
+        <button class="button button-secondary" type="button" data-domain-edit>Edit</button>
         <button class="button button-secondary" type="button" data-domain-delete>Remove</button>
       </span>
     </article>
@@ -1055,8 +1335,37 @@ function renderOrganization() {
   applyAdminCapabilities();
 }
 
+function filteredCredentials() {
+  const term = state.credentialFilters.search.trim().toLowerCase();
+  const provider = state.credentialFilters.provider;
+  const filterState = state.credentialFilters.state;
+
+  return state.credentials.filter((credential) => {
+    const displayState = credential.deletedAt ? "deleted" : credential.state;
+    if (provider && credential.provider !== provider) {
+      return false;
+    }
+    if (filterState && displayState !== filterState) {
+      return false;
+    }
+    if (term) {
+      const searchable = [
+        credential.id,
+        credential.name,
+        credential.scope,
+        credential.type,
+        credential.provider,
+        displayState,
+      ].filter(Boolean).join(" ").toLowerCase();
+      return searchable.includes(term);
+    }
+    return true;
+  });
+}
+
 function renderCredentials() {
-  const rows = state.credentials.map((credential) => {
+  const credentials = filteredCredentials();
+  const rows = credentials.map((credential) => {
     const displayState = credential.deletedAt ? "deleted" : credential.state;
     const rowClasses = [
       credential.id === state.selectedCredentialId ? "row-alert" : "",
@@ -1332,8 +1641,21 @@ function formatLimitWindowSummary(label, entry) {
   return `${entry.label || label}: ${used}, ${reset}`;
 }
 
+function filteredAlerts() {
+  return state.alerts.filter((alert) => {
+    if (state.alertStatusFilter === "active") {
+      return alert.status !== "acknowledged" && alert.status !== "resolved";
+    }
+    return alert.status === state.alertStatusFilter;
+  });
+}
+
 function renderAlerts() {
-  els.alertList.innerHTML = state.alerts.map((alert) => `
+  const alerts = filteredAlerts();
+  els.alertStatusFilterButtons.forEach((button) => {
+    button.classList.toggle("active", button.dataset.alertStatusFilter === state.alertStatusFilter);
+  });
+  els.alertList.innerHTML = alerts.map((alert) => `
     <article class="alert-card ${alert.severity === "critical" ? "critical" : ""} ${alert.id === state.selectedAlertId ? "active" : ""}" data-alert-id="${escapeHtml(alert.id)}">
       <div class="alert-head">
         <strong>${escapeHtml(alert.title)}</strong>
@@ -1347,8 +1669,9 @@ function renderAlerts() {
     </article>
   `).join("") || `<article class="alert-card active"><div class="alert-head"><strong>No alerts</strong></div><p>No active alert records.</p></article>`;
 
-  const selected = currentAlert();
+  const selected = alerts.find((entry) => entry.id === state.selectedAlertId) || alerts[0];
   if (selected) {
+    state.selectedAlertId = selected.id;
     const credential = state.credentials.find((entry) => entry.id === selected.credentialId);
     els.alertDetail.innerHTML = `
       <p class="eyebrow">Runbook</p>
@@ -1359,6 +1682,7 @@ function renderAlerts() {
         <div class="detail-line"><span>Owner</span><strong>${escapeHtml(selected.owner || "Unassigned")}</strong></div>
         <div class="detail-line"><span>Status</span><strong>${escapeHtml(selected.status)}</strong></div>
       </div>
+      <p class="eyebrow">Alert lifecycle</p>
       <div class="button-row">
         <button class="button button-secondary" type="button" data-alert-action="acknowledge">Acknowledge</button>
         <button class="button button-primary" type="button" data-alert-action="resolve">Resolve</button>
@@ -1477,19 +1801,21 @@ function updateAiAccessStatusText(user, aiAccess) {
 
 function populateUserEditor(user) {
   const isCreate = state.userMode === "create";
+  const canManagePlatform = state.session?.platformAdmin === true;
   const membership = user?.memberships?.[0];
   const aiAccess = user?.id ? currentUserAiAccess(user.id) : normalizeAiAccess(null);
   els.userEditorStatus.textContent = isCreate ? "Create user" : userStatus(user);
   els.userEditorTitle.textContent = isCreate ? "New user" : (user?.name || user?.email || "User");
   els.userName.value = user?.name || "";
+  els.userName.disabled = !canManagePlatform;
   els.userEmail.value = user?.email || "";
-  els.userEmail.disabled = !isCreate;
+  els.userEmail.disabled = !isCreate || !canManagePlatform;
   els.userOrg.disabled = false;
   els.userRole.disabled = false;
   els.userPlatformAdmin.checked = user?.platformAdmin === true;
-  if (state.session?.platformAdmin !== true) {
+  els.userPlatformAdmin.disabled = !canManagePlatform;
+  if (!canManagePlatform) {
     els.userPlatformAdmin.checked = false;
-    els.userPlatformAdmin.disabled = true;
   }
   els.userSendInvite.checked = true;
   els.userSendInvite.disabled = !isCreate;
@@ -1501,8 +1827,8 @@ function populateUserEditor(user) {
     els.userRole.value = "member";
   }
   els.userDisableButton.textContent = user?.disabled ? "Enable user" : "Disable user";
-  els.userDisableButton.disabled = isCreate || !user || state.session?.platformAdmin !== true;
-  els.userDeleteButton.disabled = isCreate || !user || state.session?.platformAdmin !== true;
+  els.userDisableButton.disabled = isCreate || !user || !canManagePlatform;
+  els.userDeleteButton.disabled = isCreate || !user || !canManagePlatform;
   if (hasCapability("managedAiUserAccess")) {
     els.userAiAccessEnabled.checked = aiAccess.enabled;
     els.userAiAccessEnabled.disabled = isCreate || !user;
@@ -1580,10 +1906,7 @@ function renderAudit() {
         <div class="detail-line"><span>Changed fields</span><strong>${escapeHtml(selected.changedFields.join(", ") || "None")}</strong></div>
         <div class="detail-line"><span>Result</span><strong>${escapeHtml(selected.result)}</strong></div>
         <div class="detail-line"><span>Entity</span><strong>${escapeHtml(`${selected.entityType}:${selected.entityId}`)}</strong></div>
-      </div>
-      <div class="button-row">
-        <button class="button button-secondary" type="button">Open entity</button>
-        <button class="button button-secondary" type="button">Trace request</button>
+        <div class="detail-line"><span>Timestamp</span><strong>${escapeHtml(formatDate(selected.timestamp))}</strong></div>
       </div>
     `;
   }
@@ -1598,8 +1921,8 @@ function enterCreateMode() {
   state.selectedUserId = null;
   setActivePage("users");
   showApp();
-  renderUsers();
-  setUserSaveStatus("Fill in the profile and save to create the user.");
+  openUserEditor(null);
+  setUserSaveStatus(defaultUserSaveStatusMessage());
 }
 
 async function refreshCredentialOperations() {
@@ -1842,6 +2165,9 @@ async function runAlertAction(action) {
       method: "POST",
     });
     await refreshAlertOperations();
+    if (action === "resolve") {
+      closeModal(els.alertDetailModal);
+    }
   } catch (error) {
     window.alert(`Unable to ${action} alert: ${error instanceof Error ? error.message : "unknown_error"}`);
   }
@@ -1889,59 +2215,50 @@ async function saveOrganization() {
   }
 }
 
-async function createOrganizationDomain() {
+async function saveOrganizationDomainModal() {
   const orgId = currentOrganizationId();
   if (!orgId) {
     return;
   }
 
   try {
-    els.organizationDomainAddButton.disabled = true;
-    setOrganizationSaveStatus("Adding domain...", "pending");
-    await fetchJson(`/organizations/${encodeURIComponent(orgId)}/domains`, {
-      method: "POST",
-      body: JSON.stringify({
-        domain: els.organizationDomainInput.value.trim(),
-        enabled: els.organizationDomainEnabled.checked,
-        selfSignupEnabled: els.organizationDomainSelfSignup.checked,
-      }),
-    });
-    els.organizationDomainInput.value = "";
-    await loadOrganization();
-    setOrganizationSaveStatus("Domain added.", "success");
-  } catch (error) {
-    setOrganizationSaveStatus(
-      `Unable to add domain: ${error instanceof Error ? error.message : "unknown_error"}`,
-      "error",
+    els.organizationDomainModalSave.disabled = true;
+    setDomainModalStatus(
+      state.organizationDomainMode === "edit" ? "Saving domain..." : "Adding domain...",
+      "pending",
     );
-  } finally {
-    els.organizationDomainAddButton.disabled = false;
-  }
-}
-
-async function saveOrganizationDomain(card) {
-  const orgId = currentOrganizationId();
-  const domainId = card?.dataset?.domainId;
-  if (!orgId || !domainId) {
-    return;
-  }
-
-  try {
-    setOrganizationSaveStatus("Saving domain...", "pending");
-    await fetchJson(`/organizations/${encodeURIComponent(orgId)}/domains/${encodeURIComponent(domainId)}`, {
-      method: "PATCH",
-      body: JSON.stringify({
-        enabled: card.querySelector("[data-domain-enabled]")?.checked === true,
-        selfSignupEnabled: card.querySelector("[data-domain-self-signup]")?.checked === true,
-      }),
-    });
+    const payload = {
+      domain: els.organizationDomainModalDomain.value.trim(),
+      enabled: els.organizationDomainModalEnabled.checked,
+      selfSignupEnabled: els.organizationDomainModalSelfSignup.checked,
+    };
+    if (state.organizationDomainMode === "edit" && state.selectedOrganizationDomainId) {
+      await fetchJson(`/organizations/${encodeURIComponent(orgId)}/domains/${encodeURIComponent(state.selectedOrganizationDomainId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          enabled: payload.enabled,
+          selfSignupEnabled: payload.selfSignupEnabled,
+        }),
+      });
+    } else {
+      await fetchJson(`/organizations/${encodeURIComponent(orgId)}/domains`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+    }
     await loadOrganization();
-    setOrganizationSaveStatus("Domain saved.", "success");
-  } catch (error) {
+    closeModal(els.organizationDomainModal);
     setOrganizationSaveStatus(
+      state.organizationDomainMode === "edit" ? "Domain saved." : "Domain added.",
+      "success",
+    );
+  } catch (error) {
+    setDomainModalStatus(
       `Unable to save domain: ${error instanceof Error ? error.message : "unknown_error"}`,
       "error",
     );
+  } finally {
+    els.organizationDomainModalSave.disabled = false;
   }
 }
 
@@ -1949,6 +2266,10 @@ async function deleteOrganizationDomain(card) {
   const orgId = currentOrganizationId();
   const domainId = card?.dataset?.domainId;
   if (!orgId || !domainId) {
+    return;
+  }
+  const domainName = card.querySelector("strong")?.textContent?.trim() || "this domain";
+  if (!window.confirm(`Remove ${domainName}? Users from this domain will no longer match organization signup policy.`)) {
     return;
   }
 
@@ -1974,25 +2295,25 @@ async function createOrganizationInvite() {
   }
 
   try {
-    els.organizationInviteSendButton.disabled = true;
-    setOrganizationSaveStatus("Sending invite...", "pending");
+    els.organizationInviteModalSend.disabled = true;
+    setInviteModalStatus("Sending invite...", "pending");
     await fetchJson(`/organizations/${encodeURIComponent(orgId)}/invites`, {
       method: "POST",
       body: JSON.stringify({
-        email: els.organizationInviteEmail.value.trim(),
-        role: normalizeOrganizationRoleInput(els.organizationInviteRole.value),
+        email: els.organizationInviteModalEmail.value.trim(),
+        role: normalizeOrganizationRoleInput(els.organizationInviteModalRole.value),
       }),
     });
-    els.organizationInviteEmail.value = "";
     await loadOrganization();
+    closeModal(els.organizationInviteModal);
     setOrganizationSaveStatus("Invite sent.", "success");
   } catch (error) {
-    setOrganizationSaveStatus(
+    setInviteModalStatus(
       `Unable to send invite: ${error instanceof Error ? error.message : "unknown_error"}`,
       "error",
     );
   } finally {
-    els.organizationInviteSendButton.disabled = false;
+    els.organizationInviteModalSend.disabled = false;
   }
 }
 
@@ -2022,6 +2343,10 @@ async function revokeOrganizationInvite(card) {
   const orgId = currentOrganizationId();
   const inviteId = card?.dataset?.inviteId;
   if (!orgId || !inviteId) {
+    return;
+  }
+  const inviteEmail = card.querySelector("strong")?.textContent?.trim() || "this invite";
+  if (!window.confirm(`Revoke invite for ${inviteEmail}?`)) {
     return;
   }
 
@@ -2111,6 +2436,7 @@ async function saveUser() {
         : "User changes saved.",
       "success",
     );
+    closeModal(els.userEditorModal);
   } catch (error) {
     setUserSaveStatus(
       `Unable to save user: ${error instanceof Error ? error.message : "unknown_error"}`,
@@ -2200,23 +2526,49 @@ function bindActions() {
   els.createUserButton.addEventListener("click", enterCreateMode);
   els.createUserButtonInline.addEventListener("click", enterCreateMode);
   els.organizationSaveButton.addEventListener("click", () => void saveOrganization());
-  els.organizationDomainAddButton.addEventListener("click", () => void createOrganizationDomain());
-  els.organizationInviteSendButton.addEventListener("click", () => void createOrganizationInvite());
+  els.organizationSelectorInput.addEventListener("change", () => void selectOrganizationFromSelector());
+  els.organizationSelectorInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void selectOrganizationFromSelector();
+    }
+  });
+  els.organizationDomainAddButton.addEventListener("click", () => openOrganizationDomainModal());
+  els.organizationDomainModalSave.addEventListener("click", () => void saveOrganizationDomainModal());
+  els.organizationDomainModalClose.addEventListener("click", () => closeModal(els.organizationDomainModal));
+  els.organizationInviteSendButton.addEventListener("click", () => openOrganizationInviteModal());
+  els.organizationInviteModalSend.addEventListener("click", () => void createOrganizationInvite());
+  els.organizationInviteModalClose.addEventListener("click", () => closeModal(els.organizationInviteModal));
   els.credentialCreateProvider.addEventListener("change", updateCredentialCreateFields);
   els.credentialCreateSubmit.addEventListener("click", () => void createCredential());
   els.credentialsShowDeleted.addEventListener("change", () => {
     state.showDeletedCredentials = els.credentialsShowDeleted.checked;
     void loadCredentials();
   });
+  els.credentialSearch.addEventListener("input", () => {
+    state.credentialFilters.search = els.credentialSearch.value;
+    renderCredentials();
+  });
+  els.credentialProviderFilter.addEventListener("change", () => {
+    state.credentialFilters.provider = els.credentialProviderFilter.value;
+    renderCredentials();
+  });
+  els.credentialStateFilter.addEventListener("change", () => {
+    state.credentialFilters.state = els.credentialStateFilter.value;
+    renderCredentials();
+  });
   els.userSaveButton.addEventListener("click", () => void saveUser());
   els.userDisableButton.addEventListener("click", () => void toggleUserDisabled());
   els.userDeleteButton.addEventListener("click", () => void deleteUser());
+  els.credentialDetailModalClose.addEventListener("click", () => closeModal(els.credentialDetailModal));
+  els.alertDetailModalClose.addEventListener("click", () => closeModal(els.alertDetailModal));
+  els.userModalClose.addEventListener("click", () => closeModal(els.userEditorModal));
+  els.auditDetailModalClose.addEventListener("click", () => closeModal(els.auditDetailModal));
 
   els.credentialsTableBody.addEventListener("click", (event) => {
     const row = event.target.closest("[data-credential-id]");
     if (!row) return;
-    state.selectedCredentialId = row.dataset.credentialId;
-    renderCredentials();
+    openCredentialDetail(row.dataset.credentialId);
   });
 
   els.credentialDetail.addEventListener("click", (event) => {
@@ -2228,6 +2580,7 @@ function bindActions() {
 
     const routeAlerts = event.target.closest("[data-route-alerts]");
     if (routeAlerts) {
+      closeAllModals();
       openAlertsForSelectedCredential();
     }
   });
@@ -2235,8 +2588,7 @@ function bindActions() {
   els.alertList.addEventListener("click", (event) => {
     const card = event.target.closest("[data-alert-id]");
     if (!card) return;
-    state.selectedAlertId = card.dataset.alertId;
-    renderAlerts();
+    openAlertDetail(card.dataset.alertId);
   });
 
   els.alertDetail.addEventListener("click", (event) => {
@@ -2248,18 +2600,23 @@ function bindActions() {
 
     const routeAudit = event.target.closest("[data-route-audit]");
     if (routeAudit) {
+      closeAllModals();
       setActivePage("audit");
       showApp();
       renderAudit();
     }
   });
+  els.alertStatusFilterButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      state.alertStatusFilter = button.dataset.alertStatusFilter;
+      renderAlerts();
+    });
+  });
 
   els.userList.addEventListener("click", (event) => {
     const card = event.target.closest("[data-user-id]");
     if (!card) return;
-    state.userMode = "edit";
-    state.selectedUserId = card.dataset.userId;
-    renderUsers();
+    openUserEditor(card.dataset.userId);
     if (state.selectedUserId && hasCapability("managedAiUserAccess")) {
       void loadUserAiAccess(state.selectedUserId)
         .then(() => {
@@ -2277,13 +2634,15 @@ function bindActions() {
   els.organizationDomainList.addEventListener("click", (event) => {
     const card = event.target.closest("[data-domain-id]");
     if (!card) return;
-    if (event.target.closest("[data-domain-save]")) {
-      void saveOrganizationDomain(card);
+    if (event.target.closest("[data-domain-edit]")) {
+      openOrganizationDomainModal(card.dataset.domainId);
       return;
     }
     if (event.target.closest("[data-domain-delete]")) {
       void deleteOrganizationDomain(card);
+      return;
     }
+    openOrganizationDomainModal(card.dataset.domainId);
   });
 
   els.organizationInviteList.addEventListener("click", (event) => {
@@ -2301,8 +2660,7 @@ function bindActions() {
   els.auditList.addEventListener("click", (event) => {
     const card = event.target.closest("[data-audit-id]");
     if (!card) return;
-    state.selectedAuditId = card.dataset.auditId;
-    renderAudit();
+    openAuditDetail(card.dataset.auditId);
   });
 
   els.userSearch.addEventListener("input", renderUsers);

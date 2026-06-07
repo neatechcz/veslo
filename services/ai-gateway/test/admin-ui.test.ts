@@ -328,7 +328,8 @@ test("GET /admin/credentials serves the admin shell with an admin-only platform 
     assert.match(html, /id="credential-create-submit"/)
     assert.match(html, /id="credentials-show-deleted"/)
     assert.match(html, /Show deleted/)
-    assert.match(html, /Codex \/ ChatGPT runtime profile/)
+    assert.match(html, /Codex \/ ChatGPT runtime/)
+    assert.match(html, /id="credential-detail-modal"/)
     assert.match(html, /<option value="codex_oauth">Codex \/ ChatGPT runtime<\/option>/)
     assert.match(html, /<option value="openai_compatible">OpenAI-compatible provider<\/option>/)
     assert.match(html, /Paste the provider API key or the full Codex auth\.json\./)
@@ -555,6 +556,104 @@ test("GET /admin includes an Organization admin page alongside existing platform
   }
 })
 
+test("GET /admin shell uses modal detail editors instead of split list-detail panels", async () => {
+  const app = createApp({ admin: createAdminServiceStub() })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin`, {
+      headers: {
+        cookie: ADMIN_COOKIE,
+      },
+    })
+
+    assert.equal(response.status, 200)
+    const html = await response.text()
+    assert.match(html, /<dialog id="credential-detail-modal" class="modal-shell"/)
+    assert.match(html, /<dialog id="alert-detail-modal" class="modal-shell"/)
+    assert.match(html, /<dialog id="user-editor-modal" class="modal-shell"/)
+    assert.match(html, /<dialog id="audit-detail-modal" class="modal-shell"/)
+    assert.match(html, /id="user-modal-close"/)
+    assert.match(html, /id="credential-detail-modal-close"/)
+    assert.match(html, /id="alert-detail-modal-close"/)
+    assert.match(html, /id="audit-detail-modal-close"/)
+    assert.doesNotMatch(html, /<aside class="detail-card user-editor"/)
+    assert.doesNotMatch(html, /<aside class="detail-rail"/)
+    assert.doesNotMatch(html, /<aside id="alert-detail"/)
+    assert.doesNotMatch(html, /<aside id="audit-detail"/)
+    assert.doesNotMatch(html, /Export CSV/)
+    assert.doesNotMatch(html, /Trace request/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin shell exposes Overview navigation and organization command modals", async () => {
+  const app = createApp({ admin: createAdminServiceStub() })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin`, {
+      headers: {
+        cookie: ADMIN_COOKIE,
+      },
+    })
+
+    assert.equal(response.status, 200)
+    const html = await response.text()
+    assert.match(html, /href="\/admin" data-route="overview" class="nav-item">Overview<\/a>/)
+    assert.match(html, /<dialog id="organization-domain-modal" class="modal-shell"/)
+    assert.match(html, /<dialog id="organization-invite-modal" class="modal-shell"/)
+    assert.match(html, /id="organization-selector-control"/)
+    assert.match(html, /id="organization-selector-input"/)
+    assert.match(html, /id="organization-selector-options"/)
+    assert.match(html, /data-platform-admin-control/)
+    assert.match(html, /id="organization-domain-modal-save"/)
+    assert.match(html, /id="organization-invite-modal-send"/)
+    assert.doesNotMatch(html, /id="organization-domain-input"/)
+    assert.doesNotMatch(html, /id="organization-invite-email"/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js supports platform-admin searchable organization selection", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+
+    assert.equal(response.status, 200)
+    const script = await response.text()
+    assert.match(script, /organizationSelectorControl:\s*document\.getElementById\("organization-selector-control"\)/)
+    assert.match(script, /organizationSelectorInput:\s*document\.getElementById\("organization-selector-input"\)/)
+    assert.match(script, /organizationSelectorOptions:\s*document\.getElementById\("organization-selector-options"\)/)
+    assert.match(script, /function organizationSelectorLabel\(organization\)/)
+    assert.match(script, /function renderOrganizationSelector\(\)/)
+    assert.match(script, /function hasOrganizationPendingChanges\(\)/)
+    assert.match(script, /async function selectOrganizationFromSelector\(\)/)
+    assert.match(script, /state\.selectedOrganizationId = selected\.id/)
+    assert.match(script, /state\.organizationDomains = \[\]/)
+    assert.match(script, /state\.organizationInvites = \[\]/)
+    assert.match(script, /await loadOrganization\(\)/)
+    assert.match(script, /organizationSelectorInput\.addEventListener\("change", \(\) => void selectOrganizationFromSelector\(\)\)/)
+    assert.match(script, /organizationSelectorInput\.addEventListener\("keydown"/)
+    assert.match(script, /window\.confirm\("Discard unsaved organization changes before switching organization\?"\)/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
 test("GET /admin shell excludes Sessions navigation and page UI", async () => {
   const app = createApp({ admin: createAdminServiceStub() })
   const server = app.listen(0, "127.0.0.1")
@@ -621,6 +720,7 @@ test("GET /admin/app.js gates organization-admin navigation and platform-only lo
     assert.match(script, /function allowedPages\(\)/)
     assert.match(script, /function hasCapability\(capability\)/)
     assert.match(script, /function applyAdminCapabilities\(\)/)
+    assert.match(script, /route === "overview" \? !canManagePlatform : !allowed\.has\(route\)/)
     assert.match(script, /runAllowedLoad\("organization", loadOrganization\)/)
     assert.match(script, /runAllowedLoad\("users", loadUsers\)/)
     assert.match(script, /runAllowedLoad\("credentials", loadCredentials\)/)
@@ -646,6 +746,94 @@ test("GET /admin/app.js gates organization-admin navigation and platform-only lo
   }
 })
 
+test("GET /admin/app.js reapplies the current route after session bootstrap for direct subpage loads", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+
+    assert.equal(response.status, 200)
+    const script = await response.text()
+    assert.match(script, /function activateCurrentRoute\(\)/)
+    assert.match(script, /const requestedPage = normalizePage\(location\.pathname\)/)
+    assert.match(script, /setActivePage\(requestedPage\)/)
+    assert.match(script, /await loadAllData\(\)[\s\S]*activateCurrentRoute\(\)/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js opens modal editors from selected rows and keeps user changes behind Save", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+
+    assert.equal(response.status, 200)
+    const script = await response.text()
+    assert.match(script, /credentialDetailModal:\s*document\.getElementById\("credential-detail-modal"\)/)
+    assert.match(script, /userEditorModal:\s*document\.getElementById\("user-editor-modal"\)/)
+    assert.match(script, /alertDetailModal:\s*document\.getElementById\("alert-detail-modal"\)/)
+    assert.match(script, /auditDetailModal:\s*document\.getElementById\("audit-detail-modal"\)/)
+    assert.match(script, /function openModal\(modal\)/)
+    assert.match(script, /function closeModal\(modal\)/)
+    assert.match(script, /function openCredentialDetail\(credentialId\)/)
+    assert.match(script, /function openAlertDetail\(alertId\)/)
+    assert.match(script, /function openUserEditor\(userId\)/)
+    assert.match(script, /function openAuditDetail\(auditId\)/)
+    assert.match(script, /function openOrganizationDomainModal\(/)
+    assert.match(script, /function openOrganizationInviteModal\(/)
+    assert.match(script, /els\.credentialDetailModal\.showModal\(\)/)
+    assert.match(script, /els\.userEditorModal\.showModal\(\)/)
+    assert.match(script, /els\.alertDetailModal\.showModal\(\)/)
+    assert.match(script, /els\.auditDetailModal\.showModal\(\)/)
+    assert.match(script, /els\.organizationDomainModal\.showModal\(\)/)
+    assert.match(script, /els\.organizationInviteModal\.showModal\(\)/)
+    assert.match(script, /event\.target\.closest\("\[data-user-id\]"\)/)
+    assert.match(script, /event\.target\.closest\("\[data-credential-id\]"\)/)
+    assert.match(script, /event\.target\.closest\("\[data-alert-id\]"\)/)
+    assert.match(script, /event\.target\.closest\("\[data-audit-id\]"\)/)
+    assert.match(script, /closeModal\(els\.userEditorModal\)/)
+    assert.doesNotMatch(script, /userRole\.addEventListener\("change"[\s\S]*fetchJson/)
+    assert.doesNotMatch(script, /userPlatformAdmin\.addEventListener\("change"[\s\S]*fetchJson/)
+    assert.doesNotMatch(script, /userOrg\.addEventListener\("change"[\s\S]*fetchJson/)
+    assert.doesNotMatch(script, /Trace request/)
+    assert.doesNotMatch(script, /Open entity/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js closes stale modals before route actions and terminal alert resolve", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+
+    assert.equal(response.status, 200)
+    const script = await response.text()
+    assert.match(script, /function closeAllModals\(\)/)
+    assert.match(script, /if \(routeAlerts\) \{[\s\S]*closeAllModals\(\);[\s\S]*openAlertsForSelectedCredential\(\)/)
+    assert.match(script, /function openAlertsForSelectedCredential\(\) \{[\s\S]*setActivePage\("alerts"\)/)
+    assert.match(script, /if \(routeAudit\) \{[\s\S]*closeAllModals\(\);[\s\S]*setActivePage\("audit"\)/)
+    assert.match(script, /if \(action === "resolve"\) \{[\s\S]*closeModal\(els\.alertDetailModal\)/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
 test("GET /admin/app.js saves organization membership changes only from the user Save action", async () => {
   const app = createApp()
   const server = app.listen(0, "127.0.0.1")
@@ -660,6 +848,10 @@ test("GET /admin/app.js saves organization membership changes only from the user
     assert.match(script, /function normalizeOrganizationRoleInput\(value\)/)
     assert.match(script, /orgRole:\s*normalizeOrganizationRoleInput\(els\.userRole\.value\)/)
     assert.match(script, /function buildUserUpdatePayload\(payload\)/)
+    assert.match(script, /function buildUserRoleFilterOptions\(\)/)
+    assert.match(script, /const canManagePlatform = state\.session\?\.platformAdmin === true/)
+    assert.match(script, /els\.userName\.disabled = !canManagePlatform/)
+    assert.match(script, /els\.userEmail\.disabled = !isCreate \|\| !canManagePlatform/)
     assert.match(script, /data-invite-resend/)
     assert.match(script, /async function resendOrganizationInvite\(card\)/)
     assert.match(script, /\/invites\/\$\{encodeURIComponent\(inviteId\)\}\/resend/)
@@ -674,6 +866,7 @@ test("GET /admin/app.js saves organization membership changes only from the user
     )
     assert.match(script, /<option value="organization_admin">Organization admin<\/option>/)
     assert.match(script, /createUserButtonInline[\s\S]*data-platform-only/)
+    assert.match(script, /Organization membership changes are applied through Save\./)
     assert.doesNotMatch(script, /userRole\.addEventListener\("change"[\s\S]*fetchJson/)
     assert.doesNotMatch(script, /userPlatformAdmin\.addEventListener\("change"[\s\S]*fetchJson/)
     assert.doesNotMatch(script, /userOrg\.addEventListener\("change"[\s\S]*fetchJson/)
@@ -704,6 +897,58 @@ test("GET /admin/usage includes a credential usage section", async () => {
     assert.match(html, /id="usage-capacity-weekly"/)
     assert.match(html, /id="usage-capacity-credentials"/)
     assert.match(html, /Codex limits/i)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin shell prioritizes Codex capacity before usage drilldown", async () => {
+  const app = createApp({ admin: createAdminServiceStub() })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/usage`, {
+      headers: {
+        cookie: ADMIN_COOKIE,
+      },
+    })
+
+    assert.equal(response.status, 200)
+    const html = await response.text()
+    const capacityIndex = html.indexOf("Capacity overview")
+    const totalUsageIndex = html.indexOf("Token volume trend")
+    assert.notEqual(capacityIndex, -1)
+    assert.notEqual(totalUsageIndex, -1)
+    assert.ok(capacityIndex < totalUsageIndex)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js wires client-side credential and alert filters", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+
+    assert.equal(response.status, 200)
+    const script = await response.text()
+    assert.match(script, /credentialFilters:\s*\{/)
+    assert.match(script, /function filteredCredentials\(\)/)
+    assert.match(script, /els\.credentialSearch\.addEventListener\("input",/)
+    assert.match(script, /els\.credentialProviderFilter\.addEventListener\("change",/)
+    assert.match(script, /els\.credentialStateFilter\.addEventListener\("change",/)
+    assert.match(script, /function filteredAlerts\(\)/)
+    assert.match(script, /alertStatusFilter:\s*"active"/)
+    assert.match(script, /data-alert-status-filter/)
+    assert.match(script, /state\.alertStatusFilter = button\.dataset\.alertStatusFilter/)
   } finally {
     server.close()
     await once(server, "close")
@@ -757,6 +1002,62 @@ test("organization admins are forbidden from platform-only gateway admin API rou
       assert.equal(response.status, 403, `${method} ${path}`)
       assert.deepEqual(await response.json(), { error: "forbidden" }, `${method} ${path}`)
     }
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("organization admins cannot update organization seat limit through the gateway API", async () => {
+  let capturedUpdate: unknown = null
+  const app = createApp({
+    admin: {
+      ...createAdminServiceStub({
+        async getSession() {
+          return orgAdminSession() as unknown as AdminSessionSnapshot
+        },
+      }),
+      async updateOrganization(_token: string, _orgId: string, input: unknown) {
+        capturedUpdate = input
+        return {
+          organization: {
+            id: "org_1",
+            name: "Acme",
+            slug: "acme",
+            ownerUserId: "user_org_admin",
+            seatLimit: 10,
+          },
+        }
+      },
+    } as any,
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const allowedResponse = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1`, {
+      method: "PATCH",
+      headers: {
+        cookie: ADMIN_COOKIE,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ name: "Acme Renamed", slug: "acme" }),
+    })
+    assert.equal(allowedResponse.status, 200)
+    assert.deepEqual(capturedUpdate, { name: "Acme Renamed", slug: "acme" })
+
+    const blockedResponse = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1`, {
+      method: "PATCH",
+      headers: {
+        cookie: ADMIN_COOKIE,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ seatLimit: 99 }),
+    })
+    assert.equal(blockedResponse.status, 403)
+    assert.deepEqual(await blockedResponse.json(), { error: "forbidden_seat_limit" })
+    assert.deepEqual(capturedUpdate, { name: "Acme Renamed", slug: "acme" })
   } finally {
     server.close()
     await once(server, "close")

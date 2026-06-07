@@ -108,6 +108,19 @@ test("SoulView hides private workspace Soul rows from the workspace source table
   assert.match(dashboardSource, /<SoulView[\s\S]*isPrivateWorkspacePath=\{props\.isPrivateWorkspacePath\}/);
 });
 
+test("Soul workspace source column shows only the workspace display name", () => {
+  const tableIndex = soulSource.indexOf('data-testid="soul-workspace-sources-table"');
+  const modalIndex = soulSource.indexOf('<Show when={activeModalSource()}>');
+  assert.ok(tableIndex >= 0, "workspace source table should have a stable test id");
+  assert.ok(modalIndex > tableIndex, "workspace source table should render before the modal");
+
+  const workspaceTableSource = soulSource.slice(tableIndex, modalIndex);
+
+  assert.match(workspaceTableSource, /workspaceDisplayName\(source\)/);
+  assert.doesNotMatch(workspaceTableSource, /sourceName\(summary\)/);
+  assert.doesNotMatch(workspaceTableSource, /summary\?\.ownerId/);
+});
+
 test("Soul overview locale keys exist in all app locales", () => {
   const requiredKeys = [
     "soul.source_title",

@@ -120,8 +120,7 @@ export function resolveUpdateStartupPreferences(input: {
   storedAutoDownload: string | null;
 }) {
   const autoDownload = resolveUpdateAutoDownloadPreference(input.storedAutoDownload);
-  const autoCheck = autoDownload || input.storedAutoCheck !== "0";
-  return { autoCheck, autoDownload };
+  return { autoCheck: true, autoDownload };
 }
 
 export function getUpdateLastCheckedAt(state: UpdateStatus) {

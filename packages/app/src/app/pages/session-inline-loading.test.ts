@@ -57,6 +57,14 @@ test("session switch keeps inline loading until transcript hydration completes",
   );
 });
 
+test("session switch loading does not render the pending session title as the large heading", () => {
+  assert.doesNotMatch(
+    sessionSource,
+    /<h3 class="font-product type-title-sm text-gray-12">\s*\{props\.pendingSessionLoad\?\.sessionTitle \|\| tr\("session\.opening_conversation"\)\}\s*<\/h3>/s,
+    "pending session titles can be long prompt text, so the loading heading should stay generic",
+  );
+});
+
 test("pending draft write-back only runs while the bare pending draft route owns the composer bucket", () => {
   assert.match(
     appSource,

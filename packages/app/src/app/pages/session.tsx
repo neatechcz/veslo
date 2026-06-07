@@ -4229,7 +4229,7 @@ export default function SessionView(props: SessionViewProps) {
                   </div>
                   <div class="space-y-2">
                     <h3 class="font-product type-title-sm text-gray-12">
-                      {props.pendingSessionLoad?.sessionTitle || tr("session.opening_conversation")}
+                      {tr("session.opening_conversation")}
                     </h3>
                     <Show when={props.pendingSessionLoad?.workspaceName}>
                       {(workspaceName) => (

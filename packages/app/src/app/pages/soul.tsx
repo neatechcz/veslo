@@ -64,12 +64,24 @@ const versionLabel = (summary?: VesloSoulSummary | null) =>
 const sourceName = (summary?: VesloSoulSummary | null) =>
   summary?.title?.trim() || summary?.ownerId?.trim() || t("soul.not_available", currentLocale());
 
+const workspaceSoulTitleName = (summary?: VesloSoulSummary | null) => {
+  const title = summary?.title?.trim() ?? "";
+  return title.replace(/\s+soul$/i, "").trim();
+};
+
 export default function SoulView(props: SoulViewProps) {
   const translate = (key: string) => t(key, currentLocale());
 
   const organizationSummary = createMemo(() => props.soulOverview?.organization ?? null);
   const userSummary = createMemo(() => props.soulOverview?.user ?? null);
-  const workspaceById = createMemo(() => new Map(props.workspaces.map((workspace) => [workspace.id, workspace])));
+  const workspaceById = createMemo(() => new Map<string, WorkspaceInfo>(
+    props.workspaces.flatMap((workspace) =>
+      [workspace.id, workspace.vesloWorkspaceId ?? ""]
+        .map((key) => key.trim())
+        .filter(Boolean)
+        .map((key) => [key, workspace] as [string, WorkspaceInfo]),
+    ),
+  ));
   const workspaceSummaries = createMemo(() =>
     (props.soulOverview?.workspaces ?? []).filter((summary) => {
       const workspace = workspaceById().get(summary.ownerId);
@@ -221,6 +233,18 @@ export default function SoulView(props: SoulViewProps) {
 
   const heartbeatLabel = (summary?: VesloSoulSummary | null) =>
     summary?.heartbeatEnabled ? translate("soul.heartbeat_enabled") : translate("soul.heartbeat_disabled");
+
+  const workspaceDisplayName = (source: SoulSource) => {
+    if (source.scope !== "workspace") return source.label;
+    const workspace = workspaceById().get(source.workspaceId);
+    return (
+      workspace?.displayName?.trim() ||
+      workspace?.vesloWorkspaceName?.trim() ||
+      workspace?.name?.trim() ||
+      workspaceSoulTitleName(source.summary) ||
+      translate("soul.not_available")
+    );
+  };
 
   const metadataCell = (label: string, value: string) => (
     <div class="min-w-0">
@@ -392,8 +416,7 @@ export default function SoulView(props: SoulViewProps) {
                     return (
                       <tr class={openSourceKey() === source.key ? "bg-blue-3/20 text-dls-text" : "text-dls-text"}>
                         <td class="max-w-[16rem] px-4 py-3">
-                          <div class="truncate font-medium">{sourceName(summary)}</div>
-                          <div class="truncate text-xs text-dls-secondary">{summary?.ownerId}</div>
+                          <div class="truncate font-medium">{workspaceDisplayName(source)}</div>
                         </td>
                         <td class="px-4 py-3">
                           <span class={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${statusTone(summary?.status ?? "")}`}>

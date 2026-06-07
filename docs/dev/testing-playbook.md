@@ -123,6 +123,7 @@ Focused pilot scenarios can be run from `packages/e2e`:
 ```bash
 pnpm test:pilot:smoke
 pnpm test:pilot:navigation
+pnpm test -- --scenario sidebar-session-retention
 pnpm test -- --scenario <name-or-path>
 ```
 

@@ -38,7 +38,7 @@ Fill `/srv/veslo/env/production.env` with production values. The template covers
 
 The GitHub Actions deployment can point at a different server-side env file with `OWNED_SERVER_ENV_FILE`. The current production workflow default uses the existing production env path on the owned server until the host layout is normalized.
 
-Auth email uses Lettr over HTTPS via `LETTR_API_KEY`, `AUTH_EMAIL_ADDRESS`, and `AUTH_EMAIL_FROM_NAME`. Direct SMTP is not required.
+Auth email and standalone AI Gateway alert email use Lettr over HTTPS via `LETTR_API_KEY`, `AUTH_EMAIL_ADDRESS`, and `AUTH_EMAIL_FROM_NAME`. Direct SMTP is not required. Set `AI_GATEWAY_ALERT_EMAIL_RECIPIENTS` to the comma or whitespace separated Platform Admin/ops addresses that should receive Codex capacity alert emails from `ai-gateway`.
 
 The web app reads public `NEXT_PUBLIC_*` values at image build time. Rebuild the `web` image after changing those values.
 

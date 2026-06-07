@@ -1,7 +1,4 @@
 import crypto from "node:crypto"
-import { existsSync } from "node:fs"
-import path from "node:path"
-import { fileURLToPath } from "node:url"
 import express from "express"
 
 import { asyncRoute } from "../../http/errors.js"
@@ -44,6 +41,7 @@ import {
 import type { UsageAggregateResponse, UsageCredentialAggregate, UsageRepository } from "../usage/repository.js"
 
 const DEFAULT_CODEX_CAPACITY_ALERT_READ_TIMEOUT_MS = 2500
+const CANONICAL_AI_GATEWAY_ADMIN_URL = "https://ai.veslo.work/admin"
 
 class HttpError extends Error {
   constructor(
@@ -833,9 +831,6 @@ export function createManagedAiAdminRouteDeps(
 
 export function createManagedAiAdminUiRouter(deps: ManagedAiAdminUiOptions) {
   const router = express.Router()
-  const currentFile = fileURLToPath(import.meta.url)
-  const publicDir = path.resolve(path.dirname(currentFile), "../../../public-admin")
-  const indexPath = path.join(publicDir, "index.html")
 
   router.post("/admin/api/credentials/openai/oauth/start", asyncRoute(async (req, res) => {
     const session = await deps.getAdminSession(req, res)
@@ -916,24 +911,20 @@ export function createManagedAiAdminUiRouter(deps: ManagedAiAdminUiOptions) {
     }
   }))
 
-  router.use("/admin", express.static(publicDir, { index: false }))
-
-  const sendAdminShell = (_req: express.Request, res: express.Response) => {
-    if (existsSync(indexPath)) {
-      res.sendFile(indexPath)
-      return
-    }
-
-    res.type("html").send(`<!doctype html><html><body><h1>Veslo Admin</h1></body></html>`)
+  const redirectToCanonicalAdmin = (req: express.Request, res: express.Response) => {
+    const suffix = req.path === "/admin" ? "" : req.path.slice("/admin".length)
+    const queryIndex = req.originalUrl.indexOf("?")
+    const query = queryIndex >= 0 ? req.originalUrl.slice(queryIndex) : ""
+    res.redirect(302, `${CANONICAL_AI_GATEWAY_ADMIN_URL}${suffix}${query}`)
   }
 
-  router.get("/admin", sendAdminShell)
+  router.get("/admin", redirectToCanonicalAdmin)
   router.get("/admin/*", (req, res, next) => {
-    if (req.path.startsWith("/admin/api/")) {
+    if (req.path === "/admin/api" || req.path.startsWith("/admin/api/")) {
       next()
       return
     }
-    sendAdminShell(req, res)
+    redirectToCanonicalAdmin(req, res)
   })
 
   return router

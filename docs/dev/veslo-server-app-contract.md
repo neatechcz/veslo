@@ -19,6 +19,13 @@ The app treats Veslo server as the canonical workspace-control API for:
 
 The app should prefer these server surfaces over inventing parallel client-only behavior.
 
+For OpenCode prompt execution, workspace switching, conversation/session
+binding, sandboxed execution, and non-sandbox multi-workspace execution, use
+`docs/dev/opencode-workspace-runtime-architecture.md` as the canonical runtime
+contract. In short: the app sends user intent, Veslo server owns the
+conversation/run boundary, and OpenCode session ids/directories are internal
+runtime details controlled by Veslo.
+
 ## Auth Model
 
 There are two important auth classes:

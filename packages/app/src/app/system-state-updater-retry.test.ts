@@ -64,11 +64,11 @@ test("automatic retry stops when auto-download is disabled", () => {
 });
 
 test("disabling auto-download restores scheduled retry to manual availability", () => {
-  assert.match(source, /function restoreScheduledUpdateRetryForManualDownload\(\)/);
-  assert.match(source, /state\.state !== "downloading" \|\| state\.retry\?\.kind !== "scheduled"/);
+  assert.match(source, /function restoreAutoDownloadToManualAvailability\(\)/);
+  assert.match(source, /if \(state\.state !== "downloading"\) return;/);
   assert.match(source, /setUpdateAutoDownloadSignal/);
-  assert.match(source, /restoreScheduledUpdateRetryForManualDownload\(\)/);
-  assert.match(source, /const next = setUpdateAutoDownloadSignal\(value\);[\s\S]*if \(!next\) \{[\s\S]*restoreScheduledUpdateRetryForManualDownload\(\)/);
+  assert.match(source, /restoreAutoDownloadToManualAvailability\(\)/);
+  assert.match(source, /const next = setUpdateAutoDownloadSignal\(value\);[\s\S]*if \(!next\) \{[\s\S]*restoreAutoDownloadToManualAvailability\(\)/);
   assert.doesNotMatch(source, /setUpdateAutoDownloadSignal\(\(current\) => \{[\s\S]*restoreScheduledUpdateRetryForManualDownload\(\)/);
 });
 
@@ -115,6 +115,95 @@ test("disabling auto-download during scheduled retry does not trigger automatic 
       assert.equal(systemState.updateAutoDownload(), false);
       assert.equal(systemState.updateStatus().state, "available");
       assert.equal(automaticDownloads, 0);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("disabling auto-download during active automatic download pauses to manual availability", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const systemState = createSystemStateForTest();
+
+      systemState.setPendingUpdate({
+        update: createPendingUpdateForTest(),
+        version: "2026.6.1",
+        notes: "Release notes",
+      });
+      systemState.setUpdateStatus({
+        state: "downloading",
+        lastCheckedAt: 100,
+        version: "2026.6.1",
+        totalBytes: 100,
+        downloadedBytes: 35,
+        notes: "Release notes",
+      });
+
+      systemState.setUpdateAutoDownload(false);
+      await tick();
+
+      assert.equal(systemState.updateAutoDownload(), false);
+      assert.deepEqual(systemState.updateStatus(), {
+        state: "available",
+        lastCheckedAt: 100,
+        version: "2026.6.1",
+        notes: "Release notes",
+      });
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("late automatic download completion after pause does not mark update ready", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      let finishDownload!: () => void;
+      const systemState = createSystemStateForTest();
+
+      systemState.setPendingUpdate({
+        update: {
+          ...createPendingUpdateForTest(),
+          download: async (onEvent) => {
+            onEvent?.({ event: "Started", data: { contentLength: 100 } });
+            await new Promise<void>((resolve) => {
+              finishDownload = resolve;
+            });
+            onEvent?.({ event: "Progress", data: { chunkLength: 100 } });
+          },
+        },
+        version: "2026.6.1",
+        notes: "Release notes",
+      });
+      systemState.setUpdateStatus({
+        state: "available",
+        lastCheckedAt: 100,
+        version: "2026.6.1",
+        notes: "Release notes",
+      });
+
+      const downloadPromise = (systemState.downloadUpdate as (options?: { automatic?: boolean }) => Promise<void>)({
+        automatic: true,
+      });
+      await tick();
+
+      assert.equal(systemState.updateStatus().state, "downloading");
+
+      systemState.setUpdateAutoDownload(false);
+      await tick();
+
+      assert.equal(systemState.updateStatus().state, "available");
+      finishDownload();
+      await downloadPromise;
+
+      assert.equal(systemState.updateAutoDownload(), false);
+      assert.deepEqual(systemState.updateStatus(), {
+        state: "available",
+        lastCheckedAt: 100,
+        version: "2026.6.1",
+        notes: "Release notes",
+      });
     } finally {
       dispose();
     }

@@ -155,6 +155,7 @@ export type DashboardViewProps = {
   testVesloServerConnection: (next: VesloServerSettings) => Promise<boolean>;
   canReloadWorkspace: boolean;
   reloadWorkspaceEngine: () => Promise<void>;
+  reloadScheduledAutomationsSource: () => Promise<void>;
   reloadBusy: boolean;
   reloadError: string | null;
   workspaceAutoReloadAvailable: boolean;
@@ -314,8 +315,6 @@ export type DashboardViewProps = {
   aiAccessAllowedModels: string[];
   showThinking: boolean;
   toggleShowThinking: () => void;
-  autoCompactContext: boolean;
-  toggleAutoCompactContext: () => void;
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
   modelVariantLabel: string;
@@ -323,8 +322,6 @@ export type DashboardViewProps = {
   setModelVariant: (value: string) => void;
   language: Language;
   setLanguage: (value: Language) => void;
-  updateAutoCheck: boolean;
-  toggleUpdateAutoCheck: () => void;
   updateAutoDownload: boolean;
   toggleUpdateAutoDownload: () => void;
   themeMode: "light" | "dark" | "system";
@@ -1581,7 +1578,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 deleteAutomation={props.deleteAutomation}
                 runAutomation={props.runAutomation}
                 newTaskDisabled={props.newTaskDisabled}
-                reloadWorkspaceEngine={props.reloadWorkspaceEngine}
+                reloadWorkspaceEngine={props.reloadScheduledAutomationsSource}
                 reloadBusy={props.reloadBusy}
                 canReloadWorkspace={props.canReloadWorkspace}
               />
@@ -1739,8 +1736,6 @@ export default function DashboardView(props: DashboardViewProps) {
                   aiAccessAllowedModels={props.aiAccessAllowedModels}
                   showThinking={props.showThinking}
                   toggleShowThinking={props.toggleShowThinking}
-                  autoCompactContext={props.autoCompactContext}
-                  toggleAutoCompactContext={props.toggleAutoCompactContext}
                   hideTitlebar={props.hideTitlebar}
                   toggleHideTitlebar={props.toggleHideTitlebar}
                   modelVariantLabel={props.modelVariantLabel}
@@ -1748,8 +1743,6 @@ export default function DashboardView(props: DashboardViewProps) {
                   setModelVariant={props.setModelVariant}
                   language={props.language}
                   setLanguage={props.setLanguage}
-                  updateAutoCheck={props.updateAutoCheck}
-                  toggleUpdateAutoCheck={props.toggleUpdateAutoCheck}
                   updateAutoDownload={props.updateAutoDownload}
                   toggleUpdateAutoDownload={props.toggleUpdateAutoDownload}
                   themeMode={props.themeMode}
