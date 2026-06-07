@@ -8,6 +8,8 @@ export type LifecycleRunStatusResult = {
   stale: boolean;
 };
 
+export const ORCHESTRATOR_LIFECYCLE_REQUEST_TIMEOUT_MS = 5_000;
+
 export class RunAlreadyActiveError extends Error {
   readonly activeRunId: string;
 
@@ -29,6 +31,16 @@ export class OrchestratorLifecycleRequestError extends Error {
     this.path = path;
     this.status = status;
     this.body = body;
+  }
+}
+
+export class OrchestratorLifecycleTimeoutError extends OrchestratorLifecycleRequestError {
+  readonly timeoutMs: number;
+
+  constructor(path: string, timeoutMs: number) {
+    super(path, 504, { error: "request_timeout", timeoutMs });
+    this.name = "OrchestratorLifecycleTimeoutError";
+    this.timeoutMs = timeoutMs;
   }
 }
 
@@ -63,16 +75,37 @@ export function createOrchestratorLifecycleClient(options: {
   daemonUrl: string;
   token: string;
   fetchImpl?: typeof fetch;
+  timeoutMs?: number;
 }): OrchestratorLifecycleClient {
   const fetchImpl = options.fetchImpl ?? fetch;
   const baseUrl = options.daemonUrl.replace(/\/+$/, "");
+  const timeoutMs = Number.isFinite(options.timeoutMs) && (options.timeoutMs ?? 0) > 0
+    ? Math.floor(options.timeoutMs ?? ORCHESTRATOR_LIFECYCLE_REQUEST_TIMEOUT_MS)
+    : ORCHESTRATOR_LIFECYCLE_REQUEST_TIMEOUT_MS;
   const headers = {
     "Content-Type": "application/json",
     [ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER]: options.token,
   };
 
+  const request = async (path: string, init?: RequestInit): Promise<Response> => {
+    try {
+      return await fetchImpl(`${baseUrl}${path}`, {
+        ...init,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (error) {
+      if (
+        error instanceof DOMException &&
+        (error.name === "AbortError" || error.name === "TimeoutError")
+      ) {
+        throw new OrchestratorLifecycleTimeoutError(path, timeoutMs);
+      }
+      throw error;
+    }
+  };
+
   const post = async (path: string, body: unknown): Promise<void> => {
-    const response = await fetchImpl(`${baseUrl}${path}`, {
+    const response = await request(path, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
@@ -115,7 +148,7 @@ export function createOrchestratorLifecycleClient(options: {
 
     async status(workspaceId, conversationId, runIdOrLatest) {
       const path = `/workspace/${encodeURIComponent(workspaceId)}/conversations/${encodeURIComponent(conversationId)}/runs/${encodeURIComponent(runIdOrLatest)}`;
-      const response = await fetchImpl(`${baseUrl}${path}`, { headers });
+      const response = await request(path, { headers });
       if (response.status === 404) return null;
       if (!response.ok) {
         throw new OrchestratorLifecycleRequestError(path, response.status, await readJsonSafely(response));

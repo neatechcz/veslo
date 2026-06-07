@@ -5,6 +5,7 @@ import {
   AI_ACCESS_INVALID_MESSAGE,
   AI_ACCESS_NOT_CONFIGURED_MESSAGE,
   DEFAULT_MANAGED_AI_GATEWAY_BASE_URL,
+  extractManagedApiKey,
   formatManagedAiAccessConfig,
   type ManagedAiAccessProfile,
   resolveManagedAiAccess,
@@ -142,6 +143,33 @@ test("resolveManagedAiAccessBundleState ignores redacted gateway tokens and uses
   assert.equal(result.reason, null);
   assert.equal(result.gatewayAccessToken, "den-user-token");
   assert.deepEqual(result.profile, managedCodexProfile);
+});
+
+test("extractManagedApiKey ignores redacted server config values", () => {
+  assert.equal(
+    extractManagedApiKey(JSON.stringify({
+      provider: {
+        codex_oauth: {
+          options: {
+            apiKey: "[REDACTED]",
+          },
+        },
+      },
+    })),
+    null,
+  );
+  assert.equal(
+    extractManagedApiKey(JSON.stringify({
+      provider: {
+        codex_oauth: {
+          options: {
+            apiKey: "veslo-client-token",
+          },
+        },
+      },
+    })),
+    "veslo-client-token",
+  );
 });
 
 test("shouldDeferManagedAiAccessRefresh waits for the local desktop client token before gateway fetch", () => {

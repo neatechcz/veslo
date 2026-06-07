@@ -98,6 +98,125 @@ const startTestServer = (input: {
 };
 
 describe("conversation routes", () => {
+  test("POST /workspace/:id/conversations derives opencode baseUrl from orchestrator daemon for local workspaces", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-orchestrator-"));
+    tempDirs.push(workspaceRoot);
+    await useTempVesloDataDir();
+
+    let upstreamPath = "";
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        upstreamPath = url.pathname;
+        if (request.method === "POST" && url.pathname === "/workspace/ws_orch/opencode/session") {
+          return Response.json({
+            id: "sess-orch",
+            title: "Orchestrated",
+            directory: workspaceRoot,
+            parentID: null,
+            time: { created: 111, updated: 222 },
+          });
+        }
+        return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+      orchestratorDaemonUrl: `http://127.0.0.1:${upstream.port}`,
+      workspaces: [
+        {
+          id: "ws_orch",
+          name: "Orchestrated",
+          path: workspaceRoot,
+          baseUrl: "",
+        },
+      ],
+    });
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_orch/conversations`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          directory: workspaceRoot,
+          title: "Orchestrated",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(201);
+    expect(upstreamPath).toBe("/workspace/ws_orch/opencode/session");
+    const payload = await response.json() as { id: string; opencodeSessionId: string };
+    expect(payload.id).toBe("sess-orch");
+    expect(payload.opencodeSessionId).toBe("sess-orch");
+  });
+
+  test.if(process.platform === "win32")("POST /workspace/:id/conversations accepts Windows directory casing differences", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "Veslo-Server-Conversations-Case-"));
+    tempDirs.push(workspaceRoot);
+    await useTempVesloDataDir();
+
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (request.method === "POST" && url.pathname === "/session") {
+          return Response.json({
+            id: "sess-case",
+            title: "Case",
+            directory: workspaceRoot,
+            parentID: null,
+            time: { created: 111, updated: 222 },
+          });
+        }
+        return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+      workspaces: [
+        {
+          id: "ws_case",
+          name: "Case",
+          path: workspaceRoot.toLowerCase(),
+          baseUrl: `http://127.0.0.1:${upstream.port}`,
+        },
+      ],
+    });
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_case/conversations`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          directory: workspaceRoot,
+          title: "Case",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(201);
+    const payload = await response.json() as { id: string };
+    expect(payload.id).toBe("sess-case");
+  });
+
   test("POST /workspace/:id/conversations creates an engine session and persists a binding", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-workspace-"));
     tempDirs.push(workspaceRoot);

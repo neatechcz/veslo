@@ -132,6 +132,8 @@ const AI_GATEWAY_UPSTREAM_RESPONSE_SNIPPET_MAX = 1000;
 const OPENCODE_JSON_DEFAULT_RESPONSE_MAX_BYTES = 1024 * 1024;
 const OPENCODE_TRANSCRIPT_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
 const OPENCODE_JSON_FETCH_DEFAULT_TIMEOUT_MS = 5_000;
+const OPENCODE_SESSION_CREATE_TIMEOUT_MS = 60_000;
+const OPENCODE_CONVERSATION_SUBMIT_TIMEOUT_MS = 30_000;
 export const REDACTED_SECRET_VALUE = "[REDACTED]";
 const GATEWAY_CALLER_AUTH_HEADER = "x-veslo-gateway-authorization";
 const GATEWAY_ACCESS_TOKEN_HEADER = "x-veslo-gateway-token";
@@ -814,6 +816,14 @@ function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string, wo
   }
   target.search = search;
   return target.toString();
+}
+
+function buildOrchestratorWorkspaceOpencodeBaseUrl(config: ServerConfig, workspace: WorkspaceInfo): string {
+  if (workspace.workspaceType !== "local") return "";
+  const daemonUrl = config.orchestratorDaemonUrl?.trim().replace(/\/+$/, "") ?? "";
+  const workspaceId = workspace.id?.trim() ?? "";
+  if (!daemonUrl || !workspaceId) return "";
+  return `${daemonUrl}/workspace/${encodeURIComponent(workspaceId)}/opencode`;
 }
 
 async function fetchOpencodeJson(
@@ -2776,6 +2786,15 @@ function optionalBodyBoolean(body: Record<string, unknown>, field: string): bool
   return typeof value === "boolean" ? value : undefined;
 }
 
+function optionalBodyHttpUrl(body: Record<string, unknown>, field: string): string | undefined {
+  const value = optionalBodyString(body, field);
+  if (!value) return undefined;
+  if (!value.startsWith("http://") && !value.startsWith("https://")) {
+    throw new ApiError(400, "invalid_payload", `${field} must start with http:// or https://`);
+  }
+  return value.replace(/\/+$/, "");
+}
+
 function requireBodyObject(body: Record<string, unknown>, field: string): Record<string, unknown> {
   const value = body[field];
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -2798,6 +2817,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       const scopedWorkspace = directory ? { ...workspace, directory } : workspace;
       return await fetchOpencodeJson(scopedWorkspace, "/session", {
         method: "POST",
+        timeoutMs: OPENCODE_SESSION_CREATE_TIMEOUT_MS,
         body: {
           ...(directory ? { directory } : {}),
           ...(title?.trim() ? { title: title.trim() } : {}),
@@ -3061,6 +3081,10 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     const name = typeof body.name === "string" && body.name.trim()
       ? body.name.trim()
       : basename(folderPath);
+    const baseUrl = optionalBodyHttpUrl(body, "baseUrl");
+    const directory = optionalBodyString(body, "directory");
+    const opencodeUsername = optionalBodyString(body, "opencodeUsername");
+    const opencodePassword = optionalBodyString(body, "opencodePassword");
 
     const workspacePath = resolve(folderPath);
     await mkdir(workspacePath, { recursive: true });
@@ -3068,6 +3092,31 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     const id = workspaceIdForPath(workspacePath);
     const existing = config.workspaces.find((entry) => entry.id === id);
     if (existing) {
+      const nextWorkspace: WorkspaceInfo = {
+        ...existing,
+        ...(name && existing.name !== name ? { name } : {}),
+        ...(baseUrl ? { baseUrl } : {}),
+        ...(directory ? { directory } : {}),
+        ...(opencodeUsername ? { opencodeUsername } : {}),
+        ...(opencodePassword ? { opencodePassword } : {}),
+      };
+      const changed =
+        nextWorkspace.name !== existing.name ||
+        nextWorkspace.baseUrl !== existing.baseUrl ||
+        nextWorkspace.directory !== existing.directory ||
+        nextWorkspace.opencodeUsername !== existing.opencodeUsername ||
+        nextWorkspace.opencodePassword !== existing.opencodePassword;
+      if (changed && (baseUrl || directory || opencodeUsername || opencodePassword)) {
+        config.workspaces = config.workspaces.map((entry) =>
+          entry.id === id ? nextWorkspace : entry,
+        );
+        const persisted = await persistServerWorkspaceState(config);
+        return jsonResponse({
+          activeId: config.workspaces[0]?.id ?? null,
+          items: config.workspaces.map(serializeWorkspace),
+          persisted,
+        });
+      }
       throw new ApiError(409, "workspace_exists", "Workspace already exists", {
         id,
         path: workspacePath,
@@ -3079,6 +3128,10 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       name,
       path: workspacePath,
       workspaceType: "local",
+      ...(baseUrl ? { baseUrl } : {}),
+      ...(directory ? { directory } : {}),
+      ...(opencodeUsername ? { opencodeUsername } : {}),
+      ...(opencodePassword ? { opencodePassword } : {}),
     };
 
     // Prepend so it becomes the active workspace (single-active-workspace model).
@@ -3513,6 +3566,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     try {
       upstream = await fetchOpencodeJson({ ...workspace, directory: target.directory }, path, {
         method: "POST",
+        timeoutMs: OPENCODE_CONVERSATION_SUBMIT_TIMEOUT_MS,
         body: buildConversationRunBody(kind, body),
       });
     } catch (error) {
@@ -6877,13 +6931,22 @@ async function resolveWorkspace(config: ServerConfig, id: string): Promise<Works
   if (!authorized) {
     throw new ApiError(403, "workspace_unauthorized", "Workspace is not authorized");
   }
-  return { ...workspace, path: resolvedWorkspace };
+  const baseUrl = workspace.baseUrl?.trim() || buildOrchestratorWorkspaceOpencodeBaseUrl(config, workspace);
+  return {
+    ...workspace,
+    path: resolvedWorkspace,
+    ...(baseUrl ? { baseUrl } : {}),
+  };
 }
 
 async function isAuthorizedRoot(workspacePath: string, roots: string[]): Promise<boolean> {
-  const resolvedWorkspace = resolve(workspacePath);
+  const normalizeAuthorizedPath = (value: string) => {
+    const resolved = normalizeOpencodeDirectory(resolve(value));
+    return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  };
+  const resolvedWorkspace = normalizeAuthorizedPath(workspacePath);
   for (const root of roots) {
-    const resolvedRoot = resolve(root);
+    const resolvedRoot = normalizeAuthorizedPath(root);
     if (resolvedWorkspace === resolvedRoot) return true;
     if (resolvedWorkspace.startsWith(resolvedRoot + sep)) return true;
   }

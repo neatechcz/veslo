@@ -97,6 +97,18 @@ describe("run registry", () => {
     expect((await registry.get("ws-a", "run-a"))?.record.status).toBe("completed");
   });
 
+  test("register keeps blocking when an active run probe is unreachable", async () => {
+    const { registry } = createRegistry(() => ({ unreachable: true }));
+    await registry.register(input);
+
+    await expect(registry.register({ ...input, runId: "run-b" })).rejects.toThrow(RunAlreadyActiveError);
+
+    const active = await registry.latest("ws-a", "conv-a");
+    expect(active?.record.runId).toBe("run-a");
+    expect(active?.record.status).toBe("running");
+    expect(active?.stale).toBe(true);
+  });
+
   test("abort intent is metadata and inactive reconcile completes the run", async () => {
     const { registry } = createRegistry(() => ({ active: false }));
     await registry.register(input);

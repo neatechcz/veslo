@@ -2148,8 +2148,8 @@ export function createVesloServerClient(options: {
     deleteSession: 12_000,
     sessionArtifacts: 10_000,
     sessionTranscript: 10_000,
-    conversationCreate: 30_000,
-    conversationRun: 30_000,
+    conversationCreate: 70_000,
+    conversationRun: 45_000,
     conversationAbort: 10_000,
     status: 6_000,
     config: 10_000,
@@ -2231,7 +2231,14 @@ export function createVesloServerClient(options: {
     // Hot-register a local workspace path without respawning the server
     // (VSLO-171). Server endpoint persists into config.workspaces at runtime;
     // returns 409 if the workspace already exists (caller can treat as success).
-    addLocalWorkspace: (input: { path: string; name?: string }) =>
+    addLocalWorkspace: (input: {
+      path: string;
+      name?: string;
+      baseUrl?: string | null;
+      directory?: string | null;
+      opencodeUsername?: string | null;
+      opencodePassword?: string | null;
+    }) =>
       requestJson<{
         activeId: string;
         items: VesloWorkspaceInfo[];
@@ -2240,7 +2247,14 @@ export function createVesloServerClient(options: {
         token,
         hostToken,
         method: "POST",
-        body: { path: input.path, name: input.name },
+        body: {
+          path: input.path,
+          name: input.name,
+          ...(input.baseUrl?.trim() ? { baseUrl: input.baseUrl.trim() } : {}),
+          ...(input.directory?.trim() ? { directory: input.directory.trim() } : {}),
+          ...(input.opencodeUsername?.trim() ? { opencodeUsername: input.opencodeUsername.trim() } : {}),
+          ...(input.opencodePassword?.trim() ? { opencodePassword: input.opencodePassword.trim() } : {}),
+        },
         timeoutMs: timeouts.addLocalWorkspace,
       }),
     deleteWorkspace: (workspaceId: string) =>

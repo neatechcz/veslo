@@ -5,6 +5,7 @@ import { basename, join } from "node:path";
 
 import { startServer } from "./server.js";
 import type { WorkspaceInfo } from "./types.js";
+import { workspaceIdForPath } from "./workspaces.js";
 
 const runningServers: Array<{ stop?: (closeActiveConnections?: boolean) => void }> = [];
 const tempDirs: string[] = [];
@@ -147,6 +148,57 @@ test("POST /workspaces/local rejects duplicate with 409", async () => {
   expect(second.status).toBe(409);
   const payload = (await second.json()) as { code: string };
   expect(payload.code).toBe("workspace_exists");
+});
+
+test("POST /workspaces/local updates existing workspace opencode metadata", async () => {
+  const seedDir = await mkdtemp(join(tmpdir(), "veslo-ws-metadata-"));
+  tempDirs.push(seedDir);
+  const workspaceId = workspaceIdForPath(seedDir);
+  const seed: WorkspaceInfo = {
+    id: workspaceId,
+    name: "Seed",
+    path: seedDir,
+    workspaceType: "local",
+  };
+  const { server, configPath } = await startFixture([seed]);
+  const baseUrl = `http://127.0.0.1:62930/workspace/${workspaceId}/opencode/`;
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/workspaces/local`, {
+    method: "POST",
+    headers: hostHeaders(),
+    body: JSON.stringify({
+      path: seedDir,
+      name: "Seed",
+      baseUrl,
+      directory: seedDir,
+      opencodeUsername: "opencode",
+      opencodePassword: "secret",
+    }),
+  });
+
+  expect(response.status).toBe(200);
+  const payload = (await response.json()) as {
+    items: Array<{ id: string; baseUrl?: string; opencode?: { baseUrl?: string; username?: string } }>;
+    persisted: boolean;
+  };
+  const updated = payload.items.find((item) => item.id === seed.id);
+  expect(updated?.baseUrl).toBe(`http://127.0.0.1:62930/workspace/${workspaceId}/opencode`);
+  expect(updated?.opencode?.baseUrl).toBe(`http://127.0.0.1:62930/workspace/${workspaceId}/opencode`);
+  expect(updated?.opencode?.username).toBe("opencode");
+  expect(payload.persisted).toBe(true);
+
+  const onDisk = JSON.parse(await readFile(configPath, "utf8")) as {
+    workspaces: Array<{
+      baseUrl?: string;
+      directory?: string;
+      opencodeUsername?: string;
+      opencodePassword?: string;
+    }>;
+  };
+  expect(onDisk.workspaces[0]!.baseUrl).toBe(`http://127.0.0.1:62930/workspace/${workspaceId}/opencode`);
+  expect(onDisk.workspaces[0]!.directory).toBe(seedDir);
+  expect(onDisk.workspaces[0]!.opencodeUsername).toBe("opencode");
+  expect(onDisk.workspaces[0]!.opencodePassword).toBe("secret");
 });
 
 test("POST /workspaces/local requires host token (not client)", async () => {

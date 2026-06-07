@@ -4,6 +4,7 @@ import {
   createOrchestratorLifecycleClient,
   ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER,
   OrchestratorLifecycleRequestError,
+  OrchestratorLifecycleTimeoutError,
   RunAlreadyActiveError,
 } from "./orchestrator-lifecycle-client.js";
 
@@ -55,6 +56,33 @@ describe("orchestrator lifecycle client", () => {
       directory: "/tmp/workspace-a",
       kind: "prompt",
     })).rejects.toThrow(RunAlreadyActiveError);
+  });
+
+  test("register aborts stalled lifecycle requests with a local timeout", async () => {
+    let signal: AbortSignal | undefined;
+    const fetchImpl = mockFetch(async (_input, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        signal = init?.signal ?? undefined;
+        signal?.addEventListener("abort", () => {
+          reject(signal?.reason ?? new DOMException("The operation was aborted.", "AbortError"));
+        });
+      }));
+    const client = createOrchestratorLifecycleClient({
+      daemonUrl: "http://127.0.0.1:1234",
+      token: "secret-token",
+      fetchImpl,
+      timeoutMs: 5,
+    });
+
+    await expect(client.register({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      runId: "run-a",
+      engineSessionId: "sess-a",
+      directory: "/tmp/workspace-a",
+      kind: "prompt",
+    })).rejects.toThrow(OrchestratorLifecycleTimeoutError);
+    expect(signal?.aborted).toBe(true);
   });
 
   test("status returns null for 404", async () => {

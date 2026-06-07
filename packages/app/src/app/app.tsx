@@ -1710,14 +1710,75 @@ export default function App() {
     const workspace = workspaceStore.workspaces().find((entry) => entry.id === workspaceId) ?? null;
     if (!workspace || workspace.workspaceType !== "local") return fallback;
 
-    const workspaceRoot = normalizeDirectoryPath(workspace.path?.trim() || workspace.directory?.trim() || "");
-    const targetDirectory = normalizeDirectoryPath(directoryRaw?.trim() || workspaceRoot);
+    const workspaceRootRaw = workspace.path?.trim() || workspace.directory?.trim() || "";
+    const targetDirectoryRaw = directoryRaw?.trim() || workspaceRootRaw;
+    const workspaceRoot = normalizeDirectoryPath(workspaceRootRaw);
+    const targetDirectory = normalizeDirectoryPath(targetDirectoryRaw);
     if (!targetDirectory) return fallback;
     const matchDirectories = new Set([workspaceRoot, targetDirectory].filter(Boolean));
+    type ConversationWorkspaceRegistryEntry = {
+      id: string;
+      path?: string;
+      directory?: string;
+      baseUrl?: string;
+      opencodeUsername?: string;
+      opencodePassword?: string;
+      opencode?: {
+        baseUrl?: string;
+        directory?: string;
+        username?: string;
+      };
+    };
 
-    const findMatchingWorkspaceId = (items: Array<{ id: string; path?: string; directory?: string; opencode?: { directory?: string } }>) => {
+    const normalizeBaseUrlForCompare = (value: string | null | undefined) =>
+      value?.trim().replace(/\/+$/, "") ?? "";
+    const parseWorkspaceMountId = (value: string | null | undefined) => {
+      const baseUrl = normalizeBaseUrlForCompare(value);
+      if (!baseUrl) return "";
+      try {
+        const match = new URL(baseUrl).pathname.match(/^\/workspace\/([^/]+)\/opencode(?:\/.*)?$/);
+        return match ? decodeURIComponent(match[1] ?? "").trim() : "";
+      } catch {
+        return "";
+      }
+    };
+
+    const resolveLocalOpencodeRegistration = async () => {
+      if (!isTauriRuntime()) return null;
+      try {
+        const info = await engineInfo(workspaceId, workspaceRootRaw || targetDirectoryRaw);
+        const resolvedBaseUrl = normalizeBaseUrlForCompare(info.baseUrl);
+        if (!resolvedBaseUrl) return null;
+        return {
+          baseUrl: resolvedBaseUrl,
+          directory: info.projectDir?.trim() || targetDirectoryRaw || workspaceRootRaw,
+          opencodeUsername: info.opencodeUsername?.trim() || null,
+          opencodePassword: info.opencodePassword?.trim() || null,
+        };
+      } catch (error) {
+        wsDebug("conversation-read:engine-info:failed", {
+          workspaceId,
+          directory: targetDirectory,
+          error: error instanceof Error ? error.message : safeStringify(error),
+        });
+        return null;
+      }
+    };
+
+    const matchesRegistration = (
+      entry: ConversationWorkspaceRegistryEntry,
+      registration: Awaited<ReturnType<typeof resolveLocalOpencodeRegistration>>,
+    ) => {
+      if (!registration?.baseUrl) return true;
+      const existingBaseUrl = normalizeBaseUrlForCompare(entry.baseUrl || entry.opencode?.baseUrl);
+      const mountId = parseWorkspaceMountId(registration.baseUrl);
+      if (mountId && entry.id !== mountId) return false;
+      return existingBaseUrl === registration.baseUrl;
+    };
+
+    const findMatchingWorkspace = (items: ConversationWorkspaceRegistryEntry[]) => {
       const exact = items.find((entry) => entry.id === fallback);
-      if (exact) return exact.id;
+      if (exact) return exact;
       const match = items.find((entry) => {
         const candidates = [
           entry.path,
@@ -1728,13 +1789,15 @@ export default function App() {
           .filter(Boolean);
         return candidates.some((candidate) => matchDirectories.has(candidate));
       });
-      return match?.id ?? "";
+      return match ?? null;
     };
+
+    const opencodeRegistration = await resolveLocalOpencodeRegistration();
 
     try {
       const listed = await serverClient.listWorkspaces();
-      const existing = findMatchingWorkspaceId(listed.items);
-      if (existing) return existing;
+      const existing = findMatchingWorkspace(listed.items);
+      if (existing && matchesRegistration(existing, opencodeRegistration)) return existing.id;
     } catch (error) {
       wsDebug("conversation-read:workspace-list:failed", {
         workspaceId,
@@ -1747,15 +1810,20 @@ export default function App() {
       // so passive reads can be routed by workspace id. This does not start
       // or contact the OpenCode engine.
       const added = await serverClient.addLocalWorkspace({
-        path: workspaceRoot || targetDirectory,
+        path: workspaceRootRaw || targetDirectoryRaw,
         name: workspace.name?.trim() || undefined,
+        baseUrl: opencodeRegistration?.baseUrl ?? undefined,
+        directory: opencodeRegistration?.directory || targetDirectoryRaw,
+        opencodeUsername: opencodeRegistration?.opencodeUsername ?? undefined,
+        opencodePassword: opencodeRegistration?.opencodePassword ?? undefined,
       });
-      const registered = findMatchingWorkspaceId(added.items);
-      if (registered) return registered;
+      const registered = findMatchingWorkspace(added.items);
+      if (registered) return registered.id;
     } catch (error) {
       wsDebug("conversation-read:workspace-register:failed", {
         workspaceId,
         directory: targetDirectory,
+        hasBaseUrl: Boolean(opencodeRegistration?.baseUrl),
         error: error instanceof Error ? error.message : safeStringify(error),
       });
     }

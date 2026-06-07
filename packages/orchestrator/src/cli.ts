@@ -28,8 +28,8 @@ import {
   createRunRegistry,
   DEFAULT_RUN_FAILURE_ERROR,
   RunAlreadyActiveError,
-  type RunProbeResult,
 } from "./run-registry.js";
+import { createRunActivityProbe } from "./run-activity-probe.js";
 import {
   hostDirectoryToEngineDirectory,
   rewriteDirectoryFieldsForEngine,
@@ -193,8 +193,6 @@ type RouterWorkspace = {
 
 const ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER = "X-Veslo-Orchestrator-Token";
 const ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER_LOWER = ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER.toLowerCase();
-const RUN_ACTIVITY_PROBE_TIMEOUT_MS = 4_000;
-
 type RouterDaemonState = {
   pid: number;
   port: number;
@@ -4044,52 +4042,10 @@ async function runRouterDaemon(args: ParsedArgs) {
       headers,
     };
   };
-  const probeRunActivity = async (record: {
-    workspaceId: string;
-    engineSessionId: string;
-    directory: string;
-  }): Promise<RunProbeResult> => {
-    const engine = pool.get(record.workspaceId);
-    if (!engine) return { unreachable: true };
-
-    try {
-      const targetPath = `/session/${encodeURIComponent(record.engineSessionId)}/message`;
-      const engineRequest = buildEngineRequest(engine, {
-        workspaceId: record.workspaceId,
-        directory: record.directory,
-        targetPath,
-        method: "GET",
-      });
-
-      const response = await fetch(engineRequest.url, {
-        headers: engineRequest.headers,
-        signal: AbortSignal.timeout(RUN_ACTIVITY_PROBE_TIMEOUT_MS),
-      });
-      if (!response.ok) return { unreachable: true };
-
-      const payload = await response.json() as unknown;
-      const messages = Array.isArray(payload)
-        ? payload
-        : payload && typeof payload === "object" && Array.isArray((payload as { items?: unknown }).items)
-          ? (payload as { items: unknown[] }).items
-          : [];
-      const assistant = messages
-        .slice()
-        .reverse()
-        .find((message) => {
-          const info = message && typeof message === "object"
-            ? (message as { info?: { role?: unknown } }).info
-            : null;
-          return info?.role === "assistant";
-        });
-      if (!assistant || typeof assistant !== "object") return { active: true };
-      const info = (assistant as { info?: { time?: { completed?: unknown } } }).info;
-      const completed = info?.time?.completed;
-      return { active: !(typeof completed === "number" && Number.isFinite(completed) && completed > 0) };
-    } catch {
-      return { unreachable: true };
-    }
-  };
+  const probeRunActivity = createRunActivityProbe({
+    getEngine: (workspaceId) => pool.get(workspaceId),
+    buildEngineRequest,
+  });
   const runRegistry = createRunRegistry({ store: runStore, probeRunActivity });
 
   persistEngines = (): void => {

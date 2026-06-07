@@ -6,6 +6,8 @@ out/
 dist/
 packages/*/dist/
 tmp/
+.tmp/
+**/.tmp/
 
 # Local git worktrees
 _worktrees/
@@ -49,6 +51,9 @@ vendor/opencode/
 
 # Local evidence artifacts
 evidence/
+
+# Local latency diagnostics
+packages/app/scripts/workspace-latency.mjs
 
 # Local Codex run logs
 .codex-run/

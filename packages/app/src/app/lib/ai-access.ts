@@ -335,7 +335,10 @@ export function extractManagedApiKey(content: string | null | undefined): string
       const options = (entry as Record<string, unknown>).options;
       if (!options || typeof options !== "object") continue;
       const apiKey = (options as Record<string, unknown>).apiKey;
-      if (typeof apiKey === "string" && apiKey.trim()) return apiKey;
+      if (typeof apiKey !== "string") continue;
+      const normalized = apiKey.trim();
+      if (!normalized || normalized === REDACTED_SECRET_VALUE) continue;
+      return normalized;
     }
     return null;
   } catch {
