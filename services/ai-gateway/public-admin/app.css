@@ -405,6 +405,27 @@ a {
   margin-bottom: 14px;
 }
 
+.section-actions,
+.organization-page-actions {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.organization-selector {
+  display: grid;
+  gap: 6px;
+  min-width: 260px;
+}
+
+.organization-selector span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .toolbar {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

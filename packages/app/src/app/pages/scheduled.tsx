@@ -202,6 +202,7 @@ const latestRunFor = (automation: VesloAutomation, runs: VesloAutomationRun[]) =
 
 const AutomationTemplateCard = (props: {
   icon: any;
+  name: string;
   description: string;
   tone?: string;
   onClick?: () => void;
@@ -220,6 +221,7 @@ const AutomationTemplateCard = (props: {
       <div class={`mb-4 flex h-8 w-8 items-center justify-center rounded-lg border border-gray-3 bg-gray-1 ${props.tone ?? ""}`}>
         <Icon size={18} />
       </div>
+      <div class="mb-1 text-sm font-semibold text-gray-12">{props.name}</div>
       <p class="text-[13px] text-gray-10 leading-relaxed group-hover:text-gray-12">{props.description}</p>
     </button>
   );
@@ -391,8 +393,9 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   const deleteAction = createAsyncAction();
   const scheduleTimezone = createMemo(() => resolveLocalScheduleTimezone());
 
-  const automationDisabled = createMemo(() => props.newTaskDisabled || !props.sourceReady || props.busy);
+  const createModalDisabled = createMemo(() => !props.sourceReady || props.busy);
   const readyWorkspaces = createMemo(() => props.automationWorkspaces.filter((workspace) => workspace.status === "ready" && workspace.serverWorkspaceId));
+  const noReadyWorkspaces = createMemo(() => readyWorkspaces().length === 0);
   const defaultWorkspaceId = createMemo(() => {
     const preferredWorkspace = readyWorkspaces().find((workspace) => workspace.serverWorkspaceId === props.defaultAutomationWorkspaceId);
     return preferredWorkspace?.serverWorkspaceId ?? readyWorkspaces()[0]?.serverWorkspaceId ?? "";
@@ -417,7 +420,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
     }, scheduleTimezone()),
   );
   const canCreateAutomation = createMemo(() => {
-    return automationName().trim().length > 0 && automationPrompt().trim().length > 0 && Boolean(selectedSchedule()) && Boolean(automationWorkspaceId()) && !automationDisabled();
+    return automationName().trim().length > 0 && automationPrompt().trim().length > 0 && Boolean(selectedSchedule()) && Boolean(automationWorkspaceId()) && !createModalDisabled();
   });
   const statusGroups = createMemo(() => ({
     active: props.automationItems.filter((item) => item.automation.status === "active"),
@@ -481,7 +484,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   };
 
   const openCreateModal = () => {
-    if (automationDisabled()) return;
+    if (createModalDisabled()) return;
     const workspaceId = defaultWorkspaceId();
     setAutomationWorkspaceId(workspaceId);
     setAutomationName(tr("scheduled.default_name"));
@@ -496,8 +499,8 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
     setCreateModalOpen(true);
   };
 
-  const openCreateModalFromTemplate = (template: AutomationTemplate) => {
-    if (automationDisabled()) return;
+  const applyAutomationTemplate = (template: AutomationTemplate) => {
+    resetScheduleForm();
     setAutomationName(tr(template.nameKey));
     setAutomationPrompt(tr(template.promptKey));
     setScheduleMode(template.scheduleMode);
@@ -514,7 +517,6 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
     setAutomationVariant("");
     setAutomationStatus("active");
     setAutomationEnabled(true);
-    setCreateModalOpen(true);
   };
 
   const openEditModal = (item: WorkspaceAutomationItem) => {
@@ -633,9 +635,9 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
           <button
             type="button"
             onClick={openCreateModal}
-            disabled={automationDisabled()}
+            disabled={createModalDisabled()}
             class={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-              automationDisabled() ? "bg-gray-3 text-gray-8" : "bg-gray-12 text-gray-1 hover:bg-gray-11"
+              createModalDisabled() ? "bg-gray-3 text-gray-8" : "bg-gray-12 text-gray-1 hover:bg-gray-11"
             }`}
           >
             <Plus size={14} />
@@ -737,19 +739,6 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
         fallback={
           <div class="space-y-4">
             <div class="text-center text-sm text-gray-9">{tr("scheduled.no_automations")}</div>
-            <div class="grid w-full grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-              <For each={automationTemplates}>
-                {(card) => (
-                  <AutomationTemplateCard
-                    icon={card.icon}
-                    description={tr(card.descriptionKey)}
-                    tone={card.tone}
-                    onClick={() => openCreateModalFromTemplate(card)}
-                    disabled={automationDisabled()}
-                  />
-                )}
-              </For>
-            </div>
           </div>
         }
       >
@@ -813,19 +802,45 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
               <div class="space-y-6">
                 <div>
                   <label class="mb-2 block text-[11px] font-bold uppercase text-gray-8">{tr("scheduled.workspace_label")}</label>
-                  <select
-                    value={automationWorkspaceId()}
-                    onChange={(event) => setAutomationWorkspaceId(event.currentTarget.value)}
-                    class="w-full rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:border-blue-7 focus:outline-none focus:ring-1 focus:ring-blue-9/20"
+                  <Show
+                    when={!noReadyWorkspaces()}
+                    fallback={
+                      <div class="rounded-xl border border-amber-7/40 bg-amber-3/50 px-4 py-3 text-xs text-amber-12">
+                        <div class="font-semibold">{tr("scheduled.no_ready_workspaces_title")}</div>
+                        <div class="mt-1">{tr("scheduled.no_ready_workspaces_hint")}</div>
+                      </div>
+                    }
                   >
-                    <For each={readyWorkspaces()}>
-                      {(workspace) => (
-                        <option value={workspace.serverWorkspaceId ?? ""}>
-                          {workspace.name}
-                        </option>
+                    <select
+                      value={automationWorkspaceId()}
+                      onChange={(event) => setAutomationWorkspaceId(event.currentTarget.value)}
+                      class="w-full rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:border-blue-7 focus:outline-none focus:ring-1 focus:ring-blue-9/20"
+                    >
+                      <For each={readyWorkspaces()}>
+                        {(workspace) => (
+                          <option value={workspace.serverWorkspaceId ?? ""}>
+                            {workspace.name}
+                          </option>
+                        )}
+                      </For>
+                    </select>
+                  </Show>
+                </div>
+                <div>
+                  <div class="mb-2 block text-[11px] font-bold uppercase text-gray-8">{tr("scheduled.templates_label")}</div>
+                  <div class="grid gap-3 md:grid-cols-2">
+                    <For each={automationTemplates}>
+                      {(card) => (
+                        <AutomationTemplateCard
+                          icon={card.icon}
+                          name={tr(card.nameKey)}
+                          description={tr(card.descriptionKey)}
+                          tone={card.tone}
+                          onClick={() => applyAutomationTemplate(card)}
+                        />
                       )}
                     </For>
-                  </select>
+                  </div>
                 </div>
                 <div>
                   <label class="mb-2 block text-[11px] font-bold uppercase text-gray-8">{tr("scheduled.label_name")}</label>

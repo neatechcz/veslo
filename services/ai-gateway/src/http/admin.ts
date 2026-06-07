@@ -8,6 +8,11 @@ import { fileURLToPath } from "node:url";
 import { createAutoAssignedCodexCredentialRotationService, type AutoAssignedCodexCredentialRotationService } from "../access/auto-assignment-rotation.js";
 import type { AlertRecord, AlertRepository } from "../alerts/repository.js";
 import { buildCodexCapacityAlerts } from "../alerts/codex-capacity-alerts.js";
+import {
+  createCodexCapacityAlertMonitorRunner,
+  type CodexCapacityAlertEmailInput,
+  type CodexCapacityAlertMonitorResult,
+} from "../alerts/codex-capacity-monitor.js";
 import type { AiAccessProvider, AiAccessRepository, UpsertUserAiAccessPolicyInput, UserAiAccessPolicyRecord } from "../access/repository.js";
 import { MySqlAiAccessRepository } from "../access/mysql-repository.js";
 import { MySqlAlertRepository } from "../alerts/mysql-repository.js";
@@ -21,6 +26,7 @@ import type { SecretStore, StoredSecret } from "../credentials/secret-store.js";
 import type { AiGatewayDb } from "../db/index.js";
 import { createDb } from "../db/index.js";
 import { credentialBindingTable, credentialHealthEventTable, credentialRecordTable, credentialUsageEventTable, sessionLeaseTable, userAiAccessPolicyTable, type CredentialState } from "../db/schema.js";
+import { sendAdminAlertEmail } from "../email/admin-alert-mailer.js";
 import { env } from "../env.js";
 import type { AdminSessionRecord, LeaseProvider } from "../leases/repository.js";
 import { CODEX_DEFAULT_MODEL, listCodexModelCatalog, resolveCodexModelPolicy } from "../providers/codex-model-catalog.js";
@@ -348,6 +354,7 @@ export interface AdminService {
   acknowledgeAlert(_token: string, alertId: string, actorUserId: string | null): Promise<{ alert: AlertRecord }>;
   resolveAlert(_token: string, alertId: string, actorUserId: string | null): Promise<{ alert: AlertRecord }>;
   listAudit(_token: string): Promise<{ events: AuditRecord[] }>;
+  runCodexCapacityAlertEmailMonitor?(): Promise<CodexCapacityAlertMonitorResult>;
 }
 
 class HttpError extends Error {
@@ -454,6 +461,8 @@ type AdminReadModelDependencies = {
   auditRepository?: AuditRepository;
   secretStore?: SecretStore;
   openAiCompatibleTransport?: OpenAiCompatibleProviderTransport;
+  alertEmailRecipients?: string[];
+  sendAlertEmail?: (input: CodexCapacityAlertEmailInput) => Promise<void>;
   now?: () => Date;
 };
 
@@ -1202,6 +1211,8 @@ export function createDefaultAdminService(
   const getSecretStore = () =>
     deps.secretStore ?? getDefaultRepositories().secretStore;
   const openAiCompatibleTransport = deps.openAiCompatibleTransport ?? new OpenAiCompatibleTransport();
+  const alertEmailRecipients = deps.alertEmailRecipients ?? env.alertEmail.recipients;
+  const sendAlertEmail = deps.sendAlertEmail ?? sendAdminAlertEmail;
   const now = deps.now ?? (() => new Date());
   const codexStatusProvider =
     deps.codexStatusProvider ??
@@ -1230,6 +1241,7 @@ export function createDefaultAdminService(
       : new UnavailableCodexCredentialStatusProvider());
   let credentialRotationService: AutoAssignedCodexCredentialRotationService | null =
     deps.credentialRotationService ?? null;
+  let codexCapacityAlertEmailRunner: (() => Promise<CodexCapacityAlertMonitorResult>) | null = null;
 
   function getCredentialRotationService() {
     if (!credentialRotationService) {
@@ -1636,12 +1648,17 @@ export function createDefaultAdminService(
   }
 
   async function listCodexCapacityAlerts(): Promise<AlertRecord[]> {
+    const capacity = await loadCodexCapacityOverview();
+    return buildCodexCapacityAlerts(capacity, now());
+  }
+
+  async function loadCodexCapacityOverview(): Promise<CodexCapacityOverview> {
     const credentials = await withCodexUpstreamStatus(
       await getCredentialReadRepository().listAdminCredentials(),
       codexStatusProvider,
     );
     const capacityCredentials = await toCodexCapacityCredentials(credentials, codexStatusProvider);
-    return buildCodexCapacityAlerts(buildCodexCapacityOverview(capacityCredentials), now());
+    return buildCodexCapacityOverview(capacityCredentials);
   }
 
   async function listCodexCapacityAlertsBestEffort(): Promise<AlertRecord[]> {
@@ -1655,6 +1672,20 @@ export function createDefaultAdminService(
       console.error("ai_gateway_admin_codex_capacity_alerts_failed", error);
       return [];
     }
+  }
+
+  function getCodexCapacityAlertEmailRunner() {
+    if (!codexCapacityAlertEmailRunner) {
+      codexCapacityAlertEmailRunner = createCodexCapacityAlertMonitorRunner({
+        loadCapacityOverview: loadCodexCapacityOverview,
+        listAdminRecipients: async () => alertEmailRecipients,
+        sendEmail: sendAlertEmail,
+        audit: getAuditRepository(),
+        now,
+      });
+    }
+
+    return codexCapacityAlertEmailRunner;
   }
 
   return {
@@ -2013,6 +2044,9 @@ export function createDefaultAdminService(
         getAlertRepository().listAlerts(),
       ]);
       return { alerts: [...capacityAlerts, ...repositoryAlerts] };
+    },
+    async runCodexCapacityAlertEmailMonitor() {
+      return getCodexCapacityAlertEmailRunner()();
     },
     async acknowledgeAlert(_token, alertId, actorUserId) {
       const acknowledge = getAlertRepository().acknowledgeAlert;
@@ -2578,7 +2612,10 @@ function readOrganizationRoleInput(value: unknown, fallback: CurrentAdminOrganiz
   return parseOrganizationRoleInput(value) ?? fallback;
 }
 
-function readOrganizationUpdateInput(body: unknown): UpdateOrganizationInput {
+function readOrganizationUpdateInput(
+  body: unknown,
+  options: { allowSeatLimit?: boolean } = {},
+): UpdateOrganizationInput {
   const input: UpdateOrganizationInput = {};
   if (hasOwn(body, "name")) {
     input.name = readTrimmedString((body as { name?: unknown }).name) ?? "";
@@ -2587,6 +2624,9 @@ function readOrganizationUpdateInput(body: unknown): UpdateOrganizationInput {
     input.slug = readTrimmedString((body as { slug?: unknown }).slug) ?? "";
   }
   if (hasOwn(body, "seatLimit")) {
+    if (options.allowSeatLimit !== true) {
+      throw new HttpError("forbidden_seat_limit", 403);
+    }
     const value = (body as { seatLimit?: unknown }).seatLimit;
     if (value === null || value === undefined || value === "") {
       input.seatLimit = null;
@@ -2802,10 +2842,11 @@ export function createAdminRouter(adminService: AdminService) {
     }
 
     try {
+      const session = res.locals.adminSession as AdminSessionSnapshot | undefined;
       const payload = await adminService.updateOrganization(
         res.locals.adminToken as string,
         req.params.orgId,
-        readOrganizationUpdateInput(req.body),
+        readOrganizationUpdateInput(req.body, { allowSeatLimit: session?.platformAdmin === true }),
       );
       res.json(payload);
     } catch (error) {

@@ -212,6 +212,92 @@ test("/admin/api/alerts includes synthetic Codex capacity threshold alerts", asy
   }
 });
 
+test("default admin service sends Codex capacity alert emails through the monitor", async () => {
+  const sent: Array<{ to: string; subject: string; text: string }> = [];
+  const auditEvents: Array<{
+    action: string;
+    entityType: string;
+    entityId: string;
+    result: string;
+    summary?: string | null;
+  }> = [];
+  const service = createDefaultAdminService(
+    "http://den.example.test",
+    {
+      denClient: createDenClient(),
+      alertEmailRecipients: ["admin-one@example.test", "admin-two@example.test"],
+      sendAlertEmail: async (input: { to: string; subject: string; text: string }) => {
+        sent.push(input);
+      },
+      auditRepository: {
+        async listEvents() {
+          return [];
+        },
+        async recordEvent(input) {
+          auditEvents.push(input);
+        },
+      },
+      credentialReadRepository: {
+        async listAdminCredentials() {
+          return [createCredential("cred_codex_1", { name: "Codex Team One" })];
+        },
+      },
+      codexStatusProvider: {
+        async getStatus() {
+          return {
+            available: true,
+            source: "codex_exec_rate_limits",
+            label: "Codex limits available",
+            detail: null,
+            checkedAt: "2026-06-06T12:00:00.000Z",
+            limits: {
+              fiveHour: {
+                label: "5h",
+                usedPercent: 95,
+                windowMinutes: 300,
+                resetAt: null,
+              },
+              weekly: {
+                label: "Weekly",
+                usedPercent: 40,
+                windowMinutes: 10080,
+                resetAt: null,
+              },
+            },
+          };
+        },
+      },
+      now: () => new Date("2026-06-06T12:00:00.000Z"),
+    } as never,
+  ) as ReturnType<typeof createDefaultAdminService> & {
+    runCodexCapacityAlertEmailMonitor(): Promise<{ evaluatedAlerts: number; emailsSent: number; recipients: number }>;
+  };
+
+  const result = await service.runCodexCapacityAlertEmailMonitor();
+
+  assert.deepEqual(result, {
+    evaluatedAlerts: 1,
+    emailsSent: 2,
+    recipients: 2,
+  });
+  assert.deepEqual(sent.map((entry) => ({
+    to: entry.to,
+    subject: entry.subject,
+  })), [
+    {
+      to: "admin-one@example.test",
+      subject: "[URGENT] Codex 5h limit capacity at 95%",
+    },
+    {
+      to: "admin-two@example.test",
+      subject: "[URGENT] Codex 5h limit capacity at 95%",
+    },
+  ]);
+  assert.match(sent[0]?.text ?? "", /Codex Team One: 5h 5% remaining/);
+  assert.equal(auditEvents.length, 2);
+  assert.equal(auditEvents.every((event) => event.action === "codex_capacity_alert.email.sent"), true);
+});
+
 test("/admin/api/alerts returns repository alerts when Codex capacity probing fails", async () => {
   const restoreConsole = muteConsoleError();
   const expected = [

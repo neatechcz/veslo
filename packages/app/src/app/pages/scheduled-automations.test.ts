@@ -9,7 +9,9 @@ import { buildSchedule } from "./scheduled-automation-schedule";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const scheduledSource = () => readFileSync(join(__dirname, "scheduled.tsx"), "utf8");
 const scheduleHelperSource = () => readFileSync(join(__dirname, "scheduled-automation-schedule.ts"), "utf8");
+const workspaceMapSource = () => readFileSync(join(__dirname, "../lib/automation-workspace-map.ts"), "utf8");
 const appSource = () => readFileSync(join(__dirname, "../app.tsx"), "utf8");
+const dashboardSource = () => readFileSync(join(__dirname, "dashboard.tsx"), "utf8");
 
 test("ScheduledTasksView keeps server automations on API handlers instead of prompt/session routing", () => {
   const source = scheduledSource();
@@ -64,6 +66,56 @@ test("ScheduledTasksView provides app-style workspace filtering and cards", () =
   assert.doesNotMatch(source, /<table|<thead|<tbody/);
 });
 
+test("ScheduledTasksView keeps automation templates inside the create modal", () => {
+  const source = scheduledSource();
+
+  assert.match(source, /scheduled\.templates_label/);
+  assert.match(source, /applyAutomationTemplate/);
+  assert.doesNotMatch(source, /openCreateModalFromTemplate/);
+
+  const emptyState = source.match(/fallback=\{\s*<div class="space-y-4">[\s\S]*?<\/div>\s*\}/)?.[0] ?? "";
+  assert.ok(emptyState, "empty automations fallback should remain explicit");
+  assert.doesNotMatch(emptyState, /AutomationTemplateCard/);
+
+  const createModal = source.match(/<Show when=\{createModalOpen\(\)\}>[\s\S]*?<Show when=\{editTarget\(\)\}>/)?.[0] ?? "";
+  assert.ok(createModal, "create modal source should be present");
+  assert.match(createModal, /AutomationTemplateCard/);
+  assert.match(createModal, /scheduled\.no_ready_workspaces_title/);
+});
+
+test("ScheduledTasksView can open create automation without the session new-task guard", () => {
+  const source = scheduledSource();
+
+  assert.match(source, /const createModalDisabled = createMemo\(\(\) => !props\.sourceReady \|\| props\.busy\)/);
+  assert.doesNotMatch(source, /props\.newTaskDisabled \|\| !props\.sourceReady/);
+  assert.match(source, /disabled=\{createModalDisabled\(\)\}/);
+});
+
+test("App recovers the local Veslo server before refreshing automations", () => {
+  const source = appSource();
+  const dashboard = dashboardSource();
+  const recovery = source.match(/const ensureScheduledJobsSourceReady[\s\S]*?};/);
+  const clientRecovery = source.match(/const ensureScheduledJobsClient[\s\S]*?};/);
+  const refresh = source.match(/const refreshScheduledJobs[\s\S]*?const reloadScheduledJobsSource/)?.[0] ?? "";
+
+  assert.ok(recovery, "scheduled automations source recovery helper should be present");
+  assert.match(recovery[0], /scheduledJobsSourceReady\(\)/);
+  assert.match(recovery[0], /scheduledJobsSource\(\) !== "local"/);
+  assert.match(recovery[0], /ensureLocalVesloServerRunning\(\{ ignoreStartupPreference: true \}\)/);
+  assert.ok(clientRecovery, "scheduled automations client recovery helper should be present");
+  assert.match(clientRecovery[0], /ensureLocalVesloServerRunning\(\{ ignoreStartupPreference: true \}\)/);
+  assert.match(clientRecovery[0], /await vesloServerInfo\(\)/);
+  assert.match(clientRecovery[0], /createVesloServerClient\(\{ baseUrl, token: clientToken, hostToken \}\)/);
+  assert.match(refresh, /await ensureScheduledJobsClient\(\)\.catch/);
+  assert.ok(
+    refresh.indexOf("await ensureScheduledJobsClient().catch") < refresh.indexOf("const serverStatus = vesloServerStatus()"),
+    "automations refresh should recover a concrete Veslo server client before checking server status",
+  );
+  assert.match(refresh, /resolveAutomationWorkspaceMap\(client\)/);
+  assert.match(source, /reloadScheduledAutomationsSource:\s*reloadScheduledJobsSource/);
+  assert.match(dashboard, /reloadWorkspaceEngine=\{props\.reloadScheduledAutomationsSource\}/);
+});
+
 test("ScheduledTasksView defaults new automations to the active ready workspace when available", () => {
   const source = scheduledSource();
   const app = appSource();
@@ -107,10 +159,14 @@ test("App refreshes automations for all mapped workspaces", () => {
 
 test("App only treats remote automation workspace ids as ready when the connected server lists them", () => {
   const source = appSource();
+  const mapSource = workspaceMapSource();
 
-  assert.match(source, /const listedServerWorkspaceIds = new Set\(items\.map\(\(item\) => item\.id\)\)/);
-  assert.match(source, /listedServerWorkspaceIds\.has\(storedServerWorkspaceId\)/);
-  assert.match(source, /findServerWorkspaceByDirectory\(items, workspace\.directory \?\? workspace\.path \?\? ""\)/);
+  assert.match(source, /buildAutomationWorkspaceSummaries/);
+  assert.match(source, /connectedServerBaseUrl:\s*client\.baseUrl/);
+  assert.match(mapSource, /const listedServerWorkspaceIds = new Set\(input\.serverWorkspaces\.map\(\(item\) => item\.id\)\)/);
+  assert.match(mapSource, /listedServerWorkspaceIds\.has\(storedServerWorkspaceId\)/);
+  assert.match(mapSource, /findServerWorkspaceByDirectory\(input\.serverWorkspaces, workspace\.directory \?\? workspace\.path \?\? ""\)/);
+  assert.match(mapSource, /remoteWorkspaceBelongsToDifferentServer\(workspace, input\.connectedServerBaseUrl\)/);
   assert.doesNotMatch(source, /serverWorkspaceId =\s*\n\s*workspace\.vesloWorkspaceId\?\.trim\(\)/);
 });
 

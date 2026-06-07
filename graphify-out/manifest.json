@@ -65,9 +65,9 @@
     "semantic_hash": "b71e442247161285c65de8c809717798"
   },
   "packages/app/package.json": {
-    "mtime": 1780806827.9692285,
-    "ast_hash": "9fe45bc26600fb38153f2047f5d56444",
-    "semantic_hash": "9fe45bc26600fb38153f2047f5d56444"
+    "mtime": 1780816108.32979,
+    "ast_hash": "2db33056519e4b447df88f33fbed846c",
+    "semantic_hash": ""
   },
   "packages/app/progress.json": {
     "mtime": 1777281604.5648208,
@@ -85,7 +85,7 @@
     "semantic_hash": "6bedcee72c9801eaf690728669e1ee21"
   },
   "packages/app/scripts/_util.mjs": {
-    "mtime": 1777281604.5656986,
+    "mtime": 1780836468.909785,
     "ast_hash": "fe8d4f73970c6307aba3162cd54cd762",
     "semantic_hash": "fe8d4f73970c6307aba3162cd54cd762"
   },
@@ -260,9 +260,9 @@
     "semantic_hash": "d9b38f3bd08b8269d416a170c7fde143"
   },
   "packages/app/src/app/app-managed-ai-bootstrap-gate.test.ts": {
-    "mtime": 1780806827.9696894,
-    "ast_hash": "9d5e823dcf6e90140c356545e0aa2558",
-    "semantic_hash": "9d5e823dcf6e90140c356545e0aa2558"
+    "mtime": 1780816462.2879333,
+    "ast_hash": "25fada840bcc371b87f85786578a2e01",
+    "semantic_hash": ""
   },
   "packages/app/src/app/app-overlay-i18n.test.ts": {
     "mtime": 1777281604.5691943,
@@ -295,9 +295,9 @@
     "semantic_hash": "34f726e20fa2d3dcf92471a5ed9b489f"
   },
   "packages/app/src/app/app-stale-local-runtime-recovery.test.ts": {
-    "mtime": 1780806827.9698977,
-    "ast_hash": "435182b3ca6894aafa8fa27794d91536",
-    "semantic_hash": "435182b3ca6894aafa8fa27794d91536"
+    "mtime": 1780816462.2884607,
+    "ast_hash": "73a5b91c4a1d2feed5772d5d8f156632",
+    "semantic_hash": ""
   },
   "packages/app/src/app/app-startup-signal-order.test.ts": {
     "mtime": 1780304781.8242269,
@@ -315,8 +315,8 @@
     "semantic_hash": "f9d6940de3591a92d0b2d5316ccfa031"
   },
   "packages/app/src/app/app.tsx": {
-    "mtime": 1780806832.8747582,
-    "ast_hash": "7196de0e1ea70ae8c900af118c9c9b78",
+    "mtime": 1780816470.8031669,
+    "ast_hash": "b55c017b10e32267404ee51e68e8a59a",
     "semantic_hash": ""
   },
   "packages/app/src/app/components/add-mcp-modal.tsx": {
@@ -390,14 +390,14 @@
     "semantic_hash": "a9dd6c97744c02deb688c4e0d3d17b79"
   },
   "packages/app/src/app/components/layout/global-sidebar-prefs.test.ts": {
-    "mtime": 1780806827.9721005,
-    "ast_hash": "e485d25875eacc28d2e9b054b1b40f23",
-    "semantic_hash": "e485d25875eacc28d2e9b054b1b40f23"
+    "mtime": 1780816462.2909405,
+    "ast_hash": "fa1c4176c0ecf0390762cd54a6f33c33",
+    "semantic_hash": ""
   },
   "packages/app/src/app/components/layout/global-sidebar-prefs.ts": {
-    "mtime": 1780806827.972377,
-    "ast_hash": "853e5254085b6067d66427bcdc54d391",
-    "semantic_hash": "853e5254085b6067d66427bcdc54d391"
+    "mtime": 1780816462.2912045,
+    "ast_hash": "d411a02f9591968785dfec6c2ecb569d",
+    "semantic_hash": ""
   },
   "packages/app/src/app/components/layout/left-sidebar-width-prefs.test.ts": {
     "mtime": 1777281604.5719538,
@@ -460,9 +460,9 @@
     "semantic_hash": "33ade7aa008c668c9b57d0f744b3596f"
   },
   "packages/app/src/app/components/part-view-markdown-renderer.ts": {
-    "mtime": 1780806827.9728518,
-    "ast_hash": "cac6e93752cac97f814a8e7c5b0b8b3f",
-    "semantic_hash": "cac6e93752cac97f814a8e7c5b0b8b3f"
+    "mtime": 1780816462.2916908,
+    "ast_hash": "c40c1939d4483aebbe51a4e32cc8617e",
+    "semantic_hash": ""
   },
   "packages/app/src/app/components/part-view.path-links.test.ts": {
     "mtime": 1777281604.574259,
@@ -470,9 +470,9 @@
     "semantic_hash": "58deed8606a78741bc40375c03ce9a8d"
   },
   "packages/app/src/app/components/part-view.tsx": {
-    "mtime": 1780806827.9737182,
-    "ast_hash": "054f27cd7b54b7e04d1c732c294c0d88",
-    "semantic_hash": "054f27cd7b54b7e04d1c732c294c0d88"
+    "mtime": 1780816462.2920904,
+    "ast_hash": "d734c8a010ab7bc7129d8984a9e09997",
+    "semantic_hash": ""
   },
   "packages/app/src/app/components/question-modal.tsx": {
     "mtime": 1780304781.8270633,
@@ -600,9 +600,9 @@
     "semantic_hash": "322e32e059f06376cdaeabf3b9aef222"
   },
   "packages/app/src/app/components/session/composer.tsx": {
-    "mtime": 1780806827.9741557,
-    "ast_hash": "d7021098be2946cd2e683c1c7c9812b3",
-    "semantic_hash": "d7021098be2946cd2e683c1c7c9812b3"
+    "mtime": 1780816462.292922,
+    "ast_hash": "db0b72260bbbb3c0c05ccdc42a0a2fd6",
+    "semantic_hash": ""
   },
   "packages/app/src/app/components/session/context-panel.tsx": {
     "mtime": 1780304781.829681,
@@ -650,14 +650,14 @@
     "semantic_hash": "081d7a5f72bb450994d05caa41acb332"
   },
   "packages/app/src/app/components/session/message-list-hybrid-timeline.test.ts": {
-    "mtime": 1780806827.9748228,
-    "ast_hash": "d224f2d0f4282a9333420ef292e3f7a6",
-    "semantic_hash": "d224f2d0f4282a9333420ef292e3f7a6"
+    "mtime": 1780816462.2935207,
+    "ast_hash": "604b79ccfe1180a811cd70b667087470",
+    "semantic_hash": ""
   },
   "packages/app/src/app/components/session/message-list-path-layout.test.ts": {
-    "mtime": 1780806827.9753785,
-    "ast_hash": "8d022eed3aad37c61920041ffa59faea",
-    "semantic_hash": "8d022eed3aad37c61920041ffa59faea"
+    "mtime": 1780816462.2938168,
+    "ast_hash": "b0d23babeeb500baffac3815b266c026",
+    "semantic_hash": ""
   },
   "packages/app/src/app/components/session/message-list-subagent-decorations.test.ts": {
     "mtime": 1777281604.578276,
@@ -665,9 +665,9 @@
     "semantic_hash": "1636d7d8a56f172351f980ba9bff409f"
   },
   "packages/app/src/app/components/session/message-list.tsx": {
-    "mtime": 1780806827.9759264,
-    "ast_hash": "4cfdff05f16fca8cdecfd76833782aa0",
-    "semantic_hash": "4cfdff05f16fca8cdecfd76833782aa0"
+    "mtime": 1780816462.294274,
+    "ast_hash": "0e061753d3727ad69e39e7065fe80733",
+    "semantic_hash": ""
   },
   "packages/app/src/app/components/session/minimap.tsx": {
     "mtime": 1780304781.830338,
@@ -685,14 +685,14 @@
     "semantic_hash": "871ff8a78c5ae4f64c3ccb4e646d848b"
   },
   "packages/app/src/app/components/session/progress-grouping-model.test.ts": {
-    "mtime": 1780806827.9763114,
-    "ast_hash": "52097f16362975c6e5d20d45df2dafc4",
-    "semantic_hash": "52097f16362975c6e5d20d45df2dafc4"
+    "mtime": 1780816462.2946408,
+    "ast_hash": "cb63fd51247a34660b3a3d29edc440d7",
+    "semantic_hash": ""
   },
   "packages/app/src/app/components/session/progress-grouping-model.ts": {
-    "mtime": 1780806827.9767263,
-    "ast_hash": "4da66dbc729c6cc11fe0bae8a93dcca0",
-    "semantic_hash": "4da66dbc729c6cc11fe0bae8a93dcca0"
+    "mtime": 1780816462.294993,
+    "ast_hash": "584869ce9d7b000cc66ab26a55af4c09",
+    "semantic_hash": ""
   },
   "packages/app/src/app/components/session/queued-message-list-model.ts": {
     "mtime": 1779635196.0909264,
@@ -855,14 +855,14 @@
     "semantic_hash": "4b0de120035beba4dd00351106977d73"
   },
   "packages/app/src/app/components/session/workspace-session-list-model.test.ts": {
-    "mtime": 1780806827.976997,
-    "ast_hash": "ea931131374b671a1782b97c640a315b",
-    "semantic_hash": "ea931131374b671a1782b97c640a315b"
+    "mtime": 1780816462.2954483,
+    "ast_hash": "f8d67b838c5a721d8d7cb3e785b46704",
+    "semantic_hash": ""
   },
   "packages/app/src/app/components/session/workspace-session-list-model.ts": {
-    "mtime": 1780806827.9771821,
-    "ast_hash": "901dc1790c65ccaa6060346bde4cd3c9",
-    "semantic_hash": "901dc1790c65ccaa6060346bde4cd3c9"
+    "mtime": 1780816462.2957532,
+    "ast_hash": "a8cfe6a5615d104150eb7af0a14662d9",
+    "semantic_hash": ""
   },
   "packages/app/src/app/components/session/workspace-session-list-order.test.ts": {
     "mtime": 1780304781.8321724,
@@ -1185,14 +1185,14 @@
     "semantic_hash": "1287026a236fcc09a4a0a2ee239697fb"
   },
   "packages/app/src/app/context/updater.test.ts": {
-    "mtime": 1780596566.7058947,
-    "ast_hash": "3f39094cf7dcec9687299fb6ed3f13e1",
-    "semantic_hash": "3f39094cf7dcec9687299fb6ed3f13e1"
+    "mtime": 1780812565.6035979,
+    "ast_hash": "a72dc943c5fb5fd33bb29ae452f60a1c",
+    "semantic_hash": ""
   },
   "packages/app/src/app/context/updater.ts": {
-    "mtime": 1780596566.7063336,
-    "ast_hash": "53d9210c37574bf9771e73ddeb1f352a",
-    "semantic_hash": "53d9210c37574bf9771e73ddeb1f352a"
+    "mtime": 1780812622.74316,
+    "ast_hash": "2d5adf1b078a70fc0428d64c10d4d760",
+    "semantic_hash": ""
   },
   "packages/app/src/app/context/veslo-server.ts": {
     "mtime": 1779192950.8912792,
@@ -1225,9 +1225,9 @@
     "semantic_hash": "c8e3cbc3cc5bf2784a04236048d13056"
   },
   "packages/app/src/app/context/workspace.ts": {
-    "mtime": 1780806827.978233,
-    "ast_hash": "0e667214d10a1c49888733455c6b7454",
-    "semantic_hash": "0e667214d10a1c49888733455c6b7454"
+    "mtime": 1780816462.2965994,
+    "ast_hash": "5fd5cf3ec71a94ad8927fa37b64b29b3",
+    "semantic_hash": ""
   },
   "packages/app/src/app/data/skill-creator-contract.test.ts": {
     "mtime": 1780776097.6053073,
@@ -1335,9 +1335,9 @@
     "semantic_hash": "59f3185a8aecf50644ffa457a6cb7ec3"
   },
   "packages/app/src/app/lib/db-reader.ts": {
-    "mtime": 1780806827.9787369,
-    "ast_hash": "9fd6dcbace0338d97c7bf4ce802940a8",
-    "semantic_hash": "9fd6dcbace0338d97c7bf4ce802940a8"
+    "mtime": 1780816462.296955,
+    "ast_hash": "48a8b28f9b4d9c7563e35b0323771439",
+    "semantic_hash": ""
   },
   "packages/app/src/app/lib/deep-links.ts": {
     "mtime": 1777281604.5905943,
@@ -1810,9 +1810,9 @@
     "semantic_hash": "f359a690258eeb1021a2497bb4bb77af"
   },
   "packages/app/src/app/pages/dashboard.tsx": {
-    "mtime": 1780806827.9797204,
-    "ast_hash": "d3823a5f5609b770b14ec4ca628d1f33",
-    "semantic_hash": "d3823a5f5609b770b14ec4ca628d1f33"
+    "mtime": 1780816470.8036609,
+    "ast_hash": "0d0a1d4fde855c4fb7d5426bba3fc8ea",
+    "semantic_hash": ""
   },
   "packages/app/src/app/pages/extensions.tsx": {
     "mtime": 1777281604.6015618,
@@ -1855,8 +1855,8 @@
     "semantic_hash": "685f92b85b45d4d60c51e90a3f759e19"
   },
   "packages/app/src/app/pages/scheduled-automations.test.ts": {
-    "mtime": 1780776097.6112595,
-    "ast_hash": "869400e65a47c1ea9677d43b89dc3b78",
+    "mtime": 1780814773.5476768,
+    "ast_hash": "f3a6d8603d4a12f834bbf0432e064a6e",
     "semantic_hash": ""
   },
   "packages/app/src/app/pages/scheduled-layout-contract.test.ts": {
@@ -1865,14 +1865,14 @@
     "semantic_hash": "6f877ee1c510c96aa7d9d94dc755a36c"
   },
   "packages/app/src/app/pages/scheduled.tsx": {
-    "mtime": 1780776097.611891,
-    "ast_hash": "77b0b53f3efec767330c67ed79c155ce",
-    "semantic_hash": "77b0b53f3efec767330c67ed79c155ce"
+    "mtime": 1780807660.695547,
+    "ast_hash": "00cf26258b560640c27a1ddf1d9bbc42",
+    "semantic_hash": ""
   },
   "packages/app/src/app/pages/session-admin-ai-access.test.ts": {
-    "mtime": 1780806827.9801447,
-    "ast_hash": "143a276430f00ad097433525d98f87a8",
-    "semantic_hash": "143a276430f00ad097433525d98f87a8"
+    "mtime": 1780816462.297973,
+    "ast_hash": "1eccf996639a5d4a0c90a1a0f62517cc",
+    "semantic_hash": ""
   },
   "packages/app/src/app/pages/session-composer-drafts.test.ts": {
     "mtime": 1777281604.60319,
@@ -1885,9 +1885,9 @@
     "semantic_hash": "6c2cfccae294f0d1ebe1fed9bbd8a1a5"
   },
   "packages/app/src/app/pages/session-composer-entry.test.ts": {
-    "mtime": 1780776097.612101,
-    "ast_hash": "f06c935da2d4ce883f522e68e7147eab",
-    "semantic_hash": "f06c935da2d4ce883f522e68e7147eab"
+    "mtime": 1780815599.8049634,
+    "ast_hash": "bbc0e19969206682abe686968e3c24ea",
+    "semantic_hash": ""
   },
   "packages/app/src/app/pages/session-escape-stop-confirmation.test.ts": {
     "mtime": 1780776097.6122663,
@@ -1895,9 +1895,9 @@
     "semantic_hash": "ab0da347d3ada9b8e32dcd87fc88d1f5"
   },
   "packages/app/src/app/pages/session-inline-loading.test.ts": {
-    "mtime": 1780776097.612472,
-    "ast_hash": "eba51e4c95a3a025897aecb350159dc9",
-    "semantic_hash": "eba51e4c95a3a025897aecb350159dc9"
+    "mtime": 1780807882.5815678,
+    "ast_hash": "a524e8d09d36a32658aefcd2abaf90ba",
+    "semantic_hash": ""
   },
   "packages/app/src/app/pages/session-layout-width.test.ts": {
     "mtime": 1777281604.6034641,
@@ -1980,9 +1980,9 @@
     "semantic_hash": "a43d35f444eb2559f88be0be13dbf43f"
   },
   "packages/app/src/app/pages/session.tsx": {
-    "mtime": 1780806827.9805343,
-    "ast_hash": "46eabd78546635e4c0f9ff60651232bd",
-    "semantic_hash": "46eabd78546635e4c0f9ff60651232bd"
+    "mtime": 1780816462.29922,
+    "ast_hash": "fadc4eb940ca39349edc0699893c7cf5",
+    "semantic_hash": ""
   },
   "packages/app/src/app/pages/settings-admin-ai-access.test.ts": {
     "mtime": 1780304781.845231,
@@ -1995,9 +1995,9 @@
     "semantic_hash": "1652ac6899288cc25c60924f2e75a3ca"
   },
   "packages/app/src/app/pages/settings-tabs-layout.test.ts": {
-    "mtime": 1780596566.7113678,
-    "ast_hash": "4ce2891f4333cc3a8fdb6d351e3900e5",
-    "semantic_hash": "4ce2891f4333cc3a8fdb6d351e3900e5"
+    "mtime": 1780814045.5337968,
+    "ast_hash": "4f189d06492ded8a2d72bdd2222fe221",
+    "semantic_hash": ""
   },
   "packages/app/src/app/pages/settings-technical-details.test.ts": {
     "mtime": 1777281604.6050746,
@@ -2005,9 +2005,9 @@
     "semantic_hash": "27a22574cb4064c6734db7001845265c"
   },
   "packages/app/src/app/pages/settings.tsx": {
-    "mtime": 1780596566.712015,
-    "ast_hash": "9d49bb6adca6e46f5848d4c0579f06f6",
-    "semantic_hash": "9d49bb6adca6e46f5848d4c0579f06f6"
+    "mtime": 1780814075.3393006,
+    "ast_hash": "abb21e6e2d5252d7fc3d02b477e41e78",
+    "semantic_hash": ""
   },
   "packages/app/src/app/pages/sidebar-archived-settings-navigation.test.ts": {
     "mtime": 1777281604.60543,
@@ -2055,14 +2055,14 @@
     "semantic_hash": "cdccd926f45e100242796eb0b66a4ff7"
   },
   "packages/app/src/app/pages/soul-layout-contract.test.ts": {
-    "mtime": 1780776097.6160932,
-    "ast_hash": "64217b72f8d2361a427e4d1ab4156958",
-    "semantic_hash": "64217b72f8d2361a427e4d1ab4156958"
+    "mtime": 1780814956.1368287,
+    "ast_hash": "2c1a97bd6f3e9ac47e44843c1e86690a",
+    "semantic_hash": ""
   },
   "packages/app/src/app/pages/soul.tsx": {
-    "mtime": 1780776097.6164854,
-    "ast_hash": "37e617306ea69fd329997f7c1935999f",
-    "semantic_hash": "37e617306ea69fd329997f7c1935999f"
+    "mtime": 1780815054.8800943,
+    "ast_hash": "5720354a589ac381e1c02959f40cede5",
+    "semantic_hash": ""
   },
   "packages/app/src/app/pending-session-send-flow.test.ts": {
     "mtime": 1780596566.714398,
@@ -2135,14 +2135,14 @@
     "semantic_hash": "61c103add8f211341a7740ac64c6fe05"
   },
   "packages/app/src/app/system-state-updater-retry.test.ts": {
-    "mtime": 1780596566.7148702,
-    "ast_hash": "7a986e90e4cdeae606b83e7c6ff64396",
-    "semantic_hash": "7a986e90e4cdeae606b83e7c6ff64396"
+    "mtime": 1780812977.1663847,
+    "ast_hash": "cb8dfc3a0d6af1ebe8ecf7716d8a1d7a",
+    "semantic_hash": ""
   },
   "packages/app/src/app/system-state.ts": {
-    "mtime": 1780596566.7154882,
-    "ast_hash": "e61391fc47d339a5211e8c44a0c28b09",
-    "semantic_hash": "e61391fc47d339a5211e8c44a0c28b09"
+    "mtime": 1780813175.2062132,
+    "ast_hash": "486861c25abcd5e3aa76a7dc167999ab",
+    "semantic_hash": ""
   },
   "packages/app/src/app/theme.ts": {
     "mtime": 1777281604.6108384,
@@ -2195,14 +2195,14 @@
     "semantic_hash": "9429c736d11f4096715e9b5374ee1c23"
   },
   "packages/app/src/app/utils/local-runtime-lifecycle.test.ts": {
-    "mtime": 1780806827.9810226,
-    "ast_hash": "29bec79d269749d94907aa16a62b9c1a",
-    "semantic_hash": "29bec79d269749d94907aa16a62b9c1a"
+    "mtime": 1780816462.2996078,
+    "ast_hash": "8424956f90b828389846c10ff529a3c6",
+    "semantic_hash": ""
   },
   "packages/app/src/app/utils/local-runtime-lifecycle.ts": {
-    "mtime": 1780806827.981551,
-    "ast_hash": "86f2d812376cb2d67ff0e7365c87a23c",
-    "semantic_hash": "86f2d812376cb2d67ff0e7365c87a23c"
+    "mtime": 1780816462.3000662,
+    "ast_hash": "25b9cb2f887c9bd9042283c7f1e6089b",
+    "semantic_hash": ""
   },
   "packages/app/src/app/utils/messages-grouping.test.ts": {
     "mtime": 1777281604.611898,
@@ -2370,14 +2370,14 @@
     "semantic_hash": "f0005617265d0ad75f53a83dfe4e4d65"
   },
   "packages/app/src/i18n/locales/cs.ts": {
-    "mtime": 1780776097.619024,
-    "ast_hash": "4c12a8b336605171294b2faf78bde6db",
-    "semantic_hash": "4c12a8b336605171294b2faf78bde6db"
+    "mtime": 1780813097.3931901,
+    "ast_hash": "96a8ec6696d95eb81930fafa759b85b5",
+    "semantic_hash": ""
   },
   "packages/app/src/i18n/locales/en.ts": {
-    "mtime": 1780776097.6199396,
-    "ast_hash": "9f519902027c6c56a2d0c7e37f86da11",
-    "semantic_hash": "9f519902027c6c56a2d0c7e37f86da11"
+    "mtime": 1780813097.394307,
+    "ast_hash": "8eed6b8766550b92af89d50258ee668b",
+    "semantic_hash": ""
   },
   "packages/app/src/i18n/locales/index.ts": {
     "mtime": 1777281604.6153986,
@@ -2385,9 +2385,9 @@
     "semantic_hash": "93708cab9e57bef681fe7a0bba87e373"
   },
   "packages/app/src/i18n/locales/zh.ts": {
-    "mtime": 1780776097.6204076,
-    "ast_hash": "bb118975bbe1e0ae87b17a2876dddbae",
-    "semantic_hash": "bb118975bbe1e0ae87b17a2876dddbae"
+    "mtime": 1780813097.3949647,
+    "ast_hash": "11db7b5d6430ed45f46ddcfbdd141afb",
+    "semantic_hash": ""
   },
   "packages/app/src/index.tsx": {
     "mtime": 1777281604.6156518,
@@ -2430,9 +2430,9 @@
     "semantic_hash": "c10417c727ec619aef55afa7c87417a8"
   },
   "packages/desktop/package.json": {
-    "mtime": 1780806827.9818614,
-    "ast_hash": "65ccf87cd80e8d1ae34a92963c7867ed",
-    "semantic_hash": "65ccf87cd80e8d1ae34a92963c7867ed"
+    "mtime": 1780816108.3301823,
+    "ast_hash": "0d58d765c166d340cf89f5bcdc1df166",
+    "semantic_hash": ""
   },
   "packages/desktop/scripts/chrome-devtools-mcp-shim.ts": {
     "mtime": 1777281604.6186912,
@@ -2470,9 +2470,9 @@
     "semantic_hash": "b89e464c25bc4425f68cc82f905a1e1b"
   },
   "packages/desktop/src-tauri/capabilities/default.json": {
-    "mtime": 1780806827.9830706,
-    "ast_hash": "4d5af47d189d9acaa479b59f4d0203b2",
-    "semantic_hash": "4d5af47d189d9acaa479b59f4d0203b2"
+    "mtime": 1780816462.3010945,
+    "ast_hash": "cac31b41b01049947d39e86477089f17",
+    "semantic_hash": ""
   },
   "packages/desktop/src-tauri/gen/schemas/acl-manifests.json": {
     "mtime": 1780776097.624588,
@@ -2480,9 +2480,9 @@
     "semantic_hash": "804ac71695a86d3c76c7de80edf67745"
   },
   "packages/desktop/src-tauri/gen/schemas/capabilities.json": {
-    "mtime": 1780806827.9832485,
-    "ast_hash": "b4559fb0981855a546400f5574bf882d",
-    "semantic_hash": "b4559fb0981855a546400f5574bf882d"
+    "mtime": 1780816462.301293,
+    "ast_hash": "aad86e908494517bdbaec45bb131db11",
+    "semantic_hash": ""
   },
   "packages/desktop/src-tauri/gen/schemas/desktop-schema.json": {
     "mtime": 1780776097.6265142,
@@ -2500,9 +2500,9 @@
     "semantic_hash": "8ec9c8147323d3f55e0a93085b0617f4"
   },
   "packages/desktop/src-tauri/gen/schemas/windows-schema.json": {
-    "mtime": 1780806827.9835072,
-    "ast_hash": "b6b10c2298dbe8fad46e24c16daa2c7d",
-    "semantic_hash": "b6b10c2298dbe8fad46e24c16daa2c7d"
+    "mtime": 1780816462.3018036,
+    "ast_hash": "2a13f181c3eb978bf4684deb410cffb4",
+    "semantic_hash": ""
   },
   "packages/desktop/src-tauri/src/bun_env.rs": {
     "mtime": 1777281604.6266835,
@@ -2515,9 +2515,9 @@
     "semantic_hash": "8fa79d1c7d454863bbf0c69433508a1a"
   },
   "packages/desktop/src-tauri/src/commands/command_files.rs": {
-    "mtime": 1780806827.9838827,
-    "ast_hash": "d2d2431e45c976341f3b9743f5eb6d9e",
-    "semantic_hash": "d2d2431e45c976341f3b9743f5eb6d9e"
+    "mtime": 1780816462.3021212,
+    "ast_hash": "8479b5839c80db6e94687efea5cfaa67",
+    "semantic_hash": ""
   },
   "packages/desktop/src-tauri/src/commands/config.rs": {
     "mtime": 1777281604.626978,
@@ -2570,9 +2570,9 @@
     "semantic_hash": "d502c95b94255c64f5a632a3240a5669"
   },
   "packages/desktop/src-tauri/src/commands/session_reader.rs": {
-    "mtime": 1780806827.9846554,
-    "ast_hash": "aeffc4f0da599bb461e30c1534c06389",
-    "semantic_hash": "aeffc4f0da599bb461e30c1534c06389"
+    "mtime": 1780816462.302325,
+    "ast_hash": "a7c2db8957d3d04ec15fc5412310ba25",
+    "semantic_hash": ""
   },
   "packages/desktop/src-tauri/src/commands/skills.rs": {
     "mtime": 1780776097.6321125,
@@ -2600,9 +2600,9 @@
     "semantic_hash": "f5155f3375e18c2b2966aae34aae5e23"
   },
   "packages/desktop/src-tauri/src/config.rs": {
-    "mtime": 1780806827.9848096,
-    "ast_hash": "9910484533a75df5d340150d8d8ca7cf",
-    "semantic_hash": "9910484533a75df5d340150d8d8ca7cf"
+    "mtime": 1780816462.303156,
+    "ast_hash": "e1940d642ffd28c46bb96e2525d2e4c4",
+    "semantic_hash": ""
   },
   "packages/desktop/src-tauri/src/debug_logs_forwarder.rs": {
     "mtime": 1780304781.854574,
@@ -2645,9 +2645,9 @@
     "semantic_hash": "31afd1f361c39a4601be8b68067f9b56"
   },
   "packages/desktop/src-tauri/src/lib.rs": {
-    "mtime": 1780806827.9851139,
-    "ast_hash": "ae4c35248133faafb6439bf6faa85fa9",
-    "semantic_hash": "ae4c35248133faafb6439bf6faa85fa9"
+    "mtime": 1780816462.3035276,
+    "ast_hash": "a353b45b0acb223baa636fbf3846965c",
+    "semantic_hash": ""
   },
   "packages/desktop/src-tauri/src/main.rs": {
     "mtime": 1777281604.6310728,
@@ -2685,9 +2685,9 @@
     "semantic_hash": "92946a4b3c220a4d205791df3f91249b"
   },
   "packages/desktop/src-tauri/src/paths.rs": {
-    "mtime": 1780806827.985958,
-    "ast_hash": "0f52e5a13ccf519403daf7bc2443f071",
-    "semantic_hash": "0f52e5a13ccf519403daf7bc2443f071"
+    "mtime": 1780816462.3037937,
+    "ast_hash": "2c1c5a739d2d94062bcb0366e19753d8",
+    "semantic_hash": ""
   },
   "packages/desktop/src-tauri/src/platform/mod.rs": {
     "mtime": 1777281604.6324668,
@@ -2740,9 +2740,9 @@
     "semantic_hash": "f554300154eb63b26096293fc1754982"
   },
   "packages/desktop/src-tauri/src/veslo_server/spawn.rs": {
-    "mtime": 1780806827.9861474,
-    "ast_hash": "5189a8bec6f1ac70fbdb92c3c52b5993",
-    "semantic_hash": "5189a8bec6f1ac70fbdb92c3c52b5993"
+    "mtime": 1780816462.3041122,
+    "ast_hash": "404b80e65c0ca85fbac437b41f6e6017",
+    "semantic_hash": ""
   },
   "packages/desktop/src-tauri/src/workspace/commands.rs": {
     "mtime": 1777281604.6337287,
@@ -2775,9 +2775,9 @@
     "semantic_hash": "2ddd901f6972d190d4d74b6feb905e78"
   },
   "packages/desktop/src-tauri/tauri.conf.json": {
-    "mtime": 1780806827.9864023,
-    "ast_hash": "88d15a5fe7f0610866a9eec8d8d57c39",
-    "semantic_hash": "88d15a5fe7f0610866a9eec8d8d57c39"
+    "mtime": 1780816462.304276,
+    "ast_hash": "91d47a72e2f0596bb5df6e1002932494",
+    "semantic_hash": ""
   },
   "packages/desktop/src-tauri/tauri.dev.conf.json": {
     "mtime": 1777281604.634626,
@@ -3285,9 +3285,9 @@
     "semantic_hash": "6e1e8e2378f8c4c1669a4e0382ed4439"
   },
   "packages/opencode-router/package.json": {
-    "mtime": 1780806827.9865797,
-    "ast_hash": "adba0fd2bcff581fc8fb444968e3c173",
-    "semantic_hash": "adba0fd2bcff581fc8fb444968e3c173"
+    "mtime": 1780816108.3313675,
+    "ast_hash": "f7d66f3c63aec66bdc05bb56f1be1ade",
+    "semantic_hash": ""
   },
   "packages/opencode-router/script/build.ts": {
     "mtime": 1779634092.6965783,
@@ -3425,9 +3425,9 @@
     "semantic_hash": "9386a8dc90df43f7ab7f2897726b7715"
   },
   "packages/orchestrator/package.json": {
-    "mtime": 1780806827.9867074,
-    "ast_hash": "4cd57f7584a0326313a24f54b82657a2",
-    "semantic_hash": "4cd57f7584a0326313a24f54b82657a2"
+    "mtime": 1780816108.3305032,
+    "ast_hash": "528c4fb2615657e9504ed054bf7964c7",
+    "semantic_hash": ""
   },
   "packages/orchestrator/script/build.ts": {
     "mtime": 1779634092.6971395,
@@ -3540,9 +3540,9 @@
     "semantic_hash": "039102ee44c982686fcacec7dd9433f9"
   },
   "packages/server/package.json": {
-    "mtime": 1780806827.9868486,
-    "ast_hash": "9aadce9c798463d8a3897d6bc97ee8cf",
-    "semantic_hash": "9aadce9c798463d8a3897d6bc97ee8cf"
+    "mtime": 1780816108.3309548,
+    "ast_hash": "04c08dd3554a812bf3c58d2b7958e448",
+    "semantic_hash": ""
   },
   "packages/server/script/build.ts": {
     "mtime": 1779634092.699099,
@@ -4400,9 +4400,9 @@
     "semantic_hash": "f4411313b150c5258280f417fa3326b8"
   },
   "services/ai-gateway/public-admin/app.js": {
-    "mtime": 1780806827.9907038,
-    "ast_hash": "b3d1b8c3c2662ad25561021a1e299d7c",
-    "semantic_hash": "b3d1b8c3c2662ad25561021a1e299d7c"
+    "mtime": 1780841392.1272953,
+    "ast_hash": "71617444eb47723172e17a634e7e1a7e",
+    "semantic_hash": ""
   },
   "services/ai-gateway/src/access/auto-assignment-rotation.ts": {
     "mtime": 1779192950.9666395,
@@ -4470,14 +4470,14 @@
     "semantic_hash": "ba10b2020bc86b432a3c128bbd88b9bd"
   },
   "services/ai-gateway/src/env.ts": {
-    "mtime": 1779634092.7035806,
-    "ast_hash": "3a633ab1fdfa442f8649786a1f687d39",
-    "semantic_hash": "3a633ab1fdfa442f8649786a1f687d39"
+    "mtime": 1780842683.9362981,
+    "ast_hash": "8a65acaaa51dc587ab4408dceb135bc2",
+    "semantic_hash": ""
   },
   "services/ai-gateway/src/http/admin.ts": {
-    "mtime": 1780806827.992402,
-    "ast_hash": "cb2f36bf1e2323044fb15f284bda94fd",
-    "semantic_hash": "cb2f36bf1e2323044fb15f284bda94fd"
+    "mtime": 1780842714.3234537,
+    "ast_hash": "663d4101cf926818d41c23da6269b493",
+    "semantic_hash": ""
   },
   "services/ai-gateway/src/http/providers/access-policy.ts": {
     "mtime": 1777281605.3801708,
@@ -4515,9 +4515,9 @@
     "semantic_hash": "f6a1f4eb32894f1ee6de2d73c63f5309"
   },
   "services/ai-gateway/src/index.ts": {
-    "mtime": 1778009829.4411893,
-    "ast_hash": "6db067bc68b1dc1f93010b2052fe47f8",
-    "semantic_hash": "6db067bc68b1dc1f93010b2052fe47f8"
+    "mtime": 1780842732.655449,
+    "ast_hash": "de6fd27309dc6fd7fc1fe6db5846a23e",
+    "semantic_hash": ""
   },
   "services/ai-gateway/src/leases/binding-selector.ts": {
     "mtime": 1778009829.441393,
@@ -4605,9 +4605,9 @@
     "semantic_hash": "1634ea5b6a9be89ef0d5c58dda9cb72e"
   },
   "services/ai-gateway/src/usage/codex-status.ts": {
-    "mtime": 1780806827.9927912,
-    "ast_hash": "cc903a662109a0f764035f800c4a5d90",
-    "semantic_hash": "cc903a662109a0f764035f800c4a5d90"
+    "mtime": 1780816462.3080637,
+    "ast_hash": "ee84138d3dc65fbfcb4ff0df5916e2b8",
+    "semantic_hash": ""
   },
   "services/ai-gateway/src/usage/mysql-repository.ts": {
     "mtime": 1778009829.443104,
@@ -4625,14 +4625,14 @@
     "semantic_hash": "240953b36cf4ad5ee9f424dcc45c1019"
   },
   "services/ai-gateway/test/admin-actions.test.ts": {
-    "mtime": 1780806827.9931188,
-    "ast_hash": "dd5b9f6760cf15046aa181a0b4c2be10",
-    "semantic_hash": "dd5b9f6760cf15046aa181a0b4c2be10"
+    "mtime": 1780816462.3143215,
+    "ast_hash": "72730bc666862de035e41bda38c61d8f",
+    "semantic_hash": ""
   },
   "services/ai-gateway/test/admin-alerts.test.ts": {
-    "mtime": 1780776097.678182,
-    "ast_hash": "156cfb0eb09db6b2db457cf75e15e1b1",
-    "semantic_hash": "156cfb0eb09db6b2db457cf75e15e1b1"
+    "mtime": 1780842601.4605052,
+    "ast_hash": "d3b1bbc28581b7e689569757f260e04e",
+    "semantic_hash": ""
   },
   "services/ai-gateway/test/admin-mysql-read-repository.test.ts": {
     "mtime": 1778009829.4441826,
@@ -4650,9 +4650,9 @@
     "semantic_hash": "75360df7297be87214601d172d49f4b0"
   },
   "services/ai-gateway/test/admin-ui.test.ts": {
-    "mtime": 1780806827.9934106,
-    "ast_hash": "baa7e4171839d1c1160eaf756d59b7f8",
-    "semantic_hash": "baa7e4171839d1c1160eaf756d59b7f8"
+    "mtime": 1780841270.3968217,
+    "ast_hash": "3fc17edeabb71269412147a6248aa6c2",
+    "semantic_hash": ""
   },
   "services/ai-gateway/test/admin-user-access.test.ts": {
     "mtime": 1779192950.973658,
@@ -4700,14 +4700,14 @@
     "semantic_hash": "3dfde4a38196d5a3c88d763cc7f526fd"
   },
   "services/ai-gateway/test/codex-status.test.ts": {
-    "mtime": 1780806827.9936857,
-    "ast_hash": "c6725e4647d15fd984e09077a9314d4f",
-    "semantic_hash": "c6725e4647d15fd984e09077a9314d4f"
+    "mtime": 1780816462.315221,
+    "ast_hash": "16a22543a65a3bc0f3c15abac6777e66",
+    "semantic_hash": ""
   },
   "services/ai-gateway/test/env.test.ts": {
-    "mtime": 1779634092.7043846,
-    "ast_hash": "621f1c489b1f1f1e5cf6153d91b0bb8f",
-    "semantic_hash": "621f1c489b1f1f1e5cf6153d91b0bb8f"
+    "mtime": 1780842562.373199,
+    "ast_hash": "caf32a84376956dd624dab26b311314e",
+    "semantic_hash": ""
   },
   "services/ai-gateway/test/health.test.ts": {
     "mtime": 1777281605.3845966,
@@ -4878,11 +4878,6 @@
     "mtime": 1780776097.682992,
     "ast_hash": "d30f21262c25c474e739efa48cc0c8ac",
     "semantic_hash": "d30f21262c25c474e739efa48cc0c8ac"
-  },
-  "services/den/public-admin/app.js": {
-    "mtime": 1780776097.6853979,
-    "ast_hash": "d704f5e37f76877cb4dcc48734090f4f",
-    "semantic_hash": ""
   },
   "services/den/scripts/copy-core-platform-skill-assets.mjs": {
     "mtime": 1780776097.6861048,
@@ -5150,9 +5145,9 @@
     "semantic_hash": "153d3e5e10a3590f8b57199f4364188d"
   },
   "services/den/src/managed-ai/http/admin.ts": {
-    "mtime": 1780776097.6900206,
-    "ast_hash": "1dddb15826a60fbf473c862c360f65e3",
-    "semantic_hash": "1dddb15826a60fbf473c862c360f65e3"
+    "mtime": 1780818677.9763737,
+    "ast_hash": "67b28404dff01b8c8f7a957117f78a12",
+    "semantic_hash": ""
   },
   "services/den/src/managed-ai/http/providers/access-policy.ts": {
     "mtime": 1777281605.3988352,
@@ -5585,9 +5580,9 @@
     "semantic_hash": "ce657985b1f5143876b30beb9ec771e1"
   },
   "services/den/test/admin-managed-ai-ui.test.ts": {
-    "mtime": 1780776097.7296977,
-    "ast_hash": "f7f3abf8000443e08c3f5f76ba0e0da3",
-    "semantic_hash": "f7f3abf8000443e08c3f5f76ba0e0da3"
+    "mtime": 1780818677.9770017,
+    "ast_hash": "f6e64a6576b1343174216390d4ae0c71",
+    "semantic_hash": ""
   },
   "services/den/test/admin-managed-ai-user-access.test.ts": {
     "mtime": 1779192950.9914882,
@@ -6035,1118 +6030,388 @@
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-opencode-home/.veslo/app-data/veslo-workspaces.json": {
-    "mtime": 1780806329.7892,
-    "ast_hash": "ce4a9d70117a0b13b8b3b76df11f41b2",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-local-data/veslo-server-plugin-state.json": {
-    "mtime": 1780806306.5837085,
-    "ast_hash": "aee055a2f119c13f7682e07117819e98",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/app-local-data/veslo-server-state.json": {
-    "mtime": 1780806306.5835118,
-    "ast_hash": "d6ea2b718104e9eed70ac88d9e1ddc91",
+    "mtime": 1780816152.5080025,
+    "ast_hash": "a3a9d42cadcadb9d00980874edc5cad9",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-opencode-home/.veslo/app-local-data/veslo-workspaces.json": {
-    "mtime": 1780806299.0883057,
+    "mtime": 1780816140.1684742,
     "ast_hash": "ed40a27d9028f5b9145c8a26381d056d",
     "semantic_hash": ""
   },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806303639-000000-4f995bcf-38ac-4693-a174-d87fa4e646c7.json": {
-    "mtime": 1780806303.6426504,
-    "ast_hash": "c43f244fbb7b2050460e49a8d1e90c1c",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806303677-000000-43b73d53-f5f0-465b-a70b-6491a0b2a2a6.json": {
-    "mtime": 1780806303.6772993,
-    "ast_hash": "286b014a39f03577d7d15e4106742d27",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806303751-000000-6b2a071d-5706-48d0-9716-6b1f267f8335.json": {
-    "mtime": 1780806303.752152,
-    "ast_hash": "78cc4d44238e7e26f54b60d5d89568aa",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806304486-000000-e1623ca2-7f59-411f-99a9-2f37018e3c33.json": {
-    "mtime": 1780806304.4872923,
-    "ast_hash": "785021834c8407e054304262c6f59bc9",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806304486-000001-3708878e-e286-4847-a197-ee92055a64a7.json": {
-    "mtime": 1780806304.4876502,
-    "ast_hash": "0c59d9210db4154bfe7dfbdb8888f1de",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806304486-000002-f32c0a57-969c-44d9-86ca-7385e8a00ad6.json": {
-    "mtime": 1780806304.4875348,
-    "ast_hash": "f66e547f5035a5262108fb59a23ead81",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806304486-000003-511036c7-54e8-4999-bcc0-331b5a92563c.json": {
-    "mtime": 1780806304.4876723,
-    "ast_hash": "dd28c26b69f6ea30c66ca6469c8cf7af",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806304486-000004-bf3fd3c8-5c5c-4a7a-a0f5-0482d54c162d.json": {
-    "mtime": 1780806304.4876556,
-    "ast_hash": "db8d0545ca9be8a9db19d65ec20a1916",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806309496-000000-9d4734f0-187f-4fab-92b4-3e64734e830d.json": {
-    "mtime": 1780806309.4977603,
-    "ast_hash": "0b15ced049dc542160bcf80c9244466f",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806309496-000001-eb1d8d30-8d11-48d9-ae65-d4bea6167e3f.json": {
-    "mtime": 1780806309.4973786,
-    "ast_hash": "73854f4ad86dbd71f4ecdc087214be81",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806309496-000002-8a0eba94-e7d7-4694-a497-c12dfbf1c367.json": {
-    "mtime": 1780806309.4975214,
-    "ast_hash": "c5047f0ec8e571692da194b2028d86f4",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806309496-000003-83499091-7163-4334-8939-646aae0f99a3.json": {
-    "mtime": 1780806309.4986515,
-    "ast_hash": "df79256df564bd743b8c1ef823c69d87",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806309496-000004-94e50c89-95b1-46c9-99b7-2123de36b060.json": {
-    "mtime": 1780806309.4986942,
-    "ast_hash": "eb8246aedbfc6d22ea91327cbdfdeb23",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806309496-000005-3db7b35e-eb69-4b1d-84bd-660e6edce3ea.json": {
-    "mtime": 1780806309.498654,
-    "ast_hash": "4473edd40b5c6eab5d1eb05bc5e5ed1b",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806309496-000006-699fee62-7bad-4bcd-b675-dc4cc5bdc675.json": {
-    "mtime": 1780806309.4981709,
-    "ast_hash": "85bbca17fcbd6ae5398de7f7bff52f2c",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806309496-000007-97be90e7-bfe6-4302-a9ae-dfb5f33e7295.json": {
-    "mtime": 1780806309.4987023,
-    "ast_hash": "658925daadba0cee67f5fb81ea87aaae",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806309496-000008-a36e89ee-0d5f-4169-a2c8-089071039ac5.json": {
-    "mtime": 1780806309.4987729,
-    "ast_hash": "3130d935caea54022347fb7040369d5e",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806309496-000009-cfb1eb57-4811-42ae-8567-3059d7518627.json": {
-    "mtime": 1780806309.4984653,
-    "ast_hash": "af43c774a06e33c8dea84a13d3242061",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806309496-000010-48679dfd-7c8f-49ec-b7dd-e1176d9f8723.json": {
-    "mtime": 1780806309.498667,
-    "ast_hash": "37ee10f6ea1153e264096c9376812c77",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806309496-000011-f9ec0d77-3b30-4c20-9ebb-9dc0071dc1b4.json": {
-    "mtime": 1780806309.4983475,
-    "ast_hash": "ebfd34bdf49386380c3ea91ccd3f9772",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806309496-000012-66671c92-7162-4b54-a32b-d8ad983c3bb0.json": {
-    "mtime": 1780806309.4982545,
-    "ast_hash": "962efadc35dac98f6863def33ffccce6",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806309496-000013-b9e25bb4-e877-4612-9d0e-e7cd8b560555.json": {
-    "mtime": 1780806309.4982076,
-    "ast_hash": "93dd19b463d40c5d63dd3e00fb7afa23",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806309496-000014-a3b032d2-af98-4f6a-aa55-95f52adff829.json": {
-    "mtime": 1780806309.498525,
-    "ast_hash": "527c94a8851e413d0a148360d0bcf754",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806309496-000015-42e7a9fa-98a2-4e30-a81c-6e48c2066330.json": {
-    "mtime": 1780806309.497951,
-    "ast_hash": "8aae6e6717eb0380267b502fe3b6fc36",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806309496-000016-f467b658-2d95-4f79-b21b-6900220cfc2f.json": {
-    "mtime": 1780806309.4982345,
-    "ast_hash": "cf94192c51ea0b59b79560017f33b053",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806327831-000000-84553711-3e21-49a2-b047-50ffa569e4d3.json": {
-    "mtime": 1780806327.8396838,
-    "ast_hash": "bccaca518b711ebf25e360e1ed164ace",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806327839-000000-8995e742-6159-4edb-8173-015ee8ae3b20.json": {
-    "mtime": 1780806327.8401616,
-    "ast_hash": "5f16988b5550be7ee0a567a4a6867983",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806327855-000000-07f4e590-86ef-4bd5-addb-3554a86e1654.json": {
-    "mtime": 1780806327.855935,
-    "ast_hash": "2513afb32d1a31057b8b8ae00dff941b",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329515-000000-5963f7cb-918e-4e01-b4e2-a5104459790a.json": {
-    "mtime": 1780806329.5162203,
-    "ast_hash": "8bc59171bd1fe2f703af9fb8f08587aa",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329515-000001-131c583f-5671-4ca1-bc07-c74f870e8d09.json": {
-    "mtime": 1780806329.5166225,
-    "ast_hash": "31f1c029aa95df2f40baf2e0203686ee",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329515-000002-0398ad5e-b69f-4c18-a9a6-3e89a97cfdec.json": {
-    "mtime": 1780806329.5162425,
-    "ast_hash": "0067b8a9dc50558ed4eec6881404f274",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329515-000003-18021379-9587-4e0c-9328-af719c1cf579.json": {
-    "mtime": 1780806329.516625,
-    "ast_hash": "dd594f178e6dda527c54c38e4b3dab32",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329515-000004-bc6b4eca-fbf3-4708-a232-89c84e2d229e.json": {
-    "mtime": 1780806329.516498,
-    "ast_hash": "f613c20be6ec886547f0cacaee47d858",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329515-000005-5c59e14e-2b7e-4a0c-a899-a1b88b8cdc3d.json": {
-    "mtime": 1780806329.516396,
-    "ast_hash": "76c8221f4cd63df929aeb1de05281060",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329515-000006-98a8cab1-709e-4162-9862-719b56804ff3.json": {
-    "mtime": 1780806329.5164561,
-    "ast_hash": "6d125d79fc046f5a34a7f4c7190c707e",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329515-000007-a14b7727-164b-4c9a-ae93-83eb176141d1.json": {
-    "mtime": 1780806329.5163531,
-    "ast_hash": "a961b5a7380169f48af5643e6212e542",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329767-000000-29565a3b-1935-4df5-b1a6-52920d54fb7d.json": {
-    "mtime": 1780806329.7674901,
-    "ast_hash": "9f3827e23a4b5f8f623dbf22ca869690",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329767-000000-d0d6062a-481d-446f-a7b0-98b50582f142.json": {
-    "mtime": 1780806329.767682,
-    "ast_hash": "1208765950aa15141af619484cb0ae0e",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329778-000000-963403c7-1f2a-4c41-8f19-daed0c5bec72.json": {
-    "mtime": 1780806329.7786613,
-    "ast_hash": "e660df35db874a2e84f1d5dd9e3f9217",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329784-000000-2482ee9e-bd0a-4a96-8de3-a0e82459c530.json": {
-    "mtime": 1780806329.784647,
-    "ast_hash": "27095114c0efcaa0c5b53df649e4b004",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329802-000000-d0b9b6bd-3d08-4708-aaed-dd85bce3eb2b.json": {
-    "mtime": 1780806329.802646,
-    "ast_hash": "c6a45f1b4a1fbf79147beca22ac0e5f5",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329802-000000-eb41213d-e4fd-47b6-8225-3229493f15e0.json": {
-    "mtime": 1780806329.803011,
-    "ast_hash": "4ba6c48ea2c6955a74c612ef0e8c214a",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329803-000000-706c3227-8978-41ea-a357-f17bc86cc93c.json": {
-    "mtime": 1780806329.8035233,
-    "ast_hash": "fd157b30383e1ee3b6dde55ae9a2f8d5",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329806-000000-1f37f95d-9462-41b4-a407-7a938e502763.json": {
-    "mtime": 1780806329.8072324,
-    "ast_hash": "155b3f326d8d4cf96daf33d875d3e8cd",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329812-000000-31adcf9d-0676-4a89-a051-2cc914db554a.json": {
-    "mtime": 1780806329.8131497,
-    "ast_hash": "ab6d0014d4f4955bd5d79fb729e4a480",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329813-000000-4ac5063d-e69c-4edb-9d86-5e048f256826.json": {
-    "mtime": 1780806329.8137968,
-    "ast_hash": "a7468f6ed3c6a87afcca7273b8d8122f",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329815-000000-1e61119f-ea36-4db2-afda-97f73f7d4f77.json": {
-    "mtime": 1780806329.8159451,
-    "ast_hash": "adf67f5e6aefbda0702c6c53a81c280c",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329815-000000-fd7d77b5-abff-47fd-8ac8-876d14af77e5.json": {
-    "mtime": 1780806329.8158457,
-    "ast_hash": "2f55bc3fe74dca17a4780863bd7dab75",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329816-000000-0d9a27f5-986e-4ca6-81f9-77cbea48a216.json": {
-    "mtime": 1780806329.8164544,
-    "ast_hash": "2a3acd93abdb437cc7e5b4dba56c3dd6",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329833-000000-b2bc79f1-7a1b-4c6d-9294-fea1868948ca.json": {
-    "mtime": 1780806329.8336174,
-    "ast_hash": "42bf27b749cb4c4395c821b86f2d3451",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329834-000000-3d76dc73-0bcc-4108-ac5c-ccaccbfbb7a5.json": {
-    "mtime": 1780806329.834412,
-    "ast_hash": "266f65fb3e92a4760829872a79b09cfb",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329834-000000-65621f50-e01f-4209-8692-7da586201493.json": {
-    "mtime": 1780806329.8349643,
-    "ast_hash": "88b1bdd63c03ef3588ab9bbe4bfdb0ce",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329834-000000-dee70160-5219-49ed-98b3-5c2e1085e339.json": {
-    "mtime": 1780806329.8347676,
-    "ast_hash": "69a1e1e72b4e7bde67da35d6cf5bec61",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329834-000000-f9708441-9479-4e71-a3ea-9374ec8a3547.json": {
-    "mtime": 1780806329.8343887,
-    "ast_hash": "eb0deedd1b324c88f1835ea2e48e9ce1",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806329842-000000-21f9ca6e-2a47-4e92-a5a4-c9c8fc3a2053.json": {
-    "mtime": 1780806329.8426652,
-    "ast_hash": "47948d82b417e59edb1e3a146359a9d3",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806331236-000000-661610fb-4605-4463-a33d-219a70a86713.json": {
-    "mtime": 1780806331.2366445,
-    "ast_hash": "e3bd7beffea704e6f5d9f6ce69a1aefd",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806331382-000000-15138d1d-92c9-40b7-8915-f12df8776535.json": {
-    "mtime": 1780806331.3830144,
-    "ast_hash": "d57faedbce04d07ed16450b60a9e752e",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806331383-000000-feb0e49a-4071-4123-9068-5364d514d1c8.json": {
-    "mtime": 1780806331.383768,
-    "ast_hash": "acd72041203d1c547adfc86b37e28dc1",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806331391-000000-f8b511fd-b669-4162-be69-b6118f7022eb.json": {
-    "mtime": 1780806331.3913348,
-    "ast_hash": "0d4d537c437d39628bdef1b96869d816",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806331393-000000-14d01fff-5f33-40d4-bb4c-c4e83bdaa9b7.json": {
-    "mtime": 1780806331.3939261,
-    "ast_hash": "766c4357d08443a12bab35c4d7075ed1",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806331393-000000-a82a980f-7779-424d-8df0-1f8541f4ce44.json": {
-    "mtime": 1780806331.3939998,
-    "ast_hash": "f0a3066fb159e90d30f238b621a5f1c4",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806331407-000000-3f78f1d2-9be0-474c-97fe-59dedb86406c.json": {
-    "mtime": 1780806331.4079268,
-    "ast_hash": "e05c76c9fec9b8204004f5b7f444a686",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806331407-000000-489482af-283e-47f9-900d-7f09b3de3bb2.json": {
-    "mtime": 1780806331.40731,
-    "ast_hash": "97f920a3f78bf33296ea96d9ab29f125",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806331411-000000-602423c8-779c-4c3d-b708-8fc990ab51dc.json": {
-    "mtime": 1780806331.4112642,
-    "ast_hash": "d1ca0d0514dbbabe8a1db9803b14e16e",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806331411-000000-8e150ecf-a506-4418-a7f5-2845c51c4673.json": {
-    "mtime": 1780806331.4115715,
-    "ast_hash": "a2564bb73033cbd2583d36f93e140080",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806331500-000000-321a66c2-79aa-46ca-b9a9-795e5bc5801d.json": {
-    "mtime": 1780806331.5004673,
-    "ast_hash": "ee58f47d9f70cc5d22c4bd3af8d119a8",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806331500-000000-eb6dd73f-6287-4df0-a8d0-d3a21250288d.json": {
-    "mtime": 1780806331.5005233,
-    "ast_hash": "b9c8e9ac14cbcab96dc082be9fd45ad7",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806331777-000000-5ac76932-5f20-4a65-aac2-216d7c518eb8.json": {
-    "mtime": 1780806331.7781339,
-    "ast_hash": "65c50d1318eaa686da4e8ea9e60d758a",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806331777-000000-f97026af-8e46-49b5-ba17-ce0e5b0b177b.json": {
-    "mtime": 1780806331.778053,
-    "ast_hash": "8b0cb1724752d4db33c688789d02d458",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806331832-000000-7f5b09c9-7b5b-4e49-b99d-d53f4b14e6cd.json": {
-    "mtime": 1780806331.8330605,
-    "ast_hash": "6818fe838ccb29c942a0f668113a71f7",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806331843-000000-5caec0d9-ec18-4671-ad8a-02532703a696.json": {
-    "mtime": 1780806331.8436337,
-    "ast_hash": "56d9ce481d1d571acb08b1b9ed794e54",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806332012-000000-17ceded4-295a-4a17-a91e-c6d011a45dac.json": {
-    "mtime": 1780806332.0128949,
-    "ast_hash": "d7306c09c4bf8adcf4abdf3705187d94",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806332012-000000-4828f44c-34fb-4d67-a210-99a964e67fb6.json": {
-    "mtime": 1780806332.0128992,
-    "ast_hash": "85fa8e58b5b522cff5f8be79fd9d2b99",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806332035-000000-a8243e16-72ae-4c2c-9496-c6c2366808e4.json": {
-    "mtime": 1780806332.0352514,
-    "ast_hash": "7ff98eb9f9bf2d3f4ea8e2aa86c33e49",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806332039-000000-016cba5a-26df-4dc6-bf96-2b57ee21b4c5.json": {
-    "mtime": 1780806332.0393505,
-    "ast_hash": "0bb22a3998a8966ce909a8744f2e509d",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806332158-000000-d7fc01b6-554f-4872-8d0d-475a52809507.json": {
-    "mtime": 1780806332.1590977,
-    "ast_hash": "cc2916667385992ad9b0502dc006cfaa",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806332217-000000-07840d28-ddba-4f23-b000-6c1d3e0ac96f.json": {
-    "mtime": 1780806332.2182443,
-    "ast_hash": "2219ad9154f3578c3815b1c6bd3f4142",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806332217-000000-4f2afaaf-d62e-4013-a806-409d235cd4fd.json": {
-    "mtime": 1780806332.2181418,
-    "ast_hash": "c6761be8b4e04fb631e5de854271d216",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806332242-000000-99e00727-fc6a-48f6-b459-b60d95fca001.json": {
-    "mtime": 1780806332.24306,
-    "ast_hash": "2005c838c6073c76575d77ab23ddc2ef",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806332243-000000-b025bde9-04ea-47fe-a1c3-2c80056ec043.json": {
-    "mtime": 1780806332.2436604,
-    "ast_hash": "fd5754dc53efdc9aa46b3ac63c813872",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806332262-000000-e5f45521-7b8a-470e-a195-db4f1475b960.json": {
-    "mtime": 1780806332.2632205,
-    "ast_hash": "193a010380e82405245b066f0ccba47b",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806332264-000000-a06aa63e-5625-45f8-9f41-35278564e1c4.json": {
-    "mtime": 1780806332.2645423,
-    "ast_hash": "d144c630dc2ed8e7dc731c6916e3b67a",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806332264-000000-e35e5e29-e4ee-4b93-9dc6-f2af8bc11469.json": {
-    "mtime": 1780806332.2645426,
-    "ast_hash": "ea33d4fd72febd5ae8bc6bf7bf382a7a",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806332275-000000-6a7889eb-9f13-48b4-9e88-27139c28709f.json": {
-    "mtime": 1780806332.2761176,
-    "ast_hash": "3848a3e3796fa42fd15d6891b5be38e7",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806332275-000000-ef9579f9-0f6c-4e04-91b9-4e288f36b8ed.json": {
-    "mtime": 1780806332.2761228,
-    "ast_hash": "3eb6b1cd872d15dd17291ee1eb182aa0",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806332276-000000-eeca6fc6-fee4-4984-9577-6f5ac9b40014.json": {
-    "mtime": 1780806332.2766356,
-    "ast_hash": "52dc4058f7fa0b58c5a7da95a2a2aa00",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806332338-000000-12e086ce-bc14-4c8a-a5e7-937567b86878.json": {
-    "mtime": 1780806332.338545,
-    "ast_hash": "e206ad5c2f5a5db5afdf7d8b54e7b963",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806332338-000000-f045884f-03b2-4b59-86e3-56a60ff54753.json": {
-    "mtime": 1780806332.3385296,
-    "ast_hash": "5a90e5c0cccf131355c37bbde4b082e0",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806333320-000000-e452fc4b-db30-4136-8b12-5be3e9923a8b.json": {
-    "mtime": 1780806333.3204832,
-    "ast_hash": "13003465a22effc902eaa292be185c6c",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806333454-000000-215c6f5e-f597-44b6-99c9-a76892ff9ac9.json": {
-    "mtime": 1780806333.4543748,
-    "ast_hash": "ec8aab49787759aa30498f8918aadd39",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806333454-000000-d881e5e3-7c8b-4051-8c1f-167dd4b2d6ad.json": {
-    "mtime": 1780806333.454993,
-    "ast_hash": "51565c9ad2dcca28ff469e12ccd16c33",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806333497-000000-ccb7c308-b680-429e-8cdf-da78bd6b56ff.json": {
-    "mtime": 1780806333.497401,
-    "ast_hash": "67e40cdfca84e7a239a2ffd94dbbad94",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806333606-000000-ca32818a-9d8d-4fed-8ad4-b31a773dd9f0.json": {
-    "mtime": 1780806333.6063006,
-    "ast_hash": "30550eb7737fa59a4faabd4739d4c2bc",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806333653-000000-f77f129a-b364-4f0a-a85c-1ed051c4066f.json": {
-    "mtime": 1780806333.65403,
-    "ast_hash": "eae1048c674e5b66b93a17662c55060d",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806333762-000000-3d0f347c-4eea-49da-946e-ff7232b805e2.json": {
-    "mtime": 1780806333.7631378,
-    "ast_hash": "8bf1182720e3871d46bc21ac6ea154d0",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806333773-000000-542b78be-03a0-47e3-afb1-41e7f467beda.json": {
-    "mtime": 1780806333.7738338,
-    "ast_hash": "39859e26eedf24cefecf5f081f9b4614",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806333829-000000-2ecd0001-3885-4975-9d12-a59de42740f4.json": {
-    "mtime": 1780806333.8301573,
-    "ast_hash": "13397081414c7b5b29ae6a021531d332",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000000-1c5a7860-057c-4115-9cef-56f21745cba8.json": {
-    "mtime": 1780806334.5259676,
-    "ast_hash": "dc71595f25903d515f89001c7168b1b5",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000001-10deacb5-efbc-475c-bb3b-409fcb1db006.json": {
-    "mtime": 1780806334.5291724,
-    "ast_hash": "8adfc8c7a968640c35067900daaf39c6",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000002-fe426ad0-3a01-4833-8cff-534254c6e259.json": {
-    "mtime": 1780806334.528834,
-    "ast_hash": "52c86a5b173c5b070352152eac92a746",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000003-0c8de19e-e704-4e3f-827f-1c94c6bd2a9c.json": {
-    "mtime": 1780806334.5286324,
-    "ast_hash": "a4f7baafdcccd9dcb42ea04f39661a72",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000004-673ee12f-15a0-4d34-8a37-7d6d93895ec8.json": {
-    "mtime": 1780806334.5282009,
-    "ast_hash": "aeebdc488259cf72b19e9bb3eb29543a",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000005-bd7864bf-3ce1-4028-8d09-89eebcdc9fe8.json": {
-    "mtime": 1780806334.5277562,
-    "ast_hash": "27865784b69008758258a3236e247fbc",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000006-64499a42-ac33-4873-9cbd-52b78f46b36a.json": {
-    "mtime": 1780806334.5273898,
-    "ast_hash": "426cbdd7149a447fe56565e23ab6492c",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000007-9fa13bdd-49eb-43a3-94d6-65a6f1da5487.json": {
-    "mtime": 1780806334.5269694,
-    "ast_hash": "f939a966a0f8a0b6a2151241bcf94f7d",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000008-f9228518-7362-48e9-acf0-1712d51d9ff4.json": {
-    "mtime": 1780806334.5283246,
-    "ast_hash": "b73fc04ffe1a8250ff12b7beb552a255",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000009-44965735-ef4a-4883-ab1b-4c5c1ff4dc5a.json": {
-    "mtime": 1780806334.52827,
-    "ast_hash": "71e3b4ed365e13c17a8be5f21bee2404",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000010-44f1f9e0-3af5-4778-a1bc-fe91cee87836.json": {
-    "mtime": 1780806334.5285046,
-    "ast_hash": "f5e08592155c66660b457eed9dc96474",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000011-79182f09-d979-4225-9cad-aa4cae0abcfd.json": {
-    "mtime": 1780806334.527946,
-    "ast_hash": "14976a04dfcc2aa157f46e8c540e502e",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000012-4dd7827d-49e6-4e96-9410-4cd63096d794.json": {
-    "mtime": 1780806334.5273607,
-    "ast_hash": "57d9b2bb65074a2fd45f3b36a786f2d9",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000013-6fdb922f-c944-4d6a-ba30-221d730eab67.json": {
-    "mtime": 1780806334.5269823,
-    "ast_hash": "bd4c58b83a4eadd1b4f0ad9e9d927d76",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000014-e6e1147f-d4c8-4dee-9e79-dee066146edb.json": {
-    "mtime": 1780806334.528731,
-    "ast_hash": "b0cc839d6e8973f6c031e18c4b992326",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000015-3ceaef40-a0a5-4215-9a90-f928abe6003c.json": {
-    "mtime": 1780806334.528096,
-    "ast_hash": "360077fe75dd8a58932db4e71bf0a634",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000016-5b1b218a-36f2-4de0-9f4e-1124b4b29b21.json": {
-    "mtime": 1780806334.5286863,
-    "ast_hash": "e44f13fb14d4a343162dcbf7d6958fb3",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000017-a6f1d5ea-0d1c-4f03-972f-7afe4971f8b7.json": {
-    "mtime": 1780806334.528286,
-    "ast_hash": "ce3d1ccf891fc239198ea641208eeedd",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000018-3889e0c0-1370-465a-899a-a8cd6ec5e839.json": {
-    "mtime": 1780806334.5274758,
-    "ast_hash": "609fa90132e34acce39212f592b902ab",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000019-63cbc386-205b-4f9a-8de3-0344f88f8234.json": {
-    "mtime": 1780806334.5267007,
-    "ast_hash": "30119c0dafecda5d3439b9c419d1f8db",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000020-479326b9-5f57-4a5a-93f1-ee91dcd8ae40.json": {
-    "mtime": 1780806334.5291753,
-    "ast_hash": "47dda0862d9d8e5dcec8b680569e38ac",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000021-a137ba2b-fdbb-46d0-82ac-aa0d52b8e712.json": {
-    "mtime": 1780806334.5289905,
-    "ast_hash": "c6be5a451bcee9b83b52025039512b6c",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000022-a86b2e28-571a-4827-a840-e5d925b08e3d.json": {
-    "mtime": 1780806334.5292978,
-    "ast_hash": "8d2203632253482a9a571ab118631d84",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000023-4d3a827d-5e58-46d9-9e78-48c3b2ddaf48.json": {
-    "mtime": 1780806334.5293772,
-    "ast_hash": "f923f17f30bd158ce278b925adf7e335",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000024-74605ffa-951c-42f4-8389-70d4418ccc08.json": {
-    "mtime": 1780806334.5290763,
-    "ast_hash": "37714e1ee7ef46e332e76bfc08ee6e7d",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000025-b510e09e-5e21-4aaa-aaab-eee1f42041c5.json": {
-    "mtime": 1780806334.5293238,
-    "ast_hash": "c9ac4aafe0757469dbfffe16ee5a09bb",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000026-5e436c6a-f8a6-4040-a533-42d591a66f6d.json": {
-    "mtime": 1780806334.529355,
-    "ast_hash": "0a6adaf39efe793dfa44d463bdfb6f8a",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000027-fb2f171c-111c-4402-9c33-adf07f5a5fc6.json": {
-    "mtime": 1780806334.529369,
-    "ast_hash": "7492013fbdbf277f2f1d1021efadc1dd",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000028-bf6b7a03-c1cb-4316-95c8-cec45e287543.json": {
-    "mtime": 1780806334.5288134,
-    "ast_hash": "fe75bf606135306a90b753d6f5b69918",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000029-035a3d97-70f5-4324-889b-c3d0caee120a.json": {
-    "mtime": 1780806334.5277321,
-    "ast_hash": "5d61c49a9abcb2c0d6036f53f94e55ea",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000030-d88e35e5-1c51-4380-ae8d-54010d74120b.json": {
-    "mtime": 1780806334.5272295,
-    "ast_hash": "5af08aea0f2abc08a8ab02b5b69b8241",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000031-b27e6a53-ff2e-484c-81f9-e6bf157155f8.json": {
-    "mtime": 1780806334.5264409,
-    "ast_hash": "02133a5da64988cb069804b4bc47a186",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000032-b9df5cd7-5265-43fb-8867-384ba8ca21bc.json": {
-    "mtime": 1780806334.52611,
-    "ast_hash": "5e427fc57a9c69f837bff00cb08b3df5",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000033-ae5d7f87-b850-4a1b-9606-54ade2d00631.json": {
-    "mtime": 1780806334.5263958,
-    "ast_hash": "b3f76013c7ecd3354589153dae2135a0",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000034-4ee9a98a-bea1-4426-82e1-6fea0863c12d.json": {
-    "mtime": 1780806334.529088,
-    "ast_hash": "092240b932d1fce9c54db31d4daaa74f",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000035-6a8c995e-5810-438a-beaa-82fd5160c358.json": {
-    "mtime": 1780806334.5287244,
-    "ast_hash": "78c2536afb46c9d2fe987a5f056ad28a",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000036-4540fc8d-3419-4715-89c9-55c9c7fdf008.json": {
-    "mtime": 1780806334.5288937,
-    "ast_hash": "5c750f55726169d54834a7cecc1cbf44",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000037-c16f397a-127d-4d0f-bf1b-49911945f7ea.json": {
-    "mtime": 1780806334.5281265,
-    "ast_hash": "47f039307784cc16dad21b92d20c5ce4",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000038-fb059c6d-d343-4607-ae79-2ab4d11d7213.json": {
-    "mtime": 1780806334.527706,
-    "ast_hash": "0ba414ac7926dbb500158ce7f0031e7b",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000039-0a451948-ebe6-4d40-9446-719e038a0d18.json": {
-    "mtime": 1780806334.5270648,
-    "ast_hash": "e752b55684f908010d00045a70a2fcf6",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000040-46e8e976-d028-4fbe-ae97-b7dc8f1fa6a9.json": {
-    "mtime": 1780806334.5268977,
-    "ast_hash": "638775b57a1e0dfd8da89737e078949f",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000041-46fc49ee-5a77-4410-bec8-e6baa4efbeb3.json": {
-    "mtime": 1780806334.5284543,
-    "ast_hash": "70e0cfdccbe14b1578ff8a8674cf86df",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000042-44cc8130-6441-40c7-b476-ce1e02968168.json": {
-    "mtime": 1780806334.5283368,
-    "ast_hash": "46892a919136f5c7db3e7aa5bd581e7b",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000043-1bdda76e-4d29-4781-ad16-e32ec9c3cfa8.json": {
-    "mtime": 1780806334.5279346,
-    "ast_hash": "a468c6eb62dda702d36613e34cf55019",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000044-5b93195c-4574-4688-96f0-a89f124b4427.json": {
-    "mtime": 1780806334.5275617,
-    "ast_hash": "4994e06f2e112e6b60cc5ad87b648941",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000045-a24ac273-0ae5-4a45-89f8-7863da9c15a1.json": {
-    "mtime": 1780806334.5271084,
-    "ast_hash": "176af58cf9ca4be6d72fc747f451d497",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000046-dc83e8e7-eec6-45ef-83e5-d6fa6758a0d1.json": {
-    "mtime": 1780806334.5267112,
-    "ast_hash": "54c337a013cfd2efe6717168cae49893",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000047-dbf02500-c44e-4968-adfe-4a964e3bed2f.json": {
-    "mtime": 1780806334.5263278,
-    "ast_hash": "55a47b96b0dc692e2ae2fb214bfdc900",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000048-9aae4b7e-51ef-4a2e-8e58-2f74ab31b1ca.json": {
-    "mtime": 1780806334.5275977,
-    "ast_hash": "4ea88ab87f805218147ee9e419cdb797",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000049-816a252b-1caf-49b4-a54b-d99140b56d0d.json": {
-    "mtime": 1780806334.5271358,
-    "ast_hash": "119b9f262c5d63f87e8cede33f3d0083",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000050-d95192ed-f421-47eb-b875-5573d929d71a.json": {
-    "mtime": 1780806334.5269706,
-    "ast_hash": "ce0c085b8b8c08f65d6d2e42a9febed5",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000051-9872e7f4-cae0-4e6f-b784-291e6eca6198.json": {
-    "mtime": 1780806334.5265067,
-    "ast_hash": "86ad6f84350fcd94ddc06f2413e182b9",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000052-3b56543f-6527-4137-992c-f38a31d13221.json": {
-    "mtime": 1780806334.5278358,
-    "ast_hash": "6217bd48a68af6ad896ca0d336f72211",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000053-161fbc82-b746-4880-8eca-3ad13631e726.json": {
-    "mtime": 1780806334.5274541,
-    "ast_hash": "10cf045fbeb158979c581837c00332e3",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000054-780f32e8-ee0b-495d-9723-fc5b5904dd00.json": {
-    "mtime": 1780806334.5261385,
-    "ast_hash": "6b0d81f83a21c6192af15b7cae37030d",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000055-d0581752-2ee6-4882-bf0c-624aab0695fc.json": {
-    "mtime": 1780806334.5282722,
-    "ast_hash": "d53d3a21a1a8abb4dbaf6a604e0091a4",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000056-4af911ea-fc35-44dd-86c6-2d30bec0936a.json": {
-    "mtime": 1780806334.5274029,
-    "ast_hash": "505f3a698cf17919637974339c4a1079",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000057-33f26dab-d86c-48a7-a549-a3bc6b3f137a.json": {
-    "mtime": 1780806334.5264592,
-    "ast_hash": "3311a690ad867b32f486301b8143b7cc",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000058-a426263b-f5ce-4d8f-aea8-04b90d1ae7e8.json": {
-    "mtime": 1780806334.5277545,
-    "ast_hash": "5735e0b17ee580f607ddf78832919232",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000059-6a076554-7f6c-4d71-bcab-ddeafd7bfc6f.json": {
-    "mtime": 1780806334.5273724,
-    "ast_hash": "d7cb8b20cce71ec3e47b75882d6962d4",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780806334525-000060-146d8972-9f58-436d-8306-07dec96bf9a6.json": {
-    "mtime": 1780806334.5263562,
-    "ast_hash": "5f3ca7de9626eca7daf1377d4a7d1b6e",
-    "semantic_hash": ""
-  },
   "packages/e2e/.tmp-opencode-home/.veslo/den-auth.json": {
-    "mtime": 1780806327.8436923,
-    "ast_hash": "8690d5d87d4296fbe02d05b471ac7f45",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/opencode-config/ws-fc0ad7ec2c42/package.json": {
-    "mtime": 1780806315.3682895,
-    "ast_hash": "64f89884b360da0328e8478d053851a7",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/opencode-config/ws-fc0ad7ec2c42/tools/opencode_router_send.ts": {
-    "mtime": 1780806304.4883187,
-    "ast_hash": "577d8e2aa4d1e71878ef9dfab186d050",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/opencode-config/ws-fc0ad7ec2c42/tools/opencode_router_status.ts": {
-    "mtime": 1780806304.4887803,
-    "ast_hash": "8487efec246075e199fa822151ad29cc",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/veslo-orchestrator-auth.json": {
-    "mtime": 1780806303.6608338,
-    "ast_hash": "1857c93bd516ac23b0c94735ec39c988",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-opencode-home/.veslo/veslo-orchestrator-state.json": {
-    "mtime": 1780806332.030018,
-    "ast_hash": "afc7f6d5d1673576875a503830fa5fa9",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/package.json": {
-    "mtime": 1780806320.0368805,
-    "ast_hash": "64f89884b360da0328e8478d053851a7",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/.veslo-materialization.json": {
-    "mtime": 1780806332.011995,
-    "ast_hash": "08e9a7f42bca1cc3ce34f111c36a7015",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/skill-creator/.veslo-managed.json": {
-    "mtime": 1780806331.773191,
-    "ast_hash": "f3ea892c08b004bc19776035755065b4",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/skill-creator/scripts/init_skill.py": {
-    "mtime": 1780806331.7722254,
-    "ast_hash": "b644b13614cba092b89a0dce9c3a5da1",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/skill-creator/scripts/package_skill.py": {
-    "mtime": 1780806331.7724483,
-    "ast_hash": "6621da5f65e059bec4a708ff85806db0",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/skill-creator/scripts/quick_validate.py": {
-    "mtime": 1780806331.7728064,
-    "ast_hash": "5f08bdc0c17d28038c7ba96b326966ee",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-automations/.veslo-managed.json": {
-    "mtime": 1780806331.7744904,
-    "ast_hash": "129b8ca42f43919068d950b1cb8ac111",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-docx/.veslo-managed.json": {
-    "mtime": 1780806331.7093585,
-    "ast_hash": "d3389732e21e7a5fb53156c403c4447b",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-docx/scripts/__init__.py": {
-    "mtime": 1780806331.6960642,
-    "ast_hash": "2b74d8c4bd027d27b005fb0d2411b7a2",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-docx/scripts/comment.py": {
-    "mtime": 1780806331.6965017,
-    "ast_hash": "c5cab80cb3e3337190de5c9a7f3d2334",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-docx/scripts/helpers/__init__.py": {
-    "mtime": 1780806331.6967618,
-    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-docx/scripts/helpers/merge_runs.py": {
-    "mtime": 1780806331.6971455,
-    "ast_hash": "71ef3ae25aada719852b2a2714fbcc65",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-docx/scripts/ooxml/scripts/pack.py": {
-    "mtime": 1780806331.7052329,
-    "ast_hash": "99d7c94338ecaac4ea0d423c130e332b",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-docx/scripts/ooxml/scripts/unpack.py": {
-    "mtime": 1780806331.7054214,
-    "ast_hash": "26135c2250872e522f41215833880bc5",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-docx/scripts/ooxml/scripts/validate.py": {
-    "mtime": 1780806331.7056673,
-    "ast_hash": "1998dd264520c7c8d09f3edef11c92c7",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-docx/scripts/ooxml/scripts/validation/__init__.py": {
-    "mtime": 1780806331.705937,
-    "ast_hash": "9577920dc811fff9762a96d4095d95e5",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-docx/scripts/ooxml/scripts/validation/base.py": {
-    "mtime": 1780806331.706163,
-    "ast_hash": "3dba9423cd3c7040719353bd90a80985",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-docx/scripts/ooxml/scripts/validation/docx.py": {
-    "mtime": 1780806331.7063653,
-    "ast_hash": "f74a2ffcf139e597c0bd14fd50a70c22",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-docx/scripts/ooxml/scripts/validation/pptx.py": {
-    "mtime": 1780806331.7065947,
-    "ast_hash": "3b5cc57a4728a9297f51b8a4c66f7449",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-docx/scripts/ooxml/scripts/validation/redlining.py": {
-    "mtime": 1780806331.7069612,
-    "ast_hash": "40ec4a9f2b783a2c4b13800462d6b8aa",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-docx/scripts/pack.py": {
-    "mtime": 1780806331.7071915,
-    "ast_hash": "98e72a5e16b97c5f758677c74e647b12",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-docx/scripts/unpack.py": {
-    "mtime": 1780806331.7083402,
-    "ast_hash": "0c9e7eea923133e0ae63724f95cde3f5",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-pdf/.veslo-managed.json": {
-    "mtime": 1780806331.7159593,
-    "ast_hash": "879f8adf01e88e968d88bf779d24f624",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-pdf/scripts/check_bounding_boxes.py": {
-    "mtime": 1780806331.7134829,
-    "ast_hash": "64ce2d6bf850cb622e25bcd427cdab53",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-pdf/scripts/check_fillable_fields.py": {
-    "mtime": 1780806331.7137206,
-    "ast_hash": "3f61698ecb0c5dc3554feea244c90f54",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-pdf/scripts/convert_pdf_to_images.py": {
-    "mtime": 1780806331.7144744,
-    "ast_hash": "4e5fc4c79544f9a61ec712a5d2a5c195",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-pdf/scripts/create_validation_image.py": {
-    "mtime": 1780806331.7148044,
-    "ast_hash": "68ad9c8912b1ba0fd852ce55a0ec3530",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-pdf/scripts/extract_form_field_info.py": {
-    "mtime": 1780806331.7150755,
-    "ast_hash": "919f3d8db479f7342bacfc71c42ee844",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-pdf/scripts/fill_fillable_fields.py": {
-    "mtime": 1780806331.7153397,
-    "ast_hash": "036130dab315960e93e0cb43bd6d6606",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-pdf/scripts/fill_pdf_form_with_annotations.py": {
-    "mtime": 1780806331.7155366,
-    "ast_hash": "fae9be54e3cb090ad8361a1643b2211f",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-pptx/.veslo-managed.json": {
-    "mtime": 1780806331.7667558,
-    "ast_hash": "3b76b19791b42bba931771390aadd05b",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-pptx/ooxml/scripts/pack.py": {
-    "mtime": 1780806331.7642467,
-    "ast_hash": "99d7c94338ecaac4ea0d423c130e332b",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-pptx/ooxml/scripts/unpack.py": {
-    "mtime": 1780806331.7643824,
-    "ast_hash": "26135c2250872e522f41215833880bc5",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-pptx/ooxml/scripts/validate.py": {
-    "mtime": 1780806331.7645137,
-    "ast_hash": "1998dd264520c7c8d09f3edef11c92c7",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-pptx/ooxml/scripts/validation/__init__.py": {
-    "mtime": 1780806331.7646909,
-    "ast_hash": "9577920dc811fff9762a96d4095d95e5",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-pptx/ooxml/scripts/validation/base.py": {
-    "mtime": 1780806331.7648535,
-    "ast_hash": "3dba9423cd3c7040719353bd90a80985",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-pptx/ooxml/scripts/validation/docx.py": {
-    "mtime": 1780806331.765021,
-    "ast_hash": "f74a2ffcf139e597c0bd14fd50a70c22",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-pptx/ooxml/scripts/validation/pptx.py": {
-    "mtime": 1780806331.7651672,
-    "ast_hash": "3b5cc57a4728a9297f51b8a4c66f7449",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-pptx/ooxml/scripts/validation/redlining.py": {
-    "mtime": 1780806331.7654831,
-    "ast_hash": "40ec4a9f2b783a2c4b13800462d6b8aa",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-pptx/scripts/inventory.py": {
-    "mtime": 1780806331.765715,
-    "ast_hash": "601246c5e0de1240936033b6b15c0e62",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-pptx/scripts/rearrange.py": {
-    "mtime": 1780806331.7659843,
-    "ast_hash": "50ed064e92670d478b2ee681670829dc",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-pptx/scripts/replace.py": {
-    "mtime": 1780806331.7661529,
-    "ast_hash": "58d9f615c24a006ec8fbf543ecf7f3d6",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-pptx/scripts/thumbnail.py": {
-    "mtime": 1780806331.766302,
-    "ast_hash": "8a1810bf6f566ece02c00176c019aacb",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-xlsx/.veslo-managed.json": {
-    "mtime": 1780806331.769318,
-    "ast_hash": "0181e9ee63bb3421e7f493700aed0450",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/.config/opencode/skills/veslo-managed/veslo-xlsx/recalc.py": {
-    "mtime": 1780806331.7688215,
-    "ast_hash": "2c168b411fb4af7d21788b706dea3e80",
+    "mtime": 1780816150.0612411,
+    "ast_hash": "eb7309af73126ceb3a4e6eefa1ae2d65",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-veslo-home/Library/Application Support/com.differentai.openwork.dev/veslo-workspaces.json": {
-    "mtime": 1780806299.0893679,
+    "mtime": 1780816140.169821,
     "ast_hash": "ed40a27d9028f5b9145c8a26381d056d",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-veslo-home/Library/Application Support/com.differentai.openwork/veslo-workspaces.json": {
-    "mtime": 1780806299.0891654,
+    "mtime": 1780816140.1696556,
     "ast_hash": "ed40a27d9028f5b9145c8a26381d056d",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-veslo-home/Library/Application Support/com.neatech.veslo.dev/veslo-workspaces.json": {
-    "mtime": 1780806299.0888257,
+    "mtime": 1780816140.1691482,
     "ast_hash": "ed40a27d9028f5b9145c8a26381d056d",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-veslo-home/Library/Application Support/com.neatech.veslo.e2e/veslo-workspaces.json": {
-    "mtime": 1780806299.0889738,
+    "mtime": 1780816140.169432,
     "ast_hash": "ed40a27d9028f5b9145c8a26381d056d",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-veslo-home/Library/Application Support/com.neatech.veslo/veslo-workspaces.json": {
-    "mtime": 1780806299.0886047,
+    "mtime": 1780816140.1689794,
     "ast_hash": "ed40a27d9028f5b9145c8a26381d056d",
     "semantic_hash": ""
   },
-  "packages/e2e/.tmp-veslo-home/workspaces/visual-workspace/.opencode/package.json": {
-    "mtime": 1780806322.983223,
-    "ast_hash": "64f89884b360da0328e8478d053851a7",
+  "packages/app/src/app/lib/automation-workspace-map.test.ts": {
+    "mtime": 1780812384.913553,
+    "ast_hash": "97292940cf41d3aa900ac91bfa237d37",
     "semantic_hash": ""
   },
-  "packages/e2e/.tmp-veslo-home/workspaces/visual-workspace/.opencode/plugins/veslo-automations.js": {
-    "mtime": 1780806300.6715736,
+  "packages/app/src/app/lib/automation-workspace-map.ts": {
+    "mtime": 1780812425.9625628,
+    "ast_hash": "8c590ce62315f3fe1ce9fdfd54e4b886",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/app-local-data/veslo-server-plugin-state.json": {
+    "mtime": 1780816150.0524595,
+    "ast_hash": "3311276f3b5c37f9ecbded50e2424f13",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/app-local-data/veslo-server-state.json": {
+    "mtime": 1780816150.0523136,
+    "ast_hash": "ccae2b609b6e8031b636946438dfa226",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816146868-000000-6227c160-d908-4cb5-bbb9-97a88e385d7c.json": {
+    "mtime": 1780816146.8693945,
+    "ast_hash": "f8cc610832ecabc73a8381f2e3140ebf",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816146869-000001-e25f165a-3a7d-4b26-abeb-515cafa7359c.json": {
+    "mtime": 1780816146.8693948,
+    "ast_hash": "bfbe9c63ab413bea278ea3979d7a3a75",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816151874-000000-509af2dd-e595-4c09-a87d-536196b3ce5d.json": {
+    "mtime": 1780816151.8751264,
+    "ast_hash": "c761549455ecc903a1294e56574adf28",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816151874-000001-aabf18d1-5870-4c4f-aacd-d6a08e10d745.json": {
+    "mtime": 1780816151.8751252,
+    "ast_hash": "488f1e2b44043dc0917013728ddcbb15",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152121-000000-172a50f8-8e9f-4b0f-9882-6bf55e2d92f2.json": {
+    "mtime": 1780816152.1220577,
+    "ast_hash": "087fe6b5acf6aee81630015eda59bf54",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152121-000000-d95e6676-3c19-4de3-9366-1d4cdc564a03.json": {
+    "mtime": 1780816152.1220577,
+    "ast_hash": "5c4f5b636a1232df94707d3074945a73",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152160-000000-5819c82f-b831-4e7e-bb4b-0032835c5640.json": {
+    "mtime": 1780816152.1611803,
+    "ast_hash": "a809a5d000ad7c0f9442310340218fb5",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152161-000000-047c1068-8832-4a4b-bf2b-a080c082c991.json": {
+    "mtime": 1780816152.1616993,
+    "ast_hash": "a0f463b00e958bbb02d75f2f41e2736f",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152187-000000-d63dc33b-61c5-4f77-a16e-2d0961d11aac.json": {
+    "mtime": 1780816152.187412,
+    "ast_hash": "e54eb525c7e0ed57557d890d05c9c4e6",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152190-000000-1f2ebb1b-db2b-477e-915f-1576151d4c6c.json": {
+    "mtime": 1780816152.191187,
+    "ast_hash": "e02ab3a8dc5b41b1bdee1c79457f4518",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152190-000000-66f5bbb1-25b1-44e9-91c5-ebfa14e34edb.json": {
+    "mtime": 1780816152.1912217,
+    "ast_hash": "0819ba8db0d015d10c5e2ff3957287e4",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152190-000000-d78c59f0-6c31-4298-bbf8-a24d875aa126.json": {
+    "mtime": 1780816152.1912818,
+    "ast_hash": "610becf0833fe51cf40a5fb2fe9ed247",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152195-000000-4137a1fd-cb3b-4770-a724-35bc70558bfe.json": {
+    "mtime": 1780816152.196023,
+    "ast_hash": "04c84956f04c7625121948297357356b",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152198-000000-e26d5333-272d-4380-8d1c-409f60f9d505.json": {
+    "mtime": 1780816152.1990917,
+    "ast_hash": "72b6f4af22a13ac9da53781dc860c882",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152207-000000-37c3c2fd-9f3d-4e5b-a8e0-c506a7a7a8c4.json": {
+    "mtime": 1780816152.2075658,
+    "ast_hash": "0b9ac94ec5bb9aa86d0fc517ff97a208",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152207-000000-b677943a-887b-465c-bfb1-328818388ebd.json": {
+    "mtime": 1780816152.207588,
+    "ast_hash": "83cb5a40a2d90712a459d3a2ba614457",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152208-000000-a5568548-ff6f-4b23-a417-67befc4754f0.json": {
+    "mtime": 1780816152.2083588,
+    "ast_hash": "4f571abf92ce9e841fa6ec7918b218e1",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152219-000000-84083dde-e967-4f61-8b5e-fadb5c2c4d52.json": {
+    "mtime": 1780816152.2195768,
+    "ast_hash": "743a146716d5bbe407ee73f50dc37aea",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152219-000000-a4154f5b-02f7-4636-ad0e-5030bf294eb6.json": {
+    "mtime": 1780816152.2195454,
+    "ast_hash": "8bd623f87ae520a44b79efd5f98d6cfa",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152225-000000-f8b8f801-dbc0-44d1-82bb-35c6f2b5fe19.json": {
+    "mtime": 1780816152.2259476,
+    "ast_hash": "8954ff08055d9ed261947ba98c7d59cf",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152266-000000-7bc04df7-ab38-4837-ae5b-850873459aff.json": {
+    "mtime": 1780816152.266723,
+    "ast_hash": "b7a20db9cc9cd852cd8055770f94d3b2",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152275-000000-2b141e39-481b-4e00-ad67-116aacb4b9a8.json": {
+    "mtime": 1780816152.2756202,
+    "ast_hash": "1fd22dc48c9ab5b284158a71954c7db0",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152512-000000-3e7dc3d9-798c-42ab-8ab5-4da14b2ac03e.json": {
+    "mtime": 1780816152.5130842,
+    "ast_hash": "066c8011310f8b8b12863460621d0f69",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152524-000000-d0df2b5a-f9a6-4d0a-b4d4-29a2fd2ae9fe.json": {
+    "mtime": 1780816152.5253427,
+    "ast_hash": "e79641339a04a3d747d18a1b9ce0103b",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152528-000000-4952227a-14e5-4450-8637-f5ea1a96a683.json": {
+    "mtime": 1780816152.5287616,
+    "ast_hash": "0670fdbfe703c21974a2448f8bb8e05c",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152528-000000-8c8631df-bbc1-4e67-b810-37b6732809fc.json": {
+    "mtime": 1780816152.530777,
+    "ast_hash": "d4d9922c90c83c4abca46426424b3cbe",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152528-000000-95938d6a-b400-4b67-8b5a-a2fb9afd42d4.json": {
+    "mtime": 1780816152.5301847,
+    "ast_hash": "4146dc6c6a759ad7e8c869b380ddb845",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152528-000000-ca12cf55-ee3b-477e-81dc-b23c5e80cae8.json": {
+    "mtime": 1780816152.5288641,
+    "ast_hash": "420bc498c46c11ea3ab20f2ae944fffc",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152528-000000-da527b76-8fcb-4984-bffa-12de47e5a13f.json": {
+    "mtime": 1780816152.528874,
+    "ast_hash": "7e3eea14dd7bd06b72cb43c2a69e6095",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152529-000000-72723d14-5603-4fc8-80f6-f11cd60531be.json": {
+    "mtime": 1780816152.529863,
+    "ast_hash": "8585438dc21fe96b39a81074a8fdae77",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152533-000000-94e33d2c-eb22-4fd2-8868-0c61763a9169.json": {
+    "mtime": 1780816152.534747,
+    "ast_hash": "ba9fabcf93f9d11f69e5d6fe83672da0",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152535-000000-3eb3e3d5-3c42-4917-bbef-c8dd30deef93.json": {
+    "mtime": 1780816152.5357633,
+    "ast_hash": "dc2fdb2635ce36d5886f72e35bc2b4b5",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152535-000000-3f623e2a-055d-4db4-a742-f63f4c1b9e05.json": {
+    "mtime": 1780816152.5363977,
+    "ast_hash": "e1e80350aab7bad53c10e7f037116eea",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152537-000000-07e42935-8089-47ea-86d1-373eae03a9d1.json": {
+    "mtime": 1780816152.5378435,
+    "ast_hash": "7bd0d5d032eee86708dac810835e8432",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152537-000000-96a99a87-fb04-4986-8b3a-a59c069e6bd6.json": {
+    "mtime": 1780816152.537948,
+    "ast_hash": "21c939bcc249b91d166ed820d89f5b56",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152538-000000-8b05f646-4a6b-44c0-873a-e5c578bb57f5.json": {
+    "mtime": 1780816152.5391662,
+    "ast_hash": "42dc218313a0537cab673bb0169483d6",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152538-000000-b1fca0b9-15cf-4627-b4a1-027f5e2d8a52.json": {
+    "mtime": 1780816152.5390913,
+    "ast_hash": "9ca3ce6a8a681e5c163ebaf1b7712f32",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152559-000000-a4011934-9b6b-41d8-8a68-0f03e0d38b56.json": {
+    "mtime": 1780816152.560077,
+    "ast_hash": "b041aa33b5c62745e746d0473ea8c4b7",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152561-000000-039d9686-9c34-41e2-b5f7-a3a4827cc2a4.json": {
+    "mtime": 1780816152.561851,
+    "ast_hash": "c9e0e3e189e386c57f22d0a7630eb7c3",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152561-000000-30e7a64e-31e0-4ec1-b32b-a2ee43584706.json": {
+    "mtime": 1780816152.5613937,
+    "ast_hash": "056dd9d1e53e07c73d56831244c64a65",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152561-000000-f08bc369-e7a0-44f9-9305-7bd3e26e7267.json": {
+    "mtime": 1780816152.5624363,
+    "ast_hash": "6b056f0c0854697c04c182f942e8a463",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152562-000000-99adb56a-da38-4d3f-ae7c-3e4df1f8027c.json": {
+    "mtime": 1780816152.562572,
+    "ast_hash": "70603518e82cc5b33526346ceb4e18c5",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152563-000000-76fd60c9-81b4-4fba-8527-7c61a84e27e5.json": {
+    "mtime": 1780816152.5633054,
+    "ast_hash": "b0dea942ed788fbdc539c449eaba663c",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152579-000000-5c6f764d-17fb-437a-afd5-efead842cc72.json": {
+    "mtime": 1780816152.5795317,
+    "ast_hash": "407ab24a26e9739c5f6a34449521562e",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152590-000000-13a4f17d-0761-4273-8af9-0494aaea99d1.json": {
+    "mtime": 1780816152.5910006,
+    "ast_hash": "aaa50a6c002aa08be2f0a076517e954e",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152590-000000-4b45e975-ece3-4e44-bab1-20b3eb46a979.json": {
+    "mtime": 1780816152.5908694,
+    "ast_hash": "35fc7a6fb0ff2304b4940e43c8cc7808",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/debug-log-spool/events/1780816152592-000000-71d7669b-1422-483e-b5bd-8f6348dee48c.json": {
+    "mtime": 1780816152.5934095,
+    "ast_hash": "be8efbb0f77ab1aca419ad1c166bf245",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-veslo-home/Library/Application Support/com.neatech.veslo.dev/pending-session-drafts/pending-directory-4fde1f09-ae73-4c4b-a5a7-0b2f161c7f15/draft.json": {
+    "mtime": 1780816152.6785948,
+    "ast_hash": "0ecaa63cb9fde6746b664c08ce2c04b1",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-veslo-home/workspaces/draft-move-target-1780816142723/.opencode/plugins/veslo-automations.js": {
+    "mtime": 1780816142.7310848,
     "ast_hash": "aed23afe5713ad71d78343adc71dabe0",
     "semantic_hash": ""
   },
-  "packages/e2e/.tmp-veslo-home/workspaces/visual-workspace/.opencode/skills/veslo-managed/.veslo-materialization.json": {
-    "mtime": 1780806331.9833865,
-    "ast_hash": "a2536193fcc06a6045620f15c80bf2c6",
+  "packages/e2e/.tmp-veslo-home/workspaces/draft-move-target-1780816142723/.opencode/veslo.json": {
+    "mtime": 1780816142.732237,
+    "ast_hash": "ba5ac7f3644dde115dc0ea0f4e9c04c0",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-veslo-home/workspaces/visual-workspace/.opencode/plugins/veslo-automations.js": {
+    "mtime": 1780816142.7100577,
+    "ast_hash": "aed23afe5713ad71d78343adc71dabe0",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-veslo-home/workspaces/visual-workspace/.opencode/veslo.json": {
-    "mtime": 1780806300.681737,
-    "ast_hash": "86f7015bffa4d06d0d77d3ae4ac7bd5f",
+    "mtime": 1780816142.7117136,
+    "ast_hash": "70fd976988aad843b5a90f50223cb84b",
     "semantic_hash": ""
   },
-  "packages/e2e/.tmp-veslo-home/workspaces/visual-workspace/.opencode/veslo.skills.lock.json": {
-    "mtime": 1780806332.0124037,
-    "ast_hash": "94deac98ef7a580e16f8e366da863c9c",
+  "packages/app/src/app/app-managed-ai-access-retry-gate.test.ts": {
+    "mtime": 1780816462.2873616,
+    "ast_hash": "47de2b17a4ce8f19419c96f271d0bf34",
+    "semantic_hash": ""
+  },
+  "packages/app/src/app/components/part-view-code-copy.test.ts": {
+    "mtime": 1780816462.2913375,
+    "ast_hash": "b63d3258bf1c30c819cfdba1a311d02e",
+    "semantic_hash": ""
+  },
+  "packages/app/src/app/components/session/composer-mention-trigger.test.ts": {
+    "mtime": 1780816462.292253,
+    "ast_hash": "cb936d4e25ce960e0cd3a0d43bf2ccdd",
+    "semantic_hash": ""
+  },
+  "packages/app/src/app/components/session/composer-mention-trigger.ts": {
+    "mtime": 1780816462.2923424,
+    "ast_hash": "7b02bda3d2bd60b92ba758ec792b719b",
+    "semantic_hash": ""
+  },
+  "packages/app/src/app/components/session/message-list-copy-affordance.test.ts": {
+    "mtime": 1780816462.2931755,
+    "ast_hash": "2cd90e61b082e9ad3535efccfe69d6ca",
+    "semantic_hash": ""
+  },
+  "packages/app/src/app/context/workspace-browse-cold-start.test.ts": {
+    "mtime": 1780816462.2959056,
+    "ast_hash": "fff3457aebd6708ea935f31da06fb973",
+    "semantic_hash": ""
+  },
+  "packages/app/src/app/context/workspace-quiet-connect-timeout.test.ts": {
+    "mtime": 1780816462.296011,
+    "ast_hash": "f35f7e96e5c1ee1b5a8254bcdfb1c567",
+    "semantic_hash": ""
+  },
+  "packages/desktop/src-tauri/src/single_window_config_tests.rs": {
+    "mtime": 1780816462.3038938,
+    "ast_hash": "60e240fdd5cfd04dbb7ca57350bccd5a",
+    "semantic_hash": ""
+  },
+  "packages/e2e/specs/sidebar-empty-private-chat.spec.ts": {
+    "mtime": 1780816462.304556,
+    "ast_hash": "a3004fda4a3c5988e611cd3703c13b97",
+    "semantic_hash": ""
+  },
+  "services/ai-gateway/src/alerts/codex-capacity-monitor.ts": {
+    "mtime": 1780842683.9378035,
+    "ast_hash": "06e69d73831b55693b04eed4ab3ce46e",
+    "semantic_hash": ""
+  },
+  "services/ai-gateway/src/email/admin-alert-mailer.ts": {
+    "mtime": 1780842759.251629,
+    "ast_hash": "e9b894f7898fc954442e2a3ebfd70fe0",
+    "semantic_hash": ""
+  },
+  "services/ai-gateway/test/alert-mailer.test.ts": {
+    "mtime": 1780842562.3734348,
+    "ast_hash": "ac33da4ae0e4e5c350cbaf2677d4a085",
+    "semantic_hash": ""
+  },
+  "services/ai-gateway/test/codex-capacity-alert-monitor.test.ts": {
+    "mtime": 1780842562.3736527,
+    "ast_hash": "ba4d6dc5de01e8d56ad1a6f4e3e3413c",
     "semantic_hash": ""
   }
 }

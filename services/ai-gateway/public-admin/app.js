@@ -37,6 +37,8 @@ const state = {
   selectedAuditId: null,
   selectedUserId: null,
   selectedOrganizationId: null,
+  selectedOrganizationDomainId: null,
+  organizationDomainMode: "create",
   userMode: "edit",
   userAiAccessByUserId: {},
   userAiAccessAvailableCredentialsByUserId: {},
@@ -68,15 +70,27 @@ const els = {
   organizationSeatLimit: document.getElementById("organization-seat-limit"),
   organizationSaveButton: document.getElementById("organization-save-button"),
   organizationSaveStatus: document.getElementById("organization-save-status"),
-  organizationDomainInput: document.getElementById("organization-domain-input"),
-  organizationDomainEnabled: document.getElementById("organization-domain-enabled"),
-  organizationDomainSelfSignup: document.getElementById("organization-domain-self-signup"),
+  organizationSelectorControl: document.getElementById("organization-selector-control"),
+  organizationSelectorInput: document.getElementById("organization-selector-input"),
+  organizationSelectorOptions: document.getElementById("organization-selector-options"),
   organizationDomainAddButton: document.getElementById("organization-domain-add-button"),
   organizationDomainList: document.getElementById("organization-domain-list"),
-  organizationInviteEmail: document.getElementById("organization-invite-email"),
-  organizationInviteRole: document.getElementById("organization-invite-role"),
   organizationInviteSendButton: document.getElementById("organization-invite-send-button"),
   organizationInviteList: document.getElementById("organization-invite-list"),
+  organizationDomainModal: document.getElementById("organization-domain-modal"),
+  organizationDomainModalTitle: document.getElementById("organization-domain-modal-title"),
+  organizationDomainModalClose: document.getElementById("organization-domain-modal-close"),
+  organizationDomainModalDomain: document.getElementById("organization-domain-modal-domain"),
+  organizationDomainModalEnabled: document.getElementById("organization-domain-modal-enabled"),
+  organizationDomainModalSelfSignup: document.getElementById("organization-domain-modal-self-signup"),
+  organizationDomainModalSave: document.getElementById("organization-domain-modal-save"),
+  organizationDomainModalStatus: document.getElementById("organization-domain-modal-status"),
+  organizationInviteModal: document.getElementById("organization-invite-modal"),
+  organizationInviteModalClose: document.getElementById("organization-invite-modal-close"),
+  organizationInviteModalEmail: document.getElementById("organization-invite-modal-email"),
+  organizationInviteModalRole: document.getElementById("organization-invite-modal-role"),
+  organizationInviteModalSend: document.getElementById("organization-invite-modal-send"),
+  organizationInviteModalStatus: document.getElementById("organization-invite-modal-status"),
   credentialCreateProvider: document.getElementById("credential-create-provider"),
   credentialCreateName: document.getElementById("credential-create-name"),
   credentialCreateBaseUrl: document.getElementById("credential-create-base-url"),
@@ -180,6 +194,56 @@ function closeModal(modal) {
   }
 
   modal.removeAttribute("open");
+}
+
+function closeAllModals() {
+  [
+    els.organizationDomainModal,
+    els.organizationInviteModal,
+    els.credentialDetailModal,
+    els.alertDetailModal,
+    els.userEditorModal,
+    els.auditDetailModal,
+  ].forEach((modal) => closeModal(modal));
+}
+
+function setDomainModalStatus(message, tone = "neutral") {
+  els.organizationDomainModalStatus.textContent = message;
+  els.organizationDomainModalStatus.dataset.tone = tone;
+}
+
+function setInviteModalStatus(message, tone = "neutral") {
+  els.organizationInviteModalStatus.textContent = message;
+  els.organizationInviteModalStatus.dataset.tone = tone;
+}
+
+function openOrganizationDomainModal(domainId = null) {
+  const domain = state.organizationDomains.find((entry) => entry.id === domainId) || null;
+  state.organizationDomainMode = domain ? "edit" : "create";
+  state.selectedOrganizationDomainId = domain?.id || null;
+  els.organizationDomainModalTitle.textContent = domain ? "Edit domain" : "Add domain";
+  els.organizationDomainModalDomain.value = domain?.domain || "";
+  els.organizationDomainModalDomain.disabled = Boolean(domain);
+  els.organizationDomainModalEnabled.checked = domain?.enabled ?? true;
+  els.organizationDomainModalSelfSignup.checked = domain?.selfSignupEnabled ?? false;
+  els.organizationDomainModalSave.textContent = domain ? "Save domain" : "Add domain";
+  setDomainModalStatus("Domain changes are applied through Save.");
+  if (typeof els.organizationDomainModal.showModal === "function" && !els.organizationDomainModal.open) {
+    els.organizationDomainModal.showModal();
+  } else {
+    openModal(els.organizationDomainModal);
+  }
+}
+
+function openOrganizationInviteModal() {
+  els.organizationInviteModalEmail.value = "";
+  els.organizationInviteModalRole.value = "member";
+  setInviteModalStatus("Invite is sent only when confirmed.");
+  if (typeof els.organizationInviteModal.showModal === "function" && !els.organizationInviteModal.open) {
+    els.organizationInviteModal.showModal();
+  } else {
+    openModal(els.organizationInviteModal);
+  }
 }
 
 function openCredentialDetail(credentialId) {
@@ -392,6 +456,11 @@ function canAccessPage(page) {
   return allowedPages().includes(page);
 }
 
+function activateCurrentRoute() {
+  const requestedPage = normalizePage(location.pathname);
+  setActivePage(requestedPage);
+}
+
 async function runAllowedLoad(page, loader) {
   if (!canAccessPage(page)) {
     return;
@@ -406,7 +475,7 @@ function applyAdminCapabilities() {
 
   els.navItems.forEach((item) => {
     const route = item.dataset.route || "";
-    item.classList.toggle("hidden", !allowed.has(route));
+    item.classList.toggle("hidden", route === "overview" ? !canManagePlatform : !allowed.has(route));
   });
   els.pages.forEach((panel) => {
     const page = panel.dataset.page || "";
@@ -429,6 +498,15 @@ function applyAdminCapabilities() {
   if (els.createUserButtonInline) {
     els.createUserButtonInline.classList.toggle("hidden", !canManagePlatform);
   }
+  if (els.userRoleFilter) {
+    const selectedRoleFilter = els.userRoleFilter.value;
+    els.userRoleFilter.innerHTML = buildUserRoleFilterOptions();
+    const hasSelectedRoleFilter = Array.from(els.userRoleFilter.options)
+      .some((option) => option.value === selectedRoleFilter);
+    if (hasSelectedRoleFilter) {
+      els.userRoleFilter.value = selectedRoleFilter;
+    }
+  }
 }
 
 function normalizeOrganizationRoleInput(value) {
@@ -437,6 +515,13 @@ function normalizeOrganizationRoleInput(value) {
 
 function organizationRoleOptionsMarkup() {
   return `<option value="organization_admin">Organization admin</option><option value="member">Member</option>`;
+}
+
+function buildUserRoleFilterOptions() {
+  const platformAdminOption = state.session?.platformAdmin === true
+    ? `<option value="platform_admin">Platform admin</option>`
+    : "";
+  return `<option value="">Role</option>${platformAdminOption}<option value="member">Member</option>`;
 }
 
 function buildUserUpdatePayload(payload) {
@@ -589,8 +674,20 @@ function readAiAccessCredentialValue() {
 function summarizeUser(user) {
   const membership = user.memberships?.[0];
   const orgPart = membership ? `${membership.role} in ${membership.orgName}` : "no org membership";
+  if (state.session?.platformAdmin !== true) {
+    return orgPart;
+  }
   const rolePart = user.platformAdmin ? "Platform admin" : "Member";
   return `${rolePart} · ${orgPart}`;
+}
+
+function defaultUserSaveStatusMessage() {
+  if (state.userMode === "create") {
+    return "Fill in the profile and save to create the user.";
+  }
+  return hasCapability("managedAiUserAccess")
+    ? "Directory changes and AI access assignments are applied separately."
+    : "Organization membership changes are applied through Save.";
 }
 
 function userStatus(user) {
@@ -643,7 +740,7 @@ function setActivePage(page) {
     const active = panel.dataset.page === page || (page === "overview" && panel.dataset.page === "overview");
     panel.classList.toggle("hidden", !active);
   });
-  els.createUserButton.classList.toggle("hidden", page !== "users");
+  els.createUserButton.classList.toggle("hidden", page !== "users" || state.session?.platformAdmin !== true);
 
   const titles = {
     overview: ["AI Gateway control plane", "Overview", "Inspect credentials, usage, alerts, users, and audit events from one place."],
@@ -734,6 +831,7 @@ async function bootstrapSession() {
   );
   showApp();
   await loadAllData();
+  activateCurrentRoute();
 }
 
 function populateOrganizationOptions() {
@@ -745,6 +843,7 @@ function populateOrganizationOptions() {
   els.userOrg.innerHTML = organizations.length
     ? organizations.map((entry) => `<option value="${escapeHtml(entry.id)}">${escapeHtml(entry.name)}</option>`).join("")
     : `<option value="">No organization</option>`;
+  renderOrganizationSelector();
 }
 
 async function startBrowserAuth() {
@@ -902,6 +1001,106 @@ function currentOrganization() {
   return state.organizations.find((entry) => entry.id === orgId) || state.session?.organizations?.find((entry) => entry.id === orgId) || null;
 }
 
+function organizationSelectorLabel(organization) {
+  const name = String(organization?.name || "").trim();
+  const slug = String(organization?.slug || "").trim();
+  const id = String(organization?.id || "").trim();
+  return [name || slug || id, slug, id]
+    .filter(Boolean)
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .join(" - ");
+}
+
+function normalizeSelectorText(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function findOrganizationFromSelectorValue(value) {
+  const normalized = normalizeSelectorText(value);
+  if (!normalized) {
+    return null;
+  }
+  return state.organizations.find((organization) => {
+    const candidates = [
+      organizationSelectorLabel(organization),
+      organization?.name,
+      organization?.slug,
+      organization?.id,
+    ].map(normalizeSelectorText);
+    return candidates.includes(normalized);
+  }) || null;
+}
+
+function renderOrganizationSelector() {
+  const canManagePlatform = state.session?.platformAdmin === true;
+  els.organizationSelectorControl.classList.toggle("hidden", !canManagePlatform);
+  if (!canManagePlatform) {
+    return;
+  }
+
+  const organizations = Array.isArray(state.organizations) ? state.organizations : [];
+  const selected = currentOrganization();
+  els.organizationSelectorOptions.innerHTML = organizations.map((organization) => `
+    <option value="${escapeHtml(organizationSelectorLabel(organization))}" label="${escapeHtml(organization.slug || organization.id)}"></option>
+  `).join("");
+  els.organizationSelectorInput.value = selected ? organizationSelectorLabel(selected) : "";
+  els.organizationSelectorInput.disabled = organizations.length <= 1;
+  els.organizationSelectorInput.title = organizations.length <= 1
+    ? "Only one organization is available."
+    : "Search by organization name, slug, or id.";
+}
+
+function hasOrganizationPendingChanges() {
+  const organization = currentOrganization();
+  if (!organization) {
+    return false;
+  }
+
+  const savedSeatLimit = organization.seatLimit === null || organization.seatLimit === undefined
+    ? ""
+    : String(organization.seatLimit);
+  const currentSeatLimit = els.organizationSeatLimit.value.trim();
+  return (
+    els.organizationName.value.trim() !== String(organization.name || "").trim() ||
+    els.organizationSlug.value.trim() !== String(organization.slug || "").trim() ||
+    (state.session?.platformAdmin === true && currentSeatLimit !== savedSeatLimit)
+  );
+}
+
+async function selectOrganizationFromSelector() {
+  if (state.session?.platformAdmin !== true) {
+    renderOrganizationSelector();
+    return;
+  }
+
+  const selected = findOrganizationFromSelectorValue(els.organizationSelectorInput.value);
+  const currentId = currentOrganizationId();
+  if (!selected) {
+    renderOrganizationSelector();
+    return;
+  }
+  if (selected.id === currentId) {
+    renderOrganizationSelector();
+    return;
+  }
+  if (
+    hasOrganizationPendingChanges() &&
+    !window.confirm("Discard unsaved organization changes before switching organization?")
+  ) {
+    renderOrganizationSelector();
+    return;
+  }
+
+  closeAllModals();
+  state.selectedOrganizationId = selected.id;
+  state.organizationDomains = [];
+  state.organizationInvites = [];
+  state.selectedOrganizationDomainId = null;
+  setOrganizationSaveStatus("Loading organization...", "pending");
+  await loadOrganization();
+  setOrganizationSaveStatus("No pending changes.");
+}
+
 async function loadOrganization() {
   try {
     const payload = await fetchJson("/organizations");
@@ -1040,11 +1239,7 @@ async function loadUsers() {
         populateUserEditor(user);
       }
     }
-    setUserSaveStatus(
-      state.userMode === "create"
-        ? "Fill in the profile and save to create the user."
-        : "Directory changes and AI access assignments are applied separately.",
-    );
+    setUserSaveStatus(defaultUserSaveStatusMessage());
   } catch (error) {
     console.error("loadUsers failed", error);
     setUserSaveStatus(
@@ -1091,6 +1286,7 @@ function renderOverview() {
 function renderOrganization() {
   const organization = currentOrganization();
   if (!organization) {
+    renderOrganizationSelector();
     els.organizationEditorTitle.textContent = "No organization";
     els.organizationName.value = "";
     els.organizationSlug.value = "";
@@ -1100,6 +1296,7 @@ function renderOrganization() {
     return;
   }
 
+  renderOrganizationSelector();
   els.organizationEditorTitle.textContent = organization.name || organization.slug || organization.id;
   els.organizationName.value = organization.name || "";
   els.organizationSlug.value = organization.slug || "";
@@ -1113,17 +1310,9 @@ function renderOrganization() {
       <div>
         <strong>${escapeHtml(domain.domain)}</strong>
         <p>${domain.enabled ? "Enabled" : "Disabled"} · ${domain.selfSignupEnabled ? "Self signup enabled" : "Self signup disabled"}</p>
-        <label class="switch-row">
-          <span>Enabled</span>
-          <input type="checkbox" data-domain-enabled ${domain.enabled ? "checked" : ""} />
-        </label>
-        <label class="switch-row">
-          <span>Self signup</span>
-          <input type="checkbox" data-domain-self-signup ${domain.selfSignupEnabled ? "checked" : ""} />
-        </label>
       </div>
       <span class="button-row">
-        <button class="button button-secondary" type="button" data-domain-save>Save</button>
+        <button class="button button-secondary" type="button" data-domain-edit>Edit</button>
         <button class="button button-secondary" type="button" data-domain-delete>Remove</button>
       </span>
     </article>
@@ -1612,19 +1801,21 @@ function updateAiAccessStatusText(user, aiAccess) {
 
 function populateUserEditor(user) {
   const isCreate = state.userMode === "create";
+  const canManagePlatform = state.session?.platformAdmin === true;
   const membership = user?.memberships?.[0];
   const aiAccess = user?.id ? currentUserAiAccess(user.id) : normalizeAiAccess(null);
   els.userEditorStatus.textContent = isCreate ? "Create user" : userStatus(user);
   els.userEditorTitle.textContent = isCreate ? "New user" : (user?.name || user?.email || "User");
   els.userName.value = user?.name || "";
+  els.userName.disabled = !canManagePlatform;
   els.userEmail.value = user?.email || "";
-  els.userEmail.disabled = !isCreate;
+  els.userEmail.disabled = !isCreate || !canManagePlatform;
   els.userOrg.disabled = false;
   els.userRole.disabled = false;
   els.userPlatformAdmin.checked = user?.platformAdmin === true;
-  if (state.session?.platformAdmin !== true) {
+  els.userPlatformAdmin.disabled = !canManagePlatform;
+  if (!canManagePlatform) {
     els.userPlatformAdmin.checked = false;
-    els.userPlatformAdmin.disabled = true;
   }
   els.userSendInvite.checked = true;
   els.userSendInvite.disabled = !isCreate;
@@ -1636,8 +1827,8 @@ function populateUserEditor(user) {
     els.userRole.value = "member";
   }
   els.userDisableButton.textContent = user?.disabled ? "Enable user" : "Disable user";
-  els.userDisableButton.disabled = isCreate || !user || state.session?.platformAdmin !== true;
-  els.userDeleteButton.disabled = isCreate || !user || state.session?.platformAdmin !== true;
+  els.userDisableButton.disabled = isCreate || !user || !canManagePlatform;
+  els.userDeleteButton.disabled = isCreate || !user || !canManagePlatform;
   if (hasCapability("managedAiUserAccess")) {
     els.userAiAccessEnabled.checked = aiAccess.enabled;
     els.userAiAccessEnabled.disabled = isCreate || !user;
@@ -1731,7 +1922,7 @@ function enterCreateMode() {
   setActivePage("users");
   showApp();
   openUserEditor(null);
-  setUserSaveStatus("Fill in the profile and save to create the user.");
+  setUserSaveStatus(defaultUserSaveStatusMessage());
 }
 
 async function refreshCredentialOperations() {
@@ -1974,6 +2165,9 @@ async function runAlertAction(action) {
       method: "POST",
     });
     await refreshAlertOperations();
+    if (action === "resolve") {
+      closeModal(els.alertDetailModal);
+    }
   } catch (error) {
     window.alert(`Unable to ${action} alert: ${error instanceof Error ? error.message : "unknown_error"}`);
   }
@@ -2021,59 +2215,50 @@ async function saveOrganization() {
   }
 }
 
-async function createOrganizationDomain() {
+async function saveOrganizationDomainModal() {
   const orgId = currentOrganizationId();
   if (!orgId) {
     return;
   }
 
   try {
-    els.organizationDomainAddButton.disabled = true;
-    setOrganizationSaveStatus("Adding domain...", "pending");
-    await fetchJson(`/organizations/${encodeURIComponent(orgId)}/domains`, {
-      method: "POST",
-      body: JSON.stringify({
-        domain: els.organizationDomainInput.value.trim(),
-        enabled: els.organizationDomainEnabled.checked,
-        selfSignupEnabled: els.organizationDomainSelfSignup.checked,
-      }),
-    });
-    els.organizationDomainInput.value = "";
-    await loadOrganization();
-    setOrganizationSaveStatus("Domain added.", "success");
-  } catch (error) {
-    setOrganizationSaveStatus(
-      `Unable to add domain: ${error instanceof Error ? error.message : "unknown_error"}`,
-      "error",
+    els.organizationDomainModalSave.disabled = true;
+    setDomainModalStatus(
+      state.organizationDomainMode === "edit" ? "Saving domain..." : "Adding domain...",
+      "pending",
     );
-  } finally {
-    els.organizationDomainAddButton.disabled = false;
-  }
-}
-
-async function saveOrganizationDomain(card) {
-  const orgId = currentOrganizationId();
-  const domainId = card?.dataset?.domainId;
-  if (!orgId || !domainId) {
-    return;
-  }
-
-  try {
-    setOrganizationSaveStatus("Saving domain...", "pending");
-    await fetchJson(`/organizations/${encodeURIComponent(orgId)}/domains/${encodeURIComponent(domainId)}`, {
-      method: "PATCH",
-      body: JSON.stringify({
-        enabled: card.querySelector("[data-domain-enabled]")?.checked === true,
-        selfSignupEnabled: card.querySelector("[data-domain-self-signup]")?.checked === true,
-      }),
-    });
+    const payload = {
+      domain: els.organizationDomainModalDomain.value.trim(),
+      enabled: els.organizationDomainModalEnabled.checked,
+      selfSignupEnabled: els.organizationDomainModalSelfSignup.checked,
+    };
+    if (state.organizationDomainMode === "edit" && state.selectedOrganizationDomainId) {
+      await fetchJson(`/organizations/${encodeURIComponent(orgId)}/domains/${encodeURIComponent(state.selectedOrganizationDomainId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          enabled: payload.enabled,
+          selfSignupEnabled: payload.selfSignupEnabled,
+        }),
+      });
+    } else {
+      await fetchJson(`/organizations/${encodeURIComponent(orgId)}/domains`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+    }
     await loadOrganization();
-    setOrganizationSaveStatus("Domain saved.", "success");
-  } catch (error) {
+    closeModal(els.organizationDomainModal);
     setOrganizationSaveStatus(
+      state.organizationDomainMode === "edit" ? "Domain saved." : "Domain added.",
+      "success",
+    );
+  } catch (error) {
+    setDomainModalStatus(
       `Unable to save domain: ${error instanceof Error ? error.message : "unknown_error"}`,
       "error",
     );
+  } finally {
+    els.organizationDomainModalSave.disabled = false;
   }
 }
 
@@ -2081,6 +2266,10 @@ async function deleteOrganizationDomain(card) {
   const orgId = currentOrganizationId();
   const domainId = card?.dataset?.domainId;
   if (!orgId || !domainId) {
+    return;
+  }
+  const domainName = card.querySelector("strong")?.textContent?.trim() || "this domain";
+  if (!window.confirm(`Remove ${domainName}? Users from this domain will no longer match organization signup policy.`)) {
     return;
   }
 
@@ -2106,25 +2295,25 @@ async function createOrganizationInvite() {
   }
 
   try {
-    els.organizationInviteSendButton.disabled = true;
-    setOrganizationSaveStatus("Sending invite...", "pending");
+    els.organizationInviteModalSend.disabled = true;
+    setInviteModalStatus("Sending invite...", "pending");
     await fetchJson(`/organizations/${encodeURIComponent(orgId)}/invites`, {
       method: "POST",
       body: JSON.stringify({
-        email: els.organizationInviteEmail.value.trim(),
-        role: normalizeOrganizationRoleInput(els.organizationInviteRole.value),
+        email: els.organizationInviteModalEmail.value.trim(),
+        role: normalizeOrganizationRoleInput(els.organizationInviteModalRole.value),
       }),
     });
-    els.organizationInviteEmail.value = "";
     await loadOrganization();
+    closeModal(els.organizationInviteModal);
     setOrganizationSaveStatus("Invite sent.", "success");
   } catch (error) {
-    setOrganizationSaveStatus(
+    setInviteModalStatus(
       `Unable to send invite: ${error instanceof Error ? error.message : "unknown_error"}`,
       "error",
     );
   } finally {
-    els.organizationInviteSendButton.disabled = false;
+    els.organizationInviteModalSend.disabled = false;
   }
 }
 
@@ -2154,6 +2343,10 @@ async function revokeOrganizationInvite(card) {
   const orgId = currentOrganizationId();
   const inviteId = card?.dataset?.inviteId;
   if (!orgId || !inviteId) {
+    return;
+  }
+  const inviteEmail = card.querySelector("strong")?.textContent?.trim() || "this invite";
+  if (!window.confirm(`Revoke invite for ${inviteEmail}?`)) {
     return;
   }
 
@@ -2333,8 +2526,19 @@ function bindActions() {
   els.createUserButton.addEventListener("click", enterCreateMode);
   els.createUserButtonInline.addEventListener("click", enterCreateMode);
   els.organizationSaveButton.addEventListener("click", () => void saveOrganization());
-  els.organizationDomainAddButton.addEventListener("click", () => void createOrganizationDomain());
-  els.organizationInviteSendButton.addEventListener("click", () => void createOrganizationInvite());
+  els.organizationSelectorInput.addEventListener("change", () => void selectOrganizationFromSelector());
+  els.organizationSelectorInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void selectOrganizationFromSelector();
+    }
+  });
+  els.organizationDomainAddButton.addEventListener("click", () => openOrganizationDomainModal());
+  els.organizationDomainModalSave.addEventListener("click", () => void saveOrganizationDomainModal());
+  els.organizationDomainModalClose.addEventListener("click", () => closeModal(els.organizationDomainModal));
+  els.organizationInviteSendButton.addEventListener("click", () => openOrganizationInviteModal());
+  els.organizationInviteModalSend.addEventListener("click", () => void createOrganizationInvite());
+  els.organizationInviteModalClose.addEventListener("click", () => closeModal(els.organizationInviteModal));
   els.credentialCreateProvider.addEventListener("change", updateCredentialCreateFields);
   els.credentialCreateSubmit.addEventListener("click", () => void createCredential());
   els.credentialsShowDeleted.addEventListener("change", () => {
@@ -2376,6 +2580,7 @@ function bindActions() {
 
     const routeAlerts = event.target.closest("[data-route-alerts]");
     if (routeAlerts) {
+      closeAllModals();
       openAlertsForSelectedCredential();
     }
   });
@@ -2395,6 +2600,7 @@ function bindActions() {
 
     const routeAudit = event.target.closest("[data-route-audit]");
     if (routeAudit) {
+      closeAllModals();
       setActivePage("audit");
       showApp();
       renderAudit();
@@ -2428,13 +2634,15 @@ function bindActions() {
   els.organizationDomainList.addEventListener("click", (event) => {
     const card = event.target.closest("[data-domain-id]");
     if (!card) return;
-    if (event.target.closest("[data-domain-save]")) {
-      void saveOrganizationDomain(card);
+    if (event.target.closest("[data-domain-edit]")) {
+      openOrganizationDomainModal(card.dataset.domainId);
       return;
     }
     if (event.target.closest("[data-domain-delete]")) {
       void deleteOrganizationDomain(card);
+      return;
     }
+    openOrganizationDomainModal(card.dataset.domainId);
   });
 
   els.organizationInviteList.addEventListener("click", (event) => {

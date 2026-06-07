@@ -26,6 +26,9 @@ must send the owning server workspace ID explicitly, so inactive workspaces rema
 editable without activating them first. New automations default to the active
 workspace when that workspace is mapped and ready, otherwise to the first ready
 workspace in the aggregated list.
+Remote Veslo workspaces that belong to a different connected server are outside
+the current server aggregation scope and are skipped instead of shown as mapping
+errors.
 
 ## Veslo Automations
 

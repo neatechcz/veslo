@@ -36,6 +36,7 @@ This flow replaces the old user-managed BYOK provider/model settings in Veslo.
 ## Admin behavior
 
 - The AI Gateway admin `Users` page includes an `AI access` editor.
+- The AI Gateway admin `Organization` page is shared by Platform Admins and Organization Admins. Platform Admins can switch the edited organization with the searchable organization selector on that page; Organization Admins only see their active organization and do not see the selector or seat-limit controls.
 - Platform admins can enable/disable access, pick the assigned provider, set the default model, and optionally restrict allowed models.
 - New DEN sign-ups are auto-assigned to Codex / ChatGPT inference with `gpt-5.5` when at least one eligible Codex OAuth inference credential exists. These rows are marked `auto_assigned`. When multiple credentials are eligible, DEN selects the one with the fewest active leases and uses deterministic tie-breaking.
 - Admin edits are marked `admin_assigned`. Non-Codex admin assignments remain explicit credential choices.

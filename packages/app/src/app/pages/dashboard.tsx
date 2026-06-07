@@ -155,6 +155,7 @@ export type DashboardViewProps = {
   testVesloServerConnection: (next: VesloServerSettings) => Promise<boolean>;
   canReloadWorkspace: boolean;
   reloadWorkspaceEngine: () => Promise<void>;
+  reloadScheduledAutomationsSource: () => Promise<void>;
   reloadBusy: boolean;
   reloadError: string | null;
   workspaceAutoReloadAvailable: boolean;
@@ -1577,7 +1578,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 deleteAutomation={props.deleteAutomation}
                 runAutomation={props.runAutomation}
                 newTaskDisabled={props.newTaskDisabled}
-                reloadWorkspaceEngine={props.reloadWorkspaceEngine}
+                reloadWorkspaceEngine={props.reloadScheduledAutomationsSource}
                 reloadBusy={props.reloadBusy}
                 canReloadWorkspace={props.canReloadWorkspace}
               />

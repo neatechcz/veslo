@@ -3,6 +3,7 @@ import { pathToFileURL } from "node:url";
 
 import { createDb } from "./db/index.js";
 import { ensureAiGatewaySchema } from "./db/schema-reconcile.js";
+import { isAdminAlertEmailConfigured } from "./email/admin-alert-mailer.js";
 import { env } from "./env.js";
 import { createAdminRouter, createDefaultAdminService, type AdminService } from "./http/admin.js";
 import { createProxyRouter, type ProxyDependencies } from "./http/proxy.js";
@@ -52,10 +53,13 @@ export async function startServer() {
     await schemaDb.close();
   }
 
-  const app = createApp();
-  return app.listen(env.port, env.host, () => {
+  const adminService = createDefaultAdminService(env.denApiBase);
+  const app = createApp({ admin: adminService });
+  const server = app.listen(env.port, env.host, () => {
     console.log(`ai-gateway listening on http://${env.host}:${env.port}`);
   });
+  startCodexCapacityAlertEmailLoop(adminService);
+  return server;
 }
 
 export { createDefaultProxyDependencies, createDefaultRuntimeState, createDefaultUserCredentialDependencies };
@@ -71,4 +75,42 @@ if (isMain) {
     console.error(`[ai-gateway] bootstrap failed: ${message}`);
     process.exit(1);
   });
+}
+
+function startCodexCapacityAlertEmailLoop(adminService: AdminService) {
+  if (!adminService.runCodexCapacityAlertEmailMonitor) {
+    return;
+  }
+
+  if (!isAdminAlertEmailConfigured()) {
+    console.warn("[ai-gateway] Codex capacity alert emails disabled: Lettr email env is not configured");
+    return;
+  }
+
+  if (env.alertEmail.recipients.length === 0) {
+    console.warn("[ai-gateway] Codex capacity alert emails disabled: AI_GATEWAY_ALERT_EMAIL_RECIPIENTS is empty");
+    return;
+  }
+
+  const runMonitorBestEffort = () => {
+    void adminService.runCodexCapacityAlertEmailMonitor?.().catch((error) => {
+      const message = error instanceof Error ? error.stack ?? error.message : String(error);
+      console.error(`[ai-gateway] Codex capacity alert email monitor failed: ${message}`);
+    });
+  };
+
+  runMonitorBestEffort();
+  const interval = setInterval(runMonitorBestEffort, env.alertEmail.codexCapacityIntervalMs);
+  unrefTimer(interval);
+}
+
+function unrefTimer(handle: unknown) {
+  if (!handle || typeof handle !== "object") {
+    return;
+  }
+
+  const unref = (handle as { unref?: unknown }).unref;
+  if (typeof unref === "function") {
+    unref.call(handle);
+  }
 }

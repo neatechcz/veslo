@@ -23,6 +23,7 @@
         </div>
 
         <nav class="nav" aria-label="Admin sections">
+          <a href="/admin" data-route="overview" class="nav-item">Overview</a>
           <a href="/admin/organization" data-route="organization" class="nav-item">Organization</a>
           <a href="/admin/credentials" data-route="credentials" class="nav-item">Credentials</a>
           <a href="/admin/usage" data-route="usage" class="nav-item">Usage</a>
@@ -109,7 +110,14 @@
                 <p class="eyebrow">Organization</p>
                 <h2>Organization details</h2>
               </div>
-              <button id="organization-save-button" class="button button-primary" type="button">Save organization</button>
+              <div class="section-actions organization-page-actions">
+                <label id="organization-selector-control" class="organization-selector hidden" data-platform-admin-control>
+                  <span>Organization</span>
+                  <input id="organization-selector-input" class="input" type="search" list="organization-selector-options" autocomplete="off" placeholder="Search organization" />
+                  <datalist id="organization-selector-options"></datalist>
+                </label>
+                <button id="organization-save-button" class="button button-primary" type="button">Save organization</button>
+              </div>
             </div>
             <div class="split-layout organization-layout">
               <aside class="detail-card organization-editor">
@@ -138,22 +146,6 @@
                       <p class="eyebrow">Domains</p>
                       <h3>Enabled domains</h3>
                     </div>
-                  </div>
-                  <div class="credential-create-grid">
-                    <label>
-                      <span>Domain</span>
-                      <input id="organization-domain-input" class="input" type="text" placeholder="example.com" />
-                    </label>
-                    <label class="switch-row">
-                      <span>Enabled</span>
-                      <input id="organization-domain-enabled" type="checkbox" checked />
-                    </label>
-                    <label class="switch-row">
-                      <span>Self signup</span>
-                      <input id="organization-domain-self-signup" type="checkbox" />
-                    </label>
-                  </div>
-                  <div class="button-row">
                     <button id="organization-domain-add-button" class="button button-secondary" type="button">Add domain</button>
                   </div>
                   <div id="organization-domain-list" class="list-cards"></div>
@@ -164,21 +156,6 @@
                       <p class="eyebrow">Invites</p>
                       <h3>Pending invites</h3>
                     </div>
-                  </div>
-                  <div class="credential-create-grid">
-                    <label>
-                      <span>Email</span>
-                      <input id="organization-invite-email" class="input" type="email" placeholder="teammate@example.com" />
-                    </label>
-                    <label>
-                      <span>Organization role</span>
-                      <select id="organization-invite-role" class="input">
-                        <option value="member">Member</option>
-                        <option value="organization_admin">Organization admin</option>
-                      </select>
-                    </label>
-                  </div>
-                  <div class="button-row">
                     <button id="organization-invite-send-button" class="button button-secondary" type="button">Send invite</button>
                   </div>
                   <div id="organization-invite-list" class="list-cards"></div>
@@ -568,6 +545,65 @@
         </section>
       </main>
     </div>
+
+    <dialog id="organization-domain-modal" class="modal-shell">
+      <div class="modal-card">
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow">Domain</p>
+            <h2 id="organization-domain-modal-title">Add domain</h2>
+          </div>
+          <button id="organization-domain-modal-close" class="button button-secondary modal-close" type="button" aria-label="Close domain editor">Close</button>
+        </div>
+        <form class="editor-form">
+          <label>
+            <span>Domain</span>
+            <input id="organization-domain-modal-domain" class="input" type="text" placeholder="example.com" />
+          </label>
+          <label class="switch-row">
+            <span>Enabled</span>
+            <input id="organization-domain-modal-enabled" type="checkbox" checked />
+          </label>
+          <label class="switch-row">
+            <span>Self signup</span>
+            <input id="organization-domain-modal-self-signup" type="checkbox" />
+          </label>
+        </form>
+        <div class="button-row modal-actions">
+          <button id="organization-domain-modal-save" class="button button-primary" type="button">Save domain</button>
+        </div>
+        <p id="organization-domain-modal-status" class="editor-note muted">Domain changes are applied through Save.</p>
+      </div>
+    </dialog>
+
+    <dialog id="organization-invite-modal" class="modal-shell">
+      <div class="modal-card">
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow">Invite</p>
+            <h2>Send invite</h2>
+          </div>
+          <button id="organization-invite-modal-close" class="button button-secondary modal-close" type="button" aria-label="Close invite editor">Close</button>
+        </div>
+        <form class="editor-form">
+          <label>
+            <span>Email</span>
+            <input id="organization-invite-modal-email" class="input" type="email" placeholder="teammate@example.com" />
+          </label>
+          <label>
+            <span>Organization role</span>
+            <select id="organization-invite-modal-role" class="input">
+              <option value="member">Member</option>
+              <option value="organization_admin">Organization admin</option>
+            </select>
+          </label>
+        </form>
+        <div class="button-row modal-actions">
+          <button id="organization-invite-modal-send" class="button button-primary" type="button">Send invite</button>
+        </div>
+        <p id="organization-invite-modal-status" class="editor-note muted">Invite is sent only when confirmed.</p>
+      </div>
+    </dialog>
 
     <dialog id="credential-detail-modal" class="modal-shell">
       <div class="modal-card">
