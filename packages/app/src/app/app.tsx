@@ -107,6 +107,7 @@ import {
 import { promoteStoredProjectOrderKey } from "./components/session/workspace-session-list-prefs";
 import { shouldFallbackFromSessionRoute } from "./lib/session-route-selection-guard";
 import { shouldSyncSidebarFromSessionStore } from "./lib/sidebar-session-sync-guard";
+import { deriveSidebarRowsFromSessionStore } from "./lib/sidebar-session-store-sync";
 import { partitionVesloUtilitySessions } from "./lib/veslo-utility-session";
 import ResetModal from "./components/reset-modal";
 import ConfirmModal from "./components/confirm-modal";
@@ -4702,10 +4703,14 @@ export default function App() {
       const sorted = sortSessionsByActivity(scopedSessions);
       const { visible: visibleSessions } = partitionVesloUtilitySessions(sorted);
       const requestLimit = sidebarSessionLimitByWorkspaceId()[wsId] ?? initialSidebarSessionLimit();
-      const visibleRows = expandSidebarSessionSliceWithAncestors(visibleSessions, requestLimit);
-      setSidebarSessionsByWorkspaceId((prev) => ({
-        ...prev,
-        [wsId]: visibleRows.map((s) => {
+      const incomingVisibleRows = expandSidebarSessionSliceWithAncestors(visibleSessions, requestLimit);
+      const existingTargetSidebarRows = untrack(() => sidebarSessionsByWorkspaceId()[wsId] ?? []);
+      const nextSidebarRows = deriveSidebarRowsFromSessionStore({
+        incomingSessions: visibleSessions,
+        existingRows: existingTargetSidebarRows,
+        requestLimit,
+        expandVisibleSessions: expandSidebarSessionSliceWithAncestors,
+        mapSession: (s) => {
           const displaySession = applyPendingInitialSessionTitle(s);
           return {
             id: displaySession.id,
@@ -4715,11 +4720,18 @@ export default function App() {
             time: displaySession.time,
             directory: displaySession.directory,
           };
-        }),
+        },
+      });
+      const retainedExistingSidebarRows = nextSidebarRows.length > incomingVisibleRows.length;
+      setSidebarSessionsByWorkspaceId((prev) => ({
+        ...prev,
+        [wsId]: nextSidebarRows,
       }));
       setSidebarSessionHasMoreByWorkspaceId((prev) => ({
         ...prev,
-        [wsId]: deriveSidebarHasMore(visibleSessions.length, requestLimit),
+        [wsId]: retainedExistingSidebarRows
+          ? prev[wsId] ?? deriveSidebarHasMore(nextSidebarRows.length, requestLimit)
+          : deriveSidebarHasMore(visibleSessions.length, requestLimit),
       }));
     }
   });
