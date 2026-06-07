@@ -117,6 +117,28 @@ Managed local sidecars distinguish internal runtime URLs from advertised connect
 
 Desktop-managed OpenCode, Veslo server, Veslo orchestrator, and OpenCode Router processes launch through the desktop supervised-process wrapper. On Windows, that wrapper applies the hidden-process creation flags before spawn so first launch, restart, and fallback command startup do not create visible console windows. Sidecar stdout/stderr still flows through the debug-log forwarding path below.
 
+## OpenCode Workspace Runtime State
+
+The durable runtime contract for OpenCode workspace execution is
+`docs/dev/opencode-workspace-runtime-architecture.md`.
+
+State ownership summary:
+
+- the app owns prepared user intent and visible UI state,
+- Veslo server owns workspace-scoped conversations, run records, and
+  conversation-to-OpenCode-session bindings,
+- the orchestrator owns execution strategy and process routing,
+- the desktop shell owns the local Veslo server process lifecycle.
+
+An OpenCode session is created in a workspace directory and remains bound to
+that directory through the Veslo conversation. Workspace switching changes only
+the visible UI context; it must not retarget an existing conversation, run, or
+OpenCode session.
+
+The local Veslo server should be recoverable without an active workspace.
+`Invalid bearer token` between the app and local server is treated as stale
+local connection state, not as a failed message or failed conversation.
+
 ## Desktop Debug Log Forwarder
 
 The Tauri shell forwards stdout/stderr from every supervised sidecar (`veslo-server`, `opencode-router`, `veslo-orchestrator`, `engine`) into the veslo-server debug log pipeline. Implementation lives in `packages/desktop/src-tauri/src/debug_logs_forwarder.rs`.

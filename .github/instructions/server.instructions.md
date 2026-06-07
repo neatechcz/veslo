@@ -3,5 +3,6 @@ applyTo: "packages/server/**/*,packages/orchestrator/**/*,packages/openwork/**/*
 ---
 
 - Follow `packages/server/AGENTS.md`.
-- Changes in `packages/server/src` require `pnpm --filter openwork-server build:bin`.
+- For OpenCode proxying, conversation/run routes, orchestrator integration, and sandbox/no-sandbox execution, read `docs/dev/opencode-workspace-runtime-architecture.md`.
+- Changes in `packages/server/src` require `pnpm --filter veslo-server build:bin`.
 - Keep `.opencode`-mutating behavior expressible through server surfaces when possible.
