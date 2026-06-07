@@ -54,6 +54,8 @@ Hlavní endpointy:
 - `POST /workspaces` — register
 - `POST /workspaces/:id/activate` — set active
 - `* /workspace/:id/opencode/*` — proxy na engine pro daný workspace (lazy spawn pokud chybí)
+- `POST /workspace/:id/runs/register` — lifecycle register pro local conversation sendy
+- `GET /workspace/:id/conversations/:conversationId/runs/:runId|latest` — lifecycle status/reconcile
 
 Auth: HTTP Basic (`opencode:<random-uuid>` při spawn).
 
@@ -63,6 +65,8 @@ Zdroj: `packages/orchestrator/src/cli.ts`, `packages/orchestrator/src/engine-poo
 
 Bun proces. Single source of truth pro **persistent state**:
 - registry workspaces (`/workspaces`, `/workspaces/local`, `/workspaces/:id/activate`)
+- conversation service (`/workspace/:id/conversations*`) — pasivní OpenCode
+  SQLite reads, conversation bindings, write API pro create/run/abort
 - session archives, session transcripts
 - workspace config (`opencode.jsonc`, `.opencode/veslo.json`)
 - AI gateway proxy (`/ai-gateway/providers/{openai,anthropic,codex_oauth,openai_compatible}/v1/...`)
@@ -107,7 +111,8 @@ jako daemon.
 
 Hlavní endpointy (z OpenCode SDK):
 - `POST /session` — vytvoří session
-- `POST /session/:id/message` — pošle prompt
+- `POST /session/:id/prompt_async` — submitne prompt a vrátí hned
+- `GET /session/status` — runtime busy/idle status pro sessions
 - `GET /session/:id/message` — vyčte messages
 - `GET /event?directory=...` — SSE stream
 - `GET /config/providers` — AI provider config
@@ -245,6 +250,25 @@ ve `veslo-server` proxy vrstvě.
 Invariant: `veslo-server` používá workspace-scoped base URL
 `/workspace/<id>/opencode`, drží `--workspace` a `--workspace-id` zarovnané a
 na upstream posílá `Accept-Encoding: identity`.
+
+### Conversation service je hranice mezi UI a OpenCode sessions
+
+Současný send/read flow už nemá být přímé UI volání OpenCode SDK pro běžné
+conversation operace. UI používá Veslo server conversation API:
+
+- read: `GET /workspace/:id/conversations` a
+  `GET /workspace/:id/conversations/:conversationId/transcript`
+- create: `POST /workspace/:id/conversations`
+- run: `POST /workspace/:id/conversations/:conversationId/runs`
+- abort: `POST /workspace/:id/conversations/:conversationId/abort`
+
+Veslo server drží stabilní Veslo `conversationId` v binding DB a mapuje ho na
+OpenCode `engineSessionId`. Pasivní list/transcript flow čte OpenCode SQLite
+read-only; nemá startovat engine. Write flow může engine kontaktovat, ale run
+musí nejdřív projít lifecycle registrací u orchestrator daemonu, aby jedna
+conversation neměla dva aktivní runy.
+
+Detailní contract je v [`conversation-service.md`](conversation-service.md).
 
 ### Engine konfigurace je 3-zdrojová
 

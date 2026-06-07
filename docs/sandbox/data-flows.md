@@ -158,7 +158,14 @@ volání šlo orchestrator proxy → `pool.ensure` → cold engine spawn
 u workspace, do kterého uživatel jen klikl na session, ale neposlal
 žádnou zprávu — engine se spawnoval na klik session.
 
-## Flow 4 — Send message (první v session, cold engine spawn)
+## Flow 4 — Send message přes Veslo conversation API
+
+Současná primární send cesta je serverové Veslo conversation API. UI už
+nemá pro běžný run posílat prompt přímo přes OpenCode SDK; server je hranice,
+která resolve-ne conversation binding, zaregistruje lifecycle run a až potom
+volá OpenCode `/prompt_async`.
+
+### 4a — UI preflight před serverovým run requestem
 
 ```
 UI uživatel napíše text + klik Send
@@ -166,82 +173,117 @@ UI uživatel napíše text + klik Send
    ▼
 app.tsx ::sendPrompt
    │
-   ├── IF !engineReady():                               ← první send v workspace
-   │   │
-   │   ├── setBusy(true) + setBusyLabel("status.connecting")
-   │   │
+   ├── složí draft + zablokuje prázdný prompt
+   │
+   ├── pokud je cílová session z jiného workspace:
+   │   └── ensureSelectedSessionWorkspaceActiveForSend
+   │
+   ├── maybeResolveSkillCommand
+   │   └── volitelný Veslo server request pro skill match
+   │
+   ├── IF !engineReady():
    │   └── workspaceStore.ensureEngineForWorkspace
-   │       │
-   │       └── restartWorkspaceRuntime (lifecycle.ts)
-   │           │
-   │           ├── activateOrchestratorWorkspace
-   │           │   │
-   │           │   ├── orchestrator_workspace_activate (Tauri IPC, async + spawn_blocking)
-   │           │   │   │
-   │           │   │   └── HTTP POST /workspaces + POST /workspaces/:id/activate
-   │           │   │       (na orchestrator daemon)
-   │           │   │
-   │           │   └── activateVesloHostWorkspaceWithTimeout (30 s)
-   │           │       │
-   │           │       └── client.activateWorkspace
-   │           │           └── HTTP POST /workspaces/:id/activate
-   │           │               (na veslo-server, host token)
-   │           │
-   │           └── readEngineInfo (poll na engine baseUrl, 30 s timeout)
+   │       ├── čeká na workspace hydration až 5 s
+   │       ├── syncWorkspaceSkillMaterializationBeforeRuntime
+   │       ├── restartWorkspaceRuntime nebo startHost
+   │       └── loadSessions + setEngineReady(true)
    │
-   ├── ensureManagedAiBootstrapReady                    ← AI access preflight
-   │   │
-   │   └── HTTP GET /ai-gateway/me/ai-access (na veslo-server)
-   │       — veslo-server forwarduje na configured managed-AI gateway
-   │         (`/api/me/ai-access`; default `https://ai.veslo.work`)
+   ├── ensureManagedAiBootstrapReady
+   │   └── managed-AI bootstrap/reload/client gate
    │
-   ├── routedClient() → guarded klient k engine přes orchestrator proxy
+   ├── ensureLocalRuntimeReachableForSend("sendPrompt")
+   │   ├── local health timeout 3 s
+   │   └── při síťové chybě recovery přes ensureEngineForWorkspace
    │
-   ├── c.session.create   ← Engine vytvoří session
-   │   │
-   │   └── HTTP POST /workspace/<wsId>/opencode/session
-   │       (na orchestrator daemon, proxy na engine)
-   │       │
-   │       └── orchestrator pool.ensure(<wsId>)         ← TADY první engine spawn!
-   │           │
-   │           ├── spawn opencode child přes WorkerSandbox
-   │           │   (macOS sandbox-exec, Windows WSL2 + bwrap)
-   │           ├── waitForHealthy (~30-60 s cold start)
-   │           └── proxy POST na engine
+   ├── pokud sessionID chybí:
+   │   └── createSessionAndOpen
+   │       ├── POST /workspace/:id/conversations
+   │       ├── Server -> OpenCode POST /session
+   │       └── Server persistuje conversation binding
    │
-   ├── c.session.message  ← Engine pošle prompt
-   │   │
-   │   └── engine interně volá veslo-server AI gateway:
-   │       HTTP POST http://127.0.0.1:8787/ai-gateway/providers/codex_oauth/v1/chat/completions
-   │       │
-   │       └── veslo-server forwarduje na configured managed-AI gateway
-   │           managed-AI gateway → vlastní AI provider (OpenAI/Anthropic/Codex)
-   │
-   └── engine SSE events (přes Rust proxy) populují UI
-       │
-       └── setMessagesForSession(sessionID, msgs) v realtime
+   └── runConversationFromVesloWriteApi
+       └── serverClient.runConversation
 ```
 
-**Trvání cold first message:** **30-60 s** (engine cold start) + ~3-10 s
-AI inference. Subsequent messages v stejném workspace: ~3-10 s (engine
-už běží).
+Pokud se UI zasekne před tím, než v server logu uvidíš
+`POST /workspace/:id/conversations/:conversationId/runs`, problém je v tomhle
+preflightu, ne v lifecycle registeru.
 
-**Co může selhat (a kde to vidíš):**
+### 4b — Server run request a lifecycle register
+
+```
+UI runConversationFromVesloWriteApi
+   │
+   ├── resolve conversation scope
+   ├── ensureConversationReadWorkspaceRegistered
+   └── serverClient.runConversation
+       │
+       ▼
+Server POST /workspace/:id/conversations/:conversationId/runs
+   │
+   ├── resolveWorkspace
+   ├── parse kind (prompt_async / command / shell / summarize)
+   ├── resolveConversationExecutionTarget
+   │   └── conversationId -> opencodeSessionId přes binding store
+   │
+   ├── lifecycleOwner.register                     ← kritický bod
+   │   │
+   │   └── Daemon POST /workspace/:id/runs/register
+   │       │
+   │       └── runRegistry.register
+   │           ├── najde aktivní run pro stejnou conversation
+   │           ├── pokud existuje, reconcile přes run-activity-probe
+   │           ├── OpenCode GET /session/status
+   │           ├── idle => starý run completed, nový run running
+   │           ├── busy/retry => 409 run_already_active
+   │           └── unreachable => konzervativně 409 run_already_active
+   │
+   ├── OpenCode POST /session/:opencodeSessionId/prompt_async
+   │   (přes workspace-scoped baseUrl, u local workspace přes orchestrator proxy)
+   │
+   └── Server vrátí { status: "submitted", runId, conversationId, opencodeSessionId }
+```
+
+Kritický invariant: `lifecycleOwner.register` se musí dokončit před
+OpenCode `/prompt_async`. Pokud tady stojí request, prompt ještě nebyl
+submitnutý do OpenCode.
+
+### 4c — Odpověď modelu
+
+```
+Server POST /runs vrátí submitted
+   │
+   ▼
+OpenCode dál generuje odpověď
+   │
+   ├── engine interně volá veslo-server AI gateway:
+   │   POST /ai-gateway/providers/.../v1/chat/completions
+   │
+   └── engine SSE events
+       └── Rust SSE proxy -> UI session store
+           ├── message.updated
+           └── message.part.updated
+```
+
+POST `/runs` nečeká na modelovou odpověď. Pokud `submitted` přišel, ale UI
+nevidí odpověď, hledej problém v engine/model runtime nebo SSE doručení.
+
+### 4d — Co může selhat (a kde to vidíš)
 
 | Symptom | Místo | Důvod |
 |---|---|---|
-| 30 s freeze před engine ready | `pool.ensure` v daemonu | Sandbox init (`sandbox-exec` na macOS, WSL2 + bwrap na Windows) + Bun JIT cold |
-| 502 Bad Gateway na `/opencode/*` | Orchestrator proxy | Engine spawn fail (`Unable to connect`) |
+| Dlouhé čekání před server `/runs` | UI `sendPrompt` preflight | Cold start, workspace switch, skill resolve, managed AI gate, runtime health/recovery |
+| Server `/runs` začal, ale `/prompt_async` se nevolá | `lifecycleOwner.register` | Stale active run, nedostupný orchestrator lifecycle endpoint, run probe |
+| `409 run_already_active` | Orchestrator run registry | Stejná conversation má aktivní run nebo probe nedokáže bezpečně potvrdit idle |
+| 5 s lifecycle timeout | Server lifecycle client | Orchestrator lifecycle endpoint visí nebo neodpovídá |
+| 502 Bad Gateway na `/opencode/*` | Orchestrator/veslo-server proxy | Engine spawn fail nebo upstream route/base path problém |
 | Direct orchestrator health 200, ale `:8787/workspace/.../health` 500/502 | `veslo-server` proxy | Base path dropped nebo Bun `fetch` zlib; neřešit WSL routing |
 | WSL engine log končí na `Failed to fetch models.dev` před `server listening` | bwrap DNS | `/etc/resolv.conf` symlink target není bindnutý do sandboxu |
 | Health přes `127.0.0.1:<engine-port>` timeout, přes WSL IP 200 | WSL host route | Windows localhost forwarding flaky; použít `connectHost` WSL guest IP |
-| `WorkspaceClientStaleError` | Guard proxy v `workspace-routing.ts:59` | Uživatel přepnul workspace během SDK call |
-| `Timed out waiting for session.messages` | `withTimeout` 12 s v session.ts:965 | Engine pomalý / mrtvý |
-| AI gateway 401 | Veslo-server `/ai-gateway/...` | Stale gateway token v opencode.jsonc, nebo expired caller/gateway auth (typicky Den bearer token nebo managed-AI access token) |
+| AI gateway 401 | Veslo-server `/ai-gateway/...` | Stale gateway token v opencode.jsonc, expired caller/gateway auth |
 
-Pokud managed-AI gateway nedostala request, prompt se zastavil lokálně.
-Neřeš model backend, dokud engine health a lokální provider request nejsou
-potvrzené.
+Detailní contract nové vrstvy je v
+[`conversation-service.md`](conversation-service.md).
 
 ## Flow 5 — Workspace switch během běžícího sendu
 

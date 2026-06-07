@@ -199,6 +199,8 @@ Common app flows:
 
 - `GET /workspaces`
   Discover available workspaces and active workspace.
+- `POST /workspaces/local`
+  Register a desktop-local workspace with the server before workspace-scoped config, mutation, or OpenCode write flows depend on it.
 - `GET /workspace/:id/config`
   Read workspace-scoped Veslo config.
 - `PATCH /workspace/:id/config`
@@ -207,6 +209,14 @@ Common app flows:
   Ask the engine to reread config for a workspace.
 
 Use workspace-scoped URLs whenever possible, including the mounted `/w/:id/...` forms.
+
+### Local Workspace Registration
+
+For desktop-local workspaces, the app should preserve the raw platform path when registering the workspace and include current OpenCode routing metadata when available: `baseUrl`, `directory`, `opencodeUsername`, and `opencodePassword`. A duplicate `POST /workspaces/local` with updated OpenCode metadata may update the existing workspace registration instead of failing as a plain duplicate.
+
+When a local workspace has no explicit OpenCode `baseUrl`, a desktop-launched server may derive the effective OpenCode base URL from its orchestrator daemon URL and the workspace id using the mounted workspace route: `{orchestratorDaemonUrl}/workspace/:id/opencode`. The app should still pass fresh engine metadata when it has it, because explicit routing data avoids stale path-only registrations.
+
+Windows path checks must tolerate extended-length prefixes such as `\\?\` and compare normalized roots case-insensitively for authorization. The raw path should remain available for persistence and engine handoff; normalized paths are for comparison.
 
 ## Capability Discovery
 

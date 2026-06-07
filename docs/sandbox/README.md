@@ -43,12 +43,13 @@ viz [`known-issues.md`](known-issues.md) a [`fixes-timeline.md`](fixes-timeline.
 |---|--------|-------|----------|
 | 1 | [`architecture.md`](architecture.md) | 6 procesů Vesla a kdo s kým mluví | Hned. Bez toho další docs nedávají smysl. |
 | 2 | [`data-flows.md`](data-flows.md) | Konkrétní cesty: boot, klik workspace, klik session, send | Po architektuře. Tady uvidíš, který proces co dělá v reálném scénáři. |
-| 3 | [`known-issues.md`](known-issues.md) | Aktuální pain pointy a proč existují | Před debugováním. Mnoho symptomů má hluboké příčiny. |
-| 4 | [`fixes-timeline.md`](fixes-timeline.md) | Chronologie commitů, co řešily, jak verifikované | Pokud potřebuješ vědět, co už bylo opraveno (a v jakém stavu to bylo předtím). |
-| 5 | [`debug-playbook.md`](debug-playbook.md) | Jak spustit dev mode, najít porty, otevřít DevTools, číst logy | Jakmile narazíš na první problém. |
-| 6 | [`e2e-specs.md`](e2e-specs.md) | Existující WebDriver specy a jak je rozšířit | Pokud chceš automatizovaně reprodukovat / verifikovat fixy. |
-| 7 | [`handoff.md`](handoff.md) | Otevřené úkoly, doporučená strategie, copy-paste prompt pro novou AI session | Až budeš plánovat další krok. |
-| 8 | [`windows-wsl2-sandbox-runtime.md`](windows-wsl2-sandbox-runtime.md) | Windows WSL2 + bwrap runtime, runtime selection, managed `VesloSandbox` distro | Windows sandbox/runtime provisioning. |
+| 3 | [`conversation-service.md`](conversation-service.md) | Nová Veslo conversation vrstva: read/write API, binding DB, lifecycle register, stale-active runy | Když řešíš send/read flow, session ids nebo run blokace. |
+| 4 | [`known-issues.md`](known-issues.md) | Aktuální pain pointy a proč existují | Před debugováním. Mnoho symptomů má hluboké příčiny. |
+| 5 | [`fixes-timeline.md`](fixes-timeline.md) | Chronologie commitů, co řešily, jak verifikované | Pokud potřebuješ vědět, co už bylo opraveno (a v jakém stavu to bylo předtím). |
+| 6 | [`debug-playbook.md`](debug-playbook.md) | Jak spustit dev mode, najít porty, otevřít DevTools, číst logy | Jakmile narazíš na první problém. |
+| 7 | [`e2e-specs.md`](e2e-specs.md) | Existující WebDriver specy a jak je rozšířit | Pokud chceš automatizovaně reprodukovat / verifikovat fixy. |
+| 8 | [`handoff.md`](handoff.md) | Otevřené úkoly, doporučená strategie, copy-paste prompt pro novou AI session | Až budeš plánovat další krok. |
+| 9 | [`windows-wsl2-sandbox-runtime.md`](windows-wsl2-sandbox-runtime.md) | Windows WSL2 + bwrap runtime, runtime selection, managed `VesloSandbox` distro | Windows sandbox/runtime provisioning. |
 
 ## Vztah k existující dokumentaci v gitu
 
