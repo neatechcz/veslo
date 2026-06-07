@@ -444,6 +444,12 @@ a {
   grid-template-columns: minmax(0, 1.35fr) minmax(340px, 0.95fr);
 }
 
+.modal-list-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
 .detail-card,
 .chart-card {
   padding: 18px;
@@ -466,6 +472,14 @@ td {
   padding: 16px 14px;
   text-align: left;
   border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+tbody tr[data-credential-id] {
+  cursor: pointer;
+}
+
+tbody tr[data-credential-id]:hover {
+  background: rgba(143, 180, 255, 0.06);
 }
 
 th {
@@ -699,6 +713,12 @@ tr.row-muted strong {
   margin: 8px 0 0;
 }
 
+.alert-card,
+.audit-row,
+.list-card {
+  cursor: pointer;
+}
+
 .alert-meta {
   display: flex;
   gap: 14px;
@@ -713,6 +733,74 @@ tr.row-muted strong {
   justify-content: space-between;
   gap: 16px;
   align-items: flex-start;
+}
+
+.modal-shell {
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+}
+
+.modal-shell::backdrop {
+  background: rgba(3, 7, 18, 0.72);
+  backdrop-filter: blur(10px);
+}
+
+.modal-card {
+  display: grid;
+  gap: 16px;
+  padding: 22px;
+  background: rgba(11, 16, 29, 0.98);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 12px;
+  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.48);
+}
+
+.modal-card-wide {
+  width: min(920px, calc(100vw - 32px));
+}
+
+.modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.modal-head h2 {
+  margin: 0;
+}
+
+.modal-detail {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  background: rgba(18, 24, 39, 0.64);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+}
+
+.modal-detail h3,
+.user-editor h4 {
+  margin: 0;
+}
+
+.user-editor {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.user-editor .editor-section {
+  grid-column: 1 / -1;
+}
+
+.modal-actions {
+  justify-content: flex-end;
 }
 
 .switch-row {
@@ -765,6 +853,7 @@ tr.row-muted strong {
   .alerts-layout,
   .audit-layout,
   .credential-create-grid,
+  .user-editor,
   .split-layout,
   .login-panel {
     grid-template-columns: 1fr;
@@ -778,6 +867,7 @@ tr.row-muted strong {
 @media (max-width: 760px) {
   .topbar,
   .section-head,
+  .modal-head,
   .audit-row,
   .list-card,
   .hero-head,
@@ -799,5 +889,17 @@ tr.row-muted strong {
 
   .nav-item {
     text-align: center;
+  }
+
+  .modal-card {
+    padding: 16px;
+  }
+
+  .modal-actions {
+    justify-content: stretch;
+  }
+
+  .modal-actions .button {
+    width: 100%;
   }
 }

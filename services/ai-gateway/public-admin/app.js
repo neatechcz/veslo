@@ -25,6 +25,12 @@ const state = {
     userId: "",
     orgId: "",
   },
+  credentialFilters: {
+    search: "",
+    provider: "",
+    state: "",
+  },
+  alertStatusFilter: "active",
   showDeletedCredentials: false,
   selectedCredentialId: null,
   selectedAlertId: null,
@@ -77,8 +83,13 @@ const els = {
   credentialCreateSecret: document.getElementById("credential-create-secret"),
   credentialCreateSubmit: document.getElementById("credential-create-submit"),
   credentialCreateStatus: document.getElementById("credential-create-status"),
+  credentialSearch: document.getElementById("credential-search"),
+  credentialProviderFilter: document.getElementById("credential-provider-filter"),
+  credentialStateFilter: document.getElementById("credential-state-filter"),
   credentialsShowDeleted: document.getElementById("credentials-show-deleted"),
   credentialsTableBody: document.getElementById("credentials-table-body"),
+  credentialDetailModal: document.getElementById("credential-detail-modal"),
+  credentialDetailModalClose: document.getElementById("credential-detail-modal-close"),
   credentialDetail: document.getElementById("credential-detail"),
   usageGroupBy: document.getElementById("usage-group-by"),
   usageCredentialFilter: document.getElementById("usage-filter-credential"),
@@ -98,6 +109,9 @@ const els = {
   usageCapacityCredentials: document.getElementById("usage-capacity-credentials"),
   usageCredentialTableBody: document.getElementById("usage-credential-table-body"),
   alertList: document.getElementById("alert-list"),
+  alertStatusFilterButtons: Array.from(document.querySelectorAll("[data-alert-status-filter]")),
+  alertDetailModal: document.getElementById("alert-detail-modal"),
+  alertDetailModalClose: document.getElementById("alert-detail-modal-close"),
   alertDetail: document.getElementById("alert-detail"),
   userSearch: document.getElementById("user-search"),
   userStatusFilter: document.getElementById("user-status-filter"),
@@ -118,6 +132,8 @@ const els = {
   userAiAccessModelOptions: document.getElementById("user-ai-access-model-options"),
   userAiAccessAllowedModels: document.getElementById("user-ai-access-allowed-models"),
   userAiAccessStatus: document.getElementById("user-ai-access-status"),
+  userEditorModal: document.getElementById("user-editor-modal"),
+  userModalClose: document.getElementById("user-modal-close"),
   userDisableButton: document.getElementById("user-disable-button"),
   userDeleteButton: document.getElementById("user-delete-button"),
   userSaveButton: document.getElementById("user-save-button"),
@@ -127,6 +143,8 @@ const els = {
   auditActorFilter: document.getElementById("audit-actor-filter"),
   auditEntityFilter: document.getElementById("audit-entity-filter"),
   auditList: document.getElementById("audit-list"),
+  auditDetailModal: document.getElementById("audit-detail-modal"),
+  auditDetailModalClose: document.getElementById("audit-detail-modal-close"),
   auditDetail: document.getElementById("audit-detail"),
   heroMetrics: Array.from(document.querySelectorAll(".hero-metrics .metric-card strong")),
 };
@@ -136,6 +154,79 @@ function normalizePage(pathname) {
   if (!path || path === "/admin") return "overview";
   const page = path.split("/").pop();
   return DEFAULT_PAGES.includes(page) ? page : "overview";
+}
+
+function openModal(modal) {
+  if (!modal) {
+    return;
+  }
+
+  if (typeof modal.showModal === "function" && !modal.open) {
+    modal.showModal();
+    return;
+  }
+
+  modal.setAttribute("open", "");
+}
+
+function closeModal(modal) {
+  if (!modal) {
+    return;
+  }
+
+  if (typeof modal.close === "function") {
+    modal.close();
+    return;
+  }
+
+  modal.removeAttribute("open");
+}
+
+function openCredentialDetail(credentialId) {
+  if (credentialId) {
+    state.selectedCredentialId = credentialId;
+  }
+  renderCredentials();
+  if (typeof els.credentialDetailModal.showModal === "function" && !els.credentialDetailModal.open) {
+    els.credentialDetailModal.showModal();
+  } else {
+    openModal(els.credentialDetailModal);
+  }
+}
+
+function openAlertDetail(alertId) {
+  if (alertId) {
+    state.selectedAlertId = alertId;
+  }
+  renderAlerts();
+  if (typeof els.alertDetailModal.showModal === "function" && !els.alertDetailModal.open) {
+    els.alertDetailModal.showModal();
+  } else {
+    openModal(els.alertDetailModal);
+  }
+}
+
+function openUserEditor(userId) {
+  state.userMode = userId ? "edit" : "create";
+  state.selectedUserId = userId || null;
+  renderUsers();
+  if (typeof els.userEditorModal.showModal === "function" && !els.userEditorModal.open) {
+    els.userEditorModal.showModal();
+  } else {
+    openModal(els.userEditorModal);
+  }
+}
+
+function openAuditDetail(auditId) {
+  if (auditId) {
+    state.selectedAuditId = auditId;
+  }
+  renderAudit();
+  if (typeof els.auditDetailModal.showModal === "function" && !els.auditDetailModal.open) {
+    els.auditDetailModal.showModal();
+  } else {
+    openModal(els.auditDetailModal);
+  }
 }
 
 function authStorage() {
@@ -558,7 +649,7 @@ function setActivePage(page) {
     overview: ["AI Gateway control plane", "Overview", "Inspect credentials, usage, alerts, users, and audit events from one place."],
     organization: ["AI Gateway control plane", "Organization", "Manage organization details, domains, and pending invites."],
     credentials: ["AI Gateway control plane", "Credentials", "Inspect provider keys, linked alerts, and rotation state."],
-    usage: ["AI Gateway control plane", "Usage", "Analyze total token usage first, then break it down by credential, user, or org."],
+    usage: ["AI Gateway control plane", "Usage", "Watch Codex capacity first, then break usage down by credential, user, or org."],
     alerts: ["AI Gateway control plane", "Alerts", "Triage credential failures, usage spikes, and routing anomalies."],
     users: ["AI Gateway control plane", "Users", "Create, edit, disable, or remove users from the directory."],
     audit: ["AI Gateway control plane", "Audit", "Filter by actor, action, or entity and inspect detailed change history."],
@@ -1055,8 +1146,37 @@ function renderOrganization() {
   applyAdminCapabilities();
 }
 
+function filteredCredentials() {
+  const term = state.credentialFilters.search.trim().toLowerCase();
+  const provider = state.credentialFilters.provider;
+  const filterState = state.credentialFilters.state;
+
+  return state.credentials.filter((credential) => {
+    const displayState = credential.deletedAt ? "deleted" : credential.state;
+    if (provider && credential.provider !== provider) {
+      return false;
+    }
+    if (filterState && displayState !== filterState) {
+      return false;
+    }
+    if (term) {
+      const searchable = [
+        credential.id,
+        credential.name,
+        credential.scope,
+        credential.type,
+        credential.provider,
+        displayState,
+      ].filter(Boolean).join(" ").toLowerCase();
+      return searchable.includes(term);
+    }
+    return true;
+  });
+}
+
 function renderCredentials() {
-  const rows = state.credentials.map((credential) => {
+  const credentials = filteredCredentials();
+  const rows = credentials.map((credential) => {
     const displayState = credential.deletedAt ? "deleted" : credential.state;
     const rowClasses = [
       credential.id === state.selectedCredentialId ? "row-alert" : "",
@@ -1332,8 +1452,21 @@ function formatLimitWindowSummary(label, entry) {
   return `${entry.label || label}: ${used}, ${reset}`;
 }
 
+function filteredAlerts() {
+  return state.alerts.filter((alert) => {
+    if (state.alertStatusFilter === "active") {
+      return alert.status !== "acknowledged" && alert.status !== "resolved";
+    }
+    return alert.status === state.alertStatusFilter;
+  });
+}
+
 function renderAlerts() {
-  els.alertList.innerHTML = state.alerts.map((alert) => `
+  const alerts = filteredAlerts();
+  els.alertStatusFilterButtons.forEach((button) => {
+    button.classList.toggle("active", button.dataset.alertStatusFilter === state.alertStatusFilter);
+  });
+  els.alertList.innerHTML = alerts.map((alert) => `
     <article class="alert-card ${alert.severity === "critical" ? "critical" : ""} ${alert.id === state.selectedAlertId ? "active" : ""}" data-alert-id="${escapeHtml(alert.id)}">
       <div class="alert-head">
         <strong>${escapeHtml(alert.title)}</strong>
@@ -1347,8 +1480,9 @@ function renderAlerts() {
     </article>
   `).join("") || `<article class="alert-card active"><div class="alert-head"><strong>No alerts</strong></div><p>No active alert records.</p></article>`;
 
-  const selected = currentAlert();
+  const selected = alerts.find((entry) => entry.id === state.selectedAlertId) || alerts[0];
   if (selected) {
+    state.selectedAlertId = selected.id;
     const credential = state.credentials.find((entry) => entry.id === selected.credentialId);
     els.alertDetail.innerHTML = `
       <p class="eyebrow">Runbook</p>
@@ -1359,6 +1493,7 @@ function renderAlerts() {
         <div class="detail-line"><span>Owner</span><strong>${escapeHtml(selected.owner || "Unassigned")}</strong></div>
         <div class="detail-line"><span>Status</span><strong>${escapeHtml(selected.status)}</strong></div>
       </div>
+      <p class="eyebrow">Alert lifecycle</p>
       <div class="button-row">
         <button class="button button-secondary" type="button" data-alert-action="acknowledge">Acknowledge</button>
         <button class="button button-primary" type="button" data-alert-action="resolve">Resolve</button>
@@ -1580,10 +1715,7 @@ function renderAudit() {
         <div class="detail-line"><span>Changed fields</span><strong>${escapeHtml(selected.changedFields.join(", ") || "None")}</strong></div>
         <div class="detail-line"><span>Result</span><strong>${escapeHtml(selected.result)}</strong></div>
         <div class="detail-line"><span>Entity</span><strong>${escapeHtml(`${selected.entityType}:${selected.entityId}`)}</strong></div>
-      </div>
-      <div class="button-row">
-        <button class="button button-secondary" type="button">Open entity</button>
-        <button class="button button-secondary" type="button">Trace request</button>
+        <div class="detail-line"><span>Timestamp</span><strong>${escapeHtml(formatDate(selected.timestamp))}</strong></div>
       </div>
     `;
   }
@@ -1598,7 +1730,7 @@ function enterCreateMode() {
   state.selectedUserId = null;
   setActivePage("users");
   showApp();
-  renderUsers();
+  openUserEditor(null);
   setUserSaveStatus("Fill in the profile and save to create the user.");
 }
 
@@ -2111,6 +2243,7 @@ async function saveUser() {
         : "User changes saved.",
       "success",
     );
+    closeModal(els.userEditorModal);
   } catch (error) {
     setUserSaveStatus(
       `Unable to save user: ${error instanceof Error ? error.message : "unknown_error"}`,
@@ -2208,15 +2341,30 @@ function bindActions() {
     state.showDeletedCredentials = els.credentialsShowDeleted.checked;
     void loadCredentials();
   });
+  els.credentialSearch.addEventListener("input", () => {
+    state.credentialFilters.search = els.credentialSearch.value;
+    renderCredentials();
+  });
+  els.credentialProviderFilter.addEventListener("change", () => {
+    state.credentialFilters.provider = els.credentialProviderFilter.value;
+    renderCredentials();
+  });
+  els.credentialStateFilter.addEventListener("change", () => {
+    state.credentialFilters.state = els.credentialStateFilter.value;
+    renderCredentials();
+  });
   els.userSaveButton.addEventListener("click", () => void saveUser());
   els.userDisableButton.addEventListener("click", () => void toggleUserDisabled());
   els.userDeleteButton.addEventListener("click", () => void deleteUser());
+  els.credentialDetailModalClose.addEventListener("click", () => closeModal(els.credentialDetailModal));
+  els.alertDetailModalClose.addEventListener("click", () => closeModal(els.alertDetailModal));
+  els.userModalClose.addEventListener("click", () => closeModal(els.userEditorModal));
+  els.auditDetailModalClose.addEventListener("click", () => closeModal(els.auditDetailModal));
 
   els.credentialsTableBody.addEventListener("click", (event) => {
     const row = event.target.closest("[data-credential-id]");
     if (!row) return;
-    state.selectedCredentialId = row.dataset.credentialId;
-    renderCredentials();
+    openCredentialDetail(row.dataset.credentialId);
   });
 
   els.credentialDetail.addEventListener("click", (event) => {
@@ -2235,8 +2383,7 @@ function bindActions() {
   els.alertList.addEventListener("click", (event) => {
     const card = event.target.closest("[data-alert-id]");
     if (!card) return;
-    state.selectedAlertId = card.dataset.alertId;
-    renderAlerts();
+    openAlertDetail(card.dataset.alertId);
   });
 
   els.alertDetail.addEventListener("click", (event) => {
@@ -2253,13 +2400,17 @@ function bindActions() {
       renderAudit();
     }
   });
+  els.alertStatusFilterButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      state.alertStatusFilter = button.dataset.alertStatusFilter;
+      renderAlerts();
+    });
+  });
 
   els.userList.addEventListener("click", (event) => {
     const card = event.target.closest("[data-user-id]");
     if (!card) return;
-    state.userMode = "edit";
-    state.selectedUserId = card.dataset.userId;
-    renderUsers();
+    openUserEditor(card.dataset.userId);
     if (state.selectedUserId && hasCapability("managedAiUserAccess")) {
       void loadUserAiAccess(state.selectedUserId)
         .then(() => {
@@ -2301,8 +2452,7 @@ function bindActions() {
   els.auditList.addEventListener("click", (event) => {
     const card = event.target.closest("[data-audit-id]");
     if (!card) return;
-    state.selectedAuditId = card.dataset.auditId;
-    renderAudit();
+    openAuditDetail(card.dataset.auditId);
   });
 
   els.userSearch.addEventListener("input", renderUsers);

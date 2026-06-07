@@ -328,7 +328,8 @@ test("GET /admin/credentials serves the admin shell with an admin-only platform 
     assert.match(html, /id="credential-create-submit"/)
     assert.match(html, /id="credentials-show-deleted"/)
     assert.match(html, /Show deleted/)
-    assert.match(html, /Codex \/ ChatGPT runtime profile/)
+    assert.match(html, /Codex \/ ChatGPT runtime/)
+    assert.match(html, /id="credential-detail-modal"/)
     assert.match(html, /<option value="codex_oauth">Codex \/ ChatGPT runtime<\/option>/)
     assert.match(html, /<option value="openai_compatible">OpenAI-compatible provider<\/option>/)
     assert.match(html, /Paste the provider API key or the full Codex auth\.json\./)
@@ -555,6 +556,41 @@ test("GET /admin includes an Organization admin page alongside existing platform
   }
 })
 
+test("GET /admin shell uses modal detail editors instead of split list-detail panels", async () => {
+  const app = createApp({ admin: createAdminServiceStub() })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin`, {
+      headers: {
+        cookie: ADMIN_COOKIE,
+      },
+    })
+
+    assert.equal(response.status, 200)
+    const html = await response.text()
+    assert.match(html, /<dialog id="credential-detail-modal" class="modal-shell"/)
+    assert.match(html, /<dialog id="alert-detail-modal" class="modal-shell"/)
+    assert.match(html, /<dialog id="user-editor-modal" class="modal-shell"/)
+    assert.match(html, /<dialog id="audit-detail-modal" class="modal-shell"/)
+    assert.match(html, /id="user-modal-close"/)
+    assert.match(html, /id="credential-detail-modal-close"/)
+    assert.match(html, /id="alert-detail-modal-close"/)
+    assert.match(html, /id="audit-detail-modal-close"/)
+    assert.doesNotMatch(html, /<aside class="detail-card user-editor"/)
+    assert.doesNotMatch(html, /<aside class="detail-rail"/)
+    assert.doesNotMatch(html, /<aside id="alert-detail"/)
+    assert.doesNotMatch(html, /<aside id="audit-detail"/)
+    assert.doesNotMatch(html, /Export CSV/)
+    assert.doesNotMatch(html, /Trace request/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
 test("GET /admin shell excludes Sessions navigation and page UI", async () => {
   const app = createApp({ admin: createAdminServiceStub() })
   const server = app.listen(0, "127.0.0.1")
@@ -646,6 +682,47 @@ test("GET /admin/app.js gates organization-admin navigation and platform-only lo
   }
 })
 
+test("GET /admin/app.js opens modal editors from selected rows and keeps user changes behind Save", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+
+    assert.equal(response.status, 200)
+    const script = await response.text()
+    assert.match(script, /credentialDetailModal:\s*document\.getElementById\("credential-detail-modal"\)/)
+    assert.match(script, /userEditorModal:\s*document\.getElementById\("user-editor-modal"\)/)
+    assert.match(script, /alertDetailModal:\s*document\.getElementById\("alert-detail-modal"\)/)
+    assert.match(script, /auditDetailModal:\s*document\.getElementById\("audit-detail-modal"\)/)
+    assert.match(script, /function openModal\(modal\)/)
+    assert.match(script, /function closeModal\(modal\)/)
+    assert.match(script, /function openCredentialDetail\(credentialId\)/)
+    assert.match(script, /function openAlertDetail\(alertId\)/)
+    assert.match(script, /function openUserEditor\(userId\)/)
+    assert.match(script, /function openAuditDetail\(auditId\)/)
+    assert.match(script, /els\.credentialDetailModal\.showModal\(\)/)
+    assert.match(script, /els\.userEditorModal\.showModal\(\)/)
+    assert.match(script, /els\.alertDetailModal\.showModal\(\)/)
+    assert.match(script, /els\.auditDetailModal\.showModal\(\)/)
+    assert.match(script, /event\.target\.closest\("\[data-user-id\]"\)/)
+    assert.match(script, /event\.target\.closest\("\[data-credential-id\]"\)/)
+    assert.match(script, /event\.target\.closest\("\[data-alert-id\]"\)/)
+    assert.match(script, /event\.target\.closest\("\[data-audit-id\]"\)/)
+    assert.match(script, /closeModal\(els\.userEditorModal\)/)
+    assert.doesNotMatch(script, /userRole\.addEventListener\("change"[\s\S]*fetchJson/)
+    assert.doesNotMatch(script, /userPlatformAdmin\.addEventListener\("change"[\s\S]*fetchJson/)
+    assert.doesNotMatch(script, /userOrg\.addEventListener\("change"[\s\S]*fetchJson/)
+    assert.doesNotMatch(script, /Trace request/)
+    assert.doesNotMatch(script, /Open entity/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
 test("GET /admin/app.js saves organization membership changes only from the user Save action", async () => {
   const app = createApp()
   const server = app.listen(0, "127.0.0.1")
@@ -704,6 +781,58 @@ test("GET /admin/usage includes a credential usage section", async () => {
     assert.match(html, /id="usage-capacity-weekly"/)
     assert.match(html, /id="usage-capacity-credentials"/)
     assert.match(html, /Codex limits/i)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin shell prioritizes Codex capacity before usage drilldown", async () => {
+  const app = createApp({ admin: createAdminServiceStub() })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/usage`, {
+      headers: {
+        cookie: ADMIN_COOKIE,
+      },
+    })
+
+    assert.equal(response.status, 200)
+    const html = await response.text()
+    const capacityIndex = html.indexOf("Capacity overview")
+    const totalUsageIndex = html.indexOf("Token volume trend")
+    assert.notEqual(capacityIndex, -1)
+    assert.notEqual(totalUsageIndex, -1)
+    assert.ok(capacityIndex < totalUsageIndex)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js wires client-side credential and alert filters", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+
+    assert.equal(response.status, 200)
+    const script = await response.text()
+    assert.match(script, /credentialFilters:\s*\{/)
+    assert.match(script, /function filteredCredentials\(\)/)
+    assert.match(script, /els\.credentialSearch\.addEventListener\("input",/)
+    assert.match(script, /els\.credentialProviderFilter\.addEventListener\("change",/)
+    assert.match(script, /els\.credentialStateFilter\.addEventListener\("change",/)
+    assert.match(script, /function filteredAlerts\(\)/)
+    assert.match(script, /alertStatusFilter:\s*"active"/)
+    assert.match(script, /data-alert-status-filter/)
+    assert.match(script, /state\.alertStatusFilter = button\.dataset\.alertStatusFilter/)
   } finally {
     server.close()
     await once(server, "close")

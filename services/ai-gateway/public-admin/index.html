@@ -198,20 +198,22 @@
               </div>
             </div>
             <div class="toolbar credentials-toolbar">
-              <input class="input" type="search" name="credential-search" placeholder="Search provider, state, or secret ref" />
-              <select class="input" name="credential-provider-filter">
-                <option>All providers</option>
-                <option>OpenAI</option>
-                <option>Anthropic</option>
-                <option>Codex / ChatGPT</option>
-                <option>OpenAI-compatible provider</option>
-                <option>Google</option>
+              <input id="credential-search" class="input" type="search" name="credential-search" placeholder="Search provider, state, or secret ref" />
+              <select id="credential-provider-filter" class="input" name="credential-provider-filter">
+                <option value="">All providers</option>
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="codex_oauth">Codex / ChatGPT</option>
+                <option value="openai_compatible">OpenAI-compatible provider</option>
               </select>
-              <select class="input" name="credential-state-filter">
-                <option>All states</option>
-                <option>Healthy</option>
-                <option>Degraded</option>
-                <option>Unhealthy</option>
+              <select id="credential-state-filter" class="input" name="credential-state-filter">
+                <option value="">All states</option>
+                <option value="healthy">Healthy</option>
+                <option value="degraded">Degraded</option>
+                <option value="unhealthy">Unhealthy</option>
+                <option value="draining">Draining</option>
+                <option value="revoked">Revoked</option>
+                <option value="deleted">Deleted</option>
               </select>
               <label class="checkbox-row">
                 <input id="credentials-show-deleted" type="checkbox" />
@@ -249,7 +251,7 @@
                 <p class="editor-note credential-create-status" id="credential-create-status">Secrets are stored encrypted and assigned to the provider platform pool. For Codex / ChatGPT runtime, paste the full Codex <code>auth.json</code> with <code>id_token</code>, <code>access_token</code>, <code>refresh_token</code>, and <code>account_id</code>.</p>
               </div>
             </div>
-            <div class="split-layout credentials-layout">
+            <div class="credentials-layout modal-list-layout">
               <div class="table-shell">
                 <table>
                   <thead>
@@ -266,59 +268,12 @@
                     </tr>
                   </thead>
                   <tbody id="credentials-table-body">
-                    <tr class="row-alert">
-                      <td><strong>OpenAI org key</strong><span>secret_ref: vault://cred/oa-001</span></td>
-                      <td>OAuth</td>
-                      <td><span class="status-chip danger">Unhealthy</span></td>
-                      <td><a href="/admin/alerts">2 active alerts</a></td>
-                      <td>6</td>
-                      <td>3 min ago</td>
-                      <td>0</td>
-                      <td><span class="muted">N/A</span></td>
-                      <td><span class="muted">N/A</span></td>
-                    </tr>
                     <tr>
-                      <td><strong>Anthropic shared key</strong><span>secret_ref: vault://cred/anth-004</span></td>
-                      <td>API key</td>
-                      <td><span class="status-chip warning">Degraded</span></td>
-                      <td><a href="/admin/alerts">1 warning</a></td>
-                      <td>8</td>
-                      <td>18 min ago</td>
-                      <td>0</td>
-                      <td><span class="muted">N/A</span></td>
-                      <td><span class="muted">N/A</span></td>
-                    </tr>
-                    <tr>
-                      <td><strong>Google Workspace OAuth</strong><span>secret_ref: vault://cred/gws-019</span></td>
-                      <td>OAuth</td>
-                      <td><span class="status-chip success">Healthy</span></td>
-                      <td><a href="/admin/alerts">No current alerts</a></td>
-                      <td>4</td>
-                      <td>1 hour ago</td>
-                      <td>0</td>
-                      <td><span class="muted">N/A</span></td>
-                      <td><span class="muted">N/A</span></td>
+                      <td colspan="9">Credential inventory will load after sign-in.</td>
                     </tr>
                   </tbody>
                 </table>
               </div>
-              <aside class="detail-rail">
-                <div id="credential-detail" class="detail-card">
-                  <p class="eyebrow">Selected credential</p>
-                  <h3>Codex / ChatGPT runtime profile</h3>
-                  <div class="stack">
-                    <div class="detail-line"><span>Health</span><strong>Server-side inference credential</strong></div>
-                    <div class="detail-line"><span>Linked alerts</span><strong>Tracked in Render logs</strong></div>
-                    <div class="detail-line"><span>Latest incident</span><strong>None selected</strong></div>
-                    <div class="detail-line"><span>Rotation</span><strong>Update Codex auth secret</strong></div>
-                  </div>
-                  <div class="button-row">
-                    <button class="button button-secondary" type="button">Drain</button>
-                    <button class="button button-secondary" type="button">Rotate</button>
-                    <button class="button button-primary" type="button">Open alerts</button>
-                  </div>
-                </div>
-              </aside>
             </div>
           </section>
 
@@ -326,7 +281,7 @@
             <div class="section-head">
               <div>
                 <p class="eyebrow">Usage</p>
-                <h2>Total usage first, then drill down</h2>
+                <h2>Capacity first, then drill down</h2>
               </div>
               <span class="status-chip info">By credential / user / org</span>
             </div>
@@ -352,6 +307,33 @@
                 <option value="">All orgs</option>
               </select>
             </div>
+            <section class="usage-credential-card capacity-overview">
+              <div class="section-head compact">
+                <div>
+                  <p class="eyebrow">Capacity overview</p>
+                  <h3>Codex remaining limits</h3>
+                </div>
+                <span class="status-chip info">Functional credentials only</span>
+              </div>
+              <div class="hero-metrics">
+                <article class="metric-card">
+                  <span class="metric-label">5h remaining</span>
+                  <strong id="usage-capacity-five-hour">Unknown</strong>
+                  <span class="metric-note" id="usage-capacity-five-hour-note">Waiting for Codex limit status</span>
+                </article>
+                <article class="metric-card">
+                  <span class="metric-label">Weekly remaining</span>
+                  <strong id="usage-capacity-weekly">Unknown</strong>
+                  <span class="metric-note" id="usage-capacity-weekly-note">Waiting for Codex limit status</span>
+                </article>
+                <article class="metric-card">
+                  <span class="metric-label">Measured credentials</span>
+                  <strong id="usage-capacity-measured">0/0</strong>
+                  <span class="metric-note" id="usage-capacity-measured-note">No Codex credentials measured</span>
+                </article>
+              </div>
+              <div id="usage-capacity-credentials" class="list-cards"></div>
+            </section>
             <div class="usage-grid">
               <article class="chart-card">
                 <div class="chart-head">
@@ -388,33 +370,6 @@
               </article>
             </div>
             <div id="usage-series" class="list-cards"></div>
-            <section class="usage-credential-card">
-              <div class="section-head compact">
-                <div>
-                  <p class="eyebrow">Capacity overview</p>
-                  <h3>Codex remaining limits</h3>
-                </div>
-                <span class="status-chip info">Functional credentials only</span>
-              </div>
-              <div class="hero-metrics">
-                <article class="metric-card">
-                  <span class="metric-label">5h remaining</span>
-                  <strong id="usage-capacity-five-hour">Unknown</strong>
-                  <span class="metric-note" id="usage-capacity-five-hour-note">Waiting for Codex limit status</span>
-                </article>
-                <article class="metric-card">
-                  <span class="metric-label">Weekly remaining</span>
-                  <strong id="usage-capacity-weekly">Unknown</strong>
-                  <span class="metric-note" id="usage-capacity-weekly-note">Waiting for Codex limit status</span>
-                </article>
-                <article class="metric-card">
-                  <span class="metric-label">Measured credentials</span>
-                  <strong id="usage-capacity-measured">0/0</strong>
-                  <span class="metric-note" id="usage-capacity-measured-note">No Codex credentials measured</span>
-                </article>
-              </div>
-              <div id="usage-capacity-credentials" class="list-cards"></div>
-            </section>
             <section class="usage-credential-card">
               <div class="section-head compact">
                 <div>
@@ -455,13 +410,13 @@
                 <p class="eyebrow">Alerts</p>
                 <h2>Incident triage board</h2>
               </div>
-              <div class="segmented">
-                <button class="segment active" type="button">Active</button>
-                <button class="segment" type="button">Acknowledged</button>
-                <button class="segment" type="button">Resolved</button>
+              <div class="segmented" id="alert-status-filters">
+                <button class="segment active" type="button" data-alert-status-filter="active">Active</button>
+                <button class="segment" type="button" data-alert-status-filter="acknowledged">Acknowledged</button>
+                <button class="segment" type="button" data-alert-status-filter="resolved">Resolved</button>
               </div>
             </div>
-            <div class="alerts-layout">
+            <div class="alerts-layout modal-list-layout">
               <div id="alert-list" class="alert-queue">
                 <article class="alert-card critical active">
                   <div class="alert-head">
@@ -486,20 +441,6 @@
                   </div>
                 </article>
               </div>
-              <aside id="alert-detail" class="detail-card alert-detail">
-                <p class="eyebrow">Runbook</p>
-                <h3>Credential outage</h3>
-                <div class="stack">
-                  <div class="detail-line"><span>Affected credential</span><strong>OpenAI org key</strong></div>
-                  <div class="detail-line"><span>Affected routes</span><strong>6</strong></div>
-                  <div class="detail-line"><span>Recommended action</span><strong>Rebalance routes</strong></div>
-                </div>
-                <div class="button-row">
-                  <button class="button button-secondary" type="button">Acknowledge</button>
-                  <button class="button button-secondary" type="button">Escalate</button>
-                  <button class="button button-primary" type="button">Resolve</button>
-                </div>
-              </aside>
             </div>
           </section>
 
@@ -511,7 +452,7 @@
               </div>
               <button id="create-user-button-inline" class="button button-primary" type="button" data-platform-admin-control data-platform-only>Create user</button>
             </div>
-            <div class="split-layout users-layout">
+            <div class="users-layout modal-list-layout">
               <div>
                 <div class="toolbar">
                   <input id="user-search" class="input" type="search" placeholder="Search by name or email" />
@@ -551,83 +492,6 @@
                   </article>
                 </div>
               </div>
-              <aside class="detail-card user-editor">
-                <p id="user-editor-status" class="eyebrow">Edit user</p>
-                <h3 id="user-editor-title">Vaclav Soukup</h3>
-                <form class="editor-form">
-                  <label>
-                    <span>Name</span>
-                    <input id="user-name" class="input" value="Vaclav Soukup" />
-                  </label>
-                  <label>
-                    <span>Email</span>
-                    <input id="user-email" class="input" value="vaclav.soukup@neatec.cz" />
-                  </label>
-                  <label>
-                    <span>Organization</span>
-                    <select id="user-org" class="input">
-                      <option>Personal</option>
-                    </select>
-                  </label>
-                  <label>
-                    <span>Organization role</span>
-                    <select id="user-role" class="input">
-                      <option value="organization_admin" selected>Organization admin</option>
-                      <option value="member">Member</option>
-                    </select>
-                  </label>
-                  <label class="switch-row" data-platform-admin-control>
-                    <span>Platform admin</span>
-                    <input id="user-platform-admin" type="checkbox" checked />
-                  </label>
-                  <label class="switch-row">
-                    <span>Send invite email immediately</span>
-                    <input id="user-send-invite" type="checkbox" checked />
-                  </label>
-                  <section class="editor-section" data-ai-access-control>
-                    <div>
-                      <p class="eyebrow">AI access</p>
-                      <h4>Admin-managed AI access</h4>
-                    </div>
-                    <label class="switch-row">
-                      <span>Enable AI access</span>
-                      <input id="user-ai-access-enabled" type="checkbox" />
-                    </label>
-                    <label>
-                      <span>Assigned provider</span>
-                      <select id="user-ai-access-provider" class="input">
-                        <option value="">Not assigned</option>
-                        <option value="openai">OpenAI</option>
-                        <option value="anthropic">Anthropic</option>
-                        <option value="codex_oauth">Codex / ChatGPT runtime</option>
-                        <option value="openai_compatible">OpenAI-compatible provider</option>
-                      </select>
-                    </label>
-                    <label>
-                      <span>Assigned credential</span>
-                      <select id="user-ai-access-credential" class="input">
-                        <option value="">Select assigned credential</option>
-                      </select>
-                    </label>
-                    <label>
-                      <span>Default model</span>
-                      <input id="user-ai-access-default-model" class="input" list="user-ai-access-model-options" placeholder="gpt-4o-mini" />
-                      <datalist id="user-ai-access-model-options"></datalist>
-                    </label>
-                    <label>
-                      <span>Allowed models</span>
-                      <textarea id="user-ai-access-allowed-models" class="input ai-access-textarea" placeholder="One model per line or comma-separated"></textarea>
-                    </label>
-                    <p id="user-ai-access-status" class="editor-note muted">Assignments are enforced by the gateway for this signed-in user, including Codex OAuth inference proxying.</p>
-                  </section>
-                </form>
-                <div class="button-row">
-                  <button id="user-disable-button" class="button button-secondary" type="button">Disable user</button>
-                  <button id="user-delete-button" class="button button-secondary" type="button">Delete user</button>
-                  <button id="user-save-button" class="button button-primary" type="button">Save changes</button>
-                </div>
-                <p id="user-save-status" class="editor-note muted">Create or edit a user, then save to apply the directory change.</p>
-              </aside>
             </div>
           </section>
 
@@ -637,7 +501,6 @@
                 <p class="eyebrow">Audit</p>
                 <h2>Filterable event stream</h2>
               </div>
-              <button class="button button-secondary" type="button">Export CSV</button>
             </div>
             <div class="audit-layout">
               <aside class="audit-filters">
@@ -700,24 +563,146 @@
                   <span>13:31</span>
                 </article>
               </section>
-              <aside id="audit-detail" class="detail-card audit-detail">
-                <p class="eyebrow">Event detail</p>
-                <h3>User invited</h3>
-                <div class="stack">
-                  <div class="detail-line"><span>Actor</span><strong>Václav Soukup</strong></div>
-                  <div class="detail-line"><span>Changed fields</span><strong>invite status, platform role</strong></div>
-                  <div class="detail-line"><span>Result</span><strong>Success</strong></div>
-                  <div class="detail-line"><span>Correlation</span><strong>evt_9a21f</strong></div>
-                </div>
-                <div class="button-row">
-                  <button class="button button-secondary" type="button">Open user</button>
-                  <button class="button button-secondary" type="button">Open org</button>
-                </div>
-              </aside>
             </div>
           </section>
         </section>
       </main>
     </div>
+
+    <dialog id="credential-detail-modal" class="modal-shell">
+      <div class="modal-card">
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow">Credential</p>
+            <h2>Credential detail</h2>
+          </div>
+          <button id="credential-detail-modal-close" class="button button-secondary modal-close" type="button" aria-label="Close credential detail">Close</button>
+        </div>
+        <div id="credential-detail" class="modal-detail">
+          <p class="eyebrow">Selected credential</p>
+          <h3>No credential selected</h3>
+          <p class="editor-note muted">Select a credential to inspect capacity, actions, and alerts.</p>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="alert-detail-modal" class="modal-shell">
+      <div class="modal-card">
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow">Alert</p>
+            <h2>Incident detail</h2>
+          </div>
+          <button id="alert-detail-modal-close" class="button button-secondary modal-close" type="button" aria-label="Close alert detail">Close</button>
+        </div>
+        <div id="alert-detail" class="modal-detail">
+          <p class="eyebrow">Runbook</p>
+          <h3>No alert selected</h3>
+          <p class="editor-note muted">Select an alert to acknowledge, resolve, or inspect the related audit trail.</p>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="user-editor-modal" class="modal-shell">
+      <div class="modal-card modal-card-wide">
+        <div class="modal-head">
+          <div>
+            <p id="user-editor-status" class="eyebrow">Edit user</p>
+            <h2 id="user-editor-title">User</h2>
+          </div>
+          <button id="user-modal-close" class="button button-secondary modal-close" type="button" aria-label="Close user editor">Close</button>
+        </div>
+        <form class="editor-form user-editor">
+          <label>
+            <span>Name</span>
+            <input id="user-name" class="input" value="" />
+          </label>
+          <label>
+            <span>Email</span>
+            <input id="user-email" class="input" value="" />
+          </label>
+          <label>
+            <span>Organization</span>
+            <select id="user-org" class="input">
+              <option>Personal</option>
+            </select>
+          </label>
+          <label>
+            <span>Organization role</span>
+            <select id="user-role" class="input">
+              <option value="organization_admin">Organization admin</option>
+              <option value="member">Member</option>
+            </select>
+          </label>
+          <label class="switch-row" data-platform-admin-control>
+            <span>Platform admin</span>
+            <input id="user-platform-admin" type="checkbox" />
+          </label>
+          <label class="switch-row">
+            <span>Send invite email immediately</span>
+            <input id="user-send-invite" type="checkbox" checked />
+          </label>
+          <section class="editor-section" data-ai-access-control>
+            <div>
+              <p class="eyebrow">AI access</p>
+              <h4>Admin-managed AI access</h4>
+            </div>
+            <label class="switch-row">
+              <span>Enable AI access</span>
+              <input id="user-ai-access-enabled" type="checkbox" />
+            </label>
+            <label>
+              <span>Assigned provider</span>
+              <select id="user-ai-access-provider" class="input">
+                <option value="">Not assigned</option>
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="codex_oauth">Codex / ChatGPT runtime</option>
+                <option value="openai_compatible">OpenAI-compatible provider</option>
+              </select>
+            </label>
+            <label>
+              <span>Assigned credential</span>
+              <select id="user-ai-access-credential" class="input">
+                <option value="">Select assigned credential</option>
+              </select>
+            </label>
+            <label>
+              <span>Default model</span>
+              <input id="user-ai-access-default-model" class="input" list="user-ai-access-model-options" placeholder="gpt-4o-mini" />
+              <datalist id="user-ai-access-model-options"></datalist>
+            </label>
+            <label>
+              <span>Allowed models</span>
+              <textarea id="user-ai-access-allowed-models" class="input ai-access-textarea" placeholder="One model per line or comma-separated"></textarea>
+            </label>
+            <p id="user-ai-access-status" class="editor-note muted">Assignments are enforced by the gateway for this signed-in user, including Codex OAuth inference proxying.</p>
+          </section>
+        </form>
+        <div class="button-row modal-actions">
+          <button id="user-disable-button" class="button button-secondary" type="button">Disable user</button>
+          <button id="user-delete-button" class="button button-secondary" type="button">Delete user</button>
+          <button id="user-save-button" class="button button-primary" type="button">Save changes</button>
+        </div>
+        <p id="user-save-status" class="editor-note muted">Create or edit a user, then save to apply the directory change.</p>
+      </div>
+    </dialog>
+
+    <dialog id="audit-detail-modal" class="modal-shell">
+      <div class="modal-card">
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow">Audit</p>
+            <h2>Event detail</h2>
+          </div>
+          <button id="audit-detail-modal-close" class="button button-secondary modal-close" type="button" aria-label="Close audit detail">Close</button>
+        </div>
+        <div id="audit-detail" class="modal-detail">
+          <p class="eyebrow">Event detail</p>
+          <h3>No event selected</h3>
+          <p class="editor-note muted">Select an audit event to inspect its payload snapshot.</p>
+        </div>
+      </div>
+    </dialog>
   </body>
 </html>

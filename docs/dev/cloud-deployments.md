@@ -69,7 +69,9 @@ connect through externally reachable database URLs.
 
 Signed-in app identity and desktop handoff can come from DEN, but managed-AI assignment and admin truth follow the service that receives the routed managed-AI request. The inference base URL is separate from DEN auth: desktop and orchestrator defaults route managed-AI requests to the owned standalone AI Gateway at `https://ai.veslo.work`. The previous Render AI Gateway is a rollback target only.
 
-For the standalone gateway, AI Gateway admin is where operators inspect routed usage, rotated credentials, exhausted Codex credentials, OpenAI-compatible custom provider credentials, cached tokens, and credential eligibility. DEN admin and standalone AI Gateway admin show the same assignment and credential state only when they share the same managed-AI backing database and config.
+For the standalone gateway, the canonical admin is AI Gateway admin at `https://ai.veslo.work/admin`. When Veslo work items or implementation notes say "admin" for managed-AI operations, they mean this AI Gateway admin and its `/admin` subpages. There is no separate DEN admin UI for VSLO-201 managed-AI operations.
+
+AI Gateway admin is where operators inspect organizations, users, routed usage, rotated credentials, exhausted Codex credentials, OpenAI-compatible custom provider credentials, cached tokens, credential eligibility, alerts, and audit events. DEN remains the backend owner for auth, users, organizations, domains, invites, memberships, platform roles, and seat limits; AI Gateway admin calls the DEN-backed admin APIs for that data instead of exposing a second DEN admin shell.
 
 Standalone AI Gateway admin routes under `/admin` are protected before the admin shell is served. A browser without a valid gateway admin session is redirected to the existing DEN desktop-auth login page, and the DEN callback returns to the originally requested admin route. The gateway stores the resulting admin token in an HTTP-only `/admin` cookie and uses that cookie for admin API calls; unauthenticated users must not receive the admin HTML shell for `/admin` or its page routes.
 
