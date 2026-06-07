@@ -537,10 +537,9 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|pair| pair == ["--orchestrator-url", "http://127.0.0.1:12345"]));
-        assert!(args.windows(2).any(|pair| pair == [
-            "--orchestrator-lifecycle-token",
-            "lifecycle-token"
-        ]));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--orchestrator-lifecycle-token", "lifecycle-token"]));
     }
 
     #[test]

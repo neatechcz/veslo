@@ -5,7 +5,7 @@ import {
   RunAlreadyActiveError,
   type RunProbeResult,
 } from "./run-registry.js";
-import type { RunRecord, RunStore } from "./run-store.js";
+import { isActiveRunStatus, type RunRecord, type RunStore } from "./run-store.js";
 
 const input = {
   workspaceId: "ws-a",
@@ -48,7 +48,7 @@ function createMemoryRunStore(): RunStore {
         .filter((record) =>
           record.workspaceId === workspaceId &&
           record.conversationId === conversationId &&
-          ["submitted", "running", "blocked"].includes(record.status)
+          isActiveRunStatus(record.status)
         )
         .sort((a, b) => b.createdAt - a.createdAt)[0] ?? null;
     },

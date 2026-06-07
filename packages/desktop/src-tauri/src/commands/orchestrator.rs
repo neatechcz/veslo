@@ -276,7 +276,12 @@ pub fn reconcile_orchestrator_workspaces(
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .or_else(|| Some(workspace.name.trim()).filter(|s| !s.is_empty()));
-        match register_workspace_with_orchestrator(&base_url, path, Some(workspace.id.as_str()), display_name) {
+        match register_workspace_with_orchestrator(
+            &base_url,
+            path,
+            Some(workspace.id.as_str()),
+            display_name,
+        ) {
             Ok(_) => registered += 1,
             Err(error) => eprintln!("[orchestrator] reconcile failed for {path}: {error}"),
         }
