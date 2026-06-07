@@ -135,6 +135,12 @@ that directory through the Veslo conversation. Workspace switching changes only
 the visible UI context; it must not retarget an existing conversation, run, or
 OpenCode session.
 
+For Veslo-scoped conversations, the app does not send a raw OpenCode directory
+for create, run, or abort. The server creates the session from the registered
+workspace directory and later resolves run/abort directory from the persisted
+conversation binding. Raw OpenCode-session compatibility calls still require a
+directory because they may not have a Veslo binding.
+
 The local Veslo server should be recoverable without an active workspace.
 `Invalid bearer token` between the app and local server is treated as stale
 local connection state, not as a failed message or failed conversation.

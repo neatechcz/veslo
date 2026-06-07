@@ -1,7 +1,5 @@
-import type { Provider as ConfigProvider, ProviderListResponse } from "@opencode-ai/sdk/v2/client";
-
-type ProviderListItem = ProviderListResponse["all"][number];
-type ProviderListModel = ProviderListItem["models"][string];
+import type { Provider as ConfigProvider } from "@opencode-ai/sdk/v2/client";
+import type { ProviderListItem, ProviderListModel } from "../types";
 
 type ProviderConnectionItem = Pick<ProviderListItem, "id" | "env">;
 
@@ -91,7 +89,6 @@ const buildModalities = (caps?: ConfigProvider["models"][string]["capabilities"]
 };
 
 const mapModel = (model: ConfigProvider["models"][string]): ProviderListModel => {
-  const interleaved = model.capabilities?.interleaved;
   const modalities = buildModalities(model.capabilities);
   const status = model.status === "alpha" || model.status === "beta" || model.status === "deprecated"
     ? model.status
@@ -103,10 +100,10 @@ const mapModel = (model: ConfigProvider["models"][string]): ProviderListModel =>
     family: model.family,
     release_date: model.release_date ?? "",
     attachment: model.capabilities?.attachment ?? false,
-    reasoning: model.capabilities?.reasoning ?? false,
+    reasoning: Boolean(model.capabilities?.reasoning),
     temperature: model.capabilities?.temperature ?? false,
     tool_call: model.capabilities?.toolcall ?? false,
-    interleaved: interleaved === false ? undefined : interleaved,
+    interleaved: model.capabilities?.interleaved ? true : undefined,
     cost: model.cost
       ? {
           input: model.cost.input,
@@ -134,7 +131,7 @@ const mapModel = (model: ConfigProvider["models"][string]): ProviderListModel =>
   };
 };
 
-export const mapConfigProvidersToList = (providers: ConfigProvider[]): ProviderListResponse["all"] =>
+export const mapConfigProvidersToList = (providers: ConfigProvider[]): ProviderListItem[] =>
   providers.map((provider) => {
     const models = Object.fromEntries(
       Object.entries(provider.models ?? {}).map(([key, model]) => [key, mapModel(model)]),

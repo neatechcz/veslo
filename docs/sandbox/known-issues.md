@@ -240,7 +240,7 @@ Podobné symptomy mají jiné fixy:
 - `engine-suspend` s `reason: "api-dispose"` → managed-AI reload/runtime
   state, ne WSL routing.
 - `Object.values requires that input parameter not be null or undefined`
-  → managed OpenCode plugin/zod provisioning (`1.14.29` + `4.1.8`).
+  → managed OpenCode plugin/zod provisioning (`1.16.2` + `4.1.8`).
 
 ## 9. WorkspaceClientStaleError jako unhandled rejection
 

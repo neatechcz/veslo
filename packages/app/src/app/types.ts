@@ -3,7 +3,6 @@ import type {
   Part,
   PermissionRequest as ApiPermissionRequest,
   QuestionRequest,
-  ProviderListResponse,
   Session,
 } from "@opencode-ai/sdk/v2/client";
 import type { createClient } from "./lib/opencode";
@@ -11,7 +10,54 @@ import type { OpencodeConfigFile, ScheduledJob as TauriScheduledJob, WorkspaceIn
 
 export type Client = ReturnType<typeof createClient>;
 
-export type ProviderListItem = ProviderListResponse["all"][number];
+export type ProviderListModel = {
+  id: string;
+  name: string;
+  family?: string;
+  release_date?: string;
+  attachment?: boolean;
+  reasoning?: boolean;
+  temperature?: boolean;
+  tool_call?: boolean;
+  interleaved?: boolean;
+  cost?: {
+    input: number;
+    output: number;
+    cache_read?: number;
+    cache_write?: number;
+    context_over_200k?: {
+      input: number;
+      output: number;
+      cache_read?: number;
+      cache_write?: number;
+    };
+  };
+  limit?: {
+    context: number;
+    output: number;
+  };
+  modalities?: {
+    input: Array<"text" | "audio" | "image" | "video" | "pdf">;
+    output: Array<"text" | "audio" | "image" | "video" | "pdf">;
+  };
+  experimental?: boolean;
+  status?: "alpha" | "beta" | "deprecated" | "active";
+  options?: Record<string, unknown>;
+  headers?: Record<string, string>;
+  provider?: {
+    npm: string;
+  };
+  variants?: unknown;
+};
+
+export type ProviderListItem = {
+  api?: string;
+  name: string;
+  env: string[];
+  id: string;
+  npm?: string;
+  models: Record<string, ProviderListModel>;
+};
 
 export type VesloAutomationSchedule =
   | { kind: "oneShot"; runAt: string; timezone?: string }

@@ -77,7 +77,6 @@ export type ConversationService = {
 
   createConversation(input: {
     workspace: WorkspaceInfo;
-    directory: string | null;
     title?: string | null;
   }): Promise<ConversationCreateResult>;
 };
@@ -100,6 +99,23 @@ const normalizeTimestamp = (value: unknown, fallback: number) =>
 
 const readTimeRecord = (value: unknown): Record<string, unknown> =>
   isRecord(value) ? value : {};
+
+const normalizeConversationDirectory = (directory: string): string => {
+  if (process.platform === "win32") {
+    return directory.replace(/^\\\\\?\\/, "").replace(/^\/\/\?\//, "");
+  }
+  return directory;
+};
+
+const resolveConversationCreateDirectory = (workspace: WorkspaceInfo): string => {
+  const explicit = normalizeText(workspace.directory ?? workspace.opencode?.directory);
+  if (explicit) return normalizeConversationDirectory(explicit);
+  if (workspace.workspaceType === "local") {
+    const workspacePath = normalizeText(workspace.path);
+    return workspacePath ? normalizeConversationDirectory(workspacePath) : "";
+  }
+  return "";
+};
 
 export function createConversationService(options: {
   readStore: ConversationReadStore;
@@ -196,7 +212,7 @@ export function createConversationService(options: {
     const workspaceId = normalizeText(input.workspaceId);
     const directory = normalizeText(input.directory);
     const sessionOrConversationId = normalizeText(input.sessionOrConversationId);
-    if (!workspaceId || !directory || !sessionOrConversationId) return null;
+    if (!workspaceId || !sessionOrConversationId) return null;
 
     try {
       return await options.bindingStore.resolveOpenCodeSession({
@@ -257,7 +273,7 @@ export function createConversationService(options: {
 
     async createConversation(input) {
       const workspaceId = normalizeText(input.workspace.id);
-      const directory = normalizeText(input.directory);
+      const directory = resolveConversationCreateDirectory(input.workspace);
       if (!workspaceId || !directory) {
         throw new ApiError(400, "invalid_directory", "Conversation directory is required");
       }

@@ -16,6 +16,11 @@ test("conversation runs remember the submitted run id for scoped abort", () => {
     /rememberLatestConversationRunId\(\{[\s\S]*workspaceId,[\s\S]*conversationId: result\.conversationId,[\s\S]*opencodeSessionId: result\.opencodeSessionId,[\s\S]*uiSessionId: normalizedSessionId,[\s\S]*runId: result\.runId,[\s\S]*\}\);/,
     "successful conversation runs should remember their submitted run id under Veslo and UI identities",
   );
+  assert.match(
+    runSource,
+    /const runInput: VesloConversationRunInput = \{ \.\.\.input \};[\s\S]*if \(scope\?\.conversationId\) \{[\s\S]*delete runInput\.directory;[\s\S]*\} else \{[\s\S]*runInput\.directory = directory;[\s\S]*\}[\s\S]*serverClient\.runConversation\(serverWorkspaceId, conversationId, runInput\)/,
+    "scoped conversation runs should not send client directory back to the Veslo run endpoint",
+  );
 });
 
 test("abortSession routes scoped conversations through Veslo abort and scoped legacy fallback", () => {
@@ -31,8 +36,8 @@ test("abortSession routes scoped conversations through Veslo abort and scoped le
   );
   assert.match(
     abortWrapperSource,
-    /serverClient\.abortConversation\(serverWorkspaceId, conversationId, \{[\s\S]*directory,[\s\S]*runId,[\s\S]*\}\)/,
-    "conversation abort should call the local Veslo abort endpoint",
+    /serverClient\.abortConversation\([\s\S]*serverWorkspaceId,[\s\S]*conversationId,[\s\S]*scope\?\.conversationId \? \{ runId \} : \{ directory, runId \},[\s\S]*\)/,
+    "scoped conversation abort should not send client directory back to the Veslo abort endpoint",
   );
 
   const abortSessionStart = source.indexOf("  async function abortSession(");

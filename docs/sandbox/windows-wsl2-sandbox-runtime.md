@@ -165,7 +165,7 @@ The host-side proxy reaches the engine through WSL guest IPv4 (`connectHost`).
   points into `/mnt/wsl`, bind its real target into the sandbox.
 - Use WSL guest IP as `connectHost`; Windows `127.0.0.1` forwarding is not the
   source of truth for engine health.
-- Managed OpenCode dependencies must use `@opencode-ai/plugin@1.14.29` and
+- Managed OpenCode dependencies must use `@opencode-ai/plugin@1.16.2` and
   `zod@4.1.8`.
 
 Fallback plugin mode is acceptable only when it imports real vendored `zod`.
@@ -183,7 +183,7 @@ Installed state:
 - Default user: `veslo`
 - Home: `/home/veslo`
 - `bubblewrap`: `/usr/bin/bwrap`, version `0.6.1`
-- OpenCode: `/usr/local/bin/opencode`, version `1.14.29`
+- OpenCode: `/usr/local/bin/opencode`, version `1.16.2`
 - `/etc/wsl.conf`:
 
 ```ini
@@ -202,9 +202,9 @@ Verified checks:
 - `pnpm --filter veslo-orchestrator exec bun scripts/windows-wsl2-sandbox-smoke.ts`
   passed with `PASS - WSL2 bwrap smoke passed in distro VesloSandbox (x86_64)`.
 - `discoverWsl2Runtime()` selected `VesloSandbox`.
-- `resolveWslOpencodeRuntime(runtime, "1.14.29")` resolved
+- `resolveWslOpencodeRuntime(runtime, "1.16.2")` resolved
   `/usr/local/bin/opencode`.
-- Direct `bwrap ... -- /usr/local/bin/opencode --version` returned `1.14.29`.
+- Direct `bwrap ... -- /usr/local/bin/opencode --version` returned `1.16.2`.
 - `pnpm --filter veslo-orchestrator typecheck` passed.
 
 This is a local dev bootstrap, not the shipped first-run onboarding. Future

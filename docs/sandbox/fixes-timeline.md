@@ -324,7 +324,7 @@ Windows runtime invarianty:
 - `veslo-server` proxy musí zachovat `/workspace/<id>/opencode` base path a
   používat `Accept-Encoding: identity`.
 - `api-dispose` reloady jsou managed-AI/runtime state, ne WSL routing.
-- Managed OpenCode dependencies: `@opencode-ai/plugin@1.14.29` a `zod@4.1.8`.
+- Managed OpenCode dependencies: `@opencode-ai/plugin@1.16.2` a `zod@4.1.8`.
 
 ## Co stále **neopravené**
 

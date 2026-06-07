@@ -212,7 +212,6 @@ describe("conversation routes", () => {
         },
         body: JSON.stringify({
           kind: "prompt_async",
-          directory: workspaceRoot,
           sessionID: "must-not-forward",
           extra: "must-not-forward",
           parts: [{ type: "text", text: "Hello" }],
@@ -250,7 +249,6 @@ describe("conversation routes", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          directory: workspaceRoot,
           runId: runPayload.runId,
         }),
       },
@@ -288,8 +286,8 @@ describe("conversation routes", () => {
     );
     expect(missingRunIdAbortResponse.status).toBe(400);
 
-    const missingDirectoryAbortResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(payload.conversationId)}/abort`,
+    const rawSessionMissingDirectoryAbortResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(payload.opencodeSessionId)}/abort`,
       {
         method: "POST",
         headers: {
@@ -301,10 +299,10 @@ describe("conversation routes", () => {
         }),
       },
     );
-    expect(missingDirectoryAbortResponse.status).toBe(400);
+    expect(rawSessionMissingDirectoryAbortResponse.status).toBe(400);
 
-    const missingDirectoryRunResponse = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(payload.conversationId)}/runs`,
+    const rawSessionMissingDirectoryRunResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(payload.opencodeSessionId)}/runs`,
       {
         method: "POST",
         headers: {
@@ -317,22 +315,100 @@ describe("conversation routes", () => {
         }),
       },
     );
-    expect(missingDirectoryRunResponse.status).toBe(400);
+    expect(rawSessionMissingDirectoryRunResponse.status).toBe(400);
     expect(upstreamHits).toBe(3);
   });
 
-  test("POST /workspace/:id/conversations rejects directories outside the workspace before engine contact", async () => {
+  test("POST /workspace/:id/conversations ignores client OpenCode routing fields", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-workspace-"));
+    tempDirs.push(workspaceRoot);
+    await useTempVesloDataDir();
+
+    const clientDirectory = join(workspaceRoot, "client-selected-subdir");
+    const receivedBodies: Array<Record<string, unknown>> = [];
+    const receivedDirectoryHeaders: string[] = [];
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (request.method === "POST" && url.pathname === "/session") {
+          receivedDirectoryHeaders.push(request.headers.get("x-opencode-directory") ?? "");
+          const receivedBody = await request.json() as Record<string, unknown>;
+          receivedBodies.push(receivedBody);
+          return Response.json({
+            id: "sess-server-created",
+            title: receivedBody.title,
+            directory: receivedBody.directory,
+            parentID: null,
+            time: { created: 111, updated: 222 },
+          });
+        }
+        return Response.json({ error: "unexpected upstream route" }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const server = startTestServer({ workspaceRoot, upstreamPort: upstream.port });
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          directory: clientDirectory,
+          openCodeSessionId: "client-open-code-session",
+          opencodeSessionId: "client-opencode-session",
+          sessionId: "client-session-id",
+          sessionID: "client-session-id-camel",
+          title: "Server Bound Conversation",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(201);
+    const payload = await response.json() as {
+      conversationId: string;
+      opencodeSessionId: string;
+      directory: string;
+    };
+    expect(payload.opencodeSessionId).toBe("sess-server-created");
+    expect(payload.conversationId).toMatch(/^conv-/);
+    expect(payload.directory).toBe(workspaceRoot);
+    expect(receivedDirectoryHeaders).toEqual([workspaceRoot]);
+    expect(receivedBodies[0]?.directory).toBe(workspaceRoot);
+    expect(receivedBodies[0]?.openCodeSessionId).toBeUndefined();
+    expect(receivedBodies[0]?.opencodeSessionId).toBeUndefined();
+    expect(receivedBodies[0]?.sessionId).toBeUndefined();
+    expect(receivedBodies[0]?.sessionID).toBeUndefined();
+  });
+
+  test("POST /workspace/:id/conversations ignores client directories outside the workspace", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-workspace-"));
     tempDirs.push(workspaceRoot);
     await useTempVesloDataDir();
 
     let upstreamHits = 0;
+    const receivedBodies: Array<Record<string, unknown>> = [];
+    const receivedDirectoryHeaders: string[] = [];
     const upstream = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
-      fetch: async () => {
+      fetch: async (request) => {
         upstreamHits += 1;
-        return Response.json({ id: "should-not-happen" });
+        receivedDirectoryHeaders.push(request.headers.get("x-opencode-directory") ?? "");
+        const receivedBody = await request.json() as Record<string, unknown>;
+        receivedBodies.push(receivedBody);
+        return Response.json({
+          id: "sess-server-root",
+          title: receivedBody.title,
+          directory: receivedBody.directory,
+          parentID: null,
+          time: { created: 111, updated: 222 },
+        });
       },
     });
     runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
@@ -353,8 +429,16 @@ describe("conversation routes", () => {
       },
     );
 
-    expect(response.status).toBe(403);
-    expect(upstreamHits).toBe(0);
+    expect(response.status).toBe(201);
+    const payload = await response.json() as {
+      opencodeSessionId: string;
+      directory: string;
+    };
+    expect(payload.opencodeSessionId).toBe("sess-server-root");
+    expect(payload.directory).toBe(workspaceRoot);
+    expect(upstreamHits).toBe(1);
+    expect(receivedDirectoryHeaders).toEqual([workspaceRoot]);
+    expect(receivedBodies[0]?.directory).toBe(workspaceRoot);
   });
 
   test("POST /workspace/:id/conversations/:conversationId/runs rejects conversation ids from another workspace before engine contact", async () => {

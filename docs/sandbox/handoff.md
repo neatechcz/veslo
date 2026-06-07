@@ -154,7 +154,7 @@ V aktuálním kódu je podporovaná Windows sandbox cesta WSL2 + bwrap.
   `127.0.0.1`.
 - `veslo-server` OpenCode proxy musí zachovat `/workspace/<id>/opencode` base
   path a posílat `Accept-Encoding: identity`.
-- Managed OpenCode dependencies musí být ve verzi `@opencode-ai/plugin@1.14.29`
+- Managed OpenCode dependencies musí být ve verzi `@opencode-ai/plugin@1.16.2`
   a `zod@4.1.8`.
 
 ## Priorita 2 — drobné fixy

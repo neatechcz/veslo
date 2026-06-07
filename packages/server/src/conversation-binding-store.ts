@@ -42,7 +42,7 @@ export type ConversationBindingStore = {
   }): Promise<Map<string, ConversationBinding>>;
   resolveOpenCodeSession(input: {
     workspaceId: string;
-    directory: string;
+    directory?: string | null;
     sessionOrConversationId: string;
   }): Promise<ConversationBinding | null>;
 };
@@ -281,9 +281,21 @@ export function createConversationBindingStore(options?: {
       const workspaceId = normalizeText(input.workspaceId);
       const directory = normalizeText(input.directory);
       const sessionOrConversationId = normalizeText(input.sessionOrConversationId);
-      if (!workspaceId || !directory || !sessionOrConversationId) return null;
+      if (!workspaceId || !sessionOrConversationId) return null;
 
       return withDb((db) => {
+        if (!directory) {
+          const row = db.query<ConversationBindingRow, [string, string, string, string]>(
+            `SELECT * FROM conversation_binding
+             WHERE workspace_id = ?1
+               AND engine = ?2
+               AND (engine_session_id = ?3 OR conversation_id = ?4)
+             ORDER BY updated_at DESC
+             LIMIT 1`,
+          ).get(workspaceId, ENGINE, sessionOrConversationId, sessionOrConversationId);
+          return row ? rowToBinding(row) : null;
+        }
+
         const row = db.query<ConversationBindingRow, [string, string, string, string, string]>(
           `SELECT * FROM conversation_binding
            WHERE workspace_id = ?1

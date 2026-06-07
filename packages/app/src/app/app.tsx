@@ -296,6 +296,7 @@ import {
   safeStringify,
   summarizeStep,
   addOpencodeCacheHint,
+  normalizeTodoItems,
 } from "./utils";
 import {
   applyThemeMode,
@@ -1816,17 +1817,21 @@ export default function App() {
 
   const createConversationFromVesloWriteApi = async (
     workspaceId: string,
-    directory: string,
     title?: string,
   ) => {
     const serverClient = await resolvePassiveConversationReadClient();
     if (!serverClient) return null;
-    const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(serverClient, workspaceId, directory);
+    const workspaceRoot = workspaceStore.activeWorkspaceRoot().trim();
+    const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(
+      serverClient,
+      workspaceId,
+      workspaceRoot || undefined,
+    );
     if (!serverWorkspaceId) return null;
     const result = await serverClient.createConversation(serverWorkspaceId, {
-      directory,
       title,
     });
+    const directory = result.directory?.trim() || workspaceRoot;
     rememberConversationScope({
       sessionId: result.id,
       workspaceId,
@@ -1862,10 +1867,13 @@ export default function App() {
     const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(serverClient, workspaceId, directory);
     if (!serverWorkspaceId) return null;
     const conversationId = scope?.conversationId?.trim() || normalizedSessionId;
-    const result = await serverClient.runConversation(serverWorkspaceId, conversationId, {
-      ...input,
-      directory,
-    });
+    const runInput: VesloConversationRunInput = { ...input };
+    if (scope?.conversationId) {
+      delete runInput.directory;
+    } else {
+      runInput.directory = directory;
+    }
+    const result = await serverClient.runConversation(serverWorkspaceId, conversationId, runInput);
     rememberConversationScope({
       sessionId: result.opencodeSessionId || normalizedSessionId,
       workspaceId,
@@ -1914,10 +1922,11 @@ export default function App() {
     if (!serverClient) return null;
     const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(serverClient, workspaceId, directory);
     if (!serverWorkspaceId) return null;
-    const result = await serverClient.abortConversation(serverWorkspaceId, conversationId, {
-      directory,
-      runId,
-    });
+    const result = await serverClient.abortConversation(
+      serverWorkspaceId,
+      conversationId,
+      scope?.conversationId ? { runId } : { directory, runId },
+    );
     rememberConversationScope({
       sessionId: result.opencodeSessionId || normalizedSessionId,
       workspaceId,
@@ -3176,12 +3185,13 @@ export default function App() {
       return false;
     }
 
-    const c = routedClient();
-    if (!c) {
-      recordSendTrace("sendPrompt:blocked-no-client");
-      stopSendPromptBusy();
-      return false;
-    }
+    const resolveLegacyClient = () => {
+      const c = routedClient();
+      if (!c) {
+        throw new Error("Local runtime is not ready yet.");
+      }
+      return c;
+    };
 
     const compactShortcut = /^\/compact(?:\s+.*)?$/i.test(initialContent);
     const compactCommand = resolvedDraft.command?.name === "compact" || compactShortcut;
@@ -3354,7 +3364,7 @@ export default function App() {
             agent: agent ?? undefined,
           },
           async () => {
-            await shellInSession(c, sessionID, content);
+            await shellInSession(resolveLegacyClient(), sessionID, content);
           },
         );
       } else if (resolvedDraft.command || compactCommand) {
@@ -3397,6 +3407,7 @@ export default function App() {
             directory: sessionDirOverride,
           },
           async () => {
+            const c = resolveLegacyClient();
             unwrap(
               await c.session.command({
                 sessionID,
@@ -3427,6 +3438,7 @@ export default function App() {
             parts,
           },
           async () => {
+            const c = resolveLegacyClient();
             const result = await c.session.promptAsync({
               sessionID,
               model,
@@ -4159,7 +4171,7 @@ export default function App() {
     const messages = unwrap(await c.session.messages({ sessionID }));
     let todos: TodoItem[] = [];
     try {
-      todos = unwrap(await c.session.todo({ sessionID }));
+      todos = normalizeTodoItems(unwrap(await c.session.todo({ sessionID })));
     } catch {
       // ignore
     }
@@ -9333,44 +9345,7 @@ export default function App() {
       setCreatingSession(true);
     }
 
-    const withTimeout = async <T,>(
-      promise: Promise<T>,
-      ms: number,
-      label: string
-    ) => {
-      let timeoutId: ReturnType<typeof setTimeout> | null = null;
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(
-          () => reject(new Error(`Timed out waiting for ${label}`)),
-          ms
-        );
-      });
-      try {
-        return await Promise.race([promise, timeoutPromise]);
-      } finally {
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
-      }
-    };
-
     try {
-      // Quick health check to detect stale connection
-      mark("health:start");
-      try {
-        await withTimeout(c.global.health(), 3_000, "health");
-        recordSendTrace("createSessionAndOpen:health-ok");
-        mark("health:ok");
-      } catch (healthErr) {
-        recordSendTrace("createSessionAndOpen:health-error", {
-          message: healthErr instanceof Error ? healthErr.message : safeStringify(healthErr),
-        });
-        mark("health:error", {
-          error: healthErr instanceof Error ? healthErr.message : safeStringify(healthErr),
-        });
-        console.warn("[createSessionAndOpen] health preflight failed; continuing to session.create", healthErr);
-      }
-
       const initialSessionTitle = initialTitle.trim();
       let session: Session & {
         conversationId?: string | null;
@@ -9381,30 +9356,17 @@ export default function App() {
       try {
         mark("session:create:start");
         const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
-        const vesloCreated = activeWorkspaceId
-          ? await createConversationFromVesloWriteApi(
-              activeWorkspaceId,
-              sessionDirectory,
-              initialSessionTitle || undefined,
-            ).catch((error) => {
-              recordSendTrace("createSessionAndOpen:veslo-create-error", {
-                message: error instanceof Error ? error.message : safeStringify(error),
-              });
-              console.warn("[conversation-create] falling back to OpenCode SDK", error);
-              return null;
-            })
-          : null;
-        if (vesloCreated) {
-          session = vesloCreated;
-        } else {
-          recordSendTrace("createSessionAndOpen:legacy-create-fallback", {
-            workspaceId: activeWorkspaceId || null,
-          });
-          session = unwrap(await c.session.create({
-            directory: sessionDirectory,
-            title: initialSessionTitle || undefined,
-          }));
+        if (!activeWorkspaceId) {
+          throw new Error("Workspace id is required to create a conversation.");
         }
+        const vesloCreated = await createConversationFromVesloWriteApi(
+          activeWorkspaceId,
+          initialSessionTitle || undefined,
+        );
+        if (!vesloCreated) {
+          throw new Error("Conversation service is unavailable for session creation.");
+        }
+        session = vesloCreated;
         recordSendTrace("createSessionAndOpen:create-ok", {
           sessionDirectory,
           conversationId: session.conversationId ?? null,

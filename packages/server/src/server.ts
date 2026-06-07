@@ -3612,6 +3612,23 @@ function createRoutes(
     requestedDirectory: string | undefined;
     missingDirectoryMessage: string;
   }) => {
+    if (!input.requestedDirectory && isVesloConversationId(input.sessionOrConversationId)) {
+      const binding = await conversationService.resolveOpenCodeSessionForRead({
+        workspaceId: input.workspace.id,
+        directory: null,
+        sessionOrConversationId: input.sessionOrConversationId,
+      });
+      if (!binding) {
+        throw new ApiError(404, "conversation_not_found", "Conversation was not found in this workspace");
+      }
+      return {
+        directory: binding.directory,
+        binding,
+        opencodeSessionId: binding.engineSessionId,
+        conversationId: binding.conversationId,
+      };
+    }
+
     if (!input.requestedDirectory) {
       throw new ApiError(400, "invalid_directory", input.missingDirectoryMessage);
     }
@@ -4266,13 +4283,8 @@ function createRoutes(
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readOptionalJsonBody(ctx.request);
-    const directory = await resolveConversationReadDirectory(
-      workspace,
-      optionalBodyNullableString(body, "directory") ?? null,
-    );
     const result = await conversationService.createConversation({
       workspace,
-      directory,
       title: optionalBodyNullableString(body, "title") ?? null,
     });
     return jsonResponse(result, 201);

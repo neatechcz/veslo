@@ -118,7 +118,6 @@ describe("conversation service", () => {
 
     const result = await service.createConversation({
       workspace: workspaceFor(directory),
-      directory,
       title: "Created",
     });
 

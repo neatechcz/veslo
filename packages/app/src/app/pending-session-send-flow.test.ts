@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const appSource = readFileSync(new URL("./app.tsx", import.meta.url), "utf8");
+const sessionViewSource = readFileSync(new URL("./pages/session.tsx", import.meta.url), "utf8");
 
 test("successful pending draft sends consume the pending draft only after the prompt handoff succeeds", () => {
   assert.match(
@@ -114,5 +115,50 @@ test("first pending draft send materializes workspace and session without global
     createSessionSource,
     /if \(blockAppDuringCreate \|\| currentView\(\) === "session"\) \{\s*goToSession\(session\.id\);\s*\}/s,
     "non-blocking first-send materialization should not force the user back to chat after they navigate elsewhere",
+  );
+});
+
+test("first pending draft send goes pending before workspace activation and server conversation handoff", () => {
+  const sendImmediateStart = sessionViewSource.indexOf("  const sendPromptImmediate = async (");
+  const sendImmediateEnd = sessionViewSource.indexOf("  const drainNextQueuedDraft = async (", sendImmediateStart);
+  assert.notEqual(sendImmediateStart, -1, "sendPromptImmediate should exist");
+  assert.notEqual(sendImmediateEnd, -1, "sendPromptImmediate block should end before queue draining");
+  const sendImmediateSource = sessionViewSource.slice(sendImmediateStart, sendImmediateEnd);
+
+  const optimisticSubmitIndex = sendImmediateSource.indexOf("setOptimisticSubmittedDraft(");
+  const handoffIndex = sendImmediateSource.indexOf("props.sendPromptAsync(");
+  assert.ok(
+    optimisticSubmitIndex >= 0 && handoffIndex > optimisticSubmitIndex,
+    "the pending user message should be visible before the app send handoff starts",
+  );
+
+  const sendPromptStart = appSource.indexOf("  async function sendPrompt(");
+  const sendPromptEnd = appSource.indexOf("  async function abortSession(", sendPromptStart);
+  assert.notEqual(sendPromptStart, -1, "sendPrompt should exist");
+  assert.notEqual(sendPromptEnd, -1, "sendPrompt block should end before abortSession");
+  const sendPromptSource = appSource.slice(sendPromptStart, sendPromptEnd);
+
+  const activationIndex = sendPromptSource.indexOf("await workspaceStore.ensureEngineForWorkspace()");
+  const createConversationIndex = sendPromptSource.indexOf("await createSessionAndOpen(");
+  const serverRunIndex = sendPromptSource.indexOf('kind: "prompt_async"', createConversationIndex);
+  assert.ok(
+    activationIndex >= 0 && createConversationIndex > activationIndex && serverRunIndex > createConversationIndex,
+    "first send should activate the workspace, create/bind the server conversation, then submit the prompt run",
+  );
+
+  const createSessionStart = appSource.indexOf("  async function createSessionAndOpen(");
+  const createSessionEnd = appSource.indexOf("  const openNewSessionWithDirectory = async () =>", createSessionStart);
+  assert.notEqual(createSessionStart, -1, "createSessionAndOpen should exist");
+  assert.notEqual(createSessionEnd, -1, "createSessionAndOpen block should end before openNewSessionWithDirectory");
+  const createSessionSource = appSource.slice(createSessionStart, createSessionEnd);
+  assert.match(
+    createSessionSource,
+    /await createConversationFromVesloWriteApi\(/,
+    "new sessions should be created through the Veslo conversation API",
+  );
+  assert.doesNotMatch(
+    createSessionSource,
+    /c\.session\.create\(/,
+    "new-session handoff must not directly create an OpenCode session from the UI",
   );
 });

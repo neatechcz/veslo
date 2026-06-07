@@ -58,7 +58,7 @@ The app may send:
 The app must not send:
 
 - a client-chosen OpenCode session id for a new run,
-- a raw OpenCode directory override,
+- a raw OpenCode directory override for a Veslo-scoped conversation,
 - a run target based only on the currently selected workspace,
 - global busy or error state that represents a different workspace run.
 
@@ -74,7 +74,8 @@ Veslo server owns the app-facing conversation and run boundary.
 Responsibilities:
 
 - validate the workspace id,
-- validate and normalize the workspace directory,
+- validate and normalize the workspace directory from the server workspace
+  registry,
 - create or resolve the Veslo conversation,
 - create or resolve the bound OpenCode session,
 - persist the mapping from Veslo conversation to OpenCode session,
@@ -92,6 +93,16 @@ The server route shape should remain workspace-scoped:
 - `POST /workspace/:id/conversations/:conversationId/abort`
 - `GET /workspace/:id/conversations/:conversationId/runs/latest`
 
+`POST /workspace/:id/conversations` creates the OpenCode session in the
+workspace directory resolved by the server. Client-supplied `directory`,
+`sessionId`, `sessionID`, `opencodeSessionId`, or similar routing fields are not
+used for the new OpenCode session.
+
+For Veslo conversation ids, run and abort routes resolve the OpenCode session
+and directory from the persisted binding. They do not require a client directory
+in the request body. The compatibility path for a raw OpenCode session id still
+requires an explicit directory, because there may be no Veslo binding yet.
+
 Server-controlled writes must remain expressible through Veslo server APIs.
 Avoid adding Tauri-only filesystem mutations for behavior that changes
 `.opencode/` state.
@@ -104,6 +115,13 @@ It must support two execution modes behind one runtime boundary:
 
 - shared OpenCode process without sandbox,
 - workspace-scoped sandboxed engine process.
+
+`packages/orchestrator/src/execution-manager.ts` is the small routing boundary
+for this decision. In shared mode it routes different workspaces through the
+same engine identity and creates each OpenCode session with its own workspace
+root. In sandbox mode it derives an isolated engine identity from workspace,
+sandbox identity, and session root. Once a conversation has a prior run, the
+stored run directory remains the session root for later runs.
 
 The run/conversation model must not depend on sandbox availability. Sandbox is
 an isolation strategy, not the only mechanism for parallel workspace execution.
@@ -158,7 +176,8 @@ Do not build a separate conversation model only for sandboxed execution.
 1. The user writes a message in a new or existing conversation.
 2. The app records the prepared message locally.
 3. The app sends a Veslo intent to the workspace-scoped server API.
-4. Veslo server validates the workspace and directory.
+4. Veslo server validates the workspace and resolves the server-owned
+   workspace directory.
 5. Veslo server creates the conversation when needed.
 6. Veslo server creates or resolves the bound OpenCode session.
 7. Veslo server creates the run record.

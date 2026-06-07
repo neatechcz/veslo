@@ -1,7 +1,7 @@
 {
   "name": "veslo-orchestrator",
   "version": "2026.6.2",
-  "opencodeVersion": "1.14.29",
+  "opencodeVersion": "1.16.2",
   "description": "Veslo host orchestrator for opencode + Veslo server + veslo-code-router",
   "private": true,
   "type": "module",
@@ -46,7 +46,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sandbox-runtime": "0.0.52",
-    "@opencode-ai/sdk": "^1.1.31",
+    "@opencode-ai/sdk": "1.16.2",
     "@opentui/core": "0.1.77",
     "@opentui/solid": "0.1.77",
     "solid-js": "1.9.9",

@@ -1932,7 +1932,7 @@ function opencodeRouterStatusToolSource(): string {
  * a minimal hand-written shim that lets opencode load the tools but won't pass
  * full zod introspection — the warning is logged so callers can investigate.
  */
-const VESLO_MANAGED_PLUGIN_VERSION = "1.14.29";
+const VESLO_MANAGED_PLUGIN_VERSION = "1.16.2";
 const VESLO_MANAGED_ZOD_VERSION = "4.1.8";
 
 const MANAGED_PLUGIN_FALLBACK_TOOL = `import { z } from "zod";

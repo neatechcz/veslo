@@ -23,19 +23,15 @@ test("createSessionAndOpen persists the first composer text as the initial backe
     /const initialSessionTitle = initialTitle\.trim\(\);/,
     "createSessionAndOpen should trim the prompt before using it as the local temporary title",
   );
-  const createCallStart = createSessionAndOpenSource.indexOf("createConversationFromVesloWriteApi(");
-  const createCallEnd = createSessionAndOpenSource.indexOf("});", createCallStart);
-  assert.ok(createCallStart >= 0 && createCallEnd > createCallStart, "conversation service create call should be present");
-  const createCallSource = createSessionAndOpenSource.slice(createCallStart, createCallEnd);
-  assert.match(
-    createCallSource,
-    /initialSessionTitle \|\| undefined,/,
-    "createSessionAndOpen should persist the first composer text as the backend session title until an explicit rename/title update happens",
-  );
   assert.match(
     createSessionAndOpenSource,
-    /c\.session\.create\(\{[\s\S]*title: initialSessionTitle \|\| undefined,/,
-    "legacy session.create fallback should keep the same initial title contract",
+    /createConversationFromVesloWriteApi\(\s*activeWorkspaceId,\s*initialSessionTitle \|\| undefined,\s*\);/s,
+    "createSessionAndOpen should persist the first composer text as the backend session title until an explicit rename/title update happens",
+  );
+  assert.doesNotMatch(
+    createSessionAndOpenSource,
+    /c\.session\.create\(/,
+    "createSessionAndOpen must not directly create OpenCode sessions from the UI",
   );
   assert.match(
     createSessionAndOpenSource,

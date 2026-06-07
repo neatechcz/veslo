@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -12,57 +12,80 @@ import {
 } from "./_util.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "veslo-session-directory-switch-"));
-const dirA = join(root, "private-workspace");
-const dirB = join(root, "chosen-folder");
+const dirA = join(root, "workspace-a");
+const dirB = join(root, "workspace-b");
 
 function normalizeMacOSTempPath(input) {
   return resolve(input).replace(/^\/private\/var(?=\/|$)/, "/var").replace(/[\\/]+$/, "");
 }
 
+async function withTimeout(label, promise, timeoutMs = 10_000) {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 const port = await findFreePort();
 await mkdir(dirA, { recursive: true });
+await mkdir(dirB, { recursive: true });
 const server = await spawnOpencodeServe({ directory: dirA, port });
 
 try {
   const clientA = makeClient({ baseUrl: server.baseUrl, directory: dirA });
+  const clientB = makeClient({ baseUrl: server.baseUrl, directory: dirB });
   await waitForHealthy(clientA);
 
-  const agents = await clientA.app.agents({ directory: dirA });
-  const agent = agents[0]?.id || agents[0]?.name;
-  assert.ok(agent, "expected at least one agent for shell execution");
+  const sessionA = await withTimeout(
+    "session.create for workspace A",
+    clientA.session.create({ title: "Workspace A", directory: dirA }),
+  );
+  assert.ok(sessionA?.id, "expected a session id for workspace A");
 
-  const session = await clientA.session.create({ title: "Directory switch", directory: dirA });
-  assert.ok(session?.id, "expected a session id");
+  const sessionB = await withTimeout(
+    "session.create for workspace B",
+    clientB.session.create({ title: "Workspace B", directory: dirB }),
+  );
+  assert.ok(sessionB?.id, "expected a session id for workspace B");
+  assert.notEqual(sessionA.id, sessionB.id, "expected distinct sessions for distinct workspace roots");
 
-  cpSync(dirA, dirB, { recursive: true });
-
-  await clientA.session.shell({
-    sessionID: session.id,
-    directory: dirB,
-    agent,
-    command: "printf 'switched' > switched.txt",
-  });
-
-  assert.equal(existsSync(join(dirA, "switched.txt")), false, "command must not write into the old folder");
-  assert.equal(existsSync(join(dirB, "switched.txt")), true, "command must write into the new folder");
-  assert.equal(readFileSync(join(dirB, "switched.txt"), "utf8"), "switched");
-
-  const reopened = await clientA.session.get({ sessionID: session.id, directory: dirB });
-  assert.equal(reopened.id, session.id);
+  const reopenedA = await withTimeout(
+    "session.get for workspace A while directory B is requested",
+    clientA.session.get({ sessionID: sessionA.id, directory: dirB }),
+  );
+  assert.equal(reopenedA.id, sessionA.id);
   assert.equal(
-    normalizeMacOSTempPath(reopened.directory),
+    normalizeMacOSTempPath(reopenedA.directory),
     normalizeMacOSTempPath(dirA),
-    "OpenCode still stores the original session directory",
+    "OpenCode stores the original directory for session A",
+  );
+
+  const reopenedB = await withTimeout(
+    "session.get for workspace B",
+    clientB.session.get({ sessionID: sessionB.id, directory: dirB }),
+  );
+  assert.equal(reopenedB.id, sessionB.id);
+  assert.equal(
+    normalizeMacOSTempPath(reopenedB.directory),
+    normalizeMacOSTempPath(dirB),
+    "OpenCode stores the original directory for session B",
   );
 
   console.log(
     JSON.stringify({
       ok: true,
       baseUrl: server.baseUrl,
-      sessionID: session.id,
-      oldDirectory: dirA,
-      newDirectory: dirB,
-      storedDirectory: reopened.directory,
+      sessionAID: sessionA.id,
+      sessionBID: sessionB.id,
+      workspaceA: dirA,
+      workspaceB: dirB,
+      storedDirectoryA: reopenedA.directory,
+      storedDirectoryB: reopenedB.directory,
     }),
   );
 } catch (error) {
