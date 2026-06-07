@@ -3,13 +3,13 @@ use tauri::{AppHandle, State};
 use crate::engine::manager::EngineManager;
 use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::orchestrator::{self, read_orchestrator_auth};
-use crate::veslo_server::manager::VesloServerManager;
-use crate::veslo_server::{
-    clear_persisted_veslo_server_info, recover_persisted_veslo_server_info,
-    server_health_identity, start_veslo_server, HealthIdentity,
-};
 use crate::types::{VesloServerInfo, WorkspaceState, WorkspaceType};
 use crate::utils::truncate_output;
+use crate::veslo_server::manager::VesloServerManager;
+use crate::veslo_server::{
+    clear_persisted_veslo_server_info, recover_persisted_veslo_server_info, server_health_identity,
+    start_veslo_server, HealthIdentity,
+};
 use crate::workspace::state::load_workspace_state;
 
 fn active_local_workspace_path(state: &WorkspaceState) -> Option<String> {
@@ -61,7 +61,8 @@ fn sanitize_live_info_with_health(
     // A matching bearer token is stronger than the PID. In dev-watch mode the
     // managed child can be the Bun watcher while /health is served by its
     // worker process, so the PID can differ for a valid server.
-    let pid_mismatch = !token_verified && matches!((info.pid, identity.pid), (Some(a), Some(b)) if a != b);
+    let pid_mismatch =
+        !token_verified && matches!((info.pid, identity.pid), (Some(a), Some(b)) if a != b);
     if !(token_mismatch || pid_mismatch) {
         return (info, false);
     }
@@ -85,10 +86,7 @@ fn sanitize_live_info_with_health(
 #[tauri::command]
 pub fn veslo_server_info(app: AppHandle, manager: State<VesloServerManager>) -> VesloServerInfo {
     {
-        let mut state = manager
-            .inner
-            .lock()
-            .expect("veslo server mutex poisoned");
+        let mut state = manager.inner.lock().expect("veslo server mutex poisoned");
         let info = VesloServerManager::snapshot_locked(&mut state);
         let (sanitized, stale) = sanitize_live_info_with_health(info, server_health_identity);
         if sanitized.running {
@@ -103,10 +101,7 @@ pub fn veslo_server_info(app: AppHandle, manager: State<VesloServerManager>) -> 
     match recover_persisted_veslo_server_info(&app) {
         Ok(Some(info)) => info,
         Ok(None) | Err(_) => {
-            let mut state = manager
-                .inner
-                .lock()
-                .expect("veslo server mutex poisoned");
+            let mut state = manager.inner.lock().expect("veslo server mutex poisoned");
             VesloServerManager::snapshot_locked(&mut state)
         }
     }
@@ -119,7 +114,12 @@ pub fn veslo_server_restart(
     engine_manager: State<EngineManager>,
     opencode_router_manager: State<OpenCodeRouterManager>,
 ) -> Result<VesloServerInfo, String> {
-    let (engine_workspace_path, engine_opencode_url, engine_opencode_username, engine_opencode_password) = {
+    let (
+        engine_workspace_path,
+        engine_opencode_url,
+        engine_opencode_username,
+        engine_opencode_password,
+    ) = {
         let engine = engine_manager
             .inner
             .lock()

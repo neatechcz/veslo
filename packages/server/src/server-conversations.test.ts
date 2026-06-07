@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 
+import { ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER } from "./orchestrator-lifecycle-client.js";
 import { startServer } from "./server.js";
 
 const runningServers: Array<{ stop?: (closeActiveConnections?: boolean) => void }> = [];
@@ -47,6 +48,8 @@ const startTestServer = (input: {
   workspaceRoot: string;
   upstreamPort: number;
   workspaces?: Array<{ id: string; name: string; path: string; baseUrl?: string }>;
+  orchestratorDaemonUrl?: string;
+  orchestratorLifecycleToken?: string;
 }) => {
   const workspaces = input.workspaces?.map((workspace) => ({
     id: workspace.id,
@@ -78,6 +81,8 @@ const startTestServer = (input: {
     hostTokenSource: "cli",
     logFormat: "pretty",
     logRequests: false,
+    orchestratorDaemonUrl: input.orchestratorDaemonUrl,
+    orchestratorLifecycleToken: input.orchestratorLifecycleToken,
     debugLogs: {
       enabled: false,
       ingestUrl: null,
@@ -442,5 +447,242 @@ describe("conversation routes", () => {
     );
     expect(abortResponse.status).toBe(404);
     expect(upstreamHits).toBe(1);
+  });
+
+  test("conversation runs delegate lifecycle to orchestrator before engine submit", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-lifecycle-workspace-"));
+    tempDirs.push(workspaceRoot);
+    await useTempVesloDataDir();
+
+    const events: string[] = [];
+    let submitShouldFail = false;
+    let registerShouldConflict = false;
+    let runIdFromRegister = "";
+    let conversationIdFromRegister = "";
+    const orchestratorRequests: Array<{
+      method: string;
+      pathname: string;
+      token: string | null;
+      body: Record<string, unknown> | null;
+    }> = [];
+    const engineRequests: Array<{
+      method: string;
+      pathname: string;
+      search: string;
+      body: Record<string, unknown> | null;
+    }> = [];
+
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const body = request.method === "POST"
+          ? await request.json().catch(() => null) as Record<string, unknown> | null
+          : null;
+        engineRequests.push({ method: request.method, pathname: url.pathname, search: url.search, body });
+        if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session") {
+          events.push("engine-create-session");
+          return Response.json({
+            id: "sess-created",
+            title: body?.title,
+            directory: body?.directory,
+            parentID: null,
+            time: { created: 111, updated: 222 },
+          });
+        }
+        if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session/sess-created/prompt_async") {
+          events.push(submitShouldFail ? "engine-submit-failed" : "engine-submit");
+          if (submitShouldFail) {
+            return Response.json({ error: "submit failed" }, { status: 500 });
+          }
+          return Response.json({ ok: true });
+        }
+        if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session/sess-created/abort") {
+          events.push("engine-abort");
+          return Response.json({ ok: true });
+        }
+        return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const orchestrator = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const body = request.method === "POST"
+          ? await request.json().catch(() => null) as Record<string, unknown> | null
+          : null;
+        orchestratorRequests.push({
+          method: request.method,
+          pathname: url.pathname,
+          token: request.headers.get(ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER),
+          body,
+        });
+        if (request.headers.get(ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER) !== "lifecycle-token") {
+          return Response.json({ error: "unauthorized" }, { status: 401 });
+        }
+        if (request.method === "POST" && url.pathname === "/workspace/ws_1/runs/register") {
+          events.push("orchestrator-register");
+          if (registerShouldConflict) {
+            return Response.json({ error: "run_already_active", activeRunId: "run-active" }, { status: 409 });
+          }
+          runIdFromRegister = typeof body?.runId === "string" ? body.runId : "";
+          conversationIdFromRegister = typeof body?.conversationId === "string" ? body.conversationId : "";
+          return Response.json({ ok: true, ...body, workspaceId: "ws_1", status: "running", stale: false });
+        }
+        if (request.method === "POST" && url.pathname === `/workspace/ws_1/runs/${encodeURIComponent(runIdFromRegister)}/failed`) {
+          events.push("orchestrator-mark-failed");
+          return Response.json({ ok: true, runId: runIdFromRegister, status: "failed" });
+        }
+        if (request.method === "POST" && url.pathname === `/workspace/ws_1/runs/${encodeURIComponent(runIdFromRegister)}/abort-requested`) {
+          events.push("orchestrator-abort-requested");
+          return Response.json({ ok: true, runId: runIdFromRegister, abortRequested: true });
+        }
+        if (
+          request.method === "GET" &&
+          url.pathname === `/workspace/ws_1/conversations/${encodeURIComponent(conversationIdFromRegister)}/runs/latest`
+        ) {
+          events.push("orchestrator-status");
+          return Response.json({
+            ok: true,
+            workspaceId: "ws_1",
+            conversationId: conversationIdFromRegister,
+            runId: runIdFromRegister,
+            status: "completed",
+            stale: false,
+          });
+        }
+        return Response.json({ error: "unexpected orchestrator route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(orchestrator as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+      workspaces: [
+        {
+          id: "ws_1",
+          name: "Workspace",
+          path: workspaceRoot,
+          baseUrl: `http://127.0.0.1:${upstream.port}/workspace/ws_stale/opencode`,
+        },
+      ],
+      orchestratorDaemonUrl: `http://127.0.0.1:${orchestrator.port}`,
+      orchestratorLifecycleToken: "lifecycle-token",
+    });
+
+    const createResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          directory: workspaceRoot,
+          title: "Lifecycle Conversation",
+        }),
+      },
+    );
+    expect(createResponse.status).toBe(201);
+    const created = await createResponse.json() as { conversationId: string };
+
+    const runResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          kind: "prompt_async",
+          directory: workspaceRoot,
+          parts: [{ type: "text", text: "Hello" }],
+        }),
+      },
+    );
+    expect(runResponse.status).toBe(200);
+    const runPayload = await runResponse.json() as { runId: string; conversationId: string };
+    expect(runPayload.runId).toBe(runIdFromRegister);
+    expect(runPayload.conversationId).toBe(created.conversationId);
+    expect(events.indexOf("orchestrator-register")).toBeLessThan(events.indexOf("engine-submit"));
+    expect(orchestratorRequests[0]?.token).toBe("lifecycle-token");
+    expect(orchestratorRequests[0]?.body?.kind).toBe("prompt");
+    expect(orchestratorRequests[0]?.body?.engineSessionId).toBe("sess-created");
+    expect(engineRequests.some((entry) =>
+      entry.pathname === "/workspace/ws_1/opencode/session/sess-created/prompt_async"
+    )).toBe(true);
+
+    const statusResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs/latest`,
+      { headers: { Authorization: "Bearer client-token" } },
+    );
+    expect(statusResponse.status).toBe(200);
+    const statusPayload = await statusResponse.json() as { runId: string; status: string; stale: boolean };
+    expect(statusPayload.runId).toBe(runIdFromRegister);
+    expect(statusPayload.status).toBe("completed");
+    expect(statusPayload.stale).toBe(false);
+
+    const abortResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/abort`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          directory: workspaceRoot,
+          runId: runPayload.runId,
+        }),
+      },
+    );
+    expect(abortResponse.status).toBe(200);
+    expect(events.indexOf("engine-abort")).toBeLessThan(events.indexOf("orchestrator-abort-requested"));
+
+    submitShouldFail = true;
+    const failedRunResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          kind: "prompt_async",
+          directory: workspaceRoot,
+          parts: [{ type: "text", text: "Fail" }],
+        }),
+      },
+    );
+    expect(failedRunResponse.status).toBe(502);
+    expect(events.indexOf("engine-submit-failed")).toBeLessThan(events.indexOf("orchestrator-mark-failed"));
+
+    registerShouldConflict = true;
+    const engineRequestsBeforeConflict = engineRequests.length;
+    const conflictResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          kind: "prompt_async",
+          directory: workspaceRoot,
+          parts: [{ type: "text", text: "Conflict" }],
+        }),
+      },
+    );
+    expect(conflictResponse.status).toBe(409);
+    expect(engineRequests).toHaveLength(engineRequestsBeforeConflict);
   });
 });

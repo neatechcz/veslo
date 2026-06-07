@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   createOrchestratorLifecycleClient,
+  ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER,
   OrchestratorLifecycleRequestError,
   RunAlreadyActiveError,
 } from "./orchestrator-lifecycle-client.js";
@@ -34,7 +35,7 @@ describe("orchestrator lifecycle client", () => {
 
     expect(calls[0]?.url).toBe("http://127.0.0.1:1234/workspace/ws-a/runs/register");
     expect(calls[0]?.init?.method).toBe("POST");
-    expect((calls[0]?.init?.headers as Record<string, string>)["X-Veslo-Orchestrator-Token"]).toBe("secret-token");
+    expect((calls[0]?.init?.headers as Record<string, string>)[ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER]).toBe("secret-token");
   });
 
   test("register maps orchestrator 409 to RunAlreadyActiveError", async () => {

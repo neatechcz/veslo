@@ -106,7 +106,7 @@ fn build_urls(
     let connect_url = lan_url.clone().or(mdns_url.clone());
     let engine_url = resolve_engine_url(port);
 
-(connect_url, mdns_url, lan_url, engine_url)
+    (connect_url, mdns_url, lan_url, engine_url)
 }
 
 pub fn resolve_connect_url(port: u16) -> Option<String> {

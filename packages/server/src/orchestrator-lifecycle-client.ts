@@ -1,5 +1,7 @@
 export type LifecycleRunStatus = "submitted" | "running" | "blocked" | "completed" | "failed" | "aborted";
 
+export const ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER = "X-Veslo-Orchestrator-Token";
+
 export type LifecycleRunStatusResult = {
   runId: string;
   status: LifecycleRunStatus;
@@ -66,7 +68,7 @@ export function createOrchestratorLifecycleClient(options: {
   const baseUrl = options.daemonUrl.replace(/\/+$/, "");
   const headers = {
     "Content-Type": "application/json",
-    "X-Veslo-Orchestrator-Token": options.token,
+    [ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER]: options.token,
   };
 
   const post = async (path: string, body: unknown): Promise<void> => {

@@ -5,6 +5,8 @@ import { dirname } from "node:path";
 export type RunStatus = "submitted" | "running" | "blocked" | "completed" | "failed" | "aborted";
 export type RunKind = "prompt" | "command" | "shell" | "summarize";
 
+export const ACTIVE_RUN_STATUSES = ["submitted", "running", "blocked"] as const satisfies readonly RunStatus[];
+
 export type RunRecord = {
   workspaceId: string;
   conversationId: string;
@@ -47,8 +49,11 @@ type RunRow = {
   error: string | null;
 };
 
+const ACTIVE_RUN_STATUS_SQL_LIST = ACTIVE_RUN_STATUSES.map((status) => `'${status}'`).join(", ");
 const TERMINAL_STATUSES: ReadonlySet<RunStatus> = new Set(["completed", "failed", "aborted"]);
 
+export const isActiveRunStatus = (status: RunStatus): boolean =>
+  (ACTIVE_RUN_STATUSES as readonly RunStatus[]).includes(status);
 export const isTerminalRunStatus = (status: RunStatus): boolean => TERMINAL_STATUSES.has(status);
 
 function rowToRecord(row: RunRow): RunRecord {
@@ -95,7 +100,7 @@ function openDb(dbPath: string): Database {
       ON conversation_run (workspace_id, status, created_at DESC);
     CREATE UNIQUE INDEX IF NOT EXISTS conversation_run_active_conversation_uidx
       ON conversation_run (workspace_id, conversation_id)
-      WHERE status IN ('submitted', 'running', 'blocked');
+      WHERE status IN (${ACTIVE_RUN_STATUS_SQL_LIST});
   `);
   return db;
 }
@@ -213,7 +218,7 @@ export function createRunStore(options: { dbPath: string }): RunStore {
           `SELECT * FROM conversation_run
            WHERE workspace_id = ?1
              AND conversation_id = ?2
-             AND status IN ('submitted', 'running', 'blocked')
+             AND status IN (${ACTIVE_RUN_STATUS_SQL_LIST})
            ORDER BY created_at DESC
            LIMIT 1`,
         ).get(workspaceId, conversationId);

@@ -733,7 +733,8 @@ fn log_workspace_opencode_dependency_status(opencode_root: &Path, node_modules_r
         eprintln!(
             "[workspace] opencode plugin dependency status {payload} — workspace plugins may fail OpenCode zod introspection (symptom: Object.values on null/undefined)"
         );
-    } else if plugin_mode == "vendored-version-mismatch" || zod_mode == "vendored-version-mismatch" {
+    } else if plugin_mode == "vendored-version-mismatch" || zod_mode == "vendored-version-mismatch"
+    {
         eprintln!("[workspace] opencode plugin dependency status {payload}");
     } else {
         println!("[workspace] opencode plugin dependency status {payload}");

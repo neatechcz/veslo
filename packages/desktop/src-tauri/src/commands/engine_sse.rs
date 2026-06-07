@@ -27,6 +27,14 @@ use uuid::Uuid;
 const ENGINE_SSE_EVENT_NAME: &str = "veslo://engine-sse-event";
 const SSE_LINE_BUFFER_CAP: usize = 1 << 20; // 1 MiB hard cap per single event
 
+#[derive(Debug, PartialEq, Eq)]
+enum SseParseStep {
+    None,
+    Emit(String),
+    Overflow,
+    InvalidUtf8,
+}
+
 #[derive(Default)]
 pub struct EngineSseRegistry {
     inner: Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
@@ -201,6 +209,58 @@ fn urlencoding_encode(input: &str) -> String {
     out
 }
 
+fn ingest_sse_byte(
+    byte: u8,
+    line_buffer: &mut Vec<u8>,
+    data_accumulator: &mut String,
+) -> SseParseStep {
+    line_buffer.push(byte);
+    if line_buffer.len() > SSE_LINE_BUFFER_CAP {
+        line_buffer.clear();
+        data_accumulator.clear();
+        return SseParseStep::Overflow;
+    }
+
+    if byte != b'\n' {
+        return SseParseStep::None;
+    }
+
+    let mut line = line_buffer.as_slice();
+    if line.ends_with(b"\n") {
+        line = &line[..line.len().saturating_sub(1)];
+    }
+    if line.ends_with(b"\r") {
+        line = &line[..line.len().saturating_sub(1)];
+    }
+
+    let step = if line.is_empty() {
+        if data_accumulator.is_empty() {
+            SseParseStep::None
+        } else {
+            SseParseStep::Emit(std::mem::take(data_accumulator))
+        }
+    } else {
+        let trimmed = match std::str::from_utf8(line) {
+            Ok(value) => value,
+            Err(_) => {
+                data_accumulator.clear();
+                line_buffer.clear();
+                return SseParseStep::InvalidUtf8;
+            }
+        };
+        if let Some(payload) = trimmed.strip_prefix("data:") {
+            if !data_accumulator.is_empty() {
+                data_accumulator.push('\n');
+            }
+            data_accumulator.push_str(payload.trim_start_matches(' '));
+        }
+        SseParseStep::None
+    };
+
+    line_buffer.clear();
+    step
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_subscription(
     app: AppHandle,
@@ -281,7 +341,7 @@ async fn run_subscription(
     });
 
     let mut byte_stream = response.bytes_stream();
-    let mut line_buffer = String::new();
+    let mut line_buffer: Vec<u8> = Vec::new();
     let mut data_accumulator = String::new();
     let mut cancel_rx = cancel_rx;
 
@@ -302,41 +362,33 @@ async fn run_subscription(
                         break "stream-error";
                     }
                     Some(Ok(bytes)) => {
-                        // SSE frames are CRLF or LF separated. Accumulate into
-                        // line_buffer and split on '\n'; treat empty line as
-                        // event boundary.
+                        // SSE frames are CRLF or LF separated. Accumulate raw
+                        // bytes and decode a full line as UTF-8. Decoding each
+                        // byte as `char` corrupts multibyte text (`ř` -> `Å`).
                         for byte in bytes.iter() {
-                            line_buffer.push(*byte as char);
-                            if line_buffer.len() > SSE_LINE_BUFFER_CAP {
-                                emit(EngineSseEvent::Error {
-                                    subscription_id: subscription_id.clone(),
-                                    workspace_id: workspace_id.clone(),
-                                    message: "line buffer overflow".into(),
-                                });
-                                // Reset and drop the bad event.
-                                line_buffer.clear();
-                                data_accumulator.clear();
-                                continue;
-                            }
-                            if *byte == b'\n' {
-                                let trimmed = line_buffer.trim_end_matches(['\n', '\r']);
-                                if trimmed.is_empty() {
-                                    if !data_accumulator.is_empty() {
-                                        emit(EngineSseEvent::Message {
-                                            subscription_id: subscription_id.clone(),
-                                            workspace_id: workspace_id.clone(),
-                                            data: std::mem::take(&mut data_accumulator),
-                                        });
-                                    }
-                                } else if let Some(payload) = trimmed.strip_prefix("data:") {
-                                    if !data_accumulator.is_empty() {
-                                        data_accumulator.push('\n');
-                                    }
-                                    data_accumulator.push_str(payload.trim_start_matches(' '));
+                            match ingest_sse_byte(*byte, &mut line_buffer, &mut data_accumulator) {
+                                SseParseStep::None => {}
+                                SseParseStep::Emit(data) => {
+                                    emit(EngineSseEvent::Message {
+                                        subscription_id: subscription_id.clone(),
+                                        workspace_id: workspace_id.clone(),
+                                        data,
+                                    });
                                 }
-                                // Other SSE fields (event:, id:, retry:, :comment)
-                                // are not used by opencode — ignore.
-                                line_buffer.clear();
+                                SseParseStep::Overflow => {
+                                    emit(EngineSseEvent::Error {
+                                        subscription_id: subscription_id.clone(),
+                                        workspace_id: workspace_id.clone(),
+                                        message: "line buffer overflow".into(),
+                                    });
+                                }
+                                SseParseStep::InvalidUtf8 => {
+                                    emit(EngineSseEvent::Error {
+                                        subscription_id: subscription_id.clone(),
+                                        workspace_id: workspace_id.clone(),
+                                        message: "invalid utf-8 in SSE line".into(),
+                                    });
+                                }
                             }
                         }
                     }
@@ -392,5 +444,44 @@ mod tests {
         assert_eq!(u, "http://127.0.0.1:1234/event");
         let u = build_event_url("http://127.0.0.1:1234", &Some("".into()));
         assert_eq!(u, "http://127.0.0.1:1234/event");
+    }
+
+    #[test]
+    fn sse_parser_preserves_utf8_payload() {
+        let input = "data: {\"text\":\"Příliš žluťoučký kůň\"}\n\n";
+        let mut line_buffer = Vec::new();
+        let mut data_accumulator = String::new();
+        let mut emitted = None;
+
+        for byte in input.as_bytes() {
+            if let SseParseStep::Emit(data) =
+                ingest_sse_byte(*byte, &mut line_buffer, &mut data_accumulator)
+            {
+                emitted = Some(data);
+            }
+        }
+
+        assert_eq!(
+            emitted.as_deref(),
+            Some("{\"text\":\"Příliš žluťoučký kůň\"}")
+        );
+    }
+
+    #[test]
+    fn sse_parser_joins_multiple_data_lines() {
+        let input = "data: {\"a\":1,\ndata: \"b\":2}\n\n";
+        let mut line_buffer = Vec::new();
+        let mut data_accumulator = String::new();
+        let mut emitted = None;
+
+        for byte in input.as_bytes() {
+            if let SseParseStep::Emit(data) =
+                ingest_sse_byte(*byte, &mut line_buffer, &mut data_accumulator)
+            {
+                emitted = Some(data);
+            }
+        }
+
+        assert_eq!(emitted.as_deref(), Some("{\"a\":1,\n\"b\":2}"));
     }
 }

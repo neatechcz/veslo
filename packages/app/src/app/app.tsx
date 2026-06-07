@@ -2071,9 +2071,11 @@ export default function App() {
   const activeSessionId = createMemo(() => selectedSessionId());
   const activeSessions = createMemo(() => sessions());
   const activeSessionStatusById = createMemo(() => sessionStatusById());
-  const busySessionByWorkspaceId = createMemo(() => workspaceStore.workspaceBusy());
+  const busySessionByWorkspaceId = createMemo<Record<string, { sessionId: string; startedAt: number }>>(
+    () => workspaceStoreRef?.workspaceBusy() ?? {},
+  );
   const activeConversationBusy = createMemo(() => {
-    const workspaceId = workspaceStore.activeWorkspaceId().trim();
+    const workspaceId = workspaceStoreRef?.activeWorkspaceId().trim() ?? "";
     const entry = workspaceId ? busySessionByWorkspaceId()[workspaceId] : null;
     const sessionId = activeSessionId();
     return Boolean(entry && sessionId && entry.sessionId === sessionId);

@@ -26,6 +26,7 @@ import { proxyToEngine } from "./router-proxy.js";
 import { createRunStore, type RunKind } from "./run-store.js";
 import {
   createRunRegistry,
+  DEFAULT_RUN_FAILURE_ERROR,
   RunAlreadyActiveError,
   type RunProbeResult,
 } from "./run-registry.js";
@@ -189,6 +190,10 @@ type RouterWorkspace = {
   createdAt: number;
   lastUsedAt?: number;
 };
+
+const ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER = "X-Veslo-Orchestrator-Token";
+const ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER_LOWER = ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER.toLowerCase();
+const RUN_ACTIVITY_PROBE_TIMEOUT_MS = 4_000;
 
 type RouterDaemonState = {
   pid: number;
@@ -4005,6 +4010,40 @@ async function runRouterDaemon(args: ParsedArgs) {
   const runStore = createRunStore({
     dbPath: join(dataDir, "conversations", "runs.sqlite"),
   });
+  const buildEngineRequest = (
+    engine: EngineProcess,
+    input: {
+      workspaceId: string;
+      directory: string;
+      targetPath: string;
+      method: string;
+    },
+  ): { url: string; headers: Record<string, string> } => {
+    const workspace = findWorkspace(state, input.workspaceId);
+    const mapping: EnginePathMapping = {
+      backend: resolveConfiguredSandboxBackend(),
+      hostWorkspacePath: workspace?.path?.trim() || input.directory,
+    };
+    const search = rewriteDirectoryQueryForEngine(
+      `?directory=${encodeURIComponent(input.directory)}`,
+      {
+        method: input.method,
+        targetPath: input.targetPath,
+        mapping,
+      },
+    );
+    const engineDirectory = hostDirectoryToEngineDirectory(input.directory, mapping) ?? input.directory;
+    const headers: Record<string, string> = {
+      "x-opencode-directory": engineDirectory,
+    };
+    if (opencodePassword) {
+      headers.authorization = `Basic ${encodeBasicAuth(opencodeUsername, opencodePassword)}`;
+    }
+    return {
+      url: `${engine.baseUrl}${input.targetPath}${search}`,
+      headers,
+    };
+  };
   const probeRunActivity = async (record: {
     workspaceId: string;
     engineSessionId: string;
@@ -4014,31 +4053,17 @@ async function runRouterDaemon(args: ParsedArgs) {
     if (!engine) return { unreachable: true };
 
     try {
-      const workspace = findWorkspace(state, record.workspaceId);
-      const mapping: EnginePathMapping = {
-        backend: resolveConfiguredSandboxBackend(),
-        hostWorkspacePath: workspace?.path?.trim() || record.directory,
-      };
       const targetPath = `/session/${encodeURIComponent(record.engineSessionId)}/message`;
-      const search = rewriteDirectoryQueryForEngine(
-        `?directory=${encodeURIComponent(record.directory)}`,
-        {
-          method: "GET",
-          targetPath,
-          mapping,
-        },
-      );
-      const engineDirectory = hostDirectoryToEngineDirectory(record.directory, mapping) ?? record.directory;
-      const headers: Record<string, string> = {
-        "x-opencode-directory": engineDirectory,
-      };
-      if (opencodePassword) {
-        headers.authorization = `Basic ${encodeBasicAuth(opencodeUsername, opencodePassword)}`;
-      }
+      const engineRequest = buildEngineRequest(engine, {
+        workspaceId: record.workspaceId,
+        directory: record.directory,
+        targetPath,
+        method: "GET",
+      });
 
-      const response = await fetch(`${engine.baseUrl}${targetPath}${search}`, {
-        headers,
-        signal: AbortSignal.timeout(4_000),
+      const response = await fetch(engineRequest.url, {
+        headers: engineRequest.headers,
+        signal: AbortSignal.timeout(RUN_ACTIVITY_PROBE_TIMEOUT_MS),
       });
       if (!response.ok) return { unreachable: true };
 
@@ -4095,7 +4120,7 @@ async function runRouterDaemon(args: ParsedArgs) {
     });
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type,X-Veslo-Orchestrator-Token");
+    res.setHeader("Access-Control-Allow-Headers", `Content-Type,${ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER}`);
 
     if (req.method === "OPTIONS") {
       res.statusCode = 204;
@@ -4122,7 +4147,23 @@ async function runRouterDaemon(args: ParsedArgs) {
     };
 
     const lifecycleAuthorized = () =>
-      Boolean(lifecycleToken && req.headers["x-veslo-orchestrator-token"] === lifecycleToken);
+      Boolean(lifecycleToken && req.headers[ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER_LOWER] === lifecycleToken);
+    const resolveLifecycleWorkspace = (workspaceId: string | undefined): RouterWorkspace | null => {
+      if (!lifecycleAuthorized()) {
+        send(401, { error: "unauthorized" });
+        return null;
+      }
+      const workspace = findWorkspace(state, decodeURIComponent(workspaceId ?? ""));
+      if (!workspace) {
+        send(404, { error: "workspace not found" });
+        return null;
+      }
+      if (workspace.workspaceType === "remote") {
+        send(501, { error: "remote run lifecycle unsupported" });
+        return null;
+      }
+      return workspace;
+    };
     const readObjectBody = async (): Promise<Record<string, unknown>> => {
       const body = await readBody();
       return body && typeof body === "object" && !Array.isArray(body)
@@ -4305,19 +4346,8 @@ async function runRouterDaemon(args: ParsedArgs) {
       }
 
       if (parts[0] === "workspace" && parts.length >= 4 && parts[2] === "runs") {
-        if (!lifecycleAuthorized()) {
-          send(401, { error: "unauthorized" });
-          return;
-        }
-        const workspace = findWorkspace(state, decodeURIComponent(parts[1] ?? ""));
-        if (!workspace) {
-          send(404, { error: "workspace not found" });
-          return;
-        }
-        if (workspace.workspaceType === "remote") {
-          send(501, { error: "remote run lifecycle unsupported" });
-          return;
-        }
+        const workspace = resolveLifecycleWorkspace(parts[1]);
+        if (!workspace) return;
 
         if (req.method === "POST" && parts.length === 4 && parts[3] === "register") {
           const body = await readObjectBody();
@@ -4361,7 +4391,7 @@ async function runRouterDaemon(args: ParsedArgs) {
             const record = runRegistry.markFailed(
               workspace.id,
               runId,
-              bodyString(body, "error") || "engine submit failed",
+              bodyString(body, "error") || DEFAULT_RUN_FAILURE_ERROR,
             );
             if (!record) {
               send(404, { error: "run not found" });
@@ -4392,19 +4422,8 @@ async function runRouterDaemon(args: ParsedArgs) {
         parts[4] === "runs" &&
         req.method === "GET"
       ) {
-        if (!lifecycleAuthorized()) {
-          send(401, { error: "unauthorized" });
-          return;
-        }
-        const workspace = findWorkspace(state, decodeURIComponent(parts[1] ?? ""));
-        if (!workspace) {
-          send(404, { error: "workspace not found" });
-          return;
-        }
-        if (workspace.workspaceType === "remote") {
-          send(501, { error: "remote run lifecycle unsupported" });
-          return;
-        }
+        const workspace = resolveLifecycleWorkspace(parts[1]);
+        if (!workspace) return;
         const conversationId = decodeURIComponent(parts[3] ?? "").trim();
         const runId = decodeURIComponent(parts[5] ?? "").trim();
         const reconciled =

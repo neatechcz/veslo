@@ -37,6 +37,8 @@ export class RunAlreadyActiveError extends Error {
   }
 }
 
+export const DEFAULT_RUN_FAILURE_ERROR = "engine submit failed";
+
 const normalizeText = (value: string | null | undefined) => value?.trim() ?? "";
 
 export function createRunRegistry(deps: {
@@ -129,7 +131,7 @@ export function createRunRegistry(deps: {
     markFailed(workspaceId, runId, error) {
       return deps.store.update(workspaceId, runId, {
         status: "failed",
-        error: normalizeText(error) || "engine submit failed",
+        error: normalizeText(error) || DEFAULT_RUN_FAILURE_ERROR,
         completedAt: now(),
       });
     },

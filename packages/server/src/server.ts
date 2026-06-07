@@ -3476,10 +3476,10 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       missingDirectoryMessage: "Conversation run directory is required",
     });
     const runId = shortId();
-    const lifecycleEnabled = Boolean(lifecycleClient && workspace.workspaceType !== "remote");
-    if (lifecycleClient && workspace.workspaceType !== "remote") {
+    const lifecycleOwner = workspace.workspaceType === "remote" ? null : lifecycleClient;
+    if (lifecycleOwner) {
       try {
-        await lifecycleClient.register({
+        await lifecycleOwner.register({
           workspaceId: workspace.id,
           conversationId: target.conversationId,
           runId,
@@ -3516,8 +3516,8 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
         body: buildConversationRunBody(kind, body),
       });
     } catch (error) {
-      if (lifecycleClient && lifecycleEnabled) {
-        await lifecycleClient.markFailed(
+      if (lifecycleOwner) {
+        await lifecycleOwner.markFailed(
           workspace.id,
           runId,
           error instanceof Error ? error.message : String(error),
@@ -3560,8 +3560,9 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       `/session/${encodeURIComponent(target.opencodeSessionId)}/abort?${query.toString()}`,
       { method: "POST" },
     );
-    if (lifecycleClient && workspace.workspaceType !== "remote") {
-      await lifecycleClient.markAbortRequested(workspace.id, runId).catch(() => undefined);
+    const lifecycleOwner = workspace.workspaceType === "remote" ? null : lifecycleClient;
+    if (lifecycleOwner) {
+      await lifecycleOwner.markAbortRequested(workspace.id, runId).catch(() => undefined);
     }
     return jsonResponse({
       ok: true,
