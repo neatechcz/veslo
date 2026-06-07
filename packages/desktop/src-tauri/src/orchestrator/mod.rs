@@ -22,6 +22,7 @@ pub mod manager;
 pub struct OrchestratorAuthFile {
     pub opencode_username: Option<String>,
     pub opencode_password: Option<String>,
+    pub lifecycle_token: Option<String>,
     pub project_dir: Option<String>,
     pub updated_at: Option<u64>,
 }
@@ -74,6 +75,7 @@ pub struct OrchestratorSpawnOptions {
     pub opencode_port: Option<u16>,
     pub opencode_username: Option<String>,
     pub opencode_password: Option<String>,
+    pub lifecycle_token: Option<String>,
     pub cors: Option<String>,
     /// VSLO-171 F3Ú9: max concurrent engines in pool (1-16). None = orchestrator default.
     pub max_engines: Option<u32>,
@@ -169,6 +171,7 @@ pub fn write_orchestrator_auth(
     data_dir: &str,
     opencode_username: Option<&str>,
     opencode_password: Option<&str>,
+    lifecycle_token: Option<&str>,
     project_dir: Option<&str>,
 ) -> Result<(), String> {
     let path = orchestrator_auth_path(data_dir);
@@ -180,6 +183,7 @@ pub fn write_orchestrator_auth(
     let payload = OrchestratorAuthFile {
         opencode_username: opencode_username.map(|value| value.to_string()),
         opencode_password: opencode_password.map(|value| value.to_string()),
+        lifecycle_token: lifecycle_token.map(|value| value.to_string()),
         project_dir: project_dir.map(|value| value.to_string()),
         updated_at: Some(crate::utils::now_ms()),
     };
@@ -298,6 +302,13 @@ pub fn spawn_orchestrator_daemon(
         if !password.trim().is_empty() {
             args.push("--opencode-password".to_string());
             args.push(password.to_string());
+        }
+    }
+
+    if let Some(token) = &options.lifecycle_token {
+        if !token.trim().is_empty() {
+            args.push("--lifecycle-token".to_string());
+            args.push(token.to_string());
         }
     }
 

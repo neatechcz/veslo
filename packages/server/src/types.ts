@@ -100,6 +100,8 @@ export interface ServerConfig {
   denApiBase?: string;
   skillRegistryBaseUrl?: string;
   skillRegistryToken?: string;
+  orchestratorDaemonUrl?: string;
+  orchestratorLifecycleToken?: string;
 }
 
 export interface Capabilities {

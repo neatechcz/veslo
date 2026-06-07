@@ -105,6 +105,11 @@ import { createSessionTranscriptPrefetchStore } from "./session-transcript-prefe
 import { createConversationReadStore } from "./conversation-read-store.js";
 import { createConversationBindingStore } from "./conversation-binding-store.js";
 import { createConversationService } from "./conversation-service.js";
+import {
+  createOrchestratorLifecycleClient,
+  OrchestratorLifecycleRequestError,
+  RunAlreadyActiveError,
+} from "./orchestrator-lifecycle-client.js";
 import pkg from "../package.json" with { type: "json" };
 
 const SERVER_VERSION = pkg.version;
@@ -821,10 +826,13 @@ async function fetchOpencodeJson(
     throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
   }
 
-  const url = new URL(baseUrl);
   const [pathname, search = ""] = path.split("?");
-  url.pathname = pathname.startsWith("/") ? pathname : `/${pathname}`;
-  url.search = search ? `?${search}` : "";
+  const url = new URL(buildOpencodeProxyUrl(
+    baseUrl,
+    pathname.startsWith("/") ? pathname : `/${pathname}`,
+    search ? `?${search}` : "",
+    workspace.id,
+  ));
 
   const headers = new Headers();
   headers.set("Content-Type", "application/json");
@@ -1969,6 +1977,30 @@ function buildConversationRunBody(kind: "prompt_async" | "command" | "shell" | "
   return result;
 }
 
+function lifecycleRunKind(kind: "prompt_async" | "command" | "shell" | "summarize") {
+  return kind === "prompt_async" ? "prompt" : kind;
+}
+
+function lifecycleRequestApiError(error: OrchestratorLifecycleRequestError): ApiError {
+  const status = error.status === 401 || error.status === 403
+    ? 503
+    : error.status === 404
+      ? 404
+      : error.status === 501
+        ? 501
+        : 503;
+  const code = status === 404
+    ? "lifecycle_not_found"
+    : status === 501
+      ? "lifecycle_unsupported"
+      : "lifecycle_unavailable";
+  return new ApiError(status, code, "Run lifecycle owner is unavailable", {
+    upstreamStatus: error.status,
+    path: error.path,
+    body: error.body,
+  });
+}
+
 function isVesloConversationId(input: string): boolean {
   return /^conv-[0-9a-f]{20}$/i.test(input.trim());
 }
@@ -2773,6 +2805,13 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       });
     },
   });
+  const lifecycleClient =
+    config.orchestratorDaemonUrl && config.orchestratorLifecycleToken
+      ? createOrchestratorLifecycleClient({
+          daemonUrl: config.orchestratorDaemonUrl,
+          token: config.orchestratorLifecycleToken,
+        })
+      : null;
 
   const sessionTranscriptPrefetch = createSessionTranscriptPrefetchStore({
     loadTranscript: async ({ workspaceId, sessionId, limit, directory }) => {
@@ -3436,6 +3475,30 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       requestedDirectory: optionalBodyString(body, "directory"),
       missingDirectoryMessage: "Conversation run directory is required",
     });
+    const runId = shortId();
+    const lifecycleEnabled = Boolean(lifecycleClient && workspace.workspaceType !== "remote");
+    if (lifecycleClient && workspace.workspaceType !== "remote") {
+      try {
+        await lifecycleClient.register({
+          workspaceId: workspace.id,
+          conversationId: target.conversationId,
+          runId,
+          engineSessionId: target.opencodeSessionId,
+          directory: target.directory,
+          kind: lifecycleRunKind(kind),
+        });
+      } catch (error) {
+        if (error instanceof RunAlreadyActiveError) {
+          throw new ApiError(409, "run_already_active", "A run is already active for this conversation", {
+            activeRunId: error.activeRunId,
+          });
+        }
+        if (error instanceof OrchestratorLifecycleRequestError) {
+          throw lifecycleRequestApiError(error);
+        }
+        throw error;
+      }
+    }
     const query = new URLSearchParams();
     query.set("directory", target.directory);
     const path =
@@ -3446,16 +3509,28 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
           : kind === "shell"
             ? `/session/${encodeURIComponent(target.opencodeSessionId)}/shell?${query.toString()}`
             : `/session/${encodeURIComponent(target.opencodeSessionId)}/summarize?${query.toString()}`;
-    const upstream = await fetchOpencodeJson({ ...workspace, directory: target.directory }, path, {
-      method: "POST",
-      body: buildConversationRunBody(kind, body),
-    });
+    let upstream: unknown;
+    try {
+      upstream = await fetchOpencodeJson({ ...workspace, directory: target.directory }, path, {
+        method: "POST",
+        body: buildConversationRunBody(kind, body),
+      });
+    } catch (error) {
+      if (lifecycleClient && lifecycleEnabled) {
+        await lifecycleClient.markFailed(
+          workspace.id,
+          runId,
+          error instanceof Error ? error.message : String(error),
+        ).catch(() => undefined);
+      }
+      throw error;
+    }
     return jsonResponse({
       ok: true,
       workspaceId: workspace.id,
       conversationId: target.conversationId,
       opencodeSessionId: target.opencodeSessionId,
-      runId: shortId(),
+      runId,
       status: "submitted",
       kind,
       upstream,
@@ -3485,6 +3560,9 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       `/session/${encodeURIComponent(target.opencodeSessionId)}/abort?${query.toString()}`,
       { method: "POST" },
     );
+    if (lifecycleClient && workspace.workspaceType !== "remote") {
+      await lifecycleClient.markAbortRequested(workspace.id, runId).catch(() => undefined);
+    }
     return jsonResponse({
       ok: true,
       workspaceId: workspace.id,
@@ -3494,6 +3572,39 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       status: "submitted",
       kind: "abort",
       upstream,
+    });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/conversations/:conversationId/runs/:runId", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const conversationId = (ctx.params.conversationId ?? "").trim();
+    const runId = (ctx.params.runId ?? "").trim();
+    if (!conversationId || !runId) {
+      throw new ApiError(400, "invalid_payload", "conversationId and runId are required");
+    }
+    if (!lifecycleClient) {
+      throw new ApiError(503, "lifecycle_unavailable", "Run lifecycle owner is not configured");
+    }
+    let status;
+    try {
+      status = await lifecycleClient.status(workspace.id, conversationId, runId);
+    } catch (error) {
+      if (error instanceof OrchestratorLifecycleRequestError) {
+        throw lifecycleRequestApiError(error);
+      }
+      throw error;
+    }
+    if (!status) {
+      throw new ApiError(404, "run_not_found", "Run was not found for this conversation");
+    }
+    return jsonResponse({
+      ok: true,
+      workspaceId: workspace.id,
+      conversationId,
+      runId: status.runId,
+      status: status.status,
+      stale: status.stale,
     });
   });
 

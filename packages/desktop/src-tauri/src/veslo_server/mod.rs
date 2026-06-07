@@ -398,6 +398,8 @@ pub fn start_veslo_server(
     opencode_username: Option<&str>,
     opencode_password: Option<&str>,
     opencode_router_health_port: Option<u16>,
+    orchestrator_daemon_url: Option<&str>,
+    orchestrator_lifecycle_token: Option<&str>,
 ) -> Result<VesloServerInfo, String> {
     // VSLO-86 — extend caller-supplied workspaces with every local workspace
     // from veslo-workspaces.json before spawn. The frontend passes only the
@@ -444,12 +446,20 @@ pub fn start_veslo_server(
     };
     let requested_paths = normalize_paths(workspace_paths);
     let existing_paths = normalize_paths(&state.workspace_paths);
+    let normalized_orchestrator_daemon_url = orchestrator_daemon_url
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty());
+    let normalized_orchestrator_lifecycle_token = orchestrator_lifecycle_token
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
     if state.child.is_some()
         && !state.child_exited
         && state.client_token.is_some()
         && state.host_token.is_some()
         && state.port.is_some()
         && requested_paths == existing_paths
+        && state.orchestrator_daemon_url == normalized_orchestrator_daemon_url
+        && state.orchestrator_lifecycle_token == normalized_orchestrator_lifecycle_token
     {
         let info = VesloServerManager::snapshot_locked(&mut state);
         drop(state);
@@ -496,6 +506,8 @@ pub fn start_veslo_server(
         opencode_username,
         opencode_password,
         opencode_router_health_port,
+        normalized_orchestrator_daemon_url.as_deref(),
+        normalized_orchestrator_lifecycle_token.as_deref(),
     )?;
 
     state.child = Some(child);
@@ -511,6 +523,8 @@ pub fn start_veslo_server(
     state.client_token = Some(client_token);
     state.host_token = Some(host_token);
     state.workspace_paths = workspace_paths.to_vec();
+    state.orchestrator_daemon_url = normalized_orchestrator_daemon_url;
+    state.orchestrator_lifecycle_token = normalized_orchestrator_lifecycle_token;
     state.last_stdout = None;
     state.last_stderr = None;
 
