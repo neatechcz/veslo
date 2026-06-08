@@ -102,9 +102,16 @@ import {
   markPendingSubmittedFailed,
   pendingSubmittedDraftToEditable,
   pendingSubmittedDraftToMessage,
-  remapPendingSubmittedSession,
-  type PendingSubmittedDraft,
 } from "../components/session/pending-submit-model";
+import {
+  createPendingSessionInstanceId,
+  isPendingSessionInstanceId,
+  materializePendingSessionInstance,
+  removePendingSubmittedDraftForKey,
+  selectPendingSubmittedDraft,
+  setPendingSubmittedDraftForKey,
+  type PendingSubmittedDraftBySessionKey,
+} from "../components/session/pending-session-instance-model";
 import {
   appendQueuedDraft,
   firstQueuedDraft,
@@ -940,13 +947,31 @@ export default function SessionView(props: SessionViewProps) {
   const sessionQueueKeyForSessionId = (sessionId: string | null | undefined) =>
     sessionId?.trim() || pendingSessionQueueKey();
   const sessionIdForQueueKey = (sessionKey: string) =>
+    isPendingSessionInstanceId(sessionKey) ||
     sessionKey.startsWith("pending:") ||
     sessionKey.startsWith("pending-draft:") ||
     sessionKey.startsWith("pending-workspace:")
       ? null
       : sessionKey;
-  const currentSessionQueueKey = createMemo(() => sessionQueueKeyForSessionId(props.selectedSessionId));
-  const [optimisticSubmittedDraft, setOptimisticSubmittedDraft] = createSignal<PendingSubmittedDraft | null>(null);
+  const [pendingQueueKeyAwaitingSessionId, setPendingQueueKeyAwaitingSessionId] = createSignal<string | null>(null);
+  const currentSessionQueueKey = createMemo(() => {
+    const selectedSessionKey = props.selectedSessionId?.trim();
+    if (selectedSessionKey) return sessionQueueKeyForSessionId(selectedSessionKey);
+    return pendingQueueKeyAwaitingSessionId() || pendingSessionQueueKey();
+  });
+  const [pendingSubmittedDraftBySessionKey, setPendingSubmittedDraftBySessionKey] =
+    createSignal<PendingSubmittedDraftBySessionKey>({});
+  const optimisticSubmittedDraft = createMemo(() =>
+    selectPendingSubmittedDraft(pendingSubmittedDraftBySessionKey(), currentSessionQueueKey()),
+  );
+  const setOptimisticSubmittedDraft = (
+    sessionKey: string,
+    draft: ReturnType<typeof createPendingSubmittedDraft>,
+  ) => {
+    setPendingSubmittedDraftBySessionKey((current) =>
+      setPendingSubmittedDraftForKey(current, sessionKey, draft),
+    );
+  };
   const [runStartedAt, setRunStartedAt] = createSignal<number | null>(null);
   const [runHasBegun, setRunHasBegun] = createSignal(false);
   const [runTick, setRunTick] = createSignal(Date.now());
@@ -1602,7 +1627,6 @@ export default function SessionView(props: SessionViewProps) {
   const [isInitialLoad, setIsInitialLoad] = createSignal(true);
   const [queuedDraftsBySessionKey, setQueuedDraftsBySessionKey] = createSignal<Record<string, QueuedDraft[]>>({});
   const [queuePausedAfterStopBySessionKey, setQueuePausedAfterStopBySessionKey] = createSignal<Record<string, boolean>>({});
-  const [pendingQueueKeyAwaitingSessionId, setPendingQueueKeyAwaitingSessionId] = createSignal<string | null>(null);
   const [editingQueuedDraftId, setEditingQueuedDraftId] = createSignal<string | null>(null);
   const [editingTranscriptMessageId, setEditingTranscriptMessageId] = createSignal<string | null>(null);
   const [abortBusy, setAbortBusy] = createSignal(false);
@@ -1676,11 +1700,14 @@ export default function SessionView(props: SessionViewProps) {
       };
     });
 
-    setOptimisticSubmittedDraft((current) =>
-      current?.sessionKey === pendingKey
-        ? { ...remapPendingSubmittedSession(current, sessionId), sessionKey }
-        : current,
-    );
+    setPendingSubmittedDraftBySessionKey((current) => {
+      // materializePendingSessionInstance preserves the former remapPendingSubmittedSession behavior for keyed drafts.
+      return materializePendingSessionInstance(current, {
+        pendingSessionKey: pendingKey,
+        realSessionKey: sessionKey,
+        realSessionId: sessionId,
+      });
+    });
   };
 
   const restoreMaterializedQueueToPending = (pendingKey: string, sessionId: string | null | undefined) => {
@@ -1707,6 +1734,20 @@ export default function SessionView(props: SessionViewProps) {
       return {
         ...rest,
         [pendingKey]: materializedPaused || Boolean(current[pendingKey]),
+      };
+    });
+
+    setPendingSubmittedDraftBySessionKey((current) => {
+      const materializedDraft = current[sessionKey];
+      if (!materializedDraft) return current;
+      const { [sessionKey]: _removedMaterializedDraft, ...rest } = current;
+      return {
+        ...rest,
+        [pendingKey]: {
+          ...materializedDraft,
+          sessionKey: pendingKey,
+          sessionId: null,
+        },
       };
     });
   };
@@ -3214,25 +3255,49 @@ export default function SessionView(props: SessionViewProps) {
     });
     if (expectedSessionKey && currentSessionQueueKey() !== expectedSessionKey && !targetSessionId) return false;
     const showOptimisticSubmit = !options.replaceMessageId && options.reason !== "queue-drain";
-    const sessionKey = expectedSessionKey ?? currentSessionQueueKey();
+    const baseSessionKey = expectedSessionKey ?? currentSessionQueueKey();
+    const needsPendingSessionInstance = !targetSessionId && !sessionIdForQueueKey(baseSessionKey);
+    const pendingInstanceKey = needsPendingSessionInstance ? createPendingSessionInstanceId() : null;
+    const sessionKey = pendingInstanceKey ?? baseSessionKey;
     const pendingSessionKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey(sessionKey) ? sessionKey : null;
     if (pendingSessionKeyBeforeHandoff) {
       setPendingQueueKeyAwaitingSessionId(pendingSessionKeyBeforeHandoff);
     }
     const pendingSubmitId = `optimistic-submit:${Date.now()}:${Math.random().toString(36).slice(2)}`;
     const clearMatchingPendingSubmit = () => {
-      setOptimisticSubmittedDraft((current) => (current?.id === pendingSubmitId ? null : current));
+      setPendingSubmittedDraftBySessionKey((current) => {
+        const cleared = removePendingSubmittedDraftForKey(current, sessionKey, pendingSubmitId);
+        if (!pendingSessionKeyBeforeHandoff) return cleared;
+        const materializedSessionId = props.selectedSessionId?.trim();
+        if (!materializedSessionId) return cleared;
+        return removePendingSubmittedDraftForKey(
+          cleared,
+          sessionQueueKeyForSessionId(materializedSessionId),
+          pendingSubmitId,
+        );
+      });
     };
     const markMatchingPendingSubmitFailed = (errorMessage: string) => {
       let materializedSessionIdToRestore: string | null = null;
-      setOptimisticSubmittedDraft((current) => {
-        if (current?.id !== pendingSubmitId) return current;
+      setPendingSubmittedDraftBySessionKey((draftsBySessionKey) => {
+        const directMatch = draftsBySessionKey[sessionKey];
+        const matchingEntry =
+          directMatch?.id === pendingSubmitId
+            ? ([sessionKey, directMatch] as const)
+            : Object.entries(draftsBySessionKey).find(([, draft]) => draft.id === pendingSubmitId);
+        if (!matchingEntry) return draftsBySessionKey;
+        const [matchingSessionKey, current] = matchingEntry;
         const failed = markPendingSubmittedFailed(current, errorMessage);
         if (pendingSessionKeyBeforeHandoff) {
           materializedSessionIdToRestore = current.sessionId;
-          return { ...failed, sessionKey: pendingSessionKeyBeforeHandoff, sessionId: null };
+          const { [matchingSessionKey]: _removedFailedDraft, ...rest } = draftsBySessionKey;
+          return setPendingSubmittedDraftForKey(rest, pendingSessionKeyBeforeHandoff, {
+            ...failed,
+            sessionKey: pendingSessionKeyBeforeHandoff,
+            sessionId: null,
+          });
         }
-        return failed;
+        return setPendingSubmittedDraftForKey(draftsBySessionKey, matchingSessionKey, failed);
       });
       if (pendingSessionKeyBeforeHandoff) {
         restoreMaterializedQueueToPending(pendingSessionKeyBeforeHandoff, materializedSessionIdToRestore);
@@ -3240,6 +3305,7 @@ export default function SessionView(props: SessionViewProps) {
     };
     if (showOptimisticSubmit) {
       setOptimisticSubmittedDraft(
+        sessionKey,
         createPendingSubmittedDraft({
           id: pendingSubmitId,
           sessionKey,
@@ -3399,7 +3465,9 @@ export default function SessionView(props: SessionViewProps) {
     const pendingEditable =
       submitted?.sessionKey === currentSessionQueueKey() ? pendingSubmittedDraftToEditable(submitted) : null;
     if (pendingEditable?.messageId === editable.messageId) {
-      setOptimisticSubmittedDraft(null);
+      setPendingSubmittedDraftBySessionKey((current) =>
+        removePendingSubmittedDraftForKey(current, currentSessionQueueKey(), pendingEditable.messageId),
+      );
       setEditingTranscriptMessageId(null);
       props.setComposerDraft(pendingEditable.draft);
       return;
