@@ -167,3 +167,45 @@ test('sidebar session retention pilot scenario requests the managed AI fixture',
     true,
   );
 });
+
+test('pending session instance isolation pilot scenario requests the managed AI fixture', () => {
+  const e2eRoot = '/repo/packages/e2e';
+
+  assert.equal(
+    scenarioSelectionNeedsManagedAiGatewayFixture(
+      resolvePilotScenarioSelection({ scenario: ['pending-session-instance-isolation'] }, e2eRoot),
+    ),
+    true,
+  );
+});
+
+test('pending session instance isolation pilot covers required helpers and variants', () => {
+  const source = readFileSync(join(import.meta.dirname, '..', 'pilot-scenarios', 'pending-session-instance-isolation.toml'), 'utf8');
+
+  for (const helperName of [
+    'waitUntil',
+    'waitForComposer',
+    'setComposerText',
+    'sendComposerText',
+    'visibleBodyText',
+    'assertTextVisible',
+    'assertTextNotVisible',
+    'clickSidebarRowByText',
+  ]) {
+    assert.match(source, new RegExp(`const ${helperName} =`));
+  }
+
+  assert.match(source, /window\.__TAURI_INTERNALS__\?\.invoke/);
+  assert.match(source, /tauriInvoke\("workspace_bootstrap"\)/);
+  assert.match(source, /tauriInvoke\("veslo_server_info"\)/);
+  assert.match(source, /"x-veslo-gateway-authorization": "Bearer veslo-e2e-managed-ai-token"/);
+  assert.match(source, /pending isolation chat A \$\{timestamp\}/);
+  assert.match(source, /pending isolation chat B \$\{timestamp\}/);
+  assert.match(source, /pending isolation chat project \$\{timestamp\}/);
+  assert.match(source, /pending isolation same project A \$\{timestamp\}/);
+  assert.match(source, /pending isolation same project B \$\{timestamp\}/);
+  assert.match(source, /waitForChatSidebarRow\(messages\.chatA\)/);
+  assert.match(source, /waitForProjectSidebarRow\(messages\.sameProjectA\)/);
+  assert.match(source, /sameProjectAKey === projectKey/);
+  assert.match(source, /assertTextNotVisible\(messages\.sameProjectB/);
+});
