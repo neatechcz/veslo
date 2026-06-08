@@ -209,3 +209,32 @@ test('pending session instance isolation pilot covers required helpers and varia
   assert.match(source, /sameProjectAKey === projectKey/);
   assert.match(source, /assertTextNotVisible\(messages\.sameProjectB/);
 });
+
+test('pending session instance isolation sends same-project sessions before forcing settle', () => {
+  const source = readFileSync(join(import.meta.dirname, '..', 'pilot-scenarios', 'pending-session-instance-isolation.toml'), 'utf8');
+
+  const sendA = source.indexOf('await sendComposerText(messages.sameProjectA);');
+  const rowA = source.indexOf('const sameProjectARow = await waitForProjectSidebarRow(messages.sameProjectA);');
+  const openB = source.indexOf('await openNewProjectSession();', rowA + 1);
+  const sendB = source.indexOf('await sendComposerText(messages.sameProjectB);');
+  const rowB = source.indexOf('const sameProjectBRow = await waitForProjectSidebarRow(messages.sameProjectB);');
+  const clickA = source.indexOf('await clickSidebarRowByText(messages.sameProjectA, { section: "project", projectKey });');
+  const clickB = source.indexOf('await clickSidebarRowByText(messages.sameProjectB, { section: "project", projectKey });');
+  const settleA = source.indexOf('await waitForMaterializedSettle(messages.sameProjectA);');
+
+  for (const [label, index] of Object.entries({ sendA, rowA, openB, sendB, rowB, clickA, clickB, settleA })) {
+    assert.notEqual(index, -1, `${label} should exist in the same-project scenario flow`);
+  }
+
+  assert.ok(sendA < rowA, 'sameProjectA should be sent before checking its pending sidebar row');
+  assert.ok(rowA < openB, 'sameProjectB should be opened after sameProjectA has a pending/sidebar row');
+  assert.ok(openB < sendB, 'sameProjectB should be sent from a newly opened same-project session');
+  assert.ok(sendB < rowB, 'sameProjectB should have its own pending/sidebar row');
+  assert.ok(rowB < clickA && rowB < clickB, 'the scenario should click between rows only after both pending rows exist');
+  assert.ok(clickA < settleA && clickB < settleA, 'sameProjectA should not be forced to settle before pending-row isolation is checked');
+  assert.doesNotMatch(
+    source.slice(rowA, sendB),
+    /waitForMaterializedSettle\(messages\.sameProjectA\)/,
+    'sameProjectA must not settle before sameProjectB is opened and sent',
+  );
+});

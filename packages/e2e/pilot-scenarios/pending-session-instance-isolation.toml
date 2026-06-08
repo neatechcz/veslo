@@ -484,7 +484,6 @@ if (!window.__vesloPendingSessionInstanceIsolationStarted) {
       const sameProjectARow = await waitForProjectSidebarRow(messages.sameProjectA);
       const sameProjectAKey = sameProjectARow.closest("[data-project-key]")?.getAttribute("data-project-key");
       assert(sameProjectAKey === projectKey, `same project A landed in ${sameProjectAKey}, expected ${projectKey}`);
-      await waitForMaterializedSettle(messages.sameProjectA);
 
       await openNewProjectSession();
       await sendComposerText(messages.sameProjectB);
@@ -500,6 +499,18 @@ if (!window.__vesloPendingSessionInstanceIsolationStarted) {
       assertTextVisible(messages.sameProjectB, "same project B");
       assertTextNotVisible(messages.sameProjectA, "same project A");
       assertTextNotVisible(messages.chatProject, "project session");
+
+      await clickSidebarRowByText(messages.sameProjectA, { section: "project", projectKey });
+      await waitForMaterializedSettle(messages.sameProjectA);
+      assertTextVisible(messages.sameProjectA, "same project A after materialization");
+      assertTextNotVisible(messages.sameProjectB, "same project B after same project A materialization");
+      assertTextNotVisible(messages.chatProject, "project session after same project A materialization");
+
+      await clickSidebarRowByText(messages.sameProjectB, { section: "project", projectKey });
+      await waitForMaterializedSettle(messages.sameProjectB);
+      assertTextVisible(messages.sameProjectB, "same project B after materialization");
+      assertTextNotVisible(messages.sameProjectA, "same project A after same project B materialization");
+      assertTextNotVisible(messages.chatProject, "project session after same project B materialization");
 
       await waitForProjectSidebarRow(messages.chatProject);
       await waitForProjectSidebarRow(messages.sameProjectA);
