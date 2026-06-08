@@ -67,6 +67,13 @@ message and let the runtime attach the workspace and create the conversation in
 the background. Workspace activation must not be a UI-blocking precondition for
 the send action.
 
+For first-send pending drafts, the app may create a UI-only `pending-session:*`
+instance before the server returns the real conversation/session id. That
+instance owns the local prepared message, sidebar row, run indicator, failure
+state, and captured workspace context until materialization completes. The id is
+not an OpenCode session id and must not be treated as server conversation
+routing.
+
 ### Veslo Server
 
 Veslo server owns the app-facing conversation and run boundary.
@@ -97,6 +104,10 @@ The server route shape should remain workspace-scoped:
 workspace directory resolved by the server. Client-supplied `directory`,
 `sessionId`, `sessionID`, `opencodeSessionId`, or similar routing fields are not
 used for the new OpenCode session.
+
+`pending-session:*` ids are app-local pending instance keys, not server
+conversation ids. Veslo server binding remains the authoritative source for
+routing a real conversation to its OpenCode session and workspace directory.
 
 For Veslo conversation ids, run and abort routes resolve the OpenCode session
 and directory from the persisted binding. They do not require a client directory
@@ -193,7 +204,9 @@ Do not build a separate conversation model only for sandboxed execution.
 ## First Message Flow
 
 1. The user writes a message in a new or existing conversation.
-2. The app records the prepared message locally.
+2. The app records the prepared message locally. For a new pending draft, this
+   creates a UI-only `pending-session:*` instance that captures the source
+   workspace context before asynchronous handoff begins.
 3. The app sends a Veslo intent to the workspace-scoped server API.
 4. Veslo server validates the workspace and resolves the server-owned
    workspace directory.
@@ -203,6 +216,12 @@ Do not build a separate conversation model only for sandboxed execution.
 8. The orchestrator resolves the execution target.
 9. OpenCode receives the prompt for the bound session and directory.
 10. Events and transcript data are mirrored back to the conversation and run.
+
+When a pending instance materializes, the app remaps only the matching
+`pending-session:*` instance and its captured workspace context to the real
+conversation/session id. Other pending instances keep their own submitted
+messages, run indicators, failure state, and materialization path even when they
+were sent at the same time or belong to the same project.
 
 If any step fails, store the failure at the narrowest correct level:
 

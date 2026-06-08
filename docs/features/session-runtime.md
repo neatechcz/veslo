@@ -63,6 +63,7 @@ Submit behavior:
 - the responding state is not rendered as assistant message text or as a footnote under the submitted user message; it belongs to the footer run indicator and must stay visible while a pending send handoff is still warming up workspace/runtime state
 - while that pending send is still starting a local workspace/runtime, the footer indicator label is `Loading`/`Nahrávám`; once workspace warmup is done and the backend is simply producing the assistant turn, the same indicator returns to `Responding`/`Odpovídám`
 - first-send workspace and session materialization is scoped to the session run state; it must not hold the global app busy/navigation lock or force the user back to chat if they navigate elsewhere while the handoff is still pending
+- each first-send pending draft is keyed by its own pending session instance; simultaneous new sends, including two private chats, a private chat plus a project chat, or two new sessions in the same project, keep submitted user messages, footer run indicators, failure state, and real-session materialization scoped to that instance
 - when a local workspace is in browsing mode, the OpenCode runtime warmup needed before a send must also stay outside the global app busy/navigation lock; the warmup may delay that send, but the rest of the app remains usable
 - remote skill registry/Den failures during local runtime warmup are degraded telemetry conditions, not prompt-send failures, as long as local materialized skill state can still be used safely
 - browsing-mode runtime warmup must preserve the currently selected session route even when the engine has to cold-start instead of reattaching to an existing runtime
@@ -133,7 +134,8 @@ Current behavior:
 
 - pending drafts are durable local state
 - empty pending sessions show a centered composer entry instead of the full conversation layout
-- pending drafts do not appear in the sidebar until the user presses `Run`; when the pending draft is for a newly registered local directory, the directory itself can appear immediately as an empty project/workspace row in by-project mode
+- unsent pending drafts do not appear in the sidebar until the user presses `Run`; after the first send, Veslo creates a pending session instance row immediately in the correct chat or project group while backend session materialization continues
+- when the pending draft is for a newly registered local directory, the directory itself can appear immediately as an empty project/workspace row in by-project mode
 - `Chat` reopens the one existing unpublished private draft instead of creating another unpublished private workspace
 - project `+` actions reopen the pending draft for that project directory when one already exists
 - the composer target picker can switch the centered entry between the private chat draft and workspace pending drafts
