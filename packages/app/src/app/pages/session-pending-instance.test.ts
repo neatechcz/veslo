@@ -410,8 +410,13 @@ test("clicking a pending sidebar row opens the local pending session without tra
 
   assert.match(
     openSource,
+    /if \(isPendingSessionInstanceId\(sessionId\)\) \{[\s\S]*void openSessionWithWorkspaceActivation\(\{[\s\S]*activateWorkspaceBeforeOpen: true,[\s\S]*openSession: \(nextSessionId\) => \{[\s\S]*props\.setSessionBrowseScope\(\{[\s\S]*sessionId: nextSessionId,[\s\S]*workspaceId,[\s\S]*workspaceRoot,[\s\S]*directory: session\?\.directory \?\? workspaceRoot,[\s\S]*conversationId: null,[\s\S]*opencodeSessionId: null,[\s\S]*\}\);[\s\S]*props\.setPendingSessionLoad\(null\);[\s\S]*props\.setView\("session", nextSessionId\);[\s\S]*\},[\s\S]*\}\)/,
+    "pending sidebar rows should activate/bind their clicked workspace scope before routing to the local pending id",
+  );
+  assert.doesNotMatch(
+    openSource,
     /if \(isPendingSessionInstanceId\(sessionId\)\) \{\s*props\.setPendingSessionLoad\(null\);\s*props\.setView\("session", sessionId\);\s*return;\s*\}/,
-    "pending sidebar rows should navigate to the local pending id without starting session-load overlay or transcript selection",
+    "pending sidebar rows should not route without binding the clicked workspace scope",
   );
   assert.match(
     openSource,

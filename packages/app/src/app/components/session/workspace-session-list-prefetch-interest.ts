@@ -1,5 +1,6 @@
 export type { LoadedSidebarPrefetchInterest } from "../../types.js";
 import type { LoadedSidebarPrefetchInterest as LoadedSidebarPrefetchInterestType } from "../../types.js";
+import { isPendingSessionInstanceId } from "./pending-session-instance-model.js";
 
 type LoadedSidebarPrefetchRow = {
   workspaceId: string;
@@ -11,6 +12,10 @@ type LoadedSidebarPrefetchRow = {
 type WorkspaceInterest = LoadedSidebarPrefetchInterestType;
 
 const normalizeId = (value: string | null | undefined) => value?.trim() ?? "";
+const normalizePrefetchableSessionId = (value: string | null | undefined) => {
+  const id = normalizeId(value);
+  return isPendingSessionInstanceId(id) ? "" : id;
+};
 
 const createInterest = (): WorkspaceInterest => ({
   clickedSessionId: null,
@@ -81,7 +86,7 @@ export function deriveLoadedSidebarPrefetchInterest(input: {
 
   for (const row of input.loadedTopLevelRows) {
     const workspaceId = normalizeId(row.workspaceId);
-    const sessionId = normalizeId(row.sessionId);
+    const sessionId = normalizePrefetchableSessionId(row.sessionId);
     if (!workspaceId || !sessionId) continue;
     recordSessionWorkspace(sessionWorkspaces, sessionId, workspaceId);
     const interest = ensureWorkspaceInterest(interests, workspaceId);
@@ -98,7 +103,7 @@ export function deriveLoadedSidebarPrefetchInterest(input: {
   const expandedByWorkspace = new Map<string, Array<LoadedSidebarPrefetchRow & { index: number }>>();
   input.expandedSubagentRows.forEach((row, index) => {
     const workspaceId = normalizeId(row.workspaceId);
-    const sessionId = normalizeId(row.sessionId);
+    const sessionId = normalizePrefetchableSessionId(row.sessionId);
     if (!workspaceId || !sessionId) return;
     recordSessionWorkspace(sessionWorkspaces, sessionId, workspaceId);
     const bucket = expandedByWorkspace.get(workspaceId) ?? [];
@@ -108,20 +113,22 @@ export function deriveLoadedSidebarPrefetchInterest(input: {
     if (interest) recordSessionDirectory(interest, sessionId, row.directory);
   });
 
-  const clickedWorkspaceId = input.clickedSessionId
-    ? findUniqueWorkspaceForSession(input.clickedSessionId, sessionWorkspaces)
+  const clickedSessionId = normalizePrefetchableSessionId(input.clickedSessionId);
+  const clickedWorkspaceId = clickedSessionId
+    ? findUniqueWorkspaceForSession(clickedSessionId, sessionWorkspaces)
     : null;
   if (clickedWorkspaceId) {
     const interest = ensureWorkspaceInterest(interests, clickedWorkspaceId);
-    if (interest) interest.clickedSessionId = normalizeId(input.clickedSessionId);
+    if (interest) interest.clickedSessionId = clickedSessionId;
   }
 
-  const selectedWorkspaceId = input.selectedSessionId
-    ? findUniqueWorkspaceForSession(input.selectedSessionId, sessionWorkspaces)
+  const selectedSessionId = normalizePrefetchableSessionId(input.selectedSessionId);
+  const selectedWorkspaceId = selectedSessionId
+    ? findUniqueWorkspaceForSession(selectedSessionId, sessionWorkspaces)
     : null;
   if (selectedWorkspaceId) {
     const interest = ensureWorkspaceInterest(interests, selectedWorkspaceId);
-    if (interest) interest.selectedSessionId = normalizeId(input.selectedSessionId);
+    if (interest) interest.selectedSessionId = selectedSessionId;
   }
 
   for (const [workspaceId, rows] of expandedByWorkspace.entries()) {

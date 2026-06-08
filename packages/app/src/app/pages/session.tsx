@@ -3736,21 +3736,44 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
-    if (isPendingSessionInstanceId(sessionId)) {
-      props.setPendingSessionLoad(null);
-      props.setView("session", sessionId);
-      return;
-    }
-    const attempt = ++pendingSessionLoadAttempt;
-    const shouldShowOverlay = sessionId !== props.selectedSessionId;
     const group = props.workspaceSessionGroups.find((g) => g.workspace.id === workspaceId);
     const workspaceRoot =
       group?.workspace.directory?.trim() ||
       group?.workspace.path?.trim() ||
       "";
+    const session = group?.sessions.find((s) => s.id === sessionId);
+
+    if (isPendingSessionInstanceId(sessionId)) {
+      props.setPendingSessionLoad(null);
+      void openSessionWithWorkspaceActivation({
+        activeWorkspaceId: props.activeWorkspaceId,
+        getActiveWorkspaceId: () => props.activeWorkspaceId,
+        workspaceId,
+        sessionId,
+        activateWorkspace: props.activateWorkspace,
+        activateWorkspaceBeforeOpen: true,
+        openSession: (nextSessionId) => {
+          props.setSessionBrowseScope({
+            sessionId: nextSessionId,
+            workspaceId,
+            workspaceRoot,
+            directory: session?.directory ?? workspaceRoot,
+            conversationId: null,
+            opencodeSessionId: null,
+          });
+          props.setPendingSessionLoad(null);
+          props.setView("session", nextSessionId);
+        },
+      }).catch(() => {
+        props.setPendingSessionLoad(null);
+      });
+      return;
+    }
+
+    const attempt = ++pendingSessionLoadAttempt;
+    const shouldShowOverlay = sessionId !== props.selectedSessionId;
 
     // Show loading overlay immediately when switching to a different session.
-    const session = group?.sessions.find((s) => s.id === sessionId);
     if (shouldShowOverlay) {
       const workspaceName = group?.workspace.displayName ?? group?.workspace.name ?? "";
       const sessionTitle = session?.title ?? "";

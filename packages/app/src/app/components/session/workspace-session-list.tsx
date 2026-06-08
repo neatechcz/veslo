@@ -90,6 +90,7 @@ import {
   type SidebarViewMode,
 } from "./workspace-session-list-prefs";
 import { deriveLoadedSidebarPrefetchInterest } from "./workspace-session-list-prefetch-interest";
+import { isPendingSessionInstanceId } from "./pending-session-instance-model";
 import { currentLocale, t } from "../../../i18n";
 
 type Props = {
@@ -223,6 +224,11 @@ const workspaceKindLabel = (workspace: WorkspaceInfo) =>
   workspace.workspaceType === "remote"
     ? t("sidebar.workspace_kind_remote", currentLocale())
     : t("sidebar.workspace_kind_local", currentLocale());
+
+const isPendingSidebarSession = (session: WorkspaceSessionGroup["sessions"][number]) =>
+  Boolean(session.pending) ||
+  isPendingSessionInstanceId(session.id) ||
+  isPendingSessionInstanceId(session.pendingSessionInstanceId);
 
 const sidebarControlTooltipClass =
   "relative after:pointer-events-none after:absolute after:left-1/2 after:bottom-full after:z-30 after:mb-1 after:-translate-x-1/2 after:rounded-md after:border after:border-gray-6 after:bg-gray-1 after:px-2 after:py-1 after:text-[10px] after:font-medium after:leading-none after:text-gray-11 after:whitespace-nowrap after:opacity-0 after:shadow-lg after:transition-opacity after:duration-150 after:delay-[250ms] hover:after:opacity-100 focus-visible:after:opacity-100 after:content-[attr(data-tooltip)]";
@@ -1012,7 +1018,7 @@ export default function WorkspaceSessionList(props: Props) {
   const handleSessionArchiveAction = async (event: MouseEvent, sessionId: string) => {
     event.stopPropagation();
     const id = sessionId.trim();
-    if (!id) return;
+    if (!id || isPendingSessionInstanceId(id)) return;
     const archived = isSessionArchived(id);
     const workspaceId = sessionWorkspaceById().get(id) ?? "";
     if (!workspaceId) return;
@@ -1038,9 +1044,11 @@ export default function WorkspaceSessionList(props: Props) {
     event: MouseEvent,
     workspaceId: string,
     anchorKey: string,
+    sessionId?: string | null,
   ) => {
     event.preventDefault();
     event.stopPropagation();
+    if (isPendingSessionInstanceId(sessionId)) return;
     setWorkspaceMenuTarget({
       workspaceId,
       anchorKey,
@@ -1793,8 +1801,8 @@ export default function WorkspaceSessionList(props: Props) {
       <div
         class="relative group/session-row"
         onContextMenu={(event) => {
-          if (!showWorkspaceMenu) return;
-          handleSessionRowContextMenu(event, row.workspace.id, options.anchorKey);
+          if (!showWorkspaceMenu || isPendingSidebarSession(row.session)) return;
+          handleSessionRowContextMenu(event, row.workspace.id, options.anchorKey, row.session.id);
         }}
       >
         <button
@@ -1844,40 +1852,42 @@ export default function WorkspaceSessionList(props: Props) {
           {formatSessionRelativeAge(displayTimestamp(session()))}
         </span>
 
-        <div
-          class={`absolute right-2 top-1/2 -translate-y-1/2 transition-opacity ${
-            archiveConfirmationPending()
-              ? "opacity-100"
-              : sessionHoverActionsSuspended()
-              ? "pointer-events-none opacity-0"
-              : "opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100"
-          }`}
-        >
-          <button
-            type="button"
-            class={archiveConfirmationPending()
-              ? "rounded-md border border-amber-7 bg-amber-3 px-2 py-0.5 text-[11px] font-medium text-amber-11 hover:bg-amber-4"
-              : "p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"}
-            onClick={(event) => handleSessionArchiveAction(event, row.session.id)}
-            aria-label={archiveConfirmationPending()
-              ? tr("sidebar.archive_confirm")
-              : isSessionArchived(row.session.id)
-              ? tr("sidebar.unarchive_session")
-              : tr("sidebar.archive_session")}
-            title={archiveConfirmationPending()
-              ? tr("sidebar.archive_confirm")
-              : isSessionArchived(row.session.id)
-              ? tr("sidebar.unarchive_session")
-              : tr("sidebar.archive_session")}
-            ref={(el) => {
-              if (archiveConfirmationPending()) pendingArchiveConfirmButtonRef = el;
-            }}
+        <Show when={!isPendingSidebarSession(row.session)}>
+          <div
+            class={`absolute right-2 top-1/2 -translate-y-1/2 transition-opacity ${
+              archiveConfirmationPending()
+                ? "opacity-100"
+                : sessionHoverActionsSuspended()
+                ? "pointer-events-none opacity-0"
+                : "opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100"
+            }`}
           >
-            <Show when={archiveConfirmationPending()} fallback={<Archive size={14} />}>
-              {tr("sidebar.archive_confirm")}
-            </Show>
-          </button>
-        </div>
+            <button
+              type="button"
+              class={archiveConfirmationPending()
+                ? "rounded-md border border-amber-7 bg-amber-3 px-2 py-0.5 text-[11px] font-medium text-amber-11 hover:bg-amber-4"
+                : "p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"}
+              onClick={(event) => handleSessionArchiveAction(event, row.session.id)}
+              aria-label={archiveConfirmationPending()
+                ? tr("sidebar.archive_confirm")
+                : isSessionArchived(row.session.id)
+                ? tr("sidebar.unarchive_session")
+                : tr("sidebar.archive_session")}
+              title={archiveConfirmationPending()
+                ? tr("sidebar.archive_confirm")
+                : isSessionArchived(row.session.id)
+                ? tr("sidebar.unarchive_session")
+                : tr("sidebar.archive_session")}
+              ref={(el) => {
+                if (archiveConfirmationPending()) pendingArchiveConfirmButtonRef = el;
+              }}
+            >
+              <Show when={archiveConfirmationPending()} fallback={<Archive size={14} />}>
+                {tr("sidebar.archive_confirm")}
+              </Show>
+            </button>
+          </div>
+        </Show>
 
       </div>
     );
@@ -1907,7 +1917,10 @@ export default function WorkspaceSessionList(props: Props) {
     return (
       <div
         class="relative group/session-row"
-        onContextMenu={(event) => handleSessionRowContextMenu(event, workspace().id, anchorKey)}
+        onContextMenu={(event) => {
+          if (isPendingSidebarSession(session())) return;
+          handleSessionRowContextMenu(event, workspace().id, anchorKey, session().id);
+        }}
       >
         <button
           type="button"
@@ -1985,40 +1998,42 @@ export default function WorkspaceSessionList(props: Props) {
           {formatSessionRelativeAge(displayTimestamp(session()))}
         </span>
 
-        <div
-          class={`absolute right-2 bottom-1 transition-opacity ${
-            archiveConfirmationPending()
-              ? "opacity-100"
-              : sessionHoverActionsSuspended()
-              ? "pointer-events-none opacity-0"
-              : "opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100"
-          }`}
-        >
-          <button
-            type="button"
-            class={archiveConfirmationPending()
-              ? "rounded-md border border-amber-7 bg-amber-3 px-2 py-0.5 text-[11px] font-medium text-amber-11 hover:bg-amber-4"
-              : "p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"}
-            onClick={(event) => handleSessionArchiveAction(event, session().id)}
-            aria-label={archiveConfirmationPending()
-              ? tr("sidebar.archive_confirm")
-              : isSessionArchived(session().id)
-              ? tr("sidebar.unarchive_session")
-              : tr("sidebar.archive_session")}
-            title={archiveConfirmationPending()
-              ? tr("sidebar.archive_confirm")
-              : isSessionArchived(session().id)
-              ? tr("sidebar.unarchive_session")
-              : tr("sidebar.archive_session")}
-            ref={(el) => {
-              if (archiveConfirmationPending()) pendingArchiveConfirmButtonRef = el;
-            }}
+        <Show when={!isPendingSidebarSession(session())}>
+          <div
+            class={`absolute right-2 bottom-1 transition-opacity ${
+              archiveConfirmationPending()
+                ? "opacity-100"
+                : sessionHoverActionsSuspended()
+                ? "pointer-events-none opacity-0"
+                : "opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100"
+            }`}
           >
-            <Show when={archiveConfirmationPending()} fallback={<Archive size={14} />}>
-              {tr("sidebar.archive_confirm")}
-            </Show>
-          </button>
-        </div>
+            <button
+              type="button"
+              class={archiveConfirmationPending()
+                ? "rounded-md border border-amber-7 bg-amber-3 px-2 py-0.5 text-[11px] font-medium text-amber-11 hover:bg-amber-4"
+                : "p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"}
+              onClick={(event) => handleSessionArchiveAction(event, session().id)}
+              aria-label={archiveConfirmationPending()
+                ? tr("sidebar.archive_confirm")
+                : isSessionArchived(session().id)
+                ? tr("sidebar.unarchive_session")
+                : tr("sidebar.archive_session")}
+              title={archiveConfirmationPending()
+                ? tr("sidebar.archive_confirm")
+                : isSessionArchived(session().id)
+                ? tr("sidebar.unarchive_session")
+                : tr("sidebar.archive_session")}
+              ref={(el) => {
+                if (archiveConfirmationPending()) pendingArchiveConfirmButtonRef = el;
+              }}
+            >
+              <Show when={archiveConfirmationPending()} fallback={<Archive size={14} />}>
+                {tr("sidebar.archive_confirm")}
+              </Show>
+            </button>
+          </div>
+        </Show>
       </div>
     );
   };

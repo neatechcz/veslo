@@ -285,6 +285,30 @@ test("opens cross-workspace session without activating the workspace", async () 
   assert.deepEqual(opened, ["sess-2"]);
 });
 
+test("can opt pending placeholder navigation into workspace activation before opening", async () => {
+  const opened: string[] = [];
+  const activated: string[] = [];
+  let activeWorkspaceId = "ws-active";
+
+  const result = await openSessionWithWorkspaceActivation({
+    activeWorkspaceId,
+    getActiveWorkspaceId: () => activeWorkspaceId,
+    workspaceId: "ws-other",
+    sessionId: "pending-session:one",
+    activateWorkspace: async (id) => {
+      activated.push(id);
+      activeWorkspaceId = id;
+      return true;
+    },
+    activateWorkspaceBeforeOpen: true,
+    openSession: (id) => opened.push(`${activeWorkspaceId}:${id}`),
+  });
+
+  assert.equal(result, "opened");
+  assert.deepEqual(activated, ["ws-other"]);
+  assert.deepEqual(opened, ["ws-other:pending-session:one"]);
+});
+
 test("serializes rapid cross-workspace session clicks and only opens the latest session", async () => {
   const opened: string[] = [];
   const activationEvents: string[] = [];

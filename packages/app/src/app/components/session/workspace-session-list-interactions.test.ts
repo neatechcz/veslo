@@ -476,7 +476,7 @@ test("collapsed project persistence writes only from explicit user toggles", () 
 test("session rows use archive action and open submenu on right-click", () => {
   assert.match(
     source,
-    /const handleSessionRowContextMenu = \(\s*event: MouseEvent,\s*workspaceId: string,\s*anchorKey: string,\s*\) => \{/,
+    /const handleSessionRowContextMenu = \(\s*event: MouseEvent,\s*workspaceId: string,\s*anchorKey: string,\s*sessionId\?: string \| null,\s*\) => \{/,
     "session list should define a dedicated right-click handler for session rows",
   );
 
@@ -488,13 +488,13 @@ test("session rows use archive action and open submenu on right-click", () => {
 
   assert.match(
     source,
-    /onContextMenu=\{\(event\) => handleSessionRowContextMenu\(event, workspace\(\)\.id, anchorKey\)\}/,
+    /onContextMenu=\{\(event\) => \{\s*if \(isPendingSidebarSession\(session\(\)\)\) return;\s*handleSessionRowContextMenu\(event, workspace\(\)\.id, anchorKey, session\(\)\.id\);\s*\}\}/,
     "recent session rows should open submenu from right-click",
   );
 
   assert.match(
     source,
-    /onContextMenu=\{\(event\) => \{\s*if \(!showWorkspaceMenu\) return;\s*handleSessionRowContextMenu\(event, row\.workspace\.id, options\.anchorKey\);\s*\}\}/s,
+    /onContextMenu=\{\(event\) => \{\s*if \(!showWorkspaceMenu \|\| isPendingSidebarSession\(row\.session\)\) return;\s*handleSessionRowContextMenu\(event, row\.workspace\.id, options\.anchorKey, row\.session\.id\);\s*\}\}/s,
     "by-project session rows should open submenu from right-click through the shared row renderer",
   );
 
@@ -598,6 +598,51 @@ test("session rows use archive action and open submenu on right-click", () => {
     source,
     /tr\("sidebar\.archive_confirm"\)/,
     "inline archive confirmation should use localized confirm label",
+  );
+});
+
+test("pending sidebar rows do not expose archive or backend context actions", () => {
+  assert.match(
+    source,
+    /import \{ isPendingSessionInstanceId \} from "\.\/pending-session-instance-model";/,
+    "session list should share the pending-session id guard with other pending-session surfaces",
+  );
+  assert.match(
+    source,
+    /const isPendingSidebarSession = \(session: WorkspaceSessionGroup\["sessions"\]\[number\]\) =>\s*Boolean\(session\.pending\) \|\|\s*isPendingSessionInstanceId\(session\.id\) \|\|\s*isPendingSessionInstanceId\(session\.pendingSessionInstanceId\);/,
+    "pending sidebar rows should be detected from row metadata and the UI-only id shape",
+  );
+
+  const archiveStart = source.indexOf("  const handleSessionArchiveAction = async (event: MouseEvent, sessionId: string) => {");
+  const archiveEnd = source.indexOf("  const handleSessionRowContextMenu = (", archiveStart);
+  assert.notEqual(archiveStart, -1, "archive handler should exist");
+  assert.notEqual(archiveEnd, -1, "archive handler should end before context-menu handler");
+  const archiveSource = source.slice(archiveStart, archiveEnd);
+  assert.match(
+    archiveSource,
+    /if \(!id \|\| isPendingSessionInstanceId\(id\)\) return;/,
+    "archive handler should never call archive or unarchive callbacks for UI-only pending ids",
+  );
+
+  assert.match(
+    source,
+    /onContextMenu=\{\(event\) => \{\s*if \(!showWorkspaceMenu \|\| isPendingSidebarSession\(row\.session\)\) return;[\s\S]*handleSessionRowContextMenu\(event, row\.workspace\.id, options\.anchorKey, row\.session\.id\);[\s\S]*\}\}/,
+    "compact session rows should not open backend context actions for pending rows",
+  );
+  assert.match(
+    source,
+    /onContextMenu=\{\(event\) => \{\s*if \(isPendingSidebarSession\(session\(\)\)\) return;[\s\S]*handleSessionRowContextMenu\(event, workspace\(\)\.id, anchorKey, session\(\)\.id\);[\s\S]*\}\}/,
+    "detailed session rows should not open backend context actions for pending rows",
+  );
+  assert.match(
+    source,
+    /<Show when=\{!isPendingSidebarSession\(row\.session\)\}>[\s\S]*onClick=\{\(event\) => handleSessionArchiveAction\(event, row\.session\.id\)\}[\s\S]*<\/Show>/,
+    "compact pending rows should not render archive or unarchive actions",
+  );
+  assert.match(
+    source,
+    /<Show when=\{!isPendingSidebarSession\(session\(\)\)\}>[\s\S]*onClick=\{\(event\) => handleSessionArchiveAction\(event, session\(\)\.id\)\}[\s\S]*<\/Show>/,
+    "detailed pending rows should not render archive or unarchive actions",
   );
 });
 

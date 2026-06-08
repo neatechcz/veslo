@@ -89,6 +89,38 @@ test("normalizes ids, filters blanks, and deduplicates duplicate top-level rows"
   });
 });
 
+test("filters UI-only pending session ids from loaded, expanded, clicked, and selected interest", () => {
+  const result = deriveLoadedSidebarPrefetchInterest({
+    selectedSessionId: " pending-session:selected ",
+    clickedSessionId: " pending-session:clicked ",
+    loadedTopLevelRows: [
+      { workspaceId: "ws-a", sessionId: "pending-session:clicked", directory: "/work/a", updatedAt: 30 },
+      { workspaceId: "ws-a", sessionId: "real-a", directory: "/work/a", updatedAt: 25 },
+      { workspaceId: "ws-b", sessionId: "pending-session:selected", directory: "/work/b", updatedAt: 20 },
+    ],
+    expandedSubagentRows: [
+      { workspaceId: "ws-a", sessionId: "pending-session:child", directory: "/work/a", updatedAt: 15 },
+      { workspaceId: "ws-a", sessionId: "real-child", directory: "/work/a", updatedAt: 10 },
+    ],
+  });
+
+  assert.deepEqual(result.get("ws-a"), {
+    clickedSessionId: null,
+    selectedSessionId: null,
+    loadedTopLevelSessionIds: ["real-a"],
+    expandedSubagentSessionIds: ["real-child"],
+    sessionDirectoriesById: {
+      "real-a": "/work/a",
+      "real-child": "/work/a",
+    },
+  });
+  assert.equal(
+    result.has("ws-b"),
+    false,
+    "workspaces with only UI-only pending ids should not report transcript prefetch interest",
+  );
+});
+
 test("does not misattribute ambiguous clicked or selected ids across workspaces", () => {
   const result = deriveLoadedSidebarPrefetchInterest({
     selectedSessionId: "shared",
