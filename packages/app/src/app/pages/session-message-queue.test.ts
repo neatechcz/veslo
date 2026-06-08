@@ -117,7 +117,7 @@ test("queued drain uses a stable session key and guards stale navigation", () =>
 
   assert.match(
     source,
-    /props\.sendPromptAsync\(draft, targetSessionId \? \{ targetSessionId \} : undefined\)/,
+    /const promptSendOptions: \{ targetSessionId\?: string \| null; onMaterializedSessionId\?: \(sessionId: string\) => void \} \| undefined =\s*targetSessionId\s*\? \{ targetSessionId \}/,
     "queue drains should pass their captured target session to the parent send path",
   );
 
@@ -157,7 +157,7 @@ test("accepted first pending submit captures and remaps the pending queue key", 
 
   assert.match(
     source,
-    /const pendingSessionBaseKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey\(baseSessionKey\)[\s\S]*const pendingSessionKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey\(sessionKey\) \? sessionKey : null;\s*if \(pendingSessionBaseKeyBeforeHandoff && pendingSessionKeyBeforeHandoff\) \{\s*setPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff\);\s*\}[\s\S]*const accepted = await \(options\.replaceMessageId[\s\S]*if \(accepted && pendingSessionKeyBeforeHandoff\) \{[\s\S]*const materializedSessionId = props\.selectedSessionId\?\.trim\(\);[\s\S]*if \(materializedSessionId\) \{[\s\S]*remapPendingQueueToSession\(pendingSessionKeyBeforeHandoff, materializedSessionId\);[\s\S]*clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff\);[\s\S]*\}/s,
+    /const pendingSessionBaseKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey\(baseSessionKey\)[\s\S]*const pendingSessionKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey\(sessionKey\) \? sessionKey : null;\s*if \(pendingSessionBaseKeyBeforeHandoff && pendingSessionKeyBeforeHandoff\) \{\s*setPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff\);\s*\}[\s\S]*onMaterializedSessionId: handleMaterializedSessionId[\s\S]*const accepted = await \(options\.replaceMessageId[\s\S]*if \(accepted && pendingSessionKeyBeforeHandoff\) \{[\s\S]*const materializedSessionId = materializedSessionIdFromHandoff \?\? props\.selectedSessionId\?\.trim\(\);[\s\S]*if \(materializedSessionId\) \{[\s\S]*materializePendingHandoffToSession\(materializedSessionId\);[\s\S]*\}/s,
     "sendPromptImmediate should capture the base and pending queue keys before await and clear only that mapping after an accepted first submit",
   );
 

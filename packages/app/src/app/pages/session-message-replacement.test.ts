@@ -49,7 +49,7 @@ test("clicking a transcript edit action loads the draft and arms replacement sen
 test("replacement send path reverts to the original message before sending the edited draft", () => {
   assert.match(
     appSource,
-    /async function sendPrompt\(\s*draft\?: ComposerDraft,\s*options: \{ targetSessionId\?: string \| null \} = \{\},\s*\): Promise<boolean> \{/,
+    /async function sendPrompt\(\s*draft\?: ComposerDraft,\s*options: \{\s*targetSessionId\?: string \| null;\s*onMaterializedSessionId\?: \(sessionId: string\) => void;\s*\} = \{\},\s*\): Promise<boolean> \{/,
     "app send API should not accept a replacement message id; edited transcript sends must create a new backend message after revert",
   );
   const promptAsyncStart = appSource.indexOf('kind: "prompt_async",');
@@ -69,7 +69,7 @@ test("replacement send path reverts to the original message before sending the e
   );
   assert.match(
     sessionSource,
-    /const accepted = await \(options\.replaceMessageId\s*\? props\.replaceUserMessageAsync\(options\.replaceMessageId, draft, targetSessionId \? \{ targetSessionId \} : undefined\)\s*: props\.sendPromptAsync\(draft, targetSessionId \? \{ targetSessionId \} : undefined\)\s*\);/s,
+    /const promptSendOptions: \{ targetSessionId\?: string \| null; onMaterializedSessionId\?: \(sessionId: string\) => void \} \| undefined =[\s\S]*const accepted = await \(options\.replaceMessageId\s*\? props\.replaceUserMessageAsync\(options\.replaceMessageId, draft, targetSessionId \? \{ targetSessionId \} : undefined\)\s*: props\.sendPromptAsync\(draft, promptSendOptions\)\s*\);/s,
     "sendPromptImmediate should route replacement sends through replaceUserMessageAsync",
   );
   assert.match(

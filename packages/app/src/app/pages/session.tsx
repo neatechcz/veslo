@@ -249,7 +249,7 @@ export type SessionViewProps = {
   retryUpdateDownload: () => void;
   installUpdateAndRestart: () => void;
   createSessionAndOpen: () => Promise<string | undefined>;
-  sendPromptAsync: (draft: ComposerDraft, options?: { targetSessionId?: string | null }) => Promise<boolean>;
+  sendPromptAsync: (draft: ComposerDraft, options?: { targetSessionId?: string | null; onMaterializedSessionId?: (sessionId: string) => void }) => Promise<boolean>;
   replaceUserMessageAsync: (
     messageId: string,
     draft: ComposerDraft,
@@ -3281,6 +3281,18 @@ export default function SessionView(props: SessionViewProps) {
       setPendingQueueKeyAwaitingSessionIdForBaseKey(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff);
     }
     const pendingSubmitId = `optimistic-submit:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+    let materializedSessionIdFromHandoff: string | null = null;
+    const materializePendingHandoffToSession = (sessionId: string | null | undefined) => {
+      if (!pendingSessionBaseKeyBeforeHandoff || !pendingSessionKeyBeforeHandoff) return;
+      const materializedSessionId = sessionId?.trim();
+      if (!materializedSessionId) return;
+      materializedSessionIdFromHandoff = materializedSessionId;
+      remapPendingQueueToSession(pendingSessionKeyBeforeHandoff, materializedSessionId);
+      clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff);
+    };
+    const handleMaterializedSessionId = (sessionId: string) => {
+      materializePendingHandoffToSession(sessionId);
+    };
     const clearMatchingPendingSubmit = () => {
       setPendingSubmittedDraftBySessionKey((current) => {
         const matchingEntry = Object.entries(current).find(([, draft]) => draft.id === pendingSubmitId);
@@ -3302,6 +3314,9 @@ export default function SessionView(props: SessionViewProps) {
         const failed = markPendingSubmittedFailed(current, errorMessage);
         if (pendingSessionKeyBeforeHandoff) {
           materializedSessionIdToRestore = current.sessionId;
+          if (!materializedSessionIdToRestore && materializedSessionIdFromHandoff) {
+            materializedSessionIdToRestore = materializedSessionIdFromHandoff;
+          }
           if (current.sessionId) {
             return setPendingSubmittedDraftForKey(draftsBySessionKey, matchingSessionKey, failed);
           }
@@ -3320,6 +3335,10 @@ export default function SessionView(props: SessionViewProps) {
     };
     const finishPendingSessionHandoffFailure = () => {
       if (!pendingSessionBaseKeyBeforeHandoff || !pendingSessionKeyBeforeHandoff) return;
+      if (materializedSessionIdFromHandoff) {
+        clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff);
+        return;
+      }
       if (showOptimisticSubmit && !props.selectedSessionId?.trim()) {
         setPendingQueueKeyAwaitingSessionIdForBaseKey(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff);
         return;
@@ -3358,9 +3377,15 @@ export default function SessionView(props: SessionViewProps) {
     }
 
     try {
+      const promptSendOptions: { targetSessionId?: string | null; onMaterializedSessionId?: (sessionId: string) => void } | undefined =
+        targetSessionId
+          ? { targetSessionId }
+          : pendingSessionKeyBeforeHandoff
+            ? { onMaterializedSessionId: handleMaterializedSessionId }
+            : undefined;
       const accepted = await (options.replaceMessageId
         ? props.replaceUserMessageAsync(options.replaceMessageId, draft, targetSessionId ? { targetSessionId } : undefined)
-        : props.sendPromptAsync(draft, targetSessionId ? { targetSessionId } : undefined)
+        : props.sendPromptAsync(draft, promptSendOptions)
       );
       recordSendTrace("sendPromptImmediate:result", {
         accepted,
@@ -3380,10 +3405,9 @@ export default function SessionView(props: SessionViewProps) {
         return false;
       }
       if (accepted && pendingSessionKeyBeforeHandoff) {
-        const materializedSessionId = props.selectedSessionId?.trim();
+        const materializedSessionId = materializedSessionIdFromHandoff ?? props.selectedSessionId?.trim();
         if (materializedSessionId) {
-          remapPendingQueueToSession(pendingSessionKeyBeforeHandoff, materializedSessionId);
-          clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff);
+          materializePendingHandoffToSession(materializedSessionId);
         }
       }
       if (options.expectedSessionKey && currentSessionQueueKey() !== options.expectedSessionKey) {

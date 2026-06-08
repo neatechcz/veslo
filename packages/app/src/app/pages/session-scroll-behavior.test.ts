@@ -29,7 +29,7 @@ test("session send flow starts optimistic run UI before prompt handoff resolves"
   const handlerStart = source.indexOf("const sendPromptImmediate = async (");
   const optimisticSet = source.indexOf("createPendingSubmittedDraft({", handlerStart);
   const startRun = source.indexOf("startRun();", optimisticSet);
-  const sendCall = source.indexOf("props.sendPromptAsync(draft, targetSessionId ? { targetSessionId } : undefined)", startRun);
+  const sendCall = source.indexOf("props.sendPromptAsync(draft, promptSendOptions)", startRun);
   const rejectedBranch = source.indexOf("if (!accepted) {", sendCall);
   const markFailed = source.indexOf("markMatchingPendingSubmitFailed(errorMessage);", rejectedBranch);
   const resetRun = source.indexOf("resetRunState();", rejectedBranch);
@@ -54,7 +54,7 @@ test("session send flow starts optimistic run UI before prompt handoff resolves"
 test("failed handoff marks pending submitted message by immutable submit id", () => {
   assert.match(
     source,
-    /const markMatchingPendingSubmitFailed = \(errorMessage: string\) => \{[\s\S]*setOptimisticSubmittedDraft\(\(current\) => \{[\s\S]*current\?\.id !== pendingSubmitId[\s\S]*const failed = markPendingSubmittedFailed\(current, errorMessage\);[\s\S]*return failed;[\s\S]*\}\);[\s\S]*\};/,
+    /const markMatchingPendingSubmitFailed = \(errorMessage: string\) => \{[\s\S]*setPendingSubmittedDraftBySessionKey\(\(draftsBySessionKey\) => \{[\s\S]*Object\.entries\(draftsBySessionKey\)\.find\(\(\[, draft\]\) => draft\.id === pendingSubmitId\)[\s\S]*const failed = markPendingSubmittedFailed\(current, errorMessage\);[\s\S]*setPendingSubmittedDraftForKey\(draftsBySessionKey, matchingSessionKey, failed\)[\s\S]*\}\);[\s\S]*\};/,
     "failed handoff should mark the optimistic submitted draft by id so remapped session keys still fail visibly",
   );
 
@@ -68,8 +68,8 @@ test("failed handoff marks pending submitted message by immutable submit id", ()
 test("failed pending handoff restores the pending submit to its original pending draft key after remap", () => {
   assert.match(
     source,
-    /const failed = markPendingSubmittedFailed\(current, errorMessage\);[\s\S]*if \(pendingSessionKeyBeforeHandoff\) \{[\s\S]*return \{ \.\.\.failed, sessionKey: pendingSessionKeyBeforeHandoff, sessionId: null \};[\s\S]*\}[\s\S]*return failed;/s,
-    "failed pending handoff should be visible on the restored pending draft route even if session materialization remapped it first",
+    /const failed = markPendingSubmittedFailed\(current, errorMessage\);[\s\S]*if \(pendingSessionKeyBeforeHandoff\) \{[\s\S]*if \(current\.sessionId\) \{[\s\S]*return setPendingSubmittedDraftForKey\(draftsBySessionKey, matchingSessionKey, failed\);[\s\S]*\}[\s\S]*return setPendingSubmittedDraftForKey\(rest, pendingSessionKeyBeforeHandoff, \{[\s\S]*\.\.\.failed,[\s\S]*sessionKey: pendingSessionKeyBeforeHandoff,[\s\S]*sessionId: null,[\s\S]*\}\);[\s\S]*\}[\s\S]*return setPendingSubmittedDraftForKey\(draftsBySessionKey, matchingSessionKey, failed\);/s,
+    "failed pending handoff should stay on the real session after materialization or restore to the pending route before materialization",
   );
 });
 
@@ -130,7 +130,7 @@ test("failed pending submitted messages become editable only through explicit ac
 
   assert.match(
     source,
-    /handleEditUserMessage[\s\S]*setOptimisticSubmittedDraft\(null\);[\s\S]*props\.setComposerDraft\(pendingEditable\.draft\);/,
+    /handleEditUserMessage[\s\S]*removePendingSubmittedDraftForKey\(current, currentSessionQueueKey\(\), pendingEditable\.messageId\)[\s\S]*props\.setComposerDraft\(pendingEditable\.draft\);/,
     "explicit edit should clear the pending timeline message and load that exact draft into Composer",
   );
 });
@@ -149,7 +149,7 @@ test("accepted handoff does not clear unrelated failed pending submitted message
 
   assert.match(
     source,
-    /const clearMatchingPendingSubmit = \(\) => \{\s*setOptimisticSubmittedDraft\(\(current\) => \(current\?\.id === pendingSubmitId \? null : current\)\);\s*\};/,
+    /const clearMatchingPendingSubmit = \(\) => \{\s*setPendingSubmittedDraftBySessionKey\(\(current\) => \{\s*const matchingEntry = Object\.entries\(current\)\.find\(\(\[, draft\]\) => draft\.id === pendingSubmitId\);[\s\S]*removePendingSubmittedDraftForKey\(current, matchingSessionKey, pendingSubmitId\);[\s\S]*\}\);\s*\};/,
     "session should clear pending submit state by immutable pending submit id so remapped session keys still clean up",
   );
 

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("./session.tsx", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 
 test("session view stores optimistic submitted drafts by session key", () => {
   assert.match(
@@ -67,7 +68,7 @@ test("first-send handoff stores and clears the pending instance by base key", ()
 test("failed first-send optimistic drafts keep the captured pending instance selected", () => {
   assert.match(
     source,
-    /const finishPendingSessionHandoffFailure = \(\) => \{\s*if \(!pendingSessionBaseKeyBeforeHandoff \|\| !pendingSessionKeyBeforeHandoff\) return;\s*if \(showOptimisticSubmit && !props\.selectedSessionId\?\.trim\(\)\) \{\s*setPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff\);\s*return;\s*\}\s*clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff\);\s*\};/,
+    /const finishPendingSessionHandoffFailure = \(\) => \{\s*if \(!pendingSessionBaseKeyBeforeHandoff \|\| !pendingSessionKeyBeforeHandoff\) return;[\s\S]*if \(materializedSessionIdFromHandoff\) \{\s*clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff\);\s*return;\s*\}[\s\S]*if \(showOptimisticSubmit && !props\.selectedSessionId\?\.trim\(\)\) \{\s*setPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff\);\s*return;\s*\}\s*clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff\);\s*\};/,
     "failure cleanup should keep the captured pending instance selected when no real session exists yet",
   );
 
@@ -102,7 +103,7 @@ test("failed first-send optimistic drafts keep the captured pending instance sel
 test("materialized first-send failures keep the failed draft on the active real session key", () => {
   assert.match(
     source,
-    /if \(pendingSessionKeyBeforeHandoff\) \{\s*materializedSessionIdToRestore = current\.sessionId;\s*if \(current\.sessionId\) \{\s*return setPendingSubmittedDraftForKey\(draftsBySessionKey, matchingSessionKey, failed\);\s*\}/,
+    /if \(pendingSessionKeyBeforeHandoff\) \{\s*materializedSessionIdToRestore = current\.sessionId;[\s\S]*if \(!materializedSessionIdToRestore && materializedSessionIdFromHandoff\) \{\s*materializedSessionIdToRestore = materializedSessionIdFromHandoff;\s*\}[\s\S]*if \(current\.sessionId\) \{\s*return setPendingSubmittedDraftForKey\(draftsBySessionKey, matchingSessionKey, failed\);\s*\}/,
     "a materialized first-send failure should leave the failed optimistic draft under the active real session key",
   );
 
@@ -147,6 +148,81 @@ test("successful optimistic submit cleanup removes the draft by submit id wherev
     clearSource,
     /props\.selectedSessionId/,
     "successful cleanup should not rely on the currently selected session id",
+  );
+});
+
+test("pending handoffs materialize from the app callback with captured keys", () => {
+  const sendImmediateStart = source.indexOf("  const sendPromptImmediate = async (");
+  const sendImmediateEnd = source.indexOf("  const drainNextQueuedDraft = async (", sendImmediateStart);
+  assert.notEqual(sendImmediateStart, -1, "sendPromptImmediate should exist");
+  assert.notEqual(sendImmediateEnd, -1, "sendPromptImmediate should end before queue draining");
+  const sendImmediateSource = source.slice(sendImmediateStart, sendImmediateEnd);
+
+  assert.match(
+    source,
+    /sendPromptAsync: \(draft: ComposerDraft, options\?: \{ targetSessionId\?: string \| null; onMaterializedSessionId\?: \(sessionId: string\) => void \}\) => Promise<boolean>;/,
+    "session props should let app prompt sends report the materialized session id for that handoff",
+  );
+  assert.match(
+    sendImmediateSource,
+    /let materializedSessionIdFromHandoff: string \| null = null;/,
+    "sendPromptImmediate should store the materialized id reported by the specific app handoff",
+  );
+  assert.match(
+    sendImmediateSource,
+    /const materializePendingHandoffToSession = \(sessionId: string \| null \| undefined\) => \{[\s\S]*const materializedSessionId = sessionId\?\.trim\(\);[\s\S]*materializedSessionIdFromHandoff = materializedSessionId;[\s\S]*remapPendingQueueToSession\(pendingSessionKeyBeforeHandoff, materializedSessionId\);[\s\S]*clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff\);[\s\S]*\};/,
+    "materialization should remap and clear the captured base-to-pending mapping, not the current active pending draft",
+  );
+  assert.match(
+    sendImmediateSource,
+    /onMaterializedSessionId: handleMaterializedSessionId/,
+    "pending first sends should pass the captured materialization callback to app sendPrompt",
+  );
+  assert.match(
+    sendImmediateSource,
+    /const materializedSessionId = materializedSessionIdFromHandoff \?\? props\.selectedSessionId\?\.trim\(\);/,
+    "accepted fallback should prefer the materialized id reported by the app handoff over current selected session state",
+  );
+  assert.match(
+    sendImmediateSource,
+    /if \(materializedSessionIdFromHandoff\) \{\s*clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff\);\s*return;\s*\}/,
+    "failure cleanup should not restore a pending mapping after that handoff already materialized",
+  );
+});
+
+test("app sendPrompt reports the created first-session id to the handoff callback", () => {
+  const sendPromptStart = appSource.indexOf("  async function sendPrompt(");
+  const sendPromptEnd = appSource.indexOf("  async function abortSession(", sendPromptStart);
+  assert.notEqual(sendPromptStart, -1, "app sendPrompt should exist");
+  assert.notEqual(sendPromptEnd, -1, "app sendPrompt should end before abortSession");
+  const sendPromptSource = appSource.slice(sendPromptStart, sendPromptEnd);
+
+  assert.match(
+    sendPromptSource,
+    /options: \{\s*targetSessionId\?: string \| null;\s*onMaterializedSessionId\?: \(sessionId: string\) => void;\s*\} = \{\},/,
+    "app sendPrompt options should accept a per-send materialized session callback",
+  );
+
+  const createNeededStart = sendPromptSource.indexOf('if (!sessionID) {\n      recordSendTrace("sendPrompt:create-session-needed");');
+  const createNeededEnd = sendPromptSource.indexOf("    if (!sessionID) {", createNeededStart + 1);
+  assert.notEqual(createNeededStart, -1, "first-send create-session branch should exist");
+  assert.notEqual(createNeededEnd, -1, "first-send branch should end before blocked-no-session branch");
+  const createNeededSource = sendPromptSource.slice(createNeededStart, createNeededEnd);
+
+  assert.match(
+    createNeededSource,
+    /const createdSessionId = await createSessionAndOpen\(initialSessionTitle, \{[\s\S]*blockAppDuringCreate: blockAppDuringPromptSend,[\s\S]*managedAiRuntimeAlreadyPrepared: true,[\s\S]*\}\);/,
+    "first sends should capture the session id returned by their own createSessionAndOpen call",
+  );
+  assert.match(
+    createNeededSource,
+    /const materializedSessionId = createdSessionId\?\.trim\(\);[\s\S]*if \(materializedSessionId\) \{\s*sessionID = materializedSessionId;\s*options\.onMaterializedSessionId\?\.\(materializedSessionId\);[\s\S]*\} else \{\s*sessionID = selectedSessionId\(\);\s*\}/,
+    "sendPrompt should call the callback only with the created session id for this handoff",
+  );
+  assert.doesNotMatch(
+    createNeededSource,
+    /onMaterializedSessionId\?\.\(selectedSessionId/,
+    "the materialized callback should not be fed from current selected session state",
   );
 });
 

@@ -3101,7 +3101,10 @@ export default function App() {
 
   async function sendPrompt(
     draft?: ComposerDraft,
-    options: { targetSessionId?: string | null } = {},
+    options: {
+      targetSessionId?: string | null;
+      onMaterializedSessionId?: (sessionId: string) => void;
+    } = {},
   ): Promise<boolean> {
     recordSendTrace("sendPrompt:start", {
       engineReady: engineReady(),
@@ -3277,10 +3280,17 @@ export default function App() {
     })();
     if (!sessionID) {
       recordSendTrace("sendPrompt:create-session-needed");
-      sessionID = (await createSessionAndOpen(initialSessionTitle, {
+      const createdSessionId = await createSessionAndOpen(initialSessionTitle, {
         blockAppDuringCreate: blockAppDuringPromptSend,
         managedAiRuntimeAlreadyPrepared: true,
-      })) ?? selectedSessionId();
+      });
+      const materializedSessionId = createdSessionId?.trim();
+      if (materializedSessionId) {
+        sessionID = materializedSessionId;
+        options.onMaterializedSessionId?.(materializedSessionId);
+      } else {
+        sessionID = selectedSessionId();
+      }
     }
     if (!sessionID) {
       recordSendTrace("sendPrompt:blocked-no-session");
