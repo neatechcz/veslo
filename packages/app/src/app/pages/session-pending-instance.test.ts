@@ -336,7 +336,7 @@ test("pending handoffs materialize from the app callback with captured keys", ()
 
   assert.match(
     source,
-    /sendPromptAsync: \(draft: ComposerDraft, options\?: \{ targetSessionId\?: string \| null; onMaterializedSessionId\?: \(sessionId: string\) => void \}\) => Promise<boolean>;/,
+    /sendPromptAsync: \(draft: ComposerDraft, options\?: \{ targetSessionId\?: string \| null; onMaterializedSessionId\?: \(sessionId: string\) => void; pendingSession\?: PendingSidebarSessionMetadata \| null \}\) => Promise<boolean>;/,
     "session props should let app prompt sends report the materialized session id for that handoff",
   );
   assert.match(
@@ -366,6 +366,60 @@ test("pending handoffs materialize from the app callback with captured keys", ()
   );
 });
 
+test("pending first sends pass captured sidebar placeholder metadata to app prompt send", () => {
+  assert.match(
+    source,
+    /import type \{[\s\S]*PendingSidebarSessionMetadata[\s\S]*\} from "\.\.\/types";/,
+    "session view should use the shared pending sidebar metadata type in prompt send options",
+  );
+
+  const sendImmediateStart = source.indexOf("  const sendPromptImmediate = async (");
+  const sendImmediateEnd = source.indexOf("  const drainNextQueuedDraft = async (", sendImmediateStart);
+  assert.notEqual(sendImmediateStart, -1, "sendPromptImmediate should exist");
+  assert.notEqual(sendImmediateEnd, -1, "sendPromptImmediate should end before queue draining");
+  const sendImmediateSource = source.slice(sendImmediateStart, sendImmediateEnd);
+
+  assert.match(
+    sendImmediateSource,
+    /const pendingSidebarSessionCreatedAt = Date\.now\(\);/,
+    "pending sidebar placeholder metadata should use a captured creation time",
+  );
+  assert.match(
+    sendImmediateSource,
+    /const pendingSidebarSession: PendingSidebarSessionMetadata \| null = pendingSessionKeyBeforeHandoff\s*\? \{[\s\S]*id: pendingSessionKeyBeforeHandoff,[\s\S]*workspaceId: props\.activeWorkspaceId,[\s\S]*workspaceRoot: props\.activeWorkspaceRoot,[\s\S]*title: draft\.text\.trim\(\),[\s\S]*createdAt: pendingSidebarSessionCreatedAt,[\s\S]*\}[\s\S]*: null;/,
+    "pending first sends should capture the pending id, workspace id/root, title, and creation time",
+  );
+  assert.match(
+    sendImmediateSource,
+    /const promptSendOptions: \{ targetSessionId\?: string \| null; onMaterializedSessionId\?: \(sessionId: string\) => void; pendingSession\?: PendingSidebarSessionMetadata \| null \} \| undefined =/,
+    "prompt send options should allow pending sidebar metadata",
+  );
+  assert.match(
+    sendImmediateSource,
+    /\? \{ onMaterializedSessionId: handleMaterializedSessionId, pendingSession: pendingSidebarSession \}/,
+    "pending first sends should pass the captured metadata with the materialization callback",
+  );
+});
+
+test("clicking a pending sidebar row opens the local pending session without transcript selection", () => {
+  const openStart = source.indexOf("  const openSessionFromList = (workspaceId: string, sessionId: string) => {");
+  const openEnd = source.indexOf("  const resolveVesloWorkspaceId = (workspaceId: string) => {", openStart);
+  assert.notEqual(openStart, -1, "openSessionFromList should exist");
+  assert.notEqual(openEnd, -1, "openSessionFromList should end before resolveVesloWorkspaceId");
+  const openSource = source.slice(openStart, openEnd);
+
+  assert.match(
+    openSource,
+    /if \(isPendingSessionInstanceId\(sessionId\)\) \{\s*props\.setPendingSessionLoad\(null\);\s*props\.setView\("session", sessionId\);\s*return;\s*\}/,
+    "pending sidebar rows should navigate to the local pending id without starting session-load overlay or transcript selection",
+  );
+  assert.match(
+    openSource,
+    /void openSessionWithWorkspaceActivation/,
+    "real sidebar rows should continue through the existing workspace/session navigation path",
+  );
+});
+
 test("app sendPrompt reports the created first-session id to the handoff callback", () => {
   const sendPromptStart = appSource.indexOf("  async function sendPrompt(");
   const sendPromptEnd = appSource.indexOf("  async function abortSession(", sendPromptStart);
@@ -375,7 +429,7 @@ test("app sendPrompt reports the created first-session id to the handoff callbac
 
   assert.match(
     sendPromptSource,
-    /options: \{\s*targetSessionId\?: string \| null;\s*onMaterializedSessionId\?: \(sessionId: string\) => void;\s*\} = \{\},/,
+    /options: \{\s*targetSessionId\?: string \| null;\s*onMaterializedSessionId\?: \(sessionId: string\) => void;\s*pendingSession\?: PendingSidebarSessionMetadata \| null;\s*\} = \{\},/,
     "app sendPrompt options should accept a per-send materialized session callback",
   );
 
@@ -387,12 +441,12 @@ test("app sendPrompt reports the created first-session id to the handoff callbac
 
   assert.match(
     createNeededSource,
-    /const createdSessionId = await createSessionAndOpen\(initialSessionTitle, \{[\s\S]*blockAppDuringCreate: blockAppDuringPromptSend,[\s\S]*managedAiRuntimeAlreadyPrepared: true,[\s\S]*\}\);/,
+    /const createdSessionId = await createSessionAndOpen\(initialSessionTitle, \{[\s\S]*blockAppDuringCreate: blockAppDuringPromptSend,[\s\S]*managedAiRuntimeAlreadyPrepared: true,[\s\S]*pendingSession: pendingSidebarSession,[\s\S]*\}\);/,
     "first sends should capture the session id returned by their own createSessionAndOpen call",
   );
   assert.match(
     createNeededSource,
-    /const materializedSessionId = createdSessionId\?\.trim\(\);[\s\S]*if \(materializedSessionId\) \{\s*sessionID = materializedSessionId;\s*options\.onMaterializedSessionId\?\.\(materializedSessionId\);[\s\S]*\} else \{\s*sessionID = selectedSessionId\(\);\s*\}/,
+    /const materializedSessionId = createdSessionId\?\.trim\(\);[\s\S]*if \(materializedSessionId\) \{\s*sessionID = materializedSessionId;\s*options\.onMaterializedSessionId\?\.\(materializedSessionId\);[\s\S]*\} else \{\s*const selectedAfterCreate = selectedSessionId\(\);[\s\S]*sessionID = isPendingSessionInstanceId\(selectedAfterCreate\) \? null : selectedAfterCreate;\s*\}/,
     "sendPrompt should call the callback only with the created session id for this handoff",
   );
   assert.doesNotMatch(

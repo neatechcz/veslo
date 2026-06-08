@@ -86,7 +86,7 @@ test("first pending draft send materializes workspace and session without global
   );
   assert.match(
     sendPromptSource,
-    /const createdSessionId = await createSessionAndOpen\(initialSessionTitle, \{\s*blockAppDuringCreate: blockAppDuringPromptSend,\s*managedAiRuntimeAlreadyPrepared: true,\s*\}\);[\s\S]*const materializedSessionId = createdSessionId\?\.trim\(\);[\s\S]*if \(materializedSessionId\) \{\s*sessionID = materializedSessionId;\s*options\.onMaterializedSessionId\?\.\(materializedSessionId\);[\s\S]*\} else \{\s*sessionID = selectedSessionId\(\);[\s\S]*\}/,
+    /const createdSessionId = await createSessionAndOpen\(initialSessionTitle, \{\s*blockAppDuringCreate: blockAppDuringPromptSend,\s*managedAiRuntimeAlreadyPrepared: true,\s*pendingSession: pendingSidebarSession,\s*\}\);[\s\S]*const materializedSessionId = createdSessionId\?\.trim\(\);[\s\S]*if \(materializedSessionId\) \{\s*sessionID = materializedSessionId;\s*options\.onMaterializedSessionId\?\.\(materializedSessionId\);[\s\S]*\} else \{\s*const selectedAfterCreate = selectedSessionId\(\);[\s\S]*sessionID = isPendingSessionInstanceId\(selectedAfterCreate\) \? null : selectedAfterCreate;[\s\S]*\}/,
     "first prompt session creation should opt out of global app blocking while existing-session sends keep the old guarded behavior",
   );
 
@@ -98,7 +98,7 @@ test("first pending draft send materializes workspace and session without global
 
   assert.match(
     createSessionSource,
-    /options: \{\s*blockAppDuringCreate\?: boolean;\s*managedAiRuntimeAlreadyPrepared\?: boolean;\s*\} = \{\}/,
+    /options: \{\s*blockAppDuringCreate\?: boolean;\s*managedAiRuntimeAlreadyPrepared\?: boolean;\s*pendingSession\?: PendingSidebarSessionMetadata \| null;\s*\} = \{\}/,
     "session creation should expose a scoped option for pending first sends",
   );
   assert.match(

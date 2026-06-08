@@ -23,6 +23,7 @@ import type {
   WorkspaceSessionGroup,
   StartupPreference,
   SidebarSubagentDecoration,
+  PendingSidebarSessionMetadata,
   LoadedSessionPrefetchInterestChangeHandler,
 } from "../types";
 
@@ -249,7 +250,7 @@ export type SessionViewProps = {
   retryUpdateDownload: () => void;
   installUpdateAndRestart: () => void;
   createSessionAndOpen: () => Promise<string | undefined>;
-  sendPromptAsync: (draft: ComposerDraft, options?: { targetSessionId?: string | null; onMaterializedSessionId?: (sessionId: string) => void }) => Promise<boolean>;
+  sendPromptAsync: (draft: ComposerDraft, options?: { targetSessionId?: string | null; onMaterializedSessionId?: (sessionId: string) => void; pendingSession?: PendingSidebarSessionMetadata | null }) => Promise<boolean>;
   replaceUserMessageAsync: (
     messageId: string,
     draft: ComposerDraft,
@@ -3353,6 +3354,16 @@ export default function SessionView(props: SessionViewProps) {
     if (pendingSessionBaseKeyBeforeHandoff && pendingSessionKeyBeforeHandoff) {
       setPendingQueueKeyAwaitingSessionIdForBaseKey(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff);
     }
+    const pendingSidebarSessionCreatedAt = Date.now();
+    const pendingSidebarSession: PendingSidebarSessionMetadata | null = pendingSessionKeyBeforeHandoff
+      ? {
+        id: pendingSessionKeyBeforeHandoff,
+        workspaceId: props.activeWorkspaceId,
+        workspaceRoot: props.activeWorkspaceRoot,
+        title: draft.text.trim(),
+        createdAt: pendingSidebarSessionCreatedAt,
+      }
+      : null;
     const pendingSubmitId = `optimistic-submit:${Date.now()}:${Math.random().toString(36).slice(2)}`;
     let materializedSessionIdFromHandoff: string | null = null;
     let materializedSessionIdForRunStateReset: string | null = null;
@@ -3457,11 +3468,11 @@ export default function SessionView(props: SessionViewProps) {
     }
 
     try {
-      const promptSendOptions: { targetSessionId?: string | null; onMaterializedSessionId?: (sessionId: string) => void } | undefined =
+      const promptSendOptions: { targetSessionId?: string | null; onMaterializedSessionId?: (sessionId: string) => void; pendingSession?: PendingSidebarSessionMetadata | null } | undefined =
         targetSessionId
           ? { targetSessionId }
           : pendingSessionKeyBeforeHandoff
-            ? { onMaterializedSessionId: handleMaterializedSessionId }
+            ? { onMaterializedSessionId: handleMaterializedSessionId, pendingSession: pendingSidebarSession }
             : undefined;
       const accepted = await (options.replaceMessageId
         ? props.replaceUserMessageAsync(options.replaceMessageId, draft, targetSessionId ? { targetSessionId } : undefined)
@@ -3725,6 +3736,11 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
+    if (isPendingSessionInstanceId(sessionId)) {
+      props.setPendingSessionLoad(null);
+      props.setView("session", sessionId);
+      return;
+    }
     const attempt = ++pendingSessionLoadAttempt;
     const shouldShowOverlay = sessionId !== props.selectedSessionId;
     const group = props.workspaceSessionGroups.find((g) => g.workspace.id === workspaceId);

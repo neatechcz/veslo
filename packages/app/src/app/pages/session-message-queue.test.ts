@@ -117,7 +117,7 @@ test("queued drain uses a stable session key and guards stale navigation", () =>
 
   assert.match(
     source,
-    /const promptSendOptions: \{ targetSessionId\?: string \| null; onMaterializedSessionId\?: \(sessionId: string\) => void \} \| undefined =\s*targetSessionId\s*\? \{ targetSessionId \}/,
+    /const promptSendOptions: \{ targetSessionId\?: string \| null; onMaterializedSessionId\?: \(sessionId: string\) => void; pendingSession\?: PendingSidebarSessionMetadata \| null \} \| undefined =\s*targetSessionId\s*\? \{ targetSessionId \}/,
     "queue drains should pass their captured target session to the parent send path",
   );
 
@@ -218,7 +218,7 @@ test("rejected pending queue drain updates the remapped item key", () => {
 
 test("app prompt send accepts an explicit target session without freezing model bootstrap", () => {
   const sendStart = appSource.indexOf("async function sendPrompt");
-  const targetCapture = appSource.indexOf("let sessionID = options.targetSessionId?.trim() || selectedSessionId();", sendStart);
+  const targetCapture = appSource.indexOf("let sessionID = isPendingSessionInstanceId(options.targetSessionId) ? null : options.targetSessionId?.trim() || selectedRealSessionId;", sendStart);
   const bootstrap = appSource.indexOf("await ensureManagedAiBootstrapReady();", sendStart);
   const modelResolution = appSource.indexOf("const model = modelForSession(sessionID);", sendStart);
   const agentResolution = appSource.indexOf("const agent = agentForSession(sessionID);", sendStart);

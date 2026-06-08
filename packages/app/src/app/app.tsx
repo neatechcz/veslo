@@ -144,6 +144,7 @@ import {
   resolveComposerStorageKey,
   resolvePendingDraftKey,
 } from "./lib/pending-session-drafts";
+import { isPendingSessionInstanceId } from "./components/session/pending-session-instance-model";
 import {
   createClient,
   managedConfigContentsMatchForServerPatch,
@@ -218,6 +219,7 @@ import type {
   ResetVesloMode,
   SettingsTab,
   SkillCard,
+  PendingSidebarSessionMetadata,
   SidebarSubagentDecoration,
   SidebarSessionItem,
   TodoItem,
@@ -2168,6 +2170,7 @@ export default function App() {
     const workspaceId = vesloServerWorkspaceId();
     const sessionId = selectedSessionId();
     if (!client || !workspaceId || !sessionId || vesloServerStatus() !== "connected") return "";
+    if (isPendingSessionInstanceId(sessionId)) return "";
 
     const list = messages();
     let partCount = 0;
@@ -2193,6 +2196,10 @@ export default function App() {
     const workspaceId = vesloServerWorkspaceId();
     const sessionId = selectedSessionId();
     if (!client || !workspaceId || !sessionId) {
+      setLatestRunArtifactResponse(undefined);
+      return;
+    }
+    if (isPendingSessionInstanceId(sessionId)) {
       setLatestRunArtifactResponse(undefined);
       return;
     }
@@ -3104,6 +3111,7 @@ export default function App() {
     options: {
       targetSessionId?: string | null;
       onMaterializedSessionId?: (sessionId: string) => void;
+      pendingSession?: PendingSidebarSessionMetadata | null;
     } = {},
   ): Promise<boolean> {
     recordSendTrace("sendPrompt:start", {
@@ -3114,7 +3122,9 @@ export default function App() {
       busy: busy(),
       busyLabel: busyLabel(),
     });
-    let sessionID = options.targetSessionId?.trim() || selectedSessionId();
+    const selectedSessionCandidate = selectedSessionId();
+    const selectedRealSessionId = isPendingSessionInstanceId(selectedSessionCandidate) ? null : selectedSessionCandidate;
+    let sessionID = isPendingSessionInstanceId(options.targetSessionId) ? null : options.targetSessionId?.trim() || selectedRealSessionId;
     const blockAppDuringPromptSend = Boolean(sessionID);
     let ownsSendPromptBusy = false;
     let releaseSendPromptInFlight: (() => void) | null = null;
@@ -3172,6 +3182,7 @@ export default function App() {
       return false;
     }
 
+    const pendingSidebarSession = options.pendingSession ?? null;
     releaseSendPromptInFlight = beginSendPromptInFlight();
     if (!(await ensureManagedAiAccessReadyForEngineStart())) {
       recordSendTrace("sendPrompt:blocked-managed-ai-access");
@@ -3280,16 +3291,21 @@ export default function App() {
     })();
     if (!sessionID) {
       recordSendTrace("sendPrompt:create-session-needed");
+      if (pendingSidebarSession) {
+        registerPendingSidebarSession(pendingSidebarSession);
+      }
       const createdSessionId = await createSessionAndOpen(initialSessionTitle, {
         blockAppDuringCreate: blockAppDuringPromptSend,
         managedAiRuntimeAlreadyPrepared: true,
+        pendingSession: pendingSidebarSession,
       });
       const materializedSessionId = createdSessionId?.trim();
       if (materializedSessionId) {
         sessionID = materializedSessionId;
         options.onMaterializedSessionId?.(materializedSessionId);
       } else {
-        sessionID = selectedSessionId();
+        const selectedAfterCreate = selectedSessionId();
+        sessionID = isPendingSessionInstanceId(selectedAfterCreate) ? null : selectedAfterCreate;
       }
     }
     if (!sessionID) {
@@ -5004,7 +5020,10 @@ export default function App() {
       const { visible: items } = partitionVesloUtilitySessions(
         result.items.map(applyPendingInitialSessionTitle),
       );
-      setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [workspaceId]: items }));
+      setSidebarSessionsByWorkspaceId((prev) => ({
+        ...prev,
+        [workspaceId]: mergeSidebarRowsPreservingPendingPlaceholders(items, prev[workspaceId] ?? []),
+      }));
       setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [workspaceId]: "ready" as const }));
     },
     hydrateLatestSessionFromDb: async (workspaceId: string, directory: string) => {
@@ -5370,6 +5389,127 @@ export default function App() {
     Record<string, boolean>
   >({});
 
+  const sidebarPendingSessionInstanceIdForRow = (row: SidebarSessionItem) =>
+    row.pendingSessionInstanceId?.trim() || (isPendingSessionInstanceId(row.id) ? row.id.trim() : "");
+
+  const upsertPendingSidebarPlaceholder = (
+    currentRows: SidebarSessionItem[],
+    placeholder: SidebarSessionItem,
+  ): SidebarSessionItem[] => {
+    const pendingId = sidebarPendingSessionInstanceIdForRow(placeholder);
+    if (!pendingId) return currentRows;
+    return [
+      placeholder,
+      ...currentRows.filter((row) => {
+        if (row.id.trim() === placeholder.id.trim()) return false;
+        const rowPendingId = sidebarPendingSessionInstanceIdForRow(row);
+        return !rowPendingId || rowPendingId !== pendingId;
+      }),
+    ];
+  };
+
+  const mergeSidebarRowsPreservingPendingPlaceholders = (
+    incomingRows: SidebarSessionItem[],
+    existingRows: SidebarSessionItem[],
+  ): SidebarSessionItem[] => {
+    if (!existingRows.length) return incomingRows;
+    const incomingIds = new Set(incomingRows.map((row) => row.id.trim()).filter(Boolean));
+    const incomingPendingIds = new Set(incomingRows.map(sidebarPendingSessionInstanceIdForRow).filter(Boolean));
+    const retainedPendingRows = existingRows.filter((row) => {
+      if (!row.pending) return false;
+      const id = row.id.trim();
+      const pendingId = sidebarPendingSessionInstanceIdForRow(row);
+      if (id && incomingIds.has(id)) return false;
+      if (pendingId && incomingPendingIds.has(pendingId)) return false;
+      return true;
+    });
+    return [...incomingRows, ...retainedPendingRows];
+  };
+
+  const materializePendingSidebarRows = (
+    currentRows: SidebarSessionItem[],
+    pendingSession: PendingSidebarSessionMetadata | null | undefined,
+    realSession: SidebarSessionItem,
+  ): SidebarSessionItem[] => {
+    const pendingId = pendingSession?.id?.trim() ?? "";
+    const realSessionId = realSession.id.trim();
+    if (!realSessionId) return currentRows;
+    let replaced = false;
+    const deduped = currentRows.flatMap((row) => {
+      const rowPendingId = sidebarPendingSessionInstanceIdForRow(row);
+      if (pendingId && rowPendingId === pendingId) {
+        if (replaced) return [];
+        replaced = true;
+        return realSession;
+      }
+      if (row.id.trim() === realSessionId) {
+        if (replaced) return [];
+        replaced = true;
+        return realSession;
+      }
+      return row;
+    });
+    if (replaced) return deduped;
+    return [realSession, ...deduped];
+  };
+
+  const registerPendingSidebarSession = (pendingSession: PendingSidebarSessionMetadata | null | undefined) => {
+    const pendingId = pendingSession?.id?.trim() ?? "";
+    const workspaceId = pendingSession?.workspaceId?.trim() ?? "";
+    if (!isPendingSessionInstanceId(pendingId) || !workspaceId) return;
+    const workspaceRoot = pendingSession?.workspaceRoot?.trim() ?? "";
+    const title = pendingSession?.title?.trim() || "New session";
+    const createdAt = pendingSession?.createdAt || Date.now();
+    const placeholder: SidebarSessionItem = {
+      id: pendingId,
+      title,
+      time: { created: createdAt, updated: createdAt },
+      directory: workspaceRoot || null,
+      pending: true,
+      pendingSessionInstanceId: pendingId,
+    };
+    setSidebarSessionsByWorkspaceId((prev) => ({
+      ...prev,
+      [workspaceId]: upsertPendingSidebarPlaceholder(prev[workspaceId] ?? [], placeholder),
+    }));
+    setSidebarSessionStatusByWorkspaceId((prev) => ({
+      ...prev,
+      [workspaceId]: "ready" as const,
+    }));
+  };
+
+  const resolveSidebarWorkspaceIdForSession = (session: Pick<SidebarSessionItem, "id" | "directory">) => {
+    const override = sessionDirectoryOverrideById()[session.id]?.trim() ?? "";
+    const sessionDirectory = normalizeDirectoryPath(override || session.directory?.trim() || "");
+    if (!sessionDirectory) return null;
+    const match = workspaceStore.workspaces().find((workspace) => {
+      const workspaceRoot = normalizeDirectoryPath(
+        workspace.workspaceType === "local"
+          ? workspace.path?.trim() ?? ""
+          : workspace.directory?.trim() ?? workspace.path?.trim() ?? "",
+      );
+      return Boolean(workspaceRoot && sessionDirectoryMatchesRoot(sessionDirectory, workspaceRoot));
+    });
+    return match?.id ?? null;
+  };
+
+  const materializePendingSidebarSession = (
+    workspaceId: string,
+    pendingSession: PendingSidebarSessionMetadata | null | undefined,
+    realSession: SidebarSessionItem,
+  ) => {
+    const id = workspaceId.trim();
+    if (!id) return;
+    setSidebarSessionsByWorkspaceId((prev) => ({
+      ...prev,
+      [id]: materializePendingSidebarRows(prev[id] ?? [], pendingSession, realSession),
+    }));
+    setSidebarSessionStatusByWorkspaceId((prev) => ({
+      ...prev,
+      [id]: "ready" as const,
+    }));
+  };
+
   const pruneSidebarSessionState = (workspaceIds: Set<string>) => {
     setSidebarSessionsByWorkspaceId((prev) => {
       let changed = false;
@@ -5540,7 +5680,10 @@ export default function App() {
           const { visible: items } = partitionVesloUtilitySessions(
             result.items.map(applyPendingInitialSessionTitle),
           );
-          setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [id]: items }));
+          setSidebarSessionsByWorkspaceId((prev) => ({
+            ...prev,
+            [id]: mergeSidebarRowsPreservingPendingPlaceholders(items, prev[id] ?? []),
+          }));
           setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" as const }));
           setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
           setSidebarSessionHasMoreByWorkspaceId((prev) => ({ ...prev, [id]: false }));
@@ -5555,7 +5698,10 @@ export default function App() {
         }
       }
 
-      setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [id]: [] }));
+      setSidebarSessionsByWorkspaceId((prev) => ({
+        ...prev,
+        [id]: mergeSidebarRowsPreservingPendingPlaceholders([], prev[id] ?? []),
+      }));
       setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" as const }));
       setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
       setSidebarSessionHasMoreByWorkspaceId((prev) => ({ ...prev, [id]: false }));
@@ -5672,7 +5818,7 @@ export default function App() {
 
       setSidebarSessionsByWorkspaceId((prev) => ({
         ...prev,
-        [id]: items,
+        [id]: mergeSidebarRowsPreservingPendingPlaceholders(items, prev[id] ?? []),
       }));
       setSidebarSessionHasMoreByWorkspaceId((prev) => ({
         ...prev,
@@ -5901,7 +6047,7 @@ export default function App() {
       const retainedExistingSidebarRows = nextSidebarRows.length > incomingVisibleRows.length;
       setSidebarSessionsByWorkspaceId((prev) => ({
         ...prev,
-        [wsId]: nextSidebarRows,
+        [wsId]: mergeSidebarRowsPreservingPendingPlaceholders(nextSidebarRows, existingTargetSidebarRows),
       }));
       setSidebarSessionHasMoreByWorkspaceId((prev) => ({
         ...prev,
@@ -6483,6 +6629,7 @@ export default function App() {
       (sessionId ? resolveSelectedSessionBrowseScope(sessionId)?.workspaceId : null) ??
       workspaceStore.activeWorkspaceId();
     if (!workspaceId || !sessionId) return;
+    if (isPendingSessionInstanceId(sessionId)) return;
     const map = readSessionByWorkspace();
     if (map[workspaceId] === sessionId) return;
     map[workspaceId] = sessionId;
@@ -6532,6 +6679,10 @@ export default function App() {
       connectedVersion() ?? "",
     ].join("::");
     if (connectionKey === lastRouteClientResumeKey) return;
+    if (isPendingSessionInstanceId(id)) {
+      lastRouteClientResumeKey = connectionKey;
+      return;
+    }
 
     const alreadyLoaded = selectedSessionId() === id && visibleMessages().length > 0;
     if (alreadyLoaded) {
@@ -9613,9 +9764,11 @@ export default function App() {
     options: {
       blockAppDuringCreate?: boolean;
       managedAiRuntimeAlreadyPrepared?: boolean;
+      pendingSession?: PendingSidebarSessionMetadata | null;
     } = {},
   ) {
     const blockAppDuringCreate = options.blockAppDuringCreate ?? true;
+    const pendingSidebarSession = options.pendingSession ?? null;
     recordSendTrace("createSessionAndOpen:start", {
       connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
       activeWorkspaceId: workspaceStore.activeWorkspaceId(),
@@ -9665,7 +9818,7 @@ export default function App() {
     // Guard against creating a session with an empty directory, which would
     // cause the bridge to silently fall back to the orchestrator's default
     // directory (possibly a temp folder or the wrong workspace).
-    const sessionDirectory = workspaceStore.activeWorkspaceRoot().trim();
+    const sessionDirectory = pendingSidebarSession?.workspaceRoot?.trim() || workspaceStore.activeWorkspaceRoot().trim();
     if (!sessionDirectory) {
       console.warn(
         "[createSessionAndOpen] Blocked: activeWorkspaceRoot is empty",
@@ -9722,7 +9875,7 @@ export default function App() {
       };
       try {
         mark("session:create:start");
-        const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
+        const activeWorkspaceId = pendingSidebarSession?.workspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
         if (!activeWorkspaceId) {
           throw new Error("Workspace id is required to create a conversation.");
         }
@@ -9756,7 +9909,8 @@ export default function App() {
       if (initialSessionTitle) {
         registerPendingInitialSessionTitle(session.id, initialSessionTitle);
       }
-      const displaySession = applyPendingInitialSessionTitle(session);
+      const sessionForStore = session.directory?.trim() ? session : { ...session, directory: sessionDirectory };
+      const displaySession = applyPendingInitialSessionTitle(sessionForStore);
       // Immediately select and show the new session before background list refresh.
       if (blockAppDuringCreate) {
         setBusyLabel("status.loading_session");
@@ -9770,7 +9924,7 @@ export default function App() {
       // even if the background loadSessionsWithReady hasn't returned yet.
       const currentStoreSessions = sessions();
       if (!currentStoreSessions.some((s) => s.id === session.id)) {
-        setSessions([session, ...currentStoreSessions]);
+        setSessions([sessionForStore, ...currentStoreSessions]);
       }
 
       const newItem: SidebarSessionItem = {
@@ -9779,23 +9933,17 @@ export default function App() {
         slug: displaySession.slug,
         parentID: displaySession.parentID,
         time: displaySession.time,
-        directory: displaySession.directory,
+        directory: displaySession.directory ?? sessionDirectory,
         conversationId: session.conversationId ?? null,
         opencodeSessionId: session.opencodeSessionId ?? session.id,
         parentConversationId: session.parentConversationId ?? null,
         branchId: session.branchId ?? null,
       };
-      const wsId = (workspaceStore.connectingWorkspaceId() ?? workspaceStore.activeWorkspaceId()).trim();
+      const wsId = pendingSidebarSession?.workspaceId?.trim() ||
+        resolveSidebarWorkspaceIdForSession(displaySession) ||
+        (workspaceStore.connectingWorkspaceId() ?? workspaceStore.activeWorkspaceId()).trim();
       if (wsId) {
-        const currentSessions = sidebarSessionsByWorkspaceId()[wsId] || [];
-        setSidebarSessionsByWorkspaceId((prev) => ({
-          ...prev,
-          [wsId]: [newItem, ...currentSessions],
-        }));
-        setSidebarSessionStatusByWorkspaceId((prev) => ({
-          ...prev,
-          [wsId]: "ready",
-        }));
+        materializePendingSidebarSession(wsId, pendingSidebarSession, newItem);
       }
 
       // setSessionViewLockUntil(Date.now() + 1200);
@@ -12365,6 +12513,16 @@ export default function App() {
           setSelectedSessionId(null);
         }
         navigate("/session", { replace: true });
+        return;
+      }
+
+      if (isPendingSessionInstanceId(id)) {
+        if (selectedSessionId() !== id) {
+          setSelectedSessionId(id);
+          setMessages([]);
+          setTodos([]);
+        }
+        setPendingSessionLoad(null);
         return;
       }
 
