@@ -151,19 +151,19 @@ test("pending draft queues remap to the real session key without replacing exist
 test("accepted first pending submit captures and remaps the pending queue key", () => {
   assert.match(
     source,
-    /const \[pendingQueueKeyAwaitingSessionId, setPendingQueueKeyAwaitingSessionId\] = createSignal<string \| null>\(null\);/,
-    "session view should retain a captured pending queue key until a real session id is available",
+    /const \[pendingQueueKeyAwaitingSessionIdByBaseKey, setPendingQueueKeyAwaitingSessionIdByBaseKey\] =\s*createSignal<Record<string, string>>\(\{\}\);/,
+    "session view should retain captured pending queue keys by their base pending session key",
   );
 
   assert.match(
     source,
-    /const pendingSessionKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey\(sessionKey\) \? sessionKey : null;\s*if \(pendingSessionKeyBeforeHandoff\) \{\s*setPendingQueueKeyAwaitingSessionId\(pendingSessionKeyBeforeHandoff\);\s*\}[\s\S]*const accepted = await \(options\.replaceMessageId[\s\S]*if \(accepted && pendingSessionKeyBeforeHandoff\) \{[\s\S]*const materializedSessionId = props\.selectedSessionId\?\.trim\(\);[\s\S]*if \(materializedSessionId\) \{[\s\S]*remapPendingQueueToSession\(pendingSessionKeyBeforeHandoff, materializedSessionId\);[\s\S]*setPendingQueueKeyAwaitingSessionId\(null\);[\s\S]*\}/s,
-    "sendPromptImmediate should capture the pending queue key before await and remap it after an accepted first submit",
+    /const pendingSessionBaseKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey\(baseSessionKey\)[\s\S]*const pendingSessionKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey\(sessionKey\) \? sessionKey : null;\s*if \(pendingSessionBaseKeyBeforeHandoff && pendingSessionKeyBeforeHandoff\) \{\s*setPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff\);\s*\}[\s\S]*const accepted = await \(options\.replaceMessageId[\s\S]*if \(accepted && pendingSessionKeyBeforeHandoff\) \{[\s\S]*const materializedSessionId = props\.selectedSessionId\?\.trim\(\);[\s\S]*if \(materializedSessionId\) \{[\s\S]*remapPendingQueueToSession\(pendingSessionKeyBeforeHandoff, materializedSessionId\);[\s\S]*clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff\);[\s\S]*\}/s,
+    "sendPromptImmediate should capture the base and pending queue keys before await and clear only that mapping after an accepted first submit",
   );
 
   assert.match(
     source,
-    /createEffect\(\s*on\(\s*\(\) => props\.selectedSessionId,[\s\S]*const pendingKey = !previousSessionId \? pendingQueueKeyAwaitingSessionId\(\) : null;[\s\S]*if \(pendingKey\) \{[\s\S]*remapPendingQueueToSession\(pendingKey, sessionId\);[\s\S]*setPendingQueueKeyAwaitingSessionId\(null\);[\s\S]*\}/s,
+    /createEffect\(\s*on\(\s*\(\) => props\.selectedSessionId,[\s\S]*const pendingBaseKey = pendingSessionQueueKey\(\);[\s\S]*const pendingKey = !previousSessionId\s*\? pendingQueueKeyAwaitingSessionIdByBaseKey\(\)\[pendingBaseKey\] \?\? null\s*: null;[\s\S]*if \(pendingKey\) \{[\s\S]*remapPendingQueueToSession\(pendingKey, sessionId\);[\s\S]*clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingBaseKey, pendingKey\);[\s\S]*\}/s,
     "session view should also remap pending queues when the selected session id arrives in a later reactive update",
   );
 

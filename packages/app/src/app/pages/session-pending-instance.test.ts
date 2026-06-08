@@ -21,15 +21,53 @@ test("session view stores optimistic submitted drafts by session key", () => {
 test("active first-send pending views select the captured pending instance key", () => {
   assert.match(
     source,
-    /const currentSessionQueueKey = createMemo\(\(\) => \{\s*const selectedSessionKey = props\.selectedSessionId\?\.trim\(\);\s*if \(selectedSessionKey\) return sessionQueueKeyForSessionId\(selectedSessionKey\);\s*return pendingQueueKeyAwaitingSessionId\(\) \|\| pendingSessionQueueKey\(\);\s*\}\);/,
-    "the active pending view should read the optimistic draft stored under the pending session instance key",
+    /const \[pendingQueueKeyAwaitingSessionIdByBaseKey, setPendingQueueKeyAwaitingSessionIdByBaseKey\] =\s*createSignal<Record<string, string>>\(\{\}\);/,
+    "pending first-send handoff state should be keyed by the base pending session key",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /const \[pendingQueueKeyAwaitingSessionId, setPendingQueueKeyAwaitingSessionId\] = createSignal<string \| null>\(null\);/,
+    "session view should not use one global pending handoff key",
+  );
+
+  assert.match(
+    source,
+    /const currentSessionQueueKey = createMemo\(\(\) => \{\s*const selectedSessionKey = props\.selectedSessionId\?\.trim\(\);\s*if \(selectedSessionKey\) return sessionQueueKeyForSessionId\(selectedSessionKey\);\s*const basePendingKey = pendingSessionQueueKey\(\);\s*return pendingQueueKeyAwaitingSessionIdByBaseKey\(\)\[basePendingKey\] \?\? basePendingKey;\s*\}\);/,
+    "pending views should select a pending instance only for their own base pending key",
+  );
+});
+
+test("first-send handoff stores and clears the pending instance by base key", () => {
+  assert.match(
+    source,
+    /const pendingSessionBaseKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey\(baseSessionKey\)\s*\? isPendingSessionInstanceId\(baseSessionKey\)\s*\? pendingSessionQueueKey\(\)\s*: baseSessionKey\s*: null;/,
+    "first sends should capture the base pending key separately from the pending instance key",
+  );
+
+  assert.match(
+    source,
+    /const needsPendingSessionInstance = Boolean\(pendingSessionBaseKeyBeforeHandoff\) && !isPendingSessionInstanceId\(baseSessionKey\);/,
+    "first sends should not create a new pending instance when already targeting a pending instance",
+  );
+
+  assert.match(
+    source,
+    /setPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff\);/,
+    "first sends should store the pending instance under the captured base key",
+  );
+
+  assert.match(
+    source,
+    /clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff\);/,
+    "accepted or materialized handoff should clear only the matching base-to-pending mapping",
   );
 });
 
 test("failed first-send optimistic drafts keep the captured pending instance selected", () => {
   assert.match(
     source,
-    /const finishPendingSessionHandoffFailure = \(\) => \{\s*if \(!pendingSessionKeyBeforeHandoff\) return;\s*if \(showOptimisticSubmit && !props\.selectedSessionId\?\.trim\(\)\) \{\s*setPendingQueueKeyAwaitingSessionId\(pendingSessionKeyBeforeHandoff\);\s*return;\s*\}\s*setPendingQueueKeyAwaitingSessionId\(null\);\s*\};/,
+    /const finishPendingSessionHandoffFailure = \(\) => \{\s*if \(!pendingSessionBaseKeyBeforeHandoff \|\| !pendingSessionKeyBeforeHandoff\) return;\s*if \(showOptimisticSubmit && !props\.selectedSessionId\?\.trim\(\)\) \{\s*setPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff\);\s*return;\s*\}\s*clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff\);\s*\};/,
     "failure cleanup should keep the captured pending instance selected when no real session exists yet",
   );
 
@@ -85,6 +123,30 @@ test("materialized first-send failures keep the failed draft on the active real 
     restoreSource,
     /setPendingSubmittedDraftBySessionKey/,
     "materialized queue restoration should not move a failed optimistic submitted draft away from the active real session",
+  );
+});
+
+test("successful optimistic submit cleanup removes the draft by submit id wherever it was remapped", () => {
+  const clearStart = source.indexOf("const clearMatchingPendingSubmit = () => {");
+  const markFailedStart = source.indexOf("const markMatchingPendingSubmitFailed", clearStart);
+  assert.notEqual(clearStart, -1, "clearMatchingPendingSubmit should exist");
+  assert.notEqual(markFailedStart, -1, "clearMatchingPendingSubmit should end before markMatchingPendingSubmitFailed");
+  const clearSource = source.slice(clearStart, markFailedStart);
+
+  assert.match(
+    clearSource,
+    /Object\.entries\(current\)\.find\(\(\[, draft\]\) => draft\.id === pendingSubmitId\)/,
+    "successful cleanup should locate the optimistic draft by pending submit id across all session keys",
+  );
+  assert.match(
+    clearSource,
+    /removePendingSubmittedDraftForKey\(current, matchingSessionKey, pendingSubmitId\)/,
+    "successful cleanup should remove the matching draft from the key where it currently lives",
+  );
+  assert.doesNotMatch(
+    clearSource,
+    /props\.selectedSessionId/,
+    "successful cleanup should not rely on the currently selected session id",
   );
 });
 
