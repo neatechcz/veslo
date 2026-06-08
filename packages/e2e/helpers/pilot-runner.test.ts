@@ -9,6 +9,7 @@ import {
   pilotReadinessProbeCommands,
   resolvePilotBinary,
   resolvePilotScenarioSelection,
+  scenarioSelectionManagedAiGatewayResponseDelayMs,
   scenarioSelectionNeedsSkillEnableInventoryFixture,
   scenarioSelectionNeedsManagedAiGatewayFixture,
   scenarioSelectionNeedsSkillRegistryAuthFixture,
@@ -179,6 +180,46 @@ test('pending session instance isolation pilot scenario requests the managed AI 
   );
 });
 
+test('pending session instance isolation pilot scenario requests a deterministic managed AI delay', () => {
+  const e2eRoot = '/repo/packages/e2e';
+  const scenarios = resolvePilotScenarioSelection({ scenario: ['pending-session-instance-isolation'] }, e2eRoot);
+
+  assert.equal(scenarioSelectionManagedAiGatewayResponseDelayMs(scenarios, {}), '8000');
+  assert.equal(
+    scenarioSelectionManagedAiGatewayResponseDelayMs(
+      resolvePilotScenarioSelection({ scenario: ['sidebar-session-retention'] }, e2eRoot),
+      {},
+    ),
+    null,
+  );
+});
+
+test('pending session instance isolation pilot scenario preserves larger managed AI delay overrides', () => {
+  const e2eRoot = '/repo/packages/e2e';
+  const scenarios = resolvePilotScenarioSelection({ scenario: ['pending-session-instance-isolation'] }, e2eRoot);
+
+  assert.equal(
+    scenarioSelectionManagedAiGatewayResponseDelayMs(scenarios, {
+      E2E_MANAGED_AI_RESPONSE_DELAY_MS: '12000',
+    }),
+    '12000',
+  );
+  assert.equal(
+    scenarioSelectionManagedAiGatewayResponseDelayMs(scenarios, {
+      E2E_MANAGED_AI_RESPONSE_DELAY_MS: '500',
+    }),
+    '8000',
+  );
+});
+
+test('pending session instance isolation pilot runner source keeps the managed AI delay floor wired', () => {
+  const source = readFileSync(join(import.meta.dirname, 'pilot-runner.ts'), 'utf8');
+
+  assert.match(source, /PENDING_SESSION_INSTANCE_ISOLATION_MANAGED_AI_RESPONSE_DELAY_MS = 8_000/);
+  assert.match(source, /scenarioSelectionManagedAiGatewayResponseDelayMs\(scenarios\)/);
+  assert.match(source, /process\.env\.E2E_MANAGED_AI_RESPONSE_DELAY_MS = managedAiResponseDelayMs/);
+});
+
 test('pending session instance isolation pilot covers required helpers and variants', () => {
   const source = readFileSync(join(import.meta.dirname, '..', 'pilot-scenarios', 'pending-session-instance-isolation.toml'), 'utf8');
 
@@ -191,6 +232,7 @@ test('pending session instance isolation pilot covers required helpers and varia
     'assertTextVisible',
     'assertTextNotVisible',
     'clickSidebarRowByText',
+    'waitForActiveRunIndicator',
   ]) {
     assert.match(source, new RegExp(`const ${helperName} =`));
   }
@@ -215,6 +257,7 @@ test('pending session instance isolation sends same-project sessions before forc
 
   const sendA = source.indexOf('await sendComposerText(messages.sameProjectA);');
   const rowA = source.indexOf('const sameProjectARow = await waitForProjectSidebarRow(messages.sameProjectA);');
+  const activeRunA = source.indexOf('await waitForActiveRunIndicator(messages.sameProjectA);');
   const openB = source.indexOf('await openNewProjectSession();', rowA + 1);
   const sendB = source.indexOf('await sendComposerText(messages.sameProjectB);');
   const rowB = source.indexOf('const sameProjectBRow = await waitForProjectSidebarRow(messages.sameProjectB);');
@@ -222,16 +265,18 @@ test('pending session instance isolation sends same-project sessions before forc
   const clickB = source.indexOf('await clickSidebarRowByText(messages.sameProjectB, { section: "project", projectKey });');
   const settleA = source.indexOf('await waitForMaterializedSettle(messages.sameProjectA);');
 
-  for (const [label, index] of Object.entries({ sendA, rowA, openB, sendB, rowB, clickA, clickB, settleA })) {
+  for (const [label, index] of Object.entries({ sendA, rowA, activeRunA, openB, sendB, rowB, clickA, clickB, settleA })) {
     assert.notEqual(index, -1, `${label} should exist in the same-project scenario flow`);
   }
 
   assert.ok(sendA < rowA, 'sameProjectA should be sent before checking its pending sidebar row');
-  assert.ok(rowA < openB, 'sameProjectB should be opened after sameProjectA has a pending/sidebar row');
+  assert.ok(rowA < activeRunA, 'sameProjectA should have a sidebar row before checking active run state');
+  assert.ok(activeRunA < openB, 'sameProjectB should open only after sameProjectA is still actively pending/running');
   assert.ok(openB < sendB, 'sameProjectB should be sent from a newly opened same-project session');
   assert.ok(sendB < rowB, 'sameProjectB should have its own pending/sidebar row');
   assert.ok(rowB < clickA && rowB < clickB, 'the scenario should click between rows only after both pending rows exist');
   assert.ok(clickA < settleA && clickB < settleA, 'sameProjectA should not be forced to settle before pending-row isolation is checked');
+  assert.match(source, /\[data-testid="session-run-indicator"\]/);
   assert.doesNotMatch(
     source.slice(rowA, sendB),
     /waitForMaterializedSettle\(messages\.sameProjectA\)/,

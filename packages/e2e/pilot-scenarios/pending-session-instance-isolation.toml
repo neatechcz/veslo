@@ -418,6 +418,19 @@ if (!window.__vesloPendingSessionInstanceIsolationStarted) {
         message: `Session did not settle after ${text}. Body=${visibleBodyText().slice(0, 2500)} Trace=${JSON.stringify(sendTrace())}`,
       });
     };
+    const waitForActiveRunIndicator = async (text) => {
+      setProgress("waiting-active-run-indicator", { text });
+      await waitUntil(() => {
+        const main = document.querySelector("main");
+        if (!main || !visibleBodyText().includes(text)) return false;
+        const indicator = main.querySelector('[data-testid="session-run-indicator"]');
+        return indicator instanceof HTMLElement && isVisibleElement(indicator) ? indicator : false;
+      }, {
+        timeout: 20000,
+        interval: 250,
+        message: `Session was not actively running after ${text}. Body=${visibleBodyText().slice(0, 2500)} Trace=${JSON.stringify(sendTrace())}`,
+      });
+    };
 
     try {
       const timestamp = Date.now();
@@ -484,6 +497,7 @@ if (!window.__vesloPendingSessionInstanceIsolationStarted) {
       const sameProjectARow = await waitForProjectSidebarRow(messages.sameProjectA);
       const sameProjectAKey = sameProjectARow.closest("[data-project-key]")?.getAttribute("data-project-key");
       assert(sameProjectAKey === projectKey, `same project A landed in ${sameProjectAKey}, expected ${projectKey}`);
+      await waitForActiveRunIndicator(messages.sameProjectA);
 
       await openNewProjectSession();
       await sendComposerText(messages.sameProjectB);

@@ -15,6 +15,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const DEFAULT_READY_POLL_INTERVAL = 250;
 const DEFAULT_PILOT_SCENARIO_NAMES = ['smoke', 'navigation'] as const;
+const PENDING_SESSION_INSTANCE_ISOLATION_MANAGED_AI_RESPONSE_DELAY_MS = 8_000;
 
 type BuildPilotCommandOptions = {
   binary: string;
@@ -89,12 +90,35 @@ export function scenarioSelectionNeedsSkillEnableInventoryFixture(scenarios: str
   return scenarios.some((scenario) => scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/skills-enabled-state.toml'));
 }
 
+function scenarioSelectionIncludesScenario(scenarios: string[], scenarioName: string): boolean {
+  return scenarios.some((scenario) => scenario.replaceAll('\\', '/').endsWith(`/pilot-scenarios/${scenarioName}.toml`));
+}
+
 export function scenarioSelectionNeedsManagedAiGatewayFixture(scenarios: string[]): boolean {
   return scenarios.some((scenario) =>
     scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/message-send-registry-degraded.toml') ||
     scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/sidebar-session-retention.toml') ||
     scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/pending-session-instance-isolation.toml'),
   );
+}
+
+export function scenarioSelectionManagedAiGatewayResponseDelayMs(
+  scenarios: string[],
+  env: Record<string, string | undefined> = process.env,
+): string | null {
+  if (!scenarioSelectionIncludesScenario(scenarios, 'pending-session-instance-isolation')) return null;
+
+  const existingDelay = env.E2E_MANAGED_AI_RESPONSE_DELAY_MS?.trim() ?? '';
+  const existingDelayMs = Number(existingDelay);
+  if (
+    existingDelay &&
+    Number.isFinite(existingDelayMs) &&
+    existingDelayMs >= PENDING_SESSION_INSTANCE_ISOLATION_MANAGED_AI_RESPONSE_DELAY_MS
+  ) {
+    return existingDelay;
+  }
+
+  return String(PENDING_SESSION_INSTANCE_ISOLATION_MANAGED_AI_RESPONSE_DELAY_MS);
 }
 
 export async function runPilotCommand(options: RunPilotCommandOptions): Promise<void> {
@@ -191,6 +215,10 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
   }
   if (scenarioSelectionNeedsManagedAiGatewayFixture(scenarios)) {
     process.env.E2E_MANAGED_AI_GATEWAY_FIXTURE ||= '1';
+  }
+  const managedAiResponseDelayMs = scenarioSelectionManagedAiGatewayResponseDelayMs(scenarios);
+  if (managedAiResponseDelayMs) {
+    process.env.E2E_MANAGED_AI_RESPONSE_DELAY_MS = managedAiResponseDelayMs;
   }
 
   await startApp();
