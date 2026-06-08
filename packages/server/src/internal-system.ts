@@ -3,7 +3,7 @@ import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { exists, ensureDir } from "./utils.js";
 
-export const INTERNAL_SYSTEM_VERSION = "2026-06-06.1";
+export const INTERNAL_SYSTEM_VERSION = "2026-06-07.2";
 const INTERNAL_SYSTEM_SOURCE = "openwork-snapshot";
 
 const DELEGATE_PLUGIN_FILE = "veslo-delegate.js";
@@ -365,7 +365,13 @@ async function ensureVesloAgentInstructions(workspaceRoot: string, stats: Provis
 
 function automationsPluginSource(): string {
   return `import { readFile } from "node:fs/promises";
-import { tool } from "@opencode-ai/plugin";
+import { z } from "zod";
+
+function tool(input) {
+  return input;
+}
+
+tool.schema = z;
 
 /**
  * Veslo Automations Plugin
@@ -760,6 +766,168 @@ export default async (ctx) => {
 `;
 }
 
+function automationsToolPrelude(): string {
+  const source = automationsPluginSource();
+  const marker = "export default async (ctx) => {";
+  const index = source.indexOf(marker);
+  const prelude = index >= 0 ? source.slice(0, index) : source;
+  return prelude
+    .replace("Veslo Automations Plugin", "Veslo Automations Tools")
+    .replace(
+      "Registers tools that create, inspect, update, cancel, and run persistent\n * Veslo app-backed automations through the running Veslo server.",
+      "Provides a single Veslo automation tool through the running Veslo server.",
+    );
+}
+
+function automationToolSource(body: string): string {
+  return `${automationsToolPrelude()}${body.trim()}\n`;
+}
+
+function automationToolSources(): Array<[filename: string, source: string]> {
+  return [
+    [
+      "veslo_create_automation.ts",
+      automationToolSource(`
+export default tool({
+  description: "Create a persistent Veslo automation in the current workspace through the running Veslo server.",
+  args: {
+    workspaceId: tool.schema.string().optional().describe("Veslo workspace id. Provide this when it cannot be inferred from the current session."),
+    id: tool.schema.string().optional().describe("Optional stable automation id."),
+    name: tool.schema.string().describe("Short automation name."),
+    prompt: tool.schema.string().describe("Prompt to run when the automation fires."),
+    schedule: tool.schema.any().describe("Automation schedule object: oneShot, interval, daily, weekly, or cron."),
+    timezone: tool.schema.string().optional().describe("Optional timezone for oneShot, cron, daily, or weekly schedules when schedule.timezone is absent."),
+    target: tool.schema.any().optional().describe("Optional target overrides such as preferredSessionId, fallbackTitle, agent, model, or variant."),
+    enabled: tool.schema.boolean().optional().describe("Whether the automation starts enabled."),
+    status: tool.schema.enum(["active", "paused", "completed", "failed", "cancelled"]).optional().describe("Initial automation status."),
+  },
+  async execute(args, context) {
+    return await withVesloWorkspace(args, context, null, async (state, workspaceId) => {
+      if (args.schedule === undefined) return "Error: schedule is required.";
+      const target = createTarget(args, context);
+      if (target.error) return target.error;
+      const body = {
+        ...definedPatch(args, ["id", "enabled", "status"]),
+        name: args.name,
+        prompt: args.prompt,
+        schedule: withTopLevelTimezone(args.schedule, args.timezone),
+        target: target.target,
+      };
+      const data = await vesloRequest(state, workspaceId, "", { method: "POST", body });
+      return jsonSummary({
+        action: "created",
+        automation: summarizeAutomation(data.automation),
+      });
+    });
+  },
+});
+`),
+    ],
+    [
+      "veslo_list_automations.ts",
+      automationToolSource(`
+export default tool({
+  description: "List persistent Veslo automations for a workspace through the running Veslo server.",
+  args: {
+    workspaceId: tool.schema.string().optional().describe("Veslo workspace id. Provide this when it cannot be inferred from the current session."),
+  },
+  async execute(args, context) {
+    return await withVesloWorkspace(args, context, null, async (state, workspaceId) => {
+      const data = await vesloRequest(state, workspaceId, "", { method: "GET" });
+      const items = Array.isArray(data.items) ? data.items.map(summarizeAutomation) : [];
+      return jsonSummary({ count: items.length, items });
+    });
+  },
+});
+`),
+    ],
+    [
+      "veslo_run_automation.ts",
+      automationToolSource(`
+export default tool({
+  description: "Run a persistent Veslo automation immediately through the running Veslo server.",
+  args: {
+    workspaceId: tool.schema.string().optional().describe("Veslo workspace id. Provide this when it cannot be inferred from the current session."),
+    automationId: tool.schema.string().describe("Automation id to run."),
+  },
+  async execute(args, context) {
+    return await withVesloWorkspace(args, context, null, async (state, workspaceId) => {
+      const suffix = "/" + encodeURIComponent(args.automationId) + "/run";
+      const data = await vesloRequest(state, workspaceId, suffix, { method: "POST" });
+      return jsonSummary({ action: "ran", run: summarizeRun(data.run) });
+    });
+  },
+});
+`),
+    ],
+    [
+      "veslo_update_automation.ts",
+      automationToolSource(`
+export default tool({
+  description: "Update a persistent Veslo automation through the running Veslo server.",
+  args: {
+    workspaceId: tool.schema.string().optional().describe("Veslo workspace id. Provide this when it cannot be inferred from the current session."),
+    automationId: tool.schema.string().describe("Automation id to update."),
+    name: tool.schema.string().optional().describe("Updated automation name."),
+    prompt: tool.schema.string().optional().describe("Updated automation prompt."),
+    schedule: tool.schema.any().optional().describe("Updated automation schedule object."),
+    target: tool.schema.any().optional().describe("Updated target object."),
+    enabled: tool.schema.boolean().optional().describe("Updated enabled flag."),
+    status: tool.schema.enum(["active", "paused", "completed", "failed", "cancelled"]).optional().describe("Updated automation status."),
+  },
+  async execute(args, context) {
+    return await withVesloWorkspace(args, context, null, async (state, workspaceId) => {
+      const body = definedPatch(args, ["name", "prompt", "schedule", "target", "enabled", "status"]);
+      const suffix = "/" + encodeURIComponent(args.automationId);
+      const data = await vesloRequest(state, workspaceId, suffix, { method: "PATCH", body });
+      return jsonSummary({
+        action: "updated",
+        automation: summarizeAutomation(data.automation),
+      });
+    });
+  },
+});
+`),
+    ],
+    [
+      "veslo_delete_automation.ts",
+      automationToolSource(`
+export default tool({
+  description: "Cancel a persistent Veslo automation through the running Veslo server.",
+  args: {
+    workspaceId: tool.schema.string().optional().describe("Veslo workspace id. Provide this when it cannot be inferred from the current session."),
+    automationId: tool.schema.string().describe("Automation id to cancel."),
+  },
+  async execute(args, context) {
+    return await withVesloWorkspace(args, context, null, async (state, workspaceId) => {
+      const suffix = "/" + encodeURIComponent(args.automationId);
+      const data = await vesloRequest(state, workspaceId, suffix, { method: "DELETE" });
+      return jsonSummary({
+        action: "cancelled",
+        automation: summarizeAutomation(data.automation),
+      });
+    });
+  },
+});
+`),
+    ],
+  ];
+}
+
+function isManagedAutomationPluginContent(content: string) {
+  return content.includes("Veslo Automations Plugin") &&
+    content.includes("Managed by Veslo internal system");
+}
+
+async function removeManagedAutomationPlugin(workspaceRoot: string, stats: ProvisionStats) {
+  const pluginPath = join(workspaceRoot, ".opencode", "plugins", AUTOMATIONS_PLUGIN_FILE);
+  if (!(await exists(pluginPath))) return;
+  const content = await readFile(pluginPath, "utf8");
+  if (!isManagedAutomationPluginContent(content)) return;
+  await rm(pluginPath, { force: true });
+  stats.written += 1;
+}
+
 const DEFAULT_SOUL_COMPANY = `# Company Instructions
 
 <!-- Edit this file to set company-wide tone, guardrails, and context. -->
@@ -844,9 +1012,15 @@ async function ensureSoulInstructions(workspaceRoot: string, stats: ProvisionSta
 }
 
 async function writeInternalPlugins(workspaceRoot: string, stats: ProvisionStats) {
-  const pluginsDir = join(workspaceRoot, ".opencode", "plugins");
-  await ensureDir(pluginsDir);
-  await writeIfChanged(join(pluginsDir, AUTOMATIONS_PLUGIN_FILE), automationsPluginSource(), stats);
+  await removeManagedAutomationPlugin(workspaceRoot, stats);
+}
+
+async function writeInternalTools(workspaceRoot: string, stats: ProvisionStats) {
+  const toolsDir = join(workspaceRoot, ".opencode", "tools");
+  await ensureDir(toolsDir);
+  for (const [filename, source] of automationToolSources()) {
+    await writeIfChanged(join(toolsDir, filename), source, stats);
+  }
 }
 
 /**
@@ -870,6 +1044,7 @@ export async function provisionWorkspaceInternalSystem(
   await cleanupLegacyInternalDelegation(workspaceRoot, stats);
   await ensureSoulFiles(workspaceRoot, stats);
   await writeInternalPlugins(workspaceRoot, stats);
+  await writeInternalTools(workspaceRoot, stats);
   await ensureVesloAgentInstructions(workspaceRoot, stats);
   await ensureWorkspaceInstructions(workspaceRoot, stats);
   await ensureSoulInstructions(workspaceRoot, stats);

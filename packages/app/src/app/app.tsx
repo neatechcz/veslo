@@ -1253,12 +1253,20 @@ export default function App() {
   // Tracks which Veslo server token we already wrote into managed-AI config.
   // The Veslo server mints a fresh client token on every restart, so
   // opencode.jsonc files in workspaces that were not visited since the last
-  // restart still hold the old apiKey. Patching them is fast; automatically
-  // disposing the engine from this reactive path is not, and it can kill a
-  // healthy engine immediately before Send.
+  // restart still hold the old apiKey. Patching is fast; runtime reload is
+  // tracked separately so Send can wait and idle workspaces can refresh in the
+  // background without blocking composer input.
   const [
     lastManagedAiConfigAppliedForServerToken,
     setLastManagedAiConfigAppliedForServerToken,
+  ] = createSignal("");
+  const [
+    managedAiConfigRuntimeReloadKey,
+    setManagedAiConfigRuntimeReloadKey,
+  ] = createSignal("");
+  const [
+    managedAiRuntimeReloadInFlightKey,
+    setManagedAiRuntimeReloadInFlightKey,
   ] = createSignal("");
 
   createEffect(() => {
@@ -1815,6 +1823,32 @@ export default function App() {
     return snapshot.source === "unavailable" ? null : snapshot;
   };
 
+  const syncConversationWorkspaceRuntimeRoute = async (
+    serverClient: NonNullable<ReturnType<typeof vesloServerClient>>,
+    serverWorkspaceId: string,
+    directory: string,
+  ) => {
+    const normalizedWorkspaceId = serverWorkspaceId.trim();
+    const runtimeBaseUrl = baseUrl().trim();
+    const runtimeDirectory = directory.trim();
+    if (!normalizedWorkspaceId || !runtimeBaseUrl || !runtimeDirectory) return;
+
+    recordSendTrace("createConversation:workspace-route-sync:start", {
+      serverWorkspaceId: normalizedWorkspaceId,
+      baseUrl: runtimeBaseUrl,
+      directory: runtimeDirectory,
+    });
+    await serverClient.updateWorkspace(normalizedWorkspaceId, {
+      baseUrl: runtimeBaseUrl,
+      directory: runtimeDirectory,
+    });
+    recordSendTrace("createConversation:workspace-route-sync:ok", {
+      serverWorkspaceId: normalizedWorkspaceId,
+      baseUrl: runtimeBaseUrl,
+      directory: runtimeDirectory,
+    });
+  };
+
   const createConversationFromVesloWriteApi = async (
     workspaceId: string,
     title?: string,
@@ -1828,7 +1862,9 @@ export default function App() {
       workspaceRoot || undefined,
     );
     if (!serverWorkspaceId) return null;
+    await syncConversationWorkspaceRuntimeRoute(serverClient, serverWorkspaceId, workspaceRoot);
     const result = await serverClient.createConversation(serverWorkspaceId, {
+      directory: workspaceRoot || undefined,
       title,
     });
     const directory = result.directory?.trim() || workspaceRoot;
@@ -2112,6 +2148,7 @@ export default function App() {
     if (activeConversationBusy()) return true;
     const label = busyLabel();
     if (label === "status.running") return false;
+    if (!activeSessionId()) return false;
     return busy();
   });
   const activeMessages = createMemo(() => messages());
@@ -3082,6 +3119,7 @@ export default function App() {
       releaseSendPromptInFlight?.();
       releaseSendPromptInFlight = null;
     };
+    let managedAiColdEngineStarted = false;
     const startSendPromptBusy = (label: string) => {
       if (!blockAppDuringPromptSend) return;
       ownsSendPromptBusy = true;
@@ -3131,6 +3169,18 @@ export default function App() {
       return false;
     }
 
+    releaseSendPromptInFlight = beginSendPromptInFlight();
+    if (!(await ensureManagedAiAccessReadyForEngineStart())) {
+      recordSendTrace("sendPrompt:blocked-managed-ai-access");
+      stopSendPromptBusy();
+      return false;
+    }
+    if (!(await ensureManagedAiConfigReadyForEngineStart())) {
+      recordSendTrace("sendPrompt:blocked-managed-ai-config");
+      stopSendPromptBusy();
+      return false;
+    }
+
     // In browsing mode, engine is not connected. Start it before sending.
     if (!engineReady()) {
       // VSLO-171 F3Ú8: cross-workspace takeover dialog removed.
@@ -3150,7 +3200,7 @@ export default function App() {
           clientDirectory: clientDirectory().trim() || null,
           hasClient: Boolean(client()),
         });
-        const started = await workspaceStore.ensureEngineForWorkspace();
+        const started = await workspaceStore.ensureEngineForWorkspace({ activeRun: true });
         recordSendTrace("sendPrompt:ensure-engine-after", {
           started,
           activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
@@ -3164,6 +3214,11 @@ export default function App() {
           stopSendPromptBusy();
           return false;
         }
+        managedAiColdEngineStarted = true;
+        if (managedAiConfigRuntimeReloadKey()) {
+          recordSendTrace("sendPrompt:managed-ai-runtime-fresh-after-cold-start");
+          setManagedAiConfigRuntimeReloadKey("");
+        }
       } catch (error) {
         recordSendTrace("sendPrompt:engine-start-error", {
           message: error instanceof Error ? error.message : String(error),
@@ -3173,9 +3228,17 @@ export default function App() {
       }
     }
 
-    releaseSendPromptInFlight = beginSendPromptInFlight();
     if (!(await ensureManagedAiBootstrapReady())) {
       recordSendTrace("sendPrompt:blocked-managed-ai-bootstrap");
+      stopSendPromptBusy();
+      return false;
+    }
+    if (managedAiColdEngineStarted && managedAiConfigRuntimeReloadKey()) {
+      recordSendTrace("sendPrompt:managed-ai-runtime-fresh-after-post-start-bootstrap");
+      setManagedAiConfigRuntimeReloadKey("");
+    }
+    if (!(await ensureManagedAiRuntimeFreshForSend())) {
+      recordSendTrace("sendPrompt:blocked-managed-ai-runtime-stale");
       stopSendPromptBusy();
       return false;
     }
@@ -3214,7 +3277,10 @@ export default function App() {
     })();
     if (!sessionID) {
       recordSendTrace("sendPrompt:create-session-needed");
-      sessionID = (await createSessionAndOpen(initialSessionTitle, { blockAppDuringCreate: blockAppDuringPromptSend })) ?? selectedSessionId();
+      sessionID = (await createSessionAndOpen(initialSessionTitle, {
+        blockAppDuringCreate: blockAppDuringPromptSend,
+        managedAiRuntimeAlreadyPrepared: true,
+      })) ?? selectedSessionId();
     }
     if (!sessionID) {
       recordSendTrace("sendPrompt:blocked-no-session");
@@ -3452,6 +3518,7 @@ export default function App() {
           },
         );
       }
+      await sessionStore.refreshSessionMessages(sessionID, { reason: "prompt-complete" });
       if (pendingDraftSendState) {
         const pendingDraftStorageKey = pendingDraftSendState.key;
         const pendingDraftId = pendingDraftSendState.draftId;
@@ -4426,18 +4493,274 @@ export default function App() {
   };
 
   const ensureManagedAiBootstrapReady = async (): Promise<boolean> => {
+    recordSendTrace("managed-ai-bootstrap:start", {
+      hasManagedProfile: Boolean(managedAiAccess()) || managedAiBootstrapBusy(),
+      bootstrapBusy: managedAiBootstrapBusy(),
+      reloadBusy: reloadBusy() || Boolean(managedAiRuntimeReloadInFlightKey()),
+      hasRoutedClient: Boolean(routedClient()),
+      hasClient: Boolean(client()),
+    });
     try {
       await waitForManagedAiBootstrapReady({
         hasManagedProfile: Boolean(managedAiAccess()) || managedAiBootstrapBusy(),
         isBootstrapBusy: managedAiBootstrapBusy,
-        isReloadBusy: reloadBusy,
+        isReloadBusy: () => reloadBusy() || Boolean(managedAiRuntimeReloadInFlightKey()),
         hasClient: () => Boolean(routedClient()),
+      });
+      recordSendTrace("managed-ai-bootstrap:ok", {
+        hasRoutedClient: Boolean(routedClient()),
+        hasClient: Boolean(client()),
+      });
+      return true;
+    } catch (error) {
+      recordSendTrace("managed-ai-bootstrap:error", {
+        message: error instanceof Error ? error.message : safeStringify(error),
+      });
+      setError(error instanceof Error ? error.message : safeStringify(error));
+      return false;
+    }
+  };
+
+  const ensureManagedAiAccessReadyForEngineStart = async (): Promise<boolean> => {
+    if (!isTauriRuntime() || workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") {
+      return true;
+    }
+    if (!denGatewayAccessToken()) {
+      return true;
+    }
+
+    try {
+      recordSendTrace("managed-ai-access-cold-start:start", {
+        hasManagedProfile: Boolean(managedAiAccess()),
+        accessBusy: managedAiAccessBusy(),
+        hasAccessError: Boolean(managedAiAccessError()),
+      });
+      const localServerReady = await ensureLocalVesloServerRunning({ ignoreStartupPreference: true });
+      if (!localServerReady && !gatewayVesloServerClient()) {
+        setError("Local Veslo server is not available.");
+        recordSendTrace("managed-ai-access-cold-start:no-local-server");
+        return false;
+      }
+
+      if (!managedAiAccess()) {
+        setManagedAiAccessError(null);
+        requestManagedAiAccessRefresh();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      await waitForManagedAiBootstrapReady({
+        hasManagedProfile: true,
+        isBootstrapBusy: managedAiAccessBusy,
+        isReloadBusy: () => false,
+        hasClient: () => Boolean(managedAiAccess()) || Boolean(managedAiAccessError()),
+      });
+
+      if (!managedAiAccess()) {
+        setError(managedAiAccessError() ?? AI_ACCESS_NOT_CONFIGURED_MESSAGE);
+        recordSendTrace("managed-ai-access-cold-start:missing-profile", {
+          message: managedAiAccessError() ?? AI_ACCESS_NOT_CONFIGURED_MESSAGE,
+        });
+        return false;
+      }
+
+      recordSendTrace("managed-ai-access-cold-start:ok");
+      return true;
+    } catch (error) {
+      recordSendTrace("managed-ai-access-cold-start:error", {
+        message: error instanceof Error ? error.message : safeStringify(error),
+      });
+      setError(error instanceof Error ? error.message : safeStringify(error));
+      return false;
+    }
+  };
+
+  const currentManagedAiProviderRoutingReloadKey = (): string => {
+    const managedProfile = managedAiAccess();
+    if (!managedProfile) return "";
+
+    const providerRoutingLocalHost = activeVesloServerHostInfo();
+    const providerRoutingLocalBaseUrl =
+      providerRoutingLocalHost?.baseUrl ?? deriveLocalVesloServerUrlFromOpencodeBaseUrl(baseUrl()) ?? "";
+    const providerRoutingEngineBaseUrl =
+      providerRoutingLocalHost?.engineUrl ?? providerRoutingLocalBaseUrl;
+    const gatewayClient = gatewayVesloServerClient();
+    const providerRoutingTarget = resolveManagedAiProviderRoutingTarget({
+      isDesktopRuntime: isTauriRuntime(),
+      workspaceType: workspaceStore.activeWorkspaceDisplay().workspaceType,
+      activeBaseUrl: providerRoutingLocalBaseUrl,
+      engineBaseUrl: providerRoutingEngineBaseUrl,
+      activeToken: providerRoutingLocalHost?.clientToken ?? "",
+      gatewayBaseUrl: gatewayClient?.baseUrl ?? "",
+      gatewayToken: gatewayClient?.token ?? "",
+    });
+    const gatewayAccessToken = managedAiGatewayAccessToken() || denGatewayAccessToken();
+    if (!providerRoutingTarget?.serverClientToken || !gatewayAccessToken) return "";
+    return `${providerRoutingTarget.serverClientToken}@${providerRoutingTarget.engineBaseUrl}`;
+  };
+
+  const applyManagedAiConfigForEngineStart = async (): Promise<boolean> => {
+    const managedProfile = managedAiAccess();
+    if (!managedProfile) return true;
+    if (!isTauriRuntime() || workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") return true;
+
+    recordSendTrace("managed-ai-config-cold-start:start", {
+      vesloServerStatus: vesloServerStatus(),
+      hasVesloClient: Boolean(vesloServerClient()),
+      vesloWorkspaceId: vesloServerWorkspaceId() ?? null,
+    });
+
+    await ensureLocalVesloServerRunning({ ignoreStartupPreference: true });
+
+    const providerRoutingLocalHost = activeVesloServerHostInfo();
+    const providerRoutingLocalBaseUrl =
+      providerRoutingLocalHost?.baseUrl ?? deriveLocalVesloServerUrlFromOpencodeBaseUrl(baseUrl()) ?? "";
+    const providerRoutingEngineBaseUrl =
+      providerRoutingLocalHost?.engineUrl ?? providerRoutingLocalBaseUrl;
+    const gatewayClient = gatewayVesloServerClient();
+    const providerRoutingTarget = resolveManagedAiProviderRoutingTarget({
+      isDesktopRuntime: isTauriRuntime(),
+      workspaceType: "local",
+      activeBaseUrl: providerRoutingLocalBaseUrl,
+      engineBaseUrl: providerRoutingEngineBaseUrl,
+      activeToken: providerRoutingLocalHost?.clientToken ?? "",
+      gatewayBaseUrl: gatewayClient?.baseUrl ?? "",
+      gatewayToken: gatewayClient?.token ?? "",
+    });
+    const gatewayAccessToken = managedAiGatewayAccessToken() || denGatewayAccessToken();
+    if (!providerRoutingTarget?.serverClientToken || !gatewayAccessToken) {
+      recordSendTrace("managed-ai-config-cold-start:not-ready", {
+        hasProviderRoutingTarget: Boolean(providerRoutingTarget?.serverClientToken),
+        hasGatewayAccessToken: Boolean(gatewayAccessToken),
+      });
+      return false;
+    }
+
+    const reloadKey = `${providerRoutingTarget.serverClientToken}@${providerRoutingTarget.engineBaseUrl}`;
+    const vesloClient = vesloServerClient();
+    const vesloWorkspaceId = vesloServerWorkspaceId();
+    const vesloCapabilities = resolvedVesloCapabilities();
+    if (
+      vesloServerStatus() === "connected" &&
+      vesloClient &&
+      vesloWorkspaceId &&
+      vesloCapabilities?.config?.write
+    ) {
+      const config = await vesloClient.getConfig(vesloWorkspaceId);
+      const currentOpencodeContent = JSON.stringify(config.opencode ?? {}, null, 2);
+      const content = formatManagedAiAccessConfig(currentOpencodeContent, {
+        profile: managedProfile,
+        serverBaseUrl: providerRoutingTarget.baseUrl,
+        engineBaseUrl: providerRoutingTarget.engineBaseUrl,
+        serverClientToken: providerRoutingTarget.serverClientToken,
+        gatewayAccessToken,
+      });
+      const desiredSnapshot = getConfigSnapshot(content);
+      const currentApiKey = extractManagedApiKey(currentOpencodeContent);
+      if (currentApiKey && currentApiKey !== providerRoutingTarget.serverClientToken) {
+        lastKnownConfigSnapshotByWs.delete(vesloWorkspaceId);
+      }
+      if (managedConfigContentsMatchForServerPatch(currentOpencodeContent, content)) {
+        lastKnownConfigSnapshotByWs.set(vesloWorkspaceId, desiredSnapshot);
+        markManagedAiConfigApplied(reloadKey);
+        recordSendTrace("managed-ai-config-cold-start:already-current", { mode: "server" });
+        return true;
+      }
+      await vesloClient.patchConfig(vesloWorkspaceId, {
+        opencode: JSON.parse(content) as Record<string, unknown>,
+      });
+      lastKnownConfigSnapshotByWs.set(vesloWorkspaceId, desiredSnapshot);
+      markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
+      markManagedAiRuntimeReloadRequired(reloadKey);
+      markManagedAiConfigApplied(reloadKey);
+      recordSendTrace("managed-ai-config-cold-start:patched", { mode: "server" });
+      return true;
+    }
+
+    const root = workspaceStore.activeWorkspacePath().trim();
+    if (!root) {
+      recordSendTrace("managed-ai-config-cold-start:no-root");
+      return false;
+    }
+    const configFile = await readOpencodeConfig("project", root);
+    const content = formatManagedAiAccessConfig(configFile.content, {
+      profile: managedProfile,
+      serverBaseUrl: providerRoutingTarget.baseUrl,
+      engineBaseUrl: providerRoutingTarget.engineBaseUrl,
+      serverClientToken: providerRoutingTarget.serverClientToken,
+      gatewayAccessToken,
+    });
+    if ((configFile.content ?? "").trim() === content.trim()) {
+      markManagedAiConfigApplied(reloadKey);
+      recordSendTrace("managed-ai-config-cold-start:already-current", { mode: "filesystem" });
+      return true;
+    }
+
+    const result = await writeOpencodeConfig("project", root, content);
+    if (!result.ok) {
+      throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
+    }
+    lastKnownConfigSnapshotByWs.set(root, getConfigSnapshot(content));
+    markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
+    markManagedAiRuntimeReloadRequired(reloadKey);
+    markManagedAiConfigApplied(reloadKey);
+    recordSendTrace("managed-ai-config-cold-start:patched", { mode: "filesystem" });
+    return true;
+  };
+
+  const ensureManagedAiConfigReadyForEngineStart = async (): Promise<boolean> => {
+    try {
+      if (
+        isTauriRuntime() &&
+        workspaceStore.activeWorkspaceDisplay().workspaceType === "local" &&
+        managedAiAccess()
+      ) {
+        if (!(await applyManagedAiConfigForEngineStart())) {
+          return false;
+        }
+      }
+      await waitForManagedAiBootstrapReady({
+        hasManagedProfile: Boolean(managedAiAccess()) || managedAiBootstrapBusy(),
+        isBootstrapBusy: managedAiBootstrapBusy,
+        isReloadBusy: () => reloadBusy() || Boolean(managedAiRuntimeReloadInFlightKey()),
+        hasClient: () => {
+          if (!managedAiAccess()) return true;
+          const reloadKey = currentManagedAiProviderRoutingReloadKey();
+          return Boolean(reloadKey && lastManagedAiConfigAppliedForServerToken() === reloadKey);
+        },
       });
       return true;
     } catch (error) {
       setError(error instanceof Error ? error.message : safeStringify(error));
       return false;
     }
+  };
+
+  const ensureManagedAiRuntimeFreshForSend = async (): Promise<boolean> => {
+    const reloadKey = managedAiConfigRuntimeReloadKey();
+    recordSendTrace("managed-ai-runtime-fresh:start", {
+      hasReloadKey: Boolean(reloadKey),
+      canReloadWorkspace: canReloadWorkspace(),
+      anyActiveRuns: anyActiveRuns(),
+    });
+    if (!reloadKey) return true;
+    if (!canReloadWorkspace()) {
+      recordSendTrace("managed-ai-runtime-fresh:blocked-cannot-reload");
+      setError("Apply the updated AI configuration before sending.");
+      return false;
+    }
+    if (anyActiveRuns()) {
+      recordSendTrace("managed-ai-runtime-fresh:blocked-active-runs");
+      setError("Wait for the active task to finish before applying the updated AI configuration.");
+      return false;
+    }
+
+    const ok = await reloadWorkspaceEngine();
+    recordSendTrace("managed-ai-runtime-fresh:reload-result", { ok });
+    if (!ok) return false;
+    if (managedAiConfigRuntimeReloadKey() === reloadKey) {
+      setManagedAiConfigRuntimeReloadKey("");
+    }
+    return true;
   };
 
   const localRuntimeHealthTimeoutMessage = "Timed out waiting for local runtime health";
@@ -4517,7 +4840,7 @@ export default function App() {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     try {
-      const started = await workspaceStore.ensureEngineForWorkspace();
+      const started = await workspaceStore.ensureEngineForWorkspace({ activeRun: true });
       if (!started || !client()) {
         recordSendTrace(`${reason}:runtime-recovery-not-started`, {
           started,
@@ -4650,7 +4973,6 @@ export default function App() {
     updateVesloServerSettings,
     preferServerByDefault: () => Boolean(cloudEnvironment.vesloUrl),
     vesloServerClient,
-    ensureLocalVesloServerRunning: () => ensureLocalVesloServerRunning({ ignoreStartupPreference: true }),
     vesloServerHostInfo: () => vesloServerHostInfo(),
     ensureLocalVesloServerRunning: () => ensureLocalVesloServerRunning({ ignoreStartupPreference: true }),
     onEngineStable: () => {
@@ -7847,7 +8169,31 @@ export default function App() {
     if (!reloadKey) return;
     if (lastManagedAiConfigAppliedForServerToken() === reloadKey) return;
     setLastManagedAiConfigAppliedForServerToken(reloadKey);
-    console.log("[managed-ai] config applied; destructive engine reload deferred", { reloadKey });
+    console.log("[managed-ai] config applied; runtime reload guarded separately", { reloadKey });
+  };
+  const markManagedAiRuntimeReloadRequired = (reloadKey: string): void => {
+    if (!reloadKey) return;
+    if (!canReloadWorkspace()) return;
+    setManagedAiConfigRuntimeReloadKey(reloadKey);
+  };
+  const applyManagedAiRuntimeReloadIfIdle = (reloadKey: string): void => {
+    if (!reloadKey) return;
+    if (managedAiRuntimeReloadInFlightKey() === reloadKey) return;
+    if (!engineReady() || !routedClient()) return;
+    if (!canReloadWorkspace() || anyActiveRuns() || sendPromptInFlight()) return;
+    setManagedAiRuntimeReloadInFlightKey(reloadKey);
+    void (async () => {
+      try {
+        const ok = await reloadWorkspaceEngineFromUi();
+        if (ok && managedAiConfigRuntimeReloadKey() === reloadKey) {
+          setManagedAiConfigRuntimeReloadKey("");
+        }
+      } catch (error) {
+        console.warn("[managed-ai] background runtime reload failed", error);
+      } finally {
+        setManagedAiRuntimeReloadInFlightKey((current) => (current === reloadKey ? "" : current));
+      }
+    })();
   };
 
   markReloadRequiredHandler = systemState.markReloadRequired;
@@ -9254,7 +9600,10 @@ export default function App() {
 
   async function createSessionAndOpen(
     initialTitle = "",
-    options: { blockAppDuringCreate?: boolean } = {},
+    options: {
+      blockAppDuringCreate?: boolean;
+      managedAiRuntimeAlreadyPrepared?: boolean;
+    } = {},
   ) {
     const blockAppDuringCreate = options.blockAppDuringCreate ?? true;
     recordSendTrace("createSessionAndOpen:start", {
@@ -9278,9 +9627,17 @@ export default function App() {
       return undefined;
     }
 
-    if (!(await ensureManagedAiBootstrapReady())) {
-      recordSendTrace("createSessionAndOpen:blocked-managed-ai-bootstrap");
-      return undefined;
+    if (!options.managedAiRuntimeAlreadyPrepared) {
+      if (!(await ensureManagedAiBootstrapReady())) {
+        recordSendTrace("createSessionAndOpen:blocked-managed-ai-bootstrap");
+        return undefined;
+      }
+      if (!(await ensureManagedAiRuntimeFreshForSend())) {
+        recordSendTrace("createSessionAndOpen:blocked-managed-ai-runtime-stale");
+        return undefined;
+      }
+    } else {
+      recordSendTrace("createSessionAndOpen:managed-ai-runtime-prepared");
     }
     if (!(await ensureLocalRuntimeReachableForSend("createSessionAndOpen"))) {
       recordSendTrace("createSessionAndOpen:blocked-runtime-unreachable");
@@ -9376,6 +9733,9 @@ export default function App() {
       } catch (createErr) {
         recordSendTrace("createSessionAndOpen:create-error", {
           message: createErr instanceof Error ? createErr.message : safeStringify(createErr),
+          status: createErr instanceof VesloServerError ? createErr.status : null,
+          code: createErr instanceof VesloServerError ? createErr.code : null,
+          details: createErr instanceof VesloServerError ? createErr.details ?? null : null,
         });
         mark("session:create:error", {
           error: createErr instanceof Error ? createErr.message : safeStringify(createErr),
@@ -10522,11 +10882,9 @@ export default function App() {
             if (currentApiKey && currentApiKey !== providerRoutingTarget.serverClientToken) {
               lastKnownConfigSnapshotByWs.delete(wsKey);
             }
-            if (lastKnownConfigSnapshotByWs.get(wsKey) === desiredSnapshot) {
-              return;
-            }
             if (managedConfigContentsMatchForServerPatch(currentOpencodeContent, content)) {
               lastKnownConfigSnapshotByWs.set(wsKey, desiredSnapshot);
+              markManagedAiConfigApplied(providerRoutingReloadKey);
               return;
             }
             await vesloClient.patchConfig(vesloWorkspaceId, {
@@ -10534,11 +10892,13 @@ export default function App() {
             });
             lastKnownConfigSnapshotByWs.set(wsKey, desiredSnapshot);
             markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
-            // Do not auto-dispose/reload the engine here. This effect runs
-            // during boot and before Send; a destructive reload can suspend a
-            // healthy WSL engine and block the first prompt behind runtime
-            // recovery. The banner still marks config as changed, while the
-            // managed provider config is available for OpenCode's next read.
+            markManagedAiRuntimeReloadRequired(providerRoutingReloadKey);
+            const managedAiConfigAlreadyApplied =
+              lastManagedAiConfigAppliedForServerToken() === providerRoutingReloadKey;
+            markManagedAiConfigApplied(providerRoutingReloadKey);
+            // Keep the config write fast. If no run is active, schedule a
+            // guarded background runtime reload below; Send still performs the
+            // same freshness check as a fallback.
             if (
               shouldAutoReloadManagedAiConfig({
                 hasManagedProfile: true,
@@ -10546,9 +10906,9 @@ export default function App() {
                 hasActiveRuns: anyActiveRuns() || sendPromptInFlight(),
                 canReloadWorkspace: canReloadWorkspace(),
               }) &&
-              lastManagedAiConfigAppliedForServerToken() !== providerRoutingReloadKey
+              !managedAiConfigAlreadyApplied
             ) {
-              markManagedAiConfigApplied(providerRoutingReloadKey);
+              applyManagedAiRuntimeReloadIfIdle(providerRoutingReloadKey);
             }
             return;
           }
@@ -10586,7 +10946,10 @@ export default function App() {
             serverClientToken: providerRoutingTarget.serverClientToken,
             gatewayAccessToken,
           });
-          if ((configFile.content ?? "").trim() === content.trim()) return;
+          if ((configFile.content ?? "").trim() === content.trim()) {
+            markManagedAiConfigApplied(providerRoutingReloadKey);
+            return;
+          }
 
           const result = await writeOpencodeConfig("project", root, content);
           if (!result.ok) {
@@ -10594,7 +10957,11 @@ export default function App() {
           }
           lastKnownConfigSnapshotByWs.set(root, getConfigSnapshot(content));
           markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
-          // Do not auto-dispose/reload the engine here — see comment above.
+          markManagedAiRuntimeReloadRequired(providerRoutingReloadKey);
+          const managedAiConfigAlreadyApplied =
+            lastManagedAiConfigAppliedForServerToken() === providerRoutingReloadKey;
+          markManagedAiConfigApplied(providerRoutingReloadKey);
+          // Keep the config write fast; see the server-backed branch above.
           if (
             shouldAutoReloadManagedAiConfig({
               hasManagedProfile: true,
@@ -10602,9 +10969,9 @@ export default function App() {
               hasActiveRuns: anyActiveRuns() || sendPromptInFlight(),
               canReloadWorkspace: canReloadWorkspace(),
             }) &&
-            lastManagedAiConfigAppliedForServerToken() !== providerRoutingReloadKey
+            !managedAiConfigAlreadyApplied
           ) {
-            markManagedAiConfigApplied(providerRoutingReloadKey);
+            applyManagedAiRuntimeReloadIfIdle(providerRoutingReloadKey);
           }
           return;
         }
@@ -11424,7 +11791,6 @@ export default function App() {
       automationItems: automationItems(),
       automationWorkspaces: automationWorkspaces(),
       defaultAutomationWorkspaceId: activeAutomationWorkspace()?.serverWorkspaceId ?? null,
-      scheduledJobs: scheduledJobs(),
       scheduledJobsSource: scheduledJobsSource(),
       scheduledJobsSourceReady: scheduledJobsSourceReady(),
       scheduledJobsStatus: scheduledJobsStatus(),

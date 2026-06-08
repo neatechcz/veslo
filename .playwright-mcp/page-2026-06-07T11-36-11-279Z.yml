@@ -1,0 +1,57 @@
+- generic [ref=e2]:
+  - complementary [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: AG
+      - generic [ref=e6]:
+        - generic [ref=e7]: AI Gateway
+        - generic [ref=e8]: Admin control plane
+    - navigation "Admin sections" [ref=e9]:
+      - link "Organization" [ref=e10] [cursor=pointer]:
+        - /url: /admin/organization
+      - link "Users" [ref=e11] [cursor=pointer]:
+        - /url: /admin/users
+    - generic [ref=e12]:
+      - generic [ref=e13]: Auth
+      - generic [ref=e14]:
+        - generic [ref=e15]: Signed in
+        - generic [ref=e16]: Org Admin · organization admin
+      - button "Sign out" [ref=e17] [cursor=pointer]
+    - generic [ref=e18]:
+      - generic [ref=e19]: Live signals
+      - generic [ref=e20]:
+        - generic [ref=e21]: Gateway healthy
+        - generic [ref=e23]: 2 credential alerts
+  - main [ref=e25]:
+    - generic [ref=e26]:
+      - generic [ref=e27]:
+        - paragraph [ref=e28]: AI Gateway control plane
+        - heading "Users" [level=1] [ref=e126]
+        - paragraph [ref=e30]: Create, edit, disable, or remove users from the directory.
+      - button "Refresh" [ref=e32] [cursor=pointer]
+    - generic [ref=e127]:
+      - generic [ref=e129]:
+        - paragraph [ref=e130]: Users
+        - heading "Directory and account management" [level=2] [ref=e131]
+      - generic [ref=e133]:
+        - generic [ref=e134]:
+          - searchbox "Search by name or email" [ref=e135]
+          - combobox [ref=e136]:
+            - option "All statuses" [selected]
+            - option "Active"
+            - option "Invited"
+            - option "Disabled"
+          - combobox [ref=e137]:
+            - option "Role" [selected]
+            - option "Platform admin"
+            - option "Member"
+        - generic [ref=e138]:
+          - article [ref=e187] [cursor=pointer]:
+            - generic [ref=e188]:
+              - strong [ref=e189]: Org Admin
+              - paragraph [ref=e190]: org-admin@example.test · Member · organization_admin in Neatech
+            - generic [ref=e191]: Active
+          - article [ref=e192] [cursor=pointer]:
+            - generic [ref=e193]:
+              - strong [ref=e194]: Member User
+              - paragraph [ref=e195]: member@example.test · Member · member in Neatech
+            - generic [ref=e196]: Active

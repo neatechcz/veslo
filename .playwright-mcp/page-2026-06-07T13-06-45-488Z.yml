@@ -1,0 +1,108 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e5]: AG
+        - generic [ref=e6]:
+          - generic [ref=e7]: AI Gateway
+          - generic [ref=e8]: Admin control plane
+      - navigation "Admin sections" [ref=e9]:
+        - link "Organization" [ref=e10] [cursor=pointer]:
+          - /url: /admin/organization
+        - link "Credentials" [ref=e11] [cursor=pointer]:
+          - /url: /admin/credentials
+        - link "Usage" [ref=e12] [cursor=pointer]:
+          - /url: /admin/usage
+        - link "Alerts" [ref=e13] [cursor=pointer]:
+          - /url: /admin/alerts
+        - link "Users" [ref=e14] [cursor=pointer]:
+          - /url: /admin/users
+        - link "Audit" [ref=e15] [cursor=pointer]:
+          - /url: /admin/audit
+      - generic [ref=e16]:
+        - generic [ref=e17]: Auth
+        - generic [ref=e18]:
+          - generic [ref=e19]: Signed in
+          - generic [ref=e20]: Platform Admin · platform admin
+        - button "Sign out" [ref=e21] [cursor=pointer]
+      - generic [ref=e22]:
+        - generic [ref=e23]: Live signals
+        - generic [ref=e24]:
+          - generic [ref=e25]: Gateway healthy
+          - generic [ref=e27]: 2 credential alerts
+    - main [ref=e29]:
+      - generic [ref=e30]:
+        - generic [ref=e31]:
+          - paragraph [ref=e32]: AI Gateway control plane
+          - heading "Audit" [level=1] [ref=e357]
+          - paragraph [ref=e34]: Filter by actor, action, or entity and inspect detailed change history.
+        - button "Refresh" [ref=e36] [cursor=pointer]
+      - generic [ref=e358]:
+        - generic [ref=e360]:
+          - paragraph [ref=e361]: Audit
+          - heading "Filterable event stream" [level=2] [ref=e362]
+        - generic [ref=e363]:
+          - complementary [ref=e364]:
+            - generic [ref=e365]:
+              - generic [ref=e366]:
+                - text: Search
+                - searchbox "Search" [ref=e367]
+              - generic [ref=e368]:
+                - text: Date range
+                - combobox "Date range" [ref=e369]:
+                  - option "Last 24h" [selected]
+                  - option "Last 7 days"
+                  - option "Last 30 days"
+              - generic [ref=e370]:
+                - text: Actor
+                - combobox "Actor" [ref=e371]:
+                  - option "All actors" [selected]
+                  - option "Platform admin"
+                  - option "Member"
+              - generic [ref=e372]:
+                - text: Entity type
+                - combobox "Entity type" [ref=e373]:
+                  - option "All entities" [selected]
+                  - option "User"
+                  - option "Credential"
+                  - option "Route"
+            - generic [ref=e374]:
+              - button "Reset" [ref=e375] [cursor=pointer]
+              - button "Apply" [ref=e376] [cursor=pointer]
+          - generic [ref=e377]:
+            - article [ref=e388] [cursor=pointer]:
+              - generic [ref=e389]:
+                - strong [ref=e390]: user.update
+                - paragraph [ref=e391]: Changed member role.
+              - generic [ref=e392]: Jun 7, 12:10 PM
+            - article [ref=e393] [cursor=pointer]:
+              - generic [ref=e394]:
+                - strong [ref=e395]: alert.email.sent
+                - paragraph [ref=e396]: Urgent alert email sent.
+              - generic [ref=e397]: Jun 7, 12:06 PM
+  - dialog [ref=e398]:
+    - generic [ref=e399]:
+      - generic [ref=e400]:
+        - generic [ref=e401]:
+          - paragraph [ref=e402]: Audit
+          - heading "Event detail" [level=2] [ref=e403]
+        - button "Close audit detail" [active] [ref=e404] [cursor=pointer]: Close
+      - generic [ref=e405]:
+        - paragraph [ref=e406]: Event detail
+        - heading "user.update" [level=3] [ref=e407]
+        - generic [ref=e408]:
+          - generic [ref=e409]:
+            - generic [ref=e410]: Actor
+            - strong [ref=e411]: admin@example.test
+          - generic [ref=e412]:
+            - generic [ref=e413]: Changed fields
+            - strong [ref=e414]: orgRole
+          - generic [ref=e415]:
+            - generic [ref=e416]: Result
+            - strong [ref=e417]: success
+          - generic [ref=e418]:
+            - generic [ref=e419]: Entity
+            - strong [ref=e420]: user:user_member
+          - generic [ref=e421]:
+            - generic [ref=e422]: Timestamp
+            - strong [ref=e423]: Jun 7, 12:10 PM

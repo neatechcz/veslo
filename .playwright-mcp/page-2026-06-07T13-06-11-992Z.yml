@@ -1,0 +1,74 @@
+- generic [ref=e2]:
+  - complementary [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: AG
+      - generic [ref=e6]:
+        - generic [ref=e7]: AI Gateway
+        - generic [ref=e8]: Admin control plane
+    - navigation "Admin sections" [ref=e9]:
+      - link "Organization" [ref=e10] [cursor=pointer]:
+        - /url: /admin/organization
+      - link "Credentials" [ref=e11] [cursor=pointer]:
+        - /url: /admin/credentials
+      - link "Usage" [ref=e12] [cursor=pointer]:
+        - /url: /admin/usage
+      - link "Alerts" [ref=e13] [cursor=pointer]:
+        - /url: /admin/alerts
+      - link "Users" [active] [ref=e14] [cursor=pointer]:
+        - /url: /admin/users
+      - link "Audit" [ref=e15] [cursor=pointer]:
+        - /url: /admin/audit
+    - generic [ref=e16]:
+      - generic [ref=e17]: Auth
+      - generic [ref=e18]:
+        - generic [ref=e19]: Signed in
+        - generic [ref=e20]: Platform Admin · platform admin
+      - button "Sign out" [ref=e21] [cursor=pointer]
+    - generic [ref=e22]:
+      - generic [ref=e23]: Live signals
+      - generic [ref=e24]:
+        - generic [ref=e25]: Gateway healthy
+        - generic [ref=e27]: 2 credential alerts
+  - main [ref=e29]:
+    - generic [ref=e30]:
+      - generic [ref=e31]:
+        - paragraph [ref=e32]: AI Gateway control plane
+        - heading "Users" [level=1] [ref=e261]
+        - paragraph [ref=e34]: Create, edit, disable, or remove users from the directory.
+      - generic [ref=e35]:
+        - button "Refresh" [ref=e36] [cursor=pointer]
+        - button "Create user" [ref=e262] [cursor=pointer]
+    - generic [ref=e263]:
+      - generic [ref=e264]:
+        - generic [ref=e265]:
+          - paragraph [ref=e266]: Users
+          - heading "Directory and account management" [level=2] [ref=e267]
+        - button "Create user" [ref=e268] [cursor=pointer]
+      - generic [ref=e270]:
+        - generic [ref=e271]:
+          - searchbox "Search by name or email" [ref=e272]
+          - combobox [ref=e273]:
+            - option "All statuses" [selected]
+            - option "Active"
+            - option "Invited"
+            - option "Disabled"
+          - combobox [ref=e274]:
+            - option "Role" [selected]
+            - option "Platform admin"
+            - option "Member"
+        - generic [ref=e275]:
+          - article [ref=e276] [cursor=pointer]:
+            - generic [ref=e277]:
+              - strong [ref=e278]: Platform Admin
+              - paragraph [ref=e279]: admin@example.test · Platform admin · organization_admin in Neatech Platform
+            - generic [ref=e280]: Active
+          - article [ref=e281] [cursor=pointer]:
+            - generic [ref=e282]:
+              - strong [ref=e283]: Org Admin
+              - paragraph [ref=e284]: org-admin@example.test · Member · organization_admin in Neatech Platform
+            - generic [ref=e285]: Active
+          - article [ref=e286] [cursor=pointer]:
+            - generic [ref=e287]:
+              - strong [ref=e288]: Member User
+              - paragraph [ref=e289]: member@example.test · Member · member in Neatech Platform
+            - generic [ref=e290]: Active

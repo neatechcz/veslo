@@ -184,6 +184,39 @@ test("PATCH /workspaces/:id renames workspace and persists", async () => {
   expect(onDisk.workspaces[0]!.name).toBe("NewName");
 });
 
+test("PATCH /workspaces/:id updates OpenCode connection metadata and persists", async () => {
+  const seedDir = await mkdtemp(join(tmpdir(), "veslo-ws-opencode-"));
+  tempDirs.push(seedDir);
+  const seed: WorkspaceInfo = { id: "ws_opencode", name: "Workspace", path: seedDir, workspaceType: "local" };
+  const { server, configPath } = await startFixture([seed]);
+  const nextBaseUrl = "http://127.0.0.1:55101/workspace/ws_opencode/opencode";
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/workspaces/${seed.id}`, {
+    method: "PATCH",
+    headers: hostHeaders(),
+    body: JSON.stringify({
+      baseUrl: nextBaseUrl,
+      directory: seedDir,
+    }),
+  });
+
+  expect(response.status).toBe(200);
+  const payload = (await response.json()) as {
+    items: Array<{ id: string; baseUrl?: string; opencode?: { directory?: string } }>;
+    persisted: boolean;
+  };
+  const updated = payload.items.find((w) => w.id === seed.id)!;
+  expect(updated.baseUrl).toBe(nextBaseUrl);
+  expect(updated.opencode?.directory).toBe(seedDir);
+  expect(payload.persisted).toBe(true);
+
+  const onDisk = JSON.parse(await readFile(configPath, "utf8")) as {
+    workspaces: Array<{ baseUrl?: string; opencode?: { directory?: string } }>;
+  };
+  expect(onDisk.workspaces[0]!.baseUrl).toBe(nextBaseUrl);
+  expect(onDisk.workspaces[0]!.opencode?.directory).toBe(seedDir);
+});
+
 test("PATCH /workspaces/:id rejects empty name with 400", async () => {
   const seedDir = await mkdtemp(join(tmpdir(), "veslo-ws-rename-"));
   tempDirs.push(seedDir);

@@ -33,7 +33,7 @@ test("local runtime recovery restarts for dead endpoints and health timeouts", (
   );
   assert.match(
     source,
-    /if \(!isLocalRuntimeHealthTimeoutError\(error\) && !shouldRecoverLocalRuntimeFromHealthError\(error\)\) \{[\s\S]*return true;[\s\S]*setEngineReady\(false\);[\s\S]*workspaceStore\.ensureEngineForWorkspace\(\)/s,
+    /if \(!isLocalRuntimeHealthTimeoutError\(error\) && !shouldRecoverLocalRuntimeFromHealthError\(error\)\) \{[\s\S]*return true;[\s\S]*setEngineReady\(false\);[\s\S]*workspaceStore\.ensureEngineForWorkspace\(\{ activeRun: true \}\)/s,
     "runtime recovery should restart before send when the endpoint is dead or the local health probe times out",
   );
 });

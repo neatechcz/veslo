@@ -1,0 +1,110 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e5]: AG
+        - generic [ref=e6]:
+          - generic [ref=e7]: AI Gateway
+          - generic [ref=e8]: Admin control plane
+      - navigation "Admin sections" [ref=e9]:
+        - link "Organization" [ref=e10] [cursor=pointer]:
+          - /url: /admin/organization
+        - link "Credentials" [ref=e11] [cursor=pointer]:
+          - /url: /admin/credentials
+        - link "Usage" [ref=e12] [cursor=pointer]:
+          - /url: /admin/usage
+        - link "Alerts" [ref=e13] [cursor=pointer]:
+          - /url: /admin/alerts
+        - link "Users" [ref=e14] [cursor=pointer]:
+          - /url: /admin/users
+        - link "Audit" [ref=e15] [cursor=pointer]:
+          - /url: /admin/audit
+      - generic [ref=e16]:
+        - generic [ref=e17]: Auth
+        - generic [ref=e18]:
+          - generic [ref=e19]: Signed in
+          - generic [ref=e20]: Platform Admin · platform admin
+        - button "Sign out" [ref=e21] [cursor=pointer]
+      - generic [ref=e22]:
+        - generic [ref=e23]: Live signals
+        - generic [ref=e24]:
+          - generic [ref=e25]: Gateway healthy
+          - generic [ref=e27]: 2 credential alerts
+    - main [ref=e29]:
+      - generic [ref=e30]:
+        - generic [ref=e31]:
+          - paragraph [ref=e32]: AI Gateway control plane
+          - heading "Audit" [level=1] [ref=e358]
+          - paragraph [ref=e34]: Filter by actor, action, or entity and inspect detailed change history.
+        - button "Refresh" [ref=e36] [cursor=pointer]
+      - generic [ref=e359]:
+        - generic [ref=e361]:
+          - paragraph [ref=e362]: Audit
+          - heading "Filterable event stream" [level=2] [ref=e363]
+        - generic [ref=e364]:
+          - complementary [ref=e365]:
+            - generic [ref=e366]:
+              - generic [ref=e367]:
+                - text: Search
+                - searchbox "Search" [ref=e368]
+              - generic [ref=e369]:
+                - text: Date range
+                - combobox "Date range" [ref=e370]:
+                  - option "Last 24h" [selected]
+                  - option "Last 7 days"
+                  - option "Last 30 days"
+              - generic [ref=e371]:
+                - text: Actor
+                - combobox "Actor" [ref=e372]:
+                  - option "All actors" [selected]
+                  - option "Platform admin"
+                  - option "Member"
+              - generic [ref=e373]:
+                - text: Entity type
+                - combobox "Entity type" [ref=e374]:
+                  - option "All entities" [selected]
+                  - option "User"
+                  - option "Credential"
+                  - option "Route"
+            - generic [ref=e375]:
+              - button "Reset" [ref=e376] [cursor=pointer]
+              - button "Apply" [ref=e377] [cursor=pointer]
+          - generic [ref=e378]:
+            - article [ref=e379] [cursor=pointer]:
+              - generic [ref=e380]:
+                - strong [ref=e381]: user.update
+                - paragraph [ref=e382]: Changed member role.
+              - generic [ref=e383]: Jun 7, 12:10 PM
+            - article [ref=e384] [cursor=pointer]:
+              - generic [ref=e385]:
+                - strong [ref=e386]: alert.email.sent
+                - paragraph [ref=e387]: Urgent alert email sent.
+              - generic [ref=e388]: Jun 7, 12:06 PM
+  - dialog [ref=e330]:
+    - generic [ref=e331]:
+      - generic [ref=e332]:
+        - generic [ref=e333]:
+          - paragraph [ref=e334]: Alert
+          - heading "Incident detail" [level=2] [ref=e335]
+        - button "Close alert detail" [ref=e336] [cursor=pointer]: Close
+      - generic [ref=e337]:
+        - paragraph [ref=e338]: Runbook
+        - heading "Codex 5h usage reached 95%" [level=3] [ref=e339]
+        - generic [ref=e340]:
+          - generic [ref=e341]:
+            - generic [ref=e342]: Affected credential
+            - strong [ref=e343]: Unassigned
+          - generic [ref=e344]:
+            - generic [ref=e345]: Affected routes
+            - strong [ref=e346]: undefined
+          - generic [ref=e347]:
+            - generic [ref=e348]: Owner
+            - strong [ref=e349]: Unassigned
+          - generic [ref=e350]:
+            - generic [ref=e351]: Status
+            - strong [ref=e352]: active
+        - paragraph [ref=e353]: Alert lifecycle
+        - generic [ref=e354]:
+          - button "Acknowledge" [ref=e355] [cursor=pointer]
+          - button "Resolve" [ref=e356] [cursor=pointer]
+          - button "Open audit" [active] [ref=e357] [cursor=pointer]

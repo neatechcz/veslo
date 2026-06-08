@@ -38,7 +38,6 @@ const GATEWAY_PROVIDER_ALLOWED_HEADER_KEYS = new Set([
   "xveslogatewaytoken",
   "xveslosessionid",
 ]);
-const SERVER_PATCH_COMPARISON_SECRET_VALUE = "__veslo_secret__";
 const SERVER_PATCH_COMPARISON_GATEWAY_TOKEN_VALUE = "__veslo_gateway_token__";
 const SERVER_PATCH_COMPARISON_SECRET_VALUE = "__veslo_secret_value__";
 // VSLO-86 — a literal "[REDACTED]" sitting in opencode.jsonc on disk is a

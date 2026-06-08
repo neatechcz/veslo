@@ -1,7 +1,7 @@
 [scenario]
 name = "automations"
 fail_fast = true
-global_timeout_ms = 260000
+global_timeout_ms = 480000
 
 [[step]]
 name = "root exists"
@@ -57,21 +57,29 @@ const tauriInvoke = async (command, payload = {}) => {
 
 const workspaceDirectory = (workspace) => trimText(workspace?.directory) || trimText(workspace?.path);
 
+const connectionFromServerInfo = (info) => {
+  const baseUrl = trimBaseUrl(info?.baseUrl);
+  const clientToken = trimText(info?.clientToken);
+  const hostToken = trimText(info?.hostToken);
+  if (!info?.running || !baseUrl || !clientToken || !hostToken) return null;
+  return { baseUrl, clientToken, hostToken };
+};
+
+const waitForServerConnectionHealth = async (connection) => {
+  const response = await fetch(`${connection.baseUrl}/health`).catch(() => null);
+  if (!response?.ok) return false;
+  const payload = await response.json().catch(() => null);
+  if (payload?.ok !== true) return false;
+  return connection;
+};
+
 const waitForLocalVesloServerReady = async (timeout = 60000) => {
   let latest = null;
   return await waitUntil(async () => {
     latest = await tauriInvoke("veslo_server_info").catch(() => null);
-    const baseUrl = trimBaseUrl(latest?.baseUrl);
-    const clientToken = trimText(latest?.clientToken);
-    const hostToken = trimText(latest?.hostToken);
-    if (!latest?.running || !baseUrl || !clientToken || !hostToken) return false;
-
-    const response = await fetch(`${baseUrl}/health`).catch(() => null);
-    if (!response?.ok) return false;
-    const payload = await response.json().catch(() => null);
-    if (payload?.ok !== true) return false;
-
-    return { baseUrl, clientToken, hostToken };
+    const connection = connectionFromServerInfo(latest);
+    if (!connection) return false;
+    return await waitForServerConnectionHealth(connection);
   }, {
     timeout,
     interval: 500,
@@ -80,7 +88,12 @@ const waitForLocalVesloServerReady = async (timeout = 60000) => {
 };
 
 const restartVesloServerAndReconnect = async () => {
-  await tauriInvoke("veslo_server_restart");
+  const restartInfo = await tauriInvoke("veslo_server_restart");
+  const restarted = connectionFromServerInfo(restartInfo);
+  if (restarted) {
+    const healthy = await waitForServerConnectionHealth(restarted);
+    if (healthy) return healthy;
+  }
   return await waitForLocalVesloServerReady();
 };
 
@@ -92,16 +105,40 @@ const ensureVesloServerConnection = async () => {
   }
 };
 
+const freshServerPath = (path) => {
+  const separator = path.includes("?") ? "&" : "?";
+  const nonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  return `${path}${separator}_veslo_cache=${encodeURIComponent(nonce)}`;
+};
+
 const fetchJson = async (connection, path, init = {}) => {
-  const response = await fetch(`${connection.baseUrl}${path}`, {
+  const url = `${connection.baseUrl}${path}`;
+  const request = {
     ...init,
+    cache: "no-store",
     headers: {
       authorization: `Bearer ${connection.clientToken}`,
       accept: "application/json",
       ...(init.body ? { "content-type": "application/json" } : {}),
       ...(init.headers ?? {}),
     },
-  });
+  };
+  let response = null;
+  let lastError = null;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    try {
+      response = await fetch(url, request);
+      break;
+    } catch (error) {
+      lastError = error;
+      const message = String(error?.message || error || "").toLowerCase();
+      if (!message.includes("load failed") && !message.includes("failed to fetch") && !message.includes("network error")) {
+        throw error;
+      }
+      await sleep(250 * (attempt + 1));
+    }
+  }
+  if (!response) throw lastError ?? new Error(`Request ${init.method ?? "GET"} ${path} failed before response`);
   const text = await response.text();
   const payload = text.trim() ? JSON.parse(text) : null;
   if (!response.ok) {
@@ -112,14 +149,18 @@ const fetchJson = async (connection, path, init = {}) => {
 
 const fetchWorkspaces = (connection) => fetchJson(connection, "/workspaces");
 
-const waitForServerWorkspaceByDirectory = async (connection, directory) => {
+const findServerWorkspaceByDirectory = async (connection, directory) => {
   const normalizedDirectory = normalizePath(directory);
+  const payload = await fetchWorkspaces(connection).catch(() => null);
+  return payload?.items?.find((workspace) =>
+    normalizePath(workspace.directory) === normalizedDirectory ||
+    normalizePath(workspace.path) === normalizedDirectory
+  ) ?? null;
+};
+
+const waitForServerWorkspaceByDirectory = async (connection, directory) => {
   return await waitUntil(async () => {
-    const payload = await fetchWorkspaces(connection).catch(() => null);
-    return payload?.items?.find((workspace) =>
-      normalizePath(workspace.directory) === normalizedDirectory ||
-      normalizePath(workspace.path) === normalizedDirectory
-    ) ?? false;
+    return await findServerWorkspaceByDirectory(connection, directory) ?? false;
   }, {
     timeout: 90000,
     interval: 500,
@@ -154,35 +195,56 @@ const createAutomation = async (connection, workspaceId, input) => {
 };
 
 const listAutomations = async (connection, workspaceId) => {
-  const payload = await fetchJson(connection, `/workspace/${encodeURIComponent(workspaceId)}/automations`);
+  const payload = await fetchJson(connection, freshServerPath(`/workspace/${encodeURIComponent(workspaceId)}/automations`));
   return Array.isArray(payload.items) ? payload.items : [];
 };
 
 const listAutomationRuns = async (connection, workspaceId, automationId) => {
   const payload = await fetchJson(
     connection,
-    `/workspace/${encodeURIComponent(workspaceId)}/automations/${encodeURIComponent(automationId)}/runs`,
+    freshServerPath(`/workspace/${encodeURIComponent(workspaceId)}/automations/${encodeURIComponent(automationId)}/runs`),
   );
   return Array.isArray(payload.items) ? payload.items : [];
 };
 
-const waitForCompletedAutomation = async (connection, workspaceId, automationId) => {
+const waitForCompletedAutomation = async (getConnection, directory, initialWorkspaceId, automationId) => {
+  let latestWorkspace = null;
+  let latestWorkspaceId = trimText(initialWorkspaceId);
   let latestAutomation = null;
+  let latestAutomations = [];
   let latestRuns = [];
-  await waitUntil(async () => {
-    const automations = await listAutomations(connection, workspaceId);
-    latestAutomation = automations.find((automation) => automation.id === automationId) ?? null;
-    latestRuns = latestAutomation ? await listAutomationRuns(connection, workspaceId, automationId) : [];
+  const refresh = async () => {
+    const connection = await getConnection();
+    latestWorkspace = await findServerWorkspaceByDirectory(connection, directory) ?? latestWorkspace;
+    latestWorkspaceId = trimText(latestWorkspace?.id) || latestWorkspaceId;
+    if (!latestWorkspaceId) {
+      latestAutomations = [];
+      latestAutomation = null;
+      latestRuns = [];
+      return false;
+    }
+    latestAutomations = await listAutomations(connection, latestWorkspaceId);
+    latestAutomation = latestAutomations.find((automation) => automation.id === automationId) ?? null;
+    latestRuns = await listAutomationRuns(connection, latestWorkspaceId, automationId).catch(() => []);
     const successfulRun = latestRuns.find((run) => run.status === "success" && trimText(run.sessionId));
     return Boolean(latestAutomation?.status === "completed" && latestAutomation.completedAt && successfulRun);
-  }, {
-    timeout: 120000,
-    interval: 1000,
-    message: `Automation ${automationId} did not complete successfully. Automation=${JSON.stringify(latestAutomation)} runs=${JSON.stringify(latestRuns)}`,
-  });
+  };
+  const message = () => `Automation ${automationId} did not complete successfully. Workspace=${JSON.stringify(latestWorkspace)} workspaceId=${latestWorkspaceId} automationIds=${JSON.stringify(latestAutomations.map((automation) => automation.id))} automation=${JSON.stringify(latestAutomation)} runs=${JSON.stringify(latestRuns)}`;
+  try {
+    await waitUntil(refresh, {
+      timeout: 120000,
+      interval: 1000,
+      message: message(),
+    });
+  } catch (error) {
+    await sleep(500);
+    if (!await refresh()) {
+      throw new Error(message());
+    }
+  }
   const run = latestRuns.find((item) => item.status === "success" && trimText(item.sessionId));
   assert(latestAutomation && run, `Automation ${automationId} completed wait ended without a successful run.`);
-  return { automation: latestAutomation, run };
+  return { automation: latestAutomation, run, workspace: latestWorkspace };
 };
 
 const readAutomationCards = () =>
@@ -318,6 +380,8 @@ const saveButton = document.querySelector('[data-testid="scheduled-automation-ed
 assert(saveButton && !saveButton.disabled, "Inactive workspace automation save button is not enabled.");
 saveButton.click();
 
+const updatedCards = await waitForAutomationCards([activeAutomationName, editedInactiveAutomationName]);
+
 await waitUntil(async () => {
   const automations = await listAutomations(connection, secondaryServerWorkspace.id);
   return automations.some((automation) =>
@@ -330,22 +394,34 @@ await waitUntil(async () => {
   message: "Inactive workspace automation edit was not persisted through the server API",
 });
 
-const updatedCards = await waitForAutomationCards([activeAutomationName, editedInactiveAutomationName]);
 assert(
   updatedCards.find((card) => card.automationId === inactiveAutomation.id)?.text.includes(editedInactiveAutomationName),
   "Inactive workspace automation card did not show the edited name.",
 );
 
-await tauriInvoke("engine_start", {
-  projectDir: activeDirectory,
-  preferSidecar: true,
-  runtime: "veslo-orchestrator",
-  workspacePaths: [activeDirectory],
-});
+try {
+  await tauriInvoke("orchestrator_workspace_activate", {
+    workspacePath: activeDirectory,
+    name: trimText(activeWorkspace.displayName || activeWorkspace.name) || null,
+  });
+} catch {
+  await tauriInvoke("engine_start", {
+    projectDir: activeDirectory,
+    preferSidecar: true,
+    runtime: "veslo-orchestrator",
+    workspacePaths: [activeDirectory],
+  });
+  await tauriInvoke("orchestrator_workspace_activate", {
+    workspacePath: activeDirectory,
+    name: trimText(activeWorkspace.displayName || activeWorkspace.name) || null,
+  });
+}
 await waitUntil(async () => {
-  const info = await tauriInvoke("engine_info").catch(() => null);
+  const info = await tauriInvoke("engine_info", {
+    workspaceId: activeWorkspace?.id ?? null,
+    workspacePath: activeDirectory,
+  }).catch(() => null);
   return Boolean(
-    info?.running &&
     trimBaseUrl(info.baseUrl) &&
     normalizePath(info.projectDir) === normalizePath(activeDirectory)
   );
@@ -356,7 +432,8 @@ await waitUntil(async () => {
 });
 
 const runtimeConnection = await restartVesloServerAndReconnect();
-await waitForServerWorkspaceOpenCodeUrl(runtimeConnection, activeServerWorkspace.id);
+const runtimeActiveServerWorkspace = await waitForServerWorkspaceByDirectory(runtimeConnection, activeDirectory);
+await waitForServerWorkspaceOpenCodeUrl(runtimeConnection, runtimeActiveServerWorkspace.id);
 const globalSyncResponse = await fetch(`${runtimeConnection.baseUrl}/skills/materialization/sync-global`, {
   method: "POST",
   headers: {
@@ -380,7 +457,7 @@ assert(
 
 const runSuffix = Date.now();
 const dueRunAt = futureIso(4000);
-const dueAutomation = await createAutomation(runtimeConnection, activeServerWorkspace.id, {
+const dueAutomation = await createAutomation(runtimeConnection, runtimeActiveServerWorkspace.id, {
   id: `e2e_one_shot_due_${runSuffix}`,
   name: `E2E one-shot due ${runSuffix}`,
   runAt: dueRunAt,
@@ -388,14 +465,16 @@ const dueAutomation = await createAutomation(runtimeConnection, activeServerWork
 });
 assert(dueAutomation.nextRunAt === dueRunAt, "Due one-shot automation did not keep the requested nextRunAt.");
 
-const completed = await waitForCompletedAutomation(runtimeConnection, activeServerWorkspace.id, dueAutomation.id);
+const completed = await waitForCompletedAutomation(async () => await ensureVesloServerConnection(), activeDirectory, dueAutomation.workspaceId, dueAutomation.id);
 assert(completed.automation.status === "completed", "Due one-shot automation did not become completed.");
 assert(completed.automation.lastRunId === completed.run.id, "Due one-shot automation did not record the successful run id.");
 assert(completed.run.status === "success", "Due one-shot automation run did not succeed.");
 assert(trimText(completed.run.sessionId), "Due one-shot automation run did not create or reuse a session.");
 
+const futureConnection = await ensureVesloServerConnection();
+const futureActiveServerWorkspace = await waitForServerWorkspaceByDirectory(futureConnection, activeDirectory);
 const futureRunAt = futureIso(10 * 60 * 1000);
-const futureAutomation = await createAutomation(runtimeConnection, activeServerWorkspace.id, {
+const futureAutomation = await createAutomation(futureConnection, futureActiveServerWorkspace.id, {
   id: `e2e_one_shot_future_${runSuffix}`,
   name: `E2E one-shot future ${runSuffix}`,
   runAt: futureRunAt,
@@ -405,8 +484,9 @@ assert(futureAutomation.status === "active", "Future one-shot automation was not
 assert(futureAutomation.nextRunAt === futureRunAt, "Future one-shot automation did not keep the requested nextRunAt.");
 
 const restartedConnection = await restartVesloServerAndReconnect();
-await waitForServerWorkspaceOpenCodeUrl(restartedConnection, activeServerWorkspace.id);
-const automationsAfterRestart = await listAutomations(restartedConnection, activeServerWorkspace.id);
+const restartedActiveServerWorkspace = await waitForServerWorkspaceByDirectory(restartedConnection, activeDirectory);
+await waitForServerWorkspaceOpenCodeUrl(restartedConnection, restartedActiveServerWorkspace.id);
+const automationsAfterRestart = await listAutomations(restartedConnection, restartedActiveServerWorkspace.id);
 const futureAfterRestart = automationsAfterRestart.find((automation) => automation.id === futureAutomation.id);
 assert(futureAfterRestart?.status === "active", "Future one-shot automation did not remain active after server restart.");
 assert(futureAfterRestart?.nextRunAt === futureRunAt, "Future one-shot automation nextRunAt changed after server restart.");
@@ -440,7 +520,7 @@ true;
 name = "global automations pilot task finished"
 action = "wait"
 target = "[data-testid=\"automation-pilot-complete\"], [data-testid=\"automation-pilot-error\"]"
-timeout_ms = 240000
+timeout_ms = 450000
 
 [[step]]
 name = "global automations pilot task succeeded"

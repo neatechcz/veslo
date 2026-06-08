@@ -25,7 +25,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const DEFAULT_WEBDRIVER_PORT = 4445;
-const DEFAULT_PILOT_IDENTIFIER = 'com.neatech.veslo.dev';
+const DEFAULT_PILOT_IDENTIFIER = 'com.neatech.veslo.e2e';
 const DEFAULT_LAUNCH_TIMEOUT = 120_000;
 const LAUNCH_TIMEOUT = resolveLaunchTimeout();
 const REAL_PROFILE_ENV = process.env.E2E_USE_EXISTING_PROFILE?.trim() === '1';
@@ -245,6 +245,13 @@ export function createAppLaunchEnv(
     ...baseEnv,
     TAURI_PILOT_SOCKET: pilotSocket,
     OPENCODE_HOME: options.opencodeHome,
+    ...(baseEnv.VESLO_BUN_CACHE_HOME?.trim()
+      ? { VESLO_BUN_CACHE_HOME: baseEnv.VESLO_BUN_CACHE_HOME.trim() }
+      : baseEnv.HOME?.trim()
+        ? { VESLO_BUN_CACHE_HOME: baseEnv.HOME.trim() }
+        : baseEnv.USERPROFILE?.trim()
+          ? { VESLO_BUN_CACHE_HOME: baseEnv.USERPROFILE.trim() }
+          : {}),
     VESLO_DATA_DIR: vesloDataDir,
     VESLO_APP_DATA_DIR: vesloAppDataDir,
     VESLO_APP_LOCAL_DATA_DIR: vesloAppLocalDataDir,
@@ -381,6 +388,26 @@ function writeSkillMaterializationManifest(rootDir: string, entries: SkillEnable
   );
 }
 
+function seedWorkspaceGitRoot(workspacePath: string): void {
+  const gitDir = join(workspacePath, '.git');
+  mkdirSync(join(gitDir, 'branches'), { recursive: true });
+  mkdirSync(join(gitDir, 'objects', 'info'), { recursive: true });
+  mkdirSync(join(gitDir, 'objects', 'pack'), { recursive: true });
+  mkdirSync(join(gitDir, 'refs', 'heads'), { recursive: true });
+  writeFileSync(join(gitDir, 'HEAD'), 'ref: refs/heads/main\n');
+  writeFileSync(
+    join(gitDir, 'config'),
+    [
+      '[core]',
+      '\trepositoryformatversion = 0',
+      '\tfilemode = true',
+      '\tbare = false',
+      '\tlogallrefupdates = true',
+      '',
+    ].join('\n'),
+  );
+}
+
 function seedSkillEnableInventoryFixture(input: {
   root: string;
   workspacePath: string;
@@ -452,6 +479,7 @@ function seedSkillEnableInventoryFixture(input: {
 export function seedDefaultWorkspaceState(root: string, env: NodeJS.ProcessEnv): void {
   const workspacePath = join(root, 'workspaces', 'visual-workspace');
   mkdirSync(workspacePath, { recursive: true });
+  seedWorkspaceGitRoot(workspacePath);
   const opencodePath = join(workspacePath, '.opencode');
   mkdirSync(opencodePath, { recursive: true });
   writeFileSync(
@@ -477,6 +505,7 @@ export function seedDefaultWorkspaceState(root: string, env: NodeJS.ProcessEnv):
 
   if (shouldSeedAutomationsSecondaryWorkspace(env)) {
     mkdirSync(secondaryAutomationWorkspacePath, { recursive: true });
+    seedWorkspaceGitRoot(secondaryAutomationWorkspacePath);
     workspaces.push({
       id: 'e2e-automations-secondary-workspace',
       name: 'Automations Secondary Workspace',

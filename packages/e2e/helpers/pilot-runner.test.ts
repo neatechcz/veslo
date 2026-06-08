@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
@@ -69,6 +70,36 @@ test('automation pilot scenario requests the secondary workspace fixture', () =>
   );
 });
 
+test('automation pilot scenario cache-busts volatile server polling', () => {
+  const source = readFileSync(join(import.meta.dirname, '..', 'pilot-scenarios', 'automations.toml'), 'utf8');
+
+  assert.match(source, /const freshServerPath = \(path\) =>/);
+  assert.match(source, /fetchJson\(connection, freshServerPath\(`/);
+});
+
+test('automation pilot scenario reuses restart-returned Veslo server connection', () => {
+  const source = readFileSync(join(import.meta.dirname, '..', 'pilot-scenarios', 'automations.toml'), 'utf8');
+
+  assert.match(source, /const restartInfo = await tauriInvoke\("veslo_server_restart"\);/);
+  assert.match(source, /const restarted = connectionFromServerInfo\(restartInfo\);/);
+});
+
+test('automation pilot scenario re-resolves server workspaces by directory after restart', () => {
+  const source = readFileSync(join(import.meta.dirname, '..', 'pilot-scenarios', 'automations.toml'), 'utf8');
+
+  assert.match(source, /const findServerWorkspaceByDirectory = async \(connection, directory\) =>/);
+  assert.match(source, /const runtimeActiveServerWorkspace = await waitForServerWorkspaceByDirectory\(runtimeConnection, activeDirectory\);/);
+  assert.match(source, /waitForCompletedAutomation\(async \(\) => await ensureVesloServerConnection\(\), activeDirectory, dueAutomation\.workspaceId, dueAutomation\.id\);/);
+});
+
+test('composer draft move pilot scenario uses a pointer click sequence for menu selection', () => {
+  const source = readFileSync(join(import.meta.dirname, '..', 'pilot-scenarios', 'composer-draft-workspace-move.toml'), 'utf8');
+
+  assert.match(source, /const dispatchClickSequence = \(element\) =>/);
+  assert.match(source, /dispatchClickSequence\(picker\);/);
+  assert.match(source, /dispatchClickSequence\(option\);/);
+});
+
 test('soul dashboard pilot scenario requests skill registry Den auth fixture', () => {
   const e2eRoot = '/repo/packages/e2e';
 
@@ -108,6 +139,22 @@ test('message send degraded registry pilot scenario requests the managed AI fixt
     scenarioSelectionNeedsManagedAiGatewayFixture(resolvePilotScenarioSelection({ scenario: ['smoke'] }, e2eRoot)),
     false,
   );
+});
+
+test('message send degraded registry pilot allows cold OpenCode managed-AI startup', () => {
+  const source = readFileSync(join(import.meta.dirname, '..', 'pilot-scenarios', 'message-send-registry-degraded.toml'), 'utf8');
+
+  assert.match(source, /global_timeout_ms = 500000/);
+  assert.match(source, /}, \{\n  timeout: 300000,\n  interval: 1000,\n  message: `Managed AI fixture response did not render/);
+  assert.match(source, /timeout_ms = 470000/);
+});
+
+test('multi-workspace sessions pilot retries transient local server transport failures', () => {
+  const source = readFileSync(join(import.meta.dirname, '..', 'pilot-scenarios', 'multi-workspace-sessions.toml'), 'utf8');
+
+  assert.match(source, /const isRetryableServerTransportError = \(error\) =>/);
+  assert.match(source, /for \(let attempt = 0; attempt < 8; attempt \+= 1\)/);
+  assert.match(source, /await sleep\(250 \* \(attempt \+ 1\)\);/);
 });
 
 test('sidebar session retention pilot scenario requests the managed AI fixture', () => {

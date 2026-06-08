@@ -1,0 +1,100 @@
+- generic [ref=e2]:
+  - complementary [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: AG
+      - generic [ref=e6]:
+        - generic [ref=e7]: AI Gateway
+        - generic [ref=e8]: Admin control plane
+    - navigation "Admin sections" [ref=e9]:
+      - link "Overview" [ref=e10] [cursor=pointer]:
+        - /url: /admin
+      - link "Organization" [ref=e11] [cursor=pointer]:
+        - /url: /admin/organization
+      - link "Credentials" [ref=e12] [cursor=pointer]:
+        - /url: /admin/credentials
+      - link "Usage" [ref=e13] [cursor=pointer]:
+        - /url: /admin/usage
+      - link "Alerts" [ref=e14] [cursor=pointer]:
+        - /url: /admin/alerts
+      - link "Users" [ref=e15] [cursor=pointer]:
+        - /url: /admin/users
+      - link "Audit" [ref=e16] [cursor=pointer]:
+        - /url: /admin/audit
+    - generic [ref=e17]:
+      - generic [ref=e18]: Auth
+      - generic [ref=e19]:
+        - generic [ref=e20]: Signed in
+        - generic [ref=e21]: Admin User · platform admin
+      - button "Sign out" [ref=e22] [cursor=pointer]
+    - generic [ref=e23]:
+      - generic [ref=e24]: Live signals
+      - generic [ref=e25]:
+        - generic [ref=e26]: Gateway healthy
+        - generic [ref=e28]: 2 credential alerts
+  - main [ref=e30]:
+    - generic [ref=e31]:
+      - generic [ref=e32]:
+        - paragraph [ref=e33]: AI Gateway control plane
+        - heading "Organization" [level=1] [ref=e34]
+        - paragraph [ref=e35]: Manage organization details, domains, and pending invites.
+      - button "Refresh" [ref=e37] [cursor=pointer]
+    - generic [ref=e39]:
+      - generic [ref=e40]:
+        - generic [ref=e41]:
+          - paragraph [ref=e42]: Organization
+          - heading "Organization details" [level=2] [ref=e43]
+        - generic [ref=e44]:
+          - generic [ref=e45]:
+            - generic [ref=e46]: Organization
+            - combobox "Organization" [active] [ref=e47]: Acme Workspace - acme - org_1
+          - button "Save organization" [ref=e48] [cursor=pointer]
+      - generic [ref=e49]:
+        - complementary [ref=e50]:
+          - paragraph [ref=e51]: Details
+          - heading "Acme Workspace" [level=3] [ref=e115]
+          - generic [ref=e53]:
+            - generic [ref=e54]:
+              - generic [ref=e55]: Name
+              - textbox "Name" [ref=e56]: Acme Workspace
+            - generic [ref=e57]:
+              - generic [ref=e58]: Slug
+              - textbox "Slug" [ref=e59]: acme
+            - generic [ref=e60]:
+              - generic [ref=e61]: Seat limit
+              - spinbutton "Seat limit" [ref=e62]: "12"
+          - paragraph [ref=e63]: No pending changes.
+        - generic [ref=e64]:
+          - generic [ref=e65]:
+            - generic [ref=e66]:
+              - generic [ref=e67]:
+                - paragraph [ref=e68]: Domains
+                - heading "Enabled domains" [level=3] [ref=e69]
+              - button "Add domain" [ref=e70] [cursor=pointer]
+            - generic [ref=e71]:
+              - article [ref=e116] [cursor=pointer]:
+                - generic [ref=e117]:
+                  - strong [ref=e118]: acme.test
+                  - paragraph [ref=e119]: Enabled · Self signup enabled
+                - generic [ref=e120]:
+                  - button "Edit" [ref=e121]
+                  - button "Remove" [ref=e122]
+              - article [ref=e123] [cursor=pointer]:
+                - generic [ref=e124]:
+                  - strong [ref=e125]: legacy.test
+                  - paragraph [ref=e126]: Disabled · Self signup disabled
+                - generic [ref=e127]:
+                  - button "Edit" [ref=e128]
+                  - button "Remove" [ref=e129]
+          - generic [ref=e86]:
+            - generic [ref=e87]:
+              - generic [ref=e88]:
+                - paragraph [ref=e89]: Invites
+                - heading "Pending invites" [level=3] [ref=e90]
+              - button "Send invite" [ref=e91] [cursor=pointer]
+            - article [ref=e130] [cursor=pointer]:
+              - generic [ref=e131]:
+                - strong [ref=e132]: new.user@acme.test
+                - paragraph [ref=e133]: member · expires Jun 14, 04:11 PM
+              - generic [ref=e134]:
+                - button "Resend" [ref=e135]
+                - button "Revoke" [ref=e136]

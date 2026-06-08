@@ -380,7 +380,7 @@ mod tests {
         let info = sample_live_info();
         let (sanitized, stale) = sanitize_live_info_with_health(info.clone(), |_| {
             Some(HealthIdentity {
-                token: None,
+                token: info.client_token.clone(),
                 pid: Some(99999),
             })
         });

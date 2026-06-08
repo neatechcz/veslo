@@ -84,27 +84,31 @@ if (!window.__veslo230SeedStarted) {
       const workspacePath = normalize(workspace?.path || workspace?.directory);
       assert(workspacePath, `Workspace path is missing from bootstrap payload: ${JSON.stringify(workspace)}`);
       let latest = null;
+      try {
+        await tauriInvoke("orchestrator_workspace_activate", {
+          workspacePath,
+          name: normalize(workspace?.displayName || workspace?.name) || null,
+        });
+      } catch (error) {
+        await tauriInvoke("engine_start", {
+          projectDir: workspacePath,
+          preferSidecar: true,
+          opencodeBinPath: null,
+          runtime: "veslo-orchestrator",
+          workspacePaths: [workspacePath],
+        });
+        await tauriInvoke("orchestrator_workspace_activate", {
+          workspacePath,
+          name: normalize(workspace?.displayName || workspace?.name) || null,
+        });
+      }
       return await waitUntil(async () => {
-        latest = await tauriInvoke("engine_info").catch((error) => ({ error: error?.message || String(error) }));
+        latest = await tauriInvoke("engine_info", {
+          workspaceId: workspace?.id ?? null,
+          workspacePath,
+        }).catch((error) => ({ error: error?.message || String(error) }));
         if (trimBaseUrl(latest?.baseUrl)) return latest;
-        try {
-          await tauriInvoke("engine_start", {
-            projectDir: workspacePath,
-            preferSidecar: true,
-            opencodeBinPath: null,
-            runtime: "veslo-orchestrator",
-            workspacePaths: [workspacePath],
-          });
-          await tauriInvoke("orchestrator_workspace_activate", {
-            workspacePath,
-            name: normalize(workspace?.displayName || workspace?.name) || null,
-          });
-        } catch (error) {
-          latest = { error: error?.message || String(error) };
-          return false;
-        }
-        latest = await tauriInvoke("engine_info").catch((error) => ({ error: error?.message || String(error) }));
-        return trimBaseUrl(latest?.baseUrl) ? latest : false;
+        return false;
       }, {
         timeout: 90000,
         interval: 1000,
@@ -113,17 +117,9 @@ if (!window.__veslo230SeedStarted) {
     };
     const opencodeRequest = async (engineInfo, path, options = {}) => {
       const baseUrl = trimBaseUrl(engineInfo?.baseUrl);
-      const directory = normalize(engineInfo?.projectDir || engineInfo?.directory);
-      const username = normalize(engineInfo?.opencodeUsername || engineInfo?.username);
-      const password = normalize(engineInfo?.opencodePassword || engineInfo?.password);
       assert(baseUrl, `Engine baseUrl missing: ${JSON.stringify(engineInfo)}`);
-      assert(directory, `Engine directory missing: ${JSON.stringify(engineInfo)}`);
       const headers = new Headers(options.headers || {});
       headers.set("accept", "application/json");
-      headers.set("x-opencode-directory", directory);
-      if (username || password) {
-        headers.set("authorization", `Basic ${btoa(`${username}:${password}`)}`);
-      }
       if (options.body && !headers.has("content-type")) {
         headers.set("content-type", "application/json");
       }
@@ -355,27 +351,31 @@ if (!window.__veslo230RetentionStarted) {
       const workspacePath = normalize(workspace?.path || workspace?.directory);
       assert(workspacePath, `Workspace path is missing from bootstrap payload: ${JSON.stringify(workspace)}`);
       let latest = null;
+      try {
+        await tauriInvoke("orchestrator_workspace_activate", {
+          workspacePath,
+          name: normalize(workspace?.displayName || workspace?.name) || null,
+        });
+      } catch (error) {
+        await tauriInvoke("engine_start", {
+          projectDir: workspacePath,
+          preferSidecar: true,
+          opencodeBinPath: null,
+          runtime: "veslo-orchestrator",
+          workspacePaths: [workspacePath],
+        });
+        await tauriInvoke("orchestrator_workspace_activate", {
+          workspacePath,
+          name: normalize(workspace?.displayName || workspace?.name) || null,
+        });
+      }
       return await waitUntil(async () => {
-        latest = await tauriInvoke("engine_info").catch((error) => ({ error: error?.message || String(error) }));
+        latest = await tauriInvoke("engine_info", {
+          workspaceId: workspace?.id ?? null,
+          workspacePath,
+        }).catch((error) => ({ error: error?.message || String(error) }));
         if (trimBaseUrl(latest?.baseUrl)) return latest;
-        try {
-          await tauriInvoke("engine_start", {
-            projectDir: workspacePath,
-            preferSidecar: true,
-            opencodeBinPath: null,
-            runtime: "veslo-orchestrator",
-            workspacePaths: [workspacePath],
-          });
-          await tauriInvoke("orchestrator_workspace_activate", {
-            workspacePath,
-            name: normalize(workspace?.displayName || workspace?.name) || null,
-          });
-        } catch (error) {
-          latest = { error: error?.message || String(error) };
-          return false;
-        }
-        latest = await tauriInvoke("engine_info").catch((error) => ({ error: error?.message || String(error) }));
-        return trimBaseUrl(latest?.baseUrl) ? latest : false;
+        return false;
       }, {
         timeout: 90000,
         interval: 1000,
@@ -479,10 +479,10 @@ if (!window.__veslo230RetentionStarted) {
         interval: 250,
         message: `Send click did not reach composer handler. Trace=${JSON.stringify(sendTrace())}`,
       });
-      await waitUntil(() => sendTrace().some((entry) => entry?.event === "createSessionAndOpen:create-ok"), {
+      await waitUntil(() => bodyText().includes(seed.prompt) && /Responding|Just asking/i.test(bodyText()), {
         timeout: 60000,
         interval: 500,
-        message: `New session was not created. Trace=${JSON.stringify(sendTrace())}. Body=${bodyText().slice(0, 2000)}`,
+        message: `New pending conversation did not appear. Trace=${JSON.stringify(sendTrace())}. Body=${bodyText().slice(0, 2000)}`,
       });
 
       await waitForRows(seed.titles, "Retained after create", 60000);

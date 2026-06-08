@@ -142,6 +142,45 @@ if (!window.__vesloComposerDraftWorkspaceMoveStarted) {
       editor.focus();
       await sleep(900);
 
+      const dispatchClickSequence = (element) => {
+        element.focus?.();
+        const base = {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          view: window,
+          button: 0,
+        };
+        if (typeof PointerEvent === "function") {
+          element.dispatchEvent(new PointerEvent("pointerdown", {
+            ...base,
+            pointerId: 1,
+            pointerType: "mouse",
+            isPrimary: true,
+            buttons: 1,
+          }));
+          element.dispatchEvent(new PointerEvent("pointerup", {
+            ...base,
+            pointerId: 1,
+            pointerType: "mouse",
+            isPrimary: true,
+            buttons: 0,
+          }));
+        }
+        element.dispatchEvent(new MouseEvent("mousedown", {
+          ...base,
+          buttons: 1,
+        }));
+        element.dispatchEvent(new MouseEvent("mouseup", {
+          ...base,
+          buttons: 0,
+        }));
+        element.dispatchEvent(new MouseEvent("click", {
+          ...base,
+          buttons: 0,
+        }));
+      };
+
       const clickTarget = async (targetId) => {
         const picker = await waitUntil(() => {
           const candidate = document.querySelector('[data-testid="composer-target-picker"]');
@@ -151,7 +190,7 @@ if (!window.__vesloComposerDraftWorkspaceMoveStarted) {
           timeout: 30000,
           message: "Composer target picker did not become enabled",
         });
-        picker.click();
+        dispatchClickSequence(picker);
         const option = await waitUntil(() => {
           const options = Array.from(document.querySelectorAll('[data-testid="composer-target-option"]'));
           return options.find((candidate) => candidate.dataset.composerTargetId === targetId && !candidate.disabled) || false;
@@ -159,7 +198,7 @@ if (!window.__vesloComposerDraftWorkspaceMoveStarted) {
           timeout: 30000,
           message: `Composer target option ${targetId} did not become enabled`,
         });
-        option.click();
+        dispatchClickSequence(option);
         await waitUntil(() => window.localStorage.getItem("veslo.active-pending-draft.v1") === targetId, {
           timeout: 30000,
           message: `Composer target ${targetId} did not become active`,

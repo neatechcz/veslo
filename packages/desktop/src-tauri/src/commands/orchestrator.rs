@@ -64,11 +64,17 @@ fn resolve_data_dir(manager: &OrchestratorManager) -> String {
 
 fn resolve_base_url(manager: &OrchestratorManager) -> Result<String, String> {
     let data_dir = resolve_data_dir(manager);
-    let status = resolve_orchestrator_status(&data_dir, None);
-    status
-        .daemon
-        .map(|daemon| daemon.base_url)
-        .ok_or_else(|| "orchestrator daemon is not running".to_string())
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let status = resolve_orchestrator_status(&data_dir, None);
+        if let Some(daemon) = status.daemon {
+            return Ok(daemon.base_url);
+        }
+        if Instant::now() >= deadline {
+            return Err("orchestrator daemon is not running".to_string());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 fn workspace_id_for_registered_path(app: &AppHandle, workspace_path: &str) -> Option<String> {
@@ -528,4 +534,3 @@ pub fn orchestrator_start_detached(
         port,
     })
 }
-

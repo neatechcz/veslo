@@ -240,6 +240,16 @@ test("selectSession uses offline fallback for database browsing even when a clie
               },
             },
           } as any),
+        routing: makeTestRouting(() =>
+          ({
+            session: {
+              messages: () => {
+                messageCalls += 1;
+                throw new Error("session.messages must not run for DB browsing");
+              },
+            },
+          } as any),
+        ),
         activeWorkspaceRoot: () => "/tmp/prometheus",
         selectedSessionId,
         setSelectedSessionId,
@@ -268,6 +278,47 @@ test("selectSession uses offline fallback for database browsing even when a clie
       assert.equal(offlineLoadCalls, 1);
       assert.equal(messageCalls, 0);
       assert.equal(store.getCachedTranscriptMessageCount("sess-db"), 1);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("refreshSessionMessages hydrates a completed prompt when SSE was missed", async () => {
+  let messageCalls = 0;
+
+  await createRoot(async (dispose) => {
+    try {
+      const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>("sess-a");
+
+      const clientFn = () =>
+        ({
+          session: {
+            messages: (input: { sessionID: string; limit: number }) => {
+              messageCalls += 1;
+              assert.equal(input.sessionID, "sess-a");
+              assert.equal(input.limit, 140);
+              return ok([{ info: makeMessageInfo(), parts: [makeTextPart()] }]);
+            },
+          },
+        }) as any;
+      const store = createSessionStore({
+        client: clientFn,
+        routing: makeTestRouting(clientFn),
+        activeWorkspaceRoot: () => "/Users/vaclavsoukup/ai discussion projects/Client data and offer descriptions/Prometheus",
+        selectedSessionId,
+        setSelectedSessionId,
+        developerMode: () => false,
+        setError: () => {},
+        setSseConnected: () => {},
+      });
+
+      const refreshed = await store.refreshSessionMessages("sess-a");
+
+      assert.equal(refreshed, true);
+      assert.equal(messageCalls, 1);
+      assert.equal(selectedSessionId(), "sess-a");
+      assert.equal(store.getCachedTranscriptMessageCount("sess-a"), 1);
     } finally {
       dispose();
     }

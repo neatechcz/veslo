@@ -1,0 +1,139 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e5]: AG
+        - generic [ref=e6]:
+          - generic [ref=e7]: AI Gateway
+          - generic [ref=e8]: Admin control plane
+      - navigation "Admin sections" [ref=e9]:
+        - link "Organization" [ref=e10] [cursor=pointer]:
+          - /url: /admin/organization
+        - link "Credentials" [ref=e11] [cursor=pointer]:
+          - /url: /admin/credentials
+        - link "Usage" [ref=e12] [cursor=pointer]:
+          - /url: /admin/usage
+        - link "Alerts" [ref=e13] [cursor=pointer]:
+          - /url: /admin/alerts
+        - link "Users" [ref=e14] [cursor=pointer]:
+          - /url: /admin/users
+        - link "Audit" [ref=e15] [cursor=pointer]:
+          - /url: /admin/audit
+      - generic [ref=e16]:
+        - generic [ref=e17]: Auth
+        - generic [ref=e18]:
+          - generic [ref=e19]: Signed in
+          - generic [ref=e20]: Platform Admin · platform admin
+        - button "Sign out" [ref=e21] [cursor=pointer]
+      - generic [ref=e22]:
+        - generic [ref=e23]: Live signals
+        - generic [ref=e24]:
+          - generic [ref=e25]: Gateway healthy
+          - generic [ref=e27]: 2 credential alerts
+    - main [ref=e29]:
+      - generic [ref=e30]:
+        - generic [ref=e31]:
+          - paragraph [ref=e32]: AI Gateway control plane
+          - heading "Users" [level=1] [ref=e261]
+          - paragraph [ref=e34]: Create, edit, disable, or remove users from the directory.
+        - generic [ref=e35]:
+          - button "Refresh" [ref=e36] [cursor=pointer]
+          - button "Create user" [ref=e262] [cursor=pointer]
+      - generic [ref=e263]:
+        - generic [ref=e264]:
+          - generic [ref=e265]:
+            - paragraph [ref=e266]: Users
+            - heading "Directory and account management" [level=2] [ref=e267]
+          - button "Create user" [ref=e268] [cursor=pointer]
+        - generic [ref=e270]:
+          - generic [ref=e271]:
+            - searchbox "Search by name or email" [ref=e272]
+            - combobox [ref=e273]:
+              - option "All statuses" [selected]
+              - option "Active"
+              - option "Invited"
+              - option "Disabled"
+            - combobox [ref=e274]:
+              - option "Role" [selected]
+              - option "Platform admin"
+              - option "Member"
+          - generic [ref=e275]:
+            - article [ref=e291] [cursor=pointer]:
+              - generic [ref=e292]:
+                - strong [ref=e293]: Platform Admin
+                - paragraph [ref=e294]: admin@example.test · Platform admin · organization_admin in Neatech Platform
+              - generic [ref=e295]: Active
+            - article [ref=e296] [cursor=pointer]:
+              - generic [ref=e297]:
+                - strong [ref=e298]: Org Admin
+                - paragraph [ref=e299]: org-admin@example.test · Member · organization_admin in Neatech Platform
+              - generic [ref=e300]: Active
+            - article [ref=e301] [cursor=pointer]:
+              - generic [ref=e302]:
+                - strong [ref=e303]: Member User
+                - paragraph [ref=e304]: member@example.test · Member · member in Neatech Platform
+              - generic [ref=e305]: Active
+  - dialog [ref=e306]:
+    - generic [ref=e307]:
+      - generic [ref=e308]:
+        - generic [ref=e309]:
+          - paragraph [ref=e310]: Active
+          - heading "Member User" [level=2] [ref=e311]
+        - button "Close user editor" [active] [ref=e312] [cursor=pointer]: Close
+      - generic [ref=e313]:
+        - generic [ref=e314]:
+          - generic [ref=e315]: Name
+          - textbox "Name" [ref=e316]: Member User
+        - generic [ref=e317]:
+          - generic [ref=e318]: Email
+          - textbox "Email" [disabled] [ref=e319]: member@example.test
+        - generic [ref=e320]:
+          - generic [ref=e321]: Organization
+          - combobox "Organization" [ref=e322]:
+            - option "Neatech Platform" [selected]
+        - generic [ref=e323]:
+          - generic [ref=e324]: Organization role
+          - combobox "Organization role" [ref=e325]:
+            - option "Organization admin"
+            - option "Member" [selected]
+        - generic [ref=e326]:
+          - generic [ref=e327]: Platform admin
+          - checkbox "Platform admin" [ref=e328]
+        - generic [ref=e329]:
+          - generic [ref=e330]: Send invite email immediately
+          - checkbox "Send invite email immediately" [checked] [disabled] [ref=e331]
+        - generic [ref=e332]:
+          - generic [ref=e333]:
+            - paragraph [ref=e334]: AI access
+            - heading "Admin-managed AI access" [level=4] [ref=e335]
+          - generic [ref=e336]:
+            - generic [ref=e337]: Enable AI access
+            - checkbox "Enable AI access" [ref=e338]
+          - generic [ref=e339]:
+            - generic [ref=e340]: Assigned provider
+            - combobox "Assigned provider" [ref=e341]:
+              - option "Not assigned" [selected]
+              - option "OpenAI"
+              - option "Anthropic"
+              - option "Codex / ChatGPT runtime"
+              - option "OpenAI-compatible provider"
+          - generic [ref=e342]:
+            - generic [ref=e343]: Assigned credential
+            - combobox "Assigned credential" [disabled] [ref=e344]:
+              - option "Select assigned credential" [selected]
+              - option "cred_codex_ok"
+              - option "cred_codex_warning"
+              - option "cred_custom"
+          - generic [ref=e345]:
+            - generic [ref=e346]: Default model
+            - combobox "Default model" [ref=e347]
+          - generic [ref=e348]:
+            - generic [ref=e349]: Allowed models
+            - textbox "Allowed models" [ref=e350]:
+              - /placeholder: One model per line or comma-separated
+          - paragraph [ref=e351]: Assignments are enforced by the gateway for this signed-in user.
+      - generic [ref=e352]:
+        - button "Disable user" [ref=e353] [cursor=pointer]
+        - button "Delete user" [ref=e354] [cursor=pointer]
+        - button "Save changes" [ref=e355] [cursor=pointer]
+      - paragraph [ref=e356]: Directory changes and AI access assignments are applied separately.

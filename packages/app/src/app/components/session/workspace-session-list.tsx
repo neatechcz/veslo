@@ -1964,11 +1964,7 @@ export default function WorkspaceSessionList(props: Props) {
               </Show>
               <Show when={row.status === "error"}>
                 <span
-                  class={`text-[10px] px-1.5 py-0.5 rounded-full border ${
-                    taskLoadError().tone === "offline"
-                      ? "border-amber-7 text-amber-11 bg-amber-3"
-                      : "border-red-7 text-red-11 bg-red-3"
-                  }`}
+                  class="text-[10px] px-1.5 py-0.5 rounded-full border border-red-7 text-red-11 bg-red-3"
                   title={taskLoadError().title}
                 >
                   {taskLoadError().label}

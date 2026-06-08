@@ -1651,7 +1651,13 @@ function workspaceIdForRemote(baseUrl: string, directory?: string | null): strin
 
 function opencodeRouterSendToolSource(): string {
   return [
-    'import { tool } from "@opencode-ai/plugin"',
+    'import { z } from "zod"',
+    "",
+    "function tool(input) {",
+    "  return input",
+    "}",
+    "",
+    "tool.schema = z",
     "",
     "const redactTarget = (value) => {",
     "  const text = String(value || '').trim()",
@@ -1759,7 +1765,13 @@ function opencodeRouterSendToolSource(): string {
 
 function opencodeRouterStatusToolSource(): string {
   return [
-    'import { tool } from "@opencode-ai/plugin"',
+    'import { z } from "zod"',
+    "",
+    "function tool(input) {",
+    "  return input",
+    "}",
+    "",
+    "tool.schema = z",
     "",
     "const redactTarget = (value) => {",
     "  const text = String(value || '').trim()",
@@ -1920,40 +1932,82 @@ function opencodeRouterStatusToolSource(): string {
 }
 
 /**
- * Vendors `@opencode-ai/plugin` (plus its `zod` dependency) into
- * `<configDir>/node_modules/` so managed tool files load cleanly inside the
- * sandboxed opencode engine. Opencode runs Bun with `--no-install`, and
- * opencode's `tool({...})` introspects real zod internals (`_zod.def`), so a
- * pure shim isn't enough — we need the actual published packages.
- *
- * Source is the local Bun install cache (`~/.bun/install/cache/<pkg>@<ver>@@@1/`),
- * which is populated by `bun install` during development and shipped alongside
- * orchestrator builds. If the cache is empty (CI, first run), we fall back to
- * a minimal hand-written shim that lets opencode load the tools but won't pass
- * full zod introspection — the warning is logged so callers can investigate.
+ * Vendors the minimal runtime packages managed OpenCode tool files need into
+ * `<configDir>/node_modules/` so sandboxed engines do not reach npm before
+ * inference. OpenCode 1.16 still probes for `@opencode-ai/plugin` when tools or
+ * plugins are present, so we provide the matching `tool` export as an offline
+ * shim.
  */
-const VESLO_MANAGED_PLUGIN_VERSION = "1.16.2";
 const VESLO_MANAGED_ZOD_VERSION = "4.1.8";
+const VESLO_OPENCODE_PLUGIN_VERSION = "1.16.2";
+const VESLO_OPENAI_COMPATIBLE_PROVIDER_VERSION = "2.0.48";
 
-const MANAGED_PLUGIN_FALLBACK_TOOL = `import { z } from "zod";
+const MANAGED_OPENCODE_PLUGIN_TOOL_INDEX = `import { z } from "zod";
+
 export function tool(input) {
   return input;
 }
+
 tool.schema = z;
 `;
 
-const MANAGED_PLUGIN_FALLBACK_INDEX = `export * from "./tool.js";\n`;
+const MANAGED_OPENCODE_PLUGIN_INDEX = `export * from "./tool.js";
+`;
 
-const MANAGED_PLUGIN_FALLBACK_PACKAGE_JSON = `${JSON.stringify(
+const MANAGED_OPENCODE_PLUGIN_PACKAGE_JSON = `${JSON.stringify(
   {
     name: "@opencode-ai/plugin",
-    version: "0.0.0-veslo-managed",
+    version: VESLO_OPENCODE_PLUGIN_VERSION,
+    vesloManagedShim: true,
     type: "module",
+    license: "MIT",
     exports: {
       ".": { import: "./dist/index.js" },
       "./tool": { import: "./dist/tool.js" },
     },
     files: ["dist"],
+    dependencies: {
+      zod: VESLO_MANAGED_ZOD_VERSION,
+    },
+  },
+  null,
+  2,
+)}\n`;
+
+const MANAGED_ZOD_FALLBACK_INDEX = `const makeSchema = (type, extra = {}) => {
+  const schema = {
+    _zod: { def: { type, ...extra } },
+    _def: { typeName: type, ...extra },
+    describe() { return schema },
+    optional() { return schema },
+    nullable() { return schema },
+    default() { return schema },
+    array() { return makeSchema("array", { item: schema }) },
+  }
+  return schema
+}
+
+export const z = {
+  any: () => makeSchema("any"),
+  boolean: () => makeSchema("boolean"),
+  enum: (values) => makeSchema("enum", { values }),
+  object: (shape) => makeSchema("object", { shape }),
+  string: () => makeSchema("string"),
+}
+
+export default z
+`;
+
+const MANAGED_ZOD_FALLBACK_PACKAGE_JSON = `${JSON.stringify(
+  {
+    name: "zod",
+    version: VESLO_MANAGED_ZOD_VERSION,
+    vesloManagedFallback: true,
+    type: "module",
+    exports: {
+      ".": { import: "./index.js" },
+    },
+    files: ["index.js"],
   },
   null,
   2,
@@ -1969,52 +2023,68 @@ async function readPackageJsonVersion(packageDir: string): Promise<string | null
   }
 }
 
+async function readPackageJsonInfo(packageDir: string): Promise<{ version: string | null; vesloManagedFallback: boolean }> {
+  try {
+    const raw = await readFile(join(packageDir, "package.json"), "utf8");
+    const parsed = JSON.parse(raw) as { version?: unknown; vesloManagedFallback?: unknown };
+    return {
+      version: typeof parsed.version === "string" ? parsed.version : null,
+      vesloManagedFallback: parsed.vesloManagedFallback === true,
+    };
+  } catch {
+    return { version: null, vesloManagedFallback: false };
+  }
+}
+
 async function logOpencodeManagedDependencyStatus(configDir: string): Promise<void> {
-  const pluginDir = join(configDir, "node_modules", "@opencode-ai", "plugin");
   const zodDir = join(configDir, "node_modules", "zod");
-  const pluginVersion = await readPackageJsonVersion(pluginDir);
-  const zodVersion = await readPackageJsonVersion(zodDir);
-  const pluginPackagePath = join(pluginDir, "package.json");
+  const pluginDir = join(configDir, "node_modules", "@opencode-ai", "plugin");
+  const zodInfo = await readPackageJsonInfo(zodDir);
+  const pluginInfo = await readPackageJsonInfo(pluginDir);
+  const zodVersion = zodInfo.version;
+  const pluginVersion = pluginInfo.version;
   const zodPackagePath = join(zodDir, "package.json");
-  const pluginMode =
-    pluginVersion === "0.0.0-veslo-managed"
-      ? "fallback-zod-shim"
-      : pluginVersion
-        ? pluginVersion === VESLO_MANAGED_PLUGIN_VERSION
-          ? "vendored"
-          : "vendored-version-mismatch"
-        : "missing";
+  const pluginPackagePath = join(pluginDir, "package.json");
   const zodMode =
-    zodVersion
+    zodInfo.vesloManagedFallback || zodVersion === "0.0.0-veslo-managed"
+      ? "fallback-zod-shim"
+      : zodVersion
       ? zodVersion === VESLO_MANAGED_ZOD_VERSION
-        ? "vendored"
-        : "vendored-version-mismatch"
+      ? "vendored"
+      : "vendored-version-mismatch"
+      : "missing";
+  const pluginMode =
+    pluginVersion === VESLO_OPENCODE_PLUGIN_VERSION
+      ? pluginInfo.vesloManagedFallback
+        ? "fallback-plugin-shim"
+        : "managed-plugin-shim"
+      : pluginVersion
+      ? "plugin-version-mismatch"
       : "missing";
   const payload = JSON.stringify({
     configDir,
     pluginMode,
     pluginVersion,
     pluginPackagePath,
-    expectedPluginVersion: VESLO_MANAGED_PLUGIN_VERSION,
+    expectedPluginVersion: VESLO_OPENCODE_PLUGIN_VERSION,
     zodMode,
     zodVersion,
     zodPackagePath,
     expectedZodVersion: VESLO_MANAGED_ZOD_VERSION,
   });
 
-  if (pluginMode === "fallback-zod-shim" && zodMode !== "missing") {
-    console.warn(`[veslo-orchestrator] opencode managed dependency status ${payload}`);
-    return;
-  }
-
-  if (pluginMode === "missing" || zodMode === "missing") {
+  if (zodMode === "missing" || pluginMode === "missing") {
     console.warn(
       `[veslo-orchestrator] opencode managed dependency status ${payload} — managed tools may fail OpenCode zod introspection (symptom: Object.values on null/undefined).`,
     );
     return;
   }
 
-  if (pluginMode === "vendored-version-mismatch" || zodMode === "vendored-version-mismatch") {
+  if (
+    zodMode === "vendored-version-mismatch" ||
+    zodMode === "fallback-zod-shim" ||
+    pluginMode === "plugin-version-mismatch"
+  ) {
     console.warn(`[veslo-orchestrator] opencode managed dependency status ${payload}`);
     return;
   }
@@ -2058,12 +2128,22 @@ async function pathExists(target: string): Promise<boolean> {
   }
 }
 
-function resolveBunCacheEntry(pkg: string, version: string): string {
-  return join(process.env.HOME ?? "", ".bun", "install", "cache", `${pkg}@${version}@@@1`);
+function resolveBunCacheHomes(): string[] {
+  const homes: string[] = [];
+  for (const key of ["VESLO_BUN_CACHE_HOME", "HOME", "USERPROFILE"]) {
+    const value = process.env[key]?.trim();
+    if (!value || homes.includes(value)) continue;
+    homes.push(value);
+  }
+  return homes;
 }
 
-function resolveLegacyBunCacheEntry(pkg: string, version: string): string {
-  return join(process.env.HOME ?? "", ".bun", "install", "cache", pkg, `${version}@@@1`);
+function resolveBunCacheEntryForHome(home: string, pkg: string, version: string): string {
+  return join(home, ".bun", "install", "cache", `${pkg}@${version}@@@1`);
+}
+
+function resolveLegacyBunCacheEntryForHome(home: string, pkg: string, version: string): string {
+  return join(home, ".bun", "install", "cache", pkg, `${version}@@@1`);
 }
 
 async function vendorBunCachePackage(
@@ -2071,12 +2151,21 @@ async function vendorBunCachePackage(
   version: string,
   destNodeModules: string,
 ): Promise<boolean> {
-  let cacheRoot = resolveBunCacheEntry(pkg, version);
-  if (!(await pathExists(cacheRoot))) {
-    const legacy = resolveLegacyBunCacheEntry(pkg, version);
-    if (!(await pathExists(legacy))) return false;
-    cacheRoot = legacy;
+  let cacheRoot = "";
+  const homes = resolveBunCacheHomes();
+  for (const home of homes) {
+    const flat = resolveBunCacheEntryForHome(home, pkg, version);
+    if (await pathExists(flat)) {
+      cacheRoot = flat;
+      break;
+    }
+    const legacy = resolveLegacyBunCacheEntryForHome(home, pkg, version);
+    if (await pathExists(legacy)) {
+      cacheRoot = legacy;
+      break;
+    }
   }
+  if (!cacheRoot) return false;
   const destDir = join(destNodeModules, pkg);
   await rm(destDir, { recursive: true, force: true });
   await mkdir(destDir, { recursive: true });
@@ -2084,12 +2173,142 @@ async function vendorBunCachePackage(
   return true;
 }
 
-async function writeManagedPluginFallback(pluginDir: string): Promise<void> {
+async function resolveNodePackageJsonPath(pkg: string, fromPackageJsonPath?: string): Promise<string | null> {
+  if (fromPackageJsonPath) {
+    const requireFromPackage = createRequire(fromPackageJsonPath);
+    try {
+      return await realpath(requireFromPackage.resolve(`${pkg}/package.json`));
+    } catch {
+      // fall back to the orchestrator/global resolution below
+    }
+  }
+
+  const require = createRequire(import.meta.url);
+  try {
+    return await realpath(require.resolve(`${pkg}/package.json`));
+  } catch {
+    // ignore
+  }
+
+  let current = process.cwd();
+  while (true) {
+    const candidates = [
+      join(current, "node_modules", ...pkg.split("/"), "package.json"),
+      join(current, "packages", "orchestrator", "node_modules", ...pkg.split("/"), "package.json"),
+    ];
+    for (const candidate of candidates) {
+      try {
+        return await realpath(candidate);
+      } catch {
+        // keep searching
+      }
+    }
+    const parent = dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+async function vendorResolvedNodePackageTree(
+  pkg: string,
+  destNodeModules: string,
+  seen = new Set<string>(),
+  fromPackageJsonPath?: string,
+): Promise<boolean> {
+  if (seen.has(pkg)) return true;
+  seen.add(pkg);
+
+  const packageJsonPath = await resolveNodePackageJsonPath(pkg, fromPackageJsonPath);
+  if (!packageJsonPath) return false;
+
+  const sourceDir = dirname(packageJsonPath);
+  const raw = await readFile(packageJsonPath, "utf8");
+  const parsed = JSON.parse(raw) as { dependencies?: Record<string, string>; version?: string };
+  const destDir = join(destNodeModules, ...pkg.split("/"));
+
+  await rm(destDir, { recursive: true, force: true });
+  await mkdir(destDir, { recursive: true });
+  await copyDirRecursive(sourceDir, destDir);
+
+  for (const dep of Object.keys(parsed.dependencies ?? {})) {
+    const ok = await vendorResolvedNodePackageTree(dep, destNodeModules, seen, packageJsonPath);
+    if (!ok) return false;
+  }
+
+  return true;
+}
+
+async function writeManagedZodFallback(zodDir: string): Promise<void> {
+  await mkdir(zodDir, { recursive: true });
+  await writeFile(join(zodDir, "package.json"), MANAGED_ZOD_FALLBACK_PACKAGE_JSON, "utf8");
+  await writeFile(join(zodDir, "index.js"), MANAGED_ZOD_FALLBACK_INDEX, "utf8");
+}
+
+async function writeManagedOpencodePluginShim(nodeModulesDir: string): Promise<void> {
+  const pluginDir = join(nodeModulesDir, "@opencode-ai", "plugin");
   const distDir = join(pluginDir, "dist");
+  await rm(pluginDir, { recursive: true, force: true });
   await mkdir(distDir, { recursive: true });
-  await writeFile(join(pluginDir, "package.json"), MANAGED_PLUGIN_FALLBACK_PACKAGE_JSON, "utf8");
-  await writeFile(join(distDir, "index.js"), MANAGED_PLUGIN_FALLBACK_INDEX, "utf8");
-  await writeFile(join(distDir, "tool.js"), MANAGED_PLUGIN_FALLBACK_TOOL, "utf8");
+  await writeFile(join(pluginDir, "package.json"), MANAGED_OPENCODE_PLUGIN_PACKAGE_JSON, "utf8");
+  await writeFile(join(distDir, "index.js"), MANAGED_OPENCODE_PLUGIN_INDEX, "utf8");
+  await writeFile(join(distDir, "tool.js"), MANAGED_OPENCODE_PLUGIN_TOOL_INDEX, "utf8");
+}
+
+async function ensureOpencodeManagedDependencies(configDir: string): Promise<void> {
+  const nodeModulesDir = join(configDir, "node_modules");
+  await mkdir(nodeModulesDir, { recursive: true });
+  await writeManagedOpencodePluginShim(nodeModulesDir);
+
+  // Vendor zod (only used when the real plugin from cache is in place; cheap to
+  // skip the copy if the destination already exists).
+  const zodDir = join(nodeModulesDir, "zod");
+  const existingZodInfo = await readPackageJsonInfo(zodDir);
+  if (
+    existingZodInfo.version !== VESLO_MANAGED_ZOD_VERSION ||
+    existingZodInfo.vesloManagedFallback
+  ) {
+    const ok = await vendorBunCachePackage("zod", VESLO_MANAGED_ZOD_VERSION, nodeModulesDir);
+    if (!ok) {
+      console.warn(
+        `[veslo-orchestrator] Bun cache miss for zod@${VESLO_MANAGED_ZOD_VERSION}; using minimal zod shim for managed plugin fallback.`,
+      );
+      await writeManagedZodFallback(zodDir);
+    }
+  }
+
+  const openAiCompatibleDir = join(nodeModulesDir, "@ai-sdk", "openai-compatible");
+  const existingOpenAiCompatibleVersion = await readPackageJsonVersion(openAiCompatibleDir);
+  if (existingOpenAiCompatibleVersion !== VESLO_OPENAI_COMPATIBLE_PROVIDER_VERSION) {
+    const ok = await vendorResolvedNodePackageTree("@ai-sdk/openai-compatible", nodeModulesDir);
+    if (!ok) {
+      console.warn(
+        `[veslo-orchestrator] Unable to vendor @ai-sdk/openai-compatible@${VESLO_OPENAI_COMPATIBLE_PROVIDER_VERSION}; OpenCode may try a runtime npm install for managed AI providers.`,
+      );
+    }
+  }
+
+  await logOpencodeManagedDependencyStatus(configDir);
+}
+
+function resolveGlobalOpencodeConfigDir(): string | null {
+  const xdgConfigHome = process.env.XDG_CONFIG_HOME?.trim();
+  if (xdgConfigHome) return join(xdgConfigHome, "opencode");
+  const home = process.env.HOME?.trim() || process.env.USERPROFILE?.trim();
+  return home ? join(home, ".config", "opencode") : null;
+}
+
+async function ensureGlobalOpencodeManagedDependencies(logger: Logger): Promise<void> {
+  const globalConfigDir = resolveGlobalOpencodeConfigDir();
+  if (!globalConfigDir) return;
+  try {
+    await ensureOpencodeManagedDependencies(globalConfigDir);
+  } catch (error) {
+    logger.warn(
+      "failed to prepare global OpenCode managed dependencies",
+      { configDir: globalConfigDir, error: error instanceof Error ? error.message : String(error) },
+      "opencode",
+    );
+  }
 }
 
 async function ensureOpencodeManagedTools(configDir: string): Promise<void> {
@@ -2107,42 +2326,9 @@ async function ensureOpencodeManagedTools(configDir: string): Promise<void> {
     await writeFile(toolPath, content, "utf8");
   };
 
-  const nodeModulesDir = join(configDir, "node_modules");
-  await mkdir(nodeModulesDir, { recursive: true });
-
-  // Vendor @opencode-ai/plugin (preferred: from Bun cache; fallback: hand-rolled shim).
-  const pluginDir = join(nodeModulesDir, "@opencode-ai", "plugin");
-  const existingPluginVersion = await readPackageJsonVersion(pluginDir);
-  if (!existingPluginVersion || existingPluginVersion === "0.0.0-veslo-managed") {
-    await mkdir(join(nodeModulesDir, "@opencode-ai"), { recursive: true });
-    const ok = await vendorBunCachePackage(
-      "@opencode-ai/plugin",
-      VESLO_MANAGED_PLUGIN_VERSION,
-      nodeModulesDir,
-    );
-    if (!ok) {
-      console.warn(
-        `[veslo-orchestrator] Bun cache miss for @opencode-ai/plugin@${VESLO_MANAGED_PLUGIN_VERSION}; using minimal zod-backed plugin shim.`,
-      );
-      await writeManagedPluginFallback(pluginDir);
-    }
-  }
-
-  // Vendor zod (only used when the real plugin from cache is in place; cheap to
-  // skip the copy if the destination already exists).
-  const zodDir = join(nodeModulesDir, "zod");
-  if (!(await pathExists(join(zodDir, "package.json")))) {
-    const ok = await vendorBunCachePackage("zod", VESLO_MANAGED_ZOD_VERSION, nodeModulesDir);
-    if (!ok) {
-      console.warn(
-        `[veslo-orchestrator] Bun cache miss for zod@${VESLO_MANAGED_ZOD_VERSION}; the @opencode-ai/plugin shim will be used instead.`,
-      );
-    }
-  }
-
+  await ensureOpencodeManagedDependencies(configDir);
   await writeManagedTool("opencode_router_send.ts", opencodeRouterSendToolSource());
   await writeManagedTool("opencode_router_status.ts", opencodeRouterStatusToolSource());
-  await logOpencodeManagedDependencyStatus(configDir);
 }
 
 function findWorkspace(state: RouterState, input: string): RouterWorkspace | undefined {
@@ -2406,6 +2592,7 @@ function selectedProcessEnvForDiag(env: NodeJS.ProcessEnv): LogAttributes {
     "USERPROFILE",
     "VESLO_APP_DATA_DIR",
     "VESLO_APP_LOCAL_DATA_DIR",
+    "VESLO_BUN_CACHE_HOME",
     "VESLO_DATA_DIR",
     "WSLENV",
     "XDG_CACHE_HOME",
@@ -2610,6 +2797,8 @@ async function startOpencode(options: {
    *  resolved automatically per platform unless `VESLO_DISABLE_SANDBOX=1`. */
   sandbox?: WorkerSandbox | null;
 }): Promise<{ child: ChildProcess; connectHost?: string; childKind?: "direct" | "wsl" }> {
+  await ensureGlobalOpencodeManagedDependencies(options.logger);
+
   const args = ["serve", "--hostname", options.bindHost, "--port", String(options.port)];
   for (const origin of options.corsOrigins) {
     args.push("--cors", origin);
@@ -2681,12 +2870,11 @@ async function startOpencode(options: {
     //   - /tmp + /private/tmp + /var/folders (SQLite WAL/SHM, scratch files)
     //   - XDG dirs opencode uses: ~/.local/state/opencode, ~/.local/share/opencode,
     //     ~/.cache/opencode, ~/.config/opencode (sessions DB, model cache, settings)
-    //   VSLO-86: `@opencode-ai/plugin` + zod are vendored into
-    //   `<workspace>/.opencode/node_modules/` and `<configDir>/node_modules/`
-    //   at provisioning time, so the engine no longer needs to walk into
-    //   `~/.bun/install/cache` at runtime. Keeping that path out of the
-    //   sandbox allow-list avoids a regression where the sandbox-runtime
-    //   appears to abort fresh spawns when the path is added.
+    //   VSLO-86: managed zod/provider dependencies are vendored into config
+    //   roots at provisioning time, so the engine no longer needs to walk into
+    //   `~/.bun/install/cache` at runtime. Keeping that path out of the sandbox
+    //   allow-list avoids a regression where the sandbox-runtime appears to
+    //   abort fresh spawns when the path is added.
     //   These will move to per-workspace dirs in a later fáze.
     const home = process.env.HOME ?? "";
     const extraWrites: string[] = [

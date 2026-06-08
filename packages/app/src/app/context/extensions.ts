@@ -111,7 +111,7 @@ import type { WorkspaceRouting } from "./workspace-routing";
 
 export function createExtensionsStore(options: {
   client: () => Client | null;
-  routing: WorkspaceRouting;
+  routing?: WorkspaceRouting;
   projectDir: () => string;
   activeWorkspaceId: () => string;
   activeWorkspaceRoot: () => string;
@@ -1165,7 +1165,7 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    const c = options.routing.active();
+    const c = options.routing?.active() ?? options.client();
     if (!c) {
       setSkills([]);
       markLocalSkillsSourceChanged();

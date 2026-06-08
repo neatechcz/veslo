@@ -191,6 +191,7 @@ const OPENCODE_JSON_DEFAULT_RESPONSE_MAX_BYTES = 1024 * 1024;
 const OPENCODE_TRANSCRIPT_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
 const OPENCODE_JSON_FETCH_DEFAULT_TIMEOUT_MS = 5_000;
 const AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS = 30_000;
+const OPENCODE_SESSION_CREATE_DEFAULT_TIMEOUT_MS = 90_000;
 export const REDACTED_SECRET_VALUE = "[REDACTED]";
 const GATEWAY_CALLER_AUTH_HEADER = "x-veslo-gateway-authorization";
 const GATEWAY_ACCESS_TOKEN_HEADER = "x-veslo-gateway-token";
@@ -930,7 +931,7 @@ function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string, wo
   const trimmedPath = path.replace(/^\/opencode/, "");
   const suffix = trimmedPath === "" ? "/" : trimmedPath.startsWith("/") ? trimmedPath : `/${trimmedPath}`;
   const basePath = target.pathname.replace(/\/+$/, "") || "";
-  const workspaceMount = basePath.match(/^\/workspace\/([^/]+)\/opencode(?:\/.*)?$/);
+  const workspaceMount = basePath.match(/^\/workspace\/([^/]*)\/opencode(?:\/.*)?$/);
   if (workspaceMount) {
     const id = encodeURIComponent(workspaceId ?? decodeURIComponent(workspaceMount[1] ?? ""));
     target.pathname = `/workspace/${id}/opencode${suffix === "/" ? "" : suffix}`;
@@ -961,6 +962,7 @@ async function fetchOpencodeJson(
 
   const headers = new Headers();
   headers.set("Content-Type", "application/json");
+  headers.set(ACCEPT_ENCODING_HEADER, ACCEPT_ENCODING_IDENTITY);
 
   const directory = resolveOpencodeDirectory(workspace);
   if (directory) {
@@ -1071,7 +1073,7 @@ function createOpenCodeAutomationExecutor(
     const created = await fetchOpencodeJson(workspace, "/session", {
       method: "POST",
       body: { title: input.target.fallbackTitle?.trim() || `Automation: ${input.automation.name}` },
-      timeoutMs: AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS,
+      timeoutMs: resolveOpenCodeSessionCreateTimeoutMs(),
     });
     const sessionId = typeof created?.id === "string" ? created.id.trim() : "";
     if (!sessionId) {
@@ -1587,7 +1589,12 @@ function sanitizeDecodedProxyResponseHeaders(headers: Headers): Headers {
 function jsonResponse(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+      "Pragma": "no-cache",
+      "Expires": "0",
+    },
   });
 }
 
@@ -3543,6 +3550,7 @@ function createRoutes(
       const scopedWorkspace = directory ? { ...workspace, directory } : workspace;
       return await fetchOpencodeJson(scopedWorkspace, "/session", {
         method: "POST",
+        timeoutMs: resolveOpenCodeSessionCreateTimeoutMs(),
         body: {
           ...(directory ? { directory } : {}),
           ...(title?.trim() ? { title: title.trim() } : {}),
@@ -3962,16 +3970,46 @@ function createRoutes(
     ensureWritable(config);
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
-    const nextName = typeof body.name === "string" && body.name.trim()
-      ? body.name.trim()
-      : undefined;
+    const hasName = Object.prototype.hasOwnProperty.call(body, "name");
+    const hasBaseUrl = Object.prototype.hasOwnProperty.call(body, "baseUrl");
+    const hasDirectory = Object.prototype.hasOwnProperty.call(body, "directory");
 
-    if (!nextName) {
+    const nextName = hasName && typeof body.name === "string" ? body.name.trim() : undefined;
+    const nextBaseUrl = hasBaseUrl && typeof body.baseUrl === "string" ? body.baseUrl.trim() : undefined;
+    const nextDirectory = hasDirectory && typeof body.directory === "string" ? body.directory.trim() : undefined;
+
+    if (hasName && !nextName) {
       throw new ApiError(400, "invalid_payload", "name must be a non-empty string");
+    }
+    if (hasBaseUrl && !nextBaseUrl) {
+      throw new ApiError(400, "invalid_payload", "baseUrl must be a non-empty string");
+    }
+    if (hasBaseUrl && nextBaseUrl && !/^https?:\/\//i.test(nextBaseUrl)) {
+      throw new ApiError(400, "invalid_payload", "baseUrl must start with http:// or https://");
+    }
+    if (hasDirectory && !nextDirectory) {
+      throw new ApiError(400, "invalid_payload", "directory must be a non-empty string");
+    }
+    if (!nextName && !nextBaseUrl && !nextDirectory) {
+      throw new ApiError(400, "invalid_payload", "name, baseUrl, or directory is required");
     }
 
     config.workspaces = config.workspaces.map((entry) =>
-      entry.id === workspace.id ? { ...entry, name: nextName } : entry,
+      entry.id === workspace.id
+        ? {
+            ...entry,
+            ...(nextName ? { name: nextName } : {}),
+            ...(nextBaseUrl ? { baseUrl: nextBaseUrl } : {}),
+            ...(nextDirectory
+              ? {
+                  opencode: {
+                    ...(entry.opencode ?? {}),
+                    directory: nextDirectory,
+                  },
+                }
+              : {}),
+          }
+        : entry,
     );
     const persisted = await persistServerWorkspaceState(config);
 
@@ -4283,8 +4321,13 @@ function createRoutes(
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readOptionalJsonBody(ctx.request);
+    const directory = await resolveConversationReadDirectory(
+      workspace,
+      optionalBodyNullableString(body, "directory") ?? null,
+    );
     const result = await conversationService.createConversation({
       workspace,
+      directory,
       title: optionalBodyNullableString(body, "title") ?? null,
     });
     return jsonResponse(result, 201);
@@ -5554,7 +5597,6 @@ function createRoutes(
     const relativePath = normalizeWorkspaceRelativePath(requestedPath, { allowSubdirs: true });
     const inboxRoot = resolveInboxDir(workspace.path);
     const dest = await resolveSafeChildPath(inboxRoot, relativePath);
-    const maxBytes = resolveInboxMaxBytes();
     if (file.size > maxBytes) {
       throw new ApiError(413, "file_too_large", "File exceeds upload limit", { maxBytes, size: file.size });
     }
@@ -8473,6 +8515,14 @@ function resolveOpenCodeJsonFetchTimeoutMs(): number {
   return OPENCODE_JSON_FETCH_DEFAULT_TIMEOUT_MS;
 }
 
+function resolveOpenCodeSessionCreateTimeoutMs(): number {
+  const parsed = parseInteger(process.env.VESLO_OPENCODE_SESSION_CREATE_TIMEOUT_MS);
+  if (parsed && parsed > 0) {
+    return clampNumber(parsed, 100, 180_000);
+  }
+  return OPENCODE_SESSION_CREATE_DEFAULT_TIMEOUT_MS;
+}
+
 function isAbortError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const name = "name" in error ? String((error as { name?: unknown }).name ?? "") : "";
@@ -9720,7 +9770,7 @@ async function resolveConversationReadDirectory(
     workspace.path,
     fallback,
   ].filter((value): value is string => Boolean(value?.trim()));
-  const authorized = await isAuthorizedRoot(directory, allowedRoots);
+  const authorized = isAuthorizedRootSync(directory, allowedRoots);
   if (!authorized) {
     throw new ApiError(403, "directory_unauthorized", "Conversation directory is outside this workspace");
   }

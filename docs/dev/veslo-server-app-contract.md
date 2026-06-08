@@ -285,6 +285,11 @@ Automation mutation routes record audit actions `automations.create`,
 refreshes the in-process automation runner after create/update/delete so local
 schedules reflect persisted state.
 
+Automation list and run-history responses are volatile app state. Server JSON
+responses are sent with no-store headers, and app callers should also use fresh
+requests for these reads so WebView caching cannot hide newly created, updated,
+completed, or manually run automations.
+
 Agent Lab compatibility routes under
 `/workspace/:id/agentlab/automations...` remain available for older callers.
 They read through the canonical automation store and legacy migration path

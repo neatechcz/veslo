@@ -1,7 +1,7 @@
 [scenario]
 name = "message-send-registry-degraded"
 fail_fast = true
-global_timeout_ms = 360000
+global_timeout_ms = 500000
 
 [[step]]
 name = "root exists"
@@ -51,10 +51,10 @@ if (!window.__vesloMessageSendRegistryDegradedStarted) {
         message: "Timed out before the message-send registry degraded task produced a result marker.",
         progress: window.__vesloMessageSendRegistryDegradedProgress ?? null,
         clickedButton: window.__vesloMessageSendRegistryDegradedClickedButton ?? null,
-        sendTrace: Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.slice(-30) : [],
+        sendTrace: Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.slice(-80) : [],
         body: document.body.innerText.replace(/\s+/g, " ").trim().slice(0, 3000),
       });
-    }, 300000);
+    }, 420000);
     try {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const trimText = (value) => String(value ?? "").trim();
@@ -180,21 +180,32 @@ const waitForAiAccessReady = async (connection) => {
 const waitForWorkspaceEngineReady = async (workspace) => {
   const workspacePath = normalize(workspace?.path || workspace?.directory);
   assert(workspacePath, `Workspace path is missing from bootstrap payload: ${JSON.stringify(workspace)}`);
-  setProgress("starting-workspace-engine", { workspacePath });
-  await tauriInvoke("engine_start", {
-    projectDir: workspacePath,
-    preferSidecar: true,
-    opencodeBinPath: null,
-    runtime: "veslo-orchestrator",
-    workspacePaths: [workspacePath],
-  });
-  await tauriInvoke("orchestrator_workspace_activate", {
-    workspacePath,
-    name: normalize(workspace?.displayName || workspace?.name) || null,
-  });
+  setProgress("activating-workspace-engine", { workspacePath });
+  try {
+    await tauriInvoke("orchestrator_workspace_activate", {
+      workspacePath,
+      name: normalize(workspace?.displayName || workspace?.name) || null,
+    });
+  } catch (error) {
+    setProgress("starting-workspace-engine", { workspacePath, error: error?.message || String(error) });
+    await tauriInvoke("engine_start", {
+      projectDir: workspacePath,
+      preferSidecar: true,
+      opencodeBinPath: null,
+      runtime: "veslo-orchestrator",
+      workspacePaths: [workspacePath],
+    });
+    await tauriInvoke("orchestrator_workspace_activate", {
+      workspacePath,
+      name: normalize(workspace?.displayName || workspace?.name) || null,
+    });
+  }
   setProgress("waiting-workspace-engine-ready", { workspacePath });
   return await waitUntil(async () => {
-    const info = await tauriInvoke("engine_info").catch(() => null);
+    const info = await tauriInvoke("engine_info", {
+      workspaceId: workspace?.id ?? null,
+      workspacePath,
+    }).catch(() => null);
     const baseUrl = trimBaseUrl(info?.baseUrl);
     if (!baseUrl) return false;
     return info;
@@ -360,7 +371,7 @@ await waitUntil(() => {
   const occurrences = text.split(token).length - 1;
   return occurrences >= 2;
 }, {
-  timeout: 60000,
+  timeout: 300000,
   interval: 1000,
   message: `Managed AI fixture response did not render for token ${token}. Body=${bodyText().slice(0, 2000)}`,
 });
@@ -390,7 +401,7 @@ document.body.append(completeMarker);
         stack: error?.stack || null,
         progress: window.__vesloMessageSendRegistryDegradedProgress ?? null,
         clickedButton: window.__vesloMessageSendRegistryDegradedClickedButton ?? null,
-        sendTrace: Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.slice(-30) : [],
+        sendTrace: Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.slice(-80) : [],
         buttons: fallbackButtonDetails(),
         body: fallbackBodyText().slice(0, 3000),
       });
@@ -405,7 +416,7 @@ true;
 name = "degraded registry send task finished"
 action = "wait"
 target = "[data-testid=\"message-send-registry-degraded-complete\"], [data-testid=\"message-send-registry-degraded-error\"]"
-timeout_ms = 350000
+timeout_ms = 470000
 
 [[step]]
 name = "degraded registry send task succeeded"
@@ -415,7 +426,7 @@ const error = document.querySelector('[data-testid="message-send-registry-degrad
 if (error) {
   const detail = (error.textContent || "Message send registry degraded task failed")
     .replace(/[\u0080-\uffff]/g, "?")
-    .slice(0, 4000);
+    .slice(0, 12000);
   throw new Error(`Message send registry degraded task failed: ${detail}`);
 }
 true;

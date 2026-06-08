@@ -126,6 +126,25 @@ stored run directory remains the session root for later runs.
 The run/conversation model must not depend on sandbox availability. Sandbox is
 an isolation strategy, not the only mechanism for parallel workspace execution.
 
+### OpenCode Plugin Dependencies
+
+OpenCode loads two different kinds of Veslo-managed extension code:
+
+- managed tools from `OPENCODE_CONFIG_DIR/tools`,
+- workspace plugins from `<workspace>/.opencode/plugins`.
+
+These resolve npm packages from different roots. Dependencies for managed tools
+must be available under `<OPENCODE_CONFIG_DIR>/node_modules`. Dependencies for
+workspace plugins must also be available under
+`<workspace>/.opencode/node_modules`, because Bun resolves imports from the
+plugin file path. Do not rely on OpenCode walking into the global Bun cache at
+runtime, and do not add the global Bun cache back into sandbox write access.
+
+Veslo-managed workspace plugins that import `@opencode-ai/plugin` are provisioned
+with workspace-local `@opencode-ai/plugin` and `zod` packages before the engine
+is expected to load them. This rule applies in both sandboxed and non-sandboxed
+runtime modes.
+
 ### Desktop Shell
 
 The desktop shell owns the local Veslo server process lifecycle.

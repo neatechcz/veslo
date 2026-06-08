@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -12,6 +13,23 @@ import {
 } from "./veslo-server.js";
 
 const LOCAL_SESSION_ARCHIVE_OWNER_KEY = "local:desktop";
+const vesloServerSource = readFileSync(new URL("./veslo-server.ts", import.meta.url), "utf8");
+
+test("conversation create client timeout allows cold OpenCode session startup", () => {
+  assert.match(
+    vesloServerSource,
+    /conversationCreate: 120_000,/,
+    "conversation creation should outlive the local server's cold OpenCode session create timeout",
+  );
+});
+
+test("local Veslo server fallback treats WebView Load failed as a transport error", () => {
+  assert.match(
+    vesloServerSource,
+    /return\s+\/[^\n]*load failed[^\n]*\/i\.test\(message\);/,
+    "Tauri HTTP fallback should cover WebView loopback transport failures reported as Load failed",
+  );
+});
 
 test("deriveLocalVesloServerUrlFromOpencodeBaseUrl rewrites local loopback hosts to Veslo port", () => {
   const derived = deriveLocalVesloServerUrlFromOpencodeBaseUrl("http://127.0.0.1:64792");
@@ -223,15 +241,106 @@ test("automation requests encode workspace and automation ids", async () => {
     await client.listAutomationRuns("ws 1", "auto 1");
 
     assert.deepEqual(
-      calls.map((call) => ({ url: call.url, method: call.method ?? "GET" })),
+      calls.map((call) => {
+        const url = new URL(call.url);
+        return {
+          path: url.pathname,
+          hasFreshQuery: url.searchParams.has("_veslo_cache"),
+          method: call.method ?? "GET",
+        };
+      }),
       [
-        { url: "https://veslo.example/workspace/ws%201/automations", method: "GET" },
-        { url: "https://veslo.example/workspace/ws%201/automations", method: "POST" },
-        { url: "https://veslo.example/workspace/ws%201/automations/auto%201", method: "PATCH" },
-        { url: "https://veslo.example/workspace/ws%201/automations/auto%201/run", method: "POST" },
-        { url: "https://veslo.example/workspace/ws%201/automations/auto%201/runs", method: "GET" },
+        { path: "/workspace/ws%201/automations", hasFreshQuery: true, method: "GET" },
+        { path: "/workspace/ws%201/automations", hasFreshQuery: false, method: "POST" },
+        { path: "/workspace/ws%201/automations/auto%201", hasFreshQuery: false, method: "PATCH" },
+        { path: "/workspace/ws%201/automations/auto%201/run", hasFreshQuery: false, method: "POST" },
+        { path: "/workspace/ws%201/automations/auto%201/runs", hasFreshQuery: true, method: "GET" },
       ],
     );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("automation list requests use fresh URLs so WebView cache cannot hide new runs", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method?: string }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({ url: String(input), method: init?.method });
+    return new Response(JSON.stringify({ items: [], updatedAt: "2026-06-05T10:00:00.000Z" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+    });
+
+    await client.listAutomations("ws 1");
+    await client.listAutomations("ws 1");
+    await client.listAutomationRuns("ws 1", "auto 1");
+
+    assert.equal(calls.length, 3);
+    const urls = calls.map((call) => new URL(call.url));
+    assert.equal(urls[0]?.pathname, "/workspace/ws%201/automations");
+    assert.equal(urls[1]?.pathname, "/workspace/ws%201/automations");
+    assert.equal(urls[2]?.pathname, "/workspace/ws%201/automations/auto%201/runs");
+    assert.ok(urls.every((url) => url.searchParams.has("_veslo_cache")));
+    assert.notEqual(urls[0]?.searchParams.get("_veslo_cache"), urls[1]?.searchParams.get("_veslo_cache"));
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("automation updates retry transient loopback transport failures", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method?: string }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({ url: String(input), method: init?.method });
+    if (calls.length === 1) {
+      throw new Error("Load failed");
+    }
+    return new Response(
+      JSON.stringify({
+        automation: {
+          id: "auto 1",
+          workspaceId: "ws 1",
+          name: "Edited",
+          enabled: true,
+          status: "active",
+          schedule: { kind: "oneShot", runAt: "2026-06-05T10:00:00.000Z" },
+          prompt: "Prompt",
+          target: {},
+          createdAt: "2026-06-05T09:00:00.000Z",
+          updatedAt: "2026-06-05T09:05:00.000Z",
+          nextRunAt: "2026-06-05T10:00:00.000Z",
+          completedAt: null,
+          lastRunId: null,
+        },
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "http://127.0.0.1:8787",
+      token: "token-123",
+    });
+
+    const response = await client.updateAutomation("ws 1", "auto 1", { name: "Edited" });
+
+    assert.equal(response.automation.name, "Edited");
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls.map((call) => call.method), ["PATCH", "PATCH"]);
   } finally {
     globalThis.fetch = previousFetch;
   }

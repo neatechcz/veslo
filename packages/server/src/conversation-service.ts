@@ -77,6 +77,7 @@ export type ConversationService = {
 
   createConversation(input: {
     workspace: WorkspaceInfo;
+    directory?: string | null;
     title?: string | null;
   }): Promise<ConversationCreateResult>;
 };
@@ -107,7 +108,9 @@ const normalizeConversationDirectory = (directory: string): string => {
   return directory;
 };
 
-const resolveConversationCreateDirectory = (workspace: WorkspaceInfo): string => {
+const resolveConversationCreateDirectory = (workspace: WorkspaceInfo, directory?: string | null): string => {
+  const requested = normalizeText(directory);
+  if (requested) return normalizeConversationDirectory(requested);
   const explicit = normalizeText(workspace.directory ?? workspace.opencode?.directory);
   if (explicit) return normalizeConversationDirectory(explicit);
   if (workspace.workspaceType === "local") {
@@ -273,7 +276,7 @@ export function createConversationService(options: {
 
     async createConversation(input) {
       const workspaceId = normalizeText(input.workspace.id);
-      const directory = resolveConversationCreateDirectory(input.workspace);
+      const directory = resolveConversationCreateDirectory(input.workspace, input.directory);
       if (!workspaceId || !directory) {
         throw new ApiError(400, "invalid_directory", "Conversation directory is required");
       }

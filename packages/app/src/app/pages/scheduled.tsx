@@ -15,6 +15,7 @@ import { currentLocale, t } from "../../i18n";
 import { createAsyncAction } from "../hooks/create-async-action";
 import {
   buildSchedule,
+  localDateTimeInputPartsFromInstant,
   resolveLocalScheduleTimezone,
   scheduledDayOptions,
 } from "./scheduled-automation-schedule";
@@ -475,8 +476,9 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
       const parsed = new Date(schedule.runAt);
       setScheduleMode("oneShot");
       if (Number.isFinite(parsed.getTime())) {
-        setRunAtDate(parsed.toISOString().slice(0, 10));
-        setRunAtTime(parsed.toISOString().slice(11, 16));
+        const parts = localDateTimeInputPartsFromInstant(schedule.runAt);
+        setRunAtDate(parts.date);
+        setRunAtTime(parts.time);
       }
       return;
     }

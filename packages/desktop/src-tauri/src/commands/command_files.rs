@@ -19,13 +19,14 @@ fn resolve_commands_dir(
                 validate_workspace_path(app, project_dir, ValidationMode::IsRegisteredWorkspace)?;
             Ok(workspace.join(".opencode").join("commands"))
         }
-        "global" => {
-            let base =
-                xdg_config_home().ok_or_else(|| "Unable to resolve config directory".to_string())?;
-            Ok(base.join("opencode").join("commands"))
-        }
+        "global" => resolve_global_commands_dir(),
         _ => Err("scope must be 'workspace' or 'global'".to_string()),
     }
+}
+
+fn resolve_global_commands_dir() -> Result<PathBuf, String> {
+    let base = xdg_config_home().ok_or_else(|| "Unable to resolve config directory".to_string())?;
+    Ok(base.join("opencode").join("commands"))
 }
 
 fn list_command_names(dir: &PathBuf) -> Result<Vec<String>, String> {
@@ -131,8 +132,8 @@ mod tests {
             ("USERPROFILE", Some("C:\\Users\\marcel")),
         ]);
 
-        let path = resolve_commands_dir("global", "")
-            .expect("global commands should resolve from USERPROFILE");
+        let path =
+            resolve_global_commands_dir().expect("global commands should resolve from USERPROFILE");
 
         assert_eq!(
             path,

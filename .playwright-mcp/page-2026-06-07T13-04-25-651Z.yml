@@ -1,0 +1,82 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e5]: AG
+        - generic [ref=e6]:
+          - generic [ref=e7]: AI Gateway
+          - generic [ref=e8]: Admin control plane
+      - navigation "Admin sections" [ref=e9]:
+        - link "Organization" [ref=e10] [cursor=pointer]:
+          - /url: /admin/organization
+        - link "Credentials" [ref=e11] [cursor=pointer]:
+          - /url: /admin/credentials
+        - link "Usage" [ref=e12] [cursor=pointer]:
+          - /url: /admin/usage
+        - link "Alerts" [ref=e13] [cursor=pointer]:
+          - /url: /admin/alerts
+        - link "Users" [ref=e14] [cursor=pointer]:
+          - /url: /admin/users
+        - link "Audit" [ref=e15] [cursor=pointer]:
+          - /url: /admin/audit
+      - generic [ref=e16]:
+        - generic [ref=e17]: Auth
+        - generic [ref=e18]:
+          - generic [ref=e19]: Signed in
+          - generic [ref=e20]: Platform Admin · platform admin
+        - button "Sign out" [ref=e21] [cursor=pointer]
+      - generic [ref=e22]:
+        - generic [ref=e23]: Live signals
+        - generic [ref=e24]:
+          - generic [ref=e25]: Gateway healthy
+          - generic [ref=e27]: 2 credential alerts
+    - main [ref=e29]:
+      - generic [ref=e30]:
+        - generic [ref=e31]:
+          - paragraph [ref=e32]: AI Gateway control plane
+          - heading "Alerts" [level=1] [ref=e389]
+          - paragraph [ref=e34]: Triage credential failures, usage spikes, and routing anomalies.
+        - button "Refresh" [ref=e36] [cursor=pointer]
+      - generic [ref=e305]:
+        - generic [ref=e306]:
+          - generic [ref=e307]:
+            - paragraph [ref=e308]: Alerts
+            - heading "Incident triage board" [level=2] [ref=e309]
+          - generic [ref=e310]:
+            - button "Active" [ref=e311] [cursor=pointer]
+            - button "Acknowledged" [ref=e312] [cursor=pointer]
+            - button "Resolved" [ref=e313] [cursor=pointer]
+        - article [ref=e390] [cursor=pointer]:
+          - generic [ref=e391]:
+            - strong [ref=e392]: Codex 5h usage reached 95%
+            - generic [ref=e393]: critical
+          - paragraph [ref=e394]: Reconnect or add Codex credentials.
+          - generic [ref=e396]: Never
+  - dialog [ref=e330]:
+    - generic [ref=e331]:
+      - generic [ref=e332]:
+        - generic [ref=e333]:
+          - paragraph [ref=e334]: Alert
+          - heading "Incident detail" [level=2] [ref=e335]
+        - button "Close alert detail" [active] [ref=e336] [cursor=pointer]: Close
+      - generic [ref=e337]:
+        - paragraph [ref=e397]: Runbook
+        - heading "Codex 5h usage reached 95%" [level=3] [ref=e398]
+        - generic [ref=e399]:
+          - generic [ref=e400]:
+            - generic [ref=e401]: Affected credential
+            - strong [ref=e402]: Unassigned
+          - generic [ref=e403]:
+            - generic [ref=e404]: Affected routes
+            - strong [ref=e405]: undefined
+          - generic [ref=e406]:
+            - generic [ref=e407]: Owner
+            - strong [ref=e408]: Unassigned
+          - generic [ref=e409]:
+            - generic [ref=e410]: Status
+            - strong [ref=e411]: active
+        - paragraph [ref=e412]: Alert lifecycle
+        - generic [ref=e413]:
+          - button "Acknowledge" [ref=e414] [cursor=pointer]
+          - button "Resolve" [ref=e415] [cursor=pointer]
+          - button "Open audit" [ref=e416] [cursor=pointer]

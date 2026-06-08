@@ -2201,6 +2201,67 @@ const resolveFetch = () => (isTauriRuntime() ? tauriFetch : globalThis.fetch);
 
 const DEFAULT_VESLO_SERVER_TIMEOUT_MS = 10_000;
 
+function isLoopbackUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return ["127.0.0.1", "localhost", "::1", "[::1]", "0.0.0.0"].includes(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isTauriFetchTransportError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /error sending request|connection refused|tcp connect error|network error|load failed/i.test(message);
+}
+
+function isRetryableVesloServerMethod(method: string | undefined) {
+  return new Set(["GET", "HEAD", "PUT", "PATCH", "DELETE"]).has((method ?? "GET").toUpperCase());
+}
+
+function freshJsonPath(path: string): string {
+  const separator = path.includes("?") ? "&" : "?";
+  const nonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  return `${path}${separator}_veslo_cache=${encodeURIComponent(nonce)}`;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchVesloServer(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const fetchImpl = resolveFetch();
+  const loopback = isLoopbackUrl(url);
+  const fetchChain =
+    fetchImpl !== globalThis.fetch && loopback && typeof globalThis.fetch === "function"
+      ? [fetchImpl, globalThis.fetch]
+      : [fetchImpl];
+  const maxAttempts = loopback && isRetryableVesloServerMethod(init.method) ? 3 : 1;
+  let lastTransportError: unknown = null;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    for (const candidate of fetchChain) {
+      try {
+        return await fetchWithTimeout(candidate, url, init, timeoutMs);
+      } catch (error) {
+        if (!loopback || !isTauriFetchTransportError(error)) {
+          throw error;
+        }
+        lastTransportError = error;
+      }
+    }
+    if (attempt < maxAttempts - 1) {
+      await sleep(120 * (attempt + 1));
+    }
+  }
+
+  throw lastTransportError instanceof Error ? lastTransportError : new Error(String(lastTransportError ?? "Request failed"));
+}
+
 async function requestJson<T>(
   baseUrl: string,
   path: string,
@@ -2211,18 +2272,21 @@ async function requestJson<T>(
     body?: unknown;
     timeoutMs?: number;
     extraHeaders?: Record<string, string>;
+    fresh?: boolean;
   } = {},
 ): Promise<T> {
-  const url = `${baseUrl}${path}`;
-  const fetchImpl = resolveFetch();
-  const response = await fetchWithTimeout(
-    fetchImpl,
+  const url = `${baseUrl}${options.fresh ? freshJsonPath(path) : path}`;
+  const init: RequestInit = {
+    method: options.method ?? "GET",
+    headers: buildHeaders(options.token, options.hostToken, options.extraHeaders),
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  };
+  if (options.fresh) {
+    init.cache = "no-store";
+  }
+  const response = await fetchVesloServer(
     url,
-    {
-      method: options.method ?? "GET",
-      headers: buildHeaders(options.token, options.hostToken, options.extraHeaders),
-      body: options.body ? JSON.stringify(options.body) : undefined,
-    },
+    init,
     options.timeoutMs ?? DEFAULT_VESLO_SERVER_TIMEOUT_MS,
   );
 
@@ -2254,9 +2318,7 @@ async function requestJsonRaw<T>(
   options: { method?: string; token?: string; hostToken?: string; body?: unknown; timeoutMs?: number } = {},
 ): Promise<RawJsonResponse<T>> {
   const url = `${baseUrl}${path}`;
-  const fetchImpl = resolveFetch();
-  const response = await fetchWithTimeout(
-    fetchImpl,
+  const response = await fetchVesloServer(
     url,
     {
       method: options.method ?? "GET",
@@ -2283,9 +2345,7 @@ async function requestMultipartRaw(
   options: { method?: string; token?: string; hostToken?: string; body?: FormData; timeoutMs?: number } = {},
 ): Promise<{ ok: boolean; status: number; text: string }>{
   const url = `${baseUrl}${path}`;
-  const fetchImpl = resolveFetch();
-  const response = await fetchWithTimeout(
-    fetchImpl,
+  const response = await fetchVesloServer(
     url,
     {
       method: options.method ?? "POST",
@@ -2304,9 +2364,7 @@ async function requestBinary(
   options: { method?: string; token?: string; hostToken?: string; timeoutMs?: number } = {},
 ): Promise<{ data: ArrayBuffer; contentType: string | null; filename: string | null }>{
   const url = `${baseUrl}${path}`;
-  const fetchImpl = resolveFetch();
-  const response = await fetchWithTimeout(
-    fetchImpl,
+  const response = await fetchVesloServer(
     url,
     {
       method: options.method ?? "GET",
@@ -2358,7 +2416,7 @@ export function createVesloServerClient(options: {
     deleteSession: 12_000,
     sessionArtifacts: 10_000,
     sessionTranscript: 10_000,
-    conversationCreate: 30_000,
+    conversationCreate: 120_000,
     conversationRun: 30_000,
     conversationAbort: 10_000,
     status: 6_000,
@@ -2454,6 +2512,22 @@ export function createVesloServerClient(options: {
         body: { path: input.path, name: input.name },
         timeoutMs: timeouts.addLocalWorkspace,
       }),
+    updateWorkspace: (workspaceId: string, input: { name?: string | null; baseUrl?: string | null; directory?: string | null }) =>
+      requestJson<{ items: VesloWorkspaceInfo[]; persisted: boolean }>(
+        baseUrl,
+        `/workspaces/${encodeURIComponent(workspaceId)}`,
+        {
+          token,
+          hostToken,
+          method: "PATCH",
+          body: {
+            ...(input.name?.trim() ? { name: input.name.trim() } : {}),
+            ...(input.baseUrl?.trim() ? { baseUrl: input.baseUrl.trim() } : {}),
+            ...(input.directory?.trim() ? { directory: input.directory.trim() } : {}),
+          },
+          timeoutMs: timeouts.addLocalWorkspace,
+        },
+      ),
     deleteWorkspace: (workspaceId: string) =>
       requestJson<{ ok: boolean; deleted: boolean; persisted: boolean; activeId: string | null; items: VesloWorkspaceInfo[] }>(
         baseUrl,
@@ -3373,7 +3447,7 @@ export function createVesloServerClient(options: {
       requestJson<{ items: VesloAutomation[]; updatedAt: string }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/automations`,
-        { token, hostToken },
+        { token, hostToken, fresh: true },
       ),
     createAutomation: (workspaceId: string, payload: VesloAutomationCreatePayload) =>
       requestJson<{ automation: VesloAutomation }>(
@@ -3403,7 +3477,7 @@ export function createVesloServerClient(options: {
       requestJson<{ items: VesloAutomationRun[] }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/automations/${encodeURIComponent(automationId)}/runs`,
-        { token, hostToken },
+        { token, hostToken, fresh: true },
       ),
     listScheduledJobs: (workspaceId: string) =>
       requestJson<{ items: ScheduledJob[] }>(baseUrl, `/workspace/${workspaceId}/scheduler/jobs`, { token, hostToken }),

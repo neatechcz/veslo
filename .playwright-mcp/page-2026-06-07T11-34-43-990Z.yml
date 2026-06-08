@@ -1,0 +1,100 @@
+- generic [ref=e2]:
+  - complementary [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: AG
+      - generic [ref=e6]:
+        - generic [ref=e7]: AI Gateway
+        - generic [ref=e8]: Admin control plane
+    - navigation "Admin sections" [ref=e9]:
+      - link "Organization" [ref=e10] [cursor=pointer]:
+        - /url: /admin/organization
+      - link "Users" [ref=e11] [cursor=pointer]:
+        - /url: /admin/users
+    - generic [ref=e12]:
+      - generic [ref=e13]: Auth
+      - generic [ref=e14]:
+        - generic [ref=e15]: Signed in
+        - generic [ref=e16]: Org Admin · organization admin
+      - button "Sign out" [ref=e17] [cursor=pointer]
+    - generic [ref=e18]:
+      - generic [ref=e19]: Live signals
+      - generic [ref=e20]:
+        - generic [ref=e21]: Gateway healthy
+        - generic [ref=e23]: 2 credential alerts
+  - main [ref=e25]:
+    - generic [ref=e26]:
+      - generic [ref=e27]:
+        - paragraph [ref=e28]: AI Gateway control plane
+        - heading "Organization" [level=1] [ref=e29]
+        - paragraph [ref=e30]: Manage organization details, domains, and pending invites.
+      - button "Refresh" [ref=e32] [cursor=pointer]
+    - generic [ref=e34]:
+      - generic [ref=e35]:
+        - generic [ref=e36]:
+          - paragraph [ref=e37]: Organization
+          - heading "Organization details" [level=2] [ref=e38]
+        - button "Save organization" [ref=e39] [cursor=pointer]
+      - generic [ref=e40]:
+        - complementary [ref=e41]:
+          - paragraph [ref=e42]: Details
+          - heading "Neatech" [level=3] [ref=e43]
+          - generic [ref=e44]:
+            - generic [ref=e45]:
+              - generic [ref=e46]: Name
+              - textbox "Name" [ref=e47]: Neatech
+            - generic [ref=e48]:
+              - generic [ref=e49]: Slug
+              - textbox "Slug" [ref=e50]: neatech
+          - paragraph [ref=e51]: Organization saved.
+        - generic [ref=e52]:
+          - generic [ref=e53]:
+            - generic [ref=e55]:
+              - paragraph [ref=e56]: Domains
+              - heading "Enabled domains" [level=3] [ref=e57]
+            - generic [ref=e58]:
+              - generic [ref=e59]:
+                - generic [ref=e60]: Domain
+                - textbox "Domain" [ref=e61]:
+                  - /placeholder: example.com
+              - generic [ref=e62]:
+                - generic [ref=e63]: Enabled
+                - checkbox "Enabled" [checked] [ref=e64]
+              - generic [ref=e65]:
+                - generic [ref=e66]: Self signup
+                - checkbox "Self signup" [ref=e67]
+            - button "Add domain" [ref=e69] [cursor=pointer]
+            - article [ref=e106] [cursor=pointer]:
+              - generic [ref=e107]:
+                - strong [ref=e108]: neatech.cz
+                - paragraph [ref=e109]: Enabled · Self signup enabled
+                - generic [ref=e110]:
+                  - generic [ref=e111]: Enabled
+                  - checkbox "Enabled" [checked] [ref=e112]
+                - generic [ref=e113]:
+                  - generic [ref=e114]: Self signup
+                  - checkbox "Self signup" [checked] [ref=e115]
+              - generic [ref=e116]:
+                - button "Save" [ref=e117]
+                - button "Remove" [ref=e118]
+          - generic [ref=e84]:
+            - generic [ref=e86]:
+              - paragraph [ref=e87]: Invites
+              - heading "Pending invites" [level=3] [ref=e88]
+            - generic [ref=e89]:
+              - generic [ref=e90]:
+                - generic [ref=e91]: Email
+                - textbox "Email" [ref=e92]:
+                  - /placeholder: teammate@example.com
+              - generic [ref=e93]:
+                - generic [ref=e94]: Organization role
+                - combobox "Organization role" [ref=e95]:
+                  - option "Member" [selected]
+                  - option "Organization admin"
+            - button "Send invite" [ref=e97] [cursor=pointer]
+            - article [ref=e119] [cursor=pointer]:
+              - generic [ref=e120]:
+                - strong [ref=e121]: member@neatech.cz
+                - paragraph [ref=e122]: member · expires Jun 11, 12:00 PM
+              - generic [ref=e123]:
+                - button "Resend" [ref=e124]
+                - button "Revoke" [ref=e125]

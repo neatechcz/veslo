@@ -1,0 +1,209 @@
+- generic [ref=e2]:
+  - complementary [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: AG
+      - generic [ref=e6]:
+        - generic [ref=e7]: AI Gateway
+        - generic [ref=e8]: Admin control plane
+    - navigation "Admin sections" [ref=e9]:
+      - link "Organization" [ref=e10] [cursor=pointer]:
+        - /url: /admin/organization
+      - link "Credentials" [ref=e11] [cursor=pointer]:
+        - /url: /admin/credentials
+      - link "Usage" [active] [ref=e12] [cursor=pointer]:
+        - /url: /admin/usage
+      - link "Alerts" [ref=e13] [cursor=pointer]:
+        - /url: /admin/alerts
+      - link "Users" [ref=e14] [cursor=pointer]:
+        - /url: /admin/users
+      - link "Audit" [ref=e15] [cursor=pointer]:
+        - /url: /admin/audit
+    - generic [ref=e16]:
+      - generic [ref=e17]: Auth
+      - generic [ref=e18]:
+        - generic [ref=e19]: Signed in
+        - generic [ref=e20]: Platform Admin · platform admin
+      - button "Sign out" [ref=e21] [cursor=pointer]
+    - generic [ref=e22]:
+      - generic [ref=e23]: Live signals
+      - generic [ref=e24]:
+        - generic [ref=e25]: Gateway healthy
+        - generic [ref=e27]: 2 credential alerts
+  - main [ref=e29]:
+    - generic [ref=e30]:
+      - generic [ref=e31]:
+        - paragraph [ref=e32]: AI Gateway control plane
+        - heading "Usage" [level=1] [ref=e114]
+        - paragraph [ref=e34]: Watch Codex capacity first, then break usage down by credential, user, or org.
+      - button "Refresh" [ref=e36] [cursor=pointer]
+    - generic [ref=e115]:
+      - generic [ref=e116]:
+        - generic [ref=e117]:
+          - paragraph [ref=e118]: Usage
+          - heading "Capacity first, then drill down" [level=2] [ref=e119]
+        - generic [ref=e120]: By credential / user / org
+      - generic [ref=e121]:
+        - generic [ref=e122]:
+          - button "24h" [ref=e123] [cursor=pointer]
+          - button "7d" [ref=e124] [cursor=pointer]
+          - button "30d" [ref=e125] [cursor=pointer]
+        - combobox [ref=e126]:
+          - option "Total usage" [selected]
+          - option "Credential"
+          - option "User"
+          - option "Org"
+        - combobox [ref=e127]:
+          - option "All credentials" [selected]
+          - option "Codex shared primary"
+          - option "Codex shared warning"
+          - option "Custom OpenAI-compatible"
+        - combobox [ref=e128]:
+          - option "All users" [selected]
+          - option "Platform Admin"
+          - option "Org Admin"
+          - option "Member User"
+        - combobox [ref=e129]:
+          - option "All orgs" [selected]
+          - option "Neatech Platform"
+      - generic [ref=e130]:
+        - generic [ref=e131]:
+          - generic [ref=e132]:
+            - paragraph [ref=e133]: Capacity overview
+            - heading "Codex remaining limits" [level=3] [ref=e134]
+          - generic [ref=e135]: Functional credentials only
+        - generic [ref=e136]:
+          - article [ref=e137]:
+            - text: 5h remaining
+            - strong [ref=e138]: 22% remaining
+            - text: 78% used across 2 measured credentials
+          - article [ref=e139]:
+            - text: Weekly remaining
+            - strong [ref=e140]: 20% remaining
+            - text: 80% used across 2 measured credentials
+          - article [ref=e141]:
+            - text: Measured credentials
+            - strong [ref=e142]: 2/2
+            - text: All Codex credential limits visible
+        - generic [ref=e143]:
+          - article [ref=e144] [cursor=pointer]:
+            - generic [ref=e145]:
+              - strong [ref=e146]: cred_codex_ok
+              - paragraph [ref=e147]: 5h Unknown · Weekly Unknown
+            - generic [ref=e148]: Limits visible
+          - article [ref=e149] [cursor=pointer]:
+            - generic [ref=e150]:
+              - strong [ref=e151]: cred_codex_warning
+              - paragraph [ref=e152]: 5h Unknown · Weekly Unknown
+            - generic [ref=e153]: Limits visible
+      - generic [ref=e154]:
+        - article [ref=e155]:
+          - generic [ref=e156]:
+            - generic [ref=e157]:
+              - paragraph [ref=e158]: Total usage
+              - heading "Token volume trend" [level=3] [ref=e159]
+            - generic [ref=e160]: +12% vs yesterday
+          - generic [ref=e161]:
+            - generic "Codex shared primary · 124,000 tokens" [ref=e162]
+            - generic "Codex shared warning · 93,000 tokens" [ref=e163]
+            - generic "Custom OpenAI-compatible · 42,000 tokens" [ref=e164]
+        - article [ref=e165]:
+          - text: Prompt tokens
+          - strong [ref=e166]: 259,000
+          - text: Collected across credentials, users, and orgs
+        - article [ref=e167]:
+          - text: Requests
+          - strong [ref=e168]: 1,280
+          - text: Can be grouped by credential or user
+        - article [ref=e169]:
+          - text: Top credential
+          - strong [ref=e170]: Codex shared primary
+          - text: 53% of current rolling usage
+      - generic [ref=e171]:
+        - article [ref=e172] [cursor=pointer]:
+          - generic [ref=e173]:
+            - strong [ref=e174]: Codex shared primary
+            - paragraph [ref=e175]: 600 requests
+          - generic [ref=e176]: 124,000 tokens
+        - article [ref=e177] [cursor=pointer]:
+          - generic [ref=e178]:
+            - strong [ref=e179]: Codex shared warning
+            - paragraph [ref=e180]: 510 requests
+          - generic [ref=e181]: 93,000 tokens
+        - article [ref=e182] [cursor=pointer]:
+          - generic [ref=e183]:
+            - strong [ref=e184]: Custom OpenAI-compatible
+            - paragraph [ref=e185]: 170 requests
+          - generic [ref=e186]: 42,000 tokens
+      - generic [ref=e187]:
+        - generic [ref=e188]:
+          - generic [ref=e189]:
+            - paragraph [ref=e190]: Credential usage
+            - heading "Recorded usage and Codex limits" [level=3] [ref=e191]
+          - generic [ref=e192]: Codex limits best effort
+        - table [ref=e194]:
+          - rowgroup [ref=e195]:
+            - row "Credential Provider Status Requests Cached tokens Tokens Active leases Last usage Eligibility Upstream status" [ref=e196]:
+              - columnheader "Credential" [ref=e197]
+              - columnheader "Provider" [ref=e198]
+              - columnheader "Status" [ref=e199]
+              - columnheader "Requests" [ref=e200]
+              - columnheader "Cached tokens" [ref=e201]
+              - columnheader "Tokens" [ref=e202]
+              - columnheader "Active leases" [ref=e203]
+              - columnheader "Last usage" [ref=e204]
+              - columnheader "Eligibility" [ref=e205]
+              - columnheader "Upstream status" [ref=e206]
+          - rowgroup [ref=e207]:
+            - row "Codex shared primary cred_codex_ok Codex / ChatGPT healthy 500 0 124,000 4 Jun 7, 12:00 PM unavailable Eligibility status unavailable Codex limits visible Status probe did not return limits." [ref=e208]:
+              - cell "Codex shared primary cred_codex_ok" [ref=e209]:
+                - strong [ref=e210]: Codex shared primary
+                - generic [ref=e211]: cred_codex_ok
+              - cell "Codex / ChatGPT" [ref=e212]
+              - cell "healthy" [ref=e213]:
+                - generic [ref=e214]: healthy
+              - cell "500" [ref=e215]
+              - cell "0" [ref=e216]
+              - cell "124,000" [ref=e217]
+              - cell "4" [ref=e218]
+              - cell "Jun 7, 12:00 PM" [ref=e219]
+              - cell "unavailable Eligibility status unavailable" [ref=e220]:
+                - generic [ref=e221]: unavailable
+                - generic [ref=e222]: Eligibility status unavailable
+              - cell "Codex limits visible Status probe did not return limits." [ref=e223]:
+                - generic [ref=e224]: Codex limits visible
+                - generic [ref=e225]: Status probe did not return limits.
+            - row "Codex shared warning cred_codex_warning Codex / ChatGPT degraded 500 0 93,000 1 Jun 7, 12:00 PM unavailable Eligibility status unavailable Codex limits visible Status probe did not return limits." [ref=e226]:
+              - cell "Codex shared warning cred_codex_warning" [ref=e227]:
+                - strong [ref=e228]: Codex shared warning
+                - generic [ref=e229]: cred_codex_warning
+              - cell "Codex / ChatGPT" [ref=e230]
+              - cell "degraded" [ref=e231]:
+                - generic [ref=e232]: degraded
+              - cell "500" [ref=e233]
+              - cell "0" [ref=e234]
+              - cell "93,000" [ref=e235]
+              - cell "1" [ref=e236]
+              - cell "Jun 7, 12:00 PM" [ref=e237]
+              - cell "unavailable Eligibility status unavailable" [ref=e238]:
+                - generic [ref=e239]: unavailable
+                - generic [ref=e240]: Eligibility status unavailable
+              - cell "Codex limits visible Status probe did not return limits." [ref=e241]:
+                - generic [ref=e242]: Codex limits visible
+                - generic [ref=e243]: Status probe did not return limits.
+            - row "Custom OpenAI-compatible cred_custom OpenAI-compatible provider healthy 170 0 42,000 0 Jun 7, 12:00 PM N/A No upstream status Historical usage only." [ref=e244]:
+              - cell "Custom OpenAI-compatible cred_custom" [ref=e245]:
+                - strong [ref=e246]: Custom OpenAI-compatible
+                - generic [ref=e247]: cred_custom
+              - cell "OpenAI-compatible provider" [ref=e248]
+              - cell "healthy" [ref=e249]:
+                - generic [ref=e250]: healthy
+              - cell "170" [ref=e251]
+              - cell "0" [ref=e252]
+              - cell "42,000" [ref=e253]
+              - cell "0" [ref=e254]
+              - cell "Jun 7, 12:00 PM" [ref=e255]
+              - cell "N/A" [ref=e256]:
+                - generic [ref=e257]: N/A
+              - cell "No upstream status Historical usage only." [ref=e258]:
+                - generic [ref=e259]: No upstream status
+                - generic [ref=e260]: Historical usage only.

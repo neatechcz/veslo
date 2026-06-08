@@ -6,6 +6,16 @@ import { realpathSync, statSync } from "node:fs";
 
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
+function timeoutSignal(ms) {
+  return typeof AbortSignal.timeout === "function"
+    ? AbortSignal.timeout(ms)
+    : (() => {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), ms);
+        return controller.signal;
+      })();
+}
+
 function resolveAuthHeader(auth) {
   if (auth?.mode === "veslo" && auth.token) {
     return `Bearer ${auth.token}`;
@@ -18,13 +28,20 @@ function resolveAuthHeader(auth) {
 
 export function makeClient({ baseUrl, directory, auth }) {
   const authHeader = resolveAuthHeader(auth);
-  return createOpencodeClient({
+  const client = createOpencodeClient({
     baseUrl,
     directory,
     responseStyle: "data",
     throwOnError: true,
     headers: authHeader ? { Authorization: authHeader } : undefined,
   });
+
+  Object.defineProperties(client, {
+    __vesloScriptBaseUrl: { value: baseUrl },
+    __vesloScriptAuthHeader: { value: authHeader },
+  });
+
+  return client;
 }
 
 export async function findFreePort() {
@@ -123,10 +140,22 @@ export async function spawnOpencodeServe({
 export async function waitForHealthy(client, { timeoutMs = 10_000, pollMs = 250 } = {}) {
   const start = Date.now();
   let lastError;
+  const baseUrl = client.__vesloScriptBaseUrl;
+  const authHeader = client.__vesloScriptAuthHeader;
 
   while (Date.now() - start < timeoutMs) {
     try {
-      const health = await client.global.health();
+      const health = baseUrl
+        ? await fetch(`${baseUrl.replace(/\/+$/, "")}/global/health`, {
+            headers: authHeader ? { Authorization: authHeader } : undefined,
+            signal: timeoutSignal(Math.min(1500, timeoutMs)),
+          }).then(async (response) => {
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}`);
+            }
+            return response.json();
+          })
+        : await client.global.health();
       assert.equal(health.healthy, true);
       assert.ok(typeof health.version === "string");
       return health;

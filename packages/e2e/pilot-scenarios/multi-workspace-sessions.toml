@@ -1,0 +1,337 @@
+[scenario]
+name = "multi-workspace-sessions"
+fail_fast = true
+global_timeout_ms = 360000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "start multi workspace session task"
+action = "eval"
+script = '''
+const completeSelector = '[data-testid="multi-workspace-sessions-complete"]';
+const errorSelector = '[data-testid="multi-workspace-sessions-error"]';
+const progressSelector = '[data-testid="multi-workspace-sessions-progress"]';
+document.querySelector(completeSelector)?.remove();
+document.querySelector(errorSelector)?.remove();
+document.querySelector(progressSelector)?.remove();
+
+const progressMarker = document.createElement("pre");
+progressMarker.dataset.testid = "multi-workspace-sessions-progress";
+progressMarker.style.display = "none";
+progressMarker.textContent = "starting";
+document.body.append(progressMarker);
+
+const setProgress = (stage, detail = null) => {
+  window.__vesloMultiWorkspaceSessionsProgress = {
+    stage,
+    detail,
+    at: new Date().toISOString(),
+  };
+  progressMarker.textContent = JSON.stringify(window.__vesloMultiWorkspaceSessionsProgress);
+};
+
+const appendMarker = (selector, payload) => {
+  if (document.querySelector(completeSelector) || document.querySelector(errorSelector)) return;
+  const marker = document.createElement("pre");
+  marker.dataset.testid = selector === completeSelector
+    ? "multi-workspace-sessions-complete"
+    : "multi-workspace-sessions-error";
+  marker.textContent = JSON.stringify(payload, null, 2);
+  document.body.append(marker);
+};
+
+if (!window.__vesloMultiWorkspaceSessionsStarted) {
+  window.__vesloMultiWorkspaceSessionsStarted = true;
+  window.__vesloMultiWorkspaceSessionsPromise = (async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const trimText = (value) => String(value ?? "").trim();
+    const normalize = (value) => trimText(value).replace(/\s+/g, " ");
+    const trimBaseUrl = (value) => normalize(value).replace(/\/+$/, "");
+    const normalizePath = (value) => trimText(value).replace(/\\/g, "/").replace(/\/+$/, "");
+    const assert = (condition, message) => {
+      if (!condition) throw new Error(message);
+    };
+    const waitUntil = async (predicate, options = {}) => {
+      const timeout = options.timeout ?? 10000;
+      const interval = options.interval ?? 250;
+      const message = options.message ?? "Condition was not met";
+      const deadline = Date.now() + timeout;
+      let latest;
+      while (Date.now() < deadline) {
+        latest = await predicate();
+        if (latest) return latest;
+        await sleep(interval);
+      }
+      throw new Error(`${message}. Latest=${JSON.stringify(latest)}`);
+    };
+    const tauriInvoke = async (command, payload = {}) => {
+      const invoke = window.__TAURI_INTERNALS__?.invoke;
+      assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
+      return await invoke(command, payload);
+    };
+    const isRetryableServerTransportError = (error) => {
+      const message = String(error?.message || error || "").toLowerCase();
+      return message.includes("load failed") || message.includes("failed to fetch") || message.includes("network error");
+    };
+    const serverRequest = async (connection, path, options = {}) => {
+      const headers = new Headers(options.headers || {});
+      headers.set("accept", "application/json");
+      if (options.body && !headers.has("content-type")) {
+        headers.set("content-type", "application/json");
+      }
+      if (options.auth === "host") {
+        headers.set("x-veslo-host-token", connection.hostToken);
+      } else if (options.auth !== "none") {
+        headers.set("authorization", `Bearer ${connection.clientToken}`);
+      }
+      let response = null;
+      let lastError = null;
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        try {
+          response = await fetch(`${connection.baseUrl}${path}`, {
+            ...options,
+            headers,
+          });
+          break;
+        } catch (error) {
+          lastError = error;
+          if (!isRetryableServerTransportError(error)) {
+            throw error;
+          }
+          await sleep(250 * (attempt + 1));
+        }
+      }
+      if (!response) {
+        throw lastError ?? new Error(`Veslo server request failed before response: ${path}`);
+      }
+      const text = await response.text();
+      if (!response.ok && !(options.acceptStatuses || []).includes(response.status)) {
+        throw new Error(`Veslo server request failed ${response.status} ${path}: ${text.slice(0, 1500)}`);
+      }
+      const payload = text.trim() ? JSON.parse(text) : null;
+      return { response, payload };
+    };
+    const waitForLocalVesloServerReady = async () => {
+      let latest = null;
+      setProgress("waiting-local-veslo-server");
+      return await waitUntil(async () => {
+        latest = await tauriInvoke("veslo_server_info").catch(() => null);
+        const baseUrl = trimBaseUrl(latest?.baseUrl);
+        const clientToken = normalize(latest?.clientToken);
+        const hostToken = normalize(latest?.hostToken);
+        if (!latest?.running || !baseUrl || !clientToken || !hostToken) return false;
+        const response = await fetch(`${baseUrl}/health`).catch(() => null);
+        if (!response?.ok) return false;
+        const payload = await response.json().catch(() => null);
+        return payload?.ok === true ? { baseUrl, clientToken, hostToken } : false;
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: `Local Veslo server did not become ready. Server info=${JSON.stringify(latest)}`,
+      });
+    };
+    const registerLocalWorkspace = async (connection, workspace) => {
+      const path = normalizePath(workspace?.path || workspace?.directory);
+      const name = normalize(workspace?.displayName || workspace?.name) || path.split("/").pop() || "Workspace";
+      assert(path, `Workspace path is missing: ${JSON.stringify(workspace)}`);
+      setProgress("registering-local-workspace", { path, name });
+      await serverRequest(connection, "/workspaces/local", {
+        auth: "host",
+        method: "POST",
+        body: JSON.stringify({ path, name }),
+        acceptStatuses: [409],
+      });
+      return path;
+    };
+    const findServerWorkspaceByPath = async (connection, workspacePath) => {
+      const normalizedPath = normalizePath(workspacePath);
+      setProgress("waiting-server-workspace", { workspacePath: normalizedPath });
+      return await waitUntil(async () => {
+        const { payload } = await serverRequest(connection, "/workspaces");
+        const items = Array.isArray(payload?.items) ? payload.items : [];
+        return items.find((item) => normalizePath(item.path || item.directory || item.opencode?.directory) === normalizedPath) || false;
+      }, {
+        timeout: 45000,
+        interval: 500,
+        message: `Veslo server did not list workspace ${normalizedPath}`,
+      });
+    };
+    const waitForWorkspaceEngineReady = async (workspace) => {
+      const workspacePath = normalizePath(workspace?.path || workspace?.directory);
+      assert(workspacePath, `Workspace path is missing from bootstrap payload: ${JSON.stringify(workspace)}`);
+      setProgress("activating-workspace-engine", { workspacePath });
+      try {
+        await tauriInvoke("orchestrator_workspace_activate", {
+          workspacePath,
+          name: normalize(workspace?.displayName || workspace?.name) || null,
+        });
+      } catch (error) {
+        setProgress("starting-workspace-engine", { workspacePath, error: error?.message || String(error) });
+        await tauriInvoke("engine_start", {
+          projectDir: workspacePath,
+          preferSidecar: true,
+          opencodeBinPath: null,
+          runtime: "veslo-orchestrator",
+          workspacePaths: [workspacePath],
+        });
+        await tauriInvoke("orchestrator_workspace_activate", {
+          workspacePath,
+          name: normalize(workspace?.displayName || workspace?.name) || null,
+        });
+      }
+      setProgress("waiting-workspace-engine-ready", { workspacePath });
+      return await waitUntil(async () => {
+        const info = await tauriInvoke("engine_info", {
+          workspaceId: workspace?.id ?? null,
+          workspacePath,
+        }).catch(() => null);
+        const baseUrl = trimBaseUrl(info?.baseUrl);
+        const directory = normalizePath(info?.projectDir || info?.directory || workspacePath);
+        return baseUrl && directory === workspacePath ? { ...info, baseUrl, projectDir: directory } : false;
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: `Workspace engine did not become routable for ${workspacePath}`,
+      });
+    };
+    const patchServerWorkspaceRoute = async (connection, serverWorkspace, engineInfo, workspacePath) => {
+      const baseUrl = trimBaseUrl(engineInfo?.baseUrl);
+      const directory = normalizePath(engineInfo?.projectDir || workspacePath);
+      assert(serverWorkspace?.id, `Server workspace id is missing: ${JSON.stringify(serverWorkspace)}`);
+      assert(baseUrl, `Engine baseUrl is missing: ${JSON.stringify(engineInfo)}`);
+      assert(directory === normalizePath(workspacePath), `Engine directory mismatch: ${directory} !== ${workspacePath}`);
+      setProgress("patching-server-workspace-route", { workspaceId: serverWorkspace.id, baseUrl, directory });
+      await serverRequest(connection, `/workspaces/${encodeURIComponent(serverWorkspace.id)}`, {
+        auth: "host",
+        method: "PATCH",
+        body: JSON.stringify({
+          name: serverWorkspace.name || serverWorkspace.id,
+          baseUrl,
+          directory,
+        }),
+      });
+      const patched = await findServerWorkspaceByPath(connection, workspacePath);
+      assert(trimBaseUrl(patched.baseUrl || patched.opencode?.baseUrl) === baseUrl, `Server baseUrl was not persisted: ${JSON.stringify(patched)}`);
+      assert(normalizePath(patched.opencode?.directory || patched.directory) === directory, `Server directory was not persisted: ${JSON.stringify(patched)}`);
+      return patched;
+    };
+    const createServerConversation = async (connection, serverWorkspace, workspacePath, title) => {
+      setProgress("creating-server-conversation", { workspaceId: serverWorkspace.id, workspacePath, title });
+      const { payload } = await serverRequest(connection, `/workspace/${encodeURIComponent(serverWorkspace.id)}/conversations`, {
+        auth: "client",
+        method: "POST",
+        body: JSON.stringify({ directory: workspacePath, title }),
+      });
+      assert(payload?.id, `Conversation create did not return an OpenCode session id: ${JSON.stringify(payload)}`);
+      assert(payload?.conversationId, `Conversation create did not return a Veslo conversation id: ${JSON.stringify(payload)}`);
+      assert(normalizePath(payload?.directory) === normalizePath(workspacePath), `Conversation directory mismatch: ${JSON.stringify(payload)}`);
+      return payload;
+    };
+
+    try {
+      await waitUntil(() => document.querySelector("#root")?.children.length > 0, {
+        timeout: 15000,
+        message: "Veslo root did not render child UI",
+      });
+
+      const connection = await waitForLocalVesloServerReady();
+      const { payload: capabilities } = await serverRequest(connection, "/capabilities");
+      assert(capabilities?.sandbox?.enabled === false, `Expected no-sandbox e2e runtime, got: ${JSON.stringify(capabilities?.sandbox)}`);
+
+      const bootstrap = await waitUntil(async () => {
+        const info = await tauriInvoke("workspace_bootstrap").catch(() => null);
+        return Array.isArray(info?.workspaces) && info.workspaces.length > 0 ? info : false;
+      }, {
+        timeout: 45000,
+        interval: 500,
+        message: "Workspace bootstrap did not expose a local workspace",
+      });
+      const first = bootstrap.workspaces.find((workspace) => workspace.id === bootstrap.activeId) ?? bootstrap.workspaces[0];
+      const firstPath = normalizePath(first?.path || first?.directory);
+      assert(first?.id && firstPath, `Initial workspace is unavailable: ${JSON.stringify(bootstrap)}`);
+
+      const parent = firstPath.replace(/\/[^/]+$/, "");
+      const requestedSecondPath = `${parent}/multi-session-target-${Date.now()}`;
+      const requestedSecondLeaf = requestedSecondPath.split("/").filter(Boolean).pop();
+      setProgress("creating-second-workspace", { secondPath: requestedSecondPath });
+      const afterCreate = await tauriInvoke("workspace_create", {
+        folderPath: requestedSecondPath,
+        name: "Multi Session Target",
+        preset: "starter",
+      });
+      const second = afterCreate.workspaces.find((workspace) => {
+        const candidatePath = normalizePath(workspace.path || workspace.directory);
+        return candidatePath === normalizePath(requestedSecondPath) || candidatePath.endsWith(`/${requestedSecondLeaf}`);
+      });
+      assert(second?.id, `Second workspace was not registered in Tauri state: ${JSON.stringify(afterCreate)}`);
+      const secondPath = normalizePath(second.path || second.directory);
+
+      await registerLocalWorkspace(connection, first);
+      await registerLocalWorkspace(connection, second);
+      const firstServerWorkspace = await findServerWorkspaceByPath(connection, firstPath);
+      const secondServerWorkspace = await findServerWorkspaceByPath(connection, secondPath);
+      assert(firstServerWorkspace.id !== secondServerWorkspace.id, "Server workspaces must have distinct ids.");
+
+      const firstEngine = await waitForWorkspaceEngineReady(first);
+      const secondEngine = await waitForWorkspaceEngineReady(second);
+      const firstPatched = await patchServerWorkspaceRoute(connection, firstServerWorkspace, firstEngine, firstPath);
+      const secondPatched = await patchServerWorkspaceRoute(connection, secondServerWorkspace, secondEngine, secondPath);
+
+      const runId = `multi workspace sessions ${Date.now()}`;
+      const firstConversation = await createServerConversation(connection, firstPatched, firstPath, `${runId} first`);
+      const secondConversation = await createServerConversation(connection, secondPatched, secondPath, `${runId} second`);
+
+      assert(firstConversation.id !== secondConversation.id, "OpenCode session ids must be distinct.");
+      assert(firstConversation.conversationId !== secondConversation.conversationId, "Veslo conversation ids must be distinct.");
+      assert(firstConversation.workspaceId === firstPatched.id, `First conversation workspace mismatch: ${JSON.stringify(firstConversation)}`);
+      assert(secondConversation.workspaceId === secondPatched.id, `Second conversation workspace mismatch: ${JSON.stringify(secondConversation)}`);
+
+      appendMarker(completeSelector, {
+        first: {
+          workspaceId: firstPatched.id,
+          directory: firstConversation.directory,
+          sessionId: firstConversation.id,
+          conversationId: firstConversation.conversationId,
+        },
+        second: {
+          workspaceId: secondPatched.id,
+          directory: secondConversation.directory,
+          sessionId: secondConversation.id,
+          conversationId: secondConversation.conversationId,
+        },
+      });
+    } catch (error) {
+      appendMarker(errorSelector, {
+        message: error?.message || String(error),
+        stack: error?.stack || null,
+        progress: window.__vesloMultiWorkspaceSessionsProgress ?? null,
+        body: document.body.innerText.replace(/\s+/g, " ").trim().slice(0, 3000),
+      });
+    }
+  })();
+}
+
+true;
+'''
+
+[[step]]
+name = "multi workspace session task finished"
+action = "wait"
+target = "[data-testid=\"multi-workspace-sessions-complete\"], [data-testid=\"multi-workspace-sessions-error\"]"
+timeout_ms = 300000
+
+[[step]]
+name = "multi workspace session task succeeded"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="multi-workspace-sessions-error"]');
+if (error) {
+  throw new Error(`Multi-workspace session check failed: ${(error.textContent || "").slice(0, 5000)}`);
+}
+true;
+'''

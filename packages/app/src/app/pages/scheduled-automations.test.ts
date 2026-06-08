@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { buildSchedule } from "./scheduled-automation-schedule";
+import { buildSchedule, localDateTimeInputPartsFromInstant } from "./scheduled-automation-schedule";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const scheduledSource = () => readFileSync(join(__dirname, "scheduled.tsx"), "utf8");
@@ -230,4 +230,20 @@ test("buildSchedule preserves local timezone for recurring wall-clock schedules"
   const oneShot = buildSchedule("oneShot", baseOptions, "Europe/Prague");
   assert.equal(oneShot?.kind, "oneShot");
   assert.equal("timezone" in (oneShot ?? {}), false);
+});
+
+test("one-shot edit form roundtrips a local wall-clock instant without UTC shifting", () => {
+  const originalRunAt = new Date(2026, 5, 7, 22, 52, 0, 0).toISOString();
+  const parts = localDateTimeInputPartsFromInstant(originalRunAt);
+
+  const oneShot = buildSchedule("oneShot", {
+    timeValue: "09:00",
+    days: ["mo"],
+    intervalHours: 6,
+    runAtDate: parts.date,
+    runAtTime: parts.time,
+    quickMinutes: 0,
+  });
+
+  assert.deepEqual(oneShot, { kind: "oneShot", runAt: originalRunAt });
 });

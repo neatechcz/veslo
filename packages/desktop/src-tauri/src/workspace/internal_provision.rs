@@ -1,13 +1,88 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::fs::copy_dir_recursive;
 use serde::Deserialize;
 
-const PROVISION_VERSION: &str = "2026-06-06.1";
+const PROVISION_VERSION: &str = "2026-06-07.4";
 const LEGACY_INTERNAL_SOURCE: &str = "openwork-snapshot";
+const VESLO_MANAGED_ZOD_VERSION: &str = "4.1.8";
 
 const DELEGATE_PLUGIN_FILE: &str = "veslo-delegate.js";
 const AUTOMATIONS_PLUGIN_FILE: &str = "veslo-automations.js";
+const MANAGED_ZOD_FALLBACK_INDEX: &str = r#"const makeSchema = (type, extra = {}) => {
+  const schema = {
+    _zod: { def: { type, ...extra } },
+    _def: { typeName: type, ...extra },
+    describe() { return schema },
+    optional() { return schema },
+    nullable() { return schema },
+    default() { return schema },
+    array() { return makeSchema("array", { item: schema }) },
+  };
+  return schema;
+};
+
+export const z = {
+  any: () => makeSchema("any"),
+  boolean: () => makeSchema("boolean"),
+  enum: (values) => makeSchema("enum", { values }),
+  object: (shape) => makeSchema("object", { shape }),
+  string: () => makeSchema("string"),
+};
+
+export default z;
+"#;
+const MANAGED_ZOD_FALLBACK_PACKAGE_JSON: &str = r#"{
+  "name": "zod",
+  "version": "4.1.8",
+  "vesloManagedFallback": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./index.js"
+    }
+  },
+  "files": [
+    "index.js"
+  ]
+}
+"#;
+
+const MANAGED_OPENCODE_PLUGIN_TOOL_INDEX: &str = r#"import { z } from "zod";
+
+export function tool(input) {
+  return input;
+}
+
+tool.schema = z;
+"#;
+
+const MANAGED_OPENCODE_PLUGIN_INDEX: &str = r#"export * from "./tool.js";
+"#;
+
+const MANAGED_OPENCODE_PLUGIN_PACKAGE_JSON: &str = r#"{
+  "name": "@opencode-ai/plugin",
+  "version": "1.16.2",
+  "vesloManagedShim": true,
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js"
+    },
+    "./tool": {
+      "import": "./dist/tool.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "zod": "4.1.8"
+  }
+}
+"#;
 
 const ROUTING_BLOCK_START: &str = "<!-- VESLO_INTERNAL_ROUTING_START -->";
 const ROUTING_BLOCK_END: &str = "<!-- VESLO_INTERNAL_ROUTING_END -->";
@@ -192,7 +267,13 @@ fn ensure_veslo_agent_instructions(
 
 fn automations_plugin_source() -> String {
     r#"import { readFile } from "node:fs/promises";
-import { tool } from "@opencode-ai/plugin";
+import { z } from "zod";
+
+function tool(input) {
+  return input;
+}
+
+tool.schema = z;
 
 /**
  * Veslo Automations Plugin
@@ -588,12 +669,383 @@ export default async (ctx) => {
     .replace("__VESLO_INTERNAL_VERSION__", PROVISION_VERSION)
 }
 
+fn automations_tool_prelude() -> Result<String, String> {
+    let source = automations_plugin_source();
+    let marker = "export default async (ctx) => {";
+    let index = source
+        .find(marker)
+        .ok_or_else(|| "Failed to locate automations plugin export marker".to_string())?;
+    Ok(source[..index]
+        .replace("Veslo Automations Plugin", "Veslo Automations Tools")
+        .replace(
+            "Registers tools that create, inspect, update, cancel, and run persistent\n * Veslo app-backed automations through the running Veslo server.",
+            "Provides a single Veslo automation tool through the running Veslo server.",
+        ))
+}
+
+fn automation_tool_source(body: &str) -> Result<String, String> {
+    Ok(format!("{}{}\n", automations_tool_prelude()?, body.trim()))
+}
+
+fn automation_tool_sources() -> Result<Vec<(&'static str, String)>, String> {
+    Ok(vec![
+        (
+            "veslo_create_automation.ts",
+            automation_tool_source(
+                r#"export default tool({
+  description: "Create a persistent Veslo automation in the current workspace through the running Veslo server.",
+  args: {
+    workspaceId: tool.schema.string().optional().describe("Veslo workspace id. Provide this when it cannot be inferred from the current session."),
+    id: tool.schema.string().optional().describe("Optional stable automation id."),
+    name: tool.schema.string().describe("Short automation name."),
+    prompt: tool.schema.string().describe("Prompt to run when the automation fires."),
+    schedule: tool.schema.any().describe("Automation schedule object: oneShot, interval, daily, weekly, or cron."),
+    timezone: tool.schema.string().optional().describe("Optional timezone for oneShot, cron, daily, or weekly schedules when schedule.timezone is absent."),
+    target: tool.schema.any().optional().describe("Optional target overrides such as preferredSessionId, fallbackTitle, agent, model, or variant."),
+    enabled: tool.schema.boolean().optional().describe("Whether the automation starts enabled."),
+    status: tool.schema.enum(["active", "paused", "completed", "failed", "cancelled"]).optional().describe("Initial automation status."),
+  },
+  async execute(args, context) {
+    return await withVesloWorkspace(args, context, null, async (state, workspaceId) => {
+      if (args.schedule === undefined) return "Error: schedule is required.";
+      const target = createTarget(args, context);
+      if (target.error) return target.error;
+      const body = {
+        ...definedPatch(args, ["id", "enabled", "status"]),
+        name: args.name,
+        prompt: args.prompt,
+        schedule: withTopLevelTimezone(args.schedule, args.timezone),
+        target: target.target,
+      };
+      const data = await vesloRequest(state, workspaceId, "", { method: "POST", body });
+      return jsonSummary({
+        action: "created",
+        automation: summarizeAutomation(data.automation),
+      });
+    });
+  },
+});"#,
+            )?,
+        ),
+        (
+            "veslo_list_automations.ts",
+            automation_tool_source(
+                r#"export default tool({
+  description: "List persistent Veslo automations for a workspace through the running Veslo server.",
+  args: {
+    workspaceId: tool.schema.string().optional().describe("Veslo workspace id. Provide this when it cannot be inferred from the current session."),
+  },
+  async execute(args, context) {
+    return await withVesloWorkspace(args, context, null, async (state, workspaceId) => {
+      const data = await vesloRequest(state, workspaceId, "", { method: "GET" });
+      const items = Array.isArray(data.items) ? data.items.map(summarizeAutomation) : [];
+      return jsonSummary({ count: items.length, items });
+    });
+  },
+});"#,
+            )?,
+        ),
+        (
+            "veslo_run_automation.ts",
+            automation_tool_source(
+                r#"export default tool({
+  description: "Run a persistent Veslo automation immediately through the running Veslo server.",
+  args: {
+    workspaceId: tool.schema.string().optional().describe("Veslo workspace id. Provide this when it cannot be inferred from the current session."),
+    automationId: tool.schema.string().describe("Automation id to run."),
+  },
+  async execute(args, context) {
+    return await withVesloWorkspace(args, context, null, async (state, workspaceId) => {
+      const suffix = "/" + encodeURIComponent(args.automationId) + "/run";
+      const data = await vesloRequest(state, workspaceId, suffix, { method: "POST" });
+      return jsonSummary({ action: "ran", run: summarizeRun(data.run) });
+    });
+  },
+});"#,
+            )?,
+        ),
+        (
+            "veslo_update_automation.ts",
+            automation_tool_source(
+                r#"export default tool({
+  description: "Update a persistent Veslo automation through the running Veslo server.",
+  args: {
+    workspaceId: tool.schema.string().optional().describe("Veslo workspace id. Provide this when it cannot be inferred from the current session."),
+    automationId: tool.schema.string().describe("Automation id to update."),
+    name: tool.schema.string().optional().describe("Updated automation name."),
+    prompt: tool.schema.string().optional().describe("Updated automation prompt."),
+    schedule: tool.schema.any().optional().describe("Updated automation schedule object."),
+    target: tool.schema.any().optional().describe("Updated target object."),
+    enabled: tool.schema.boolean().optional().describe("Updated enabled flag."),
+    status: tool.schema.enum(["active", "paused", "completed", "failed", "cancelled"]).optional().describe("Updated automation status."),
+  },
+  async execute(args, context) {
+    return await withVesloWorkspace(args, context, null, async (state, workspaceId) => {
+      const body = definedPatch(args, ["name", "prompt", "schedule", "target", "enabled", "status"]);
+      const suffix = "/" + encodeURIComponent(args.automationId);
+      const data = await vesloRequest(state, workspaceId, suffix, { method: "PATCH", body });
+      return jsonSummary({
+        action: "updated",
+        automation: summarizeAutomation(data.automation),
+      });
+    });
+  },
+});"#,
+            )?,
+        ),
+        (
+            "veslo_delete_automation.ts",
+            automation_tool_source(
+                r#"export default tool({
+  description: "Cancel a persistent Veslo automation through the running Veslo server.",
+  args: {
+    workspaceId: tool.schema.string().optional().describe("Veslo workspace id. Provide this when it cannot be inferred from the current session."),
+    automationId: tool.schema.string().describe("Automation id to cancel."),
+  },
+  async execute(args, context) {
+    return await withVesloWorkspace(args, context, null, async (state, workspaceId) => {
+      const suffix = "/" + encodeURIComponent(args.automationId);
+      const data = await vesloRequest(state, workspaceId, suffix, { method: "DELETE" });
+      return jsonSummary({
+        action: "cancelled",
+        automation: summarizeAutomation(data.automation),
+      });
+    });
+  },
+});"#,
+            )?,
+        ),
+    ])
+}
+
+fn is_managed_automation_plugin_content(content: &str) -> bool {
+    content.contains("Veslo Automations Plugin")
+        && content.contains("Managed by Veslo internal system")
+}
+
+fn remove_managed_automation_plugin(
+    workspace_root: &Path,
+    stats: &mut WriteStats,
+) -> Result<(), String> {
+    let plugin_path = workspace_root
+        .join(".opencode")
+        .join("plugins")
+        .join(AUTOMATIONS_PLUGIN_FILE);
+    if !plugin_path.exists() {
+        return Ok(());
+    }
+    let content = fs::read_to_string(&plugin_path)
+        .map_err(|e| format!("Failed to read {}: {e}", plugin_path.display()))?;
+    if !is_managed_automation_plugin_content(&content) {
+        return Ok(());
+    }
+    fs::remove_file(&plugin_path)
+        .map_err(|e| format!("Failed to remove {}: {e}", plugin_path.display()))?;
+    stats.written += 1;
+    Ok(())
+}
+
 fn write_internal_plugins(workspace_root: &Path, stats: &mut WriteStats) -> Result<(), String> {
-    let plugins_root = workspace_root.join(".opencode").join("plugins");
-    fs::create_dir_all(&plugins_root)
-        .map_err(|e| format!("Failed to create {}: {e}", plugins_root.display()))?;
-    let plugin_path = plugins_root.join(AUTOMATIONS_PLUGIN_FILE);
-    write_if_changed(&plugin_path, automations_plugin_source().as_bytes(), stats)
+    remove_managed_automation_plugin(workspace_root, stats)
+}
+
+fn write_internal_tools(workspace_root: &Path, stats: &mut WriteStats) -> Result<(), String> {
+    let tools_root = workspace_root.join(".opencode").join("tools");
+    fs::create_dir_all(&tools_root)
+        .map_err(|e| format!("Failed to create {}: {e}", tools_root.display()))?;
+    for (filename, source) in automation_tool_sources()? {
+        write_if_changed(&tools_root.join(filename), source.as_bytes(), stats)?;
+    }
+    Ok(())
+}
+
+fn vendor_opencode_plugin_into_workspace(opencode_root: &Path, stats: &mut WriteStats) {
+    let homes = resolve_bun_cache_homes();
+    if homes.is_empty() {
+        eprintln!(
+            "[workspace] no Bun cache home is available; workspace OpenCode plugin dependencies were not vendored"
+        );
+        return;
+    }
+    vendor_opencode_plugin_into_workspace_from_homes(opencode_root, &homes, stats);
+}
+
+fn resolve_bun_cache_homes() -> Vec<PathBuf> {
+    let mut homes = Vec::new();
+    for key in ["VESLO_BUN_CACHE_HOME", "HOME", "USERPROFILE"] {
+        let Ok(value) = std::env::var(key) else {
+            continue;
+        };
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let path = PathBuf::from(trimmed);
+        if homes.iter().any(|existing| existing == &path) {
+            continue;
+        }
+        homes.push(path);
+    }
+    homes
+}
+
+fn vendor_opencode_plugin_into_workspace_from_homes(
+    opencode_root: &Path,
+    homes: &[PathBuf],
+    stats: &mut WriteStats,
+) {
+    let node_modules_root = opencode_root.join("node_modules");
+    if let Err(err) = fs::create_dir_all(&node_modules_root) {
+        eprintln!("[workspace] failed to create plugin node_modules: {err}");
+        return;
+    }
+
+    if let Err(err) = write_managed_opencode_plugin_shim(&node_modules_root, stats) {
+        eprintln!("[workspace] failed to write @opencode-ai/plugin shim: {err}");
+    }
+
+    if !vendor_bun_cache_package(
+        homes,
+        "zod",
+        VESLO_MANAGED_ZOD_VERSION,
+        &node_modules_root,
+        stats,
+    ) {
+        eprintln!(
+            "[workspace] Bun cache miss for zod@{VESLO_MANAGED_ZOD_VERSION}; using minimal zod shim for managed plugin fallback."
+        );
+        if let Err(err) = write_managed_zod_fallback(&node_modules_root, stats) {
+            eprintln!("[workspace] failed to write zod fallback shim: {err}");
+        }
+    }
+}
+
+fn vendor_bun_cache_package(
+    homes: &[PathBuf],
+    pkg: &str,
+    version: &str,
+    node_modules_root: &Path,
+    stats: &mut WriteStats,
+) -> bool {
+    let dst = node_modules_root.join(pkg);
+    if read_package_json_version(&dst).as_deref() == Some(version) {
+        stats.unchanged += 1;
+        return true;
+    }
+
+    let Some(src) = resolve_bun_cache_package(homes, pkg, version) else {
+        return false;
+    };
+
+    if path_exists_or_symlink(&dst) {
+        if let Err(err) = remove_path(&dst) {
+            eprintln!(
+                "[workspace] failed to remove stale {pkg} package at {}: {err}",
+                dst.display()
+            );
+            return false;
+        }
+    }
+    if let Some(parent) = dst.parent() {
+        if let Err(err) = fs::create_dir_all(parent) {
+            eprintln!(
+                "[workspace] failed to create package parent {}: {err}",
+                parent.display()
+            );
+            return false;
+        }
+    }
+
+    match copy_dir_recursive(&src, &dst) {
+        Ok(()) => {
+            stats.written += 1;
+            true
+        }
+        Err(err) => {
+            eprintln!(
+                "[workspace] failed to vendor {pkg}@{version} into {}: {err}",
+                dst.display()
+            );
+            false
+        }
+    }
+}
+
+fn resolve_bun_cache_package(homes: &[PathBuf], pkg: &str, version: &str) -> Option<PathBuf> {
+    for home in homes {
+        let cache = home.join(".bun").join("install").join("cache");
+        let flat = cache.join(format!("{pkg}@{version}@@@1"));
+        if flat.exists() {
+            return Some(flat);
+        }
+        let legacy = cache.join(pkg).join(format!("{version}@@@1"));
+        if legacy.exists() {
+            return Some(legacy);
+        }
+    }
+    None
+}
+
+fn read_package_json_version(package_dir: &Path) -> Option<String> {
+    let raw = fs::read_to_string(package_dir.join("package.json")).ok()?;
+    let parsed = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
+    parsed
+        .get("version")
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+}
+
+fn write_managed_zod_fallback(
+    node_modules_root: &Path,
+    stats: &mut WriteStats,
+) -> Result<(), String> {
+    let zod_dir = node_modules_root.join("zod");
+    fs::create_dir_all(&zod_dir)
+        .map_err(|e| format!("Failed to create {}: {e}", zod_dir.display()))?;
+    write_if_changed(
+        &zod_dir.join("package.json"),
+        MANAGED_ZOD_FALLBACK_PACKAGE_JSON.as_bytes(),
+        stats,
+    )?;
+    write_if_changed(
+        &zod_dir.join("index.js"),
+        MANAGED_ZOD_FALLBACK_INDEX.as_bytes(),
+        stats,
+    )?;
+    Ok(())
+}
+
+fn write_managed_opencode_plugin_shim(
+    node_modules_root: &Path,
+    stats: &mut WriteStats,
+) -> Result<(), String> {
+    let plugin_dir = node_modules_root.join("@opencode-ai").join("plugin");
+    if fs::symlink_metadata(&plugin_dir)
+        .map(|metadata| metadata.file_type().is_symlink() || !metadata.is_dir())
+        .unwrap_or(false)
+    {
+        remove_path(&plugin_dir)
+            .map_err(|e| format!("Failed to remove {}: {e}", plugin_dir.display()))?;
+    }
+    let dist_dir = plugin_dir.join("dist");
+    fs::create_dir_all(&dist_dir)
+        .map_err(|e| format!("Failed to create {}: {e}", dist_dir.display()))?;
+    write_if_changed(
+        &plugin_dir.join("package.json"),
+        MANAGED_OPENCODE_PLUGIN_PACKAGE_JSON.as_bytes(),
+        stats,
+    )?;
+    write_if_changed(
+        &dist_dir.join("index.js"),
+        MANAGED_OPENCODE_PLUGIN_INDEX.as_bytes(),
+        stats,
+    )?;
+    write_if_changed(
+        &dist_dir.join("tool.js"),
+        MANAGED_OPENCODE_PLUGIN_TOOL_INDEX.as_bytes(),
+        stats,
+    )?;
+    Ok(())
 }
 
 /// Compatibility wrapper for existing workspace creation callers.
@@ -611,6 +1063,8 @@ pub fn provision_internal_workspace_assets(
 
     remove_legacy_internal_delegation(workspace_root, &mut stats)?;
     write_internal_plugins(workspace_root, &mut stats)?;
+    write_internal_tools(workspace_root, &mut stats)?;
+    vendor_opencode_plugin_into_workspace(&workspace_root.join(".opencode"), &mut stats);
     ensure_veslo_agent_instructions(workspace_root, &mut stats)?;
 
     Ok(ProvisionResult {
@@ -696,8 +1150,8 @@ fn remove_managed_legacy_internal_pack(pack_dir: &Path) -> Result<bool, String> 
 }
 
 fn dir_is_empty(path: &Path) -> Result<bool, String> {
-    let mut entries =
-        fs::read_dir(path).map_err(|e| format!("Failed to read directory {}: {e}", path.display()))?;
+    let mut entries = fs::read_dir(path)
+        .map_err(|e| format!("Failed to read directory {}: {e}", path.display()))?;
     Ok(entries.next().is_none())
 }
 
@@ -882,10 +1336,135 @@ mod tests {
         fs::write(path, content).unwrap();
     }
 
+    fn write_fake_bun_cache_package(home: &Path, pkg: &str, version: &str) {
+        let package_dir = home
+            .join(".bun")
+            .join("install")
+            .join("cache")
+            .join(format!("{pkg}@{version}@@@1"));
+        write_file(
+            &package_dir.join("package.json"),
+            &format!(
+                "{{\n  \"name\": \"{pkg}\",\n  \"version\": \"{version}\",\n  \"type\": \"module\"\n}}\n"
+            ),
+        );
+        write_file(
+            &package_dir.join("dist").join("index.js"),
+            "export default {};\n",
+        );
+    }
+
     fn managed_legacy_agent(label: &str) -> String {
         format!(
             "---\ndescription: Veslo internal {label} execution agent\nmode: subagent\nhidden: true\n---\n\nVeslo internal execution agent\n"
         )
+    }
+
+    #[test]
+    fn provision_vendors_workspace_plugin_and_zod_dependency_from_bun_cache() {
+        let workspace_root = temp_workspace_root("vendor-zod-deps");
+        let home = temp_workspace_root("vendor-zod-home");
+        write_fake_bun_cache_package(&home, "zod", VESLO_MANAGED_ZOD_VERSION);
+
+        let mut stats = WriteStats::default();
+        vendor_opencode_plugin_into_workspace_from_homes(
+            &workspace_root.join(".opencode"),
+            &[home.clone()],
+            &mut stats,
+        );
+
+        assert_eq!(
+            read_package_json_version(&opencode_path(
+                &workspace_root,
+                &["node_modules", "@opencode-ai", "plugin"],
+            ))
+            .as_deref(),
+            Some("1.16.2")
+        );
+        assert_eq!(
+            read_package_json_version(&opencode_path(&workspace_root, &["node_modules", "zod"]))
+                .as_deref(),
+            Some(VESLO_MANAGED_ZOD_VERSION)
+        );
+
+        fs::remove_dir_all(workspace_root).unwrap();
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn provision_replaces_legacy_workspace_plugin_dependency_with_managed_shim() {
+        let workspace_root = temp_workspace_root("remove-plugin-dep");
+        let home = temp_workspace_root("remove-plugin-home");
+        let legacy_plugin_dir =
+            opencode_path(&workspace_root, &["node_modules", "@opencode-ai", "plugin"]);
+        fs::create_dir_all(&legacy_plugin_dir).unwrap();
+        fs::write(
+            legacy_plugin_dir.join("package.json"),
+            r#"{"name":"@opencode-ai/plugin","version":"1.16.2"}"#,
+        )
+        .unwrap();
+        write_fake_bun_cache_package(&home, "zod", VESLO_MANAGED_ZOD_VERSION);
+
+        let mut stats = WriteStats::default();
+        vendor_opencode_plugin_into_workspace_from_homes(
+            &workspace_root.join(".opencode"),
+            &[home.clone()],
+            &mut stats,
+        );
+
+        assert_eq!(
+            read_package_json_version(&opencode_path(
+                &workspace_root,
+                &["node_modules", "@opencode-ai", "plugin"],
+            ))
+            .as_deref(),
+            Some("1.16.2")
+        );
+        assert!(fs::read_to_string(opencode_path(
+            &workspace_root,
+            &["node_modules", "@opencode-ai", "plugin", "dist", "tool.js"],
+        ))
+        .unwrap()
+        .contains("tool.schema = z"));
+        assert_eq!(
+            read_package_json_version(&opencode_path(&workspace_root, &["node_modules", "zod"]))
+                .as_deref(),
+            Some(VESLO_MANAGED_ZOD_VERSION)
+        );
+
+        fs::remove_dir_all(workspace_root).unwrap();
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn provision_writes_zod_fallback_when_zod_cache_is_missing() {
+        let workspace_root = temp_workspace_root("vendor-zod-fallback");
+        let home = temp_workspace_root("vendor-zod-fallback-home");
+
+        let mut stats = WriteStats::default();
+        vendor_opencode_plugin_into_workspace_from_homes(
+            &workspace_root.join(".opencode"),
+            &[home.clone()],
+            &mut stats,
+        );
+
+        assert_eq!(
+            read_package_json_version(&opencode_path(
+                &workspace_root,
+                &["node_modules", "@opencode-ai", "plugin"],
+            ))
+            .as_deref(),
+            Some("1.16.2")
+        );
+        assert_eq!(
+            read_package_json_version(&opencode_path(&workspace_root, &["node_modules", "zod"]))
+                .as_deref(),
+            Some(VESLO_MANAGED_ZOD_VERSION)
+        );
+        assert!(opencode_path(&workspace_root, &["node_modules", "zod", "index.js"]).exists());
+
+        fs::remove_dir_all(workspace_root).unwrap();
+        fs::remove_dir_all(home).unwrap();
     }
 
     #[test]
@@ -897,6 +1476,14 @@ mod tests {
 
         assert!(!opencode_path(&workspace_root, &["veslo", "internal"]).exists());
         assert!(!opencode_path(&workspace_root, &["plugins", "veslo-delegate.js"]).exists());
+        assert!(!opencode_path(&workspace_root, &["plugins", "veslo-automations.js"]).exists());
+        assert!(opencode_path(&workspace_root, &["tools", "veslo_create_automation.ts"]).exists());
+        assert!(fs::read_to_string(opencode_path(
+            &workspace_root,
+            &["tools", "veslo_create_automation.ts"],
+        ))
+        .unwrap()
+        .contains("export default tool({"));
         for filename in INTERNAL_AGENTS {
             assert!(!opencode_path(&workspace_root, &["agents", filename]).exists());
         }
@@ -914,6 +1501,33 @@ mod tests {
         assert_eq!(second.status, ProvisionStatus::Unchanged);
         assert!(!opencode_path(&workspace_root, &["veslo", "internal"]).exists());
         assert!(!opencode_path(&workspace_root, &["plugins", "veslo-delegate.js"]).exists());
+
+        fs::remove_dir_all(workspace_root).unwrap();
+    }
+
+    #[test]
+    fn provision_replaces_managed_automation_plugin_with_tools() {
+        let workspace_root = temp_workspace_root("automation-tools");
+        write_file(
+            &opencode_path(&workspace_root, &["plugins", "veslo-automations.js"]),
+            "/* Veslo Automations Plugin\n * Managed by Veslo internal system (v2026-06-07.1). Do not edit manually.\n */\nexport default async () => ({ tool: {} });\n",
+        );
+
+        let result = provision_internal_workspace_assets(&workspace_root, None).unwrap();
+        assert_eq!(result.status, ProvisionStatus::Updated);
+        assert!(!opencode_path(&workspace_root, &["plugins", "veslo-automations.js"]).exists());
+        assert!(fs::read_to_string(opencode_path(
+            &workspace_root,
+            &["tools", "veslo_create_automation.ts"],
+        ))
+        .unwrap()
+        .contains("Create a persistent Veslo automation"));
+        assert!(fs::read_to_string(opencode_path(
+            &workspace_root,
+            &["tools", "veslo_delete_automation.ts"],
+        ))
+        .unwrap()
+        .contains("export default tool({"));
 
         fs::remove_dir_all(workspace_root).unwrap();
     }
@@ -942,7 +1556,11 @@ mod tests {
         for filename in INTERNAL_AGENTS {
             write_file(
                 &opencode_path(&workspace_root, &["agents", filename]),
-                &managed_legacy_agent(filename.trim_start_matches("veslo-internal-").trim_end_matches(".md")),
+                &managed_legacy_agent(
+                    filename
+                        .trim_start_matches("veslo-internal-")
+                        .trim_end_matches(".md"),
+                ),
             );
         }
         write_file(
@@ -1025,7 +1643,8 @@ mod tests {
         let workspace_root = temp_workspace_root("preserve-same-name");
         let internal_root = opencode_path(&workspace_root, &["veslo", "internal"]);
         let user_docx_agent = opencode_path(&workspace_root, &["agents", "veslo-internal-docx.md"]);
-        let managed_pdf_agent = opencode_path(&workspace_root, &["agents", "veslo-internal-pdf.md"]);
+        let managed_pdf_agent =
+            opencode_path(&workspace_root, &["agents", "veslo-internal-pdf.md"]);
         let user_plugin = opencode_path(&workspace_root, &["plugins", "veslo-delegate.js"]);
         let user_docx_content = "---\ndescription: user-owned DOCX helper\nmode: primary\n---\n\nThis same-name file is user-authored.\n";
         let user_plugin_content =
@@ -1054,8 +1673,14 @@ mod tests {
 
         assert!(!internal_root.exists());
         assert!(!managed_pdf_agent.exists());
-        assert_eq!(fs::read_to_string(&user_docx_agent).unwrap(), user_docx_content);
-        assert_eq!(fs::read_to_string(&user_plugin).unwrap(), user_plugin_content);
+        assert_eq!(
+            fs::read_to_string(&user_docx_agent).unwrap(),
+            user_docx_content
+        );
+        assert_eq!(
+            fs::read_to_string(&user_plugin).unwrap(),
+            user_plugin_content
+        );
 
         let second = provision_internal_workspace_assets(&workspace_root, None).unwrap();
         assert_eq!(second.status, ProvisionStatus::Unchanged);

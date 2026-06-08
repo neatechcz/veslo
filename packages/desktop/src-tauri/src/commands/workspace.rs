@@ -9,7 +9,10 @@ use crate::types::{
     ExecResult, RemoteType, WorkspaceInfo, WorkspaceList, WorkspaceState, WorkspaceType,
     WorkspaceVesloConfig,
 };
-use crate::workspace::files::{ensure_workspace_files, seed_soul_templates};
+use crate::workspace::files::{
+    ensure_workspace_files, seed_minimal_git_root, seed_soul_templates,
+    should_seed_minimal_git_root,
+};
 use crate::workspace::reserved::is_reserved_internal_workspace_dir_name;
 use crate::workspace::state::{
     load_workspace_state, private_workspace_root_from_data_dir, save_workspace_state,
@@ -471,6 +474,7 @@ pub fn workspace_create(
         preset
     };
 
+    let seed_git_root = should_seed_minimal_git_root(&folder_path)?;
     fs::create_dir_all(&folder).map_err(|e| format!("Failed to create workspace folder: {e}"))?;
 
     let (data_dir, _) = crate::workspace::state::veslo_state_paths(&app)?;
@@ -481,6 +485,9 @@ pub fn workspace_create(
 
     let id = stable_workspace_id(&folder);
 
+    if seed_git_root {
+        let _ = seed_minimal_git_root(&folder_path)?;
+    }
     ensure_workspace_files(&folder, &preset, Some(&templates_dir), Some(&data_dir))?;
 
     let mut state = load_workspace_state(&app)?;

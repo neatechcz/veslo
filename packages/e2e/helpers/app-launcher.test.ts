@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -30,11 +30,12 @@ test('createAppLaunchEnv configures pilot and forces x11 on linux so GTK-backed 
     },
   );
 
-  assert.equal(env.TAURI_PILOT_SOCKET, '/tmp/veslo-pilot-runtime/tauri-pilot-com.neatech.veslo.dev.sock');
+  assert.equal(env.TAURI_PILOT_SOCKET, '/tmp/veslo-pilot-runtime/tauri-pilot-com.neatech.veslo.e2e.sock');
   assert.equal(env.OPENCODE_HOME, '/tmp/opencode-home');
   assert.equal(env.VESLO_DATA_DIR, '/tmp/opencode-home/.veslo');
   assert.equal(env.VESLO_APP_DATA_DIR, '/tmp/opencode-home/.veslo/app-data');
   assert.equal(env.VESLO_APP_LOCAL_DATA_DIR, '/tmp/opencode-home/.veslo/app-local-data');
+  assert.equal(env.VESLO_BUN_CACHE_HOME, '/tmp/home');
   assert.equal(env.VESLO_DEN_AUTH_SNAPSHOT_PATH, '/tmp/opencode-home/.veslo/den-auth.json');
   assert.equal(env.XDG_RUNTIME_DIR, '/tmp/veslo-pilot-runtime');
   assert.equal(env.GDK_BACKEND, 'x11');
@@ -53,19 +54,20 @@ test('createAppLaunchEnv isolates Windows app, local, WebView2, and pilot storag
     },
   );
 
-  assert.equal(env.TAURI_PILOT_SOCKET, '\\\\.\\pipe\\tauri-pilot-com.neatech.veslo.dev');
+  assert.equal(env.TAURI_PILOT_SOCKET, '\\\\.\\pipe\\tauri-pilot-com.neatech.veslo.e2e');
   assert.equal(env.OPENCODE_HOME, 'C:\\temp\\veslo-e2e-home');
   assert.equal(env.VESLO_DATA_DIR, 'C:\\temp\\veslo-e2e-home\\.veslo');
   assert.equal(env.VESLO_APP_DATA_DIR, 'C:\\temp\\veslo-e2e-home\\.veslo\\app-data');
   assert.equal(env.VESLO_APP_LOCAL_DATA_DIR, 'C:\\temp\\veslo-e2e-home\\.veslo\\app-local-data');
+  assert.equal(env.VESLO_BUN_CACHE_HOME, 'C:\\Users\\micha');
   assert.equal(env.VESLO_DEN_AUTH_SNAPSHOT_PATH, 'C:\\temp\\veslo-e2e-home\\.veslo\\den-auth.json');
   assert.equal(env.APPDATA, 'C:\\temp\\veslo-e2e-home\\AppData\\Roaming');
   assert.equal(env.LOCALAPPDATA, 'C:\\temp\\veslo-e2e-home\\AppData\\Local');
   assert.equal(env.WEBVIEW2_USER_DATA_FOLDER, 'C:\\temp\\veslo-e2e-home\\webview2');
 });
 
-test('resolvePilotIdentifier defaults to the dev app identifier used by the e2e build', () => {
-  assert.equal(resolvePilotIdentifier({}), 'com.neatech.veslo.dev');
+test('resolvePilotIdentifier defaults to the e2e app identifier used by the e2e build', () => {
+  assert.equal(resolvePilotIdentifier({}), 'com.neatech.veslo.e2e');
   assert.equal(resolvePilotIdentifier({ E2E_TAURI_PILOT_IDENTIFIER: 'com.example.test' }), 'com.example.test');
 });
 
@@ -84,7 +86,7 @@ test('resolvePilotSocketPath allows E2E runs to target an explicit pilot socket'
       platform: 'darwin',
       runtimeDir: '/tmp/veslo-pilot-runtime',
     }),
-    '/tmp/veslo-pilot-runtime/tauri-pilot-com.neatech.veslo.dev.sock',
+    '/tmp/veslo-pilot-runtime/tauri-pilot-com.neatech.veslo.e2e.sock',
   );
 });
 
@@ -125,10 +127,15 @@ test('seedDefaultWorkspaceState skips network-backed enterprise creators for det
   const root = mkdtempSync(join(tmpdir(), 'veslo-e2e-home-'));
   try {
     seedDefaultWorkspaceState(root, {});
+    const workspacePath = join(root, 'workspaces', 'visual-workspace');
 
     assert.equal(
-      existsSync(join(root, 'workspaces', 'visual-workspace', '.opencode', '.veslo-enterprise-creators')),
+      existsSync(join(workspacePath, '.opencode', '.veslo-enterprise-creators')),
       true,
+    );
+    assert.equal(
+      execFileSync('git', ['-C', workspacePath, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim(),
+      realpathSync(workspacePath),
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

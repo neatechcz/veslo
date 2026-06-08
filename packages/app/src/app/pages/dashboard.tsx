@@ -199,7 +199,6 @@ export type DashboardViewProps = {
   automationItems: WorkspaceAutomationItem[];
   automationWorkspaces: AutomationWorkspaceSummary[];
   defaultAutomationWorkspaceId: string | null;
-  scheduledJobs: ScheduledJob[];
   scheduledJobsSource: "local" | "remote";
   scheduledJobsSourceReady: boolean;
   scheduledJobsStatus: string | null;

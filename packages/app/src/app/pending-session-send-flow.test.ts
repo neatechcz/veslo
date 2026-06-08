@@ -8,7 +8,7 @@ const sessionViewSource = readFileSync(new URL("./pages/session.tsx", import.met
 test("successful pending draft sends consume the pending draft only after the prompt handoff succeeds", () => {
   assert.match(
     appSource,
-    /await runConversationOrLegacy\(\s*\{[\s\S]*kind: "prompt_async",[\s\S]*\},[\s\S]*\);\s*\}\s*if \(pendingDraftSendState\) \{[\s\S]*const pendingDraftStorageKey = pendingDraftSendState\.key;[\s\S]*const pendingDraftId = pendingDraftSendState\.draftId;[\s\S]*if \(pendingDraftId && isTauriRuntime\(\)\) \{[\s\S]*await pendingSessionDraftsDelete\(pendingDraftId\);[\s\S]*\}[\s\S]*clearActivePendingDraftState\(\);[\s\S]*setComposerDraftBySessionId\(\(current\) => deleteSessionComposerDraft\(current, \{ storageKey: pendingDraftStorageKey \}\)\);[\s\S]*\}\s*finishPerf\(perfEnabled, "session\.prompt", "done", startedAt, \{[\s\S]*\}\);\s*return true;/s,
+    /await runConversationOrLegacy\(\s*\{[\s\S]*kind: "prompt_async",[\s\S]*\},[\s\S]*\);\s*\}\s*await sessionStore\.refreshSessionMessages\(sessionID, \{ reason: "prompt-complete" \}\);[\s\S]*if \(pendingDraftSendState\) \{[\s\S]*const pendingDraftStorageKey = pendingDraftSendState\.key;[\s\S]*const pendingDraftId = pendingDraftSendState\.draftId;[\s\S]*if \(pendingDraftId && isTauriRuntime\(\)\) \{[\s\S]*await pendingSessionDraftsDelete\(pendingDraftId\);[\s\S]*\}[\s\S]*clearActivePendingDraftState\(\);[\s\S]*setComposerDraftBySessionId\(\(current\) => deleteSessionComposerDraft\(current, \{ storageKey: pendingDraftStorageKey \}\)\);[\s\S]*\}\s*finishPerf\(perfEnabled, "session\.prompt", "done", startedAt, \{[\s\S]*\}\);\s*return true;/s,
     "pending drafts should be deleted and cleared only after the conversation prompt handoff succeeds",
   );
 });
@@ -86,7 +86,7 @@ test("first pending draft send materializes workspace and session without global
   );
   assert.match(
     sendPromptSource,
-    /sessionID = \(await createSessionAndOpen\(initialSessionTitle, \{ blockAppDuringCreate: blockAppDuringPromptSend \}\)\) \?\? selectedSessionId\(\);/,
+    /sessionID = \(await createSessionAndOpen\(initialSessionTitle, \{\s*blockAppDuringCreate: blockAppDuringPromptSend,\s*managedAiRuntimeAlreadyPrepared: true,\s*\}\)\) \?\? selectedSessionId\(\);/,
     "first prompt session creation should opt out of global app blocking while existing-session sends keep the old guarded behavior",
   );
 
@@ -98,7 +98,7 @@ test("first pending draft send materializes workspace and session without global
 
   assert.match(
     createSessionSource,
-    /options: \{ blockAppDuringCreate\?: boolean \} = \{\}/,
+    /options: \{\s*blockAppDuringCreate\?: boolean;\s*managedAiRuntimeAlreadyPrepared\?: boolean;\s*\} = \{\}/,
     "session creation should expose a scoped option for pending first sends",
   );
   assert.match(
@@ -115,6 +115,14 @@ test("first pending draft send materializes workspace and session without global
     createSessionSource,
     /if \(blockAppDuringCreate \|\| currentView\(\) === "session"\) \{\s*goToSession\(session\.id\);\s*\}/s,
     "non-blocking first-send materialization should not force the user back to chat after they navigate elsewhere",
+  );
+});
+
+test("pending draft composer stays sendable while workspace startup is globally busy", () => {
+  assert.match(
+    appSource,
+    /const activeComposerBusy = createMemo\(\(\) => \{\s*if \(activeConversationBusy\(\)\) return true;\s*const label = busyLabel\(\);\s*if \(label === "status\.running"\) return false;\s*if \(!activeSessionId\(\)\) return false;\s*return busy\(\);\s*\}\);/s,
+    "the first no-session send should stay clickable while workspace/runtime startup is tracked by global busy state",
   );
 });
 
@@ -138,7 +146,7 @@ test("first pending draft send goes pending before workspace activation and serv
   assert.notEqual(sendPromptEnd, -1, "sendPrompt block should end before abortSession");
   const sendPromptSource = appSource.slice(sendPromptStart, sendPromptEnd);
 
-  const activationIndex = sendPromptSource.indexOf("await workspaceStore.ensureEngineForWorkspace()");
+  const activationIndex = sendPromptSource.indexOf("await workspaceStore.ensureEngineForWorkspace({ activeRun: true })");
   const createConversationIndex = sendPromptSource.indexOf("await createSessionAndOpen(");
   const serverRunIndex = sendPromptSource.indexOf('kind: "prompt_async"', createConversationIndex);
   assert.ok(

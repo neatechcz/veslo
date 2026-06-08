@@ -13,7 +13,7 @@ test("workspace store defines a server-backed skill materialization sync gate", 
 
   assert.match(
     source,
-    /workspaceBusy\(\)\[workspace\.id\][\s\S]*activeRun: true/s,
+    /context\?\.activeRun === true \|\| Boolean\(workspaceBusy\(\)\[workspace\.id\]\)[\s\S]*activeRun: true/s,
     "active workspace runs must request pending materialization instead of mutating managed skill files",
   );
 });
@@ -67,8 +67,22 @@ test("active runtime starts request pending global materialization instead of mu
 
   assert.match(
     syncSource,
-    /const activeRun = Boolean\(workspaceBusy\(\)\[workspace\.id\]\)[\s\S]*syncGlobalSkillMaterialization\(\{ \.\.\.materializationAuth, activeRun: true \}\)/s,
+    /const activeRun = context\?\.activeRun === true \|\| Boolean\(workspaceBusy\(\)\[workspace\.id\]\)[\s\S]*syncGlobalSkillMaterialization\(\{ \.\.\.materializationAuth, activeRun: true \}\)/s,
     "active workspace runs must request pending global materialization before runtime mutation",
+  );
+});
+
+test("prompt-triggered runtime starts request pending materialization before a session exists", () => {
+  const ensureStart = source.indexOf("async function ensureEngineForWorkspace(");
+  assert.notStrictEqual(ensureStart, -1, "ensureEngineForWorkspace is missing");
+  const ensureEnd = source.indexOf("return {", ensureStart);
+  assert.notStrictEqual(ensureEnd, -1, "ensureEngineForWorkspace should end before returned store members");
+  const ensureSource = source.slice(ensureStart, ensureEnd);
+
+  assert.match(
+    ensureSource,
+    /syncWorkspaceSkillMaterializationBeforeRuntime\(workspace,[\s\S]*reason: context\?\.activeRun \? "prompt-send" : "browse-attach"[\s\S]*activeRun: context\?\.activeRun === true/s,
+    "first prompt cold starts must mark skill materialization as active-run before workspaceBusy can be populated",
   );
 });
 
@@ -108,7 +122,7 @@ test("local materialization sync starts the managed server before using the fall
 
 test("local runtime starts are gated behind skill materialization sync", () => {
   const helperCall = "await syncWorkspaceSkillMaterializationBeforeRuntime(workspace,";
-  const ensureStart = source.indexOf("async function ensureEngineForWorkspace()");
+  const ensureStart = source.indexOf("async function ensureEngineForWorkspace(");
   assert.notStrictEqual(ensureStart, -1, "ensureEngineForWorkspace is missing");
 
   const ensureSource = source.slice(ensureStart);

@@ -11,14 +11,14 @@ mod orchestrator;
 mod paths;
 mod platform;
 mod process_supervisor;
+#[cfg(test)]
+mod single_window_config_tests;
 mod supervised_process;
 mod types;
 mod updater;
 mod utils;
 mod veslo_server;
 mod workspace;
-#[cfg(test)]
-mod single_window_config_tests;
 
 pub use types::*;
 

@@ -1,0 +1,83 @@
+- generic [ref=e2]:
+  - complementary [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: AG
+      - generic [ref=e6]:
+        - generic [ref=e7]: AI Gateway
+        - generic [ref=e8]: Admin control plane
+    - navigation "Admin sections" [ref=e9]:
+      - link "Organization" [active] [ref=e10] [cursor=pointer]:
+        - /url: /admin/organization
+      - link "Users" [ref=e11] [cursor=pointer]:
+        - /url: /admin/users
+    - generic [ref=e12]:
+      - generic [ref=e13]: Auth
+      - generic [ref=e14]:
+        - generic [ref=e15]: Signed in
+        - generic [ref=e16]: Org Admin · organization admin
+      - button "Sign out" [ref=e17] [cursor=pointer]
+    - generic [ref=e18]:
+      - generic [ref=e19]: Live signals
+      - generic [ref=e20]:
+        - generic [ref=e21]: Gateway healthy
+        - generic [ref=e23]: 2 credential alerts
+  - main [ref=e25]:
+    - generic [ref=e26]:
+      - generic [ref=e27]:
+        - paragraph [ref=e28]: AI Gateway control plane
+        - heading "Organization" [level=1] [ref=e61]
+        - paragraph [ref=e30]: Manage organization details, domains, and pending invites.
+      - button "Refresh" [ref=e32] [cursor=pointer]
+    - generic [ref=e62]:
+      - generic [ref=e63]:
+        - generic [ref=e64]:
+          - paragraph [ref=e65]: Organization
+          - heading "Organization details" [level=2] [ref=e66]
+        - button "Save organization" [ref=e68] [cursor=pointer]
+      - generic [ref=e69]:
+        - complementary [ref=e70]:
+          - paragraph [ref=e71]: Details
+          - heading "Acme Workspace" [level=3] [ref=e72]
+          - generic [ref=e73]:
+            - generic [ref=e74]:
+              - generic [ref=e75]: Name
+              - textbox "Name" [ref=e76]: Acme Workspace
+            - generic [ref=e77]:
+              - generic [ref=e78]: Slug
+              - textbox "Slug" [ref=e79]: acme
+          - paragraph [ref=e80]: No pending changes.
+        - generic [ref=e81]:
+          - generic [ref=e82]:
+            - generic [ref=e83]:
+              - generic [ref=e84]:
+                - paragraph [ref=e85]: Domains
+                - heading "Enabled domains" [level=3] [ref=e86]
+              - button "Add domain" [ref=e87] [cursor=pointer]
+            - generic [ref=e88]:
+              - article [ref=e89] [cursor=pointer]:
+                - generic [ref=e90]:
+                  - strong [ref=e91]: acme.test
+                  - paragraph [ref=e92]: Enabled · Self signup enabled
+                - generic [ref=e93]:
+                  - button "Edit" [ref=e94]
+                  - button "Remove" [ref=e95]
+              - article [ref=e96] [cursor=pointer]:
+                - generic [ref=e97]:
+                  - strong [ref=e98]: legacy.test
+                  - paragraph [ref=e99]: Disabled · Self signup disabled
+                - generic [ref=e100]:
+                  - button "Edit" [ref=e101]
+                  - button "Remove" [ref=e102]
+          - generic [ref=e103]:
+            - generic [ref=e104]:
+              - generic [ref=e105]:
+                - paragraph [ref=e106]: Invites
+                - heading "Pending invites" [level=3] [ref=e107]
+              - button "Send invite" [ref=e108] [cursor=pointer]
+            - article [ref=e110] [cursor=pointer]:
+              - generic [ref=e111]:
+                - strong [ref=e112]: new.user@acme.test
+                - paragraph [ref=e113]: member · expires Jun 14, 04:11 PM
+              - generic [ref=e114]:
+                - button "Resend" [ref=e115]
+                - button "Revoke" [ref=e116]

@@ -1,0 +1,8 @@
+[     151ms] [ERROR] loadAudit failed TypeError: Cannot read properties of undefined (reading 'join')
+    at renderAudit (http://127.0.0.1:4177/admin/app.js:1715:105)
+    at loadAudit (http://127.0.0.1:4177/admin/app.js:967:5)
+    at async runAllowedLoad (http://127.0.0.1:4177/admin/app.js:399:3)
+    at async Promise.all (index 4)
+    at async loadAllData (http://127.0.0.1:4177/admin/app.js:885:3)
+    at async bootstrapSession (http://127.0.0.1:4177/admin/app.js:736:3)
+    at async initializeAuth (http://127.0.0.1:4177/admin/app.js:854:3) @ http://127.0.0.1:4177/admin/app.js:968

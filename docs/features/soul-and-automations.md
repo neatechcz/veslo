@@ -53,13 +53,19 @@ Supported public behavior:
 Automation reads are available to viewer-level clients. Creating, updating,
 cancelling, and manual runs require collaborator access.
 
-Agent-facing automation tools are provisioned as Veslo-managed OpenCode plugins.
-They read the running Veslo server state from the desktop-provided environment
-and call the server automation routes. Agents must not create separate OS jobs or
-write scheduler files directly for Veslo automations.
+Agent-facing automation tools are provisioned as Veslo-managed OpenCode tools
+under the OpenCode config directory. They read the running Veslo server state
+from the desktop-provided environment and call the server automation routes.
+Agents must not create separate OS jobs or write scheduler files directly for
+Veslo automations.
 The Automations UI must treat local Veslo server readiness as the unlock for new
 automations. It must not prompt users to install external scheduler plugins to
 unlock server-managed automations, and it must not render raw job lists.
+New starter or automation workspaces must not automatically add
+`opencode-scheduler` to `opencode.json` or `opencode.jsonc`. External scheduler
+plugins may remain installable through normal plugin flows, but Veslo-managed
+automations are provided by the local Veslo server and Veslo-managed OpenCode
+tools.
 
 The server also materializes a platform-managed, locked user-global
 `veslo-automations` skill under the `veslo-managed` skill root. The skill directs

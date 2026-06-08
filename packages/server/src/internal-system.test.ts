@@ -13,30 +13,30 @@ async function createWorkspaceRoot(label: string) {
   return await mkdtemp(join(tmpdir(), `veslo-internal-system-${label}-`));
 }
 
-async function installFakeOpenCodePluginModule(pluginDir: string) {
-  const moduleRoot = join(pluginDir, "node_modules", "@opencode-ai", "plugin");
+async function installFakeZodModule(pluginDir: string) {
+  const moduleRoot = join(pluginDir, "node_modules", "zod");
   await mkdir(moduleRoot, { recursive: true });
-  await writeFile(join(moduleRoot, "package.json"), JSON.stringify({ type: "module" }), "utf8");
   await writeFile(
-    join(moduleRoot, "index.js"),
+    join(moduleRoot, "package.json"),
+    JSON.stringify({ name: "zod", type: "module", exports: "./index.mjs" }),
+    "utf8",
+  );
+  await writeFile(
+    join(moduleRoot, "index.mjs"),
     `
-export function tool(definition) {
-  return definition;
-}
-
 function schema() {
   return {
     optional() { return this; },
     describe() { return this; },
   };
 }
-
-tool.schema = {
+export const z = {
   any: schema,
   boolean: schema,
   string: schema,
   enum: () => schema(),
 };
+export default z;
 `,
     "utf8",
   );
@@ -44,19 +44,25 @@ tool.schema = {
 
 async function loadGeneratedAutomationTools(workspaceRoot: string) {
   await provisionWorkspaceInternalSystem(workspaceRoot);
-  const pluginDir = join(workspaceRoot, ".opencode", "plugins");
-  await writeFile(join(pluginDir, "package.json"), JSON.stringify({ type: "module" }), "utf8");
-  await installFakeOpenCodePluginModule(pluginDir);
+  const toolsDir = join(workspaceRoot, ".opencode", "tools");
+  await writeFile(join(toolsDir, "package.json"), JSON.stringify({ type: "module" }), "utf8");
+  await installFakeZodModule(toolsDir);
 
-  const pluginUrl = pathToFileURL(join(pluginDir, "veslo-automations.js")).href;
-  const module = await import(`${pluginUrl}?test=${Date.now()}-${Math.random()}`);
-  return await module.default({
-    client: {
-      session: {
-        get: async () => ({ directory: workspaceRoot }),
-      },
+  const createUrl = pathToFileURL(join(toolsDir, "veslo_create_automation.ts")).href;
+  const listUrl = pathToFileURL(join(toolsDir, "veslo_list_automations.ts")).href;
+  const runUrl = pathToFileURL(join(toolsDir, "veslo_run_automation.ts")).href;
+  const updateUrl = pathToFileURL(join(toolsDir, "veslo_update_automation.ts")).href;
+  const deleteUrl = pathToFileURL(join(toolsDir, "veslo_delete_automation.ts")).href;
+  const suffix = `?test=${Date.now()}-${Math.random()}`;
+  return {
+    tool: {
+      veslo_create_automation: (await import(`${createUrl}${suffix}`)).default,
+      veslo_list_automations: (await import(`${listUrl}${suffix}`)).default,
+      veslo_run_automation: (await import(`${runUrl}${suffix}`)).default,
+      veslo_update_automation: (await import(`${updateUrl}${suffix}`)).default,
+      veslo_delete_automation: (await import(`${deleteUrl}${suffix}`)).default,
     },
-  });
+  };
 }
 
 const LEGACY_INTERNAL_AGENT_FILES = [
@@ -169,7 +175,37 @@ You are Veslo.
     }
   });
 
-  test("generated automation plugin creates through directory-matched workspace using sanitized state", async () => {
+  test("replaces managed automations plugin with OpenCode tool files", async () => {
+    const workspaceRoot = await createWorkspaceRoot("automation-tools");
+    const pluginsRoot = join(workspaceRoot, ".opencode", "plugins");
+
+    try {
+      await mkdir(pluginsRoot, { recursive: true });
+      await writeFile(
+        join(pluginsRoot, "veslo-automations.js"),
+        `/**
+ * Veslo Automations Plugin
+ *
+ * Managed by Veslo internal system (v2026-06-07.1). Do not edit manually.
+ */
+export default async () => ({ tool: {} });
+`,
+        "utf8",
+      );
+
+      await provisionWorkspaceInternalSystem(workspaceRoot);
+
+      await expectMissing(join(pluginsRoot, "veslo-automations.js"));
+      await expect(readFile(join(workspaceRoot, ".opencode", "tools", "veslo_create_automation.ts"), "utf8"))
+        .resolves.toContain("Create a persistent Veslo automation");
+      await expect(readFile(join(workspaceRoot, ".opencode", "tools", "veslo_delete_automation.ts"), "utf8"))
+        .resolves.toContain("export default tool({");
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("generated automation tool creates through directory-matched workspace using sanitized state", async () => {
     const workspaceRoot = await createWorkspaceRoot("automation-plugin-runtime");
     const statePath = join(workspaceRoot, "veslo-server-plugin-state.json");
     const previousStatePath = process.env.VESLO_SERVER_STATE_PATH;
@@ -298,7 +334,7 @@ You are Veslo.
         JSON.stringify(
           {
             schemaVersion: 1,
-            version: "2026-06-06.1",
+            version: "2026-06-07.2",
             source: "openwork-snapshot",
             packs: ["docx", "pdf", "pptx", "xlsx", "skill-creator", "research"],
             agents: LEGACY_INTERNAL_AGENT_FILES.map((filename) => filename.replace(/\.md$/i, "")),
@@ -328,7 +364,7 @@ You are Veslo.
         `/**
  * Veslo Delegate Plugin
  *
- * Managed by Veslo internal system (v2026-06-06.1). Do not edit manually.
+ * Managed by Veslo internal system (v2026-06-07.2). Do not edit manually.
  */
 export default async () => ({});
 `,
@@ -358,6 +394,9 @@ Keep this sentence too.
       expect(result.status).toBe("updated");
 
       await expectNoInternalDelegationRuntime(workspaceRoot);
+      await expectMissing(join(workspaceRoot, ".opencode", "plugins", "veslo-automations.js"));
+      await expect(readFile(join(workspaceRoot, ".opencode", "tools", "veslo_create_automation.ts"), "utf8"))
+        .resolves.toContain("export default tool({");
 
       const vesloAgent = await readFile(vesloAgentPath, "utf8");
       expect(vesloAgent).toContain("User-authored project rule.");

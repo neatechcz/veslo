@@ -89,6 +89,25 @@ function _wsLog(msg: string, data?: unknown) {
   } catch {}
 }
 
+const WORKSPACE_ACTIVATE_PAINT_WAIT_TIMEOUT_MS = 80;
+
+async function waitForWorkspaceActivationPaint() {
+  if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") return;
+
+  await new Promise<void>((resolve) => {
+    let resolved = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const finish = () => {
+      if (resolved) return;
+      resolved = true;
+      if (timeoutId !== null) clearTimeout(timeoutId);
+      resolve();
+    };
+    timeoutId = setTimeout(finish, WORKSPACE_ACTIVATE_PAINT_WAIT_TIMEOUT_MS);
+    window.requestAnimationFrame(() => finish());
+  });
+}
+
 function isSkillRegistryMaterializationError(error: unknown): boolean {
   if (error instanceof VesloServerError) {
     if (error.code.trim().startsWith("skill_registry_")) return true;
@@ -156,7 +175,6 @@ export function createWorkspaceStore(options: {
     engineUrl?: string | null;
     clientToken?: string | null;
   } | null;
-  ensureLocalVesloServerRunning?: () => Promise<boolean>;
   setOpencodeConnectStatus?: (status: OpencodeConnectStatus | null) => void;
   onEngineStable?: () => void;
   engineRuntime?: () => EngineRuntime;
@@ -724,7 +742,7 @@ export function createWorkspaceStore(options: {
 
   async function syncWorkspaceSkillMaterializationBeforeRuntime(
     workspace: WorkspaceInfo,
-    context?: { reason?: string },
+    context?: { reason?: string; activeRun?: boolean },
   ) {
     const workspaceId = workspace.id?.trim() ?? "";
     if (!workspaceId) return true;
@@ -755,7 +773,7 @@ export function createWorkspaceStore(options: {
         denOrgId: denAuth?.orgId?.trim() || undefined,
         denUserId: denAuth?.user?.id?.trim() || undefined,
       };
-      const activeRun = Boolean(workspaceBusy()[workspace.id]);
+      const activeRun = context?.activeRun === true || Boolean(workspaceBusy()[workspace.id]);
 
       try {
         const globalStatus = await client.getGlobalSkillMaterializationStatus();
@@ -923,9 +941,7 @@ export function createWorkspaceStore(options: {
 
     // Allow the UI to paint the "switching" state before we kick off work that can
     // trigger expensive reactive updates (e.g. sidebar session refreshes).
-    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
-      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
-    }
+    await waitForWorkspaceActivationPaint();
 
     if (isSuperseded()) {
       wsDebug("activate:superseded:early", { id });
@@ -2962,7 +2978,7 @@ export function createWorkspaceStore(options: {
     );
   }
 
-  async function ensureEngineForWorkspace(): Promise<boolean> {
+  async function ensureEngineForWorkspace(context?: { activeRun?: boolean }): Promise<boolean> {
     const id = activeWorkspaceId();
     const workspace = workspaces().find((w) => w.id === id);
     if (!workspace?.path) return false;
@@ -2989,7 +3005,8 @@ export function createWorkspaceStore(options: {
 
       try {
         const skillsReady = await syncWorkspaceSkillMaterializationBeforeRuntime(workspace, {
-          reason: "browse-attach",
+          reason: context?.activeRun ? "prompt-send" : "browse-attach",
+          activeRun: context?.activeRun === true,
         });
         if (!skillsReady) return false;
 

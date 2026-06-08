@@ -1,0 +1,53 @@
+- generic [ref=e2]:
+  - complementary [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: AG
+      - generic [ref=e6]:
+        - generic [ref=e7]: AI Gateway
+        - generic [ref=e8]: Admin control plane
+    - navigation "Admin sections" [ref=e9]:
+      - link "Organization" [ref=e10] [cursor=pointer]:
+        - /url: /admin/organization
+      - link "Credentials" [ref=e11] [cursor=pointer]:
+        - /url: /admin/credentials
+      - link "Usage" [ref=e12] [cursor=pointer]:
+        - /url: /admin/usage
+      - link "Alerts" [active] [ref=e13] [cursor=pointer]:
+        - /url: /admin/alerts
+      - link "Users" [ref=e14] [cursor=pointer]:
+        - /url: /admin/users
+      - link "Audit" [ref=e15] [cursor=pointer]:
+        - /url: /admin/audit
+    - generic [ref=e16]:
+      - generic [ref=e17]: Auth
+      - generic [ref=e18]:
+        - generic [ref=e19]: Signed in
+        - generic [ref=e20]: Platform Admin · platform admin
+      - button "Sign out" [ref=e21] [cursor=pointer]
+    - generic [ref=e22]:
+      - generic [ref=e23]: Live signals
+      - generic [ref=e24]:
+        - generic [ref=e25]: Gateway healthy
+        - generic [ref=e27]: 2 credential alerts
+  - main [ref=e29]:
+    - generic [ref=e30]:
+      - generic [ref=e31]:
+        - paragraph [ref=e32]: AI Gateway control plane
+        - heading "Alerts" [level=1] [ref=e389]
+        - paragraph [ref=e34]: Triage credential failures, usage spikes, and routing anomalies.
+      - button "Refresh" [ref=e36] [cursor=pointer]
+    - generic [ref=e305]:
+      - generic [ref=e306]:
+        - generic [ref=e307]:
+          - paragraph [ref=e308]: Alerts
+          - heading "Incident triage board" [level=2] [ref=e309]
+        - generic [ref=e310]:
+          - button "Active" [ref=e311] [cursor=pointer]
+          - button "Acknowledged" [ref=e312] [cursor=pointer]
+          - button "Resolved" [ref=e313] [cursor=pointer]
+      - article [ref=e323] [cursor=pointer]:
+        - generic [ref=e324]:
+          - strong [ref=e325]: Codex 5h usage reached 95%
+          - generic [ref=e326]: critical
+        - paragraph [ref=e327]: Reconnect or add Codex credentials.
+        - generic [ref=e329]: Never

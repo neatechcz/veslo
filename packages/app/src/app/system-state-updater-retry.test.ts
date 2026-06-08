@@ -5,15 +5,25 @@ import test from "node:test";
 import { createEffect, createRoot } from "solid-js";
 
 import { createSystemState } from "./system-state.js";
+import { createWorkspaceRouting } from "./context/workspace-routing.js";
 import type { UpdateHandle } from "./types.js";
 
 const source = readFileSync(new URL("./system-state.ts", import.meta.url), "utf8");
 
 const tick = () => new Promise<void>((resolve) => queueMicrotask(resolve));
 
+const createRoutingForTest = () =>
+  createWorkspaceRouting({
+    clientSource: () => null,
+    activeWorkspaceId: () => "test-workspace",
+    createClient: () => null as any,
+    waitForHealthy: async () => ({ healthy: true }),
+  });
+
 const createSystemStateForTest = () =>
   createSystemState({
     client: () => null,
+    routing: createRoutingForTest(),
     sessions: () => [],
     sessionStatusById: () => ({}),
     refreshPlugins: async () => undefined,

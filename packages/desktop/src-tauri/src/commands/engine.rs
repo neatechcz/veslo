@@ -17,7 +17,8 @@ use crate::supervised_process::CommandEvent;
 use crate::types::{EngineDoctorResult, EngineInfo, EngineRuntime, ExecResult};
 use crate::utils::truncate_output;
 use crate::veslo_server::{
-    manager::VesloServerManager, persisted_veslo_server_plugin_state_path, start_veslo_server,
+    manager::VesloServerManager, persisted_veslo_server_plugin_state_path, resolve_connect_url,
+    start_veslo_server,
 };
 use crate::workspace::server_client::reconcile_server_workspaces;
 use serde_json::json;
@@ -102,6 +103,10 @@ fn format_orchestrator_start_error(
     }
 
     message
+}
+
+fn orchestrator_health_ready_for_server(health: &orchestrator::OrchestratorHealth) -> bool {
+    health.ok && health.daemon.as_ref().is_some_and(|daemon| daemon.port > 0)
 }
 
 fn should_retry_orchestrator_start(
@@ -764,7 +769,12 @@ pub fn engine_start(
 
             let health_result = loop {
                 let health_error = match orchestrator::fetch_orchestrator_health(&daemon_base_url) {
-                    Ok(health) if health.ok => break Ok(health),
+                    Ok(health) if orchestrator_health_ready_for_server(&health) => {
+                        break Ok(health)
+                    }
+                    Ok(health) if health.ok => {
+                        "Orchestrator reported healthy before daemon port was ready".to_string()
+                    }
                     Ok(_) => "Orchestrator reported unhealthy".to_string(),
                     Err(error) => error,
                 };
@@ -1178,7 +1188,12 @@ pub fn engine_start(
 
 #[cfg(test)]
 mod tests {
-    use super::{format_orchestrator_start_error, should_retry_orchestrator_start};
+    use super::{
+        format_orchestrator_start_error, orchestrator_health_ready_for_server,
+        should_retry_orchestrator_start,
+    };
+    use crate::orchestrator::OrchestratorHealth;
+    use crate::types::OrchestratorDaemonState;
 
     #[test]
     fn local_sidecars_use_loopback_opencode_url() {
@@ -1228,5 +1243,43 @@ mod tests {
         assert!(!should_retry_orchestrator_start(2, 2, true));
         assert!(!should_retry_orchestrator_start(1, 2, false));
         assert!(!should_retry_orchestrator_start(1, 1, true));
+    }
+
+    #[test]
+    fn orchestrator_health_requires_nonzero_daemon_port_before_server_spawn() {
+        let missing_daemon = OrchestratorHealth {
+            ok: true,
+            daemon: None,
+            opencode: None,
+            cli_version: None,
+            sidecar: None,
+            binaries: None,
+            active_id: Some("ws-a".to_string()),
+            workspace_count: Some(1),
+            engines: Vec::new(),
+        };
+        assert!(!orchestrator_health_ready_for_server(&missing_daemon));
+
+        let zero_daemon_port = OrchestratorHealth {
+            daemon: Some(OrchestratorDaemonState {
+                pid: 42,
+                port: 0,
+                base_url: "http://127.0.0.1:0".to_string(),
+                started_at: 1,
+            }),
+            ..missing_daemon
+        };
+        assert!(!orchestrator_health_ready_for_server(&zero_daemon_port));
+
+        let ready = OrchestratorHealth {
+            daemon: Some(OrchestratorDaemonState {
+                pid: 42,
+                port: 58229,
+                base_url: "http://127.0.0.1:58229".to_string(),
+                started_at: 1,
+            }),
+            ..zero_daemon_port
+        };
+        assert!(orchestrator_health_ready_for_server(&ready));
     }
 }

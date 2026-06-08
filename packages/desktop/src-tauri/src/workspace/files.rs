@@ -64,6 +64,21 @@ fn has_chrome_mcp_alias(mcp_obj: &serde_json::Map<String, serde_json::Value>) ->
     mcp_obj.contains_key("chrome-devtools") || mcp_obj.contains_key("control-chrome")
 }
 
+fn is_legacy_seeded_chrome_mcp(value: &serde_json::Value) -> bool {
+    let command = value
+        .get("command")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    command == ["npx", "-y", "chrome-devtools-mcp@latest", "--isolated"]
+}
+
 fn seed_veslo_agent(agent_root: &PathBuf) -> Result<(), String> {
     let agent_path = agent_root.join("veslo.md");
     if agent_path.exists() {
@@ -593,13 +608,9 @@ pub fn ensure_workspace_files(
         }
     }
 
-    let required_plugins: Vec<&str> = match preset {
-        "starter" => vec!["opencode-scheduler"],
-        "automation" => vec!["opencode-scheduler"],
-        _ => vec![],
-    };
+    let required_plugins: Vec<&str> = Vec::new();
 
-    let should_seed_chrome_mcp = true;
+    let should_seed_chrome_mcp = false;
 
     if !required_plugins.is_empty() {
         let plugins_value = config
@@ -630,30 +641,41 @@ pub fn ensure_workspace_files(
         }
     }
 
-    if should_seed_chrome_mcp {
-        if let Some(obj) = config.as_object_mut() {
-            let mcp_value = obj
-                .get("mcp")
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!({}));
+    if let Some(obj) = config.as_object_mut() {
+        let mcp_value = obj
+            .get("mcp")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
 
-            let mut mcp_obj = match mcp_value {
-                serde_json::Value::Object(map) => map,
-                _ => serde_json::Map::new(),
-            };
+        let mut mcp_obj = match mcp_value {
+            serde_json::Value::Object(map) => map,
+            _ => serde_json::Map::new(),
+        };
 
-            if !has_chrome_mcp_alias(&mcp_obj) {
-                mcp_obj.insert(
-                    "chrome-devtools".to_string(),
-                    serde_json::json!({
-                      "type": "local",
-                      "command": ["npx", "-y", "chrome-devtools-mcp@latest", "--isolated"]
-                    }),
-                );
-                config_changed = true;
-            }
+        if mcp_obj
+            .get("chrome-devtools")
+            .map(is_legacy_seeded_chrome_mcp)
+            .unwrap_or(false)
+        {
+            mcp_obj.remove("chrome-devtools");
+            config_changed = true;
+        }
 
+        if should_seed_chrome_mcp && !has_chrome_mcp_alias(&mcp_obj) {
+            mcp_obj.insert(
+                "chrome-devtools".to_string(),
+                serde_json::json!({
+                  "type": "local",
+                  "command": ["npx", "-y", "chrome-devtools-mcp@latest", "--isolated"]
+                }),
+            );
+            config_changed = true;
+        }
+
+        if !mcp_obj.is_empty() {
             obj.insert("mcp".to_string(), serde_json::Value::Object(mcp_obj));
+        } else if obj.remove("mcp").is_some() {
+            config_changed = true;
         }
     }
 
@@ -680,6 +702,71 @@ pub fn ensure_workspace_files(
     }
 
     Ok(())
+}
+
+pub fn should_seed_minimal_git_root(workspace_root: &Path) -> Result<bool, String> {
+    if !workspace_root.exists() {
+        return Ok(true);
+    }
+    if workspace_root.join(".git").exists() {
+        return Ok(false);
+    }
+    let mut entries = fs::read_dir(workspace_root).map_err(|e| {
+        format!(
+            "Failed to inspect workspace folder {}: {e}",
+            workspace_root.display()
+        )
+    })?;
+    Ok(entries.next().is_none())
+}
+
+pub fn seed_minimal_git_root(workspace_root: &Path) -> Result<bool, String> {
+    let git_dir = workspace_root.join(".git");
+    if git_dir.exists() {
+        return Ok(false);
+    }
+
+    fs::create_dir_all(git_dir.join("branches")).map_err(|e| {
+        format!(
+            "Failed to create {}: {e}",
+            git_dir.join("branches").display()
+        )
+    })?;
+    fs::create_dir_all(git_dir.join("objects").join("info")).map_err(|e| {
+        format!(
+            "Failed to create {}: {e}",
+            git_dir.join("objects").join("info").display()
+        )
+    })?;
+    fs::create_dir_all(git_dir.join("objects").join("pack")).map_err(|e| {
+        format!(
+            "Failed to create {}: {e}",
+            git_dir.join("objects").join("pack").display()
+        )
+    })?;
+    fs::create_dir_all(git_dir.join("refs").join("heads")).map_err(|e| {
+        format!(
+            "Failed to create {}: {e}",
+            git_dir.join("refs").join("heads").display()
+        )
+    })?;
+    fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n")
+        .map_err(|e| format!("Failed to write {}: {e}", git_dir.join("HEAD").display()))?;
+    fs::write(
+        git_dir.join("config"),
+        [
+            "[core]",
+            "\trepositoryformatversion = 0",
+            "\tfilemode = true",
+            "\tbare = false",
+            "\tlogallrefupdates = true",
+            "",
+        ]
+        .join("\n"),
+    )
+    .map_err(|e| format!("Failed to write {}: {e}", git_dir.join("config").display()))?;
+
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -741,6 +828,76 @@ mod tests {
         assert!(!skills_dir.join("skill-creator").exists());
         assert!(!skills_dir.join("plugin-creator").exists());
         assert!(!skills_dir.join("agent-creator").exists());
+    }
+
+    #[test]
+    fn starter_and_automation_workspaces_do_not_seed_external_scheduler_plugin() {
+        for preset in ["starter", "automation"] {
+            let root = temp_workspace_root(&format!("{preset}-no-scheduler-plugin"));
+            let root_str = root.to_string_lossy().to_string();
+
+            ensure_workspace_files(&root_str, preset, None, None).expect("seed workspace files");
+
+            let config_raw =
+                fs::read_to_string(root.join("opencode.jsonc")).expect("read generated config");
+            let config: serde_json::Value =
+                serde_json::from_str(&config_raw).expect("parse generated config");
+            let plugins = config
+                .get("plugin")
+                .and_then(|value| value.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            assert!(
+                !plugins.contains(&serde_json::Value::String("opencode-scheduler".to_string())),
+                "{preset} preset should not silently enable external scheduler plugin"
+            );
+
+            fs::remove_dir_all(root).ok();
+        }
+    }
+
+    #[test]
+    fn should_seed_minimal_git_root_for_missing_or_empty_workspace_only() {
+        let missing = std::env::temp_dir().join(format!(
+            "veslo-workspace-files-missing-git-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        assert!(should_seed_minimal_git_root(&missing).expect("inspect missing workspace"));
+
+        let empty = temp_workspace_root("empty-git-root");
+        assert!(should_seed_minimal_git_root(&empty).expect("inspect empty workspace"));
+
+        let non_empty = temp_workspace_root("non-empty-git-root");
+        fs::write(non_empty.join("README.md"), "existing project\n").expect("write marker");
+        assert!(!should_seed_minimal_git_root(&non_empty).expect("inspect non-empty workspace"));
+
+        let already_git = temp_workspace_root("already-git-root");
+        fs::create_dir_all(already_git.join(".git")).expect("create .git");
+        assert!(!should_seed_minimal_git_root(&already_git).expect("inspect git workspace"));
+    }
+
+    #[test]
+    fn seed_minimal_git_root_creates_project_boundary_without_overwriting_existing_git() {
+        let root = temp_workspace_root("seed-minimal-git-root");
+
+        assert!(seed_minimal_git_root(&root).expect("seed git root"));
+        assert_eq!(
+            fs::read_to_string(root.join(".git").join("HEAD")).expect("read HEAD"),
+            "ref: refs/heads/main\n"
+        );
+        assert!(root.join(".git").join("refs").join("heads").exists());
+
+        fs::write(root.join(".git").join("HEAD"), "ref: refs/heads/custom\n")
+            .expect("customize HEAD");
+        assert!(!seed_minimal_git_root(&root).expect("preserve existing git root"));
+        assert_eq!(
+            fs::read_to_string(root.join(".git").join("HEAD")).expect("read preserved HEAD"),
+            "ref: refs/heads/custom\n"
+        );
     }
 
     #[test]
@@ -907,7 +1064,7 @@ Use this guide for the team's custom process.
     }
 
     #[test]
-    fn ensure_workspace_files_seeds_chrome_for_non_starter_presets() {
+    fn ensure_workspace_files_does_not_seed_chrome_mcp_by_default() {
         let root = temp_workspace_root("automation");
         let root_str = root.to_string_lossy().to_string();
 
@@ -917,23 +1074,50 @@ Use this guide for the team's custom process.
             fs::read_to_string(root.join("opencode.jsonc")).expect("read generated config");
         let config: serde_json::Value =
             serde_json::from_str(&config_raw).expect("parse generated config");
-        let command = config
+        let mcp = config
             .get("mcp")
-            .and_then(|value| value.get("chrome-devtools"))
-            .and_then(|value| value.get("command"))
-            .and_then(|value| value.as_array())
+            .and_then(|value| value.as_object())
             .cloned()
-            .expect("chrome-devtools command array");
+            .unwrap_or_default();
 
-        assert_eq!(
-            command,
-            vec![
-                serde_json::Value::String("npx".to_string()),
-                serde_json::Value::String("-y".to_string()),
-                serde_json::Value::String("chrome-devtools-mcp@latest".to_string()),
-                serde_json::Value::String("--isolated".to_string()),
-            ]
-        );
+        assert!(!mcp.contains_key("chrome-devtools"));
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn ensure_workspace_files_removes_legacy_seeded_chrome_mcp() {
+        let root = temp_workspace_root("legacy-chrome-mcp");
+        let config_path = root.join("opencode.jsonc");
+        fs::write(
+            &config_path,
+            r#"{
+  "mcp": {
+    "chrome-devtools": {
+      "type": "local",
+      "command": ["npx", "-y", "chrome-devtools-mcp@latest", "--isolated"]
+    },
+    "context7": {
+      "type": "remote"
+    }
+  }
+}"#,
+        )
+        .expect("write existing config");
+
+        let root_str = root.to_string_lossy().to_string();
+        ensure_workspace_files(&root_str, "automation", None, None).expect("seed workspace files");
+
+        let config_raw = fs::read_to_string(&config_path).expect("read updated config");
+        let config: serde_json::Value =
+            serde_json::from_str(&config_raw).expect("parse updated config");
+        let mcp = config
+            .get("mcp")
+            .and_then(|value| value.as_object())
+            .expect("mcp object");
+
+        assert!(!mcp.contains_key("chrome-devtools"));
+        assert!(mcp.contains_key("context7"));
 
         fs::remove_dir_all(root).ok();
     }

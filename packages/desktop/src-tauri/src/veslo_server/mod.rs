@@ -541,12 +541,25 @@ pub fn start_veslo_server(
     let normalized_orchestrator_lifecycle_token = orchestrator_lifecycle_token
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
+    let normalized_opencode_base_url = opencode_base_url
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty());
+    let normalized_opencode_username = opencode_username
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let normalized_opencode_password = opencode_password
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
     if state.child.is_some()
         && !state.child_exited
         && state.client_token.is_some()
         && state.host_token.is_some()
         && state.port.is_some()
         && requested_paths == existing_paths
+        && state.opencode_base_url == normalized_opencode_base_url
+        && state.opencode_username == normalized_opencode_username
+        && state.opencode_password == normalized_opencode_password
+        && state.opencode_router_health_port == opencode_router_health_port
         && state.orchestrator_daemon_url == normalized_orchestrator_daemon_url
         && state.orchestrator_lifecycle_token == normalized_orchestrator_lifecycle_token
     {
@@ -586,14 +599,14 @@ pub fn start_veslo_server(
         &workspace_ids,
         &client_token,
         &host_token,
-        opencode_base_url,
+        normalized_opencode_base_url.as_deref(),
         if active_workspace.is_empty() {
             None
         } else {
             Some(active_workspace)
         },
-        opencode_username,
-        opencode_password,
+        normalized_opencode_username.as_deref(),
+        normalized_opencode_password.as_deref(),
         opencode_router_health_port,
         normalized_orchestrator_daemon_url.as_deref(),
         normalized_orchestrator_lifecycle_token.as_deref(),
@@ -612,6 +625,10 @@ pub fn start_veslo_server(
     state.client_token = Some(client_token);
     state.host_token = Some(host_token);
     state.workspace_paths = workspace_paths.to_vec();
+    state.opencode_base_url = normalized_opencode_base_url;
+    state.opencode_username = normalized_opencode_username;
+    state.opencode_password = normalized_opencode_password;
+    state.opencode_router_health_port = opencode_router_health_port;
     state.orchestrator_daemon_url = normalized_orchestrator_daemon_url;
     state.orchestrator_lifecycle_token = normalized_orchestrator_lifecycle_token;
     state.last_stdout = None;
@@ -637,8 +654,7 @@ mod tests {
     use super::{
         persist_veslo_server_plugin_state, persisted_veslo_server_plugin_state_path_from_override,
         persisted_veslo_server_state_path_from_override, read_persisted_veslo_server_info,
-        HealthIdentity, PersistedVesloServerState,
-        read_persisted_veslo_server_info_with_cleanup,
+        read_persisted_veslo_server_info_with_cleanup, HealthIdentity, PersistedVesloServerState,
     };
     use crate::types::VesloServerInfo;
     use std::fs;
@@ -730,6 +746,7 @@ mod tests {
             connect_url: Some("http://127.0.0.1:8787".to_string()),
             mdns_url: None,
             lan_url: None,
+            engine_url: None,
             client_token: Some("client-token".to_string()),
             host_token: Some("host-token".to_string()),
             pid: Some(12345),
@@ -956,7 +973,6 @@ mod tests {
             mdns_url: None,
             lan_url: None,
             client_token: Some(token.to_string()),
-            host_token: Some("host-token".to_string()),
             pid: Some(pid),
         }
     }

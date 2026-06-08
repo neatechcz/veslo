@@ -30,6 +30,17 @@ export const resolveLocalScheduleTimezone = () => {
   }
 };
 
+const pad2 = (value: number) => String(value).padStart(2, "0");
+
+export const localDateTimeInputPartsFromInstant = (value: string) => {
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime())) return { date: "", time: "" };
+  return {
+    date: `${parsed.getFullYear()}-${pad2(parsed.getMonth() + 1)}-${pad2(parsed.getDate())}`,
+    time: `${pad2(parsed.getHours())}:${pad2(parsed.getMinutes())}`,
+  };
+};
+
 export const buildSchedule = (
   mode: ScheduledAutomationScheduleMode,
   options: ScheduledAutomationScheduleOptions,

@@ -30,6 +30,10 @@ pub struct VesloServerState {
     // (b) carry tokens across an unavoidable respawn so the frontend's cached
     //     bearer keeps working (VSLO-171: token rotation was causing 401s).
     pub workspace_paths: Vec<String>,
+    pub opencode_base_url: Option<String>,
+    pub opencode_username: Option<String>,
+    pub opencode_password: Option<String>,
+    pub opencode_router_health_port: Option<u16>,
     pub orchestrator_daemon_url: Option<String>,
     pub orchestrator_lifecycle_token: Option<String>,
 }
@@ -95,6 +99,10 @@ impl VesloServerManager {
         // subsequent start_veslo_server can decide whether to skip respawn or
         // reuse the existing tokens (avoids the 401 "Invalid bearer token"
         // race documented in docs/handoffs/vslo-171-auth-and-switch.md).
+        state.opencode_base_url = None;
+        state.opencode_username = None;
+        state.opencode_password = None;
+        state.opencode_router_health_port = None;
         state.orchestrator_daemon_url = None;
         state.orchestrator_lifecycle_token = None;
     }

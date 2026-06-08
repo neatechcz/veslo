@@ -11,6 +11,19 @@ test("local activation path applies workspace_set_active response back into the 
   );
 });
 
+test("workspace activation paint wait cannot block the switch forever", () => {
+  assert.match(
+    source,
+    /await waitForWorkspaceActivationPaint\(\);/,
+    "activateWorkspace should wait for paint through a bounded helper",
+  );
+  assert.doesNotMatch(
+    source,
+    /await new Promise<void>\(\(resolve\) => window\.requestAnimationFrame\(\(\) => resolve\(\)\)\);/,
+    "a bare requestAnimationFrame await can hang in hidden or pilot-driven Tauri webviews",
+  );
+});
+
 test("ensuring an existing folder promotes that workspace to the top immediately", () => {
   assert.match(
     source,
@@ -144,7 +157,7 @@ test("workspace activation delegates local runtime reuse and restart flows to th
 });
 
 test("browsing-mode cold engine attach preserves the current session view", () => {
-  const ensureStart = source.indexOf("async function ensureEngineForWorkspace()");
+  const ensureStart = source.indexOf("async function ensureEngineForWorkspace(");
   assert.notStrictEqual(ensureStart, -1, "ensureEngineForWorkspace is missing");
   const ensureSource = source.slice(ensureStart);
 

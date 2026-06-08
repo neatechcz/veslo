@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
@@ -98,6 +98,122 @@ const startTestServer = (input: {
 };
 
 describe("conversation routes", () => {
+  test("POST /workspace/:id/conversations allows slow cold OpenCode session creation", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-workspace-"));
+    tempDirs.push(workspaceRoot);
+    await useTempVesloDataDir();
+
+    const previousTimeout = process.env.VESLO_OPENCODE_JSON_FETCH_TIMEOUT_MS;
+    process.env.VESLO_OPENCODE_JSON_FETCH_TIMEOUT_MS = "100";
+    envRestores.push(() => {
+      if (previousTimeout === undefined) {
+        delete process.env.VESLO_OPENCODE_JSON_FETCH_TIMEOUT_MS;
+      } else {
+        process.env.VESLO_OPENCODE_JSON_FETCH_TIMEOUT_MS = previousTimeout;
+      }
+    });
+
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (request.method === "POST" && url.pathname === "/session") {
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          return Response.json({
+            id: "sess-slow-created",
+            title: "Slow Created Conversation",
+            directory: workspaceRoot,
+            parentID: null,
+            time: { created: 111, updated: 222 },
+          });
+        }
+        return Response.json({ error: "unexpected upstream route" }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const server = startTestServer({ workspaceRoot, upstreamPort: upstream.port });
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          directory: workspaceRoot,
+          title: "Slow Created Conversation",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(201);
+    const payload = await response.json() as { id: string; conversationId: string };
+    expect(payload.id).toBe("sess-slow-created");
+    expect(payload.conversationId).toMatch(/^conv-/);
+  });
+
+  test("POST /workspace/:id/conversations uses the dedicated session create timeout override", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-workspace-"));
+    tempDirs.push(workspaceRoot);
+    await useTempVesloDataDir();
+
+    const previousTimeout = process.env.VESLO_OPENCODE_SESSION_CREATE_TIMEOUT_MS;
+    process.env.VESLO_OPENCODE_SESSION_CREATE_TIMEOUT_MS = "100";
+    envRestores.push(() => {
+      if (previousTimeout === undefined) {
+        delete process.env.VESLO_OPENCODE_SESSION_CREATE_TIMEOUT_MS;
+      } else {
+        process.env.VESLO_OPENCODE_SESSION_CREATE_TIMEOUT_MS = previousTimeout;
+      }
+    });
+
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (request.method === "POST" && url.pathname === "/session") {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          return Response.json({
+            id: "sess-too-slow",
+            title: "Too Slow",
+            directory: workspaceRoot,
+          });
+        }
+        return Response.json({ error: "unexpected upstream route" }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const server = startTestServer({ workspaceRoot, upstreamPort: upstream.port });
+    const startedAt = Date.now();
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          directory: workspaceRoot,
+          title: "Too Slow",
+        }),
+      },
+    );
+    const elapsedMs = Date.now() - startedAt;
+
+    expect(response.status).toBe(502);
+    expect(elapsedMs).toBeGreaterThanOrEqual(80);
+    expect(elapsedMs).toBeLessThan(450);
+    const payload = await response.json() as { code?: string; details?: { timeoutMs?: number } };
+    expect(payload.code).toBe("opencode_request_timeout");
+    expect(payload.details?.timeoutMs).toBe(100);
+  });
+
   test("POST /workspace/:id/conversations creates an engine session and persists a binding", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-workspace-"));
     tempDirs.push(workspaceRoot);
@@ -106,6 +222,7 @@ describe("conversation routes", () => {
     let upstreamHits = 0;
     const receivedBodies: Array<Record<string, unknown>> = [];
     const receivedDirectoryHeaders: string[] = [];
+    const receivedAcceptEncodingHeaders: string[] = [];
     const receivedRunPaths: string[] = [];
     const receivedRunDirectories: string[] = [];
     const receivedAbortPaths: string[] = [];
@@ -118,6 +235,7 @@ describe("conversation routes", () => {
         if (request.method === "POST" && url.pathname === "/session") {
           upstreamHits += 1;
           receivedDirectoryHeaders.push(request.headers.get("x-opencode-directory") ?? "");
+          receivedAcceptEncodingHeaders.push(request.headers.get("accept-encoding") ?? "");
           const receivedBody = await request.json() as Record<string, unknown>;
           receivedBodies.push(receivedBody);
           return Response.json({
@@ -166,6 +284,7 @@ describe("conversation routes", () => {
     expect(response.status).toBe(201);
     expect(upstreamHits).toBe(1);
     expect(receivedDirectoryHeaders[0]).toBe(workspaceRoot);
+    expect(receivedAcceptEncodingHeaders[0]).toBe("identity");
     expect(receivedBodies[0]?.directory).toBe(workspaceRoot);
     expect(receivedBodies[0]?.title).toBe("Created Conversation");
 
@@ -319,12 +438,68 @@ describe("conversation routes", () => {
     expect(upstreamHits).toBe(3);
   });
 
-  test("POST /workspace/:id/conversations ignores client OpenCode routing fields", async () => {
-    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-workspace-"));
+  test("POST /workspace/:id/conversations fills an empty orchestrator workspace mount from the server workspace id", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-empty-mount-"));
     tempDirs.push(workspaceRoot);
     await useTempVesloDataDir();
 
+    const receivedPaths: string[] = [];
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        receivedPaths.push(url.pathname);
+        if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session") {
+          return Response.json({
+            id: "sess-created",
+            title: "Created Conversation",
+            directory: workspaceRoot,
+            parentID: null,
+            time: { created: 111, updated: 222 },
+          });
+        }
+        return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+      workspaces: [{
+        id: "ws_1",
+        name: "Workspace",
+        path: workspaceRoot,
+        baseUrl: `http://127.0.0.1:${upstream.port}/workspace//opencode`,
+      }],
+    });
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          directory: workspaceRoot,
+          title: "Created Conversation",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(201);
+    expect(receivedPaths).toEqual(["/workspace/ws_1/opencode/session"]);
+  });
+
+  test("POST /workspace/:id/conversations accepts an authorized directory but ignores client OpenCode routing ids", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-workspace-"));
+    tempDirs.push(workspaceRoot);
     const clientDirectory = join(workspaceRoot, "client-selected-subdir");
+    await mkdir(clientDirectory);
+    await useTempVesloDataDir();
+
     const receivedBodies: Array<Record<string, unknown>> = [];
     const receivedDirectoryHeaders: string[] = [];
     const upstream = Bun.serve({
@@ -377,16 +552,16 @@ describe("conversation routes", () => {
     };
     expect(payload.opencodeSessionId).toBe("sess-server-created");
     expect(payload.conversationId).toMatch(/^conv-/);
-    expect(payload.directory).toBe(workspaceRoot);
-    expect(receivedDirectoryHeaders).toEqual([workspaceRoot]);
-    expect(receivedBodies[0]?.directory).toBe(workspaceRoot);
+    expect(payload.directory).toBe(clientDirectory);
+    expect(receivedDirectoryHeaders).toEqual([clientDirectory]);
+    expect(receivedBodies[0]?.directory).toBe(clientDirectory);
     expect(receivedBodies[0]?.openCodeSessionId).toBeUndefined();
     expect(receivedBodies[0]?.opencodeSessionId).toBeUndefined();
     expect(receivedBodies[0]?.sessionId).toBeUndefined();
     expect(receivedBodies[0]?.sessionID).toBeUndefined();
   });
 
-  test("POST /workspace/:id/conversations ignores client directories outside the workspace", async () => {
+  test("POST /workspace/:id/conversations rejects client directories outside the workspace before engine contact", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-workspace-"));
     tempDirs.push(workspaceRoot);
     await useTempVesloDataDir();
@@ -429,16 +604,10 @@ describe("conversation routes", () => {
       },
     );
 
-    expect(response.status).toBe(201);
-    const payload = await response.json() as {
-      opencodeSessionId: string;
-      directory: string;
-    };
-    expect(payload.opencodeSessionId).toBe("sess-server-root");
-    expect(payload.directory).toBe(workspaceRoot);
-    expect(upstreamHits).toBe(1);
-    expect(receivedDirectoryHeaders).toEqual([workspaceRoot]);
-    expect(receivedBodies[0]?.directory).toBe(workspaceRoot);
+    expect(response.status).toBe(403);
+    expect(upstreamHits).toBe(0);
+    expect(receivedDirectoryHeaders).toEqual([]);
+    expect(receivedBodies).toEqual([]);
   });
 
   test("POST /workspace/:id/conversations/:conversationId/runs rejects conversation ids from another workspace before engine contact", async () => {

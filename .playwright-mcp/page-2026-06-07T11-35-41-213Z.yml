@@ -1,0 +1,89 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e5]: AG
+        - generic [ref=e6]:
+          - generic [ref=e7]: AI Gateway
+          - generic [ref=e8]: Admin control plane
+      - navigation "Admin sections" [ref=e9]:
+        - link "Organization" [ref=e10] [cursor=pointer]:
+          - /url: /admin/organization
+        - link "Users" [ref=e11] [cursor=pointer]:
+          - /url: /admin/users
+      - generic [ref=e12]:
+        - generic [ref=e13]: Auth
+        - generic [ref=e14]:
+          - generic [ref=e15]: Signed in
+          - generic [ref=e16]: Org Admin · organization admin
+        - button "Sign out" [ref=e17] [cursor=pointer]
+      - generic [ref=e18]:
+        - generic [ref=e19]: Live signals
+        - generic [ref=e20]:
+          - generic [ref=e21]: Gateway healthy
+          - generic [ref=e23]: 2 credential alerts
+    - main [ref=e25]:
+      - generic [ref=e26]:
+        - generic [ref=e27]:
+          - paragraph [ref=e28]: AI Gateway control plane
+          - heading "Users" [level=1] [ref=e126]
+          - paragraph [ref=e30]: Create, edit, disable, or remove users from the directory.
+        - button "Refresh" [ref=e32] [cursor=pointer]
+      - generic [ref=e127]:
+        - generic [ref=e129]:
+          - paragraph [ref=e130]: Users
+          - heading "Directory and account management" [level=2] [ref=e131]
+        - generic [ref=e133]:
+          - generic [ref=e134]:
+            - searchbox "Search by name or email" [ref=e135]
+            - combobox [ref=e136]:
+              - option "All statuses" [selected]
+              - option "Active"
+              - option "Invited"
+              - option "Disabled"
+            - combobox [ref=e137]:
+              - option "Role" [selected]
+              - option "Platform admin"
+              - option "Member"
+          - generic [ref=e138]:
+            - article [ref=e149] [cursor=pointer]:
+              - generic [ref=e150]:
+                - strong [ref=e151]: Org Admin
+                - paragraph [ref=e152]: org-admin@example.test · Member · organization_admin in Neatech
+              - generic [ref=e153]: Active
+            - article [ref=e154] [cursor=pointer]:
+              - generic [ref=e155]:
+                - strong [ref=e156]: Member User
+                - paragraph [ref=e157]: member@example.test · Member · member in Neatech
+              - generic [ref=e158]: Active
+  - dialog [ref=e159]:
+    - generic [ref=e160]:
+      - generic [ref=e161]:
+        - generic [ref=e162]:
+          - paragraph [ref=e163]: Active
+          - heading "Member User" [level=2] [ref=e164]
+        - button "Close user editor" [active] [ref=e165] [cursor=pointer]: Close
+      - generic [ref=e166]:
+        - generic [ref=e167]:
+          - generic [ref=e168]: Name
+          - textbox "Name" [ref=e169]: Member User
+        - generic [ref=e170]:
+          - generic [ref=e171]: Email
+          - textbox "Email" [disabled] [ref=e172]: member@example.test
+        - generic [ref=e173]:
+          - generic [ref=e174]: Organization
+          - combobox "Organization" [ref=e175]:
+            - option "Neatech" [selected]
+        - generic [ref=e176]:
+          - generic [ref=e177]: Organization role
+          - combobox "Organization role" [ref=e178]:
+            - option "Organization admin"
+            - option "Member" [selected]
+        - generic [ref=e179]:
+          - generic [ref=e180]: Send invite email immediately
+          - checkbox "Send invite email immediately" [checked] [disabled] [ref=e181]
+      - generic [ref=e182]:
+        - button "Disable user" [disabled] [ref=e183] [cursor=pointer]
+        - button "Delete user" [disabled] [ref=e184] [cursor=pointer]
+        - button "Save changes" [ref=e185] [cursor=pointer]
+      - paragraph [ref=e186]: Directory changes and AI access assignments are applied separately.

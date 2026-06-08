@@ -145,6 +145,13 @@ The local Veslo server should be recoverable without an active workspace.
 `Invalid bearer token` between the app and local server is treated as stale
 local connection state, not as a failed message or failed conversation.
 
+Loopback app calls to the local Veslo server should tolerate short transport
+gaps during restart or recovery. The app may retry idempotent or replace-style
+methods (`GET`, `HEAD`, `PUT`, `PATCH`, `DELETE`) on local transport errors,
+but must not blindly retry `POST` requests that may create irreversible work.
+Volatile reads such as automation lists and run history should request fresh
+JSON and avoid browser/WebView caching.
+
 ## Desktop Debug Log Forwarder
 
 The Tauri shell forwards stdout/stderr from every supervised sidecar (`veslo-server`, `opencode-router`, `veslo-orchestrator`, `engine`) into the veslo-server debug log pipeline. Implementation lives in `packages/desktop/src-tauri/src/debug_logs_forwarder.rs`.
@@ -224,7 +231,7 @@ The local proxy must not parse the full provider request body before forwarding 
 
 The local server also treats body parsing as byte-bounded infrastructure. AI gateway error details include only a bounded sanitized upstream preview, large provider JSON success responses remain streamed, OpenCode JSON helper responses have explicit parsing limits, and local JSON/form ingest rejects oversized request bodies before validation or multipart parsing when possible. Transcript prefetch caches are bounded by estimated bytes as well as entry count, so large tool outputs cannot remain resident solely because the session count is low.
 
-OpenCode JSON helper calls made by the local server use a bounded upstream timeout so stale interface URLs or hung sockets cannot hold UI-facing server routes for OS-level TCP timeouts. The default is 5000 ms and can be overridden for diagnostics/tests with `VESLO_OPENCODE_JSON_FETCH_TIMEOUT_MS`. Streaming pass-through proxy routes are not governed by this helper timeout.
+OpenCode JSON helper calls made by the local server use a bounded upstream timeout so stale interface URLs or hung sockets cannot hold UI-facing server routes for OS-level TCP timeouts. The default is 5000 ms and can be overridden for diagnostics/tests with `VESLO_OPENCODE_JSON_FETCH_TIMEOUT_MS`. Creating a cold OpenCode session has its own longer default timeout of 90000 ms because the first request may initialize the workspace, configuration, plugins, and model metadata; this session-create timeout is used by both conversation creation and server-managed automation execution. Override it with `VESLO_OPENCODE_SESSION_CREATE_TIMEOUT_MS` only for diagnostics or focused tests. The desktop client waits up to 120000 ms for conversation creation so the local server timeout remains authoritative. Streaming pass-through proxy routes are not governed by these helper timeouts.
 
 The desktop app recognizes managed Codex credential exhaustion or missing eligible binding inside these normalized errors and formats it as an actionable AI access failure. Prompt sends that hit this condition set the session run state to failed and insert the error into the transcript instead of leaving OpenCode's empty assistant turn looking like an active run.
 
@@ -291,6 +298,8 @@ the canonical store, initializes missing `nextRunAt` values for active enabled
 automations, recovers recent due runs, skips stale missed runs after the runner
 grace window, and sends prompts to the workspace OpenCode upstream. Mutating
 automation routes refresh the runner for that workspace after the store write.
+Automation list and run-history reads are volatile runtime state; app callers
+should fetch them fresh instead of relying on cached WebView responses.
 
 Legacy Agent Lab scheduler data may still exist at:
 
@@ -318,6 +327,12 @@ Use this surface for:
 - command-related OpenCode settings
 
 Veslo pages that mutate plugins or MCP are usually editing this config, not `.opencode/veslo.json`.
+
+Desktop workspace provisioning must not silently add network-backed MCP commands
+such as `npx -y chrome-devtools-mcp@latest` to this config. A failing MCP server
+can make OpenCode fail prompt tool resolution before model inference starts.
+Provisioning preserves user-owned MCP aliases, but removes Veslo's old exact
+auto-seeded `chrome-devtools` default when it is encountered.
 
 ## Skills Inventory
 

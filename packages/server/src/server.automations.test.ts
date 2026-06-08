@@ -49,6 +49,17 @@ test("GET /workspace/ws_1/automations returns migrated legacy items", async () =
   });
 });
 
+test("GET /workspace/ws_1/automations disables browser caching", async () => {
+  const fixture = await startFixture();
+
+  const response = await fixture.clientFetch("/workspace/ws_1/automations");
+
+  expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toBe("no-store, no-cache, must-revalidate, max-age=0");
+  expect(response.headers.get("pragma")).toBe("no-cache");
+  expect(response.headers.get("expires")).toBe("0");
+});
+
 test("POST /workspace/ws_1/automations creates a one-shot automation with nextRunAt", async () => {
   const fixture = await startFixture();
   const runAt = futureRunAt();
@@ -432,6 +443,30 @@ test("automation execution allows cold OpenCode session startup beyond the gener
       delete process.env.VESLO_OPENCODE_JSON_FETCH_TIMEOUT_MS;
     } else {
       process.env.VESLO_OPENCODE_JSON_FETCH_TIMEOUT_MS = previousTimeout;
+    }
+  }
+});
+
+test("automation execution uses the dedicated OpenCode session create timeout override", async () => {
+  const previousTimeout = process.env.VESLO_OPENCODE_SESSION_CREATE_TIMEOUT_MS;
+  process.env.VESLO_OPENCODE_SESSION_CREATE_TIMEOUT_MS = "100";
+  try {
+    const fixture = await startFixture({ sessionDelayMs: 250 });
+    const created = await fixture.createAutomation();
+
+    const response = await fixture.clientFetch(`/workspace/ws_1/automations/${created.id}/run`, {
+      method: "POST",
+    });
+    const payload = await response.json() as { run?: AutomationRun };
+
+    expect(response.status).toBe(200);
+    expect(payload.run?.status).toBe("failed");
+    expect(payload.run?.error).toBe("OpenCode request timed out");
+  } finally {
+    if (previousTimeout === undefined) {
+      delete process.env.VESLO_OPENCODE_SESSION_CREATE_TIMEOUT_MS;
+    } else {
+      process.env.VESLO_OPENCODE_SESSION_CREATE_TIMEOUT_MS = previousTimeout;
     }
   }
 });

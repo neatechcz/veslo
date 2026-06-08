@@ -1080,6 +1080,46 @@ export function createSessionStore(options: {
     }
   }
 
+  async function refreshSessionMessages(
+    sessionID: string,
+    optionsForRefresh: { reason?: string; limit?: number } = {},
+  ): Promise<boolean> {
+    const trimmedSessionID = sessionID.trim();
+    if (!trimmedSessionID) return false;
+
+    const requestedLimit = Math.max(
+      INITIAL_SESSION_MESSAGE_LIMIT,
+      messageLimitBySession()[trimmedSessionID] ?? 0,
+      optionsForRefresh.limit ?? 0,
+    );
+    const browseFromDb = options.shouldBrowseSessionFromDb?.(trimmedSessionID) ?? false;
+    const c = options.routing.active();
+
+    try {
+      if (!c || browseFromDb) {
+        const snapshot = (await options.loadOfflineTranscript?.(trimmedSessionID, requestedLimit)) ?? null;
+        if (!snapshot) return false;
+        hydrateTranscriptSnapshot(snapshot);
+        return true;
+      }
+
+      const msgs = unwrap(
+        await withTimeout(c.session.messages({ sessionID: trimmedSessionID, limit: requestedLimit }), 12000, "session.messages"),
+      );
+      setMessagesForSession(trimmedSessionID, msgs);
+      setMessageLimitBySession((prev) => ({ ...prev, [trimmedSessionID]: requestedLimit }));
+      setMessageCompleteBySession((prev) => ({ ...prev, [trimmedSessionID]: msgs.length < requestedLimit }));
+      return true;
+    } catch (error) {
+      sessionWarn("refreshSessionMessages:failed", {
+        sessionID: trimmedSessionID,
+        reason: optionsForRefresh.reason ?? "",
+        error: error instanceof Error ? error.message : safeStringify(error),
+      });
+      return false;
+    }
+  }
+
   async function loadEarlierMessages(sessionID: string, chunk = SESSION_MESSAGE_LOAD_CHUNK) {
     const c = options.routing.active();
     if (!sessionID) return;
@@ -2059,6 +2099,7 @@ export function createSessionStore(options: {
     refreshPendingPermissions,
     refreshPendingQuestions,
     selectSession,
+    refreshSessionMessages,
     loadEarlierMessages,
     renameSession,
     respondPermission,

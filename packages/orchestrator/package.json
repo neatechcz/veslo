@@ -45,6 +45,7 @@
     "access": "public"
   },
   "dependencies": {
+    "@ai-sdk/openai-compatible": "2.0.48",
     "@anthropic-ai/sandbox-runtime": "0.0.52",
     "@opencode-ai/sdk": "1.16.2",
     "@opentui/core": "0.1.77",

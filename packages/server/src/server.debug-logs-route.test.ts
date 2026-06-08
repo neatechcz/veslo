@@ -24,7 +24,7 @@ afterEach(async () => {
   }
 });
 
-async function startFixture(options: { logRequests?: boolean } = {}) {
+async function startFixture(options: { logRequests?: boolean; enableDebugLogIngest?: boolean } = {}) {
   const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-debug-logs-route-"));
   const dataDir = await mkdtemp(join(tmpdir(), "veslo-debug-logs-data-"));
   tempDirs.push(workspaceRoot, dataDir);
@@ -49,13 +49,13 @@ async function startFixture(options: { logRequests?: boolean } = {}) {
     logFormat: "pretty",
     logRequests: options.logRequests ?? false,
     debugLogs: {
-      enabled: false,
-      ingestUrl: null,
-      ingestToken: null,
+      enabled: options.enableDebugLogIngest ?? false,
+      ingestUrl: options.enableDebugLogIngest ? "https://den.example/v1/internal/debug-logs" : null,
+      ingestToken: options.enableDebugLogIngest ? "debug-log-token" : null,
       batchMaxEvents: 200,
       batchMaxBytes: 256 * 1024,
       spoolMaxBytes: 100 * 1024 * 1024,
-      flushIntervalMs: 5000,
+      flushIntervalMs: 60_000,
     },
   });
 
@@ -131,7 +131,7 @@ test("POST /debug-logs with host token accepts a valid batch (202)", async () =>
 });
 
 test("POST /debug-logs does not spool its own request log", async () => {
-  const server = await startFixture({ logRequests: true });
+  const server = await startFixture({ logRequests: true, enableDebugLogIngest: true });
   const dataDir = process.env.VESLO_DATA_DIR ?? "";
   const response = await fetch(`http://127.0.0.1:${server.port}/debug-logs`, {
     method: "POST",
