@@ -1737,19 +1737,6 @@ export default function SessionView(props: SessionViewProps) {
       };
     });
 
-    setPendingSubmittedDraftBySessionKey((current) => {
-      const materializedDraft = current[sessionKey];
-      if (!materializedDraft) return current;
-      const { [sessionKey]: _removedMaterializedDraft, ...rest } = current;
-      return {
-        ...rest,
-        [pendingKey]: {
-          ...materializedDraft,
-          sessionKey: pendingKey,
-          sessionId: null,
-        },
-      };
-    });
   };
 
   const appendDraftToCurrentQueue = (draft: ComposerDraft) => {
@@ -3290,6 +3277,9 @@ export default function SessionView(props: SessionViewProps) {
         const failed = markPendingSubmittedFailed(current, errorMessage);
         if (pendingSessionKeyBeforeHandoff) {
           materializedSessionIdToRestore = current.sessionId;
+          if (current.sessionId) {
+            return setPendingSubmittedDraftForKey(draftsBySessionKey, matchingSessionKey, failed);
+          }
           const { [matchingSessionKey]: _removedFailedDraft, ...rest } = draftsBySessionKey;
           return setPendingSubmittedDraftForKey(rest, pendingSessionKeyBeforeHandoff, {
             ...failed,
@@ -3305,7 +3295,7 @@ export default function SessionView(props: SessionViewProps) {
     };
     const finishPendingSessionHandoffFailure = () => {
       if (!pendingSessionKeyBeforeHandoff) return;
-      if (showOptimisticSubmit) {
+      if (showOptimisticSubmit && !props.selectedSessionId?.trim()) {
         setPendingQueueKeyAwaitingSessionId(pendingSessionKeyBeforeHandoff);
         return;
       }

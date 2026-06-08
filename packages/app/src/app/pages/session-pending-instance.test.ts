@@ -29,8 +29,8 @@ test("active first-send pending views select the captured pending instance key",
 test("failed first-send optimistic drafts keep the captured pending instance selected", () => {
   assert.match(
     source,
-    /const finishPendingSessionHandoffFailure = \(\) => \{\s*if \(!pendingSessionKeyBeforeHandoff\) return;\s*if \(showOptimisticSubmit\) \{\s*setPendingQueueKeyAwaitingSessionId\(pendingSessionKeyBeforeHandoff\);\s*return;\s*\}\s*setPendingQueueKeyAwaitingSessionId\(null\);\s*\};/,
-    "failure cleanup should keep the captured pending instance selected when a failed optimistic draft exists",
+    /const finishPendingSessionHandoffFailure = \(\) => \{\s*if \(!pendingSessionKeyBeforeHandoff\) return;\s*if \(showOptimisticSubmit && !props\.selectedSessionId\?\.trim\(\)\) \{\s*setPendingQueueKeyAwaitingSessionId\(pendingSessionKeyBeforeHandoff\);\s*return;\s*\}\s*setPendingQueueKeyAwaitingSessionId\(null\);\s*\};/,
+    "failure cleanup should keep the captured pending instance selected when no real session exists yet",
   );
 
   const aiAccessStart = source.indexOf("if (props.aiAccessBlockedReason) {");
@@ -59,6 +59,33 @@ test("failed first-send optimistic drafts keep the captured pending instance sel
   assert.match(thrownFailure, /markMatchingPendingSubmitFailed\(errorMessage\);/);
   assert.match(thrownFailure, /finishPendingSessionHandoffFailure\(\);/);
   assert.doesNotMatch(thrownFailure, /setPendingQueueKeyAwaitingSessionId\(null\);/);
+});
+
+test("materialized first-send failures keep the failed draft on the active real session key", () => {
+  assert.match(
+    source,
+    /if \(pendingSessionKeyBeforeHandoff\) \{\s*materializedSessionIdToRestore = current\.sessionId;\s*if \(current\.sessionId\) \{\s*return setPendingSubmittedDraftForKey\(draftsBySessionKey, matchingSessionKey, failed\);\s*\}/,
+    "a materialized first-send failure should leave the failed optimistic draft under the active real session key",
+  );
+
+  const restoreStart = source.indexOf(
+    "const restoreMaterializedQueueToPending = (pendingKey: string, sessionId: string | null | undefined) => {",
+  );
+  const appendStart = source.indexOf("const appendDraftToCurrentQueue", restoreStart);
+  assert.notEqual(restoreStart, -1, "restoreMaterializedQueueToPending should exist");
+  assert.notEqual(appendStart, -1, "restoreMaterializedQueueToPending should end before appendDraftToCurrentQueue");
+  const restoreSource = source.slice(restoreStart, appendStart);
+
+  assert.match(
+    restoreSource,
+    /setQueuedDraftsBySessionKey/,
+    "materialized queue restoration should continue to move queued follow-up drafts where needed",
+  );
+  assert.doesNotMatch(
+    restoreSource,
+    /setPendingSubmittedDraftBySessionKey/,
+    "materialized queue restoration should not move a failed optimistic submitted draft away from the active real session",
+  );
 });
 
 test("first sends create unique pending session instance keys before handoff", () => {
