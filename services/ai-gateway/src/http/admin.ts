@@ -3229,6 +3229,10 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.post("/admin/api/credentials/:credentialId/reconnect", async (req, res) => {
+    if (!requireAdminCapability(res, "credentials")) {
+      return;
+    }
+
     try {
       const payload = await adminService.reconnectCredential(
         res.locals.adminToken as string,

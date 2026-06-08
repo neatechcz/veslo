@@ -974,6 +974,7 @@ test("organization admins are forbidden from platform-only gateway admin API rou
     ["POST", "/admin/api/credentials/cred_1/revoke"],
     ["POST", "/admin/api/credentials/cred_1/drain"],
     ["POST", "/admin/api/credentials/cred_1/rotate"],
+    ["POST", "/admin/api/credentials/cred_1/reconnect"],
     ["GET", "/admin/api/sessions"],
     ["GET", "/admin/api/usage"],
     ["GET", "/admin/api/alerts"],
