@@ -22,11 +22,14 @@ export const isPendingSessionInstanceId = (
 ): value is PendingSessionInstanceId => (value ?? "").trim().startsWith(PENDING_SESSION_INSTANCE_PREFIX);
 
 export const createPendingSessionInstanceId = (
-  uuid: () => string = () =>
+  uuid: string | (() => string) = () =>
     typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
       ? crypto.randomUUID()
       : `${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`,
-): PendingSessionInstanceId => `${PENDING_SESSION_INSTANCE_PREFIX}${uuid().replace(/[^a-zA-Z0-9_-]/g, "")}`;
+): PendingSessionInstanceId => {
+  const value = typeof uuid === "function" ? uuid() : uuid;
+  return `${PENDING_SESSION_INSTANCE_PREFIX}${value.replace(/[^a-zA-Z0-9_-]/g, "")}`;
+};
 
 export function pendingSessionKeyForInstance(id: PendingSessionInstanceId): string {
   return id;
@@ -91,7 +94,7 @@ export function materializePendingSessionInstance(
   const pendingKey = input.pendingSessionKey.trim();
   const realKey = input.realSessionKey.trim();
   const realSessionId = input.realSessionId.trim();
-  if (!pendingKey || !realKey || !realSessionId || pendingKey === realKey) return current;
+  if (!isPendingSessionInstanceId(pendingKey) || !realKey || !realSessionId || pendingKey === realKey) return current;
 
   const pending = current[pendingKey];
   if (!pending) return current;

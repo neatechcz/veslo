@@ -32,6 +32,10 @@ test("pending session ids are distinct and renderable as pending session keys", 
   assert.equal(pendingSessionKeyForInstance(first), first);
 });
 
+test("pending session ids accept direct uuid strings and sanitize renderable keys", () => {
+  assert.equal(createPendingSessionInstanceId("a.b_c-d"), "pending-session:ab_c-d");
+});
+
 test("two pending sessions in the same workspace keep separate submitted drafts", () => {
   const first = createPendingSessionInstance({
     id: "pending-session:first",
@@ -111,6 +115,27 @@ test("materializing one pending session remaps only its submitted draft", () => 
   assert.equal(selectPendingSubmittedDraft(remapped, "session-real-first")?.sessionId, "session-real-first");
   assert.equal(selectPendingSubmittedDraft(remapped, "pending-session:first"), null);
   assert.equal(selectPendingSubmittedDraft(remapped, "pending-session:second")?.draft.text, "second message");
+});
+
+test("materializing ignores non-pending session keys", () => {
+  const submitted: PendingSubmittedDraftBySessionKey = {
+    "session-real-existing": createPendingSubmittedDraft({
+      id: "optimistic:existing",
+      sessionKey: "session-real-existing",
+      sessionId: "session-real-existing",
+      createdAt: 100,
+      draft: draft("existing message"),
+    }),
+  };
+
+  const remapped = materializePendingSessionInstance(submitted, {
+    pendingSessionKey: "session-real-existing",
+    realSessionKey: "session-remapped",
+    realSessionId: "session-remapped",
+  });
+
+  assert.equal(selectPendingSubmittedDraft(remapped, "session-real-existing")?.id, "optimistic:existing");
+  assert.equal(selectPendingSubmittedDraft(remapped, "session-remapped"), null);
 });
 
 test("removing a pending submitted draft removes only the matching key and id", () => {
