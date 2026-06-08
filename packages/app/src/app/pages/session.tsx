@@ -3303,6 +3303,14 @@ export default function SessionView(props: SessionViewProps) {
         restoreMaterializedQueueToPending(pendingSessionKeyBeforeHandoff, materializedSessionIdToRestore);
       }
     };
+    const finishPendingSessionHandoffFailure = () => {
+      if (!pendingSessionKeyBeforeHandoff) return;
+      if (showOptimisticSubmit) {
+        setPendingQueueKeyAwaitingSessionId(pendingSessionKeyBeforeHandoff);
+        return;
+      }
+      setPendingQueueKeyAwaitingSessionId(null);
+    };
     if (showOptimisticSubmit) {
       setOptimisticSubmittedDraft(
         sessionKey,
@@ -3329,9 +3337,7 @@ export default function SessionView(props: SessionViewProps) {
         markMatchingPendingSubmitFailed(props.aiAccessBlockedReason);
         resetRunState();
       }
-      if (pendingSessionKeyBeforeHandoff) {
-        setPendingQueueKeyAwaitingSessionId(null);
-      }
+      finishPendingSessionHandoffFailure();
       setToastMessage(props.aiAccessBlockedReason);
       return false;
     }
@@ -3354,9 +3360,7 @@ export default function SessionView(props: SessionViewProps) {
           markMatchingPendingSubmitFailed(errorMessage);
           resetRunState();
         }
-        if (pendingSessionKeyBeforeHandoff) {
-          setPendingQueueKeyAwaitingSessionId(null);
-        }
+        finishPendingSessionHandoffFailure();
         setToastMessage(props.error ?? tr("session.connect_server_to_attach"));
         return false;
       }
@@ -3386,9 +3390,7 @@ export default function SessionView(props: SessionViewProps) {
         markMatchingPendingSubmitFailed(errorMessage);
         resetRunState();
       }
-      if (pendingSessionKeyBeforeHandoff) {
-        setPendingQueueKeyAwaitingSessionId(null);
-      }
+      finishPendingSessionHandoffFailure();
       reportError(e, "session.sendPrompt");
       setToastMessage(props.error ?? tr("session.connect_server_to_attach"));
       return false;

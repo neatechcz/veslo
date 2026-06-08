@@ -26,6 +26,41 @@ test("active first-send pending views select the captured pending instance key",
   );
 });
 
+test("failed first-send optimistic drafts keep the captured pending instance selected", () => {
+  assert.match(
+    source,
+    /const finishPendingSessionHandoffFailure = \(\) => \{\s*if \(!pendingSessionKeyBeforeHandoff\) return;\s*if \(showOptimisticSubmit\) \{\s*setPendingQueueKeyAwaitingSessionId\(pendingSessionKeyBeforeHandoff\);\s*return;\s*\}\s*setPendingQueueKeyAwaitingSessionId\(null\);\s*\};/,
+    "failure cleanup should keep the captured pending instance selected when a failed optimistic draft exists",
+  );
+
+  const aiAccessStart = source.indexOf("if (props.aiAccessBlockedReason) {");
+  const tryStart = source.indexOf("try {", aiAccessStart);
+  assert.notEqual(aiAccessStart, -1, "AI access failure branch should exist");
+  assert.notEqual(tryStart, -1, "send try block should follow AI access branch");
+  const aiAccessFailure = source.slice(aiAccessStart, tryStart);
+  assert.match(aiAccessFailure, /markMatchingPendingSubmitFailed\(props\.aiAccessBlockedReason\);/);
+  assert.match(aiAccessFailure, /finishPendingSessionHandoffFailure\(\);/);
+  assert.doesNotMatch(aiAccessFailure, /setPendingQueueKeyAwaitingSessionId\(null\);/);
+
+  const rejectedStart = source.indexOf("if (!accepted) {", tryStart);
+  const acceptedStart = source.indexOf("if (accepted && pendingSessionKeyBeforeHandoff)", rejectedStart);
+  assert.notEqual(rejectedStart, -1, "rejected send branch should exist");
+  assert.notEqual(acceptedStart, -1, "accepted handoff branch should follow rejected send branch");
+  const rejectedFailure = source.slice(rejectedStart, acceptedStart);
+  assert.match(rejectedFailure, /markMatchingPendingSubmitFailed\(errorMessage\);/);
+  assert.match(rejectedFailure, /finishPendingSessionHandoffFailure\(\);/);
+  assert.doesNotMatch(rejectedFailure, /setPendingQueueKeyAwaitingSessionId\(null\);/);
+
+  const thrownStart = source.indexOf("} catch (e) {", acceptedStart);
+  const sendImmediateEnd = source.indexOf("const drainNextQueuedDraft", thrownStart);
+  assert.notEqual(thrownStart, -1, "thrown send branch should exist");
+  assert.notEqual(sendImmediateEnd, -1, "sendPromptImmediate should end before queue draining");
+  const thrownFailure = source.slice(thrownStart, sendImmediateEnd);
+  assert.match(thrownFailure, /markMatchingPendingSubmitFailed\(errorMessage\);/);
+  assert.match(thrownFailure, /finishPendingSessionHandoffFailure\(\);/);
+  assert.doesNotMatch(thrownFailure, /setPendingQueueKeyAwaitingSessionId\(null\);/);
+});
+
 test("first sends create unique pending session instance keys before handoff", () => {
   assert.match(
     source,
