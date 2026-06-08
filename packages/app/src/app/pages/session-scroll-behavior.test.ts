@@ -28,11 +28,11 @@ test("session view accepts active pending draft key for pending queue identity",
 test("session send flow starts optimistic run UI before prompt handoff resolves", () => {
   const handlerStart = source.indexOf("const sendPromptImmediate = async (");
   const optimisticSet = source.indexOf("createPendingSubmittedDraft({", handlerStart);
-  const startRun = source.indexOf("startRun();", optimisticSet);
+  const startRun = source.indexOf("startRun(sessionKey);", optimisticSet);
   const sendCall = source.indexOf("props.sendPromptAsync(draft, promptSendOptions)", startRun);
   const rejectedBranch = source.indexOf("if (!accepted) {", sendCall);
   const markFailed = source.indexOf("markMatchingPendingSubmitFailed(errorMessage);", rejectedBranch);
-  const resetRun = source.indexOf("resetRunState();", rejectedBranch);
+  const resetRun = source.indexOf("resetRunState(sessionKey);", rejectedBranch);
   const failedBranchEnd = source.indexOf("setToastMessage(props.error ?? tr(\"session.connect_server_to_attach\"));", rejectedBranch);
   const failedBranch = source.slice(rejectedBranch, failedBranchEnd);
 

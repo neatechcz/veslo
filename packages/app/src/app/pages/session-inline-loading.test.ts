@@ -92,8 +92,8 @@ test("optimistic first submit replaces the centered composer entry immediately",
 test("materializing a pending submitted draft preserves the visible run indicator", () => {
   assert.match(
     sessionSource,
-    /const pendingKey = !previousSessionId \? pendingQueueKeyAwaitingSessionId\(\) : null;[\s\S]*if \(!pendingKey\) \{\s*resetRunState\(\);\s*\}/s,
-    "selecting the real session created for a pending submit should remap the optimistic draft without resetting the active run indicator",
+    /const pendingKey = !previousSessionId\s*\? pendingQueueKeyAwaitingSessionIdByBaseKey\(\)\[pendingBaseKey\] \?\? null\s*: null;[\s\S]*const previousSessionKey = previousSessionId \? sessionQueueKeyForSessionId\(previousSessionId\) : null;[\s\S]*if \(!pendingKey && previousSessionKey\) \{\s*resetRunState\(previousSessionKey\);\s*\}[\s\S]*if \(pendingKey\) \{[\s\S]*remapPendingQueueToSession\(pendingKey, sessionId\);/s,
+    "selecting the real session created for a pending submit should remap the optimistic draft and run indicator without globally resetting active run state",
   );
 });
 

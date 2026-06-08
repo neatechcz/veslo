@@ -39,6 +39,112 @@ test("active first-send pending views select the captured pending instance key",
   );
 });
 
+test("session view stores run UI state by session key", () => {
+  assert.match(
+    source,
+    /type RunUiState = \{[\s\S]*startedAt: number \| null;[\s\S]*hasBegun: boolean;[\s\S]*tick: number;[\s\S]*lastProgressAt: number \| null;[\s\S]*baseline: RunBaseline;[\s\S]*\};/,
+    "run UI state should be represented as one keyed state object",
+  );
+
+  assert.match(
+    source,
+    /const \[runStateBySessionKey, setRunStateBySessionKey\] = createSignal<Record<string, RunUiState>>\(\{\}\);/,
+    "session view should store run UI state by session key",
+  );
+
+  assert.match(
+    source,
+    /const activeRunState = createMemo\(\(\) => runStateBySessionKey\(\)\[currentSessionQueueKey\(\)\] \?\? EMPTY_RUN_STATE\);/,
+    "run UI reads should derive from the currently active session key",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /const \[runStartedAt, setRunStartedAt\] = createSignal<number \| null>\(null\);/,
+    "runStartedAt should not be one global signal",
+  );
+  assert.doesNotMatch(
+    source,
+    /const \[runHasBegun, setRunHasBegun\] = createSignal\(false\);/,
+    "runHasBegun should not be one global signal",
+  );
+  assert.doesNotMatch(
+    source,
+    /const \[runTick, setRunTick\] = createSignal\(Date\.now\(\)\);/,
+    "runTick should not be one global signal",
+  );
+  assert.doesNotMatch(
+    source,
+    /const \[runLastProgressAt, setRunLastProgressAt\] = createSignal<number \| null>\(null\);/,
+    "runLastProgressAt should not be one global signal",
+  );
+  assert.doesNotMatch(
+    source,
+    /const \[runBaseline, setRunBaseline\] = createSignal/,
+    "runBaseline should not be one global signal",
+  );
+});
+
+test("sendPromptImmediate starts and resets run UI state by captured session key", () => {
+  const sendImmediateStart = source.indexOf("  const sendPromptImmediate = async (");
+  const sendImmediateEnd = source.indexOf("  const drainNextQueuedDraft = async (", sendImmediateStart);
+  assert.notEqual(sendImmediateStart, -1, "sendPromptImmediate should exist");
+  assert.notEqual(sendImmediateEnd, -1, "sendPromptImmediate should end before queue draining");
+  const sendImmediateSource = source.slice(sendImmediateStart, sendImmediateEnd);
+
+  assert.match(
+    source,
+    /const startRun = \(sessionKey = currentSessionQueueKey\(\)\) => \{/,
+    "startRun should default to the active key but allow a captured send key",
+  );
+  assert.match(
+    source,
+    /const resetRunState = \(sessionKey = currentSessionQueueKey\(\)\) => \{/,
+    "resetRunState should default to the active key but allow a captured send key",
+  );
+  assert.match(
+    sendImmediateSource,
+    /startRun\(sessionKey\);/,
+    "optimistic and accepted sends should start run UI state under the captured send key",
+  );
+  assert.match(
+    sendImmediateSource,
+    /resetRunState\(sessionKey\);/,
+    "failed sends should reset only the captured send key",
+  );
+  assert.doesNotMatch(
+    sendImmediateSource,
+    /startRun\(\);|resetRunState\(\);/,
+    "sendPromptImmediate should not mutate whichever session is active after async handoff",
+  );
+});
+
+test("pending session materialization remaps only that pending run UI state", () => {
+  assert.match(
+    source,
+    /const remapPendingRunStateToSession = \(pendingKey: string, sessionId: string\) => \{[\s\S]*const pendingRun = current\[pendingKey\];[\s\S]*const \{ \[pendingKey\]: _removedPendingRunState, \.\.\.rest \} = current;[\s\S]*return \{[\s\S]*\.\.\.rest,[\s\S]*\[sessionKey\]: pendingRun,[\s\S]*\};[\s\S]*\};/,
+    "materializing a pending session should move only its run UI state to the real session key",
+  );
+  assert.match(
+    source,
+    /const remapPendingQueueToSession = \(pendingKey: string, sessionId: string\) => \{[\s\S]*remapPendingRunStateToSession\(pendingKey, sessionId\);/,
+    "pending-to-real handoff should remap run UI state with the queue and submitted draft",
+  );
+});
+
+test("session switching resets only keyed run UI state", () => {
+  assert.match(
+    source,
+    /const previousSessionKey = previousSessionId \? sessionQueueKeyForSessionId\(previousSessionId\) : null;[\s\S]*if \(!pendingKey && previousSessionKey\) \{\s*resetRunState\(previousSessionKey\);\s*\}/,
+    "session switching should reset only the previous keyed run state when no pending remap is in flight",
+  );
+  assert.doesNotMatch(
+    source,
+    /if \(!pendingKey\) \{\s*resetRunState\(\);\s*\}/,
+    "session switching should not reset whatever run state is globally active",
+  );
+});
+
 test("first-send handoff stores and clears the pending instance by base key", () => {
   assert.match(
     source,

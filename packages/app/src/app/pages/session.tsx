@@ -994,19 +994,61 @@ export default function SessionView(props: SessionViewProps) {
       setPendingSubmittedDraftForKey(current, sessionKey, draft),
     );
   };
-  const [runStartedAt, setRunStartedAt] = createSignal<number | null>(null);
-  const [runHasBegun, setRunHasBegun] = createSignal(false);
-  const [runTick, setRunTick] = createSignal(Date.now());
-  const [runLastProgressAt, setRunLastProgressAt] = createSignal<number | null>(null);
-  const [runBaseline, setRunBaseline] = createSignal<{ assistantId: string | null; partCount: number }>({
-    assistantId: null,
-    partCount: 0,
+  type RunBaseline = {
+    assistantId: string | null;
+    partCount: number;
+  };
+  type RunUiState = {
+    startedAt: number | null;
+    hasBegun: boolean;
+    tick: number;
+    lastProgressAt: number | null;
+    baseline: RunBaseline;
+  };
+  const EMPTY_RUN_STATE: RunUiState = {
+    startedAt: null,
+    hasBegun: false,
+    tick: 0,
+    lastProgressAt: null,
+    baseline: {
+      assistantId: null,
+      partCount: 0,
+    },
+  };
+  const createIdleRunState = (tick = 0): RunUiState => ({
+    startedAt: null,
+    hasBegun: false,
+    tick,
+    lastProgressAt: null,
+    baseline: {
+      assistantId: null,
+      partCount: 0,
+    },
   });
-  const resetRunState = () => {
-    setRunStartedAt(null);
-    setRunHasBegun(false);
-    setRunLastProgressAt(null);
-    setRunBaseline({ assistantId: null, partCount: 0 });
+  const [runStateBySessionKey, setRunStateBySessionKey] = createSignal<Record<string, RunUiState>>({});
+  const activeRunState = createMemo(() => runStateBySessionKey()[currentSessionQueueKey()] ?? EMPTY_RUN_STATE);
+  const runStartedAt = createMemo(() => activeRunState().startedAt);
+  const runHasBegun = createMemo(() => activeRunState().hasBegun);
+  const runTick = createMemo(() => activeRunState().tick);
+  const runLastProgressAt = createMemo(() => activeRunState().lastProgressAt);
+  const runBaseline = createMemo(() => activeRunState().baseline);
+  const updateRunStateForSessionKey = (sessionKey: string, update: (current: RunUiState) => RunUiState) => {
+    const key = sessionKey.trim();
+    if (!key) return;
+    setRunStateBySessionKey((current) => {
+      const previous = current[key] ?? createIdleRunState(Date.now());
+      const next = update(previous);
+      return { ...current, [key]: next };
+    });
+  };
+  const resetRunState = (sessionKey = currentSessionQueueKey()) => {
+    const key = sessionKey.trim();
+    if (!key) return;
+    setRunStateBySessionKey((current) => {
+      if (!(key in current)) return current;
+      const { [key]: _removedRunState, ...rest } = current;
+      return rest;
+    });
   };
 
   const lastAssistantSnapshot = createMemo(() => {
@@ -1021,18 +1063,44 @@ export default function SessionView(props: SessionViewProps) {
     return { id: null, partCount: 0 };
   });
 
-  const captureRunBaseline = () => {
-    const snapshot = lastAssistantSnapshot();
-    setRunBaseline({ assistantId: snapshot.id, partCount: snapshot.partCount });
-  };
-
-  const startRun = () => {
-    if (runStartedAt()) return;
+  const startRun = (sessionKey = currentSessionQueueKey()) => {
+    const key = sessionKey.trim();
+    if (!key) return;
+    if (runStateBySessionKey()[key]?.startedAt) return;
     const now = Date.now();
-    setRunStartedAt(now);
-    setRunLastProgressAt(now);
-    setRunHasBegun(false);
-    captureRunBaseline();
+    const snapshot = lastAssistantSnapshot();
+    setRunStateBySessionKey((current) => ({
+      ...current,
+      [key]: {
+        startedAt: now,
+        hasBegun: false,
+        tick: now,
+        lastProgressAt: now,
+        baseline: { assistantId: snapshot.id, partCount: snapshot.partCount },
+      },
+    }));
+  };
+  const setRunHasBegunForSessionKey = (sessionKey: string, hasBegun: boolean) => {
+    updateRunStateForSessionKey(sessionKey, (current) => ({ ...current, hasBegun }));
+  };
+  const setRunTickForSessionKey = (sessionKey: string, tick: number) => {
+    updateRunStateForSessionKey(sessionKey, (current) => ({ ...current, tick }));
+  };
+  const setRunLastProgressAtForSessionKey = (sessionKey: string, lastProgressAt: number | null) => {
+    updateRunStateForSessionKey(sessionKey, (current) => ({ ...current, lastProgressAt }));
+  };
+  const remapPendingRunStateToSession = (pendingKey: string, sessionId: string) => {
+    const sessionKey = sessionQueueKeyForSessionId(sessionId);
+    if (!pendingKey || pendingKey === sessionKey) return;
+    setRunStateBySessionKey((current) => {
+      const pendingRun = current[pendingKey];
+      if (!pendingRun) return current;
+      const { [pendingKey]: _removedPendingRunState, ...rest } = current;
+      return {
+        ...rest,
+        [sessionKey]: pendingRun,
+      };
+    });
   };
 
   const responseStarted = createMemo(() => {
@@ -1722,6 +1790,8 @@ export default function SessionView(props: SessionViewProps) {
       };
     });
 
+    remapPendingRunStateToSession(pendingKey, sessionId);
+
     setPendingSubmittedDraftBySessionKey((current) => {
       // materializePendingSessionInstance preserves the former remapPendingSubmittedSession behavior for keyed drafts.
       return materializePendingSessionInstance(current, {
@@ -2062,11 +2132,12 @@ export default function SessionView(props: SessionViewProps) {
         const pendingKey = !previousSessionId
           ? pendingQueueKeyAwaitingSessionIdByBaseKey()[pendingBaseKey] ?? null
           : null;
+        const previousSessionKey = previousSessionId ? sessionQueueKeyForSessionId(previousSessionId) : null;
         // Reset run state when switching sessions so a stuck error from a
         // previous session doesn't bleed into the new one. Pending first sends
         // remap their optimistic draft to the materialized session instead.
-        if (!pendingKey) {
-          resetRunState();
+        if (!pendingKey && previousSessionKey) {
+          resetRunState(previousSessionKey);
         }
         const previousEditingQueuedDraftId = editingQueuedDraftId();
         restoreEditingQueuedDraft(sessionQueueKeyForSessionId(previousSessionId), previousEditingQueuedDraftId);
@@ -2266,8 +2337,9 @@ export default function SessionView(props: SessionViewProps) {
   createEffect(() => {
     const status = props.sessionStatus;
     if (status === "running" || status === "retry") {
-      startRun();
-      setRunHasBegun(true);
+      const sessionKey = currentSessionQueueKey();
+      startRun(sessionKey);
+      setRunHasBegunForSessionKey(sessionKey, true);
     }
   });
 
@@ -2301,7 +2373,7 @@ export default function SessionView(props: SessionViewProps) {
 
   createEffect(() => {
     if (responseStarted()) {
-      setRunHasBegun(true);
+      setRunHasBegunForSessionKey(currentSessionQueueKey(), true);
     }
   });
 
@@ -2314,7 +2386,7 @@ export default function SessionView(props: SessionViewProps) {
   createEffect(() => {
     if (!runStartedAt()) return;
     if (props.sessionStatus === "idle" && (runHasBegun() || responseStarted())) {
-      resetRunState();
+      resetRunState(currentSessionQueueKey());
     }
   });
 
@@ -2335,7 +2407,7 @@ export default function SessionView(props: SessionViewProps) {
         !runHasBegun() &&
         !responseStarted()
       ) {
-        resetRunState();
+        resetRunState(currentSessionQueueKey());
       }
     }, 2_000);
     onCleanup(() => clearTimeout(timer));
@@ -2343,8 +2415,9 @@ export default function SessionView(props: SessionViewProps) {
 
   createEffect(() => {
     if (!showRunIndicator()) return;
-    setRunTick(Date.now());
-    const id = window.setInterval(() => setRunTick(Date.now()), 50);
+    const sessionKey = currentSessionQueueKey();
+    setRunTickForSessionKey(sessionKey, Date.now());
+    const id = window.setInterval(() => setRunTickForSessionKey(sessionKey, Date.now()), 50);
     onCleanup(() => window.clearInterval(id));
   });
 
@@ -2372,7 +2445,7 @@ export default function SessionView(props: SessionViewProps) {
             scheduleScrollToLatest("auto");
           }
           if (showRunIndicator()) {
-            setRunLastProgressAt(Date.now());
+            setRunLastProgressAtForSessionKey(currentSessionQueueKey(), Date.now());
           }
         }
       },
@@ -2461,7 +2534,7 @@ export default function SessionView(props: SessionViewProps) {
     // If the run is already in error state (e.g. model failed before responding),
     // the session is already idle server-side. Just dismiss the stuck indicator locally.
     if (runPhase() === "error") {
-      resetRunState();
+      resetRunState(currentSessionQueueKey());
       return;
     }
 
@@ -3358,7 +3431,7 @@ export default function SessionView(props: SessionViewProps) {
       );
       setStickToBottom(true);
       scheduleScrollToLatest("auto");
-      startRun();
+      startRun(sessionKey);
     }
     if (props.aiAccessBlockedReason) {
       recordSendTrace("sendPromptImmediate:blocked-ai-access", {
@@ -3369,7 +3442,7 @@ export default function SessionView(props: SessionViewProps) {
       });
       if (showOptimisticSubmit) {
         markMatchingPendingSubmitFailed(props.aiAccessBlockedReason);
-        resetRunState();
+        resetRunState(sessionKey);
       }
       finishPendingSessionHandoffFailure();
       setToastMessage(props.aiAccessBlockedReason);
@@ -3398,7 +3471,7 @@ export default function SessionView(props: SessionViewProps) {
         if (showOptimisticSubmit) {
           const errorMessage = props.error ?? tr("session.connect_server_to_attach");
           markMatchingPendingSubmitFailed(errorMessage);
-          resetRunState();
+          resetRunState(sessionKey);
         }
         finishPendingSessionHandoffFailure();
         setToastMessage(props.error ?? tr("session.connect_server_to_attach"));
@@ -3421,13 +3494,13 @@ export default function SessionView(props: SessionViewProps) {
       }
       setStickToBottom(true);
       scheduleScrollToLatest("auto");
-      startRun();
+      startRun(sessionKey);
       return true;
     } catch (e) {
       if (showOptimisticSubmit) {
         const errorMessage = props.error ?? (e instanceof Error ? e.message : tr("session.connect_server_to_attach"));
         markMatchingPendingSubmitFailed(errorMessage);
-        resetRunState();
+        resetRunState(sessionKey);
       }
       finishPendingSessionHandoffFailure();
       reportError(e, "session.sendPrompt");
