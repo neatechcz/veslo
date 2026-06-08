@@ -5,6 +5,7 @@ import type { ComposerDraft } from "../../types";
 import {
   createPendingSessionInstance,
   createPendingSessionInstanceId,
+  isPendingSessionInstanceId,
   materializePendingSessionInstance,
   pendingSessionKeyForInstance,
   removePendingSubmittedDraftForKey,
@@ -34,6 +35,19 @@ test("pending session ids are distinct and renderable as pending session keys", 
 
 test("pending session ids accept direct uuid strings and sanitize renderable keys", () => {
   assert.equal(createPendingSessionInstanceId("a.b_c-d"), "pending-session:ab_c-d");
+});
+
+test("pending session ids fall back when sanitized input has an empty suffix", () => {
+  const id = createPendingSessionInstanceId(".");
+
+  assert.notEqual(id, "pending-session:");
+  assert.equal(isPendingSessionInstanceId(id), true);
+  assert.notEqual(id.slice("pending-session:".length), "");
+});
+
+test("pending session id guard rejects prefix-only values", () => {
+  assert.equal(isPendingSessionInstanceId("pending-session:"), false);
+  assert.equal(isPendingSessionInstanceId(" pending-session: "), false);
 });
 
 test("two pending sessions in the same workspace keep separate submitted drafts", () => {

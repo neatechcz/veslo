@@ -17,18 +17,28 @@ export type PendingSessionInstance = {
 
 export type PendingSubmittedDraftBySessionKey = Record<string, PendingSubmittedDraft>;
 
-export const isPendingSessionInstanceId = (
-  value: string | null | undefined,
-): value is PendingSessionInstanceId => (value ?? "").trim().startsWith(PENDING_SESSION_INSTANCE_PREFIX);
+const sanitizePendingSessionInstanceSuffix = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, "");
 
-export const createPendingSessionInstanceId = (
-  uuid: string | (() => string) = () =>
+const createDefaultPendingSessionInstanceSuffix = () =>
+  sanitizePendingSessionInstanceSuffix(
     typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
       ? crypto.randomUUID()
       : `${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`,
+  );
+
+export const isPendingSessionInstanceId = (
+  value: string | null | undefined,
+): value is PendingSessionInstanceId => {
+  const id = (value ?? "").trim();
+  return id.startsWith(PENDING_SESSION_INSTANCE_PREFIX) && id.slice(PENDING_SESSION_INSTANCE_PREFIX.length) !== "";
+};
+
+export const createPendingSessionInstanceId = (
+  uuid: string | (() => string) = createDefaultPendingSessionInstanceSuffix,
 ): PendingSessionInstanceId => {
   const value = typeof uuid === "function" ? uuid() : uuid;
-  return `${PENDING_SESSION_INSTANCE_PREFIX}${value.replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  const suffix = sanitizePendingSessionInstanceSuffix(value) || createDefaultPendingSessionInstanceSuffix();
+  return `${PENDING_SESSION_INSTANCE_PREFIX}${suffix}`;
 };
 
 export function pendingSessionKeyForInstance(id: PendingSessionInstanceId): string {
