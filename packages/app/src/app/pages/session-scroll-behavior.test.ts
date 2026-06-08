@@ -32,7 +32,7 @@ test("session send flow starts optimistic run UI before prompt handoff resolves"
   const sendCall = source.indexOf("props.sendPromptAsync(draft, promptSendOptions)", startRun);
   const rejectedBranch = source.indexOf("if (!accepted) {", sendCall);
   const markFailed = source.indexOf("markMatchingPendingSubmitFailed(errorMessage);", rejectedBranch);
-  const resetRun = source.indexOf("resetRunState(sessionKey);", rejectedBranch);
+  const resetRun = source.indexOf("resetRunState(runStateSessionKeyForHandoffFailure());", rejectedBranch);
   const failedBranchEnd = source.indexOf("setToastMessage(props.error ?? tr(\"session.connect_server_to_attach\"));", rejectedBranch);
   const failedBranch = source.slice(rejectedBranch, failedBranchEnd);
 

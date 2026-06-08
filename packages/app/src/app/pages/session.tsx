@@ -3355,11 +3355,17 @@ export default function SessionView(props: SessionViewProps) {
     }
     const pendingSubmitId = `optimistic-submit:${Date.now()}:${Math.random().toString(36).slice(2)}`;
     let materializedSessionIdFromHandoff: string | null = null;
+    let materializedSessionIdForRunStateReset: string | null = null;
+    const runStateSessionKeyForHandoffFailure = () => {
+      const materializedSessionId = materializedSessionIdForRunStateReset ?? materializedSessionIdFromHandoff;
+      return materializedSessionId ? sessionQueueKeyForSessionId(materializedSessionId) : sessionKey;
+    };
     const materializePendingHandoffToSession = (sessionId: string | null | undefined) => {
       if (!pendingSessionBaseKeyBeforeHandoff || !pendingSessionKeyBeforeHandoff) return;
       const materializedSessionId = sessionId?.trim();
       if (!materializedSessionId) return;
       materializedSessionIdFromHandoff = materializedSessionId;
+      materializedSessionIdForRunStateReset = materializedSessionId;
       remapPendingQueueToSession(pendingSessionKeyBeforeHandoff, materializedSessionId);
       clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff);
     };
@@ -3391,6 +3397,7 @@ export default function SessionView(props: SessionViewProps) {
             materializedSessionIdToRestore = materializedSessionIdFromHandoff;
           }
           if (current.sessionId) {
+            materializedSessionIdForRunStateReset = current.sessionId;
             return setPendingSubmittedDraftForKey(draftsBySessionKey, matchingSessionKey, failed);
           }
           const { [matchingSessionKey]: _removedFailedDraft, ...rest } = draftsBySessionKey;
@@ -3442,7 +3449,7 @@ export default function SessionView(props: SessionViewProps) {
       });
       if (showOptimisticSubmit) {
         markMatchingPendingSubmitFailed(props.aiAccessBlockedReason);
-        resetRunState(sessionKey);
+        resetRunState(runStateSessionKeyForHandoffFailure());
       }
       finishPendingSessionHandoffFailure();
       setToastMessage(props.aiAccessBlockedReason);
@@ -3471,7 +3478,7 @@ export default function SessionView(props: SessionViewProps) {
         if (showOptimisticSubmit) {
           const errorMessage = props.error ?? tr("session.connect_server_to_attach");
           markMatchingPendingSubmitFailed(errorMessage);
-          resetRunState(sessionKey);
+          resetRunState(runStateSessionKeyForHandoffFailure());
         }
         finishPendingSessionHandoffFailure();
         setToastMessage(props.error ?? tr("session.connect_server_to_attach"));
@@ -3500,7 +3507,7 @@ export default function SessionView(props: SessionViewProps) {
       if (showOptimisticSubmit) {
         const errorMessage = props.error ?? (e instanceof Error ? e.message : tr("session.connect_server_to_attach"));
         markMatchingPendingSubmitFailed(errorMessage);
-        resetRunState(sessionKey);
+        resetRunState(runStateSessionKeyForHandoffFailure());
       }
       finishPendingSessionHandoffFailure();
       reportError(e, "session.sendPrompt");

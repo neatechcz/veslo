@@ -85,7 +85,7 @@ test("session view stores run UI state by session key", () => {
   );
 });
 
-test("sendPromptImmediate starts and resets run UI state by captured session key", () => {
+test("sendPromptImmediate starts run UI state by captured key and resets failures by handoff key", () => {
   const sendImmediateStart = source.indexOf("  const sendPromptImmediate = async (");
   const sendImmediateEnd = source.indexOf("  const drainNextQueuedDraft = async (", sendImmediateStart);
   assert.notEqual(sendImmediateStart, -1, "sendPromptImmediate should exist");
@@ -109,13 +109,83 @@ test("sendPromptImmediate starts and resets run UI state by captured session key
   );
   assert.match(
     sendImmediateSource,
-    /resetRunState\(sessionKey\);/,
-    "failed sends should reset only the captured send key",
+    /let materializedSessionIdForRunStateReset: string \| null = null;/,
+    "sendPromptImmediate should track where a pending handoff's run UI state was materialized",
+  );
+  assert.match(
+    sendImmediateSource,
+    /const runStateSessionKeyForHandoffFailure = \(\) => \{[\s\S]*const materializedSessionId = materializedSessionIdForRunStateReset \?\? materializedSessionIdFromHandoff;[\s\S]*return materializedSessionId \? sessionQueueKeyForSessionId\(materializedSessionId\) : sessionKey;[\s\S]*\};/,
+    "failed sends should reset the key where the handoff run UI state currently lives",
+  );
+  assert.match(
+    sendImmediateSource,
+    /materializedSessionIdForRunStateReset = materializedSessionId;/,
+    "callback materialization should record the real session id for later failure reset",
+  );
+  assert.match(
+    sendImmediateSource,
+    /if \(current\.sessionId\) \{\s*materializedSessionIdForRunStateReset = current\.sessionId;\s*return setPendingSubmittedDraftForKey\(draftsBySessionKey, matchingSessionKey, failed\);\s*\}/,
+    "failure marking should record the real session id when the matching draft was already materialized",
+  );
+  assert.match(
+    sendImmediateSource,
+    /resetRunState\(runStateSessionKeyForHandoffFailure\(\)\);/,
+    "failed sends should reset by the handoff-aware run-state key",
   );
   assert.doesNotMatch(
     sendImmediateSource,
-    /startRun\(\);|resetRunState\(\);/,
-    "sendPromptImmediate should not mutate whichever session is active after async handoff",
+    /resetRunState\(sessionKey\);/,
+    "failed sends should not always reset the original pending send key",
+  );
+  assert.doesNotMatch(
+    sendImmediateSource,
+    /resetRunState\(\);/,
+    "sendPromptImmediate should not reset whichever session is active after async handoff",
+  );
+  assert.doesNotMatch(
+    sendImmediateSource,
+    /startRun\(\);/,
+    "sendPromptImmediate should not start whichever session is active after async handoff",
+  );
+});
+
+test("failed first-send run reset uses the handoff-aware key in every failure branch", () => {
+  const aiAccessStart = source.indexOf("if (props.aiAccessBlockedReason) {");
+  const tryStart = source.indexOf("try {", aiAccessStart);
+  assert.notEqual(aiAccessStart, -1, "AI access failure branch should exist");
+  assert.notEqual(tryStart, -1, "send try block should follow AI access branch");
+  const aiAccessFailure = source.slice(aiAccessStart, tryStart);
+  assert.match(
+    aiAccessFailure,
+    /markMatchingPendingSubmitFailed\(props\.aiAccessBlockedReason\);[\s\S]*resetRunState\(runStateSessionKeyForHandoffFailure\(\)\);/,
+    "AI-access failures should reset the pending or materialized handoff run key",
+  );
+
+  const rejectedStart = source.indexOf("if (!accepted) {", tryStart);
+  const acceptedStart = source.indexOf("if (accepted && pendingSessionKeyBeforeHandoff)", rejectedStart);
+  assert.notEqual(rejectedStart, -1, "rejected send branch should exist");
+  assert.notEqual(acceptedStart, -1, "accepted handoff branch should follow rejected send branch");
+  const rejectedFailure = source.slice(rejectedStart, acceptedStart);
+  assert.match(
+    rejectedFailure,
+    /markMatchingPendingSubmitFailed\(errorMessage\);[\s\S]*resetRunState\(runStateSessionKeyForHandoffFailure\(\)\);/,
+    "rejected sends should reset the pending or materialized handoff run key",
+  );
+
+  const thrownStart = source.indexOf("} catch (e) {", acceptedStart);
+  const sendImmediateEnd = source.indexOf("const drainNextQueuedDraft", thrownStart);
+  assert.notEqual(thrownStart, -1, "thrown send branch should exist");
+  assert.notEqual(sendImmediateEnd, -1, "sendPromptImmediate should end before queue draining");
+  const thrownFailure = source.slice(thrownStart, sendImmediateEnd);
+  assert.match(
+    thrownFailure,
+    /markMatchingPendingSubmitFailed\(errorMessage\);[\s\S]*resetRunState\(runStateSessionKeyForHandoffFailure\(\)\);/,
+    "thrown sends should reset the pending or materialized handoff run key",
+  );
+  assert.doesNotMatch(
+    `${aiAccessFailure}\n${rejectedFailure}\n${thrownFailure}`,
+    /resetRunState\(sessionKey\);/,
+    "failure branches should not leave materialized real-session run state behind by resetting only the original key",
   );
 });
 
@@ -209,7 +279,7 @@ test("failed first-send optimistic drafts keep the captured pending instance sel
 test("materialized first-send failures keep the failed draft on the active real session key", () => {
   assert.match(
     source,
-    /if \(pendingSessionKeyBeforeHandoff\) \{\s*materializedSessionIdToRestore = current\.sessionId;[\s\S]*if \(!materializedSessionIdToRestore && materializedSessionIdFromHandoff\) \{\s*materializedSessionIdToRestore = materializedSessionIdFromHandoff;\s*\}[\s\S]*if \(current\.sessionId\) \{\s*return setPendingSubmittedDraftForKey\(draftsBySessionKey, matchingSessionKey, failed\);\s*\}/,
+    /if \(pendingSessionKeyBeforeHandoff\) \{\s*materializedSessionIdToRestore = current\.sessionId;[\s\S]*if \(!materializedSessionIdToRestore && materializedSessionIdFromHandoff\) \{\s*materializedSessionIdToRestore = materializedSessionIdFromHandoff;\s*\}[\s\S]*if \(current\.sessionId\) \{\s*materializedSessionIdForRunStateReset = current\.sessionId;\s*return setPendingSubmittedDraftForKey\(draftsBySessionKey, matchingSessionKey, failed\);\s*\}/,
     "a materialized first-send failure should leave the failed optimistic draft under the active real session key",
   );
 
