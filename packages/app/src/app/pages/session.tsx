@@ -260,10 +260,6 @@ export type SessionViewProps = {
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean;
   openRenameWorkspace: (workspaceId: string) => void;
   selectSession: (sessionId: string) => Promise<void> | void;
-  pendingSessionLoad: { sessionId: string; workspaceId: string; sessionTitle: string; workspaceName: string } | null;
-  setPendingSessionLoad: (
-    value: { sessionId: string; workspaceId: string; sessionTitle: string; workspaceName: string } | null
-  ) => void;
   selectedSessionTitle: string | null;
   messages: MessageWithParts[];
   todos: TodoItem[];
@@ -766,7 +762,6 @@ export default function SessionView(props: SessionViewProps) {
   const showSessionLoadingState = createMemo(() =>
     shouldShowSessionLoadingState({
       hasWorkspaceSetupEmptyState: showWorkspaceSetupEmptyState(),
-      hasPendingSessionLoad: Boolean(props.pendingSessionLoad),
       selectedSessionId: props.selectedSessionId,
       messageCount: props.messages.length,
       loadingEarlierMessages: props.loadingEarlierMessages,
@@ -3559,33 +3554,18 @@ export default function SessionView(props: SessionViewProps) {
     });
   };
 
-  let pendingSessionLoadAttempt = 0;
-
   const handleDraftChange = (draft: ComposerDraft) => {
     props.setComposerDraft(draft);
   };
 
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
-    const attempt = ++pendingSessionLoadAttempt;
-    const shouldShowOverlay = sessionId !== props.selectedSessionId;
     const group = props.workspaceSessionGroups.find((g) => g.workspace.id === workspaceId);
     const workspaceRoot =
       group?.workspace.directory?.trim() ||
       group?.workspace.path?.trim() ||
       "";
 
-    // Show loading overlay immediately when switching to a different session.
     const session = group?.sessions.find((s) => s.id === sessionId);
-    if (shouldShowOverlay) {
-      const workspaceName = group?.workspace.displayName ?? group?.workspace.name ?? "";
-      const sessionTitle = session?.title ?? "";
-      props.setPendingSessionLoad({
-        sessionId,
-        workspaceId,
-        sessionTitle,
-        workspaceName,
-      });
-    }
     void openSessionWithWorkspaceActivation({
       activeWorkspaceId: props.activeWorkspaceId,
       getActiveWorkspaceId: () => props.activeWorkspaceId,
@@ -3605,20 +3585,7 @@ export default function SessionView(props: SessionViewProps) {
         props.setView("session", nextSessionId);
       },
     })
-      .then((result) => {
-        if (!shouldShowOverlay) return;
-        if (attempt !== pendingSessionLoadAttempt) return;
-        // Opened routes keep the inline loading state until selectSession
-        // completes transcript hydration and fires onSessionLoadComplete.
-        if (result === "blocked" || result === "superseded") {
-          props.setPendingSessionLoad(null);
-        }
-      })
-      .catch(() => {
-        if (!shouldShowOverlay) return;
-        if (attempt !== pendingSessionLoadAttempt) return;
-        props.setPendingSessionLoad(null);
-      });
+      .catch((error) => reportError(error, "session.openSessionFromList"));
   };
 
   const resolveVesloWorkspaceId = (workspaceId: string) => {
@@ -3996,9 +3963,6 @@ export default function SessionView(props: SessionViewProps) {
             selectedSessionId={props.selectedSessionId}
             pendingPermissionCountByWs={props.pendingPermissionCountByWs}
             allowSelectedParentExpansion={true}
-            pendingSelectedSessionId={props.pendingSessionLoad?.sessionId ?? null}
-            pendingSelectedWorkspaceId={props.pendingSessionLoad?.workspaceId ?? null}
-            suspendProjectReorder={Boolean(props.pendingSessionLoad)}
             sessionStatusById={props.sessionStatusById}
             busySessionByWorkspaceId={props.busySessionByWorkspaceId}
             connectingWorkspaceId={props.connectingWorkspaceId}
@@ -4278,13 +4242,8 @@ export default function SessionView(props: SessionViewProps) {
                   </div>
                   <div class="space-y-2">
                     <h3 class="font-product type-title-sm text-gray-12">
-                      {props.pendingSessionLoad?.sessionTitle || tr("session.opening_conversation")}
+                      {props.selectedSessionTitle || tr("session.opening_conversation")}
                     </h3>
-                    <Show when={props.pendingSessionLoad?.workspaceName}>
-                      {(workspaceName) => (
-                        <p class="font-product type-ui-sm text-gray-10">{workspaceName()}</p>
-                      )}
-                    </Show>
                     <p class="font-reading type-ui-md text-gray-10">{tr("session.opening_conversation")}</p>
                   </div>
                 </div>

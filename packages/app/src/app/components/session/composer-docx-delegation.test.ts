@@ -22,7 +22,7 @@ test("composer keeps dropped files as attachment chips and does not inject path 
 test("all attachment staging happens in session-directory send pipeline, not in composer", () => {
   assert.match(
     appSource,
-    /const stageAttachmentsIntoSessionDirectory = async \(\s*draft: ComposerDraft,\s*sessionID: string,\s*\): Promise<StagedSessionAttachment\[]> =>/,
+    /const stageAttachmentsIntoSessionDirectory = async \(\s*draft: ComposerDraft,\s*sessionID: string,\s*preflight\?: SendPreflightContext,\s*\): Promise<StagedSessionAttachment\[]> =>/,
     "app send pipeline should stage attachments into the active session directory",
   );
 
@@ -40,7 +40,7 @@ test("all attachment staging happens in session-directory send pipeline, not in 
 
   assert.match(
     appSource,
-    /await client\.createFileSession\(workspaceId, \{[\s\S]*write: true,/,
+    /client\.createFileSession\(workspaceId, \{[\s\S]*write: true,/,
     "staging should open a writable file session",
   );
 
@@ -52,8 +52,8 @@ test("all attachment staging happens in session-directory send pipeline, not in 
 
   assert.match(
     appSource,
-    /const workspaceId = await resolveWorkspaceIdForAttachmentStaging\(client\);/,
-    "staging should lazily resolve the Veslo workspace id when the UI has not hydrated it yet",
+    /const workspaceId = resolution\?\.serverWorkspaceId \|\| await resolveWorkspaceIdForAttachmentStaging\(client\);/,
+    "staging should reuse the send preflight workspace resolution and lazily resolve the Veslo workspace id as a fallback",
   );
 
   assert.match(
@@ -82,7 +82,7 @@ test("all attachment staging happens in session-directory send pipeline, not in 
 
   assert.match(
     appSource,
-    /const stagedAttachments = await stageAttachmentsIntoSessionDirectory\(resolvedDraft, sessionID\);/,
+    /stageAttachmentsIntoSessionDirectory\(resolvedDraft, sessionID, sendPreflight\)/,
     "send pipeline should stage attachments after session selection and before provider calls",
   );
 

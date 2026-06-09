@@ -142,3 +142,17 @@ test("workspace activation delegates local runtime reuse and restart flows to th
     "browsing-mode engine attach should use the shared helper's quiet reconnect path",
   );
 });
+
+test("orchestrator browse attach preserves busy state for other live workspaces", () => {
+  const ensureStart = source.indexOf("async function ensureEngineForWorkspace()");
+  const ensureEnd = source.indexOf("\n  return {", ensureStart);
+  assert.notStrictEqual(ensureStart, -1, "ensureEngineForWorkspace definition missing");
+  assert.notStrictEqual(ensureEnd, -1, "ensureEngineForWorkspace end marker missing");
+  const ensureSource = source.slice(ensureStart, ensureEnd);
+
+  assert.match(
+    ensureSource,
+    /if \(resolveEngineRuntime\(\) !== "veslo-orchestrator"\) \{\s*clearWorkspaceBusyAllExcept\(workspace\.id\);\s*\}/,
+    "orchestrator workspace switching must not clear busy state for other pooled workspaces",
+  );
+});

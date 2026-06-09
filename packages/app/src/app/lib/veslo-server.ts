@@ -983,6 +983,14 @@ export type VesloConversationRunInput = Record<string, unknown> & {
   directory?: string | null;
 };
 
+export type VesloConversationRunDebugTraceEntry = {
+  source: string;
+  event: string;
+  traceId?: string | null;
+  durationMs?: number;
+  [key: string]: unknown;
+};
+
 export type VesloConversationRunResult = {
   ok: boolean;
   workspaceId: string;
@@ -992,6 +1000,7 @@ export type VesloConversationRunResult = {
   status: "submitted";
   kind: VesloConversationRunKind;
   upstream?: unknown;
+  debugTrace?: VesloConversationRunDebugTraceEntry[];
 };
 
 export type VesloConversationAbortResult = {
@@ -2295,7 +2304,12 @@ export function createVesloServerClient(options: {
           timeoutMs: timeouts.conversationCreate,
         },
       ),
-    runConversation: (workspaceId: string, conversationId: string, input: VesloConversationRunInput) =>
+    runConversation: (
+      workspaceId: string,
+      conversationId: string,
+      input: VesloConversationRunInput,
+      options?: { sendTraceId?: string | null },
+    ) =>
       requestJson<VesloConversationRunResult>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/conversations/${encodeURIComponent(conversationId)}/runs`,
@@ -2305,6 +2319,9 @@ export function createVesloServerClient(options: {
           method: "POST",
           body: input,
           timeoutMs: timeouts.conversationRun,
+          extraHeaders: options?.sendTraceId?.trim()
+            ? { "X-Veslo-Send-Trace-Id": options.sendTraceId.trim() }
+            : undefined,
         },
       ),
     abortConversation: (workspaceId: string, conversationId: string, input: { directory?: string | null; runId: string }) =>

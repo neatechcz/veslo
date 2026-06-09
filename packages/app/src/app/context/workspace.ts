@@ -77,6 +77,36 @@ export type WorkspaceDebugEvent = {
   payload?: unknown;
 };
 
+type WorkspaceBusyMap = Record<string, { sessionId: string; startedAt: number }>;
+
+type WorkspaceBusyTraceRoot = typeof window & {
+  __vesloWorkspaceBusyTrace?: Array<Record<string, unknown>>;
+  __vesloWorkspaceBusySnapshot?: WorkspaceBusyMap;
+};
+
+function recordWorkspaceBusyTrace(event: string, payload?: Record<string, unknown>) {
+  if (typeof window === "undefined") return;
+  try {
+    const root = window as WorkspaceBusyTraceRoot;
+    const logs = root.__vesloWorkspaceBusyTrace ?? [];
+    logs.push({
+      at: new Date().toISOString(),
+      ts: Date.now(),
+      source: "workspace",
+      event,
+      ...(payload ?? {}),
+    });
+    if (logs.length > 500) logs.splice(0, logs.length - 500);
+    root.__vesloWorkspaceBusyTrace = logs;
+    if (payload?.next && typeof payload.next === "object") {
+      root.__vesloWorkspaceBusySnapshot = payload.next as WorkspaceBusyMap;
+    }
+    console.log("[workspace:busy]", event, payload ?? {});
+  } catch {
+    // ignore
+  }
+}
+
 function _wsLog(msg: string, data?: unknown) {
   const line = `[${new Date().toISOString()}] ${msg}${data !== undefined ? " " + (typeof data === "string" ? data : JSON.stringify(data)) : ""}`;
   console.log(line);
@@ -311,10 +341,19 @@ export function createWorkspaceStore(options: {
   function markWorkspaceBusy(workspaceId: string, sessionId: string) {
     const id = workspaceId.trim();
     if (!id || !sessionId) return;
-    setWorkspaceBusy((prev) => ({
-      ...prev,
-      [id]: { sessionId, startedAt: Date.now() },
-    }));
+    setWorkspaceBusy((prev) => {
+      const next = {
+        ...prev,
+        [id]: { sessionId, startedAt: Date.now() },
+      };
+      recordWorkspaceBusyTrace("mark", {
+        workspaceId: id,
+        sessionId,
+        previous: prev,
+        next,
+      });
+      return next;
+    });
   }
 
   function clearWorkspaceBusy(workspaceId: string, sessionId?: string) {
@@ -326,6 +365,12 @@ export function createWorkspaceStore(options: {
       if (sessionId && entry.sessionId !== sessionId) return prev;
       const next = { ...prev };
       delete next[id];
+      recordWorkspaceBusyTrace("clear", {
+        workspaceId: id,
+        sessionId: sessionId ?? null,
+        previous: prev,
+        next,
+      });
       return next;
     });
   }
@@ -335,6 +380,12 @@ export function createWorkspaceStore(options: {
     setWorkspaceBusy((prev) => {
       const next: Record<string, { sessionId: string; startedAt: number }> = {};
       if (keep && prev[keep]) next[keep] = prev[keep];
+      recordWorkspaceBusyTrace("clear-all-except", {
+        keepWorkspaceId: keep || null,
+        previous: prev,
+        next,
+        droppedWorkspaceIds: Object.keys(prev).filter((id) => id !== keep),
+      });
       return next;
     });
   }
@@ -2915,10 +2966,12 @@ export function createWorkspaceStore(options: {
         }
       }
 
-      // Any engine that was running for another workspace is about to be torn
-      // down by restartWorkspaceRuntime/startHost — clear stale busy entries
-      // so we don't show false "another workspace is running" warnings later.
-      clearWorkspaceBusyAllExcept(workspace.id);
+      // Direct runtime switches replace the single host process. The
+      // orchestrator owns a workspace pool, so switching the browsed workspace
+      // must not erase busy state from other live workspaces.
+      if (resolveEngineRuntime() !== "veslo-orchestrator") {
+        clearWorkspaceBusyAllExcept(workspace.id);
+      }
 
       try {
         const skillsReady = await syncWorkspaceSkillMaterializationBeforeRuntime(workspace, {

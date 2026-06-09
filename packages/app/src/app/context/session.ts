@@ -46,6 +46,34 @@ import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from ".
 
 export type SessionStore = ReturnType<typeof createSessionStore>;
 
+type SessionStatusTraceRoot = typeof window & {
+  __vesloSessionStatusTrace?: Array<Record<string, unknown>>;
+  __vesloSessionStatusSnapshot?: Record<string, string>;
+};
+
+function recordSessionStatusTrace(event: string, payload?: Record<string, unknown>) {
+  if (typeof window === "undefined") return;
+  try {
+    const root = window as SessionStatusTraceRoot;
+    const logs = root.__vesloSessionStatusTrace ?? [];
+    logs.push({
+      at: new Date().toISOString(),
+      ts: Date.now(),
+      source: "session",
+      event,
+      ...(payload ?? {}),
+    });
+    if (logs.length > 500) logs.splice(0, logs.length - 500);
+    root.__vesloSessionStatusTrace = logs;
+    if (payload?.next && typeof payload.next === "object") {
+      root.__vesloSessionStatusSnapshot = payload.next as Record<string, string>;
+    }
+    console.log("[session:status]", event, payload ?? {});
+  } catch {
+    // ignore
+  }
+}
+
 type TranscriptFreshness = {
   fetchedAt: number | null;
   staleAt: number | null;
@@ -197,6 +225,12 @@ export function createSessionStore(options: {
 }) {
 
   const notifySessionBusy = (sessionId: string, status: string, workspaceId?: string) => {
+    recordSessionStatusTrace("notify-busy", {
+      sessionId,
+      status,
+      busy: status !== "idle",
+      workspaceId: workspaceId ?? null,
+    });
     if (!options.onSessionBusyChange) return;
     options.onSessionBusyChange(sessionId, status !== "idle", workspaceId);
   };
@@ -275,6 +309,7 @@ export function createSessionStore(options: {
   const [pendingPermissionsByWs, setPendingPermissionsByWs] = createSignal<
     Record<string, PendingPermission[]>
   >({});
+  let pendingPermissionsRefreshInFlight: Promise<void> | null = null;
 
   // VSLO-171 — flattened view of all per-workspace permissions for the
   // cross-workspace UI (sidebar badges, activePermission fallback).
@@ -807,54 +842,78 @@ export function createSessionStore(options: {
   }
 
   async function refreshPendingPermissions() {
-    // VSLO-171 — iterate every per-workspace client and refresh each
-    // workspace's permissions independently. The active workspace's list is
-    // also mirrored into the global store so callers that read
-    // store.pendingPermissions directly (Dialog, activePermission memo) keep
-    // working.
-    const activeWs = options.routing.activeWorkspaceId();
-    const nextByWs: Record<string, PendingPermission[]> = {};
-    const now = Date.now();
-    const prevByWs = pendingPermissionsByWs();
-    const clientsToProbe: Array<{ wsId: string; client: RoutingClient }> = [];
-    options.routing.forEach((wsId, client) => {
-      clientsToProbe.push({ wsId, client });
-    });
-    // If no per-WS clients have been ensured yet, fall back to the global
-    // active client so the very first prompt still surfaces permissions.
-    if (clientsToProbe.length === 0) {
-      const c = options.routing.active();
-      if (!c) return;
-      const list = unwrap(await c.permission.list()) as Array<PendingPermission>;
-      const byId = new Map(store.pendingPermissions.map((p) => [p.id, p] as const));
-      const next = list.map((perm) => ({
-        ...perm,
-        workspaceId: activeWs || undefined,
-        receivedAt: byId.get(perm.id)?.receivedAt ?? now,
-      }));
-      setStore("pendingPermissions", next);
-      if (activeWs) setPendingPermissionsByWs({ [activeWs]: next });
+    if (options.engineReady && !options.engineReady()) {
+      sessionDebug("permissions:skip-engine-not-ready", {
+        activeWorkspaceId: options.routing.activeWorkspaceId() || null,
+      });
       return;
     }
-    await Promise.all(
-      clientsToProbe.map(async ({ wsId, client }) => {
-        try {
-          const list = unwrap(await client.permission.list()) as Array<PendingPermission>;
-          const prev = prevByWs[wsId] ?? [];
-          const byId = new Map(prev.map((p) => [p.id, p] as const));
-          nextByWs[wsId] = list.map((perm) => ({
-            ...perm,
-            workspaceId: wsId,
-            receivedAt: byId.get(perm.id)?.receivedAt ?? now,
-          }));
-        } catch {
-          nextByWs[wsId] = prevByWs[wsId] ?? [];
-        }
-      })
-    );
-    setPendingPermissionsByWs(nextByWs);
-    const activeList = activeWs ? nextByWs[activeWs] ?? [] : [];
-    setStore("pendingPermissions", activeList);
+    if (pendingPermissionsRefreshInFlight) {
+      sessionDebug("permissions:skip-in-flight", {
+        activeWorkspaceId: options.routing.activeWorkspaceId() || null,
+      });
+      return;
+    }
+
+    const run = (async () => {
+      // VSLO-171 — iterate every per-workspace client and refresh each
+      // workspace's permissions independently. The active workspace's list is
+      // also mirrored into the global store so callers that read
+      // store.pendingPermissions directly (Dialog, activePermission memo) keep
+      // working.
+      const activeWs = options.routing.activeWorkspaceId();
+      const nextByWs: Record<string, PendingPermission[]> = {};
+      const now = Date.now();
+      const prevByWs = pendingPermissionsByWs();
+      const clientsToProbe: Array<{ wsId: string; client: RoutingClient }> = [];
+      options.routing.forEach((wsId, client) => {
+        clientsToProbe.push({ wsId, client });
+      });
+      // If no per-WS clients have been ensured yet, fall back to the global
+      // active client so the very first prompt still surfaces permissions.
+      if (clientsToProbe.length === 0) {
+        const c = options.routing.active();
+        if (!c) return;
+        const list = unwrap(await c.permission.list()) as Array<PendingPermission>;
+        const byId = new Map(store.pendingPermissions.map((p) => [p.id, p] as const));
+        const next = list.map((perm) => ({
+          ...perm,
+          workspaceId: activeWs || undefined,
+          receivedAt: byId.get(perm.id)?.receivedAt ?? now,
+        }));
+        setStore("pendingPermissions", next);
+        if (activeWs) setPendingPermissionsByWs({ [activeWs]: next });
+        return;
+      }
+      await Promise.all(
+        clientsToProbe.map(async ({ wsId, client }) => {
+          try {
+            const list = unwrap(await client.permission.list()) as Array<PendingPermission>;
+            const prev = prevByWs[wsId] ?? [];
+            const byId = new Map(prev.map((p) => [p.id, p] as const));
+            nextByWs[wsId] = list.map((perm) => ({
+              ...perm,
+              workspaceId: wsId,
+              receivedAt: byId.get(perm.id)?.receivedAt ?? now,
+            }));
+          } catch {
+            nextByWs[wsId] = prevByWs[wsId] ?? [];
+          }
+        }),
+      );
+      setPendingPermissionsByWs(nextByWs);
+      const activeList = activeWs ? nextByWs[activeWs] ?? [] : [];
+      setStore("pendingPermissions", activeList);
+    })();
+
+    pendingPermissionsRefreshInFlight = run;
+    try {
+      await run;
+    } finally {
+      if (pendingPermissionsRefreshInFlight === run) {
+        pendingPermissionsRefreshInFlight = null;
+      }
+    }
   }
 
   async function refreshPendingQuestions() {
@@ -1170,6 +1229,12 @@ export function createSessionStore(options: {
   };
 
   const setSessionStatusById = (next: Record<string, string>) => {
+    recordSessionStatusTrace("replace-map", {
+      previous: store.sessionStatus,
+      next,
+      previousKeys: Object.keys(store.sessionStatus),
+      nextKeys: Object.keys(next),
+    });
     setStore("sessionStatus", next);
   };
 
@@ -1404,6 +1469,12 @@ export function createSessionStore(options: {
         const sessionID = extractSessionId(record);
         if (sessionID && isKnownSessionId(sessionID)) {
           const normalized = normalizeSessionStatus(record.status);
+          recordSessionStatusTrace("sse-session-status", {
+            sessionId: sessionID,
+            status: normalized,
+            sourceWorkspaceId: sourceWsId ?? null,
+            previous: store.sessionStatus[sessionID] ?? "idle",
+          });
           setStore("sessionStatus", sessionID, normalized);
           notifySessionBusy(sessionID, normalized, sourceWsId);
           if (sessionID === options.selectedSessionId() && normalized !== "idle") {
@@ -1418,6 +1489,12 @@ export function createSessionStore(options: {
         const record = event.properties as Record<string, unknown>;
         const sessionID = extractSessionId(record);
         if (sessionID && isKnownSessionId(sessionID)) {
+          recordSessionStatusTrace("sse-session-idle", {
+            sessionId: sessionID,
+            status: "idle",
+            sourceWorkspaceId: sourceWsId ?? null,
+            previous: store.sessionStatus[sessionID] ?? "idle",
+          });
           setStore("sessionStatus", sessionID, "idle");
           notifySessionBusy(sessionID, "idle", sourceWsId);
           // VSLO-171.F3Ú6: SSE event handler will dispatch on per-workspace

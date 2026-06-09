@@ -2450,8 +2450,8 @@ export default function WorkspaceSessionList(props: Props) {
                     <div class="relative flex items-start gap-2">
                       <div
                         class="min-w-0 flex-1"
-                        draggable
                         data-project-drag-preview
+                        draggable
                         onDragStart={(event) => handleProjectDragStart(event, project.key)}
                         onDragEnd={handleProjectDragEnd}
                       >
@@ -2465,14 +2465,7 @@ export default function WorkspaceSessionList(props: Props) {
                           title={project.projectTitle}
                           aria-label={project.projectLabel ? `${tr("sidebar.open_project")} ${project.projectLabel}` : tr("sidebar.open_project")}
                           onPointerDown={(event) => handleProjectPointerDown(event, project.key, projectDragLabel())}
-                          onClick={() => {
-                            if (!isActiveWorkspace()) {
-                              void Promise.resolve(props.onActivateWorkspace(workspace().id));
-                              if (collapsed()) toggleProjectCollapse(project.key);
-                              return;
-                            }
-                            toggleProjectCollapse(project.key);
-                          }}
+                          onClick={() => toggleProjectCollapse(project.key)}
                         >
                           <div class="flex items-center gap-2 min-w-0">
                             <Folder

@@ -194,6 +194,56 @@ test("non-archive requests do not include the account id header", async () => {
   }
 });
 
+test("runConversation includes the optional send trace id header", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method?: string; headers: Headers; body: string | null }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method,
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+      body: typeof init?.body === "string" ? init.body : null,
+    });
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        workspaceId: "ws_1",
+        conversationId: "conv_1",
+        opencodeSessionId: "sess_1",
+        runId: "run_1",
+        status: "submitted",
+        kind: "prompt_async",
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+    });
+
+    await client.runConversation(
+      "ws_1",
+      "conv_1",
+      { kind: "prompt_async", parts: [{ type: "text", text: "Hello" }] },
+      { sendTraceId: "send-trace-123" },
+    );
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.url, "https://veslo.example/workspace/ws_1/conversations/conv_1/runs");
+    assert.equal(calls[0]?.method, "POST");
+    assert.equal(calls[0]?.headers.get("x-veslo-send-trace-id"), "send-trace-123");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("requestManagedAiAccessBundle fetches the raw managed gateway bundle with the DEN bearer token", async () => {
   const previousFetch = globalThis.fetch;
   const calls: Array<{ url: string; method?: string; headers: Headers; body: string | null }> = [];

@@ -193,12 +193,12 @@ test("app routes selected session browsing through DB scope", () => {
 test("app activates selected session workspace at send time, not browse time", () => {
   assert.match(
     scopedSendActivationSource,
-    /const transcriptScope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*await workspaceStore\.activateWorkspace\(targetWorkspaceId\);/s,
+    /const transcriptScope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*sendTraceStep\(\s*"sendPrompt:activate-scoped-workspace-call",[\s\S]*workspaceStore\.activateWorkspace\(targetWorkspaceId\)/s,
     "send path should activate the workspace from the selected session scope",
   );
   assert.match(
     sendPromptSource,
-    /if \(sessionID && !\(await ensureSelectedSessionWorkspaceActiveForSend\(sessionID\)\)\) \{[\s\S]*recordSendTrace\("sendPrompt:blocked-scoped-workspace"\);[\s\S]*return false;[\s\S]*\}[\s\S]*resolvedDraft = await maybeResolveSkillCommand\(resolvedDraft\);/s,
+    /const scopedSessionID = sessionID\?\.trim\(\) \|\| "";[\s\S]*if \([\s\S]*scopedSessionID &&[\s\S]*sendTraceStep\(\s*"sendPrompt:ensure-scoped-workspace-active",[\s\S]*ensureSelectedSessionWorkspaceActiveForSend\(scopedSessionID, sendTraceId\)[\s\S]*\) \{[\s\S]*recordSendTrace\("sendPrompt:blocked-scoped-workspace",[\s\S]*?\);[\s\S]*return false;[\s\S]*\}[\s\S]*resolvedDraft = await sendTraceStep\(\s*"sendPrompt:maybe-resolve-skill-command"/s,
     "scoped workspace activation should run during send before workspace-sensitive prompt routing",
   );
 });

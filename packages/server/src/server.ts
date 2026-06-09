@@ -1435,7 +1435,7 @@ function withCors(response: Response, request: Request, config: ServerConfig) {
   headers.set("Access-Control-Allow-Origin", allowOrigin);
   headers.set(
     "Access-Control-Allow-Headers",
-    "Authorization, Content-Type, X-Veslo-Host-Token, X-Veslo-Client-Id, x-veslo-account-id, X-Veslo-User-Id, X-Veslo-Den-User-Id, X-Veslo-Org-Id, X-Veslo-Den-Org-Id, X-Veslo-Gateway-Authorization, X-Veslo-Gateway-Token, X-Veslo-Session-Id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
+    "Authorization, Content-Type, X-Veslo-Host-Token, X-Veslo-Client-Id, X-Veslo-Send-Trace-Id, x-veslo-account-id, X-Veslo-User-Id, X-Veslo-Den-User-Id, X-Veslo-Org-Id, X-Veslo-Den-Org-Id, X-Veslo-Gateway-Authorization, X-Veslo-Gateway-Token, X-Veslo-Session-Id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
   );
   headers.set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
   headers.set("Vary", "Origin");
@@ -2009,6 +2009,76 @@ function lifecycleRequestApiError(error: OrchestratorLifecycleRequestError): Api
     path: error.path,
     body: error.body,
   });
+}
+
+type ConversationRunDebugTraceEntry = {
+  source: "server";
+  event: string;
+  at: string;
+  ts: number;
+  traceId?: string;
+  durationMs?: number;
+  [key: string]: unknown;
+};
+
+const roundTraceMs = (value: number) => Math.round(value * 100) / 100;
+
+const perfMs = () =>
+  typeof performance !== "undefined" && typeof performance.now === "function"
+    ? performance.now()
+    : Date.now();
+
+function createConversationRunTracer(request: Request) {
+  const traceId = request.headers.get("x-veslo-send-trace-id")?.trim() || "";
+  const enabled = Boolean(traceId) || ["1", "true", "yes"].includes((process.env.VESLO_FLOW_LOG ?? "").toLowerCase());
+  const entries: ConversationRunDebugTraceEntry[] = [];
+
+  const record = (event: string, payload: Record<string, unknown> = {}) => {
+    const entry: ConversationRunDebugTraceEntry = {
+      source: "server",
+      event,
+      at: new Date().toISOString(),
+      ts: Date.now(),
+      ...(traceId ? { traceId } : {}),
+      ...payload,
+    };
+    entries.push(entry);
+    if (enabled) {
+      try {
+        console.log(`[veslo:send-flow] ${event} ${JSON.stringify(entry)}`);
+      } catch {
+        console.log(`[veslo:send-flow] ${event}`);
+      }
+    }
+  };
+
+  const step = async <T,>(
+    event: string,
+    fn: () => Promise<T>,
+    payload: Record<string, unknown> = {},
+  ): Promise<T> => {
+    const startedAt = perfMs();
+    record(`${event}:start`, payload);
+    try {
+      const result = await fn();
+      record(event, {
+        ...payload,
+        durationMs: roundTraceMs(perfMs() - startedAt),
+        outcome: "ok",
+      });
+      return result;
+    } catch (error) {
+      record(`${event}:error`, {
+        ...payload,
+        durationMs: roundTraceMs(perfMs() - startedAt),
+        outcome: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  };
+
+  return { entries, record, step, traceId: traceId || null };
 }
 
 function isVesloConversationId(input: string): boolean {
@@ -3513,8 +3583,13 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
   });
 
   addRoute(routes, "POST", "/workspace/:id/conversations/:conversationId/runs", "client", async (ctx) => {
+    const runTrace = createConversationRunTracer(ctx.request);
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
+    runTrace.record("server:conversation-run:start", {
+      workspaceId: ctx.params.id,
+      conversationId: ctx.params.conversationId,
+    });
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const sessionOrConversationId = (ctx.params.conversationId ?? "").trim();
     if (!sessionOrConversationId) {
@@ -3522,24 +3597,48 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     }
     const body = await readJsonBody(ctx.request);
     const kind = parseConversationRunKind(body.kind);
-    const target = await resolveConversationExecutionTarget({
-      workspace,
-      sessionOrConversationId,
-      requestedDirectory: optionalBodyString(body, "directory"),
-      missingDirectoryMessage: "Conversation run directory is required",
-    });
+    const target = await runTrace.step(
+      "server:conversation-run:resolve-target",
+      () => resolveConversationExecutionTarget({
+        workspace,
+        sessionOrConversationId,
+        requestedDirectory: optionalBodyString(body, "directory"),
+        missingDirectoryMessage: "Conversation run directory is required",
+      }),
+      {
+        workspaceId: workspace.id,
+        workspaceType: workspace.workspaceType,
+        kind,
+      },
+    );
     const runId = shortId();
     const lifecycleOwner = workspace.workspaceType === "remote" ? null : lifecycleClient;
+    runTrace.record("server:conversation-run:lifecycle-owner", {
+      workspaceId: workspace.id,
+      runId,
+      enabled: Boolean(lifecycleOwner),
+      workspaceType: workspace.workspaceType,
+    });
     if (lifecycleOwner) {
       try {
-        await lifecycleOwner.register({
-          workspaceId: workspace.id,
-          conversationId: target.conversationId,
-          runId,
-          engineSessionId: target.opencodeSessionId,
-          directory: target.directory,
-          kind: lifecycleRunKind(kind),
-        });
+        await runTrace.step(
+          "server:conversation-run:lifecycle-register",
+          () => lifecycleOwner.register({
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            runId,
+            engineSessionId: target.opencodeSessionId,
+            directory: target.directory,
+            kind: lifecycleRunKind(kind),
+          }),
+          {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            runId,
+            engineSessionId: target.opencodeSessionId,
+            kind: lifecycleRunKind(kind),
+          },
+        );
       } catch (error) {
         if (error instanceof RunAlreadyActiveError) {
           throw new ApiError(409, "run_already_active", "A run is already active for this conversation", {
@@ -3564,17 +3663,35 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
             : `/session/${encodeURIComponent(target.opencodeSessionId)}/summarize?${query.toString()}`;
     let upstream: unknown;
     try {
-      upstream = await fetchOpencodeJson({ ...workspace, directory: target.directory }, path, {
-        method: "POST",
-        timeoutMs: OPENCODE_CONVERSATION_SUBMIT_TIMEOUT_MS,
-        body: buildConversationRunBody(kind, body),
-      });
+      upstream = await runTrace.step(
+        "server:conversation-run:opencode-submit",
+        () => fetchOpencodeJson({ ...workspace, directory: target.directory }, path, {
+          method: "POST",
+          timeoutMs: OPENCODE_CONVERSATION_SUBMIT_TIMEOUT_MS,
+          body: buildConversationRunBody(kind, body),
+        }),
+        {
+          workspaceId: workspace.id,
+          conversationId: target.conversationId,
+          runId,
+          kind,
+          opencodeSessionId: target.opencodeSessionId,
+        },
+      );
     } catch (error) {
       if (lifecycleOwner) {
-        await lifecycleOwner.markFailed(
-          workspace.id,
-          runId,
-          error instanceof Error ? error.message : String(error),
+        await runTrace.step(
+          "server:conversation-run:lifecycle-mark-failed",
+          () => lifecycleOwner.markFailed(
+            workspace.id,
+            runId,
+            error instanceof Error ? error.message : String(error),
+          ),
+          {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            runId,
+          },
         ).catch(() => undefined);
       }
       throw error;
@@ -3588,6 +3705,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       status: "submitted",
       kind,
       upstream,
+      debugTrace: runTrace.entries,
     });
   });
 

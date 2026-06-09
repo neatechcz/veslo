@@ -5,10 +5,26 @@ import test from "node:test";
 const source = readFileSync(new URL("./app.tsx", import.meta.url), "utf8");
 
 test("sendPrompt keeps the session id returned by createSessionAndOpen before prompting", () => {
+  const start = source.indexOf("async function sendPrompt(");
+  const end = source.indexOf("async function abortSession", start);
+  assert.ok(start >= 0 && end > start, "sendPrompt source should be present");
+  const sendPromptSource = source.slice(start, end);
+
+  const initialTitleIndex = sendPromptSource.indexOf("const initialSessionTitle = resolvedDraft.text.trim();");
+  const createNeededIndex = sendPromptSource.indexOf('recordSendTrace("sendPrompt:create-session-needed"');
+  const createCallIndex = sendPromptSource.indexOf("createSessionAndOpen(initialSessionTitle", createNeededIndex);
+  const assignmentIndex = sendPromptSource.indexOf("sessionID = (await sendTraceStep(", createNeededIndex);
+  const blockedIndex = sendPromptSource.indexOf('recordSendTrace("sendPrompt:blocked-no-session"', createNeededIndex);
+
+  assert.ok(initialTitleIndex >= 0, "sendPrompt should derive the initial session title before creating");
+  assert.ok(createNeededIndex > initialTitleIndex, "sendPrompt should decide session creation after initial content checks");
+  assert.ok(assignmentIndex > createNeededIndex, "sendPrompt should assign the create-session result back to sessionID");
+  assert.ok(createCallIndex > assignmentIndex, "sendPrompt should call createSessionAndOpen inside the traced assignment");
+  assert.ok(blockedIndex > createCallIndex, "sendPrompt should only check for missing session after createSessionAndOpen returns");
   assert.match(
-    source,
-    /let sessionID = options\.targetSessionId\?\.trim\(\) \|\| selectedSessionId\(\);\s*[\s\S]*?const initialSessionTitle = resolvedDraft\.text\.trim\(\);\s*const initialContent = \(resolvedDraft\.resolvedText \?\? resolvedDraft\.text\)\.trim\(\);[\s\S]*?if \(!sessionID\) \{\s*recordSendTrace\("sendPrompt:create-session-needed"\);\s*sessionID = \(await createSessionAndOpen\(initialSessionTitle, \{ blockAppDuringCreate: blockAppDuringPromptSend \}\)\) \?\? selectedSessionId\(\);\s*\}\s*if \(!sessionID\) \{\s*recordSendTrace\("sendPrompt:blocked-no-session"\);\s*stopSendPromptBusy\(\);\s*return false;\s*\}/s,
-    "sendPrompt should use the session id returned by createSessionAndOpen so the first prompt is not dropped while selection state catches up",
+    sendPromptSource.slice(assignmentIndex, blockedIndex),
+    /preflight: sendPreflight,/,
+    "sendPrompt should pass the preflight context when creating the first session",
   );
 });
 

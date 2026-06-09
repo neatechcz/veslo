@@ -718,6 +718,7 @@ describe("conversation routes", () => {
         headers: {
           Authorization: "Bearer client-token",
           "Content-Type": "application/json",
+          "X-Veslo-Send-Trace-Id": "send-trace-abc",
         },
         body: JSON.stringify({
           kind: "prompt_async",
@@ -727,9 +728,36 @@ describe("conversation routes", () => {
       },
     );
     expect(runResponse.status).toBe(200);
-    const runPayload = await runResponse.json() as { runId: string; conversationId: string };
+    const runPayload = await runResponse.json() as {
+      runId: string;
+      conversationId: string;
+      debugTrace?: Array<{
+        source: string;
+        event: string;
+        traceId?: string;
+        durationMs?: number;
+      }>;
+    };
     expect(runPayload.runId).toBe(runIdFromRegister);
     expect(runPayload.conversationId).toBe(created.conversationId);
+    expect(runPayload.debugTrace?.some((entry) =>
+      entry.source === "server" &&
+      entry.event === "server:conversation-run:resolve-target" &&
+      entry.traceId === "send-trace-abc" &&
+      typeof entry.durationMs === "number"
+    )).toBe(true);
+    expect(runPayload.debugTrace?.some((entry) =>
+      entry.source === "server" &&
+      entry.event === "server:conversation-run:lifecycle-register" &&
+      entry.traceId === "send-trace-abc" &&
+      typeof entry.durationMs === "number"
+    )).toBe(true);
+    expect(runPayload.debugTrace?.some((entry) =>
+      entry.source === "server" &&
+      entry.event === "server:conversation-run:opencode-submit" &&
+      entry.traceId === "send-trace-abc" &&
+      typeof entry.durationMs === "number"
+    )).toBe(true);
     expect(events.indexOf("orchestrator-register")).toBeLessThan(events.indexOf("engine-submit"));
     expect(orchestratorRequests[0]?.token).toBe("lifecycle-token");
     expect(orchestratorRequests[0]?.body?.kind).toBe("prompt");

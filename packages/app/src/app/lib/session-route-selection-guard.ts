@@ -3,7 +3,6 @@ type SessionRouteSelectionGuardInput = {
   routeSessionId: string;
   sessionIdsInStore: string[];
   sessionIdsInSidebar: string[];
-  pendingRouteSessionId: string | null;
 };
 
 const includesNormalizedId = (ids: string[], sessionId: string) => {
@@ -20,6 +19,5 @@ export const shouldFallbackFromSessionRoute = (
   if (!routeSessionId) return false;
   if (includesNormalizedId(input.sessionIdsInStore, routeSessionId)) return false;
   if (includesNormalizedId(input.sessionIdsInSidebar, routeSessionId)) return false;
-  if (includesNormalizedId([input.pendingRouteSessionId ?? ""], routeSessionId)) return false;
   return true;
 };

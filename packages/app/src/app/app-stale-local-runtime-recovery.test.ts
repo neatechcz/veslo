@@ -10,7 +10,7 @@ test("sendPrompt recovers a stale local runtime before reading the client", () =
   assert.ok(start >= 0 && end > start, "sendPrompt source should be present");
 
   const sendPromptSource = source.slice(start, end);
-  const recoveryCheckIndex = sendPromptSource.indexOf('ensureLocalRuntimeReachableForSend("sendPrompt")');
+  const recoveryCheckIndex = sendPromptSource.indexOf('ensureLocalRuntimeReachableForSend("sendPrompt", sendPreflight)');
   const routedClientIndex = sendPromptSource.indexOf("const c = routedClient();");
   assert.ok(recoveryCheckIndex >= 0, "sendPrompt should check local runtime reachability");
   assert.ok(routedClientIndex >= 0, "sendPrompt should capture the routed client after recovery");

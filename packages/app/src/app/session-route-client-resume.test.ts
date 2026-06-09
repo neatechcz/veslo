@@ -60,14 +60,14 @@ test("session route re-selects once when a client becomes available after bootst
   );
   assert.match(
     routeSource,
-    /const connectionKey = \[\s*id,\s*client\(\) \? "live" : "offline",\s*clientDirectory\(\) \|\| workspaceStore\.activeWorkspaceRoot\(\)\.trim\(\),\s*connectedVersion\(\) \?\? "",\s*\]\.join\("::"\);/s,
-    "route resume key should distinguish live vs offline selection and retry once the workspace root becomes available",
+    /const routeBrowseScope = resolveSelectedSessionBrowseScope\(id\);[\s\S]*const routeWorkspaceId = routeBrowseScope\?\.workspaceId\?\.trim\(\) \|\| undefined;[\s\S]*const routeWorkspaceRoot =\s*routeBrowseScope\?\.workspaceRoot\?\.trim\(\) \|\|\s*clientDirectory\(\) \|\|\s*workspaceStore\.activeWorkspaceRoot\(\)\.trim\(\);[\s\S]*const connectionKey = \[\s*id,\s*routedClient\(routeWorkspaceId\) \? "live" : "offline",\s*routeWorkspaceId \?\? "",\s*routeWorkspaceRoot,\s*routeBrowseScope\?\.directory\?\.trim\(\) \|\| "",\s*routeBrowseScope\?\.conversationId\?\.trim\(\) \|\| "",\s*routeBrowseScope\?\.opencodeSessionId\?\.trim\(\) \|\| "",\s*connectedVersion\(\) \?\? "",\s*\]\.join\("::"\);/s,
+    "route resume key should distinguish live vs offline selection, workspace scope, and workspace root availability",
   );
   assert.match(routeSource, /if \(connectionKey === lastRouteClientResumeKey\) return;/);
   assert.match(
     routeSource,
-    /const alreadyLoaded = selectedSessionId\(\) === id && visibleMessages\(\)\.length > 0;/,
-    "route resume guard should skip re-select when the transcript is already present",
+    /const alreadyLoaded = !routeBrowseScope && selectedSessionId\(\) === id && visibleMessages\(\)\.length > 0;/,
+    "route resume guard should not skip explicit browse-scope reselection just because another transcript is visible",
   );
   assert.match(
     routeSource,

@@ -8,9 +8,16 @@ test("managed AI bootstrap readiness returns a blocking result when setup is not
   const start = source.indexOf("const ensureManagedAiBootstrapReady = async");
   const end = source.indexOf("const localRuntimeHealthTimeoutMessage", start);
   assert.ok(start >= 0 && end > start, "ensureManagedAiBootstrapReady source should be present");
-  assert.match(
-    source,
-    /async function sendPrompt\([\s\S]*?\)[\s\S]*?await ensureManagedAiBootstrapReady\(\);\s*const c = routedClient\(\);/s,
+  const sendStart = source.indexOf("async function sendPrompt(");
+  const sendEnd = source.indexOf("async function abortSession", sendStart);
+  assert.ok(sendStart >= 0 && sendEnd > sendStart, "sendPrompt source should be present");
+  const sendSource = source.slice(sendStart, sendEnd);
+  const gateIndex = sendSource.indexOf('"sendPrompt:ensure-managed-ai-bootstrap-ready"');
+  const clientIndex = sendSource.indexOf("const c = routedClient();");
+  assert.ok(gateIndex >= 0, "sendPrompt should trace the managed bootstrap gate");
+  assert.ok(clientIndex >= 0, "sendPrompt should read the routed client");
+  assert.ok(
+    gateIndex < clientIndex,
     "sendPrompt should wait for managed bootstrap readiness before grabbing the routed client",
   );
 });
@@ -19,10 +26,19 @@ test("sendPrompt blocks when managed bootstrap readiness is unavailable before r
   const start = source.indexOf("async function sendPrompt(");
   const end = source.indexOf("async function abortSession", start);
   assert.ok(start >= 0 && end > start, "sendPrompt source should be present");
-  assert.match(
-    source,
-    /async function createSessionAndOpen\([^)]*\)[\s\S]*?await ensureManagedAiBootstrapReady\(\);\s*const c = routedClient\(\);/s,
-    "createSessionAndOpen should wait for managed bootstrap readiness before grabbing the routed client",
+  const createStart = source.indexOf("async function createSessionAndOpen(");
+  const createEnd = source.indexOf("const openNewSessionWithDirectory = async () =>", createStart);
+  assert.ok(createStart >= 0 && createEnd > createStart, "createSessionAndOpen source should be present");
+  const createSource = source.slice(createStart, createEnd);
+  const skipIndex = createSource.indexOf("createSessionAndOpen:managed-ai-bootstrap-skip");
+  const gateIndex = createSource.indexOf('"createSessionAndOpen:ensure-managed-ai-bootstrap-ready"');
+  const clientIndex = createSource.indexOf("const c = routedClient();");
+  assert.ok(skipIndex >= 0, "createSessionAndOpen should skip the gate when send preflight already passed it");
+  assert.ok(gateIndex >= 0, "createSessionAndOpen should still trace the direct-create managed bootstrap gate");
+  assert.ok(clientIndex >= 0, "createSessionAndOpen should read the routed client");
+  assert.ok(
+    gateIndex < clientIndex,
+    "createSessionAndOpen should wait for managed bootstrap readiness before grabbing the routed client when not skipped",
   );
 });
 

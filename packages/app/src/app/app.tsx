@@ -427,25 +427,132 @@ type RemoteWorkspaceDefaults = {
   displayName?: string | null;
 };
 
+type SendTraceRoot = typeof window & {
+  __vesloSendTrace?: Array<Record<string, unknown>>;
+  __vesloActiveSendTraceId?: string | null;
+  __vesloSendTraceSeq?: number;
+};
+
+type SendConversationWorkspaceResolution = {
+  serverClient: VesloServerClient;
+  serverWorkspaceId: string;
+  workspaceId: string;
+  directory: string;
+};
+
+type SendPreflightContext = {
+  traceId: string;
+  managedAiReady: boolean;
+  runtimeHealthOk: boolean;
+  conversationWorkspaceByDirectory: Map<string, Promise<SendConversationWorkspaceResolution | null>>;
+};
+
+const SEND_TRACE_LIMIT = 500;
+
+const roundSendTraceMs = (value: number) => Math.round(value * 100) / 100;
+
+const sendTraceErrorMessage = (error: unknown): string => {
+  if (error instanceof Error) return error.message;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+};
+
+const makeSendTraceId = () => {
+  const suffix =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`;
+  return `send_${suffix.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64)}`;
+};
+
+const createSendPreflightContext = (): SendPreflightContext => ({
+  traceId: makeSendTraceId(),
+  managedAiReady: false,
+  runtimeHealthOk: false,
+  conversationWorkspaceByDirectory: new Map(),
+});
+
+const activateSendTrace = (traceId: string) => {
+  if (typeof window === "undefined") return () => undefined;
+  const root = window as SendTraceRoot;
+  const previous = root.__vesloActiveSendTraceId ?? null;
+  root.__vesloActiveSendTraceId = traceId;
+  return () => {
+    root.__vesloActiveSendTraceId = previous;
+  };
+};
+
+const activeSendTraceId = () => {
+  if (typeof window === "undefined") return null;
+  return (window as SendTraceRoot).__vesloActiveSendTraceId ?? null;
+};
+
 function recordSendTrace(event: string, payload?: Record<string, unknown>) {
   if (typeof window === "undefined") return;
   try {
-    const root = window as typeof window & {
-      __vesloSendTrace?: Array<Record<string, unknown>>;
-    };
+    const root = window as SendTraceRoot;
     const logs = root.__vesloSendTrace ?? [];
+    const seq = (root.__vesloSendTraceSeq ?? 0) + 1;
+    root.__vesloSendTraceSeq = seq;
+    const payloadTraceId = typeof payload?.traceId === "string" ? payload.traceId.trim() : "";
+    const traceId = payloadTraceId || root.__vesloActiveSendTraceId || undefined;
     logs.push({
+      id: seq,
       at: new Date().toISOString(),
+      ts: Date.now(),
+      perfMs: roundSendTraceMs(perfNow()),
       source: "app",
+      ...(traceId ? { traceId } : {}),
       event,
       ...(payload ?? {}),
     });
-    if (logs.length > 160) logs.splice(0, logs.length - 160);
+    if (logs.length > SEND_TRACE_LIMIT) logs.splice(0, logs.length - SEND_TRACE_LIMIT);
     root.__vesloSendTrace = logs;
   } catch {
     // ignore
   }
 }
+
+const sendTraceStep = async <T,>(
+  event: string,
+  fn: () => Promise<T>,
+  payload?: Record<string, unknown>,
+): Promise<T> => {
+  const startedAt = perfNow();
+  recordSendTrace(`${event}:start`, payload);
+  try {
+    const result = await fn();
+    recordSendTrace(`${event}:end`, {
+      ...(payload ?? {}),
+      durationMs: roundSendTraceMs(perfNow() - startedAt),
+      outcome: "ok",
+    });
+    return result;
+  } catch (error) {
+    recordSendTrace(`${event}:error`, {
+      ...(payload ?? {}),
+      durationMs: roundSendTraceMs(perfNow() - startedAt),
+      outcome: "error",
+      message: sendTraceErrorMessage(error),
+    });
+    throw error;
+  }
+};
+
+const recordExternalSendTraceEntries = (entries: unknown) => {
+  if (!Array.isArray(entries)) return;
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as Record<string, unknown>;
+    const event = typeof record.event === "string" ? record.event.trim() : "";
+    if (!event) continue;
+    const { event: _event, ...payload } = record;
+    recordSendTrace(event, payload);
+  }
+};
 
 export default function App() {
   const cloudEnvironment = resolveVesloCloudEnvironment(import.meta.env as Record<string, string | undefined>);
@@ -1831,6 +1938,103 @@ export default function App() {
     return fallback;
   };
 
+  const conversationWorkspaceCacheKey = (workspaceId: string, directory: string) => [
+    workspaceId.trim(),
+    normalizeDirectoryPath(directory) || directory.trim(),
+  ].join("\n");
+
+  const resolveConversationServerWorkspaceForSend = async (
+    workspaceId: string,
+    directory: string,
+    preflight: SendPreflightContext | undefined,
+    reason: string,
+  ): Promise<SendConversationWorkspaceResolution | null> => {
+    const normalizedWorkspaceId = workspaceId.trim();
+    const normalizedDirectory = directory.trim();
+    const tracePayload = preflight ? { traceId: preflight.traceId } : undefined;
+    if (!normalizedWorkspaceId || !normalizedDirectory) {
+      recordSendTrace(`${reason}:conversation-workspace-skipped-empty`, {
+        ...(tracePayload ?? {}),
+        hasWorkspaceId: Boolean(normalizedWorkspaceId),
+        hasDirectory: Boolean(normalizedDirectory),
+      });
+      return null;
+    }
+
+    const cacheKey = conversationWorkspaceCacheKey(normalizedWorkspaceId, normalizedDirectory);
+    const cached = preflight?.conversationWorkspaceByDirectory.get(cacheKey);
+    if (cached) {
+      recordSendTrace(`${reason}:conversation-workspace-cache-hit`, {
+        ...(tracePayload ?? {}),
+        workspaceId: normalizedWorkspaceId,
+        directory: normalizedDirectory,
+      });
+      return await cached;
+    }
+
+    const promise = sendTraceStep(
+      `${reason}:conversation-workspace-resolve`,
+      async () => {
+        const serverClient = await sendTraceStep(
+          `${reason}:resolve-passive-client`,
+          () => resolvePassiveConversationReadClient(),
+          {
+            ...(tracePayload ?? {}),
+            vesloServerStatus: vesloServerStatus(),
+            hasCachedClient: Boolean(vesloServerClient()),
+          },
+        );
+        if (!serverClient) {
+          recordSendTrace(`${reason}:conversation-workspace-unavailable-client`, tracePayload);
+          return null;
+        }
+
+        const serverWorkspaceId = await sendTraceStep(
+          `${reason}:ensure-workspace-registered`,
+          () => ensureConversationReadWorkspaceRegistered(
+            serverClient,
+            normalizedWorkspaceId,
+            normalizedDirectory,
+          ),
+          {
+            ...(tracePayload ?? {}),
+            workspaceId: normalizedWorkspaceId,
+            directory: normalizedDirectory,
+          },
+        );
+        if (!serverWorkspaceId) {
+          recordSendTrace(`${reason}:conversation-workspace-unavailable-id`, {
+            ...(tracePayload ?? {}),
+            workspaceId: normalizedWorkspaceId,
+            directory: normalizedDirectory,
+          });
+          return null;
+        }
+
+        recordSendTrace(`${reason}:conversation-workspace-resolved`, {
+          ...(tracePayload ?? {}),
+          workspaceId: normalizedWorkspaceId,
+          serverWorkspaceId,
+          directory: normalizedDirectory,
+        });
+        return {
+          serverClient,
+          serverWorkspaceId,
+          workspaceId: normalizedWorkspaceId,
+          directory: normalizedDirectory,
+        };
+      },
+      {
+        ...(tracePayload ?? {}),
+        workspaceId: normalizedWorkspaceId,
+        directory: normalizedDirectory,
+      },
+    );
+
+    preflight?.conversationWorkspaceByDirectory.set(cacheKey, promise);
+    return await promise;
+  };
+
   const listConversationsFromVesloReadApi = async (
     workspaceId: string,
     directory?: string,
@@ -1867,15 +2071,38 @@ export default function App() {
     workspaceId: string,
     directory: string,
     title?: string,
+    preflight?: SendPreflightContext,
   ) => {
-    const serverClient = await resolvePassiveConversationReadClient();
-    if (!serverClient) return null;
-    const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(serverClient, workspaceId, directory);
-    if (!serverWorkspaceId) return null;
-    const result = await serverClient.createConversation(serverWorkspaceId, {
+    const tracePayload = preflight ? { traceId: preflight.traceId } : undefined;
+    recordSendTrace("createConversationFromVesloWriteApi:start", {
+      ...(tracePayload ?? {}),
+      workspaceId,
       directory,
-      title,
+      hasTitle: Boolean(title?.trim()),
     });
+    const resolution = await resolveConversationServerWorkspaceForSend(
+      workspaceId,
+      directory,
+      preflight,
+      "createConversationFromVesloWriteApi",
+    );
+    if (!resolution) {
+      recordSendTrace("createConversationFromVesloWriteApi:unavailable", tracePayload);
+      return null;
+    }
+    const result = await sendTraceStep(
+      "createConversationFromVesloWriteApi:create",
+      () => resolution.serverClient.createConversation(resolution.serverWorkspaceId, {
+        directory,
+        title,
+      }),
+      {
+        ...(tracePayload ?? {}),
+        workspaceId,
+        serverWorkspaceId: resolution.serverWorkspaceId,
+        directory,
+      },
+    );
     rememberConversationScope({
       sessionId: result.id,
       workspaceId,
@@ -1890,7 +2117,10 @@ export default function App() {
   const runConversationFromVesloWriteApi = async (
     sessionId: string,
     input: VesloConversationRunInput,
+    options: { sendTraceId?: string | null; preflight?: SendPreflightContext } = {},
   ) => {
+    const traceId = options.preflight?.traceId || options.sendTraceId?.trim() || activeSendTraceId() || "";
+    const tracePayload = traceId ? { traceId } : undefined;
     const normalizedSessionId = sessionId.trim();
     if (!normalizedSessionId) {
       throw new Error("Session id is required.");
@@ -1906,15 +2136,47 @@ export default function App() {
       throw new Error("Conversation directory is required.");
     }
 
-    const serverClient = await resolvePassiveConversationReadClient();
-    if (!serverClient) return null;
-    const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(serverClient, workspaceId, directory);
-    if (!serverWorkspaceId) return null;
-    const conversationId = scope?.conversationId?.trim() || normalizedSessionId;
-    const result = await serverClient.runConversation(serverWorkspaceId, conversationId, {
-      ...input,
+    recordSendTrace("runConversationFromVesloWriteApi:start", {
+      ...(tracePayload ?? {}),
+      sessionId: normalizedSessionId,
+      workspaceId,
       directory,
+      kind: input.kind,
+      hasConversationScope: Boolean(scope?.conversationId),
     });
+    const resolution = await resolveConversationServerWorkspaceForSend(
+      workspaceId,
+      directory,
+      options.preflight,
+      "runConversationFromVesloWriteApi",
+    );
+    if (!resolution) {
+      recordSendTrace("runConversationFromVesloWriteApi:unavailable", tracePayload);
+      return null;
+    }
+    const conversationId = scope?.conversationId?.trim() || normalizedSessionId;
+    const result = await sendTraceStep(
+      "runConversationFromVesloWriteApi:run",
+      () => resolution.serverClient.runConversation(
+        resolution.serverWorkspaceId,
+        conversationId,
+        {
+          ...input,
+          directory,
+        },
+        {
+          sendTraceId: traceId || undefined,
+        },
+      ),
+      {
+        ...(tracePayload ?? {}),
+        workspaceId,
+        serverWorkspaceId: resolution.serverWorkspaceId,
+        conversationId,
+        kind: input.kind,
+      },
+    );
+    recordExternalSendTraceEntries(result.debugTrace);
     rememberConversationScope({
       sessionId: result.opencodeSessionId || normalizedSessionId,
       workspaceId,
@@ -1993,7 +2255,6 @@ export default function App() {
     onHotReloadApplied: () => {
       onHotReloadAppliedHandler?.();
     },
-    onSessionLoadComplete: () => setPendingSessionLoad(null),
     conversationReader: () => ({
       listConversations: async (workspaceId, directory) => {
         const result = await listConversationsFromVesloReadApi(workspaceId, directory);
@@ -2448,25 +2709,60 @@ export default function App() {
   const stageAttachmentsIntoSessionDirectory = async (
     draft: ComposerDraft,
     sessionID: string,
+    preflight?: SendPreflightContext,
   ): Promise<StagedSessionAttachment[]> => {
+    const tracePayload = preflight ? { traceId: preflight.traceId } : undefined;
     const attachmentsToStage = draft.attachments;
-    if (!attachmentsToStage.length) return [];
+    if (!attachmentsToStage.length) {
+      recordSendTrace("stageAttachmentsIntoSessionDirectory:skip-empty", {
+        ...(tracePayload ?? {}),
+        sessionID,
+      });
+      return [];
+    }
 
-    const client = vesloServerClient();
+    let client = vesloServerClient();
     if (!client || vesloServerStatus() !== "connected") {
       throw new Error("Connect to Veslo server before sending attachments.");
     }
-    const workspaceId = await resolveWorkspaceIdForAttachmentStaging(client);
+    const scope = resolveSelectedSessionBrowseScope(sessionID);
+    const workspaceIdForResolution = scope?.workspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
+    const directoryForResolution =
+      scope?.directory?.trim() ||
+      sessionDirectoryOverrideById()[sessionID]?.trim() ||
+      workspaceStore.activeWorkspaceRoot().trim();
+    const resolution =
+      workspaceIdForResolution && directoryForResolution
+        ? await resolveConversationServerWorkspaceForSend(
+            workspaceIdForResolution,
+            directoryForResolution,
+            preflight,
+            "stageAttachmentsIntoSessionDirectory",
+          )
+        : null;
+    if (resolution) {
+      client = resolution.serverClient;
+    }
+    const workspaceId = resolution?.serverWorkspaceId || await resolveWorkspaceIdForAttachmentStaging(client);
     if (!workspaceId) {
       throw new Error("Veslo server workspace is not ready for attachments.");
     }
 
     const reservedPaths = new Set<string>();
     const stagedAttachments: StagedSessionAttachment[] = [];
-    const fileSession = await client.createFileSession(workspaceId, {
-      ttlSeconds: 15 * 60,
-      write: true,
-    });
+    const fileSession = await sendTraceStep(
+      "stageAttachmentsIntoSessionDirectory:create-file-session",
+      () => client.createFileSession(workspaceId, {
+        ttlSeconds: 15 * 60,
+        write: true,
+      }),
+      {
+        ...(tracePayload ?? {}),
+        sessionID,
+        workspaceId,
+        attachmentCount: attachmentsToStage.length,
+      },
+    );
 
     try {
       for (const attachment of attachmentsToStage) {
@@ -2492,6 +2788,12 @@ export default function App() {
           absolutePath: resolveWorkspaceAbsolutePath(relativePath),
         });
       }
+      recordSendTrace("stageAttachmentsIntoSessionDirectory:done", {
+        ...(tracePayload ?? {}),
+        sessionID,
+        workspaceId,
+        attachmentCount: stagedAttachments.length,
+      });
     } finally {
       await client.closeFileSession(fileSession.session.id).catch(() => undefined);
     }
@@ -2602,11 +2904,29 @@ export default function App() {
     return `msg_${suffix.replace(/[^a-zA-Z0-9]/g, "")}`;
   };
 
-  async function maybeResolveSkillCommand(draft: ComposerDraft): Promise<ComposerDraft> {
-    if (draft.mode !== "prompt" || draft.command) return draft;
+  async function maybeResolveSkillCommand(
+    draft: ComposerDraft,
+    traceId?: string | null,
+  ): Promise<ComposerDraft> {
+    const tracePayload = traceId ? { traceId } : undefined;
+    if (draft.mode !== "prompt" || draft.command) {
+      recordSendTrace("maybeResolveSkillCommand:skipped-mode-or-command", {
+        ...(tracePayload ?? {}),
+        mode: draft.mode,
+        hasCommand: Boolean(draft.command),
+      });
+      return draft;
+    }
 
     const text = (draft.resolvedText ?? draft.text).trim();
-    if (!text || text.startsWith("/")) return draft;
+    if (!text || text.startsWith("/")) {
+      recordSendTrace("maybeResolveSkillCommand:skipped-empty-or-slash", {
+        ...(tracePayload ?? {}),
+        hasText: Boolean(text),
+        startsWithSlash: text.startsWith("/"),
+      });
+      return draft;
+    }
 
     const vesloClient = vesloServerClient();
     const workspaceId = resolvedDevtoolsWorkspaceId();
@@ -2616,30 +2936,66 @@ export default function App() {
       !workspaceId ||
       typeof (vesloClient as unknown as { resolveSkill?: unknown }).resolveSkill !== "function"
     ) {
+      recordSendTrace("maybeResolveSkillCommand:skipped-veslo-server-unavailable", {
+        ...(tracePayload ?? {}),
+        vesloServerStatus: vesloServerStatus(),
+        hasClient: Boolean(vesloClient),
+        hasWorkspaceId: Boolean(workspaceId),
+      });
       return draft;
     }
 
     try {
       const includeGlobal = workspaceStore.activeWorkspaceDisplay().workspaceType === "local";
-      const resolution = await (vesloClient as unknown as {
-        resolveSkill: (
-          workspaceId: string,
-          payload: { text: string; includeGlobal?: boolean },
-        ) => Promise<{ match?: { name?: string | null } | null }>;
-      }).resolveSkill(workspaceId, {
-        text,
-        includeGlobal,
-      });
+      const resolution = await sendTraceStep(
+        "maybeResolveSkillCommand:resolve-skill",
+        () => (vesloClient as unknown as {
+          resolveSkill: (
+            workspaceId: string,
+            payload: { text: string; includeGlobal?: boolean },
+          ) => Promise<{ match?: { name?: string | null } | null }>;
+        }).resolveSkill(workspaceId, {
+          text,
+          includeGlobal,
+        }),
+        {
+          ...(tracePayload ?? {}),
+          workspaceId,
+          includeGlobal,
+          textLength: text.length,
+        },
+      );
 
       const matchedName = resolution?.match?.name?.trim();
-      if (!matchedName) return draft;
+      if (!matchedName) {
+        recordSendTrace("maybeResolveSkillCommand:no-match", tracePayload);
+        return draft;
+      }
 
-      const commands = await listCommands();
+      const commands = await sendTraceStep(
+        "maybeResolveSkillCommand:list-commands",
+        () => listCommands(),
+        {
+          ...(tracePayload ?? {}),
+          matchedName,
+        },
+      );
       const matchedCommand = commands.find(
         (entry) => entry.name === matchedName && entry.source === "skill",
       );
-      if (!matchedCommand) return draft;
+      if (!matchedCommand) {
+        recordSendTrace("maybeResolveSkillCommand:matched-skill-command-missing", {
+          ...(tracePayload ?? {}),
+          matchedName,
+          commandCount: commands.length,
+        });
+        return draft;
+      }
 
+      recordSendTrace("maybeResolveSkillCommand:matched", {
+        ...(tracePayload ?? {}),
+        matchedName,
+      });
       return {
         ...draft,
         command: {
@@ -2647,27 +3003,57 @@ export default function App() {
           arguments: text,
         },
       };
-    } catch {
+    } catch (error) {
+      recordSendTrace("maybeResolveSkillCommand:error", {
+        ...(tracePayload ?? {}),
+        message: messageFromUnknownError(error),
+      });
       return draft;
     }
   }
 
-  async function ensureSelectedSessionWorkspaceActiveForSend(sessionId: string): Promise<boolean> {
+  async function ensureSelectedSessionWorkspaceActiveForSend(
+    sessionId: string,
+    traceId?: string | null,
+  ): Promise<boolean> {
+    const tracePayload = traceId ? { traceId } : undefined;
     const transcriptScope = resolveSelectedSessionBrowseScope(sessionId);
-    if (!transcriptScope) return true;
+    if (!transcriptScope) {
+      recordSendTrace("sendPrompt:scoped-workspace-skipped-no-scope", tracePayload);
+      return true;
+    }
     const targetWorkspaceId = transcriptScope.workspaceId.trim();
-    if (!targetWorkspaceId) return true;
-    if (targetWorkspaceId === workspaceStore.activeWorkspaceId().trim()) return true;
+    if (!targetWorkspaceId) {
+      recordSendTrace("sendPrompt:scoped-workspace-skipped-empty-target", tracePayload);
+      return true;
+    }
+    if (targetWorkspaceId === workspaceStore.activeWorkspaceId().trim()) {
+      recordSendTrace("sendPrompt:scoped-workspace-already-active", {
+        ...(tracePayload ?? {}),
+        workspaceId: targetWorkspaceId,
+      });
+      return true;
+    }
 
     recordSendTrace("sendPrompt:activate-scoped-workspace", {
+      ...(tracePayload ?? {}),
       sessionId,
       workspaceId: targetWorkspaceId,
       activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
     });
     try {
-      const activated = await workspaceStore.activateWorkspace(targetWorkspaceId);
+      const activated = await sendTraceStep(
+        "sendPrompt:activate-scoped-workspace-call",
+        () => workspaceStore.activateWorkspace(targetWorkspaceId),
+        {
+          ...(tracePayload ?? {}),
+          sessionId,
+          workspaceId: targetWorkspaceId,
+        },
+      );
       if (!activated) {
         recordSendTrace("sendPrompt:activate-scoped-workspace-blocked", {
+          ...(tracePayload ?? {}),
           sessionId,
           workspaceId: targetWorkspaceId,
         });
@@ -2675,6 +3061,7 @@ export default function App() {
       return Boolean(activated);
     } catch (error) {
       recordSendTrace("sendPrompt:activate-scoped-workspace-error", {
+        ...(tracePayload ?? {}),
         sessionId,
         workspaceId: targetWorkspaceId,
         message: messageFromUnknownError(error),
@@ -2687,7 +3074,10 @@ export default function App() {
     draft?: ComposerDraft,
     options: { targetSessionId?: string | null } = {},
   ): Promise<boolean> {
+    const sendPreflight = createSendPreflightContext();
+    const sendTraceId = sendPreflight.traceId;
     recordSendTrace("sendPrompt:start", {
+      traceId: sendTraceId,
       engineReady: engineReady(),
       selectedSessionId: selectedSessionId(),
       targetSessionId: options.targetSessionId ?? null,
@@ -2727,22 +3117,49 @@ export default function App() {
 
     const preflightContent = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
     if (!preflightContent && !resolvedDraft.attachments.length) {
-      recordSendTrace("sendPrompt:blocked-empty");
+      recordSendTrace("sendPrompt:blocked-empty", {
+        traceId: sendTraceId,
+        phase: "initial-preflight",
+      });
       return false;
     }
 
-    if (sessionID && !(await ensureSelectedSessionWorkspaceActiveForSend(sessionID))) {
-      recordSendTrace("sendPrompt:blocked-scoped-workspace");
+    const scopedSessionID = sessionID?.trim() || "";
+    if (
+      scopedSessionID &&
+      !(await sendTraceStep(
+        "sendPrompt:ensure-scoped-workspace-active",
+        () => ensureSelectedSessionWorkspaceActiveForSend(scopedSessionID, sendTraceId),
+        {
+          traceId: sendTraceId,
+          sessionID: scopedSessionID,
+        },
+      ))
+    ) {
+      recordSendTrace("sendPrompt:blocked-scoped-workspace", {
+        traceId: sendTraceId,
+        sessionID: scopedSessionID,
+      });
       stopSendPromptBusy();
       return false;
     }
 
-    resolvedDraft = await maybeResolveSkillCommand(resolvedDraft);
+    resolvedDraft = await sendTraceStep(
+      "sendPrompt:maybe-resolve-skill-command",
+      () => maybeResolveSkillCommand(resolvedDraft, sendTraceId),
+      {
+        traceId: sendTraceId,
+        mode: resolvedDraft.mode,
+      },
+    );
 
     const initialSessionTitle = resolvedDraft.text.trim();
     const initialContent = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
     if (!initialContent && !resolvedDraft.attachments.length) {
-      recordSendTrace("sendPrompt:blocked-empty");
+      recordSendTrace("sendPrompt:blocked-empty", {
+        traceId: sendTraceId,
+        phase: "after-skill-resolution",
+      });
       return false;
     }
 
@@ -2758,33 +3175,75 @@ export default function App() {
       // before the engine start blocks the microtask chain.
       await new Promise((resolve) => setTimeout(resolve, 0));
       try {
-        const started = await workspaceStore.ensureEngineForWorkspace();
+        const started = await sendTraceStep(
+          "sendPrompt:ensure-engine-for-workspace",
+          () => workspaceStore.ensureEngineForWorkspace(),
+          {
+            traceId: sendTraceId,
+            activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
+            activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
+          },
+        );
         if (!started) {
-          recordSendTrace("sendPrompt:engine-not-started");
+          recordSendTrace("sendPrompt:engine-not-started", {
+            traceId: sendTraceId,
+          });
           stopSendPromptBusy();
           return false;
         }
-      } catch {
-        recordSendTrace("sendPrompt:engine-start-error");
+      } catch (error) {
+        recordSendTrace("sendPrompt:engine-start-error", {
+          traceId: sendTraceId,
+          message: messageFromUnknownError(error),
+        });
         stopSendPromptBusy();
         return false;
       }
     }
 
-    if (!(await ensureManagedAiBootstrapReady())) {
-      recordSendTrace("sendPrompt:blocked-managed-ai-bootstrap");
+    if (
+      !(await sendTraceStep(
+        "sendPrompt:ensure-managed-ai-bootstrap-ready",
+        () => ensureManagedAiBootstrapReady(),
+        {
+          traceId: sendTraceId,
+          managedAiBootstrapBusy: managedAiBootstrapBusy(),
+          reloadBusy: reloadBusy(),
+          hasClient: Boolean(routedClient()),
+        },
+      ))
+    ) {
+      recordSendTrace("sendPrompt:blocked-managed-ai-bootstrap", {
+        traceId: sendTraceId,
+      });
       stopSendPromptBusy();
       return false;
     }
-    if (!(await ensureLocalRuntimeReachableForSend("sendPrompt"))) {
-      recordSendTrace("sendPrompt:blocked-runtime-unreachable");
+    sendPreflight.managedAiReady = true;
+    if (
+      !(await sendTraceStep(
+        "sendPrompt:ensure-local-runtime-reachable",
+        () => ensureLocalRuntimeReachableForSend("sendPrompt", sendPreflight),
+        {
+          traceId: sendTraceId,
+          activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
+          workspaceType: workspaceStore.activeWorkspaceDisplay().workspaceType,
+          hasClient: Boolean(client()),
+        },
+      ))
+    ) {
+      recordSendTrace("sendPrompt:blocked-runtime-unreachable", {
+        traceId: sendTraceId,
+      });
       stopSendPromptBusy();
       return false;
     }
 
     const c = routedClient();
     if (!c) {
-      recordSendTrace("sendPrompt:blocked-no-client");
+      recordSendTrace("sendPrompt:blocked-no-client", {
+        traceId: sendTraceId,
+      });
       stopSendPromptBusy();
       return false;
     }
@@ -2793,6 +3252,9 @@ export default function App() {
     const compactCommand = resolvedDraft.command?.name === "compact" || compactShortcut;
     const commandName = compactCommand ? "compact" : (resolvedDraft.command?.name ?? null);
     if (compactCommand && !sessionID) {
+      recordSendTrace("sendPrompt:blocked-compact-no-session", {
+        traceId: sendTraceId,
+      });
       setError("Select a session with messages before running /compact.");
       return false;
     }
@@ -2808,11 +3270,26 @@ export default function App() {
       };
     })();
     if (!sessionID) {
-      recordSendTrace("sendPrompt:create-session-needed");
-      sessionID = (await createSessionAndOpen(initialSessionTitle, { blockAppDuringCreate: blockAppDuringPromptSend })) ?? selectedSessionId();
+      recordSendTrace("sendPrompt:create-session-needed", {
+        traceId: sendTraceId,
+      });
+      sessionID = (await sendTraceStep(
+        "sendPrompt:create-session-and-open",
+        () => createSessionAndOpen(initialSessionTitle, {
+          blockAppDuringCreate: blockAppDuringPromptSend,
+          sendTraceId,
+          preflight: sendPreflight,
+        }),
+        {
+          traceId: sendTraceId,
+          blockAppDuringCreate: blockAppDuringPromptSend,
+        },
+      )) ?? selectedSessionId();
     }
     if (!sessionID) {
-      recordSendTrace("sendPrompt:blocked-no-session");
+      recordSendTrace("sendPrompt:blocked-no-session", {
+        traceId: sendTraceId,
+      });
       stopSendPromptBusy();
       return false;
     }
@@ -2822,6 +3299,7 @@ export default function App() {
     const reportSendErrorToDisplayedTarget = (message: string) => {
       if (!sendTargetStillDisplayed()) {
         recordSendTrace("sendPrompt:error-skipped-stale-display", {
+          traceId: sendTraceId,
           sessionID,
           message,
         });
@@ -2842,7 +3320,15 @@ export default function App() {
     };
 
     try {
-      const stagedAttachments = await stageAttachmentsIntoSessionDirectory(resolvedDraft, sessionID);
+      const stagedAttachments = await sendTraceStep(
+        "sendPrompt:stage-attachments",
+        () => stageAttachmentsIntoSessionDirectory(resolvedDraft, sessionID, sendPreflight),
+        {
+          traceId: sendTraceId,
+          sessionID,
+          attachmentCount: resolvedDraft.attachments.length,
+        },
+      );
       const routedDraft = routeStagedAttachmentsForModel({
         draft: resolvedDraft,
         stagedAttachments,
@@ -2850,6 +3336,11 @@ export default function App() {
         providers: providers(),
       });
       if (routedDraft.error) {
+        recordSendTrace("sendPrompt:staged-attachment-routing-error", {
+          traceId: sendTraceId,
+          sessionID,
+          message: routedDraft.error,
+        });
         restorePendingDraftAfterSendFailure();
         if (sendTargetStillDisplayed()) {
           setError(routedDraft.error);
@@ -2860,6 +3351,11 @@ export default function App() {
       resolvedDraft = routedDraft.draft;
       promptSystem = routedDraft.system;
     } catch (error) {
+      recordSendTrace("sendPrompt:stage-attachments-error", {
+        traceId: sendTraceId,
+        sessionID,
+        message: messageFromUnknownError(error),
+      });
       restorePendingDraftAfterSendFailure();
       if (sendTargetStillDisplayed()) {
         setError(error instanceof Error ? error.message : safeStringify(error));
@@ -2870,6 +3366,10 @@ export default function App() {
 
     const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
     if (!content && !resolvedDraft.attachments.length && !promptSystem) {
+      recordSendTrace("sendPrompt:blocked-empty-after-staging", {
+        traceId: sendTraceId,
+        sessionID,
+      });
       stopSendPromptBusy();
       return false;
     }
@@ -2919,9 +3419,12 @@ export default function App() {
       ) => {
         const scope = resolveSelectedSessionBrowseScope(sessionID);
         try {
-          const result = await runConversationFromVesloWriteApi(sessionID, input);
+          const result = await runConversationFromVesloWriteApi(sessionID, input, {
+            preflight: sendPreflight,
+          });
           if (result) return;
           recordSendTrace("sendPrompt:conversation-run-unavailable", {
+            traceId: sendTraceId,
             sessionID,
             kind: input.kind,
             hasConversationScope: Boolean(scope?.conversationId),
@@ -2931,6 +3434,7 @@ export default function App() {
           }
         } catch (error) {
           recordSendTrace("sendPrompt:conversation-run-error", {
+            traceId: sendTraceId,
             sessionID,
             kind: input.kind,
             hasConversationScope: Boolean(scope?.conversationId),
@@ -2943,6 +3447,7 @@ export default function App() {
         }
 
         recordSendTrace("sendPrompt:legacy-run-fallback", {
+          traceId: sendTraceId,
           sessionID,
           kind: input.kind,
         });
@@ -2970,7 +3475,10 @@ export default function App() {
             mode: resolvedDraft.mode,
             command: commandName,
           });
-          recordSendTrace("sendPrompt:compact-success", { sessionID });
+          recordSendTrace("sendPrompt:compact-success", {
+            traceId: sendTraceId,
+            sessionID,
+          });
           return true;
         }
 
@@ -3075,6 +3583,7 @@ export default function App() {
         command: commandName,
       });
       recordSendTrace("sendPrompt:success", {
+        traceId: sendTraceId,
         sessionID,
         mode: resolvedDraft.mode,
         command: commandName,
@@ -3092,6 +3601,7 @@ export default function App() {
       // an error turn, just unwind cleanly.
       if (isWorkspaceClientStaleError(e)) {
         recordSendTrace("sendPrompt:stale-client", {
+          traceId: sendTraceId,
           sessionID,
           entryWorkspaceId: e.entryWorkspaceId,
           currentWorkspaceId: e.currentWorkspaceId,
@@ -3106,6 +3616,7 @@ export default function App() {
       });
       const message = e instanceof Error ? e.message : safeStringify(e);
       recordSendTrace("sendPrompt:error", {
+        traceId: sendTraceId,
         sessionID,
         message,
       });
@@ -3799,6 +4310,7 @@ export default function App() {
   const [mcpStatus, setMcpStatus] = createSignal<string | null>(null);
   const [mcpLastUpdatedAt, setMcpLastUpdatedAt] = createSignal<number | null>(null);
   const [mcpStatuses, setMcpStatuses] = createSignal<McpStatusMap>({});
+  const mcpRuntimeStatusRefreshInFlightByKey = new Map<string, Promise<void>>();
   const [mcpConnectingName, setMcpConnectingName] = createSignal<string | null>(null);
   const [selectedMcp, setSelectedMcp] = createSignal<string | null>(null);
   const [scheduledJobs, setScheduledJobs] = createSignal<ScheduledJob[]>([]);
@@ -4038,29 +4550,53 @@ export default function App() {
     }
   };
 
-  async function ensureLocalRuntimeReachableForSend(reason: string): Promise<boolean> {
+  async function ensureLocalRuntimeReachableForSend(
+    reason: string,
+    preflightOrTraceId?: SendPreflightContext | string | null,
+  ): Promise<boolean> {
+    const preflight = typeof preflightOrTraceId === "object" ? preflightOrTraceId ?? undefined : undefined;
+    const traceId = typeof preflightOrTraceId === "string"
+      ? preflightOrTraceId
+      : preflightOrTraceId?.traceId ?? null;
+    const tracePayload = traceId ? { traceId } : undefined;
     if (!isTauriRuntime() || workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") {
+      recordSendTrace(`${reason}:runtime-health-skipped`, {
+        ...(tracePayload ?? {}),
+        isTauriRuntime: isTauriRuntime(),
+        workspaceType: workspaceStore.activeWorkspaceDisplay().workspaceType,
+      });
       return true;
     }
 
     const currentClient = client();
     if (currentClient) {
       try {
-        await withLocalRuntimeHealthTimeout(currentClient.global.health());
-        recordSendTrace(`${reason}:runtime-health-ok`);
+        await sendTraceStep(
+          `${reason}:runtime-health`,
+          () => withLocalRuntimeHealthTimeout(currentClient.global.health()),
+          {
+            ...(tracePayload ?? {}),
+            hasClient: true,
+          },
+        );
+        recordSendTrace(`${reason}:runtime-health-ok`, tracePayload);
+        if (preflight) preflight.runtimeHealthOk = true;
         return true;
       } catch (error) {
         const message = messageFromUnknownError(error);
-        recordSendTrace(`${reason}:runtime-health-error`, { message });
+        recordSendTrace(`${reason}:runtime-health-error`, {
+          ...(tracePayload ?? {}),
+          message,
+        });
         if (!isLocalRuntimeHealthTimeoutError(error) && !shouldRecoverLocalRuntimeFromHealthError(error)) {
           return true;
         }
       }
     } else {
-      recordSendTrace(`${reason}:runtime-missing-client`);
+      recordSendTrace(`${reason}:runtime-missing-client`, tracePayload);
     }
 
-    recordSendTrace(`${reason}:runtime-recovery-start`);
+    recordSendTrace(`${reason}:runtime-recovery-start`, tracePayload);
     setEngineReady(false);
     setSseConnected(false);
     setBusy(true);
@@ -4069,9 +4605,18 @@ export default function App() {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     try {
-      const started = await workspaceStore.ensureEngineForWorkspace();
+      const started = await sendTraceStep(
+        `${reason}:runtime-recovery-ensure-engine`,
+        () => workspaceStore.ensureEngineForWorkspace(),
+        {
+          ...(tracePayload ?? {}),
+          activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
+          activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
+        },
+      );
       if (!started || !client()) {
         recordSendTrace(`${reason}:runtime-recovery-not-started`, {
+          ...(tracePayload ?? {}),
           started,
           hasClient: Boolean(client()),
         });
@@ -4081,11 +4626,14 @@ export default function App() {
         return false;
       }
       recordSendTrace(`${reason}:runtime-recovery-ok`, {
+        ...(tracePayload ?? {}),
         hasClient: Boolean(client()),
       });
+      if (preflight) preflight.runtimeHealthOk = true;
       return true;
     } catch (error) {
       recordSendTrace(`${reason}:runtime-recovery-error`, {
+        ...(tracePayload ?? {}),
         message: messageFromUnknownError(error),
       });
       setBusy(false);
@@ -5670,15 +6218,25 @@ export default function App() {
     const id = (sessionSegment ?? "").trim();
     if (!id) return;
 
+    const routeBrowseScope = resolveSelectedSessionBrowseScope(id);
+    const routeWorkspaceId = routeBrowseScope?.workspaceId?.trim() || undefined;
+    const routeWorkspaceRoot =
+      routeBrowseScope?.workspaceRoot?.trim() ||
+      clientDirectory() ||
+      workspaceStore.activeWorkspaceRoot().trim();
     const connectionKey = [
       id,
-      routedClient() ? "live" : "offline",
-      clientDirectory() || workspaceStore.activeWorkspaceRoot().trim(),
+      routedClient(routeWorkspaceId) ? "live" : "offline",
+      routeWorkspaceId ?? "",
+      routeWorkspaceRoot,
+      routeBrowseScope?.directory?.trim() || "",
+      routeBrowseScope?.conversationId?.trim() || "",
+      routeBrowseScope?.opencodeSessionId?.trim() || "",
       connectedVersion() ?? "",
     ].join("::");
     if (connectionKey === lastRouteClientResumeKey) return;
 
-    const alreadyLoaded = selectedSessionId() === id && visibleMessages().length > 0;
+    const alreadyLoaded = !routeBrowseScope && selectedSessionId() === id && visibleMessages().length > 0;
     if (alreadyLoaded) {
       lastRouteClientResumeKey = connectionKey;
       return;
@@ -6162,6 +6720,7 @@ export default function App() {
     workspace: WorkspaceInfo | null,
   ): Promise<McpStatusMap> => {
     if (!entries.length) return {};
+    if (!engineReady()) return {};
     const runtimeClient = matchingRuntimeClientForSessionCapabilities(directory, workspace);
     if (!runtimeClient) return {};
 
@@ -7926,12 +8485,44 @@ export default function App() {
     }
   }
 
-  async function refreshMcpServers() {
-    const filterConfiguredStatuses = (status: McpStatusMap, entries: McpServerEntry[]) => {
-      const configured = new Set(entries.map((entry) => entry.name));
-      return Object.fromEntries(Object.entries(status).filter(([name]) => configured.has(name))) as McpStatusMap;
-    };
+  const filterConfiguredMcpStatuses = (status: McpStatusMap, entries: McpServerEntry[]) => {
+    const configured = new Set(entries.map((entry) => entry.name));
+    return Object.fromEntries(Object.entries(status).filter(([name]) => configured.has(name))) as McpStatusMap;
+  };
 
+  function scheduleMcpRuntimeStatusRefresh(projectDir: string, entries: McpServerEntry[]) {
+    const directory = projectDir.trim();
+    const workspaceId = workspaceStore.activeWorkspaceId().trim();
+    const activeClient = routedClient();
+
+    if (!entries.length || !directory || !engineReady() || !activeClient) {
+      setMcpStatuses({});
+      return;
+    }
+
+    const entriesKey = entries.map((entry) => entry.name).join("\0");
+    const key = [workspaceId, directory].join("::");
+    if (mcpRuntimeStatusRefreshInFlightByKey.has(key)) return;
+
+    const task = (async () => {
+      try {
+        const status = unwrap(await activeClient.mcp.status({ directory }));
+        if (workspaceStore.activeWorkspaceId().trim() !== workspaceId) return;
+        if (workspaceProjectDir().trim() !== directory) return;
+        if (mcpServers().map((entry) => entry.name).join("\0") !== entriesKey) return;
+        setMcpStatuses(filterConfiguredMcpStatuses(status as McpStatusMap, entries));
+      } catch {
+        if (workspaceStore.activeWorkspaceId().trim() === workspaceId && workspaceProjectDir().trim() === directory) {
+          setMcpStatuses({});
+        }
+      } finally {
+        mcpRuntimeStatusRefreshInFlightByKey.delete(key);
+      }
+    })();
+    mcpRuntimeStatusRefreshInFlightByKey.set(key, task);
+  }
+
+  async function refreshMcpServers() {
     const projectDir = workspaceProjectDir().trim();
     const isRemoteWorkspace = workspaceStore.activeWorkspaceDisplay().workspaceType === "remote";
     const isLocalWorkspace = !isRemoteWorkspace;
@@ -7964,17 +8555,7 @@ export default function App() {
         setMcpServers(next);
         setMcpLastUpdatedAt(Date.now());
 
-        const activeClient = routedClient();
-        if (activeClient && projectDir) {
-          try {
-            const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
-            setMcpStatuses(filterConfiguredStatuses(status as McpStatusMap, next));
-          } catch {
-            setMcpStatuses({});
-          }
-        } else {
-          setMcpStatuses({});
-        }
+        scheduleMcpRuntimeStatusRefresh(projectDir, next);
 
         if (!next.length) {
           setMcpStatus("No MCP servers configured yet.");
@@ -8000,17 +8581,7 @@ export default function App() {
         setMcpServers(next);
         setMcpLastUpdatedAt(Date.now());
 
-        const activeClient = routedClient();
-        if (activeClient && projectDir) {
-          try {
-            const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
-            setMcpStatuses(filterConfiguredStatuses(status as McpStatusMap, next));
-          } catch {
-            setMcpStatuses({});
-          }
-        } else {
-          setMcpStatuses({});
-        }
+        scheduleMcpRuntimeStatusRefresh(projectDir, next);
 
         if (!next.length) {
           setMcpStatus("No MCP servers configured yet.");
@@ -8043,15 +8614,7 @@ export default function App() {
       setMcpServers(next);
       setMcpLastUpdatedAt(Date.now());
 
-      const activeClient = routedClient();
-      if (activeClient) {
-        try {
-          const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
-          setMcpStatuses(filterConfiguredStatuses(status as McpStatusMap, next));
-        } catch {
-          setMcpStatuses({});
-        }
-      }
+      scheduleMcpRuntimeStatusRefresh(projectDir, next);
 
       if (!next.length) {
         setMcpStatus("No MCP servers configured yet.");
@@ -8502,10 +9065,18 @@ export default function App() {
 
   async function createSessionAndOpen(
     initialTitle = "",
-    options: { blockAppDuringCreate?: boolean } = {},
+    options: {
+      blockAppDuringCreate?: boolean;
+      sendTraceId?: string | null;
+      preflight?: SendPreflightContext;
+    } = {},
   ) {
     const blockAppDuringCreate = options.blockAppDuringCreate ?? true;
+    const preflight = options.preflight;
+    const sendTraceId = options.sendTraceId?.trim() || preflight?.traceId || activeSendTraceId();
+    const tracePayload = sendTraceId ? { traceId: sendTraceId } : undefined;
     recordSendTrace("createSessionAndOpen:start", {
+      ...(tracePayload ?? {}),
       connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
       activeWorkspaceId: workspaceStore.activeWorkspaceId(),
       activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
@@ -8520,16 +9091,38 @@ export default function App() {
         { connectingWorkspaceId: workspaceStore.connectingWorkspaceId() },
       );
       recordSendTrace("createSessionAndOpen:blocked-connecting", {
+        ...(tracePayload ?? {}),
         connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
       });
       setError("Please wait for the workspace switch to complete.");
       return undefined;
     }
 
-    await ensureManagedAiBootstrapReady();
+    if (preflight?.managedAiReady) {
+      recordSendTrace("createSessionAndOpen:managed-ai-bootstrap-skip", {
+        ...(tracePayload ?? {}),
+        reason: "send-preflight-already-ready",
+      });
+    } else {
+      const managedAiReady = await sendTraceStep(
+        "createSessionAndOpen:ensure-managed-ai-bootstrap-ready",
+        () => ensureManagedAiBootstrapReady(),
+        {
+          ...(tracePayload ?? {}),
+          managedAiBootstrapBusy: managedAiBootstrapBusy(),
+          reloadBusy: reloadBusy(),
+          hasClient: Boolean(routedClient()),
+        },
+      );
+      if (!managedAiReady) {
+        recordSendTrace("createSessionAndOpen:blocked-managed-ai-bootstrap", tracePayload);
+        return undefined;
+      }
+      if (preflight) preflight.managedAiReady = true;
+    }
     const c = routedClient();
     if (!c) {
-      recordSendTrace("createSessionAndOpen:blocked-no-client");
+      recordSendTrace("createSessionAndOpen:blocked-no-client", tracePayload);
       setError("Local runtime is not ready yet.");
       return undefined;
     }
@@ -8542,7 +9135,7 @@ export default function App() {
       console.warn(
         "[createSessionAndOpen] Blocked: activeWorkspaceRoot is empty",
       );
-      recordSendTrace("createSessionAndOpen:blocked-empty-root");
+      recordSendTrace("createSessionAndOpen:blocked-empty-root", tracePayload);
       setError("Workspace directory is not available. Please try again.");
       return undefined;
     }
@@ -8570,11 +9163,16 @@ export default function App() {
       workspace: workspaceStore.activeWorkspaceRoot().trim() || null,
     });
 
-    // Abort any in-flight refresh operations to free up connection resources
-    abortRefreshes();
-
-    // Small delay to allow pending requests to settle
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await sendTraceStep(
+      "createSessionAndOpen:abort-refresh-settle",
+      async () => {
+        // Abort any in-flight refresh operations to free up connection resources.
+        abortRefreshes();
+        // Small delay to allow pending requests to settle.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      },
+      tracePayload,
+    );
 
     setError(null);
     if (blockAppDuringCreate) {
@@ -8608,18 +9206,32 @@ export default function App() {
     try {
       // Quick health check to detect stale connection
       mark("health:start");
-      try {
-        await withTimeout(c.global.health(), 3_000, "health");
-        recordSendTrace("createSessionAndOpen:health-ok");
-        mark("health:ok");
-      } catch (healthErr) {
-        recordSendTrace("createSessionAndOpen:health-error", {
-          message: healthErr instanceof Error ? healthErr.message : safeStringify(healthErr),
+      if (preflight?.runtimeHealthOk) {
+        recordSendTrace("createSessionAndOpen:health-skip", {
+          ...(tracePayload ?? {}),
+          reason: "send-preflight-already-healthy",
         });
-        mark("health:error", {
-          error: healthErr instanceof Error ? healthErr.message : safeStringify(healthErr),
-        });
-        console.warn("[createSessionAndOpen] health preflight failed; continuing to session.create", healthErr);
+        mark("health:skip");
+      } else {
+        try {
+          await sendTraceStep(
+            "createSessionAndOpen:health",
+            () => withTimeout(c.global.health(), 3_000, "health"),
+            tracePayload,
+          );
+          recordSendTrace("createSessionAndOpen:health-ok", tracePayload);
+          if (preflight) preflight.runtimeHealthOk = true;
+          mark("health:ok");
+        } catch (healthErr) {
+          recordSendTrace("createSessionAndOpen:health-error", {
+            ...(tracePayload ?? {}),
+            message: healthErr instanceof Error ? healthErr.message : safeStringify(healthErr),
+          });
+          mark("health:error", {
+            error: healthErr instanceof Error ? healthErr.message : safeStringify(healthErr),
+          });
+          console.warn("[createSessionAndOpen] health preflight failed; continuing to session.create", healthErr);
+        }
       }
 
       const initialSessionTitle = initialTitle.trim();
@@ -8633,30 +9245,50 @@ export default function App() {
         mark("session:create:start");
         const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
         const vesloCreated = activeWorkspaceId
-          ? await createConversationFromVesloWriteApi(
-              activeWorkspaceId,
-              sessionDirectory,
-              initialSessionTitle || undefined,
-            ).catch((error) => {
+          ? await sendTraceStep(
+              "createSessionAndOpen:veslo-conversation-create",
+              () => createConversationFromVesloWriteApi(
+                activeWorkspaceId,
+                sessionDirectory,
+                initialSessionTitle || undefined,
+                preflight,
+              ).catch((error) => {
               recordSendTrace("createSessionAndOpen:veslo-create-error", {
+                ...(tracePayload ?? {}),
                 message: error instanceof Error ? error.message : safeStringify(error),
               });
               console.warn("[conversation-create] falling back to OpenCode SDK", error);
               return null;
-            })
+              }),
+              {
+                ...(tracePayload ?? {}),
+                workspaceId: activeWorkspaceId,
+                sessionDirectory,
+              },
+            )
           : null;
         if (vesloCreated) {
           session = vesloCreated;
         } else {
           recordSendTrace("createSessionAndOpen:legacy-create-fallback", {
+            ...(tracePayload ?? {}),
             workspaceId: activeWorkspaceId || null,
           });
-          session = unwrap(await c.session.create({
-            directory: sessionDirectory,
-            title: initialSessionTitle || undefined,
-          }));
+          session = unwrap(await sendTraceStep(
+            "createSessionAndOpen:legacy-session-create",
+            () => c.session.create({
+              directory: sessionDirectory,
+              title: initialSessionTitle || undefined,
+            }),
+            {
+              ...(tracePayload ?? {}),
+              workspaceId: activeWorkspaceId || null,
+              sessionDirectory,
+            },
+          ));
         }
         recordSendTrace("createSessionAndOpen:create-ok", {
+          ...(tracePayload ?? {}),
           sessionDirectory,
           conversationId: session.conversationId ?? null,
           opencodeSessionId: session.opencodeSessionId ?? session.id,
@@ -8664,6 +9296,7 @@ export default function App() {
         mark("session:create:ok");
       } catch (createErr) {
         recordSendTrace("createSessionAndOpen:create-error", {
+          ...(tracePayload ?? {}),
           message: createErr instanceof Error ? createErr.message : safeStringify(createErr),
         });
         mark("session:create:error", {
@@ -8681,7 +9314,14 @@ export default function App() {
         setBusyLabel("status.loading_session");
       }
       mark("session:select:start", { sessionID: session.id });
-      await selectSession(session.id);
+      await sendTraceStep(
+        "createSessionAndOpen:select-session",
+        () => selectSession(session.id),
+        {
+          ...(tracePayload ?? {}),
+          sessionID: session.id,
+        },
+      );
       mark("session:select:ok", { sessionID: session.id });
 
       // Inject the new session into the reactive sessions() store so
@@ -8733,6 +9373,7 @@ export default function App() {
         sessionID: session.id,
       });
       recordSendTrace("createSessionAndOpen:success", {
+        ...(tracePayload ?? {}),
         sessionID: session.id,
       });
       return session.id;
@@ -8748,6 +9389,7 @@ export default function App() {
       // fresh session in the right workspace.
       if (isWorkspaceClientStaleError(e)) {
         recordSendTrace("createSessionAndOpen:stale-client", {
+          ...(tracePayload ?? {}),
           entryWorkspaceId: e.entryWorkspaceId,
           currentWorkspaceId: e.currentWorkspaceId,
         });
@@ -8755,6 +9397,7 @@ export default function App() {
       }
       const message = e instanceof Error ? e.message : t("app.unknown_error", currentLocale());
       recordSendTrace("createSessionAndOpen:error", {
+        ...(tracePayload ?? {}),
         message,
       });
       setError(addOpencodeCacheHint(message));
@@ -9615,6 +10258,7 @@ export default function App() {
 
   createEffect(() => {
     if (!isTauriRuntime()) return;
+    engineReady();
     const projectDir = workspaceProjectDir().trim();
     if (!projectDir) return;
     void refreshMcpServers();
@@ -10371,13 +11015,6 @@ export default function App() {
   const [workspaceSwitchHoldOpen, setWorkspaceSwitchHoldOpen] = createSignal(false);
 
   // Session loading overlay — shown immediately on session click, hidden after messages load.
-  const [pendingSessionLoad, setPendingSessionLoad] = createSignal<{
-    sessionId: string;
-    workspaceId: string;
-    sessionTitle: string;
-    workspaceName: string;
-  } | null>(null);
-
   createEffect(() => {
     if (typeof window === "undefined") return;
     const switchingId = workspaceStore.connectingWorkspaceId();
@@ -10431,7 +11068,6 @@ export default function App() {
 
   const workspaceSwitchOpen = createMemo(() => {
     if (booting()) return true;
-    if (pendingSessionLoad()) return false;
     if (workspaceStore.connectingWorkspaceId()) return workspaceSwitchDelayElapsed();
     if (workspaceSwitchHoldOpen()) return true;
     if (!busy() || !busyLabel()) return false;
@@ -11032,8 +11668,6 @@ export default function App() {
     soulStatusByWorkspaceId: soulStatusByWorkspaceId(),
     openRenameWorkspace,
     selectSession: selectSession,
-    pendingSessionLoad: pendingSessionLoad(),
-    setPendingSessionLoad,
     selectedSessionTitle: selectedSessionDisplayTitle(),
     messages: visibleMessages(),
     todos: activeTodos(),
@@ -11239,7 +11873,6 @@ export default function App() {
           routeSessionId: id,
           sessionIdsInStore,
           sessionIdsInSidebar,
-          pendingRouteSessionId: pendingSessionLoad()?.sessionId ?? null,
         })
       ) {
         if (selectedSessionId() === id) {

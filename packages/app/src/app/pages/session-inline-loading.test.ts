@@ -5,18 +5,11 @@ import test from "node:test";
 const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 const sessionSource = readFileSync(new URL("./session.tsx", import.meta.url), "utf8");
 
-test("session loading moves from fullscreen app overlay into the center pane", () => {
-  assert.ok(
-    sessionSource.includes(
-      "pendingSessionLoad: { sessionId: string; workspaceId: string; sessionTitle: string; workspaceName: string } | null;",
-    ),
-    "session view props should receive the pending session load metadata",
-  );
-
+test("session loading stays route-owned without a pending preloader", () => {
   assert.match(
     sessionSource,
-    /const showSessionLoadingState = createMemo\(\(\) =>[\s\S]*shouldShowSessionLoadingState\(\{[\s\S]*hasPendingSessionLoad: Boolean\(props\.pendingSessionLoad\),[\s\S]*selectedSessionId: props\.selectedSessionId,[\s\S]*messageCount: props\.messages\.length,[\s\S]*loadingEarlierMessages: props\.loadingEarlierMessages,[\s\S]*\}\)[\s\S]*\);/,
-    "session page should derive an inline loading state from pending switch metadata or the active message fetch",
+    /const showSessionLoadingState = createMemo\(\(\) =>[\s\S]*shouldShowSessionLoadingState\(\{[\s\S]*selectedSessionId: props\.selectedSessionId,[\s\S]*messageCount: props\.messages\.length,[\s\S]*loadingEarlierMessages: props\.loadingEarlierMessages,[\s\S]*\}\)[\s\S]*\);/,
+    "session page should derive inline loading from the selected session fetch state, not from a pre-route pending switch",
   );
 
   assert.match(
@@ -25,35 +18,35 @@ test("session loading moves from fullscreen app overlay into the center pane", (
     "session page should render a dedicated inline loading state in the center pane",
   );
 
-  assert.match(
-    appSource,
-    /const workspaceSwitchOpen = createMemo\(\(\) => \{[\s\S]*if \(pendingSessionLoad\(\)\) return false;/,
-    "workspace switch overlay should stay closed while a sidebar session switch is already rendering inline loading",
+  assert.doesNotMatch(
+    sessionSource,
+    /pendingSessionLoad|setPendingSessionLoad|hasPendingSessionLoad/,
+    "SessionView should not carry a separate pending-session preloader state",
   );
 
   assert.doesNotMatch(
     appSource,
-    /<Show when=\{pendingSessionLoad\(\)\}>/,
-    "app shell should not render a separate fullscreen session loading overlay anymore",
+    /pendingSessionLoad|setPendingSessionLoad/,
+    "app shell should not own a separate pending-session preloader state",
   );
 });
 
-test("session switch keeps inline loading until transcript hydration completes", () => {
+test("session switch records browse scope and routes immediately without arming a preloader", () => {
   const openSessionStart = sessionSource.indexOf("  const openSessionFromList = (workspaceId: string, sessionId: string) => {");
   const openSessionEnd = sessionSource.indexOf("  const resolveVesloWorkspaceId = (workspaceId: string) => {", openSessionStart);
   assert.notEqual(openSessionStart, -1, "openSessionFromList should exist");
   assert.notEqual(openSessionEnd, -1, "openSessionFromList block end should exist");
   const openSessionSource = sessionSource.slice(openSessionStart, openSessionEnd);
 
-  assert.match(
-    openSessionSource,
-    /if \(result === "blocked" \|\| result === "superseded"\) \{\s*props\.setPendingSessionLoad\(null\);\s*\}/s,
-    "session click navigation should only clear the inline loading state for terminal non-open results",
-  );
   assert.doesNotMatch(
     openSessionSource,
-    /result === "opened"[\s\S]*props\.setPendingSessionLoad\(null\)/s,
-    "opened navigation must keep pendingSessionLoad alive until onSessionLoadComplete fires after transcript hydration",
+    /setPendingSessionLoad|pendingSessionLoad/,
+    "sidebar session clicks should not arm a pending-session preloader",
+  );
+  assert.match(
+    openSessionSource,
+    /props\.setSessionBrowseScope\(\{[\s\S]*workspaceId,[\s\S]*conversationId: session\?\.conversationId \?\? null,[\s\S]*opencodeSessionId: session\?\.opencodeSessionId \?\? nextSessionId,[\s\S]*\}\);[\s\S]*props\.setView\("session", nextSessionId\);/s,
+    "session click navigation should record browse scope before routing to the target session",
   );
 });
 

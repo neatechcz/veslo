@@ -88,12 +88,32 @@ export function createOrchestratorLifecycleClient(options: {
   };
 
   const request = async (path: string, init?: RequestInit): Promise<Response> => {
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        try {
+          controller?.abort();
+        } catch {
+          // ignore abort errors; the timeout error below is the API surface
+        }
+        reject(new OrchestratorLifecycleTimeoutError(path, timeoutMs));
+      }, timeoutMs);
+    });
+    const initWithSignal =
+      controller && !init?.signal
+        ? { ...init, signal: controller.signal }
+        : init;
+
     try {
-      return await fetchImpl(`${baseUrl}${path}`, {
-        ...init,
-        signal: AbortSignal.timeout(timeoutMs),
-      });
+      return await Promise.race([
+        fetchImpl(`${baseUrl}${path}`, initWithSignal),
+        timeoutPromise,
+      ]);
     } catch (error) {
+      if (error instanceof OrchestratorLifecycleTimeoutError) {
+        throw error;
+      }
       if (
         error instanceof DOMException &&
         (error.name === "AbortError" || error.name === "TimeoutError")
@@ -101,6 +121,8 @@ export function createOrchestratorLifecycleClient(options: {
         throw new OrchestratorLifecycleTimeoutError(path, timeoutMs);
       }
       throw error;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
     }
   };
 
