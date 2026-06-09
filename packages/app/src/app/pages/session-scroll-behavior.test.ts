@@ -29,7 +29,7 @@ test("session send flow starts optimistic run UI before prompt handoff resolves"
   const handlerStart = source.indexOf("const sendPromptImmediate = async (");
   const optimisticSet = source.indexOf("createPendingSubmittedDraft({", handlerStart);
   const startRun = source.indexOf("startRun();", optimisticSet);
-  const sendCall = source.indexOf("props.sendPromptAsync(draft, targetSessionId ? { targetSessionId } : undefined)", startRun);
+  const sendCall = source.indexOf("props.sendPromptAsync(draft, handoffOptions)", startRun);
   const rejectedBranch = source.indexOf("if (!accepted) {", sendCall);
   const markFailed = source.indexOf("markMatchingPendingSubmitFailed(errorMessage);", rejectedBranch);
   const resetRun = source.indexOf("resetRunState();", rejectedBranch);

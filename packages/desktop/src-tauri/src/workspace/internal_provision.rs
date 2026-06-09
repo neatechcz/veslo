@@ -568,6 +568,11 @@ fn vendor_opencode_plugin_into_workspace(opencode_root: &Path, stats: &mut Write
         VESLO_MANAGED_PLUGIN_VERSION,
         &node_modules_root,
         stats,
+    ) || vendor_node_module_package(
+        "@opencode-ai/plugin",
+        VESLO_MANAGED_PLUGIN_VERSION,
+        &node_modules_root,
+        stats,
     );
     let zod_vendored = vendor_bun_cache_package(
         &home,
@@ -575,7 +580,7 @@ fn vendor_opencode_plugin_into_workspace(opencode_root: &Path, stats: &mut Write
         VESLO_MANAGED_ZOD_VERSION,
         &node_modules_root,
         stats,
-    );
+    ) || vendor_node_module_package("zod", VESLO_MANAGED_ZOD_VERSION, &node_modules_root, stats);
     if !plugin_vendored {
         write_zod_backed_plugin_fallback(&node_modules_root, stats);
     }
@@ -639,6 +644,64 @@ fn vendor_bun_cache_package(
             false
         }
     }
+}
+
+fn vendor_node_module_package(
+    pkg: &str,
+    version: &str,
+    node_modules_root: &Path,
+    stats: &mut WriteStats,
+) -> bool {
+    let package_parts: Vec<&str> = pkg.split('/').collect();
+    let mut starts = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        starts.push(cwd);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            starts.push(parent.to_path_buf());
+        }
+    }
+
+    for start in starts {
+        for ancestor in start.ancestors() {
+            let candidates = [
+                package_parts
+                    .iter()
+                    .fold(ancestor.join("node_modules"), |path, part| path.join(part)),
+                package_parts.iter().fold(
+                    ancestor.join("packages").join("orchestrator").join("node_modules"),
+                    |path, part| path.join(part),
+                ),
+            ];
+            for src in candidates {
+                if package_json_version(&src).as_deref() != Some(version) {
+                    continue;
+                }
+                let dst = node_modules_root.join(pkg);
+                if dst.join("package.json").exists() {
+                    return true;
+                }
+                if let Some(parent) = dst.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                match copy_dir_recursive(&src, &dst) {
+                    Ok(_) => {
+                        stats.written += 1;
+                        return true;
+                    }
+                    Err(err) => {
+                        eprintln!(
+                            "[workspace] failed to vendor {pkg}@{version} from {} into {}: {err}",
+                            src.display(),
+                            dst.display()
+                        );
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 fn write_zod_backed_plugin_fallback(node_modules_root: &Path, stats: &mut WriteStats) {

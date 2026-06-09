@@ -12,7 +12,7 @@ test("sendPrompt carries a preflight context into first-session creation", () =>
 
   assert.match(
     sendPromptSource,
-    /const sendPreflight = createSendPreflightContext\(\);/,
+    /const sendPreflight = createSendPreflightContext\(options\.sendTraceId\);/,
     "sendPrompt should create one preflight context for the whole send flow",
   );
   assert.match(

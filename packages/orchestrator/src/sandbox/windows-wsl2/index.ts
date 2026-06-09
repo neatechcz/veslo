@@ -179,6 +179,21 @@ export function buildWindowsWsl2Script(opts: SandboxSpawnOptions, runtime: Wsl2R
     "  mkdir -p \"$CONFIG_DIR/node_modules\"",
     "  BWRAP_ARGS+=(--ro-bind \"$HOST_CONFIG_DIR/node_modules\" /config/node_modules)",
     "fi",
+    // WSL generates /etc/resolv.conf as a symlink into /mnt/wsl by default.
+    // `--ro-bind /etc /etc` carries the symlink but not its target, leaving
+    // DNS dead inside bwrap - the engine then hangs on its first network
+    // fetch (e.g. models.dev) before it ever starts listening. Bind the
+    // resolved target at the same absolute path so the symlink works.
+    "RESOLV_TARGET=\"$(readlink -f /etc/resolv.conf 2>/dev/null || true)\"",
+    "if [ -n \"$RESOLV_TARGET\" ] && [ \"$RESOLV_TARGET\" != \"/etc/resolv.conf\" ] && [ -e \"$RESOLV_TARGET\" ]; then",
+    "  case \"$RESOLV_TARGET\" in",
+    "    /etc/*|/usr/*|/bin/*|/lib/*|/lib64/*) ;;",
+    "    *)",
+    "      add_target_parent_dirs \"$RESOLV_TARGET\"",
+    "      BWRAP_ARGS+=(--ro-bind \"$RESOLV_TARGET\" \"$RESOLV_TARGET\")",
+    "      ;;",
+    "  esac",
+    "fi",
     "if [ -d \"$WORKSPACE/.git\" ]; then",
     "  BWRAP_ARGS+=(--ro-bind \"$WORKSPACE/.git\" /workspace/.git)",
     "elif [ -f \"$WORKSPACE/.git\" ]; then",

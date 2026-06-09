@@ -233,11 +233,14 @@ export type SessionViewProps = {
   retryUpdateDownload: () => void;
   installUpdateAndRestart: () => void;
   createSessionAndOpen: () => Promise<string | undefined>;
-  sendPromptAsync: (draft: ComposerDraft, options?: { targetSessionId?: string | null }) => Promise<boolean>;
+  sendPromptAsync: (
+    draft: ComposerDraft,
+    options?: { targetSessionId?: string | null; sendTraceId?: string | null },
+  ) => Promise<boolean>;
   replaceUserMessageAsync: (
     messageId: string,
     draft: ComposerDraft,
-    options?: { targetSessionId?: string | null },
+    options?: { targetSessionId?: string | null; sendTraceId?: string | null },
   ) => Promise<boolean>;
   clearComposerDraftForSession: (sessionId: string | null | undefined) => void;
   abortSession: (sessionId?: string) => Promise<void>;
@@ -3199,11 +3202,20 @@ export default function SessionView(props: SessionViewProps) {
       expectedSessionKey?: string;
       replaceMessageId?: string;
       restoreDraftOnFailure?: boolean;
+      sendTraceId?: string | null;
     } = {},
   ) => {
     const expectedSessionKey = options.expectedSessionKey;
     const targetSessionId = expectedSessionKey ? sessionIdForQueueKey(expectedSessionKey) : null;
+    const handoffOptions =
+      targetSessionId || options.sendTraceId
+        ? {
+            ...(targetSessionId ? { targetSessionId } : {}),
+            ...(options.sendTraceId ? { sendTraceId: options.sendTraceId } : {}),
+          }
+        : undefined;
     recordSendTrace("sendPromptImmediate:start", {
+      sendTraceId: options.sendTraceId ?? null,
       aiAccessBlockedReason: props.aiAccessBlockedReason,
       busyHint: props.busyHint ?? null,
       busyLabel: props.busyLabel ?? null,
@@ -3271,10 +3283,11 @@ export default function SessionView(props: SessionViewProps) {
 
     try {
       const accepted = await (options.replaceMessageId
-        ? props.replaceUserMessageAsync(options.replaceMessageId, draft, targetSessionId ? { targetSessionId } : undefined)
-        : props.sendPromptAsync(draft, targetSessionId ? { targetSessionId } : undefined)
+        ? props.replaceUserMessageAsync(options.replaceMessageId, draft, handoffOptions)
+        : props.sendPromptAsync(draft, handoffOptions)
       );
       recordSendTrace("sendPromptImmediate:result", {
+        sendTraceId: options.sendTraceId ?? null,
         accepted,
         error: props.error ?? null,
         expectedSessionKey: expectedSessionKey ?? null,
@@ -3410,6 +3423,7 @@ export default function SessionView(props: SessionViewProps) {
 
   const handleSendPrompt = async (draft: ComposerDraft, options: ComposerSendOptions = {}) => {
     recordSendTrace("handleSendPrompt:start", {
+      sendTraceId: options.sendTraceId ?? null,
       sendNow: options.sendNow,
       source: options.source,
       editingQueuedDraftId: editingQueuedDraftId(),
@@ -3444,6 +3458,7 @@ export default function SessionView(props: SessionViewProps) {
         reason: "send-now",
         expectedSessionKey: sessionKey,
         restoreDraftOnFailure: false,
+        sendTraceId: options.sendTraceId,
       });
       const resultSessionKey = resolveQueueKeyForQueuedDraft(sessionKey, editingId);
       if (!accepted) {
@@ -3467,6 +3482,7 @@ export default function SessionView(props: SessionViewProps) {
         reason: "replacement",
         expectedSessionKey: sessionKey,
         replaceMessageId: transcriptEditMessageId,
+        sendTraceId: options.sendTraceId,
       });
       if (!accepted) return false;
       return true;
@@ -3497,14 +3513,18 @@ export default function SessionView(props: SessionViewProps) {
     if (sendNow) {
       const sessionKey = currentSessionQueueKey();
       const wasPaused = queuePausedForSessionKey(sessionKey);
-      const accepted = await sendPromptImmediate(draft, { reason: "send-now", expectedSessionKey: sessionKey });
+      const accepted = await sendPromptImmediate(draft, {
+        reason: "send-now",
+        expectedSessionKey: sessionKey,
+        sendTraceId: options.sendTraceId,
+      });
       if (accepted && wasPaused) {
         setQueuePausedForSessionKey(sessionKey, false);
       }
       return accepted;
     }
 
-    return sendPromptImmediate(draft, { reason: "normal" });
+    return sendPromptImmediate(draft, { reason: "normal", sendTraceId: options.sendTraceId });
   };
 
   const handleBrowserAutomationQuickstart = () => {

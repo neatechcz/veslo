@@ -32,6 +32,13 @@ export type RunStore = {
   get(workspaceId: string, runId: string): RunRecord | null;
   latestForConversation(workspaceId: string, conversationId: string): RunRecord | null;
   activeForConversation(workspaceId: string, conversationId: string): RunRecord | null;
+  /**
+   * True when the workspace has any run in an active status created at or
+   * after `createdSince` (epoch ms). The lower bound keeps a stale record -
+   * a run whose engine died before reaching a terminal status - from
+   * counting as active work forever.
+   */
+  hasActiveForWorkspace(workspaceId: string, createdSince: number): boolean;
 };
 
 type RunRow = {
@@ -223,6 +230,19 @@ export function createRunStore(options: { dbPath: string }): RunStore {
            LIMIT 1`,
         ).get(workspaceId, conversationId);
         return row ? rowToRecord(row) : null;
+      });
+    },
+
+    hasActiveForWorkspace(workspaceId, createdSince) {
+      return withDb((db) => {
+        const row = db.query<{ present: number }, [string, number]>(
+          `SELECT 1 AS present FROM conversation_run
+           WHERE workspace_id = ?1
+             AND status IN (${ACTIVE_RUN_STATUS_SQL_LIST})
+             AND created_at >= ?2
+           LIMIT 1`,
+        ).get(workspaceId, createdSince);
+        return Boolean(row);
       });
     },
   };

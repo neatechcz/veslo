@@ -328,6 +328,7 @@ import {
   workspaceCopyIntoFolder,
   workspaceVesloRead,
   workspaceVesloWrite,
+  logUiEvent,
   opencodeDbUpdateSessionDirectory,
   type OrchestratorEngineSnapshot,
   type OrchestratorStatus,
@@ -431,6 +432,7 @@ type SendTraceRoot = typeof window & {
   __vesloSendTrace?: Array<Record<string, unknown>>;
   __vesloActiveSendTraceId?: string | null;
   __vesloSendTraceSeq?: number;
+  __vesloSendTraceStartPerfMsById?: Record<string, number>;
 };
 
 type SendConversationWorkspaceResolution = {
@@ -468,22 +470,12 @@ const makeSendTraceId = () => {
   return `send_${suffix.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64)}`;
 };
 
-const createSendPreflightContext = (): SendPreflightContext => ({
-  traceId: makeSendTraceId(),
+const createSendPreflightContext = (traceId?: string | null): SendPreflightContext => ({
+  traceId: traceId?.trim() || makeSendTraceId(),
   managedAiReady: false,
   runtimeHealthOk: false,
   conversationWorkspaceByDirectory: new Map(),
 });
-
-const activateSendTrace = (traceId: string) => {
-  if (typeof window === "undefined") return () => undefined;
-  const root = window as SendTraceRoot;
-  const previous = root.__vesloActiveSendTraceId ?? null;
-  root.__vesloActiveSendTraceId = traceId;
-  return () => {
-    root.__vesloActiveSendTraceId = previous;
-  };
-};
 
 const activeSendTraceId = () => {
   if (typeof window === "undefined") return null;
@@ -499,18 +491,28 @@ function recordSendTrace(event: string, payload?: Record<string, unknown>) {
     root.__vesloSendTraceSeq = seq;
     const payloadTraceId = typeof payload?.traceId === "string" ? payload.traceId.trim() : "";
     const traceId = payloadTraceId || root.__vesloActiveSendTraceId || undefined;
-    logs.push({
+    const perfMs = roundSendTraceMs(perfNow());
+    const startPerfMsById = root.__vesloSendTraceStartPerfMsById ?? (root.__vesloSendTraceStartPerfMsById = {});
+    const relativeMs =
+      traceId
+        ? roundSendTraceMs(perfMs - (startPerfMsById[traceId] ?? (startPerfMsById[traceId] = perfMs)))
+        : undefined;
+    const entry = {
       id: seq,
       at: new Date().toISOString(),
       ts: Date.now(),
-      perfMs: roundSendTraceMs(perfNow()),
+      perfMs,
+      ...(relativeMs !== undefined ? { relativeMs } : {}),
       source: "app",
       ...(traceId ? { traceId } : {}),
       event,
       ...(payload ?? {}),
-    });
+    };
+    logs.push(entry);
     if (logs.length > SEND_TRACE_LIMIT) logs.splice(0, logs.length - SEND_TRACE_LIMIT);
     root.__vesloSendTrace = logs;
+    console.log(`[SENDTRACE] app:${event}`, entry);
+    logUiEvent("send-trace", event, entry);
   } catch {
     // ignore
   }
@@ -3072,12 +3074,13 @@ export default function App() {
 
   async function sendPrompt(
     draft?: ComposerDraft,
-    options: { targetSessionId?: string | null } = {},
+    options: { targetSessionId?: string | null; sendTraceId?: string | null } = {},
   ): Promise<boolean> {
-    const sendPreflight = createSendPreflightContext();
+    const sendPreflight = createSendPreflightContext(options.sendTraceId);
     const sendTraceId = sendPreflight.traceId;
     recordSendTrace("sendPrompt:start", {
       traceId: sendTraceId,
+      uiSendTraceId: options.sendTraceId ?? null,
       engineReady: engineReady(),
       selectedSessionId: selectedSessionId(),
       targetSessionId: options.targetSessionId ?? null,
@@ -3973,12 +3976,13 @@ export default function App() {
   async function replaceUserMessage(
     messageID: string,
     draft: ComposerDraft,
-    options: { targetSessionId?: string | null } = {},
+    options: { targetSessionId?: string | null; sendTraceId?: string | null } = {},
   ): Promise<boolean> {
     const sessionID = (options.targetSessionId?.trim() || selectedSessionId() || "").trim();
     if (!sessionID || !messageID.trim()) return false;
 
     recordSendTrace("replaceUserMessage:start", {
+      traceId: options.sendTraceId ?? undefined,
       sessionID,
       messageID,
       engineReady: engineReady(),
@@ -4002,7 +4006,7 @@ export default function App() {
     const next = await revertSession(c, sessionID, messageID);
     upsertLocalSession(next);
 
-    const accepted = await sendPrompt(draft, { targetSessionId: sessionID });
+    const accepted = await sendPrompt(draft, { targetSessionId: sessionID, sendTraceId: options.sendTraceId });
     if (!accepted) {
       try {
         const restored = previousRevertMessageID

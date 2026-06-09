@@ -10,7 +10,7 @@ const zhSource = readFileSync(new URL("../../../i18n/locales/zh.ts", import.meta
 test("composer exports send intent options and passes them to onSend", () => {
   assert.match(
     composerSource,
-    /export type ComposerSendOptions = \{\s*sendNow\?: boolean;\s*source\?: "button" \| "enter" \| "ctrl-enter";\s*\};/,
+    /export type ComposerSendOptions = \{\s*sendNow\?: boolean;\s*source\?: "button" \| "enter" \| "ctrl-enter";\s*sendTraceId\?: string;\s*\};/,
     "composer should export the send intent options contract",
   );
 
@@ -29,6 +29,21 @@ test("composer exports send intent options and passes them to onSend", () => {
   assert.notEqual(onSendIndex, -1, "sendDraft should pass the send intent through to onSend");
   assert.notEqual(awaitIndex, -1, "sendDraft should await the parent send promise");
   assert.ok(submittedDraftIndex < onSendIndex && onSendIndex < awaitIndex);
+});
+
+test("composer creates a trace id before parent send handoff", () => {
+  const handlerStart = composerSource.indexOf("const sendDraft = async (");
+  const traceIdIndex = composerSource.indexOf("makeComposerSendTraceId()", handlerStart);
+  const onSendIndex = composerSource.indexOf("sendPromise = props.onSend(submittedDraft, options);", handlerStart);
+
+  assert.notEqual(handlerStart, -1, "sendDraft should exist");
+  assert.ok(traceIdIndex > handlerStart, "sendDraft should create a send trace id");
+  assert.ok(onSendIndex > traceIdIndex, "trace id should exist before the parent send handoff");
+  assert.match(
+    composerSource,
+    /logUiEvent\("send-trace", `composer:\$\{event\}`, entry\);/,
+    "composer send trace entries should be forwarded to Tauri stderr",
+  );
 });
 
 test("composer calls onSend before clearing the parent draft", () => {

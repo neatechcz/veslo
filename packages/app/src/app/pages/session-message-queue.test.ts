@@ -75,7 +75,7 @@ test("idle Enter appends behind an existing queue instead of sending immediately
   const drainCall = source.indexOf("void drainNextQueuedDraft(\"normal\", sessionKey);", appendCall);
   const returnTrue = source.indexOf("return true;", drainCall);
   const sendNowBranch = source.indexOf("if (sendNow) {", returnTrue);
-  const immediateNormal = source.indexOf("return sendPromptImmediate(draft, { reason: \"normal\" });", returnTrue);
+  const immediateNormal = source.indexOf("return sendPromptImmediate(draft, { reason: \"normal\", sendTraceId: options.sendTraceId });", returnTrue);
 
   assert.notEqual(handlerStart, -1, "session send handler should exist");
   assert.ok(queuedBranch > handlerStart, "plain Enter should branch when the queue already has drafts");
@@ -89,7 +89,7 @@ test("idle Enter appends behind an existing queue instead of sending immediately
 test("paused send-now unpauses only after accepted immediate send", () => {
   assert.match(
     source,
-    /const sessionKey = currentSessionQueueKey\(\);\s*const wasPaused = queuePausedForSessionKey\(sessionKey\);\s*const accepted = await sendPromptImmediate\(draft, \{ reason: "send-now", expectedSessionKey: sessionKey \}\);\s*if \(accepted && wasPaused\) \{\s*setQueuePausedForSessionKey\(sessionKey, false\);\s*\}\s*return accepted;/s,
+    /const sessionKey = currentSessionQueueKey\(\);\s*const wasPaused = queuePausedForSessionKey\(sessionKey\);\s*const accepted = await sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*sendTraceId: options\.sendTraceId,\s*\}\);\s*if \(accepted && wasPaused\) \{\s*setQueuePausedForSessionKey\(sessionKey, false\);\s*\}\s*return accepted;/s,
     "send-now while paused should unpause only after the immediate send is accepted",
   );
 });
@@ -117,8 +117,8 @@ test("queued drain uses a stable session key and guards stale navigation", () =>
 
   assert.match(
     source,
-    /props\.sendPromptAsync\(draft, targetSessionId \? \{ targetSessionId \} : undefined\)/,
-    "queue drains should pass their captured target session to the parent send path",
+    /const handoffOptions =[\s\S]*targetSessionId \|\| options\.sendTraceId[\s\S]*\.\.\.\(targetSessionId \? \{ targetSessionId \} : \{\}\),[\s\S]*\.\.\.\(options\.sendTraceId \? \{ sendTraceId: options\.sendTraceId \} : \{\}\),[\s\S]*props\.sendPromptAsync\(draft, handoffOptions\)/s,
+    "queue drains should pass their captured target session and trace id to the parent send path",
   );
 
   assert.match(
@@ -258,7 +258,7 @@ test("queued edit lifecycle restores editing items and drains idle saves", () =>
 test("edited queued send-now marks the edited item sending before awaiting handoff", () => {
   assert.match(
     source,
-    /const sessionKey = currentSessionQueueKey\(\);\s*const wasPaused = queuePausedForSessionKey\(sessionKey\);\s*updateQueueForSessionKey\(sessionKey, \(queue\) =>\s*markQueuedDraftSending\(updateQueuedDraft\(queue, editingId, draft\), editingId\),\s*\);\s*if \(currentSessionQueueKey\(\) === sessionKey\) \{\s*setEditingQueuedDraftId\(null\);\s*props\.setComposerDraft\(emptyComposerDraft\(draft\.mode\)\);\s*\}\s*const accepted = await sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*restoreDraftOnFailure: false,\s*\}\);/s,
+    /const sessionKey = currentSessionQueueKey\(\);\s*const wasPaused = queuePausedForSessionKey\(sessionKey\);\s*updateQueueForSessionKey\(sessionKey, \(queue\) =>\s*markQueuedDraftSending\(updateQueuedDraft\(queue, editingId, draft\), editingId\),\s*\);\s*if \(currentSessionQueueKey\(\) === sessionKey\) \{\s*setEditingQueuedDraftId\(null\);\s*props\.setComposerDraft\(emptyComposerDraft\(draft\.mode\)\);\s*\}\s*const accepted = await sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*restoreDraftOnFailure: false,\s*sendTraceId: options\.sendTraceId,\s*\}\);/s,
     "edited queued send-now should persist the edited draft into a sending queue item and release the composer before awaiting handoff",
   );
 });
@@ -266,7 +266,7 @@ test("edited queued send-now marks the edited item sending before awaiting hando
 test("edited queued send-now marks the edited item error when handoff is rejected", () => {
   assert.match(
     source,
-    /const accepted = await sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*restoreDraftOnFailure: false,\s*\}\);\s*const resultSessionKey = resolveQueueKeyForQueuedDraft\(sessionKey, editingId\);\s*if \(!accepted\) \{\s*updateQueueForSessionKey\(resultSessionKey, \(queue\) =>\s*markQueuedDraftError\(queue, editingId, props\.error \?\? tr\("session\.connect_server_to_attach"\)\),\s*\);\s*return false;\s*\}\s*updateQueueForSessionKey\(resultSessionKey, \(queue\) => removeQueuedDraft\(queue, editingId\)\);[\s\S]*if \(accepted && wasPaused\) \{\s*setQueuePausedForSessionKey\(sessionKey, false\);\s*\}/s,
+    /const accepted = await sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*restoreDraftOnFailure: false,\s*sendTraceId: options\.sendTraceId,\s*\}\);\s*const resultSessionKey = resolveQueueKeyForQueuedDraft\(sessionKey, editingId\);\s*if \(!accepted\) \{\s*updateQueueForSessionKey\(resultSessionKey, \(queue\) =>\s*markQueuedDraftError\(queue, editingId, props\.error \?\? tr\("session\.connect_server_to_attach"\)\),\s*\);\s*return false;\s*\}\s*updateQueueForSessionKey\(resultSessionKey, \(queue\) => removeQueuedDraft\(queue, editingId\)\);[\s\S]*if \(accepted && wasPaused\) \{\s*setQueuePausedForSessionKey\(sessionKey, false\);\s*\}/s,
     "edited queued send-now should update whichever queue contains the edited item after a pending remap",
   );
 });

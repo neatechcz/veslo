@@ -123,12 +123,15 @@ Current implemented behavior:
   wildcard-bound engine without depending on flaky localhost forwarding
 - fails closed when WSL2, bwrap, workspace path visibility, or OpenCode version
   checks fail
+- includes a repair/provisioning helper at
+  `packages/orchestrator/scripts/windows-wsl2-sandbox-provision.ps1` that
+  imports `VesloSandbox`, installs `bubblewrap`/CA certificates, installs the
+  pinned Linux OpenCode binary, writes `/etc/wsl.conf`, and verifies bwrap
 
 Not yet implemented:
 
 - first-run UI onboarding
-- managed Ubuntu rootfs acquisition/import
-- runtime payload installation into `VesloSandbox`
+- installer/desktop invocation of the provisioning helper
 - versioned runtime manifest
 - user-facing repair flow
 
@@ -170,11 +173,13 @@ The host-side proxy reaches the engine through WSL guest IPv4 (`connectHost`).
 
 Fallback plugin mode is acceptable only when it imports real vendored `zod`.
 
-## Local Dev Provisioning Snapshot
+## Historical Local Dev Provisioning Snapshot
 
-As of the 2026-05-28 Windows dev pass, this machine has a manually provisioned
-`VesloSandbox` distro that matches the intended managed-runtime shape closely
-enough for backend testing.
+As of the 2026-05-28 Windows dev pass, a local dev machine had a manually
+provisioned `VesloSandbox` distro that matched the intended managed-runtime
+shape closely enough for backend testing. This is a historical snapshot, not a
+guarantee that the distro still exists on any given developer machine. Use the
+provisioning helper above to recreate it.
 
 Installed state:
 

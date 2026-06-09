@@ -65,4 +65,19 @@ describe("windows-wsl2 launch script", () => {
     expect(script).toContain('--ro-bind "$HOST_CONFIG_DIR/node_modules" /config/node_modules');
     expect(script).not.toContain('cp -a "$src" "$stage"');
   });
+
+  test("binds the resolv.conf symlink target so DNS works inside bwrap", () => {
+    const script = buildWindowsWsl2Script(
+      spawnOptions("C:\\Users\\alice\\.veslo\\opencode-config\\ws-a"),
+      runtime,
+      opencode,
+    );
+
+    expect(script).toContain('RESOLV_TARGET="$(readlink -f /etc/resolv.conf');
+    expect(script).toContain('add_target_parent_dirs "$RESOLV_TARGET"');
+    expect(script).toContain('BWRAP_ARGS+=(--ro-bind "$RESOLV_TARGET" "$RESOLV_TARGET")');
+    // Targets already covered by the base /etc and /usr style mounts must not
+    // be re-bound (the case statement skips them).
+    expect(script).toContain("/etc/*|/usr/*|/bin/*|/lib/*|/lib64/*) ;;");
+  });
 });

@@ -454,6 +454,74 @@ describe("EnginePool — F2Ú4 LRU + idle suspend", () => {
       await h.cleanup();
     }
   });
+
+  test("idle sweep skips engine whose workspace has an active run", async () => {
+    const timers = new FakeTimers();
+    const activeWork = new Set(["a"]);
+    const h = harness(
+      { hasActiveWork: (workspaceId) => activeWork.has(workspaceId) },
+      { idleSuspendMs: 1_000, idleSweepIntervalMs: 500, lruActivityGuardMs: 50 },
+      timers,
+    );
+    try {
+      await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      // Way past the idle threshold — but the workspace is mid-run, so the
+      // sweep must leave the engine alone.
+      timers.advance(5_000);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(h.pool.get("a")?.state).toBe("ready");
+
+      // Run finished — the next sweep tick suspends as usual.
+      activeWork.clear();
+      timers.advance(1_000);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(h.pool.get("a")?.state).toBe("suspended");
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("LRU eviction skips engine with an active run and picks the next candidate", async () => {
+    const timers = new FakeTimers();
+    const activeWork = new Set(["a"]);
+    const h = harness(
+      { hasActiveWork: (workspaceId) => activeWork.has(workspaceId) },
+      { maxEngines: 2, lruActivityGuardMs: 100, idleSuspendMs: 999_999, idleSweepIntervalMs: 999_999 },
+      timers,
+    );
+    try {
+      await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      timers.advance(50);
+      await h.pool.ensure({ id: "b", path: "/tmp/b" });
+      timers.advance(200);
+      // "a" is the LRU candidate but has an active run — "b" gets evicted.
+      await h.pool.ensure({ id: "c", path: "/tmp/c" });
+      expect(h.pool.get("a")?.state).toBe("ready");
+      expect(h.pool.get("b")?.state).toBe("suspended");
+      expect(h.pool.get("c")?.state).toBe("ready");
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("LRU eviction throws capacity exceeded instead of killing a busy engine", async () => {
+    const timers = new FakeTimers();
+    const h = harness(
+      { hasActiveWork: () => true },
+      { maxEngines: 1, lruActivityGuardMs: 100, idleSuspendMs: 999_999, idleSweepIntervalMs: 999_999 },
+      timers,
+    );
+    try {
+      await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      timers.advance(500); // past the activity guard — only the active run protects "a"
+      await expect(h.pool.ensure({ id: "b", path: "/tmp/b" })).rejects.toThrow(
+        "engine pool capacity exceeded",
+      );
+      expect(h.pool.get("a")?.state).toBe("ready");
+    } finally {
+      await h.cleanup();
+    }
+  });
 });
 
 describe("EnginePool — F2Ú5 crash recovery + health monitor", () => {

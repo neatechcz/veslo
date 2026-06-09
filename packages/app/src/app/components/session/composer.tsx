@@ -5,7 +5,7 @@ import { ArrowUp, File as FileIcon, Loader2, Paperclip, Square, Terminal, X, Zap
 
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, SlashCommandOption } from "../../types";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
-import { readClipboardFilePaths } from "../../lib/tauri";
+import { logUiEvent, readClipboardFilePaths } from "../../lib/tauri";
 import { currentLocale, t, useTranslate } from "../../../i18n";
 import { extractFileReferencePathsFromDataTransfer, extractFilesFromDataTransfer, isFileDragTransfer } from "../../utils/data-transfer-files";
 import { looksLikePdfDocumentPrefix } from "../../utils/pdf-signature";
@@ -28,6 +28,7 @@ type MentionGroup = {
 export type ComposerSendOptions = {
   sendNow?: boolean;
   source?: "button" | "enter" | "ctrl-enter";
+  sendTraceId?: string;
 };
 
 type ComposerProps = {
@@ -80,20 +81,52 @@ function recordSendTrace(event: string, payload?: Record<string, unknown>) {
   try {
     const root = window as typeof window & {
       __vesloSendTrace?: Array<Record<string, unknown>>;
+      __vesloSendTraceSeq?: number;
+      __vesloSendTraceStartPerfMsById?: Record<string, number>;
     };
     const logs = root.__vesloSendTrace ?? [];
-    logs.push({
+    const id = (root.__vesloSendTraceSeq ?? 0) + 1;
+    root.__vesloSendTraceSeq = id;
+    const traceId =
+      typeof payload?.traceId === "string"
+        ? payload.traceId
+        : typeof payload?.sendTraceId === "string"
+          ? payload.sendTraceId
+          : undefined;
+    const perfMs = Math.round(perfNow() * 100) / 100;
+    const startPerfMsById = root.__vesloSendTraceStartPerfMsById ?? (root.__vesloSendTraceStartPerfMsById = {});
+    const relativeMs =
+      traceId
+        ? Math.round((perfMs - (startPerfMsById[traceId] ?? (startPerfMsById[traceId] = perfMs))) * 100) / 100
+        : undefined;
+    const entry = {
+      id,
       at: new Date().toISOString(),
+      ts: Date.now(),
+      perfMs,
+      ...(relativeMs !== undefined ? { relativeMs } : {}),
       source: "composer",
+      ...(traceId ? { traceId } : {}),
       event,
       ...(payload ?? {}),
-    });
-    if (logs.length > 120) logs.splice(0, logs.length - 120);
+    };
+    logs.push(entry);
+    if (logs.length > 500) logs.splice(0, logs.length - 500);
     root.__vesloSendTrace = logs;
+    console.log(`[SENDTRACE] composer:${event}`, entry);
+    logUiEvent("send-trace", `composer:${event}`, entry);
   } catch {
     // ignore
   }
 }
+
+const makeComposerSendTraceId = () => {
+  const suffix =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`;
+  return `send_${suffix.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64)}`;
+};
 
 const fileToDataUrl = (file: File) =>
   new Promise<string>((resolve, reject) => {
@@ -972,8 +1005,10 @@ export default function Composer(props: ComposerProps) {
 
   const sendDraft = async (options: ComposerSendOptions = {}) => {
     if (options.sendNow && sendNowPending()) return;
+    options = { ...options, sendTraceId: options.sendTraceId ?? makeComposerSendTraceId() };
 
     recordSendTrace("sendDraft:start", {
+      sendTraceId: options.sendTraceId,
       busy: props.busy,
       streaming: props.isStreaming,
       sendNow: options.sendNow,
@@ -1009,6 +1044,7 @@ export default function Composer(props: ComposerProps) {
     setSlashOpen(false);
     setSlashQuery("");
     recordSendTrace("sendDraft:onSend", {
+      sendTraceId: options.sendTraceId,
       textLength: text.length,
       attachmentCount: draft.attachments.length,
       sendNow: options.sendNow,
@@ -1022,6 +1058,7 @@ export default function Composer(props: ComposerProps) {
       setSending(false);
       if (options.sendNow) setSendNowPending(false);
       recordSendTrace("sendDraft:onSend:error", {
+        sendTraceId: options.sendTraceId,
         message: error instanceof Error ? error.message : String(error),
         sendNow: options.sendNow,
         source: options.source,
@@ -1047,6 +1084,7 @@ export default function Composer(props: ComposerProps) {
       sent = await sendPromise;
     } catch (error) {
       recordSendTrace("sendDraft:onSend:error", {
+        sendTraceId: options.sendTraceId,
         message: error instanceof Error ? error.message : String(error),
         sendNow: options.sendNow,
         source: options.source,
@@ -1055,6 +1093,7 @@ export default function Composer(props: ComposerProps) {
       if (options.sendNow) setSendNowPending(false);
     }
     recordSendTrace("sendDraft:onSend:result", {
+      sendTraceId: options.sendTraceId,
       sent,
       busy: props.busy,
       streaming: props.isStreaming,

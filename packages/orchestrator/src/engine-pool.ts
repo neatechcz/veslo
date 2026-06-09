@@ -132,6 +132,15 @@ export type EnginePoolDeps = {
   healthCheck?: (baseUrl: string) => Promise<void>;
   /** F2Ú5 — observability callback. Pool calls after every state transition. */
   onEngineChange?: (workspaceId: string, event: EngineEvent) => void;
+  /**
+   * Returns true when the workspace has an active run (submitted/running/
+   * blocked in the run registry). Engines with active work are skipped by
+   * both LRU eviction and the idle sweep - a generating engine produces no
+   * new proxy traffic (the SSE stream is one long request), so
+   * `lastActivityAt` alone misclassifies it as idle. Must be cheap and
+   * synchronous; errors are treated as "no active work".
+   */
+  hasActiveWork?: (workspaceId: string) => boolean;
 };
 
 export type EnginePoolConfig = {
@@ -188,6 +197,7 @@ export type EnginePoolInput = {
 type ResolvedDepsWithEvents = ResolvedDeps & {
   healthCheck?: (baseUrl: string) => Promise<void>;
   onEngineChange?: (workspaceId: string, event: EngineEvent) => void;
+  hasActiveWork?: (workspaceId: string) => boolean;
 };
 
 export class EnginePool {
@@ -227,6 +237,7 @@ export class EnginePool {
         deps.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms))),
       healthCheck: deps.healthCheck,
       onEngineChange: deps.onEngineChange,
+      hasActiveWork: deps.hasActiveWork,
     };
     this.config = { ...DEFAULT_ENGINE_POOL_CONFIG, ...input.config };
     this.startBackgroundLoops();
@@ -489,6 +500,26 @@ export class EnginePool {
    * The orchestrator then reports "Unable to connect" on every subsequent
    * request because the engine is killed before the SDK client can talk to it.
    */
+  /**
+   * True when the run registry reports active work for the workspace. Used to
+   * keep the idle sweep and LRU eviction away from engines that are mid-run:
+   * a generating engine holds one long SSE request and produces no fresh
+   * proxy traffic, so `lastActivityAt` alone cannot tell busy from idle.
+   * A throwing or missing `hasActiveWork` dep means "not protected".
+   */
+  private hasActiveWork(workspaceId: string): boolean {
+    if (!this.deps.hasActiveWork) return false;
+    try {
+      return this.deps.hasActiveWork(workspaceId);
+    } catch (err) {
+      this.deps.log?.("active-work probe failed", {
+        workspaceId,
+        error: String(err),
+      });
+      return false;
+    }
+  }
+
   private runIdleSweep(): void {
     if (this.config.idleSuspendMs <= 0) return;
     const now = this.deps.now();
@@ -496,6 +527,12 @@ export class EnginePool {
     for (const engine of this.engines.values()) {
       if (engine.state !== "ready") continue;
       if (now - engine.lastActivityAt <= this.config.idleSuspendMs) continue;
+      if (this.hasActiveWork(engine.workspaceId)) {
+        this.deps.log?.("engine idle by lastActivityAt but has active run, skipping suspend", {
+          workspaceId: engine.workspaceId,
+        });
+        continue;
+      }
       idsToSuspend.push(engine.workspaceId);
     }
     if (idsToSuspend.length === 0) return;
@@ -531,6 +568,7 @@ export class EnginePool {
         if (engine.workspaceId === excludeWorkspaceId) continue;
         if (engine.state !== "ready" && engine.state !== "idle") continue;
         if (now - engine.lastActivityAt < this.config.lruActivityGuardMs) continue;
+        if (this.hasActiveWork(engine.workspaceId)) continue;
         if (!best || engine.lastActivityAt < best.lastActivityAt) best = engine;
       }
       return best;

@@ -65,4 +65,45 @@ describe("run store", () => {
       startedAt: 1_100,
     }))).toThrow();
   });
+
+  test("hasActiveForWorkspace finds only recent active workspace runs", async () => {
+    const store = await createTempStore();
+    store.insert(record({
+      runId: "old-active",
+      conversationId: "conv-old",
+      engineSessionId: "sess-old",
+      createdAt: 1_000,
+      status: "running",
+    }));
+    store.insert(record({
+      runId: "recent-terminal",
+      conversationId: "conv-terminal",
+      engineSessionId: "sess-terminal",
+      createdAt: 3_000,
+      status: "completed",
+      completedAt: 3_500,
+    }));
+    store.insert(record({
+      runId: "other-workspace",
+      workspaceId: "ws-b",
+      conversationId: "conv-b",
+      engineSessionId: "sess-b",
+      createdAt: 4_000,
+      status: "running",
+    }));
+
+    expect(store.hasActiveForWorkspace("ws-a", 2_000)).toBe(false);
+
+    store.insert(record({
+      runId: "recent-active",
+      conversationId: "conv-recent",
+      engineSessionId: "sess-recent",
+      createdAt: 5_000,
+      status: "submitted",
+    }));
+
+    expect(store.hasActiveForWorkspace("ws-a", 2_000)).toBe(true);
+    expect(store.hasActiveForWorkspace("ws-b", 2_000)).toBe(true);
+    expect(store.hasActiveForWorkspace("missing", 0)).toBe(false);
+  });
 });

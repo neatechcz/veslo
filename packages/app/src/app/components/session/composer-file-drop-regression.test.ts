@@ -122,7 +122,7 @@ test("oversized pasted or dropped files become file references instead of attach
 test("pasted files ask Tauri for native clipboard paths before large-file handling", () => {
   assert.match(
     source,
-    /import \{ readClipboardFilePaths \} from "\.\.\/\.\.\/lib\/tauri";/,
+    /import \{[^}]*readClipboardFilePaths[^}]*\} from "\.\.\/\.\.\/lib\/tauri";/s,
     "composer should import the desktop clipboard file-path bridge",
   );
 

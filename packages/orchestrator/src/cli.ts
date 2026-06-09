@@ -2064,6 +2064,36 @@ function resolveLegacyBunCacheEntry(pkg: string, version: string): string {
   return join(process.env.HOME ?? "", ".bun", "install", "cache", pkg, `${version}@@@1`);
 }
 
+async function resolveNodeModulePackageDir(pkg: string, version: string): Promise<string | null> {
+  const packagePath = pkg.split("/");
+  const startDirs = new Set<string>([
+    dirname(fileURLToPath(import.meta.url)),
+    process.cwd(),
+    dirname(process.execPath),
+  ]);
+
+  for (const startDir of startDirs) {
+    let current = startDir;
+    while (true) {
+      const candidates = [
+        join(current, "node_modules", ...packagePath),
+        join(current, "packages", "orchestrator", "node_modules", ...packagePath),
+      ];
+      for (const candidate of candidates) {
+        const packageJson = join(candidate, "package.json");
+        const installedVersion = await readPackageJsonVersion(candidate);
+        if (installedVersion === version && (await pathExists(packageJson))) {
+          return realpath(candidate);
+        }
+      }
+      const next = dirname(current);
+      if (next === current) break;
+      current = next;
+    }
+  }
+  return null;
+}
+
 async function vendorBunCachePackage(
   pkg: string,
   version: string,
@@ -2080,6 +2110,30 @@ async function vendorBunCachePackage(
   await mkdir(destDir, { recursive: true });
   await copyDirRecursive(cacheRoot, destDir);
   return true;
+}
+
+async function vendorNodeModulePackage(
+  pkg: string,
+  version: string,
+  destNodeModules: string,
+): Promise<boolean> {
+  const packageRoot = await resolveNodeModulePackageDir(pkg, version);
+  if (!packageRoot) return false;
+  const destDir = join(destNodeModules, pkg);
+  await rm(destDir, { recursive: true, force: true });
+  await mkdir(destDir, { recursive: true });
+  await copyDirRecursive(packageRoot, destDir);
+  return true;
+}
+
+async function vendorManagedPackage(
+  pkg: string,
+  version: string,
+  destNodeModules: string,
+): Promise<"bun-cache" | "node-modules" | null> {
+  if (await vendorBunCachePackage(pkg, version, destNodeModules)) return "bun-cache";
+  if (await vendorNodeModulePackage(pkg, version, destNodeModules)) return "node-modules";
+  return null;
 }
 
 async function writeManagedPluginFallback(pluginDir: string): Promise<void> {
@@ -2111,29 +2165,38 @@ async function ensureOpencodeManagedTools(configDir: string): Promise<void> {
   // Vendor @opencode-ai/plugin (preferred: from Bun cache; fallback: hand-rolled shim).
   const pluginDir = join(nodeModulesDir, "@opencode-ai", "plugin");
   const existingPluginVersion = await readPackageJsonVersion(pluginDir);
-  if (!existingPluginVersion || existingPluginVersion === "0.0.0-veslo-managed") {
+  if (existingPluginVersion !== VESLO_MANAGED_PLUGIN_VERSION) {
     await mkdir(join(nodeModulesDir, "@opencode-ai"), { recursive: true });
-    const ok = await vendorBunCachePackage(
+    const source = await vendorManagedPackage(
       "@opencode-ai/plugin",
       VESLO_MANAGED_PLUGIN_VERSION,
       nodeModulesDir,
     );
-    if (!ok) {
+    if (!source) {
       console.warn(
-        `[veslo-orchestrator] Bun cache miss for @opencode-ai/plugin@${VESLO_MANAGED_PLUGIN_VERSION}; using minimal zod-backed plugin shim.`,
+        `[veslo-orchestrator] could not find @opencode-ai/plugin@${VESLO_MANAGED_PLUGIN_VERSION} in Bun cache or node_modules; using minimal zod-backed plugin shim.`,
       );
       await writeManagedPluginFallback(pluginDir);
+    } else {
+      console.log(
+        `[veslo-orchestrator] vendored @opencode-ai/plugin@${VESLO_MANAGED_PLUGIN_VERSION} from ${source}.`,
+      );
     }
   }
 
   // Vendor zod (only used when the real plugin from cache is in place; cheap to
   // skip the copy if the destination already exists).
   const zodDir = join(nodeModulesDir, "zod");
-  if (!(await pathExists(join(zodDir, "package.json")))) {
-    const ok = await vendorBunCachePackage("zod", VESLO_MANAGED_ZOD_VERSION, nodeModulesDir);
-    if (!ok) {
+  const existingZodVersion = await readPackageJsonVersion(zodDir);
+  if (existingZodVersion !== VESLO_MANAGED_ZOD_VERSION) {
+    const source = await vendorManagedPackage("zod", VESLO_MANAGED_ZOD_VERSION, nodeModulesDir);
+    if (!source) {
       console.warn(
-        `[veslo-orchestrator] Bun cache miss for zod@${VESLO_MANAGED_ZOD_VERSION}; the @opencode-ai/plugin shim will be used instead.`,
+        `[veslo-orchestrator] could not find zod@${VESLO_MANAGED_ZOD_VERSION} in Bun cache or node_modules; the @opencode-ai/plugin shim will be used instead.`,
+      );
+    } else {
+      console.log(
+        `[veslo-orchestrator] vendored zod@${VESLO_MANAGED_ZOD_VERSION} from ${source}.`,
       );
     }
   }
@@ -3934,6 +3997,17 @@ async function runRouterDaemon(args: ParsedArgs) {
   // after `pool` is constructed.
   let persistEngines: () => void = () => {};
 
+  const runStore = createRunStore({
+    dbPath: join(dataDir, "conversations", "runs.sqlite"),
+  });
+
+  // Engines whose workspace has an active run created within this window are
+  // protected from idle suspend and LRU eviction. The bound keeps an orphaned
+  // "running" record (engine died before reaching a terminal status) from
+  // shielding an idle engine forever; register/get reconcile such records via
+  // the run-activity probe, the sweeps do not.
+  const ACTIVE_RUN_PROTECTION_WINDOW_MS = 2 * 60 * 60_000;
+
   const pool = new EnginePool({
     deps: {
       resolveWorkspace: async (ws) => {
@@ -3976,13 +4050,18 @@ async function runRouterDaemon(args: ParsedArgs) {
       },
       waitForHealthy: async (baseUrl) => {
         const client = createOpencodeClient({ baseUrl, headers: authHeaders });
-        // Keep the proxy interactive: if OpenCode does not become healthy
-        // promptly, surface a concrete 502 instead of holding the caller for
-        // a minute and hiding the real failing step behind the UI spinner.
+        // Upper bound for a cold engine start. Sandboxed cold starts
+        // (sandbox-exec on macOS, WSL2 + bwrap on Windows) routinely need
+        // 30-60s for sandbox init + Bun JIT + SQLite migrations - see the
+        // synchronous /workspaces/:id/activate handler, which deliberately
+        // blocks on this. A shorter limit does not make startup faster; it
+        // kills a starting engine and forces the next attempt to begin from
+        // scratch, so every retry pays the full cold-start cost again.
+        // Healthy engines respond in the first few polls regardless.
         const timeoutMs = (() => {
           const raw = process.env.VESLO_OPENCODE_HEALTH_TIMEOUT_MS;
           const parsed = raw ? Number.parseInt(raw, 10) : NaN;
-          return Number.isFinite(parsed) && parsed >= 1_000 ? parsed : 12_000;
+          return Number.isFinite(parsed) && parsed >= 1_000 ? parsed : 60_000;
         })();
         await waitForOpencodeHealthy(client, timeoutMs, 250, logger, { baseUrl }, { baseUrl, headers: authHeaders });
       },
@@ -4001,13 +4080,12 @@ async function runRouterDaemon(args: ParsedArgs) {
         logger.info("engine event", { workspaceId, event }, "engine-pool");
         persistEngines();
       },
+      hasActiveWork: (workspaceId) =>
+        runStore.hasActiveForWorkspace(workspaceId, Date.now() - ACTIVE_RUN_PROTECTION_WINDOW_MS),
     },
     config: { maxEngines, idleSuspendMs },
   });
 
-  const runStore = createRunStore({
-    dbPath: join(dataDir, "conversations", "runs.sqlite"),
-  });
   const buildEngineRequest = (
     engine: EngineProcess,
     input: {

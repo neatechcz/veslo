@@ -52,6 +52,14 @@ function createMemoryRunStore(): RunStore {
         )
         .sort((a, b) => b.createdAt - a.createdAt)[0] ?? null;
     },
+
+    hasActiveForWorkspace(workspaceId, createdSince) {
+      return [...records.values()].some((record) =>
+        record.workspaceId === workspaceId &&
+        isActiveRunStatus(record.status) &&
+        record.createdAt >= createdSince
+      );
+    },
   };
 }
 
