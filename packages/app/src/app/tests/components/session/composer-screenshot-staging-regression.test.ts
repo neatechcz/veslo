@@ -30,7 +30,7 @@ test("staging failure blocks send with an explicit error and no draft clear", ()
 
 test("send flow snapshots pending draft context before materializing a real session", () => {
   const sendStart = appSource.indexOf("async function sendPrompt");
-  const sessionTarget = appSource.indexOf("let sessionID = options.targetSessionId?.trim() || selectedSessionId();", sendStart);
+  const sessionTarget = appSource.indexOf("let sessionID = isPendingSessionInstanceId(options.targetSessionId)", sendStart);
   const pendingSnapshot = appSource.indexOf("const pendingDraftSendState = (() => {", sessionTarget);
   const pendingKey = appSource.indexOf("const pendingDraftKey = (activePendingDraftKey() ?? \"\").trim();", pendingSnapshot);
   const sessionCreate = appSource.indexOf(

@@ -213,7 +213,7 @@ test("app routes selected session browsing through DB scope", () => {
 test("app activates selected session workspace at send time, not browse time", () => {
   assert.match(
     workspaceSendTargetSource,
-    /const transcriptScope = options\.resolveSessionSendTargetScope\(sessionId\);[\s\S]*options\.sendTraceStep\(\s*"sendPrompt:activate-scoped-workspace-call",[\s\S]*options\.activateWorkspace\(targetWorkspaceId\)/s,
+    /const transcriptScope = options\.resolveSelectedSessionBrowseScope[\s\S]*\? options\.resolveSelectedSessionBrowseScope\(sessionId\)[\s\S]*: options\.resolveSessionSendTargetScope\(sessionId\);[\s\S]*options\.sendTraceStep\(\s*"sendPrompt:activate-scoped-workspace-call",[\s\S]*options\.activateWorkspace\(targetWorkspaceId\)/s,
     "send path should activate the workspace from the selected session scope",
   );
   assert.match(

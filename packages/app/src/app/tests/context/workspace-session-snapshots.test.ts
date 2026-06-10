@@ -64,3 +64,31 @@ test("initial workspace load only loads the active workspace snapshot", () => {
     },
   );
 });
+
+test("selected session scope changes inside the same active workspace do not reload snapshot", () => {
+  assert.deepEqual(
+    resolveWorkspaceSessionSnapshotAction({
+      previousWorkspaceId: "ws-a",
+      activeWorkspaceId: "ws-a",
+      selectedScopeWorkspaceId: null,
+    }),
+    {
+      saveWorkspaceId: null,
+      loadWorkspaceId: null,
+      nextPreviousWorkspaceId: "ws-a",
+    },
+  );
+
+  assert.deepEqual(
+    resolveWorkspaceSessionSnapshotAction({
+      previousWorkspaceId: "ws-a",
+      activeWorkspaceId: "ws-a",
+      selectedScopeWorkspaceId: "ws-b",
+    }),
+    {
+      saveWorkspaceId: null,
+      loadWorkspaceId: null,
+      nextPreviousWorkspaceId: "ws-a",
+    },
+  );
+});

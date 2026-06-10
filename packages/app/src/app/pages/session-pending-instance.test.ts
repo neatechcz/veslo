@@ -450,7 +450,7 @@ test("clicking a pending sidebar row opens the local pending session without tra
 
   assert.match(
     openSource,
-    /if \(isPendingSessionInstanceId\(sessionId\)\) \{[\s\S]*const openPendingSidebarSession = \(nextSessionId: string\) => \{[\s\S]*props\.setSessionBrowseScope\(\{[\s\S]*sessionId: nextSessionId,[\s\S]*workspaceId,[\s\S]*workspaceRoot,[\s\S]*directory: session\?\.directory \?\? workspaceRoot,[\s\S]*conversationId: null,[\s\S]*opencodeSessionId: null,[\s\S]*\}\);[\s\S]*props\.setPendingSessionLoad\(null\);[\s\S]*props\.setView\("session", nextSessionId\);[\s\S]*\};[\s\S]*openPendingSidebarSession\(sessionId\);[\s\S]*void openSessionWithWorkspaceActivation\(\{[\s\S]*activateWorkspaceBeforeOpen: true,[\s\S]*openSession: openPendingSidebarSession,[\s\S]*\}\)/,
+    /if \(isPendingSessionInstanceId\(sessionId\)\) \{[\s\S]*const openPendingSidebarSession = \(nextSessionId: string\) => \{[\s\S]*props\.setSessionBrowseScope\(\{[\s\S]*sessionId: nextSessionId,[\s\S]*workspaceId,[\s\S]*workspaceRoot,[\s\S]*directory: session\?\.directory \?\? workspaceRoot,[\s\S]*conversationId: null,[\s\S]*opencodeSessionId: null,[\s\S]*\}\);[\s\S]*props\.setView\("session", nextSessionId\);[\s\S]*\};[\s\S]*openPendingSidebarSession\(sessionId\);[\s\S]*void openSessionWithWorkspaceActivation\(\{[\s\S]*activateWorkspaceBeforeOpen: true,[\s\S]*openSession: openPendingSidebarSession,[\s\S]*\}\)/,
     "pending sidebar rows should bind and route to the local pending id before any async workspace activation",
   );
   assert.doesNotMatch(

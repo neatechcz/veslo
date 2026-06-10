@@ -32,6 +32,8 @@ import type { WorkspaceRouting } from "./workspace-routing";
 import type { WorkspaceStore } from "./workspace";
 
 type SidebarWorkspaceSessionsStatus = WorkspaceSessionGroup["status"];
+type SidebarSessionsByWorkspaceId = Record<string, SidebarSessionItem[]>;
+type SidebarStatusByWorkspaceId = Record<string, SidebarWorkspaceSessionsStatus>;
 
 type ConversationReadResult = {
   items: Session[];
@@ -121,6 +123,99 @@ const sidebarSessionItemsEqual = (left: SidebarSessionItem[], right: SidebarSess
   }
   return true;
 };
+
+export const removeSidebarSessionFromWorkspaceRows = (
+  current: SidebarSessionsByWorkspaceId,
+  workspaceId: string,
+  sessionId: string,
+): SidebarSessionsByWorkspaceId => {
+  const id = workspaceId.trim();
+  const targetSessionId = sessionId.trim();
+  if (!id || !targetSessionId) return current;
+  const currentRows = current[id] ?? [];
+  const nextRows = currentRows.filter((session) => session.id !== targetSessionId);
+  if (nextRows.length === currentRows.length) return current;
+  return { ...current, [id]: nextRows };
+};
+
+export const replaceSidebarWorkspaceSessionRows = (input: {
+  sessionsByWorkspaceId: SidebarSessionsByWorkspaceId;
+  statusByWorkspaceId: SidebarStatusByWorkspaceId;
+  workspaceId: string;
+  items: SidebarSessionItem[];
+}) => {
+  const workspaceId = input.workspaceId.trim();
+  if (!workspaceId) {
+    return {
+      sessionsByWorkspaceId: input.sessionsByWorkspaceId,
+      statusByWorkspaceId: input.statusByWorkspaceId,
+    };
+  }
+  return {
+    sessionsByWorkspaceId: { ...input.sessionsByWorkspaceId, [workspaceId]: input.items },
+    statusByWorkspaceId: { ...input.statusByWorkspaceId, [workspaceId]: "ready" as const },
+  };
+};
+
+export const prependSidebarSessionToWorkspaceRows = (
+  current: SidebarSessionsByWorkspaceId,
+  workspaceId: string,
+  item: SidebarSessionItem,
+): SidebarSessionsByWorkspaceId => {
+  const id = workspaceId.trim();
+  const sessionId = item.id.trim();
+  if (!id || !sessionId) return current;
+  const currentRows = current[id] ?? [];
+  if (currentRows.some((session) => session.id === sessionId)) return current;
+  return { ...current, [id]: [item, ...currentRows] };
+};
+
+export const materializePendingSidebarSessionRows = (input: {
+  current: SidebarSessionsByWorkspaceId;
+  workspaceId: string;
+  pendingSessionInstanceId?: string | null;
+  item: SidebarSessionItem;
+}): SidebarSessionsByWorkspaceId => {
+  const id = input.workspaceId.trim();
+  const sessionId = input.item.id.trim();
+  if (!id || !sessionId) return input.current;
+  const pendingSessionInstanceId =
+    input.pendingSessionInstanceId?.trim() || input.item.pendingSessionInstanceId?.trim() || "";
+  const currentRows = input.current[id] ?? [];
+  const nextRows = currentRows.filter((session) => {
+    if (session.id === sessionId) return false;
+    if (!pendingSessionInstanceId) return true;
+    return session.id !== pendingSessionInstanceId && session.pendingSessionInstanceId !== pendingSessionInstanceId;
+  });
+  return { ...input.current, [id]: [input.item, ...nextRows] };
+};
+
+export const moveSidebarSessionBetweenWorkspaceRows = (input: {
+  current: SidebarSessionsByWorkspaceId;
+  sourceWorkspaceId?: string | null;
+  targetWorkspaceId: string;
+  item: SidebarSessionItem;
+}): SidebarSessionsByWorkspaceId => {
+  const sourceWorkspaceId = input.sourceWorkspaceId?.trim() ?? "";
+  const targetWorkspaceId = input.targetWorkspaceId.trim();
+  const sessionId = input.item.id.trim();
+  if (!targetWorkspaceId || !sessionId) return input.current;
+  const sourceRows = sourceWorkspaceId
+    ? (input.current[sourceWorkspaceId] ?? []).filter((session) => session.id !== sessionId)
+    : undefined;
+  const targetRows = (input.current[targetWorkspaceId] ?? []).filter((session) => session.id !== sessionId);
+  return {
+    ...input.current,
+    ...(sourceWorkspaceId ? { [sourceWorkspaceId]: sourceRows ?? [] } : {}),
+    [targetWorkspaceId]: [input.item, ...targetRows],
+  };
+};
+
+export const ensureSidebarSessionInWorkspaceRows = (
+  current: SidebarSessionsByWorkspaceId,
+  workspaceId: string,
+  item: SidebarSessionItem,
+): SidebarSessionsByWorkspaceId => prependSidebarSessionToWorkspaceRows(current, workspaceId, item);
 
 export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessionsOptions) {
   const [sidebarSessionsByWorkspaceId, setSidebarSessionsByWorkspaceId] = createSignal<
@@ -488,6 +583,64 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
     }
   };
 
+  const removeSessionFromWorkspaceSidebar = (workspaceId: string, sessionId: string) => {
+    setSidebarSessionsByWorkspaceId((prev) =>
+      removeSidebarSessionFromWorkspaceRows(prev, workspaceId, sessionId),
+    );
+  };
+
+  const replaceWorkspaceSidebarSessions = (workspaceId: string, items: SidebarSessionItem[]) => {
+    setSidebarSessionsByWorkspaceId((sessionsPrev) => {
+      const statusPrev = untrack(sidebarSessionStatusByWorkspaceId);
+      const next = replaceSidebarWorkspaceSessionRows({
+        sessionsByWorkspaceId: sessionsPrev,
+        statusByWorkspaceId: statusPrev,
+        workspaceId,
+        items,
+      });
+      setSidebarSessionStatusByWorkspaceId(next.statusByWorkspaceId);
+      return next.sessionsByWorkspaceId;
+    });
+  };
+
+  const markWorkspaceSidebarLoading = (workspaceId: string) => {
+    const id = workspaceId.trim();
+    if (!id) return;
+    setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "loading" as const }));
+  };
+
+  const prependSessionToWorkspaceSidebar = (workspaceId: string, item: SidebarSessionItem) => {
+    setSidebarSessionsByWorkspaceId((prev) => prependSidebarSessionToWorkspaceRows(prev, workspaceId, item));
+    const id = workspaceId.trim();
+    if (id) {
+      setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" as const }));
+    }
+  };
+
+  const materializePendingSessionInWorkspaceSidebar = (input: {
+    workspaceId: string;
+    pendingSessionInstanceId?: string | null;
+    item: SidebarSessionItem;
+  }) => {
+    setSidebarSessionsByWorkspaceId((prev) => materializePendingSidebarSessionRows({ current: prev, ...input }));
+    const id = input.workspaceId.trim();
+    if (id) {
+      setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" as const }));
+    }
+  };
+
+  const moveSessionBetweenWorkspaceSidebars = (input: {
+    sourceWorkspaceId?: string | null;
+    targetWorkspaceId: string;
+    item: SidebarSessionItem;
+  }) => {
+    setSidebarSessionsByWorkspaceId((prev) => moveSidebarSessionBetweenWorkspaceRows({ current: prev, ...input }));
+  };
+
+  const ensureSessionInWorkspaceSidebar = (workspaceId: string, item: SidebarSessionItem) => {
+    setSidebarSessionsByWorkspaceId((prev) => ensureSidebarSessionInWorkspaceRows(prev, workspaceId, item));
+  };
+
   let sidebarBulkRefreshInFlight: Promise<void> | null = null;
 
   const refreshAllSidebarWorkspaceSessions = async (prioritizeWorkspaceId?: string | null) => {
@@ -757,13 +910,18 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
 
   return {
     sidebarSessionsByWorkspaceId,
-    setSidebarSessionsByWorkspaceId,
-    setSidebarSessionStatusByWorkspaceId,
     sidebarWorkspaceGroups,
     workspaceSessionPagingById,
     clearStaleWorkspaceSessionError,
     refreshSidebarWorkspaceSessions,
     loadMoreWorkspaceSidebarSessions,
     publishRegisteredWorkspaceToSidebar,
+    markWorkspaceSidebarLoading,
+    replaceWorkspaceSidebarSessions,
+    removeSessionFromWorkspaceSidebar,
+    prependSessionToWorkspaceSidebar,
+    materializePendingSessionInWorkspaceSidebar,
+    moveSessionBetweenWorkspaceSidebars,
+    ensureSessionInWorkspaceSidebar,
   };
 }

@@ -250,7 +250,6 @@ import {
 } from "./utils";
 import { isFileDragTransfer } from "./utils/data-transfer-files";
 import { createStartupGuard } from "./utils/startup-guard";
-import { computeWorkspaceSwitchOverlayHoldMs } from "./utils/workspace-switch-overlay";
 import {
   parseAuthCompleteDeepLink,
   clearDenAuth,
@@ -300,6 +299,7 @@ import { createExtensionsStore } from "./context/extensions";
 import { useGlobalSync } from "./context/global-sync";
 import { createWorkspaceStore } from "./context/workspace";
 import { WorkspaceServerSync } from "./context/workspace-server-sync";
+import { createWorkspaceSwitchOverlayState } from "./context/workspace-switch-overlay-state";
 import {
   createWorkspaceRouting,
   isWorkspaceClientStaleError,
@@ -1489,12 +1489,6 @@ export default function App() {
   const [activePendingDraftKey, setActivePendingDraftKey] = createSignal<string | null>(null);
   const [activePendingDraftMeta, setActivePendingDraftMeta] = createSignal<PendingSessionDraftSummary | null>(null);
   const [activePendingDraftStorageReady, setActivePendingDraftStorageReady] = createSignal(false);
-  const [pendingSessionLoad, setPendingSessionLoad] = createSignal<{
-    sessionId: string;
-    workspaceId: string;
-    sessionTitle: string;
-    workspaceName: string;
-  } | null>(null);
   const workspaceSessionSelection = createWorkspaceSessionSelection({
     activeWorkspaceId: () => workspaceStoreRef?.activeWorkspaceId() ?? "",
     activeWorkspaceRoot: () => workspaceStoreRef?.activeWorkspaceRoot().trim() ?? "",
@@ -4102,10 +4096,7 @@ export default function App() {
     setSessions(sessions().filter((s) => s.id !== trimmed));
     setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, trimmed));
     const sidebarWorkspaceId = workspace?.id ?? workspaceStore.activeWorkspaceId();
-    setSidebarSessionsByWorkspaceId((prev) => ({
-      ...prev,
-      [sidebarWorkspaceId]: (prev[sidebarWorkspaceId] ?? []).filter((s) => s.id !== trimmed),
-    }));
+    removeSessionFromWorkspaceSidebar(sidebarWorkspaceId, trimmed);
 
     // If we're currently routed to the deleted session, navigate away immediately.
     // (Otherwise the route effect can try to re-select a session that no longer exists.)
@@ -4812,13 +4803,12 @@ export default function App() {
     populateSidebarFromDb: async (workspaceId: string, directory: string) => {
       // Set status to "loading" SYNCHRONOUSLY before any await, so the idle-loader
       // effect (line ~2964) doesn't fire and try to contact the engine API.
-      setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [workspaceId]: "loading" as const }));
+      markWorkspaceSidebarLoading(workspaceId);
       const result = await listConversationsFromVesloReadApi(workspaceId, directory);
       const { visible: items } = partitionVesloUtilitySessions(
         result.items.map(applyPendingInitialSessionTitle),
       );
-      setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [workspaceId]: items }));
-      setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [workspaceId]: "ready" as const }));
+      replaceWorkspaceSidebarSessions(workspaceId, items);
     },
     hydrateLatestSessionFromDb: async (workspaceId: string, directory: string) => {
       const result = await listConversationsFromVesloReadApi(workspaceId, directory);
@@ -4846,6 +4836,7 @@ export default function App() {
     activePendingDraftMeta,
     resolveWorkspaceRoot: workspaceRootForId,
     resolveSessionSendTargetScope: workspaceSessionSelection.resolveSendTargetWorkspaceScope,
+    resolveSelectedSessionBrowseScope,
     activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
     activateWorkspace: (workspaceId) => workspaceStore.activateWorkspace(workspaceId),
     recordSendTrace,
@@ -5130,15 +5121,19 @@ export default function App() {
     wsDebug,
   });
   const {
-    sidebarSessionsByWorkspaceId,
-    setSidebarSessionsByWorkspaceId,
-    setSidebarSessionStatusByWorkspaceId,
     sidebarWorkspaceGroups,
     workspaceSessionPagingById,
     clearStaleWorkspaceSessionError,
     refreshSidebarWorkspaceSessions,
     loadMoreWorkspaceSidebarSessions,
     publishRegisteredWorkspaceToSidebar,
+    markWorkspaceSidebarLoading,
+    replaceWorkspaceSidebarSessions,
+    removeSessionFromWorkspaceSidebar,
+    prependSessionToWorkspaceSidebar,
+    materializePendingSessionInWorkspaceSidebar,
+    moveSessionBetweenWorkspaceSidebars,
+    ensureSessionInWorkspaceSidebar,
   } = sidebarWorkspaceSessions;
 
   const pendingSidebarSessionToItem = (pending: PendingSidebarSessionMetadata): SidebarSessionItem => ({
@@ -5159,44 +5154,7 @@ export default function App() {
     const pendingId = pending.id.trim();
     if (!workspaceId || !pendingId) return;
     const pendingItem = pendingSidebarSessionToItem(pending);
-    setSidebarSessionsByWorkspaceId((prev) => {
-      const current = prev[workspaceId] ?? [];
-      if (current.some((item) => item.id === pendingId)) return prev;
-      return {
-        ...prev,
-        [workspaceId]: [pendingItem, ...current],
-      };
-    });
-    setSidebarSessionStatusByWorkspaceId((prev) => ({
-      ...prev,
-      [workspaceId]: "ready",
-    }));
-  };
-
-  const materializePendingSidebarSession = (
-    workspaceId: string,
-    pending: PendingSidebarSessionMetadata | null | undefined,
-    item: SidebarSessionItem,
-  ) => {
-    const wsId = workspaceId.trim();
-    if (!wsId) return;
-    const pendingId = pending?.id?.trim() ?? "";
-    setSidebarSessionsByWorkspaceId((prev) => {
-      const current = prev[wsId] ?? [];
-      const withoutPending = current.filter((entry) => {
-        if (entry.id === item.id) return false;
-        if (!pendingId) return true;
-        return entry.id !== pendingId && entry.pendingSessionInstanceId !== pendingId;
-      });
-      return {
-        ...prev,
-        [wsId]: [item, ...withoutPending],
-      };
-    });
-    setSidebarSessionStatusByWorkspaceId((prev) => ({
-      ...prev,
-      [wsId]: "ready",
-    }));
+    prependSessionToWorkspaceSidebar(workspaceId, pendingItem);
   };
 
   const handleActivateWorkspace: typeof workspaceStore.activateWorkspace = (workspaceId, options) => {
@@ -5729,7 +5687,6 @@ export default function App() {
       if (selectedSessionId() !== id) {
         setSelectedSessionId(id);
       }
-      setPendingSessionLoad(null);
       return;
     }
 
@@ -8827,7 +8784,11 @@ export default function App() {
         targetWorkspace?.workspaceId ||
         (workspaceStore.connectingWorkspaceId() ?? workspaceStore.activeWorkspaceId()).trim();
       if (wsId) {
-        materializePendingSidebarSession(wsId, pendingSidebarSession, newItem);
+        materializePendingSessionInWorkspaceSidebar({
+          workspaceId: wsId,
+          pendingSessionInstanceId: pendingSidebarSession?.id ?? null,
+          item: newItem,
+        });
       }
 
       // setSessionViewLockUntil(Date.now() + 1200);
@@ -9230,21 +9191,17 @@ export default function App() {
 
       // Optimistically move the session in the sidebar so the user sees
       // immediate feedback. Uses the snapshot captured before activation.
-      setSidebarSessionsByWorkspaceId((prev) => {
-        const sourceList = (prev[sourceWorkspaceId] ?? []).filter((s) => s.id !== sessionID);
-        const movedItem: SidebarSessionItem = {
+      moveSessionBetweenWorkspaceSidebars({
+        sourceWorkspaceId,
+        targetWorkspaceId: targetWorkspace.id,
+        item: {
           id: sessionID,
           title: sessionSnapshot?.title ?? "",
           slug: sessionSnapshot?.slug,
           parentID: sessionSnapshot?.parentID ?? null,
           time: sessionSnapshot?.time,
           directory: targetWorkspace.path,
-        };
-        return {
-          ...prev,
-          [sourceWorkspaceId]: sourceList,
-          [targetWorkspace.id]: [movedItem, ...(prev[targetWorkspace.id] ?? [])],
-        };
+        },
       });
 
       // Navigate and load messages before forgetWorkspace (which may
@@ -9273,18 +9230,13 @@ export default function App() {
       // to find the session, so it should include it. As a safety net,
       // re-ensure the session appears in case the async refresh hasn't
       // completed or failed to find it.
-      setSidebarSessionsByWorkspaceId((prev) => {
-        const existing = prev[targetWorkspace.id] ?? [];
-        if (existing.some((s) => s.id === sessionID)) return prev;
-        const item: SidebarSessionItem = {
+      ensureSessionInWorkspaceSidebar(targetWorkspace.id, {
           id: sessionID,
           title: sessionSnapshot?.title ?? "",
           slug: sessionSnapshot?.slug,
           parentID: sessionSnapshot?.parentID ?? null,
           time: sessionSnapshot?.time,
           directory: targetWorkspace.path,
-        };
-        return { ...prev, [targetWorkspace.id]: [item, ...existing] };
       });
 
       return true;
@@ -10472,99 +10424,17 @@ export default function App() {
     return seconds > 0 ? `${label} · ${seconds}s` : label;
   });
 
-  const workspaceSwitchWorkspace = createMemo(() => {
-    // During boot, don't show any specific workspace in the overlay.
-    if (booting()) return null;
-    const switchingId = workspaceStore.connectingWorkspaceId();
-    if (switchingId) {
-      return workspaceStore.workspaces().find((ws) => ws.id === switchingId) ?? activeWorkspaceDisplay();
-    }
-    return activeWorkspaceDisplay();
-  });
-
-  // Avoid flashing the full-screen switch overlay for fast workspace switches.
-  // Only show it if a switch is still in progress after a short delay and keep
-  // it visible briefly once shown to avoid blinky transitions.
-  const WORKSPACE_SWITCH_OVERLAY_DELAY_MS = 250;
-  const WORKSPACE_SWITCH_OVERLAY_MIN_VISIBLE_MS = 350;
-  const [workspaceSwitchDelayElapsed, setWorkspaceSwitchDelayElapsed] = createSignal(false);
-  const [workspaceSwitchVisibleSinceMs, setWorkspaceSwitchVisibleSinceMs] = createSignal<number | null>(null);
-  const [workspaceSwitchHoldOpen, setWorkspaceSwitchHoldOpen] = createSignal(false);
-
-  // Session loading overlay — shown immediately on session click, hidden after messages load.
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    const switchingId = workspaceStore.connectingWorkspaceId();
-    if (!switchingId) {
-      setWorkspaceSwitchDelayElapsed(false);
-      return;
-    }
-
-    setWorkspaceSwitchDelayElapsed(false);
-    const timer = window.setTimeout(() => setWorkspaceSwitchDelayElapsed(true), WORKSPACE_SWITCH_OVERLAY_DELAY_MS);
-    onCleanup(() => window.clearTimeout(timer));
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    const connecting = Boolean(workspaceStore.connectingWorkspaceId());
-    const shouldShowForSwitch = connecting && workspaceSwitchDelayElapsed();
-
-    // Read visibleSinceMs without tracking — otherwise setting it to null
-    // re-triggers this effect, which cancels the hold-open timer via onCleanup
-    // before it can fire, leaving holdOpen stuck at true forever.
-    const visibleSinceMs = untrack(workspaceSwitchVisibleSinceMs);
-
-    if (shouldShowForSwitch) {
-      setWorkspaceSwitchHoldOpen(false);
-      if (visibleSinceMs === null) {
-        setWorkspaceSwitchVisibleSinceMs(Date.now());
-      }
-      return;
-    }
-
-    if (visibleSinceMs === null) return;
-    setWorkspaceSwitchVisibleSinceMs(null);
-
-    const holdMs = computeWorkspaceSwitchOverlayHoldMs({
-      visibleSinceMs,
-      nowMs: Date.now(),
-      minVisibleMs: WORKSPACE_SWITCH_OVERLAY_MIN_VISIBLE_MS,
-    });
-    if (holdMs <= 0) {
-      setWorkspaceSwitchHoldOpen(false);
-      return;
-    }
-
-    setWorkspaceSwitchHoldOpen(true);
-    const timer = window.setTimeout(() => {
-      setWorkspaceSwitchHoldOpen(false);
-    }, holdMs);
-    onCleanup(() => window.clearTimeout(timer));
-  });
-
-  const workspaceSwitchOpen = createMemo(() => {
-    if (booting()) return true;
-    if (workspaceStore.connectingWorkspaceId()) return workspaceSwitchDelayElapsed();
-    if (workspaceSwitchHoldOpen()) return true;
-    if (!busy() || !busyLabel()) return false;
-    const label = busyLabel();
-    return (
-      label === "status.starting_engine" ||
-      label === "status.restarting_engine"
-    );
-  });
-
-  const workspaceSwitchStatusKey = createMemo(() => {
-    const label = busyLabel();
-    if (label === "status.connecting") return "workspace.switching_status_connecting";
-    if (label === "status.starting_engine" || label === "status.restarting_engine") {
-      return "workspace.switching_status_preparing";
-    }
-    if (label === "status.loading_session") return "workspace.switching_status_loading";
-    if (workspaceStore.connectingWorkspaceId()) return "workspace.switching_status_loading";
-    if (booting()) return "workspace.switching_status_preparing";
-    return "workspace.switching_status_preparing";
+  const {
+    workspaceSwitchWorkspace,
+    workspaceSwitchOpen,
+    workspaceSwitchStatusKey,
+  } = createWorkspaceSwitchOverlayState({
+    booting,
+    connectingWorkspaceId: () => workspaceStore.connectingWorkspaceId(),
+    activeWorkspaceDisplay,
+    workspaces: () => workspaceStore.workspaces(),
+    busy,
+    busyLabel,
   });
 
   const localHostLabel = createMemo(() => {
@@ -11146,8 +11016,6 @@ export default function App() {
     soulStatusByWorkspaceId: soulStatusByWorkspaceId(),
     openRenameWorkspace,
     selectSession: selectSession,
-    pendingSessionLoad: pendingSessionLoad(),
-    setPendingSessionLoad,
     selectedSessionTitle: selectedSessionDisplayTitle(),
     messages: visibleMessages(),
     todos: activeTodos(),
@@ -11347,7 +11215,6 @@ export default function App() {
         if (selectedSessionId() !== id) {
           setSelectedSessionId(id);
         }
-        setPendingSessionLoad(null);
         return;
       }
       // If the URL points at a session that no longer exists (e.g. after deletion),

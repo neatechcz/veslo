@@ -278,20 +278,6 @@ export type SessionViewProps = {
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean;
   openRenameWorkspace: (workspaceId: string) => void;
   selectSession: (sessionId: string) => Promise<void> | void;
-  pendingSessionLoad: {
-    sessionId: string;
-    workspaceId: string;
-    sessionTitle: string;
-    workspaceName: string;
-  } | null;
-  setPendingSessionLoad: (
-    value: {
-      sessionId: string;
-      workspaceId: string;
-      sessionTitle: string;
-      workspaceName: string;
-    } | null,
-  ) => void;
   selectedSessionTitle: string | null;
   messages: MessageWithParts[];
   todos: TodoItem[];
@@ -3884,7 +3870,6 @@ export default function SessionView(props: SessionViewProps) {
           conversationId: null,
           opencodeSessionId: null,
         });
-        props.setPendingSessionLoad(null);
         props.setView("session", nextSessionId);
       };
 

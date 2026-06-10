@@ -13,16 +13,20 @@ test("sendPrompt keeps the session id returned by createSessionAndOpen before pr
   const initialTitleIndex = sendPromptSource.indexOf("const initialSessionTitle = resolvedDraft.text.trim();");
   const createNeededIndex = sendPromptSource.indexOf('recordSendTrace("sendPrompt:create-session-needed"');
   const createCallIndex = sendPromptSource.indexOf("createSessionAndOpen(initialSessionTitle", createNeededIndex);
-  const assignmentIndex = sendPromptSource.indexOf("sessionID = (await sendTraceStep(", createNeededIndex);
+  const createdSessionIdIndex = sendPromptSource.indexOf("const createdSessionId = await sendTraceStep(", createNeededIndex);
+  const materializedSessionIdIndex = sendPromptSource.indexOf("const materializedSessionId = createdSessionId?.trim();", createNeededIndex);
+  const assignmentIndex = sendPromptSource.indexOf("sessionID = materializedSessionId;", createNeededIndex);
   const blockedIndex = sendPromptSource.indexOf('recordSendTrace("sendPrompt:blocked-no-session"', createNeededIndex);
 
   assert.ok(initialTitleIndex >= 0, "sendPrompt should derive the initial session title before creating");
   assert.ok(createNeededIndex > initialTitleIndex, "sendPrompt should decide session creation after initial content checks");
-  assert.ok(assignmentIndex > createNeededIndex, "sendPrompt should assign the create-session result back to sessionID");
-  assert.ok(createCallIndex > assignmentIndex, "sendPrompt should call createSessionAndOpen inside the traced assignment");
+  assert.ok(createdSessionIdIndex > createNeededIndex, "sendPrompt should capture the create-session result");
+  assert.ok(createCallIndex > createdSessionIdIndex, "sendPrompt should call createSessionAndOpen inside the traced creation step");
+  assert.ok(materializedSessionIdIndex > createCallIndex, "sendPrompt should normalize the created session id before prompting");
+  assert.ok(assignmentIndex > materializedSessionIdIndex, "sendPrompt should assign the create-session result back to sessionID");
   assert.ok(blockedIndex > createCallIndex, "sendPrompt should only check for missing session after createSessionAndOpen returns");
   assert.match(
-    sendPromptSource.slice(assignmentIndex, blockedIndex),
+    sendPromptSource.slice(createdSessionIdIndex, blockedIndex),
     /preflight: sendPreflight,/,
     "sendPrompt should pass the preflight context when creating the first session",
   );

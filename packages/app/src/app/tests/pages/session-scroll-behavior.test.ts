@@ -14,7 +14,7 @@ test("session view accepts active pending draft key for pending queue identity",
 
   assert.match(
     source,
-    /`pending-draft:\$\{props\.activePendingDraftKey\}`/,
+    /const pendingDraftKey = props\.activePendingDraftKey\?\.trim\(\);[\s\S]*return `pending-draft:\$\{pendingDraftKey\}`;/,
     "pending sessions should key queues by pending draft identity when available",
   );
 
@@ -28,11 +28,11 @@ test("session view accepts active pending draft key for pending queue identity",
 test("session send flow starts optimistic run UI before prompt handoff resolves", () => {
   const handlerStart = source.indexOf("const sendPromptImmediate = async (");
   const optimisticSet = source.indexOf("createPendingSubmittedDraft({", handlerStart);
-  const startRun = source.indexOf("startRun();", optimisticSet);
-  const sendCall = source.indexOf("props.sendPromptAsync(draft, handoffOptions)", startRun);
+  const startRun = source.indexOf("startRun(sessionKey);", optimisticSet);
+  const sendCall = source.indexOf("props.sendPromptAsync(draft, promptSendOptions)", startRun);
   const rejectedBranch = source.indexOf("if (!accepted) {", sendCall);
   const markFailed = source.indexOf("markMatchingPendingSubmitFailed(errorMessage);", rejectedBranch);
-  const resetRun = source.indexOf("resetRunState();", rejectedBranch);
+  const resetRun = source.indexOf("resetRunState(runStateSessionKeyForHandoffFailure());", rejectedBranch);
   const failedBranchEnd = source.indexOf("setToastMessage(props.error ?? tr(\"session.connect_server_to_attach\"));", rejectedBranch);
   const failedBranch = source.slice(rejectedBranch, failedBranchEnd);
 
@@ -54,7 +54,7 @@ test("session send flow starts optimistic run UI before prompt handoff resolves"
 test("failed handoff marks pending submitted message by immutable submit id", () => {
   assert.match(
     source,
-    /const markMatchingPendingSubmitFailed = \(errorMessage: string\) => \{[\s\S]*setOptimisticSubmittedDraft\(\(current\) => \{[\s\S]*current\?\.id !== pendingSubmitId[\s\S]*const failed = markPendingSubmittedFailed\(current, errorMessage\);[\s\S]*return failed;[\s\S]*\}\);[\s\S]*\};/,
+    /const markMatchingPendingSubmitFailed = \(errorMessage: string\) => \{[\s\S]*Object\.entries\(draftsBySessionKey\)\.find\(\(\[, draft\]\) => draft\.id === pendingSubmitId\)[\s\S]*const failed = markPendingSubmittedFailed\(current, errorMessage\);[\s\S]*return setPendingSubmittedDraftForKey\(draftsBySessionKey, matchingSessionKey, failed\);[\s\S]*\};/,
     "failed handoff should mark the optimistic submitted draft by id so remapped session keys still fail visibly",
   );
 
@@ -68,7 +68,7 @@ test("failed handoff marks pending submitted message by immutable submit id", ()
 test("failed pending handoff restores the pending submit to its original pending draft key after remap", () => {
   assert.match(
     source,
-    /const failed = markPendingSubmittedFailed\(current, errorMessage\);[\s\S]*if \(pendingSessionKeyBeforeHandoff\) \{[\s\S]*return \{ \.\.\.failed, sessionKey: pendingSessionKeyBeforeHandoff, sessionId: null \};[\s\S]*\}[\s\S]*return failed;/s,
+    /const failed = markPendingSubmittedFailed\(current, errorMessage\);[\s\S]*if \(pendingSessionKeyBeforeHandoff\) \{[\s\S]*return setPendingSubmittedDraftForKey\(draftsBySessionKey, pendingSessionKeyBeforeHandoff, \{[\s\S]*\.\.\.failed,[\s\S]*sessionKey: pendingSessionKeyBeforeHandoff,[\s\S]*sessionId: null,[\s\S]*\}\);[\s\S]*\}[\s\S]*return setPendingSubmittedDraftForKey\(draftsBySessionKey, matchingSessionKey, failed\);/s,
     "failed pending handoff should be visible on the restored pending draft route even if session materialization remapped it first",
   );
 });
@@ -102,8 +102,8 @@ test("session renders a temporary submitted user message while footer indicator 
 
   assert.match(
     source,
-    /if \(accepted && showOptimisticSubmit\) \{\s*clearMatchingPendingSubmit\(\);\s*\}/,
-    "accepted handoff should clear only the matching optimistic placeholder so the server transcript owns display",
+    /if \(!submittedDraftHasMessageInTranscript\(submitted\)\) return;[\s\S]*removePendingSubmittedDraftForKey\(current, submitted\.sessionKey, submitted\.id\)/,
+    "accepted handoff should clear the matching optimistic placeholder once the server transcript owns display",
   );
 });
 
@@ -130,7 +130,7 @@ test("failed pending submitted messages become editable only through explicit ac
 
   assert.match(
     source,
-    /handleEditUserMessage[\s\S]*setOptimisticSubmittedDraft\(null\);[\s\S]*props\.setComposerDraft\(pendingEditable\.draft\);/,
+    /handleEditUserMessage[\s\S]*removePendingSubmittedDraftForKey\(current, currentSessionQueueKey\(\), pendingEditable\.messageId\)[\s\S]*props\.setComposerDraft\(pendingEditable\.draft\);/,
     "explicit edit should clear the pending timeline message and load that exact draft into Composer",
   );
 });
@@ -149,7 +149,7 @@ test("accepted handoff does not clear unrelated failed pending submitted message
 
   assert.match(
     source,
-    /const clearMatchingPendingSubmit = \(\) => \{\s*setOptimisticSubmittedDraft\(\(current\) => \(current\?\.id === pendingSubmitId \? null : current\)\);\s*\};/,
+    /const clearMatchingPendingSubmit = \(\) => \{[\s\S]*Object\.entries\(current\)\.find\(\(\[, draft\]\) => draft\.id === pendingSubmitId\);[\s\S]*removePendingSubmittedDraftForKey\(current, matchingSessionKey, pendingSubmitId\);[\s\S]*\};/,
     "session should clear pending submit state by immutable pending submit id so remapped session keys still clean up",
   );
 
@@ -157,12 +157,6 @@ test("accepted handoff does not clear unrelated failed pending submitted message
     acceptedBranch,
     /if \(showOptimisticSubmit\) \{\s*clearMatchingPendingSubmit\(\);\s*\}\s*return accepted;/,
     "accepted stale-navigation handoff should only clear this send's pending submit",
-  );
-
-  assert.match(
-    acceptedBranch,
-    /if \(accepted && showOptimisticSubmit\) \{\s*clearMatchingPendingSubmit\(\);\s*\}/,
-    "accepted normal handoff should only clear optimistic sends",
   );
 
   assert.doesNotMatch(

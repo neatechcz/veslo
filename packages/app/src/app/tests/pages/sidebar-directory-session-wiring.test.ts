@@ -68,7 +68,7 @@ test("WorkspaceSessionList exposes the project pending-draft callback", () => {
 test("session wires the project pending-draft callback into WorkspaceSessionList", () => {
   assert.match(
     sessionSource,
-    /onOpenPendingDirectoryDraftInWorkspace=\{props\.openPendingDirectoryDraftInWorkspace\}/,
+    /onOpenPendingDirectoryDraftInWorkspace=\{openPendingDirectoryDraftFromList\}/,
     "Session should pass the per-project pending-draft callback into WorkspaceSessionList",
   );
 });
