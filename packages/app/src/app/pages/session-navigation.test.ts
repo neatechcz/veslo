@@ -166,8 +166,13 @@ test("session list clicks record browse scope before route navigation", () => {
     );
     assert.match(
       openSessionSource,
-      /props\.setSessionBrowseScope\(\{[\s\S]*\}\);\s*props\.setView\("session", nextSessionId\);/s,
-      "session browse scope must be recorded before route navigation triggers selectSession",
+      /props\.setSessionBrowseScope\(\{[\s\S]*\}\);\s*void Promise\.resolve\(props\.selectSession\(nextSessionId\)\)[\s\S]*props\.setView\("session", nextSessionId\);/s,
+      "session browse scope must be recorded before explicit selection and route navigation",
+    );
+    assert.match(
+      openSessionSource,
+      /props\.selectSession\(nextSessionId\)/,
+      "existing-session navigation should explicitly reload the selected session when the route id is unchanged",
     );
   }
 });

@@ -229,17 +229,19 @@ test("selectSession uses offline fallback for database browsing even when a clie
       const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(null);
       let offlineLoadCalls = 0;
       let messageCalls = 0;
+      const clientFn = () =>
+        ({
+          session: {
+            messages: () => {
+              messageCalls += 1;
+              throw new Error("session.messages must not run for DB browsing");
+            },
+          },
+        }) as any;
 
       const store = createSessionStore({
-        client: () =>
-          ({
-            session: {
-              messages: () => {
-                messageCalls += 1;
-                throw new Error("session.messages must not run for DB browsing");
-              },
-            },
-          } as any),
+        client: clientFn,
+        routing: makeTestRouting(clientFn),
         activeWorkspaceRoot: () => "/tmp/prometheus",
         selectedSessionId,
         setSelectedSessionId,

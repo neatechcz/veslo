@@ -213,6 +213,43 @@ export function createConversationService(options: {
     }
   };
 
+  const bindingToSummary = (binding: ConversationBinding): ConversationSummary => ({
+    id: binding.engineSessionId,
+    conversationId: binding.conversationId,
+    opencodeSessionId: binding.engineSessionId,
+    title: binding.title ?? binding.engineSessionId,
+    slug: binding.title ?? binding.engineSessionId,
+    directory: binding.directory,
+    parentID: binding.parentEngineSessionId,
+    parentConversationId: binding.parentConversationId,
+    branchId: binding.branchId,
+    time: {
+      created: binding.createdAt,
+      updated: binding.updatedAt,
+    },
+  });
+
+  const listPersistedBindings = async (
+    workspaceId: string,
+    directory: string | null,
+  ): Promise<ConversationSummary[]> => {
+    const normalizedDirectory = normalizeText(directory);
+    if (!normalizeText(workspaceId) || !normalizedDirectory) return [];
+    try {
+      const bindings = await options.bindingStore.listOpenCodeSessions({
+        workspaceId,
+        directory: normalizedDirectory,
+      });
+      return bindings.map(bindingToSummary);
+    } catch (error) {
+      warn("[veslo-server] conversation binding list failed", {
+        workspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
+  };
+
   return {
     async listConversations(input) {
       const result = await options.readStore.listConversations({
@@ -222,7 +259,9 @@ export function createConversationService(options: {
       });
       const items = result.source === "sqlite"
         ? await attachConversationBindings(input.workspace.id, input.directory, result.items)
-        : result.items;
+        : result.items.length > 0
+          ? result.items
+          : await listPersistedBindings(input.workspace.id, input.directory);
       return { ...result, items };
     },
 

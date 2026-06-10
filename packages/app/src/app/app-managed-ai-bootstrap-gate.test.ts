@@ -13,7 +13,7 @@ test("managed AI bootstrap readiness returns a blocking result when setup is not
   assert.ok(sendStart >= 0 && sendEnd > sendStart, "sendPrompt source should be present");
   const sendSource = source.slice(sendStart, sendEnd);
   const gateIndex = sendSource.indexOf('"sendPrompt:ensure-managed-ai-bootstrap-ready"');
-  const clientIndex = sendSource.indexOf("const c = routedClient();");
+  const clientIndex = sendSource.indexOf("const c = routedClientForSendTarget(sendTargetWorkspace);");
   assert.ok(gateIndex >= 0, "sendPrompt should trace the managed bootstrap gate");
   assert.ok(clientIndex >= 0, "sendPrompt should read the routed client");
   assert.ok(
@@ -32,7 +32,7 @@ test("sendPrompt blocks when managed bootstrap readiness is unavailable before r
   const createSource = source.slice(createStart, createEnd);
   const skipIndex = createSource.indexOf("createSessionAndOpen:managed-ai-bootstrap-skip");
   const gateIndex = createSource.indexOf('"createSessionAndOpen:ensure-managed-ai-bootstrap-ready"');
-  const clientIndex = createSource.indexOf("const c = routedClient();");
+  const clientIndex = createSource.indexOf("const c = routedClientForSendTarget(targetWorkspace);");
   assert.ok(skipIndex >= 0, "createSessionAndOpen should skip the gate when send preflight already passed it");
   assert.ok(gateIndex >= 0, "createSessionAndOpen should still trace the direct-create managed bootstrap gate");
   assert.ok(clientIndex >= 0, "createSessionAndOpen should read the routed client");

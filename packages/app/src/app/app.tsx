@@ -442,10 +442,17 @@ type SendConversationWorkspaceResolution = {
   directory: string;
 };
 
+type SendTargetWorkspaceScope = {
+  workspaceId: string;
+  workspaceRoot: string;
+  directory: string;
+};
+
 type SendPreflightContext = {
   traceId: string;
   managedAiReady: boolean;
   runtimeHealthOk: boolean;
+  targetWorkspace: SendTargetWorkspaceScope | null;
   conversationWorkspaceByDirectory: Map<string, Promise<SendConversationWorkspaceResolution | null>>;
 };
 
@@ -474,6 +481,7 @@ const createSendPreflightContext = (traceId?: string | null): SendPreflightConte
   traceId: traceId?.trim() || makeSendTraceId(),
   managedAiReady: false,
   runtimeHealthOk: false,
+  targetWorkspace: null,
   conversationWorkspaceByDirectory: new Map(),
 });
 
@@ -3089,6 +3097,15 @@ export default function App() {
       busyLabel: busyLabel(),
     });
     let sessionID = options.targetSessionId?.trim() || selectedSessionId();
+    let sendTargetWorkspace = resolveSendTargetWorkspaceScope(sessionID);
+    sendPreflight.targetWorkspace = sendTargetWorkspace;
+    recordSendTrace("sendPrompt:target-workspace-snapshot", {
+      traceId: sendTraceId,
+      sessionID: sessionID ?? null,
+      workspaceId: sendTargetWorkspace?.workspaceId ?? null,
+      workspaceRoot: sendTargetWorkspace?.workspaceRoot ?? null,
+      directory: sendTargetWorkspace?.directory ?? null,
+    });
     const blockAppDuringPromptSend = Boolean(sessionID);
     let ownsSendPromptBusy = false;
     const startSendPromptBusy = (label: string) => {
@@ -3146,6 +3163,10 @@ export default function App() {
       stopSendPromptBusy();
       return false;
     }
+    if (scopedSessionID) {
+      sendTargetWorkspace = resolveSendTargetWorkspaceScope(scopedSessionID) ?? sendTargetWorkspace;
+      sendPreflight.targetWorkspace = sendTargetWorkspace;
+    }
 
     resolvedDraft = await sendTraceStep(
       "sendPrompt:maybe-resolve-skill-command",
@@ -3180,11 +3201,13 @@ export default function App() {
       try {
         const started = await sendTraceStep(
           "sendPrompt:ensure-engine-for-workspace",
-          () => workspaceStore.ensureEngineForWorkspace(),
+          () => workspaceStore.ensureEngineForWorkspace(sendTargetWorkspace?.workspaceId),
           {
             traceId: sendTraceId,
             activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
             activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
+            targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
+            targetWorkspaceRoot: sendTargetWorkspace?.workspaceRoot ?? null,
           },
         );
         if (!started) {
@@ -3230,8 +3253,9 @@ export default function App() {
         {
           traceId: sendTraceId,
           activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
+          targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
           workspaceType: workspaceStore.activeWorkspaceDisplay().workspaceType,
-          hasClient: Boolean(routedClient()),
+          hasClient: Boolean(routedClient(sendTargetWorkspace?.workspaceId)),
         },
       ))
     ) {
@@ -3242,7 +3266,7 @@ export default function App() {
       return false;
     }
 
-    const c = routedClient();
+    const c = routedClientForSendTarget(sendTargetWorkspace);
     if (!c) {
       recordSendTrace("sendPrompt:blocked-no-client", {
         traceId: sendTraceId,
@@ -3286,6 +3310,8 @@ export default function App() {
         {
           traceId: sendTraceId,
           blockAppDuringCreate: blockAppDuringPromptSend,
+          targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
+          targetWorkspaceRoot: sendTargetWorkspace?.workspaceRoot ?? null,
         },
       )) ?? selectedSessionId();
     }
@@ -4563,16 +4589,22 @@ export default function App() {
       ? preflightOrTraceId
       : preflightOrTraceId?.traceId ?? null;
     const tracePayload = traceId ? { traceId } : undefined;
-    if (!isTauriRuntime() || workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") {
+    const targetWorkspaceId = preflight?.targetWorkspace?.workspaceId?.trim() ?? "";
+    const targetWorkspace = targetWorkspaceId
+      ? workspaceStore.workspaces().find((workspace) => workspace.id === targetWorkspaceId) ?? null
+      : null;
+    const targetWorkspaceType = targetWorkspace?.workspaceType ?? workspaceStore.activeWorkspaceDisplay().workspaceType;
+    if (!isTauriRuntime() || targetWorkspaceType !== "local") {
       recordSendTrace(`${reason}:runtime-health-skipped`, {
         ...(tracePayload ?? {}),
         isTauriRuntime: isTauriRuntime(),
-        workspaceType: workspaceStore.activeWorkspaceDisplay().workspaceType,
+        workspaceType: targetWorkspaceType,
+        targetWorkspaceId: targetWorkspaceId || null,
       });
       return true;
     }
 
-    const currentClient = routedClient();
+    const currentClient = targetWorkspaceId ? routedClient(targetWorkspaceId) : routedClient();
     if (currentClient) {
       try {
         await sendTraceStep(
@@ -4581,6 +4613,7 @@ export default function App() {
           {
             ...(tracePayload ?? {}),
             hasClient: true,
+            targetWorkspaceId: targetWorkspaceId || null,
           },
         );
         recordSendTrace(`${reason}:runtime-health-ok`, tracePayload);
@@ -4611,18 +4644,21 @@ export default function App() {
     try {
       const started = await sendTraceStep(
         `${reason}:runtime-recovery-ensure-engine`,
-        () => workspaceStore.ensureEngineForWorkspace(),
+        () => workspaceStore.ensureEngineForWorkspace(targetWorkspaceId || undefined),
         {
           ...(tracePayload ?? {}),
           activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
           activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
+          targetWorkspaceId: targetWorkspaceId || null,
         },
       );
-      if (!started || !routedClient()) {
+      const recoveredClient = targetWorkspaceId ? routedClient(targetWorkspaceId) : routedClient();
+      if (!started || !recoveredClient) {
         recordSendTrace(`${reason}:runtime-recovery-not-started`, {
           ...(tracePayload ?? {}),
           started,
-          hasClient: Boolean(routedClient()),
+          hasClient: Boolean(recoveredClient),
+          targetWorkspaceId: targetWorkspaceId || null,
         });
         setBusy(false);
         setBusyLabel(null);
@@ -4631,7 +4667,8 @@ export default function App() {
       }
       recordSendTrace(`${reason}:runtime-recovery-ok`, {
         ...(tracePayload ?? {}),
-        hasClient: Boolean(routedClient()),
+        hasClient: Boolean(recoveredClient),
+        targetWorkspaceId: targetWorkspaceId || null,
       });
       if (preflight) preflight.runtimeHealthOk = true;
       return true;
@@ -4814,6 +4851,56 @@ export default function App() {
     },
   });
   workspaceStoreRef = workspaceStore;
+
+  const workspaceRootForId = (workspaceId: string, fallbackDirectory?: string | null) => {
+    const id = workspaceId.trim();
+    const workspace = workspaceStore.workspaces().find((item) => item.id === id) ?? null;
+    return workspace?.directory?.trim() || workspace?.path?.trim() || fallbackDirectory?.trim() || "";
+  };
+
+  const makeSendTargetWorkspaceScope = (
+    workspaceId: string,
+    workspaceRoot: string,
+    directory?: string | null,
+  ): SendTargetWorkspaceScope | null => {
+    const id = workspaceId.trim();
+    const root = workspaceRoot.trim();
+    const dir = directory?.trim() || root;
+    if (!id || !root || !dir) return null;
+    return { workspaceId: id, workspaceRoot: root, directory: dir };
+  };
+
+  const resolveSendTargetWorkspaceScope = (sessionId?: string | null): SendTargetWorkspaceScope | null => {
+    const normalizedSessionId = sessionId?.trim() ?? "";
+    if (normalizedSessionId) {
+      const scope = resolveSelectedSessionBrowseScope(normalizedSessionId);
+      if (scope?.workspaceId?.trim()) {
+        return makeSendTargetWorkspaceScope(
+          scope.workspaceId,
+          scope.workspaceRoot || workspaceRootForId(scope.workspaceId, scope.directory),
+          scope.directory,
+        );
+      }
+    }
+
+    if (!normalizedSessionId) {
+      const pending = activePendingDraftMeta();
+      const pendingWorkspaceId = (pending?.privateWorkspaceId ?? pending?.workspaceId ?? "").trim();
+      if (pendingWorkspaceId) {
+        const root = workspaceRootForId(pendingWorkspaceId, pending?.directory ?? null);
+        const scope = makeSendTargetWorkspaceScope(pendingWorkspaceId, root, pending?.directory ?? root);
+        if (scope) return scope;
+      }
+    }
+
+    const activeRoot = workspaceStore.activeWorkspaceRoot().trim();
+    return makeSendTargetWorkspaceScope(workspaceStore.activeWorkspaceId().trim(), activeRoot, activeRoot);
+  };
+
+  const routedClientForSendTarget = (targetWorkspace?: SendTargetWorkspaceScope | null) => {
+    const workspaceId = targetWorkspace?.workspaceId?.trim() ?? "";
+    return workspaceId ? routedClient(workspaceId) : routedClient();
+  };
 
   // VSLO-171 F3Ú7a — per-workspace pending permissions polling. Without SSE
   // multiplex (F3Ú6d push) we refresh every 5 s in multi mode so background
@@ -9100,27 +9187,42 @@ export default function App() {
     const preflight = options.preflight;
     const sendTraceId = options.sendTraceId?.trim() || preflight?.traceId || activeSendTraceId();
     const tracePayload = sendTraceId ? { traceId: sendTraceId } : undefined;
+    const targetWorkspace =
+      preflight?.targetWorkspace ??
+      resolveSendTargetWorkspaceScope(selectedSessionId()) ??
+      null;
     recordSendTrace("createSessionAndOpen:start", {
       ...(tracePayload ?? {}),
       connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
       activeWorkspaceId: workspaceStore.activeWorkspaceId(),
       activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
+      targetWorkspaceId: targetWorkspace?.workspaceId ?? null,
+      targetWorkspaceRoot: targetWorkspace?.workspaceRoot ?? null,
+      targetDirectory: targetWorkspace?.directory ?? null,
       hasClient: Boolean(routedClient()),
     });
     // Block session creation while a workspace switch is in progress.
     // Without this gate, activeWorkspaceRoot() can return a stale or empty
     // value and the session ends up in the wrong directory.
-    if (workspaceStore.connectingWorkspaceId()) {
+    const connectingWorkspaceId = workspaceStore.connectingWorkspaceId()?.trim() ?? "";
+    if (connectingWorkspaceId && (!targetWorkspace || connectingWorkspaceId === targetWorkspace.workspaceId)) {
       console.warn(
         "[createSessionAndOpen] Blocked: workspace switch in progress",
-        { connectingWorkspaceId: workspaceStore.connectingWorkspaceId() },
+        { connectingWorkspaceId },
       );
       recordSendTrace("createSessionAndOpen:blocked-connecting", {
         ...(tracePayload ?? {}),
-        connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
+        connectingWorkspaceId,
+        targetWorkspaceId: targetWorkspace?.workspaceId ?? null,
       });
       setError("Please wait for the workspace switch to complete.");
       return undefined;
+    } else if (connectingWorkspaceId) {
+      recordSendTrace("createSessionAndOpen:ignore-unrelated-connecting-workspace", {
+        ...(tracePayload ?? {}),
+        connectingWorkspaceId,
+        targetWorkspaceId: targetWorkspace?.workspaceId ?? null,
+      });
     }
 
     if (preflight?.managedAiReady) {
@@ -9136,7 +9238,7 @@ export default function App() {
           ...(tracePayload ?? {}),
           managedAiBootstrapBusy: managedAiBootstrapBusy(),
           reloadBusy: reloadBusy(),
-          hasClient: Boolean(routedClient()),
+          hasClient: Boolean(routedClient(targetWorkspace?.workspaceId)),
         },
       );
       if (!managedAiReady) {
@@ -9145,7 +9247,7 @@ export default function App() {
       }
       if (preflight) preflight.managedAiReady = true;
     }
-    const c = routedClient();
+    const c = routedClientForSendTarget(targetWorkspace);
     if (!c) {
       recordSendTrace("createSessionAndOpen:blocked-no-client", tracePayload);
       setError("Local runtime is not ready yet.");
@@ -9155,7 +9257,7 @@ export default function App() {
     // Guard against creating a session with an empty directory, which would
     // cause the bridge to silently fall back to the orchestrator's default
     // directory (possibly a temp folder or the wrong workspace).
-    const sessionDirectory = workspaceStore.activeWorkspaceRoot().trim();
+    const sessionDirectory = targetWorkspace?.directory || targetWorkspace?.workspaceRoot || workspaceStore.activeWorkspaceRoot().trim();
     if (!sessionDirectory) {
       console.warn(
         "[createSessionAndOpen] Blocked: activeWorkspaceRoot is empty",
@@ -9185,7 +9287,8 @@ export default function App() {
 
     mark("start", {
       baseUrl: baseUrl(),
-      workspace: workspaceStore.activeWorkspaceRoot().trim() || null,
+      workspace: sessionDirectory || null,
+      workspaceId: targetWorkspace?.workspaceId || workspaceStore.activeWorkspaceId().trim() || null,
     });
 
     await sendTraceStep(
@@ -9268,7 +9371,7 @@ export default function App() {
       };
       try {
         mark("session:create:start");
-        const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
+        const activeWorkspaceId = targetWorkspace?.workspaceId || workspaceStore.activeWorkspaceId().trim();
         const vesloCreated = activeWorkspaceId
           ? await sendTraceStep(
               "createSessionAndOpen:veslo-conversation-create",
@@ -9369,7 +9472,7 @@ export default function App() {
         parentConversationId: session.parentConversationId ?? null,
         branchId: session.branchId ?? null,
       };
-      const wsId = (workspaceStore.connectingWorkspaceId() ?? workspaceStore.activeWorkspaceId()).trim();
+      const wsId = targetWorkspace?.workspaceId || (workspaceStore.connectingWorkspaceId() ?? workspaceStore.activeWorkspaceId()).trim();
       if (wsId) {
         const currentSessions = sidebarSessionsByWorkspaceId()[wsId] || [];
         setSidebarSessionsByWorkspaceId((prev) => ({

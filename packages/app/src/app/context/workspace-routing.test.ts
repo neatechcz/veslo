@@ -2,7 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createRoot } from "solid-js";
 
-import { createWorkspaceRouting } from "./workspace-routing.js";
+import { createWorkspaceRouting, WorkspaceClientStaleError } from "./workspace-routing.js";
+
+const makeClient = (id: string, calls: string[] = []) => ({
+  id,
+  session: {
+    async messages() {
+      calls.push(id);
+      return [];
+    },
+  },
+}) as any;
 
 function createTestRouting() {
   const fallbackClient = { marker: "fallback", health: () => "fallback" };
@@ -50,5 +60,87 @@ test("workspace routing keeps fallback client only for pre-workspace bootstrap",
     } finally {
       dispose();
     }
+  });
+});
+
+test("explicit workspace client lookup does not fall back to the active client", () => {
+  createRoot((dispose) => {
+    try {
+      const fallbackClient = makeClient("active-fallback");
+      const routing = createWorkspaceRouting({
+        clientSource: () => fallbackClient,
+        activeWorkspaceId: () => "ws-active",
+        createClient: () => makeClient("created"),
+        waitForHealthy: async () => ({ healthy: true }),
+      });
+
+      assert.equal(routing.client(), null);
+      assert.equal(routing.client("ws-missing"), null);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("explicit workspace client lookup can call a non-active workspace client", async () => {
+  await new Promise<void>((resolve, reject) => {
+    createRoot((dispose) => {
+      void (async () => {
+        const calls: string[] = [];
+        try {
+          const routing = createWorkspaceRouting({
+            clientSource: () => null,
+            activeWorkspaceId: () => "ws-active",
+            createClient: (_baseUrl, directory) => makeClient(directory ?? "missing", calls),
+            waitForHealthy: async () => ({ healthy: true }),
+          });
+
+          await routing.ensure("ws-active", "http://active", { directory: "active-client" });
+          await routing.ensure("ws-background", "http://background", { directory: "background-client" });
+
+          const background = routing.client("ws-background");
+          assert.ok(background);
+          await (background as any).session.messages();
+
+          assert.deepEqual(calls, ["background-client"]);
+          resolve();
+        } catch (error) {
+          reject(error);
+        } finally {
+          dispose();
+        }
+      })();
+    });
+  });
+});
+
+test("implicit active client lookup still rejects calls after an active workspace switch", async () => {
+  await new Promise<void>((resolve, reject) => {
+    createRoot((dispose) => {
+      void (async () => {
+        let activeWorkspaceId = "ws-active";
+        try {
+          const routing = createWorkspaceRouting({
+            clientSource: () => null,
+            activeWorkspaceId: () => activeWorkspaceId,
+            createClient: (_baseUrl, directory) => makeClient(directory ?? "missing"),
+            waitForHealthy: async () => ({ healthy: true }),
+          });
+
+          await routing.ensure("ws-active", "http://active", { directory: "active-client" });
+
+          const active = routing.client();
+          assert.ok(active);
+          activeWorkspaceId = "ws-other";
+
+          assert.throws(() => (active as any).session.messages(), WorkspaceClientStaleError);
+          resolve();
+        } catch (error) {
+          reject(error);
+        } finally {
+          dispose();
+        }
+      })();
+    });
   });
 });

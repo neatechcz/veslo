@@ -40,6 +40,11 @@ export type ConversationBindingStore = {
     directory: string;
     sessions: Array<Omit<ConversationBindingInput, "workspaceId" | "directory">>;
   }): Promise<Map<string, ConversationBinding>>;
+  listOpenCodeSessions(input: {
+    workspaceId: string;
+    directory: string;
+    limit?: number;
+  }): Promise<ConversationBinding[]>;
   resolveOpenCodeSession(input: {
     workspaceId: string;
     directory: string;
@@ -71,6 +76,72 @@ const normalizeNullableText = (value: string | null | undefined) => {
   const normalized = normalizeText(value);
   return normalized || null;
 };
+
+function normalizeWindowsExtendedPath(value: string): string {
+  return value.replace(/^\\\\\?\\/, "").replace(/^\/\/\?\//, "");
+}
+
+function shouldUseWindowsDirectoryLookup(value: string): boolean {
+  return /^\\\\\?\\/.test(value) ||
+    /^\/\/\?\//.test(value) ||
+    /^[a-z]:[\\/]/i.test(value) ||
+    /^\\\\[^\\]/.test(value) ||
+    value.includes("\\");
+}
+
+function directoryLookupVariants(value: string, windowsLookup: boolean): string[] {
+  const normalized = normalizeText(value);
+  if (!normalized) return [];
+
+  const variants = new Set<string>();
+  const add = (candidate: string) => {
+    const next = normalizeText(candidate);
+    if (next) variants.add(next);
+  };
+
+  add(normalized);
+  if (!windowsLookup) return [...variants];
+
+  const withoutExtendedPrefix = normalizeWindowsExtendedPath(normalized);
+  add(withoutExtendedPrefix);
+  add(withoutExtendedPrefix.toLowerCase());
+  add(`\\\\?\\${withoutExtendedPrefix}`);
+  add(`//?/${withoutExtendedPrefix.replace(/\\/g, "/")}`);
+
+  const backslash = withoutExtendedPrefix.replace(/\//g, "\\");
+  add(backslash);
+  add(backslash.toLowerCase());
+
+  const slash = withoutExtendedPrefix.replace(/\\/g, "/");
+  add(slash);
+  add(slash.toLowerCase());
+
+  return [...variants];
+}
+
+function numberedInClause(column: string, startIndex: number, count: number): string {
+  return count > 0
+    ? `${column} IN (${Array.from({ length: count }, (_, index) => `?${startIndex + index}`).join(", ")})`
+    : "1 = 0";
+}
+
+function directoryMatchClause(column: string, startIndex: number, directCount: number, lowerCount: number): string {
+  if (directCount <= 0 && lowerCount <= 0) return "1 = 0";
+  const clauses = [numberedInClause(column, startIndex, directCount)];
+  if (lowerCount > 0) {
+    clauses.push(numberedInClause(`LOWER(${column})`, startIndex + directCount, lowerCount));
+  }
+  return `(${clauses.join(" OR ")})`;
+}
+
+function directoryLookupArgs(directory: string): { directories: string[]; lowerDirectories: string[] } {
+  const windowsLookup = shouldUseWindowsDirectoryLookup(directory);
+  const directories = directoryLookupVariants(directory, windowsLookup);
+  return {
+    directories,
+    lowerDirectories: windowsLookup ? directories.map((item) => item.toLowerCase()) : [],
+  };
+}
 
 const normalizeTimestamp = (value: number | null | undefined, fallback: number) =>
   Number.isFinite(value ?? NaN) && (value ?? 0) > 0 ? Math.floor(value as number) : fallback;
@@ -179,12 +250,43 @@ export function createConversationBindingStore(options?: {
     if (!workspaceId || !directory || !engineSessionId) {
       throw new Error("workspaceId, directory and engineSessionId are required");
     }
+    const { directories, lowerDirectories } = directoryLookupArgs(directory);
+    const lookupArgCount = directories.length + lowerDirectories.length;
+    const engineIndex = lookupArgCount + 2;
+    const engineSessionIndex = lookupArgCount + 3;
+    const existingRow = db.query<ConversationBindingRow, Array<string>>(
+      `SELECT * FROM conversation_binding
+       WHERE workspace_id = ?1
+         AND ${directoryMatchClause("directory", 2, directories.length, lowerDirectories.length)}
+         AND engine = ?${engineIndex}
+         AND engine_session_id = ?${engineSessionIndex}
+       LIMIT 1`,
+    ).get(workspaceId, ...directories, ...lowerDirectories, ENGINE, engineSessionId);
+    const bindingDirectory = existingRow?.directory ?? directory;
 
     const seenAt = now();
-    const conversationId = deterministicConversationId({ workspaceId, directory, engineSessionId });
+    const conversationId = existingRow?.conversation_id ?? deterministicConversationId({
+      workspaceId,
+      directory: bindingDirectory,
+      engineSessionId,
+    });
     const parentEngineSessionId = normalizeNullableText(input.parentEngineSessionId);
+    const parentRow = parentEngineSessionId
+      ? db.query<ConversationBindingRow, Array<string>>(
+          `SELECT * FROM conversation_binding
+           WHERE workspace_id = ?1
+             AND ${directoryMatchClause("directory", 2, directories.length, lowerDirectories.length)}
+             AND engine = ?${engineIndex}
+             AND engine_session_id = ?${engineSessionIndex}
+           LIMIT 1`,
+        ).get(workspaceId, ...directories, ...lowerDirectories, ENGINE, parentEngineSessionId)
+      : null;
     const parentConversationId = parentEngineSessionId
-      ? deterministicConversationId({ workspaceId, directory, engineSessionId: parentEngineSessionId })
+      ? parentRow?.conversation_id ?? deterministicConversationId({
+          workspaceId,
+          directory: bindingDirectory,
+          engineSessionId: parentEngineSessionId,
+        })
       : null;
     const createdAt = normalizeTimestamp(input.createdAt, seenAt);
     const updatedAt = normalizeTimestamp(input.updatedAt, createdAt);
@@ -220,7 +322,7 @@ export function createConversationBindingStore(options?: {
       conversationId,
       ENGINE,
       engineSessionId,
-      directory,
+      bindingDirectory,
       branchId,
       parentConversationId,
       parentEngineSessionId,
@@ -231,11 +333,34 @@ export function createConversationBindingStore(options?: {
       seenAt,
     );
 
+    const childLookup = directoryLookupArgs(bindingDirectory);
+    const childLookupArgCount = childLookup.directories.length + childLookup.lowerDirectories.length;
+    const childEngineIndex = childLookupArgCount + 3;
+    const childParentEngineSessionIndex = childLookupArgCount + 4;
+    const childConversationCheckIndex = childLookupArgCount + 5;
+    db.query(
+      `UPDATE conversation_binding
+       SET parent_conversation_id = ?1
+       WHERE workspace_id = ?2
+         AND ${directoryMatchClause("directory", 3, childLookup.directories.length, childLookup.lowerDirectories.length)}
+         AND engine = ?${childEngineIndex}
+         AND parent_engine_session_id = ?${childParentEngineSessionIndex}
+         AND (parent_conversation_id IS NULL OR parent_conversation_id <> ?${childConversationCheckIndex})`,
+    ).run(
+      conversationId,
+      workspaceId,
+      ...childLookup.directories,
+      ...childLookup.lowerDirectories,
+      ENGINE,
+      engineSessionId,
+      conversationId,
+    );
+
     const row = db.query<ConversationBindingRow, [string, string, string, string]>(
       `SELECT * FROM conversation_binding
        WHERE workspace_id = ?1 AND directory = ?2 AND engine = ?3 AND engine_session_id = ?4
        LIMIT 1`,
-    ).get(workspaceId, directory, ENGINE, engineSessionId);
+    ).get(workspaceId, bindingDirectory, ENGINE, engineSessionId);
     if (!row) {
       throw new Error("Failed to persist conversation binding");
     }
@@ -277,21 +402,59 @@ export function createConversationBindingStore(options?: {
       });
     },
 
+    async listOpenCodeSessions(input) {
+      const workspaceId = normalizeText(input.workspaceId);
+      const directory = normalizeText(input.directory);
+      if (!workspaceId || !directory) return [];
+      const { directories, lowerDirectories } = directoryLookupArgs(directory);
+      const limit =
+        Number.isFinite(input.limit ?? NaN) && (input.limit ?? 0) > 0
+          ? Math.min(Math.floor(input.limit as number), 500)
+          : 200;
+      const lookupArgCount = directories.length + lowerDirectories.length;
+      const engineIndex = lookupArgCount + 2;
+      const limitIndex = lookupArgCount + 3;
+
+      return withDb((db) => {
+        const rows = db.query<ConversationBindingRow, Array<string | number>>(
+          `SELECT * FROM conversation_binding
+           WHERE workspace_id = ?1
+             AND ${directoryMatchClause("directory", 2, directories.length, lowerDirectories.length)}
+             AND engine = ?${engineIndex}
+           ORDER BY updated_at DESC, created_at DESC, engine_session_id ASC
+           LIMIT ?${limitIndex}`,
+        ).all(workspaceId, ...directories, ...lowerDirectories, ENGINE, limit);
+        return rows.map(rowToBinding);
+      });
+    },
+
     async resolveOpenCodeSession(input) {
       const workspaceId = normalizeText(input.workspaceId);
       const directory = normalizeText(input.directory);
       const sessionOrConversationId = normalizeText(input.sessionOrConversationId);
       if (!workspaceId || !directory || !sessionOrConversationId) return null;
+      const { directories, lowerDirectories } = directoryLookupArgs(directory);
+      const lookupArgCount = directories.length + lowerDirectories.length;
+      const engineIndex = lookupArgCount + 2;
+      const engineSessionIndex = lookupArgCount + 3;
+      const conversationIndex = lookupArgCount + 4;
 
       return withDb((db) => {
-        const row = db.query<ConversationBindingRow, [string, string, string, string, string]>(
+        const row = db.query<ConversationBindingRow, Array<string | number>>(
           `SELECT * FROM conversation_binding
            WHERE workspace_id = ?1
-             AND directory = ?2
-             AND engine = ?3
-             AND (engine_session_id = ?4 OR conversation_id = ?5)
+             AND ${directoryMatchClause("directory", 2, directories.length, lowerDirectories.length)}
+             AND engine = ?${engineIndex}
+             AND (engine_session_id = ?${engineSessionIndex} OR conversation_id = ?${conversationIndex})
            LIMIT 1`,
-        ).get(workspaceId, directory, ENGINE, sessionOrConversationId, sessionOrConversationId);
+        ).get(
+          workspaceId,
+          ...directories,
+          ...lowerDirectories,
+          ENGINE,
+          sessionOrConversationId,
+          sessionOrConversationId,
+        );
         return row ? rowToBinding(row) : null;
       });
     },

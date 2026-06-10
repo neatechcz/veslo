@@ -144,7 +144,7 @@ test("workspace activation delegates local runtime reuse and restart flows to th
 });
 
 test("orchestrator browse attach preserves busy state for other live workspaces", () => {
-  const ensureStart = source.indexOf("async function ensureEngineForWorkspace()");
+  const ensureStart = source.indexOf("async function ensureEngineForWorkspace(");
   const ensureEnd = source.indexOf("\n  return {", ensureStart);
   assert.notStrictEqual(ensureStart, -1, "ensureEngineForWorkspace definition missing");
   assert.notStrictEqual(ensureEnd, -1, "ensureEngineForWorkspace end marker missing");

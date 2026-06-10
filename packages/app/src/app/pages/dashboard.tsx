@@ -35,6 +35,7 @@ import {
   createVesloServerClient,
   parseVesloWorkspaceIdFromUrl,
 } from "../lib/veslo-server";
+import { reportError } from "../lib/error-reporter";
 import type {
   VesloAuditEntry,
   VesloSoulHeartbeatEntry,
@@ -496,7 +497,11 @@ export default function DashboardView(props: DashboardViewProps) {
       workspaceId,
       sessionId,
       activateWorkspace: props.activateWorkspace,
-      // Route-driven selection: navigate first and let the route effect own selectSession.
+      // Route-driven selection handles normal id changes. Also select
+      // explicitly after recording the browse scope because the user can
+      // return to the same /session/:id route after switching projects; in
+      // that case the route effect is deduped and would leave the main
+      // transcript on the empty workspace screen.
       openSession: (nextSessionId) => {
         props.setSessionBrowseScope({
           sessionId: nextSessionId,
@@ -506,6 +511,8 @@ export default function DashboardView(props: DashboardViewProps) {
           conversationId: session?.conversationId ?? null,
           opencodeSessionId: session?.opencodeSessionId ?? nextSessionId,
         });
+        void Promise.resolve(props.selectSession(nextSessionId))
+          .catch((error) => reportError(error, "dashboard.openSessionFromList.selectSession"));
         props.setView("session", nextSessionId);
       },
     });

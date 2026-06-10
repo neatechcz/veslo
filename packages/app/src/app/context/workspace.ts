@@ -2946,8 +2946,8 @@ export function createWorkspaceStore(options: {
     );
   }
 
-  async function ensureEngineForWorkspace(): Promise<boolean> {
-    const id = activeWorkspaceId();
+  async function ensureEngineForWorkspace(workspaceId?: string | null): Promise<boolean> {
+    const id = workspaceId?.trim() || activeWorkspaceId();
     const workspace = workspaces().find((w) => w.id === id);
     if (!workspace?.path) return false;
 

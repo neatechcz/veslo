@@ -65,6 +65,28 @@ const fakeReadStore = (directory: string): ConversationReadStore => ({
   },
 });
 
+const unavailableReadStore: ConversationReadStore = {
+  async listConversations(input) {
+    return {
+      workspaceId: input.workspaceId,
+      source: "unavailable",
+      items: [],
+    };
+  },
+
+  async getTranscript(input) {
+    return {
+      workspaceId: input.workspaceId,
+      sessionId: input.sessionId,
+      limit: input.limit,
+      messages: [],
+      partsByMessageId: {},
+      fetchedAt: 100,
+      source: "unavailable",
+    };
+  },
+};
+
 describe("conversation service", () => {
   test("attaches Veslo conversation bindings to passive OpenCode sessions", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-service-"));
@@ -94,6 +116,38 @@ describe("conversation service", () => {
       sessionOrConversationId: result.items[1]?.conversationId ?? "",
     });
     expect(resolved?.engineSessionId).toBe("sess-child");
+  });
+
+  test("lists persisted bindings when OpenCode sqlite is unavailable", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-service-bindings-"));
+    tempDirs.push(dataDir);
+    const directory = join(dataDir, "workspace-a");
+    const bindingStore = createConversationBindingStore({ dataDir, now: () => 3_000 });
+    await bindingStore.bindOpenCodeSession({
+      workspaceId: "ws-a",
+      directory,
+      engineSessionId: "sess-created",
+      title: "Created",
+      createdAt: 111,
+      updatedAt: 222,
+    });
+    const service = createConversationService({
+      readStore: unavailableReadStore,
+      bindingStore,
+      createOpenCodeSession: async () => ({ id: "unused" }),
+    });
+
+    const result = await service.listConversations({
+      workspace: workspaceFor(directory),
+      directory,
+    });
+
+    expect(result.source).toBe("unavailable");
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.id).toBe("sess-created");
+    expect(result.items[0]?.opencodeSessionId).toBe("sess-created");
+    expect(result.items[0]?.conversationId).toMatch(/^conv-/);
+    expect(result.items[0]?.title).toBe("Created");
   });
 
   test("creates an OpenCode session and persists the binding before returning", async () => {

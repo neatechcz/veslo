@@ -126,6 +126,234 @@ describe("conversation binding store", () => {
     }))?.engineSessionId).toBe("sess-same");
   });
 
+  test("lists OpenCode sessions for a single workspace directory by recent activity", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-bindings-list-"));
+    tempDirs.push(dataDir);
+    const directory = join(dataDir, "workspace-a");
+    const otherDirectory = join(dataDir, "workspace-b");
+    const store = createConversationBindingStore({ dataDir, now: () => 1_000 });
+
+    await store.bindOpenCodeSession({
+      workspaceId: "ws-a",
+      directory,
+      engineSessionId: "sess-old",
+      title: "Old",
+      updatedAt: 10,
+    });
+    await store.bindOpenCodeSession({
+      workspaceId: "ws-a",
+      directory,
+      engineSessionId: "sess-new",
+      title: "New",
+      updatedAt: 30,
+    });
+    await store.bindOpenCodeSession({
+      workspaceId: "ws-a",
+      directory: otherDirectory,
+      engineSessionId: "sess-other-dir",
+      updatedAt: 40,
+    });
+    await store.bindOpenCodeSession({
+      workspaceId: "ws-b",
+      directory,
+      engineSessionId: "sess-other-ws",
+      updatedAt: 50,
+    });
+
+    const sessions = await store.listOpenCodeSessions({
+      workspaceId: "ws-a",
+      directory,
+    });
+
+    expect(sessions.map((session) => session.engineSessionId)).toEqual(["sess-new", "sess-old"]);
+  });
+
+  test("orders same-timestamp sessions deterministically for parallel conversation starts", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-bindings-stable-order-"));
+    tempDirs.push(dataDir);
+    const directory = join(dataDir, "workspace-a");
+    const store = createConversationBindingStore({ dataDir, now: () => 1_000 });
+
+    await store.bindOpenCodeSession({
+      workspaceId: "ws-a",
+      directory,
+      engineSessionId: "sess-b",
+      updatedAt: 50,
+    });
+    await store.bindOpenCodeSession({
+      workspaceId: "ws-a",
+      directory,
+      engineSessionId: "sess-a",
+      updatedAt: 50,
+    });
+    await store.bindOpenCodeSession({
+      workspaceId: "ws-a",
+      directory,
+      engineSessionId: "sess-c",
+      updatedAt: 50,
+    });
+
+    const sessions = await store.listOpenCodeSessions({
+      workspaceId: "ws-a",
+      directory,
+    });
+
+    expect(sessions.map((session) => session.engineSessionId)).toEqual(["sess-a", "sess-b", "sess-c"]);
+  });
+
+  test("matches Windows directory variants when listing and resolving", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-bindings-windows-path-"));
+    tempDirs.push(dataDir);
+    const store = createConversationBindingStore({ dataDir, now: () => 1_000 });
+    await store.bindOpenCodeSession({
+      workspaceId: "ws-a",
+      directory: "c:\\users\\jajse\\desktop\\test-repo\\test-repo2",
+      engineSessionId: "sess-a",
+      title: "Session A",
+      updatedAt: 20,
+    });
+
+    const sessions = await store.listOpenCodeSessions({
+      workspaceId: "ws-a",
+      directory: "\\\\?\\C:\\Users\\jajse\\Desktop\\test-repo\\test-repo2",
+    });
+
+    expect(sessions.map((session) => session.engineSessionId)).toEqual(["sess-a"]);
+
+    const resolved = await store.resolveOpenCodeSession({
+      workspaceId: "ws-a",
+      directory: "//?/C:/Users/jajse/Desktop/test-repo/test-repo2",
+      sessionOrConversationId: sessions[0]?.conversationId ?? "",
+    });
+    expect(resolved?.engineSessionId).toBe("sess-a");
+  });
+
+  test("keeps POSIX directories with different casing isolated", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-bindings-posix-case-"));
+    tempDirs.push(dataDir);
+    const store = createConversationBindingStore({ dataDir, now: () => 1_000 });
+    const upperDirectory = "/tmp/VesloCaseSensitive";
+    const lowerDirectory = "/tmp/veslocasesensitive";
+
+    const upper = await store.bindOpenCodeSession({
+      workspaceId: "ws-a",
+      directory: upperDirectory,
+      engineSessionId: "sess-same",
+      title: "Upper",
+      updatedAt: 20,
+    });
+    const lower = await store.bindOpenCodeSession({
+      workspaceId: "ws-a",
+      directory: lowerDirectory,
+      engineSessionId: "sess-same",
+      title: "Lower",
+      updatedAt: 40,
+    });
+
+    expect(lower.conversationId).not.toBe(upper.conversationId);
+
+    const upperSessions = await store.listOpenCodeSessions({
+      workspaceId: "ws-a",
+      directory: upperDirectory,
+    });
+    const lowerSessions = await store.listOpenCodeSessions({
+      workspaceId: "ws-a",
+      directory: lowerDirectory,
+    });
+
+    expect(upperSessions.map((session) => session.title)).toEqual(["Upper"]);
+    expect(lowerSessions.map((session) => session.title)).toEqual(["Lower"]);
+  });
+
+  test("updates one binding when the same Windows directory is rebound with a different path spelling", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-bindings-windows-rebind-"));
+    tempDirs.push(dataDir);
+    const store = createConversationBindingStore({ dataDir, now: () => 1_000 });
+
+    const first = await store.bindOpenCodeSession({
+      workspaceId: "ws-a",
+      directory: "C:\\Users\\Jajse\\Desktop\\test-repo\\test-repo2",
+      engineSessionId: "sess-a",
+      title: "First",
+      updatedAt: 20,
+    });
+    const second = await store.bindOpenCodeSession({
+      workspaceId: "ws-a",
+      directory: "//?/c:/users/jajse/desktop/test-repo/test-repo2",
+      engineSessionId: "sess-a",
+      title: "Second",
+      updatedAt: 40,
+    });
+
+    expect(second.conversationId).toBe(first.conversationId);
+    expect(second.directory).toBe(first.directory);
+    expect(second.title).toBe("Second");
+
+    const sessions = await store.listOpenCodeSessions({
+      workspaceId: "ws-a",
+      directory: "c:\\users\\jajse\\desktop\\test-repo\\test-repo2",
+    });
+
+    expect(sessions.map((session) => session.engineSessionId)).toEqual(["sess-a"]);
+    expect(sessions[0]?.conversationId).toBe(first.conversationId);
+  });
+
+  test("links Windows child sessions to an existing parent across path spellings", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-bindings-windows-parent-"));
+    tempDirs.push(dataDir);
+    const store = createConversationBindingStore({ dataDir, now: () => 1_000 });
+
+    const parent = await store.bindOpenCodeSession({
+      workspaceId: "ws-a",
+      directory: "C:\\Users\\Jajse\\Desktop\\test-repo\\test-repo2",
+      engineSessionId: "sess-parent",
+      title: "Parent",
+      updatedAt: 20,
+    });
+    const child = await store.bindOpenCodeSession({
+      workspaceId: "ws-a",
+      directory: "//?/c:/users/jajse/desktop/test-repo/test-repo2",
+      engineSessionId: "sess-child",
+      parentEngineSessionId: "sess-parent",
+      title: "Child",
+      updatedAt: 40,
+    });
+
+    expect(child.parentConversationId).toBe(parent.conversationId);
+  });
+
+  test("repairs Windows child parent links when the parent is bound later", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-bindings-windows-late-parent-"));
+    tempDirs.push(dataDir);
+    const store = createConversationBindingStore({ dataDir, now: () => 1_000 });
+
+    const child = await store.bindOpenCodeSession({
+      workspaceId: "ws-a",
+      directory: "//?/c:/users/jajse/desktop/test-repo/test-repo2",
+      engineSessionId: "sess-child",
+      parentEngineSessionId: "sess-parent",
+      title: "Child",
+      updatedAt: 40,
+    });
+    const parent = await store.bindOpenCodeSession({
+      workspaceId: "ws-a",
+      directory: "C:\\Users\\Jajse\\Desktop\\test-repo\\test-repo2",
+      engineSessionId: "sess-parent",
+      title: "Parent",
+      updatedAt: 20,
+    });
+
+    expect(child.parentConversationId).not.toBe(parent.conversationId);
+
+    const resolvedChild = await store.resolveOpenCodeSession({
+      workspaceId: "ws-a",
+      directory: "\\\\?\\C:\\Users\\jajse\\Desktop\\test-repo\\test-repo2",
+      sessionOrConversationId: "sess-child",
+    });
+
+    expect(resolvedChild?.parentConversationId).toBe(parent.conversationId);
+  });
+
   test("resolves the default DB path under the configured server data dir", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-bindings-path-"));
     tempDirs.push(dataDir);

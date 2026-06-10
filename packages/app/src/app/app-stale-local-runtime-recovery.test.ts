@@ -11,7 +11,7 @@ test("sendPrompt recovers a stale local runtime before reading the client", () =
 
   const sendPromptSource = source.slice(start, end);
   const recoveryCheckIndex = sendPromptSource.indexOf('ensureLocalRuntimeReachableForSend("sendPrompt", sendPreflight)');
-  const routedClientIndex = sendPromptSource.indexOf("const c = routedClient();");
+  const routedClientIndex = sendPromptSource.indexOf("const c = routedClientForSendTarget(sendTargetWorkspace);");
   assert.ok(recoveryCheckIndex >= 0, "sendPrompt should check local runtime reachability");
   assert.ok(routedClientIndex >= 0, "sendPrompt should capture the routed client after recovery");
   assert.ok(
@@ -28,12 +28,12 @@ test("local runtime send health uses the routed active workspace client", () => 
   const recoverySource = source.slice(start, end);
   assert.match(
     recoverySource,
-    /const currentClient = routedClient\(\);/,
-    "local send health should inspect the routed active workspace client, not the stale global client",
+    /const currentClient = targetWorkspaceId \? routedClient\(targetWorkspaceId\) : routedClient\(\);/,
+    "local send health should inspect the routed active/target workspace client, not the stale global client",
   );
   assert.match(
     recoverySource,
-    /if \(!started \|\| !routedClient\(\)\) \{/,
+    /const recoveredClient = targetWorkspaceId \? routedClient\(targetWorkspaceId\) : routedClient\(\);[\s\S]*if \(!started \|\| !recoveredClient\) \{/,
     "runtime recovery should require a route for the active workspace before send continues",
   );
   assert.doesNotMatch(
@@ -74,7 +74,35 @@ test("local runtime recovery restarts for dead endpoints and health timeouts", (
   );
   assert.match(
     source,
-    /if \(!isLocalRuntimeHealthTimeoutError\(error\) && !shouldRecoverLocalRuntimeFromHealthError\(error\)\) \{[\s\S]*return true;[\s\S]*setEngineReady\(false\);[\s\S]*workspaceStore\.ensureEngineForWorkspace\(\)/s,
+    /if \(!isLocalRuntimeHealthTimeoutError\(error\) && !shouldRecoverLocalRuntimeFromHealthError\(error\)\) \{[\s\S]*return true;[\s\S]*setEngineReady\(false\);[\s\S]*workspaceStore\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined\)/s,
     "runtime recovery should restart before send when the endpoint is dead or the local health probe times out",
+  );
+});
+
+test("send runtime recovery uses the snapshotted target workspace", () => {
+  const start = source.indexOf("async function ensureLocalRuntimeReachableForSend(");
+  const end = source.indexOf("async function connectLocalRuntimeClientFromEngineInfo", start);
+  assert.ok(start >= 0 && end > start, "ensureLocalRuntimeReachableForSend source should be present");
+  const recoverySource = source.slice(start, end);
+
+  assert.match(
+    recoverySource,
+    /const targetWorkspaceId = preflight\?\.targetWorkspace\?\.workspaceId\?\.trim\(\) \?\? "";/,
+    "runtime health should read the send preflight target workspace",
+  );
+  assert.match(
+    recoverySource,
+    /const currentClient = targetWorkspaceId \? routedClient\(targetWorkspaceId\) : routedClient\(\);/,
+    "runtime health should probe the routed target workspace client when a target is present",
+  );
+  assert.match(
+    recoverySource,
+    /workspaceStore\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined\)/,
+    "runtime recovery should restart the target workspace engine, not the current active workspace",
+  );
+  assert.match(
+    recoverySource,
+    /const recoveredClient = targetWorkspaceId \? routedClient\(targetWorkspaceId\) : routedClient\(\);/,
+    "runtime recovery should verify that the target workspace client was restored",
   );
 });

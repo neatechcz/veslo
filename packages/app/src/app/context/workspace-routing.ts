@@ -47,6 +47,7 @@ function wrapClientWithGuard<T extends object>(
   target: T,
   entryWsId: string,
   getActiveWsId: () => string,
+  guardActiveWorkspace: boolean,
 ): T {
   return new Proxy(target, {
     get(inner, prop, receiver) {
@@ -54,16 +55,18 @@ function wrapClientWithGuard<T extends object>(
       if (typeof value === "function") {
         return new Proxy(value as (...args: unknown[]) => unknown, {
           apply(fn, thisArg, args) {
-            const current = getActiveWsId();
-            if (current && current !== entryWsId) {
-              throw new WorkspaceClientStaleError(entryWsId, current);
+            if (guardActiveWorkspace) {
+              const current = getActiveWsId();
+              if (current && current !== entryWsId) {
+                throw new WorkspaceClientStaleError(entryWsId, current);
+              }
             }
             return Reflect.apply(fn, thisArg === receiver ? inner : thisArg, args);
           },
         });
       }
       if (value && typeof value === "object") {
-        return wrapClientWithGuard(value as object, entryWsId, getActiveWsId);
+        return wrapClientWithGuard(value as object, entryWsId, getActiveWsId, guardActiveWorkspace);
       }
       return value;
     },
@@ -151,6 +154,15 @@ export function createWorkspaceRouting(
 ): WorkspaceRouting {
   const entries = new Map<string, ClientEntry>();
   const ensureErrors = new Map<string, string>();
+  const pendingEnsures = new Map<
+    string,
+    {
+      baseUrl: string;
+      directory?: string;
+      auth?: OpencodeAuth;
+      promise: Promise<ClientEntry | null>;
+    }
+  >();
   // VSLO-86 F4Ú12 — reactive trigger so consumers (SSE multiplex) re-run
   // when workspaces are ensured/released.
   const [entryIdsSignal, setEntryIdsSignal] = createSignal<string[]>([], {
@@ -167,19 +179,21 @@ export function createWorkspaceRouting(
       // Workspace switches between this lookup and the async SDK call now
       // surface as `WorkspaceClientStaleError` instead of silently hitting
       // the previous workspace's engine.
+      const explicitWorkspaceId = workspaceId !== undefined;
       const wsId = workspaceId ?? opts.activeWorkspaceId();
       if (wsId) {
         const entry = entries.get(wsId);
         if (entry) {
-          return wrapClientWithGuard(entry.client, wsId, opts.activeWorkspaceId);
+          return wrapClientWithGuard(
+            entry.client,
+            wsId,
+            opts.activeWorkspaceId,
+            !explicitWorkspaceId,
+          );
         }
-        // During local browsing mode the global client can still point at the
-        // previously active workspace. Once routing has any workspace entry,
-        // a missing entry for the requested/active workspace means "not
-        // connected", not "reuse the global client".
-        if (workspaceId !== undefined || entries.size > 0) {
-          return null;
-        }
+        // A concrete workspace without a route is disconnected. The global
+        // client is only valid before the app has an active workspace id.
+        return null;
       }
       return opts.clientSource();
     },
@@ -188,11 +202,9 @@ export function createWorkspaceRouting(
       if (wsId) {
         const entry = entries.get(wsId);
         if (entry) {
-          return wrapClientWithGuard(entry.client, wsId, opts.activeWorkspaceId);
+          return wrapClientWithGuard(entry.client, wsId, opts.activeWorkspaceId, true);
         }
-        if (entries.size > 0) {
-          return null;
-        }
+        return null;
       }
       return opts.clientSource();
     },
@@ -209,40 +221,61 @@ export function createWorkspaceRouting(
       baseUrl: string,
       options?: EnsureOptions
     ) {
+      const directory = options?.directory;
+      const auth = options?.auth;
       const cached = entries.get(workspaceId);
       if (
         cached &&
         cached.baseUrl === baseUrl &&
-        cached.directory === options?.directory
+        cached.directory === directory
       ) {
         cached.lastUsed = Date.now();
         return cached;
       }
-      const client = opts.createClient(
-        baseUrl,
-        options?.directory,
-        options?.auth
-      );
-      try {
-        await opts.waitForHealthy(client, { timeoutMs: 10_000 });
-      } catch (error) {
-        ensureErrors.set(
-          workspaceId,
-          error instanceof Error ? error.message : String(error),
-        );
-        return null;
+      const pending = pendingEnsures.get(workspaceId);
+      if (
+        pending &&
+        pending.baseUrl === baseUrl &&
+        pending.directory === directory &&
+        pending.auth === auth
+      ) {
+        return pending.promise;
       }
-      const entry: ClientEntry = {
-        workspaceId,
-        client,
-        baseUrl,
-        directory: options?.directory,
-        lastUsed: Date.now(),
-      };
-      entries.set(workspaceId, entry);
-      ensureErrors.delete(workspaceId);
-      bumpEntryIds();
-      return entry;
+      const promise = (async () => {
+        const client = opts.createClient(
+          baseUrl,
+          directory,
+          auth
+        );
+        try {
+          await opts.waitForHealthy(client, { timeoutMs: 10_000 });
+        } catch (error) {
+          ensureErrors.set(
+            workspaceId,
+            error instanceof Error ? error.message : String(error),
+          );
+          return null;
+        }
+        const entry: ClientEntry = {
+          workspaceId,
+          client,
+          baseUrl,
+          directory,
+          lastUsed: Date.now(),
+        };
+        entries.set(workspaceId, entry);
+        ensureErrors.delete(workspaceId);
+        bumpEntryIds();
+        return entry;
+      })();
+      pendingEnsures.set(workspaceId, { baseUrl, directory, auth, promise });
+      try {
+        return await promise;
+      } finally {
+        if (pendingEnsures.get(workspaceId)?.promise === promise) {
+          pendingEnsures.delete(workspaceId);
+        }
+      }
     },
     lastEnsureError(workspaceId: string) {
       const id = workspaceId.trim();

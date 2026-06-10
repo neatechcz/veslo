@@ -49,7 +49,12 @@ export function isMacPlatform() {
 export function normalizeDirectoryQueryPath(input?: string | null) {
   const trimmed = (input ?? "").trim();
   if (!trimmed) return "";
-  const unified = trimmed.replace(/\\/g, "/");
+  const unified = trimmed
+    .replace(/^\\\\\?\\UNC\\/i, "//")
+    .replace(/^\\\\\?\\/i, "")
+    .replace(/^\/\/\?\/UNC\//i, "//")
+    .replace(/^\/\/\?\//i, "")
+    .replace(/\\/g, "/");
   const withoutTrailing = unified.replace(/\/+$/, "");
   return withoutTrailing || "/";
 }
