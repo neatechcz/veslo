@@ -17,6 +17,10 @@ const workspaceSessionSelectionSource = readFileSync(
   new URL("../../context/workspace-session-selection.ts", import.meta.url),
   "utf8",
 );
+const workspaceSessionSnapshotsSource = readFileSync(
+  new URL("../../context/workspace-session-snapshots.ts", import.meta.url),
+  "utf8",
+);
 const sidebarWorkspaceSessionsSource = readFileSync(
   new URL("../../context/sidebar-workspace-sessions.ts", import.meta.url),
   "utf8",
@@ -224,19 +228,19 @@ test("app activates selected session workspace at send time, not browse time", (
 test("workspace snapshot effect preserves scoped browse session during send-time activation", () => {
   assert.match(
     appSource,
-    /const selectedId = selectedSessionId\(\)\?\.trim\(\) \?\? "";\s*const selectedScope = selectedId \? resolveSelectedSessionBrowseScope\(selectedId\) : null;/,
-    "workspace snapshot effect should inspect the selected session scope before saving or restoring snapshots",
+    /createWorkspaceSessionSnapshots\(\{[\s\S]*selectedSessionId,[\s\S]*resolveSelectedSessionBrowseScope,[\s\S]*saveWorkspaceSnapshot: \(workspaceId\) => sessionStore\.saveWorkspaceSnapshot\(workspaceId\),[\s\S]*loadWorkspaceSnapshot: \(workspaceId\) => sessionStore\.loadWorkspaceSnapshot\(workspaceId\),[\s\S]*\}\);/,
+    "app should wire workspace snapshot save/load through the workspace session snapshots controller",
   );
 
   assert.match(
-    appSource,
-    /const selectedBelongsToOutgoing =\s*!selectedScope \|\| selectedScope\.workspaceId\.trim\(\) === previousActiveWsId;[\s\S]*if \(selectedBelongsToOutgoing\) \{\s*sessionStore\.saveWorkspaceSnapshot\(previousActiveWsId\);/s,
+    workspaceSessionSnapshotsSource,
+    /const selectedBelongsToOutgoing =\s*!selectedScopeWorkspaceId \|\| selectedScopeWorkspaceId === previousWorkspaceId;[\s\S]*saveWorkspaceId = previousWorkspaceId;/s,
     "outgoing workspace snapshot must not be overwritten by a browsed session from a different workspace",
   );
 
   assert.match(
-    appSource,
-    /const selectedBelongsToIncoming = selectedScope\?\.workspaceId\.trim\(\) === wsId;[\s\S]*if \(!selectedBelongsToIncoming\) \{\s*sessionStore\.loadWorkspaceSnapshot\(wsId\);/s,
+    workspaceSessionSnapshotsSource,
+    /const selectedBelongsToIncoming = selectedScopeWorkspaceId === activeWorkspaceId;[\s\S]*if \(!selectedBelongsToIncoming\) \{[\s\S]*loadWorkspaceId = activeWorkspaceId;/s,
     "send-time activation must not immediately replace the scoped browsed session with a stale workspace snapshot",
   );
 });

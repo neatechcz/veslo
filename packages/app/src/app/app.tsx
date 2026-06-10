@@ -290,6 +290,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { createSessionStore } from "./context/session";
 import type { ReconnectNotice } from "./context/session-reconnect";
 import { createSidebarWorkspaceSessions } from "./context/sidebar-workspace-sessions";
+import { createWorkspaceSessionSnapshots } from "./context/workspace-session-snapshots";
 import { createExtensionsStore } from "./context/extensions";
 import { useGlobalSync } from "./context/global-sync";
 import { createWorkspaceStore } from "./context/workspace";
@@ -1501,8 +1502,8 @@ export default function App() {
     resolveWorkspaceRootForConversationScope,
     rememberConversationScopesFromSessions,
     rememberConversationScopeFromTranscript,
-    readSessionByWorkspace,
-    writeSessionByWorkspace,
+    clearWorkspaceLastSessionIfSelected,
+    moveWorkspaceLastSession,
     activeWorkspaceLastSessionId,
     scopedSessionIds,
   } = workspaceSessionSelection;
@@ -4138,12 +4139,7 @@ export default function App() {
       setSelectedSessionId(null);
       const activeWorkspace = workspaceStore.activeWorkspaceId().trim();
       if (activeWorkspace) {
-        const map = readSessionByWorkspace();
-        if (map[activeWorkspace] === trimmed) {
-          const next = { ...map };
-          delete next[activeWorkspace];
-          writeSessionByWorkspace(next);
-        }
+        clearWorkspaceLastSessionIfSelected(activeWorkspace, trimmed);
       }
     }
 
@@ -4905,27 +4901,12 @@ export default function App() {
   // saves the outgoing snapshot and restores the incoming one so sessions/
   // messages/permissions don't get wiped between switches. connectToServer
   // skips its own state RESET — this cache is the source of truth.
-  let previousActiveWsId: string | null = null;
-  createEffect(() => {
-    const wsId = workspaceStore.activeWorkspaceId().trim();
-    const selectedId = selectedSessionId()?.trim() ?? "";
-    const selectedScope = selectedId ? resolveSelectedSessionBrowseScope(selectedId) : null;
-    if (previousActiveWsId && previousActiveWsId !== wsId) {
-      const selectedBelongsToOutgoing =
-        !selectedScope || selectedScope.workspaceId.trim() === previousActiveWsId;
-      if (selectedBelongsToOutgoing) {
-        sessionStore.saveWorkspaceSnapshot(previousActiveWsId);
-      }
-    }
-    if (wsId) {
-      const selectedBelongsToIncoming = selectedScope?.workspaceId.trim() === wsId;
-      if (!selectedBelongsToIncoming) {
-        sessionStore.loadWorkspaceSnapshot(wsId);
-      }
-      // Cache miss is fine — connectToServer will trigger loadSessions to
-      // populate fresh state.
-    }
-    previousActiveWsId = wsId || null;
+  createWorkspaceSessionSnapshots({
+    activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
+    selectedSessionId,
+    resolveSelectedSessionBrowseScope,
+    saveWorkspaceSnapshot: (workspaceId) => sessionStore.saveWorkspaceSnapshot(workspaceId),
+    loadWorkspaceSnapshot: (workspaceId) => sessionStore.loadWorkspaceSnapshot(workspaceId),
   });
 
   let lastLocalVesloEnsureKey = "";
@@ -9187,12 +9168,11 @@ export default function App() {
         setSessions([{ ...sessionSnapshot, directory: targetWorkspace.path }, ...currentSessions]);
       }
 
-      const sessionMap = readSessionByWorkspace();
-      const nextSessionMap = { ...sessionMap, [targetWorkspace.id]: sessionID };
-      if (sourceWorkspaceId) {
-        delete nextSessionMap[sourceWorkspaceId];
-      }
-      writeSessionByWorkspace(nextSessionMap);
+      moveWorkspaceLastSession({
+        sourceWorkspaceId,
+        targetWorkspaceId: targetWorkspace.id,
+        sessionId: sessionID,
+      });
 
       // Optimistically move the session in the sidebar so the user sees
       // immediate feedback. Uses the snapshot captured before activation.

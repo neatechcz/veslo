@@ -258,6 +258,34 @@ export function createWorkspaceSessionSelection(options: WorkspaceSessionSelecti
   const writeSessionByWorkspace = (map: Record<string, string>) =>
     writeSessionByWorkspaceToStorage(storage(), map);
 
+  const clearWorkspaceLastSessionIfSelected = (workspaceId: string, sessionId: string) => {
+    const normalizedWorkspaceId = workspaceId.trim();
+    const normalizedSessionId = sessionId.trim();
+    if (!normalizedWorkspaceId || !normalizedSessionId) return;
+    const map = readSessionByWorkspace();
+    if (map[normalizedWorkspaceId] !== normalizedSessionId) return;
+    const next = { ...map };
+    delete next[normalizedWorkspaceId];
+    writeSessionByWorkspace(next);
+  };
+
+  const moveWorkspaceLastSession = (input: {
+    sourceWorkspaceId?: string | null;
+    targetWorkspaceId: string;
+    sessionId: string;
+  }) => {
+    const targetWorkspaceId = input.targetWorkspaceId.trim();
+    const sessionId = input.sessionId.trim();
+    if (!targetWorkspaceId || !sessionId) return;
+    const sourceWorkspaceId = input.sourceWorkspaceId?.trim() ?? "";
+    const map = readSessionByWorkspace();
+    const next = { ...map, [targetWorkspaceId]: sessionId };
+    if (sourceWorkspaceId) {
+      delete next[sourceWorkspaceId];
+    }
+    writeSessionByWorkspace(next);
+  };
+
   createEffect(() => {
     const sessionId = selectedSessionId();
     const workspaceId =
@@ -328,8 +356,8 @@ export function createWorkspaceSessionSelection(options: WorkspaceSessionSelecti
     resolveWorkspaceRootForConversationScope,
     rememberConversationScopesFromSessions,
     rememberConversationScopeFromTranscript,
-    readSessionByWorkspace,
-    writeSessionByWorkspace,
+    clearWorkspaceLastSessionIfSelected,
+    moveWorkspaceLastSession,
     activeWorkspaceLastSessionId,
     scopedSessionIds,
     resolveSendTargetWorkspaceScope,
