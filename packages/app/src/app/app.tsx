@@ -248,7 +248,6 @@ import {
 } from "./utils";
 import { isFileDragTransfer } from "./utils/data-transfer-files";
 import { createStartupGuard } from "./utils/startup-guard";
-import { computeWorkspaceSwitchOverlayHoldMs } from "./utils/workspace-switch-overlay";
 import {
   parseAuthCompleteDeepLink,
   clearDenAuth,
@@ -298,6 +297,7 @@ import { createExtensionsStore } from "./context/extensions";
 import { useGlobalSync } from "./context/global-sync";
 import { createWorkspaceStore } from "./context/workspace";
 import { WorkspaceServerSync } from "./context/workspace-server-sync";
+import { createWorkspaceSwitchOverlayState } from "./context/workspace-switch-overlay-state";
 import {
   createWorkspaceRouting,
   isWorkspaceClientStaleError,
@@ -10338,99 +10338,17 @@ export default function App() {
     return seconds > 0 ? `${label} · ${seconds}s` : label;
   });
 
-  const workspaceSwitchWorkspace = createMemo(() => {
-    // During boot, don't show any specific workspace in the overlay.
-    if (booting()) return null;
-    const switchingId = workspaceStore.connectingWorkspaceId();
-    if (switchingId) {
-      return workspaceStore.workspaces().find((ws) => ws.id === switchingId) ?? activeWorkspaceDisplay();
-    }
-    return activeWorkspaceDisplay();
-  });
-
-  // Avoid flashing the full-screen switch overlay for fast workspace switches.
-  // Only show it if a switch is still in progress after a short delay and keep
-  // it visible briefly once shown to avoid blinky transitions.
-  const WORKSPACE_SWITCH_OVERLAY_DELAY_MS = 250;
-  const WORKSPACE_SWITCH_OVERLAY_MIN_VISIBLE_MS = 350;
-  const [workspaceSwitchDelayElapsed, setWorkspaceSwitchDelayElapsed] = createSignal(false);
-  const [workspaceSwitchVisibleSinceMs, setWorkspaceSwitchVisibleSinceMs] = createSignal<number | null>(null);
-  const [workspaceSwitchHoldOpen, setWorkspaceSwitchHoldOpen] = createSignal(false);
-
-  // Session loading overlay — shown immediately on session click, hidden after messages load.
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    const switchingId = workspaceStore.connectingWorkspaceId();
-    if (!switchingId) {
-      setWorkspaceSwitchDelayElapsed(false);
-      return;
-    }
-
-    setWorkspaceSwitchDelayElapsed(false);
-    const timer = window.setTimeout(() => setWorkspaceSwitchDelayElapsed(true), WORKSPACE_SWITCH_OVERLAY_DELAY_MS);
-    onCleanup(() => window.clearTimeout(timer));
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    const connecting = Boolean(workspaceStore.connectingWorkspaceId());
-    const shouldShowForSwitch = connecting && workspaceSwitchDelayElapsed();
-
-    // Read visibleSinceMs without tracking — otherwise setting it to null
-    // re-triggers this effect, which cancels the hold-open timer via onCleanup
-    // before it can fire, leaving holdOpen stuck at true forever.
-    const visibleSinceMs = untrack(workspaceSwitchVisibleSinceMs);
-
-    if (shouldShowForSwitch) {
-      setWorkspaceSwitchHoldOpen(false);
-      if (visibleSinceMs === null) {
-        setWorkspaceSwitchVisibleSinceMs(Date.now());
-      }
-      return;
-    }
-
-    if (visibleSinceMs === null) return;
-    setWorkspaceSwitchVisibleSinceMs(null);
-
-    const holdMs = computeWorkspaceSwitchOverlayHoldMs({
-      visibleSinceMs,
-      nowMs: Date.now(),
-      minVisibleMs: WORKSPACE_SWITCH_OVERLAY_MIN_VISIBLE_MS,
-    });
-    if (holdMs <= 0) {
-      setWorkspaceSwitchHoldOpen(false);
-      return;
-    }
-
-    setWorkspaceSwitchHoldOpen(true);
-    const timer = window.setTimeout(() => {
-      setWorkspaceSwitchHoldOpen(false);
-    }, holdMs);
-    onCleanup(() => window.clearTimeout(timer));
-  });
-
-  const workspaceSwitchOpen = createMemo(() => {
-    if (booting()) return true;
-    if (workspaceStore.connectingWorkspaceId()) return workspaceSwitchDelayElapsed();
-    if (workspaceSwitchHoldOpen()) return true;
-    if (!busy() || !busyLabel()) return false;
-    const label = busyLabel();
-    return (
-      label === "status.starting_engine" ||
-      label === "status.restarting_engine"
-    );
-  });
-
-  const workspaceSwitchStatusKey = createMemo(() => {
-    const label = busyLabel();
-    if (label === "status.connecting") return "workspace.switching_status_connecting";
-    if (label === "status.starting_engine" || label === "status.restarting_engine") {
-      return "workspace.switching_status_preparing";
-    }
-    if (label === "status.loading_session") return "workspace.switching_status_loading";
-    if (workspaceStore.connectingWorkspaceId()) return "workspace.switching_status_loading";
-    if (booting()) return "workspace.switching_status_preparing";
-    return "workspace.switching_status_preparing";
+  const {
+    workspaceSwitchWorkspace,
+    workspaceSwitchOpen,
+    workspaceSwitchStatusKey,
+  } = createWorkspaceSwitchOverlayState({
+    booting,
+    connectingWorkspaceId: () => workspaceStore.connectingWorkspaceId(),
+    activeWorkspaceDisplay,
+    workspaces: () => workspaceStore.workspaces(),
+    busy,
+    busyLabel,
   });
 
   const localHostLabel = createMemo(() => {
