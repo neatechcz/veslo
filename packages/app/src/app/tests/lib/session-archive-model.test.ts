@@ -1,0 +1,137 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  buildArchivedSessionDisplayLabel,
+  buildLegacyArchiveMigration,
+  buildSessionArchiveSnapshot,
+  buildWorkspaceIdentity,
+  sortArchivedSessionsByRecency,
+  toSessionArchiveItem,
+  type SessionArchiveItem,
+} from "../../lib/session-archive-model.js";
+
+test("sortArchivedSessionsByRecency orders newest archived session first", () => {
+  const items: SessionArchiveItem[] = [
+    {
+      sessionId: "old",
+      title: "Old",
+      workspaceLabel: "Workspace",
+      archivedAt: 10,
+      availableOnThisDevice: true,
+    },
+    {
+      sessionId: "new",
+      title: "New",
+      workspaceLabel: "Workspace",
+      archivedAt: 20,
+      availableOnThisDevice: true,
+    },
+  ];
+
+  assert.deepEqual(sortArchivedSessionsByRecency(items).map((item) => item.sessionId), ["new", "old"]);
+});
+
+test("buildArchivedSessionDisplayLabel falls back to project and workspace snapshots", () => {
+  const label = buildArchivedSessionDisplayLabel({
+    sessionId: "sess_123",
+    workspaceLabel: "Cloud Workspace",
+    projectLabel: "Client A",
+    resolvedDirectory: null,
+  });
+
+  assert.equal(label, "Cloud Workspace · Client A");
+});
+
+test("buildWorkspaceIdentity prefers stable remote host and workspace ids", () => {
+  assert.equal(
+    buildWorkspaceIdentity({
+      id: "local-id",
+      name: "Remote",
+      path: "/tmp",
+      preset: "starter",
+      workspaceType: "remote",
+      remoteType: "veslo",
+      baseUrl: "https://worker.example/workspace",
+      directory: "/workspace/client-a",
+      vesloHostUrl: "https://worker.example/",
+      vesloWorkspaceId: "ws_123",
+      vesloWorkspaceName: "Client A",
+    }),
+    "remote:https://worker.example::id:ws_123",
+  );
+});
+
+test("buildSessionArchiveSnapshot captures workspace and session metadata", () => {
+  const snapshot = buildSessionArchiveSnapshot({
+    session: {
+      id: "sess_123",
+      title: "Draft task",
+      parentID: "root",
+      directory: "/workspace/client-a",
+      time: { created: 1, updated: 2 },
+    },
+    workspace: {
+      id: "ws_local",
+      name: "Workspace",
+      path: "/workspace",
+      preset: "starter",
+      workspaceType: "local",
+      displayName: "Workspace",
+    },
+    archivedAt: 99,
+  });
+
+  assert.equal(snapshot.archivedAt, 99);
+  assert.equal(snapshot.workspaceIdAtArchive, "ws_local");
+  assert.equal(snapshot.projectLabelSnapshot, "client-a");
+  assert.equal(snapshot.parentSessionId, "root");
+});
+
+test("toSessionArchiveItem marks unavailable sessions and uses record snapshots", () => {
+  const item = toSessionArchiveItem(
+    {
+      sessionId: "sess_123",
+      archivedAt: 50,
+      titleSnapshot: "Archived task",
+      workspaceLabelSnapshot: "Cloud Workspace",
+      projectLabelSnapshot: "Client A",
+      resolvedDirectoryAtArchive: "/workspace/client-a",
+      workspaceIdentity: "remote:https://worker.example::id:missing",
+    },
+    [],
+  );
+
+  assert.equal(item.availableOnThisDevice, false);
+  assert.equal(item.workspaceLabel, "Cloud Workspace");
+  assert.equal(item.projectLabel, "Client A");
+});
+
+test("buildLegacyArchiveMigration preserves local archive order as synthetic archived timestamps", () => {
+  const records = buildLegacyArchiveMigration(
+    ["session-1", "session-2"],
+    [
+      {
+        workspace: {
+          id: "ws_local",
+          name: "Workspace",
+          path: "/workspace",
+          preset: "starter",
+          workspaceType: "local",
+          displayName: "Workspace",
+        },
+        sessions: [
+          { id: "session-1", title: "One", directory: "/workspace/one" },
+          { id: "session-2", title: "Two", directory: "/workspace/two" },
+        ],
+        status: "ready",
+        error: null,
+      },
+    ],
+  );
+
+  assert.equal(records.length, 2);
+  assert.equal(records[0]?.sessionId, "session-1");
+  assert.equal(records[1]?.sessionId, "session-2");
+  assert.ok((records[1]?.archivedAt ?? 0) > (records[0]?.archivedAt ?? 0));
+});

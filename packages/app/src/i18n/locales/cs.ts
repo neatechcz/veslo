@@ -269,6 +269,7 @@ export default {
   "skills.workspace_specific": "Konkrétní pracovní prostory",
   "skills.workspace_overrides": "Přepisy v pracovních prostorech",
   "skills.no_skills": "V `.opencode/skills`, `.claude/skills` ani `~/.agents/skills` nebyly nalezeny žádné Skills.",
+  "skills.pick_workspace_first": "Nejdřív vyberte složku pracovního prostoru.",
   "skills.desktop_required": "Správa Skills vyžaduje desktopovou aplikaci.",
   "skills.host_only_error": "Správa Skills vyžaduje lokální pracovní prostor nebo připojený server Veslo.",
   "skills.install_skill_creator": "Nainstalovat skill creator",
