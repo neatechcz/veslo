@@ -217,4 +217,29 @@ describe("conversation read store DB path resolution", () => {
     expect(nestedHome.source).toBe("sqlite");
     expect(nestedHome.items[0]?.id).toBe("sess-a");
   });
+
+  test("uses workspace-local opencode DB before inherited XDG_DATA_HOME", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversation-read-local-db-"));
+    tempDirs.push(workspaceRoot);
+    const dbDir = join(workspaceRoot, ".opencode");
+    await mkdir(dbDir, { recursive: true });
+    seedDb(join(dbDir, "opencode.db"), workspaceRoot);
+
+    const unrelatedDataHome = await mkdtemp(join(tmpdir(), "veslo-conversation-read-global-home-"));
+    tempDirs.push(unrelatedDataHome);
+    setEnv("XDG_DATA_HOME", unrelatedDataHome);
+
+    const store = createConversationReadStore();
+    const list = await store.listConversations({
+      workspaceId: "ws-a",
+      directory: workspaceRoot,
+      workspace: {
+        id: "ws-a",
+        path: workspaceRoot,
+      },
+    });
+
+    expect(list.source).toBe("sqlite");
+    expect(list.items[0]?.id).toBe("sess-a");
+  });
 });

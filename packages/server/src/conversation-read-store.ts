@@ -120,12 +120,14 @@ function resolveOpenCodeDbPath(input: {
     workspace?.opencode?.dataHome?.trim() ||
     workspace?.opencode?.xdgDataHome?.trim() ||
     process.env.VESLO_OPENCODE_XDG_DATA_HOME?.trim() ||
-    process.env.XDG_DATA_HOME?.trim() ||
     "";
   if (dataHome) return join(dataHome, "opencode", "opencode.db");
 
   const workspaceLocalDb = workspace?.path ? join(workspace.path, ".opencode", "opencode.db") : "";
   if (workspaceLocalDb && existsSync(workspaceLocalDb)) return workspaceLocalDb;
+
+  const inheritedDataHome = process.env.XDG_DATA_HOME?.trim() || "";
+  if (inheritedDataHome) return join(inheritedDataHome, "opencode", "opencode.db");
 
   const home = homedir();
   if (!home) return null;

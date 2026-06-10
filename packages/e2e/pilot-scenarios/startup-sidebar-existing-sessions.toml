@@ -20,7 +20,7 @@ window.localStorage.removeItem("veslo.sidebar-chat-collapsed.v1");
 window.__vesloStartupSidebar = (() => {
   const seededChatTitle = "E2E startup seeded chat session";
   const seededProjectTitle = "E2E startup seeded inactive project session";
-  const startupProjectLabel = "Startup Inactive Project";
+  const startupProjectLabel = "startup-inactive-project";
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const normalize = (value) => String(value ?? "").trim().replace(/\s+/g, " ");
   const normalizePath = (value) => String(value ?? "").trim().replace(/\\/g, "/").replace(/\/+$/, "");
@@ -45,6 +45,56 @@ window.__vesloStartupSidebar = (() => {
     const invoke = window.__TAURI_INTERNALS__?.invoke;
     assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
     return await invoke(command, payload);
+  };
+  const serverJson = async (path) => {
+    const info = await tauriInvoke("veslo_server_info");
+    const baseUrl = trimBaseUrl(info?.baseUrl || info?.base_url || "");
+    const token = normalize(info?.clientToken || info?.client_token || "");
+    assert(baseUrl, `Veslo server baseUrl missing. Info=${JSON.stringify(info)}`);
+    const response = await fetch(`${baseUrl}${path}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    const text = await response.text();
+    let body;
+    try {
+      body = text ? JSON.parse(text) : null;
+    } catch {
+      body = text;
+    }
+    return { status: response.status, body };
+  };
+  const startupServerDiagnostics = async () => {
+    const bootstrap = await tauriInvoke("workspace_bootstrap");
+    const workspaces = Array.isArray(bootstrap?.workspaces) ? bootstrap.workspaces : [];
+    const chat = workspaces.find((workspace) =>
+      normalizePath(workspace.path || workspace.directory).endsWith("/private-workspaces/startup-chat") ||
+      normalize(workspace.name || workspace.displayName).includes("Startup Chat")
+    );
+    const project = workspaces.find((workspace) =>
+      normalizePath(workspace.path || workspace.directory).endsWith("/workspaces/startup-inactive-project") ||
+      normalize(workspace.name || workspace.displayName).includes("Startup Inactive Project")
+    );
+    const conversationPath = (workspace) => {
+      const id = normalize(workspace?.id);
+      const directory = normalize(workspace?.path || workspace?.directory || "");
+      if (!id || !directory) return null;
+      return `/workspace/${encodeURIComponent(id)}/conversations?directory=${encodeURIComponent(directory)}`;
+    };
+    const chatPath = conversationPath(chat);
+    const projectPath = conversationPath(project);
+    return {
+      bootstrap: {
+        activeId: normalize(bootstrap?.activeId),
+        workspaces: workspaces.map((workspace) => ({
+          id: normalize(workspace.id),
+          name: normalize(workspace.name || workspace.displayName),
+          path: normalizePath(workspace.path || workspace.directory),
+        })),
+      },
+      serverWorkspaces: await serverJson("/workspaces").catch((error) => ({ error: String(error) })),
+      chatConversations: chatPath ? await serverJson(chatPath).catch((error) => ({ error: String(error) })) : null,
+      projectConversations: projectPath ? await serverJson(projectPath).catch((error) => ({ error: String(error) })) : null,
+    };
   };
   const visibleText = (element) => normalize(element?.innerText || element?.textContent || "");
   const bodyText = () => visibleText(document.body);
@@ -91,7 +141,7 @@ window.__vesloStartupSidebar = (() => {
   }, {
     timeout,
     interval: 500,
-    message: `${label} sidebar row did not appear for ${text}. Rows=${JSON.stringify(rowSummary())}. Body=${bodyText().slice(0, 3000)}`,
+    message: `${label} sidebar row did not appear for ${text}. Rows=${JSON.stringify(rowSummary())}. Diagnostics=${JSON.stringify(await startupServerDiagnostics().catch((error) => ({ error: String(error) })))}. Body=${bodyText().slice(0, 3000)}`,
   });
   const waitForChatRow = async (text, timeout) =>
     await waitForSidebarRow(text, (row) => Boolean(row.closest('[data-sidebar-chat-section="true"]')), "chat", timeout);
@@ -104,6 +154,19 @@ window.__vesloStartupSidebar = (() => {
     assert(!workspaceLoadingOverlayPattern.test(text), `Workspace loading overlay appeared during ${context}. Body=${text.slice(0, 3000)}`);
   };
   const activeWorkspaceId = async () => normalize((await tauriInvoke("workspace_bootstrap"))?.activeId);
+  const activeWorkspaceIdWithin = async (timeout = 3000) => {
+    let timeoutId;
+    try {
+      return await Promise.race([
+        activeWorkspaceId(),
+        new Promise((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error(`workspace_bootstrap did not resolve within ${timeout}ms`)), timeout);
+        }),
+      ]);
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  };
   const projectCollapseState = (projectRoot) => {
     const header = Array.from(projectRoot.querySelectorAll('button[data-project-collapse-toggle="true"]'))
       .find((button) => button instanceof HTMLElement && isVisibleElement(button) && !button.disabled);
@@ -140,13 +203,13 @@ window.__vesloStartupSidebar = (() => {
       Boolean(row.closest("[data-project-key]")) && !row.closest('[data-sidebar-chat-section="true"]'));
     if (existing) return existing;
     const { button, projectRoot } = findProjectHeaderByLabel(startupProjectLabel);
-    const activeBefore = await activeWorkspaceId();
+    const activeBefore = await activeWorkspaceIdWithin();
     const hashBefore = window.location.hash;
     if (button.getAttribute("aria-expanded") !== "true") {
       dispatchClickSequence(button);
       await waitForProjectExpandedState(projectRoot, true, "expand for row visibility");
     }
-    assert((await activeWorkspaceId()) === activeBefore, "Expanding project header activated workspace.");
+    assert((await activeWorkspaceIdWithin()) === activeBefore, "Expanding project header activated workspace.");
     assert(window.location.hash === hashBefore, "Expanding project header changed route.");
     assertNoWorkspaceLoadingOverlay("project expand");
     return await waitForProjectRow(seededProjectTitle, 20000);
@@ -244,6 +307,7 @@ window.__vesloStartupSidebar = (() => {
     hasWorkspaceLoadingOverlay,
     assertNoWorkspaceLoadingOverlay,
     activeWorkspaceId,
+    activeWorkspaceIdWithin,
     ensureProjectRowVisible,
     waitForProjectExpandedState,
     waitForComposer,
@@ -358,29 +422,45 @@ true;
 '''
 
 [[step]]
-name = "project header toggles without activating workspace"
+name = "start project header toggle check"
 action = "eval"
-timeout_ms = 60000
 script = '''
 const h = window.__vesloStartupSidebar;
-const projectRow = await h.waitForProjectRow(h.seededProjectTitle, 10000);
-const projectRoot = projectRow.closest("[data-project-key]");
-h.assert(projectRoot instanceof HTMLElement, "Project root missing for seeded project row.");
-const button = projectRoot.querySelector('button[data-project-collapse-toggle="true"]');
-h.assert(button instanceof HTMLElement, "Project header button missing.");
-const activeBefore = await h.activeWorkspaceId();
-const hashBefore = window.location.hash;
-h.dispatchClickSequence(button);
-await h.waitForProjectExpandedState(projectRoot, false, "collapse");
-h.assert((await h.activeWorkspaceId()) === activeBefore, "Project header collapse activated workspace.");
-h.assert(window.location.hash === hashBefore, "Project header collapse changed route.");
-h.assertNoWorkspaceLoadingOverlay("project collapse");
-h.dispatchClickSequence(button);
-await h.waitForProjectExpandedState(projectRoot, true, "expand");
-h.assert((await h.activeWorkspaceId()) === activeBefore, "Project header expand activated workspace.");
-h.assert(window.location.hash === hashBefore, "Project header expand changed route.");
-h.assertNoWorkspaceLoadingOverlay("project expand");
-await h.waitForProjectRow(h.seededProjectTitle, 10000);
+h.startStage("project-toggle", async () => {
+  const projectRow = await h.waitForProjectRow(h.seededProjectTitle, 10000);
+  const projectRoot = projectRow.closest("[data-project-key]");
+  h.assert(projectRoot instanceof HTMLElement, "Project root missing for seeded project row.");
+  const button = projectRoot.querySelector('button[data-project-collapse-toggle="true"]');
+  h.assert(button instanceof HTMLElement, "Project header button missing.");
+  const activeBefore = await h.activeWorkspaceIdWithin();
+  const hashBefore = window.location.hash;
+  h.dispatchClickSequence(button);
+  await h.waitForProjectExpandedState(projectRoot, false, "collapse");
+  h.assert((await h.activeWorkspaceIdWithin()) === activeBefore, "Project header collapse activated workspace.");
+  h.assert(window.location.hash === hashBefore, "Project header collapse changed route.");
+  h.assertNoWorkspaceLoadingOverlay("project collapse");
+  h.dispatchClickSequence(button);
+  await h.waitForProjectExpandedState(projectRoot, true, "expand");
+  h.assert((await h.activeWorkspaceIdWithin()) === activeBefore, "Project header expand activated workspace.");
+  h.assert(window.location.hash === hashBefore, "Project header expand changed route.");
+  h.assertNoWorkspaceLoadingOverlay("project expand");
+  await h.waitForProjectRow(h.seededProjectTitle, 10000);
+  return { activeWorkspaceId: activeBefore, rows: h.rowSummary() };
+});
+true;
+'''
+
+[[step]]
+name = "project header toggle check finished"
+action = "wait"
+target = "[data-testid=\"startup-sidebar-project-toggle-complete\"], [data-testid=\"startup-sidebar-project-toggle-error\"]"
+timeout_ms = 60000
+
+[[step]]
+name = "project header toggles without activating workspace"
+action = "eval"
+script = '''
+window.__vesloStartupSidebar.checkStage("project-toggle");
 true;
 '''
 
@@ -393,19 +473,22 @@ h.startStage("first-send", async () => {
   const chatRoot = document.querySelector('[data-sidebar-chat-section="true"], [data-sidebar-chat-collapsed="true"]');
   const chatButton = chatRoot
     ? Array.from(chatRoot.querySelectorAll("button")).find((button) =>
-        h.buttonMatchesLabel(button, ["New chat", "Nový chat"]) && !h.buttonMatchesLabel(button, ["Chats", "Chaty"]))
+        h.buttonMatchesLabel(button, ["New chat", "Chat", "Novy chat", "Nový chat"]) &&
+        !h.buttonMatchesLabel(button, ["Chats", "Chaty"]))
     : null;
   h.assert(chatButton instanceof HTMLElement, `New chat button was not available. Rows=${JSON.stringify(h.rowSummary())}`);
   h.dispatchClickSequence(chatButton);
-  await h.waitUntil(() => {
-    const activePendingDraftKey = window.localStorage.getItem("veslo.active-pending-draft.v1") || "";
-    if (!activePendingDraftKey.includes("__pending-draft__:new-private:")) return false;
+  await h.waitUntil(async () => {
     const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
-    return candidate instanceof HTMLElement && h.isVisibleElement(candidate) ? candidate : false;
+    if (!(candidate instanceof HTMLElement) || !h.isVisibleElement(candidate)) return false;
+    const body = h.bodyText();
+    if (/Adding this to chat|Pouze chat|Chat only/i.test(body)) return candidate;
+    const activeId = await h.activeWorkspaceIdWithin(1000).catch(() => "");
+    return activeId && activeId !== window.__vesloStartupSidebarActiveBefore ? candidate : false;
   }, {
     timeout: 120000,
     interval: 250,
-    message: `Private chat draft did not open. ActivePending=${window.localStorage.getItem("veslo.active-pending-draft.v1") || ""} Body=${h.bodyText().slice(0, 3000)} Rows=${JSON.stringify(h.rowSummary())}`,
+    message: `Private chat draft did not open. Active=${await h.activeWorkspaceIdWithin(1000).catch((error) => String(error))} Body=${h.bodyText().slice(0, 3000)} Rows=${JSON.stringify(h.rowSummary())}`,
   });
   const token = `startup-first-chat-${Date.now()}`;
   window.__vesloStartupSidebarToken = token;

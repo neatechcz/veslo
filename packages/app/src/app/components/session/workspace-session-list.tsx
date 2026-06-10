@@ -40,6 +40,7 @@ import {
   resolveSessionRowClickAction,
   requiredVisibleCountForExpandedSession,
   rowVisibleByExpansion,
+  PRIVATE_PROJECT_GROUP_KEY,
   sessionChatLabel,
   sessionSidebarTitle,
   splitProjectGroupsForSidebar,
@@ -615,7 +616,28 @@ export default function WorkspaceSessionList(props: Props) {
   const allProjectModeGroups = createMemo(() => renderProjectGroups());
   const projectSidebarSplit = createMemo(() => splitProjectGroupsForSidebar(allProjectModeGroups()));
   const normalProjectGroups = createMemo(() => projectSidebarSplit().projectGroups);
-  const chatProjectGroup = createMemo(() => projectSidebarSplit().chatGroup);
+  const emptyChatProjectGroup = createMemo<ProjectSessionGroup | null>(() => {
+    if (!props.onQuickNewSession) return null;
+    const fallbackWorkspace =
+      props.workspaceSessionGroups.find((group) => group.workspace.id === props.activeWorkspaceId)?.workspace ??
+      props.workspaceSessionGroups[0]?.workspace ??
+      null;
+    if (!fallbackWorkspace) return null;
+    return {
+      key: PRIVATE_PROJECT_GROUP_KEY,
+      workspace: fallbackWorkspace,
+      sessions: [],
+      status: "ready",
+      error: null,
+      activityAt: 0,
+      projectRoot: "",
+      projectLabel: "",
+      projectTitle: "",
+      isPrivateProject: true,
+      isWorkspaceOnlyProject: true,
+    };
+  });
+  const chatProjectGroup = createMemo(() => projectSidebarSplit().chatGroup ?? emptyChatProjectGroup());
   const recentFallbackProjectGroups = createMemo(() =>
     normalProjectGroups().filter((group) => group.isWorkspaceOnlyProject && group.sessions.length === 0),
   );

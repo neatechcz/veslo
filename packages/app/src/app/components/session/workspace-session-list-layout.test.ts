@@ -158,6 +158,16 @@ test("workspace session sidebar keeps the control rail ordered and compact-safe"
   );
 });
 
+test("by-project sidebar keeps an empty Chats action section available", () => {
+  assert.match(source, /const emptyChatProjectGroup = createMemo<ProjectSessionGroup \| null>/);
+  assert.match(source, /if \(!props\.onQuickNewSession\) return null;/);
+  assert.match(source, /key: PRIVATE_PROJECT_GROUP_KEY/);
+  assert.match(
+    source,
+    /const chatProjectGroup = createMemo\(\(\) => projectSidebarSplit\(\)\.chatGroup \?\? emptyChatProjectGroup\(\)\);/,
+  );
+});
+
 test("by-project rows keep the title wrapper without a branch toggle button", () => {
   assert.match(
     source,
