@@ -309,8 +309,8 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
         ? Math.floor(raw.staleAt as number)
         : fetchedAt + staleTtlMs;
       const snapshot: SessionTranscriptSnapshot = {
-        workspaceId: normalizeId(raw.workspaceId) || workspaceId,
-        sessionId: normalizeId(raw.sessionId) || sessionId,
+        workspaceId,
+        sessionId,
         ...(directory ? { directory } : {}),
         limit,
         messages: Array.isArray(raw.messages) ? raw.messages : [],

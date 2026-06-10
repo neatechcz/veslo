@@ -663,10 +663,18 @@ fn ensure_workspace_managed_package(
 }
 
 fn read_managed_deps_manifest(path: &Path) -> Result<ManagedDepsManifest, String> {
-    let raw = fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read managed deps manifest {}: {e}", path.display()))?;
-    let manifest: ManagedDepsManifest = serde_json::from_str(&raw)
-        .map_err(|e| format!("Failed to parse managed deps manifest {}: {e}", path.display()))?;
+    let raw = fs::read_to_string(path).map_err(|e| {
+        format!(
+            "Failed to read managed deps manifest {}: {e}",
+            path.display()
+        )
+    })?;
+    let manifest: ManagedDepsManifest = serde_json::from_str(&raw).map_err(|e| {
+        format!(
+            "Failed to parse managed deps manifest {}: {e}",
+            path.display()
+        )
+    })?;
     if manifest.schema_version != 1 {
         return Err(format!(
             "Unsupported managed deps manifest schema {} in {}",
@@ -831,7 +839,10 @@ fn vendor_node_module_package(
                     .iter()
                     .fold(ancestor.join("node_modules"), |path, part| path.join(part)),
                 package_parts.iter().fold(
-                    ancestor.join("packages").join("orchestrator").join("node_modules"),
+                    ancestor
+                        .join("packages")
+                        .join("orchestrator")
+                        .join("node_modules"),
                     |path, part| path.join(part),
                 ),
             ];
@@ -1560,7 +1571,10 @@ mod tests {
                             r#"{"name":"@opencode-ai/plugin","version":"1.14.29","type":"module","exports":{".":{"import":"./dist/index.js"},"./tool":{"import":"./dist/tool.js"}}}"#,
                         ),
                         ("dist/index.js", "export * from './tool.js';\n"),
-                        ("dist/tool.js", "export function tool(input) { return input; }\n"),
+                        (
+                            "dist/tool.js",
+                            "export function tool(input) { return input; }\n",
+                        ),
                     ],
                 ),
                 (

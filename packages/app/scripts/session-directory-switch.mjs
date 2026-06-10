@@ -40,7 +40,7 @@ try {
     sessionID: session.id,
     directory: dirB,
     agent,
-    command: "printf 'switched' > switched.txt",
+    command: "node -e \"require('node:fs').writeFileSync('switched.txt', 'switched')\"",
   });
 
   assert.equal(existsSync(join(dirA, "switched.txt")), false, "command must not write into the old folder");

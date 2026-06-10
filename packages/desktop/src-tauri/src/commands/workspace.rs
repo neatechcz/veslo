@@ -28,7 +28,8 @@ fn resolve_workspace_managed_deps_manifest(app: &tauri::AppHandle) -> Option<Pat
     let current_bin_dir = tauri::process::current_binary(&app.env())
         .ok()
         .and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
-    let sidecar_paths = sidecar_path_candidates(resource_dir.as_deref(), current_bin_dir.as_deref());
+    let sidecar_paths =
+        sidecar_path_candidates(resource_dir.as_deref(), current_bin_dir.as_deref());
     crate::orchestrator::resolve_opencode_managed_deps_manifest(&sidecar_paths)
 }
 

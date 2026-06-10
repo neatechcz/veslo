@@ -170,11 +170,7 @@ fn managed_deps_manifest_has_expected_packages(path: &Path) -> bool {
         Ok(parsed) => parsed,
         Err(_) => return false,
     };
-    if parsed
-        .get("schemaVersion")
-        .and_then(|value| value.as_u64())
-        != Some(1)
-    {
+    if parsed.get("schemaVersion").and_then(|value| value.as_u64()) != Some(1) {
         return false;
     }
     let Some(packages) = parsed.get("packages").and_then(|value| value.as_array()) else {

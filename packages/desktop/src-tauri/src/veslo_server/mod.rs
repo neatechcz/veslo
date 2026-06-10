@@ -1,5 +1,9 @@
 use std::fs;
+#[cfg(windows)]
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
+use std::process::Command;
 
 use gethostname::gethostname;
 use local_ip_address::{list_afinet_netifas, local_ip};
@@ -66,16 +70,8 @@ fn generate_token() -> String {
 fn resolve_engine_url(port: u16) -> Option<String> {
     #[cfg(windows)]
     {
-        list_afinet_netifas()
-            .ok()?
-            .into_iter()
-            .find_map(|(name, ip)| {
-                let name = name.to_ascii_lowercase();
-                if !name.contains("wsl") || !ip.is_ipv4() || ip.is_loopback() {
-                    return None;
-                }
-                Some(format!("http://{ip}:{port}"))
-            })
+        resolve_engine_url_from_interfaces(port, list_afinet_netifas().ok()?.into_iter())
+            .or_else(|| resolve_engine_url_from_wsl_interface(port))
     }
 
     #[cfg(not(windows))]
@@ -83,6 +79,54 @@ fn resolve_engine_url(port: u16) -> Option<String> {
         let _ = port;
         None
     }
+}
+
+#[cfg(windows)]
+fn format_engine_url_from_ip(ip: IpAddr, port: u16) -> Option<String> {
+    if !ip.is_ipv4() || ip.is_loopback() {
+        return None;
+    }
+    Some(format!("http://{ip}:{port}"))
+}
+
+#[cfg(windows)]
+fn resolve_engine_url_from_interfaces(
+    port: u16,
+    interfaces: impl IntoIterator<Item = (String, IpAddr)>,
+) -> Option<String> {
+    interfaces.into_iter().find_map(|(name, ip)| {
+        let name = name.to_ascii_lowercase();
+        if !name.contains("wsl") {
+            return None;
+        }
+        format_engine_url_from_ip(ip, port)
+    })
+}
+
+#[cfg(windows)]
+fn parse_wsl_engine_url_from_powershell_output(output: &str, port: u16) -> Option<String> {
+    output.lines().find_map(|line| {
+        let value = line.trim().trim_matches('"').trim_matches('\'');
+        let ip = value.parse::<IpAddr>().ok()?;
+        format_engine_url_from_ip(ip, port)
+    })
+}
+
+#[cfg(windows)]
+fn resolve_engine_url_from_wsl_interface(port: u16) -> Option<String> {
+    let output = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias '*WSL*' | Select-Object -ExpandProperty IPAddress",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_wsl_engine_url_from_powershell_output(&stdout, port)
 }
 
 fn build_urls(
@@ -545,6 +589,8 @@ pub fn start_veslo_server(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    use super::{parse_wsl_engine_url_from_powershell_output, resolve_engine_url_from_interfaces};
     use super::{
         read_persisted_veslo_server_info, read_persisted_veslo_server_info_with_cleanup,
         HealthIdentity, PersistedVesloServerState,
@@ -554,8 +600,41 @@ mod tests {
     use std::io::Read;
     use std::io::Write;
     use std::net::TcpListener;
+    #[cfg(windows)]
+    use std::net::{IpAddr, Ipv4Addr};
     use std::thread;
     use uuid::Uuid;
+
+    #[cfg(windows)]
+    #[test]
+    fn resolve_engine_url_uses_wsl_interface_address() {
+        let interfaces = vec![
+            (
+                "vEthernet (Default Switch)".to_string(),
+                IpAddr::V4(Ipv4Addr::new(172, 18, 16, 1)),
+            ),
+            (
+                "vEthernet (WSL (Hyper-V firewall))".to_string(),
+                IpAddr::V4(Ipv4Addr::new(172, 29, 64, 1)),
+            ),
+        ];
+
+        assert_eq!(
+            resolve_engine_url_from_interfaces(8787, interfaces).as_deref(),
+            Some("http://172.29.64.1:8787")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn parse_wsl_engine_url_from_powershell_output_skips_loopback() {
+        let output = "\r\n127.0.0.1\r\n172.29.64.1\r\n";
+
+        assert_eq!(
+            parse_wsl_engine_url_from_powershell_output(output, 8787).as_deref(),
+            Some("http://172.29.64.1:8787")
+        );
+    }
 
     #[test]
     fn read_persisted_server_info_returns_none_without_state() {

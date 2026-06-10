@@ -147,6 +147,26 @@ describe("session transcript prefetch core", () => {
     expect(store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-a" })?.sessionId).toBe("sess-a");
   });
 
+  test("caches loaded snapshots under the requested workspace and session", async () => {
+    const store = createSessionTranscriptPrefetchStore({
+      loadTranscript: async () => ({
+        workspaceId: "ws_wrong",
+        sessionId: "sess-wrong",
+        messages: [{ id: "m1" }],
+        partsByMessageId: {},
+      }),
+    });
+
+    const snapshot = await store.getOrLoad({ workspaceId: "ws_local", sessionId: "sess-a", limit: 140 });
+
+    expect(snapshot.workspaceId).toBe("ws_local");
+    expect(snapshot.sessionId).toBe("sess-a");
+    expect(store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-a" })?.messages).toEqual([
+      { id: "m1" },
+    ]);
+    expect(store.getWarmSnapshot({ workspaceId: "ws_wrong", sessionId: "sess-wrong" })).toBeNull();
+  });
+
   test("keeps warm snapshots isolated by directory", async () => {
     const calls: Array<{ sessionId: string; directory: string | null | undefined }> = [];
     const store = createSessionTranscriptPrefetchStore({

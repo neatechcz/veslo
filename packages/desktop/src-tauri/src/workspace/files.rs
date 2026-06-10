@@ -804,7 +804,8 @@ mod tests {
         let root = temp_workspace_root("starter-no-creator-skills");
         let root_str = root.to_string_lossy().to_string();
 
-        ensure_workspace_files(&root_str, "starter", None, None, None).expect("seed workspace files");
+        ensure_workspace_files(&root_str, "starter", None, None, None)
+            .expect("seed workspace files");
 
         let skills_dir = root.join(".opencode").join("skills");
         assert!(!skills_dir.join("skill-creator").exists());
@@ -908,7 +909,8 @@ description: User-owned onboarding notes.
         .expect("write custom skill");
 
         let root_str = root.to_string_lossy().to_string();
-        ensure_workspace_files(&root_str, "starter", None, None, None).expect("seed workspace files");
+        ensure_workspace_files(&root_str, "starter", None, None, None)
+            .expect("seed workspace files");
 
         assert!(!guide_dir.exists());
         assert!(!get_started_dir.exists());
@@ -938,7 +940,8 @@ Use this guide for the team's custom process.
         .expect("write custom workspace-guide");
 
         let root_str = root.to_string_lossy().to_string();
-        ensure_workspace_files(&root_str, "starter", None, None, None).expect("seed workspace files");
+        ensure_workspace_files(&root_str, "starter", None, None, None)
+            .expect("seed workspace files");
 
         assert!(guide_dir.join("SKILL.md").exists());
 
@@ -950,7 +953,8 @@ Use this guide for the team's custom process.
         let root = temp_workspace_root("automation");
         let root_str = root.to_string_lossy().to_string();
 
-        ensure_workspace_files(&root_str, "automation", None, None, None).expect("seed workspace files");
+        ensure_workspace_files(&root_str, "automation", None, None, None)
+            .expect("seed workspace files");
 
         let config_raw =
             fs::read_to_string(root.join("opencode.jsonc")).expect("read generated config");
@@ -995,7 +999,8 @@ Use this guide for the team's custom process.
         .expect("write existing config");
 
         let root_str = root.to_string_lossy().to_string();
-        ensure_workspace_files(&root_str, "minimal", None, None, None).expect("seed workspace files");
+        ensure_workspace_files(&root_str, "minimal", None, None, None)
+            .expect("seed workspace files");
 
         let config_raw = fs::read_to_string(&config_path).expect("read updated config");
         let config: serde_json::Value =
