@@ -4063,10 +4063,7 @@ export default function App() {
     setSessions(sessions().filter((s) => s.id !== trimmed));
     setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, trimmed));
     const sidebarWorkspaceId = workspace?.id ?? workspaceStore.activeWorkspaceId();
-    setSidebarSessionsByWorkspaceId((prev) => ({
-      ...prev,
-      [sidebarWorkspaceId]: (prev[sidebarWorkspaceId] ?? []).filter((s) => s.id !== trimmed),
-    }));
+    removeSessionFromWorkspaceSidebar(sidebarWorkspaceId, trimmed);
 
     // If we're currently routed to the deleted session, navigate away immediately.
     // (Otherwise the route effect can try to re-select a session that no longer exists.)
@@ -4773,13 +4770,12 @@ export default function App() {
     populateSidebarFromDb: async (workspaceId: string, directory: string) => {
       // Set status to "loading" SYNCHRONOUSLY before any await, so the idle-loader
       // effect (line ~2964) doesn't fire and try to contact the engine API.
-      setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [workspaceId]: "loading" as const }));
+      markWorkspaceSidebarLoading(workspaceId);
       const result = await listConversationsFromVesloReadApi(workspaceId, directory);
       const { visible: items } = partitionVesloUtilitySessions(
         result.items.map(applyPendingInitialSessionTitle),
       );
-      setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [workspaceId]: items }));
-      setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [workspaceId]: "ready" as const }));
+      replaceWorkspaceSidebarSessions(workspaceId, items);
     },
     hydrateLatestSessionFromDb: async (workspaceId: string, directory: string) => {
       const result = await listConversationsFromVesloReadApi(workspaceId, directory);
@@ -5091,15 +5087,18 @@ export default function App() {
     wsDebug,
   });
   const {
-    sidebarSessionsByWorkspaceId,
-    setSidebarSessionsByWorkspaceId,
-    setSidebarSessionStatusByWorkspaceId,
     sidebarWorkspaceGroups,
     workspaceSessionPagingById,
     clearStaleWorkspaceSessionError,
     refreshSidebarWorkspaceSessions,
     loadMoreWorkspaceSidebarSessions,
     publishRegisteredWorkspaceToSidebar,
+    markWorkspaceSidebarLoading,
+    replaceWorkspaceSidebarSessions,
+    removeSessionFromWorkspaceSidebar,
+    prependSessionToWorkspaceSidebar,
+    moveSessionBetweenWorkspaceSidebars,
+    ensureSessionInWorkspaceSidebar,
   } = sidebarWorkspaceSessions;
 
   const handleActivateWorkspace: typeof workspaceStore.activateWorkspace = (workspaceId, options) => {
@@ -8703,15 +8702,7 @@ export default function App() {
       };
       const wsId = targetWorkspace?.workspaceId || (workspaceStore.connectingWorkspaceId() ?? workspaceStore.activeWorkspaceId()).trim();
       if (wsId) {
-        const currentSessions = sidebarSessionsByWorkspaceId()[wsId] || [];
-        setSidebarSessionsByWorkspaceId((prev) => ({
-          ...prev,
-          [wsId]: [newItem, ...currentSessions],
-        }));
-        setSidebarSessionStatusByWorkspaceId((prev) => ({
-          ...prev,
-          [wsId]: "ready",
-        }));
+        prependSessionToWorkspaceSidebar(wsId, newItem);
       }
 
       // setSessionViewLockUntil(Date.now() + 1200);
@@ -9114,21 +9105,17 @@ export default function App() {
 
       // Optimistically move the session in the sidebar so the user sees
       // immediate feedback. Uses the snapshot captured before activation.
-      setSidebarSessionsByWorkspaceId((prev) => {
-        const sourceList = (prev[sourceWorkspaceId] ?? []).filter((s) => s.id !== sessionID);
-        const movedItem: SidebarSessionItem = {
+      moveSessionBetweenWorkspaceSidebars({
+        sourceWorkspaceId,
+        targetWorkspaceId: targetWorkspace.id,
+        item: {
           id: sessionID,
           title: sessionSnapshot?.title ?? "",
           slug: sessionSnapshot?.slug,
           parentID: sessionSnapshot?.parentID ?? null,
           time: sessionSnapshot?.time,
           directory: targetWorkspace.path,
-        };
-        return {
-          ...prev,
-          [sourceWorkspaceId]: sourceList,
-          [targetWorkspace.id]: [movedItem, ...(prev[targetWorkspace.id] ?? [])],
-        };
+        },
       });
 
       // Navigate and load messages before forgetWorkspace (which may
@@ -9157,18 +9144,13 @@ export default function App() {
       // to find the session, so it should include it. As a safety net,
       // re-ensure the session appears in case the async refresh hasn't
       // completed or failed to find it.
-      setSidebarSessionsByWorkspaceId((prev) => {
-        const existing = prev[targetWorkspace.id] ?? [];
-        if (existing.some((s) => s.id === sessionID)) return prev;
-        const item: SidebarSessionItem = {
+      ensureSessionInWorkspaceSidebar(targetWorkspace.id, {
           id: sessionID,
           title: sessionSnapshot?.title ?? "",
           slug: sessionSnapshot?.slug,
           parentID: sessionSnapshot?.parentID ?? null,
           time: sessionSnapshot?.time,
           directory: targetWorkspace.path,
-        };
-        return { ...prev, [targetWorkspace.id]: [item, ...existing] };
       });
 
       return true;
