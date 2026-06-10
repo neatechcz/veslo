@@ -1,0 +1,3 @@
+# Keep build scripts isolated from packages/orchestrator/bunfig.toml.
+# The runtime bunfig preloads the OpenTUI Solid plugin for source execution,
+# but sidecar compilation wires its build plugin explicitly.
