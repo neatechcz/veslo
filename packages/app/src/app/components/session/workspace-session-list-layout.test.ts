@@ -161,6 +161,8 @@ test("workspace session sidebar keeps the control rail ordered and compact-safe"
 test("by-project sidebar keeps an empty Chats action section available", () => {
   assert.match(source, /const emptyChatProjectGroup = createMemo<ProjectSessionGroup \| null>/);
   assert.match(source, /if \(!props\.onQuickNewSession\) return null;/);
+  assert.match(source, /props\.workspaces\?\.find\(\(workspace\) => workspace\.id === props\.activeWorkspaceId\)/);
+  assert.match(source, /props\.workspaces\?\.\[0\]/);
   assert.match(source, /key: PRIVATE_PROJECT_GROUP_KEY/);
   assert.match(
     source,

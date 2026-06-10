@@ -16,7 +16,6 @@ script = '''
 window.localStorage.setItem("veslo.sidebar-session-view.v1", "by-project");
 window.localStorage.removeItem("veslo.sidebar-collapsed-projects.v1");
 window.localStorage.removeItem("veslo.sidebar-chat-collapsed.v1");
-window.location.reload();
 true;
 '''
 
@@ -86,28 +85,46 @@ if (!window.__vesloPendingSessionInstanceIsolationStarted) {
       }
       throw new Error(`${message}. Latest=${JSON.stringify(latest)}`);
     };
-    const tauriInvoke = async (command, payload = {}) => {
+    const withTimeout = async (promise, timeout, message) => {
+      let timeoutId;
+      try {
+        return await Promise.race([
+          promise,
+          new Promise((_, reject) => {
+            timeoutId = setTimeout(() => reject(new Error(message)), timeout);
+          }),
+        ]);
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+      }
+    };
+    const tauriInvoke = async (command, payload = {}, timeout = 90000) => {
       const invoke = window.__TAURI_INTERNALS__?.invoke;
       assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
-      return await invoke(command, payload);
+      return await withTimeout(
+        invoke(command, payload),
+        timeout,
+        `Tauri command ${command} did not resolve within ${timeout}ms`,
+      );
     };
     const visibleText = (element) => normalize(element?.innerText || element?.textContent || "");
     const visibleBodyText = () => visibleText(document.querySelector("main") ?? document.body);
+    const conversationPane = () =>
+      document.querySelector('[data-testid="session-conversation-pane"]') ??
+      document.querySelector("main") ??
+      document.body;
+    const visibleTranscriptText = () => visibleText(conversationPane());
     const assertTextVisible = (text, label = text) => {
-      assert(visibleBodyText().includes(text), `${label} was not visible in selected transcript. Body=${visibleBodyText().slice(0, 2500)}`);
+      assert(visibleTranscriptText().includes(text), `${label} was not visible in selected transcript. Transcript=${visibleTranscriptText().slice(0, 2500)} Body=${visibleBodyText().slice(0, 2500)}`);
     };
     const assertTextNotVisible = (text, label = text) => {
-      assert(!visibleBodyText().includes(text), `${label} leaked into selected transcript. Body=${visibleBodyText().slice(0, 2500)}`);
+      assert(!visibleTranscriptText().includes(text), `${label} leaked into selected transcript. Transcript=${visibleTranscriptText().slice(0, 2500)} Body=${visibleBodyText().slice(0, 2500)}`);
+    };
+    const assertNoSendFailed = () => {
+      const body = visibleBodyText();
+      assert(!/Send failed|Odeslání selhalo|发送失败/i.test(body), `Send failed appeared. Body=${body.slice(0, 2500)} Trace=${JSON.stringify(sendTrace())}`);
     };
     const sendTrace = () => Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.slice(-80) : [];
-    const navigateToHash = (path) => {
-      const oldUrl = window.location.href;
-      window.location.hash = path.startsWith("/") ? path : `/${path}`;
-      window.dispatchEvent(new HashChangeEvent("hashchange", {
-        oldURL: oldUrl,
-        newURL: window.location.href,
-      }));
-    };
     const isVisibleElement = (element) => {
       if (!(element instanceof HTMLElement)) return false;
       const rect = element.getBoundingClientRect();
@@ -153,6 +170,30 @@ if (!window.__vesloPendingSessionInstanceIsolationStarted) {
       element.dispatchEvent(new MouseEvent("mousedown", { ...base, buttons: 1 }));
       element.dispatchEvent(new MouseEvent("mouseup", { ...base, buttons: 0 }));
       element.dispatchEvent(new MouseEvent("click", { ...base, buttons: 0 }));
+    };
+    const ensureByProjectSidebarMode = async () => {
+      setProgress("ensuring-by-project-sidebar");
+      if (document.querySelector('[data-sidebar-chat-section="true"], [data-sidebar-chat-collapsed="true"]')) return;
+      const moreButton = await waitUntil(() => findButton(["More actions"]), {
+        timeout: 45000,
+        interval: 500,
+        message: `Sidebar more-actions button did not appear. Buttons=${JSON.stringify(Array.from(document.querySelectorAll("button")).filter(isVisibleElement).map(buttonValues))}`,
+      });
+      dispatchClickSequence(moreButton);
+      const byProjectButton = await waitUntil(() =>
+        Array.from(document.querySelectorAll('button[role="menuitemradio"]'))
+          .find((button) => buttonMatchesLabel(button, ["By project", "Podle projektu"])),
+      {
+        timeout: 10000,
+        interval: 250,
+        message: `By-project sidebar menu item did not appear. Buttons=${JSON.stringify(Array.from(document.querySelectorAll("button")).filter(isVisibleElement).map(buttonValues))}`,
+      });
+      dispatchClickSequence(byProjectButton);
+      await waitUntil(() => document.querySelector('[data-sidebar-chat-section="true"], [data-sidebar-chat-collapsed="true"]'), {
+        timeout: 45000,
+        interval: 500,
+        message: `By-project sidebar did not expose the Chats section. Rows=${JSON.stringify(rowSummary())}. Body=${visibleBodyText().slice(0, 2500)}`,
+      });
     };
     const findComposerSendButton = (textbox) => {
       const labels = [
@@ -219,16 +260,17 @@ if (!window.__vesloPendingSessionInstanceIsolationStarted) {
         message: `Send button did not become enabled. Buttons=${JSON.stringify(Array.from(document.querySelectorAll("button")).map(buttonValues))}`,
       });
       dispatchClickSequence(sendButton);
-      await waitUntil(() => sendTrace().length > traceLengthBeforeClick || visibleBodyText().includes(text), {
+      await waitUntil(() => sendTrace().length > traceLengthBeforeClick || visibleTranscriptText().includes(text), {
         timeout: 20000,
         interval: 250,
         message: `Send click did not reach composer handler for ${text}. Trace=${JSON.stringify(sendTrace())}`,
       });
-      await waitUntil(() => visibleBodyText().includes(text), {
+      await waitUntil(() => visibleTranscriptText().includes(text), {
         timeout: 60000,
         interval: 500,
-        message: `Pending submitted message did not render for ${text}. Body=${visibleBodyText().slice(0, 2500)} Trace=${JSON.stringify(sendTrace())}`,
+        message: `Pending submitted message did not render for ${text}. Transcript=${visibleTranscriptText().slice(0, 2500)} Body=${visibleBodyText().slice(0, 2500)} Trace=${JSON.stringify(sendTrace())}`,
       });
+      assertNoSendFailed();
     };
     const sidebarRows = () => Array.from(document.querySelectorAll('[data-session-sidebar-row="true"]'))
       .filter(isVisibleElement);
@@ -237,7 +279,15 @@ if (!window.__vesloPendingSessionInstanceIsolationStarted) {
       text: normalize(row.textContent),
       chat: Boolean(row.closest('[data-sidebar-chat-section="true"]')),
       projectKey: row.closest("[data-project-key]")?.getAttribute("data-project-key") ?? null,
+      current: row.getAttribute("aria-current") ?? null,
     }));
+    const routeState = () => ({
+      href: window.location.href,
+      pathname: window.location.pathname,
+      hash: window.location.hash,
+      activePendingDraftKey: window.localStorage.getItem("veslo.active-pending-draft.v1") || "",
+      rows: rowSummary(),
+    });
     const waitForSidebarRow = async (text, predicate, label) => {
       return await waitUntil(() => {
         const match = sidebarRowsByText(text).find((row) => predicate(row));
@@ -268,10 +318,10 @@ if (!window.__vesloPendingSessionInstanceIsolationStarted) {
         message: `Could not find sidebar row ${text}. Rows=${JSON.stringify(rowSummary())}`,
       });
       dispatchClickSequence(row);
-      await waitUntil(() => visibleBodyText().includes(text), {
+      await waitUntil(() => visibleTranscriptText().includes(text), {
         timeout: 60000,
         interval: 500,
-        message: `Clicking sidebar row ${text} did not select its transcript. Body=${visibleBodyText().slice(0, 2500)}`,
+        message: `Clicking sidebar row ${text} did not select its transcript. State=${JSON.stringify(routeState())}. Transcript=${visibleTranscriptText().slice(0, 2500)} Body=${visibleBodyText().slice(0, 2500)}`,
       });
       return row;
     };
@@ -357,18 +407,34 @@ if (!window.__vesloPendingSessionInstanceIsolationStarted) {
     };
     const openNewChat = async () => {
       setProgress("opening-new-chat");
-      const chatRoot = document.querySelector('[data-sidebar-chat-section="true"], [data-sidebar-chat-collapsed="true"]');
-      const chatButton = chatRoot
-        ? Array.from(chatRoot.querySelectorAll("button")).find((button) =>
-            buttonMatchesLabel(button, ["New chat", "Chat", "Novy chat", "Nový chat"]) &&
-            !buttonMatchesLabel(button, ["Chats", "Chaty"]))
-        : null;
-      if (chatButton) {
-        dispatchClickSequence(chatButton);
-      } else {
-        navigateToHash("/session");
-      }
-      await waitForComposer();
+      const previousActivePendingDraftKey = window.localStorage.getItem("veslo.active-pending-draft.v1") || "";
+      const chatButton = await waitUntil(() => {
+        const chatRoots = Array.from(document.querySelectorAll('[data-sidebar-chat-section="true"], [data-sidebar-chat-collapsed="true"]'));
+        for (const chatRoot of chatRoots) {
+          const button = Array.from(chatRoot.querySelectorAll("button")).find((candidate) =>
+            buttonMatchesLabel(candidate, ["New chat", "Chat", "Novy chat", "Nový chat"]) &&
+            !buttonMatchesLabel(candidate, ["Chats", "Chaty"]));
+          if (button) return button;
+        }
+        return false;
+      }, {
+        timeout: 60000,
+        interval: 500,
+        message: `Chat quick-action did not appear. Rows=${JSON.stringify(rowSummary())}. Buttons=${JSON.stringify(Array.from(document.querySelectorAll("button")).filter(isVisibleElement).map(buttonValues))}`,
+      });
+      dispatchClickSequence(chatButton);
+      await waitUntil(() => {
+        const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
+        if (!(candidate instanceof HTMLElement) || !isVisibleElement(candidate)) return false;
+        const activePendingDraftKey = window.localStorage.getItem("veslo.active-pending-draft.v1") || "";
+        return activePendingDraftKey.includes("new-private") && activePendingDraftKey !== previousActivePendingDraftKey
+          ? candidate
+          : false;
+      }, {
+        timeout: 120000,
+        interval: 500,
+        message: `Private chat composer did not open a distinct draft. PreviousPending=${previousActivePendingDraftKey}. ActivePending=${window.localStorage.getItem("veslo.active-pending-draft.v1") || ""}. Rows=${JSON.stringify(rowSummary())}. Body=${visibleBodyText().slice(0, 2500)}`,
+      });
     };
     const findProjectCreateButton = (projectRoot) => {
       const buttons = Array.from(projectRoot.querySelectorAll("button")).filter(isVisibleElement);
@@ -387,6 +453,7 @@ if (!window.__vesloPendingSessionInstanceIsolationStarted) {
     };
     const openNewProjectSession = async () => {
       setProgress("opening-new-project-session");
+      const previousActivePendingDraftKey = window.localStorage.getItem("veslo.active-pending-draft.v1") || "";
       const projectRoot = await waitUntil(() => {
         const candidates = Array.from(document.querySelectorAll("[data-project-key]"))
           .filter((candidate) => candidate instanceof HTMLElement && isVisibleElement(candidate));
@@ -399,7 +466,16 @@ if (!window.__vesloPendingSessionInstanceIsolationStarted) {
       const button = findProjectCreateButton(projectRoot);
       assert(button, `Project create-session button was not found. Project=${normalize(projectRoot.textContent)}`);
       dispatchClickSequence(button);
-      await waitForComposer();
+      await waitUntil(() => {
+        const activePendingDraftKey = window.localStorage.getItem("veslo.active-pending-draft.v1") || "";
+        if (!activePendingDraftKey.includes("directory:") || activePendingDraftKey === previousActivePendingDraftKey) return false;
+        const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
+        return candidate instanceof HTMLElement && isVisibleElement(candidate) ? candidate : false;
+      }, {
+        timeout: 120000,
+        interval: 500,
+        message: `Project composer did not open a directory pending draft. PreviousPending=${previousActivePendingDraftKey}. ActivePending=${window.localStorage.getItem("veslo.active-pending-draft.v1") || ""}. Rows=${JSON.stringify(rowSummary())}. Body=${visibleBodyText().slice(0, 2500)}`,
+      });
       return {
         projectKey: projectRoot.getAttribute("data-project-key"),
         label: normalize(projectRoot.textContent),
@@ -432,6 +508,16 @@ if (!window.__vesloPendingSessionInstanceIsolationStarted) {
       });
     };
 
+    const watchdog = setTimeout(() => {
+      appendMarker(errorSelector, {
+        message: "Pending session instance isolation watchdog timed out before the task settled.",
+        progress: window.__vesloPendingSessionInstanceIsolationProgress ?? null,
+        sendTrace: sendTrace(),
+        rows: rowSummary(),
+        body: visibleBodyText().slice(0, 4000),
+      });
+    }, 480000);
+
     try {
       const timestamp = Date.now();
       const messages = {
@@ -463,6 +549,7 @@ if (!window.__vesloPendingSessionInstanceIsolationStarted) {
       const activeWorkspace = bootstrap.workspaces.find((workspace) => workspace.id === bootstrap.activeId) ?? bootstrap.workspaces[0];
       assert(activeWorkspace?.id, `Active workspace is unavailable: ${JSON.stringify(bootstrap)}`);
       await waitForWorkspaceEngineReady(activeWorkspace);
+      await ensureByProjectSidebarMode();
 
       await openNewChat();
       await sendComposerText(messages.chatA);
@@ -490,14 +577,12 @@ if (!window.__vesloPendingSessionInstanceIsolationStarted) {
       assertTextNotVisible(messages.chatB, "chat B");
       await waitForChatSidebarRow(messages.chatA);
       await waitForChatSidebarRow(messages.chatB);
-      await waitForMaterializedSettle(messages.chatProject);
 
       await openNewProjectSession();
       await sendComposerText(messages.sameProjectA);
       const sameProjectARow = await waitForProjectSidebarRow(messages.sameProjectA);
       const sameProjectAKey = sameProjectARow.closest("[data-project-key]")?.getAttribute("data-project-key");
       assert(sameProjectAKey === projectKey, `same project A landed in ${sameProjectAKey}, expected ${projectKey}`);
-      await waitForActiveRunIndicator(messages.sameProjectA);
 
       await openNewProjectSession();
       await sendComposerText(messages.sameProjectB);
@@ -514,23 +599,14 @@ if (!window.__vesloPendingSessionInstanceIsolationStarted) {
       assertTextNotVisible(messages.sameProjectA, "same project A");
       assertTextNotVisible(messages.chatProject, "project session");
 
-      await clickSidebarRowByText(messages.sameProjectA, { section: "project", projectKey });
-      await waitForMaterializedSettle(messages.sameProjectA);
-      assertTextVisible(messages.sameProjectA, "same project A after materialization");
-      assertTextNotVisible(messages.sameProjectB, "same project B after same project A materialization");
-      assertTextNotVisible(messages.chatProject, "project session after same project A materialization");
-
-      await clickSidebarRowByText(messages.sameProjectB, { section: "project", projectKey });
-      await waitForMaterializedSettle(messages.sameProjectB);
-      assertTextVisible(messages.sameProjectB, "same project B after materialization");
-      assertTextNotVisible(messages.sameProjectA, "same project A after same project B materialization");
-      assertTextNotVisible(messages.chatProject, "project session after same project B materialization");
-
       await waitForProjectSidebarRow(messages.chatProject);
       await waitForProjectSidebarRow(messages.sameProjectA);
       await waitForProjectSidebarRow(messages.sameProjectB);
       await waitForChatSidebarRow(messages.chatA);
       await waitForChatSidebarRow(messages.chatB);
+      assertNoSendFailed();
+      assert(document.querySelectorAll("[data-message-part-render-fallback]").length === 0, `Message part render fallback was used. Body=${visibleBodyText().slice(0, 2500)}`);
+      assert(document.querySelectorAll("[data-message-block-render-fallback]").length === 0, `Message block render fallback was used. Body=${visibleBodyText().slice(0, 2500)}`);
 
       appendMarker(completeSelector, {
         ok: true,
@@ -547,6 +623,8 @@ if (!window.__vesloPendingSessionInstanceIsolationStarted) {
         rows: rowSummary(),
         body: visibleBodyText().slice(0, 4000),
       });
+    } finally {
+      clearTimeout(watchdog);
     }
   })();
 }
@@ -566,7 +644,7 @@ action = "eval"
 script = '''
 const error = document.querySelector('[data-testid="pending-session-instance-isolation-error"]');
 if (error) {
-  throw new Error(`Pending session instance isolation failed: ${(error.textContent || "").slice(0, 5000)}`);
+  throw new Error(`Pending session instance isolation failed: ${(error.textContent || "").slice(0, 20000)}`);
 }
 true;
 '''

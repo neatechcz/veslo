@@ -95,6 +95,7 @@ import { isPendingSessionInstanceId } from "./pending-session-instance-model";
 import { currentLocale, t } from "../../../i18n";
 
 type Props = {
+  workspaces?: WorkspaceInfo[];
   workspaceSessionGroups: WorkspaceSessionGroup[];
   workspaceSessionPagingById?: Record<string, { hasMore: boolean; loadingMore: boolean }>;
   subagentDecorationsBySessionId?: Record<string, SidebarSubagentDecoration>;
@@ -620,7 +621,9 @@ export default function WorkspaceSessionList(props: Props) {
     if (!props.onQuickNewSession) return null;
     const fallbackWorkspace =
       props.workspaceSessionGroups.find((group) => group.workspace.id === props.activeWorkspaceId)?.workspace ??
+      props.workspaces?.find((workspace) => workspace.id === props.activeWorkspaceId) ??
       props.workspaceSessionGroups[0]?.workspace ??
+      props.workspaces?.[0] ??
       null;
     if (!fallbackWorkspace) return null;
     return {

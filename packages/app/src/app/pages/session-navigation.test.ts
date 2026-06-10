@@ -204,20 +204,34 @@ test("session list clicks record browse scope before route navigation", () => {
 
     assert.match(
       openSessionSource,
-      /props\.setSessionBrowseScope\(\{[\s\S]*sessionId: nextSessionId,[\s\S]*workspaceId,[\s\S]*workspaceRoot:/,
+      /props\.setSessionBrowseScope\(\{[\s\S]*sessionId(?:: nextSessionId)?,[\s\S]*workspaceId,[\s\S]*workspaceRoot:/,
       "existing-session navigation should record the workspace scope for DB transcript browsing",
     );
     assert.match(
       openSessionSource,
-      /props\.setSessionBrowseScope\(\{[\s\S]*directory: session\?\.directory \?\? workspaceRoot,[\s\S]*conversationId: session\?\.conversationId \?\? null,[\s\S]*opencodeSessionId: session\?\.opencodeSessionId \?\? nextSessionId,/s,
+      /props\.setSessionBrowseScope\(\{[\s\S]*directory: session\?\.directory \?\? workspaceRoot,[\s\S]*conversationId: session\?\.conversationId \?\? null,[\s\S]*opencodeSessionId: session\?\.opencodeSessionId \?\? (?:nextSessionId|sessionId),/s,
       "existing-session navigation should carry conversation sidecars with the browse scope",
     );
     assert.match(
       openSessionSource,
-      /props\.setSessionBrowseScope\(\{[\s\S]*\}\);\s*props\.setView\("session", nextSessionId\);/s,
-      "session browse scope must be recorded before route navigation triggers selectSession",
+      /props\.setSessionBrowseScope\(\{[\s\S]*\}\);\s*void props\.selectSession\((?:nextSessionId|sessionId)\);\s*props\.setView\("session", (?:nextSessionId|sessionId)\);/s,
+      "session browse scope must be recorded before explicit transcript selection and route navigation",
     );
   }
+});
+
+test("session page clears stale pending-load overlay when reopening the already selected row", () => {
+  const openSessionStart = sessionPageSource.indexOf("  const openSessionFromList = (workspaceId: string, sessionId: string) => {");
+  assert.notEqual(openSessionStart, -1, "openSessionFromList should exist");
+  const openSessionEnd = sessionPageSource.indexOf("  const resolveVesloWorkspaceId = (workspaceId: string) => {", openSessionStart);
+  assert.notEqual(openSessionEnd, -1, "openSessionFromList block end should exist");
+  const openSessionSource = sessionPageSource.slice(openSessionStart, openSessionEnd);
+
+  assert.match(
+    openSessionSource,
+    /if \(shouldShowOverlay\) \{[\s\S]*props\.setPendingSessionLoad\(\{[\s\S]*\}\);\s*\} else \{\s*props\.setPendingSessionLoad\(null\);\s*\}/s,
+    "reopening the selected row should clear any stale pending-load overlay from a previous switch",
+  );
 });
 
 test("app routes selected session browsing through DB scope", () => {
@@ -668,12 +682,12 @@ test("first New session creates one private workspace and opens a persisted pend
   assert.notEqual(openNewSessionSource, "", "New session flow should exist in app.tsx");
   assert.match(
     openNewSessionSource,
-    /const newPrivatePendingDraftKey = resolvePendingDraftKey\(\{ kind: "new-private" \}\);[\s\S]*const pendingDrafts = \(await pendingSessionDraftsList\(\)\)\.filter\(\(draft\) => !isConsumedPendingDraftId\(draft\.id\)\);[\s\S]*const existingPendingDraft = pendingDrafts\.find\(\(draft\) => draft\.kind === "new-private"\) \?\? null;/s,
+    /const pendingDrafts = \(await pendingSessionDraftsList\(\)\)\.filter\(\(draft\) => !isConsumedPendingDraftId\(draft\.id\)\);[\s\S]*const existingPendingDraft = pendingDrafts\.find\(\(draft\) => draft\.kind === "new-private"\) \?\? null;/s,
     "New session should look for an existing private pending draft before creating a workspace",
   );
   assert.match(
     openNewSessionSource,
-    /const scratch = await workspaceStore\.createScratchWorkspace\(\);[\s\S]*const cleanupFreshScratchWorkspace = async \(\) => \{[\s\S]*const cleanupSucceeded = await workspaceStore\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*if \(!cleanupSucceeded\) \{[\s\S]*throw new Error\(`Failed to clean up failed scratch workspace \$\{scratch\.id\}\.`\);[\s\S]*\}[\s\S]*\};[\s\S]*const emptyPendingDraft = createEmptyComposerDraft\(\);[\s\S]*const now = Date\.now\(\);[\s\S]*try \{[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*return;[\s\S]*\}[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*kind: "new-private"[\s\S]*workspaceId: scratch\.id[\s\S]*privateWorkspaceId: scratch\.id[\s\S]*createdAt: now[\s\S]*updatedAt: now[\s\S]*composer: emptyPendingDraft[\s\S]*\}\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\([\s\S]*?\{ storageKey: newPrivatePendingDraftKey \}[\s\S]*?emptyPendingDraft[\s\S]*?\)\);[\s\S]*setView\("session"\);[\s\S]*return;[\s\S]*\} catch \(error\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*throw error;[\s\S]*\}/s,
+    /const scratch = await workspaceStore\.createScratchWorkspace\(\);[\s\S]*const cleanupFreshScratchWorkspace = async \(\) => \{[\s\S]*const cleanupSucceeded = await workspaceStore\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*if \(!cleanupSucceeded\) \{[\s\S]*throw new Error\(`Failed to clean up failed scratch workspace \$\{scratch\.id\}\.`\);[\s\S]*\}[\s\S]*\};[\s\S]*const emptyPendingDraft = createEmptyComposerDraft\(\);[\s\S]*const now = Date\.now\(\);[\s\S]*try \{[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*return;[\s\S]*\}[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*kind: "new-private"[\s\S]*workspaceId: scratch\.id[\s\S]*privateWorkspaceId: scratch\.id[\s\S]*createdAt: now[\s\S]*updatedAt: now[\s\S]*composer: emptyPendingDraft[\s\S]*\}\);[\s\S]*const pendingDraftKey = pendingDraftKeyForSummary\(pendingDraft\);[\s\S]*setActivePendingDraftKey\(pendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\([\s\S]*?\{ storageKey: pendingDraftKey \}[\s\S]*?emptyPendingDraft[\s\S]*?\)\);[\s\S]*setView\("session"\);[\s\S]*return;[\s\S]*\} catch \(error\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*throw error;[\s\S]*\}/s,
     "the first New session should create one private workspace, persist one pending draft, and open the draft route",
   );
   assert.doesNotMatch(
@@ -687,7 +701,7 @@ test("second New session reopens the same pending draft and does not create anot
   assert.notEqual(openNewSessionSource, "", "New session flow should exist in app.tsx");
   assert.match(
     openNewSessionSource,
-    /if \(existingPendingDraft\) \{\s*const pendingDraft = await pendingSessionDraftsGet\(existingPendingDraft\.id\);[\s\S]*if \(pendingDraft\) \{\s*const restoreError = formatPendingDraftAttachmentRestoreError\(pendingDraft\.attachmentFailures\);[\s\S]*if \(restoreError\) \{\s*setError\(restoreError\);[\s\S]*\}\s*const pendingWorkspaceId = \(existingPendingDraft\.privateWorkspaceId \?\? existingPendingDraft\.workspaceId\)\.trim\(\);[\s\S]*const activatedPendingWorkspace = await workspaceStore\.activateWorkspace\(pendingWorkspaceId\);[\s\S]*if \(!activatedPendingWorkspace\) \{[\s\S]*await pendingSessionDraftsDelete\(existingPendingDraft\.id\);[\s\S]*markPendingDraftConsumed\(existingPendingDraft\.id\);[\s\S]*\} else \{[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(existingPendingDraft\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\([\s\S]*?\{ storageKey: newPrivatePendingDraftKey \}[\s\S]*?pendingDraft\.draft\.composer[\s\S]*?\)\);[\s\S]*setView\("session"\);[\s\S]*return;[\s\S]*\}[\s\S]*\}[\s\S]*\}/s,
+    /if \(existingPendingDraft\) \{\s*const pendingDraft = await pendingSessionDraftsGet\(existingPendingDraft\.id\);[\s\S]*if \(pendingDraft\) \{\s*const restoreError = formatPendingDraftAttachmentRestoreError\(pendingDraft\.attachmentFailures\);[\s\S]*if \(restoreError\) \{\s*setError\(restoreError\);[\s\S]*\}\s*const pendingWorkspaceId = \(existingPendingDraft\.privateWorkspaceId \?\? existingPendingDraft\.workspaceId\)\.trim\(\);[\s\S]*const activatedPendingWorkspace = await workspaceStore\.activateWorkspace\(pendingWorkspaceId\);[\s\S]*if \(!activatedPendingWorkspace\) \{[\s\S]*await pendingSessionDraftsDelete\(existingPendingDraft\.id\);[\s\S]*markPendingDraftConsumed\(existingPendingDraft\.id\);[\s\S]*\} else \{[\s\S]*const existingPendingDraftKey = pendingDraftKeyForSummary\(existingPendingDraft\);[\s\S]*setActivePendingDraftKey\(existingPendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(existingPendingDraft\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\([\s\S]*?\{ storageKey: existingPendingDraftKey \}[\s\S]*?pendingDraft\.draft\.composer[\s\S]*?\)\);[\s\S]*setView\("session"\);[\s\S]*return;[\s\S]*\}[\s\S]*\}[\s\S]*\}/s,
     "repeat New session should reopen the existing private pending draft instead of creating a new workspace",
   );
   const existingBranchMatch = openNewSessionSource.match(/if \(existingPendingDraft\) \{[\s\S]*?return;\s*\}/);
@@ -704,16 +718,81 @@ test("second New session reopens the same pending draft and does not create anot
   );
 });
 
+test("New session clears the selected materialized session before opening a pending chat draft", () => {
+  assert.notEqual(openNewSessionSource, "", "New session flow should exist in app.tsx");
+  assert.match(
+    openNewSessionSource,
+    /clearSelectedSessionForPendingDraft\(\);[\s\S]*setActivePendingDraftKey\((?:existingPendingDraftKey|pendingDraftKey)\);/s,
+    "opening a private pending draft must clear the previous selected session before the composer can send",
+  );
+});
+
+test("New session leaves the stale real-session route before async pending workspace setup", () => {
+  assert.notEqual(openNewSessionSource, "", "New session flow should exist in app.tsx");
+  assert.match(
+    openNewSessionSource,
+    /clearSelectedSessionForPendingDraft\(\);\s*setView\("session"\);\s*const pendingDrafts = \(await pendingSessionDraftsList\(\)\)/s,
+    "New Chat must navigate to the pending session shell before workspace activation can re-select the previous real session",
+  );
+});
+
+test("opening a real session clears the active pending draft before routing", () => {
+  assert.match(
+    appSource,
+    /const setView = \(next: View, sessionId\?: string\) => \{[\s\S]*if \(next === "session"\) \{[\s\S]*if \(sessionId\) \{[\s\S]*const trimmedSessionId = sessionId\.trim\(\);[\s\S]*if \(!isPendingSessionInstanceId\(sessionId\)\) \{[\s\S]*clearActivePendingDraftState\(\);[\s\S]*setSelectedSessionId\(trimmedSessionId\);[\s\S]*\}[\s\S]*goToSession\(trimmedSessionId\);[\s\S]*return;[\s\S]*\}/s,
+    "real-session sidebar navigation should clear pending draft state and immediately select the real session before rendering the transcript",
+  );
+});
+
+test("opening a real session clears stale pending-load state from another session", () => {
+  assert.match(
+    appSource,
+    /let clearStalePendingSessionLoadForRouteSession = \(_sessionId: string \| null \| undefined\) => \{\};/,
+    "setView should have an early-bound stale pending-load cleanup hook",
+  );
+  assert.match(
+    appSource,
+    /clearStalePendingSessionLoadForRouteSession = \(sessionId\) => \{[\s\S]*const normalizedSessionId = sessionId\?\.trim\(\) \?\? "";[\s\S]*setPendingSessionLoad\(\(current\) => \{[\s\S]*if \(!current\) return current;[\s\S]*if \(!normalizedSessionId\) return null;[\s\S]*return current\.sessionId === normalizedSessionId \? current : null;[\s\S]*\}\);[\s\S]*\};/s,
+    "stale pending-load state should only remain when it belongs to the routed session",
+  );
+  assert.match(
+    appSource,
+    /clearActivePendingDraftState\(\);[\s\S]*setSelectedSessionId\(trimmedSessionId\);[\s\S]*clearStalePendingSessionLoadForRouteSession\(trimmedSessionId\);/s,
+    "real-session navigation should drop any pending-load overlay from a different session before routing",
+  );
+});
+
+test("settled session routes clear stale pending-load state from another session", () => {
+  assert.match(
+    appSource,
+    /const routeSessionId = \(\) => \{[\s\S]*if \(!path\.toLowerCase\(\)\.startsWith\("\/session\/"\)\) return null;[\s\S]*return sessionSegment\?\.trim\(\) \|\| null;[\s\S]*\};/s,
+    "app should derive the effective routed session id for desktop hash routes",
+  );
+  assert.match(
+    appSource,
+    /createEffect\(\(\) => \{[\s\S]*const pending = pendingSessionLoad\(\);[\s\S]*const timer = window\.setTimeout\(\(\) => \{[\s\S]*const routedSessionId = routeSessionId\(\);[\s\S]*if \(!routedSessionId \|\| routedSessionId === pending\.sessionId\) return;[\s\S]*if \(workspaceStore\.connectingWorkspaceId\(\)\) return;[\s\S]*const selected = selectedSessionId\(\);[\s\S]*if \(selected && selected !== routedSessionId\) return;[\s\S]*setPendingSessionLoad\(\(current\) => current\?\.sessionId === pending\.sessionId \? null : current\);[\s\S]*\}, 250\);[\s\S]*onCleanup\(\(\) => window\.clearTimeout\(timer\)\);[\s\S]*\}\);/s,
+    "once routing has settled, stale pending-load state for a different session should be removed",
+  );
+});
+
+test("opening the pending session shell clears any selected real transcript before routing", () => {
+  assert.match(
+    appSource,
+    /if \(next === "session"\) \{[\s\S]*if \(sessionId\) \{[\s\S]*return;[\s\S]*\}\s*clearStalePendingSessionLoadForRouteSession\(null\);\s*if \(selectedSessionId\(\)\) \{\s*setMessages\(\[\]\);\s*setTodos\(\[\]\);\s*setSelectedSessionId\(null\);\s*\}\s*navigate\("\/session"\);/s,
+    "bare session navigation should synchronously clear the previous real transcript before showing a pending draft",
+  );
+});
+
 test("New session skips stale existing private pending draft when workspace activation fails", () => {
   assert.notEqual(openNewSessionSource, "", "New session flow should exist in app.tsx");
   assert.match(
     openNewSessionSource,
-    /const activatedPendingWorkspace = await workspaceStore\.activateWorkspace\(pendingWorkspaceId\);[\s\S]*if \(!activatedPendingWorkspace\) \{[\s\S]*await pendingSessionDraftsDelete\(existingPendingDraft\.id\);[\s\S]*markPendingDraftConsumed\(existingPendingDraft\.id\);[\s\S]*\} else \{[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(existingPendingDraft\);[\s\S]*setView\("session"\);[\s\S]*return;[\s\S]*\}/s,
+    /const activatedPendingWorkspace = await workspaceStore\.activateWorkspace\(pendingWorkspaceId\);[\s\S]*if \(!activatedPendingWorkspace\) \{[\s\S]*await pendingSessionDraftsDelete\(existingPendingDraft\.id\);[\s\S]*markPendingDraftConsumed\(existingPendingDraft\.id\);[\s\S]*\} else \{[\s\S]*const existingPendingDraftKey = pendingDraftKeyForSummary\(existingPendingDraft\);[\s\S]*setActivePendingDraftKey\(existingPendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(existingPendingDraft\);[\s\S]*setView\("session"\);[\s\S]*return;[\s\S]*\}/s,
     "reopening an existing private pending draft must remove stale draft state and continue to fresh workspace creation when activation fails",
   );
   assert.match(
     openNewSessionSource,
-    /const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*return;[\s\S]*\}[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*setView\("session"\);/s,
+    /const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*return;[\s\S]*\}[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*const pendingDraftKey = pendingDraftKeyForSummary\(pendingDraft\);[\s\S]*setActivePendingDraftKey\(pendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*setView\("session"\);/s,
     "creating a fresh private pending draft must stop before route activation when workspace activation fails",
   );
 });
@@ -768,6 +847,15 @@ test("directory picker flow opens a pending draft instead of creating a real ses
   );
 });
 
+test("directory pending draft leaves the stale real-session route before async draft lookup", () => {
+  assert.notEqual(openDirectoryPendingDraftSource, "", "Directory pending draft flow should exist in app.tsx");
+  assert.match(
+    openDirectoryPendingDraftSource,
+    /clearSelectedSessionForPendingDraft\(\);\s*setView\("session"\);\s*const pendingDraftKey = resolvePendingDraftKey\(\{/s,
+    "project and directory pending drafts must enter the pending shell before async draft lookup can re-select the previous real session",
+  );
+});
+
 test("directory picker flow publishes the registered workspace into the sidebar before continuing", () => {
   assert.notEqual(openDirectorySessionSource, "", "Directory picker flow should exist in app.tsx");
   assert.match(
@@ -800,8 +888,8 @@ test("project plus resolves the directory after workspace activation instead of 
   );
   assert.match(
     openPendingDirectoryDraftInWorkspaceSource,
-    /openPendingDraft: \(\) => \{[\s\S]*const activeWorkspace = workspaceStore\.activeWorkspaceDisplay\(\);[\s\S]*const directory = activeWorkspace\.directory\?\.trim\(\) \|\| activeWorkspace\.path\?\.trim\(\) \|\| "";\s*if \(!directory\) return "";\s*return openDirectoryPendingDraft\(\{ workspaceId: id, directory \}\);[\s\S]*\}/s,
-    "project plus should resolve the directory from the activated workspace state right before opening the pending draft",
+    /openPendingDraft: \(\) => \{[\s\S]*const workspace =[\s\S]*workspaceStore\.workspaces\(\)\.find\(\(entry\) => entry\.id === id\)[\s\S]*workspaceStore\.activeWorkspaceId\(\) === id \? workspaceStore\.activeWorkspaceDisplay\(\) : null[\s\S]*const directory = workspace\?\.directory\?\.trim\(\) \|\| workspace\?\.path\?\.trim\(\) \|\| "";\s*if \(!directory\) return "";\s*return openDirectoryPendingDraft\(\{ workspaceId: id, directory \}\);[\s\S]*\}/s,
+    "project plus should resolve the directory from the clicked workspace instead of whichever workspace is currently active",
   );
 });
 

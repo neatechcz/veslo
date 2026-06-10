@@ -9,7 +9,7 @@ import {
   resolvePendingDraftKey,
 } from "./pending-session-drafts.js";
 
-test("new-private resolves to one global draft key", () => {
+test("new-private draft keys are unique once a private workspace exists", () => {
   const first = resolvePendingDraftKey({
     kind: "new-private",
     workspaceId: "workspace-a",
@@ -20,8 +20,14 @@ test("new-private resolves to one global draft key", () => {
     workspaceId: "workspace-b",
     privateWorkspaceId: "private-b",
   });
+  const generic = resolvePendingDraftKey({
+    kind: "new-private",
+  });
 
-  assert.equal(first, second);
+  assert.notEqual(first, second);
+  assert.notEqual(first, generic);
+  assert.match(first, /private-a$/);
+  assert.match(second, /private-b$/);
   assert.equal(isPendingDraftKey(first), true);
   assert.equal(resolveComposerStorageKey({ pendingDraftKey: first }), first);
 });

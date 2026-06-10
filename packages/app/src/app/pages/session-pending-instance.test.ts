@@ -39,6 +39,14 @@ test("active first-send pending views select the captured pending instance key",
   );
 });
 
+test("temporary new-private pending draft keys are isolated by active workspace", () => {
+  assert.match(
+    source,
+    /if \(pendingDraftKey === "__pending-draft__:new-private"\) \{\s*return `pending-draft:\$\{pendingDraftKey\}:\$\{props\.activeWorkspaceId \|\| "default"\}`;\s*\}/,
+    "the temporary global new-private draft key must not share optimistic send state across private chat workspaces",
+  );
+});
+
 test("session view stores run UI state by session key", () => {
   assert.match(
     source,

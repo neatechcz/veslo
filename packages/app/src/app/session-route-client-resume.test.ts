@@ -60,7 +60,7 @@ test("session route re-selects once when a client becomes available after bootst
   );
   assert.match(
     routeSource,
-    /const connectionKey = \[\s*id,\s*client\(\) \? "live" : "offline",\s*clientDirectory\(\) \|\| workspaceStore\.activeWorkspaceRoot\(\)\.trim\(\),\s*connectedVersion\(\) \?\? "",\s*\]\.join\("::"\);/s,
+    /const connectionKey = \[\s*id,\s*routedClient\(\) \? "live" : "offline",\s*clientDirectory\(\) \|\| workspaceStore\.activeWorkspaceRoot\(\)\.trim\(\),\s*connectedVersion\(\) \?\? "",\s*\]\.join\("::"\);/s,
     "route resume key should distinguish live vs offline selection and retry once the workspace root becomes available",
   );
   assert.match(routeSource, /if \(connectionKey === lastRouteClientResumeKey\) return;/);
@@ -76,6 +76,36 @@ test("session route re-selects once when a client becomes available after bootst
   );
 });
 
+test("desktop hash session routes drive the route selection effects", () => {
+  assert.match(
+    source,
+    /const currentRoutePath = createMemo\(\(\) => \{[\s\S]*void externalHashRoutePath\(\);[\s\S]*const routerPath = normalizeRoutePath\(location\.pathname\);[\s\S]*const hashPath = readHashRoutePath\(\);[\s\S]*if \(isTauriRuntime\(\) && hashPath && routerPath === "\/"\) \{[\s\S]*return hashPath;[\s\S]*\}[\s\S]*return routerPath;[\s\S]*\}\);/s,
+    "desktop routing should use the hash path when the physical browser pathname is still /",
+  );
+
+  const routeResumeStart = source.indexOf('let lastRouteClientResumeKey = "";');
+  const routeResumeEnd = source.indexOf("  createEffect(() => {\n    const active = workspaceStore.activeWorkspaceDisplay();", routeResumeStart);
+  assert.notStrictEqual(routeResumeStart, -1, "route resume block should exist");
+  assert.notStrictEqual(routeResumeEnd, -1, "route resume block end should exist");
+  const routeResumeSource = source.slice(routeResumeStart, routeResumeEnd);
+  assert.match(
+    routeResumeSource,
+    /const rawPath = currentRoutePath\(\)\.trim\(\);[\s\S]*if \(!path\.startsWith\("\/session\/"\)\) return;[\s\S]*void selectSession\(id\);/s,
+    "session deep-link resume should select real sessions from the effective desktop route",
+  );
+
+  const routeGuardStart = source.indexOf("  createEffect(() => {\n    const rawPath = currentRoutePath().trim();", routeResumeEnd);
+  const routeGuardEnd = source.indexOf('    if (path.startsWith("/proto-v1-ux")) {', routeGuardStart);
+  assert.notStrictEqual(routeGuardStart, -1, "main route guard should use currentRoutePath");
+  assert.notStrictEqual(routeGuardEnd, -1, "main route guard block end should exist");
+  const routeGuardSource = source.slice(routeGuardStart, routeGuardEnd);
+  assert.match(
+    routeGuardSource,
+    /if \(path\.startsWith\("\/session"\)\) \{[\s\S]*const \[, , sessionSegment\] = rawPath\.split\("\/"\);/s,
+    "session route correction should also read the effective desktop route",
+  );
+});
+
 test("bare /session keeps the active pending draft context while clearing real session transcript state", () => {
   const routeStart = source.indexOf('    if (path.startsWith("/session")) {');
   const routeEnd = source.indexOf('    if (path.startsWith("/proto-v1-ux")) {', routeStart);
@@ -85,7 +115,7 @@ test("bare /session keeps the active pending draft context while clearing real s
 
   assert.match(
     routeSource,
-    /if \(!id\) \{\s*if \(activePendingDraftKey\(\)\) \{\s*(?:void activePendingDraftMeta\(\);\s*)?if \(selectedSessionId\(\)\) \{\s*setSelectedSessionId\(null\);\s*setMessages\(\[\]\);\s*setTodos\(\[\]\);\s*\}\s*return;\s*\}/s,
+    /if \(!id\) \{\s*if \(activePendingDraftKey\(\)\) \{\s*(?:void activePendingDraftMeta\(\);\s*)?if \(selectedSessionId\(\)\) \{\s*setMessages\(\[\]\);\s*setTodos\(\[\]\);\s*setSelectedSessionId\(null\);\s*\}\s*return;\s*\}/s,
     "switching from a real session to bare /session should clear transcript state but keep the pending draft active",
   );
   assert.doesNotMatch(

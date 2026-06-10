@@ -181,12 +181,22 @@ window.__vesloStartupSidebar = (() => {
     await waitUntil(() => {
       const state = projectCollapseState(projectRoot);
       if (state.expanded !== String(expanded)) return false;
-      if (!expanded && typeof state.regionHeight === "number" && state.regionHeight > 1) return false;
       return state;
     }, {
       timeout: 10000,
       interval: 250,
       message: `Project header ${context} did not reach expanded=${expanded}. State=${JSON.stringify(projectCollapseState(projectRoot))}`,
+    });
+  };
+  const waitForProjectRowHidden = async (text, projectRoot, context) => {
+    await waitUntil(() => {
+      const rows = sidebarRowsByText(text).filter((row) =>
+        row.closest("[data-project-key]") === projectRoot && !row.closest('[data-sidebar-chat-section="true"]'));
+      return rows.length === 0 ? true : false;
+    }, {
+      timeout: 10000,
+      interval: 250,
+      message: `Project row stayed visible during ${context}. Rows=${JSON.stringify(rowSummary())}`,
     });
   };
   const findProjectHeaderByLabel = (label) => {
@@ -310,6 +320,7 @@ window.__vesloStartupSidebar = (() => {
     activeWorkspaceIdWithin,
     ensureProjectRowVisible,
     waitForProjectExpandedState,
+    waitForProjectRowHidden,
     waitForComposer,
     setComposerText,
     findComposerSendButton,
@@ -436,6 +447,7 @@ h.startStage("project-toggle", async () => {
   const hashBefore = window.location.hash;
   h.dispatchClickSequence(button);
   await h.waitForProjectExpandedState(projectRoot, false, "collapse");
+  await h.waitForProjectRowHidden(h.seededProjectTitle, projectRoot, "project collapse");
   h.assert((await h.activeWorkspaceIdWithin()) === activeBefore, "Project header collapse activated workspace.");
   h.assert(window.location.hash === hashBefore, "Project header collapse changed route.");
   h.assertNoWorkspaceLoadingOverlay("project collapse");

@@ -41,6 +41,10 @@ const bytesToBase64 = (bytes: number[]) => {
 
 export const resolvePendingDraftKey = (input: PendingDraftIdentityInput) => {
   if (input.kind === "new-private") {
+    const privateWorkspaceId = (input.privateWorkspaceId ?? input.workspaceId ?? "").trim();
+    if (privateWorkspaceId) {
+      return `${PENDING_DRAFT_KEY_PREFIX}new-private:${privateWorkspaceId}`;
+    }
     return GLOBAL_NEW_PRIVATE_PENDING_DRAFT_KEY;
   }
 

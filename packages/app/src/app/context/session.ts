@@ -883,6 +883,51 @@ export function createSessionStore(options: {
     });
   }
 
+  const normalizeMessageText = (value: string) => value.replace(/\s+/g, " ").trim();
+
+  function sessionHasUserMessageText(sessionID: string, text: string) {
+    const normalizedSessionId = sessionID.trim();
+    const normalizedText = normalizeMessageText(text);
+    if (!normalizedSessionId || !normalizedText) return false;
+
+    for (const info of store.messages[normalizedSessionId] ?? []) {
+      if (info.role !== "user") continue;
+      const messageId = typeof info.id === "string" ? info.id : "";
+      if (!messageId) continue;
+      const messageText = (store.parts[messageId] ?? [])
+        .filter((part) => part.type === "text")
+        .map((part) => normalizeMessageText((part as { text?: string }).text ?? ""))
+        .filter(Boolean)
+        .join(" ");
+      if (messageText === normalizedText) return true;
+    }
+
+    return false;
+  }
+
+  function upsertLocalMessage(sessionID: string, message: MessageWithParts) {
+    const normalizedSessionId = sessionID.trim();
+    const messageId = typeof message.info?.id === "string" ? message.info.id.trim() : "";
+    if (!normalizedSessionId || !messageId) return;
+
+    const info = {
+      ...message.info,
+      sessionID: normalizedSessionId,
+    } as MessageInfo;
+    const parts = message.parts
+      .filter((part) => !!part?.id)
+      .map((part) => ({
+        ...part,
+        sessionID: normalizedSessionId,
+        messageID: messageId,
+      } as Part));
+
+    batch(() => {
+      setStore("messages", normalizedSessionId, (current = []) => upsertMessageInfo(current, info));
+      setStore("parts", messageId, reconcile(sortById(parts), { key: "id" }));
+    });
+  }
+
   function hydrateTranscriptSnapshot(snapshot: VesloSessionTranscriptSnapshot) {
     if (snapshot.source === "unavailable") return;
 
@@ -2114,6 +2159,8 @@ export function createSessionStore(options: {
     setTodos,
     setPendingPermissions,
     setPendingQuestions,
+    sessionHasUserMessageText,
+    upsertLocalMessage,
     selectedSessionHasEarlierMessages,
     selectedSessionLoadingEarlierMessages,
     hydrateTranscriptSnapshot,

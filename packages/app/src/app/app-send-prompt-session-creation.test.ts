@@ -119,7 +119,7 @@ test("pending-session routes select local pending state without transcript APIs"
 
   assert.match(
     routeSource,
-    /if \(isPendingSessionInstanceId\(id\)\) \{\s*if \(selectedSessionId\(\) !== id\) \{\s*setSelectedSessionId\(id\);\s*setMessages\(\[\]\);\s*setTodos\(\[\]\);\s*\}[\s\S]*setPendingSessionLoad\(null\);[\s\S]*return;\s*\}/,
+    /if \(isPendingSessionInstanceId\(id\)\) \{\s*if \(selectedSessionId\(\) !== id\) \{\s*if \(selectedSessionId\(\)\) \{\s*setMessages\(\[\]\);\s*setTodos\(\[\]\);\s*\}\s*setSelectedSessionId\(id\);\s*\}[\s\S]*setPendingSessionLoad\(null\);[\s\S]*return;\s*\}/,
     "pending-session routes should select local pending state and skip selectSession",
   );
   const pendingRouteIndex = routeSource.indexOf("if (isPendingSessionInstanceId(id)) {");
@@ -154,8 +154,8 @@ test("createSessionAndOpen persists the first composer text as the initial backe
   );
   assert.match(
     createSessionAndOpenSource,
-    /createConversationFromVesloWriteApi\(\s*activeWorkspaceId,\s*initialSessionTitle \|\| undefined,\s*\);/s,
-    "createSessionAndOpen should persist the first composer text as the backend session title until an explicit rename/title update happens",
+    /createConversationFromVesloWriteApi\(\s*activeWorkspaceId,\s*initialSessionTitle \|\| undefined,\s*\{\s*directory: sessionDirectory,\s*\},\s*\);/s,
+    "createSessionAndOpen should persist the first composer text and captured directory as the backend session title/scope",
   );
   assert.doesNotMatch(
     createSessionAndOpenSource,
@@ -166,6 +166,29 @@ test("createSessionAndOpen persists the first composer text as the initial backe
     createSessionAndOpenSource,
     /registerPendingInitialSessionTitle\(session\.id, initialSessionTitle\);[\s\S]*const sessionForStore = session\.directory\?\.trim\(\) \? session : \{ \.\.\.session, directory: sessionDirectory \};[\s\S]*const displaySession = applyPendingInitialSessionTitle\(sessionForStore\);/,
     "createSessionAndOpen should register the prompt title locally and render it optimistically",
+  );
+});
+
+test("createConversationFromVesloWriteApi uses captured workspace route instead of the current active workspace", () => {
+  const createStart = source.indexOf("  const createConversationFromVesloWriteApi = async (");
+  const createEnd = source.indexOf("  const runConversationFromVesloWriteApi = async (", createStart);
+  assert.ok(createStart >= 0 && createEnd > createStart, "createConversationFromVesloWriteApi source should be present");
+  const createSource = source.slice(createStart, createEnd);
+
+  assert.match(
+    createSource,
+    /options: \{\s*directory\?: string \| null;\s*\} = \{\}/s,
+    "conversation creation should accept a captured directory from the pending/session flow",
+  );
+  assert.match(
+    createSource,
+    /const workspaceRoot = options\.directory\?\.trim\(\) \|\| workspaceStore\.activeWorkspaceRoot\(\)\.trim\(\);/s,
+    "conversation creation should prefer the captured directory over the active workspace root",
+  );
+  assert.match(
+    createSource,
+    /const routeEntry = workspaceRouting\.entry\(workspaceId\);[\s\S]*await syncConversationWorkspaceRuntimeRoute\(\s*serverClient,\s*serverWorkspaceId,\s*workspaceRoot,\s*routeEntry\?\.baseUrl,\s*\);/s,
+    "conversation creation should sync the Veslo server route from the captured workspace routing entry",
   );
 });
 

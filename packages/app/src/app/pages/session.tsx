@@ -942,7 +942,12 @@ export default function SessionView(props: SessionViewProps) {
 
   const pendingSessionQueueKey = () => {
     const pendingDraftKey = props.activePendingDraftKey?.trim();
-    if (pendingDraftKey) return `pending-draft:${props.activePendingDraftKey}`;
+    if (pendingDraftKey) {
+      if (pendingDraftKey === "__pending-draft__:new-private") {
+        return `pending-draft:${pendingDraftKey}:${props.activeWorkspaceId || "default"}`;
+      }
+      return `pending-draft:${pendingDraftKey}`;
+    }
     return `pending-workspace:${props.activeWorkspaceId || "default"}`;
   };
   const sessionQueueKeyForSessionId = (sessionId: string | null | undefined) =>
@@ -987,6 +992,15 @@ export default function SessionView(props: SessionViewProps) {
   const optimisticSubmittedDraft = createMemo(() =>
     selectPendingSubmittedDraft(pendingSubmittedDraftBySessionKey(), currentSessionQueueKey()),
   );
+  const submittedDraftHasMessageInTranscript = (submitted: ReturnType<typeof optimisticSubmittedDraft>) => {
+    if (!submitted) return false;
+    const text = (submitted.draft.resolvedText ?? submitted.draft.text).trim();
+    if (!text) return false;
+    return props.messages.some((message) => {
+      if ((message.info as { role?: string }).role !== "user") return false;
+      return message.parts.some((part) => part.type === "text" && (part.text ?? "").trim() === text);
+    });
+  };
   const setOptimisticSubmittedDraft = (
     sessionKey: string,
     draft: ReturnType<typeof createPendingSubmittedDraft>,
@@ -1118,6 +1132,14 @@ export default function SessionView(props: SessionViewProps) {
     if (!submitted) return null;
     if (submitted.sessionKey !== currentSessionQueueKey()) return null;
     return pendingSubmittedDraftToMessage(submitted, props.activeWorkspaceRoot);
+  });
+  createEffect(() => {
+    const submitted = optimisticSubmittedDraft();
+    if (!submitted || submitted.state !== "sending") return;
+    if (!submittedDraftHasMessageInTranscript(submitted)) return;
+    setPendingSubmittedDraftBySessionKey((current) =>
+      removePendingSubmittedDraftForKey(current, submitted.sessionKey, submitted.id),
+    );
   });
 
   const pendingMessageStateById = createMemo<Record<string, PendingMessageState>>(() => {
@@ -3335,6 +3357,8 @@ export default function SessionView(props: SessionViewProps) {
       aiAccessBlockedReason: props.aiAccessBlockedReason,
       busyHint: props.busyHint ?? null,
       busyLabel: props.busyLabel ?? null,
+      activePendingDraftKey: props.activePendingDraftKey ?? null,
+      currentSessionQueueKey: currentSessionQueueKey(),
       expectedSessionKey: expectedSessionKey ?? null,
       targetSessionId,
       reason: options.reason ?? "normal",
@@ -3506,9 +3530,6 @@ export default function SessionView(props: SessionViewProps) {
           clearMatchingPendingSubmit();
         }
         return accepted;
-      }
-      if (accepted && showOptimisticSubmit) {
-        clearMatchingPendingSubmit();
       }
       setStickToBottom(true);
       scheduleScrollToLatest("auto");
@@ -3742,7 +3763,6 @@ export default function SessionView(props: SessionViewProps) {
       group?.workspace.path?.trim() ||
       "";
     const session = group?.sessions.find((s) => s.id === sessionId);
-
     if (isPendingSessionInstanceId(sessionId)) {
       props.setPendingSessionLoad(null);
       void openSessionWithWorkspaceActivation({
@@ -3783,40 +3803,20 @@ export default function SessionView(props: SessionViewProps) {
         sessionTitle,
         workspaceName,
       });
+    } else {
+      props.setPendingSessionLoad(null);
     }
-    void openSessionWithWorkspaceActivation({
-      activeWorkspaceId: props.activeWorkspaceId,
-      getActiveWorkspaceId: () => props.activeWorkspaceId,
-      workspaceId,
+    if (attempt !== pendingSessionLoadAttempt) return;
+    props.setSessionBrowseScope({
       sessionId,
-      activateWorkspace: props.activateWorkspace,
-      // Route-driven selection: navigate first and let the route effect own selectSession.
-      openSession: (nextSessionId) => {
-        props.setSessionBrowseScope({
-          sessionId: nextSessionId,
-          workspaceId,
-          workspaceRoot: workspaceRoot,
-          directory: session?.directory ?? workspaceRoot,
-          conversationId: session?.conversationId ?? null,
-          opencodeSessionId: session?.opencodeSessionId ?? nextSessionId,
-        });
-        props.setView("session", nextSessionId);
-      },
-    })
-      .then((result) => {
-        if (!shouldShowOverlay) return;
-        if (attempt !== pendingSessionLoadAttempt) return;
-        // Opened routes keep the inline loading state until selectSession
-        // completes transcript hydration and fires onSessionLoadComplete.
-        if (result === "blocked" || result === "superseded") {
-          props.setPendingSessionLoad(null);
-        }
-      })
-      .catch(() => {
-        if (!shouldShowOverlay) return;
-        if (attempt !== pendingSessionLoadAttempt) return;
-        props.setPendingSessionLoad(null);
-      });
+      workspaceId,
+      workspaceRoot: workspaceRoot,
+      directory: session?.directory ?? workspaceRoot,
+      conversationId: session?.conversationId ?? null,
+      opencodeSessionId: session?.opencodeSessionId ?? sessionId,
+    });
+    void props.selectSession(sessionId);
+    props.setView("session", sessionId);
   };
 
   const resolveVesloWorkspaceId = (workspaceId: string) => {
@@ -4180,6 +4180,7 @@ export default function SessionView(props: SessionViewProps) {
         </Show>
         <div class="min-h-0 flex-1">
           <WorkspaceSessionList
+            workspaces={props.workspaces}
             workspaceSessionGroups={props.workspaceSessionGroups}
             workspaceSessionPagingById={props.workspaceSessionPagingById}
             subagentDecorationsBySessionId={props.subagentDecorationsBySessionId}
@@ -4426,6 +4427,7 @@ export default function SessionView(props: SessionViewProps) {
         <div class="flex-1 flex overflow-hidden">
           <div class="flex-1 min-w-0 relative overflow-hidden bg-gray-1">
             <div
+              data-testid="session-conversation-pane"
               class={`h-full overflow-y-auto px-8 ${showWorkspaceSetupEmptyState() ? "pt-8 pb-20" : "pt-0 pb-0"} scroll-smooth bg-gray-1 ${nearBottom() ? "chat-scrollbar-hidden" : ""} ${initialAnchorPending() ? "invisible" : "visible"}`}
               style={{ contain: "layout paint style" }}
               ref={(el) => {

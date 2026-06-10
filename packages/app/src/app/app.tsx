@@ -485,18 +485,43 @@ export default function App() {
   };
   const location = useLocation();
   const navigate = useNavigate();
+  const [externalHashRoutePath, setExternalHashRoutePath] = createSignal<string | null>(null);
+
+  const normalizeRoutePath = (value: string | null | undefined) => {
+    const raw = value?.trim() ?? "";
+    const path = raw.split(/[?#]/, 1)[0]?.trim() ?? "";
+    if (!path) return "/";
+    return path.startsWith("/") ? path : `/${path}`;
+  };
+
+  const readHashRoutePath = () => {
+    if (typeof window === "undefined") return null;
+    const hashPath = window.location.hash.replace(/^#/, "").trim();
+    if (!hashPath.startsWith("/")) return null;
+    return normalizeRoutePath(hashPath);
+  };
+
+  const currentRoutePath = createMemo(() => {
+    void externalHashRoutePath();
+    const routerPath = normalizeRoutePath(location.pathname);
+    const hashPath = readHashRoutePath();
+    if (isTauriRuntime() && hashPath && routerPath === "/") {
+      return hashPath;
+    }
+    return routerPath;
+  });
 
   const [creatingSession, setCreatingSession] = createSignal(false);
   const [sessionViewLockUntil, setSessionViewLockUntil] = createSignal(0);
   const currentView = createMemo<View>(() => {
-    const path = location.pathname.toLowerCase();
+    const path = currentRoutePath().toLowerCase();
     if (path.startsWith("/onboarding")) return "onboarding";
     if (path.startsWith("/session")) return "session";
     if (path.startsWith("/proto")) return "proto";
     return "dashboard";
   });
   const isProtoV1Ux = createMemo(() =>
-    location.pathname.toLowerCase().startsWith("/proto-v1-ux")
+    currentRoutePath().toLowerCase().startsWith("/proto-v1-ux")
   );
 
   const [tab, setTabState] = createSignal<DashboardTab>("scheduled");
@@ -506,6 +531,8 @@ export default function App() {
     setTabState(nextTab);
     navigate(`/dashboard/${nextTab}`, options);
   };
+
+  let clearStalePendingSessionLoadForRouteSession = (_sessionId: string | null | undefined) => {};
 
   const setTab = (nextTab: DashboardTab) => {
     if (currentView() === "dashboard") {
@@ -532,8 +559,20 @@ export default function App() {
     }
     if (next === "session") {
       if (sessionId) {
-        goToSession(sessionId);
+        const trimmedSessionId = sessionId.trim();
+        if (!isPendingSessionInstanceId(sessionId)) {
+          clearActivePendingDraftState();
+          setSelectedSessionId(trimmedSessionId);
+          clearStalePendingSessionLoadForRouteSession(trimmedSessionId);
+        }
+        goToSession(trimmedSessionId);
         return;
+      }
+      clearStalePendingSessionLoadForRouteSession(null);
+      if (selectedSessionId()) {
+        setMessages([]);
+        setTodos([]);
+        setSelectedSessionId(null);
       }
       navigate("/session");
       return;
@@ -597,7 +636,7 @@ export default function App() {
 
   const buildFeedbackRuntimeContext = (): FeedbackRuntimeContext => ({
     view: currentView(),
-    pathname: location.pathname.trim() || "/",
+    pathname: currentRoutePath(),
     tab: tab(),
     settingsTab: settingsTab(),
     selectedSessionId: normalizeFeedbackOptional(activeSessionId()),
@@ -1541,6 +1580,13 @@ export default function App() {
     const summaries = (await pendingSessionDraftsList()).filter((draft) => !isConsumedPendingDraftId(draft.id));
     setPendingDraftSummaries(summaries);
   };
+  const pendingDraftKeyForSummary = (draft: PendingSessionDraftSummary) =>
+    resolvePendingDraftKey({
+      kind: draft.kind,
+      workspaceId: draft.workspaceId,
+      directory: draft.directory ?? null,
+      privateWorkspaceId: draft.privateWorkspaceId ?? null,
+    });
   const formatPendingDraftAttachmentRestoreError = (
     attachmentFailures: { attachmentId: string; name: string; message: string }[],
   ) => {
@@ -1554,6 +1600,13 @@ export default function App() {
     setActivePendingDraftKey(null);
     setActivePendingDraftMeta(null);
     writeActivePendingDraftKey(null);
+  };
+  const clearSelectedSessionForPendingDraft = () => {
+    if (selectedSessionId()) {
+      setMessages([]);
+      setTodos([]);
+    }
+    setSelectedSessionId(null);
   };
   const readSessionDirectoryOverrides = () => {
     if (typeof window === "undefined") return {} as Record<string, string>;
@@ -1859,9 +1912,10 @@ export default function App() {
     serverClient: NonNullable<ReturnType<typeof vesloServerClient>>,
     serverWorkspaceId: string,
     directory: string,
+    baseUrlOverride?: string | null,
   ) => {
     const normalizedWorkspaceId = serverWorkspaceId.trim();
-    const runtimeBaseUrl = baseUrl().trim();
+    const runtimeBaseUrl = baseUrlOverride?.trim() || baseUrl().trim();
     const runtimeDirectory = directory.trim();
     if (!normalizedWorkspaceId || !runtimeBaseUrl || !runtimeDirectory) return;
 
@@ -1884,17 +1938,26 @@ export default function App() {
   const createConversationFromVesloWriteApi = async (
     workspaceId: string,
     title?: string,
+    options: {
+      directory?: string | null;
+    } = {},
   ) => {
     const serverClient = await resolvePassiveConversationReadClient();
     if (!serverClient) return null;
-    const workspaceRoot = workspaceStore.activeWorkspaceRoot().trim();
+    const workspaceRoot = options.directory?.trim() || workspaceStore.activeWorkspaceRoot().trim();
     const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(
       serverClient,
       workspaceId,
       workspaceRoot || undefined,
     );
     if (!serverWorkspaceId) return null;
-    await syncConversationWorkspaceRuntimeRoute(serverClient, serverWorkspaceId, workspaceRoot);
+    const routeEntry = workspaceRouting.entry(workspaceId);
+    await syncConversationWorkspaceRuntimeRoute(
+      serverClient,
+      serverWorkspaceId,
+      workspaceRoot,
+      routeEntry?.baseUrl,
+    );
     const result = await serverClient.createConversation(serverWorkspaceId, {
       directory: workspaceRoot || undefined,
       title,
@@ -2067,6 +2130,22 @@ export default function App() {
       else workspaceStore.clearWorkspaceBusy(wsId, sessionId);
     },
   });
+
+  const ensureAcceptedPromptVisibleInSession = (sessionID: string, draft: ComposerDraft) => {
+    const text = (draft.resolvedText ?? draft.text).trim();
+    if (!text && draft.attachments.length === 0) return;
+    if (text && sessionStore.sessionHasUserMessageText(sessionID, text)) return;
+
+    const scope = resolveSelectedSessionBrowseScope(sessionID);
+    const workspaceRoot =
+      scope?.directory?.trim() ||
+      scope?.workspaceRoot?.trim() ||
+      sessionDirectoryOverrideById()[sessionID]?.trim() ||
+      workspaceStore.activeWorkspaceRoot().trim();
+    const message = createLocalSubmittedUserMessage(sessionID, draft, workspaceRoot);
+    if (!message) return;
+    sessionStore.upsertLocalMessage(sessionID, message);
+  };
 
   const {
     sessions,
@@ -2612,6 +2691,7 @@ export default function App() {
       const summary = await putPendingDraftForTarget(target, currentDraft);
       if (!summary) return { status: "blocked", message: t("session.target_not_available", currentLocale()) };
       setComposerDraftBySessionId((current) => setSessionComposerDraft(current, { storageKey: target.id }, currentDraft));
+      clearSelectedSessionForPendingDraft();
       setActivePendingDraftKey(target.id);
       setActivePendingDraftMeta(summary);
       setView("session");
@@ -2628,6 +2708,7 @@ export default function App() {
       const activated = await activateTargetWorkspace(target, destinationSummary);
       if (!activated) return { status: "blocked", message: t("session.target_not_available", currentLocale()) };
       setComposerDraftBySessionId((current) => setSessionComposerDraft(current, { storageKey: target.id }, destinationDraft));
+      clearSelectedSessionForPendingDraft();
       setActivePendingDraftKey(target.id);
       setActivePendingDraftMeta(destinationSummary);
       setView("session");
@@ -2640,6 +2721,7 @@ export default function App() {
     const summary = await putPendingDraftForTarget(target, emptyDraft);
     if (!summary) return { status: "blocked", message: t("session.target_not_available", currentLocale()) };
     setComposerDraftBySessionId((current) => setSessionComposerDraft(current, { storageKey: target.id }, emptyDraft));
+    clearSelectedSessionForPendingDraft();
     setActivePendingDraftKey(target.id);
     setActivePendingDraftMeta(summary);
     setView("session");
@@ -3055,6 +3137,62 @@ export default function App() {
     return `msg_${suffix.replace(/[^a-zA-Z0-9]/g, "")}`;
   };
 
+  const createLocalSubmittedUserMessage = (
+    sessionID: string,
+    draft: ComposerDraft,
+    workspaceRoot: string,
+  ): MessageWithParts | null => {
+    const normalizedSessionId = sessionID.trim();
+    const text = (draft.resolvedText ?? draft.text).trim();
+    if (!normalizedSessionId || (!text && draft.attachments.length === 0)) return null;
+
+    const messageID = createClientMessageID();
+    const parts: Part[] = [];
+    if (text) {
+      parts.push({
+        id: `${messageID}:text`,
+        sessionID: normalizedSessionId,
+        messageID,
+        type: "text",
+        text,
+      } as Part);
+    }
+
+    draft.attachments.forEach((attachment, index) => {
+      parts.push({
+        id: `${messageID}:attachment:${index}`,
+        sessionID: normalizedSessionId,
+        messageID,
+        type: "file",
+        url: attachment.dataUrl,
+        filename: attachment.name,
+        mime: attachment.mimeType,
+      } as Part);
+    });
+
+    return {
+      info: {
+        id: messageID,
+        sessionID: normalizedSessionId,
+        role: "user",
+        time: { created: Date.now() },
+        parentID: "",
+        model: { providerID: "", modelID: "" },
+        modelID: "",
+        providerID: "",
+        mode: draft.mode,
+        agent: "",
+        path: {
+          cwd: workspaceRoot,
+          root: workspaceRoot,
+        },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      } as MessageWithParts["info"],
+      parts,
+    };
+  };
+
   async function maybeResolveSkillCommand(draft: ComposerDraft): Promise<ComposerDraft> {
     if (draft.mode !== "prompt" || draft.command) return draft;
 
@@ -3156,6 +3294,19 @@ export default function App() {
     const selectedRealSessionId = isPendingSessionInstanceId(selectedSessionCandidate) ? null : selectedSessionCandidate;
     let sessionID = isPendingSessionInstanceId(options.targetSessionId) ? null : options.targetSessionId?.trim() || selectedRealSessionId;
     const blockAppDuringPromptSend = Boolean(sessionID);
+    const pendingDraftSendState = (() => {
+      const pendingDraftKey = (activePendingDraftKey() ?? "").trim();
+      if (sessionID) return null;
+      if (!pendingDraftKey) return null;
+      return {
+        key: pendingDraftKey,
+        meta: activePendingDraftMeta(),
+        draftId: activePendingDraftMeta()?.id?.trim() || null,
+      };
+    })();
+    if (pendingDraftSendState?.draftId && isTauriRuntime()) {
+      markPendingDraftConsumed(pendingDraftSendState.draftId);
+    }
     let ownsSendPromptBusy = false;
     let releaseSendPromptInFlight: (() => void) | null = null;
     const releasePromptSendInFlight = () => {
@@ -3309,16 +3460,6 @@ export default function App() {
       return false;
     }
 
-    const pendingDraftSendState = (() => {
-      const pendingDraftKey = (activePendingDraftKey() ?? "").trim();
-      if (sessionID) return null;
-      if (!pendingDraftKey) return null;
-      return {
-        key: pendingDraftKey,
-        meta: activePendingDraftMeta(),
-        draftId: activePendingDraftMeta()?.id?.trim() || null,
-      };
-    })();
     if (!sessionID) {
       recordSendTrace("sendPrompt:create-session-needed");
       if (pendingSidebarSession) {
@@ -3328,6 +3469,9 @@ export default function App() {
         blockAppDuringCreate: blockAppDuringPromptSend,
         managedAiRuntimeAlreadyPrepared: true,
         pendingSession: pendingSidebarSession,
+        shouldSelectCreatedSession: pendingDraftSendState
+          ? () => activePendingDraftKey() === pendingDraftSendState.key
+          : undefined,
       });
       const materializedSessionId = createdSessionId?.trim();
       if (materializedSessionId) {
@@ -3362,6 +3506,7 @@ export default function App() {
     const restorePendingDraftAfterSendFailure = () => {
       if (!sendTargetStillDisplayed()) return;
       if (pendingDraftSendState) {
+        clearConsumedPendingDraftId(pendingDraftSendState.draftId);
         setActivePendingDraftKey(pendingDraftSendState.key);
         setActivePendingDraftMeta(pendingDraftSendState.meta);
         setView("session");
@@ -3575,6 +3720,7 @@ export default function App() {
         );
       }
       await sessionStore.refreshSessionMessages(sessionID, { reason: "prompt-complete" });
+      ensureAcceptedPromptVisibleInSession(sessionID, resolvedDraft);
       if (pendingDraftSendState) {
         const pendingDraftStorageKey = pendingDraftSendState.key;
         const pendingDraftId = pendingDraftSendState.draftId;
@@ -4196,7 +4342,7 @@ export default function App() {
     // If we're currently routed to the deleted session, navigate away immediately.
     // (Otherwise the route effect can try to re-select a session that no longer exists.)
     try {
-      const path = location.pathname.toLowerCase();
+      const path = currentRoutePath().toLowerCase();
       if (path === `/session/${trimmed.toLowerCase()}`) {
         navigate("/session", { replace: true });
       }
@@ -6702,7 +6848,7 @@ export default function App() {
     // Only auto-select on bare /session. If the URL already includes /session/:id,
     // let the route-driven selector own the fetch to avoid duplicate selection runs.
     if (currentView() !== "session") return;
-    const normalizedPath = location.pathname.toLowerCase().replace(/\/+$/, "");
+    const normalizedPath = currentRoutePath().toLowerCase().replace(/\/+$/, "");
     if (normalizedPath !== "/session") return;
     if (!routedClient()) return;
     if (!sessionsLoaded()) return;
@@ -6716,7 +6862,7 @@ export default function App() {
 
   let lastRouteClientResumeKey = "";
   createEffect(() => {
-    const rawPath = location.pathname.trim();
+    const rawPath = currentRoutePath().trim();
     const path = rawPath.toLowerCase();
     if (!path.startsWith("/session/")) return;
 
@@ -9817,9 +9963,11 @@ export default function App() {
       blockAppDuringCreate?: boolean;
       managedAiRuntimeAlreadyPrepared?: boolean;
       pendingSession?: PendingSidebarSessionMetadata | null;
+      shouldSelectCreatedSession?: () => boolean;
     } = {},
   ) {
     const blockAppDuringCreate = options.blockAppDuringCreate ?? true;
+    const shouldSelectCreatedSession = options.shouldSelectCreatedSession ?? (() => blockAppDuringCreate || currentView() === "session");
     const pendingSidebarSession = options.pendingSession ?? null;
     recordSendTrace("createSessionAndOpen:start", {
       connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
@@ -9934,6 +10082,9 @@ export default function App() {
         const vesloCreated = await createConversationFromVesloWriteApi(
           activeWorkspaceId,
           initialSessionTitle || undefined,
+          {
+            directory: sessionDirectory,
+          },
         );
         if (!vesloCreated) {
           throw new Error("Conversation service is unavailable for session creation.");
@@ -9967,9 +10118,14 @@ export default function App() {
       if (blockAppDuringCreate) {
         setBusyLabel("status.loading_session");
       }
-      mark("session:select:start", { sessionID: session.id });
-      await selectSession(session.id);
-      mark("session:select:ok", { sessionID: session.id });
+      const shouldSelectSession = shouldSelectCreatedSession();
+      if (shouldSelectSession) {
+        mark("session:select:start", { sessionID: session.id });
+        await selectSession(session.id);
+        mark("session:select:ok", { sessionID: session.id });
+      } else {
+        mark("session:select:skip", { sessionID: session.id });
+      }
 
       // Inject the new session into the reactive sessions() store so
       // the createEffect bridge (sessions → sidebar) will always include it,
@@ -9999,7 +10155,7 @@ export default function App() {
       }
 
       // setSessionViewLockUntil(Date.now() + 1200);
-      if (blockAppDuringCreate || currentView() === "session") {
+      if (shouldSelectSession) {
         goToSession(session.id);
       }
 
@@ -10051,7 +10207,9 @@ export default function App() {
   const openNewSessionWithDirectory = async () => {
     if (isTauriRuntime()) {
       try {
-        const newPrivatePendingDraftKey = resolvePendingDraftKey({ kind: "new-private" });
+        clearSelectedSessionForPendingDraft();
+        setView("session");
+
         const pendingDrafts = (await pendingSessionDraftsList()).filter((draft) => !isConsumedPendingDraftId(draft.id));
         const existingPendingDraft = pendingDrafts.find((draft) => draft.kind === "new-private") ?? null;
 
@@ -10074,11 +10232,12 @@ export default function App() {
                 markPendingDraftConsumed(existingPendingDraft.id);
                 await refreshPendingDraftSummaries();
               } else {
-                setActivePendingDraftKey(newPrivatePendingDraftKey);
+                const existingPendingDraftKey = pendingDraftKeyForSummary(existingPendingDraft);
+                setActivePendingDraftKey(existingPendingDraftKey);
                 setActivePendingDraftMeta(existingPendingDraft);
                 setComposerDraftBySessionId((current) => setSessionComposerDraft(
                   current,
-                  { storageKey: newPrivatePendingDraftKey },
+                  { storageKey: existingPendingDraftKey },
                   pendingDraft.draft.composer,
                 ));
                 await refreshPendingDraftSummaries();
@@ -10123,11 +10282,13 @@ export default function App() {
             updatedAt: now,
             composer: emptyPendingDraft,
           });
-          setActivePendingDraftKey(newPrivatePendingDraftKey);
+          const pendingDraftKey = pendingDraftKeyForSummary(pendingDraft);
+          clearSelectedSessionForPendingDraft();
+          setActivePendingDraftKey(pendingDraftKey);
           setActivePendingDraftMeta(pendingDraft);
           setComposerDraftBySessionId((current) => setSessionComposerDraft(
             current,
-            { storageKey: newPrivatePendingDraftKey },
+            { storageKey: pendingDraftKey },
             emptyPendingDraft,
           ));
           await refreshPendingDraftSummaries();
@@ -10159,6 +10320,9 @@ export default function App() {
     if (!workspaceId || !directory) return "";
 
     try {
+      clearSelectedSessionForPendingDraft();
+      setView("session");
+
       const pendingDraftKey = resolvePendingDraftKey({
         kind: "directory",
         workspaceId,
@@ -10237,8 +10401,10 @@ export default function App() {
       activateWorkspace: (nextWorkspaceId) =>
         workspaceStore.activateWorkspace(nextWorkspaceId, { promoteToFront: true }),
       openPendingDraft: () => {
-        const activeWorkspace = workspaceStore.activeWorkspaceDisplay();
-        const directory = activeWorkspace.directory?.trim() || activeWorkspace.path?.trim() || "";
+        const workspace =
+          workspaceStore.workspaces().find((entry) => entry.id === id) ??
+          (workspaceStore.activeWorkspaceId() === id ? workspaceStore.activeWorkspaceDisplay() : null);
+        const directory = workspace?.directory?.trim() || workspace?.path?.trim() || "";
         if (!directory) return "";
         return openDirectoryPendingDraft({ workspaceId: id, directory });
       },
@@ -11683,6 +11849,36 @@ export default function App() {
     sessionTitle: string;
     workspaceName: string;
   } | null>(null);
+  clearStalePendingSessionLoadForRouteSession = (sessionId) => {
+    const normalizedSessionId = sessionId?.trim() ?? "";
+    setPendingSessionLoad((current) => {
+      if (!current) return current;
+      if (!normalizedSessionId) return null;
+      return current.sessionId === normalizedSessionId ? current : null;
+    });
+  };
+  const routeSessionId = () => {
+    const path = currentRoutePath().trim();
+    if (!path.toLowerCase().startsWith("/session/")) return null;
+    const [, , sessionSegment] = path.split("/");
+    return sessionSegment?.trim() || null;
+  };
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    const pending = pendingSessionLoad();
+    if (!pending) return;
+
+    const timer = window.setTimeout(() => {
+      const routedSessionId = routeSessionId();
+      if (!routedSessionId || routedSessionId === pending.sessionId) return;
+      if (workspaceStore.connectingWorkspaceId()) return;
+      const selected = selectedSessionId();
+      if (selected && selected !== routedSessionId) return;
+      setPendingSessionLoad((current) => current?.sessionId === pending.sessionId ? null : current);
+    }, 250);
+    onCleanup(() => window.clearTimeout(timer));
+  });
 
   createEffect(() => {
     if (typeof window === "undefined") return;
@@ -12464,6 +12660,7 @@ export default function App() {
   const syncExternalHashRoute = () => {
     if (!isTauriRuntime()) return;
     const hashPath = window.location.hash.replace(/^#/, "").trim();
+    setExternalHashRoutePath(readHashRoutePath());
     if (!hashPath.startsWith("/")) return;
 
     const pathname = hashPath.split(/[?#]/, 1)[0]?.toLowerCase() ?? "";
@@ -12482,6 +12679,7 @@ export default function App() {
 
   onMount(() => {
     if (!isTauriRuntime()) return;
+    setExternalHashRoutePath(readHashRoutePath());
     window.addEventListener("hashchange", syncExternalHashRoute);
   });
 
@@ -12496,7 +12694,7 @@ export default function App() {
   };
 
   createEffect(() => {
-    const rawPath = location.pathname.trim();
+    const rawPath = currentRoutePath().trim();
     const path = rawPath.toLowerCase();
 
     if ((onboardingStep() === "language" || onboardingStep() === "auth") && !path.startsWith("/onboarding")) {
@@ -12530,16 +12728,16 @@ export default function App() {
         if (activePendingDraftKey()) {
           void activePendingDraftMeta();
           if (selectedSessionId()) {
-            setSelectedSessionId(null);
             setMessages([]);
             setTodos([]);
+            setSelectedSessionId(null);
           }
           return;
         }
         if (selectedSessionId()) {
-          setSelectedSessionId(null);
           setMessages([]);
           setTodos([]);
+          setSelectedSessionId(null);
         }
         return;
       }
@@ -12562,6 +12760,8 @@ export default function App() {
         })
       ) {
         if (selectedSessionId() === id) {
+          setMessages([]);
+          setTodos([]);
           setSelectedSessionId(null);
         }
         navigate("/session", { replace: true });
@@ -12570,9 +12770,11 @@ export default function App() {
 
       if (isPendingSessionInstanceId(id)) {
         if (selectedSessionId() !== id) {
+          if (selectedSessionId()) {
+            setMessages([]);
+            setTodos([]);
+          }
           setSelectedSessionId(id);
-          setMessages([]);
-          setTodos([]);
         }
         setPendingSessionLoad(null);
         return;

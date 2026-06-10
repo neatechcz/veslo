@@ -466,25 +466,16 @@ export default function DashboardView(props: DashboardViewProps) {
       group?.workspace.directory?.trim() ||
       group?.workspace.path?.trim() ||
       "";
-    void openSessionWithWorkspaceActivation({
-      activeWorkspaceId: props.activeWorkspaceId,
-      getActiveWorkspaceId: () => props.activeWorkspaceId,
-      workspaceId,
+    props.setSessionBrowseScope({
       sessionId,
-      activateWorkspace: props.activateWorkspace,
-      // Route-driven selection: navigate first and let the route effect own selectSession.
-      openSession: (nextSessionId) => {
-        props.setSessionBrowseScope({
-          sessionId: nextSessionId,
-          workspaceId,
-          workspaceRoot: workspaceRoot,
-          directory: session?.directory ?? workspaceRoot,
-          conversationId: session?.conversationId ?? null,
-          opencodeSessionId: session?.opencodeSessionId ?? nextSessionId,
-        });
-        props.setView("session", nextSessionId);
-      },
+      workspaceId,
+      workspaceRoot: workspaceRoot,
+      directory: session?.directory ?? workspaceRoot,
+      conversationId: session?.conversationId ?? null,
+      opencodeSessionId: session?.opencodeSessionId ?? sessionId,
     });
+    void props.selectSession(sessionId);
+    props.setView("session", sessionId);
   };
 
   const resolveVesloWorkspaceId = (workspaceId: string) => {
@@ -1421,6 +1412,7 @@ export default function DashboardView(props: DashboardViewProps) {
           </Show>
           <div class="min-h-0 flex-1">
             <WorkspaceSessionList
+              workspaces={props.workspaces}
               workspaceSessionGroups={props.workspaceSessionGroups}
               workspaceSessionPagingById={props.workspaceSessionPagingById}
               subagentDecorationsBySessionId={props.subagentDecorationsBySessionId}

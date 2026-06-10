@@ -14,8 +14,14 @@ test("session view accepts active pending draft key for pending queue identity",
 
   assert.match(
     source,
-    /`pending-draft:\$\{props\.activePendingDraftKey\}`/,
+    /return `pending-draft:\$\{pendingDraftKey\}`;/,
     "pending sessions should key queues by pending draft identity when available",
+  );
+
+  assert.match(
+    source,
+    /return `pending-draft:\$\{pendingDraftKey\}:\$\{props\.activeWorkspaceId \|\| "default"\}`;/,
+    "temporary new-private pending sessions should also include the active workspace in their queue key",
   );
 
   assert.match(
@@ -102,8 +108,14 @@ test("session renders a temporary submitted user message while footer indicator 
 
   assert.match(
     source,
-    /if \(accepted && showOptimisticSubmit\) \{\s*clearMatchingPendingSubmit\(\);\s*\}/,
-    "accepted handoff should clear only the matching optimistic placeholder so the server transcript owns display",
+    /const submittedDraftHasMessageInTranscript = \(submitted: ReturnType<typeof optimisticSubmittedDraft>\) => \{[\s\S]*return props\.messages\.some\(\(message\) => \{[\s\S]*message\.parts\.some\(\(part\) => part\.type === "text" && \(part\.text \?\? ""\)\.trim\(\) === text\);[\s\S]*\}\);[\s\S]*\};/s,
+    "session should detect when the real transcript has caught up to the optimistic submitted user message",
+  );
+
+  assert.match(
+    source,
+    /createEffect\(\(\) => \{\s*const submitted = optimisticSubmittedDraft\(\);[\s\S]*if \(!submittedDraftHasMessageInTranscript\(submitted\)\) return;[\s\S]*removePendingSubmittedDraftForKey\(current, submitted\.sessionKey, submitted\.id\),[\s\S]*\}\);/s,
+    "accepted optimistic messages should clear only after the matching user message exists in the transcript",
   );
 });
 
@@ -159,10 +171,10 @@ test("accepted handoff does not clear unrelated failed pending submitted message
     "accepted stale-navigation handoff should only clear this send's pending submit",
   );
 
-  assert.match(
+  assert.doesNotMatch(
     acceptedBranch,
     /if \(accepted && showOptimisticSubmit\) \{\s*clearMatchingPendingSubmit\(\);\s*\}/,
-    "accepted normal handoff should only clear optimistic sends",
+    "accepted normal handoff should not clear the optimistic message before transcript catch-up",
   );
 
   assert.doesNotMatch(

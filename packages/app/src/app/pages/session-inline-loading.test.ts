@@ -47,13 +47,13 @@ test("session switch keeps inline loading until transcript hydration completes",
 
   assert.match(
     openSessionSource,
-    /if \(result === "blocked" \|\| result === "superseded"\) \{\s*props\.setPendingSessionLoad\(null\);\s*\}/s,
-    "session click navigation should only clear the inline loading state for terminal non-open results",
+    /if \(shouldShowOverlay\) \{[\s\S]*props\.setPendingSessionLoad\(\{[\s\S]*sessionId,[\s\S]*workspaceId,[\s\S]*\}\);[\s\S]*\} else \{\s*props\.setPendingSessionLoad\(null\);\s*\}/s,
+    "session click navigation should show inline loading only while switching to a different session",
   );
-  assert.doesNotMatch(
+  assert.match(
     openSessionSource,
-    /result === "opened"[\s\S]*props\.setPendingSessionLoad\(null\)/s,
-    "opened navigation must keep pendingSessionLoad alive until onSessionLoadComplete fires after transcript hydration",
+    /props\.setSessionBrowseScope\(\{[\s\S]*sessionId,[\s\S]*workspaceId,[\s\S]*\}\);\s*void props\.selectSession\(sessionId\);\s*props\.setView\("session", sessionId\);/s,
+    "real session clicks should synchronously select and route while pendingSessionLoad stays alive until transcript hydration completes",
   );
 });
 
