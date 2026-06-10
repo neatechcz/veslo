@@ -5,6 +5,10 @@ import test from "node:test";
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 const schedulerSource = readFileSync(new URL("../lib/workspace-runtime-schedulers.ts", import.meta.url), "utf8");
 const mcpRefreshSource = readFileSync(new URL("../lib/mcp-server-refresh.ts", import.meta.url), "utf8");
+const sidebarWorkspaceSessionsSource = readFileSync(
+  new URL("../context/sidebar-workspace-sessions.ts", import.meta.url),
+  "utf8",
+);
 
 test("send preflight records per-step latency trace entries for step 2", () => {
   assert.match(
@@ -149,19 +153,42 @@ test("create session preflight does not add a fixed abort-refresh settle delay",
 
 test("sidebar bulk refresh is single-flight to avoid duplicate cold workspace session scans", () => {
   assert.match(
-    source,
+    sidebarWorkspaceSessionsSource,
     /let sidebarBulkRefreshInFlight: Promise<void> \| null = null;/,
     "sidebar bulk refresh should keep a single in-flight promise",
   );
   assert.match(
-    source,
+    sidebarWorkspaceSessionsSource,
     /const existingBulkRefresh = sidebarBulkRefreshInFlight;[\s\S]*await existingBulkRefresh;[\s\S]*"refresh-all-joined"/,
     "refresh-all should join an existing bulk refresh instead of starting duplicate workspace scans",
   );
   assert.match(
-    source,
+    sidebarWorkspaceSessionsSource,
     /const existingBulkRefresh = sidebarBulkRefreshInFlight;[\s\S]*await existingBulkRefresh;[\s\S]*"refresh-local-joined"/,
     "refresh-local should join an existing bulk refresh instead of duplicating refresh-all work",
+  );
+  assert.match(
+    source,
+    /const sidebarWorkspaceSessions = createSidebarWorkspaceSessions\(\{[\s\S]*workspaceStore,[\s\S]*workspaceRouting,[\s\S]*listConversationsFromVesloReadApi,[\s\S]*\}\);/,
+    "app should wire sidebar session behavior through the sidebar workspace sessions controller",
+  );
+});
+
+test("session-store sidebar sync skips unchanged sidebar rows", () => {
+  assert.match(
+    sidebarWorkspaceSessionsSource,
+    /const sidebarSessionItemsEqual = \(left: SidebarSessionItem\[\], right: SidebarSessionItem\[\]\) => \{[\s\S]*a\.id !== b\.id[\s\S]*a\.title !== b\.title[\s\S]*a\.directory !== b\.directory[\s\S]*a\.time\?\.updated[\s\S]*return true;[\s\S]*\};/,
+    "app should compare sidebar rows before publishing session-store sync output",
+  );
+  assert.match(
+    sidebarWorkspaceSessionsSource,
+    /const nextRows = visibleRows\.map\(\(s\) => \{[\s\S]*setSidebarSessionsByWorkspaceId\(\(prev\) => \{[\s\S]*const currentRows = prev\[wsId\] \?\? \[\];[\s\S]*if \(sidebarSessionItemsEqual\(currentRows, nextRows\)\) return prev;[\s\S]*\[wsId\]: nextRows,[\s\S]*\}\);/,
+    "session-store sync should preserve sidebar signal identity when visible rows are unchanged",
+  );
+  assert.match(
+    sidebarWorkspaceSessionsSource,
+    /setSidebarSessionHasMoreByWorkspaceId\(\(prev\) => \{[\s\S]*const nextHasMore = deriveSidebarHasMore\(visibleSessions\.length, requestLimit\);[\s\S]*if \(\(prev\[wsId\] \?\? false\) === nextHasMore\) return prev;/,
+    "session-store sync should not invalidate sidebar paging state when hasMore is unchanged",
   );
 });
 
