@@ -6,6 +6,7 @@ import { promoteStoredProjectOrderKey } from "../components/session/workspace-se
 import { createClient, unwrap, type OpencodeAuth } from "../lib/opencode";
 import { recordPerfLog } from "../lib/perf-log";
 import { shouldSyncSidebarFromSessionStore } from "../lib/sidebar-session-sync-guard";
+import { deriveSidebarRowsFromSessionStore } from "../lib/sidebar-session-store-sync";
 import {
   parseVesloWorkspaceIdFromUrl,
   normalizeVesloServerUrl,
@@ -808,18 +809,26 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
       const sorted = sortSessionsByActivity(scopedSessions);
       const { visible: visibleSessions } = partitionVesloUtilitySessions(sorted);
       const requestLimit = sidebarSessionLimitByWorkspaceId()[wsId] ?? initialSidebarSessionLimit();
-      const visibleRows = expandSidebarSessionSliceWithAncestors(visibleSessions, requestLimit);
-      const nextRows = visibleRows.map((s) => {
-        const displaySession = options.applyPendingInitialSessionTitle(s);
-        return {
-          id: displaySession.id,
-          title: displaySession.title,
-          slug: displaySession.slug,
-          parentID: displaySession.parentID,
-          time: displaySession.time,
-          directory: displaySession.directory,
-        };
+      const incomingVisibleRows = expandSidebarSessionSliceWithAncestors(visibleSessions, requestLimit);
+      const existingTargetSidebarRows = untrack(() => sidebarSessionsByWorkspaceId()[wsId] ?? []);
+      const nextRows = deriveSidebarRowsFromSessionStore({
+        incomingSessions: visibleSessions,
+        existingRows: existingTargetSidebarRows,
+        requestLimit,
+        expandVisibleSessions: expandSidebarSessionSliceWithAncestors,
+        mapSession: (s) => {
+          const displaySession = options.applyPendingInitialSessionTitle(s);
+          return {
+            id: displaySession.id,
+            title: displaySession.title,
+            slug: displaySession.slug,
+            parentID: displaySession.parentID,
+            time: displaySession.time,
+            directory: displaySession.directory,
+          };
+        },
       });
+      const retainedExistingSidebarRows = nextRows.length > incomingVisibleRows.length;
       setSidebarSessionsByWorkspaceId((prev) => {
         const currentRows = prev[wsId] ?? [];
         if (sidebarSessionItemsEqual(currentRows, nextRows)) return prev;
@@ -829,7 +838,9 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
         };
       });
       setSidebarSessionHasMoreByWorkspaceId((prev) => {
-        const nextHasMore = deriveSidebarHasMore(visibleSessions.length, requestLimit);
+        const nextHasMore = retainedExistingSidebarRows
+          ? prev[wsId] ?? deriveSidebarHasMore(nextRows.length, requestLimit)
+          : deriveSidebarHasMore(visibleSessions.length, requestLimit);
         if ((prev[wsId] ?? false) === nextHasMore) return prev;
         return {
           ...prev,

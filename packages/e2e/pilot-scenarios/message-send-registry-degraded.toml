@@ -1,0 +1,422 @@
+[scenario]
+name = "message-send-registry-degraded"
+fail_fast = true
+global_timeout_ms = 360000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "start degraded registry send task"
+action = "eval"
+script = '''
+const completeSelector = '[data-testid="message-send-registry-degraded-complete"]';
+const errorSelector = '[data-testid="message-send-registry-degraded-error"]';
+const progressSelector = '[data-testid="message-send-registry-degraded-progress"]';
+document.querySelector(completeSelector)?.remove();
+document.querySelector(errorSelector)?.remove();
+document.querySelector(progressSelector)?.remove();
+
+const progressMarker = document.createElement("pre");
+progressMarker.dataset.testid = "message-send-registry-degraded-progress";
+progressMarker.style.display = "none";
+progressMarker.textContent = "starting";
+document.body.append(progressMarker);
+
+const setProgress = (stage, detail = null) => {
+  window.__vesloMessageSendRegistryDegradedProgress = {
+    stage,
+    detail,
+    at: new Date().toISOString(),
+  };
+  progressMarker.textContent = JSON.stringify(window.__vesloMessageSendRegistryDegradedProgress);
+};
+
+const appendFailureMarker = (payload) => {
+  if (document.querySelector(errorSelector) || document.querySelector(completeSelector)) return;
+  const errorMarker = document.createElement("pre");
+  errorMarker.dataset.testid = "message-send-registry-degraded-error";
+  errorMarker.textContent = JSON.stringify(payload, null, 2);
+  document.body.append(errorMarker);
+};
+
+if (!window.__vesloMessageSendRegistryDegradedStarted) {
+  window.__vesloMessageSendRegistryDegradedStarted = true;
+  window.__vesloMessageSendRegistryDegradedPromise = (async () => {
+    const overallTimeout = setTimeout(() => {
+      appendFailureMarker({
+        message: "Timed out before the message-send registry degraded task produced a result marker.",
+        progress: window.__vesloMessageSendRegistryDegradedProgress ?? null,
+        clickedButton: window.__vesloMessageSendRegistryDegradedClickedButton ?? null,
+        sendTrace: Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.slice(-30) : [],
+        body: document.body.innerText.replace(/\s+/g, " ").trim().slice(0, 3000),
+      });
+    }, 300000);
+    try {
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const trimText = (value) => String(value ?? "").trim();
+
+const assert = (condition, message) => {
+  if (!condition) throw new Error(message);
+};
+
+const waitUntil = async (predicate, options = {}) => {
+  const timeout = options.timeout ?? 10000;
+  const interval = options.interval ?? 250;
+  const message = options.message ?? "Condition was not met";
+  const deadline = Date.now() + timeout;
+  let latest;
+
+  while (Date.now() < deadline) {
+    latest = await predicate();
+    if (latest) return latest;
+    await sleep(interval);
+  }
+
+  throw new Error(`${message}. Latest=${JSON.stringify(latest)}`);
+};
+
+const tauriInvoke = async (command, payload = {}) => {
+  const invoke = window.__TAURI_INTERNALS__?.invoke;
+  assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
+  return await invoke(command, payload);
+};
+
+const bodyText = () => document.body.innerText.replace(/\s+/g, " ").trim();
+const normalize = (value) => trimText(value).replace(/\s+/g, " ");
+const trimBaseUrl = (value) => normalize(value).replace(/\/+$/, "");
+
+const buttonDetails = () => Array.from(document.querySelectorAll("button")).map((button) => {
+  const rect = button.getBoundingClientRect();
+  return {
+    text: normalize(button.textContent),
+    title: normalize(button.title),
+    label: normalize(button.getAttribute("aria-label")),
+    disabled: button.disabled,
+    visible: Boolean(button.offsetParent) && rect.width > 0 && rect.height > 0,
+  };
+});
+
+const sendTrace = () => Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.slice(-30) : [];
+const describeButton = (button) => ({
+  text: normalize(button.textContent),
+  title: normalize(button.title),
+  label: normalize(button.getAttribute("aria-label")),
+  disabled: button.disabled,
+  className: normalize(button.getAttribute("class")),
+});
+
+const assertNoSkillRegistryError = () => {
+  const text = bodyText();
+  if (/skill registry|skill_registry/i.test(text)) {
+    throw new Error(`Skill registry error leaked into the send flow: ${text.slice(0, 2000)}`);
+  }
+};
+
+const waitForLocalVesloServerReady = async () => {
+  let latest = null;
+  setProgress("waiting-local-veslo-server");
+  return await waitUntil(async () => {
+    latest = await tauriInvoke("veslo_server_info").catch(() => null);
+    const baseUrl = trimBaseUrl(latest?.baseUrl);
+    const clientToken = normalize(latest?.clientToken);
+    const hostToken = normalize(latest?.hostToken);
+    if (!latest?.running || !baseUrl || !clientToken || !hostToken) return false;
+
+    const response = await fetch(`${baseUrl}/health`).catch(() => null);
+    if (!response?.ok) return false;
+    const payload = await response.json().catch(() => null);
+    if (payload?.ok !== true) return false;
+
+    return { baseUrl, clientToken, hostToken };
+  }, {
+    timeout: 90000,
+    interval: 500,
+    message: `Local Veslo server did not become ready. Server info=${JSON.stringify(latest)}`,
+  });
+};
+
+const waitForAiAccessReady = async (connection) => {
+  let latest = null;
+  setProgress("waiting-ai-access");
+  const access = await waitUntil(async () => {
+    const response = await fetch(`${connection.baseUrl}/ai-gateway/me/ai-access`, {
+      headers: {
+        authorization: `Bearer ${connection.clientToken}`,
+        "x-veslo-gateway-authorization": "Bearer veslo-e2e-managed-ai-token",
+        accept: "application/json",
+      },
+    }).catch((error) => {
+      latest = { error: error?.message || String(error) };
+      return null;
+    });
+    if (!response) return false;
+    const text = await response.text();
+    latest = { status: response.status, body: text.slice(0, 500) };
+    if (!response.ok) return false;
+    const payload = text.trim() ? JSON.parse(text) : null;
+    return payload?.aiAccess?.enabled === true ? payload : false;
+  }, {
+    timeout: 90000,
+    interval: 500,
+    message: `AI access endpoint did not become ready. Latest=${JSON.stringify(latest)}`,
+  });
+
+  window.dispatchEvent(new Event("focus"));
+  document.dispatchEvent(new Event("visibilitychange"));
+  await sleep(3000);
+  setProgress("waiting-app-settle-after-ai-access");
+  await waitUntil(() => !/Opening worker|Getting things ready|Failed to load AI access/i.test(bodyText()), {
+    timeout: 90000,
+    interval: 500,
+    message: `App did not settle after AI access became ready. Body=${bodyText().slice(0, 2000)}`,
+  });
+  return access;
+};
+
+const waitForWorkspaceEngineReady = async (workspace) => {
+  const workspacePath = normalize(workspace?.path || workspace?.directory);
+  assert(workspacePath, `Workspace path is missing from bootstrap payload: ${JSON.stringify(workspace)}`);
+  setProgress("starting-workspace-engine", { workspacePath });
+  await tauriInvoke("engine_start", {
+    projectDir: workspacePath,
+    preferSidecar: true,
+    opencodeBinPath: null,
+    runtime: "veslo-orchestrator",
+    workspacePaths: [workspacePath],
+  });
+  await tauriInvoke("orchestrator_workspace_activate", {
+    workspacePath,
+    name: normalize(workspace?.displayName || workspace?.name) || null,
+  });
+  setProgress("waiting-workspace-engine-ready", { workspacePath });
+  return await waitUntil(async () => {
+    const info = await tauriInvoke("engine_info").catch(() => null);
+    const baseUrl = trimBaseUrl(info?.baseUrl);
+    if (!baseUrl) return false;
+    return info;
+  }, {
+    timeout: 90000,
+    interval: 500,
+    message: `Workspace engine did not become ready for ${workspacePath}`,
+  });
+};
+
+const navigateToHash = (path) => {
+  const oldUrl = window.location.href;
+  window.location.hash = path.startsWith("/") ? path : `/${path}`;
+  window.dispatchEvent(new HashChangeEvent("hashchange", {
+    oldURL: oldUrl,
+    newURL: window.location.href,
+  }));
+};
+
+const buttonMatchesLabel = (button, labels) => {
+  if (button.disabled) return false;
+  const rect = button.getBoundingClientRect();
+  if (!button.offsetParent || rect.width <= 0 || rect.height <= 0) return false;
+  const values = [
+    normalize(button.textContent),
+    normalize(button.title),
+    normalize(button.getAttribute("aria-label")),
+  ];
+  return labels.some((label) => values.some((value) => value === label || value.includes(label)));
+};
+
+const findButton = (labels) => Array.from(document.querySelectorAll("button")).find((button) => buttonMatchesLabel(button, labels));
+
+const findComposerSendButton = (textbox) => {
+  const labels = [
+    "Send now",
+    "Steer agent now",
+    "Queue message",
+    "Send",
+    "Poslat hned",
+    "Nasm?rovat agenta te?",
+    "Za?adit zpr?vu",
+    "Odeslat",
+    "????",
+    "??????",
+    "????",
+  ];
+  let current = textbox;
+  const containers = [];
+  for (let depth = 0; depth < 10 && current instanceof HTMLElement; depth += 1) {
+    containers.push(current);
+    current = current.parentElement;
+  }
+
+  for (const container of containers) {
+    const matching = Array.from(container.querySelectorAll("button")).find((button) => buttonMatchesLabel(button, labels));
+    if (matching) return matching;
+  }
+
+  return findButton(labels);
+};
+
+const waitForComposer = async () => {
+  setProgress("waiting-composer");
+  let textbox = await waitUntil(() => {
+    const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
+    return candidate instanceof HTMLElement && candidate.offsetParent ? candidate : false;
+  }, {
+    timeout: 30000,
+    interval: 250,
+    message: `Composer did not appear. Body=${bodyText().slice(0, 2000)}`,
+  }).catch(async () => {
+    const chatButton = findButton(["Chat", "??"]);
+    if (chatButton) {
+      chatButton.click();
+      await sleep(500);
+    }
+    return await waitUntil(() => {
+      const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
+      return candidate instanceof HTMLElement && candidate.offsetParent ? candidate : false;
+    }, {
+      timeout: 30000,
+      interval: 250,
+      message: `Composer did not appear after opening chat. Body=${bodyText().slice(0, 2000)}`,
+    });
+  });
+
+  return textbox;
+};
+
+await waitUntil(() => document.querySelector("#root")?.children.length > 0, {
+  timeout: 15000,
+  message: "Veslo root did not render child UI",
+});
+
+setProgress("waiting-workspace-bootstrap");
+const workspaceList = await waitUntil(async () => {
+  const info = await tauriInvoke("workspace_bootstrap").catch(() => null);
+  return Array.isArray(info?.workspaces) && info.workspaces.length > 0 ? info : false;
+}, {
+  timeout: 45000,
+  interval: 500,
+  message: "Workspace bootstrap did not expose a local workspace",
+});
+const activeWorkspace = workspaceList.workspaces.find((workspace) => workspace.id === workspaceList.activeId) ?? workspaceList.workspaces[0];
+
+const localServer = await waitForLocalVesloServerReady();
+await waitForAiAccessReady(localServer);
+await waitForWorkspaceEngineReady(activeWorkspace);
+
+setProgress("navigating-session-route");
+navigateToHash("/session");
+await waitUntil(() => window.location.hash.includes("/session"), {
+  timeout: 10000,
+  message: "Session route did not become active",
+});
+
+assertNoSkillRegistryError();
+const textbox = await waitForComposer();
+const token = `registry-degraded-${Date.now()}`;
+const prompt = `Reply with exactly ${token}. No other words.`;
+
+setProgress("filling-composer", { token });
+textbox.focus();
+textbox.replaceChildren(document.createTextNode(prompt));
+textbox.dispatchEvent(new InputEvent("input", {
+  bubbles: true,
+  data: prompt,
+  inputType: "insertText",
+}));
+
+await waitUntil(() => textbox.textContent === prompt, {
+  timeout: 10000,
+  message: "Composer text was not reflected in the editable node",
+});
+
+assertNoSkillRegistryError();
+setProgress("waiting-send-button", { token });
+const sendButton = await waitUntil(() => findComposerSendButton(textbox), {
+  timeout: 15000,
+  interval: 250,
+  message: `Send button did not become enabled. Buttons=${JSON.stringify(buttonDetails())}. Body=${bodyText().slice(0, 2000)}`,
+});
+window.__vesloMessageSendRegistryDegradedClickedButton = describeButton(sendButton);
+const traceLengthBeforeClick = sendTrace().length;
+setProgress("clicking-send-button", { token });
+sendButton.click();
+
+setProgress("waiting-send-handler", { token });
+await waitUntil(() => sendTrace().length > traceLengthBeforeClick, {
+  timeout: 5000,
+  interval: 250,
+  message: `Send click did not reach composer handler. Clicked=${JSON.stringify(window.__vesloMessageSendRegistryDegradedClickedButton)} Buttons=${JSON.stringify(buttonDetails())}. Body=${bodyText().slice(0, 2000)}`,
+});
+
+setProgress("waiting-fixture-response", { token });
+await waitUntil(() => {
+  assertNoSkillRegistryError();
+  const text = bodyText();
+  if (/Send failed|Odesl?n? selhalo|????/i.test(text)) {
+    throw new Error(`Message send failed before fixture response. Trace=${JSON.stringify(sendTrace())}. Body=${text.slice(0, 2000)}`);
+  }
+  const occurrences = text.split(token).length - 1;
+  return occurrences >= 2;
+}, {
+  timeout: 60000,
+  interval: 1000,
+  message: `Managed AI fixture response did not render for token ${token}. Body=${bodyText().slice(0, 2000)}`,
+});
+
+assertNoSkillRegistryError();
+clearTimeout(overallTimeout);
+const completeMarker = document.createElement("div");
+completeMarker.dataset.testid = "message-send-registry-degraded-complete";
+completeMarker.textContent = "complete";
+document.body.append(completeMarker);
+    } catch (error) {
+      clearTimeout(overallTimeout);
+      const fallbackNormalize = (value) => String(value ?? "").trim().replace(/\s+/g, " ");
+      const fallbackBodyText = () => document.body.innerText.replace(/\s+/g, " ").trim();
+      const fallbackButtonDetails = () => Array.from(document.querySelectorAll("button")).map((button) => {
+        const rect = button.getBoundingClientRect();
+        return {
+          text: fallbackNormalize(button.textContent),
+          title: fallbackNormalize(button.title),
+          label: fallbackNormalize(button.getAttribute("aria-label")),
+          disabled: button.disabled,
+          visible: Boolean(button.offsetParent) && rect.width > 0 && rect.height > 0,
+        };
+      });
+      appendFailureMarker({
+        message: error?.message || String(error),
+        stack: error?.stack || null,
+        progress: window.__vesloMessageSendRegistryDegradedProgress ?? null,
+        clickedButton: window.__vesloMessageSendRegistryDegradedClickedButton ?? null,
+        sendTrace: Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.slice(-30) : [],
+        buttons: fallbackButtonDetails(),
+        body: fallbackBodyText().slice(0, 3000),
+      });
+    }
+  })();
+}
+
+true;
+'''
+
+[[step]]
+name = "degraded registry send task finished"
+action = "wait"
+target = "[data-testid=\"message-send-registry-degraded-complete\"], [data-testid=\"message-send-registry-degraded-error\"]"
+timeout_ms = 350000
+
+[[step]]
+name = "degraded registry send task succeeded"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="message-send-registry-degraded-error"]');
+if (error) {
+  const detail = (error.textContent || "Message send registry degraded task failed")
+    .replace(/[\u0080-\uffff]/g, "?")
+    .slice(0, 4000);
+  throw new Error(`Message send registry degraded task failed: ${detail}`);
+}
+true;
+'''

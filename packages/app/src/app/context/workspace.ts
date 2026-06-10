@@ -119,6 +119,16 @@ function _wsLog(msg: string, data?: unknown) {
   } catch {}
 }
 
+function isSkillRegistryMaterializationError(error: unknown): boolean {
+  if (error instanceof VesloServerError) {
+    const code = error.code.trim();
+    if (code.startsWith("skill_registry_")) return true;
+    return error.message.includes("Skill registry") || error.message.includes("skill registry");
+  }
+  const message = error instanceof Error ? error.message : safeStringify(error);
+  return message.includes("Skill registry") || message.includes("skill registry");
+}
+
 export function createWorkspaceStore(options: {
   startupPreference: () => StartupPreference | null;
   setStartupPreference: (value: StartupPreference | null) => void;
@@ -842,6 +852,15 @@ export function createWorkspaceStore(options: {
         return true;
       }
       const message = error instanceof Error ? error.message : safeStringify(error);
+      if (isSkillRegistryMaterializationError(error)) {
+        wsDebug("skills:materialization:degraded", {
+          workspaceId,
+          reason: context?.reason ?? null,
+          message,
+        });
+        reportError(error, "workspace.skillMaterialization");
+        return true;
+      }
       wsDebug("skills:materialization:failed", {
         workspaceId,
         reason: context?.reason ?? null,

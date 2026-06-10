@@ -1,0 +1,524 @@
+[scenario]
+name = "sidebar-session-retention"
+fail_fast = true
+global_timeout_ms = 420000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "configure recent sidebar mode"
+action = "eval"
+script = '''
+window.localStorage.setItem("veslo.sidebar-session-view.v1", "recent");
+true;
+'''
+
+[[step]]
+name = "seed existing sidebar sessions"
+action = "eval"
+script = '''
+const completeSelector = '[data-testid="vslo-230-seed-complete"]';
+const errorSelector = '[data-testid="vslo-230-seed-error"]';
+document.querySelector(completeSelector)?.remove();
+document.querySelector(errorSelector)?.remove();
+
+const appendFailureMarker = (payload) => {
+  if (document.querySelector(errorSelector) || document.querySelector(completeSelector)) return;
+  const errorMarker = document.createElement("pre");
+  errorMarker.dataset.testid = "vslo-230-seed-error";
+  errorMarker.textContent = JSON.stringify(payload, null, 2);
+  document.body.append(errorMarker);
+};
+
+if (!window.__veslo230SeedStarted) {
+  window.__veslo230SeedStarted = true;
+  window.__veslo230SeedPromise = (async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const trimText = (value) => String(value ?? "").trim();
+    const normalize = (value) => trimText(value).replace(/\s+/g, " ");
+    const trimBaseUrl = (value) => normalize(value).replace(/\/+$/, "");
+    const assert = (condition, message) => {
+      if (!condition) throw new Error(message);
+    };
+    const waitUntil = async (predicate, options = {}) => {
+      const timeout = options.timeout ?? 10000;
+      const interval = options.interval ?? 250;
+      const message = options.message ?? "Condition was not met";
+      const deadline = Date.now() + timeout;
+      let latest;
+      while (Date.now() < deadline) {
+        latest = await predicate();
+        if (latest) return latest;
+        await sleep(interval);
+      }
+      throw new Error(`${message}. Latest=${JSON.stringify(latest)}`);
+    };
+    const tauriInvoke = async (command, payload = {}) => {
+      const invoke = window.__TAURI_INTERNALS__?.invoke;
+      assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
+      return await invoke(command, payload);
+    };
+    const waitForLocalVesloServerReady = async () => {
+      let latest = null;
+      return await waitUntil(async () => {
+        latest = await tauriInvoke("veslo_server_info").catch(() => null);
+        const baseUrl = trimBaseUrl(latest?.baseUrl);
+        const clientToken = normalize(latest?.clientToken);
+        const hostToken = normalize(latest?.hostToken);
+        if (!latest?.running || !baseUrl || !clientToken || !hostToken) return false;
+        const response = await fetch(`${baseUrl}/health`).catch(() => null);
+        if (!response?.ok) return false;
+        const payload = await response.json().catch(() => null);
+        return payload?.ok === true ? { baseUrl, clientToken, hostToken } : false;
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: `Local Veslo server did not become ready. Server info=${JSON.stringify(latest)}`,
+      });
+    };
+    const waitForWorkspaceEngineReady = async (workspace) => {
+      const workspacePath = normalize(workspace?.path || workspace?.directory);
+      assert(workspacePath, `Workspace path is missing from bootstrap payload: ${JSON.stringify(workspace)}`);
+      let latest = null;
+      return await waitUntil(async () => {
+        latest = await tauriInvoke("engine_info").catch((error) => ({ error: error?.message || String(error) }));
+        if (trimBaseUrl(latest?.baseUrl)) return latest;
+        try {
+          await tauriInvoke("engine_start", {
+            projectDir: workspacePath,
+            preferSidecar: true,
+            opencodeBinPath: null,
+            runtime: "veslo-orchestrator",
+            workspacePaths: [workspacePath],
+          });
+          await tauriInvoke("orchestrator_workspace_activate", {
+            workspacePath,
+            name: normalize(workspace?.displayName || workspace?.name) || null,
+          });
+        } catch (error) {
+          latest = { error: error?.message || String(error) };
+          return false;
+        }
+        latest = await tauriInvoke("engine_info").catch((error) => ({ error: error?.message || String(error) }));
+        return trimBaseUrl(latest?.baseUrl) ? latest : false;
+      }, {
+        timeout: 90000,
+        interval: 1000,
+        message: `Workspace engine did not become ready for ${workspacePath}. Latest=${JSON.stringify(latest)}`,
+      });
+    };
+    const opencodeRequest = async (engineInfo, path, options = {}) => {
+      const baseUrl = trimBaseUrl(engineInfo?.baseUrl);
+      const directory = normalize(engineInfo?.projectDir || engineInfo?.directory);
+      const username = normalize(engineInfo?.opencodeUsername || engineInfo?.username);
+      const password = normalize(engineInfo?.opencodePassword || engineInfo?.password);
+      assert(baseUrl, `Engine baseUrl missing: ${JSON.stringify(engineInfo)}`);
+      assert(directory, `Engine directory missing: ${JSON.stringify(engineInfo)}`);
+      const headers = new Headers(options.headers || {});
+      headers.set("accept", "application/json");
+      headers.set("x-opencode-directory", directory);
+      if (username || password) {
+        headers.set("authorization", `Basic ${btoa(`${username}:${password}`)}`);
+      }
+      if (options.body && !headers.has("content-type")) {
+        headers.set("content-type", "application/json");
+      }
+      const response = await fetch(`${baseUrl}${path}`, {
+        ...options,
+        headers,
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        throw new Error(`OpenCode request failed ${response.status} ${path}: ${text.slice(0, 1000)}`);
+      }
+      return text.trim() ? JSON.parse(text) : null;
+    };
+
+    try {
+      await waitUntil(() => document.querySelector("#root")?.children.length > 0, {
+        timeout: 15000,
+        message: "Veslo root did not render child UI",
+      });
+      await waitForLocalVesloServerReady();
+      const workspaceList = await waitUntil(async () => {
+        const info = await tauriInvoke("workspace_bootstrap").catch(() => null);
+        return Array.isArray(info?.workspaces) && info.workspaces.length > 0 ? info : false;
+      }, {
+        timeout: 45000,
+        interval: 500,
+        message: "Workspace bootstrap did not expose a local workspace",
+      });
+      const activeWorkspace = workspaceList.workspaces.find((workspace) => workspace.id === workspaceList.activeId) ?? workspaceList.workspaces[0];
+      const engineInfo = await waitForWorkspaceEngineReady(activeWorkspace);
+      await opencodeRequest(engineInfo, "/global/health");
+
+      const runId = `VSLO-230 ${Date.now()}`;
+      const directory = normalize(engineInfo.projectDir || activeWorkspace.path || activeWorkspace.directory);
+      const titles = [];
+      for (const suffix of ["existing A", "existing B", "existing C"]) {
+        const title = `${runId} ${suffix}`;
+        const createdPayload = await opencodeRequest(
+          engineInfo,
+          `/session?directory=${encodeURIComponent(directory)}`,
+          {
+            method: "POST",
+            body: JSON.stringify({ title }),
+          },
+        );
+        const created = createdPayload?.data ?? createdPayload;
+        assert(created?.id, `Session create did not return an id: ${JSON.stringify(createdPayload)}`);
+        titles.push(title);
+      }
+
+      window.localStorage.setItem(
+        "veslo.e2e.vslo230.seed",
+        JSON.stringify({
+          titles,
+          prompt: `${runId} new conversation`,
+        }),
+      );
+      const completeMarker = document.createElement("div");
+      completeMarker.dataset.testid = "vslo-230-seed-complete";
+      completeMarker.textContent = "complete";
+      document.body.append(completeMarker);
+    } catch (error) {
+      appendFailureMarker({
+        message: error?.message || String(error),
+        stack: error?.stack || null,
+      });
+    }
+  })();
+}
+
+true;
+'''
+
+[[step]]
+name = "seed task finished"
+action = "wait"
+target = "[data-testid=\"vslo-230-seed-complete\"], [data-testid=\"vslo-230-seed-error\"]"
+timeout_ms = 180000
+
+[[step]]
+name = "seed task succeeded"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="vslo-230-seed-error"]');
+if (error) {
+  throw new Error(`VSLO-230 seed failed: ${(error.textContent || "").slice(0, 4000)}`);
+}
+true;
+'''
+
+[[step]]
+name = "reload after seed"
+action = "eval"
+script = '''
+window.location.reload();
+true;
+'''
+
+[[step]]
+name = "root exists after reload"
+action = "wait"
+target = "#root"
+timeout_ms = 30000
+
+[[step]]
+name = "verify sidebar keeps existing sessions after new conversation"
+action = "eval"
+script = '''
+const completeSelector = '[data-testid="vslo-230-retention-complete"]';
+const errorSelector = '[data-testid="vslo-230-retention-error"]';
+document.querySelector(completeSelector)?.remove();
+document.querySelector(errorSelector)?.remove();
+
+const appendFailureMarker = (payload) => {
+  if (document.querySelector(errorSelector) || document.querySelector(completeSelector)) return;
+  const errorMarker = document.createElement("pre");
+  errorMarker.dataset.testid = "vslo-230-retention-error";
+  errorMarker.textContent = JSON.stringify(payload, null, 2);
+  document.body.append(errorMarker);
+};
+
+if (!window.__veslo230RetentionStarted) {
+  window.__veslo230RetentionStarted = true;
+  window.__veslo230RetentionPromise = (async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const trimText = (value) => String(value ?? "").trim();
+    const normalize = (value) => trimText(value).replace(/\s+/g, " ");
+    const trimBaseUrl = (value) => normalize(value).replace(/\/+$/, "");
+    const assert = (condition, message) => {
+      if (!condition) throw new Error(message);
+    };
+    const waitUntil = async (predicate, options = {}) => {
+      const timeout = options.timeout ?? 10000;
+      const interval = options.interval ?? 250;
+      const message = options.message ?? "Condition was not met";
+      const deadline = Date.now() + timeout;
+      let latest;
+      while (Date.now() < deadline) {
+        latest = await predicate();
+        if (latest) return latest;
+        await sleep(interval);
+      }
+      throw new Error(`${message}. Latest=${JSON.stringify(latest)}`);
+    };
+    const tauriInvoke = async (command, payload = {}) => {
+      const invoke = window.__TAURI_INTERNALS__?.invoke;
+      assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
+      return await invoke(command, payload);
+    };
+    const bodyText = () => document.body.innerText.replace(/\s+/g, " ").trim();
+    const rowTexts = () => Array.from(document.querySelectorAll('[data-session-sidebar-row="true"]'))
+      .filter((row) => {
+        const rect = row.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      })
+      .map((row) => normalize(row.textContent));
+    const missingTitles = (titles) => {
+      const rows = rowTexts();
+      return titles.filter((title) => !rows.some((row) => row.includes(title)));
+    };
+    const waitForRows = async (titles, label, timeout = 90000) => {
+      let latestRows = [];
+      await waitUntil(() => {
+        latestRows = rowTexts();
+        return missingTitles(titles).length === 0 ? true : false;
+      }, {
+        timeout,
+        interval: 500,
+        message: `${label} rows missing. Missing=${JSON.stringify(missingTitles(titles))} Rows=${JSON.stringify(latestRows)} Body=${bodyText().slice(0, 2000)}`,
+      });
+      await sleep(1200);
+      const missing = missingTitles(titles);
+      if (missing.length > 0) {
+        throw new Error(`${label} rows disappeared after settle. Missing=${JSON.stringify(missing)} Rows=${JSON.stringify(rowTexts())}`);
+      }
+    };
+    const navigateToHash = (path) => {
+      const oldUrl = window.location.href;
+      window.location.hash = path.startsWith("/") ? path : `/${path}`;
+      window.dispatchEvent(new HashChangeEvent("hashchange", {
+        oldURL: oldUrl,
+        newURL: window.location.href,
+      }));
+    };
+    const waitForLocalVesloServerReady = async () => {
+      let latest = null;
+      return await waitUntil(async () => {
+        latest = await tauriInvoke("veslo_server_info").catch(() => null);
+        const baseUrl = trimBaseUrl(latest?.baseUrl);
+        const clientToken = normalize(latest?.clientToken);
+        const hostToken = normalize(latest?.hostToken);
+        if (!latest?.running || !baseUrl || !clientToken || !hostToken) return false;
+        const response = await fetch(`${baseUrl}/health`).catch(() => null);
+        if (!response?.ok) return false;
+        const payload = await response.json().catch(() => null);
+        return payload?.ok === true ? { baseUrl, clientToken, hostToken } : false;
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: `Local Veslo server did not become ready. Server info=${JSON.stringify(latest)}`,
+      });
+    };
+    const waitForAiAccessReady = async (connection) => {
+      let latest = null;
+      return await waitUntil(async () => {
+        const response = await fetch(`${connection.baseUrl}/ai-gateway/me/ai-access`, {
+          headers: {
+            authorization: `Bearer ${connection.clientToken}`,
+            "x-veslo-gateway-authorization": "Bearer veslo-e2e-managed-ai-token",
+            accept: "application/json",
+          },
+        }).catch((error) => {
+          latest = { error: error?.message || String(error) };
+          return null;
+        });
+        if (!response) return false;
+        const text = await response.text();
+        latest = { status: response.status, body: text.slice(0, 500) };
+        if (!response.ok) return false;
+        const payload = text.trim() ? JSON.parse(text) : null;
+        return payload?.aiAccess?.enabled === true ? payload : false;
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: `AI access endpoint did not become ready. Latest=${JSON.stringify(latest)}`,
+      });
+    };
+    const waitForWorkspaceEngineReady = async (workspace) => {
+      const workspacePath = normalize(workspace?.path || workspace?.directory);
+      assert(workspacePath, `Workspace path is missing from bootstrap payload: ${JSON.stringify(workspace)}`);
+      let latest = null;
+      return await waitUntil(async () => {
+        latest = await tauriInvoke("engine_info").catch((error) => ({ error: error?.message || String(error) }));
+        if (trimBaseUrl(latest?.baseUrl)) return latest;
+        try {
+          await tauriInvoke("engine_start", {
+            projectDir: workspacePath,
+            preferSidecar: true,
+            opencodeBinPath: null,
+            runtime: "veslo-orchestrator",
+            workspacePaths: [workspacePath],
+          });
+          await tauriInvoke("orchestrator_workspace_activate", {
+            workspacePath,
+            name: normalize(workspace?.displayName || workspace?.name) || null,
+          });
+        } catch (error) {
+          latest = { error: error?.message || String(error) };
+          return false;
+        }
+        latest = await tauriInvoke("engine_info").catch((error) => ({ error: error?.message || String(error) }));
+        return trimBaseUrl(latest?.baseUrl) ? latest : false;
+      }, {
+        timeout: 90000,
+        interval: 1000,
+        message: `Workspace engine did not become ready for ${workspacePath}. Latest=${JSON.stringify(latest)}`,
+      });
+    };
+    const buttonMatchesLabel = (button, labels) => {
+      if (button.disabled) return false;
+      const rect = button.getBoundingClientRect();
+      if (!button.offsetParent || rect.width <= 0 || rect.height <= 0) return false;
+      const values = [
+        normalize(button.textContent),
+        normalize(button.title),
+        normalize(button.getAttribute("aria-label")),
+      ];
+      return labels.some((label) => values.some((value) => value === label || value.includes(label)));
+    };
+    const findButton = (labels) => Array.from(document.querySelectorAll("button")).find((button) => buttonMatchesLabel(button, labels));
+    const findComposerSendButton = (textbox) => {
+      const labels = [
+        "Send now",
+        "Steer agent now",
+        "Queue message",
+        "Send",
+      ];
+      let current = textbox;
+      const containers = [];
+      for (let depth = 0; depth < 10 && current instanceof HTMLElement; depth += 1) {
+        containers.push(current);
+        current = current.parentElement;
+      }
+      for (const container of containers) {
+        const matching = Array.from(container.querySelectorAll("button")).find((button) => buttonMatchesLabel(button, labels));
+        if (matching) return matching;
+      }
+      return findButton(labels);
+    };
+    const waitForComposer = async () => {
+      return await waitUntil(() => {
+        const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
+        return candidate instanceof HTMLElement && candidate.offsetParent ? candidate : false;
+      }, {
+        timeout: 30000,
+        interval: 250,
+        message: `Composer did not appear. Body=${bodyText().slice(0, 2000)}`,
+      });
+    };
+    const sendTrace = () => Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.slice(-60) : [];
+
+    try {
+      const seed = JSON.parse(window.localStorage.getItem("veslo.e2e.vslo230.seed") || "null");
+      assert(Array.isArray(seed?.titles) && seed.titles.length === 3, `Missing seed titles: ${JSON.stringify(seed)}`);
+      assert(seed.prompt, `Missing seed prompt: ${JSON.stringify(seed)}`);
+      window.localStorage.setItem("veslo.sidebar-session-view.v1", "recent");
+
+      await waitUntil(() => document.querySelector("#root")?.children.length > 0, {
+        timeout: 15000,
+        message: "Veslo root did not render child UI",
+      });
+      const localServer = await waitForLocalVesloServerReady();
+      await waitForAiAccessReady(localServer);
+      const workspaceList = await waitUntil(async () => {
+        const info = await tauriInvoke("workspace_bootstrap").catch(() => null);
+        return Array.isArray(info?.workspaces) && info.workspaces.length > 0 ? info : false;
+      }, {
+        timeout: 45000,
+        interval: 500,
+        message: "Workspace bootstrap did not expose a local workspace",
+      });
+      const activeWorkspace = workspaceList.workspaces.find((workspace) => workspace.id === workspaceList.activeId) ?? workspaceList.workspaces[0];
+      await waitForWorkspaceEngineReady(activeWorkspace);
+
+      navigateToHash("/session");
+      await waitUntil(() => window.location.hash.includes("/session"), {
+        timeout: 10000,
+        message: "Session route did not become active",
+      });
+      await waitForRows(seed.titles, "Seeded");
+
+      const textbox = await waitForComposer();
+      textbox.focus();
+      textbox.replaceChildren(document.createTextNode(seed.prompt));
+      textbox.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        data: seed.prompt,
+        inputType: "insertText",
+      }));
+      await waitUntil(() => textbox.textContent === seed.prompt, {
+        timeout: 10000,
+        message: "Composer text was not reflected in the editable node",
+      });
+      const sendButton = await waitUntil(() => findComposerSendButton(textbox), {
+        timeout: 15000,
+        interval: 250,
+        message: `Send button did not become enabled. Body=${bodyText().slice(0, 2000)}`,
+      });
+      const traceLengthBeforeClick = sendTrace().length;
+      sendButton.click();
+      await waitUntil(() => sendTrace().length > traceLengthBeforeClick, {
+        timeout: 10000,
+        interval: 250,
+        message: `Send click did not reach composer handler. Trace=${JSON.stringify(sendTrace())}`,
+      });
+      await waitUntil(() => sendTrace().some((entry) => entry?.event === "createSessionAndOpen:create-ok"), {
+        timeout: 60000,
+        interval: 500,
+        message: `New session was not created. Trace=${JSON.stringify(sendTrace())}. Body=${bodyText().slice(0, 2000)}`,
+      });
+
+      await waitForRows(seed.titles, "Retained after create", 60000);
+
+      const completeMarker = document.createElement("div");
+      completeMarker.dataset.testid = "vslo-230-retention-complete";
+      completeMarker.textContent = "complete";
+      document.body.append(completeMarker);
+    } catch (error) {
+      appendFailureMarker({
+        message: error?.message || String(error),
+        stack: error?.stack || null,
+        sendTrace: Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.slice(-60) : [],
+        rows: rowTexts(),
+        body: bodyText().slice(0, 3000),
+      });
+    }
+  })();
+}
+
+true;
+'''
+
+[[step]]
+name = "retention task finished"
+action = "wait"
+target = "[data-testid=\"vslo-230-retention-complete\"], [data-testid=\"vslo-230-retention-error\"]"
+timeout_ms = 330000
+
+[[step]]
+name = "retention task succeeded"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="vslo-230-retention-error"]');
+if (error) {
+  throw new Error(`VSLO-230 retention failed: ${(error.textContent || "").slice(0, 4000)}`);
+}
+true;
+'''
