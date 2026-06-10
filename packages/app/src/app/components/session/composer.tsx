@@ -31,6 +31,10 @@ export type ComposerSendOptions = {
   sendTraceId?: string;
 };
 
+type ComposerSendTraceRoot = typeof window & {
+  __vesloActiveSendTraceId?: string | null;
+};
+
 type ComposerProps = {
   initialDraft: ComposerDraft;
   prompt: string;
@@ -118,6 +122,11 @@ function recordSendTrace(event: string, payload?: Record<string, unknown>) {
   } catch {
     // ignore
   }
+}
+
+function setActiveSendTraceId(sendTraceId: string | null) {
+  if (typeof window === "undefined") return;
+  (window as ComposerSendTraceRoot).__vesloActiveSendTraceId = sendTraceId;
 }
 
 const makeComposerSendTraceId = () => {
@@ -1053,8 +1062,10 @@ export default function Composer(props: ComposerProps) {
     let sent = false;
     let sendPromise: Promise<boolean>;
     try {
+      setActiveSendTraceId(options.sendTraceId ?? null);
       sendPromise = props.onSend(submittedDraft, options);
     } catch (error) {
+      setActiveSendTraceId(null);
       setSending(false);
       if (options.sendNow) setSendNowPending(false);
       recordSendTrace("sendDraft:onSend:error", {
@@ -1090,6 +1101,7 @@ export default function Composer(props: ComposerProps) {
         source: options.source,
       });
     } finally {
+      setActiveSendTraceId(null);
       if (options.sendNow) setSendNowPending(false);
     }
     recordSendTrace("sendDraft:onSend:result", {

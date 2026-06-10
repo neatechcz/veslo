@@ -5,6 +5,7 @@ import test from "node:test";
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 const schedulerSource = readFileSync(new URL("../lib/workspace-runtime-schedulers.ts", import.meta.url), "utf8");
 const mcpRefreshSource = readFileSync(new URL("../lib/mcp-server-refresh.ts", import.meta.url), "utf8");
+const composerSource = readFileSync(new URL("../components/session/composer.tsx", import.meta.url), "utf8");
 const sidebarWorkspaceSessionsSource = readFileSync(
   new URL("../context/sidebar-workspace-sessions.ts", import.meta.url),
   "utf8",
@@ -229,21 +230,26 @@ test("MCP server refresh joins duplicate refreshes for the same workspace contex
   );
 });
 
-test("pending permission interval skips single-client mode covered by SSE", () => {
+test("pending permission interval skips active sends and single-client mode covered by SSE", () => {
   assert.match(
     schedulerSource,
-    /const routedWorkspaceCount = options\.routedWorkspaceCount\(\);[\s\S]*if \(routedWorkspaceCount <= 1\) \{/,
-    "periodic permission polling should only run when there are background workspace clients",
+    /const activeSendTraceId = options\.activeSendTraceId\(\);[\s\S]*if \(activeSendTraceId\) \{[\s\S]*"session\.permissions", "poll-skip-active-send"/,
+    "periodic permission polling should skip while a submit is actively running",
   );
   assert.match(
     schedulerSource,
-    /"session\.permissions", "poll-skip-single-client"/,
-    "single-client permission poll skips should be auditable during runtime investigations",
+    /if \(activeSendTraceId\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const routedWorkspaceCount = options\.routedWorkspaceCount\(\);[\s\S]*if \(routedWorkspaceCount <= 1\) \{[\s\S]*return;[\s\S]*\}[\s\S]*void options\.refreshPendingPermissions\(\);/,
+    "permission polling should not call refreshPendingPermissions during an active send or in single-client mode",
   );
   assert.match(
-    schedulerSource,
-    /if \(routedWorkspaceCount <= 1\) \{[\s\S]*return;[\s\S]*\}[\s\S]*void options\.refreshPendingPermissions\(\);/,
-    "permission polling should not call refreshPendingPermissions in single-client mode",
+    composerSource,
+    /function setActiveSendTraceId\(sendTraceId: string \| null\)[\s\S]*__vesloActiveSendTraceId = sendTraceId;/,
+    "composer should publish the active send trace id for runtime schedulers",
+  );
+  assert.match(
+    composerSource,
+    /setActiveSendTraceId\(options\.sendTraceId \?\? null\);[\s\S]*sendPromise = props\.onSend\(submittedDraft, options\);[\s\S]*finally \{[\s\S]*setActiveSendTraceId\(null\);/,
+    "composer should keep the active send trace id set while onSend is pending",
   );
   assert.match(
     source,

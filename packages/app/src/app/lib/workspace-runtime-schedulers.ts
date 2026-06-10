@@ -17,15 +17,17 @@ export function createPermissionPollingScheduler(options: PermissionPollingSched
 
   const setup = () => createEffect(() => {
     const id = window.setInterval(() => {
-      const routedWorkspaceCount = options.routedWorkspaceCount();
-      if (routedWorkspaceCount <= 1) {
-        const activeSendTraceId = options.activeSendTraceId();
-        if (!activeSendTraceId) return;
-        recordPerfLog(runtimePerfAuditEnabled(), "session.permissions", "poll-skip-single-client", {
+      const activeSendTraceId = options.activeSendTraceId();
+      if (activeSendTraceId) {
+        recordPerfLog(runtimePerfAuditEnabled(), "session.permissions", "poll-skip-active-send", {
           activeWorkspaceId: options.activeWorkspaceId(),
-          routedWorkspaceCount,
+          routedWorkspaceCount: options.routedWorkspaceCount(),
           activeSendTraceId,
         });
+        return;
+      }
+      const routedWorkspaceCount = options.routedWorkspaceCount();
+      if (routedWorkspaceCount <= 1) {
         return;
       }
       void options.refreshPendingPermissions();
