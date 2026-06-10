@@ -13,6 +13,14 @@ export type Client = ReturnType<typeof createClient>;
 
 export type ProviderListItem = ProviderListResponse["all"][number];
 
+export type PendingSidebarSessionMetadata = {
+  id: string;
+  workspaceId: string;
+  workspaceRoot: string;
+  title: string;
+  createdAt: number;
+};
+
 export type SidebarSessionItem = {
   id: string;
   title: string;
@@ -27,6 +35,7 @@ export type SidebarSessionItem = {
   opencodeSessionId?: string | null;
   parentConversationId?: string | null;
   branchId?: string | null;
+  pendingSessionInstanceId?: string | null;
 };
 
 export type SidebarSubagentDecoration = {

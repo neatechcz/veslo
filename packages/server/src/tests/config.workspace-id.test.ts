@@ -1,6 +1,6 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { parseCliArgs, resolveServerConfig } from "../config.js";
@@ -83,5 +83,61 @@ describe("workspace id config", () => {
     expect(config.workspaces).toHaveLength(1);
     expect(config.workspaces[0].id).toBe("file-workspace-a");
     expect(config.workspaces[0].path).toBe(join(configDir, "workspace-a"));
+  });
+
+  test("cli workspaces are authorized even when the config file has stale authorized roots", async () => {
+    const configDir = await mkdtemp(join(tmpdir(), "veslo-server-workspace-id-"));
+    tempDirs.push(configDir);
+    const configPath = join(configDir, "server.json");
+    const staleWorkspacePath = join(configDir, "stale-workspace");
+    const runtimeWorkspacePath = join(configDir, "runtime-private-chat");
+
+    await writeFile(
+      configPath,
+      `${JSON.stringify({
+        authorizedRoots: [staleWorkspacePath],
+      })}\n`,
+      "utf8",
+    );
+
+    const config = await resolveServerConfig(parseCliArgs([
+      "--config",
+      configPath,
+      "--workspace",
+      runtimeWorkspacePath,
+      "--workspace-id",
+      "runtime-private-chat-id",
+    ]));
+
+    expect(config.workspaces).toHaveLength(1);
+    expect(config.workspaces[0].id).toBe("runtime-private-chat-id");
+    expect(config.authorizedRoots).toContain(resolve(staleWorkspacePath));
+    expect(config.authorizedRoots).toContain(resolve(runtimeWorkspacePath));
+  });
+
+  test("file authorized roots still constrain file-configured workspaces", async () => {
+    const configDir = await mkdtemp(join(tmpdir(), "veslo-server-workspace-id-"));
+    tempDirs.push(configDir);
+    const configPath = join(configDir, "server.json");
+    const allowedWorkspacePath = join(configDir, "allowed-workspace");
+    const listedButUnauthorizedPath = join(configDir, "listed-but-unauthorized");
+
+    await writeFile(
+      configPath,
+      `${JSON.stringify({
+        workspaces: [
+          { id: "allowed-workspace-id", path: allowedWorkspacePath },
+          { id: "listed-but-unauthorized-id", path: listedButUnauthorizedPath },
+        ],
+        authorizedRoots: [allowedWorkspacePath],
+      })}\n`,
+      "utf8",
+    );
+
+    const config = await resolveServerConfig(parseCliArgs(["--config", configPath]));
+
+    expect(config.workspaces).toHaveLength(2);
+    expect(config.authorizedRoots).toContain(resolve(allowedWorkspacePath));
+    expect(config.authorizedRoots).not.toContain(resolve(listedButUnauthorizedPath));
   });
 });

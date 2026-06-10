@@ -263,6 +263,30 @@ test("opens cross-workspace session without activating the workspace", async () 
   assert.deepEqual(opened, ["sess-2"]);
 });
 
+test("explicit activation option activates workspace before opening session", async () => {
+  const opened: string[] = [];
+  const activated: string[] = [];
+  let activeWorkspaceId = "ws-active";
+
+  const result = await openSessionWithWorkspaceActivation({
+    activeWorkspaceId,
+    getActiveWorkspaceId: () => activeWorkspaceId,
+    workspaceId: "ws-other",
+    sessionId: "sess-pending",
+    activateWorkspaceBeforeOpen: true,
+    activateWorkspace: async (id) => {
+      activated.push(id);
+      activeWorkspaceId = id;
+      return true;
+    },
+    openSession: (id) => opened.push(id),
+  });
+
+  assert.equal(result, "opened");
+  assert.deepEqual(activated, ["ws-other"]);
+  assert.deepEqual(opened, ["sess-pending"]);
+});
+
 test("serializes rapid cross-workspace session clicks and only opens the latest session", async () => {
   const opened: string[] = [];
   const activationEvents: string[] = [];

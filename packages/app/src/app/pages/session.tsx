@@ -10,6 +10,7 @@ import type {
   McpStatusMap,
   PendingPermission,
   PendingQuestion,
+  PendingSidebarSessionMetadata,
   SettingsTab,
   SkillCard,
   TodoItem,
@@ -25,6 +26,7 @@ import type {
 import { reportError } from "../lib/error-reporter";
 import {
   type EngineInfo,
+  type PendingSessionDraftSummary,
   type VesloServerInfo,
   type WorkspaceInfo,
 } from "../lib/tauri";
@@ -102,9 +104,16 @@ import {
   markPendingSubmittedFailed,
   pendingSubmittedDraftToEditable,
   pendingSubmittedDraftToMessage,
-  remapPendingSubmittedSession,
-  type PendingSubmittedDraft,
 } from "../components/session/pending-submit-model";
+import {
+  createPendingSessionInstanceId,
+  isPendingSessionInstanceId,
+  materializePendingSessionInstance,
+  removePendingSubmittedDraftForKey,
+  selectPendingSubmittedDraft,
+  setPendingSubmittedDraftForKey,
+  type PendingSubmittedDraftBySessionKey,
+} from "../components/session/pending-session-instance-model";
 import {
   appendQueuedDraft,
   firstQueuedDraft,
@@ -168,6 +177,7 @@ function recordSendTrace(event: string, payload?: Record<string, unknown>) {
 export type SessionViewProps = {
   selectedSessionId: string | null;
   activePendingDraftKey: string | null;
+  activePendingDraftMeta: PendingSessionDraftSummary | null;
   setView: (view: View, sessionId?: string) => void;
   setSessionBrowseScope: (scope: SessionBrowseScope) => void;
   tab: DashboardTab;
@@ -235,7 +245,12 @@ export type SessionViewProps = {
   createSessionAndOpen: () => Promise<string | undefined>;
   sendPromptAsync: (
     draft: ComposerDraft,
-    options?: { targetSessionId?: string | null; sendTraceId?: string | null },
+    options?: {
+      targetSessionId?: string | null;
+      sendTraceId?: string | null;
+      onMaterializedSessionId?: (sessionId: string) => void;
+      pendingSession?: PendingSidebarSessionMetadata | null;
+    },
   ) => Promise<boolean>;
   replaceUserMessageAsync: (
     messageId: string,
@@ -263,6 +278,20 @@ export type SessionViewProps = {
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean;
   openRenameWorkspace: (workspaceId: string) => void;
   selectSession: (sessionId: string) => Promise<void> | void;
+  pendingSessionLoad: {
+    sessionId: string;
+    workspaceId: string;
+    sessionTitle: string;
+    workspaceName: string;
+  } | null;
+  setPendingSessionLoad: (
+    value: {
+      sessionId: string;
+      workspaceId: string;
+      sessionTitle: string;
+      workspaceName: string;
+    } | null,
+  ) => void;
   selectedSessionTitle: string | null;
   messages: MessageWithParts[];
   todos: TodoItem[];
@@ -961,32 +990,128 @@ export default function SessionView(props: SessionViewProps) {
 
   const pendingSessionQueueKey = () => {
     const pendingDraftKey = props.activePendingDraftKey?.trim();
-    if (pendingDraftKey) return `pending-draft:${props.activePendingDraftKey}`;
+    if (pendingDraftKey) {
+      if (pendingDraftKey === "__pending-draft__:new-private") {
+        return `pending-draft:${pendingDraftKey}:${props.activeWorkspaceId || "default"}`;
+      }
+      return `pending-draft:${pendingDraftKey}`;
+    }
     return `pending-workspace:${props.activeWorkspaceId || "default"}`;
   };
   const sessionQueueKeyForSessionId = (sessionId: string | null | undefined) =>
     sessionId?.trim() || pendingSessionQueueKey();
   const sessionIdForQueueKey = (sessionKey: string) =>
+    isPendingSessionInstanceId(sessionKey) ||
     sessionKey.startsWith("pending:") ||
     sessionKey.startsWith("pending-draft:") ||
     sessionKey.startsWith("pending-workspace:")
       ? null
       : sessionKey;
-  const currentSessionQueueKey = createMemo(() => sessionQueueKeyForSessionId(props.selectedSessionId));
-  const [optimisticSubmittedDraft, setOptimisticSubmittedDraft] = createSignal<PendingSubmittedDraft | null>(null);
-  const [runStartedAt, setRunStartedAt] = createSignal<number | null>(null);
-  const [runHasBegun, setRunHasBegun] = createSignal(false);
-  const [runTick, setRunTick] = createSignal(Date.now());
-  const [runLastProgressAt, setRunLastProgressAt] = createSignal<number | null>(null);
-  const [runBaseline, setRunBaseline] = createSignal<{ assistantId: string | null; partCount: number }>({
-    assistantId: null,
-    partCount: 0,
+  const [pendingQueueKeyAwaitingSessionIdByBaseKey, setPendingQueueKeyAwaitingSessionIdByBaseKey] =
+    createSignal<Record<string, string>>({});
+  const currentSessionQueueKey = createMemo(() => {
+    const selectedSessionKey = props.selectedSessionId?.trim();
+    if (selectedSessionKey) return sessionQueueKeyForSessionId(selectedSessionKey);
+    const basePendingKey = pendingSessionQueueKey();
+    return pendingQueueKeyAwaitingSessionIdByBaseKey()[basePendingKey] ?? basePendingKey;
   });
-  const resetRunState = () => {
-    setRunStartedAt(null);
-    setRunHasBegun(false);
-    setRunLastProgressAt(null);
-    setRunBaseline({ assistantId: null, partCount: 0 });
+  const setPendingQueueKeyAwaitingSessionIdForBaseKey = (baseKey: string, pendingKey: string) => {
+    const base = baseKey.trim();
+    const pending = pendingKey.trim();
+    if (!base || !pending) return;
+    setPendingQueueKeyAwaitingSessionIdByBaseKey((current) => {
+      if (current[base] === pending) return current;
+      return { ...current, [base]: pending };
+    });
+  };
+  const clearPendingQueueKeyAwaitingSessionIdForBaseKey = (baseKey: string | null, pendingKey: string | null) => {
+    const base = baseKey?.trim();
+    const pending = pendingKey?.trim();
+    if (!base) return;
+    setPendingQueueKeyAwaitingSessionIdByBaseKey((current) => {
+      if (!(base in current)) return current;
+      if (pending && current[base] !== pending) return current;
+      const { [base]: _removedPendingKey, ...rest } = current;
+      return rest;
+    });
+  };
+  const [pendingSubmittedDraftBySessionKey, setPendingSubmittedDraftBySessionKey] =
+    createSignal<PendingSubmittedDraftBySessionKey>({});
+  const optimisticSubmittedDraft = createMemo(() =>
+    selectPendingSubmittedDraft(pendingSubmittedDraftBySessionKey(), currentSessionQueueKey()),
+  );
+  const submittedDraftHasMessageInTranscript = (submitted: ReturnType<typeof optimisticSubmittedDraft>) => {
+    if (!submitted) return false;
+    const text = (submitted.draft.resolvedText ?? submitted.draft.text).trim();
+    if (!text) return false;
+    return props.messages.some((message) => {
+      if ((message.info as { role?: string }).role !== "user") return false;
+      return message.parts.some((part) => part.type === "text" && (part.text ?? "").trim() === text);
+    });
+  };
+  const setOptimisticSubmittedDraft = (
+    sessionKey: string,
+    draft: ReturnType<typeof createPendingSubmittedDraft>,
+  ) => {
+    setPendingSubmittedDraftBySessionKey((current) =>
+      setPendingSubmittedDraftForKey(current, sessionKey, draft),
+    );
+  };
+  type RunBaseline = {
+    assistantId: string | null;
+    partCount: number;
+  };
+  type RunUiState = {
+    startedAt: number | null;
+    hasBegun: boolean;
+    tick: number;
+    lastProgressAt: number | null;
+    baseline: RunBaseline;
+  };
+  const EMPTY_RUN_STATE: RunUiState = {
+    startedAt: null,
+    hasBegun: false,
+    tick: 0,
+    lastProgressAt: null,
+    baseline: {
+      assistantId: null,
+      partCount: 0,
+    },
+  };
+  const createIdleRunState = (tick = 0): RunUiState => ({
+    startedAt: null,
+    hasBegun: false,
+    tick,
+    lastProgressAt: null,
+    baseline: {
+      assistantId: null,
+      partCount: 0,
+    },
+  });
+  const [runStateBySessionKey, setRunStateBySessionKey] = createSignal<Record<string, RunUiState>>({});
+  const activeRunState = createMemo(() => runStateBySessionKey()[currentSessionQueueKey()] ?? EMPTY_RUN_STATE);
+  const runStartedAt = createMemo(() => activeRunState().startedAt);
+  const runHasBegun = createMemo(() => activeRunState().hasBegun);
+  const runTick = createMemo(() => activeRunState().tick);
+  const runLastProgressAt = createMemo(() => activeRunState().lastProgressAt);
+  const runBaseline = createMemo(() => activeRunState().baseline);
+  const updateRunStateForSessionKey = (sessionKey: string, update: (current: RunUiState) => RunUiState) => {
+    const key = sessionKey.trim();
+    if (!key) return;
+    setRunStateBySessionKey((current) => {
+      const previous = current[key] ?? createIdleRunState(Date.now());
+      const next = update(previous);
+      return { ...current, [key]: next };
+    });
+  };
+  const resetRunState = (sessionKey = currentSessionQueueKey()) => {
+    const key = sessionKey.trim();
+    if (!key) return;
+    setRunStateBySessionKey((current) => {
+      if (!(key in current)) return current;
+      const { [key]: _removedRunState, ...rest } = current;
+      return rest;
+    });
   };
 
   const lastAssistantSnapshot = createMemo(() => {
@@ -1001,18 +1126,44 @@ export default function SessionView(props: SessionViewProps) {
     return { id: null, partCount: 0 };
   });
 
-  const captureRunBaseline = () => {
-    const snapshot = lastAssistantSnapshot();
-    setRunBaseline({ assistantId: snapshot.id, partCount: snapshot.partCount });
-  };
-
-  const startRun = () => {
-    if (runStartedAt()) return;
+  const startRun = (sessionKey = currentSessionQueueKey()) => {
+    const key = sessionKey.trim();
+    if (!key) return;
+    if (runStateBySessionKey()[key]?.startedAt) return;
     const now = Date.now();
-    setRunStartedAt(now);
-    setRunLastProgressAt(now);
-    setRunHasBegun(false);
-    captureRunBaseline();
+    const snapshot = lastAssistantSnapshot();
+    setRunStateBySessionKey((current) => ({
+      ...current,
+      [key]: {
+        startedAt: now,
+        hasBegun: false,
+        tick: now,
+        lastProgressAt: now,
+        baseline: { assistantId: snapshot.id, partCount: snapshot.partCount },
+      },
+    }));
+  };
+  const setRunHasBegunForSessionKey = (sessionKey: string, hasBegun: boolean) => {
+    updateRunStateForSessionKey(sessionKey, (current) => ({ ...current, hasBegun }));
+  };
+  const setRunTickForSessionKey = (sessionKey: string, tick: number) => {
+    updateRunStateForSessionKey(sessionKey, (current) => ({ ...current, tick }));
+  };
+  const setRunLastProgressAtForSessionKey = (sessionKey: string, lastProgressAt: number | null) => {
+    updateRunStateForSessionKey(sessionKey, (current) => ({ ...current, lastProgressAt }));
+  };
+  const remapPendingRunStateToSession = (pendingKey: string, sessionId: string) => {
+    const sessionKey = sessionQueueKeyForSessionId(sessionId);
+    if (!pendingKey || pendingKey === sessionKey) return;
+    setRunStateBySessionKey((current) => {
+      const pendingRun = current[pendingKey];
+      if (!pendingRun) return current;
+      const { [pendingKey]: _removedPendingRunState, ...rest } = current;
+      return {
+        ...rest,
+        [sessionKey]: pendingRun,
+      };
+    });
   };
 
   const responseStarted = createMemo(() => {
@@ -1029,6 +1180,14 @@ export default function SessionView(props: SessionViewProps) {
     if (!submitted) return null;
     if (submitted.sessionKey !== currentSessionQueueKey()) return null;
     return pendingSubmittedDraftToMessage(submitted, props.activeWorkspaceRoot);
+  });
+  createEffect(() => {
+    const submitted = optimisticSubmittedDraft();
+    if (!submitted || submitted.state !== "sending") return;
+    if (!submittedDraftHasMessageInTranscript(submitted)) return;
+    setPendingSubmittedDraftBySessionKey((current) =>
+      removePendingSubmittedDraftForKey(current, submitted.sessionKey, submitted.id),
+    );
   });
 
   const pendingMessageStateById = createMemo<Record<string, PendingMessageState>>(() => {
@@ -1628,7 +1787,6 @@ export default function SessionView(props: SessionViewProps) {
   const [isInitialLoad, setIsInitialLoad] = createSignal(true);
   const [queuedDraftsBySessionKey, setQueuedDraftsBySessionKey] = createSignal<Record<string, QueuedDraft[]>>({});
   const [queuePausedAfterStopBySessionKey, setQueuePausedAfterStopBySessionKey] = createSignal<Record<string, boolean>>({});
-  const [pendingQueueKeyAwaitingSessionId, setPendingQueueKeyAwaitingSessionId] = createSignal<string | null>(null);
   const [editingQueuedDraftId, setEditingQueuedDraftId] = createSignal<string | null>(null);
   const [editingTranscriptMessageId, setEditingTranscriptMessageId] = createSignal<string | null>(null);
   const [abortBusy, setAbortBusy] = createSignal(false);
@@ -1700,11 +1858,39 @@ export default function SessionView(props: SessionViewProps) {
       };
     });
 
-    setOptimisticSubmittedDraft((current) =>
-      current?.sessionKey === pendingKey
-        ? { ...remapPendingSubmittedSession(current, sessionId), sessionKey }
-        : current,
-    );
+    remapPendingRunStateToSession(pendingKey, sessionId);
+
+    setPendingSubmittedDraftBySessionKey((current) => {
+      // materializePendingSessionInstance preserves the former remapPendingSubmittedSession behavior for keyed drafts.
+      return materializePendingSessionInstance(current, {
+        pendingSessionKey: pendingKey,
+        realSessionKey: sessionKey,
+        realSessionId: sessionId,
+      });
+    });
+  };
+
+  const workspaceRootForPendingSidebarSession = (workspaceId: string) => {
+    const id = workspaceId.trim();
+    if (!id) return "";
+    const workspace = props.workspaces.find((entry) => entry.id === id) ?? null;
+    return normalizeDirectoryPath(workspace?.directory?.trim() || workspace?.path?.trim() || "");
+  };
+
+  const createPendingSidebarSessionWorkspaceId = () => {
+    const meta = props.activePendingDraftMeta;
+    if (!meta) return props.activeWorkspaceId;
+    const workspaceId =
+      meta.kind === "new-private"
+        ? (meta.privateWorkspaceId ?? meta.workspaceId).trim()
+        : meta.workspaceId.trim();
+    return workspaceId || props.activeWorkspaceId;
+  };
+
+  const createPendingSidebarSessionWorkspaceRoot = (workspaceId: string) => {
+    const directory = normalizeDirectoryPath(props.activePendingDraftMeta?.directory ?? "");
+    if (directory) return directory;
+    return workspaceRootForPendingSidebarSession(workspaceId) || props.activeWorkspaceRoot;
   };
 
   const restoreMaterializedQueueToPending = (pendingKey: string, sessionId: string | null | undefined) => {
@@ -2021,12 +2207,16 @@ export default function SessionView(props: SessionViewProps) {
         setSearchQueryDebounced("");
         setActiveSearchHitIndex(0);
 
-        const pendingKey = !previousSessionId ? pendingQueueKeyAwaitingSessionId() : null;
+        const pendingBaseKey = pendingSessionQueueKey();
+        const pendingKey = !previousSessionId
+          ? pendingQueueKeyAwaitingSessionIdByBaseKey()[pendingBaseKey] ?? null
+          : null;
+        const previousSessionKey = previousSessionId ? sessionQueueKeyForSessionId(previousSessionId) : null;
         // Reset run state when switching sessions so a stuck error from a
         // previous session doesn't bleed into the new one. Pending first sends
         // remap their optimistic draft to the materialized session instead.
-        if (!pendingKey) {
-          resetRunState();
+        if (!pendingKey && previousSessionKey) {
+          resetRunState(previousSessionKey);
         }
         const previousEditingQueuedDraftId = editingQueuedDraftId();
         restoreEditingQueuedDraft(sessionQueueKeyForSessionId(previousSessionId), previousEditingQueuedDraftId);
@@ -2037,9 +2227,9 @@ export default function SessionView(props: SessionViewProps) {
         setEditingTranscriptMessageId(null);
 
         if (!sessionId) return;
-        if (pendingKey) {
+        if (pendingKey && !isPendingSessionInstanceId(sessionId)) {
           remapPendingQueueToSession(pendingKey, sessionId);
-          setPendingQueueKeyAwaitingSessionId(null);
+          clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingBaseKey, pendingKey);
         }
         const sessionKey = sessionQueueKeyForSessionId(sessionId);
         if (props.sessionStatusById[sessionId] === "idle" && !queuePausedForSessionKey(sessionKey)) {
@@ -2219,8 +2409,9 @@ export default function SessionView(props: SessionViewProps) {
   createEffect(() => {
     const status = props.sessionStatus;
     if (status === "running" || status === "retry") {
-      startRun();
-      setRunHasBegun(true);
+      const sessionKey = currentSessionQueueKey();
+      startRun(sessionKey);
+      setRunHasBegunForSessionKey(sessionKey, true);
     }
   });
 
@@ -2254,7 +2445,7 @@ export default function SessionView(props: SessionViewProps) {
 
   createEffect(() => {
     if (responseStarted()) {
-      setRunHasBegun(true);
+      setRunHasBegunForSessionKey(currentSessionQueueKey(), true);
     }
   });
 
@@ -2267,7 +2458,7 @@ export default function SessionView(props: SessionViewProps) {
   createEffect(() => {
     if (!runStartedAt()) return;
     if (props.sessionStatus === "idle" && (runHasBegun() || responseStarted())) {
-      resetRunState();
+      resetRunState(currentSessionQueueKey());
     }
   });
 
@@ -2288,7 +2479,7 @@ export default function SessionView(props: SessionViewProps) {
         !runHasBegun() &&
         !responseStarted()
       ) {
-        resetRunState();
+        resetRunState(currentSessionQueueKey());
       }
     }, 2_000);
     onCleanup(() => clearTimeout(timer));
@@ -2296,8 +2487,9 @@ export default function SessionView(props: SessionViewProps) {
 
   createEffect(() => {
     if (!showRunIndicator()) return;
-    setRunTick(Date.now());
-    const id = window.setInterval(() => setRunTick(Date.now()), 50);
+    const sessionKey = currentSessionQueueKey();
+    setRunTickForSessionKey(sessionKey, Date.now());
+    const id = window.setInterval(() => setRunTickForSessionKey(sessionKey, Date.now()), 50);
     onCleanup(() => window.clearInterval(id));
   });
 
@@ -2325,7 +2517,7 @@ export default function SessionView(props: SessionViewProps) {
             scheduleScrollToLatest("auto");
           }
           if (showRunIndicator()) {
-            setRunLastProgressAt(Date.now());
+            setRunLastProgressAtForSessionKey(currentSessionQueueKey(), Date.now());
           }
         }
       },
@@ -3207,61 +3399,129 @@ export default function SessionView(props: SessionViewProps) {
   ) => {
     const expectedSessionKey = options.expectedSessionKey;
     const targetSessionId = expectedSessionKey ? sessionIdForQueueKey(expectedSessionKey) : null;
-    const handoffOptions =
-      targetSessionId || options.sendTraceId
-        ? {
-            ...(targetSessionId ? { targetSessionId } : {}),
-            ...(options.sendTraceId ? { sendTraceId: options.sendTraceId } : {}),
-          }
-        : undefined;
     recordSendTrace("sendPromptImmediate:start", {
       sendTraceId: options.sendTraceId ?? null,
       aiAccessBlockedReason: props.aiAccessBlockedReason,
       busyHint: props.busyHint ?? null,
       busyLabel: props.busyLabel ?? null,
+      activePendingDraftKey: props.activePendingDraftKey ?? null,
+      currentSessionQueueKey: currentSessionQueueKey(),
       expectedSessionKey: expectedSessionKey ?? null,
       targetSessionId,
       reason: options.reason ?? "normal",
     });
     if (expectedSessionKey && currentSessionQueueKey() !== expectedSessionKey && !targetSessionId) return false;
     const showOptimisticSubmit = !options.replaceMessageId && options.reason !== "queue-drain";
-    const sessionKey = expectedSessionKey ?? currentSessionQueueKey();
+    const baseSessionKey = expectedSessionKey ?? currentSessionQueueKey();
+    const pendingSessionBaseKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey(baseSessionKey)
+      ? isPendingSessionInstanceId(baseSessionKey)
+        ? pendingSessionQueueKey()
+        : baseSessionKey
+      : null;
+    const needsPendingSessionInstance = Boolean(pendingSessionBaseKeyBeforeHandoff) && !isPendingSessionInstanceId(baseSessionKey);
+    const pendingInstanceKey = needsPendingSessionInstance ? createPendingSessionInstanceId() : null;
+    const sessionKey = pendingInstanceKey ?? baseSessionKey;
     const pendingSessionKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey(sessionKey) ? sessionKey : null;
-    if (pendingSessionKeyBeforeHandoff) {
-      setPendingQueueKeyAwaitingSessionId(pendingSessionKeyBeforeHandoff);
+    if (pendingSessionBaseKeyBeforeHandoff && pendingSessionKeyBeforeHandoff) {
+      setPendingQueueKeyAwaitingSessionIdForBaseKey(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff);
     }
+    const pendingSidebarSessionCreatedAt = Date.now();
+    const pendingSidebarWorkspaceId = createPendingSidebarSessionWorkspaceId();
+    const pendingSidebarWorkspaceRoot = createPendingSidebarSessionWorkspaceRoot(pendingSidebarWorkspaceId);
+    const pendingSidebarSession: PendingSidebarSessionMetadata | null = pendingSessionKeyBeforeHandoff
+      ? {
+          id: pendingSessionKeyBeforeHandoff,
+          workspaceId: pendingSidebarWorkspaceId,
+          workspaceRoot: pendingSidebarWorkspaceRoot,
+          title: draft.text.trim(),
+          createdAt: pendingSidebarSessionCreatedAt,
+        }
+      : null;
     const pendingSubmitId = `optimistic-submit:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+    let materializedSessionIdFromHandoff: string | null = null;
+    let materializedSessionIdForRunStateReset: string | null = null;
+    const runStateSessionKeyForHandoffFailure = () => {
+      const materializedSessionId = materializedSessionIdForRunStateReset ?? materializedSessionIdFromHandoff;
+      return materializedSessionId ? sessionQueueKeyForSessionId(materializedSessionId) : sessionKey;
+    };
+    const materializePendingHandoffToSession = (sessionId: string | null | undefined) => {
+      if (!pendingSessionBaseKeyBeforeHandoff || !pendingSessionKeyBeforeHandoff) return;
+      const materializedSessionId = sessionId?.trim();
+      if (!materializedSessionId || isPendingSessionInstanceId(materializedSessionId)) return;
+      materializedSessionIdFromHandoff = materializedSessionId;
+      materializedSessionIdForRunStateReset = materializedSessionId;
+      remapPendingQueueToSession(pendingSessionKeyBeforeHandoff, materializedSessionId);
+      clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff);
+    };
+    const handleMaterializedSessionId = (sessionId: string) => {
+      materializePendingHandoffToSession(sessionId);
+    };
     const clearMatchingPendingSubmit = () => {
-      setOptimisticSubmittedDraft((current) => (current?.id === pendingSubmitId ? null : current));
+      setPendingSubmittedDraftBySessionKey((current) => {
+        const matchingEntry = Object.entries(current).find(([, draft]) => draft.id === pendingSubmitId);
+        if (!matchingEntry) return current;
+        const [matchingSessionKey] = matchingEntry;
+        return removePendingSubmittedDraftForKey(current, matchingSessionKey, pendingSubmitId);
+      });
     };
     const markMatchingPendingSubmitFailed = (errorMessage: string) => {
       let materializedSessionIdToRestore: string | null = null;
-      setOptimisticSubmittedDraft((current) => {
-        if (current?.id !== pendingSubmitId) return current;
+      setPendingSubmittedDraftBySessionKey((draftsBySessionKey) => {
+        const directMatch = draftsBySessionKey[sessionKey];
+        const matchingEntry =
+          directMatch?.id === pendingSubmitId
+            ? ([sessionKey, directMatch] as const)
+            : Object.entries(draftsBySessionKey).find(([, draft]) => draft.id === pendingSubmitId);
+        if (!matchingEntry) return draftsBySessionKey;
+        const [matchingSessionKey, current] = matchingEntry;
         const failed = markPendingSubmittedFailed(current, errorMessage);
         if (pendingSessionKeyBeforeHandoff) {
           materializedSessionIdToRestore = current.sessionId;
-          return { ...failed, sessionKey: pendingSessionKeyBeforeHandoff, sessionId: null };
+          if (!materializedSessionIdToRestore && materializedSessionIdFromHandoff) {
+            materializedSessionIdToRestore = materializedSessionIdFromHandoff;
+          }
+          if (current.sessionId) {
+            materializedSessionIdForRunStateReset = current.sessionId;
+            return setPendingSubmittedDraftForKey(draftsBySessionKey, matchingSessionKey, failed);
+          }
+          return setPendingSubmittedDraftForKey(draftsBySessionKey, pendingSessionKeyBeforeHandoff, {
+            ...failed,
+            sessionKey: pendingSessionKeyBeforeHandoff,
+            sessionId: null,
+          });
         }
-        return failed;
+        return setPendingSubmittedDraftForKey(draftsBySessionKey, matchingSessionKey, failed);
       });
       if (pendingSessionKeyBeforeHandoff) {
         restoreMaterializedQueueToPending(pendingSessionKeyBeforeHandoff, materializedSessionIdToRestore);
       }
     };
+    const finishPendingSessionHandoffFailure = () => {
+      if (!pendingSessionBaseKeyBeforeHandoff || !pendingSessionKeyBeforeHandoff) return;
+      if (materializedSessionIdFromHandoff) {
+        clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff);
+        return;
+      }
+      if (showOptimisticSubmit && !props.selectedSessionId?.trim()) {
+        setPendingQueueKeyAwaitingSessionIdForBaseKey(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff);
+        return;
+      }
+      clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff);
+    };
     if (showOptimisticSubmit) {
       setOptimisticSubmittedDraft(
+        sessionKey,
         createPendingSubmittedDraft({
           id: pendingSubmitId,
           sessionKey,
           createdAt: Date.now(),
-          sessionId: targetSessionId ?? props.selectedSessionId,
+          sessionId: targetSessionId ?? (isPendingSessionInstanceId(props.selectedSessionId) ? null : props.selectedSessionId),
           draft,
         }),
       );
       setStickToBottom(true);
       scheduleScrollToLatest("auto");
-      startRun();
+      startRun(sessionKey);
     }
     if (props.aiAccessBlockedReason) {
       recordSendTrace("sendPromptImmediate:blocked-ai-access", {
@@ -3272,19 +3532,39 @@ export default function SessionView(props: SessionViewProps) {
       });
       if (showOptimisticSubmit) {
         markMatchingPendingSubmitFailed(props.aiAccessBlockedReason);
-        resetRunState();
+        resetRunState(runStateSessionKeyForHandoffFailure());
       }
-      if (pendingSessionKeyBeforeHandoff) {
-        setPendingQueueKeyAwaitingSessionId(null);
-      }
+      finishPendingSessionHandoffFailure();
       setToastMessage(props.aiAccessBlockedReason);
       return false;
     }
 
     try {
+      const promptSendOptions: {
+        targetSessionId?: string | null;
+        sendTraceId?: string | null;
+        onMaterializedSessionId?: (sessionId: string) => void;
+        pendingSession?: PendingSidebarSessionMetadata | null;
+      } | undefined =
+        targetSessionId || options.sendTraceId || pendingSessionKeyBeforeHandoff
+          ? {
+              ...(targetSessionId ? { targetSessionId } : {}),
+              ...(options.sendTraceId ? { sendTraceId: options.sendTraceId } : {}),
+              ...(pendingSessionKeyBeforeHandoff
+                ? { onMaterializedSessionId: handleMaterializedSessionId, pendingSession: pendingSidebarSession }
+                : {}),
+            }
+          : undefined;
+      const replaceOptions =
+        targetSessionId || options.sendTraceId
+          ? {
+              ...(targetSessionId ? { targetSessionId } : {}),
+              ...(options.sendTraceId ? { sendTraceId: options.sendTraceId } : {}),
+            }
+          : undefined;
       const accepted = await (options.replaceMessageId
-        ? props.replaceUserMessageAsync(options.replaceMessageId, draft, handoffOptions)
-        : props.sendPromptAsync(draft, handoffOptions)
+        ? props.replaceUserMessageAsync(options.replaceMessageId, draft, replaceOptions)
+        : props.sendPromptAsync(draft, promptSendOptions)
       );
       recordSendTrace("sendPromptImmediate:result", {
         sendTraceId: options.sendTraceId ?? null,
@@ -3298,19 +3578,16 @@ export default function SessionView(props: SessionViewProps) {
         if (showOptimisticSubmit) {
           const errorMessage = props.error ?? tr("session.connect_server_to_attach");
           markMatchingPendingSubmitFailed(errorMessage);
-          resetRunState();
+          resetRunState(runStateSessionKeyForHandoffFailure());
         }
-        if (pendingSessionKeyBeforeHandoff) {
-          setPendingQueueKeyAwaitingSessionId(null);
-        }
+        finishPendingSessionHandoffFailure();
         setToastMessage(props.error ?? tr("session.connect_server_to_attach"));
         return false;
       }
       if (accepted && pendingSessionKeyBeforeHandoff) {
-        const materializedSessionId = props.selectedSessionId?.trim();
+        const materializedSessionId = materializedSessionIdFromHandoff ?? props.selectedSessionId?.trim();
         if (materializedSessionId) {
-          remapPendingQueueToSession(pendingSessionKeyBeforeHandoff, materializedSessionId);
-          setPendingQueueKeyAwaitingSessionId(null);
+          materializePendingHandoffToSession(materializedSessionId);
         }
       }
       if (options.expectedSessionKey && currentSessionQueueKey() !== options.expectedSessionKey) {
@@ -3319,22 +3596,17 @@ export default function SessionView(props: SessionViewProps) {
         }
         return accepted;
       }
-      if (accepted && showOptimisticSubmit) {
-        clearMatchingPendingSubmit();
-      }
       setStickToBottom(true);
       scheduleScrollToLatest("auto");
-      startRun();
+      startRun(sessionKey);
       return true;
     } catch (e) {
       if (showOptimisticSubmit) {
         const errorMessage = props.error ?? (e instanceof Error ? e.message : tr("session.connect_server_to_attach"));
         markMatchingPendingSubmitFailed(errorMessage);
-        resetRunState();
+        resetRunState(runStateSessionKeyForHandoffFailure());
       }
-      if (pendingSessionKeyBeforeHandoff) {
-        setPendingQueueKeyAwaitingSessionId(null);
-      }
+      finishPendingSessionHandoffFailure();
       reportError(e, "session.sendPrompt");
       setToastMessage(props.error ?? tr("session.connect_server_to_attach"));
       return false;
@@ -3411,7 +3683,9 @@ export default function SessionView(props: SessionViewProps) {
     const pendingEditable =
       submitted?.sessionKey === currentSessionQueueKey() ? pendingSubmittedDraftToEditable(submitted) : null;
     if (pendingEditable?.messageId === editable.messageId) {
-      setOptimisticSubmittedDraft(null);
+      setPendingSubmittedDraftBySessionKey((current) =>
+        removePendingSubmittedDraftForKey(current, currentSessionQueueKey(), pendingEditable.messageId),
+      );
       setEditingTranscriptMessageId(null);
       props.setComposerDraft(pendingEditable.draft);
       return;
@@ -3586,6 +3860,47 @@ export default function SessionView(props: SessionViewProps) {
       "";
 
     const session = group?.sessions.find((s) => s.id === sessionId);
+    const openRealSession = (nextSessionId: string) => {
+      props.setSessionBrowseScope({
+        sessionId: nextSessionId,
+        workspaceId,
+        workspaceRoot: workspaceRoot,
+        directory: session?.directory ?? workspaceRoot,
+        conversationId: session?.conversationId ?? null,
+        opencodeSessionId: session?.opencodeSessionId ?? nextSessionId,
+      });
+      void Promise.resolve(props.selectSession(nextSessionId))
+        .catch((error) => reportError(error, "session.openSessionFromList.selectSession"));
+      props.setView("session", nextSessionId);
+    };
+
+    if (isPendingSessionInstanceId(sessionId)) {
+      const openPendingSidebarSession = (nextSessionId: string) => {
+        props.setSessionBrowseScope({
+          sessionId: nextSessionId,
+          workspaceId,
+          workspaceRoot,
+          directory: session?.directory ?? workspaceRoot,
+          conversationId: null,
+          opencodeSessionId: null,
+        });
+        props.setPendingSessionLoad(null);
+        props.setView("session", nextSessionId);
+      };
+
+      openPendingSidebarSession(sessionId);
+      void openSessionWithWorkspaceActivation({
+        activeWorkspaceId: props.activeWorkspaceId,
+        getActiveWorkspaceId: () => props.activeWorkspaceId,
+        workspaceId,
+        sessionId,
+        activateWorkspace: props.activateWorkspace,
+        activateWorkspaceBeforeOpen: true,
+        openSession: openPendingSidebarSession,
+      }).catch((error) => reportError(error, "session.openPendingSessionFromList"));
+      return;
+    }
+
     void openSessionWithWorkspaceActivation({
       activeWorkspaceId: props.activeWorkspaceId,
       getActiveWorkspaceId: () => props.activeWorkspaceId,
@@ -3597,19 +3912,7 @@ export default function SessionView(props: SessionViewProps) {
       // return to the same /session/:id route after switching projects; in
       // that case the route effect is deduped and would leave the main
       // transcript on the empty workspace screen.
-      openSession: (nextSessionId) => {
-        props.setSessionBrowseScope({
-          sessionId: nextSessionId,
-          workspaceId,
-          workspaceRoot: workspaceRoot,
-          directory: session?.directory ?? workspaceRoot,
-          conversationId: session?.conversationId ?? null,
-          opencodeSessionId: session?.opencodeSessionId ?? nextSessionId,
-        });
-        void Promise.resolve(props.selectSession(nextSessionId))
-          .catch((error) => reportError(error, "session.openSessionFromList.selectSession"));
-        props.setView("session", nextSessionId);
-      },
+      openSession: openRealSession,
     })
       .catch((error) => reportError(error, "session.openSessionFromList"));
   };
@@ -3644,6 +3947,15 @@ export default function SessionView(props: SessionViewProps) {
         error: error instanceof Error ? error.message : String(error),
       });
     });
+  };
+
+  const openPendingDirectoryDraftFromList = (workspaceId: string) => {
+    const pendingBaseKey = pendingSessionQueueKey();
+    const pendingKey = pendingQueueKeyAwaitingSessionIdByBaseKey()[pendingBaseKey] ?? null;
+    if (pendingKey) {
+      clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingBaseKey, pendingKey);
+    }
+    props.openPendingDirectoryDraftInWorkspace(workspaceId);
   };
 
   const commandPaletteRootItems = createMemo<CommandPaletteItem[]>(() => {
@@ -4002,7 +4314,7 @@ export default function SessionView(props: SessionViewProps) {
             onActivateWorkspace={props.activateWorkspace}
             onOpenSession={openSessionFromList}
             onDeleteSession={openDeleteSessionModalForSession}
-            onOpenPendingDirectoryDraftInWorkspace={props.openPendingDirectoryDraftInWorkspace}
+            onOpenPendingDirectoryDraftInWorkspace={openPendingDirectoryDraftFromList}
             onOpenRenameWorkspace={props.openRenameWorkspace}
             onShareWorkspace={(workspaceId) => setShareWorkspaceId(workspaceId)}
             onOpenSoul={openSoul}
