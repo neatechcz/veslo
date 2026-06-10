@@ -91,3 +91,29 @@ test("plain assigned Codex credential session failures are mapped to actionable 
   );
   assert.equal(text.includes("Response:"), false);
 });
+
+test("managed Codex no-binding failures are mapped to actionable AI access guidance", () => {
+  const text = formatSessionError({
+    name: "APIError",
+    message: "AI gateway upstream request failed",
+    data: {
+      statusCode: 502,
+      responseBody: JSON.stringify({
+        error: "no_eligible_bindings",
+        reason: "no_eligible_binding",
+        provider: "codex_oauth",
+      }),
+    },
+  });
+
+  assert.equal(
+    text,
+    [
+      "AI access unavailable",
+      "No eligible Codex credential is available for your account. Ask an admin to assign or refresh Codex AI access, then retry.",
+      "Provider: codex_oauth",
+      "Reason: no_eligible_binding",
+    ].join("\n"),
+  );
+  assert.equal(text.includes("Response:"), false);
+});

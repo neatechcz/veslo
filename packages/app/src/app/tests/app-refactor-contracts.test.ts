@@ -78,7 +78,7 @@ test("desktop deep-link fan-in dedupes URLs and stops after the first matching h
     "consumeUrls(await getCurrent());",
     "const unlisten = await onOpenUrl((urls) => {",
     "const unlistenSingleInstance = await listen<string[]>(\"deep-link://new-url\", (event) => {",
-    "onCleanup(() => {",
+    "mountCleanupFns.push(() => {",
     "unlisten();",
     "unlistenSingleInstance();",
   ]);

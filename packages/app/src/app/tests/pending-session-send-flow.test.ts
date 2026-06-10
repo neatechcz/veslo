@@ -85,7 +85,7 @@ test("first pending draft send materializes workspace and session without global
   );
   assert.match(
     sendPromptSource,
-    /sessionID = \(await sendTraceStep\(\s*"sendPrompt:create-session-and-open"[\s\S]*?createSessionAndOpen\(initialSessionTitle, \{[\s\S]*?blockAppDuringCreate: blockAppDuringPromptSend,[\s\S]*?preflight: sendPreflight,[\s\S]*?\}\)[\s\S]*?\)\) \?\? selectedSessionId\(\);/s,
+    /const createdSessionId = await sendTraceStep\(\s*"sendPrompt:create-session-and-open"[\s\S]*?createSessionAndOpen\(initialSessionTitle, \{[\s\S]*?blockAppDuringCreate: blockAppDuringPromptSend,[\s\S]*?pendingSession: pendingSidebarSession,[\s\S]*?preflight: sendPreflight,[\s\S]*?\}\)[\s\S]*?\);[\s\S]*const materializedSessionId = createdSessionId\?\.trim\(\);[\s\S]*if \(materializedSessionId\) \{[\s\S]*sessionID = materializedSessionId;[\s\S]*options\.onMaterializedSessionId\?\.\(materializedSessionId\);/s,
     "first prompt session creation should opt out of global app blocking while existing-session sends keep the old guarded behavior",
   );
 

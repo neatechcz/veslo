@@ -35,7 +35,7 @@ test("createSessionAndOpen skips duplicate preflight gates when sendPrompt alrea
 
   assert.match(
     createSource,
-    /if \(preflight\?\.managedAiReady\) \{[\s\S]*recordSendTrace\("createSessionAndOpen:managed-ai-bootstrap-skip"/,
+    /if \(preflight\?\.managedAiReady \|\| options\.managedAiRuntimeAlreadyPrepared\) \{[\s\S]*recordSendTrace\("createSessionAndOpen:managed-ai-bootstrap-skip"/,
     "createSessionAndOpen should log and skip the duplicate managed AI gate",
   );
   assert.match(

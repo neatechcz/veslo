@@ -6,6 +6,7 @@ export type OpenSessionWithWorkspaceActivationInput = {
   workspaceId: string;
   sessionId: string;
   activateWorkspace: (workspaceId: string, options: WorkspaceActivationOptions) => Promise<boolean> | boolean | void;
+  activateWorkspaceBeforeOpen?: boolean;
   openSession: (sessionId: string) => void;
 };
 
@@ -80,12 +81,21 @@ export async function openSessionWithWorkspaceActivation(
 ): Promise<OpenSessionWithWorkspaceActivationResult> {
   const sessionId = input.sessionId.trim();
   const workspaceId = input.workspaceId.trim();
+  const activeWorkspaceId = input.activeWorkspaceId.trim();
+  const getActiveWorkspaceId = () => input.getActiveWorkspaceId?.().trim() || activeWorkspaceId;
   if (!sessionId || !workspaceId) return "blocked";
 
   const token = ++openSessionNavigationToken;
 
   const run = async () => {
     if (token !== openSessionNavigationToken) return "superseded";
+
+    if (input.activateWorkspaceBeforeOpen && workspaceId !== getActiveWorkspaceId()) {
+      const activated = await Promise.resolve(input.activateWorkspace(workspaceId, {
+        origin: "session-navigation:open-session-before-open",
+      }));
+      if (!activated) return "blocked";
+    }
 
     if (token !== openSessionNavigationToken) return "superseded";
     input.openSession(sessionId);

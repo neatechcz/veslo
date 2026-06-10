@@ -81,7 +81,7 @@ test("optimistic first submit replaces the quickstart empty state immediately", 
 test("materializing a pending submitted draft preserves the visible run indicator", () => {
   assert.match(
     sessionSource,
-    /const pendingKey = !previousSessionId \? pendingQueueKeyAwaitingSessionId\(\) : null;[\s\S]*if \(!pendingKey\) \{\s*resetRunState\(\);\s*\}/s,
+    /const pendingBaseKey = pendingSessionQueueKey\(\);[\s\S]*const pendingKey = !previousSessionId[\s\S]*pendingQueueKeyAwaitingSessionIdByBaseKey\(\)\[pendingBaseKey\] \?\? null[\s\S]*const previousSessionKey = previousSessionId \? sessionQueueKeyForSessionId\(previousSessionId\) : null;[\s\S]*if \(!pendingKey && previousSessionKey\) \{\s*resetRunState\(previousSessionKey\);\s*\}/s,
     "selecting the real session created for a pending submit should remap the optimistic draft without resetting the active run indicator",
   );
 });

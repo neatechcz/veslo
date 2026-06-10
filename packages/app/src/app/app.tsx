@@ -119,6 +119,7 @@ import { resolveNativeWindowDecorationsVisible } from "./components/titlebar-men
 import OnboardingView from "./pages/onboarding";
 import DashboardView from "./pages/dashboard";
 import SessionView from "./pages/session";
+import { isPendingSessionInstanceId } from "./components/session/pending-session-instance-model";
 import ProtoWorkspacesView from "./pages/proto-workspaces";
 import ProtoV1UxView from "./pages/proto-v1-ux";
 import {
@@ -211,6 +212,7 @@ import type {
   ResetVesloMode,
   SettingsTab,
   SkillCard,
+  PendingSidebarSessionMetadata,
   SidebarSubagentDecoration,
   SidebarSessionItem,
   TodoItem,
@@ -2401,6 +2403,7 @@ export default function App() {
   const latestRunArtifactScope = createMemo(() => {
     const sessionId = selectedSessionId()?.trim() ?? "";
     if (!sessionId) return null;
+    if (isPendingSessionInstanceId(sessionId)) return null;
     const scope = resolveSelectedSessionBrowseScope(sessionId);
     const workspaceId = scope?.workspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
     const workspaceRoot = scope?.workspaceRoot?.trim() || workspaceStore.activeWorkspaceRoot().trim();
@@ -2980,22 +2983,39 @@ export default function App() {
 
   async function sendPrompt(
     draft?: ComposerDraft,
-    options: { targetSessionId?: string | null; sendTraceId?: string | null } = {},
+    options: {
+      targetSessionId?: string | null;
+      sendTraceId?: string | null;
+      onMaterializedSessionId?: (sessionId: string) => void;
+      pendingSession?: PendingSidebarSessionMetadata | null;
+    } = {},
   ): Promise<boolean> {
     const sendPreflight = createSendPreflightContext(options.sendTraceId);
     const sendTraceId = sendPreflight.traceId;
+    const pendingSidebarSession = options.pendingSession ?? null;
+    const selectedSessionCandidate = selectedSessionId();
+    const selectedRealSessionId = isPendingSessionInstanceId(selectedSessionCandidate) ? null : selectedSessionCandidate;
+    let sessionID = isPendingSessionInstanceId(options.targetSessionId)
+      ? null
+      : options.targetSessionId?.trim() || selectedRealSessionId;
+    const pendingSidebarTargetWorkspace = pendingSidebarSession?.workspaceId?.trim()
+      ? {
+          workspaceId: pendingSidebarSession.workspaceId.trim(),
+          workspaceRoot: pendingSidebarSession.workspaceRoot.trim(),
+          directory: pendingSidebarSession.workspaceRoot.trim(),
+        }
+      : null;
     recordSendTrace("sendPrompt:start", {
       traceId: sendTraceId,
       uiSendTraceId: options.sendTraceId ?? null,
       engineReady: engineReady(),
-      selectedSessionId: selectedSessionId(),
+      selectedSessionId: selectedSessionCandidate,
       targetSessionId: options.targetSessionId ?? null,
       hasClient: Boolean(routedClient()),
       busy: busy(),
       busyLabel: busyLabel(),
     });
-    let sessionID = options.targetSessionId?.trim() || selectedSessionId();
-    let sendTargetWorkspace = resolveSendTargetWorkspaceScope(sessionID);
+    let sendTargetWorkspace = pendingSidebarTargetWorkspace ?? resolveSendTargetWorkspaceScope(sessionID);
     sendPreflight.targetWorkspace = sendTargetWorkspace;
     recordSendTrace("sendPrompt:target-workspace-snapshot", {
       traceId: sendTraceId,
@@ -3083,6 +3103,9 @@ export default function App() {
         phase: "after-skill-resolution",
       });
       return false;
+    }
+    if (!sessionID && pendingSidebarSession) {
+      registerPendingSidebarSession(pendingSidebarSession);
     }
 
     // In browsing mode, engine is not connected. Start it before sending.
@@ -3198,10 +3221,12 @@ export default function App() {
       recordSendTrace("sendPrompt:create-session-needed", {
         traceId: sendTraceId,
       });
-      sessionID = (await sendTraceStep(
+      const createdSessionId = await sendTraceStep(
         "sendPrompt:create-session-and-open",
         () => createSessionAndOpen(initialSessionTitle, {
           blockAppDuringCreate: blockAppDuringPromptSend,
+          managedAiRuntimeAlreadyPrepared: true,
+          pendingSession: pendingSidebarSession,
           sendTraceId,
           preflight: sendPreflight,
         }),
@@ -3211,7 +3236,15 @@ export default function App() {
           targetWorkspaceId: sendTargetWorkspace?.workspaceId ?? null,
           targetWorkspaceRoot: sendTargetWorkspace?.workspaceRoot ?? null,
         },
-      )) ?? selectedSessionId();
+      );
+      const materializedSessionId = createdSessionId?.trim();
+      if (materializedSessionId) {
+        sessionID = materializedSessionId;
+        options.onMaterializedSessionId?.(materializedSessionId);
+      } else {
+        const selectedAfterCreate = selectedSessionId();
+        sessionID = isPendingSessionInstanceId(selectedAfterCreate) ? null : selectedAfterCreate;
+      }
     }
     if (!sessionID) {
       recordSendTrace("sendPrompt:blocked-no-session", {
@@ -5121,9 +5154,31 @@ export default function App() {
     replaceWorkspaceSidebarSessions,
     removeSessionFromWorkspaceSidebar,
     prependSessionToWorkspaceSidebar,
+    materializePendingSessionInWorkspaceSidebar,
     moveSessionBetweenWorkspaceSidebars,
     ensureSessionInWorkspaceSidebar,
   } = sidebarWorkspaceSessions;
+
+  const pendingSidebarSessionToItem = (pending: PendingSidebarSessionMetadata): SidebarSessionItem => ({
+    id: pending.id,
+    title: pending.title.trim() || "New session",
+    time: {
+      created: pending.createdAt,
+      updated: pending.createdAt,
+    },
+    directory: pending.workspaceRoot,
+    conversationId: null,
+    opencodeSessionId: null,
+    pendingSessionInstanceId: pending.id,
+  });
+
+  const registerPendingSidebarSession = (pending: PendingSidebarSessionMetadata) => {
+    const workspaceId = pending.workspaceId.trim();
+    const pendingId = pending.id.trim();
+    if (!workspaceId || !pendingId) return;
+    const pendingItem = pendingSidebarSessionToItem(pending);
+    prependSessionToWorkspaceSidebar(workspaceId, pendingItem);
+  };
 
   const handleActivateWorkspace: typeof workspaceStore.activateWorkspace = (workspaceId, options) => {
     if (typeof workspaceId === "string") {
@@ -5651,6 +5706,12 @@ export default function App() {
     const [, , sessionSegment] = rawPath.split("/");
     const id = (sessionSegment ?? "").trim();
     if (!id) return;
+    if (isPendingSessionInstanceId(id)) {
+      if (selectedSessionId() !== id) {
+        setSelectedSessionId(id);
+      }
+      return;
+    }
 
     const routeBrowseScope = resolveSelectedSessionBrowseScope(id);
     const routeWorkspaceId = routeBrowseScope?.workspaceId?.trim() || undefined;
@@ -8433,16 +8494,27 @@ export default function App() {
     initialTitle = "",
     options: {
       blockAppDuringCreate?: boolean;
+      managedAiRuntimeAlreadyPrepared?: boolean;
+      pendingSession?: PendingSidebarSessionMetadata | null;
       sendTraceId?: string | null;
       preflight?: SendPreflightContext;
     } = {},
   ) {
     const blockAppDuringCreate = options.blockAppDuringCreate ?? true;
+    const pendingSidebarSession = options.pendingSession ?? null;
     const preflight = options.preflight;
     const sendTraceId = options.sendTraceId?.trim() || preflight?.traceId || activeSendTraceId();
     const tracePayload = sendTraceId ? { traceId: sendTraceId } : undefined;
+    const pendingTargetWorkspace = pendingSidebarSession?.workspaceId?.trim()
+      ? {
+          workspaceId: pendingSidebarSession.workspaceId.trim(),
+          workspaceRoot: pendingSidebarSession.workspaceRoot.trim(),
+          directory: pendingSidebarSession.workspaceRoot.trim(),
+        }
+      : null;
     const targetWorkspace =
       preflight?.targetWorkspace ??
+      pendingTargetWorkspace ??
       resolveSendTargetWorkspaceScope(null) ??
       null;
     recordSendTrace("createSessionAndOpen:start", {
@@ -8479,11 +8551,12 @@ export default function App() {
       });
     }
 
-    if (preflight?.managedAiReady) {
+    if (preflight?.managedAiReady || options.managedAiRuntimeAlreadyPrepared) {
       recordSendTrace("createSessionAndOpen:managed-ai-bootstrap-skip", {
         ...(tracePayload ?? {}),
         reason: "send-preflight-already-ready",
       });
+      if (preflight) preflight.managedAiReady = true;
     } else {
       const managedAiReady = await sendTraceStep(
         "createSessionAndOpen:ensure-managed-ai-bootstrap-ready",
@@ -8511,7 +8584,11 @@ export default function App() {
     // Guard against creating a session with an empty directory, which would
     // cause the bridge to silently fall back to the orchestrator's default
     // directory (possibly a temp folder or the wrong workspace).
-    const sessionDirectory = targetWorkspace?.directory || targetWorkspace?.workspaceRoot || workspaceStore.activeWorkspaceRoot().trim();
+    const sessionDirectory =
+      pendingSidebarSession?.workspaceRoot?.trim() ||
+      targetWorkspace?.directory ||
+      targetWorkspace?.workspaceRoot ||
+      workspaceStore.activeWorkspaceRoot().trim();
     if (!sessionDirectory) {
       console.warn(
         "[createSessionAndOpen] Blocked: activeWorkspaceRoot is empty",
@@ -8723,10 +8800,18 @@ export default function App() {
         opencodeSessionId: session.opencodeSessionId ?? session.id,
         parentConversationId: session.parentConversationId ?? null,
         branchId: session.branchId ?? null,
+        pendingSessionInstanceId: pendingSidebarSession?.id?.trim() || null,
       };
-      const wsId = targetWorkspace?.workspaceId || (workspaceStore.connectingWorkspaceId() ?? workspaceStore.activeWorkspaceId()).trim();
+      const wsId =
+        pendingSidebarSession?.workspaceId?.trim() ||
+        targetWorkspace?.workspaceId ||
+        (workspaceStore.connectingWorkspaceId() ?? workspaceStore.activeWorkspaceId()).trim();
       if (wsId) {
-        prependSessionToWorkspaceSidebar(wsId, newItem);
+        materializePendingSessionInWorkspaceSidebar({
+          workspaceId: wsId,
+          pendingSessionInstanceId: pendingSidebarSession?.id ?? null,
+          item: newItem,
+        });
       }
 
       // setSessionViewLockUntil(Date.now() + 1200);
@@ -10831,6 +10916,7 @@ export default function App() {
   const sessionProps = () => ({
     selectedSessionId: activeSessionId(),
     activePendingDraftKey: activePendingDraftKey(),
+    activePendingDraftMeta: activePendingDraftMeta(),
     setView,
     setSessionBrowseScope,
     tab: tab(),
@@ -11159,6 +11245,12 @@ export default function App() {
       const sessionIdsInSidebar = sidebarWorkspaceGroups().flatMap((group) =>
         group.sessions.map((session) => session.id)
       );
+      if (isPendingSessionInstanceId(id)) {
+        if (selectedSessionId() !== id) {
+          setSelectedSessionId(id);
+        }
+        return;
+      }
       // If the URL points at a session that no longer exists (e.g. after deletion),
       // route back to /session so the app can fall back safely.
       // Sidebar-backed ids are accepted here so selection can proceed even when

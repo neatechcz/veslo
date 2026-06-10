@@ -9,6 +9,7 @@ import {
   openSessionWithWorkspaceActivation,
 } from "../../pages/session-navigation.js";
 import * as sessionNavigation from "../../pages/session-navigation.js";
+import type { WorkspaceActivationOptions } from "../../context/workspace.js";
 
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
 const sessionPageSource = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
@@ -74,7 +75,10 @@ const openPendingDraftWithWorkspaceActivation = () => {
           activeWorkspaceId: string;
           getActiveWorkspaceId?: () => string;
           workspaceId: string;
-          activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+          activateWorkspace: (
+            workspaceId: string,
+            options: WorkspaceActivationOptions,
+          ) => Promise<boolean> | boolean | void;
           openPendingDraft: () => Promise<string | boolean | undefined> | string | boolean | undefined | void;
         },
       ) => Promise<boolean>;
@@ -99,7 +103,10 @@ const openPendingDraftFromDirectorySelection = () => {
           ensureWorkspaceForFolder: (
             folder: string,
           ) => Promise<{ id: string } | null> | { id: string } | null;
-          activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+          activateWorkspace: (
+            workspaceId: string,
+            options: WorkspaceActivationOptions,
+          ) => Promise<boolean> | boolean | void;
           openPendingDraft: (
             target: { workspaceId: string; directory: string },
           ) => Promise<string | boolean | undefined> | string | boolean | undefined | void;
@@ -261,6 +268,30 @@ test("opens cross-workspace session without activating the workspace", async () 
   assert.equal(result, "opened");
   assert.deepEqual(activated, []);
   assert.deepEqual(opened, ["sess-2"]);
+});
+
+test("explicit activation option activates workspace before opening session", async () => {
+  const opened: string[] = [];
+  const activated: Array<{ id: string; origin: string }> = [];
+  let activeWorkspaceId = "ws-active";
+
+  const result = await openSessionWithWorkspaceActivation({
+    activeWorkspaceId,
+    getActiveWorkspaceId: () => activeWorkspaceId,
+    workspaceId: "ws-other",
+    sessionId: "sess-pending",
+    activateWorkspaceBeforeOpen: true,
+    activateWorkspace: async (id, options) => {
+      activated.push({ id, origin: options.origin });
+      activeWorkspaceId = id;
+      return true;
+    },
+    openSession: (id) => opened.push(id),
+  });
+
+  assert.equal(result, "opened");
+  assert.deepEqual(activated, [{ id: "ws-other", origin: "session-navigation:open-session-before-open" }]);
+  assert.deepEqual(opened, ["sess-pending"]);
 });
 
 test("serializes rapid cross-workspace session clicks and only opens the latest session", async () => {

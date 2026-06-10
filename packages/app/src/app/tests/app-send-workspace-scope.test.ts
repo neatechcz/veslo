@@ -16,7 +16,7 @@ test("send preflight snapshots the target workspace before cold-start awaits", (
 
   assert.match(
     sendIntro,
-    /let sendTargetWorkspace = resolveSendTargetWorkspaceScope\(sessionID\);[\s\S]*sendPreflight\.targetWorkspace = sendTargetWorkspace;/,
+    /let sendTargetWorkspace = pendingSidebarTargetWorkspace \?\? resolveSendTargetWorkspaceScope\(sessionID\);[\s\S]*sendPreflight\.targetWorkspace = sendTargetWorkspace;/,
     "sendPrompt should snapshot the target workspace before awaits can observe a different active workspace",
   );
   assert.match(
@@ -44,7 +44,7 @@ test("createSessionAndOpen uses preflight target only when send preflight provid
   );
   assert.match(
     createSource,
-    /const sessionDirectory = targetWorkspace\?\.directory \|\| targetWorkspace\?\.workspaceRoot \|\| workspaceStore\.activeWorkspaceRoot\(\)\.trim\(\);/,
+    /const sessionDirectory =[\s\S]*pendingSidebarSession\?\.workspaceRoot\?\.trim\(\) \|\|[\s\S]*targetWorkspace\?\.directory \|\|[\s\S]*targetWorkspace\?\.workspaceRoot \|\|[\s\S]*workspaceStore\.activeWorkspaceRoot\(\)\.trim\(\);/,
     "session creation should prefer the target directory over the current active workspace root",
   );
   assert.match(
@@ -54,7 +54,7 @@ test("createSessionAndOpen uses preflight target only when send preflight provid
   );
   assert.match(
     createSource,
-    /const wsId = targetWorkspace\?\.workspaceId \|\| \(workspaceStore\.connectingWorkspaceId\(\) \?\? workspaceStore\.activeWorkspaceId\(\)\)\.trim\(\);/,
+    /const wsId =[\s\S]*pendingSidebarSession\?\.workspaceId\?\.trim\(\) \|\|[\s\S]*targetWorkspace\?\.workspaceId \|\|[\s\S]*\(workspaceStore\.connectingWorkspaceId\(\) \?\? workspaceStore\.activeWorkspaceId\(\)\)\.trim\(\);/,
     "sidebar injection should attach the new session to the target workspace",
   );
 });

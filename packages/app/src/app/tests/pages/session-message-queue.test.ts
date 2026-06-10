@@ -117,7 +117,7 @@ test("queued drain uses a stable session key and guards stale navigation", () =>
 
   assert.match(
     source,
-    /const handoffOptions =[\s\S]*targetSessionId \|\| options\.sendTraceId[\s\S]*\.\.\.\(targetSessionId \? \{ targetSessionId \} : \{\}\),[\s\S]*\.\.\.\(options\.sendTraceId \? \{ sendTraceId: options\.sendTraceId \} : \{\}\),[\s\S]*props\.sendPromptAsync\(draft, handoffOptions\)/s,
+    /const promptSendOptions:[\s\S]*targetSessionId \|\| options\.sendTraceId \|\| pendingSessionKeyBeforeHandoff[\s\S]*\.\.\.\(targetSessionId \? \{ targetSessionId \} : \{\}\),[\s\S]*\.\.\.\(options\.sendTraceId \? \{ sendTraceId: options\.sendTraceId \} : \{\}\),[\s\S]*props\.sendPromptAsync\(draft, promptSendOptions\)/s,
     "queue drains should pass their captured target session and trace id to the parent send path",
   );
 
@@ -151,19 +151,19 @@ test("pending draft queues remap to the real session key without replacing exist
 test("accepted first pending submit captures and remaps the pending queue key", () => {
   assert.match(
     source,
-    /const \[pendingQueueKeyAwaitingSessionId, setPendingQueueKeyAwaitingSessionId\] = createSignal<string \| null>\(null\);/,
+    /const \[pendingQueueKeyAwaitingSessionIdByBaseKey, setPendingQueueKeyAwaitingSessionIdByBaseKey\] =\s*createSignal<Record<string, string>>\(\{\}\);/,
     "session view should retain a captured pending queue key until a real session id is available",
   );
 
   assert.match(
     source,
-    /const pendingSessionKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey\(sessionKey\) \? sessionKey : null;\s*if \(pendingSessionKeyBeforeHandoff\) \{\s*setPendingQueueKeyAwaitingSessionId\(pendingSessionKeyBeforeHandoff\);\s*\}[\s\S]*const accepted = await \(options\.replaceMessageId[\s\S]*if \(accepted && pendingSessionKeyBeforeHandoff\) \{[\s\S]*const materializedSessionId = props\.selectedSessionId\?\.trim\(\);[\s\S]*if \(materializedSessionId\) \{[\s\S]*remapPendingQueueToSession\(pendingSessionKeyBeforeHandoff, materializedSessionId\);[\s\S]*setPendingQueueKeyAwaitingSessionId\(null\);[\s\S]*\}/s,
+    /const pendingSessionBaseKeyBeforeHandoff =[\s\S]*const pendingSessionKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey\(sessionKey\) \? sessionKey : null;[\s\S]*setPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff\);[\s\S]*const accepted = await \(options\.replaceMessageId[\s\S]*if \(accepted && pendingSessionKeyBeforeHandoff\) \{[\s\S]*const materializedSessionId = materializedSessionIdFromHandoff \?\? props\.selectedSessionId\?\.trim\(\);[\s\S]*materializePendingHandoffToSession\(materializedSessionId\);/s,
     "sendPromptImmediate should capture the pending queue key before await and remap it after an accepted first submit",
   );
 
   assert.match(
     source,
-    /createEffect\(\s*on\(\s*\(\) => props\.selectedSessionId,[\s\S]*const pendingKey = !previousSessionId \? pendingQueueKeyAwaitingSessionId\(\) : null;[\s\S]*if \(pendingKey\) \{[\s\S]*remapPendingQueueToSession\(pendingKey, sessionId\);[\s\S]*setPendingQueueKeyAwaitingSessionId\(null\);[\s\S]*\}/s,
+    /createEffect\(\s*on\(\s*\(\) => props\.selectedSessionId,[\s\S]*const pendingBaseKey = pendingSessionQueueKey\(\);[\s\S]*const pendingKey = !previousSessionId[\s\S]*pendingQueueKeyAwaitingSessionIdByBaseKey\(\)\[pendingBaseKey\] \?\? null[\s\S]*if \(pendingKey && !isPendingSessionInstanceId\(sessionId\)\) \{[\s\S]*remapPendingQueueToSession\(pendingKey, sessionId\);[\s\S]*clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingBaseKey, pendingKey\);[\s\S]*\}/s,
     "session view should also remap pending queues when the selected session id arrives in a later reactive update",
   );
 
@@ -218,8 +218,8 @@ test("rejected pending queue drain updates the remapped item key", () => {
 
 test("app prompt send accepts an explicit target session without freezing model bootstrap", () => {
   const sendStart = appSource.indexOf("async function sendPrompt");
-  const targetCapture = appSource.indexOf("let sessionID = options.targetSessionId?.trim() || selectedSessionId();", sendStart);
-  const bootstrap = appSource.indexOf("await ensureManagedAiBootstrapReady();", sendStart);
+  const targetCapture = appSource.indexOf("let sessionID = isPendingSessionInstanceId(options.targetSessionId)", sendStart);
+  const bootstrap = appSource.indexOf('"sendPrompt:ensure-managed-ai-bootstrap-ready"', sendStart);
   const modelResolution = appSource.indexOf("const model = modelForSession(sessionID);", sendStart);
   const agentResolution = appSource.indexOf("const agent = agentForSession(sessionID);", sendStart);
 

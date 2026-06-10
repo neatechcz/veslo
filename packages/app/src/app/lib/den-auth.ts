@@ -354,11 +354,15 @@ function normalizePersistedLanguage(value: unknown): string | null {
   return null;
 }
 
-async function invokeDesktopCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  const runtimeInvoke = (typeof window !== "undefined"
+function runtimeTauriInvoke(): TauriInvoke | null {
+  return (typeof window !== "undefined"
     ? (window as unknown as { __TAURI_INTERNALS__?: { invoke?: TauriInvoke } }).__TAURI_INTERNALS__
         ?.invoke
     : null) as TauriInvoke | null;
+}
+
+async function invokeDesktopCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  const runtimeInvoke = runtimeTauriInvoke();
   if (runtimeInvoke) {
     return runtimeInvoke<T>(command, args);
   }
@@ -375,16 +379,22 @@ function queueDesktopSnapshotWrite(
 ): void {
   if (!isTauriRuntime() || isAutomatedBrowserSession()) return;
   const payloadAuth = auth ? JSON.stringify(auth) : null;
+  const invokeAtQueueTime = runtimeTauriInvoke();
+  const payload = {
+    authJson: payloadAuth,
+    keepSignedIn,
+    language,
+    onboardingComplete,
+  };
   desktopSnapshotWriteQueue = desktopSnapshotWriteQueue
     .catch(() => {})
     .then(async () => {
       try {
-        await invokeDesktopCommand(DEN_AUTH_SNAPSHOT_WRITE_COMMAND, {
-          authJson: payloadAuth,
-          keepSignedIn,
-          language,
-          onboardingComplete,
-        });
+        if (invokeAtQueueTime) {
+          await invokeAtQueueTime(DEN_AUTH_SNAPSHOT_WRITE_COMMAND, payload);
+          return;
+        }
+        await invokeDesktopCommand(DEN_AUTH_SNAPSHOT_WRITE_COMMAND, payload);
       } catch {
         // ignore desktop snapshot write failures
       }

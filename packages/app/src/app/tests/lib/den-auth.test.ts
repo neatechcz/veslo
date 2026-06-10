@@ -1017,6 +1017,47 @@ test("writeDenAuth syncs desktop snapshot with language and onboarding metadata"
   }
 });
 
+test("queued desktop snapshot writes use the Tauri bridge captured at queue time", async () => {
+  const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+  const storage = installDomStorage({
+    tauriInvoke: async (command, args) => {
+      calls.push({ command, args });
+      if (command === "den_auth_snapshot_write") {
+        return null;
+      }
+      throw new Error(`Unexpected invoke command: ${command}`);
+    },
+  });
+  const replacementWindow = {
+    localStorage: new MemoryStorage(),
+    sessionStorage: new MemoryStorage(),
+  };
+
+  try {
+    const authState = {
+      denApiBase: "https://api.veslo.work",
+      token: "token_for_captured_bridge",
+      orgId: "org_captured_bridge",
+      user: { id: "user_captured_bridge", email: "captured@example.com" },
+      org: { id: "org_captured_bridge", slug: "captured-bridge" },
+    };
+
+    writeDenAuth(authState);
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: replacementWindow,
+    });
+
+    await flushPendingDesktopSnapshotWrite();
+
+    const snapshotWrite = calls.filter((entry) => entry.command === "den_auth_snapshot_write").at(-1);
+    assert.ok(snapshotWrite);
+    assert.match(String(snapshotWrite.args?.authJson ?? ""), /token_for_captured_bridge/);
+  } finally {
+    storage.restore();
+  }
+});
+
 test("flushPendingDesktopSnapshotWrite waits for the queued desktop snapshot write", async () => {
   let resolveWrite: (() => void) | undefined;
   const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];

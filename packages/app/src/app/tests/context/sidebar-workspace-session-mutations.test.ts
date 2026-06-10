@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   ensureSidebarSessionInWorkspaceRows,
+  materializePendingSidebarSessionRows,
   moveSidebarSessionBetweenWorkspaceRows,
   prependSidebarSessionToWorkspaceRows,
   removeSidebarSessionFromWorkspaceRows,
@@ -49,6 +50,34 @@ test("prepend adds a session to the target workspace without duplicating existin
   assert.deepEqual(prependSidebarSessionToWorkspaceRows(current, "ws-a", item("a0")), {
     "ws-a": [item("a0"), item("a1"), item("a2")],
   });
+});
+
+test("materialize pending replaces the pending row in the target workspace", () => {
+  const pending = {
+    ...item("pending-session:abc", "/repo/ws-a"),
+    pendingSessionInstanceId: "pending-session:abc",
+  };
+  const real = {
+    ...item("real-session", "/repo/ws-a"),
+    pendingSessionInstanceId: "pending-session:abc",
+  };
+  const current = {
+    "ws-a": [pending, item("a1", "/repo/ws-a")],
+    "ws-b": [item("b1", "/repo/ws-b")],
+  };
+
+  assert.deepEqual(
+    materializePendingSidebarSessionRows({
+      current,
+      workspaceId: "ws-a",
+      pendingSessionInstanceId: "pending-session:abc",
+      item: real,
+    }),
+    {
+      "ws-a": [real, item("a1", "/repo/ws-a")],
+      "ws-b": [item("b1", "/repo/ws-b")],
+    },
+  );
 });
 
 test("move transfers a session between workspaces and preserves unrelated rows", () => {

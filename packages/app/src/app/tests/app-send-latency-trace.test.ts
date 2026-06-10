@@ -187,12 +187,12 @@ test("session-store sidebar sync skips unchanged sidebar rows", () => {
   );
   assert.match(
     sidebarWorkspaceSessionsSource,
-    /const nextRows = visibleRows\.map\(\(s\) => \{[\s\S]*setSidebarSessionsByWorkspaceId\(\(prev\) => \{[\s\S]*const currentRows = prev\[wsId\] \?\? \[\];[\s\S]*if \(sidebarSessionItemsEqual\(currentRows, nextRows\)\) return prev;[\s\S]*\[wsId\]: nextRows,[\s\S]*\}\);/,
+    /import \{ deriveSidebarRowsFromSessionStore \} from "\.\.\/lib\/sidebar-session-store-sync";[\s\S]*const incomingVisibleRows = expandSidebarSessionSliceWithAncestors\(visibleSessions, requestLimit\);[\s\S]*const existingTargetSidebarRows = untrack\(\(\) => sidebarSessionsByWorkspaceId\(\)\[wsId\] \?\? \[\]\);[\s\S]*const nextRows = deriveSidebarRowsFromSessionStore\(\{[\s\S]*incomingSessions: visibleSessions,[\s\S]*existingRows: existingTargetSidebarRows,[\s\S]*setSidebarSessionsByWorkspaceId\(\(prev\) => \{[\s\S]*const currentRows = prev\[wsId\] \?\? \[\];[\s\S]*if \(sidebarSessionItemsEqual\(currentRows, nextRows\)\) return prev;[\s\S]*\[wsId\]: nextRows,[\s\S]*\}\);/,
     "session-store sync should preserve sidebar signal identity when visible rows are unchanged",
   );
   assert.match(
     sidebarWorkspaceSessionsSource,
-    /setSidebarSessionHasMoreByWorkspaceId\(\(prev\) => \{[\s\S]*const nextHasMore = deriveSidebarHasMore\(visibleSessions\.length, requestLimit\);[\s\S]*if \(\(prev\[wsId\] \?\? false\) === nextHasMore\) return prev;/,
+    /const retainedExistingSidebarRows = nextRows\.length > incomingVisibleRows\.length;[\s\S]*setSidebarSessionHasMoreByWorkspaceId\(\(prev\) => \{[\s\S]*const nextHasMore = retainedExistingSidebarRows[\s\S]*\? prev\[wsId\] \?\? deriveSidebarHasMore\(nextRows\.length, requestLimit\)[\s\S]*: deriveSidebarHasMore\(visibleSessions\.length, requestLimit\);[\s\S]*if \(\(prev\[wsId\] \?\? false\) === nextHasMore\) return prev;/,
     "session-store sync should not invalidate sidebar paging state when hasMore is unchanged",
   );
 });

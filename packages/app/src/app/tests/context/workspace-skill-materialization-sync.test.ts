@@ -73,3 +73,23 @@ test("workspace activation local restart is gated behind skill materialization s
   assert.notStrictEqual(syncIdx, -1, "activateWorkspace should sync skills before local runtime restart");
   assert.ok(syncIdx < restartIdx, "sync must happen before local-to-local runtime restart");
 });
+
+test("skill registry materialization outages degrade without blocking runtime start", () => {
+  const syncStart = source.indexOf("async function syncWorkspaceSkillMaterializationBeforeRuntime(");
+  assert.notStrictEqual(syncStart, -1, "syncWorkspaceSkillMaterializationBeforeRuntime is missing");
+  const syncEnd = source.indexOf("async function activateWorkspace(", syncStart);
+  assert.notStrictEqual(syncEnd, -1, "activateWorkspace should follow the sync helper");
+  const syncSource = source.slice(syncStart, syncEnd);
+
+  assert.match(
+    source,
+    /function isSkillRegistryMaterializationError\(error: unknown\): boolean \{/,
+    "workspace materialization should classify skill registry outages separately",
+  );
+
+  assert.match(
+    syncSource,
+    /if \(isSkillRegistryMaterializationError\(error\)\) \{[\s\S]*wsDebug\("skills:materialization:degraded"[\s\S]*reportError\(error, "workspace\.skillMaterialization"\);[\s\S]*return true;[\s\S]*\}/s,
+    "skill registry outages should be reported as degraded and allow runtime startup to continue",
+  );
+});
