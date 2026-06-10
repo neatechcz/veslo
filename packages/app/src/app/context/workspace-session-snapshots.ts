@@ -32,9 +32,11 @@ export function resolveWorkspaceSessionSnapshotAction(
   const previousWorkspaceId = normalize(input.previousWorkspaceId);
   const activeWorkspaceId = normalize(input.activeWorkspaceId);
   const selectedScopeWorkspaceId = normalize(input.selectedScopeWorkspaceId);
+  const isInitialLoad = !previousWorkspaceId;
+  const workspaceChanged = previousWorkspaceId !== activeWorkspaceId;
 
   let saveWorkspaceId: string | null = null;
-  if (previousWorkspaceId && previousWorkspaceId !== activeWorkspaceId) {
+  if (previousWorkspaceId && workspaceChanged) {
     const selectedBelongsToOutgoing =
       !selectedScopeWorkspaceId || selectedScopeWorkspaceId === previousWorkspaceId;
     if (selectedBelongsToOutgoing) {
@@ -43,7 +45,7 @@ export function resolveWorkspaceSessionSnapshotAction(
   }
 
   let loadWorkspaceId: string | null = null;
-  if (activeWorkspaceId) {
+  if (activeWorkspaceId && (isInitialLoad || workspaceChanged)) {
     const selectedBelongsToIncoming = selectedScopeWorkspaceId === activeWorkspaceId;
     if (!selectedBelongsToIncoming) {
       loadWorkspaceId = activeWorkspaceId;

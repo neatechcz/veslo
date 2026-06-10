@@ -6,6 +6,10 @@ type PendingDraftSendTarget = {
   directory?: string | null;
 };
 
+type SelectedSessionBrowseScope = {
+  workspaceId?: string | null;
+};
+
 type ResolvePendingDraftSendTargetInput = {
   pendingDraft: PendingDraftSendTarget | null | undefined;
   resolveWorkspaceRoot: (workspaceId: string, fallbackDirectory?: string | null) => string;
@@ -15,6 +19,7 @@ type WorkspaceSendTargetOptions<Client = unknown> = {
   activePendingDraftMeta: () => PendingDraftSendTarget | null | undefined;
   resolveWorkspaceRoot: (workspaceId: string, fallbackDirectory?: string | null) => string;
   resolveSessionSendTargetScope: (sessionId?: string | null) => SendTargetWorkspaceScope | null;
+  resolveSelectedSessionBrowseScope?: (sessionId: string) => SelectedSessionBrowseScope | null;
   activeWorkspaceId: () => string;
   activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   recordSendTrace: (event: string, payload?: Record<string, unknown>) => void;
@@ -76,12 +81,14 @@ export function createWorkspaceSendTarget<Client = unknown>(options: WorkspaceSe
     traceId?: string | null,
   ): Promise<boolean> => {
     const tracePayload = traceId ? { traceId } : undefined;
-    const transcriptScope = options.resolveSessionSendTargetScope(sessionId);
+    const transcriptScope = options.resolveSelectedSessionBrowseScope
+      ? options.resolveSelectedSessionBrowseScope(sessionId)
+      : options.resolveSessionSendTargetScope(sessionId);
     if (!transcriptScope) {
       options.recordSendTrace("sendPrompt:scoped-workspace-skipped-no-scope", tracePayload);
       return true;
     }
-    const targetWorkspaceId = transcriptScope.workspaceId.trim();
+    const targetWorkspaceId = transcriptScope.workspaceId?.trim() ?? "";
     if (!targetWorkspaceId) {
       options.recordSendTrace("sendPrompt:scoped-workspace-skipped-empty-target", tracePayload);
       return true;

@@ -102,3 +102,31 @@ test("send-time scoped activation activates only when selected session belongs t
   assert.equal(await target.ensureSelectedSessionWorkspaceActiveForSend("unknown", "trace-2"), true);
   assert.deepEqual(activations, []);
 });
+
+test("send-time scoped activation does not treat active fallback as explicit session scope", async () => {
+  const events: string[] = [];
+  const target = createWorkspaceSendTarget({
+    activePendingDraftMeta: () => null,
+    resolveWorkspaceRoot: () => "",
+    resolveSessionSendTargetScope: () => ({
+      workspaceId: "ws-a",
+      workspaceRoot: "/repo/a",
+      directory: "/repo/a",
+    }),
+    resolveSelectedSessionBrowseScope: () => null,
+    activeWorkspaceId: () => "ws-a",
+    activateWorkspace: async () => {
+      throw new Error("unexpected activation");
+    },
+    recordSendTrace: (event) => events.push(event),
+    sendTraceStep: async (event, run) => {
+      events.push(event);
+      return run();
+    },
+    messageFromUnknownError: (error) => String(error),
+  });
+
+  assert.equal(await target.ensureSelectedSessionWorkspaceActiveForSend("unknown", "trace-1"), true);
+  assert.ok(events.includes("sendPrompt:scoped-workspace-skipped-no-scope"));
+  assert.ok(!events.includes("sendPrompt:scoped-workspace-already-active"));
+});

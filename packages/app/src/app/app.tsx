@@ -4803,6 +4803,7 @@ export default function App() {
     activePendingDraftMeta,
     resolveWorkspaceRoot: workspaceRootForId,
     resolveSessionSendTargetScope: workspaceSessionSelection.resolveSendTargetWorkspaceScope,
+    resolveSelectedSessionBrowseScope,
     activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
     activateWorkspace: (workspaceId) => workspaceStore.activateWorkspace(workspaceId),
     recordSendTrace,
