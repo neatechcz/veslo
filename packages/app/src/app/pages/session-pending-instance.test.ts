@@ -223,6 +223,38 @@ test("session switching resets only keyed run UI state", () => {
   );
 });
 
+test("pending sidebar selection does not materialize another pending draft into it", () => {
+  const selectedEffectStart = source.indexOf("      () => props.selectedSessionId,");
+  const selectedEffectEnd = source.indexOf("  createEffect(", selectedEffectStart + 1);
+  assert.notEqual(selectedEffectStart, -1, "selected-session effect should exist");
+  assert.notEqual(selectedEffectEnd, -1, "selected-session effect should have a bounded source slice");
+  const selectedEffectSource = source.slice(selectedEffectStart, selectedEffectEnd);
+
+  assert.match(
+    selectedEffectSource,
+    /if \(pendingKey && !isPendingSessionInstanceId\(sessionId\)\) \{\s*remapPendingQueueToSession\(pendingKey, sessionId\);\s*clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingBaseKey, pendingKey\);\s*\}/,
+    "selecting a pending sidebar row must not remap a different pending send into that pending row",
+  );
+  assert.doesNotMatch(
+    selectedEffectSource,
+    /if \(pendingKey\) \{\s*remapPendingQueueToSession\(pendingKey, sessionId\);/,
+    "pending handoff remapping should only run after a real session id is selected",
+  );
+});
+
+test("opening another project pending draft clears only the visible base mapping", () => {
+  assert.match(
+    source,
+    /const openPendingDirectoryDraftFromList = \(workspaceId: string\) => \{[\s\S]*const pendingBaseKey = pendingSessionQueueKey\(\);[\s\S]*const pendingKey = pendingQueueKeyAwaitingSessionIdByBaseKey\(\)\[pendingBaseKey\] \?\? null;[\s\S]*if \(pendingKey\) \{[\s\S]*clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingBaseKey, pendingKey\);[\s\S]*\}[\s\S]*props\.openPendingDirectoryDraftInWorkspace\(workspaceId\);[\s\S]*\};/s,
+    "project plus should clear the displayed pending-instance mapping so same-project sends can start a fresh pending row",
+  );
+  assert.match(
+    source,
+    /onOpenPendingDirectoryDraftInWorkspace=\{openPendingDirectoryDraftFromList\}/,
+    "sidebar project plus should use the wrapper that clears the visible pending base mapping",
+  );
+});
+
 test("first-send handoff stores and clears the pending instance by base key", () => {
   assert.match(
     source,
@@ -394,8 +426,8 @@ test("pending first sends pass captured sidebar placeholder metadata to app prom
   );
   assert.match(
     sendImmediateSource,
-    /const pendingSidebarSession: PendingSidebarSessionMetadata \| null = pendingSessionKeyBeforeHandoff\s*\? \{[\s\S]*id: pendingSessionKeyBeforeHandoff,[\s\S]*workspaceId: props\.activeWorkspaceId,[\s\S]*workspaceRoot: props\.activeWorkspaceRoot,[\s\S]*title: draft\.text\.trim\(\),[\s\S]*createdAt: pendingSidebarSessionCreatedAt,[\s\S]*\}[\s\S]*: null;/,
-    "pending first sends should capture the pending id, workspace id/root, title, and creation time",
+    /const pendingSidebarWorkspaceId = createPendingSidebarSessionWorkspaceId\(\);[\s\S]*const pendingSidebarWorkspaceRoot = createPendingSidebarSessionWorkspaceRoot\(pendingSidebarWorkspaceId\);[\s\S]*const pendingSidebarSession: PendingSidebarSessionMetadata \| null = pendingSessionKeyBeforeHandoff\s*\? \{[\s\S]*id: pendingSessionKeyBeforeHandoff,[\s\S]*workspaceId: pendingSidebarWorkspaceId,[\s\S]*workspaceRoot: pendingSidebarWorkspaceRoot,[\s\S]*title: draft\.text\.trim\(\),[\s\S]*createdAt: pendingSidebarSessionCreatedAt,[\s\S]*\}[\s\S]*: null;/,
+    "pending first sends should capture the pending id, target workspace id/root, title, and creation time",
   );
   assert.match(
     sendImmediateSource,
@@ -418,13 +450,13 @@ test("clicking a pending sidebar row opens the local pending session without tra
 
   assert.match(
     openSource,
-    /if \(isPendingSessionInstanceId\(sessionId\)\) \{[\s\S]*void openSessionWithWorkspaceActivation\(\{[\s\S]*activateWorkspaceBeforeOpen: true,[\s\S]*openSession: \(nextSessionId\) => \{[\s\S]*props\.setSessionBrowseScope\(\{[\s\S]*sessionId: nextSessionId,[\s\S]*workspaceId,[\s\S]*workspaceRoot,[\s\S]*directory: session\?\.directory \?\? workspaceRoot,[\s\S]*conversationId: null,[\s\S]*opencodeSessionId: null,[\s\S]*\}\);[\s\S]*props\.setPendingSessionLoad\(null\);[\s\S]*props\.setView\("session", nextSessionId\);[\s\S]*\},[\s\S]*\}\)/,
-    "pending sidebar rows should activate/bind their clicked workspace scope before routing to the local pending id",
+    /if \(isPendingSessionInstanceId\(sessionId\)\) \{[\s\S]*const openPendingSidebarSession = \(nextSessionId: string\) => \{[\s\S]*props\.setSessionBrowseScope\(\{[\s\S]*sessionId: nextSessionId,[\s\S]*workspaceId,[\s\S]*workspaceRoot,[\s\S]*directory: session\?\.directory \?\? workspaceRoot,[\s\S]*conversationId: null,[\s\S]*opencodeSessionId: null,[\s\S]*\}\);[\s\S]*props\.setPendingSessionLoad\(null\);[\s\S]*props\.setView\("session", nextSessionId\);[\s\S]*\};[\s\S]*openPendingSidebarSession\(sessionId\);[\s\S]*void openSessionWithWorkspaceActivation\(\{[\s\S]*activateWorkspaceBeforeOpen: true,[\s\S]*openSession: openPendingSidebarSession,[\s\S]*\}\)/,
+    "pending sidebar rows should bind and route to the local pending id before any async workspace activation",
   );
   assert.doesNotMatch(
     openSource,
-    /if \(isPendingSessionInstanceId\(sessionId\)\) \{\s*props\.setPendingSessionLoad\(null\);\s*props\.setView\("session", sessionId\);\s*return;\s*\}/,
-    "pending sidebar rows should not route without binding the clicked workspace scope",
+    /if \(isPendingSessionInstanceId\(sessionId\)\) \{[\s\S]*void openSessionWithWorkspaceActivation\(\{[\s\S]*openSession: \(nextSessionId\) => \{/,
+    "pending sidebar rows should not wait for activation before opening the local pending id",
   );
   assert.match(
     openSource,

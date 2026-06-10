@@ -214,9 +214,17 @@ test("session list clicks record browse scope before route navigation", () => {
     );
     assert.match(
       openSessionSource,
-      /props\.setSessionBrowseScope\(\{[\s\S]*\}\);\s*void props\.selectSession\((?:nextSessionId|sessionId)\);\s*props\.setView\("session", (?:nextSessionId|sessionId)\);/s,
-      "session browse scope must be recorded before explicit transcript selection and route navigation",
+      /props\.setSessionBrowseScope\(\{[\s\S]*\}\);\s*props\.setView\("session", (?:nextSessionId|sessionId)\);[\s\S]*void props\.selectSession\((?:nextSessionId|sessionId)\);/s,
+      "session browse scope must be recorded before route navigation, and hydration should follow the route update",
     );
+    const routeIndex = openSessionSource.indexOf('props.setView("session", sessionId);');
+    const pendingLoadIndex = openSessionSource.indexOf("props.setPendingSessionLoad({");
+    if (routeIndex !== -1 && pendingLoadIndex !== -1) {
+      assert.ok(
+        routeIndex < pendingLoadIndex,
+        "existing-session navigation should route before showing pending-load state so stale routes cannot keep the old transcript selected",
+      );
+    }
   }
 });
 
@@ -687,13 +695,22 @@ test("first New session creates one private workspace and opens a persisted pend
   );
   assert.match(
     openNewSessionSource,
-    /const scratch = await workspaceStore\.createScratchWorkspace\(\);[\s\S]*const cleanupFreshScratchWorkspace = async \(\) => \{[\s\S]*const cleanupSucceeded = await workspaceStore\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*if \(!cleanupSucceeded\) \{[\s\S]*throw new Error\(`Failed to clean up failed scratch workspace \$\{scratch\.id\}\.`\);[\s\S]*\}[\s\S]*\};[\s\S]*const emptyPendingDraft = createEmptyComposerDraft\(\);[\s\S]*const now = Date\.now\(\);[\s\S]*try \{[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*return;[\s\S]*\}[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*kind: "new-private"[\s\S]*workspaceId: scratch\.id[\s\S]*privateWorkspaceId: scratch\.id[\s\S]*createdAt: now[\s\S]*updatedAt: now[\s\S]*composer: emptyPendingDraft[\s\S]*\}\);[\s\S]*const pendingDraftKey = pendingDraftKeyForSummary\(pendingDraft\);[\s\S]*setActivePendingDraftKey\(pendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\([\s\S]*?\{ storageKey: pendingDraftKey \}[\s\S]*?emptyPendingDraft[\s\S]*?\)\);[\s\S]*setView\("session"\);[\s\S]*return;[\s\S]*\} catch \(error\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*throw error;[\s\S]*\}/s,
+    /const scratch = await workspaceStore\.createScratchWorkspace\(\);[\s\S]*const reservedPendingDraft: PendingSessionDraftSummary = \{[\s\S]*kind: "new-private"[\s\S]*workspaceId: scratch\.id[\s\S]*privateWorkspaceId: scratch\.id[\s\S]*\};[\s\S]*const pendingDraftKey = pendingDraftKeyForSummary\(reservedPendingDraft\);[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*kind: "new-private"[\s\S]*workspaceId: scratch\.id[\s\S]*privateWorkspaceId: scratch\.id[\s\S]*createdAt: now[\s\S]*updatedAt: now[\s\S]*composer: emptyPendingDraft[\s\S]*\}\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*return;[\s\S]*\}[\s\S]*setView\("session"\);[\s\S]*return;/s,
     "the first New session should create one private workspace, persist one pending draft, and open the draft route",
   );
   assert.doesNotMatch(
     openNewSessionSource,
-    /const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);/s,
-    "the fresh private pending draft must not be persisted before scratch workspace activation succeeds",
+    /if \(!activatedScratchWorkspace\) \{[\s\S]*cleanupFreshScratchWorkspace\(\);[\s\S]*return;/s,
+    "a fresh private pending draft must stay durable when workspace activation is superseded",
+  );
+});
+
+test("fresh New session reserves its pending draft before scratch workspace activation", () => {
+  assert.notEqual(openNewSessionSource, "", "New session flow should exist in app.tsx");
+  assert.match(
+    openNewSessionSource,
+    /const reservedPendingDraft: PendingSessionDraftSummary = \{[\s\S]*id: `pending-new-private-\$\{scratch\.id\}`,[\s\S]*kind: "new-private"[\s\S]*workspaceId: scratch\.id[\s\S]*privateWorkspaceId: scratch\.id[\s\S]*composer: emptyPendingDraft[\s\S]*\};[\s\S]*const pendingDraftKey = pendingDraftKeyForSummary\(reservedPendingDraft\);[\s\S]*setActivePendingDraftKey\(pendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(reservedPendingDraft\);[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);/s,
+    "a new chat should reserve its draft key before async activation so an older send cannot clear it",
   );
 });
 
@@ -739,8 +756,31 @@ test("New session leaves the stale real-session route before async pending works
 test("opening a real session clears the active pending draft before routing", () => {
   assert.match(
     appSource,
-    /const setView = \(next: View, sessionId\?: string\) => \{[\s\S]*if \(next === "session"\) \{[\s\S]*if \(sessionId\) \{[\s\S]*const trimmedSessionId = sessionId\.trim\(\);[\s\S]*if \(!isPendingSessionInstanceId\(sessionId\)\) \{[\s\S]*clearActivePendingDraftState\(\);[\s\S]*setSelectedSessionId\(trimmedSessionId\);[\s\S]*\}[\s\S]*goToSession\(trimmedSessionId\);[\s\S]*return;[\s\S]*\}/s,
+    /const setView = \(next: View, sessionId\?: string\) => \{[\s\S]*if \(next === "session"\) \{[\s\S]*if \(sessionId\) \{[\s\S]*const trimmedSessionId = sessionId\.trim\(\);[\s\S]*if \(isPendingSessionInstanceId\(sessionId\)\) \{[\s\S]*setSelectedSessionId\(trimmedSessionId\);[\s\S]*\} else \{[\s\S]*clearActivePendingDraftState\(\);[\s\S]*setSelectedSessionId\(trimmedSessionId\);[\s\S]*clearStalePendingSessionLoadForRouteSession\(trimmedSessionId\);[\s\S]*\}[\s\S]*goToSession\(trimmedSessionId\);[\s\S]*return;[\s\S]*\}/s,
     "real-session sidebar navigation should clear pending draft state and immediately select the real session before rendering the transcript",
+  );
+});
+
+test("opening a different real session keeps cached transcripts while switching visible selection", () => {
+  assert.match(
+    appSource,
+    /const setView = \(next: View, sessionId\?: string\) => \{[\s\S]*if \(next === "session"\) \{[\s\S]*if \(sessionId\) \{[\s\S]*const trimmedSessionId = sessionId\.trim\(\);[\s\S]*if \(isPendingSessionInstanceId\(sessionId\)\) \{[\s\S]*setSelectedSessionId\(trimmedSessionId\);[\s\S]*\} else \{[\s\S]*clearActivePendingDraftState\(\);[\s\S]*setSelectedSessionId\(trimmedSessionId\);[\s\S]*clearStalePendingSessionLoadForRouteSession\(trimmedSessionId\);[\s\S]*\}[\s\S]*goToSession\(trimmedSessionId\);[\s\S]*return;[\s\S]*\}/s,
+    "real-session navigation should switch the visible selected id before the new transcript hydrates",
+  );
+  assert.doesNotMatch(
+    appSource,
+    /const previousSelectedSessionId = selectedSessionId\(\);[\s\S]*if \(previousSelectedSessionId && previousSelectedSessionId !== trimmedSessionId\) \{\s*setMessages\(\[\]\);\s*setTodos\(\[\]\);\s*\}[\s\S]*clearActivePendingDraftState\(\);[\s\S]*setSelectedSessionId\(trimmedSessionId\);/s,
+    "switching real sessions must not delete the cached transcript for the session being left",
+  );
+  assert.match(
+    appSource,
+    /if \(selectedSessionId\(\) !== id\) \{\s*void selectSession\(id\);[\s\S]*\}/s,
+    "route-driven session selection should let selectSession switch ids without clearing another session's cached transcript",
+  );
+  assert.doesNotMatch(
+    appSource,
+    /if \(selectedSessionId\(\) !== id\) \{\s*const previousSelectedSessionId = selectedSessionId\(\);[\s\S]*if \(previousSelectedSessionId && previousSelectedSessionId !== id\) \{\s*setMessages\(\[\]\);\s*setTodos\(\[\]\);\s*\}[\s\S]*void selectSession\(id\);[\s\S]*\}/s,
+    "route-driven session selection must not clear the cached transcript for the previous real session",
   );
 });
 
@@ -775,11 +815,16 @@ test("settled session routes clear stale pending-load state from another session
   );
 });
 
-test("opening the pending session shell clears any selected real transcript before routing", () => {
+test("opening the pending session shell clears selection without deleting cached transcripts", () => {
   assert.match(
     appSource,
-    /if \(next === "session"\) \{[\s\S]*if \(sessionId\) \{[\s\S]*return;[\s\S]*\}\s*clearStalePendingSessionLoadForRouteSession\(null\);\s*if \(selectedSessionId\(\)\) \{\s*setMessages\(\[\]\);\s*setTodos\(\[\]\);\s*setSelectedSessionId\(null\);\s*\}\s*navigate\("\/session"\);/s,
-    "bare session navigation should synchronously clear the previous real transcript before showing a pending draft",
+    /if \(next === "session"\) \{[\s\S]*if \(sessionId\) \{[\s\S]*return;[\s\S]*\}\s*clearStalePendingSessionLoadForRouteSession\(null\);\s*if \(selectedSessionId\(\)\) \{\s*setSelectedSessionId\(null\);\s*\}\s*goToSession\(""\);/s,
+    "bare session navigation should synchronously clear the selected id before showing a pending draft",
+  );
+  assert.doesNotMatch(
+    appSource,
+    /if \(next === "session"\) \{[\s\S]*if \(sessionId\) \{[\s\S]*return;[\s\S]*\}\s*clearStalePendingSessionLoadForRouteSession\(null\);\s*if \(selectedSessionId\(\)\) \{\s*setMessages\(\[\]\);\s*setTodos\(\[\]\);/s,
+    "bare session navigation must not delete the cached transcript for the previously selected real session",
   );
 });
 
@@ -792,17 +837,17 @@ test("New session skips stale existing private pending draft when workspace acti
   );
   assert.match(
     openNewSessionSource,
-    /const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*return;[\s\S]*\}[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*const pendingDraftKey = pendingDraftKeyForSummary\(pendingDraft\);[\s\S]*setActivePendingDraftKey\(pendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*setView\("session"\);/s,
-    "creating a fresh private pending draft must stop before route activation when workspace activation fails",
+    /const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*return;[\s\S]*\}[\s\S]*setView\("session"\);/s,
+    "creating a fresh private pending draft must keep durable draft state when workspace activation is superseded",
   );
 });
 
-test("fresh New session cleans up the scratch workspace when activation or persistence throws", () => {
+test("fresh New session cleans up the scratch workspace when draft persistence throws", () => {
   assert.notEqual(openNewSessionSource, "", "New session flow should exist in app.tsx");
   assert.match(
     openNewSessionSource,
-    /const cleanupFreshScratchWorkspace = async \(\) => \{[\s\S]*const cleanupSucceeded = await workspaceStore\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*if \(!cleanupSucceeded\) \{[\s\S]*throw new Error\(`Failed to clean up failed scratch workspace \$\{scratch\.id\}\.`\);[\s\S]*\}[\s\S]*\};[\s\S]*try \{[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*\} catch \(error\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*throw error;[\s\S]*\}/s,
-    "fresh New session must roll back the scratch workspace when activation or draft persistence throws",
+    /const cleanupFreshScratchWorkspace = async \(\) => \{[\s\S]*const cleanupSucceeded = await workspaceStore\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*if \(!cleanupSucceeded\) \{[\s\S]*throw new Error\(`Failed to clean up failed scratch workspace \$\{scratch\.id\}\.`\);[\s\S]*\}[\s\S]*\};[\s\S]*try \{[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*\} catch \(error\) \{[\s\S]*await clearReservedPendingDraftState\(\);[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*throw error;[\s\S]*\}/s,
+    "fresh New session must roll back the scratch workspace when draft persistence throws before the draft is durable",
   );
 });
 
@@ -853,6 +898,15 @@ test("directory pending draft leaves the stale real-session route before async d
     openDirectoryPendingDraftSource,
     /clearSelectedSessionForPendingDraft\(\);\s*setView\("session"\);\s*const pendingDraftKey = resolvePendingDraftKey\(\{/s,
     "project and directory pending drafts must enter the pending shell before async draft lookup can re-select the previous real session",
+  );
+});
+
+test("directory pending draft reserves the active key before async draft lookup", () => {
+  assert.notEqual(openDirectoryPendingDraftSource, "", "Directory pending draft flow should exist in app.tsx");
+  assert.match(
+    openDirectoryPendingDraftSource,
+    /const pendingDraftKey = resolvePendingDraftKey\([\s\S]*\);\s*setActivePendingDraftKey\(pendingDraftKey\);\s*setActivePendingDraftMeta\(null\);\s*const pendingDrafts = \(await pendingSessionDraftsList\(\)\)/s,
+    "project and directory pending drafts should reserve their key before async draft lookup or persistence",
   );
 });
 

@@ -163,7 +163,7 @@ test("accepted first pending submit captures and remaps the pending queue key", 
 
   assert.match(
     source,
-    /createEffect\(\s*on\(\s*\(\) => props\.selectedSessionId,[\s\S]*const pendingBaseKey = pendingSessionQueueKey\(\);[\s\S]*const pendingKey = !previousSessionId\s*\? pendingQueueKeyAwaitingSessionIdByBaseKey\(\)\[pendingBaseKey\] \?\? null\s*: null;[\s\S]*if \(pendingKey\) \{[\s\S]*remapPendingQueueToSession\(pendingKey, sessionId\);[\s\S]*clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingBaseKey, pendingKey\);[\s\S]*\}/s,
+    /createEffect\(\s*on\(\s*\(\) => props\.selectedSessionId,[\s\S]*const pendingBaseKey = pendingSessionQueueKey\(\);[\s\S]*const pendingKey =\s*!previousSessionId\s*\? pendingQueueKeyAwaitingSessionIdByBaseKey\(\)\[pendingBaseKey\] \?\? null\s*: null;[\s\S]*if \(pendingKey && !isPendingSessionInstanceId\(sessionId\)\) \{[\s\S]*remapPendingQueueToSession\(pendingKey, sessionId\);[\s\S]*clearPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingBaseKey, pendingKey\);[\s\S]*\}/s,
     "session view should also remap pending queues when the selected session id arrives in a later reactive update",
   );
 

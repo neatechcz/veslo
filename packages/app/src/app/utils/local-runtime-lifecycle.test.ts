@@ -49,7 +49,12 @@ function createHarness(options?: {
     baseUrl: string;
     directory: string;
     auth?: OpencodeAuth;
-    context?: { reason?: string };
+    context?: {
+      workspaceId?: string;
+      workspaceType?: "local" | "remote";
+      targetRoot?: string;
+      reason?: string;
+    };
   }> = [];
 
   const runtime = options?.runtime ?? "direct";
@@ -182,7 +187,12 @@ test("startHost can reconnect quietly for browsing-mode cold starts", async () =
       baseUrl: "http://127.0.0.1:4096",
       directory: "/tmp/demo",
       auth: { username: "demo-user", password: "demo-pass" },
-      context: { reason: "browse-cold-start" },
+      context: {
+        workspaceId: "ws-demo",
+        workspaceType: "local",
+        targetRoot: "/tmp/demo",
+        reason: "browse-cold-start",
+      },
     },
   ]);
 });
@@ -255,7 +265,12 @@ test("restartWorkspaceRuntime can reconnect quietly after orchestrator workspace
       baseUrl: "http://127.0.0.1:6100",
       directory: "/tmp/orchestrated",
       auth: { username: "demo-user", password: "demo-pass" },
-      context: { reason: "ensure-engine" },
+      context: {
+        workspaceId: "ws-orch",
+        workspaceType: "local",
+        targetRoot: "/tmp/orchestrated",
+        reason: "ensure-engine",
+      },
     },
   ]);
 });

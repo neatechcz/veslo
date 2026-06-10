@@ -59,8 +59,13 @@ test("sendPrompt registers pending sidebar metadata before creating the first re
   );
   assert.match(
     sendPromptSource,
-    /if \(pendingSidebarSession\) \{\s*registerPendingSidebarSession\(pendingSidebarSession\);\s*\}[\s\S]*const createdSessionId = await createSessionAndOpen\(initialSessionTitle, \{[\s\S]*pendingSession: pendingSidebarSession,/,
-    "sendPrompt should register the placeholder before first-session creation and pass the same metadata into createSessionAndOpen",
+    /const pendingSidebarSession = options\.pendingSession \?\? null;\s*if \(!sessionID && pendingSidebarSession\) \{\s*registerPendingSidebarSession\(pendingSidebarSession\);\s*\}[\s\S]*const createdSessionId = await createSessionAndOpen\(initialSessionTitle, \{[\s\S]*pendingSession: pendingSidebarSession,/,
+    "sendPrompt should register the placeholder before blocking preflight work and pass the same metadata into createSessionAndOpen",
+  );
+  assert.ok(
+    sendPromptSource.indexOf("registerPendingSidebarSession(pendingSidebarSession)") <
+      sendPromptSource.indexOf("resolvedDraft = await maybeResolveSkillCommand(resolvedDraft);"),
+    "pending first-send rows should be registered before skill-command resolution or runtime preflight can delay session creation",
   );
 });
 
@@ -79,6 +84,30 @@ test("app registers and materializes sidebar pending placeholders by pending ins
     source,
     /const materializePendingSidebarRows = \([\s\S]*pendingSession: PendingSidebarSessionMetadata \| null \| undefined,[\s\S]*realSession: SidebarSessionItem,[\s\S]*\): SidebarSessionItem\[\] => \{[\s\S]*const pendingId = pendingSession\?\.id\?\.trim\(\) \?\? "";[\s\S]*if \(pendingId && rowPendingId === pendingId\) \{[\s\S]*return realSession;[\s\S]*\}[\s\S]*if \(row\.id\.trim\(\) === realSessionId\) \{[\s\S]*return realSession;[\s\S]*\}[\s\S]*return \[realSession, \.\.\.deduped\];[\s\S]*\};/,
     "materialization should dedupe by both pending instance id and real session id",
+  );
+});
+
+test("materialized pending sidebar rows remain visible until passive history lists the real session", () => {
+  const mergeStart = source.indexOf("  const mergeSidebarRowsPreservingPendingPlaceholders = (");
+  const mergeEnd = source.indexOf("  const materializePendingSidebarRows = (", mergeStart);
+  assert.ok(mergeStart >= 0 && mergeEnd > mergeStart, "sidebar merge source should be present");
+  const mergeSource = source.slice(mergeStart, mergeEnd);
+
+  assert.match(
+    mergeSource,
+    /const retainedPendingRows = existingRows\.filter\(\(row\) => \{[\s\S]*if \(!row\.pending && !row\.pendingSessionInstanceId\) return false;[\s\S]*if \(id && incomingIds\.has\(id\)\) return false;[\s\S]*if \(pendingId && incomingPendingIds\.has\(pendingId\)\) return false;[\s\S]*return true;[\s\S]*\}\);/s,
+    "sidebar refreshes should preserve both pending placeholders and just-materialized pending rows until the read model includes them",
+  );
+
+  const createStart = source.indexOf("async function createSessionAndOpen(");
+  const createEnd = source.indexOf("const openNewSessionWithDirectory = async () =>", createStart);
+  assert.ok(createStart >= 0 && createEnd > createStart, "createSessionAndOpen source should be present");
+  const createSource = source.slice(createStart, createEnd);
+
+  assert.match(
+    createSource,
+    /const pendingInstanceId = pendingSidebarSession\?\.id\?\.trim\(\) \|\| null;[\s\S]*const newItem: SidebarSessionItem = \{[\s\S]*pendingSessionInstanceId: pendingInstanceId,[\s\S]*\};/s,
+    "materialized rows should keep the originating pending instance id so async sidebar refreshes do not erase them",
   );
 });
 
@@ -119,8 +148,13 @@ test("pending-session routes select local pending state without transcript APIs"
 
   assert.match(
     routeSource,
-    /if \(isPendingSessionInstanceId\(id\)\) \{\s*if \(selectedSessionId\(\) !== id\) \{\s*if \(selectedSessionId\(\)\) \{\s*setMessages\(\[\]\);\s*setTodos\(\[\]\);\s*\}\s*setSelectedSessionId\(id\);\s*\}[\s\S]*setPendingSessionLoad\(null\);[\s\S]*return;\s*\}/,
+    /if \(isPendingSessionInstanceId\(id\)\) \{\s*if \(selectedSessionId\(\) !== id\) \{\s*setSelectedSessionId\(id\);\s*\}[\s\S]*setPendingSessionLoad\(null\);[\s\S]*return;\s*\}/,
     "pending-session routes should select local pending state and skip selectSession",
+  );
+  assert.doesNotMatch(
+    routeSource,
+    /if \(isPendingSessionInstanceId\(id\)\) \{[\s\S]*setMessages\(\[\]\);\s*setTodos\(\[\]\);[\s\S]*setSelectedSessionId\(id\);/s,
+    "pending-session routes should not delete cached real-session transcripts",
   );
   const pendingRouteIndex = routeSource.indexOf("if (isPendingSessionInstanceId(id)) {");
   const realSelectIndex = routeSource.indexOf("void selectSession(id);");
@@ -138,6 +172,14 @@ test("pending-session routes select local pending state without transcript APIs"
     resumeSource,
     /if \(isPendingSessionInstanceId\(id\)\) \{\s*lastRouteClientResumeKey = connectionKey;\s*return;\s*\}/,
     "route resume effect should not load pending-session ids through selectSession",
+  );
+});
+
+test("setView selects pending session ids before routing", () => {
+  assert.match(
+    source,
+    /const setView = \(next: View, sessionId\?: string\) => \{[\s\S]*if \(next === "session"\) \{[\s\S]*if \(sessionId\) \{[\s\S]*const trimmedSessionId = sessionId\.trim\(\);[\s\S]*if \(isPendingSessionInstanceId\(sessionId\)\) \{\s*setSelectedSessionId\(trimmedSessionId\);\s*\} else \{[\s\S]*clearActivePendingDraftState\(\);[\s\S]*setSelectedSessionId\(trimmedSessionId\);[\s\S]*\}[\s\S]*goToSession\(trimmedSessionId\);[\s\S]*return;[\s\S]*\}/s,
+    "pending sidebar rows should become the selected local session before hash routing settles",
   );
 });
 
@@ -187,8 +229,8 @@ test("createConversationFromVesloWriteApi uses captured workspace route instead 
   );
   assert.match(
     createSource,
-    /const routeEntry = workspaceRouting\.entry\(workspaceId\);[\s\S]*await syncConversationWorkspaceRuntimeRoute\(\s*serverClient,\s*serverWorkspaceId,\s*workspaceRoot,\s*routeEntry\?\.baseUrl,\s*\);/s,
-    "conversation creation should sync the Veslo server route from the captured workspace routing entry",
+    /const routeEntry = workspaceRouting\.entry\(workspaceId\);[\s\S]*const workspaceRuntimeBaseUrl = routeEntry\?\.baseUrl\?\.trim\(\) \|\| activeWorkspaceRuntimeBaseUrl;[\s\S]*await syncConversationWorkspaceRuntimeRoute\(\s*client,\s*serverWorkspaceId,\s*workspaceRoot,\s*workspaceRuntimeBaseUrl,\s*\);/s,
+    "conversation creation should sync the Veslo server route from the captured workspace routing entry or checked active fallback",
   );
 });
 
@@ -208,14 +250,67 @@ test("createConversationFromVesloWriteApi synchronizes runtime route before crea
   assert.ok(createStart >= 0 && createEnd > createStart, "createConversationFromVesloWriteApi source should be present");
   const createSource = source.slice(createStart, createEnd);
   const syncIndex = createSource.indexOf("await syncConversationWorkspaceRuntimeRoute(");
-  const createIndex = createSource.indexOf("serverClient.createConversation(");
+  const createIndex = createSource.indexOf("client.createConversation(");
   assert.ok(
     syncIndex >= 0 && createIndex > syncIndex,
     "the workspace route must be synchronized before the server tries to proxy OpenCode session creation",
   );
   assert.match(
     createSource,
-    /serverClient\.createConversation\(serverWorkspaceId,\s*\{\s*directory: workspaceRoot \|\| undefined,\s*title,\s*\}\);/s,
+    /client\.createConversation\(serverWorkspaceId,\s*\{\s*directory: workspaceRoot \|\| undefined,\s*title,\s*\}\);/s,
     "conversation creation should carry the active workspace directory explicitly",
+  );
+});
+
+test("createConversationFromVesloWriteApi does not route a captured workspace through another active workspace url", () => {
+  const helperStart = source.indexOf("  const syncConversationWorkspaceRuntimeRoute = async (");
+  const helperEnd = source.indexOf("  const isLocalVesloServerAuthError = (error: unknown) =>", helperStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart, "syncConversationWorkspaceRuntimeRoute helper should be present");
+  const helperSource = source.slice(helperStart, helperEnd);
+
+  assert.doesNotMatch(
+    helperSource,
+    /baseUrlOverride\?\.trim\(\) \|\| baseUrl\(\)\.trim\(\)/,
+    "captured conversation creation must not silently fall back to whichever workspace is globally active",
+  );
+
+  const createStart = source.indexOf("  const createConversationFromVesloWriteApi = async (");
+  const createEnd = source.indexOf("  const runConversationFromVesloWriteApi = async (", createStart);
+  assert.ok(createStart >= 0 && createEnd > createStart, "createConversationFromVesloWriteApi source should be present");
+  const createSource = source.slice(createStart, createEnd);
+
+  assert.match(
+    createSource,
+    /const activeWorkspaceRuntimeBaseUrl =\s*workspaceId === workspaceStore\.activeWorkspaceId\(\)\.trim\(\)[\s\S]*\? baseUrl\(\)\.trim\(\)[\s\S]*: "";[\s\S]*const workspaceRuntimeBaseUrl = routeEntry\?\.baseUrl\?\.trim\(\) \|\| activeWorkspaceRuntimeBaseUrl;/s,
+    "conversation creation should use the captured route entry or a checked active-workspace fallback only",
+  );
+  assert.match(
+    createSource,
+    /await syncConversationWorkspaceRuntimeRoute\(\s*client,\s*serverWorkspaceId,\s*workspaceRoot,\s*workspaceRuntimeBaseUrl,\s*\);/s,
+    "the checked runtime url should be the only value passed into server route sync",
+  );
+});
+
+test("createConversationFromVesloWriteApi refreshes local server auth and retries stale host-token writes", () => {
+  const refreshStart = source.indexOf("  const refreshLocalVesloServerAuthForWrite = async () => {");
+  const refreshEnd = source.indexOf("  const createConversationFromVesloWriteApi = async (", refreshStart);
+  assert.ok(refreshStart >= 0 && refreshEnd > refreshStart, "local server auth refresh helper should be present before conversation creation");
+  const refreshSource = source.slice(refreshStart, refreshEnd);
+
+  assert.match(
+    refreshSource,
+    /const info = await vesloServerInfo\(\);[\s\S]*setVesloServerHostInfo\(info\);[\s\S]*const result = await checkVesloServer\([\s\S]*running\.baseUrl\.trim\(\),[\s\S]*running\.clientToken\?\.trim\(\) \|\| undefined,[\s\S]*running\.hostToken\?\.trim\(\) \|\| undefined,[\s\S]*\);/s,
+    "local auth refresh should read the live Tauri server info and validate the matching client/host tokens",
+  );
+
+  const createStart = source.indexOf("  const createConversationFromVesloWriteApi = async (");
+  const createEnd = source.indexOf("  const runConversationFromVesloWriteApi = async (", createStart);
+  assert.ok(createStart >= 0 && createEnd > createStart, "createConversationFromVesloWriteApi source should be present");
+  const createSource = source.slice(createStart, createEnd);
+
+  assert.match(
+    createSource,
+    /try \{\s*return await createConversationWithClient\(serverClient\);[\s\S]*\} catch \(error\) \{[\s\S]*if \(!isLocalVesloServerAuthError\(error\)\) throw error;[\s\S]*const refreshed = await refreshLocalVesloServerAuthForWrite\(\);[\s\S]*if \(!refreshed\) throw error;[\s\S]*const retryClient = vesloServerClient\(\);[\s\S]*if \(!retryClient\) throw error;[\s\S]*return await createConversationWithClient\(retryClient\);[\s\S]*\}/s,
+    "stale local host-token writes should refresh local auth and retry the captured conversation create once",
   );
 });

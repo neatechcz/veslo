@@ -276,6 +276,9 @@ if (!window.__vesloPendingSessionInstanceIsolationStarted) {
       .filter(isVisibleElement);
     const sidebarRowsByText = (text) => sidebarRows().filter((row) => normalize(row.textContent).includes(text));
     const rowSummary = () => sidebarRows().map((row) => ({
+      id: row.getAttribute("data-session-sidebar-row-id") ?? null,
+      pendingId: row.getAttribute("data-session-sidebar-row-pending-id") ?? null,
+      pending: row.getAttribute("data-session-sidebar-row-pending") ?? null,
       text: normalize(row.textContent),
       chat: Boolean(row.closest('[data-sidebar-chat-section="true"]')),
       projectKey: row.closest("[data-project-key]")?.getAttribute("data-project-key") ?? null,
@@ -439,17 +442,10 @@ if (!window.__vesloPendingSessionInstanceIsolationStarted) {
     const findProjectCreateButton = (projectRoot) => {
       const buttons = Array.from(projectRoot.querySelectorAll("button")).filter(isVisibleElement);
       return buttons.find((button) => buttonMatchesLabel(button, [
-        "Create session in project",
-        "New session",
-        "Nova session",
-        "Nová session",
-      ])) ?? buttons.find((button) => {
-        const label = normalize(buttonValues(button).join(" ")).toLowerCase();
-        return label.includes("session") && !label.includes("workspace options") && !label.includes("moznosti");
-      }) ?? buttons.find((button) => {
-        const label = normalize(buttonValues(button).join(" ")).toLowerCase();
-        return !label.includes("workspace") && !label.includes("options") && !label.includes("moznosti") && !label.includes("open project");
-      });
+        "Create session in this project",
+        "Vytvořit relaci v tomto projektu",
+        "在此项目中创建会话",
+      ]));
     };
     const openNewProjectSession = async () => {
       setProgress("opening-new-project-session");
@@ -464,11 +460,13 @@ if (!window.__vesloPendingSessionInstanceIsolationStarted) {
         message: `Project group did not appear. Rows=${JSON.stringify(rowSummary())}`,
       });
       const button = findProjectCreateButton(projectRoot);
-      assert(button, `Project create-session button was not found. Project=${normalize(projectRoot.textContent)}`);
+      assert(button, `Project create-session button was not found. Project=${normalize(projectRoot.textContent)} Buttons=${JSON.stringify(Array.from(projectRoot.querySelectorAll("button")).filter(isVisibleElement).map(buttonValues))}`);
       dispatchClickSequence(button);
       await waitUntil(() => {
         const activePendingDraftKey = window.localStorage.getItem("veslo.active-pending-draft.v1") || "";
-        if (!activePendingDraftKey.includes("directory:") || activePendingDraftKey === previousActivePendingDraftKey) return false;
+        const alreadyOnDirectoryDraft = previousActivePendingDraftKey.includes("__pending-draft__:directory:");
+        if (!activePendingDraftKey.includes("directory:")) return false;
+        if (!alreadyOnDirectoryDraft && activePendingDraftKey === previousActivePendingDraftKey) return false;
         const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
         return candidate instanceof HTMLElement && isVisibleElement(candidate) ? candidate : false;
       }, {
@@ -583,6 +581,7 @@ if (!window.__vesloPendingSessionInstanceIsolationStarted) {
       const sameProjectARow = await waitForProjectSidebarRow(messages.sameProjectA);
       const sameProjectAKey = sameProjectARow.closest("[data-project-key]")?.getAttribute("data-project-key");
       assert(sameProjectAKey === projectKey, `same project A landed in ${sameProjectAKey}, expected ${projectKey}`);
+      await waitForActiveRunIndicator(messages.sameProjectA);
 
       await openNewProjectSession();
       await sendComposerText(messages.sameProjectB);
@@ -598,6 +597,16 @@ if (!window.__vesloPendingSessionInstanceIsolationStarted) {
       assertTextVisible(messages.sameProjectB, "same project B");
       assertTextNotVisible(messages.sameProjectA, "same project A");
       assertTextNotVisible(messages.chatProject, "project session");
+      await clickSidebarRowByText(messages.sameProjectA, { section: "project", projectKey });
+      assertTextVisible(messages.sameProjectA, "same project A");
+      assertTextNotVisible(messages.sameProjectB, "same project B");
+      assertTextNotVisible(messages.chatProject, "project session");
+      await waitForMaterializedSettle(messages.sameProjectA);
+      await clickSidebarRowByText(messages.sameProjectB, { section: "project", projectKey });
+      assertTextVisible(messages.sameProjectB, "same project B");
+      assertTextNotVisible(messages.sameProjectA, "same project A");
+      assertTextNotVisible(messages.chatProject, "project session");
+      await waitForMaterializedSettle(messages.sameProjectB);
 
       await waitForProjectSidebarRow(messages.chatProject);
       await waitForProjectSidebarRow(messages.sameProjectA);

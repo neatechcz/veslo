@@ -511,6 +511,34 @@ export default function App() {
     return routerPath;
   });
 
+  const navigateDesktopHashRoute = (path: string, options?: { replace?: boolean }) => {
+    if (!isTauriRuntime() || typeof window === "undefined") return false;
+    const normalized = normalizeRoutePath(path);
+    const oldURL = window.location.href;
+    const nextURL = `${window.location.pathname}${window.location.search}#${normalized}`;
+    setExternalHashRoutePath(normalized);
+
+    if (options?.replace) {
+      window.history.replaceState(window.history.state, "", nextURL);
+      window.dispatchEvent(new HashChangeEvent("hashchange", {
+        oldURL,
+        newURL: window.location.href,
+      }));
+      return true;
+    }
+
+    if (window.location.hash === `#${normalized}`) {
+      window.dispatchEvent(new HashChangeEvent("hashchange", {
+        oldURL,
+        newURL: window.location.href,
+      }));
+      return true;
+    }
+
+    window.location.hash = normalized;
+    return true;
+  };
+
   const [creatingSession, setCreatingSession] = createSignal(false);
   const [sessionViewLockUntil, setSessionViewLockUntil] = createSignal(0);
   const currentView = createMemo<View>(() => {
@@ -560,7 +588,9 @@ export default function App() {
     if (next === "session") {
       if (sessionId) {
         const trimmedSessionId = sessionId.trim();
-        if (!isPendingSessionInstanceId(sessionId)) {
+        if (isPendingSessionInstanceId(sessionId)) {
+          setSelectedSessionId(trimmedSessionId);
+        } else {
           clearActivePendingDraftState();
           setSelectedSessionId(trimmedSessionId);
           clearStalePendingSessionLoadForRouteSession(trimmedSessionId);
@@ -570,11 +600,9 @@ export default function App() {
       }
       clearStalePendingSessionLoadForRouteSession(null);
       if (selectedSessionId()) {
-        setMessages([]);
-        setTodos([]);
         setSelectedSessionId(null);
       }
-      navigate("/session");
+      goToSession("");
       return;
     }
     goToDashboard(tab());
@@ -583,9 +611,11 @@ export default function App() {
   const goToSession = (sessionId: string, options?: { replace?: boolean }) => {
     const trimmed = sessionId.trim();
     if (!trimmed) {
+      if (navigateDesktopHashRoute("/session", options)) return;
       navigate("/session", options);
       return;
     }
+    if (navigateDesktopHashRoute(`/session/${trimmed}`, options)) return;
     navigate(`/session/${trimmed}`, options);
   };
 
@@ -1602,10 +1632,6 @@ export default function App() {
     writeActivePendingDraftKey(null);
   };
   const clearSelectedSessionForPendingDraft = () => {
-    if (selectedSessionId()) {
-      setMessages([]);
-      setTodos([]);
-    }
     setSelectedSessionId(null);
   };
   const readSessionDirectoryOverrides = () => {
@@ -1915,7 +1941,7 @@ export default function App() {
     baseUrlOverride?: string | null,
   ) => {
     const normalizedWorkspaceId = serverWorkspaceId.trim();
-    const runtimeBaseUrl = baseUrlOverride?.trim() || baseUrl().trim();
+    const runtimeBaseUrl = baseUrlOverride?.trim() ?? "";
     const runtimeDirectory = directory.trim();
     if (!normalizedWorkspaceId || !runtimeBaseUrl || !runtimeDirectory) return;
 
@@ -1935,6 +1961,37 @@ export default function App() {
     });
   };
 
+  const isLocalVesloServerAuthError = (error: unknown) =>
+    isTauriRuntime() &&
+    startupPreference() !== "server" &&
+    error instanceof VesloServerError &&
+    (error.status === 401 || error.status === 403);
+
+  const refreshLocalVesloServerAuthForWrite = async () => {
+    if (!isTauriRuntime() || startupPreference() === "server") return false;
+
+    try {
+      const info = await vesloServerInfo();
+      setVesloServerHostInfo(info);
+      const running = resolveRunningVesloServerHostInfo(info);
+      if (running?.baseUrl?.trim()) {
+        const result = await checkVesloServer(
+          running.baseUrl.trim(),
+          running.clientToken?.trim() || undefined,
+          running.hostToken?.trim() || undefined,
+        );
+        setVesloServerStatus(result.status);
+        setVesloServerCapabilities(result.capabilities);
+        setVesloServerCheckedAt(Date.now());
+        if (result.status !== "disconnected") return true;
+      }
+    } catch {
+      setVesloServerHostInfo(null);
+    }
+
+    return await ensureLocalVesloServerRunning({ ignoreStartupPreference: true });
+  };
+
   const createConversationFromVesloWriteApi = async (
     workspaceId: string,
     title?: string,
@@ -1945,33 +2002,53 @@ export default function App() {
     const serverClient = await resolvePassiveConversationReadClient();
     if (!serverClient) return null;
     const workspaceRoot = options.directory?.trim() || workspaceStore.activeWorkspaceRoot().trim();
-    const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(
-      serverClient,
-      workspaceId,
-      workspaceRoot || undefined,
-    );
-    if (!serverWorkspaceId) return null;
-    const routeEntry = workspaceRouting.entry(workspaceId);
-    await syncConversationWorkspaceRuntimeRoute(
-      serverClient,
-      serverWorkspaceId,
-      workspaceRoot,
-      routeEntry?.baseUrl,
-    );
-    const result = await serverClient.createConversation(serverWorkspaceId, {
-      directory: workspaceRoot || undefined,
-      title,
-    });
-    const directory = result.directory?.trim() || workspaceRoot;
-    rememberConversationScope({
-      sessionId: result.id,
-      workspaceId,
-      workspaceRoot: resolveWorkspaceRootForConversationScope(workspaceId, directory),
-      directory,
-      conversationId: result.conversationId,
-      opencodeSessionId: result.opencodeSessionId,
-    });
-    return result;
+
+    const createConversationWithClient = async (client: NonNullable<ReturnType<typeof vesloServerClient>>) => {
+      const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(
+        client,
+        workspaceId,
+        workspaceRoot || undefined,
+      );
+      if (!serverWorkspaceId) return null;
+      const routeEntry = workspaceRouting.entry(workspaceId);
+      const activeWorkspaceRuntimeBaseUrl =
+        workspaceId === workspaceStore.activeWorkspaceId().trim() &&
+          normalizeDirectoryPath(workspaceStore.activeWorkspaceRoot().trim()) === normalizeDirectoryPath(workspaceRoot)
+          ? baseUrl().trim()
+          : "";
+      const workspaceRuntimeBaseUrl = routeEntry?.baseUrl?.trim() || activeWorkspaceRuntimeBaseUrl;
+      await syncConversationWorkspaceRuntimeRoute(
+        client,
+        serverWorkspaceId,
+        workspaceRoot,
+        workspaceRuntimeBaseUrl,
+      );
+      const result = await client.createConversation(serverWorkspaceId, {
+        directory: workspaceRoot || undefined,
+        title,
+      });
+      const directory = result.directory?.trim() || workspaceRoot;
+      rememberConversationScope({
+        sessionId: result.id,
+        workspaceId,
+        workspaceRoot: resolveWorkspaceRootForConversationScope(workspaceId, directory),
+        directory,
+        conversationId: result.conversationId,
+        opencodeSessionId: result.opencodeSessionId,
+      });
+      return result;
+    };
+
+    try {
+      return await createConversationWithClient(serverClient);
+    } catch (error) {
+      if (!isLocalVesloServerAuthError(error)) throw error;
+      const refreshed = await refreshLocalVesloServerAuthForWrite();
+      if (!refreshed) throw error;
+      const retryClient = vesloServerClient();
+      if (!retryClient) throw error;
+      return await createConversationWithClient(retryClient);
+    }
   };
 
   const runConversationFromVesloWriteApi = async (
@@ -3274,6 +3351,44 @@ export default function App() {
     }
   }
 
+  async function ensurePendingDraftWorkspaceActiveForSend(
+    pendingDraft: { meta: PendingSessionDraftSummary | null } | null,
+  ): Promise<boolean> {
+    const meta = pendingDraft?.meta ?? null;
+    if (!meta) return true;
+
+    const targetWorkspaceId =
+      meta.kind === "new-private"
+        ? (meta.privateWorkspaceId ?? meta.workspaceId).trim()
+        : meta.workspaceId.trim();
+    if (!targetWorkspaceId) return true;
+    if (targetWorkspaceId === workspaceStore.activeWorkspaceId().trim()) return true;
+
+    recordSendTrace("sendPrompt:activate-pending-workspace", {
+      workspaceId: targetWorkspaceId,
+      activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
+      pendingDraftId: meta.id?.trim?.() ?? null,
+      pendingDraftKind: meta.kind,
+    });
+    try {
+      const activated = await workspaceStore.activateWorkspace(targetWorkspaceId);
+      if (!activated) {
+        recordSendTrace("sendPrompt:activate-pending-workspace-blocked", {
+          workspaceId: targetWorkspaceId,
+          pendingDraftId: meta.id?.trim?.() ?? null,
+        });
+      }
+      return Boolean(activated);
+    } catch (error) {
+      recordSendTrace("sendPrompt:activate-pending-workspace-error", {
+        workspaceId: targetWorkspaceId,
+        pendingDraftId: meta.id?.trim?.() ?? null,
+        message: messageFromUnknownError(error),
+      });
+      return false;
+    }
+  }
+
   async function sendPrompt(
     draft?: ComposerDraft,
     options: {
@@ -3309,9 +3424,14 @@ export default function App() {
     }
     let ownsSendPromptBusy = false;
     let releaseSendPromptInFlight: (() => void) | null = null;
+    let releaseSendPromptRuntimeQueue: (() => void) | null = null;
     const releasePromptSendInFlight = () => {
       releaseSendPromptInFlight?.();
       releaseSendPromptInFlight = null;
+    };
+    const releasePromptRuntimeQueue = () => {
+      releaseSendPromptRuntimeQueue?.();
+      releaseSendPromptRuntimeQueue = null;
     };
     let managedAiColdEngineStarted = false;
     const startSendPromptBusy = (label: string) => {
@@ -3323,6 +3443,7 @@ export default function App() {
     };
     const stopSendPromptBusy = () => {
       releasePromptSendInFlight();
+      releasePromptRuntimeQueue();
       if (!ownsSendPromptBusy) return;
       ownsSendPromptBusy = false;
       setBusy(false);
@@ -3354,6 +3475,23 @@ export default function App() {
       return false;
     }
 
+    const pendingSidebarSession = options.pendingSession ?? null;
+    if (!sessionID && pendingSidebarSession) {
+      registerPendingSidebarSession(pendingSidebarSession);
+    }
+
+    if (!sessionID) {
+      recordSendTrace("sendPrompt:first-send-runtime-queue-wait", {
+        pendingDraftId: pendingDraftSendState?.draftId ?? null,
+        pendingDraftKey: pendingDraftSendState?.key ?? null,
+      });
+      releaseSendPromptRuntimeQueue = await beginFirstSendPromptRuntimeQueue();
+      recordSendTrace("sendPrompt:first-send-runtime-queue-acquired", {
+        pendingDraftId: pendingDraftSendState?.draftId ?? null,
+        pendingDraftKey: pendingDraftSendState?.key ?? null,
+      });
+    }
+
     resolvedDraft = await maybeResolveSkillCommand(resolvedDraft);
 
     const initialSessionTitle = resolvedDraft.text.trim();
@@ -3363,7 +3501,20 @@ export default function App() {
       return false;
     }
 
-    const pendingSidebarSession = options.pendingSession ?? null;
+    if (!(await ensurePendingDraftWorkspaceActiveForSend(pendingDraftSendState))) {
+      recordSendTrace("sendPrompt:blocked-pending-workspace");
+      stopSendPromptBusy();
+      return false;
+    }
+
+    const pendingSidebarSessionStillSelected = () => {
+      const pendingId = pendingSidebarSession?.id?.trim() ?? "";
+      return Boolean(pendingId && selectedSessionId() === pendingId);
+    };
+    const pendingDraftSendStateStillActiveForSelection = () => {
+      if (!pendingDraftSendState) return false;
+      return pendingSidebarSessionStillSelected();
+    };
     releaseSendPromptInFlight = beginSendPromptInFlight();
     if (!(await ensureManagedAiAccessReadyForEngineStart())) {
       recordSendTrace("sendPrompt:blocked-managed-ai-access");
@@ -3462,15 +3613,12 @@ export default function App() {
 
     if (!sessionID) {
       recordSendTrace("sendPrompt:create-session-needed");
-      if (pendingSidebarSession) {
-        registerPendingSidebarSession(pendingSidebarSession);
-      }
       const createdSessionId = await createSessionAndOpen(initialSessionTitle, {
         blockAppDuringCreate: blockAppDuringPromptSend,
         managedAiRuntimeAlreadyPrepared: true,
         pendingSession: pendingSidebarSession,
         shouldSelectCreatedSession: pendingDraftSendState
-          ? () => activePendingDraftKey() === pendingDraftSendState.key
+          ? pendingDraftSendStateStillActiveForSelection
           : undefined,
       });
       const materializedSessionId = createdSessionId?.trim();
@@ -4694,6 +4842,24 @@ export default function App() {
     };
   };
 
+  let firstSendPromptRuntimeQueue: Promise<void> = Promise.resolve();
+  const beginFirstSendPromptRuntimeQueue = async () => {
+    let releaseCurrent!: () => void;
+    const previous = firstSendPromptRuntimeQueue;
+    const current = new Promise<void>((resolve) => {
+      releaseCurrent = resolve;
+    });
+    firstSendPromptRuntimeQueue = previous.catch(() => undefined).then(() => current);
+    await previous.catch(() => undefined);
+
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      releaseCurrent();
+    };
+  };
+
   const ensureManagedAiBootstrapReady = async (): Promise<boolean> => {
     recordSendTrace("managed-ai-bootstrap:start", {
       hasManagedProfile: Boolean(managedAiAccess()) || managedAiBootstrapBusy(),
@@ -5592,7 +5758,7 @@ export default function App() {
     const incomingIds = new Set(incomingRows.map((row) => row.id.trim()).filter(Boolean));
     const incomingPendingIds = new Set(incomingRows.map(sidebarPendingSessionInstanceIdForRow).filter(Boolean));
     const retainedPendingRows = existingRows.filter((row) => {
-      if (!row.pending) return false;
+      if (!row.pending && !row.pendingSessionInstanceId) return false;
       const id = row.id.trim();
       const pendingId = sidebarPendingSessionInstanceIdForRow(row);
       if (id && incomingIds.has(id)) return false;
@@ -10135,6 +10301,7 @@ export default function App() {
         setSessions([sessionForStore, ...currentStoreSessions]);
       }
 
+      const pendingInstanceId = pendingSidebarSession?.id?.trim() || null;
       const newItem: SidebarSessionItem = {
         id: displaySession.id,
         title: displaySession.title,
@@ -10146,6 +10313,7 @@ export default function App() {
         opencodeSessionId: session.opencodeSessionId ?? session.id,
         parentConversationId: session.parentConversationId ?? null,
         branchId: session.branchId ?? null,
+        pendingSessionInstanceId: pendingInstanceId,
       };
       const wsId = pendingSidebarSession?.workspaceId?.trim() ||
         resolveSidebarWorkspaceIdForSession(displaySession) ||
@@ -10263,17 +10431,43 @@ export default function App() {
         };
         const emptyPendingDraft = createEmptyComposerDraft();
         const now = Date.now();
+        const reservedPendingDraft: PendingSessionDraftSummary = {
+          id: `pending-new-private-${scratch.id}`,
+          kind: "new-private",
+          workspaceId: scratch.id,
+          directory: null,
+          privateWorkspaceId: scratch.id,
+          createdAt: now,
+          updatedAt: now,
+          composer: emptyPendingDraft,
+        };
+        const pendingDraftKey = pendingDraftKeyForSummary(reservedPendingDraft);
+        clearSelectedSessionForPendingDraft();
+        setActivePendingDraftKey(pendingDraftKey);
+        setActivePendingDraftMeta(reservedPendingDraft);
+        setComposerDraftBySessionId((current) => setSessionComposerDraft(
+          current,
+          { storageKey: pendingDraftKey },
+          emptyPendingDraft,
+        ));
+        setView("session");
 
-        try {
-          // Activate in browsing mode (no engine start). Engine + session
-          // creation still happen on-demand when the user sends a message.
-          const activatedScratchWorkspace = await workspaceStore.activateWorkspace(scratch.id);
-          if (!activatedScratchWorkspace) {
-            await cleanupFreshScratchWorkspace();
-            return;
+        const clearReservedPendingDraftState = async () => {
+          if (activePendingDraftKey() === pendingDraftKey) {
+            clearActivePendingDraftState();
           }
+          setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, { storageKey: pendingDraftKey }));
+          try {
+            await pendingSessionDraftsDelete(reservedPendingDraft.id);
+          } catch (error) {
+            reportError(error, "pendingDrafts.newPrivateCleanup");
+          }
+        };
+
+        let persistedPendingDraft!: PendingSessionDraftSummary;
+        try {
           const pendingDraft = await pendingSessionDraftsPut({
-            id: `pending-new-private-${scratch.id}`,
+            id: reservedPendingDraft.id,
             kind: "new-private",
             workspaceId: scratch.id,
             directory: null,
@@ -10282,21 +10476,35 @@ export default function App() {
             updatedAt: now,
             composer: emptyPendingDraft,
           });
-          const pendingDraftKey = pendingDraftKeyForSummary(pendingDraft);
-          clearSelectedSessionForPendingDraft();
-          setActivePendingDraftKey(pendingDraftKey);
-          setActivePendingDraftMeta(pendingDraft);
-          setComposerDraftBySessionId((current) => setSessionComposerDraft(
-            current,
-            { storageKey: pendingDraftKey },
-            emptyPendingDraft,
-          ));
-          await refreshPendingDraftSummaries();
+          persistedPendingDraft = pendingDraft;
+        } catch (error) {
+          await clearReservedPendingDraftState();
+          await cleanupFreshScratchWorkspace();
+          throw error;
+        }
+
+        const pendingDraft = persistedPendingDraft;
+        setActivePendingDraftKey(pendingDraftKey);
+        setActivePendingDraftMeta(pendingDraft);
+        setComposerDraftBySessionId((current) => setSessionComposerDraft(
+          current,
+          { storageKey: pendingDraftKey },
+          emptyPendingDraft,
+        ));
+        await refreshPendingDraftSummaries();
+
+        try {
+          // Activate in browsing mode (no engine start). Engine + session
+          // creation still happen on-demand when the user sends a message.
+          const activatedScratchWorkspace = await workspaceStore.activateWorkspace(scratch.id);
+          if (!activatedScratchWorkspace) {
+            return;
+          }
           setView("session");
           return;
         } catch (error) {
-          await cleanupFreshScratchWorkspace();
-          throw error;
+          reportError(error, "pendingDrafts.newPrivate.activate");
+          return;
         }
       } catch (error) {
         reportError(error, "pendingDrafts.newPrivate");
@@ -10328,6 +10536,8 @@ export default function App() {
         workspaceId,
         directory,
       });
+      setActivePendingDraftKey(pendingDraftKey);
+      setActivePendingDraftMeta(null);
       const pendingDrafts = (await pendingSessionDraftsList()).filter((draft) => !isConsumedPendingDraftId(draft.id));
       const existingPendingDraft =
         pendingDrafts.find(
@@ -12409,6 +12619,7 @@ export default function App() {
   const sessionProps = () => ({
     selectedSessionId: activeSessionId(),
     activePendingDraftKey: activePendingDraftKey(),
+    activePendingDraftMeta: activePendingDraftMeta(),
     composerTargetOptions: composerTargetOptions(),
     activeComposerTargetId: activeComposerTargetId(),
     switchComposerTarget,
@@ -12728,15 +12939,11 @@ export default function App() {
         if (activePendingDraftKey()) {
           void activePendingDraftMeta();
           if (selectedSessionId()) {
-            setMessages([]);
-            setTodos([]);
             setSelectedSessionId(null);
           }
           return;
         }
         if (selectedSessionId()) {
-          setMessages([]);
-          setTodos([]);
           setSelectedSessionId(null);
         }
         return;
@@ -12764,16 +12971,12 @@ export default function App() {
           setTodos([]);
           setSelectedSessionId(null);
         }
-        navigate("/session", { replace: true });
+        goToSession("", { replace: true });
         return;
       }
 
       if (isPendingSessionInstanceId(id)) {
         if (selectedSessionId() !== id) {
-          if (selectedSessionId()) {
-            setMessages([]);
-            setTodos([]);
-          }
           setSelectedSessionId(id);
         }
         setPendingSessionLoad(null);

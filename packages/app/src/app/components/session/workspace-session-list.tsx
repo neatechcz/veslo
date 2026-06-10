@@ -232,6 +232,9 @@ const isPendingSidebarSession = (session: WorkspaceSessionGroup["sessions"][numb
   isPendingSessionInstanceId(session.id) ||
   isPendingSessionInstanceId(session.pendingSessionInstanceId);
 
+const sidebarSessionPendingId = (session: WorkspaceSessionGroup["sessions"][number]) =>
+  session.pendingSessionInstanceId?.trim() || (isPendingSessionInstanceId(session.id) ? session.id.trim() : "");
+
 const sidebarControlTooltipClass =
   "relative after:pointer-events-none after:absolute after:left-1/2 after:bottom-full after:z-30 after:mb-1 after:-translate-x-1/2 after:rounded-md after:border after:border-gray-6 after:bg-gray-1 after:px-2 after:py-1 after:text-[10px] after:font-medium after:leading-none after:text-gray-11 after:whitespace-nowrap after:opacity-0 after:shadow-lg after:transition-opacity after:duration-150 after:delay-[250ms] hover:after:opacity-100 focus-visible:after:opacity-100 after:content-[attr(data-tooltip)]";
 
@@ -1833,6 +1836,9 @@ export default function WorkspaceSessionList(props: Props) {
         <button
           type="button"
           data-session-sidebar-row="true"
+          data-session-sidebar-row-id={session().id}
+          data-session-sidebar-row-pending={isPendingSidebarSession(session()) ? "true" : undefined}
+          data-session-sidebar-row-pending-id={sidebarSessionPendingId(session()) || undefined}
           class={sessionRowClass(isSelected(), "gap-2 pr-12")}
           aria-current={isSelected() ? "page" : undefined}
           style={rowIndentStyle(row)}
@@ -1950,6 +1956,9 @@ export default function WorkspaceSessionList(props: Props) {
         <button
           type="button"
           data-session-sidebar-row="true"
+          data-session-sidebar-row-id={session().id}
+          data-session-sidebar-row-pending={isPendingSidebarSession(session()) ? "true" : undefined}
+          data-session-sidebar-row-pending-id={sidebarSessionPendingId(session()) || undefined}
           class={sessionRowClass(isSelected(), "pr-12")}
           aria-current={isSelected() ? "page" : undefined}
           style={rowIndentStyle(row)}

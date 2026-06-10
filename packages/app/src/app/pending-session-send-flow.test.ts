@@ -47,7 +47,50 @@ test("pending draft sends capture their draft identity before async runtime prep
   assert.ok(runtimePrepIndex > consumeIndex, "runtime preparation should happen after pending draft capture and consumption");
 });
 
-test("pending first-send materialization selects the real session only while the same draft is still active", () => {
+test("pending draft sends activate their captured workspace before runtime preparation", () => {
+  const sendPromptStart = appSource.indexOf("  async function sendPrompt(");
+  const sendPromptEnd = appSource.indexOf("  async function abortSession(", sendPromptStart);
+  assert.notEqual(sendPromptStart, -1, "sendPrompt should exist");
+  assert.notEqual(sendPromptEnd, -1, "sendPrompt block should end before abortSession");
+  const sendPromptSource = appSource.slice(sendPromptStart, sendPromptEnd);
+
+  const pendingActivationIndex = sendPromptSource.indexOf("await ensurePendingDraftWorkspaceActiveForSend(pendingDraftSendState)");
+  const managedAccessIndex = sendPromptSource.indexOf("await ensureManagedAiAccessReadyForEngineStart()");
+  const engineStartIndex = sendPromptSource.indexOf("await workspaceStore.ensureEngineForWorkspace({ activeRun: true })");
+  assert.ok(pendingActivationIndex >= 0, "pending draft sends should activate the captured pending workspace");
+  assert.ok(
+    managedAccessIndex > pendingActivationIndex && engineStartIndex > pendingActivationIndex,
+    "pending workspace activation should happen before managed runtime preparation and engine startup",
+  );
+});
+
+test("first pending sends register their sidebar row before serialized runtime handoff", () => {
+  const sendPromptStart = appSource.indexOf("  async function sendPrompt(");
+  const sendPromptEnd = appSource.indexOf("  async function abortSession(", sendPromptStart);
+  assert.notEqual(sendPromptStart, -1, "sendPrompt should exist");
+  assert.notEqual(sendPromptEnd, -1, "sendPrompt block should end before abortSession");
+  const sendPromptSource = appSource.slice(sendPromptStart, sendPromptEnd);
+
+  assert.match(
+    appSource,
+    /let firstSendPromptRuntimeQueue: Promise<void> = Promise\.resolve\(\);[\s\S]*const beginFirstSendPromptRuntimeQueue = async \(\) => \{[\s\S]*const previous = firstSendPromptRuntimeQueue;[\s\S]*firstSendPromptRuntimeQueue = previous\.catch\(\(\) => undefined\)\.then\(\(\) => current\);[\s\S]*await previous\.catch\(\(\) => undefined\);[\s\S]*return \(\) => \{[\s\S]*releaseCurrent\(\);[\s\S]*\};[\s\S]*\};/s,
+    "first sends should have a serialized runtime queue so concurrent workspace activation cannot supersede another first send",
+  );
+
+  const registerIndex = sendPromptSource.indexOf("registerPendingSidebarSession(pendingSidebarSession);");
+  const queueIndex = sendPromptSource.indexOf("releaseSendPromptRuntimeQueue = await beginFirstSendPromptRuntimeQueue();");
+  const activationIndex = sendPromptSource.indexOf("await ensurePendingDraftWorkspaceActiveForSend(pendingDraftSendState)");
+  assert.ok(registerIndex >= 0, "pending sidebar row should be registered");
+  assert.ok(queueIndex > registerIndex, "runtime queue should wait only after the pending sidebar row exists");
+  assert.ok(activationIndex > queueIndex, "captured workspace activation should run inside the serialized first-send handoff");
+  assert.match(
+    sendPromptSource,
+    /const stopSendPromptBusy = \(\) => \{[\s\S]*releasePromptSendInFlight\(\);[\s\S]*releasePromptRuntimeQueue\(\);/s,
+    "all sendPrompt early returns should release the first-send runtime queue through stopSendPromptBusy",
+  );
+});
+
+test("pending first-send materialization selects the real session only while its draft or pending row is still visible", () => {
   const sendPromptStart = appSource.indexOf("  async function sendPrompt(");
   const sendPromptEnd = appSource.indexOf("  async function abortSession(", sendPromptStart);
   assert.notEqual(sendPromptStart, -1, "sendPrompt should exist");
@@ -56,8 +99,13 @@ test("pending first-send materialization selects the real session only while the
 
   assert.match(
     sendPromptSource,
-    /createSessionAndOpen\(initialSessionTitle, \{\s*blockAppDuringCreate: blockAppDuringPromptSend,\s*managedAiRuntimeAlreadyPrepared: true,\s*pendingSession: pendingSidebarSession,\s*shouldSelectCreatedSession: pendingDraftSendState\s*\? \(\) => activePendingDraftKey\(\) === pendingDraftSendState\.key\s*: undefined,\s*\}\)/s,
-    "first-send materialization should not select an old pending draft after the user opens another pending draft",
+    /const pendingSidebarSessionStillSelected = \(\) => \{[\s\S]*const pendingId = pendingSidebarSession\?\.id\?\.trim\(\) \?\? "";[\s\S]*return Boolean\(pendingId && selectedSessionId\(\) === pendingId\);[\s\S]*\};[\s\S]*const pendingDraftSendStateStillActiveForSelection = \(\) => \{[\s\S]*if \(!pendingDraftSendState\) return false;[\s\S]*return pendingSidebarSessionStillSelected\(\);[\s\S]*\};[\s\S]*createSessionAndOpen\(initialSessionTitle, \{\s*blockAppDuringCreate: blockAppDuringPromptSend,[\s\S]*shouldSelectCreatedSession: pendingDraftSendState\s*\? pendingDraftSendStateStillActiveForSelection\s*: undefined,/s,
+    "first-send materialization should not steal selection after the user clicks another pending or real session, even when same-project sends share a draft key",
+  );
+  assert.doesNotMatch(
+    sendPromptSource,
+    /activePendingDraftKey\(\) === pendingDraftSendState\.key/,
+    "active pending draft state alone must not steal selection after the user moved away",
   );
 
   const createSessionStart = appSource.indexOf("  async function createSessionAndOpen(");

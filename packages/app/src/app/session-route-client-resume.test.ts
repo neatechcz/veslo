@@ -106,17 +106,67 @@ test("desktop hash session routes drive the route selection effects", () => {
   );
 });
 
+test("desktop session navigation writes the hash route directly", () => {
+  assert.match(
+    source,
+    /const navigateDesktopHashRoute = \(path: string, options\?: \{ replace\?: boolean \}\) => \{[\s\S]*if \(!isTauriRuntime\(\) \|\| typeof window === "undefined"\) return false;[\s\S]*setExternalHashRoutePath\(normalized\);[\s\S]*return true;[\s\S]*\};/s,
+    "app should expose a direct hash-route writer for Tauri session navigation",
+  );
+  assert.match(
+    source,
+    /if \(navigateDesktopHashRoute\(`\/session\/\$\{trimmed\}`, options\)\) return;\s*navigate\(`\/session\/\$\{trimmed\}`, options\);/s,
+    "goToSession should update the Tauri hash before falling back to router navigation",
+  );
+});
+
+test("desktop bare session navigation writes the hash route directly", () => {
+  assert.match(
+    source,
+    /clearStalePendingSessionLoadForRouteSession\(null\);\s*if \(selectedSessionId\(\)\) \{\s*setSelectedSessionId\(null\);\s*\}\s*goToSession\(""\);\s*return;/s,
+    "bare session navigation should use the same Tauri hash writer as concrete session navigation",
+  );
+});
+
+test("invalid desktop session routes fall back through the hash-safe session navigator", () => {
+  const routeResumeStart = source.indexOf('let lastRouteClientResumeKey = "";');
+  const routeGuardStart = source.indexOf("  createEffect(() => {\n    const rawPath = currentRoutePath().trim();", routeResumeStart);
+  const routeGuardEnd = source.indexOf('    if (path.startsWith("/proto-v1-ux")) {', routeGuardStart);
+  assert.notStrictEqual(routeResumeStart, -1, "route resume block should exist");
+  assert.notStrictEqual(routeGuardStart, -1, "main route guard should exist");
+  assert.notStrictEqual(routeGuardEnd, -1, "main route guard block end should exist");
+  const routeGuardSource = source.slice(routeGuardStart, routeGuardEnd);
+
+  assert.match(
+    routeGuardSource,
+    /shouldFallbackFromSessionRoute\([\s\S]*?\)\s*\) \{[\s\S]*goToSession\("", \{ replace: true \}\);[\s\S]*return;/s,
+    "stale pending-session hash routes should be cleared through goToSession so the Tauri hash cannot remain stale",
+  );
+  assert.doesNotMatch(
+    routeGuardSource,
+    /shouldFallbackFromSessionRoute\([\s\S]*?\)\s*\) \{[\s\S]*navigate\("\/session", \{ replace: true \}\);/s,
+    "route fallback should not use router navigation directly in the Tauri hash path",
+  );
+});
+
 test("bare /session keeps the active pending draft context while clearing real session transcript state", () => {
   const routeStart = source.indexOf('    if (path.startsWith("/session")) {');
   const routeEnd = source.indexOf('    if (path.startsWith("/proto-v1-ux")) {', routeStart);
   assert.notStrictEqual(routeStart, -1, "session route block should exist");
   assert.notStrictEqual(routeEnd, -1, "session route block end should exist");
   const routeSource = source.slice(routeStart, routeEnd);
+  const bareSessionEnd = routeSource.indexOf("      const sessionIdsInStore = sessions().map((session) => session.id);");
+  assert.notStrictEqual(bareSessionEnd, -1, "bare /session branch should end before fallback checks");
+  const bareSessionSource = routeSource.slice(0, bareSessionEnd);
 
   assert.match(
-    routeSource,
-    /if \(!id\) \{\s*if \(activePendingDraftKey\(\)\) \{\s*(?:void activePendingDraftMeta\(\);\s*)?if \(selectedSessionId\(\)\) \{\s*setMessages\(\[\]\);\s*setTodos\(\[\]\);\s*setSelectedSessionId\(null\);\s*\}\s*return;\s*\}/s,
-    "switching from a real session to bare /session should clear transcript state but keep the pending draft active",
+    bareSessionSource,
+    /if \(!id\) \{\s*if \(activePendingDraftKey\(\)\) \{\s*(?:void activePendingDraftMeta\(\);\s*)?if \(selectedSessionId\(\)\) \{\s*setSelectedSessionId\(null\);\s*\}\s*return;\s*\}/s,
+    "switching from a real session to bare /session should clear selected state but keep cached transcripts and the pending draft active",
+  );
+  assert.doesNotMatch(
+    bareSessionSource,
+    /setMessages\(\[\]\);\s*setTodos\(\[\]\);/s,
+    "bare /session routing must not delete the cached transcript for the previously selected real session",
   );
   assert.doesNotMatch(
     routeSource,

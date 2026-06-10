@@ -36,6 +36,7 @@ import { formatSessionError, truncateErrorField } from "../lib/session-error";
 import { detectChromeMcpCompletedError } from "../lib/chrome-mcp-error";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../types";
 import { createSelectSessionGuard } from "./select-session-guard";
+import { isPendingSessionInstanceId } from "../components/session/pending-session-instance-model";
 import {
   beginOutageEpisode,
   clearOutageEpisode,
@@ -2110,7 +2111,8 @@ export function createSessionStore(options: {
     );
     workspaceSessionIds.clear();
     for (const s of snapshot.sessions) workspaceSessionIds.add(s.id);
-    if (snapshot.selectedSessionId) {
+    const currentSelectedSessionId = options.selectedSessionId();
+    if (snapshot.selectedSessionId && !isPendingSessionInstanceId(currentSelectedSessionId)) {
       options.setSelectedSessionId(snapshot.selectedSessionId);
     }
     snapshot.lastUsed = Date.now();

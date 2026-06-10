@@ -284,6 +284,33 @@ test("selectSession uses offline fallback for database browsing even when a clie
   });
 });
 
+test("workspace snapshot restore preserves an active pending session selection", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>("sess-old");
+
+      const store = createSessionStore({
+        client: () => null,
+        routing: makeTestRouting(() => null),
+        activeWorkspaceRoot: () => "",
+        selectedSessionId,
+        setSelectedSessionId,
+        developerMode: () => false,
+        setError: () => {},
+        setSseConnected: () => {},
+      });
+
+      store.saveWorkspaceSnapshot("ws-project");
+      setSelectedSessionId("pending-session:project-row");
+
+      assert.equal(store.loadWorkspaceSnapshot("ws-project"), true);
+      assert.equal(selectedSessionId(), "pending-session:project-row");
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("refreshSessionMessages hydrates a completed prompt when SSE was missed", async () => {
   let messageCalls = 0;
 

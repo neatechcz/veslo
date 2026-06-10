@@ -52,8 +52,8 @@ test("session switch keeps inline loading until transcript hydration completes",
   );
   assert.match(
     openSessionSource,
-    /props\.setSessionBrowseScope\(\{[\s\S]*sessionId,[\s\S]*workspaceId,[\s\S]*\}\);\s*void props\.selectSession\(sessionId\);\s*props\.setView\("session", sessionId\);/s,
-    "real session clicks should synchronously select and route while pendingSessionLoad stays alive until transcript hydration completes",
+    /props\.setSessionBrowseScope\(\{[\s\S]*sessionId,[\s\S]*workspaceId,[\s\S]*\}\);\s*props\.setView\("session", sessionId\);[\s\S]*void props\.selectSession\(sessionId\);/s,
+    "real session clicks should route before transcript hydration so stale desktop routes cannot reselect the previous session",
   );
 });
 
@@ -92,7 +92,7 @@ test("optimistic first submit replaces the centered composer entry immediately",
 test("materializing a pending submitted draft preserves the visible run indicator", () => {
   assert.match(
     sessionSource,
-    /const pendingKey = !previousSessionId\s*\? pendingQueueKeyAwaitingSessionIdByBaseKey\(\)\[pendingBaseKey\] \?\? null\s*: null;[\s\S]*const previousSessionKey = previousSessionId \? sessionQueueKeyForSessionId\(previousSessionId\) : null;[\s\S]*if \(!pendingKey && previousSessionKey\) \{\s*resetRunState\(previousSessionKey\);\s*\}[\s\S]*if \(pendingKey\) \{[\s\S]*remapPendingQueueToSession\(pendingKey, sessionId\);/s,
+    /const pendingKey =\s*!previousSessionId\s*\? pendingQueueKeyAwaitingSessionIdByBaseKey\(\)\[pendingBaseKey\] \?\? null\s*: null;[\s\S]*const previousSessionKey = previousSessionId \? sessionQueueKeyForSessionId\(previousSessionId\) : null;[\s\S]*if \(!pendingKey && previousSessionKey\) \{\s*resetRunState\(previousSessionKey\);\s*\}[\s\S]*if \(pendingKey && !isPendingSessionInstanceId\(sessionId\)\) \{[\s\S]*remapPendingQueueToSession\(pendingKey, sessionId\);/s,
     "selecting the real session created for a pending submit should remap the optimistic draft and run indicator without globally resetting active run state",
   );
 });

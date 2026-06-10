@@ -78,7 +78,7 @@ export type WorkspaceDebugEvent = {
 };
 
 function _wsLog(msg: string, data?: unknown) {
-  const line = `[${new Date().toISOString()}] ${msg}${data !== undefined ? " " + (typeof data === "string" ? data : JSON.stringify(data)) : ""}`;
+  const line = `[${new Date().toISOString()}] ${msg}${data !== undefined ? " " + (typeof data === "string" ? data : safeStringify(data)) : ""}`;
   console.log(line);
   try { (window as any).__wsActivateLog = ((window as any).__wsActivateLog || "") + line + "\n"; } catch {}
   // VSLO-86 — forward to Tauri stderr (/tmp/veslo.log) so ensureEngine /
@@ -2927,11 +2927,40 @@ export function createWorkspaceStore(options: {
     baseUrl: string,
     directory: string,
     auth?: OpencodeAuth,
-    context?: { reason?: string },
+    context?: {
+      workspaceId?: string;
+      workspaceType?: WorkspaceInfo["workspaceType"];
+      targetRoot?: string;
+      reason?: string;
+    },
   ): Promise<boolean> {
     const nextClient = createClient(baseUrl, directory, auth);
     const health = await waitForHealthy(nextClient, { timeoutMs: resolveConnectHealthTimeoutMs(context?.reason) });
-    options.setClient(nextClient);
+    const workspaceId = context?.workspaceId?.trim() || activeWorkspaceId().trim();
+    const routingEntry = workspaceId
+      ? await options.routing.ensure(workspaceId, baseUrl, {
+          directory,
+          auth,
+          context: {
+            workspaceType: context?.workspaceType,
+            targetRoot: context?.targetRoot,
+            reason: context?.reason,
+          },
+        })
+      : null;
+    if (workspaceId && !routingEntry) return false;
+
+    const currentActiveId = activeWorkspaceId().trim();
+    const currentActiveRoot = activeWorkspaceRoot().trim();
+    if (
+      context?.workspaceType === "local" &&
+      ((currentActiveId && currentActiveId !== workspaceId) ||
+        (currentActiveRoot && directory.trim() && currentActiveRoot !== directory.trim()))
+    ) {
+      return true;
+    }
+
+    options.setClient(routingEntry?.client ?? nextClient);
     options.setConnectedVersion(health.version);
     options.setBaseUrl(baseUrl);
     options.setClientDirectory(directory);

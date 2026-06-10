@@ -678,7 +678,7 @@ test("after pending draft deletion New session falls back to a fresh private wor
   );
 });
 
-test("fresh private pending draft flow blocks before route activation when workspace activation fails", () => {
+test("fresh private pending draft flow persists before route activation and keeps durable state when activation is superseded", () => {
   const openNewSessionStart = appSource.indexOf("  const openNewSessionWithDirectory = async () => {");
   const openNewSessionEnd = appSource.indexOf("  const openDirectorySessionFromPicker = async () => {", openNewSessionStart);
   assert.notEqual(openNewSessionStart, -1, "New session flow should exist in app.tsx");
@@ -687,23 +687,23 @@ test("fresh private pending draft flow blocks before route activation when works
 
   assert.match(
     openNewSessionSource,
-    /const cleanupFreshScratchWorkspace = async \(\) => \{[\s\S]*const cleanupSucceeded = await workspaceStore\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*if \(!cleanupSucceeded\) \{[\s\S]*throw new Error\(`Failed to clean up failed scratch workspace \$\{scratch\.id\}\.`\);[\s\S]*\}[\s\S]*\};[\s\S]*try \{[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*return;[\s\S]*\}[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setView\("session"\);/s,
-    "fresh private pending drafts must not be persisted or activated unless scratch workspace activation succeeds",
+    /const cleanupFreshScratchWorkspace = async \(\) => \{[\s\S]*const cleanupSucceeded = await workspaceStore\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*if \(!cleanupSucceeded\) \{[\s\S]*throw new Error\(`Failed to clean up failed scratch workspace \$\{scratch\.id\}\.`\);[\s\S]*\}[\s\S]*\};[\s\S]*const reservedPendingDraft: PendingSessionDraftSummary = \{[\s\S]*workspaceId: scratch\.id[\s\S]*privateWorkspaceId: scratch\.id[\s\S]*\};[\s\S]*try \{[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*persistedPendingDraft = pendingDraft;[\s\S]*\} catch \(error\) \{[\s\S]*await clearReservedPendingDraftState\(\);[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*throw error;[\s\S]*\}[\s\S]*const pendingDraft = persistedPendingDraft;[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);/s,
+    "fresh private pending drafts must be persisted before scratch workspace activation so the sidebar row survives a superseded activation",
+  );
+  assert.match(
+    openNewSessionSource,
+    /const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);/s,
+    "fresh private pending drafts should write the durable draft before attempting route activation",
+  );
+  assert.match(
+    openNewSessionSource,
+    /if \(!activatedScratchWorkspace\) \{\s*return;\s*\}/s,
+    "superseded fresh private pending draft activation must keep the durable pending draft and scratch workspace",
   );
   assert.doesNotMatch(
     openNewSessionSource,
-    /const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);/s,
-    "fresh private pending drafts must not be written before scratch workspace activation succeeds",
-  );
-  assert.match(
-    openNewSessionSource,
-    /if \(!activatedScratchWorkspace\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*return;[\s\S]*\}/s,
-    "fresh private pending draft failure must clean up the just-created scratch workspace",
-  );
-  assert.match(
-    openNewSessionSource,
-    /catch \(error\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*throw error;[\s\S]*\}/s,
-    "fresh private pending draft failure must also clean up the scratch workspace when activation or persistence throws",
+    /if \(!activatedScratchWorkspace\) \{[\s\S]*await clearReservedPendingDraftState\(\);[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*return;/s,
+    "superseded activation must not delete the durable fresh private pending draft",
   );
 });
 

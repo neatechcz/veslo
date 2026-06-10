@@ -474,8 +474,8 @@ export default function DashboardView(props: DashboardViewProps) {
       conversationId: session?.conversationId ?? null,
       opencodeSessionId: session?.opencodeSessionId ?? sessionId,
     });
-    void props.selectSession(sessionId);
     props.setView("session", sessionId);
+    void props.selectSession(sessionId);
   };
 
   const resolveVesloWorkspaceId = (workspaceId: string) => {

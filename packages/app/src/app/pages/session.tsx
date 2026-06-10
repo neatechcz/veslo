@@ -30,6 +30,7 @@ import type {
 import { reportError } from "../lib/error-reporter";
 import {
   type EngineInfo,
+  type PendingSessionDraftSummary,
   type VesloServerInfo,
   type WorkspaceInfo,
 } from "../lib/tauri";
@@ -179,6 +180,7 @@ function recordSendTrace(event: string, payload?: Record<string, unknown>) {
 export type SessionViewProps = {
   selectedSessionId: string | null;
   activePendingDraftKey: string | null;
+  activePendingDraftMeta: PendingSessionDraftSummary | null;
   composerTargetOptions: ComposerTargetOption[];
   activeComposerTargetId: string | null;
   switchComposerTarget: (
@@ -1825,6 +1827,29 @@ export default function SessionView(props: SessionViewProps) {
     });
   };
 
+  const workspaceRootForPendingSidebarSession = (workspaceId: string) => {
+    const id = workspaceId.trim();
+    if (!id) return "";
+    const workspace = props.workspaces.find((entry) => entry.id === id) ?? null;
+    return normalizeDirectoryPath(workspace?.directory?.trim() || workspace?.path?.trim() || "");
+  };
+
+  const createPendingSidebarSessionWorkspaceId = () => {
+    const meta = props.activePendingDraftMeta;
+    if (!meta) return props.activeWorkspaceId;
+    const workspaceId =
+      meta.kind === "new-private"
+        ? (meta.privateWorkspaceId ?? meta.workspaceId).trim()
+        : meta.workspaceId.trim();
+    return workspaceId || props.activeWorkspaceId;
+  };
+
+  const createPendingSidebarSessionWorkspaceRoot = (workspaceId: string) => {
+    const directory = normalizeDirectoryPath(props.activePendingDraftMeta?.directory ?? "");
+    if (directory) return directory;
+    return workspaceRootForPendingSidebarSession(workspaceId) || props.activeWorkspaceRoot;
+  };
+
   const restoreMaterializedQueueToPending = (pendingKey: string, sessionId: string | null | undefined) => {
     const materializedSessionId = sessionId?.trim();
     if (!pendingKey || !materializedSessionId) return;
@@ -2171,7 +2196,7 @@ export default function SessionView(props: SessionViewProps) {
         setEditingTranscriptMessageId(null);
 
         if (!sessionId) return;
-        if (pendingKey) {
+        if (pendingKey && !isPendingSessionInstanceId(sessionId)) {
           remapPendingQueueToSession(pendingKey, sessionId);
           clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingBaseKey, pendingKey);
         }
@@ -3379,11 +3404,13 @@ export default function SessionView(props: SessionViewProps) {
       setPendingQueueKeyAwaitingSessionIdForBaseKey(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff);
     }
     const pendingSidebarSessionCreatedAt = Date.now();
+    const pendingSidebarWorkspaceId = createPendingSidebarSessionWorkspaceId();
+    const pendingSidebarWorkspaceRoot = createPendingSidebarSessionWorkspaceRoot(pendingSidebarWorkspaceId);
     const pendingSidebarSession: PendingSidebarSessionMetadata | null = pendingSessionKeyBeforeHandoff
       ? {
         id: pendingSessionKeyBeforeHandoff,
-        workspaceId: props.activeWorkspaceId,
-        workspaceRoot: props.activeWorkspaceRoot,
+        workspaceId: pendingSidebarWorkspaceId,
+        workspaceRoot: pendingSidebarWorkspaceRoot,
         title: draft.text.trim(),
         createdAt: pendingSidebarSessionCreatedAt,
       }
@@ -3764,7 +3791,19 @@ export default function SessionView(props: SessionViewProps) {
       "";
     const session = group?.sessions.find((s) => s.id === sessionId);
     if (isPendingSessionInstanceId(sessionId)) {
-      props.setPendingSessionLoad(null);
+      const openPendingSidebarSession = (nextSessionId: string) => {
+        props.setSessionBrowseScope({
+          sessionId: nextSessionId,
+          workspaceId,
+          workspaceRoot,
+          directory: session?.directory ?? workspaceRoot,
+          conversationId: null,
+          opencodeSessionId: null,
+        });
+        props.setPendingSessionLoad(null);
+        props.setView("session", nextSessionId);
+      };
+      openPendingSidebarSession(sessionId);
       void openSessionWithWorkspaceActivation({
         activeWorkspaceId: props.activeWorkspaceId,
         getActiveWorkspaceId: () => props.activeWorkspaceId,
@@ -3772,18 +3811,7 @@ export default function SessionView(props: SessionViewProps) {
         sessionId,
         activateWorkspace: props.activateWorkspace,
         activateWorkspaceBeforeOpen: true,
-        openSession: (nextSessionId) => {
-          props.setSessionBrowseScope({
-            sessionId: nextSessionId,
-            workspaceId,
-            workspaceRoot,
-            directory: session?.directory ?? workspaceRoot,
-            conversationId: null,
-            opencodeSessionId: null,
-          });
-          props.setPendingSessionLoad(null);
-          props.setView("session", nextSessionId);
-        },
+        openSession: openPendingSidebarSession,
       }).catch(() => {
         props.setPendingSessionLoad(null);
       });
@@ -3792,6 +3820,15 @@ export default function SessionView(props: SessionViewProps) {
 
     const attempt = ++pendingSessionLoadAttempt;
     const shouldShowOverlay = sessionId !== props.selectedSessionId;
+    props.setSessionBrowseScope({
+      sessionId,
+      workspaceId,
+      workspaceRoot: workspaceRoot,
+      directory: session?.directory ?? workspaceRoot,
+      conversationId: session?.conversationId ?? null,
+      opencodeSessionId: session?.opencodeSessionId ?? sessionId,
+    });
+    props.setView("session", sessionId);
 
     // Show loading overlay immediately when switching to a different session.
     if (shouldShowOverlay) {
@@ -3807,16 +3844,16 @@ export default function SessionView(props: SessionViewProps) {
       props.setPendingSessionLoad(null);
     }
     if (attempt !== pendingSessionLoadAttempt) return;
-    props.setSessionBrowseScope({
-      sessionId,
-      workspaceId,
-      workspaceRoot: workspaceRoot,
-      directory: session?.directory ?? workspaceRoot,
-      conversationId: session?.conversationId ?? null,
-      opencodeSessionId: session?.opencodeSessionId ?? sessionId,
-    });
     void props.selectSession(sessionId);
-    props.setView("session", sessionId);
+  };
+
+  const openPendingDirectoryDraftFromList = (workspaceId: string) => {
+    const pendingBaseKey = pendingSessionQueueKey();
+    const pendingKey = pendingQueueKeyAwaitingSessionIdByBaseKey()[pendingBaseKey] ?? null;
+    if (pendingKey) {
+      clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingBaseKey, pendingKey);
+    }
+    props.openPendingDirectoryDraftInWorkspace(workspaceId);
   };
 
   const resolveVesloWorkspaceId = (workspaceId: string) => {
@@ -4206,7 +4243,7 @@ export default function SessionView(props: SessionViewProps) {
             onActivateWorkspace={props.activateWorkspace}
             onOpenSession={openSessionFromList}
             onDeleteSession={openDeleteSessionModalForSession}
-            onOpenPendingDirectoryDraftInWorkspace={props.openPendingDirectoryDraftInWorkspace}
+            onOpenPendingDirectoryDraftInWorkspace={openPendingDirectoryDraftFromList}
             onOpenRenameWorkspace={props.openRenameWorkspace}
             onShareWorkspace={(workspaceId) => setShareWorkspaceId(workspaceId)}
             onOpenSoul={openSoul}
