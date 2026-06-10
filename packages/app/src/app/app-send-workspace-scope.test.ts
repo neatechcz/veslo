@@ -22,7 +22,7 @@ test("send preflight snapshots the target workspace before cold-start awaits", (
   );
 });
 
-test("createSessionAndOpen uses the preflight target workspace instead of active workspace after cold start", () => {
+test("createSessionAndOpen uses preflight target only when send preflight provides one", () => {
   const start = source.indexOf("async function createSessionAndOpen(");
   const end = source.indexOf("  const openNewSessionWithDirectory = async () =>", start);
   assert.ok(start >= 0 && end > start, "createSessionAndOpen source should be present");
@@ -30,8 +30,13 @@ test("createSessionAndOpen uses the preflight target workspace instead of active
 
   assert.match(
     createSource,
-    /const targetWorkspace =[\s\S]*preflight\?\.targetWorkspace/,
+    /const targetWorkspace =[\s\S]*preflight\?\.targetWorkspace \?\?[\s\S]*resolveSendTargetWorkspaceScope\(null\)/,
     "createSessionAndOpen should consume the preflight target workspace",
+  );
+  assert.doesNotMatch(
+    createSource,
+    /preflight\?\.targetWorkspace \?\?[\s\S]*resolveSendTargetWorkspaceScope\(selectedSessionId\(\)\)/,
+    "direct session creation should not inherit the previously browsed selected session scope",
   );
   assert.match(
     createSource,

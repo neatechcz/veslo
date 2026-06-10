@@ -105,6 +105,43 @@ describe("conversation read store DB path resolution", () => {
     expect(transcript.partsByMessageId["msg-1"]?.length).toBe(1);
   });
 
+  test("matches Windows directory variants when reading OpenCode sqlite", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversation-read-windows-path-"));
+    tempDirs.push(workspaceRoot);
+    const dbPath = join(workspaceRoot, "workspace-opencode.db");
+    const storedDirectory = "c:\\users\\jajse\\desktop\\test-repo\\test-repo2";
+    seedDb(dbPath, storedDirectory);
+
+    const store = createConversationReadStore();
+    const list = await store.listConversations({
+      workspaceId: "ws-a",
+      directory: "\\\\?\\C:\\Users\\jajse\\Desktop\\test-repo\\test-repo2",
+      workspace: {
+        id: "ws-a",
+        path: workspaceRoot,
+        opencodeDbPath: dbPath,
+      },
+    });
+
+    expect(list.source).toBe("sqlite");
+    expect(list.items.map((item) => item.id)).toEqual(["sess-a"]);
+
+    const transcript = await store.getTranscript({
+      workspaceId: "ws-a",
+      sessionId: "sess-a",
+      limit: 10,
+      directory: "//?/C:/Users/jajse/Desktop/test-repo/test-repo2",
+      workspace: {
+        id: "ws-a",
+        path: workspaceRoot,
+        opencodeDbPath: dbPath,
+      },
+    });
+    expect(transcript.source).toBe("sqlite");
+    expect(transcript.messages.length).toBe(1);
+    expect(transcript.partsByMessageId["msg-1"]?.length).toBe(1);
+  });
+
   test("uses workspace-scoped env override for DB path", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversation-read-env-db-"));
     tempDirs.push(workspaceRoot);

@@ -9189,7 +9189,7 @@ export default function App() {
     const tracePayload = sendTraceId ? { traceId: sendTraceId } : undefined;
     const targetWorkspace =
       preflight?.targetWorkspace ??
-      resolveSendTargetWorkspaceScope(selectedSessionId()) ??
+      resolveSendTargetWorkspaceScope(null) ??
       null;
     recordSendTrace("createSessionAndOpen:start", {
       ...(tracePayload ?? {}),

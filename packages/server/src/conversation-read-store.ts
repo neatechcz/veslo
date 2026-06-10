@@ -82,6 +82,89 @@ type PartRow = {
 
 const normalizeId = (value: string | null | undefined) => value?.trim() ?? "";
 
+function normalizeWindowsExtendedPath(value: string): string {
+  return value.replace(/^\\\\\?\\/, "").replace(/^\/\/\?\//, "");
+}
+
+function shouldUseWindowsDirectoryLookup(value: string): boolean {
+  return /^\\\\\?\\/.test(value) ||
+    /^\/\/\?\//.test(value) ||
+    /^[a-z]:[\\/]/i.test(value) ||
+    /^\\\\[^\\]/.test(value) ||
+    value.includes("\\");
+}
+
+function directoryLookupVariants(value: string, windowsLookup: boolean): string[] {
+  const normalized = normalizeId(value);
+  if (!normalized) return [];
+
+  const variants = new Set<string>();
+  const add = (candidate: string) => {
+    const next = normalizeId(candidate);
+    if (next) variants.add(next);
+  };
+
+  add(normalized);
+  if (!windowsLookup) return [...variants];
+
+  const withoutExtendedPrefix = normalizeWindowsExtendedPath(normalized);
+  add(withoutExtendedPrefix);
+  add(withoutExtendedPrefix.toLowerCase());
+  add(`\\\\?\\${withoutExtendedPrefix}`);
+  add(`//?/${withoutExtendedPrefix.replace(/\\/g, "/")}`);
+
+  const backslash = withoutExtendedPrefix.replace(/\//g, "\\");
+  add(backslash);
+  add(backslash.toLowerCase());
+
+  const slash = withoutExtendedPrefix.replace(/\\/g, "/");
+  add(slash);
+  add(slash.toLowerCase());
+
+  return [...variants];
+}
+
+function numberedInClause(
+  column: string,
+  startIndex: number,
+  count: number,
+): string {
+  return count > 0
+    ? `${column} IN (${Array.from(
+        { length: count },
+        (_, index) => `?${startIndex + index}`,
+      ).join(", ")})`
+    : "1 = 0";
+}
+
+function directoryMatchClause(
+  column: string,
+  startIndex: number,
+  directCount: number,
+  lowerCount: number,
+): string {
+  if (directCount <= 0 && lowerCount <= 0) return "1 = 0";
+  const clauses = [numberedInClause(column, startIndex, directCount)];
+  if (lowerCount > 0) {
+    clauses.push(
+      numberedInClause(`LOWER(${column})`, startIndex + directCount, lowerCount),
+    );
+  }
+  return `(${clauses.join(" OR ")})`;
+}
+
+function directoryLookupArgs(directory: string): {
+  directories: string[];
+  lowerDirectories: string[];
+} {
+  const windowsLookup = shouldUseWindowsDirectoryLookup(directory);
+  const directories = directoryLookupVariants(directory, windowsLookup);
+  return {
+    directories,
+    lowerDirectories: windowsLookup ? directories.map((item) => item.toLowerCase()) : [],
+  };
+}
+
 const envSuffixForWorkspace = (workspaceId: string) =>
   workspaceId.trim().replace(/[^A-Za-z0-9]/g, "_").toUpperCase();
 
@@ -196,12 +279,19 @@ export function createConversationReadStore(): ConversationReadStore {
       if (!db) return { workspaceId, items: [], source: "unavailable" };
 
       try {
+        const { directories, lowerDirectories } = directoryLookupArgs(directory);
         const rows = db
-          .query<SessionRow, [string]>(
+          .query<SessionRow, Array<string>>(
             "SELECT id, title, directory, parent_id, time_created, time_updated " +
-              "FROM session WHERE directory = ?1 ORDER BY time_updated DESC",
+              `FROM session WHERE ${directoryMatchClause(
+                "directory",
+                1,
+                directories.length,
+                lowerDirectories.length,
+              )} ` +
+              "ORDER BY time_updated DESC",
           )
-          .all(directory);
+          .all(...directories, ...lowerDirectories);
 
         return {
           workspaceId,
@@ -245,11 +335,17 @@ export function createConversationReadStore(): ConversationReadStore {
       if (!db) return { ...empty, source: "unavailable" };
 
       try {
+        const { directories, lowerDirectories } = directoryLookupArgs(directory);
         const session = db
-          .query<{ id: string }, [string, string]>(
-            "SELECT id FROM session WHERE id = ?1 AND directory = ?2 LIMIT 1",
+          .query<{ id: string }, Array<string>>(
+            `SELECT id FROM session WHERE id = ?1 AND ${directoryMatchClause(
+              "directory",
+              2,
+              directories.length,
+              lowerDirectories.length,
+            )} LIMIT 1`,
           )
-          .get(sessionId, directory);
+          .get(sessionId, ...directories, ...lowerDirectories);
         if (!session) return { ...empty, source: "sqlite" };
 
         const messageRows = db
