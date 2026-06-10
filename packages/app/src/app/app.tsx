@@ -159,6 +159,11 @@ import {
   listCommands as listCommandsTyped,
 } from "./lib/opencode-session";
 import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-log";
+import {
+  createMcpAutoRefreshScheduler,
+  createPermissionPollingScheduler,
+} from "./lib/workspace-runtime-schedulers";
+import { createMcpServersRefresher } from "./lib/mcp-server-refresh";
 import { createSkillReloadGuard } from "./lib/skill-reload-guard";
 import { createSkillRegistryEventsListener } from "./lib/skill-registry-events";
 import {
@@ -2537,9 +2542,10 @@ export default function App() {
     () => workspaceStoreRef?.workspaceBusy() ?? {},
   );
   const activeConversationBusy = createMemo(() => {
-    const workspaceId = workspaceStoreRef?.activeWorkspaceId().trim() ?? "";
-    const entry = workspaceId ? busySessionByWorkspaceId()[workspaceId] : null;
     const sessionId = activeSessionId();
+    const scope = sessionId ? resolveSelectedSessionBrowseScope(sessionId) : null;
+    const workspaceId = scope?.workspaceId?.trim() || workspaceStoreRef?.activeWorkspaceId().trim() || "";
+    const entry = workspaceId ? busySessionByWorkspaceId()[workspaceId] : null;
     return Boolean(entry && sessionId && entry.sessionId === sessionId);
   });
   const activeComposerBusy = createMemo(() => {
@@ -2552,19 +2558,27 @@ export default function App() {
   const activeTodos = createMemo(() => todos());
   const activeArtifacts = createMemo(() => artifacts());
   const activeWorkingFiles = createMemo(() => workingFiles());
+  const [latestRunArtifactResponseKey, setLatestRunArtifactResponseKey] = createSignal("");
+  const latestRunArtifactScope = createMemo(() => {
+    const sessionId = selectedSessionId()?.trim() ?? "";
+    if (!sessionId) return null;
+    const scope = resolveSelectedSessionBrowseScope(sessionId);
+    const workspaceId = scope?.workspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
+    const workspaceRoot = scope?.workspaceRoot?.trim() || workspaceStore.activeWorkspaceRoot().trim();
+    const directory = scope?.directory?.trim() || sessionDirectoryOverrideById()[sessionId]?.trim() || workspaceRoot;
+    if (!workspaceId || !directory) return null;
+    return { sessionId, workspaceId, directory };
+  });
   const currentLatestRunArtifactResponse = createMemo(() => {
     const response = latestRunArtifactResponse();
-    const sessionId = selectedSessionId();
-    const workspaceId = vesloServerWorkspaceId();
-    if (!response || !sessionId || !workspaceId) return undefined;
-    if (response.sessionId !== sessionId || response.workspaceId !== workspaceId) return undefined;
+    const key = latestRunArtifactRefreshKey();
+    if (!response || !key || latestRunArtifactResponseKey() !== key) return undefined;
     return response;
   });
   const latestRunArtifactRefreshKey = createMemo(() => {
     const client = vesloServerClient();
-    const workspaceId = vesloServerWorkspaceId();
-    const sessionId = selectedSessionId();
-    if (!client || !workspaceId || !sessionId || vesloServerStatus() !== "connected") return "";
+    const scope = latestRunArtifactScope();
+    if (!client || !scope || vesloServerStatus() !== "connected") return "";
 
     const list = messages();
     let partCount = 0;
@@ -2577,35 +2591,56 @@ export default function App() {
       }
     }
 
-    return `${workspaceId}:${sessionId}:${lastUserMessageId}:${partCount}`;
+    return [
+      scope.workspaceId,
+      scope.directory,
+      scope.sessionId,
+      lastUserMessageId,
+      String(partCount),
+    ].join(":");
   });
   createEffect(() => {
     const key = latestRunArtifactRefreshKey();
     if (!key) {
       setLatestRunArtifactResponse(undefined);
+      setLatestRunArtifactResponseKey("");
       return;
     }
 
     const client = vesloServerClient();
-    const workspaceId = vesloServerWorkspaceId();
-    const sessionId = selectedSessionId();
-    if (!client || !workspaceId || !sessionId) {
+    const scope = latestRunArtifactScope();
+    if (!client || !scope) {
       setLatestRunArtifactResponse(undefined);
+      setLatestRunArtifactResponseKey("");
       return;
     }
 
     let cancelled = false;
     const timer = setTimeout(() => {
-      void client
-        .getSessionLatestRunArtifacts(workspaceId, sessionId)
+      void (async () => {
+        const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(
+          client,
+          scope.workspaceId,
+          scope.directory,
+        );
+        if (!serverWorkspaceId) return null;
+        return await client.getSessionLatestRunArtifacts(serverWorkspaceId, scope.sessionId);
+      })()
         .then((response) => {
           if (cancelled) return;
-          if (response.sessionId !== sessionId || response.workspaceId !== workspaceId) return;
+          if (!response) {
+            setLatestRunArtifactResponse(undefined);
+            setLatestRunArtifactResponseKey("");
+            return;
+          }
+          if (response.sessionId !== scope.sessionId) return;
           setLatestRunArtifactResponse(response);
+          setLatestRunArtifactResponseKey(key);
         })
         .catch(() => {
           if (cancelled) return;
           setLatestRunArtifactResponse(undefined);
+          setLatestRunArtifactResponseKey("");
         });
     }, 120);
 
@@ -5088,17 +5123,13 @@ export default function App() {
     return workspaceId ? routedClient(workspaceId) : routedClient();
   };
 
-  // VSLO-171 F3Ú7a — per-workspace pending permissions polling. Without SSE
-  // multiplex (F3Ú6d push) we refresh every 5 s in multi mode so background
-  // workspaces show up-to-date badge counts. Single-active mode skips polling
-  // (one client, SSE already covers it).
-  // VSLO-171 — per-workspace pending permissions polling. Refresh every 5 s
-  // so background workspaces show up-to-date sidebar badge counts.
-  createEffect(() => {
-    const id = setInterval(() => {
-      void sessionStore.refreshPendingPermissions();
-    }, 5000);
-    onCleanup(() => clearInterval(id));
+  // VSLO-171 — per-workspace pending permissions polling is scheduled outside
+  // the component body so the single-client SSE skip is shared and testable.
+  createPermissionPollingScheduler({
+    routedWorkspaceCount: () => workspaceRouting.entryIds().length,
+    activeWorkspaceId: () => workspaceStore.activeWorkspaceId().trim() || null,
+    activeSendTraceId: () => activeSendTraceId() ?? null,
+    refreshPendingPermissions: () => sessionStore.refreshPendingPermissions(),
   });
 
   // VSLO-171 F3Ú6a — per-workspace session cache save/load. In single-active
@@ -5114,11 +5145,20 @@ export default function App() {
   let previousActiveWsId: string | null = null;
   createEffect(() => {
     const wsId = workspaceStore.activeWorkspaceId().trim();
+    const selectedId = selectedSessionId()?.trim() ?? "";
+    const selectedScope = selectedId ? resolveSelectedSessionBrowseScope(selectedId) : null;
     if (previousActiveWsId && previousActiveWsId !== wsId) {
-      sessionStore.saveWorkspaceSnapshot(previousActiveWsId);
+      const selectedBelongsToOutgoing =
+        !selectedScope || selectedScope.workspaceId.trim() === previousActiveWsId;
+      if (selectedBelongsToOutgoing) {
+        sessionStore.saveWorkspaceSnapshot(previousActiveWsId);
+      }
     }
     if (wsId) {
-      sessionStore.loadWorkspaceSnapshot(wsId);
+      const selectedBelongsToIncoming = selectedScope?.workspaceId.trim() === wsId;
+      if (!selectedBelongsToIncoming) {
+        sessionStore.loadWorkspaceSnapshot(wsId);
+      }
       // Cache miss is fine — connectToServer will trigger loadSessions to
       // populate fresh state.
     }
@@ -5348,7 +5388,9 @@ export default function App() {
       preferServerArtifacts: Boolean(currentLatestRunArtifactResponse()),
       legacyArtifacts: currentLatestRunArtifactResponse() ? [] : artifacts(),
       workingFiles: currentLatestRunArtifactResponse() ? [] : workingFiles(),
-      workspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
+      workspaceRoot:
+        (activeSessionId() ? resolveSelectedSessionBrowseScope(activeSessionId()!)?.workspaceRoot : null) ||
+        workspaceStore.activeWorkspaceRoot().trim(),
     }),
   );
 
@@ -5738,30 +5780,70 @@ export default function App() {
     }
   };
 
+  let sidebarBulkRefreshInFlight: Promise<void> | null = null;
+
   const refreshAllSidebarWorkspaceSessions = async (prioritizeWorkspaceId?: string | null) => {
+    const existingBulkRefresh = sidebarBulkRefreshInFlight;
+    if (existingBulkRefresh) {
+      await existingBulkRefresh;
+      recordPerfLog(developerMode(), "sidebar.sessions", "refresh-all-joined", {
+        prioritizeWorkspaceId: prioritizeWorkspaceId ?? null,
+      });
+      return;
+    }
+
     const list = workspaceStore.workspaces();
     if (!list.length) return;
     const prioritize = (prioritizeWorkspaceId ?? "").trim();
     const ordered = prioritize
       ? [...list.filter((ws) => ws.id === prioritize), ...list.filter((ws) => ws.id !== prioritize)]
       : list;
-    for (const ws of ordered) {
-      await refreshSidebarWorkspaceSessions(ws.id);
-      // Yield so long refresh passes don't block UI / timers.
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const run = (async () => {
+      for (const ws of ordered) {
+        await refreshSidebarWorkspaceSessions(ws.id);
+        // Yield so long refresh passes don't block UI / timers.
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+    })();
+    sidebarBulkRefreshInFlight = run;
+    try {
+      await run;
+    } finally {
+      if (sidebarBulkRefreshInFlight === run) {
+        sidebarBulkRefreshInFlight = null;
+      }
     }
   };
 
   const refreshLocalSidebarWorkspaceSessions = async (prioritizeWorkspaceId?: string | null) => {
+    const existingBulkRefresh = sidebarBulkRefreshInFlight;
+    if (existingBulkRefresh) {
+      await existingBulkRefresh;
+      recordPerfLog(developerMode(), "sidebar.sessions", "refresh-local-joined", {
+        prioritizeWorkspaceId: prioritizeWorkspaceId ?? null,
+      });
+      return;
+    }
+
     const list = workspaceStore.workspaces().filter((ws) => ws.workspaceType === "local");
     if (!list.length) return;
     const prioritize = (prioritizeWorkspaceId ?? "").trim();
     const ordered = prioritize
       ? [...list.filter((ws) => ws.id === prioritize), ...list.filter((ws) => ws.id !== prioritize)]
       : list;
-    for (const ws of ordered) {
-      await refreshSidebarWorkspaceSessions(ws.id);
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const run = (async () => {
+      for (const ws of ordered) {
+        await refreshSidebarWorkspaceSessions(ws.id);
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+    })();
+    sidebarBulkRefreshInFlight = run;
+    try {
+      await run;
+    } finally {
+      if (sidebarBulkRefreshInFlight === run) {
+        sidebarBulkRefreshInFlight = null;
+      }
     }
   };
 
@@ -8062,6 +8144,23 @@ export default function App() {
     return vesloServerStatus() === "connected" && Boolean(vesloServerClient() && vesloServerWorkspaceId());
   });
 
+  const refreshMcpServers = createMcpServersRefresher({
+    projectDir: () => workspaceProjectDir(),
+    workspaceType: () => workspaceStore.activeWorkspaceDisplay().workspaceType,
+    activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
+    isTauriRuntime,
+    developerMode: () => developerMode(),
+    vesloServerStatus,
+    vesloServerClient,
+    vesloServerWorkspaceId,
+    vesloCapabilities: () => resolvedVesloCapabilities(),
+    setMcpStatus,
+    setMcpServers,
+    setMcpStatuses,
+    setMcpLastUpdatedAt,
+    scheduleRuntimeStatusRefresh: scheduleMcpRuntimeStatusRefresh,
+  });
+
   const reloadWorkspaceEngineFromUi = async () => {
     if (canReloadLocalEngine()) {
       return workspaceStore.reloadWorkspaceEngine();
@@ -8839,110 +8938,6 @@ export default function App() {
     mcpRuntimeStatusRefreshInFlightByKey.set(key, task);
   }
 
-  async function refreshMcpServers() {
-    const projectDir = workspaceProjectDir().trim();
-    const isRemoteWorkspace = workspaceStore.activeWorkspaceDisplay().workspaceType === "remote";
-    const isLocalWorkspace = !isRemoteWorkspace;
-    const vesloClient = vesloServerClient();
-    const vesloWorkspaceId = vesloServerWorkspaceId();
-    const vesloCapabilities = resolvedVesloCapabilities();
-    const canUseVesloServer =
-      vesloServerStatus() === "connected" &&
-      vesloClient &&
-      vesloWorkspaceId &&
-      vesloCapabilities?.mcp?.read;
-
-    if (isRemoteWorkspace) {
-      if (!canUseVesloServer) {
-        setMcpStatus("Veslo server unavailable. MCP config is read-only.");
-        setMcpServers([]);
-        setMcpStatuses({});
-        return;
-      }
-
-      try {
-        setMcpStatus(null);
-        const response = await vesloClient.listMcp(vesloWorkspaceId);
-        const next = response.items.map((entry) => ({
-          name: entry.name,
-          config: entry.config as McpServerEntry["config"],
-          source: entry.source,
-          disabledByTools: entry.disabledByTools,
-        }));
-        setMcpServers(next);
-        setMcpLastUpdatedAt(Date.now());
-
-        scheduleMcpRuntimeStatusRefresh(projectDir, next);
-
-        if (!next.length) {
-          setMcpStatus("No MCP servers configured yet.");
-        }
-      } catch (e) {
-        setMcpServers([]);
-        setMcpStatuses({});
-        setMcpStatus(e instanceof Error ? e.message : "Failed to load MCP servers");
-      }
-      return;
-    }
-
-    if (isLocalWorkspace && canUseVesloServer) {
-      try {
-        setMcpStatus(null);
-        const response = await vesloClient.listMcp(vesloWorkspaceId);
-        const next = response.items.map((entry) => ({
-          name: entry.name,
-          config: entry.config as McpServerEntry["config"],
-          source: entry.source,
-          disabledByTools: entry.disabledByTools,
-        }));
-        setMcpServers(next);
-        setMcpLastUpdatedAt(Date.now());
-
-        scheduleMcpRuntimeStatusRefresh(projectDir, next);
-
-        if (!next.length) {
-          setMcpStatus("No MCP servers configured yet.");
-        }
-      } catch (e) {
-        setMcpServers([]);
-        setMcpStatuses({});
-        setMcpStatus(e instanceof Error ? e.message : "Failed to load MCP servers");
-      }
-      return;
-    }
-
-    if (!isTauriRuntime()) {
-      setMcpStatus("MCP configuration is only available for local workspaces.");
-      setMcpServers([]);
-      setMcpStatuses({});
-      return;
-    }
-
-    if (!projectDir) {
-      setMcpStatus("Pick a workspace folder to load MCP servers.");
-      setMcpServers([]);
-      setMcpStatuses({});
-      return;
-    }
-
-    try {
-      setMcpStatus(null);
-      const next = await readEffectiveMcpServerEntries(projectDir);
-      setMcpServers(next);
-      setMcpLastUpdatedAt(Date.now());
-
-      scheduleMcpRuntimeStatusRefresh(projectDir, next);
-
-      if (!next.length) {
-        setMcpStatus("No MCP servers configured yet.");
-      }
-    } catch (e) {
-      setMcpServers([]);
-      setMcpStatuses({});
-      setMcpStatus(e instanceof Error ? e.message : "Failed to load MCP servers");
-    }
-  }
-
   async function ensureMcpRuntimeContext() {
     const projectDir = workspaceProjectDir().trim();
 
@@ -9501,8 +9496,6 @@ export default function App() {
       async () => {
         // Abort any in-flight refresh operations to free up connection resources.
         abortRefreshes();
-        // Small delay to allow pending requests to settle.
-        await new Promise((resolve) => setTimeout(resolve, 50));
       },
       tracePayload,
     );
@@ -10174,6 +10167,7 @@ export default function App() {
 
 
   onMount(async () => {
+    const mountCleanupFns: Array<() => void> = [];
     const startupGuard = createStartupGuard({
       timeoutMs: 15_000,
       onTimeout: () => {
@@ -10181,7 +10175,12 @@ export default function App() {
         setBooting(false);
       },
     });
-    onCleanup(() => startupGuard.dispose());
+    onCleanup(() => {
+      startupGuard.dispose();
+      for (const cleanup of mountCleanupFns.splice(0)) {
+        cleanup();
+      }
+    });
 
     if (typeof window !== "undefined" && CLOUD_ONLY_MODE) {
       const invite = readVesloConnectInviteFromSearch(window.location.search);
@@ -10516,7 +10515,7 @@ export default function App() {
         const unlistenSingleInstance = await listen<string[]>("deep-link://new-url", (event) => {
           consumeUrls(event.payload);
         });
-        onCleanup(() => {
+        mountCleanupFns.push(() => {
           unlisten();
           unlistenSingleInstance();
         });
@@ -10589,12 +10588,11 @@ export default function App() {
     setSessionModelOverrideById({});
   });
 
-  createEffect(() => {
-    if (!isTauriRuntime()) return;
-    engineReady();
-    const projectDir = workspaceProjectDir().trim();
-    if (!projectDir) return;
-    void refreshMcpServers();
+  createMcpAutoRefreshScheduler({
+    isTauriRuntime,
+    engineReady: () => engineReady(),
+    workspaceProjectDir: () => workspaceProjectDir(),
+    refreshMcpServers,
   });
 
   createEffect(() => {
@@ -10710,8 +10708,8 @@ export default function App() {
     if (!root) return;
     const nextModel = defaultModel();
     const managedProfile = managedAiAccess();
-    const managedAccessBusy = managedAiAccessBusy();
-    const managedAccessError = managedAiAccessError();
+    const managedAccessBusy = managedProfile ? false : managedAiAccessBusy();
+    const managedAccessError = managedProfile ? null : managedAiAccessError();
     const gatewayClient = gatewayVesloServerClient();
     const providerRoutingLocalHost = activeVesloServerHostInfo();
     const providerRoutingLocalBaseUrl =
@@ -12196,16 +12194,25 @@ export default function App() {
       const sessionIdsInSidebar = sidebarWorkspaceGroups().flatMap((group) =>
         group.sessions.map((session) => session.id)
       );
+      const scopedSessionIds = Object.values(conversationScopeBySessionId()).flatMap((scopes) =>
+        scopes.flatMap((scope) => [
+          scope.sessionId,
+          scope.conversationId ?? "",
+          scope.opencodeSessionId ?? "",
+        ]),
+      );
       // If the URL points at a session that no longer exists (e.g. after deletion),
       // route back to /session so the app can fall back safely.
       // Sidebar-backed ids are accepted here so selection can proceed even when
-      // session store hydration is briefly behind sidebar refreshes.
+      // session store hydration is briefly behind sidebar refreshes. Scope-backed
+      // ids cover browse-only conversations while their source workspace is idle.
       if (
         shouldFallbackFromSessionRoute({
           sessionsLoaded: sessionsLoaded(),
           routeSessionId: id,
           sessionIdsInStore,
           sessionIdsInSidebar,
+          scopedSessionIds,
         })
       ) {
         if (selectedSessionId() === id) {

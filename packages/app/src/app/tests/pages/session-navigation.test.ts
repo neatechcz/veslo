@@ -208,6 +208,26 @@ test("app activates selected session workspace at send time, not browse time", (
   );
 });
 
+test("workspace snapshot effect preserves scoped browse session during send-time activation", () => {
+  assert.match(
+    appSource,
+    /const selectedId = selectedSessionId\(\)\?\.trim\(\) \?\? "";\s*const selectedScope = selectedId \? resolveSelectedSessionBrowseScope\(selectedId\) : null;/,
+    "workspace snapshot effect should inspect the selected session scope before saving or restoring snapshots",
+  );
+
+  assert.match(
+    appSource,
+    /const selectedBelongsToOutgoing =\s*!selectedScope \|\| selectedScope\.workspaceId\.trim\(\) === previousActiveWsId;[\s\S]*if \(selectedBelongsToOutgoing\) \{\s*sessionStore\.saveWorkspaceSnapshot\(previousActiveWsId\);/s,
+    "outgoing workspace snapshot must not be overwritten by a browsed session from a different workspace",
+  );
+
+  assert.match(
+    appSource,
+    /const selectedBelongsToIncoming = selectedScope\?\.workspaceId\.trim\(\) === wsId;[\s\S]*if \(!selectedBelongsToIncoming\) \{\s*sessionStore\.loadWorkspaceSnapshot\(wsId\);/s,
+    "send-time activation must not immediately replace the scoped browsed session with a stale workspace snapshot",
+  );
+});
+
 test("opens cross-workspace session without activating the workspace", async () => {
   const opened: string[] = [];
   const activated: string[] = [];

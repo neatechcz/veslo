@@ -29,11 +29,27 @@ const HOT_EVENT_KEYS = new Set([
   "session.window:state",
 ]);
 
+const NATIVE_RUNTIME_PERF_SCOPES = new Set([
+  "session.permissions",
+  "workspace.sidebar",
+  "workspace.mcp",
+]);
+
 export const perfNow = () => {
   if (typeof performance !== "undefined" && typeof performance.now === "function") {
     return performance.now();
   }
   return Date.now();
+};
+
+export const runtimePerfAuditEnabled = () => {
+  const root = globalThis as PerfRoot & { __vesloRuntimePerfAuditEnabled?: boolean };
+  if (root.__vesloRuntimePerfAuditEnabled) return true;
+  try {
+    return typeof localStorage !== "undefined" && localStorage.getItem("veslo:runtime-perf-audit") === "1";
+  } catch {
+    return false;
+  }
 };
 
 const round = (value: number) => Math.round(value * 100) / 100;
@@ -65,6 +81,12 @@ export const recordPerfLog = (
     logs.splice(0, logs.length - PERF_LOG_LIMIT);
   }
   root.__vesloPerfLogs = logs;
+
+  if (NATIVE_RUNTIME_PERF_SCOPES.has(scope)) {
+    void import("./tauri")
+      .then((mod) => mod.logUiEvent("runtime-perf", `${scope}:${event}`, entry))
+      .catch(() => {});
+  }
 
   try {
     const key = `${scope}:${event}`;

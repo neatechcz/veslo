@@ -13,17 +13,29 @@ const recentRenderBranch = () => {
   return source.slice(fallbackIndex, byProjectBranchIndex);
 };
 
-test("project header click toggles collapse and does not activate workspace", () => {
+test("project header click activates workspace while collapse stays on the folder icon", () => {
   assert.match(
     source,
-    /onClick=\{\(\) => toggleProjectCollapse\(project\.key\)\}/,
-    "project header should toggle collapse/expand on click",
+    /const handleProjectOpenClick = \(projectKey: string, workspaceId: string\) => \{[\s\S]*void Promise\.resolve\(props\.onActivateWorkspace\(workspaceId\)\);[\s\S]*\};/,
+    "project header should route clicks through workspace activation",
+  );
+
+  assert.match(
+    source,
+    /onClick=\{\(\) => handleProjectOpenClick\(project\.key, workspace\(\)\.id\)\}/,
+    "project header button should activate its workspace",
+  );
+
+  assert.match(
+    source,
+    /<Folder[\s\S]*onClick=\{\(event\) => \{[\s\S]*event\.stopPropagation\(\);[\s\S]*toggleProjectCollapse\(project\.key\);[\s\S]*\}\}/,
+    "folder icon should remain the explicit collapse/expand target",
   );
 
   assert.doesNotMatch(
     source,
-    /void Promise\.resolve\(props\.onActivateWorkspace\(workspace\(\)\.id\)\);/,
-    "project header interaction must not trigger workspace activation",
+    /aria-label=\{project\.projectLabel \? `\$\{tr\("sidebar\.open_project"\)\} \$\{project\.projectLabel\}` : tr\("sidebar\.open_project"\)\}[\s\S]*onClick=\{\(\) => toggleProjectCollapse\(project\.key\)\}/,
+    "open-project button must not be wired to collapse-only behavior",
   );
 });
 
@@ -256,8 +268,14 @@ test("project rows expose drag lifecycle bindings without dedicated grip handle"
 
   assert.match(
     source,
-    /data-project-drag-preview[\s\S]*<button[\s\S]*onPointerDown=\{\(event\) => handleProjectPointerDown\(event, project\.key, projectDragLabel\(\)\)\}[\s\S]*onClick=\{\(\) => toggleProjectCollapse\(project\.key\)\}/,
-    "project collapse button should stay clickable while drag behavior lives on the wrapper",
+    /data-project-drag-preview[\s\S]*<button[\s\S]*onPointerDown=\{\(event\) => handleProjectPointerDown\(event, project\.key, projectDragLabel\(\)\)\}[\s\S]*onClick=\{\(\) => handleProjectOpenClick\(project\.key, workspace\(\)\.id\)\}/,
+    "project open button should stay clickable while drag behavior lives on the wrapper",
+  );
+
+  assert.match(
+    source,
+    /const suppressNextProjectClick = \(projectKey: string\) => \{[\s\S]*suppressedProjectClickKey = projectKey;[\s\S]*\};/,
+    "pointer drag should suppress the next synthetic click so reorder does not also activate a workspace",
   );
 
   assert.match(
