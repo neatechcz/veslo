@@ -21,6 +21,10 @@ const workspaceSessionSnapshotsSource = readFileSync(
   new URL("../../context/workspace-session-snapshots.ts", import.meta.url),
   "utf8",
 );
+const workspaceSendTargetSource = readFileSync(
+  new URL("../../context/workspace-send-target.ts", import.meta.url),
+  "utf8",
+);
 const sidebarWorkspaceSessionsSource = readFileSync(
   new URL("../../context/sidebar-workspace-sessions.ts", import.meta.url),
   "utf8",
@@ -54,12 +58,6 @@ const openPendingDirectoryDraftInWorkspaceEnd = appSource.indexOf(
 const openPendingDirectoryDraftInWorkspaceSource =
   openPendingDirectoryDraftInWorkspaceStart >= 0 && openPendingDirectoryDraftInWorkspaceEnd >= 0
     ? appSource.slice(openPendingDirectoryDraftInWorkspaceStart, openPendingDirectoryDraftInWorkspaceEnd)
-    : "";
-const scopedSendActivationStart = appSource.indexOf("  async function ensureSelectedSessionWorkspaceActiveForSend(");
-const scopedSendActivationEnd = appSource.indexOf("  async function sendPrompt(", scopedSendActivationStart);
-const scopedSendActivationSource =
-  scopedSendActivationStart >= 0 && scopedSendActivationEnd >= 0
-    ? appSource.slice(scopedSendActivationStart, scopedSendActivationEnd)
     : "";
 const sendPromptStart = appSource.indexOf("  async function sendPrompt(");
 const sendPromptEnd = appSource.indexOf("  async function abortSession(", sendPromptStart);
@@ -214,8 +212,8 @@ test("app routes selected session browsing through DB scope", () => {
 
 test("app activates selected session workspace at send time, not browse time", () => {
   assert.match(
-    scopedSendActivationSource,
-    /const transcriptScope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*sendTraceStep\(\s*"sendPrompt:activate-scoped-workspace-call",[\s\S]*workspaceStore\.activateWorkspace\(targetWorkspaceId\)/s,
+    workspaceSendTargetSource,
+    /const transcriptScope = options\.resolveSessionSendTargetScope\(sessionId\);[\s\S]*options\.sendTraceStep\(\s*"sendPrompt:activate-scoped-workspace-call",[\s\S]*options\.activateWorkspace\(targetWorkspaceId\)/s,
     "send path should activate the workspace from the selected session scope",
   );
   assert.match(

@@ -3,6 +3,10 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const workspaceSendTargetSource = readFileSync(
+  new URL("../context/workspace-send-target.ts", import.meta.url),
+  "utf8",
+);
 
 test("send preflight snapshots the target workspace before cold-start awaits", () => {
   const sendStart = source.indexOf("async function sendPrompt(");
@@ -71,7 +75,12 @@ test("send engine startup uses the snapshotted target workspace", () => {
 test("scoped send and session creation do not fall back to the active client", () => {
   assert.match(
     source,
-    /const routedClientForSendTarget = \(targetWorkspace\?: SendTargetWorkspaceScope \| null\) => \{[\s\S]*const workspaceId = targetWorkspace\?\.workspaceId\?\.trim\(\) \?\? "";[\s\S]*return workspaceId \? routedClient\(workspaceId\) : routedClient\(\);[\s\S]*\};/,
+    /const workspaceSendTarget = createWorkspaceSendTarget<Client>\(\{[\s\S]*resolveSessionSendTargetScope: workspaceSessionSelection\.resolveSendTargetWorkspaceScope,[\s\S]*routedClient,[\s\S]*\}\);/,
+    "app should wire scoped send target routing through the workspace send target controller",
+  );
+  assert.match(
+    workspaceSendTargetSource,
+    /const workspaceId = input\.targetWorkspace\?\.workspaceId\?\.trim\(\) \?\? "";[\s\S]*return workspaceId \? input\.routedClient\(workspaceId\) \?\? null : input\.routedClient\(\) \?\? null;/,
     "explicitly scoped sends should return null when the target workspace client is missing instead of using the active workspace client",
   );
   assert.match(

@@ -100,8 +100,11 @@ import { shouldFallbackFromSessionRoute } from "./lib/session-route-selection-gu
 import { partitionVesloUtilitySessions } from "./lib/veslo-utility-session";
 import {
   createWorkspaceSessionSelection,
-  type SendTargetWorkspaceScope,
 } from "./context/workspace-session-selection";
+import {
+  createWorkspaceSendTarget,
+  type SendTargetWorkspaceScope,
+} from "./context/workspace-send-target";
 import ResetModal from "./components/reset-modal";
 import ConfirmModal from "./components/confirm-modal";
 import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
@@ -2964,64 +2967,6 @@ export default function App() {
     }
   }
 
-  async function ensureSelectedSessionWorkspaceActiveForSend(
-    sessionId: string,
-    traceId?: string | null,
-  ): Promise<boolean> {
-    const tracePayload = traceId ? { traceId } : undefined;
-    const transcriptScope = resolveSelectedSessionBrowseScope(sessionId);
-    if (!transcriptScope) {
-      recordSendTrace("sendPrompt:scoped-workspace-skipped-no-scope", tracePayload);
-      return true;
-    }
-    const targetWorkspaceId = transcriptScope.workspaceId.trim();
-    if (!targetWorkspaceId) {
-      recordSendTrace("sendPrompt:scoped-workspace-skipped-empty-target", tracePayload);
-      return true;
-    }
-    if (targetWorkspaceId === workspaceStore.activeWorkspaceId().trim()) {
-      recordSendTrace("sendPrompt:scoped-workspace-already-active", {
-        ...(tracePayload ?? {}),
-        workspaceId: targetWorkspaceId,
-      });
-      return true;
-    }
-
-    recordSendTrace("sendPrompt:activate-scoped-workspace", {
-      ...(tracePayload ?? {}),
-      sessionId,
-      workspaceId: targetWorkspaceId,
-      activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
-    });
-    try {
-      const activated = await sendTraceStep(
-        "sendPrompt:activate-scoped-workspace-call",
-        () => workspaceStore.activateWorkspace(targetWorkspaceId),
-        {
-          ...(tracePayload ?? {}),
-          sessionId,
-          workspaceId: targetWorkspaceId,
-        },
-      );
-      if (!activated) {
-        recordSendTrace("sendPrompt:activate-scoped-workspace-blocked", {
-          ...(tracePayload ?? {}),
-          sessionId,
-          workspaceId: targetWorkspaceId,
-        });
-      }
-      return Boolean(activated);
-    } catch (error) {
-      recordSendTrace("sendPrompt:activate-scoped-workspace-error", {
-        ...(tracePayload ?? {}),
-        sessionId,
-        workspaceId: targetWorkspaceId,
-        message: messageFromUnknownError(error),
-      });
-      return false;
-    }
-  }
-
   async function sendPrompt(
     draft?: ComposerDraft,
     options: { targetSessionId?: string | null; sendTraceId?: string | null } = {},
@@ -4858,29 +4803,22 @@ export default function App() {
     return workspace?.directory?.trim() || workspace?.path?.trim() || fallbackDirectory?.trim() || "";
   };
 
-  const resolveSendTargetWorkspaceScope = (sessionId?: string | null): SendTargetWorkspaceScope | null => {
-    const normalizedSessionId = sessionId?.trim() ?? "";
-    if (!normalizedSessionId) {
-      const pending = activePendingDraftMeta();
-      const pendingWorkspaceId = (pending?.privateWorkspaceId ?? pending?.workspaceId ?? "").trim();
-      if (pendingWorkspaceId) {
-        const root = workspaceRootForId(pendingWorkspaceId, pending?.directory ?? null);
-        const dir = pending?.directory?.trim() || root;
-        const scope =
-          pendingWorkspaceId && root && dir
-            ? { workspaceId: pendingWorkspaceId, workspaceRoot: root, directory: dir }
-            : null;
-        if (scope) return scope;
-      }
-    }
-
-    return workspaceSessionSelection.resolveSendTargetWorkspaceScope(normalizedSessionId);
-  };
-
-  const routedClientForSendTarget = (targetWorkspace?: SendTargetWorkspaceScope | null) => {
-    const workspaceId = targetWorkspace?.workspaceId?.trim() ?? "";
-    return workspaceId ? routedClient(workspaceId) : routedClient();
-  };
+  const workspaceSendTarget = createWorkspaceSendTarget<Client>({
+    activePendingDraftMeta,
+    resolveWorkspaceRoot: workspaceRootForId,
+    resolveSessionSendTargetScope: workspaceSessionSelection.resolveSendTargetWorkspaceScope,
+    activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
+    activateWorkspace: (workspaceId) => workspaceStore.activateWorkspace(workspaceId),
+    recordSendTrace,
+    sendTraceStep,
+    messageFromUnknownError,
+    routedClient,
+  });
+  const {
+    resolveSendTargetWorkspaceScope,
+    routedClientForSendTarget,
+    ensureSelectedSessionWorkspaceActiveForSend,
+  } = workspaceSendTarget;
 
   // VSLO-171 — per-workspace pending permissions polling is scheduled outside
   // the component body so the single-client SSE skip is shared and testable.
