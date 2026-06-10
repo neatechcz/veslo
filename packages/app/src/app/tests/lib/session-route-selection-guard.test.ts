@@ -42,6 +42,19 @@ test("does not fallback when session id is visible in sidebar but not yet in sto
   );
 });
 
+test("does not fallback when session id is known only from scoped conversation routing", () => {
+  assert.equal(
+    shouldFallbackFromSessionRoute({
+      sessionsLoaded: true,
+      routeSessionId: "conversation-1",
+      sessionIdsInStore: [],
+      sessionIdsInSidebar: [],
+      scopedSessionIds: ["conversation-1", "opencode-1"],
+    }),
+    false,
+  );
+});
+
 test("falls back when loaded and id is in neither store nor sidebar", () => {
   assert.equal(
     shouldFallbackFromSessionRoute({
@@ -63,8 +76,8 @@ test("real session route fallback ignores active pending draft context", () => {
 
   assert.match(
     routeSource,
-    /shouldFallbackFromSessionRoute\(\{\s*sessionsLoaded: sessionsLoaded\(\),\s*routeSessionId: id,\s*sessionIdsInStore,\s*sessionIdsInSidebar,\s*\}\)/s,
-    "real session route fallback should use persisted session ids and sidebar ids without pending preloader state",
+    /const scopedSessionIds = Object\.values\(conversationScopeBySessionId\(\)\)\.flatMap\(\(scopes\) =>[\s\S]*shouldFallbackFromSessionRoute\(\{\s*sessionsLoaded: sessionsLoaded\(\),\s*routeSessionId: id,\s*sessionIdsInStore,\s*sessionIdsInSidebar,\s*scopedSessionIds,\s*\}\)/s,
+    "real session route fallback should use persisted, sidebar, and scoped conversation ids without pending preloader state",
   );
   assert.doesNotMatch(
     routeSource,

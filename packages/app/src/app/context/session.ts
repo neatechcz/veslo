@@ -30,7 +30,7 @@ import {
 import { unwrap } from "../lib/opencode";
 import { engineSseSubscribe, isEngineSseAvailable } from "../lib/engine-sse";
 import type { WorkspaceRouting, RoutingClient } from "./workspace-routing";
-import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
+import { finishPerf, perfNow, recordPerfLog, runtimePerfAuditEnabled } from "../lib/perf-log";
 import { formatSessionError, truncateErrorField } from "../lib/session-error";
 import { detectChromeMcpCompletedError } from "../lib/chrome-mcp-error";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../types";
@@ -50,6 +50,15 @@ type SessionStatusTraceRoot = typeof window & {
   __vesloSessionStatusTrace?: Array<Record<string, unknown>>;
   __vesloSessionStatusSnapshot?: Record<string, string>;
 };
+
+type RuntimeEffectTraceRoot = typeof window & {
+  __vesloActiveSendTraceId?: string | null;
+};
+
+function activeSendTraceId() {
+  if (typeof window === "undefined") return null;
+  return (window as RuntimeEffectTraceRoot).__vesloActiveSendTraceId ?? null;
+}
 
 function recordSessionStatusTrace(event: string, payload?: Record<string, unknown>) {
   if (typeof window === "undefined") return;
@@ -843,12 +852,20 @@ export function createSessionStore(options: {
 
   async function refreshPendingPermissions() {
     if (options.engineReady && !options.engineReady()) {
+      recordPerfLog(runtimePerfAuditEnabled(), "session.permissions", "skip-engine-not-ready", {
+        activeWorkspaceId: options.routing.activeWorkspaceId() || null,
+        activeSendTraceId: activeSendTraceId(),
+      });
       sessionDebug("permissions:skip-engine-not-ready", {
         activeWorkspaceId: options.routing.activeWorkspaceId() || null,
       });
       return;
     }
     if (pendingPermissionsRefreshInFlight) {
+      recordPerfLog(runtimePerfAuditEnabled(), "session.permissions", "skip-in-flight", {
+        activeWorkspaceId: options.routing.activeWorkspaceId() || null,
+        activeSendTraceId: activeSendTraceId(),
+      });
       sessionDebug("permissions:skip-in-flight", {
         activeWorkspaceId: options.routing.activeWorkspaceId() || null,
       });
@@ -856,6 +873,7 @@ export function createSessionStore(options: {
     }
 
     const run = (async () => {
+      const startedAt = perfNow();
       // VSLO-171 — iterate every per-workspace client and refresh each
       // workspace's permissions independently. The active workspace's list is
       // also mirrored into the global store so callers that read
@@ -873,7 +891,17 @@ export function createSessionStore(options: {
       // active client so the very first prompt still surfaces permissions.
       if (clientsToProbe.length === 0) {
         const c = options.routing.active();
-        if (!c) return;
+        if (!c) {
+          finishPerf(runtimePerfAuditEnabled(), "session.permissions", "refresh", startedAt, {
+            activeWorkspaceId: activeWs || null,
+            activeSendTraceId: activeSendTraceId(),
+            clientCount: 0,
+            source: "none",
+            permissionCount: 0,
+            errorCount: 0,
+          });
+          return;
+        }
         const list = unwrap(await c.permission.list()) as Array<PendingPermission>;
         const byId = new Map(store.pendingPermissions.map((p) => [p.id, p] as const));
         const next = list.map((perm) => ({
@@ -883,8 +911,17 @@ export function createSessionStore(options: {
         }));
         setStore("pendingPermissions", next);
         if (activeWs) setPendingPermissionsByWs({ [activeWs]: next });
+        finishPerf(runtimePerfAuditEnabled(), "session.permissions", "refresh", startedAt, {
+          activeWorkspaceId: activeWs || null,
+          activeSendTraceId: activeSendTraceId(),
+          clientCount: 1,
+          source: "active-fallback",
+          permissionCount: next.length,
+          errorCount: 0,
+        });
         return;
       }
+      let errorCount = 0;
       await Promise.all(
         clientsToProbe.map(async ({ wsId, client }) => {
           try {
@@ -897,6 +934,7 @@ export function createSessionStore(options: {
               receivedAt: byId.get(perm.id)?.receivedAt ?? now,
             }));
           } catch {
+            errorCount += 1;
             nextByWs[wsId] = prevByWs[wsId] ?? [];
           }
         }),
@@ -904,6 +942,14 @@ export function createSessionStore(options: {
       setPendingPermissionsByWs(nextByWs);
       const activeList = activeWs ? nextByWs[activeWs] ?? [] : [];
       setStore("pendingPermissions", activeList);
+      finishPerf(runtimePerfAuditEnabled(), "session.permissions", "refresh", startedAt, {
+        activeWorkspaceId: activeWs || null,
+        activeSendTraceId: activeSendTraceId(),
+        clientCount: clientsToProbe.length,
+        source: "workspace-routing",
+        permissionCount: Object.values(nextByWs).reduce((sum, list) => sum + list.length, 0),
+        errorCount,
+      });
     })();
 
     pendingPermissionsRefreshInFlight = run;

@@ -504,6 +504,8 @@ export default function WorkspaceSessionList(props: Props) {
   let recentSentinelRef: HTMLDivElement | undefined;
   let projectDragPreviewElement: HTMLDivElement | null = null;
   let recentMouseUpSessionActivation: { sessionId: string; at: number } | null = null;
+  let suppressedProjectClickKey: string | null = null;
+  let clearSuppressedProjectClickTimer: number | null = null;
 
   const sidebarMode = createMemo(() => sidebarModeSignal());
   const setSidebarMode = (value: SidebarViewMode) => {
@@ -516,6 +518,30 @@ export default function WorkspaceSessionList(props: Props) {
       writeCollapsedProjectMap(next);
       return next;
     });
+  const suppressNextProjectClick = (projectKey: string) => {
+    suppressedProjectClickKey = projectKey;
+    if (clearSuppressedProjectClickTimer !== null && typeof window !== "undefined") {
+      window.clearTimeout(clearSuppressedProjectClickTimer);
+    }
+    clearSuppressedProjectClickTimer = typeof window === "undefined"
+      ? null
+      : window.setTimeout(() => {
+          suppressedProjectClickKey = null;
+          clearSuppressedProjectClickTimer = null;
+        }, 0);
+  };
+  const handleProjectOpenClick = (projectKey: string, workspaceId: string) => {
+    if (suppressedProjectClickKey === projectKey) {
+      suppressedProjectClickKey = null;
+      return;
+    }
+    void Promise.resolve(props.onActivateWorkspace(workspaceId));
+  };
+  onCleanup(() => {
+    if (clearSuppressedProjectClickTimer !== null && typeof window !== "undefined") {
+      window.clearTimeout(clearSuppressedProjectClickTimer);
+    }
+  });
   const rowIndentStyle = (row: FlatSessionRow) =>
     row.nestingLevel > 0 ? { "padding-left": `${12 + Math.min(row.nestingLevel, 6) * 14}px` } : undefined;
 
@@ -1292,6 +1318,7 @@ export default function WorkspaceSessionList(props: Props) {
     if (!drag || event.pointerId !== drag.pointerId) return;
 
     if (drag.active) {
+      suppressNextProjectClick(drag.sourceKey);
       const indicator = resolveProjectDropIndicatorFromPoint(event.clientX, event.clientY, drag.sourceKey) ??
         projectDropIndicator();
       if (indicator && indicator.key !== drag.sourceKey) {
@@ -2465,7 +2492,7 @@ export default function WorkspaceSessionList(props: Props) {
                           title={project.projectTitle}
                           aria-label={project.projectLabel ? `${tr("sidebar.open_project")} ${project.projectLabel}` : tr("sidebar.open_project")}
                           onPointerDown={(event) => handleProjectPointerDown(event, project.key, projectDragLabel())}
-                          onClick={() => toggleProjectCollapse(project.key)}
+                          onClick={() => handleProjectOpenClick(project.key, workspace().id)}
                         >
                           <div class="flex items-center gap-2 min-w-0">
                             <Folder

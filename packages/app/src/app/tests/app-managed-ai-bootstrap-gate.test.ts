@@ -157,3 +157,11 @@ test("managed AI access refresh uses single-flight per cache key", () => {
     "managed AI refresh effect should run through the single-flight helper",
   );
 });
+
+test("managed config write effect does not subscribe to access busy state when a profile is present", () => {
+  assert.match(
+    source,
+    /const managedProfile = managedAiAccess\(\);[\s\S]*?const managedAccessBusy = managedProfile \? false : managedAiAccessBusy\(\);[\s\S]*?const managedAccessError = managedProfile \? null : managedAiAccessError\(\);/,
+    "managed config writes should only track busy/error for transient no-profile preservation, not for normal cached profile refreshes",
+  );
+});
