@@ -13,6 +13,14 @@ import * as sessionNavigation from "../../pages/session-navigation.js";
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
 const sessionPageSource = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
 const dashboardSource = readFileSync(new URL("../../pages/dashboard.tsx", import.meta.url), "utf8");
+const workspaceSessionSelectionSource = readFileSync(
+  new URL("../../context/workspace-session-selection.ts", import.meta.url),
+  "utf8",
+);
+const sidebarWorkspaceSessionsSource = readFileSync(
+  new URL("../../context/sidebar-workspace-sessions.ts", import.meta.url),
+  "utf8",
+);
 
 const openNewSessionStart = appSource.indexOf("  const openNewSessionWithDirectory = async () => {");
 const openNewSessionEnd = appSource.indexOf("  const openDirectorySessionFromPicker = async () => {", openNewSessionStart);
@@ -179,9 +187,14 @@ test("session list clicks record browse scope before route navigation", () => {
 
 test("app routes selected session browsing through DB scope", () => {
   assert.match(
+    workspaceSessionSelectionSource,
+    /const \[selectedSessionBrowseScope, setSelectedSessionBrowseScope\] = createSignal<SessionBrowseScope \| null>\(null\);/,
+    "workspace session selection should track the workspace scope of the selected browsed session",
+  );
+  assert.match(
     appSource,
-    /const \[selectedSessionBrowseScope, setSelectedSessionBrowseScope\] = createSignal<SelectedSessionBrowseScope \| null>\(null\);/,
-    "app should track the workspace scope of the selected browsed session",
+    /const workspaceSessionSelection = createWorkspaceSessionSelection\(\{[\s\S]*activeWorkspaceId: \(\) => workspaceStoreRef\?\.activeWorkspaceId\(\) \?\? "",[\s\S]*workspaces: \(\) => workspaceStoreRef\?\.workspaces\(\) \?\? \[\],[\s\S]*\}\);/,
+    "app should wire selected session browsing through the workspace session selection controller",
   );
   assert.match(
     appSource,
@@ -710,12 +723,12 @@ test("directory picker flow opens a pending draft instead of creating a real ses
 test("directory picker flow publishes the registered workspace into the sidebar before continuing", () => {
   assert.notEqual(openDirectorySessionSource, "", "Directory picker flow should exist in app.tsx");
   assert.match(
-    appSource,
+    sidebarWorkspaceSessionsSource,
     /const publishRegisteredWorkspaceToSidebar = \(workspaceId: string\) => \{[\s\S]*setSidebarSessionsByWorkspaceId\(\(prev\) =>[\s\S]*setSidebarSessionStatusByWorkspaceId\(\(prev\) =>[\s\S]*setSidebarSessionErrorByWorkspaceId\(\(prev\) =>[\s\S]*setSidebarSessionHasMoreByWorkspaceId\(\(prev\) =>/s,
-    "app should expose a scoped sidebar publication helper for registered workspaces",
+    "sidebar workspace sessions controller should expose a scoped sidebar publication helper for registered workspaces",
   );
   assert.match(
-    appSource,
+    sidebarWorkspaceSessionsSource,
     /const projectKey = workspace\?\.workspaceType === "local"[\s\S]*workspaceStore\.isPrivateWorkspacePath\(projectKey\)[\s\S]*promoteStoredProjectOrderKey\(projectKey\)/s,
     "registered local workspaces should be promoted to the top of the by-project sidebar order",
   );
