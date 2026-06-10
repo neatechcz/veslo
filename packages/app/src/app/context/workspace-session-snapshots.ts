@@ -9,7 +9,9 @@ type WorkspaceSessionSnapshotsOptions = {
   selectedSessionId: () => string | null | undefined;
   resolveSelectedSessionBrowseScope: (sessionId: string) => WorkspaceSessionSnapshotScope | null;
   saveWorkspaceSnapshot: (workspaceId: string) => void;
-  loadWorkspaceSnapshot: (workspaceId: string) => void;
+  loadWorkspaceSnapshot: (workspaceId: string) => boolean | void;
+  clearSelectedSession?: () => void;
+  debug?: (label: string, payload?: unknown) => void;
 };
 
 type WorkspaceSessionSnapshotActionInput = {
@@ -25,6 +27,18 @@ type WorkspaceSessionSnapshotAction = {
 };
 
 const normalize = (value: string | null | undefined) => value?.trim() ?? "";
+
+const snapshotDebugStack = () => {
+  try {
+    return (new Error().stack ?? "")
+      .split("\n")
+      .slice(2, 9)
+      .map((line) => line.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+};
 
 export function resolveWorkspaceSessionSnapshotAction(
   input: WorkspaceSessionSnapshotActionInput,
@@ -72,11 +86,39 @@ export function createWorkspaceSessionSnapshots(options: WorkspaceSessionSnapsho
       selectedScopeWorkspaceId: selectedScope?.workspaceId ?? null,
     });
 
+    if (action.saveWorkspaceId || action.loadWorkspaceId) {
+      options.debug?.("snapshot:action", {
+        previousWorkspaceId,
+        activeWorkspaceId,
+        selectedId,
+        selectedScopeWorkspaceId: selectedScope?.workspaceId ?? null,
+        saveWorkspaceId: action.saveWorkspaceId,
+        loadWorkspaceId: action.loadWorkspaceId,
+        stack: snapshotDebugStack(),
+      });
+    }
+
     if (action.saveWorkspaceId) {
+      options.debug?.("snapshot:save", {
+        workspaceId: action.saveWorkspaceId,
+        selectedId,
+      });
       options.saveWorkspaceSnapshot(action.saveWorkspaceId);
     }
     if (action.loadWorkspaceId) {
-      options.loadWorkspaceSnapshot(action.loadWorkspaceId);
+      const loaded = options.loadWorkspaceSnapshot(action.loadWorkspaceId);
+      options.debug?.("snapshot:load", {
+        workspaceId: action.loadWorkspaceId,
+        loaded: loaded !== false,
+        selectedId,
+      });
+      if (loaded === false && selectedId) {
+        options.debug?.("snapshot:clear-stale-selected-session", {
+          workspaceId: action.loadWorkspaceId,
+          selectedId,
+        });
+        options.clearSelectedSession?.();
+      }
     }
     previousWorkspaceId = action.nextPreviousWorkspaceId;
   });

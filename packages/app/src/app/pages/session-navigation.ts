@@ -1,9 +1,11 @@
+import type { WorkspaceActivationOptions } from "../context/workspace";
+
 export type OpenSessionWithWorkspaceActivationInput = {
   activeWorkspaceId: string;
   getActiveWorkspaceId?: () => string;
   workspaceId: string;
   sessionId: string;
-  activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  activateWorkspace: (workspaceId: string, options: WorkspaceActivationOptions) => Promise<boolean> | boolean | void;
   openSession: (sessionId: string) => void;
 };
 
@@ -22,7 +24,7 @@ export type CreateSessionWithWorkspaceActivationInput = {
   activeWorkspaceId: string;
   getActiveWorkspaceId?: () => string;
   workspaceId: string;
-  activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  activateWorkspace: (workspaceId: string, options: WorkspaceActivationOptions) => Promise<boolean> | boolean | void;
   createSession: () => Promise<string | undefined> | string | undefined | void;
 };
 
@@ -30,7 +32,7 @@ export type OpenPendingDraftWithWorkspaceActivationInput = {
   activeWorkspaceId: string;
   getActiveWorkspaceId?: () => string;
   workspaceId: string;
-  activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  activateWorkspace: (workspaceId: string, options: WorkspaceActivationOptions) => Promise<boolean> | boolean | void;
   openPendingDraft: () => Promise<string | boolean | undefined> | string | boolean | undefined | void;
 };
 
@@ -41,7 +43,7 @@ export type CreateSessionFromDirectorySelectionInput = {
   ensureWorkspaceForFolder: (
     folder: string,
   ) => Promise<{ id: string } | null> | { id: string } | null;
-  activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  activateWorkspace: (workspaceId: string, options: WorkspaceActivationOptions) => Promise<boolean> | boolean | void;
   createSession: () => Promise<string | undefined> | string | undefined | void;
 };
 
@@ -52,7 +54,7 @@ export type OpenPendingDraftFromDirectorySelectionInput = {
   ensureWorkspaceForFolder: (
     folder: string,
   ) => Promise<{ id: string } | null> | { id: string } | null;
-  activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  activateWorkspace: (workspaceId: string, options: WorkspaceActivationOptions) => Promise<boolean> | boolean | void;
   openPendingDraft: (
     target: { workspaceId: string; directory: string },
   ) => Promise<string | boolean | undefined> | string | boolean | undefined | void;
@@ -112,7 +114,7 @@ export async function createSessionWithWorkspaceActivation(
     if (token !== createSessionNavigationToken) return false;
 
     if (workspaceId !== getActiveWorkspaceId()) {
-      const activated = await Promise.resolve(input.activateWorkspace(workspaceId));
+      const activated = await Promise.resolve(input.activateWorkspace(workspaceId, { origin: "session-navigation:create-session" }));
       if (!activated) return false;
     }
 
@@ -144,7 +146,7 @@ export async function openPendingDraftWithWorkspaceActivation(
     if (token !== openPendingDraftNavigationToken) return false;
 
     if (workspaceId !== getActiveWorkspaceId()) {
-      const activated = await Promise.resolve(input.activateWorkspace(workspaceId));
+      const activated = await Promise.resolve(input.activateWorkspace(workspaceId, { origin: "session-navigation:open-pending-draft" }));
       if (!activated) return false;
     }
 

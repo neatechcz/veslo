@@ -78,6 +78,7 @@ import {
   writeLeftSidebarWidth,
 } from "../components/layout/left-sidebar-width-prefs";
 import { openSessionWithWorkspaceActivation, type SessionBrowseScope } from "./session-navigation";
+import type { WorkspaceActivationOptions } from "../context/workspace";
 import {
   resolveDashboardTabSelectionAction,
   resolveLeftMenuAction,
@@ -161,7 +162,7 @@ export type DashboardViewProps = {
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   readyEngineWorkspaceIds?: Set<string>;
-  activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  activateWorkspace: (workspaceId: string, options: WorkspaceActivationOptions) => Promise<boolean> | boolean | void;
   testWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean;
   recoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean;
   openCreateWorkspace: () => void;
@@ -725,7 +726,7 @@ export default function DashboardView(props: DashboardViewProps) {
     if (!id) return;
     void (async () => {
       if (id !== props.activeWorkspaceId) {
-        await Promise.resolve(props.activateWorkspace(id));
+        await Promise.resolve(props.activateWorkspace(id, { origin: "dashboard:open-soul-workspace" }));
       }
       props.setTab("soul");
     })();

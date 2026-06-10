@@ -1,4 +1,5 @@
 import type { SendTargetWorkspaceScope } from "./workspace-session-selection";
+import type { WorkspaceActivationOptions } from "./workspace";
 
 type PendingDraftSendTarget = {
   workspaceId?: string | null;
@@ -21,7 +22,7 @@ type WorkspaceSendTargetOptions<Client = unknown> = {
   resolveSessionSendTargetScope: (sessionId?: string | null) => SendTargetWorkspaceScope | null;
   resolveSelectedSessionBrowseScope?: (sessionId: string) => SelectedSessionBrowseScope | null;
   activeWorkspaceId: () => string;
-  activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  activateWorkspace: (workspaceId: string, options: WorkspaceActivationOptions) => Promise<boolean> | boolean | void;
   recordSendTrace: (event: string, payload?: Record<string, unknown>) => void;
   sendTraceStep: <T>(
     event: string,
@@ -62,7 +63,16 @@ export function createWorkspaceSendTarget<Client = unknown>(options: WorkspaceSe
         pendingDraft: options.activePendingDraftMeta(),
         resolveWorkspaceRoot: options.resolveWorkspaceRoot,
       });
-      if (pendingScope) return pendingScope;
+      if (pendingScope) {
+        const activeWorkspaceId = options.activeWorkspaceId().trim();
+        if (!activeWorkspaceId || pendingScope.workspaceId === activeWorkspaceId) {
+          return pendingScope;
+        }
+        options.recordSendTrace("sendPrompt:pending-draft-scope-ignored-stale-workspace", {
+          pendingWorkspaceId: pendingScope.workspaceId,
+          activeWorkspaceId,
+        });
+      }
     }
 
     return options.resolveSessionSendTargetScope(normalizedSessionId);
@@ -110,7 +120,7 @@ export function createWorkspaceSendTarget<Client = unknown>(options: WorkspaceSe
     try {
       const activated = await options.sendTraceStep(
         "sendPrompt:activate-scoped-workspace-call",
-        async () => options.activateWorkspace(targetWorkspaceId),
+        async () => options.activateWorkspace(targetWorkspaceId, { origin: "send-target:selected-session-workspace" }),
         {
           ...(tracePayload ?? {}),
           sessionId,

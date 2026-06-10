@@ -22,6 +22,7 @@ import type {
   WorkspaceConnectionState,
   WorkspaceSessionGroup,
 } from "../../types";
+import type { WorkspaceActivationOptions } from "../../context/workspace";
 import {
   getWorkspaceTaskLoadErrorDisplay,
   isWindowsPlatform,
@@ -116,7 +117,7 @@ type Props = {
   showRemoteActions?: boolean;
   soulStatusByWorkspaceId: Record<string, VesloSoulStatus | null>;
   isPrivateWorkspacePath?: (folder: string | null | undefined) => boolean;
-  onActivateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  onActivateWorkspace: (workspaceId: string, options: WorkspaceActivationOptions) => Promise<boolean> | boolean | void;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
   onDeleteSession?: (workspaceId: string, sessionId: string) => void;
   onOpenPendingDirectoryDraftInWorkspace: (workspaceId: string) => void;
@@ -535,7 +536,7 @@ export default function WorkspaceSessionList(props: Props) {
       suppressedProjectClickKey = null;
       return;
     }
-    void Promise.resolve(props.onActivateWorkspace(workspaceId));
+    void Promise.resolve(props.onActivateWorkspace(workspaceId, { origin: "workspace-session-list:project-open" }));
   };
   onCleanup(() => {
     if (clearSuppressedProjectClickTimer !== null && typeof window !== "undefined") {

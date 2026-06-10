@@ -77,6 +77,11 @@ export type WorkspaceDebugEvent = {
   payload?: unknown;
 };
 
+export type WorkspaceActivationOptions = {
+  origin: string;
+  promoteToFront?: boolean;
+};
+
 type WorkspaceBusyMap = Record<string, { sessionId: string; startedAt: number }>;
 
 type WorkspaceBusyTraceRoot = typeof window & {
@@ -118,6 +123,18 @@ function _wsLog(msg: string, data?: unknown) {
     void import("../lib/tauri").then((mod) => mod.logUiEvent("workspace", msg, data)).catch(() => {});
   } catch {}
 }
+
+const workspaceDebugStack = () => {
+  try {
+    return (new Error().stack ?? "")
+      .split("\n")
+      .slice(2, 9)
+      .map((line) => line.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+};
 
 export function createWorkspaceStore(options: {
   startupPreference: () => StartupPreference | null;
@@ -854,8 +871,8 @@ export function createWorkspaceStore(options: {
   }
 
   async function activateWorkspace(
-    workspaceId?: string,
-    activationOptions?: { promoteToFront?: boolean },
+    workspaceId: string | undefined,
+    activationOptions: WorkspaceActivationOptions,
   ) {
     const id = workspaceId?.trim() ?? "";
     if (!id) return false;
@@ -884,6 +901,8 @@ export function createWorkspaceStore(options: {
       prevProjectDir: projectDir(),
       startupPref: options.startupPreference(),
       hasClient: Boolean(options.routing.active()),
+      origin: activationOptions.origin,
+      stack: workspaceDebugStack(),
     });
 
     const remoteType = isRemote ? normalizeRemoteType(next.remoteType) : "opencode";
@@ -1991,7 +2010,7 @@ export function createWorkspaceStore(options: {
     }
     const hasClient = Boolean(options.routing.client(workspaceId));
     const ok = hasClient
-      ? await activateWorkspace(workspaceId)
+      ? await activateWorkspace(workspaceId, { origin: "workspace:activate-fresh-local" })
       : await engineStore.startHost({ workspacePath, navigate: false });
     if (!ok) return false;
     await openEmptySession(activeWorkspaceRoot().trim() || workspacePath);
@@ -2149,7 +2168,7 @@ export function createWorkspaceStore(options: {
   async function ensureLocalWorkspaceActive(workspaceId: string) {
     const id = workspaceId.trim();
     if (!id) return false;
-    const activated = await activateWorkspace(id);
+    const activated = await activateWorkspace(id, { origin: "workspace:ensure-local-active" });
     if (activated === false) return false;
     if (options.routing.client(id)) return true;
 
@@ -2192,7 +2211,7 @@ export function createWorkspaceStore(options: {
       }
 
       if (ws.activeId && ws.activeId !== previousActive) {
-        const activated = await activateWorkspace(ws.activeId);
+        const activated = await activateWorkspace(ws.activeId, { origin: "workspace:forget-next-active" });
         if (!activated) return false;
       }
       return true;
@@ -2505,7 +2524,7 @@ export function createWorkspaceStore(options: {
 
     if (preferredRemoteWorkspace?.workspaceType === "remote") {
       options.setOnboardingStep("connecting");
-      const ok = await activateWorkspace(preferredRemoteWorkspace.id);
+      const ok = await activateWorkspace(preferredRemoteWorkspace.id, { origin: "workspace:connect-preferred-remote" });
       if (ok) return true;
 
       if (isTauriRuntime()) {

@@ -73,6 +73,65 @@ test("send target resolver keeps direct creation on active workspace after brows
   assert.equal(target.resolveSendTargetWorkspaceScope("b1")?.workspaceId, "ws-b");
 });
 
+test("send target ignores stale pending draft workspace after active workspace switch", () => {
+  const events: Array<{ event: string; payload?: Record<string, unknown> }> = [];
+  const target = createWorkspaceSendTarget({
+    activePendingDraftMeta: () => ({
+      workspaceId: "ws-a",
+      privateWorkspaceId: null,
+      directory: "/repo/a",
+    }),
+    resolveWorkspaceRoot: (workspaceId, fallback) => (workspaceId === "ws-a" ? "/repo/a" : fallback ?? ""),
+    resolveSessionSendTargetScope: (sessionId) =>
+      sessionId
+        ? null
+        : {
+            workspaceId: "ws-b",
+            workspaceRoot: "/repo/b",
+            directory: "/repo/b",
+          },
+    activeWorkspaceId: () => "ws-b",
+    activateWorkspace: async () => true,
+    recordSendTrace: (event, payload) => events.push({ event, payload }),
+    sendTraceStep: async (_event, run) => run(),
+    messageFromUnknownError: (error) => String(error),
+  });
+
+  assert.equal(target.resolveSendTargetWorkspaceScope(null)?.workspaceId, "ws-b");
+  assert.deepEqual(events, [
+    {
+      event: "sendPrompt:pending-draft-scope-ignored-stale-workspace",
+      payload: {
+        pendingWorkspaceId: "ws-a",
+        activeWorkspaceId: "ws-b",
+      },
+    },
+  ]);
+});
+
+test("send target keeps pending draft scope while it still matches active workspace", () => {
+  const target = createWorkspaceSendTarget({
+    activePendingDraftMeta: () => ({
+      workspaceId: "ws-a",
+      privateWorkspaceId: null,
+      directory: "/repo/a/pending",
+    }),
+    resolveWorkspaceRoot: () => "/repo/a",
+    resolveSessionSendTargetScope: () => null,
+    activeWorkspaceId: () => "ws-a",
+    activateWorkspace: async () => true,
+    recordSendTrace: () => undefined,
+    sendTraceStep: async (_event, run) => run(),
+    messageFromUnknownError: (error) => String(error),
+  });
+
+  assert.deepEqual(target.resolveSendTargetWorkspaceScope(null), {
+    workspaceId: "ws-a",
+    workspaceRoot: "/repo/a",
+    directory: "/repo/a/pending",
+  });
+});
+
 test("send-time scoped activation activates only when selected session belongs to another workspace", async () => {
   const events: string[] = [];
   const activations: string[] = [];

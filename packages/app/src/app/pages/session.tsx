@@ -141,6 +141,7 @@ import type { ArtifactFamily } from "../components/session/artifact-family-model
 import SessionCapabilitiesPanel from "../components/session/session-capabilities-panel";
 import type { SessionCapabilitiesSnapshot } from "../lib/session-capabilities";
 import { openSessionWithWorkspaceActivation, type SessionBrowseScope } from "./session-navigation";
+import type { WorkspaceActivationOptions } from "../context/workspace";
 import { availableChatWidthForLayout, reconcileSidebarLayoutForRootWidth } from "./session-layout-width";
 import { resolveSessionTitlebarContext } from "./session-titlebar-context";
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
@@ -181,7 +182,7 @@ export type SessionViewProps = {
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   readyEngineWorkspaceIds?: Set<string>;
-  activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  activateWorkspace: (workspaceId: string, options: WorkspaceActivationOptions) => Promise<boolean> | boolean | void;
   testWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean;
   recoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean;
   editWorkspaceConnection: (workspaceId: string) => void;
@@ -3901,7 +3902,7 @@ export default function SessionView(props: SessionViewProps) {
     if (!id) return;
     void (async () => {
       if (id !== props.activeWorkspaceId) {
-        await Promise.resolve(props.activateWorkspace(id));
+        await Promise.resolve(props.activateWorkspace(id, { origin: "session:open-soul-workspace" }));
       }
       props.setTab("soul");
       props.setView("dashboard");

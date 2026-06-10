@@ -34,20 +34,20 @@ test("global sync refresh waits for a healthy server before bursting engine-prox
   );
 });
 
-test("cold Tauri boot does not trust a persisted OpenCode proxy URL for health polling", () => {
+test("server health polling does not probe workspace OpenCode proxy URLs", () => {
   assert.match(
     serverSource,
-    /const \[activeHealthTrusted, setActiveHealthTrusted\] = createSignal\(false\);/,
-    "persisted server URLs must start untrusted so cold boot cannot poll a stale orchestrator proxy",
+    /export function isWorkspaceOpencodeProxyUrl\(url: string\)/,
+    "workspace-scoped OpenCode proxy URLs must be recognized separately from global /opencode proxies",
   );
   assert.match(
     serverSource,
-    /isTauriRuntime\(\) && !trusted && isOpencodeProxyUrl\(url\)/,
-    "Tauri must skip OpenCode health probes for untrusted persisted proxy URLs",
+    /isWorkspaceOpencodeProxyUrl\(url\)/,
+    "global health checks must skip workspace OpenCode proxy URLs; submit-time routing starts the right engine",
   );
   assert.match(
     workspaceServerSyncSource,
-    /server\.setActive\(nextUrl, \{ trusted: true \}\);/,
-    "WorkspaceServerSync must mark URLs returned by engineInfo as trusted so health checks resume for a real engine",
+    /server\.setActive\(nextUrl\);/,
+    "WorkspaceServerSync may publish workspace proxy URLs, but ServerProvider must not treat them as global health targets",
   );
 });

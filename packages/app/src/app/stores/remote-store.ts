@@ -8,6 +8,7 @@ import {
 import { t, currentLocale } from "../../i18n";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 import type { OpencodeAuth } from "../lib/opencode";
+import type { WorkspaceActivationOptions } from "../context/workspace";
 import {
   buildVesloWorkspaceBaseUrl,
   createVesloServerClient,
@@ -70,7 +71,7 @@ export interface RemoteStoreDeps {
   ) => Promise<boolean>;
 
   // Workspace activation & testing
-  activateWorkspace: (workspaceId: string) => Promise<boolean>;
+  activateWorkspace: (workspaceId: string, options: WorkspaceActivationOptions) => Promise<boolean>;
   testWorkspaceConnection: (workspaceId: string) => Promise<boolean>;
   openEmptySession: (scopeRoot?: string) => Promise<void>;
 
@@ -607,7 +608,7 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
 
     const reconnect = async () => {
       if (deps.getActiveWorkspaceId() === id) {
-        return await deps.activateWorkspace(id);
+        return await deps.activateWorkspace(id, { origin: "remote-store:recover-active-workspace" });
       }
       return await deps.testWorkspaceConnection(id);
     };

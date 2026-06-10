@@ -678,9 +678,20 @@ export default function App() {
   const [documentVisible, setDocumentVisible] = createSignal(true);
   const [appFocused, setAppFocused] = createSignal(true);
 
+  const workspaceDebugTraceEnabled = () => {
+    const root = globalThis as typeof globalThis & { __vesloWorkspaceDebugEnabled?: boolean };
+    if (root.__vesloWorkspaceDebugEnabled) return true;
+    try {
+      return typeof localStorage !== "undefined" && localStorage.getItem("veslo:workspace-debug") === "1";
+    } catch {
+      return false;
+    }
+  };
+
   // Workspace switch tracing is noisy, so only emit in developer mode.
-  // (Veslo already has a developer mode toggle in Settings.)
-  const wsDebugEnabled = () => developerMode();
+  // Keep the runtime flag separate from developerMode so tracing can be enabled
+  // without exposing developer-only UI panels.
+  const wsDebugEnabled = () => developerMode() || workspaceDebugTraceEnabled();
 
   const wsDebug = (label: string, payload?: unknown) => {
     if (!wsDebugEnabled()) return;
@@ -2213,7 +2224,7 @@ export default function App() {
     selectedSessionId,
     setSelectedSessionId,
     sessionDirectoryOverrideById,
-    developerMode,
+    developerMode: wsDebugEnabled,
     setError,
     setSseConnected,
     onReconnectNotice: (notice) => setSessionReconnectNotice(notice),
@@ -4805,7 +4816,7 @@ export default function App() {
     resolveSessionSendTargetScope: workspaceSessionSelection.resolveSendTargetWorkspaceScope,
     resolveSelectedSessionBrowseScope,
     activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
-    activateWorkspace: (workspaceId) => workspaceStore.activateWorkspace(workspaceId),
+    activateWorkspace: (workspaceId, options) => workspaceStore.activateWorkspace(workspaceId, options),
     recordSendTrace,
     sendTraceStep,
     messageFromUnknownError,
@@ -4842,6 +4853,18 @@ export default function App() {
     resolveSelectedSessionBrowseScope,
     saveWorkspaceSnapshot: (workspaceId) => sessionStore.saveWorkspaceSnapshot(workspaceId),
     loadWorkspaceSnapshot: (workspaceId) => sessionStore.loadWorkspaceSnapshot(workspaceId),
+    clearSelectedSession: () => {
+      wsDebug("snapshot:clearSelectedSession:app", {
+        selectedSessionId: selectedSessionId(),
+        activeWorkspaceId: workspaceStore.activeWorkspaceId(),
+        route: location.pathname,
+      });
+      setSelectedSessionId(null);
+      if (location.pathname.toLowerCase().startsWith("/session/")) {
+        navigate("/session", { replace: true });
+      }
+    },
+    debug: wsDebug,
   });
 
   let lastLocalVesloEnsureKey = "";
@@ -7210,7 +7233,7 @@ export default function App() {
 
     try {
       await client.reloadEngine(workspaceId);
-      await workspaceStore.activateWorkspace(workspaceStore.activeWorkspaceId());
+      await workspaceStore.activateWorkspace(workspaceStore.activeWorkspaceId(), { origin: "app:reload-workspace-engine" });
       await refreshMcpServers();
       return true;
     } catch (error) {
@@ -8778,7 +8801,9 @@ export default function App() {
               await pendingSessionDraftsDelete(existingPendingDraft.id);
               markPendingDraftConsumed(existingPendingDraft.id);
             } else {
-              const activatedPendingWorkspace = await workspaceStore.activateWorkspace(pendingWorkspaceId);
+              const activatedPendingWorkspace = await workspaceStore.activateWorkspace(pendingWorkspaceId, {
+                origin: "app:new-private-existing-pending-draft",
+              });
               if (!activatedPendingWorkspace) {
                 await pendingSessionDraftsDelete(existingPendingDraft.id);
                 markPendingDraftConsumed(existingPendingDraft.id);
@@ -8815,7 +8840,9 @@ export default function App() {
         try {
           // Activate in browsing mode (no engine start). Engine + session
           // creation still happen on-demand when the user sends a message.
-          const activatedScratchWorkspace = await workspaceStore.activateWorkspace(scratch.id);
+          const activatedScratchWorkspace = await workspaceStore.activateWorkspace(scratch.id, {
+            origin: "app:new-private-scratch-workspace",
+          });
           if (!activatedScratchWorkspace) {
             await cleanupFreshScratchWorkspace();
             return;
@@ -8939,7 +8966,10 @@ export default function App() {
       getActiveWorkspaceId: () => workspaceStore.activeWorkspaceId(),
       workspaceId: id,
       activateWorkspace: (nextWorkspaceId) =>
-        workspaceStore.activateWorkspace(nextWorkspaceId, { promoteToFront: true }),
+        workspaceStore.activateWorkspace(nextWorkspaceId, {
+          origin: "app:open-pending-directory-draft-workspace",
+          promoteToFront: true,
+        }),
       openPendingDraft: () => {
         const activeWorkspace = workspaceStore.activeWorkspaceDisplay();
         const directory = activeWorkspace.directory?.trim() || activeWorkspace.path?.trim() || "";
@@ -8956,7 +8986,11 @@ export default function App() {
       pickDirectory: () => workspaceStore.pickWorkspaceFolder(),
       ensureWorkspaceForFolder: workspaceStore.ensureWorkspaceForFolder,
       onWorkspaceRegistered: ({ workspaceId }) => publishRegisteredWorkspaceToSidebar(workspaceId),
-      activateWorkspace: (workspaceId) => workspaceStore.activateWorkspace(workspaceId, { promoteToFront: true }),
+      activateWorkspace: (workspaceId) =>
+        workspaceStore.activateWorkspace(workspaceId, {
+          origin: "app:open-directory-session-from-picker",
+          promoteToFront: true,
+        }),
       openPendingDraft: ({ workspaceId, directory }) => openDirectoryPendingDraft({ workspaceId, directory }),
     });
   };
