@@ -4333,6 +4333,29 @@ async function runRouterDaemon(args: ParsedArgs) {
           return;
         }
 
+        // Send-timeout fix 2026-06-10: GET/HEAD never spawn an engine. Background
+        // status polls (GET /mcp, /permission, /lsp, …) used to trigger pool.ensure
+        // here and block up to 60s on engine cold start (waitForHealthy default),
+        // making the app feel stuck before the user even sent anything. Reads now
+        // fail fast with 503 engine_not_running; the engine still spawns via
+        // explicit activate and via non-GET requests (prompt_async, session create).
+        const proxyMethod = (req.method ?? "GET").toUpperCase();
+        if (proxyMethod === "GET" || proxyMethod === "HEAD") {
+          const running = pool.getRunning(ws.id);
+          if (!running) {
+            traceRuntime("orchestrator:proxy-engine-not-running", {
+              workspaceId: ws.id,
+              workspacePath: ws.path,
+              method: req.method,
+              path: url.pathname,
+              search: url.search,
+              poolState: pool.get(ws.id)?.state ?? "absent",
+            });
+            send(503, { error: "engine_not_running", workspaceId: ws.id });
+            return;
+          }
+        }
+
         let engine: EngineProcess;
         const ensureStartedAt = Date.now();
         traceRuntime("orchestrator:proxy-ensure:start", {

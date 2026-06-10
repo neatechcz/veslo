@@ -963,4 +963,61 @@ describe("EnginePool — F2Ú5 crash recovery + health monitor", () => {
       await h.cleanup();
     }
   });
+
+  // Send-timeout fix 2026-06-10 — background reads (GET /mcp, /permission, …)
+  // must never cold-spawn an engine through the proxy. getRunning is the
+  // no-spawn lookup the proxy handler uses for GET/HEAD requests.
+  test("getRunning returns null when no engine exists and never spawns", async () => {
+    const h = harness();
+    try {
+      expect(h.pool.getRunning("a")).toBeNull();
+      expect(h.counters.spawns).toBe(0);
+      expect(h.pool.size()).toBe(0);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("getRunning returns the engine once it is ready", async () => {
+    const h = harness();
+    try {
+      const engine = await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      expect(h.pool.getRunning("a")).toBe(engine);
+      expect(h.counters.spawns).toBe(1);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("getRunning returns null while a spawn is still in flight", async () => {
+    let releaseHealth: (() => void) | null = null;
+    const h = harness({
+      waitForHealthy: () =>
+        new Promise<void>((resolve) => {
+          releaseHealth = resolve;
+        }),
+    });
+    try {
+      const ensurePromise = h.pool.ensure({ id: "a", path: "/tmp/a" });
+      // Give spawnEngine a tick to register the spawning engine.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(h.pool.getRunning("a")).toBeNull();
+      releaseHealth!();
+      await ensurePromise;
+      expect(h.pool.getRunning("a")).not.toBeNull();
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("getRunning returns null after suspend", async () => {
+    const h = harness();
+    try {
+      await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      await h.pool.suspend("a");
+      expect(h.pool.getRunning("a")).toBeNull();
+    } finally {
+      await h.cleanup();
+    }
+  });
 });

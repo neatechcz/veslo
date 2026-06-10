@@ -35,12 +35,13 @@ export function isWorkspaceClientStaleError(
 }
 
 /**
- * Recursively proxies a `RoutingClient` so every leaf function call checks
- * `getActiveWsId() === entryWsId` before delegating. Sub-objects (e.g.
- * `client.session`, `client.global`) are wrapped lazily on property access.
+ * Recursively proxies a `RoutingClient`. Implicit active-client lookups check
+ * `getActiveWsId() === entryWsId` before every leaf call. Explicit
+ * `client(workspaceId)` lookups skip that active-workspace guard so background
+ * workspace streams and replies can keep using their own clients.
  *
  * The guard is intentionally permissive: when `getActiveWsId()` returns an
- * empty string (no active workspace yet — e.g. early bootstrap), the call
+ * empty string (no active workspace yet, e.g. early bootstrap), the call
  * is allowed through so legitimate startup flows aren't broken.
  */
 function wrapClientWithGuard<T extends object>(
@@ -172,13 +173,11 @@ export function createWorkspaceRouting(
 
   return {
     client(workspaceId?: string) {
-      // VSLO-86 Task #20 — anchor the returned client to a snapshot of the
-      // workspace ID at lookup time. Caller may pass an explicit ID or rely
-      // on the active workspace; either way, all subsequent SDK calls go
-      // through guard proxies that re-check the active ID before each call.
-      // Workspace switches between this lookup and the async SDK call now
-      // surface as `WorkspaceClientStaleError` instead of silently hitting
-      // the previous workspace's engine.
+      // VSLO-86 Task #20: implicit active-client lookups are anchored to a
+      // snapshot of the active workspace ID, so active workspace switches
+      // between lookup and async SDK call surface as `WorkspaceClientStaleError`.
+      // Explicit workspace lookups intentionally remain usable for background
+      // multi-workspace flows.
       const explicitWorkspaceId = workspaceId !== undefined;
       const wsId = workspaceId ?? opts.activeWorkspaceId();
       if (wsId) {

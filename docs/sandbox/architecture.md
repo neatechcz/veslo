@@ -53,7 +53,7 @@ Hlavní endpointy:
 - `GET /health` — workspaces + engines snapshot
 - `POST /workspaces` — register
 - `POST /workspaces/:id/activate` — set active
-- `* /workspace/:id/opencode/*` — proxy na engine pro daný workspace (lazy spawn pokud chybí)
+- `* /workspace/:id/opencode/*` — proxy na engine pro daný workspace (non-GET lazy spawn pokud chybí; GET/HEAD nespawnuje — bez běžícího enginu vrací hned `503 engine_not_running`)
 - `POST /workspace/:id/runs/register` — lifecycle register pro local conversation sendy
 - `GET /workspace/:id/conversations/:conversationId/runs/:runId|latest` — lifecycle status/reconcile
 
