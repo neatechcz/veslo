@@ -13,6 +13,22 @@ import * as sessionNavigation from "../../pages/session-navigation.js";
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
 const sessionPageSource = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
 const dashboardSource = readFileSync(new URL("../../pages/dashboard.tsx", import.meta.url), "utf8");
+const workspaceSessionSelectionSource = readFileSync(
+  new URL("../../context/workspace-session-selection.ts", import.meta.url),
+  "utf8",
+);
+const workspaceSessionSnapshotsSource = readFileSync(
+  new URL("../../context/workspace-session-snapshots.ts", import.meta.url),
+  "utf8",
+);
+const workspaceSendTargetSource = readFileSync(
+  new URL("../../context/workspace-send-target.ts", import.meta.url),
+  "utf8",
+);
+const sidebarWorkspaceSessionsSource = readFileSync(
+  new URL("../../context/sidebar-workspace-sessions.ts", import.meta.url),
+  "utf8",
+);
 
 const openNewSessionStart = appSource.indexOf("  const openNewSessionWithDirectory = async () => {");
 const openNewSessionEnd = appSource.indexOf("  const openDirectorySessionFromPicker = async () => {", openNewSessionStart);
@@ -42,12 +58,6 @@ const openPendingDirectoryDraftInWorkspaceEnd = appSource.indexOf(
 const openPendingDirectoryDraftInWorkspaceSource =
   openPendingDirectoryDraftInWorkspaceStart >= 0 && openPendingDirectoryDraftInWorkspaceEnd >= 0
     ? appSource.slice(openPendingDirectoryDraftInWorkspaceStart, openPendingDirectoryDraftInWorkspaceEnd)
-    : "";
-const scopedSendActivationStart = appSource.indexOf("  async function ensureSelectedSessionWorkspaceActiveForSend(");
-const scopedSendActivationEnd = appSource.indexOf("  async function sendPrompt(", scopedSendActivationStart);
-const scopedSendActivationSource =
-  scopedSendActivationStart >= 0 && scopedSendActivationEnd >= 0
-    ? appSource.slice(scopedSendActivationStart, scopedSendActivationEnd)
     : "";
 const sendPromptStart = appSource.indexOf("  async function sendPrompt(");
 const sendPromptEnd = appSource.indexOf("  async function abortSession(", sendPromptStart);
@@ -179,9 +189,14 @@ test("session list clicks record browse scope before route navigation", () => {
 
 test("app routes selected session browsing through DB scope", () => {
   assert.match(
+    workspaceSessionSelectionSource,
+    /const \[selectedSessionBrowseScope, setSelectedSessionBrowseScope\] = createSignal<SessionBrowseScope \| null>\(null\);/,
+    "workspace session selection should track the workspace scope of the selected browsed session",
+  );
+  assert.match(
     appSource,
-    /const \[selectedSessionBrowseScope, setSelectedSessionBrowseScope\] = createSignal<SelectedSessionBrowseScope \| null>\(null\);/,
-    "app should track the workspace scope of the selected browsed session",
+    /const workspaceSessionSelection = createWorkspaceSessionSelection\(\{[\s\S]*activeWorkspaceId: \(\) => workspaceStoreRef\?\.activeWorkspaceId\(\) \?\? "",[\s\S]*workspaces: \(\) => workspaceStoreRef\?\.workspaces\(\) \?\? \[\],[\s\S]*\}\);/,
+    "app should wire selected session browsing through the workspace session selection controller",
   );
   assert.match(
     appSource,
@@ -197,8 +212,8 @@ test("app routes selected session browsing through DB scope", () => {
 
 test("app activates selected session workspace at send time, not browse time", () => {
   assert.match(
-    scopedSendActivationSource,
-    /const transcriptScope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*sendTraceStep\(\s*"sendPrompt:activate-scoped-workspace-call",[\s\S]*workspaceStore\.activateWorkspace\(targetWorkspaceId\)/s,
+    workspaceSendTargetSource,
+    /const transcriptScope = options\.resolveSessionSendTargetScope\(sessionId\);[\s\S]*options\.sendTraceStep\(\s*"sendPrompt:activate-scoped-workspace-call",[\s\S]*options\.activateWorkspace\(targetWorkspaceId\)/s,
     "send path should activate the workspace from the selected session scope",
   );
   assert.match(
@@ -211,19 +226,19 @@ test("app activates selected session workspace at send time, not browse time", (
 test("workspace snapshot effect preserves scoped browse session during send-time activation", () => {
   assert.match(
     appSource,
-    /const selectedId = selectedSessionId\(\)\?\.trim\(\) \?\? "";\s*const selectedScope = selectedId \? resolveSelectedSessionBrowseScope\(selectedId\) : null;/,
-    "workspace snapshot effect should inspect the selected session scope before saving or restoring snapshots",
+    /createWorkspaceSessionSnapshots\(\{[\s\S]*selectedSessionId,[\s\S]*resolveSelectedSessionBrowseScope,[\s\S]*saveWorkspaceSnapshot: \(workspaceId\) => sessionStore\.saveWorkspaceSnapshot\(workspaceId\),[\s\S]*loadWorkspaceSnapshot: \(workspaceId\) => sessionStore\.loadWorkspaceSnapshot\(workspaceId\),[\s\S]*\}\);/,
+    "app should wire workspace snapshot save/load through the workspace session snapshots controller",
   );
 
   assert.match(
-    appSource,
-    /const selectedBelongsToOutgoing =\s*!selectedScope \|\| selectedScope\.workspaceId\.trim\(\) === previousActiveWsId;[\s\S]*if \(selectedBelongsToOutgoing\) \{\s*sessionStore\.saveWorkspaceSnapshot\(previousActiveWsId\);/s,
+    workspaceSessionSnapshotsSource,
+    /const selectedBelongsToOutgoing =\s*!selectedScopeWorkspaceId \|\| selectedScopeWorkspaceId === previousWorkspaceId;[\s\S]*saveWorkspaceId = previousWorkspaceId;/s,
     "outgoing workspace snapshot must not be overwritten by a browsed session from a different workspace",
   );
 
   assert.match(
-    appSource,
-    /const selectedBelongsToIncoming = selectedScope\?\.workspaceId\.trim\(\) === wsId;[\s\S]*if \(!selectedBelongsToIncoming\) \{\s*sessionStore\.loadWorkspaceSnapshot\(wsId\);/s,
+    workspaceSessionSnapshotsSource,
+    /const selectedBelongsToIncoming = selectedScopeWorkspaceId === activeWorkspaceId;[\s\S]*if \(!selectedBelongsToIncoming\) \{[\s\S]*loadWorkspaceId = activeWorkspaceId;/s,
     "send-time activation must not immediately replace the scoped browsed session with a stale workspace snapshot",
   );
 });
@@ -710,12 +725,12 @@ test("directory picker flow opens a pending draft instead of creating a real ses
 test("directory picker flow publishes the registered workspace into the sidebar before continuing", () => {
   assert.notEqual(openDirectorySessionSource, "", "Directory picker flow should exist in app.tsx");
   assert.match(
-    appSource,
+    sidebarWorkspaceSessionsSource,
     /const publishRegisteredWorkspaceToSidebar = \(workspaceId: string\) => \{[\s\S]*setSidebarSessionsByWorkspaceId\(\(prev\) =>[\s\S]*setSidebarSessionStatusByWorkspaceId\(\(prev\) =>[\s\S]*setSidebarSessionErrorByWorkspaceId\(\(prev\) =>[\s\S]*setSidebarSessionHasMoreByWorkspaceId\(\(prev\) =>/s,
-    "app should expose a scoped sidebar publication helper for registered workspaces",
+    "sidebar workspace sessions controller should expose a scoped sidebar publication helper for registered workspaces",
   );
   assert.match(
-    appSource,
+    sidebarWorkspaceSessionsSource,
     /const projectKey = workspace\?\.workspaceType === "local"[\s\S]*workspaceStore\.isPrivateWorkspacePath\(projectKey\)[\s\S]*promoteStoredProjectOrderKey\(projectKey\)/s,
     "registered local workspaces should be promoted to the top of the by-project sidebar order",
   );

@@ -95,16 +95,16 @@ import {
 import {
   openPendingDraftFromDirectorySelection,
   openPendingDraftWithWorkspaceActivation,
-  type SessionBrowseScope,
 } from "./pages/session-navigation";
 import { shouldFallbackFromSessionRoute } from "./lib/session-route-selection-guard";
 import { partitionVesloUtilitySessions } from "./lib/veslo-utility-session";
 import {
-  resolveUiConversationScope,
-  upsertUiConversationScope,
-  type UiConversationScope,
-  type UiConversationScopeInput,
-} from "./lib/conversation-scope";
+  createWorkspaceSessionSelection,
+} from "./context/workspace-session-selection";
+import {
+  createWorkspaceSendTarget,
+  type SendTargetWorkspaceScope,
+} from "./context/workspace-send-target";
 import ResetModal from "./components/reset-modal";
 import ConfirmModal from "./components/confirm-modal";
 import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
@@ -293,6 +293,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { createSessionStore } from "./context/session";
 import type { ReconnectNotice } from "./context/session-reconnect";
 import { createSidebarWorkspaceSessions } from "./context/sidebar-workspace-sessions";
+import { createWorkspaceSessionSnapshots } from "./context/workspace-session-snapshots";
 import { createExtensionsStore } from "./context/extensions";
 import { useGlobalSync } from "./context/global-sync";
 import { createWorkspaceStore } from "./context/workspace";
@@ -361,7 +362,6 @@ import {
   type VesloSoulStatus,
   type VesloSessionArchiveRecord,
   type VesloSessionLatestRunArtifacts,
-  type VesloSessionTranscriptSnapshot,
   type VesloConversationRunInput,
   type VesloManagedAiAccessBundle,
   type VesloServerClient,
@@ -436,12 +436,6 @@ type SendConversationWorkspaceResolution = {
   serverClient: VesloServerClient;
   serverWorkspaceId: string;
   workspaceId: string;
-  directory: string;
-};
-
-type SendTargetWorkspaceScope = {
-  workspaceId: string;
-  workspaceRoot: string;
   directory: string;
 };
 
@@ -1493,190 +1487,34 @@ export default function App() {
   const [activePendingDraftKey, setActivePendingDraftKey] = createSignal<string | null>(null);
   const [activePendingDraftMeta, setActivePendingDraftMeta] = createSignal<PendingSessionDraftSummary | null>(null);
   const [activePendingDraftStorageReady, setActivePendingDraftStorageReady] = createSignal(false);
-  const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(
-    null
-  );
-  type SelectedSessionBrowseScope = SessionBrowseScope;
-  const [selectedSessionBrowseScope, setSelectedSessionBrowseScope] = createSignal<SelectedSessionBrowseScope | null>(null);
-  const [conversationScopeBySessionId, setConversationScopeBySessionId] = createSignal<
-    Record<string, UiConversationScope[]>
-  >({});
-  const rememberConversationScope = (scope: UiConversationScopeInput) => {
-    setConversationScopeBySessionId((current) => upsertUiConversationScope(current, scope));
-  };
-  const selectedBrowseScopeInput = (): UiConversationScopeInput | null => {
-    const scope = selectedSessionBrowseScope();
-    if (!scope) return null;
-    return {
-      sessionId: scope.sessionId,
-      workspaceId: scope.workspaceId,
-      workspaceRoot: scope.workspaceRoot,
-      directory: scope.directory ?? scope.workspaceRoot,
-      conversationId: scope.conversationId,
-      opencodeSessionId: scope.opencodeSessionId,
-    };
-  };
-  const resolveSelectedSessionBrowseScope = (sessionId: string): SelectedSessionBrowseScope | null => {
-    const id = sessionId.trim();
-    if (!id) return null;
-    return resolveUiConversationScope(conversationScopeBySessionId(), id, {
-      activeWorkspaceId: workspaceStoreRef?.activeWorkspaceId() ?? "",
-      selectedScope: selectedBrowseScopeInput(),
-    });
-  };
-  type DisplayedConversationGuard = {
-    sessionId: string;
-    workspaceId: string;
-    conversationId: string;
-    opencodeSessionId: string;
-  };
-  const captureDisplayedConversationGuard = (sessionId: string): DisplayedConversationGuard => {
-    const id = sessionId.trim();
-    const scope = id ? resolveSelectedSessionBrowseScope(id) : null;
-    return {
-      sessionId: id,
-      workspaceId: scope?.workspaceId?.trim() || workspaceStoreRef?.activeWorkspaceId().trim() || "",
-      conversationId: scope?.conversationId?.trim() || "",
-      opencodeSessionId: scope?.opencodeSessionId?.trim() || id,
-    };
-  };
-  const displayedConversationStillMatches = (guard: DisplayedConversationGuard): boolean => {
-    const currentSessionId = selectedSessionId()?.trim() || "";
-    if (!guard.sessionId || !currentSessionId) return false;
-    const currentScope = resolveSelectedSessionBrowseScope(currentSessionId);
-    const currentWorkspaceId = currentScope?.workspaceId?.trim() || workspaceStoreRef?.activeWorkspaceId().trim() || "";
-    if (guard.workspaceId && currentWorkspaceId && guard.workspaceId !== currentWorkspaceId) return false;
-    if (guard.conversationId) {
-      return currentSessionId === guard.conversationId || currentScope?.conversationId?.trim() === guard.conversationId;
-    }
-    const currentOpenCodeSessionId = currentScope?.opencodeSessionId?.trim() || currentSessionId;
-    return currentSessionId === guard.sessionId || currentOpenCodeSessionId === guard.opencodeSessionId;
-  };
-  const latestConversationRunIdByScope = new Map<string, string>();
-  const conversationRunScopeKey = (workspaceId: string, conversationId: string) => {
-    const workspaceKey = workspaceId.trim();
-    const conversationKey = conversationId.trim();
-    return workspaceKey && conversationKey ? `${workspaceKey}\0${conversationKey}` : "";
-  };
-  const rememberLatestConversationRunId = (input: {
-    workspaceId: string;
-    conversationId?: string | null;
-    opencodeSessionId?: string | null;
-    uiSessionId?: string | null;
-    runId?: string | null;
-  }) => {
-    const runId = input.runId?.trim();
-    if (!runId) return;
-    for (const id of [input.conversationId, input.opencodeSessionId, input.uiSessionId]) {
-      const key = id ? conversationRunScopeKey(input.workspaceId, id) : "";
-      if (key) latestConversationRunIdByScope.set(key, runId);
-    }
-  };
-  const resolveLatestConversationRunId = (input: {
-    workspaceId: string;
-    conversationId?: string | null;
-    opencodeSessionId?: string | null;
-    uiSessionId?: string | null;
-  }) => {
-    for (const id of [input.conversationId, input.opencodeSessionId, input.uiSessionId]) {
-      const key = id ? conversationRunScopeKey(input.workspaceId, id) : "";
-      const runId = key ? latestConversationRunIdByScope.get(key) : undefined;
-      if (runId) return runId;
-    }
-    return "";
-  };
-  const setSessionBrowseScope = (scope: SessionBrowseScope) => {
-    const sessionId = scope.sessionId.trim();
-    const workspaceId = scope.workspaceId.trim();
-    if (!sessionId || !workspaceId) return;
-    const next = {
-      sessionId,
-      workspaceId,
-      workspaceRoot: scope.workspaceRoot.trim(),
-      directory: scope.directory?.trim() || scope.workspaceRoot.trim(),
-      conversationId: scope.conversationId?.trim() || undefined,
-      opencodeSessionId: scope.opencodeSessionId?.trim() || undefined,
-    };
-    setSelectedSessionBrowseScope(next);
-    rememberConversationScope(next);
-  };
-  type SessionConversationSidecar = Pick<SidebarSessionItem, "id" | "directory"> & {
-    conversationId?: string | null;
-    opencodeSessionId?: string | null;
-  };
-  const resolveWorkspaceRootForConversationScope = (workspaceId: string, directory?: string | null) => {
-    const scopedDirectory = directory?.trim() ?? "";
-    const workspace = workspaceStoreRef?.workspaces().find((item) => item.id === workspaceId);
-    return workspace?.directory?.trim() || workspace?.path?.trim() || scopedDirectory;
-  };
-  const rememberConversationScopesFromSessions = (
-    workspaceId: string,
-    directory: string | undefined,
-    sessions: SessionConversationSidecar[],
-  ) => {
-    const normalizedWorkspaceId = workspaceId.trim();
-    if (!normalizedWorkspaceId) return;
-    for (const session of sessions) {
-      const sessionId = session.id?.trim() ?? "";
-      if (!sessionId) continue;
-      const scopedDirectory = session.directory?.trim() || directory?.trim() || "";
-      rememberConversationScope({
-        sessionId,
-        workspaceId: normalizedWorkspaceId,
-        workspaceRoot: resolveWorkspaceRootForConversationScope(normalizedWorkspaceId, scopedDirectory),
-        directory: scopedDirectory,
-        conversationId: session.conversationId,
-        opencodeSessionId: session.opencodeSessionId ?? sessionId,
-      });
-    }
-  };
-  const rememberConversationScopeFromTranscript = (
-    workspaceId: string,
-    directory: string | undefined,
-    snapshot: Pick<VesloSessionTranscriptSnapshot, "sessionId" | "directory" | "conversationId" | "opencodeSessionId"> | null,
-  ) => {
-    if (!snapshot) return;
-    const scopedDirectory = directory ?? snapshot.directory;
-    const sessionId = snapshot.sessionId?.trim() ?? "";
-    const opencodeSessionId = snapshot.opencodeSessionId?.trim() || sessionId;
-    const conversationId = snapshot.conversationId?.trim() || undefined;
-    const uiSessionId = opencodeSessionId || conversationId || sessionId;
-    if (!uiSessionId) return;
-    rememberConversationScope({
-      sessionId: uiSessionId,
-      workspaceId,
-      workspaceRoot: resolveWorkspaceRootForConversationScope(workspaceId, scopedDirectory),
-      directory: scopedDirectory,
-      conversationId,
-      opencodeSessionId,
-    });
-  };
+  const workspaceSessionSelection = createWorkspaceSessionSelection({
+    activeWorkspaceId: () => workspaceStoreRef?.activeWorkspaceId() ?? "",
+    activeWorkspaceRoot: () => workspaceStoreRef?.activeWorkspaceRoot().trim() ?? "",
+    workspaces: () => workspaceStoreRef?.workspaces() ?? [],
+  });
+  const {
+    selectedSessionId,
+    setSelectedSessionId,
+    rememberConversationScope,
+    resolveSelectedSessionBrowseScope,
+    captureDisplayedConversationGuard,
+    displayedConversationStillMatches,
+    rememberLatestConversationRunId,
+    resolveLatestConversationRunId,
+    setSessionBrowseScope,
+    resolveWorkspaceRootForConversationScope,
+    rememberConversationScopesFromSessions,
+    rememberConversationScopeFromTranscript,
+    clearWorkspaceLastSessionIfSelected,
+    moveWorkspaceLastSession,
+    activeWorkspaceLastSessionId,
+    scopedSessionIds,
+  } = workspaceSessionSelection;
   const [unreadSessionIds, setUnreadSessionIds] = createSignal<UnreadSessionMap>({});
-  const SESSION_BY_WORKSPACE_KEY = "veslo.workspace-last-session.v1";
   const ACTIVE_PENDING_DRAFT_KEY = "veslo.active-pending-draft.v1";
   const CONSUMED_PENDING_DRAFT_IDS_KEY = "veslo.consumed-pending-draft-ids.v1";
   const SESSION_DIRECTORY_OVERRIDE_KEY = "veslo.session-workspace-override.v1";
   const SUBAGENT_DECORATIONS_PREF_KEY = "veslo.subagent-decorations.v1";
-  const readSessionByWorkspace = () => {
-    if (typeof window === "undefined") return {} as Record<string, string>;
-    try {
-      const raw = window.localStorage.getItem(SESSION_BY_WORKSPACE_KEY);
-      if (!raw) return {} as Record<string, string>;
-      const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== "object") return {} as Record<string, string>;
-      return parsed as Record<string, string>;
-    } catch {
-      return {} as Record<string, string>;
-    }
-  };
-  const writeSessionByWorkspace = (map: Record<string, string>) => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(SESSION_BY_WORKSPACE_KEY, JSON.stringify(map));
-    } catch {
-      // ignore
-    }
-  };
   const readActivePendingDraftKey = () => {
     if (typeof window === "undefined") return null;
     try {
@@ -3129,64 +2967,6 @@ export default function App() {
     }
   }
 
-  async function ensureSelectedSessionWorkspaceActiveForSend(
-    sessionId: string,
-    traceId?: string | null,
-  ): Promise<boolean> {
-    const tracePayload = traceId ? { traceId } : undefined;
-    const transcriptScope = resolveSelectedSessionBrowseScope(sessionId);
-    if (!transcriptScope) {
-      recordSendTrace("sendPrompt:scoped-workspace-skipped-no-scope", tracePayload);
-      return true;
-    }
-    const targetWorkspaceId = transcriptScope.workspaceId.trim();
-    if (!targetWorkspaceId) {
-      recordSendTrace("sendPrompt:scoped-workspace-skipped-empty-target", tracePayload);
-      return true;
-    }
-    if (targetWorkspaceId === workspaceStore.activeWorkspaceId().trim()) {
-      recordSendTrace("sendPrompt:scoped-workspace-already-active", {
-        ...(tracePayload ?? {}),
-        workspaceId: targetWorkspaceId,
-      });
-      return true;
-    }
-
-    recordSendTrace("sendPrompt:activate-scoped-workspace", {
-      ...(tracePayload ?? {}),
-      sessionId,
-      workspaceId: targetWorkspaceId,
-      activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
-    });
-    try {
-      const activated = await sendTraceStep(
-        "sendPrompt:activate-scoped-workspace-call",
-        () => workspaceStore.activateWorkspace(targetWorkspaceId),
-        {
-          ...(tracePayload ?? {}),
-          sessionId,
-          workspaceId: targetWorkspaceId,
-        },
-      );
-      if (!activated) {
-        recordSendTrace("sendPrompt:activate-scoped-workspace-blocked", {
-          ...(tracePayload ?? {}),
-          sessionId,
-          workspaceId: targetWorkspaceId,
-        });
-      }
-      return Boolean(activated);
-    } catch (error) {
-      recordSendTrace("sendPrompt:activate-scoped-workspace-error", {
-        ...(tracePayload ?? {}),
-        sessionId,
-        workspaceId: targetWorkspaceId,
-        message: messageFromUnknownError(error),
-      });
-      return false;
-    }
-  }
-
   async function sendPrompt(
     draft?: ComposerDraft,
     options: { targetSessionId?: string | null; sendTraceId?: string | null } = {},
@@ -4304,12 +4084,7 @@ export default function App() {
       setSelectedSessionId(null);
       const activeWorkspace = workspaceStore.activeWorkspaceId().trim();
       if (activeWorkspace) {
-        const map = readSessionByWorkspace();
-        if (map[activeWorkspace] === trimmed) {
-          const next = { ...map };
-          delete next[activeWorkspace];
-          writeSessionByWorkspace(next);
-        }
+        clearWorkspaceLastSessionIfSelected(activeWorkspace, trimmed);
       }
     }
 
@@ -5028,49 +4803,22 @@ export default function App() {
     return workspace?.directory?.trim() || workspace?.path?.trim() || fallbackDirectory?.trim() || "";
   };
 
-  const makeSendTargetWorkspaceScope = (
-    workspaceId: string,
-    workspaceRoot: string,
-    directory?: string | null,
-  ): SendTargetWorkspaceScope | null => {
-    const id = workspaceId.trim();
-    const root = workspaceRoot.trim();
-    const dir = directory?.trim() || root;
-    if (!id || !root || !dir) return null;
-    return { workspaceId: id, workspaceRoot: root, directory: dir };
-  };
-
-  const resolveSendTargetWorkspaceScope = (sessionId?: string | null): SendTargetWorkspaceScope | null => {
-    const normalizedSessionId = sessionId?.trim() ?? "";
-    if (normalizedSessionId) {
-      const scope = resolveSelectedSessionBrowseScope(normalizedSessionId);
-      if (scope?.workspaceId?.trim()) {
-        return makeSendTargetWorkspaceScope(
-          scope.workspaceId,
-          scope.workspaceRoot || workspaceRootForId(scope.workspaceId, scope.directory),
-          scope.directory,
-        );
-      }
-    }
-
-    if (!normalizedSessionId) {
-      const pending = activePendingDraftMeta();
-      const pendingWorkspaceId = (pending?.privateWorkspaceId ?? pending?.workspaceId ?? "").trim();
-      if (pendingWorkspaceId) {
-        const root = workspaceRootForId(pendingWorkspaceId, pending?.directory ?? null);
-        const scope = makeSendTargetWorkspaceScope(pendingWorkspaceId, root, pending?.directory ?? root);
-        if (scope) return scope;
-      }
-    }
-
-    const activeRoot = workspaceStore.activeWorkspaceRoot().trim();
-    return makeSendTargetWorkspaceScope(workspaceStore.activeWorkspaceId().trim(), activeRoot, activeRoot);
-  };
-
-  const routedClientForSendTarget = (targetWorkspace?: SendTargetWorkspaceScope | null) => {
-    const workspaceId = targetWorkspace?.workspaceId?.trim() ?? "";
-    return workspaceId ? routedClient(workspaceId) : routedClient();
-  };
+  const workspaceSendTarget = createWorkspaceSendTarget<Client>({
+    activePendingDraftMeta,
+    resolveWorkspaceRoot: workspaceRootForId,
+    resolveSessionSendTargetScope: workspaceSessionSelection.resolveSendTargetWorkspaceScope,
+    activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
+    activateWorkspace: (workspaceId) => workspaceStore.activateWorkspace(workspaceId),
+    recordSendTrace,
+    sendTraceStep,
+    messageFromUnknownError,
+    routedClient,
+  });
+  const {
+    resolveSendTargetWorkspaceScope,
+    routedClientForSendTarget,
+    ensureSelectedSessionWorkspaceActiveForSend,
+  } = workspaceSendTarget;
 
   // VSLO-171 — per-workspace pending permissions polling is scheduled outside
   // the component body so the single-client SSE skip is shared and testable.
@@ -5091,27 +4839,12 @@ export default function App() {
   // saves the outgoing snapshot and restores the incoming one so sessions/
   // messages/permissions don't get wiped between switches. connectToServer
   // skips its own state RESET — this cache is the source of truth.
-  let previousActiveWsId: string | null = null;
-  createEffect(() => {
-    const wsId = workspaceStore.activeWorkspaceId().trim();
-    const selectedId = selectedSessionId()?.trim() ?? "";
-    const selectedScope = selectedId ? resolveSelectedSessionBrowseScope(selectedId) : null;
-    if (previousActiveWsId && previousActiveWsId !== wsId) {
-      const selectedBelongsToOutgoing =
-        !selectedScope || selectedScope.workspaceId.trim() === previousActiveWsId;
-      if (selectedBelongsToOutgoing) {
-        sessionStore.saveWorkspaceSnapshot(previousActiveWsId);
-      }
-    }
-    if (wsId) {
-      const selectedBelongsToIncoming = selectedScope?.workspaceId.trim() === wsId;
-      if (!selectedBelongsToIncoming) {
-        sessionStore.loadWorkspaceSnapshot(wsId);
-      }
-      // Cache miss is fine — connectToServer will trigger loadSessions to
-      // populate fresh state.
-    }
-    previousActiveWsId = wsId || null;
+  createWorkspaceSessionSnapshots({
+    activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
+    selectedSessionId,
+    resolveSelectedSessionBrowseScope,
+    saveWorkspaceSnapshot: (workspaceId) => sessionStore.saveWorkspaceSnapshot(workspaceId),
+    loadWorkspaceSnapshot: (workspaceId) => sessionStore.loadWorkspaceSnapshot(workspaceId),
   });
 
   let lastLocalVesloEnsureKey = "";
@@ -5868,29 +5601,6 @@ export default function App() {
       .catch((error) => {
         reportError(error, "pendingDrafts.persist");
       });
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    const sessionId = selectedSessionId();
-    const workspaceId =
-      (sessionId ? resolveSelectedSessionBrowseScope(sessionId)?.workspaceId : null) ??
-      workspaceStore.activeWorkspaceId();
-    if (!workspaceId || !sessionId) return;
-    const map = readSessionByWorkspace();
-    if (map[workspaceId] === sessionId) return;
-    map[workspaceId] = sessionId;
-    writeSessionByWorkspace(map);
-  });
-
-  const activeWorkspaceLastSessionId = createMemo(() => {
-    const workspaceId = workspaceStore.activeWorkspaceId().trim();
-    const selected = selectedSessionId()?.trim() ?? "";
-    if (!workspaceId) return selected || null;
-    const selectedScope = selected ? resolveSelectedSessionBrowseScope(selected) : null;
-    if (selected && (!selectedScope || selectedScope.workspaceId === workspaceId)) return selected;
-    const stored = readSessionByWorkspace()[workspaceId]?.trim() ?? "";
-    return stored || null;
   });
 
   createEffect(() => {
@@ -9396,12 +9106,11 @@ export default function App() {
         setSessions([{ ...sessionSnapshot, directory: targetWorkspace.path }, ...currentSessions]);
       }
 
-      const sessionMap = readSessionByWorkspace();
-      const nextSessionMap = { ...sessionMap, [targetWorkspace.id]: sessionID };
-      if (sourceWorkspaceId) {
-        delete nextSessionMap[sourceWorkspaceId];
-      }
-      writeSessionByWorkspace(nextSessionMap);
+      moveWorkspaceLastSession({
+        sourceWorkspaceId,
+        targetWorkspaceId: targetWorkspace.id,
+        sessionId: sessionID,
+      });
 
       // Optimistically move the session in the sidebar so the user sees
       // immediate feedback. Uses the snapshot captured before activation.
@@ -11515,13 +11224,6 @@ export default function App() {
       const sessionIdsInSidebar = sidebarWorkspaceGroups().flatMap((group) =>
         group.sessions.map((session) => session.id)
       );
-      const scopedSessionIds = Object.values(conversationScopeBySessionId()).flatMap((scopes) =>
-        scopes.flatMap((scope) => [
-          scope.sessionId,
-          scope.conversationId ?? "",
-          scope.opencodeSessionId ?? "",
-        ]),
-      );
       // If the URL points at a session that no longer exists (e.g. after deletion),
       // route back to /session so the app can fall back safely.
       // Sidebar-backed ids are accepted here so selection can proceed even when
@@ -11533,7 +11235,7 @@ export default function App() {
           routeSessionId: id,
           sessionIdsInStore,
           sessionIdsInSidebar,
-          scopedSessionIds,
+          scopedSessionIds: scopedSessionIds(),
         })
       ) {
         if (selectedSessionId() === id) {

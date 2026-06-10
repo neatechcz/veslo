@@ -5,6 +5,10 @@ import test from "node:test";
 import { shouldFallbackFromSessionRoute } from "../../lib/session-route-selection-guard.js";
 
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
+const workspaceSessionSelectionSource = readFileSync(
+  new URL("../../context/workspace-session-selection.ts", import.meta.url),
+  "utf8",
+);
 
 test("does not fallback while sessions are not loaded yet", () => {
   assert.equal(
@@ -75,8 +79,13 @@ test("real session route fallback ignores active pending draft context", () => {
   const routeSource = appSource.slice(routeStart, routeEnd);
 
   assert.match(
+    workspaceSessionSelectionSource,
+    /const scopedSessionIds = \(\) => \[[\s\S]*new Set\([\s\S]*Object\.values\(conversationScopeBySessionId\(\)\)\.flatMap\(\(scopes\) =>[\s\S]*scope\.sessionId,[\s\S]*scope\.conversationId \?\? "",[\s\S]*scope\.opencodeSessionId \?\? "",[\s\S]*\.filter\(Boolean\),[\s\S]*\]/s,
+    "workspace session selection should expose deduplicated scoped conversation ids for route fallback",
+  );
+  assert.match(
     routeSource,
-    /const scopedSessionIds = Object\.values\(conversationScopeBySessionId\(\)\)\.flatMap\(\(scopes\) =>[\s\S]*shouldFallbackFromSessionRoute\(\{\s*sessionsLoaded: sessionsLoaded\(\),\s*routeSessionId: id,\s*sessionIdsInStore,\s*sessionIdsInSidebar,\s*scopedSessionIds,\s*\}\)/s,
+    /shouldFallbackFromSessionRoute\(\{\s*sessionsLoaded: sessionsLoaded\(\),\s*routeSessionId: id,\s*sessionIdsInStore,\s*sessionIdsInSidebar,\s*scopedSessionIds: scopedSessionIds\(\),\s*\}\)/s,
     "real session route fallback should use persisted, sidebar, and scoped conversation ids without pending preloader state",
   );
   assert.doesNotMatch(

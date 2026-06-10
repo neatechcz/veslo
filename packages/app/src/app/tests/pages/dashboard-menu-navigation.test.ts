@@ -6,6 +6,10 @@ import * as dashboardMenuNavigation from "../../pages/dashboard-menu-navigation.
 import { resolveVisibleSettingsTab } from "../../lib/settings-tab-label.js";
 
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
+const workspaceSessionSelectionSource = readFileSync(
+  new URL("../../context/workspace-session-selection.ts", import.meta.url),
+  "utf8",
+);
 const { resolveLeftMenuAction } = dashboardMenuNavigation;
 const resolveDashboardTabSelectionAction = (
   dashboardMenuNavigation as {
@@ -279,9 +283,14 @@ test("dashboard passes the active workspace last session fallback into the left 
 
 test("app derives the active workspace last session and passes it into DashboardView props", () => {
   assert.match(
+    workspaceSessionSelectionSource,
+    /const activeWorkspaceLastSessionId = \(\) => \{[\s\S]*const stored = readSessionByWorkspace\(\)\[workspaceId\]\?\.trim\(\) \?\? "";/,
+    "workspace session selection should derive the fallback from the active workspace's persisted last-session map",
+  );
+  assert.match(
     appSource,
-    /const\s+activeWorkspaceLastSessionId\s*=\s*createMemo\(\(\)\s*=>\s*\{[\s\S]*readSessionByWorkspace\(\)\[workspaceId\]/,
-    "app should derive the fallback from the active workspace's persisted last-session map",
+    /const workspaceSessionSelection = createWorkspaceSessionSelection\(\{[\s\S]*activeWorkspaceId: \(\) => workspaceStoreRef\?\.activeWorkspaceId\(\) \?\? "",[\s\S]*\}\);/,
+    "app should wire active workspace last-session fallback through the workspace session selection controller",
   );
   assert.match(
     appSource,
