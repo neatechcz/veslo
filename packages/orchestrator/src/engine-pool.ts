@@ -289,6 +289,20 @@ export class EnginePool {
     return this.engines.get(workspaceId);
   }
 
+  /**
+   * No-spawn lookup: returns the engine only when it is already running
+   * (ready/idle + process alive). Used by the proxy for GET/HEAD requests so
+   * background status polls (mcp/permission/lsp/…) can fail fast instead of
+   * triggering a 30-60s cold spawn via ensure().
+   */
+  getRunning(workspaceId: string): EngineProcess | null {
+    const engine = this.engines.get(workspaceId);
+    if (!engine) return null;
+    if (engine.state !== "ready" && engine.state !== "idle") return null;
+    if (!this.deps.isProcessAlive(engine.pid) && !this.deps.healthCheck) return null;
+    return engine;
+  }
+
   snapshot(): SerializedEngineState[] {
     return Array.from(this.engines.values()).map((engine) => ({
       workspaceId: engine.workspaceId,

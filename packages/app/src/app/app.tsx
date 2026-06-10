@@ -1339,7 +1339,12 @@ export default function App() {
   const [error, setError] = createSignal<string | null>(null);
   const [opencodeConnectStatus, setOpencodeConnectStatus] = createSignal<OpencodeConnectStatus | null>(null);
   const [booting, setBooting] = createSignal(true);
-  const [engineReady, setEngineReady] = createSignal(true);
+  // Send-timeout fix 2026-06-10 — boots false: on cold/lazy boot no engine is
+  // running, and the old initial `true` opened a window where engineReady
+  // guards (permission polls, MCP status, capabilities) passed and their GETs
+  // cold-spawned the engine through the orchestrator proxy (up to 60s each).
+  // connectToServer/onEngineStable flips this true after a successful connect.
+  const [engineReady, setEngineReady] = createSignal(false);
 
   // VSLO-171 F3Ú8: cross-workspace takeover confirmation dialog removed.
   // See comment in sendPrompt about replacement strategy.

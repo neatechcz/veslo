@@ -134,6 +134,11 @@ const OPENCODE_TRANSCRIPT_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
 const OPENCODE_JSON_FETCH_DEFAULT_TIMEOUT_MS = 5_000;
 const OPENCODE_SESSION_CREATE_TIMEOUT_MS = 60_000;
 const OPENCODE_CONVERSATION_SUBMIT_TIMEOUT_MS = 30_000;
+// Send-timeout fix 2026-06-10 — upper bound for the proxy's wait on upstream
+// response HEADERS (body streaming, e.g. SSE, is never cut). Must stay above
+// the orchestrator's 60s cold OpenCode health window so a legitimate POST that
+// cold-spawns the engine is not aborted mid-spawn.
+const OPENCODE_PROXY_HEADERS_DEFAULT_TIMEOUT_MS = 75_000;
 export const REDACTED_SECRET_VALUE = "[REDACTED]";
 const GATEWAY_CALLER_AUTH_HEADER = "x-veslo-gateway-authorization";
 const GATEWAY_ACCESS_TOKEN_HEADER = "x-veslo-gateway-token";
@@ -983,18 +988,41 @@ async function proxyOpencodeRequest(input: {
 
   const method = input.request.method.toUpperCase();
   const body = method === "GET" || method === "HEAD" ? undefined : input.request.body;
+  // Bound the wait for upstream response headers only — the timer is cleared
+  // as soon as fetch resolves, so streaming bodies (SSE) are never aborted.
+  // Without this, a hung engine/orchestrator held proxied requests open until
+  // the caller's own timeout fired (observed as 60s client-side hangs).
+  const headersTimeoutMs = resolveOpencodeProxyHeadersTimeoutMs();
+  const controller = new AbortController();
+  let timedOut = false;
+  const headersTimer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, headersTimeoutMs);
+  if (typeof headersTimer === "object" && headersTimer && "unref" in headersTimer) {
+    (headersTimer as { unref?: () => void }).unref?.();
+  }
   let response: Response;
   try {
     response = await fetch(targetUrl, {
       method,
       headers,
       body,
+      signal: controller.signal,
     });
   } catch (error) {
+    if (timedOut || isAbortError(error)) {
+      throw new ApiError(502, "opencode_proxy_timeout", "OpenCode proxy timed out waiting for upstream response", {
+        url: targetUrl,
+        timeoutMs: headersTimeoutMs,
+      });
+    }
     throw new ApiError(502, "opencode_proxy_failed", "OpenCode proxy request failed", {
       url: targetUrl,
       error: error instanceof Error ? error.message : String(error),
     });
+  } finally {
+    clearTimeout(headersTimer);
   }
 
   return sanitizeProxyResponse(response);
@@ -7173,6 +7201,14 @@ function resolveOpenCodeJsonFetchTimeoutMs(): number {
     return clampNumber(parsed, 100, 60_000);
   }
   return OPENCODE_JSON_FETCH_DEFAULT_TIMEOUT_MS;
+}
+
+function resolveOpencodeProxyHeadersTimeoutMs(): number {
+  const parsed = parseInteger(process.env.VESLO_OPENCODE_PROXY_HEADERS_TIMEOUT_MS);
+  if (parsed && parsed > 0) {
+    return clampNumber(parsed, 100, 600_000);
+  }
+  return OPENCODE_PROXY_HEADERS_DEFAULT_TIMEOUT_MS;
 }
 
 function isAbortError(error: unknown): boolean {

@@ -170,7 +170,21 @@ async function makeOrchestrator(opts: {
         res.end(JSON.stringify({ error: "remote not pooled" }));
         return;
       }
-      const engine = await pool.ensure({ id: ws.id, path: ws.path });
+      // Send-timeout fix 2026-06-10 (mirrors cli.ts): GET/HEAD never spawn —
+      // background polls fail fast with 503 instead of waiting on a cold start.
+      const method = (req.method ?? "GET").toUpperCase();
+      let engine;
+      if (method === "GET" || method === "HEAD") {
+        engine = pool.getRunning(ws.id);
+        if (!engine) {
+          res.statusCode = 503;
+          res.setHeader("content-type", "application/json");
+          res.end(JSON.stringify({ error: "engine_not_running", workspaceId: ws.id }));
+          return;
+        }
+      } else {
+        engine = await pool.ensure({ id: ws.id, path: ws.path });
+      }
       const restPath = "/" + parts.slice(3).join("/");
       proxyToEngine({
         clientReq: req,
@@ -297,6 +311,7 @@ describe("router proxy + EnginePool integration", () => {
     const { echo, orch } = await setup([
       { id: "ws-a", path: "/tmp/ws-a", type: "local" },
     ]);
+    await orch.pool.ensure({ id: "ws-a", path: "/tmp/ws-a" });
     const res = await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/app`);
     expect(res.status).toBe(200);
     expect(echo.captures).toHaveLength(1);
@@ -311,6 +326,7 @@ describe("router proxy + EnginePool integration", () => {
     const { echo, orch } = await setup([
       { id: "ws-root", path: "/tmp/ws-root", type: "local" },
     ]);
+    await orch.pool.ensure({ id: "ws-root", path: "/tmp/ws-root" });
     const res = await fetchJson(
       `${orch.baseUrl}/workspace/ws-root/opencode/session?directory=${encodeURIComponent("/tmp/ws-root/.opencode")}&limit=20`,
     );
@@ -329,7 +345,7 @@ describe("router proxy + EnginePool integration", () => {
     const { orch } = await setup([
       { id: "ws-a", path: "/tmp/ws-a", type: "local" },
     ]);
-    await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/a`);
+    await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/a`, { method: "POST" });
     const beforePid = orch.pool.get("ws-a")?.pid;
     await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/b`);
     const afterPid = orch.pool.get("ws-a")?.pid;
@@ -342,8 +358,8 @@ describe("router proxy + EnginePool integration", () => {
       { id: "ws-a", path: "/tmp/ws-a", type: "local" },
       { id: "ws-b", path: "/tmp/ws-b", type: "local" },
     ]);
-    await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/x`);
-    await fetchJson(`${orch.baseUrl}/workspace/ws-b/opencode/x`);
+    await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/x`, { method: "POST" });
+    await fetchJson(`${orch.baseUrl}/workspace/ws-b/opencode/x`, { method: "POST" });
     expect(orch.pool.size()).toBe(2);
     expect(orch.pool.get("ws-a")?.pid).not.toBe(orch.pool.get("ws-b")?.pid);
   });
@@ -362,6 +378,8 @@ describe("router proxy + EnginePool integration", () => {
         res.end(JSON.stringify({ ws: req.headers["x-veslo-workspace-id"] }));
       }, delayMs);
     });
+    await orch.pool.ensure({ id: "ws-a", path: "/tmp/ws-a" });
+    await orch.pool.ensure({ id: "ws-b", path: "/tmp/ws-b" });
     const start = Date.now();
     const [a, b] = await Promise.all([
       fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/long`),
@@ -404,6 +422,7 @@ describe("router proxy + EnginePool integration", () => {
         }, 30);
       }, 30);
     });
+    await orch.pool.ensure({ id: "ws-a", path: "/tmp/ws-a" });
     const res = await fetch(`${orch.baseUrl}/workspace/ws-a/opencode/event`);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("text/event-stream");
@@ -418,8 +437,8 @@ describe("router proxy + EnginePool integration", () => {
       { id: "ws-a", path: "/tmp/ws-a", type: "local" },
       { id: "ws-b", path: "/tmp/ws-b", type: "local" },
     ]);
-    await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/ping`);
-    await fetchJson(`${orch.baseUrl}/workspace/ws-b/opencode/ping`);
+    await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/ping`, { method: "POST" });
+    await fetchJson(`${orch.baseUrl}/workspace/ws-b/opencode/ping`, { method: "POST" });
     const health = await fetchJson(`${orch.baseUrl}/health`);
     const engines = (health.body as { engines: Array<{ workspaceId: string; state: string }> })
       .engines;
@@ -451,7 +470,7 @@ describe("router proxy + EnginePool integration", () => {
     ]);
     // First spawn an engine (so pool.ensure resolves), then point its baseUrl
     // at a dead port to force ECONNREFUSED on proxy.
-    await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/warmup`);
+    await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/warmup`, { method: "POST" });
     const engine = orch.pool.get("ws-a")!;
     engine.baseUrl = "http://127.0.0.1:1"; // unbound on most systems
     const res = await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/fail`);
@@ -474,8 +493,13 @@ describe("router proxy + EnginePool integration", () => {
     // Klíčový invariant F2Ú3: activate nesmí spawnnout engine.
     expect(orch.pool.size()).toBe(0);
 
-    // Až proxy request spawne (lazy).
-    await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/x`);
+    // Send-timeout fix: GET nespawnuje — fail-fast 503.
+    const getRes = await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/x`);
+    expect(getRes.status).toBe(503);
+    expect(orch.pool.size()).toBe(0);
+
+    // Až non-GET proxy request spawne (lazy).
+    await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/x`, { method: "POST" });
     expect(orch.pool.size()).toBe(1);
   });
 
@@ -484,7 +508,7 @@ describe("router proxy + EnginePool integration", () => {
     const { orch } = await setup([
       { id: "ws-a", path: "/tmp/ws-a", type: "local" },
     ]);
-    await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/warmup`);
+    await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/warmup`, { method: "POST" });
     const firstPid = orch.pool.get("ws-a")?.pid;
     expect(firstPid).toBeGreaterThan(0);
 
@@ -495,12 +519,55 @@ describe("router proxy + EnginePool integration", () => {
     expect(disposeRes.body).toMatchObject({ disposed: true });
     expect(orch.pool.get("ws-a")?.state).toBe("suspended");
 
-    // Další request engine respawne (jiný pid).
-    await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/again`);
+    // Send-timeout fix: GET po dispose nerespawnuje — fail-fast 503.
+    const getRes = await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/poll`);
+    expect(getRes.status).toBe(503);
+    expect(orch.pool.get("ws-a")?.state).toBe("suspended");
+
+    // Další non-GET request engine respawne (jiný pid).
+    await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/again`, { method: "POST" });
     const secondPid = orch.pool.get("ws-a")?.pid;
     expect(secondPid).toBeGreaterThan(0);
     expect(secondPid).not.toBe(firstPid);
     expect(orch.pool.get("ws-a")?.state).toBe("ready");
+  });
+
+  // Send-timeout fix 2026-06-10: background polls (GET /mcp, /permission, …)
+  // must fail fast instead of cold-spawning an engine and blocking up to 60s.
+  test("GET/HEAD proxy without running engine returns 503 immediately, no spawn", async () => {
+    const { orch } = await setup([
+      { id: "ws-a", path: "/tmp/ws-a", type: "local" },
+    ]);
+    const start = Date.now();
+    const getRes = await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/mcp`);
+    expect(getRes.status).toBe(503);
+    expect(getRes.body).toMatchObject({ error: "engine_not_running", workspaceId: "ws-a" });
+    const headRes = await fetch(`${orch.baseUrl}/workspace/ws-a/opencode/permission`, {
+      method: "HEAD",
+    });
+    expect(headRes.status).toBe(503);
+    // No engine spawned and no cold-start wait happened.
+    expect(orch.pool.size()).toBe(0);
+    expect(Date.now() - start).toBeLessThan(2_000);
+  });
+
+  test("POST proxy without running engine spawns lazily (send path keeps working)", async () => {
+    const { echo, orch } = await setup([
+      { id: "ws-a", path: "/tmp/ws-a", type: "local" },
+    ]);
+    const res = await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "x" }),
+    });
+    expect(res.status).toBe(200);
+    expect(orch.pool.size()).toBe(1);
+    expect(orch.pool.get("ws-a")?.state).toBe("ready");
+    expect(echo.captures[0]?.method).toBe("POST");
+
+    // Once the engine runs, GET polls pass through normally.
+    const getRes = await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/mcp`);
+    expect(getRes.status).toBe(200);
   });
 
   // F2Ú3: dispose for unknown workspace is 404, no side effect.

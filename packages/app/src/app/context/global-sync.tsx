@@ -21,6 +21,7 @@ import { unwrap } from "../lib/opencode";
 import { safeStringify } from "../utils";
 import { isGatewayOwnedProvider, mapConfigProvidersToList, mergeConnectedProviderIds } from "../utils/providers";
 import { useGlobalSDK } from "./global-sdk";
+import { useServer } from "./server";
 
 export type WorkspaceState = {
   status: "idle" | "loading" | "partial" | "ready";
@@ -73,6 +74,7 @@ const createWorkspaceState = (): WorkspaceState => ({
 
 export function GlobalSyncProvider(props: ParentProps) {
   const globalSDK = useGlobalSDK();
+  const server = useServer();
   const defaultProvider: ProviderListResponse = { all: [], connected: [], default: {} };
   const [globalStore, setGlobalStore] = createStore<GlobalState>({
     ready: false,
@@ -258,7 +260,13 @@ export function GlobalSyncProvider(props: ParentProps) {
 
   createEffect(() => {
     const url = globalSDK.url();
-    if (!url) return;
+    // Send-timeout fix 2026-06-10 — this refresh used to burst engine-proxy
+    // reads (config/providers/mcp/lsp/project) as soon as the URL was known,
+    // even when no engine was running, which cold-spawned the engine via the
+    // orchestrator proxy. Gate on the health poll instead; the healthy
+    // false->true flip also re-fires the burst once the engine comes up.
+    const isHealthy = server.healthy() === true;
+    if (!url || !isHealthy) return;
     void refresh();
   });
 
