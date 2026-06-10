@@ -98,15 +98,25 @@ export function scenarioSelectionNeedsManagedAiGatewayFixture(scenarios: string[
   return scenarios.some((scenario) =>
     scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/message-send-registry-degraded.toml') ||
     scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/sidebar-session-retention.toml') ||
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/startup-sidebar-existing-sessions.toml') ||
     scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/pending-session-instance-isolation.toml'),
   );
+}
+
+export function scenarioSelectionNeedsStartupSidebarSessionsFixture(scenarios: string[]): boolean {
+  return scenarioSelectionIncludesScenario(scenarios, 'startup-sidebar-existing-sessions');
 }
 
 export function scenarioSelectionManagedAiGatewayResponseDelayMs(
   scenarios: string[],
   env: Record<string, string | undefined> = process.env,
 ): string | null {
-  if (!scenarioSelectionIncludesScenario(scenarios, 'pending-session-instance-isolation')) return null;
+  if (
+    !scenarioSelectionIncludesScenario(scenarios, 'pending-session-instance-isolation') &&
+    !scenarioSelectionIncludesScenario(scenarios, 'startup-sidebar-existing-sessions')
+  ) {
+    return null;
+  }
 
   const existingDelay = env.E2E_MANAGED_AI_RESPONSE_DELAY_MS?.trim() ?? '';
   const existingDelayMs = Number(existingDelay);
@@ -215,6 +225,9 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
   }
   if (scenarioSelectionNeedsManagedAiGatewayFixture(scenarios)) {
     process.env.E2E_MANAGED_AI_GATEWAY_FIXTURE ||= '1';
+  }
+  if (scenarioSelectionNeedsStartupSidebarSessionsFixture(scenarios)) {
+    process.env.E2E_SEED_STARTUP_SIDEBAR_SESSIONS ||= '1';
   }
   const managedAiResponseDelayMs = scenarioSelectionManagedAiGatewayResponseDelayMs(scenarios);
   if (managedAiResponseDelayMs) {

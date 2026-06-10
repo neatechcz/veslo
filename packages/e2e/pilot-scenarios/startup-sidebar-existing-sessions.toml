@@ -1,0 +1,466 @@
+[scenario]
+name = "startup-sidebar-existing-sessions"
+fail_fast = true
+global_timeout_ms = 300000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "install startup sidebar helpers"
+action = "eval"
+script = '''
+window.localStorage.setItem("veslo.sidebar-session-view.v1", "by-project");
+window.localStorage.removeItem("veslo.sidebar-collapsed-projects.v1");
+window.localStorage.removeItem("veslo.sidebar-chat-collapsed.v1");
+
+window.__vesloStartupSidebar = (() => {
+  const seededChatTitle = "E2E startup seeded chat session";
+  const seededProjectTitle = "E2E startup seeded inactive project session";
+  const startupProjectLabel = "Startup Inactive Project";
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const normalize = (value) => String(value ?? "").trim().replace(/\s+/g, " ");
+  const normalizePath = (value) => String(value ?? "").trim().replace(/\\/g, "/").replace(/\/+$/, "");
+  const trimBaseUrl = (value) => normalize(value).replace(/\/+$/, "");
+  const assert = (condition, message) => {
+    if (!condition) throw new Error(message);
+  };
+  const waitUntil = async (predicate, options = {}) => {
+    const timeout = options.timeout ?? 10000;
+    const interval = options.interval ?? 250;
+    const message = options.message ?? "Condition was not met";
+    const deadline = Date.now() + timeout;
+    let latest;
+    while (Date.now() < deadline) {
+      latest = await predicate();
+      if (latest) return latest;
+      await sleep(interval);
+    }
+    throw new Error(`${message}. Latest=${JSON.stringify(latest)}`);
+  };
+  const tauriInvoke = async (command, payload = {}) => {
+    const invoke = window.__TAURI_INTERNALS__?.invoke;
+    assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
+    return await invoke(command, payload);
+  };
+  const visibleText = (element) => normalize(element?.innerText || element?.textContent || "");
+  const bodyText = () => visibleText(document.body);
+  const mainText = () => visibleText(document.querySelector("main") ?? document.body);
+  const sendTrace = () => Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.slice(-100) : [];
+  const isVisibleElement = (element) => {
+    if (!(element instanceof HTMLElement)) return false;
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+  };
+  const buttonValues = (button) => [
+    normalize(button.textContent),
+    normalize(button.title),
+    normalize(button.getAttribute("aria-label")),
+  ].filter(Boolean);
+  const buttonMatchesLabel = (button, labels) => {
+    if (!(button instanceof HTMLElement) || !isVisibleElement(button) || button.disabled) return false;
+    const values = buttonValues(button);
+    return labels.some((label) => values.some((value) => value === label || value.includes(label)));
+  };
+  const dispatchClickSequence = (element) => {
+    element.focus?.();
+    const base = { bubbles: true, cancelable: true, composed: true, view: window, button: 0 };
+    if (typeof PointerEvent === "function") {
+      element.dispatchEvent(new PointerEvent("pointerdown", { ...base, pointerId: 1, pointerType: "mouse", isPrimary: true, buttons: 1 }));
+      element.dispatchEvent(new PointerEvent("pointerup", { ...base, pointerId: 1, pointerType: "mouse", isPrimary: true, buttons: 0 }));
+    }
+    element.dispatchEvent(new MouseEvent("mousedown", { ...base, buttons: 1 }));
+    element.dispatchEvent(new MouseEvent("mouseup", { ...base, buttons: 0 }));
+    element.dispatchEvent(new MouseEvent("click", { ...base, buttons: 0 }));
+  };
+  const sidebarRows = () => Array.from(document.querySelectorAll('[data-session-sidebar-row="true"]'));
+  const sidebarRowsByText = (text) => sidebarRows().filter((row) => normalize(row.textContent).includes(text));
+  const rowSummary = () => sidebarRows().map((row) => ({
+    text: normalize(row.textContent),
+    chat: Boolean(row.closest('[data-sidebar-chat-section="true"]')),
+    projectKey: row.closest("[data-project-key]")?.getAttribute("data-project-key") ?? null,
+    ariaCurrent: row.getAttribute("aria-current"),
+  }));
+  const waitForSidebarRow = async (text, predicate, label, timeout = 90000) => await waitUntil(() => {
+    const row = sidebarRowsByText(text).find(predicate);
+    return row || false;
+  }, {
+    timeout,
+    interval: 500,
+    message: `${label} sidebar row did not appear for ${text}. Rows=${JSON.stringify(rowSummary())}. Body=${bodyText().slice(0, 3000)}`,
+  });
+  const waitForChatRow = async (text, timeout) =>
+    await waitForSidebarRow(text, (row) => Boolean(row.closest('[data-sidebar-chat-section="true"]')), "chat", timeout);
+  const waitForProjectRow = async (text, timeout) =>
+    await waitForSidebarRow(text, (row) => Boolean(row.closest("[data-project-key]")) && !row.closest('[data-sidebar-chat-section="true"]'), "project", timeout);
+  const workspaceLoadingOverlayPattern = /We’ll bring your recent work back|Vrátíme vám vaši nedávnou práci|Opening worker|Otevírám pracovní prostor|Loading recent tasks|Načítám nedávné úkoly/i;
+  const hasWorkspaceLoadingOverlay = () => workspaceLoadingOverlayPattern.test(bodyText());
+  const assertNoWorkspaceLoadingOverlay = (context) => {
+    const text = bodyText();
+    assert(!workspaceLoadingOverlayPattern.test(text), `Workspace loading overlay appeared during ${context}. Body=${text.slice(0, 3000)}`);
+  };
+  const activeWorkspaceId = async () => normalize((await tauriInvoke("workspace_bootstrap"))?.activeId);
+  const projectCollapseState = (projectRoot) => {
+    const header = Array.from(projectRoot.querySelectorAll('button[data-project-collapse-toggle="true"]'))
+      .find((button) => button instanceof HTMLElement && isVisibleElement(button) && !button.disabled);
+    const region = projectRoot.querySelector('[data-sidebar-collapse-region="project"]');
+    const rect = region instanceof HTMLElement ? region.getBoundingClientRect() : null;
+    return {
+      expanded: header instanceof HTMLElement ? header.getAttribute("aria-expanded") : null,
+      regionHeight: rect ? rect.height : null,
+    };
+  };
+  const waitForProjectExpandedState = async (projectRoot, expanded, context) => {
+    await waitUntil(() => {
+      const state = projectCollapseState(projectRoot);
+      if (state.expanded !== String(expanded)) return false;
+      if (!expanded && typeof state.regionHeight === "number" && state.regionHeight > 1) return false;
+      return state;
+    }, {
+      timeout: 10000,
+      interval: 250,
+      message: `Project header ${context} did not reach expanded=${expanded}. State=${JSON.stringify(projectCollapseState(projectRoot))}`,
+    });
+  };
+  const findProjectHeaderByLabel = (label) => {
+    const buttons = Array.from(document.querySelectorAll('button[data-project-collapse-toggle="true"]'))
+      .filter((button) => button instanceof HTMLElement && isVisibleElement(button) && !button.disabled);
+    const button = buttons.find((candidate) => buttonValues(candidate).some((value) => value.includes(label)) || normalize(candidate.textContent).includes(label));
+    assert(button instanceof HTMLElement, `Project header was not available for ${label}. Headers=${JSON.stringify(buttons.map(buttonValues))}`);
+    const projectRoot = button.closest("[data-project-key]");
+    assert(projectRoot instanceof HTMLElement, `Project root missing for ${label}`);
+    return { button, projectRoot };
+  };
+  const ensureProjectRowVisible = async () => {
+    const existing = sidebarRowsByText(seededProjectTitle).find((row) =>
+      Boolean(row.closest("[data-project-key]")) && !row.closest('[data-sidebar-chat-section="true"]'));
+    if (existing) return existing;
+    const { button, projectRoot } = findProjectHeaderByLabel(startupProjectLabel);
+    const activeBefore = await activeWorkspaceId();
+    const hashBefore = window.location.hash;
+    if (button.getAttribute("aria-expanded") !== "true") {
+      dispatchClickSequence(button);
+      await waitForProjectExpandedState(projectRoot, true, "expand for row visibility");
+    }
+    assert((await activeWorkspaceId()) === activeBefore, "Expanding project header activated workspace.");
+    assert(window.location.hash === hashBefore, "Expanding project header changed route.");
+    assertNoWorkspaceLoadingOverlay("project expand");
+    return await waitForProjectRow(seededProjectTitle, 20000);
+  };
+  const waitForComposer = async () => await waitUntil(() => {
+    const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
+    return candidate instanceof HTMLElement && isVisibleElement(candidate) ? candidate : false;
+  }, {
+    timeout: 45000,
+    interval: 250,
+    message: `Composer did not appear. Body=${bodyText().slice(0, 3000)}`,
+  });
+  const setComposerText = (textbox, text) => {
+    textbox.focus();
+    if (textbox.isContentEditable) {
+      textbox.replaceChildren(document.createTextNode(text));
+    } else {
+      textbox.value = text;
+    }
+    textbox.dispatchEvent(new InputEvent("input", { bubbles: true, data: text, inputType: "insertText" }));
+    textbox.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+  };
+  const findComposerSendButton = (textbox) => {
+    const labels = ["Send now", "Steer agent now", "Queue message", "Send", "Poslat hned", "Nasměrovat agenta teď", "Zařadit zprávu", "Odeslat"];
+    let current = textbox;
+    const containers = [];
+    for (let depth = 0; depth < 10 && current instanceof HTMLElement; depth += 1) {
+      containers.push(current);
+      current = current.parentElement;
+    }
+    for (const container of containers) {
+      const matching = Array.from(container.querySelectorAll("button")).find((button) => buttonMatchesLabel(button, labels));
+      if (matching) return matching;
+    }
+    return Array.from(document.querySelectorAll("button")).find((button) => buttonMatchesLabel(button, labels));
+  };
+  const assertNoSendFailed = () => {
+    const text = bodyText();
+    assert(!/Send failed|Odeslání selhalo|发送失败/i.test(text), `Message send failed. Trace=${JSON.stringify(sendTrace())}. Body=${text.slice(0, 3000)}`);
+    assert(!sendTrace().some((entry) => /blocked|error|failed/i.test(String(entry?.event ?? ""))), `Send trace contains blocked/error event. Trace=${JSON.stringify(sendTrace())}`);
+  };
+  const stageSelector = (stage, state) => `[data-testid="startup-sidebar-${stage}-${state}"]`;
+  const appendStageMarker = (stage, state, payload) => {
+    if (document.querySelector(stageSelector(stage, "complete")) || document.querySelector(stageSelector(stage, "error"))) return;
+    const marker = document.createElement("pre");
+    marker.dataset.testid = `startup-sidebar-${stage}-${state}`;
+    marker.textContent = JSON.stringify(payload ?? { ok: state === "complete" }, null, 2);
+    document.body.append(marker);
+  };
+  const startStage = (stage, task) => {
+    document.querySelector(stageSelector(stage, "complete"))?.remove();
+    document.querySelector(stageSelector(stage, "error"))?.remove();
+    const runningKey = `__vesloStartupSidebarStageRunning_${stage}`;
+    if (window[runningKey]) return true;
+    window[runningKey] = true;
+    void task()
+      .then((payload) => appendStageMarker(stage, "complete", payload ?? { ok: true }))
+      .catch((error) => appendStageMarker(stage, "error", {
+        message: error?.message || String(error),
+        stack: error?.stack || null,
+        body: bodyText().slice(0, 5000),
+        rows: rowSummary(),
+        sendTrace: sendTrace(),
+      }))
+      .finally(() => {
+        window[runningKey] = false;
+      });
+    return true;
+  };
+  const checkStage = (stage) => {
+    const error = document.querySelector(stageSelector(stage, "error"));
+    if (error) throw new Error(`Startup sidebar stage ${stage} failed: ${(error.textContent || "").slice(0, 20000)}`);
+    assert(document.querySelector(stageSelector(stage, "complete")), `Startup sidebar stage ${stage} did not complete.`);
+    return true;
+  };
+  return {
+    seededChatTitle,
+    seededProjectTitle,
+    waitUntil,
+    tauriInvoke,
+    normalize,
+    normalizePath,
+    trimBaseUrl,
+    assert,
+    bodyText,
+    mainText,
+    sendTrace,
+    isVisibleElement,
+    buttonMatchesLabel,
+    dispatchClickSequence,
+    sidebarRows,
+    rowSummary,
+    waitForChatRow,
+    waitForProjectRow,
+    hasWorkspaceLoadingOverlay,
+    assertNoWorkspaceLoadingOverlay,
+    activeWorkspaceId,
+    ensureProjectRowVisible,
+    waitForProjectExpandedState,
+    waitForComposer,
+    setComposerText,
+    findComposerSendButton,
+    assertNoSendFailed,
+    startStage,
+    checkStage,
+  };
+})();
+
+true;
+'''
+
+[[step]]
+name = "local Veslo server auto-started"
+action = "eval"
+timeout_ms = 100000
+script = '''
+const h = window.__vesloStartupSidebar;
+let latest = null;
+await h.waitUntil(async () => {
+  latest = await h.tauriInvoke("veslo_server_info").catch(() => null);
+  const baseUrl = h.trimBaseUrl(latest?.baseUrl);
+  const clientToken = h.normalize(latest?.clientToken);
+  if (!latest?.running || !baseUrl || !clientToken) return false;
+  const response = await fetch(`${baseUrl}/health`).catch(() => null);
+  if (!response?.ok) return false;
+  const payload = await response.json().catch(() => null);
+  if (payload?.ok !== true) return false;
+  window.__vesloStartupSidebarConnection = { baseUrl, clientToken, hostToken: h.normalize(latest?.hostToken) };
+  return true;
+}, {
+  timeout: 90000,
+  interval: 500,
+  message: `Local Veslo server did not auto-start after desktop launch. Server info=${JSON.stringify(latest)}`,
+});
+true;
+'''
+
+[[step]]
+name = "workspace bootstrap includes inactive seed workspaces"
+action = "eval"
+timeout_ms = 60000
+script = '''
+const h = window.__vesloStartupSidebar;
+const bootstrap = await h.waitUntil(async () => {
+  const info = await h.tauriInvoke("workspace_bootstrap").catch(() => null);
+  return Array.isArray(info?.workspaces) && info.workspaces.length >= 3 ? info : false;
+}, {
+  timeout: 45000,
+  interval: 500,
+  message: "Workspace bootstrap did not expose the seeded startup workspaces",
+});
+const activeWorkspace = bootstrap.workspaces.find((workspace) => workspace.id === bootstrap.activeId) ?? null;
+h.assert(
+  h.normalizePath(activeWorkspace?.path || activeWorkspace?.directory).endsWith("/workspaces/visual-workspace"),
+  `Unexpected active workspace before sidebar checks: ${JSON.stringify(bootstrap)}`,
+);
+window.__vesloStartupSidebarActiveBefore = h.normalize(bootstrap.activeId);
+true;
+'''
+
+[[step]]
+name = "initial worker overlay clears"
+action = "eval"
+timeout_ms = 100000
+script = '''
+const h = window.__vesloStartupSidebar;
+await h.waitUntil(() => !h.hasWorkspaceLoadingOverlay(), {
+  timeout: 90000,
+  interval: 500,
+  message: `Workspace loading overlay did not clear. Body=${h.bodyText().slice(0, 3000)}`,
+});
+true;
+'''
+
+[[step]]
+name = "start existing session row check"
+action = "eval"
+script = '''
+const h = window.__vesloStartupSidebar;
+h.startStage("existing-rows", async () => {
+  const seededChatRow = await h.waitForChatRow(h.seededChatTitle, 90000);
+  const seededProjectRow = await h.ensureProjectRowVisible();
+  h.assert(seededChatRow instanceof HTMLElement, "Seeded chat row missing.");
+  h.assert(seededProjectRow instanceof HTMLElement, "Seeded project row missing.");
+  h.assert(h.sidebarRows().length > 0, `Sidebar has no session rows. Body=${h.bodyText().slice(0, 3000)}`);
+  h.assert(!/No sessions yet|Zatím tu nejsou žádné relace/i.test(h.bodyText()), `Sidebar rendered empty state. Rows=${JSON.stringify(h.rowSummary())}`);
+  h.assert(
+    (await h.activeWorkspaceId()) === window.__vesloStartupSidebarActiveBefore,
+    `Passive startup sidebar listing changed active workspace. Before=${window.__vesloStartupSidebarActiveBefore} After=${await h.activeWorkspaceId()}`,
+  );
+  window.__vesloStartupSidebarSeededProjectRowText = h.normalize(seededProjectRow.textContent);
+  return { rows: h.rowSummary() };
+});
+true;
+'''
+
+[[step]]
+name = "existing session row check finished"
+action = "wait"
+target = "[data-testid=\"startup-sidebar-existing-rows-complete\"], [data-testid=\"startup-sidebar-existing-rows-error\"]"
+timeout_ms = 120000
+
+[[step]]
+name = "existing chat and inactive project sessions appear"
+action = "eval"
+script = '''
+window.__vesloStartupSidebar.checkStage("existing-rows");
+true;
+'''
+
+[[step]]
+name = "project header toggles without activating workspace"
+action = "eval"
+timeout_ms = 60000
+script = '''
+const h = window.__vesloStartupSidebar;
+const projectRow = await h.waitForProjectRow(h.seededProjectTitle, 10000);
+const projectRoot = projectRow.closest("[data-project-key]");
+h.assert(projectRoot instanceof HTMLElement, "Project root missing for seeded project row.");
+const button = projectRoot.querySelector('button[data-project-collapse-toggle="true"]');
+h.assert(button instanceof HTMLElement, "Project header button missing.");
+const activeBefore = await h.activeWorkspaceId();
+const hashBefore = window.location.hash;
+h.dispatchClickSequence(button);
+await h.waitForProjectExpandedState(projectRoot, false, "collapse");
+h.assert((await h.activeWorkspaceId()) === activeBefore, "Project header collapse activated workspace.");
+h.assert(window.location.hash === hashBefore, "Project header collapse changed route.");
+h.assertNoWorkspaceLoadingOverlay("project collapse");
+h.dispatchClickSequence(button);
+await h.waitForProjectExpandedState(projectRoot, true, "expand");
+h.assert((await h.activeWorkspaceId()) === activeBefore, "Project header expand activated workspace.");
+h.assert(window.location.hash === hashBefore, "Project header expand changed route.");
+h.assertNoWorkspaceLoadingOverlay("project expand");
+await h.waitForProjectRow(h.seededProjectTitle, 10000);
+true;
+'''
+
+[[step]]
+name = "start first new chat send check"
+action = "eval"
+script = '''
+const h = window.__vesloStartupSidebar;
+h.startStage("first-send", async () => {
+  const chatRoot = document.querySelector('[data-sidebar-chat-section="true"], [data-sidebar-chat-collapsed="true"]');
+  const chatButton = chatRoot
+    ? Array.from(chatRoot.querySelectorAll("button")).find((button) =>
+        h.buttonMatchesLabel(button, ["New chat", "Nový chat"]) && !h.buttonMatchesLabel(button, ["Chats", "Chaty"]))
+    : null;
+  h.assert(chatButton instanceof HTMLElement, `New chat button was not available. Rows=${JSON.stringify(h.rowSummary())}`);
+  h.dispatchClickSequence(chatButton);
+  await h.waitUntil(() => {
+    const activePendingDraftKey = window.localStorage.getItem("veslo.active-pending-draft.v1") || "";
+    if (!activePendingDraftKey.includes("__pending-draft__:new-private:")) return false;
+    const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
+    return candidate instanceof HTMLElement && h.isVisibleElement(candidate) ? candidate : false;
+  }, {
+    timeout: 120000,
+    interval: 250,
+    message: `Private chat draft did not open. ActivePending=${window.localStorage.getItem("veslo.active-pending-draft.v1") || ""} Body=${h.bodyText().slice(0, 3000)} Rows=${JSON.stringify(h.rowSummary())}`,
+  });
+  const token = `startup-first-chat-${Date.now()}`;
+  window.__vesloStartupSidebarToken = token;
+  const textbox = await h.waitForComposer();
+  h.setComposerText(textbox, token);
+  await h.waitUntil(() => h.normalize(textbox.textContent || textbox.value).includes(token), {
+    timeout: 10000,
+    message: `Composer did not retain ${token}`,
+  });
+  const sendPromptStartCount = () => h.sendTrace().filter((entry) => entry?.event === "sendPrompt:start").length;
+  const beforeClick = sendPromptStartCount();
+  const sendButton = await h.waitUntil(() => h.findComposerSendButton(textbox), {
+    timeout: 20000,
+    interval: 250,
+    message: `Send button did not become enabled. Buttons=${JSON.stringify(Array.from(document.querySelectorAll("button")).map((button) => [h.normalize(button.textContent), h.normalize(button.title), h.normalize(button.getAttribute("aria-label"))].filter(Boolean)))}`,
+  });
+  h.dispatchClickSequence(sendButton);
+  await h.waitUntil(() => sendPromptStartCount() > beforeClick, {
+    timeout: 20000,
+    interval: 250,
+    message: `Send click did not reach composer handler for ${token}. Trace=${JSON.stringify(h.sendTrace())}. Body=${h.bodyText().slice(0, 3000)}`,
+  });
+  await h.waitUntil(() => {
+    h.assertNoSendFailed();
+    return h.mainText().includes(token);
+  }, {
+    timeout: 60000,
+    interval: 500,
+    message: `Pending submitted message did not render for ${token}. Body=${h.bodyText().slice(0, 3000)} Trace=${JSON.stringify(h.sendTrace())}`,
+  });
+  const immediateNewChatRow = await h.waitForChatRow(token, 20000);
+  h.assert(Boolean(immediateNewChatRow.closest('[data-sidebar-chat-section="true"]')), `New chat row was not in chat section. Rows=${JSON.stringify(h.rowSummary())}`);
+  await h.waitForChatRow(h.seededChatTitle, 20000);
+  await h.waitForProjectRow(h.seededProjectTitle, 20000);
+  await h.waitUntil(() => {
+    h.assertNoSendFailed();
+    return true;
+  }, { timeout: 2000, interval: 250, message: "Send failed appeared after first chat row materialized" });
+  h.assert(document.querySelectorAll("[data-message-part-render-fallback]").length === 0, `Message part render fallback was used. Body=${h.bodyText().slice(0, 3000)}`);
+  h.assert(document.querySelectorAll("[data-message-block-render-fallback]").length === 0, `Message block render fallback was used. Body=${h.bodyText().slice(0, 3000)}`);
+  return { token, rows: h.rowSummary(), sendTrace: h.sendTrace() };
+});
+true;
+'''
+
+[[step]]
+name = "first new chat send check finished"
+action = "wait"
+target = "[data-testid=\"startup-sidebar-first-send-complete\"], [data-testid=\"startup-sidebar-first-send-error\"]"
+timeout_ms = 160000
+
+[[step]]
+name = "first new chat send creates sidebar row immediately"
+action = "eval"
+script = '''
+window.__vesloStartupSidebar.checkStage("first-send");
+true;
+'''

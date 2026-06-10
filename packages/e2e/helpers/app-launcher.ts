@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -318,6 +318,10 @@ async function resolveVesloServerPortForLaunch(env: NodeJS.ProcessEnv = process.
 const ENTERPRISE_CREATOR_SEED_MARKER = '.veslo-enterprise-creators';
 const SKILL_ENABLE_FIXTURE_MARKER = '.veslo-skill-enable-inventory';
 const E2E_SKILL_ENABLE_GENERATED_AT = '2026-06-06T00:00:00.000Z';
+const STARTUP_SIDEBAR_CHAT_WORKSPACE_ID = 'e2e-startup-chat-private';
+const STARTUP_SIDEBAR_PROJECT_WORKSPACE_ID = 'e2e-startup-inactive-project';
+const STARTUP_SIDEBAR_CHAT_TITLE = 'E2E startup seeded chat session';
+const STARTUP_SIDEBAR_PROJECT_TITLE = 'E2E startup seeded inactive project session';
 
 function shouldSeedAutomationsSecondaryWorkspace(env: NodeJS.ProcessEnv): boolean {
   return env.E2E_SEED_AUTOMATIONS_SECONDARY_WORKSPACE?.trim() === '1';
@@ -325,6 +329,104 @@ function shouldSeedAutomationsSecondaryWorkspace(env: NodeJS.ProcessEnv): boolea
 
 function shouldSeedSkillEnableInventory(env: NodeJS.ProcessEnv): boolean {
   return env.E2E_SEED_SKILL_ENABLE_INVENTORY?.trim() === '1';
+}
+
+function shouldSeedStartupSidebarSessions(env: NodeJS.ProcessEnv): boolean {
+  return env.E2E_SEED_STARTUP_SIDEBAR_SESSIONS?.trim() === '1';
+}
+
+function sqlite3Command(): string {
+  if (existsSync('/usr/bin/sqlite3')) return '/usr/bin/sqlite3';
+  if (existsSync('/opt/homebrew/bin/sqlite3')) return '/opt/homebrew/bin/sqlite3';
+  return 'sqlite3';
+}
+
+function sql(value: string | number | null): string {
+  if (value === null) return 'NULL';
+  if (typeof value === 'number') return String(value);
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function seedOpenCodeDbSession(input: {
+  dbPath: string;
+  id: string;
+  title: string;
+  directory: string;
+  createdAt: number;
+  updatedAt: number;
+}): void {
+  mkdirSync(dirname(input.dbPath), { recursive: true });
+  const projectId = `project-${input.id}`;
+  const slug = input.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || input.id;
+  const script = `
+PRAGMA foreign_keys = OFF;
+CREATE TABLE IF NOT EXISTS project (
+  id text PRIMARY KEY,
+  worktree text NOT NULL,
+  vcs text,
+  name text,
+  icon_url text,
+  icon_color text,
+  time_created integer NOT NULL,
+  time_updated integer NOT NULL,
+  time_initialized integer,
+  sandboxes text NOT NULL,
+  commands text,
+  icon_url_override text
+);
+CREATE TABLE IF NOT EXISTS session (
+  id text PRIMARY KEY,
+  project_id text NOT NULL,
+  parent_id text,
+  slug text NOT NULL,
+  directory text NOT NULL,
+  title text NOT NULL,
+  version text NOT NULL,
+  share_url text,
+  summary_additions integer,
+  summary_deletions integer,
+  summary_files integer,
+  summary_diffs text,
+  revert text,
+  permission text,
+  time_created integer NOT NULL,
+  time_updated integer NOT NULL,
+  time_compacting integer,
+  time_archived integer,
+  workspace_id text,
+  path text
+);
+CREATE TABLE IF NOT EXISTS message (
+  id text PRIMARY KEY,
+  session_id text NOT NULL,
+  time_created integer NOT NULL,
+  time_updated integer NOT NULL,
+  data text NOT NULL
+);
+CREATE TABLE IF NOT EXISTS part (
+  id text PRIMARY KEY,
+  session_id text NOT NULL,
+  message_id text NOT NULL,
+  time_created integer NOT NULL,
+  time_updated integer NOT NULL,
+  data text NOT NULL
+);
+INSERT OR REPLACE INTO project (
+  id, worktree, vcs, name, icon_url, icon_color, time_created, time_updated, time_initialized, sandboxes, commands, icon_url_override
+) VALUES (
+  ${sql(projectId)}, ${sql(input.directory)}, NULL, ${sql(input.title)}, NULL, NULL, ${sql(input.createdAt)}, ${sql(input.updatedAt)}, NULL, ${sql('[]')}, NULL, NULL
+);
+INSERT OR REPLACE INTO session (
+  id, project_id, parent_id, slug, directory, title, version, share_url,
+  summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission,
+  time_created, time_updated, time_compacting, time_archived, workspace_id, path
+) VALUES (
+  ${sql(input.id)}, ${sql(projectId)}, NULL, ${sql(slug)},
+  ${sql(input.directory)}, ${sql(input.title)}, ${sql('0.0.0')}, NULL,
+  NULL, NULL, NULL, NULL, NULL, NULL, ${sql(input.createdAt)}, ${sql(input.updatedAt)}, NULL, NULL, NULL, ${sql(input.directory)}
+);
+`;
+  execFileSync(sqlite3Command(), [input.dbPath], { input: script });
 }
 
 function fixtureSkillMarkdown(name: string, description: string): string {
@@ -491,6 +593,12 @@ export function seedDefaultWorkspaceState(root: string, env: NodeJS.ProcessEnv):
   }
 
   const secondaryAutomationWorkspacePath = join(root, 'workspaces', 'automations-secondary-workspace');
+  const startupSidebarPrivateRoot = join(
+    env.VESLO_APP_DATA_DIR?.trim() || join(root, '.veslo', 'app-data'),
+    'private-workspaces',
+    'startup-chat',
+  );
+  const startupSidebarProjectPath = join(root, 'workspaces', 'startup-inactive-project');
   const workspaces = [{
     id: 'e2e-visual-workspace',
     name: 'Visual Workspace',
@@ -516,6 +624,55 @@ export function seedDefaultWorkspaceState(root: string, env: NodeJS.ProcessEnv):
       baseUrl: null,
       directory: null,
       displayName: 'Automations Secondary Workspace',
+    });
+  }
+
+  if (shouldSeedStartupSidebarSessions(env)) {
+    mkdirSync(startupSidebarPrivateRoot, { recursive: true });
+    seedWorkspaceGitRoot(startupSidebarPrivateRoot);
+    mkdirSync(startupSidebarProjectPath, { recursive: true });
+    seedWorkspaceGitRoot(startupSidebarProjectPath);
+    workspaces.push(
+      {
+        id: STARTUP_SIDEBAR_CHAT_WORKSPACE_ID,
+        name: 'Startup Chat',
+        path: startupSidebarPrivateRoot,
+        preset: 'starter',
+        workspaceType: 'local',
+        remoteType: 'opencode',
+        baseUrl: null,
+        directory: null,
+        displayName: 'Startup Chat',
+      },
+      {
+        id: STARTUP_SIDEBAR_PROJECT_WORKSPACE_ID,
+        name: 'Startup Inactive Project',
+        path: startupSidebarProjectPath,
+        preset: 'starter',
+        workspaceType: 'local',
+        remoteType: 'opencode',
+        baseUrl: null,
+        directory: null,
+        displayName: 'Startup Inactive Project',
+      },
+    );
+
+    const now = Date.parse('2026-06-09T12:00:00.000Z');
+    seedOpenCodeDbSession({
+      dbPath: join(startupSidebarPrivateRoot, '.opencode', 'opencode.db'),
+      id: 'e2e-startup-seeded-chat-session',
+      title: STARTUP_SIDEBAR_CHAT_TITLE,
+      directory: startupSidebarPrivateRoot,
+      createdAt: now,
+      updatedAt: now + 1_000,
+    });
+    seedOpenCodeDbSession({
+      dbPath: join(startupSidebarProjectPath, '.opencode', 'opencode.db'),
+      id: 'e2e-startup-seeded-inactive-project-session',
+      title: STARTUP_SIDEBAR_PROJECT_TITLE,
+      directory: startupSidebarProjectPath,
+      createdAt: now,
+      updatedAt: now + 2_000,
     });
   }
 

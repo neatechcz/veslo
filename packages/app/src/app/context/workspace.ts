@@ -2763,10 +2763,25 @@ export function createWorkspaceStore(options: {
         _wsLog("[workspace:bootstrap] lazy boot — sidebar from DB", { workspacePath });
         bootTrace("lazy boot — populateSidebarFromDb...");
         options.setEngineReady?.(false);
-        try {
-          await options.populateSidebarFromDb(activeWorkspace?.id ?? "", workspacePath);
-        } catch (e) {
-          _wsLog("[workspace:bootstrap] populateSidebarFromDb failed", e);
+        const sidebarPreloadWorkspaces = workspaces().filter((workspace) =>
+          workspace.workspaceType === "local" &&
+          Boolean(workspace.path?.trim() || workspace.directory?.trim())
+        );
+        for (const sidebarWorkspace of sidebarPreloadWorkspaces) {
+          const sidebarWorkspacePath = sidebarWorkspace.path?.trim() || sidebarWorkspace.directory?.trim() || "";
+          if (!sidebarWorkspacePath) continue;
+          try {
+            await options.populateSidebarFromDb(
+              sidebarWorkspace.id,
+              sidebarWorkspacePath,
+            );
+          } catch (e) {
+            _wsLog("[workspace:bootstrap] populateSidebarFromDb failed", {
+              workspaceId: sidebarWorkspace.id,
+              path: sidebarWorkspacePath,
+              error: e instanceof Error ? e.message : safeStringify(e),
+            });
+          }
         }
         try {
           if (options.hydrateLatestSessionFromDb && activeWorkspace) {

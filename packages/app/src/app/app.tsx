@@ -1761,16 +1761,38 @@ export default function App() {
       return match?.id ?? "";
     };
 
-    try {
-      const listed = await serverClient.listWorkspaces();
-      const existing = findMatchingWorkspaceId(listed.items);
-      if (existing) return existing;
-    } catch (error) {
-      wsDebug("conversation-read:workspace-list:failed", {
-        workspaceId,
-        error: error instanceof Error ? error.message : safeStringify(error),
-      });
-    }
+    const duplicateWorkspaceIdFromError = (error: unknown) => {
+      if (!(error instanceof VesloServerError) || error.status !== 409 || error.code !== "workspace_exists") {
+        return "";
+      }
+      const details = error.details;
+      if (!details || typeof details !== "object") return "";
+      const detailId = "id" in details && typeof details.id === "string" ? details.id.trim() : "";
+      const detailPath = "path" in details && typeof details.path === "string"
+        ? normalizeDirectoryPath(details.path)
+        : "";
+      if (!detailId) return "";
+      if (detailPath && !matchDirectories.has(detailPath)) return "";
+      return detailId;
+    };
+
+    const listRegisteredWorkspaceId = async (stage: string) => {
+      try {
+        const listed = await serverClient.listWorkspaces();
+        const existing = findMatchingWorkspaceId(listed.items);
+        if (existing) return existing;
+      } catch (error) {
+        wsDebug("conversation-read:workspace-list:failed", {
+          workspaceId,
+          stage,
+          error: error instanceof Error ? error.message : safeStringify(error),
+        });
+      }
+      return "";
+    };
+
+    const existing = await listRegisteredWorkspaceId("initial");
+    if (existing) return existing;
 
     try {
       // Explicit read bootstrap: registers workspace metadata with Veslo server
@@ -1783,6 +1805,14 @@ export default function App() {
       const registered = findMatchingWorkspaceId(added.items);
       if (registered) return registered;
     } catch (error) {
+      const duplicateWorkspaceId = duplicateWorkspaceIdFromError(error);
+      if (duplicateWorkspaceId) return duplicateWorkspaceId;
+
+      const relisted = error instanceof VesloServerError && error.status === 409
+        ? await listRegisteredWorkspaceId("after-duplicate")
+        : "";
+      if (relisted) return relisted;
+
       wsDebug("conversation-read:workspace-register:failed", {
         workspaceId,
         directory: targetDirectory,
@@ -5959,6 +5989,28 @@ export default function App() {
     }
 
     void refreshAllSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(e => reportError(e, "sidebar.refreshAll"));
+  });
+
+  const passiveSidebarServerRefreshKey = createMemo(() => {
+    const status = vesloServerStatus();
+    const baseUrlValue = vesloServerBaseUrl().trim();
+    if (status !== "connected" && status !== "limited") return "";
+    if (!baseUrlValue) return "";
+    const workspaceKey = workspaceStore
+      .workspaces()
+      .filter((workspace) => workspace.workspaceType === "local")
+      .map((workspace) => [workspace.id, workspace.path?.trim() ?? workspace.directory?.trim() ?? ""].join("|"))
+      .join(";");
+    return workspaceKey ? `${status}::${baseUrlValue}::${workspaceKey}` : "";
+  });
+
+  let lastPassiveSidebarServerRefreshKey = "";
+  createEffect(() => {
+    const key = passiveSidebarServerRefreshKey();
+    if (!key || key === lastPassiveSidebarServerRefreshKey) return;
+    lastPassiveSidebarServerRefreshKey = key;
+    void refreshLocalSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId())
+      .catch((e) => reportError(e, "sidebar.refreshLocal.serverReady"));
   });
 
   createEffect(() => {

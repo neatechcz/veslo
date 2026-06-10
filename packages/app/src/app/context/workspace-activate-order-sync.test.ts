@@ -118,6 +118,19 @@ test("bootstrap pre-loads the sidebar from SQLite without starting the engine", 
   );
 });
 
+test("bootstrap pre-loads sidebar history for every local workspace", () => {
+  assert.match(
+    source,
+    /const sidebarPreloadWorkspaces = workspaces\(\)\.filter\(\(workspace\) =>[\s\S]*?workspace\.workspaceType === "local"[\s\S]*?Boolean\(workspace\.path\?\.trim\(\) \|\| workspace\.directory\?\.trim\(\)\)[\s\S]*?\);/s,
+    "lazy boot should collect every local workspace with a path for passive sidebar history",
+  );
+  assert.match(
+    source,
+    /for \(const sidebarWorkspace of sidebarPreloadWorkspaces\) \{[\s\S]*?await options\.populateSidebarFromDb\(\s*sidebarWorkspace\.id,\s*sidebarWorkspacePath,\s*\);[\s\S]*?\}/s,
+    "lazy boot should populate sidebar rows for inactive workspaces without activating them",
+  );
+});
+
 test("orchestrator activation timeout covers cold engine spawn", () => {
   const raw = source.match(/const ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS = ([\d_]+);/)?.[1];
   assert.ok(raw, "ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS constant missing");

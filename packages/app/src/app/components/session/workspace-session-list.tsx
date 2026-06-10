@@ -2477,6 +2477,7 @@ export default function WorkspaceSessionList(props: Props) {
                       >
                         <button
                           type="button"
+                          data-project-collapse-toggle="true"
                           class={`w-full rounded-lg px-1.5 py-1 text-left transition-colors ${
                             isActiveWorkspace()
                               ? "text-gray-12"
@@ -2484,15 +2485,9 @@ export default function WorkspaceSessionList(props: Props) {
                           }`}
                           title={project.projectTitle}
                           aria-label={project.projectLabel ? `${tr("sidebar.open_project")} ${project.projectLabel}` : tr("sidebar.open_project")}
+                          aria-expanded={!collapsed()}
                           onPointerDown={(event) => handleProjectPointerDown(event, project.key, projectDragLabel())}
-                          onClick={() => {
-                            if (!isActiveWorkspace()) {
-                              void Promise.resolve(props.onActivateWorkspace(workspace().id));
-                              if (collapsed()) toggleProjectCollapse(project.key);
-                              return;
-                            }
-                            toggleProjectCollapse(project.key);
-                          }}
+                          onClick={() => toggleProjectCollapse(project.key)}
                         >
                           <div class="flex items-center gap-2 min-w-0">
                             <Folder

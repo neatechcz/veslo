@@ -14,6 +14,7 @@ import {
   scenarioSelectionNeedsManagedAiGatewayFixture,
   scenarioSelectionNeedsSkillRegistryAuthFixture,
   scenarioSelectionNeedsAutomationSecondaryWorkspace,
+  scenarioSelectionNeedsStartupSidebarSessionsFixture,
 } from './pilot-runner.js';
 
 test('resolvePilotBinary defaults to tauri-pilot and supports local overrides', () => {
@@ -180,6 +181,18 @@ test('pending session instance isolation pilot scenario requests the managed AI 
   );
 });
 
+test('startup sidebar existing sessions pilot scenario requests startup sidebar and managed AI fixtures', () => {
+  const e2eRoot = '/repo/packages/e2e';
+  const scenarios = resolvePilotScenarioSelection({ scenario: ['startup-sidebar-existing-sessions'] }, e2eRoot);
+
+  assert.equal(scenarioSelectionNeedsStartupSidebarSessionsFixture(scenarios), true);
+  assert.equal(scenarioSelectionNeedsManagedAiGatewayFixture(scenarios), true);
+  assert.equal(
+    scenarioSelectionNeedsStartupSidebarSessionsFixture(resolvePilotScenarioSelection({ scenario: ['smoke'] }, e2eRoot)),
+    false,
+  );
+});
+
 test('pending session instance isolation pilot scenario requests a deterministic managed AI delay', () => {
   const e2eRoot = '/repo/packages/e2e';
   const scenarios = resolvePilotScenarioSelection({ scenario: ['pending-session-instance-isolation'] }, e2eRoot);
@@ -192,6 +205,13 @@ test('pending session instance isolation pilot scenario requests a deterministic
     ),
     null,
   );
+});
+
+test('startup sidebar existing sessions pilot scenario requests a deterministic managed AI delay', () => {
+  const e2eRoot = '/repo/packages/e2e';
+  const scenarios = resolvePilotScenarioSelection({ scenario: ['startup-sidebar-existing-sessions'] }, e2eRoot);
+
+  assert.equal(scenarioSelectionManagedAiGatewayResponseDelayMs(scenarios, {}), '8000');
 });
 
 test('pending session instance isolation pilot scenario preserves larger managed AI delay overrides', () => {

@@ -142,6 +142,32 @@ test('seedDefaultWorkspaceState skips network-backed enterprise creators for det
   }
 });
 
+test('seedDefaultWorkspaceState creates startup sidebar databases with transcript tables', {
+  skip: !(existsSync('/usr/bin/sqlite3') || existsSync('/opt/homebrew/bin/sqlite3')) ? 'sqlite3 is required for DB fixture assertions.' : false,
+}, () => {
+  const root = mkdtempSync(join(tmpdir(), 'veslo-e2e-home-'));
+  const appDataRoot = join(root, '.veslo', 'app-data');
+  try {
+    seedDefaultWorkspaceState(root, {
+      E2E_SEED_STARTUP_SIDEBAR_SESSIONS: '1',
+      VESLO_APP_DATA_DIR: appDataRoot,
+    });
+
+    const sqlite = existsSync('/usr/bin/sqlite3') ? '/usr/bin/sqlite3' : '/opt/homebrew/bin/sqlite3';
+    const chatDb = join(appDataRoot, 'private-workspaces', 'startup-chat', '.opencode', 'opencode.db');
+    const projectDb = join(root, 'workspaces', 'startup-inactive-project', '.opencode', 'opencode.db');
+
+    for (const dbPath of [chatDb, projectDb]) {
+      const tables = execFileSync(sqlite, [dbPath, '.tables'], { encoding: 'utf8' });
+      assert.match(tables, /\bsession\b/);
+      assert.match(tables, /\bmessage\b/);
+      assert.match(tables, /\bpart\b/);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('seedDefaultWorkspaceState can seed all skill enable inventory scopes', () => {
   const root = mkdtempSync(join(tmpdir(), 'veslo-e2e-home-'));
   const configRoot = join(root, '.config');
