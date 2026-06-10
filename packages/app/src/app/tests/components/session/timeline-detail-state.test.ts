@@ -1,0 +1,85 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  createTimelineDetailState,
+  reconcileTimelineOpenSectionIds,
+  toggleTimelineExpanded,
+  toggleTimelineSection,
+} from "../../../components/session/timeline-detail-state.js";
+
+test("createTimelineDetailState starts collapsed and auto-opens the running section", () => {
+  const state = createTimelineDetailState({
+    sections: [
+      { id: "explore-0", kind: "explore", status: "done" },
+      { id: "action-1", kind: "action", status: "running" },
+      { id: "verify-2", kind: "verify", status: "done" },
+    ],
+  });
+
+  assert.equal(state.expanded, false);
+  assert.deepEqual([...state.openSectionIds], ["action-1"]);
+});
+
+test("toggleTimelineExpanded flips only the outer timeline visibility", () => {
+  const initial = createTimelineDetailState({
+    sections: [{ id: "explore-0", kind: "explore", status: "done" }],
+  });
+
+  const expanded = toggleTimelineExpanded(initial);
+  const collapsed = toggleTimelineExpanded(expanded);
+
+  assert.equal(expanded.expanded, true);
+  assert.equal(collapsed.expanded, false);
+  assert.deepEqual([...collapsed.openSectionIds], ["explore-0"]);
+});
+
+test("toggleTimelineSection allows multiple sections to stay open", () => {
+  const initial = {
+    expanded: true,
+    openSectionIds: new Set<string>(),
+  };
+
+  const withExplore = toggleTimelineSection(initial, "explore-0");
+  const withAction = toggleTimelineSection(withExplore, "action-1");
+  const withExploreClosed = toggleTimelineSection(withAction, "explore-0");
+
+  assert.deepEqual([...withExplore.openSectionIds], ["explore-0"]);
+  assert.deepEqual([...withAction.openSectionIds].sort(), ["action-1", "explore-0"]);
+  assert.deepEqual([...withExploreClosed.openSectionIds], ["action-1"]);
+});
+
+
+test("createTimelineDetailState auto-opens a single section", () => {
+  const state = createTimelineDetailState({
+    sections: [{ id: "action-0", kind: "action", status: "done" }],
+  });
+
+  assert.equal(state.expanded, false);
+  assert.deepEqual([...state.openSectionIds], ["action-0"]);
+});
+
+test("reconcileTimelineOpenSectionIds keeps user-open sections with stable ids and auto-opens new running sections", () => {
+  const current = new Set(["steps-1:section:thinking:0"]);
+
+  const next = reconcileTimelineOpenSectionIds(current, {
+    containerId: "steps-1",
+    sections: [
+      { id: "steps-1:section:thinking:0", kind: "action", status: "done" },
+      { id: "steps-1:section:action:0", kind: "action", status: "running" },
+    ],
+  });
+
+  assert.deepEqual([...next].sort(), ["steps-1:section:action:0", "steps-1:section:thinking:0"]);
+});
+
+test("reconcileTimelineOpenSectionIds keeps unrelated container ids intact", () => {
+  const current = new Set(["steps-1:section:thinking:0", "steps-2:section:explore:0"]);
+
+  const next = reconcileTimelineOpenSectionIds(current, {
+    containerId: "steps-1",
+    sections: [{ id: "steps-1:section:action:0", kind: "action", status: "running" }],
+  });
+
+  assert.deepEqual([...next].sort(), ["steps-1:section:action:0", "steps-2:section:explore:0"]);
+});

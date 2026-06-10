@@ -269,6 +269,7 @@ export default {
   "skills.workspace_specific": "Workspace-specific",
   "skills.workspace_overrides": "Workspace overrides",
   "skills.no_skills": "No skills detected in `.opencode/skills`, `.claude/skills`, or `~/.agents/skills`.",
+  "skills.pick_workspace_first": "Choose a workspace folder first.",
   "skills.desktop_required": "Skill management requires the desktop app.",
   "skills.host_only_error": "Skill management requires a local worker or connected Veslo server.",
   "skills.install_skill_creator": "Install skill creator",
