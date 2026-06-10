@@ -271,10 +271,16 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
   const configDir = dirname(configPath);
 
   const envWorkspaces = parseList(process.env.VESLO_WORKSPACES);
-  let workspaceConfigs: WorkspaceConfig[] =
+  const workspaceConfigSource: "cli" | "env" | "file" =
     cli.workspaces.length > 0
-      ? cli.workspaces.map((path, index) => ({ path, id: cli.workspaceIds[index] }))
+      ? "cli"
       : envWorkspaces.length > 0
+        ? "env"
+        : "file";
+  let workspaceConfigs: WorkspaceConfig[] =
+    workspaceConfigSource === "cli"
+      ? cli.workspaces.map((path, index) => ({ path, id: cli.workspaceIds[index] }))
+      : workspaceConfigSource === "env"
         ? envWorkspaces.map((path) => ({ path }))
         : fileConfig.workspaces ?? [];
 
@@ -398,10 +404,17 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     denApiBase;
   const skillRegistryToken = process.env.VESLO_SKILL_REGISTRY_TOKEN?.trim() || undefined;
 
-  const authorizedRoots =
-    fileConfig.authorizedRoots?.length
-      ? fileConfig.authorizedRoots.map((root) => resolve(configDir, root))
-      : workspaces.map((workspace) => workspace.path);
+  const configuredAuthorizedRoots = fileConfig.authorizedRoots?.length
+    ? fileConfig.authorizedRoots.map((root) => resolve(configDir, root))
+    : [];
+  const runtimeWorkspaceRoots = workspaceConfigSource === "cli" || workspaceConfigSource === "env"
+    ? workspaces.map((workspace) => workspace.path)
+    : [];
+  const authorizedRoots = Array.from(new Set((
+    configuredAuthorizedRoots.length
+      ? [...configuredAuthorizedRoots, ...runtimeWorkspaceRoots]
+      : workspaces.map((workspace) => workspace.path)
+  ).map((root) => resolve(root))));
 
   const host = cli.host ?? process.env.VESLO_HOST ?? fileConfig.host ?? DEFAULT_HOST;
   const port = cli.port ?? (process.env.VESLO_PORT ? Number(process.env.VESLO_PORT) : undefined) ?? fileConfig.port ?? DEFAULT_PORT;
