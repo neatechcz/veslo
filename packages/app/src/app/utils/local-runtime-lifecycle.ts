@@ -99,6 +99,26 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
     options: LocalRuntimeReconnectOptions,
   ) => {
     let activeInfo = info;
+    const mountWorkspaceId = (value: string | null | undefined) => {
+      const baseUrl = value?.trim() ?? "";
+      if (!baseUrl) return "";
+      try {
+        const match = new URL(baseUrl).pathname.match(/^\/workspace\/([^/]+)\/opencode(?:\/.*)?$/);
+        return match ? decodeURIComponent(match[1] ?? "").trim() : "";
+      } catch {
+        return "";
+      }
+    };
+    const snapshotWorkspaceId = mountWorkspaceId(activeInfo.baseUrl);
+    if (
+      options.workspaceId &&
+      activeInfo.runtime === "veslo-orchestrator" &&
+      snapshotWorkspaceId &&
+      snapshotWorkspaceId !== options.workspaceId
+    ) {
+      activeInfo = await deps.readEngineInfo(options.workspaceId, options.workspacePath);
+    }
+
     let auth = syncEngineSnapshot(activeInfo);
     let baseUrl = activeInfo.baseUrl?.trim() ?? "";
 

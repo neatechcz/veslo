@@ -33,6 +33,7 @@ function createHarness(options?: {
   const calls: string[] = [];
   const snapshots: EngineInfo[] = [];
   const authSnapshots: Array<OpencodeAuth | null> = [];
+  const readInfoRequests: Array<{ workspaceId?: string; workspacePath?: string }> = [];
   const serverConnections: Array<{
     baseUrl: string;
     directory?: string;
@@ -87,8 +88,9 @@ function createHarness(options?: {
       calls.push("stopEngine");
       return stopInfo;
     },
-    readEngineInfo: async () => {
+    readEngineInfo: async (workspaceId, workspacePath) => {
       calls.push("readEngineInfo");
+      readInfoRequests.push({ workspaceId, workspacePath });
       return infoSnapshot;
     },
     activateOrchestratorWorkspace: async ({ workspacePath, name }) => {
@@ -116,6 +118,7 @@ function createHarness(options?: {
     calls,
     snapshots,
     authSnapshots,
+    readInfoRequests,
     serverConnections,
     quietConnections,
     startInfo,
@@ -155,6 +158,51 @@ test("startHost starts the engine once, derives auth, and reconnects through the
       connectOptions: { navigate: false },
     },
   ]);
+});
+
+test("startHost reconnects through workspace-scoped engine info for orchestrator runtime", async () => {
+  const harness = createHarness({
+    runtime: "veslo-orchestrator",
+    startInfo: makeEngineInfo({
+      runtime: "veslo-orchestrator",
+      baseUrl: "http://127.0.0.1:57871/workspace/ws-old/opencode",
+      projectDir: "/tmp/old",
+    }),
+    infoSnapshot: makeEngineInfo({
+      runtime: "veslo-orchestrator",
+      baseUrl: "http://127.0.0.1:57871/workspace/ws-new/opencode",
+      projectDir: "/tmp/new",
+    }),
+  });
+
+  const ok = await harness.lifecycle.startHost({
+    workspacePath: "/tmp/new",
+    workspaceId: "ws-new",
+    reason: "browse-cold-start",
+    navigate: false,
+  });
+
+  assert.equal(ok, true);
+  assert.deepEqual(harness.calls, [
+    "startEngine:/tmp/new:veslo-orchestrator",
+    "readEngineInfo",
+    "setEngine:/tmp/new",
+    "setEngineAuth:demo-user",
+    "connectToServer:browse-cold-start",
+  ]);
+  assert.deepEqual(harness.readInfoRequests, [
+    { workspaceId: "ws-new", workspacePath: "/tmp/new" },
+  ]);
+  assert.equal(
+    harness.serverConnections[0]?.baseUrl,
+    "http://127.0.0.1:57871/workspace/ws-new/opencode",
+  );
+  assert.deepEqual(harness.serverConnections[0]?.context, {
+    workspaceId: "ws-new",
+    workspaceType: "local",
+    targetRoot: "/tmp/new",
+    reason: "browse-cold-start",
+  });
 });
 
 test("restartWorkspaceRuntime uses the shared stop/start reconnect flow for direct runtime", async () => {

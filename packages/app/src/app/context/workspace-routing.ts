@@ -173,6 +173,13 @@ export function createWorkspaceRouting(
         if (entry) {
           return wrapClientWithGuard(entry.client, wsId, opts.activeWorkspaceId);
         }
+        // During local browsing mode the global client can still point at the
+        // previously active workspace. Once routing has any workspace entry,
+        // a missing entry for the requested/active workspace means "not
+        // connected", not "reuse the global client".
+        if (workspaceId !== undefined || entries.size > 0) {
+          return null;
+        }
       }
       return opts.clientSource();
     },
@@ -182,6 +189,9 @@ export function createWorkspaceRouting(
         const entry = entries.get(wsId);
         if (entry) {
           return wrapClientWithGuard(entry.client, wsId, opts.activeWorkspaceId);
+        }
+        if (entries.size > 0) {
+          return null;
         }
       }
       return opts.clientSource();

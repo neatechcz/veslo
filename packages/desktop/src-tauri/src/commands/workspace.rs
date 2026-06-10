@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::fs::{collect_copy_conflicts, copy_dir_recursive};
-use crate::paths::home_dir;
+use crate::paths::{home_dir, sidecar_path_candidates};
 use crate::types::{
     ExecResult, RemoteType, WorkspaceInfo, WorkspaceList, WorkspaceState, WorkspaceType,
     WorkspaceVesloConfig,
@@ -18,10 +18,19 @@ use crate::workspace::state::{
 use crate::workspace::validation::{validate_workspace_path, ValidationMode};
 use crate::workspace::watch::{update_workspace_watch, WorkspaceWatchState};
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{Manager, State};
 use walkdir::WalkDir;
 use zip::write::FileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
+
+fn resolve_workspace_managed_deps_manifest(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let resource_dir = app.path().resource_dir().ok();
+    let current_bin_dir = tauri::process::current_binary(&app.env())
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
+    let sidecar_paths = sidecar_path_candidates(resource_dir.as_deref(), current_bin_dir.as_deref());
+    crate::orchestrator::resolve_opencode_managed_deps_manifest(&sidecar_paths)
+}
 
 // ---------------------------------------------------------------------------
 // OpenCode session cleanup (used by workspace_forget)
@@ -231,6 +240,7 @@ pub fn workspace_bootstrap(
 
     let (data_dir, _) = crate::workspace::state::veslo_state_paths(&app)?;
     let templates_dir = data_dir.join("templates");
+    let managed_deps_manifest_path = resolve_workspace_managed_deps_manifest(&app);
     if let Err(e) = seed_soul_templates(&templates_dir) {
         eprintln!("[workspace] failed to seed soul templates: {e}");
     }
@@ -244,6 +254,7 @@ pub fn workspace_bootstrap(
             &workspace.preset,
             Some(&templates_dir),
             Some(&data_dir),
+            managed_deps_manifest_path.as_deref(),
         ) {
             eprintln!(
                 "[workspace] bootstrap provisioning failed for {}: {}",
@@ -475,13 +486,20 @@ pub fn workspace_create(
 
     let (data_dir, _) = crate::workspace::state::veslo_state_paths(&app)?;
     let templates_dir = data_dir.join("templates");
+    let managed_deps_manifest_path = resolve_workspace_managed_deps_manifest(&app);
     if let Err(e) = seed_soul_templates(&templates_dir) {
         eprintln!("[workspace] failed to seed soul templates: {e}");
     }
 
     let id = stable_workspace_id(&folder);
 
-    ensure_workspace_files(&folder, &preset, Some(&templates_dir), Some(&data_dir))?;
+    ensure_workspace_files(
+        &folder,
+        &preset,
+        Some(&templates_dir),
+        Some(&data_dir),
+        managed_deps_manifest_path.as_deref(),
+    )?;
 
     let mut state = load_workspace_state(&app)?;
     upsert_workspace(

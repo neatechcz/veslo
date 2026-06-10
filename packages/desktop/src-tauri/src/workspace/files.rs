@@ -541,6 +541,7 @@ pub fn ensure_workspace_files(
     preset: &str,
     templates_dir: Option<&Path>,
     app_data_dir: Option<&Path>,
+    managed_deps_manifest_path: Option<&Path>,
 ) -> Result<(), String> {
     let root = PathBuf::from(workspace_path);
 
@@ -565,7 +566,11 @@ pub fn ensure_workspace_files(
     let central_packs_dir = app_data_dir
         .map(|dir| crate::workspace::internal_provision::provision_central_packs(dir))
         .transpose()?;
-    let provision = provision_internal_workspace_assets(&root, central_packs_dir.as_deref())?;
+    let provision = provision_internal_workspace_assets(
+        &root,
+        central_packs_dir.as_deref(),
+        managed_deps_manifest_path,
+    )?;
     let provision_status = match provision.status {
         ProvisionStatus::Updated => "updated",
         ProvisionStatus::Unchanged => "unchanged",
@@ -799,7 +804,7 @@ mod tests {
         let root = temp_workspace_root("starter-no-creator-skills");
         let root_str = root.to_string_lossy().to_string();
 
-        ensure_workspace_files(&root_str, "starter", None, None).expect("seed workspace files");
+        ensure_workspace_files(&root_str, "starter", None, None, None).expect("seed workspace files");
 
         let skills_dir = root.join(".opencode").join("skills");
         assert!(!skills_dir.join("skill-creator").exists());
@@ -903,7 +908,7 @@ description: User-owned onboarding notes.
         .expect("write custom skill");
 
         let root_str = root.to_string_lossy().to_string();
-        ensure_workspace_files(&root_str, "starter", None, None).expect("seed workspace files");
+        ensure_workspace_files(&root_str, "starter", None, None, None).expect("seed workspace files");
 
         assert!(!guide_dir.exists());
         assert!(!get_started_dir.exists());
@@ -933,7 +938,7 @@ Use this guide for the team's custom process.
         .expect("write custom workspace-guide");
 
         let root_str = root.to_string_lossy().to_string();
-        ensure_workspace_files(&root_str, "starter", None, None).expect("seed workspace files");
+        ensure_workspace_files(&root_str, "starter", None, None, None).expect("seed workspace files");
 
         assert!(guide_dir.join("SKILL.md").exists());
 
@@ -945,7 +950,7 @@ Use this guide for the team's custom process.
         let root = temp_workspace_root("automation");
         let root_str = root.to_string_lossy().to_string();
 
-        ensure_workspace_files(&root_str, "automation", None, None).expect("seed workspace files");
+        ensure_workspace_files(&root_str, "automation", None, None, None).expect("seed workspace files");
 
         let config_raw =
             fs::read_to_string(root.join("opencode.jsonc")).expect("read generated config");
@@ -990,7 +995,7 @@ Use this guide for the team's custom process.
         .expect("write existing config");
 
         let root_str = root.to_string_lossy().to_string();
-        ensure_workspace_files(&root_str, "minimal", None, None).expect("seed workspace files");
+        ensure_workspace_files(&root_str, "minimal", None, None, None).expect("seed workspace files");
 
         let config_raw = fs::read_to_string(&config_path).expect("read updated config");
         let config: serde_json::Value =

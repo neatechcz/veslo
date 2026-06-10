@@ -15,7 +15,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "fs";
-import { dirname, join, resolve } from "path";
+import { dirname, join, relative, resolve } from "path";
 import { tmpdir } from "os";
 import { fileURLToPath } from "url";
 
@@ -224,6 +224,12 @@ const chromeDevtoolsTargetName = chromeDevtoolsTargetTriple
 const chromeDevtoolsTargetPath = chromeDevtoolsTargetName ? join(sidecarDir, chromeDevtoolsTargetName) : null;
 const chromeDevtoolsShimPath = resolve(__dirname, "chrome-devtools-mcp-shim.ts");
 
+const managedDepsManifestBaseName = "opencode-managed-deps.json";
+const managedDepsManifestPath = join(sidecarDir, managedDepsManifestBaseName);
+const managedDepsManifestTargetPath = resolvedTargetTriple
+  ? join(sidecarDir, `${managedDepsManifestBaseName}-${resolvedTargetTriple}${process.platform === "win32" ? ".exe" : ""}`)
+  : null;
+
 const readHeader = (filePath, length = 256) => {
   const fd = openSync(filePath, "r");
   try {
@@ -360,6 +366,85 @@ const sha256File = (filePath) => {
   const hash = createHash("sha256");
   hash.update(readFileSync(filePath));
   return hash.digest("hex");
+};
+
+const readJsonFile = (filePath) => JSON.parse(readFileSync(filePath, "utf8"));
+
+const packagePathParts = (name) => name.split("/").filter(Boolean);
+
+const packageRelativePath = (root, filePath) => relative(root, filePath).replace(/\\/g, "/");
+
+const readPackageFilesForManifest = (packageRoot) => {
+  const files = readDirectory(packageRoot)
+    .map((filePath) => ({
+      path: packageRelativePath(packageRoot, filePath),
+      contentBase64: readFileSync(filePath).toString("base64"),
+    }))
+    .filter((file) => file.path && !file.path.startsWith("../") && file.path !== "..")
+    .sort((a, b) => a.path.localeCompare(b.path));
+
+  if (!files.some((file) => file.path === "package.json")) {
+    throw new Error(`Managed dependency package is missing package.json: ${packageRoot}`);
+  }
+
+  return files;
+};
+
+const buildManagedDepsManifest = (normalizedOpencodeVersion) => {
+  const orchestratorPkg = readJsonFile(resolve(orchestratorDir, "package.json"));
+  const specs = [
+    {
+      name: "@opencode-ai/plugin",
+      version: String(orchestratorPkg.dependencies?.["@opencode-ai/plugin"] ?? "").trim(),
+    },
+    {
+      name: "zod",
+      version: String(orchestratorPkg.dependencies?.zod ?? "").trim(),
+    },
+  ];
+
+  for (const spec of specs) {
+    if (!spec.version || spec.version.startsWith("^") || spec.version.startsWith("~")) {
+      throw new Error(`Managed dependency ${spec.name} must be pinned exactly in packages/orchestrator/package.json`);
+    }
+  }
+
+  const pluginSpec = specs.find((spec) => spec.name === "@opencode-ai/plugin");
+  if (pluginSpec?.version !== normalizedOpencodeVersion) {
+    throw new Error(
+      `Managed @opencode-ai/plugin version ${pluginSpec?.version || "(missing)"} does not match OpenCode ${normalizedOpencodeVersion}`,
+    );
+  }
+
+  return {
+    schemaVersion: 1,
+    packages: specs.map((spec) => {
+      const packageRoot = resolve(orchestratorDir, "node_modules", ...packagePathParts(spec.name));
+      if (!existsSync(packageRoot)) {
+        throw new Error(`Managed dependency package root not found: ${packageRoot}`);
+      }
+      const packageJson = readJsonFile(resolve(packageRoot, "package.json"));
+      const actualVersion = String(packageJson.version ?? "").trim();
+      if (actualVersion !== spec.version) {
+        throw new Error(`Managed dependency ${spec.name} expected ${spec.version}, found ${actualVersion || "(missing)"}`);
+      }
+      return {
+        name: spec.name,
+        version: spec.version,
+        files: readPackageFilesForManifest(packageRoot),
+      };
+    }),
+  };
+};
+
+const writeManagedDepsManifest = (normalizedOpencodeVersion) => {
+  mkdirSync(sidecarDir, { recursive: true });
+  const manifest = buildManagedDepsManifest(normalizedOpencodeVersion);
+  const content = JSON.stringify(manifest, null, 2) + "\n";
+  writeFileSync(managedDepsManifestPath, content, "utf8");
+  if (managedDepsManifestTargetPath) {
+    writeFileSync(managedDepsManifestTargetPath, content, "utf8");
+  }
 };
 
 const parseChecksum = (content, assetName) => {
@@ -848,6 +933,13 @@ const orchestratorVersion = (() => {
   }
 })();
 
+try {
+  writeManagedDepsManifest(normalizedOpencodeVersion);
+} catch (error) {
+  console.error(`Failed to write opencode-managed-deps.json: ${error}`);
+  process.exit(1);
+}
+
 const versions = {
   "veslo-code": {
     version: normalizedOpencodeVersion,
@@ -868,6 +960,10 @@ const versions = {
   "chrome-devtools-mcp": {
     version: chromeDevtoolsMcpVersion,
     sha256: existsSync(chromeDevtoolsPath) ? sha256File(chromeDevtoolsPath) : null,
+  },
+  "opencode-managed-deps": {
+    version: normalizedOpencodeVersion,
+    sha256: existsSync(managedDepsManifestPath) ? sha256File(managedDepsManifestPath) : null,
   },
 };
 

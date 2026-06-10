@@ -161,6 +161,83 @@ fn resolve_manifest_opencode_version(sidecar_paths: &[PathBuf]) -> Option<String
     None
 }
 
+fn managed_deps_manifest_has_expected_packages(path: &Path) -> bool {
+    let payload = match fs::read_to_string(path) {
+        Ok(payload) => payload,
+        Err(_) => return false,
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&payload) {
+        Ok(parsed) => parsed,
+        Err(_) => return false,
+    };
+    if parsed
+        .get("schemaVersion")
+        .and_then(|value| value.as_u64())
+        != Some(1)
+    {
+        return false;
+    }
+    let Some(packages) = parsed.get("packages").and_then(|value| value.as_array()) else {
+        return false;
+    };
+
+    let has_package = |name: &str, version: &str| {
+        packages.iter().any(|entry| {
+            entry.get("name").and_then(|value| value.as_str()) == Some(name)
+                && entry.get("version").and_then(|value| value.as_str()) == Some(version)
+                && entry
+                    .get("files")
+                    .and_then(|value| value.as_array())
+                    .map(|files| !files.is_empty())
+                    .unwrap_or(false)
+        })
+    };
+
+    has_package("@opencode-ai/plugin", "1.14.29") && has_package("zod", "4.1.8")
+}
+
+pub(crate) fn resolve_opencode_managed_deps_manifest(sidecar_paths: &[PathBuf]) -> Option<PathBuf> {
+    let mut names = vec![
+        "opencode-managed-deps.json".to_string(),
+        "opencode-managed-deps.json.exe".to_string(),
+    ];
+    let target = env::var("TAURI_ENV_TARGET_TRIPLE")
+        .ok()
+        .or_else(|| env::var("TARGET").ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    if let Some(target) = target {
+        names.push(format!("opencode-managed-deps.json-{target}"));
+        names.push(format!("opencode-managed-deps.json-{target}.exe"));
+    }
+
+    for dir in sidecar_paths {
+        for name in &names {
+            let path = dir.join(name);
+            if managed_deps_manifest_has_expected_packages(&path) {
+                return Some(path);
+            }
+        }
+
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if !name.starts_with("opencode-managed-deps.json-") {
+                    continue;
+                }
+                let path = entry.path();
+                if managed_deps_manifest_has_expected_packages(&path) {
+                    return Some(path);
+                }
+            }
+        }
+    }
+
+    None
+}
+
 pub fn read_orchestrator_auth(data_dir: &str) -> Option<OrchestratorAuthFile> {
     let path = orchestrator_auth_path(data_dir);
     let payload = fs::read_to_string(path).ok()?;
@@ -352,6 +429,15 @@ pub fn spawn_orchestrator_daemon(
         }
     }
 
+    if env::var_os("VESLO_OPENCODE_MANAGED_DEPS_FILE").is_none() {
+        if let Some(path) = resolve_opencode_managed_deps_manifest(&sidecar_paths) {
+            command = command.env(
+                "VESLO_OPENCODE_MANAGED_DEPS_FILE",
+                path.to_string_lossy().to_string(),
+            );
+        }
+    }
+
     command
         .spawn()
         .map_err(|e| format!("Failed to start orchestrator: {e}"))
@@ -359,7 +445,10 @@ pub fn spawn_orchestrator_daemon(
 
 #[cfg(test)]
 mod tests {
-    use super::{request_orchestrator_shutdown, resolve_manifest_opencode_version};
+    use super::{
+        request_orchestrator_shutdown, resolve_manifest_opencode_version,
+        resolve_opencode_managed_deps_manifest,
+    };
     use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -434,6 +523,38 @@ mod tests {
 
         let version = resolve_manifest_opencode_version(&[dir.clone()]);
         assert_eq!(version.as_deref(), Some("1.14.29"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn managed_deps_manifest_resolver_ignores_empty_stub_and_selects_real_manifest() {
+        let dir = std::env::temp_dir().join(format!(
+            "veslo-orchestrator-managed-deps-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&dir).expect("create test dir");
+        fs::write(
+            dir.join("opencode-managed-deps.json"),
+            r#"{"schemaVersion":1,"packages":[]}"#,
+        )
+        .expect("write empty manifest");
+        let target_manifest = dir.join("opencode-managed-deps.json-x86_64-pc-windows-msvc.exe");
+        fs::write(
+            &target_manifest,
+            r#"{
+  "schemaVersion": 1,
+  "packages": [
+    { "name": "@opencode-ai/plugin", "version": "1.14.29", "files": [{ "path": "package.json", "contentBase64": "e30=" }] },
+    { "name": "zod", "version": "4.1.8", "files": [{ "path": "package.json", "contentBase64": "e30=" }] }
+  ]
+}"#,
+        )
+        .expect("write real manifest");
+
+        let resolved = resolve_opencode_managed_deps_manifest(&[dir.clone()])
+            .expect("resolve managed deps manifest");
+        assert_eq!(resolved, target_manifest);
 
         let _ = fs::remove_dir_all(dir);
     }

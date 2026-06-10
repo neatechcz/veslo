@@ -5,7 +5,7 @@
   "windows": ["*"],
   "permissions": [
     "core:default",
-    "core:webview:deny-internal-toggle-devtools",
+    "core:webview:allow-internal-toggle-devtools",
     "core:webview:allow-set-webview-zoom",
     "core:window:allow-set-title",
     "core:window:allow-set-title-bar-style",

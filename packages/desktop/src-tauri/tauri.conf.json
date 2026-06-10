@@ -17,7 +17,7 @@
         "minWidth": 390,
         "height": 820,
         "resizable": true,
-        "devtools": false,
+        "devtools": true,
         "dragDropEnabled": false
       }
     ],
@@ -51,7 +51,8 @@
       "sidecars/veslo-code-router",
       "sidecars/veslo-orchestrator",
       "sidecars/chrome-devtools-mcp",
-      "sidecars/versions.json"
+      "sidecars/versions.json",
+      "sidecars/opencode-managed-deps.json"
     ]
   },
   "plugins": {

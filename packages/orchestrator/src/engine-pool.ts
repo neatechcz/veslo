@@ -312,6 +312,7 @@ export class EnginePool {
   async ensure(workspace: EngineWorkspace): Promise<EngineProcess> {
     const inflight = this.pending.get(workspace.id);
     if (inflight) {
+      this.deps.log?.("engine ensure pending reuse", { workspaceId: workspace.id });
       writeSpawnDiag("ensure-pending-reuse", { workspaceId: workspace.id });
       return inflight;
     }
@@ -323,6 +324,14 @@ export class EnginePool {
         (this.deps.isProcessAlive(existing.pid) || !!this.deps.healthCheck);
       if (alive) {
         existing.lastActivityAt = this.deps.now();
+        this.deps.log?.("engine ensure ready reuse", {
+          workspaceId: workspace.id,
+          state: existing.state,
+          pid: existing.pid,
+          port: existing.port,
+          baseUrl: existing.baseUrl,
+          childKind: existing.childKind,
+        });
         writeSpawnDiag("ensure-ready-reuse", {
           workspaceId: workspace.id,
           state: existing.state,
@@ -333,6 +342,15 @@ export class EnginePool {
         });
         return existing;
       }
+      this.deps.log?.("engine ensure stale respawn", {
+        workspaceId: workspace.id,
+        state: existing.state,
+        pid: existing.pid,
+        port: existing.port,
+        childKind: existing.childKind,
+        processAlive: this.deps.isProcessAlive(existing.pid),
+        hasHealthCheck: Boolean(this.deps.healthCheck),
+      });
       writeSpawnDiag("ensure-stale-respawn", {
         workspaceId: workspace.id,
         state: existing.state,

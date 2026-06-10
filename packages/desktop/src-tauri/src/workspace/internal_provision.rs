@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::fs::copy_dir_recursive;
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use include_dir::{include_dir, Dir};
 use serde::{Deserialize, Serialize};
 
@@ -54,6 +55,28 @@ struct InternalManifest {
     packs_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     central_packs_dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ManagedDepsManifest {
+    schema_version: u32,
+    packages: Vec<ManagedDepsPackage>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ManagedDepsPackage {
+    name: String,
+    version: String,
+    files: Vec<ManagedDepsFile>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ManagedDepsFile {
+    path: String,
+    content_base64: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -444,6 +467,7 @@ fn ensure_symlink(target: &Path, link: &Path) -> Result<bool, String> {
 pub fn provision_internal_workspace_assets(
     workspace_root: &Path,
     central_packs_dir: Option<&Path>,
+    managed_deps_manifest_path: Option<&Path>,
 ) -> Result<ProvisionResult, String> {
     let opencode_root = workspace_root.join(".opencode");
     let internal_root = opencode_root.join("veslo").join("internal");
@@ -505,7 +529,7 @@ pub fn provision_internal_workspace_assets(
     // copy here the engine fails to load the plugin with "Cannot find module
     // '@opencode-ai/plugin' from .../veslo-delegate.js" and the assistant becomes
     // unresponsive. Source is the Bun install cache populated by `bun install`.
-    vendor_opencode_plugin_into_workspace(&opencode_root, &mut stats);
+    vendor_opencode_plugin_into_workspace(&opencode_root, managed_deps_manifest_path, &mut stats)?;
 
     // 4) Upsert managed blocks in veslo.md (routing + agent instructions)
     ensure_veslo_agent_routing(workspace_root, &mut stats)?;
@@ -553,43 +577,173 @@ pub fn provision_internal_workspace_assets(
     })
 }
 
-fn vendor_opencode_plugin_into_workspace(opencode_root: &Path, stats: &mut WriteStats) {
-    let Ok(home) = std::env::var("HOME") else {
-        return;
-    };
+fn vendor_opencode_plugin_into_workspace(
+    opencode_root: &Path,
+    managed_deps_manifest_path: Option<&Path>,
+    stats: &mut WriteStats,
+) -> Result<(), String> {
     let node_modules_root = opencode_root.join("node_modules");
     if let Err(err) = fs::create_dir_all(&node_modules_root) {
-        eprintln!("[workspace] failed to create plugin node_modules: {err}");
-        return;
+        return Err(format!("failed to create plugin node_modules: {err}"));
     }
-    let plugin_vendored = vendor_bun_cache_package(
-        &home,
+
+    let plugin_vendored = ensure_workspace_managed_package(
         "@opencode-ai/plugin",
         VESLO_MANAGED_PLUGIN_VERSION,
         &node_modules_root,
+        managed_deps_manifest_path,
         stats,
-    ) || vendor_node_module_package(
-        "@opencode-ai/plugin",
-        VESLO_MANAGED_PLUGIN_VERSION,
-        &node_modules_root,
-        stats,
-    );
-    let zod_vendored = vendor_bun_cache_package(
-        &home,
+    )?;
+    let zod_vendored = ensure_workspace_managed_package(
         "zod",
         VESLO_MANAGED_ZOD_VERSION,
         &node_modules_root,
+        managed_deps_manifest_path,
         stats,
-    ) || vendor_node_module_package("zod", VESLO_MANAGED_ZOD_VERSION, &node_modules_root, stats);
-    if !plugin_vendored {
-        write_zod_backed_plugin_fallback(&node_modules_root, stats);
-    }
-    if !zod_vendored {
+    )?;
+
+    if managed_deps_manifest_path.is_none() && (!plugin_vendored || !zod_vendored) {
         eprintln!(
-            "[workspace] zod-backed @opencode-ai/plugin fallback is present, but zod@{VESLO_MANAGED_ZOD_VERSION} could not be vendored; workspace plugins may fail to load"
+            "[workspace] managed OpenCode dependencies incomplete (plugin_vendored={plugin_vendored}, zod_vendored={zod_vendored}); no fallback shim will be written"
         );
     }
     log_workspace_opencode_dependency_status(opencode_root, &node_modules_root);
+    if managed_deps_manifest_path.is_some() && (!plugin_vendored || !zod_vendored) {
+        return Err(format!(
+            "managed OpenCode dependencies could not be provisioned into {}",
+            node_modules_root.display()
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_workspace_managed_package(
+    pkg: &str,
+    version: &str,
+    node_modules_root: &Path,
+    managed_deps_manifest_path: Option<&Path>,
+    stats: &mut WriteStats,
+) -> Result<bool, String> {
+    let dst = node_modules_root.join(pkg);
+    if package_json_version(&dst).as_deref() == Some(version) {
+        return Ok(true);
+    }
+
+    if let Some(manifest_path) = managed_deps_manifest_path {
+        return vendor_manifest_package(manifest_path, pkg, version, node_modules_root, stats);
+    }
+
+    let Some(home) = crate::paths::home_dir() else {
+        eprintln!(
+            "[workspace] home directory unavailable; cannot vendor {pkg}@{version} from Bun cache"
+        );
+        return Ok(vendor_node_module_package(
+            pkg,
+            version,
+            node_modules_root,
+            stats,
+        ));
+    };
+    if vendor_bun_cache_package(
+        &home.to_string_lossy(),
+        pkg,
+        version,
+        node_modules_root,
+        stats,
+    ) {
+        return Ok(true);
+    }
+
+    Ok(vendor_node_module_package(
+        pkg,
+        version,
+        node_modules_root,
+        stats,
+    ))
+}
+
+fn read_managed_deps_manifest(path: &Path) -> Result<ManagedDepsManifest, String> {
+    let raw = fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read managed deps manifest {}: {e}", path.display()))?;
+    let manifest: ManagedDepsManifest = serde_json::from_str(&raw)
+        .map_err(|e| format!("Failed to parse managed deps manifest {}: {e}", path.display()))?;
+    if manifest.schema_version != 1 {
+        return Err(format!(
+            "Unsupported managed deps manifest schema {} in {}",
+            manifest.schema_version,
+            path.display()
+        ));
+    }
+    Ok(manifest)
+}
+
+fn safe_manifest_relative_path(value: &str) -> Option<PathBuf> {
+    if value.is_empty() || value.contains('\0') {
+        return None;
+    }
+    let normalized = value.replace('\\', "/");
+    if normalized.starts_with('/') || normalized.get(1..3) == Some(":/") {
+        return None;
+    }
+    let mut out = PathBuf::new();
+    for part in normalized.split('/') {
+        if part.is_empty() || part == "." || part == ".." {
+            return None;
+        }
+        out.push(part);
+    }
+    Some(out)
+}
+
+fn vendor_manifest_package(
+    manifest_path: &Path,
+    pkg: &str,
+    version: &str,
+    node_modules_root: &Path,
+    stats: &mut WriteStats,
+) -> Result<bool, String> {
+    let manifest = read_managed_deps_manifest(manifest_path)?;
+    let package = manifest
+        .packages
+        .iter()
+        .find(|entry| entry.name == pkg && entry.version == version)
+        .ok_or_else(|| {
+            format!(
+                "Managed deps manifest {} does not contain {pkg}@{version}",
+                manifest_path.display()
+            )
+        })?;
+
+    if package.files.is_empty() {
+        return Err(format!(
+            "Managed deps manifest {} contains {pkg}@{version} without files",
+            manifest_path.display()
+        ));
+    }
+
+    let dst = node_modules_root.join(pkg);
+    remove_existing_pack_path(&dst)?;
+    for file in &package.files {
+        let relative = safe_manifest_relative_path(&file.path)
+            .ok_or_else(|| format!("Invalid managed dependency file path '{}'", file.path))?;
+        let target = dst.join(relative);
+        let bytes = BASE64_STANDARD.decode(&file.content_base64).map_err(|e| {
+            format!(
+                "Invalid base64 content for {pkg}@{version} file {}: {e}",
+                file.path
+            )
+        })?;
+        write_if_changed(&target, &bytes, stats)?;
+    }
+
+    if package_json_version(&dst).as_deref() != Some(version) {
+        return Err(format!(
+            "Managed deps manifest wrote wrong package version for {pkg}@{version} into {}",
+            dst.display()
+        ));
+    }
+
+    Ok(true)
 }
 
 fn vendor_bun_cache_package(
@@ -623,13 +777,20 @@ fn vendor_bun_cache_package(
         return false;
     }
     let dst = node_modules_root.join(pkg);
-    // Skip when the package is already present — vendoring is idempotent and
-    // we don't want to clobber every provisioning run.
-    if dst.join("package.json").exists() {
+    // Skip only when the exact expected version is already present. A stale
+    // fallback shim or mismatched package must be replaced.
+    if package_json_version(&dst).as_deref() == Some(version) {
         return true;
     }
     if let Some(parent) = dst.parent() {
         let _ = fs::create_dir_all(parent);
+    }
+    if let Err(err) = remove_existing_pack_path(&dst) {
+        eprintln!(
+            "[workspace] failed to remove stale {pkg} package at {}: {err}",
+            dst.display()
+        );
+        return false;
     }
     match copy_dir_recursive(&src, &dst) {
         Ok(_) => {
@@ -679,11 +840,18 @@ fn vendor_node_module_package(
                     continue;
                 }
                 let dst = node_modules_root.join(pkg);
-                if dst.join("package.json").exists() {
+                if package_json_version(&dst).as_deref() == Some(version) {
                     return true;
                 }
                 if let Some(parent) = dst.parent() {
                     let _ = fs::create_dir_all(parent);
+                }
+                if let Err(err) = remove_existing_pack_path(&dst) {
+                    eprintln!(
+                        "[workspace] failed to remove stale {pkg} package at {}: {err}",
+                        dst.display()
+                    );
+                    return false;
                 }
                 match copy_dir_recursive(&src, &dst) {
                     Ok(_) => {
@@ -702,57 +870,6 @@ fn vendor_node_module_package(
         }
     }
     false
-}
-
-fn write_zod_backed_plugin_fallback(node_modules_root: &Path, stats: &mut WriteStats) {
-    let plugin_dir = node_modules_root.join("@opencode-ai").join("plugin");
-    let package_path = plugin_dir.join("package.json");
-    if package_path.exists() {
-        return;
-    }
-
-    let dist_dir = plugin_dir.join("dist");
-    if let Err(err) = fs::create_dir_all(&dist_dir) {
-        eprintln!(
-            "[workspace] failed to create @opencode-ai/plugin fallback at {}: {err}",
-            dist_dir.display()
-        );
-        return;
-    }
-
-    let package_json = serde_json::json!({
-        "name": "@opencode-ai/plugin",
-        "version": "0.0.0-veslo-managed",
-        "type": "module",
-        "exports": {
-            ".": { "import": "./dist/index.js" },
-            "./tool": { "import": "./dist/tool.js" }
-        },
-        "files": ["dist"]
-    })
-    .to_string();
-
-    let writes = [
-        (package_path, format!("{package_json}\n")),
-        (
-            dist_dir.join("index.js"),
-            "export * from \"./tool.js\";\n".to_string(),
-        ),
-        (
-            dist_dir.join("tool.js"),
-            "import { z } from \"zod\";\nexport function tool(input) {\n  return input;\n}\ntool.schema = z;\n".to_string(),
-        ),
-    ];
-
-    for (path, content) in writes {
-        match fs::write(&path, content) {
-            Ok(_) => stats.written += 1,
-            Err(err) => eprintln!(
-                "[workspace] failed to write @opencode-ai/plugin fallback file {}: {err}",
-                path.display()
-            ),
-        }
-    }
 }
 
 fn package_json_version(package_dir: &Path) -> Option<String> {
@@ -1333,11 +1450,41 @@ mod tests {
         path
     }
 
+    fn write_test_package_manifest(
+        manifest_path: &Path,
+        packages: &[(&str, &str, Vec<(&str, &str)>)],
+    ) {
+        let packages_json: Vec<serde_json::Value> = packages
+            .iter()
+            .map(|(name, version, files)| {
+                serde_json::json!({
+                    "name": name,
+                    "version": version,
+                    "files": files.iter().map(|(path, content)| {
+                        serde_json::json!({
+                            "path": path,
+                            "contentBase64": BASE64_STANDARD.encode(content.as_bytes()),
+                        })
+                    }).collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        let manifest = serde_json::json!({
+            "schemaVersion": 1,
+            "packages": packages_json,
+        });
+        fs::write(
+            manifest_path,
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+    }
+
     #[test]
     fn provision_includes_research_delegate_routing() {
         let workspace_root = temp_workspace_root("research");
 
-        let result = provision_internal_workspace_assets(&workspace_root, None).unwrap();
+        let result = provision_internal_workspace_assets(&workspace_root, None, None).unwrap();
         assert_eq!(result.status, ProvisionStatus::Updated);
 
         let research_agent = fs::read_to_string(
@@ -1382,6 +1529,80 @@ mod tests {
         .unwrap();
         assert!(veslo_agent.contains("Output Hygiene"));
         assert!(veslo_agent.contains("Do not print raw JSON"));
+
+        fs::remove_dir_all(workspace_root).unwrap();
+    }
+
+    #[test]
+    fn provision_replaces_fallback_plugin_with_manifest_packages() {
+        let workspace_root = temp_workspace_root("managed-deps");
+        let manifest_path = workspace_root.join("managed-deps.json");
+        let plugin_dir = workspace_root
+            .join(".opencode")
+            .join("node_modules")
+            .join("@opencode-ai")
+            .join("plugin");
+        fs::create_dir_all(&plugin_dir).unwrap();
+        fs::write(
+            plugin_dir.join("package.json"),
+            r#"{"name":"@opencode-ai/plugin","version":"0.0.0-veslo-managed"}"#,
+        )
+        .unwrap();
+        write_test_package_manifest(
+            &manifest_path,
+            &[
+                (
+                    "@opencode-ai/plugin",
+                    "1.14.29",
+                    vec![
+                        (
+                            "package.json",
+                            r#"{"name":"@opencode-ai/plugin","version":"1.14.29","type":"module","exports":{".":{"import":"./dist/index.js"},"./tool":{"import":"./dist/tool.js"}}}"#,
+                        ),
+                        ("dist/index.js", "export * from './tool.js';\n"),
+                        ("dist/tool.js", "export function tool(input) { return input; }\n"),
+                    ],
+                ),
+                (
+                    "zod",
+                    "4.1.8",
+                    vec![
+                        (
+                            "package.json",
+                            r#"{"name":"zod","version":"4.1.8","type":"module"}"#,
+                        ),
+                        ("index.js", "export const z = {};\n"),
+                    ],
+                ),
+            ],
+        );
+
+        let result =
+            provision_internal_workspace_assets(&workspace_root, None, Some(&manifest_path))
+                .unwrap();
+        assert_eq!(result.status, ProvisionStatus::Updated);
+
+        assert_eq!(
+            package_json_version(
+                &workspace_root
+                    .join(".opencode")
+                    .join("node_modules")
+                    .join("@opencode-ai")
+                    .join("plugin")
+            )
+            .as_deref(),
+            Some("1.14.29")
+        );
+        assert_eq!(
+            package_json_version(
+                &workspace_root
+                    .join(".opencode")
+                    .join("node_modules")
+                    .join("zod")
+            )
+            .as_deref(),
+            Some("4.1.8")
+        );
 
         fs::remove_dir_all(workspace_root).unwrap();
     }

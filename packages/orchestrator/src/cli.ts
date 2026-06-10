@@ -3,7 +3,7 @@ import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process"
 import type { WorkerSandbox } from "./sandbox/index.js";
 import { resolveSandbox } from "./sandbox/index.js";
 import { randomUUID, createHash } from "node:crypto";
-import { chmod, copyFile, cp, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile, realpath } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile, realpath } from "node:fs/promises";
 import { appendFileSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { createServer as createHttpServer } from "node:http";
@@ -37,6 +37,7 @@ import {
   rewriteDirectoryQueryForEngine,
   type EnginePathMapping,
 } from "./engine-paths.js";
+import { ensureOpencodeManagedTools as ensureOpencodeManagedToolsRuntime } from "./opencode-managed-dependencies.js";
 
 type ApprovalMode = "manual" | "auto";
 
@@ -1917,295 +1918,6 @@ function opencodeRouterStatusToolSource(): string {
   ].join("\n");
 }
 
-/**
- * Vendors `@opencode-ai/plugin` (plus its `zod` dependency) into
- * `<configDir>/node_modules/` so managed tool files load cleanly inside the
- * sandboxed opencode engine. Opencode runs Bun with `--no-install`, and
- * opencode's `tool({...})` introspects real zod internals (`_zod.def`), so a
- * pure shim isn't enough — we need the actual published packages.
- *
- * Source is the local Bun install cache (`~/.bun/install/cache/<pkg>@<ver>@@@1/`),
- * which is populated by `bun install` during development and shipped alongside
- * orchestrator builds. If the cache is empty (CI, first run), we fall back to
- * a minimal hand-written shim that lets opencode load the tools but won't pass
- * full zod introspection — the warning is logged so callers can investigate.
- */
-const VESLO_MANAGED_PLUGIN_VERSION = "1.14.29";
-const VESLO_MANAGED_ZOD_VERSION = "4.1.8";
-
-const MANAGED_PLUGIN_FALLBACK_TOOL = `import { z } from "zod";
-export function tool(input) {
-  return input;
-}
-tool.schema = z;
-`;
-
-const MANAGED_PLUGIN_FALLBACK_INDEX = `export * from "./tool.js";\n`;
-
-const MANAGED_PLUGIN_FALLBACK_PACKAGE_JSON = `${JSON.stringify(
-  {
-    name: "@opencode-ai/plugin",
-    version: "0.0.0-veslo-managed",
-    type: "module",
-    exports: {
-      ".": { import: "./dist/index.js" },
-      "./tool": { import: "./dist/tool.js" },
-    },
-    files: ["dist"],
-  },
-  null,
-  2,
-)}\n`;
-
-async function readPackageJsonVersion(packageDir: string): Promise<string | null> {
-  try {
-    const raw = await readFile(join(packageDir, "package.json"), "utf8");
-    const parsed = JSON.parse(raw) as { version?: unknown };
-    return typeof parsed.version === "string" ? parsed.version : null;
-  } catch {
-    return null;
-  }
-}
-
-async function logOpencodeManagedDependencyStatus(configDir: string): Promise<void> {
-  const pluginDir = join(configDir, "node_modules", "@opencode-ai", "plugin");
-  const zodDir = join(configDir, "node_modules", "zod");
-  const pluginVersion = await readPackageJsonVersion(pluginDir);
-  const zodVersion = await readPackageJsonVersion(zodDir);
-  const pluginPackagePath = join(pluginDir, "package.json");
-  const zodPackagePath = join(zodDir, "package.json");
-  const pluginMode =
-    pluginVersion === "0.0.0-veslo-managed"
-      ? "fallback-zod-shim"
-      : pluginVersion
-        ? pluginVersion === VESLO_MANAGED_PLUGIN_VERSION
-          ? "vendored"
-          : "vendored-version-mismatch"
-        : "missing";
-  const zodMode =
-    zodVersion
-      ? zodVersion === VESLO_MANAGED_ZOD_VERSION
-        ? "vendored"
-        : "vendored-version-mismatch"
-      : "missing";
-  const payload = JSON.stringify({
-    configDir,
-    pluginMode,
-    pluginVersion,
-    pluginPackagePath,
-    expectedPluginVersion: VESLO_MANAGED_PLUGIN_VERSION,
-    zodMode,
-    zodVersion,
-    zodPackagePath,
-    expectedZodVersion: VESLO_MANAGED_ZOD_VERSION,
-  });
-
-  if (pluginMode === "fallback-zod-shim" && zodMode !== "missing") {
-    console.warn(`[veslo-orchestrator] opencode managed dependency status ${payload}`);
-    return;
-  }
-
-  if (pluginMode === "missing" || zodMode === "missing") {
-    console.warn(
-      `[veslo-orchestrator] opencode managed dependency status ${payload} — managed tools may fail OpenCode zod introspection (symptom: Object.values on null/undefined).`,
-    );
-    return;
-  }
-
-  if (pluginMode === "vendored-version-mismatch" || zodMode === "vendored-version-mismatch") {
-    console.warn(`[veslo-orchestrator] opencode managed dependency status ${payload}`);
-    return;
-  }
-
-  console.log(`[veslo-orchestrator] opencode managed dependency status ${payload}`);
-}
-
-async function copyDirRecursive(src: string, dst: string): Promise<void> {
-  // Prefer fs/promises.cp, but fall back to shell `cp -R` when running inside a
-  // Bun-compiled standalone binary, where cp() can silently no-op on macOS.
-  try {
-    await cp(src, dst, { recursive: true, force: true });
-    // Sanity check: cp succeeded but copied nothing? Fall through to shell cp.
-    const entries = await readdir(src).catch(() => [] as string[]);
-    if (entries.length > 0) {
-      const dstEntries = await readdir(dst).catch(() => [] as string[]);
-      if (dstEntries.length > 0) return;
-    } else {
-      return;
-    }
-  } catch (err) {
-    // fall through to shell cp
-    void err;
-  }
-  const result = spawnProcess("cp", ["-R", `${src}/.`, dst], { stdio: "ignore" });
-  await new Promise<void>((resolve, reject) => {
-    result.on("exit", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`cp -R ${src} -> ${dst} exited with code ${code}`));
-    });
-    result.on("error", reject);
-  });
-}
-
-async function pathExists(target: string): Promise<boolean> {
-  try {
-    await access(target);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function resolveBunCacheEntry(pkg: string, version: string): string {
-  return join(process.env.HOME ?? "", ".bun", "install", "cache", `${pkg}@${version}@@@1`);
-}
-
-function resolveLegacyBunCacheEntry(pkg: string, version: string): string {
-  return join(process.env.HOME ?? "", ".bun", "install", "cache", pkg, `${version}@@@1`);
-}
-
-async function resolveNodeModulePackageDir(pkg: string, version: string): Promise<string | null> {
-  const packagePath = pkg.split("/");
-  const startDirs = new Set<string>([
-    dirname(fileURLToPath(import.meta.url)),
-    process.cwd(),
-    dirname(process.execPath),
-  ]);
-
-  for (const startDir of startDirs) {
-    let current = startDir;
-    while (true) {
-      const candidates = [
-        join(current, "node_modules", ...packagePath),
-        join(current, "packages", "orchestrator", "node_modules", ...packagePath),
-      ];
-      for (const candidate of candidates) {
-        const packageJson = join(candidate, "package.json");
-        const installedVersion = await readPackageJsonVersion(candidate);
-        if (installedVersion === version && (await pathExists(packageJson))) {
-          return realpath(candidate);
-        }
-      }
-      const next = dirname(current);
-      if (next === current) break;
-      current = next;
-    }
-  }
-  return null;
-}
-
-async function vendorBunCachePackage(
-  pkg: string,
-  version: string,
-  destNodeModules: string,
-): Promise<boolean> {
-  let cacheRoot = resolveBunCacheEntry(pkg, version);
-  if (!(await pathExists(cacheRoot))) {
-    const legacy = resolveLegacyBunCacheEntry(pkg, version);
-    if (!(await pathExists(legacy))) return false;
-    cacheRoot = legacy;
-  }
-  const destDir = join(destNodeModules, pkg);
-  await rm(destDir, { recursive: true, force: true });
-  await mkdir(destDir, { recursive: true });
-  await copyDirRecursive(cacheRoot, destDir);
-  return true;
-}
-
-async function vendorNodeModulePackage(
-  pkg: string,
-  version: string,
-  destNodeModules: string,
-): Promise<boolean> {
-  const packageRoot = await resolveNodeModulePackageDir(pkg, version);
-  if (!packageRoot) return false;
-  const destDir = join(destNodeModules, pkg);
-  await rm(destDir, { recursive: true, force: true });
-  await mkdir(destDir, { recursive: true });
-  await copyDirRecursive(packageRoot, destDir);
-  return true;
-}
-
-async function vendorManagedPackage(
-  pkg: string,
-  version: string,
-  destNodeModules: string,
-): Promise<"bun-cache" | "node-modules" | null> {
-  if (await vendorBunCachePackage(pkg, version, destNodeModules)) return "bun-cache";
-  if (await vendorNodeModulePackage(pkg, version, destNodeModules)) return "node-modules";
-  return null;
-}
-
-async function writeManagedPluginFallback(pluginDir: string): Promise<void> {
-  const distDir = join(pluginDir, "dist");
-  await mkdir(distDir, { recursive: true });
-  await writeFile(join(pluginDir, "package.json"), MANAGED_PLUGIN_FALLBACK_PACKAGE_JSON, "utf8");
-  await writeFile(join(distDir, "index.js"), MANAGED_PLUGIN_FALLBACK_INDEX, "utf8");
-  await writeFile(join(distDir, "tool.js"), MANAGED_PLUGIN_FALLBACK_TOOL, "utf8");
-}
-
-async function ensureOpencodeManagedTools(configDir: string): Promise<void> {
-  const toolsDir = join(configDir, "tools");
-  await mkdir(toolsDir, { recursive: true });
-  const writeManagedTool = async (name: string, source: string) => {
-    const toolPath = join(toolsDir, name);
-    const content = `${source}\n`;
-    try {
-      const existing = await readFile(toolPath, "utf8");
-      if (existing === content) return;
-    } catch {
-      // ignore
-    }
-    await writeFile(toolPath, content, "utf8");
-  };
-
-  const nodeModulesDir = join(configDir, "node_modules");
-  await mkdir(nodeModulesDir, { recursive: true });
-
-  // Vendor @opencode-ai/plugin (preferred: from Bun cache; fallback: hand-rolled shim).
-  const pluginDir = join(nodeModulesDir, "@opencode-ai", "plugin");
-  const existingPluginVersion = await readPackageJsonVersion(pluginDir);
-  if (existingPluginVersion !== VESLO_MANAGED_PLUGIN_VERSION) {
-    await mkdir(join(nodeModulesDir, "@opencode-ai"), { recursive: true });
-    const source = await vendorManagedPackage(
-      "@opencode-ai/plugin",
-      VESLO_MANAGED_PLUGIN_VERSION,
-      nodeModulesDir,
-    );
-    if (!source) {
-      console.warn(
-        `[veslo-orchestrator] could not find @opencode-ai/plugin@${VESLO_MANAGED_PLUGIN_VERSION} in Bun cache or node_modules; using minimal zod-backed plugin shim.`,
-      );
-      await writeManagedPluginFallback(pluginDir);
-    } else {
-      console.log(
-        `[veslo-orchestrator] vendored @opencode-ai/plugin@${VESLO_MANAGED_PLUGIN_VERSION} from ${source}.`,
-      );
-    }
-  }
-
-  // Vendor zod (only used when the real plugin from cache is in place; cheap to
-  // skip the copy if the destination already exists).
-  const zodDir = join(nodeModulesDir, "zod");
-  const existingZodVersion = await readPackageJsonVersion(zodDir);
-  if (existingZodVersion !== VESLO_MANAGED_ZOD_VERSION) {
-    const source = await vendorManagedPackage("zod", VESLO_MANAGED_ZOD_VERSION, nodeModulesDir);
-    if (!source) {
-      console.warn(
-        `[veslo-orchestrator] could not find zod@${VESLO_MANAGED_ZOD_VERSION} in Bun cache or node_modules; the @opencode-ai/plugin shim will be used instead.`,
-      );
-    } else {
-      console.log(
-        `[veslo-orchestrator] vendored zod@${VESLO_MANAGED_ZOD_VERSION} from ${source}.`,
-      );
-    }
-  }
-
-  await writeManagedTool("opencode_router_send.ts", opencodeRouterSendToolSource());
-  await writeManagedTool("opencode_router_status.ts", opencodeRouterStatusToolSource());
-  await logOpencodeManagedDependencyStatus(configDir);
-}
-
 function findWorkspace(state: RouterState, input: string): RouterWorkspace | undefined {
   const trimmed = input.trim();
   if (!trimmed) return undefined;
@@ -2450,6 +2162,37 @@ function writeOpencodeHealthDiag(event: string, payload: LogAttributes): void {
   } catch {
     // Diagnostics must never affect runtime behavior.
   }
+}
+
+function resolveRuntimeTraceFile(dataDir: string): string {
+  const override = process.env.VESLO_RUNTIME_TRACE_FILE?.trim();
+  return override || join(dataDir, "runtime-trace.jsonl");
+}
+
+function writeRuntimeTrace(file: string, event: string, payload: LogAttributes = {}): void {
+  const entry = {
+    time: new Date().toISOString(),
+    event,
+    ...payload,
+  };
+  try {
+    appendFileSync(file, `${JSON.stringify(entry)}\n`, "utf8");
+  } catch {
+    // Diagnostics must never affect runtime behavior.
+  }
+  try {
+    console.log(`[veslo:runtime-trace] ${event} ${JSON.stringify(entry)}`);
+  } catch {
+    console.log(`[veslo:runtime-trace] ${event}`);
+  }
+}
+
+function runtimeTraceEventName(prefix: string, message: string): string {
+  const slug = message
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug ? `${prefix}:${slug}` : prefix;
 }
 
 function selectedProcessEnvForDiag(env: NodeJS.ProcessEnv): LogAttributes {
@@ -3856,6 +3599,21 @@ async function runRouterDaemon(args: ParsedArgs) {
   const sidecarSource = sidecarSourceInput;
   const opencodeSource = opencodeSourceInput;
   const dataDir = resolveRouterDataDir(args.flags);
+  await mkdir(dataDir, { recursive: true });
+  const runtimeTraceFile = resolveRuntimeTraceFile(dataDir);
+  const traceRuntime = (event: string, payload: LogAttributes = {}) =>
+    writeRuntimeTrace(runtimeTraceFile, event, {
+      runId,
+      processPid: process.pid,
+      dataDir,
+      traceFile: runtimeTraceFile,
+      ...payload,
+    });
+  traceRuntime("orchestrator:daemon-start", {
+    cliVersion,
+    logFormat,
+    outputJson,
+  });
   const statePath = routerStatePath(dataDir);
   // Clear stale `.tmp.*` files left behind by previous crashes between
   // writeFile and rename inside atomicWriteJson. Without this, the data dir
@@ -4011,12 +3769,42 @@ async function runRouterDaemon(args: ParsedArgs) {
   const pool = new EnginePool({
     deps: {
       resolveWorkspace: async (ws) => {
+        const startedAt = Date.now();
+        traceRuntime("orchestrator:workspace-resolve:start", {
+          workspaceId: ws.id,
+          workspacePath: ws.path ?? null,
+        });
         const workdir = await ensureWorkspace(ws.path ?? "");
         const configDir = join(dataDir, "opencode-config", ws.id || workspaceIdForLocal(workdir));
-        await ensureOpencodeManagedTools(configDir);
+        await ensureOpencodeManagedToolsRuntime(configDir, {
+          toolSources: {
+            send: opencodeRouterSendToolSource(),
+            status: opencodeRouterStatusToolSource(),
+          },
+          emit: (event, payload) =>
+            traceRuntime(event, {
+              workspaceId: ws.id,
+              workspacePath: ws.path ?? null,
+              ...payload,
+            }),
+        });
+        traceRuntime("orchestrator:workspace-resolve:done", {
+          workspaceId: ws.id,
+          workdir,
+          configDir,
+          durationMs: Date.now() - startedAt,
+        });
         return { workdir, configDir };
       },
       spawnEngine: async ({ workspaceId, workdir, configDir, port }) => {
+        const startedAt = Date.now();
+        traceRuntime("orchestrator:engine-spawn:start", {
+          workspaceId,
+          workdir,
+          configDir,
+          port,
+          opencodeBin: opencodeBinary.bin,
+        });
         const spawned = await startOpencode({
           bin: opencodeBinary.bin,
           workspace: workdir,
@@ -4042,6 +3830,17 @@ async function runRouterDaemon(args: ParsedArgs) {
         const clientHost =
           spawned.connectHost ??
           (opencodeHost === "0.0.0.0" || opencodeHost === "::" ? "127.0.0.1" : opencodeHost);
+        traceRuntime("orchestrator:engine-spawn:done", {
+          workspaceId,
+          workdir,
+          configDir,
+          port,
+          childPid: spawned.child.pid ?? null,
+          childKind: spawned.childKind ?? "direct",
+          connectHost: spawned.connectHost ?? null,
+          clientHost,
+          durationMs: Date.now() - startedAt,
+        });
         return {
           child: spawned.child,
           baseUrl: `http://${clientHost}:${port}`,
@@ -4049,6 +3848,8 @@ async function runRouterDaemon(args: ParsedArgs) {
         };
       },
       waitForHealthy: async (baseUrl) => {
+        const startedAt = Date.now();
+        traceRuntime("orchestrator:engine-health:start", { baseUrl });
         const client = createOpencodeClient({ baseUrl, headers: authHeaders });
         // Upper bound for a cold engine start. Sandboxed cold starts
         // (sandbox-exec on macOS, WSL2 + bwrap on Windows) routinely need
@@ -4063,12 +3864,30 @@ async function runRouterDaemon(args: ParsedArgs) {
           const parsed = raw ? Number.parseInt(raw, 10) : NaN;
           return Number.isFinite(parsed) && parsed >= 1_000 ? parsed : 60_000;
         })();
-        await waitForOpencodeHealthy(client, timeoutMs, 250, logger, { baseUrl }, { baseUrl, headers: authHeaders });
+        try {
+          await waitForOpencodeHealthy(client, timeoutMs, 250, logger, { baseUrl }, { baseUrl, headers: authHeaders });
+          traceRuntime("orchestrator:engine-health:done", {
+            baseUrl,
+            timeoutMs,
+            durationMs: Date.now() - startedAt,
+          });
+        } catch (error) {
+          traceRuntime("orchestrator:engine-health:error", {
+            baseUrl,
+            timeoutMs,
+            durationMs: Date.now() - startedAt,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          throw error;
+        }
       },
       stopChild,
       findFreePort: () => findFreePort(opencodeHost),
       isProcessAlive,
-      log: (msg, attrs) => logger.info(msg, attrs, "engine-pool"),
+      log: (msg, attrs) => {
+        logger.info(msg, attrs, "engine-pool");
+        traceRuntime(runtimeTraceEventName("engine-pool", msg), attrs ?? {});
+      },
       // F2Ú5 — per-engine health probe (2s timeout, 250ms retry). Pool
       // strikes 3× before treating as crashed.
       healthCheck: async (baseUrl) => {
@@ -4338,11 +4157,32 @@ async function runRouterDaemon(args: ParsedArgs) {
         workspace.lastUsedAt = nowMs();
         await saveRouterState(statePath, state);
         if (workspace.workspaceType === "local" && workspace.path) {
+          const ensureStartedAt = Date.now();
+          traceRuntime("orchestrator:activate-ensure:start", {
+            workspaceId: workspace.id,
+            workspacePath: workspace.path,
+          });
           try {
-            await pool.ensure({ id: workspace.id, path: workspace.path });
+            const ensured = await pool.ensure({ id: workspace.id, path: workspace.path });
+            traceRuntime("orchestrator:activate-ensure:done", {
+              workspaceId: workspace.id,
+              workspacePath: workspace.path,
+              state: ensured.state,
+              pid: ensured.pid,
+              port: ensured.port,
+              baseUrl: ensured.baseUrl,
+              childKind: ensured.childKind ?? "direct",
+              durationMs: Date.now() - ensureStartedAt,
+            });
             persistEnginesSnapshot();
           } catch (err) {
             const detail = err instanceof Error ? err.message : String(err);
+            traceRuntime("orchestrator:activate-ensure:error", {
+              workspaceId: workspace.id,
+              workspacePath: workspace.path,
+              durationMs: Date.now() - ensureStartedAt,
+              error: detail,
+            });
             logger.warn(
               "eager engine spawn failed",
               { workspaceId: workspace.id, error: detail },
@@ -4494,10 +4334,38 @@ async function runRouterDaemon(args: ParsedArgs) {
         }
 
         let engine: EngineProcess;
+        const ensureStartedAt = Date.now();
+        traceRuntime("orchestrator:proxy-ensure:start", {
+          workspaceId: ws.id,
+          workspacePath: ws.path,
+          method: req.method,
+          path: url.pathname,
+          search: url.search,
+        });
         try {
           engine = await pool.ensure({ id: ws.id, path: ws.path });
+          traceRuntime("orchestrator:proxy-ensure:done", {
+            workspaceId: ws.id,
+            workspacePath: ws.path,
+            method: req.method,
+            path: url.pathname,
+            state: engine.state,
+            pid: engine.pid,
+            port: engine.port,
+            baseUrl: engine.baseUrl,
+            childKind: engine.childKind ?? "direct",
+            durationMs: Date.now() - ensureStartedAt,
+          });
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
+          traceRuntime("orchestrator:proxy-ensure:error", {
+            workspaceId: ws.id,
+            workspacePath: ws.path,
+            method: req.method,
+            path: url.pathname,
+            durationMs: Date.now() - ensureStartedAt,
+            error: detail,
+          });
           // F2Ú4 — capacity exceeded je 503 (retry-able), spawn/health fail je 502.
           const status = detail.includes("capacity exceeded") ? 503 : 502;
           send(status, { error: "engine spawn failed", detail });
@@ -4530,6 +4398,41 @@ async function runRouterDaemon(args: ParsedArgs) {
         ws.lastUsedAt = nowMs();
         persistEnginesSnapshot();
 
+        const proxyRequestId = randomUUID();
+        const upstreamStartedAt = Date.now();
+        let upstreamTraceClosed = false;
+        const finishUpstreamTrace = (
+          event: "orchestrator:proxy-upstream:done" | "orchestrator:proxy-upstream:error",
+          payload: Record<string, unknown>,
+        ) => {
+          if (upstreamTraceClosed) return;
+          upstreamTraceClosed = true;
+          traceRuntime(event, {
+            requestId: proxyRequestId,
+            workspaceId: ws.id,
+            workspacePath: ws.path,
+            method: req.method,
+            path: url.pathname,
+            search: url.search,
+            targetBaseUrl: engine.baseUrl,
+            targetPath: restPath,
+            targetSearch,
+            durationMs: Date.now() - upstreamStartedAt,
+            ...payload,
+          });
+        };
+        traceRuntime("orchestrator:proxy-upstream:start", {
+          requestId: proxyRequestId,
+          workspaceId: ws.id,
+          workspacePath: ws.path,
+          method: req.method,
+          path: url.pathname,
+          search: url.search,
+          targetBaseUrl: engine.baseUrl,
+          targetPath: restPath,
+          targetSearch,
+        });
+
         proxyToEngine({
           clientReq: req,
           clientRes: res,
@@ -4550,10 +4453,17 @@ async function runRouterDaemon(args: ParsedArgs) {
             ? (value) => rewriteDirectoryFieldsForHost(value, pathMapping)
             : undefined,
           onSuccess: () => {
+            finishUpstreamTrace("orchestrator:proxy-upstream:done", {
+              statusCode: res.statusCode,
+            });
             pool.touch(ws.id);
             persistEnginesSnapshot();
           },
           onError: (err) => {
+            finishUpstreamTrace("orchestrator:proxy-upstream:error", {
+              statusCode: res.statusCode,
+              error: err.message,
+            });
             logger.warn(
               "engine proxy error",
               { workspaceId: ws.id, error: err.message },
@@ -5030,8 +4940,32 @@ async function runStart(args: ParsedArgs) {
   logger.info("Run starting", { workspace: resolvedWorkspace, logFormat, runId }, "veslo-orchestrator");
 
   const dataDir = resolveRouterDataDir(args.flags);
+  await mkdir(dataDir, { recursive: true });
+  const runtimeTraceFile = resolveRuntimeTraceFile(dataDir);
+  const traceRuntime = (event: string, payload: LogAttributes = {}) =>
+    writeRuntimeTrace(runtimeTraceFile, event, {
+      runId,
+      processPid: process.pid,
+      dataDir,
+      traceFile: runtimeTraceFile,
+      ...payload,
+    });
+  traceRuntime("orchestrator:start-mode", {
+    workspace: resolvedWorkspace,
+    logFormat,
+  });
   const opencodeConfigDir = join(dataDir, "opencode-config", workspaceIdForLocal(resolvedWorkspace));
-  await ensureOpencodeManagedTools(opencodeConfigDir);
+  await ensureOpencodeManagedToolsRuntime(opencodeConfigDir, {
+    toolSources: {
+      send: opencodeRouterSendToolSource(),
+      status: opencodeRouterStatusToolSource(),
+    },
+    emit: (event, payload) =>
+      traceRuntime(event, {
+        workspace: resolvedWorkspace,
+        ...payload,
+      }),
+  });
   const opencodeRouterDataDir = join(dataDir, "veslo-code-router", workspaceIdForLocal(resolvedWorkspace));
   await mkdir(opencodeRouterDataDir, { recursive: true });
 

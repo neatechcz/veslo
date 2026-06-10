@@ -3231,7 +3231,7 @@ export default function App() {
           traceId: sendTraceId,
           activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
           workspaceType: workspaceStore.activeWorkspaceDisplay().workspaceType,
-          hasClient: Boolean(client()),
+          hasClient: Boolean(routedClient()),
         },
       ))
     ) {
@@ -3989,10 +3989,10 @@ export default function App() {
       hasClient: Boolean(client()),
     });
 
-    let c = client() ?? await connectLocalRuntimeClientFromEngineInfo("replaceUserMessage");
+    let c = routedClient() ?? await connectLocalRuntimeClientFromEngineInfo("replaceUserMessage");
     if (!c) {
       if (!(await ensureLocalRuntimeReachableForSend("replaceUserMessage"))) return false;
-      c = client() ?? await connectLocalRuntimeClientFromEngineInfo("replaceUserMessage");
+      c = routedClient() ?? await connectLocalRuntimeClientFromEngineInfo("replaceUserMessage");
     }
     if (!(await ensureManagedAiBootstrapReady())) return false;
     if (!c) {
@@ -4572,7 +4572,7 @@ export default function App() {
       return true;
     }
 
-    const currentClient = client();
+    const currentClient = routedClient();
     if (currentClient) {
       try {
         await sendTraceStep(
@@ -4618,11 +4618,11 @@ export default function App() {
           activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
         },
       );
-      if (!started || !client()) {
+      if (!started || !routedClient()) {
         recordSendTrace(`${reason}:runtime-recovery-not-started`, {
           ...(tracePayload ?? {}),
           started,
-          hasClient: Boolean(client()),
+          hasClient: Boolean(routedClient()),
         });
         setBusy(false);
         setBusyLabel(null);
@@ -4631,7 +4631,7 @@ export default function App() {
       }
       recordSendTrace(`${reason}:runtime-recovery-ok`, {
         ...(tracePayload ?? {}),
-        hasClient: Boolean(client()),
+        hasClient: Boolean(routedClient()),
       });
       if (preflight) preflight.runtimeHealthOk = true;
       return true;
@@ -4649,32 +4649,53 @@ export default function App() {
 
   async function connectLocalRuntimeClientFromEngineInfo(reason: string): Promise<Client | null> {
     if (!isTauriRuntime() || workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") {
-      return client();
+      return routedClient();
     }
 
     try {
-      const info = await engineInfo();
+      const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
+      const activeWorkspaceRoot = workspaceStore.activeWorkspaceRoot().trim();
+      const info = await engineInfo(activeWorkspaceId || undefined, activeWorkspaceRoot || undefined);
       const nextBaseUrl = info.baseUrl?.trim() ?? "";
       if (!info.running || !nextBaseUrl) {
         recordSendTrace(`${reason}:engine-info-unavailable`, {
+          activeWorkspaceId: activeWorkspaceId || null,
+          activeWorkspaceRoot: activeWorkspaceRoot || null,
           running: Boolean(info.running),
           hasBaseUrl: Boolean(nextBaseUrl),
         });
         return null;
       }
 
-      const directory = info.projectDir?.trim() || clientDirectory().trim() || undefined;
+      const directory = info.projectDir?.trim() || activeWorkspaceRoot || clientDirectory().trim() || undefined;
       const username = info.opencodeUsername?.trim() ?? "";
       const password = info.opencodePassword?.trim() ?? "";
       const auth = username && password ? { username, password } : undefined;
-      const nextClient = createClient(nextBaseUrl, directory, auth);
-      setBaseUrl(nextBaseUrl);
-      if (directory) {
-        setClientDirectory(directory);
+      const connected = await workspaceStore.connectToServer(
+        nextBaseUrl,
+        directory,
+        {
+          workspaceId: activeWorkspaceId || undefined,
+          workspaceType: "local",
+          targetRoot: directory,
+          reason,
+        },
+        auth,
+        { quiet: true, navigate: false, forceRefresh: true },
+      );
+      const nextClient = activeWorkspaceId ? routedClient(activeWorkspaceId) : routedClient();
+      if (!connected || !nextClient) {
+        recordSendTrace(`${reason}:engine-info-connect-failed`, {
+          activeWorkspaceId: activeWorkspaceId || null,
+          activeWorkspaceRoot: activeWorkspaceRoot || null,
+          hasClient: Boolean(nextClient),
+        });
+        return null;
       }
-      setClient(nextClient);
       setEngineReady(true);
       recordSendTrace(`${reason}:engine-info-client`, {
+        activeWorkspaceId: activeWorkspaceId || null,
+        activeWorkspaceRoot: activeWorkspaceRoot || null,
         hasDirectory: Boolean(directory),
         hasAuth: Boolean(auth),
       });
