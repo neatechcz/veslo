@@ -785,6 +785,7 @@ if (shouldBuildOrchestrator) {
     process.exit(1);
   }
   const orchestratorArgs = [
+    `--config=${resolve(orchestratorDir, "script", "bunfig.build.toml")}`,
     orchestratorBuildScript,
     "--outdir",
     sidecarDir,

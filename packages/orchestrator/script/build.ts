@@ -1,6 +1,9 @@
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
-import solidPlugin from "../node_modules/@opentui/solid/scripts/solid-plugin";
+import { pathToFileURL } from "node:url";
+import ts from "typescript";
+import type { BunPlugin } from "bun";
 
 const bunRuntime = (globalThis as typeof globalThis & {
   Bun?: {
@@ -15,6 +18,65 @@ if (!bunRuntime?.build || !bunRuntime.argv) {
 }
 
 const bun = bunRuntime as { build: (...args: any[]) => Promise<any>; argv: string[] };
+
+async function createSolidTransformPlugin(): Promise<BunPlugin> {
+  const require = createRequire(import.meta.url);
+  const solidPackageJson = realpathSync(require.resolve("@opentui/solid/package.json"));
+  const solidRequire = createRequire(solidPackageJson);
+  const babel = await import(pathToFileURL(solidRequire.resolve("@babel/core")).href);
+  const solidPresetModule = await import(pathToFileURL(solidRequire.resolve("babel-preset-solid")).href);
+  const solidPreset = solidPresetModule.default ?? solidPresetModule;
+
+  return {
+    name: "veslo-orchestrator-solid",
+    setup: (build) => {
+      build.onLoad({ filter: /\/node_modules\/solid-js\/dist\/server\.js$/ }, async (args) => {
+        const path = args.path.replace("server.js", "solid.js");
+        const file = Bun.file(path);
+        const code = await file.text();
+        return { contents: code, loader: "js" };
+      });
+      build.onLoad({ filter: /\/node_modules\/solid-js\/store\/dist\/server\.js$/ }, async (args) => {
+        const path = args.path.replace("server.js", "store.js");
+        const file = Bun.file(path);
+        const code = await file.text();
+        return { contents: code, loader: "js" };
+      });
+      build.onLoad({ filter: /\.(js|ts)x$/ }, async (args) => {
+        const file = Bun.file(args.path);
+        const source = await file.text();
+        // Avoid @babel/preset-typescript here. Bun on Windows cannot resolve
+        // that preset's pnpm-junctioned transitive deps from @opentui/solid.
+        const code = args.path.endsWith(".tsx")
+          ? ts.transpileModule(source, {
+            compilerOptions: {
+              jsx: ts.JsxEmit.Preserve,
+              module: ts.ModuleKind.ESNext,
+              target: ts.ScriptTarget.ES2022,
+            },
+            fileName: args.path,
+          }).outputText
+          : source;
+        const transformed = await babel.transformAsync(code, {
+          filename: args.path,
+          presets: [
+            [
+              solidPreset,
+              {
+                moduleName: "@opentui/solid",
+                generate: "universal",
+              },
+            ],
+          ],
+        });
+        return {
+          contents: transformed?.code ?? "",
+          loader: "js",
+        };
+      });
+    },
+  };
+}
 
 type BuildOptions = {
   targets: string[];
@@ -118,7 +180,7 @@ async function buildOnce(entrypoint: string, outdir: string, filename: string, t
   }
   const result = await bun.build({
     tsconfig: "./tsconfig.json",
-    plugins: [solidPlugin],
+    plugins: [await createSolidTransformPlugin()],
     entrypoints: [entrypoint],
     define,
     compile: compileOptions,
