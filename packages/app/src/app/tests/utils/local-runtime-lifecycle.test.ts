@@ -266,15 +266,16 @@ test("restartWorkspaceRuntime can reconnect quietly after orchestrator workspace
     "readEngineInfo",
     "setEngine:/tmp/orchestrated",
     "setEngineAuth:demo-user",
-    "connectQuiet:/tmp/orchestrated",
+    "connectToServer:ensure-engine",
   ]);
-  assert.deepEqual(harness.quietConnections, [
-    {
-      baseUrl: "http://127.0.0.1:6100",
-      directory: "/tmp/orchestrated",
-      auth: { username: "demo-user", password: "demo-pass" },
-    },
-  ]);
+  assert.deepEqual(harness.quietConnections, []);
+  assert.deepEqual(harness.serverConnections[0]?.context, {
+    workspaceId: "ws-orch",
+    workspaceType: "local",
+    targetRoot: "/tmp/orchestrated",
+    reason: "ensure-engine",
+  });
+  assert.deepEqual(harness.serverConnections[0]?.connectOptions, { quiet: true, navigate: false });
 });
 
 test("reattachOrchestratorWorkspace reuses the shared engine snapshot flow without a stop/start cycle", async () => {

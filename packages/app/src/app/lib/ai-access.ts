@@ -142,6 +142,33 @@ function hasManagedGatewayHeaders(value: unknown): boolean {
   return Boolean(gatewayToken && sessionTemplate);
 }
 
+function hasUsableServerClientCredential(
+  providerId: string,
+  providerConfig: Record<string, unknown>,
+  serverClientToken?: string | null,
+): boolean {
+  const expectedToken = serverClientToken?.trim() ?? "";
+  if (!expectedToken) return false;
+
+  const options = readConfigObject(providerConfig.options);
+  const isOpenAiCompatibleGatewayProvider = providerId === "codex_oauth" || providerId === "openai_compatible";
+  if (isOpenAiCompatibleGatewayProvider) {
+    const apiKey = typeof options.apiKey === "string" ? options.apiKey.trim() : "";
+    return apiKey === expectedToken || apiKey === REDACTED_SECRET_VALUE;
+  }
+
+  const models = readConfigObject(providerConfig.models);
+  return Object.values(models).some((model) => {
+    const headers = readConfigObject(readConfigObject(model).headers);
+    const authorization = typeof headers.Authorization === "string"
+      ? headers.Authorization.trim()
+      : typeof headers.authorization === "string"
+        ? headers.authorization.trim()
+        : "";
+    return authorization === `Bearer ${expectedToken}` || authorization === REDACTED_SECRET_VALUE;
+  });
+}
+
 function hasManagedGatewayProviderRouting(
   providerId: string,
   providerConfig: Record<string, unknown>,
@@ -163,7 +190,7 @@ function hasManagedGatewayProviderRouting(
   return Object.values(models).some((model) => hasManagedGatewayHeaders(readConfigObject(model).headers));
 }
 
-function hasManagedAiGatewayRoutingConfig(
+export function hasManagedAiGatewayRoutingConfig(
   content: string | null | undefined,
   providerId?: string | null,
   gatewayBaseUrl?: string | null,
@@ -181,6 +208,26 @@ function hasManagedAiGatewayRoutingConfig(
       return false;
     }
     return hasManagedGatewayProviderRouting(normalizedId, readConfigObject(rawConfig), gatewayBaseUrl);
+  });
+}
+
+export function hasUsableManagedAiRuntimeConfig(input: {
+  content: string | null | undefined;
+  providerId?: string | null;
+  gatewayBaseUrl?: string | null;
+  serverClientToken?: string | null;
+}): boolean {
+  const parsed = parseConfigObject(input.content);
+  const providers = readConfigObject(parsed.provider);
+  const targetProviderId = input.providerId?.trim().toLowerCase() ?? "";
+
+  return Object.entries(providers).some(([candidateId, rawConfig]) => {
+    const normalizedId = candidateId.trim().toLowerCase();
+    const providerConfig = readConfigObject(rawConfig);
+    if (!isGatewayOwnedProvider(normalizedId)) return false;
+    if (targetProviderId && normalizedId !== targetProviderId) return false;
+    if (!hasManagedGatewayProviderRouting(normalizedId, providerConfig, input.gatewayBaseUrl)) return false;
+    return hasUsableServerClientCredential(normalizedId, providerConfig, input.serverClientToken);
   });
 }
 

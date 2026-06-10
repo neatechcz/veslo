@@ -147,10 +147,6 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
 
     if (!baseUrl) return true;
 
-    if ((options.connectMode ?? "server") === "quiet") {
-      return await deps.connectQuiet(baseUrl, options.workspacePath, auth ?? undefined);
-    }
-
     return await deps.connectToServer(
       baseUrl,
       options.workspacePath,
@@ -161,7 +157,9 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
         reason: options.reason,
       },
       auth,
-      buildConnectOptions(options),
+      (options.connectMode ?? "server") === "quiet"
+        ? { quiet: true, navigate: false }
+        : buildConnectOptions(options),
     );
   };
 

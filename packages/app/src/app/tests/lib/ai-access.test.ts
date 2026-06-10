@@ -7,6 +7,7 @@ import {
   DEFAULT_MANAGED_AI_GATEWAY_BASE_URL,
   extractManagedApiKey,
   formatManagedAiAccessConfig,
+  hasUsableManagedAiRuntimeConfig,
   type ManagedAiAccessProfile,
   resolveManagedAiAccess,
   resolveManagedAiAccessBundleState,
@@ -756,6 +757,72 @@ test("shouldPreserveManagedAiConfig keeps an existing managed config when the se
       gatewayAccessToken: "gateway-access-token",
       accessBusy: false,
       accessError: null,
+    }),
+    true,
+  );
+});
+
+test("hasUsableManagedAiRuntimeConfig accepts current managed codex routing", () => {
+  const content = formatManagedAiAccessConfig("{}", {
+    profile: managedCodexProfile,
+    serverBaseUrl: "http://127.0.0.1:8787",
+    engineBaseUrl: "http://172.29.64.1:8787",
+    serverClientToken: "veslo-client-token",
+    gatewayAccessToken: "gateway-access-token",
+  });
+
+  assert.equal(
+    hasUsableManagedAiRuntimeConfig({
+      content,
+      providerId: "codex_oauth",
+      gatewayBaseUrl: "http://172.29.64.1:8787",
+      serverClientToken: "veslo-client-token",
+    }),
+    true,
+  );
+});
+
+test("hasUsableManagedAiRuntimeConfig rejects stale managed base URLs", () => {
+  const content = formatManagedAiAccessConfig("{}", {
+    profile: managedCodexProfile,
+    serverBaseUrl: "http://127.0.0.1:8787",
+    engineBaseUrl: "http://172.29.64.1:8787",
+    serverClientToken: "veslo-client-token",
+    gatewayAccessToken: "gateway-access-token",
+  });
+
+  assert.equal(
+    hasUsableManagedAiRuntimeConfig({
+      content,
+      providerId: "codex_oauth",
+      gatewayBaseUrl: "http://172.29.64.2:8787",
+      serverClientToken: "veslo-client-token",
+    }),
+    false,
+  );
+});
+
+test("hasUsableManagedAiRuntimeConfig treats server-redacted apiKey as usable when routing and gateway token match", () => {
+  const content = formatManagedAiAccessConfig("{}", {
+    profile: managedCodexProfile,
+    serverBaseUrl: "http://127.0.0.1:8787",
+    engineBaseUrl: "http://172.29.64.1:8787",
+    serverClientToken: "veslo-client-token",
+    gatewayAccessToken: "gateway-access-token",
+  });
+  const parsed = JSON.parse(content) as {
+    provider?: { codex_oauth?: { options?: { apiKey?: string } } };
+  };
+  if (parsed.provider?.codex_oauth?.options) {
+    parsed.provider.codex_oauth.options.apiKey = "[REDACTED]";
+  }
+
+  assert.equal(
+    hasUsableManagedAiRuntimeConfig({
+      content: JSON.stringify(parsed),
+      providerId: "codex_oauth",
+      gatewayBaseUrl: "http://172.29.64.1:8787",
+      serverClientToken: "veslo-client-token",
     }),
     true,
   );

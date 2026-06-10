@@ -108,3 +108,52 @@ test("managed AI config patching does not auto-dispose the engine before Send", 
     "managed AI config apply helper must not call reloadWorkspaceEngine",
   );
 });
+
+test("managed AI bootstrap can use a validated current runtime config while access refresh is busy", () => {
+  const start = source.indexOf("const ensureManagedAiBootstrapReady = async");
+  const end = source.indexOf("const localRuntimeHealthTimeoutMessage", start);
+  assert.ok(start >= 0 && end > start, "ensureManagedAiBootstrapReady source should be present");
+  const ensureSource = source.slice(start, end);
+
+  assert.match(
+    ensureSource,
+    /const canUseCurrentManagedConfig =[\s\S]*managedAiAccessBusy\(\)[\s\S]*hasUsableManagedAiRuntimeConfigForSend\(\)/,
+    "managed bootstrap should validate current runtime config before bypassing a busy access refresh",
+  );
+  assert.match(
+    ensureSource,
+    /hasManagedProfile:\s*\(Boolean\(managedAiAccess\(\)\) \|\| managedAiBootstrapBusy\(\)\) && !canUseCurrentManagedConfig/,
+    "managed bootstrap should only skip waiting when the current runtime config is usable",
+  );
+});
+
+test("managed AI access cache has a bounded TTL and hydrates before background refresh", () => {
+  assert.match(
+    source,
+    /const MANAGED_AI_ACCESS_CACHE_TTL_MS = 30 \* 60 \* 1000;/,
+    "managed AI access cache should have a bounded lifetime",
+  );
+  assert.match(
+    source,
+    /const cachedAccess = readManagedAiAccessCache\(managedAiCacheKey\);[\s\S]*setManagedAiAccess\(cachedAccess\.profile\);[\s\S]*setManagedAiGatewayAccessToken\(cachedAccess\.gatewayAccessToken\);[\s\S]*setManagedAiAccessBusy\(true\);/,
+    "managed AI access cache should hydrate usable state before the refresh request marks access busy",
+  );
+});
+
+test("managed AI access refresh uses single-flight per cache key", () => {
+  assert.match(
+    source,
+    /let managedAiAccessRefreshInFlight:/,
+    "managed AI refresh should keep an in-flight request slot",
+  );
+  assert.match(
+    source,
+    /managedAiAccessRefreshInFlight\?\.cacheKey === cacheKey[\s\S]*return managedAiAccessRefreshInFlight\.promise;/,
+    "managed AI refresh should reuse the in-flight promise for the same cache key",
+  );
+  assert.match(
+    source,
+    /const loadManagedAiAccess = loadManagedAiAccessSingleFlight\(\s*managedAiCacheKey,/,
+    "managed AI refresh effect should run through the single-flight helper",
+  );
+});

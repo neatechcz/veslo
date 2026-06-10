@@ -1333,6 +1333,14 @@ async function proxyAiGatewayRequest(input: {
   requireSessionId?: boolean;
   preserveAiAccessToken?: boolean;
 }) {
+  const startedAt = perfMs();
+  let headersPreparedAt = startedAt;
+  let modelDiagnosticStartedAt: number | undefined;
+  let modelDiagnosticFinishedAt: number | undefined;
+  let upstreamFetchStartedAt: number | undefined;
+  let upstreamHeadersReceivedAt: number | undefined;
+  let upstreamBodyDoneAt: number | undefined;
+  let redactionDoneAt: number | undefined;
   const baseUrl = resolveAiGatewayBaseUrl();
   const target = new URL(baseUrl);
   target.pathname = input.gatewayPath.startsWith("/") ? input.gatewayPath : `/${input.gatewayPath}`;
@@ -1345,7 +1353,16 @@ async function proxyAiGatewayRequest(input: {
   const authorization =
     input.auth === "caller" ? requireAiGatewayCallerAuth(input.request) : requireAiGatewayAccessToken(input.request);
   const sessionId = input.requireSessionId ? requireAiGatewaySessionId(input.request) : undefined;
-  const model = await readAiGatewayRequestModel(input.request);
+  let model: string | undefined;
+  modelDiagnosticStartedAt = perfMs();
+  const modelDiagnosticPromise = readAiGatewayRequestModel(input.request)
+    .then((value) => {
+      model = value;
+      return value;
+    })
+    .finally(() => {
+      modelDiagnosticFinishedAt = perfMs();
+    });
 
   headers.set("Authorization", authorization);
   if (input.requireSessionId) {
@@ -1363,19 +1380,65 @@ async function proxyAiGatewayRequest(input: {
 
   const method = input.request.method.toUpperCase();
   const body = method === "GET" || method === "HEAD" ? undefined : input.request.body;
+  headersPreparedAt = perfMs();
+
+  const logTiming = (status: number, outcome: "ok" | "error", extra: Record<string, unknown> = {}) => {
+    const finishedAt = perfMs();
+    const attributes = {
+      requestId,
+      method,
+      gatewayPath: input.gatewayPath,
+      provider: resolveAiGatewayProvider(input.gatewayPath) ?? null,
+      sessionId: sessionId ?? null,
+      status,
+      outcome,
+      totalMs: roundTraceMs(finishedAt - startedAt),
+      localPreflightMs: roundTraceMs((upstreamFetchStartedAt ?? headersPreparedAt) - startedAt),
+      modelDiagnosticMs:
+        modelDiagnosticStartedAt !== undefined && modelDiagnosticFinishedAt !== undefined
+          ? roundTraceMs(modelDiagnosticFinishedAt - modelDiagnosticStartedAt)
+          : undefined,
+      upstreamHeadersMs:
+        upstreamFetchStartedAt !== undefined && upstreamHeadersReceivedAt !== undefined
+          ? roundTraceMs(upstreamHeadersReceivedAt - upstreamFetchStartedAt)
+          : undefined,
+      upstreamBodyMs:
+        upstreamHeadersReceivedAt !== undefined && upstreamBodyDoneAt !== undefined
+          ? roundTraceMs(upstreamBodyDoneAt - upstreamHeadersReceivedAt)
+          : undefined,
+      redactionMs:
+        upstreamHeadersReceivedAt !== undefined && redactionDoneAt !== undefined
+          ? roundTraceMs(redactionDoneAt - upstreamHeadersReceivedAt)
+          : undefined,
+      targetOrigin: target.origin,
+      targetPath: target.pathname,
+      ...extra,
+    };
+    try {
+      console.log(`[veslo:ai-gateway] proxy ${JSON.stringify(attributes)}`);
+    } catch {
+      console.log("[veslo:ai-gateway] proxy");
+    }
+  };
 
   let response: Response;
   try {
+    upstreamFetchStartedAt = perfMs();
     response = await fetch(target.toString(), {
       method,
       headers,
       body,
     });
+    upstreamHeadersReceivedAt = perfMs();
   } catch (error) {
+    const diagnosticModel = model ?? await modelDiagnosticPromise;
+    logTiming(503, "error", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw new ApiError(503, "ai_gateway_unreachable", "AI gateway is not reachable on this host", {
       requestId,
       provider: resolveAiGatewayProvider(input.gatewayPath),
-      model,
+      model: diagnosticModel,
       sessionId,
       baseUrl,
       targetUrl: target.toString(),
@@ -1386,12 +1449,19 @@ async function proxyAiGatewayRequest(input: {
   const contentType = response.headers.get("content-type") ?? "";
   if (!response.ok) {
     const diagnostic = await readTextPreview(response.body, AI_GATEWAY_ERROR_DIAGNOSTIC_MAX_RESPONSE_BYTES);
+    upstreamBodyDoneAt = perfMs();
+    const diagnosticModel = model ?? await modelDiagnosticPromise;
+    logTiming(response.status, "error", {
+      upstreamStatus: response.status,
+      upstreamContentType: contentType || undefined,
+      upstreamResponseTruncated: diagnostic.truncated || undefined,
+    });
     throw new ApiError(502, "ai_gateway_upstream_failed", "AI gateway upstream request failed", buildAiGatewayFailureDetails({
       requestId,
       request: input.request,
       gatewayPath: input.gatewayPath,
       sessionId,
-      model,
+      model: diagnosticModel,
       response,
       responseText: diagnostic.text,
       responseTextTruncated: diagnostic.truncated,
@@ -1400,6 +1470,10 @@ async function proxyAiGatewayRequest(input: {
   }
 
   if (!contentType.toLowerCase().includes("application/json") || !input.preserveAiAccessToken) {
+    logTiming(response.status, "ok", {
+      streaming: true,
+      upstreamContentType: contentType || undefined,
+    });
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
@@ -1408,18 +1482,30 @@ async function proxyAiGatewayRequest(input: {
   }
 
   const text = await readResponseTextWithLimit(response, AI_GATEWAY_JSON_REDACTION_MAX_RESPONSE_BYTES);
+  upstreamBodyDoneAt = perfMs();
   let json: unknown = null;
   try {
     json = text ? JSON.parse(text) : null;
   } catch {
+    logTiming(response.status, "ok", {
+      streaming: false,
+      upstreamContentType: contentType || undefined,
+      jsonParse: "failed",
+    });
     return new Response(text, {
       status: response.status,
       headers: contentType ? { "Content-Type": contentType } : undefined,
     });
   }
 
+  const redacted = input.preserveAiAccessToken ? redactAiAccessBundleForClient(json) : redactSensitiveConfig(json);
+  redactionDoneAt = perfMs();
+  logTiming(response.status, "ok", {
+    streaming: false,
+    upstreamContentType: contentType || undefined,
+  });
   return jsonResponse(
-    input.preserveAiAccessToken ? redactAiAccessBundleForClient(json) : redactSensitiveConfig(json),
+    redacted,
     response.status,
   );
 }
