@@ -2400,12 +2400,6 @@ export default function App() {
     if (!workspaceId || !directory) return null;
     return { sessionId, workspaceId, directory };
   });
-  const currentLatestRunArtifactResponse = createMemo(() => {
-    const response = latestRunArtifactResponse();
-    const key = latestRunArtifactRefreshKey();
-    if (!response || !key || latestRunArtifactResponseKey() !== key) return undefined;
-    return response;
-  });
   const latestRunArtifactRefreshKey = createMemo(() => {
     const client = vesloServerClient();
     const scope = latestRunArtifactScope();
@@ -2429,6 +2423,12 @@ export default function App() {
       lastUserMessageId,
       String(partCount),
     ].join(":");
+  });
+  const currentLatestRunArtifactResponse = createMemo(() => {
+    const response = latestRunArtifactResponse();
+    const key = latestRunArtifactRefreshKey();
+    if (!response || !key || latestRunArtifactResponseKey() !== key) return undefined;
+    return response;
   });
   createEffect(() => {
     const key = latestRunArtifactRefreshKey();

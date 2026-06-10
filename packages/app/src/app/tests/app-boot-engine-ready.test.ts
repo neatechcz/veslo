@@ -7,6 +7,11 @@ const globalSyncSource = readFileSync(
   new URL("../context/global-sync.tsx", import.meta.url),
   "utf8",
 );
+const serverSource = readFileSync(new URL("../context/server.tsx", import.meta.url), "utf8");
+const workspaceServerSyncSource = readFileSync(
+  new URL("../context/workspace-server-sync.tsx", import.meta.url),
+  "utf8",
+);
 
 // Send-timeout fix 2026-06-10 — on cold/lazy boot no engine is running yet.
 // Every engine-proxy read issued in that window used to trigger a 30-60s
@@ -26,5 +31,23 @@ test("global sync refresh waits for a healthy server before bursting engine-prox
     globalSyncSource,
     /createEffect\(\(\) => \{[\s\S]{0,200}globalSDK\.url\(\);[\s\S]{0,800}server\.healthy\(\) === true[\s\S]{0,200}void refresh\(\);[\s\S]{0,100}\}\);/s,
     "the refresh effect must gate on server.healthy() — it also re-fires the burst once the engine becomes reachable",
+  );
+});
+
+test("cold Tauri boot does not trust a persisted OpenCode proxy URL for health polling", () => {
+  assert.match(
+    serverSource,
+    /const \[activeHealthTrusted, setActiveHealthTrusted\] = createSignal\(false\);/,
+    "persisted server URLs must start untrusted so cold boot cannot poll a stale orchestrator proxy",
+  );
+  assert.match(
+    serverSource,
+    /isTauriRuntime\(\) && !trusted && isOpencodeProxyUrl\(url\)/,
+    "Tauri must skip OpenCode health probes for untrusted persisted proxy URLs",
+  );
+  assert.match(
+    workspaceServerSyncSource,
+    /server\.setActive\(nextUrl, \{ trusted: true \}\);/,
+    "WorkspaceServerSync must mark URLs returned by engineInfo as trusted so health checks resume for a real engine",
   );
 });

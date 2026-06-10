@@ -47,7 +47,7 @@ export function WorkspaceServerSync(props: {
         const nextUrl = info.baseUrl?.trim();
         if (!nextUrl) return;
         if (nextUrl === server.url) return;
-        server.setActive(nextUrl);
+        server.setActive(nextUrl, { trusted: true });
         void props.workspaceStore.refreshActiveClient(nextUrl);
       })
       .catch(() => {
