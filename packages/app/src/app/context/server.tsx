@@ -17,12 +17,21 @@ export function serverDisplayName(url: string) {
   return url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
 }
 
+export function isOpencodeProxyUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    return /\/opencode(?:\/|$)/.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
+
 type ServerContextValue = {
   url: string;
   name: string;
   list: string[];
   healthy: () => boolean | undefined;
-  setActive: (url: string) => void;
+  setActive: (url: string, options?: { trusted?: boolean }) => void;
   add: (url: string) => void;
   remove: (url: string) => void;
 };
@@ -32,6 +41,7 @@ const ServerContext = createContext<ServerContextValue | undefined>(undefined);
 export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
   const [list, setList] = createSignal<string[]>([]);
   const [active, setActiveRaw] = createSignal("");
+  const [activeHealthTrusted, setActiveHealthTrusted] = createSignal(false);
   const [healthy, setHealthy] = createSignal<boolean | undefined>(undefined);
   const [ready, setReady] = createSignal(false);
 
@@ -71,6 +81,7 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
     if (forceProxy && fallback) {
       setList([fallback]);
       setActiveRaw(fallback);
+      setActiveHealthTrusted(true);
       setReady(true);
       return;
     }
@@ -83,6 +94,7 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
 
     setList(initialList);
     setActiveRaw(initialActive);
+    setActiveHealthTrusted(!isTauriRuntime() || !isOpencodeProxyUrl(initialActive));
     setReady(true);
   });
 
@@ -108,8 +120,11 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
     }
   };
 
-  const checkHealth = async (url: string) => {
+  const checkHealth = async (url: string, trusted: boolean) => {
     if (!url) return false;
+    if (isTauriRuntime() && !trusted && isOpencodeProxyUrl(url)) {
+      return false;
+    }
     const token = readVesloToken();
     const headers = token && url.includes("/opencode") ? { Authorization: `Bearer ${token}` } : undefined;
     const client = createOpencodeClient({
@@ -126,6 +141,7 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
 
   createEffect(() => {
     const url = activeUrl();
+    const trusted = activeHealthTrusted();
     if (!url) return;
 
     setHealthy(undefined);
@@ -136,7 +152,7 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
     const run = () => {
       if (busy) return;
       busy = true;
-      void checkHealth(url)
+      void checkHealth(url, trusted)
         .then((next) => {
           if (!activeRun) return;
           setHealthy(next);
@@ -155,10 +171,11 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
     });
   });
 
-  const setActive = (input: string) => {
+  const setActive = (input: string, options?: { trusted?: boolean }) => {
     const next = normalizeServerUrl(input);
     if (!next) return;
     setActiveRaw(next);
+    setActiveHealthTrusted(options?.trusted === true || !isOpencodeProxyUrl(next));
   };
 
   const add = (input: string) => {
@@ -170,6 +187,7 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
       return [...current, next];
     });
     setActiveRaw(next);
+    setActiveHealthTrusted(true);
   };
 
   const remove = (input: string) => {
@@ -182,6 +200,7 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
       const remaining = list().filter((item) => item !== next);
       return remaining[0] ?? "";
     });
+    setActiveHealthTrusted(true);
   };
 
   const value: ServerContextValue = {
