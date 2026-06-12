@@ -260,7 +260,7 @@
     "semantic_hash": "d9b38f3bd08b8269d416a170c7fde143"
   },
   "packages/app/src/app/app-managed-ai-bootstrap-gate.test.ts": {
-    "mtime": 1780867434.7690258,
+    "mtime": 1780992433.1087024,
     "ast_hash": "8ffc86861ae95ba936a48ce7daee2aad",
     "semantic_hash": ""
   },
@@ -270,8 +270,8 @@
     "semantic_hash": "38f394330a888d494af766440a09d793"
   },
   "packages/app/src/app/app-send-prompt-session-creation.test.ts": {
-    "mtime": 1780864674.8242733,
-    "ast_hash": "4e921462e834cf8ef729d524ca828914",
+    "mtime": 1781121054.170069,
+    "ast_hash": "4fba76900f89b89adc6640960b85b3c8",
     "semantic_hash": ""
   },
   "packages/app/src/app/app-session-archives.test.ts": {
@@ -315,8 +315,8 @@
     "semantic_hash": "f9d6940de3591a92d0b2d5316ccfa031"
   },
   "packages/app/src/app/app.tsx": {
-    "mtime": 1780870990.8035493,
-    "ast_hash": "704424c62fb87fd331b5b92c7f9ef4d1",
+    "mtime": 1781121020.681262,
+    "ast_hash": "a0ff21c90da30efc7274ccb0b8708924",
     "semantic_hash": ""
   },
   "packages/app/src/app/components/add-mcp-modal.tsx": {
@@ -840,14 +840,14 @@
     "semantic_hash": "4107761e61b833f35b92a972f00df690"
   },
   "packages/app/src/app/components/session/workspace-session-list-interactions.test.ts": {
-    "mtime": 1780596566.7002406,
-    "ast_hash": "1d90ccb77dd14f43994acfd3734b3bdf",
-    "semantic_hash": "1d90ccb77dd14f43994acfd3734b3bdf"
+    "mtime": 1781064029.3259892,
+    "ast_hash": "900d21c19cb14b22d6475923633f8595",
+    "semantic_hash": ""
   },
   "packages/app/src/app/components/session/workspace-session-list-layout.test.ts": {
-    "mtime": 1780776097.5979416,
-    "ast_hash": "2cf593ee5c36d8e9a6034a251c5af927",
-    "semantic_hash": "2cf593ee5c36d8e9a6034a251c5af927"
+    "mtime": 1781072736.150201,
+    "ast_hash": "604f17c9a4fa2dc55020ee825173d89b",
+    "semantic_hash": ""
   },
   "packages/app/src/app/components/session/workspace-session-list-localization.test.ts": {
     "mtime": 1779635196.0939147,
@@ -880,13 +880,13 @@
     "semantic_hash": "026e62e51e3b90e4129b9e9699c6081c"
   },
   "packages/app/src/app/components/session/workspace-session-list-prefetch-interest.test.ts": {
-    "mtime": 1780853722.7664874,
-    "ast_hash": "b0e087902040c00cf4e9059c8270c61f",
+    "mtime": 1781064029.3275769,
+    "ast_hash": "f1a109e880fb1e88d9c87f992c083b8d",
     "semantic_hash": ""
   },
   "packages/app/src/app/components/session/workspace-session-list-prefetch-interest.ts": {
-    "mtime": 1780853722.7668858,
-    "ast_hash": "a928bb9b4f86f06cc277973e6757121f",
+    "mtime": 1781064029.3279178,
+    "ast_hash": "5b382a8da97b9effc7d5dae909d635d9",
     "semantic_hash": ""
   },
   "packages/app/src/app/components/session/workspace-session-list-prefetch.test.ts": {
@@ -940,8 +940,8 @@
     "semantic_hash": "7d4d2972fedad726af155b5b49d4141e"
   },
   "packages/app/src/app/components/session/workspace-session-list.tsx": {
-    "mtime": 1780853959.8860152,
-    "ast_hash": "9325792365289769d2a1910e45197cdf",
+    "mtime": 1781092415.9555197,
+    "ast_hash": "3d291a31c4c4433505134170800fb4d6",
     "semantic_hash": ""
   },
   "packages/app/src/app/components/share-workspace-modal.tsx": {
@@ -1155,8 +1155,8 @@
     "semantic_hash": "9867db5d8575e7072e91110d157b4e18"
   },
   "packages/app/src/app/context/session-select-background-hydration.test.ts": {
-    "mtime": 1780868816.0311382,
-    "ast_hash": "bf869604e1aed8e2a86a3e015e0c2f45",
+    "mtime": 1781086698.315272,
+    "ast_hash": "7b75edab7c900639c17e139483f7d3af",
     "semantic_hash": ""
   },
   "packages/app/src/app/context/session-switch-metrics.test.ts": {
@@ -1175,8 +1175,8 @@
     "semantic_hash": "457650f24e1cc2006eb1a6ee9b2a23e5"
   },
   "packages/app/src/app/context/session.ts": {
-    "mtime": 1780868724.7839699,
-    "ast_hash": "267c0f4a4638e40188ac4effe3ad1440",
+    "mtime": 1781086716.1659076,
+    "ast_hash": "0a4bee7d7b4109ef58cef93609b5f652",
     "semantic_hash": ""
   },
   "packages/app/src/app/context/sync.tsx": {
@@ -1210,8 +1210,8 @@
     "semantic_hash": "9b10ce2fb9e7e67bf99c8fcbd41988bb"
   },
   "packages/app/src/app/context/workspace-activate-order-sync.test.ts": {
-    "mtime": 1780870913.2870798,
-    "ast_hash": "8a0799a48bda6acc49262ffcf326ec69",
+    "mtime": 1781064892.4464097,
+    "ast_hash": "1549e118942a15df94d31aa5188697f4",
     "semantic_hash": ""
   },
   "packages/app/src/app/context/workspace-forget-mode.test.ts": {
@@ -1225,8 +1225,8 @@
     "semantic_hash": ""
   },
   "packages/app/src/app/context/workspace.ts": {
-    "mtime": 1780870908.013632,
-    "ast_hash": "a76e7270bd4e4be9d0246bd536fa6f25",
+    "mtime": 1781109809.5039403,
+    "ast_hash": "b16b865385a88cb5a22da2b811315fe3",
     "semantic_hash": ""
   },
   "packages/app/src/app/data/skill-creator-contract.test.ts": {
@@ -1495,14 +1495,14 @@
     "semantic_hash": ""
   },
   "packages/app/src/app/lib/pending-session-drafts.test.ts": {
-    "mtime": 1777281604.5954607,
-    "ast_hash": "0274aa9da2ee20d8f8cae1ded837002d",
-    "semantic_hash": "0274aa9da2ee20d8f8cae1ded837002d"
+    "mtime": 1781076139.061847,
+    "ast_hash": "76847f6d8e2906503dc2e21c4b7f72ea",
+    "semantic_hash": ""
   },
   "packages/app/src/app/lib/pending-session-drafts.ts": {
-    "mtime": 1777281604.5955665,
-    "ast_hash": "e2aa1f1ae149bb1686b10f3f5b643ed2",
-    "semantic_hash": "e2aa1f1ae149bb1686b10f3f5b643ed2"
+    "mtime": 1781076163.9757373,
+    "ast_hash": "320723610cc4e75e37e670132ab88342",
+    "semantic_hash": ""
   },
   "packages/app/src/app/lib/perf-log.ts": {
     "mtime": 1777281604.5957627,
@@ -1810,8 +1810,8 @@
     "semantic_hash": "f359a690258eeb1021a2497bb4bb77af"
   },
   "packages/app/src/app/pages/dashboard.tsx": {
-    "mtime": 1780853959.886695,
-    "ast_hash": "22edd1c3800c9715083a0288b9470d08",
+    "mtime": 1781082984.7345116,
+    "ast_hash": "9a2956bef5c68603d615ba1940fc6b98",
     "semantic_hash": ""
   },
   "packages/app/src/app/pages/extensions.tsx": {
@@ -1895,8 +1895,8 @@
     "semantic_hash": "ab0da347d3ada9b8e32dcd87fc88d1f5"
   },
   "packages/app/src/app/pages/session-inline-loading.test.ts": {
-    "mtime": 1780844414.2664177,
-    "ast_hash": "a524e8d09d36a32658aefcd2abaf90ba",
+    "mtime": 1781099134.7585492,
+    "ast_hash": "19e90498d046cd218cb48618e159d254",
     "semantic_hash": ""
   },
   "packages/app/src/app/pages/session-layout-width.test.ts": {
@@ -1910,23 +1910,23 @@
     "semantic_hash": "564dd1963aa029dbc02d2791a3ce2389"
   },
   "packages/app/src/app/pages/session-message-queue.test.ts": {
-    "mtime": 1780596566.7079396,
-    "ast_hash": "e65730108bcf42be117b947ecb25e97a",
-    "semantic_hash": "e65730108bcf42be117b947ecb25e97a"
+    "mtime": 1781100209.9338558,
+    "ast_hash": "63e0d39dc1a19004de85a7edc873eab8",
+    "semantic_hash": ""
   },
   "packages/app/src/app/pages/session-message-replacement.test.ts": {
-    "mtime": 1780853722.7802308,
-    "ast_hash": "d56e824ba349c4234427f519c51762ec",
+    "mtime": 1781064029.4007037,
+    "ast_hash": "b6b7e844b99feec59f3084441065e269",
     "semantic_hash": ""
   },
   "packages/app/src/app/pages/session-navigation.test.ts": {
-    "mtime": 1780853722.7807884,
-    "ast_hash": "2ae2f3c8f39bdf27746e690d7ce03a4b",
+    "mtime": 1781098833.0448568,
+    "ast_hash": "4ff90784a29a59a728e917d417489f88",
     "semantic_hash": ""
   },
   "packages/app/src/app/pages/session-navigation.ts": {
-    "mtime": 1780853722.781219,
-    "ast_hash": "61c9638d19dd99045b06c346d0a5c1fa",
+    "mtime": 1781064029.3300924,
+    "ast_hash": "ce11d204ea2b50790c99d0ee68910b1a",
     "semantic_hash": ""
   },
   "packages/app/src/app/pages/session-permission-path-layout.test.ts": {
@@ -1935,9 +1935,9 @@
     "semantic_hash": "5ee3bba3c033a53ed8bf0acf850f49a0"
   },
   "packages/app/src/app/pages/session-scroll-behavior.test.ts": {
-    "mtime": 1780596566.7099767,
-    "ast_hash": "58bd92e702a4803631bb2aa154490a70",
-    "semantic_hash": "58bd92e702a4803631bb2aa154490a70"
+    "mtime": 1781081468.5645864,
+    "ast_hash": "e259569838b4c28c332302365440797e",
+    "semantic_hash": ""
   },
   "packages/app/src/app/pages/session-shortcuts.test.ts": {
     "mtime": 1780776097.6130066,
@@ -1980,8 +1980,8 @@
     "semantic_hash": "a43d35f444eb2559f88be0be13dbf43f"
   },
   "packages/app/src/app/pages/session.tsx": {
-    "mtime": 1780870990.8005111,
-    "ast_hash": "7995d74cba52face85e6a00f0ce8d6a5",
+    "mtime": 1781100136.3942397,
+    "ast_hash": "32ea049997fe9a0b8918ce02659e6e25",
     "semantic_hash": ""
   },
   "packages/app/src/app/pages/settings-admin-ai-access.test.ts": {
@@ -2065,8 +2065,8 @@
     "semantic_hash": ""
   },
   "packages/app/src/app/pending-session-send-flow.test.ts": {
-    "mtime": 1780868676.3694558,
-    "ast_hash": "3ce5f6b1e8f9f60f958dba62f939b18a",
+    "mtime": 1781100714.7272031,
+    "ast_hash": "41367868ff2e21426837f733279fcde9",
     "semantic_hash": ""
   },
   "packages/app/src/app/reload-banner-i18n.test.ts": {
@@ -2080,9 +2080,9 @@
     "semantic_hash": "78cf3d45a04597d9a1a35e92305c1354"
   },
   "packages/app/src/app/session-route-client-resume.test.ts": {
-    "mtime": 1777281604.6082036,
-    "ast_hash": "a25364a1e98b936c173c7ffa4b876da0",
-    "semantic_hash": "a25364a1e98b936c173c7ffa4b876da0"
+    "mtime": 1781097580.0368855,
+    "ast_hash": "08c0345b40e5281c6fb9ba4a13177a2a",
+    "semantic_hash": ""
   },
   "packages/app/src/app/sidebar-session-sync-loop.test.ts": {
     "mtime": 1777281604.6083186,
@@ -2155,8 +2155,8 @@
     "semantic_hash": "5ecc3e23de9857f0a322c70bd6478a00"
   },
   "packages/app/src/app/types.ts": {
-    "mtime": 1780853722.7841995,
-    "ast_hash": "754feef5ab2fe24073e78b30069c6a71",
+    "mtime": 1781064029.311009,
+    "ast_hash": "a4a0c4f6d92de32a65ffb621c00c36b0",
     "semantic_hash": ""
   },
   "packages/app/src/app/updater-install-preflight.test.ts": {
@@ -2195,13 +2195,13 @@
     "semantic_hash": ""
   },
   "packages/app/src/app/utils/local-runtime-lifecycle.test.ts": {
-    "mtime": 1780816462.2996078,
-    "ast_hash": "8424956f90b828389846c10ff529a3c6",
+    "mtime": 1781101711.9233274,
+    "ast_hash": "6dbd2d7660bd2f82f7bd0831f229b123",
     "semantic_hash": ""
   },
   "packages/app/src/app/utils/local-runtime-lifecycle.ts": {
-    "mtime": 1780853722.785003,
-    "ast_hash": "fcce81785564fcd97dc551ed42e5f224",
+    "mtime": 1781101727.4997911,
+    "ast_hash": "16a7f76777aa15331f1a080b015069b6",
     "semantic_hash": ""
   },
   "packages/app/src/app/utils/messages-grouping.test.ts": {
@@ -2320,9 +2320,9 @@
     "semantic_hash": "8acd7d13018f4fc8df40d0f60a39d674"
   },
   "packages/app/src/app/utils/temp-folder-isolation.test.ts": {
-    "mtime": 1777281604.6139417,
-    "ast_hash": "eae9f69ea949a94d35aecf75c80664af",
-    "semantic_hash": "eae9f69ea949a94d35aecf75c80664af"
+    "mtime": 1781099159.7994041,
+    "ast_hash": "5b2ad10f13afdb2c24ab2df2b298dc76",
+    "semantic_hash": ""
   },
   "packages/app/src/app/utils/tools.test.ts": {
     "mtime": 1780304781.849682,
@@ -2595,8 +2595,8 @@
     "semantic_hash": "906afc538d32ecd6d11475ad13076e17"
   },
   "packages/desktop/src-tauri/src/commands/workspace.rs": {
-    "mtime": 1780860043.7771766,
-    "ast_hash": "fe9534fdd60c59e3b2c592acc1d45be1",
+    "mtime": 1781073322.5001707,
+    "ast_hash": "2deb58899354a806b53ce5a59611d1fa",
     "semantic_hash": ""
   },
   "packages/desktop/src-tauri/src/config.rs": {
@@ -2810,13 +2810,13 @@
     "semantic_hash": "2ff00000b53af7dc5bd384a5a051d192"
   },
   "packages/e2e/helpers/app-launcher.test.ts": {
-    "mtime": 1780858672.1328707,
-    "ast_hash": "fdfee62239587f070c918efe9736f9a3",
+    "mtime": 1781064139.97837,
+    "ast_hash": "7add21038c03c02d8e6de8ce708a0d2f",
     "semantic_hash": ""
   },
   "packages/e2e/helpers/app-launcher.ts": {
-    "mtime": 1780858661.1869426,
-    "ast_hash": "30d2936535bb338e03ded79f2fcdd7f8",
+    "mtime": 1781064124.3440018,
+    "ast_hash": "f1e9615664d8adff67e8607fc7947cd1",
     "semantic_hash": ""
   },
   "packages/e2e/helpers/desktop-auth-seed.test.ts": {
@@ -2900,13 +2900,13 @@
     "semantic_hash": "c6488fb340939127a1740e36e5f03d68"
   },
   "packages/e2e/helpers/pilot-runner.test.ts": {
-    "mtime": 1780875148.3023527,
-    "ast_hash": "0c2f0e61a983efd86f1e2b5275706484",
+    "mtime": 1781064172.9104574,
+    "ast_hash": "4bbdbce3eba2e186e210cf91120a3ad3",
     "semantic_hash": ""
   },
   "packages/e2e/helpers/pilot-runner.ts": {
-    "mtime": 1780844414.2707639,
-    "ast_hash": "e4f51c9b77255a33657d03d903b20245",
+    "mtime": 1781064158.4609272,
+    "ast_hash": "d9c89ce9d7fcb72d715f9f2f3d1bb1be",
     "semantic_hash": ""
   },
   "packages/e2e/helpers/skill-registry-fixture.ts": {
@@ -3615,13 +3615,13 @@
     "semantic_hash": "a4a22ba565a7e84b9fb180069ec9f04b"
   },
   "packages/server/src/config.ts": {
-    "mtime": 1780853722.813203,
-    "ast_hash": "21f8c62e6958cd338955d21befdc4734",
+    "mtime": 1781063762.8762124,
+    "ast_hash": "b6d976b04e05ed8d260e2ff9f8da69ce",
     "semantic_hash": ""
   },
   "packages/server/src/config.workspace-id.test.ts": {
-    "mtime": 1780853722.813581,
-    "ast_hash": "7957b0f4727252e19b740a5cb98f8a60",
+    "mtime": 1781063781.7152705,
+    "ast_hash": "df1102b23f57c094b5517950e9ef7df4",
     "semantic_hash": ""
   },
   "packages/server/src/debug-log-events.ts": {
@@ -6030,42 +6030,42 @@
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-opencode-home/.veslo/app-data/veslo-workspaces.json": {
-    "mtime": 1780875211.940611,
-    "ast_hash": "2e14451951abedd2d4812381cb5fd003",
+    "mtime": 1781122784.3074293,
+    "ast_hash": "31ff2fb7ab4d1cb84dc3bb3b3a827df3",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-opencode-home/.veslo/app-local-data/veslo-workspaces.json": {
-    "mtime": 1780875201.1507215,
+    "mtime": 1781122782.2728446,
     "ast_hash": "ed40a27d9028f5b9145c8a26381d056d",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-opencode-home/.veslo/den-auth.json": {
-    "mtime": 1780875210.2387116,
-    "ast_hash": "aef5aabeab1873521f35fb8a6999f442",
+    "mtime": 1781122783.4125729,
+    "ast_hash": "a51fce674f688f7ac36f56cff3dc381a",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-veslo-home/Library/Application Support/com.differentai.openwork.dev/veslo-workspaces.json": {
-    "mtime": 1780875201.1515486,
+    "mtime": 1781122782.2737267,
     "ast_hash": "ed40a27d9028f5b9145c8a26381d056d",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-veslo-home/Library/Application Support/com.differentai.openwork/veslo-workspaces.json": {
-    "mtime": 1780875201.151432,
+    "mtime": 1781122782.2735753,
     "ast_hash": "ed40a27d9028f5b9145c8a26381d056d",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-veslo-home/Library/Application Support/com.neatech.veslo.dev/veslo-workspaces.json": {
-    "mtime": 1780875201.15105,
+    "mtime": 1781122782.2732468,
     "ast_hash": "ed40a27d9028f5b9145c8a26381d056d",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-veslo-home/Library/Application Support/com.neatech.veslo.e2e/veslo-workspaces.json": {
-    "mtime": 1780875201.151207,
+    "mtime": 1781122782.2734277,
     "ast_hash": "ed40a27d9028f5b9145c8a26381d056d",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-veslo-home/Library/Application Support/com.neatech.veslo/veslo-workspaces.json": {
-    "mtime": 1780875201.1509364,
+    "mtime": 1781122782.273086,
     "ast_hash": "ed40a27d9028f5b9145c8a26381d056d",
     "semantic_hash": ""
   },
@@ -6080,18 +6080,18 @@
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-opencode-home/.veslo/app-local-data/veslo-server-plugin-state.json": {
-    "mtime": 1780875203.4886363,
-    "ast_hash": "1ea46d6ab8e2bffb6aa893bb5f727108",
+    "mtime": 1781122785.2836974,
+    "ast_hash": "b89514946e818dffc58ec919cfab3ec6",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-opencode-home/.veslo/app-local-data/veslo-server-state.json": {
-    "mtime": 1780875203.4884546,
-    "ast_hash": "ae63679902b553b736da4656b655a495",
+    "mtime": 1781122785.2832737,
+    "ast_hash": "4ef7a78e31ec70fe4d14789d1781e95b",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-veslo-home/workspaces/visual-workspace/.opencode/veslo.json": {
-    "mtime": 1780875201.8570411,
-    "ast_hash": "238a32fe5eb3a69acaf68183254be9b0",
+    "mtime": 1781122783.4098513,
+    "ast_hash": "b28e48be95c4c9fd21a7f676583968ea",
     "semantic_hash": ""
   },
   "packages/app/src/app/app-managed-ai-access-retry-gate.test.ts": {
@@ -6120,13 +6120,13 @@
     "semantic_hash": ""
   },
   "packages/app/src/app/context/workspace-browse-cold-start.test.ts": {
-    "mtime": 1780816462.2959056,
+    "mtime": 1780941268.3083727,
     "ast_hash": "fff3457aebd6708ea935f31da06fb973",
     "semantic_hash": ""
   },
   "packages/app/src/app/context/workspace-quiet-connect-timeout.test.ts": {
-    "mtime": 1780816462.296011,
-    "ast_hash": "f35f7e96e5c1ee1b5a8254bcdfb1c567",
+    "mtime": 1781102455.6037903,
+    "ast_hash": "b168ba31f6818e8a11a87d4589acbbd2",
     "semantic_hash": ""
   },
   "packages/desktop/src-tauri/src/single_window_config_tests.rs": {
@@ -6235,102 +6235,67 @@
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-opencode-home/.veslo/opencode-config/ws-fc0ad7ec2c42/tools/opencode_router_send.ts": {
-    "mtime": 1780875203.299753,
+    "mtime": 1781122785.2770107,
     "ast_hash": "70fafe0a2a6677c038d7f1a3bf77a4d0",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-opencode-home/.veslo/opencode-config/ws-fc0ad7ec2c42/tools/opencode_router_status.ts": {
-    "mtime": 1780875203.2999706,
+    "mtime": 1781122785.2774084,
     "ast_hash": "494871dabd159247fe72722477dabf4e",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-opencode-home/.veslo/veslo-orchestrator-auth.json": {
-    "mtime": 1780875202.7670856,
-    "ast_hash": "f2deb103414d6d0dae57e1f622d22633",
+    "mtime": 1781122784.1374927,
+    "ast_hash": "22311db7be628c8e104d014f76c489cf",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-opencode-home/.veslo/veslo-orchestrator-state.json": {
-    "mtime": 1780875212.4404445,
-    "ast_hash": "d110578ad1a32e1f233cd6f6fdb68e60",
+    "mtime": 1781122789.7963321,
+    "ast_hash": "d922e27e1a253e619a0f1e7c52e59dd4",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-veslo-home/.config/veslo/server.json": {
-    "mtime": 1780875209.988408,
-    "ast_hash": "8b2fb295b32094ed1105d3e06a24a4fa",
+    "mtime": 1781122788.7286034,
+    "ast_hash": "16f00b3f6d38a6ef5d6af54a2c19923a",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-veslo-home/.local/state/opencode/locks/a24ab76ba049491778c7e3f7f4b28a18a709415a.lock/meta.json": {
-    "mtime": 1780875206.0318716,
-    "ast_hash": "c3578e247951dc589317c4a230da664a",
+    "mtime": 1781122789.0317805,
+    "ast_hash": "784f7cfb0bb5f2181d1a4f6fe8a37e5b",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-veslo-home/.local/state/opencode/locks/dfe8ca1734a96fb913e6eba979bcf9bf31d4dda2.lock/meta.json": {
-    "mtime": 1780875206.0033247,
-    "ast_hash": "c0741f8e94c2a0d7095d94b184c7fe6e",
+    "mtime": 1781122788.9801614,
+    "ast_hash": "768a06250f62755f12a2d495b6385831",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-veslo-home/.local/state/opencode/locks/e644bc2ca7be94f64d88a5c19f7373ad86b4ab87.lock/meta.json": {
-    "mtime": 1780875205.9085069,
-    "ast_hash": "72a3bd0f2bbcaf567a0d0b50facf8405",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/Library/Application Support/com.neatech.veslo.e2e/pending-session-drafts/pending-directory-4d310bed-e09b-48a8-ac9d-c33923dca663/draft.json": {
-    "mtime": 1780875212.1725502,
-    "ast_hash": "49384782562f70a61e14993379e944fa",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/workspaces/draft-move-target-1780875209891/.opencode/tools/veslo_create_automation.ts": {
-    "mtime": 1780875209.8937871,
-    "ast_hash": "b841a120399c80459763c05c300e3bf0",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/workspaces/draft-move-target-1780875209891/.opencode/tools/veslo_delete_automation.ts": {
-    "mtime": 1780875209.8943303,
-    "ast_hash": "c1ebe18929f5f37598af3ef3f5dafd21",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/workspaces/draft-move-target-1780875209891/.opencode/tools/veslo_list_automations.ts": {
-    "mtime": 1780875209.8939083,
-    "ast_hash": "f0fabada3378b0c52f24257017340fd0",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/workspaces/draft-move-target-1780875209891/.opencode/tools/veslo_run_automation.ts": {
-    "mtime": 1780875209.8940992,
-    "ast_hash": "35661df92b14b4f2a7cafe8cbc862ebb",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/workspaces/draft-move-target-1780875209891/.opencode/tools/veslo_update_automation.ts": {
-    "mtime": 1780875209.8942144,
-    "ast_hash": "37c3e239f288c53e23c9ca33c378cfe9",
-    "semantic_hash": ""
-  },
-  "packages/e2e/.tmp-veslo-home/workspaces/draft-move-target-1780875209891/.opencode/veslo.json": {
-    "mtime": 1780875209.9854355,
-    "ast_hash": "fd83b631e57d7945c0fda971a65d0f50",
+    "mtime": 1781122788.8671446,
+    "ast_hash": "1a6740da5c84ce47d7908b56e60d4b41",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-veslo-home/workspaces/visual-workspace/.opencode/tools/veslo_create_automation.ts": {
-    "mtime": 1780875201.7725823,
+    "mtime": 1781122783.3034596,
     "ast_hash": "b841a120399c80459763c05c300e3bf0",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-veslo-home/workspaces/visual-workspace/.opencode/tools/veslo_delete_automation.ts": {
-    "mtime": 1780875201.7730138,
+    "mtime": 1781122783.3039129,
     "ast_hash": "c1ebe18929f5f37598af3ef3f5dafd21",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-veslo-home/workspaces/visual-workspace/.opencode/tools/veslo_list_automations.ts": {
-    "mtime": 1780875201.7727115,
+    "mtime": 1781122783.3035786,
     "ast_hash": "f0fabada3378b0c52f24257017340fd0",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-veslo-home/workspaces/visual-workspace/.opencode/tools/veslo_run_automation.ts": {
-    "mtime": 1780875201.77282,
+    "mtime": 1781122783.3036866,
     "ast_hash": "35661df92b14b4f2a7cafe8cbc862ebb",
     "semantic_hash": ""
   },
   "packages/e2e/.tmp-veslo-home/workspaces/visual-workspace/.opencode/tools/veslo_update_automation.ts": {
-    "mtime": 1780875201.7729218,
+    "mtime": 1781122783.303793,
     "ast_hash": "37c3e239f288c53e23c9ca33c378cfe9",
     "semantic_hash": ""
   },
@@ -6525,13 +6490,13 @@
     "semantic_hash": ""
   },
   "packages/server/src/conversation-read-store.test.ts": {
-    "mtime": 1780853722.813968,
-    "ast_hash": "c66ee4ea09946c3061dae5b0c86c75ea",
+    "mtime": 1781068496.8068569,
+    "ast_hash": "41c60e0592279ce810c3fad5d254946d",
     "semantic_hash": ""
   },
   "packages/server/src/conversation-read-store.ts": {
-    "mtime": 1780853722.814079,
-    "ast_hash": "de6bb99a5fa70980930c9d2ed80f3793",
+    "mtime": 1781068519.3706002,
+    "ast_hash": "69a9d33cc4d94fb522c05de000c2daa3",
     "semantic_hash": ""
   },
   "packages/server/src/conversation-service.test.ts": {
@@ -6592,6 +6557,76 @@
   "packages/server/src/workspaces.test.ts": {
     "mtime": 1780853722.8204787,
     "ast_hash": "07deb60446a84974ad0206ca89d7ac43",
+    "semantic_hash": ""
+  },
+  "packages/app/src/app/app-passive-conversation-read.test.ts": {
+    "mtime": 1781067587.9217892,
+    "ast_hash": "2f34afa8188c16703fe0e8013bfd6cbc",
+    "semantic_hash": ""
+  },
+  "packages/app/src/app/components/session/pending-session-instance-model.test.ts": {
+    "mtime": 1781064029.1873274,
+    "ast_hash": "4073d531aefb8a4cc1c30b5e99cadb57",
+    "semantic_hash": ""
+  },
+  "packages/app/src/app/components/session/pending-session-instance-model.ts": {
+    "mtime": 1781064029.1875238,
+    "ast_hash": "00383995348679be733f0f1a1122cf06",
+    "semantic_hash": ""
+  },
+  "packages/app/src/app/pages/session-pending-instance.test.ts": {
+    "mtime": 1781100165.5566893,
+    "ast_hash": "20911694f9b5911d380812fef0a3fec1",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/opencode-config/ws-fa93bb7fa0f4/tools/opencode_router_send.ts": {
+    "mtime": 1781122787.9140902,
+    "ast_hash": "70fafe0a2a6677c038d7f1a3bf77a4d0",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-opencode-home/.veslo/opencode-config/ws-fa93bb7fa0f4/tools/opencode_router_status.ts": {
+    "mtime": 1781122787.914341,
+    "ast_hash": "494871dabd159247fe72722477dabf4e",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-veslo-home/.local/state/opencode/locks/3c7e3a7a418afa5912c7bffe3674f28352cb3bc1.lock/meta.json": {
+    "mtime": 1781122789.277409,
+    "ast_hash": "78f009c844ccdf248c0f13962db17d6f",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-veslo-home/.local/state/opencode/locks/5c2d8d2acfc8d897d9c259423768263382a43395.lock/meta.json": {
+    "mtime": 1781122789.1540897,
+    "ast_hash": "b2c0d7ee8683f855df8a3f79ca36b712",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-veslo-home/workspaces/multi-session-target-1781122784196/.opencode/tools/veslo_create_automation.ts": {
+    "mtime": 1781122784.2048008,
+    "ast_hash": "b841a120399c80459763c05c300e3bf0",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-veslo-home/workspaces/multi-session-target-1781122784196/.opencode/tools/veslo_delete_automation.ts": {
+    "mtime": 1781122784.205322,
+    "ast_hash": "c1ebe18929f5f37598af3ef3f5dafd21",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-veslo-home/workspaces/multi-session-target-1781122784196/.opencode/tools/veslo_list_automations.ts": {
+    "mtime": 1781122784.204922,
+    "ast_hash": "f0fabada3378b0c52f24257017340fd0",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-veslo-home/workspaces/multi-session-target-1781122784196/.opencode/tools/veslo_run_automation.ts": {
+    "mtime": 1781122784.2050586,
+    "ast_hash": "35661df92b14b4f2a7cafe8cbc862ebb",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-veslo-home/workspaces/multi-session-target-1781122784196/.opencode/tools/veslo_update_automation.ts": {
+    "mtime": 1781122784.2051914,
+    "ast_hash": "37c3e239f288c53e23c9ca33c378cfe9",
+    "semantic_hash": ""
+  },
+  "packages/e2e/.tmp-veslo-home/workspaces/multi-session-target-1781122784196/.opencode/veslo.json": {
+    "mtime": 1781122784.306924,
+    "ast_hash": "5f9091241592e5c02faddf5de224fe51",
     "semantic_hash": ""
   }
 }

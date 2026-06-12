@@ -3528,7 +3528,20 @@ export default function App() {
     }
 
     // In browsing mode, engine is not connected. Start it before sending.
-    if (!engineReady()) {
+    // Managed-AI readiness above can take minutes on a cold start, during
+    // which the active workspace may have changed — re-assert the pending
+    // draft's workspace so the engine ensure below targets the captured
+    // workspace, not whatever became active meanwhile.
+    if (!(await ensurePendingDraftWorkspaceActiveForSend(pendingDraftSendState))) {
+      recordSendTrace("sendPrompt:blocked-pending-workspace-stale");
+      stopSendPromptBusy();
+      return false;
+    }
+    // The send target also needs a per-workspace routing entry; without one,
+    // createConversation has no runtime route to register and the server
+    // rejects the create with opencode_unconfigured.
+    const sendRuntimeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
+    if (!engineReady() || (sendRuntimeWorkspaceId && !workspaceRouting.entry(sendRuntimeWorkspaceId))) {
       // VSLO-171 F3Ú8: cross-workspace takeover dialog removed.
       // Multi mode (F3Ú6) keeps per-WS clients alive in parallel; single-active
       // fallback may interrupt another worker silently but that's the legacy

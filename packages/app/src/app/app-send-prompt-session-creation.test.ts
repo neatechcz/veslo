@@ -291,6 +291,19 @@ test("createConversationFromVesloWriteApi does not route a captured workspace th
   );
 });
 
+test("sendPrompt re-asserts the pending workspace and requires its routing entry at the engine gate", () => {
+  const sendPromptStart = source.indexOf("  async function sendPrompt(");
+  const sendPromptEnd = source.indexOf("  async function abortSession(", sendPromptStart);
+  assert.ok(sendPromptStart >= 0 && sendPromptEnd > sendPromptStart, "sendPrompt should exist");
+  const sendPromptSource = source.slice(sendPromptStart, sendPromptEnd);
+
+  assert.match(
+    sendPromptSource,
+    /if \(!\(await ensurePendingDraftWorkspaceActiveForSend\(pendingDraftSendState\)\)\) \{\s*recordSendTrace\("sendPrompt:blocked-pending-workspace-stale"\);\s*stopSendPromptBusy\(\);\s*return false;\s*\}[\s\S]*?const sendRuntimeWorkspaceId = workspaceStore\.activeWorkspaceId\(\)\.trim\(\);\s*if \(!engineReady\(\) \|\| \(sendRuntimeWorkspaceId && !workspaceRouting\.entry\(sendRuntimeWorkspaceId\)\)\) \{/s,
+    "first-send must re-assert the pending draft workspace after managed-AI readiness and ensure the engine when the send target has no per-workspace routing entry, otherwise conversation creation has no runtime route to register and the server rejects it with opencode_unconfigured",
+  );
+});
+
 test("createConversationFromVesloWriteApi refreshes local server auth and retries stale host-token writes", () => {
   const refreshStart = source.indexOf("  const refreshLocalVesloServerAuthForWrite = async () => {");
   const refreshEnd = source.indexOf("  const createConversationFromVesloWriteApi = async (", refreshStart);
