@@ -19,10 +19,18 @@ import type { TuiHandle } from "./tui/app.js";
 import { reconcileOpencodeVersion } from "./opencode-version.js";
 import { sanitizeRuntimePayloadForLogs } from "./security.js";
 import { resolveEngineSandbox } from "./sandbox-mode.js";
+import {
+  buildSharedOpencodeEngineWarning,
+  resolveEngineTopology,
+  sandboxExplicitlyDisabled,
+} from "./engine-topology.js";
 import { readVersionManifestFromDirs, type VersionInfo, type VersionManifest } from "./version-manifest.js";
 import type { SerializedEngineState } from "./engine-pool.js";
 import { atomicWriteJson, cleanupStaleTmpFiles, createDebouncedPersister } from "./persistence.js";
 import { EnginePool, type EngineProcess } from "./engine-pool.js";
+import { SharedOpenCodeEngine } from "./shared-opencode-engine.js";
+import { resolveOpencodeProxyTarget } from "./opencode-proxy-target.js";
+import { probeOpenCodeProjectApi } from "./opencode-project-api.js";
 import { proxyToEngine } from "./router-proxy.js";
 import { createRunStore, type RunKind } from "./run-store.js";
 import {
@@ -2311,6 +2319,7 @@ function printHelp(): void {
     "  --opencode-hot-reload-cooldown-ms <ms>  Minimum interval between hot reloads (default: 1500)",
     "  --max-engines <N>         Max concurrent engines in pool (1-64, default: 8) [VSLO-171]",
     "  --idle-suspend-ms <ms>    Idle threshold for engine suspend (default: 900000 = 15 min)",
+    "  --shared-opencode-engine  Use one shared OpenCode engine (requires VESLO_DISABLE_SANDBOX=1)",
     "  --opencode-username <u>   OpenCode basic auth username",
     "  --opencode-password <p>   OpenCode basic auth password",
     "  --veslo-host <host>    Bind host for veslo-server (default: 0.0.0.0)",
@@ -2624,7 +2633,7 @@ async function startOpencode(options: {
 }
 
 function resolveConfiguredSandboxBackend(): WorkerSandbox["name"] | "none" {
-  if (process.env.VESLO_DISABLE_SANDBOX === "1") return "none";
+  if (sandboxExplicitlyDisabled(process.env)) return "none";
   try {
     return resolveSandbox().name;
   } catch {
@@ -3628,6 +3637,39 @@ async function runRouterDaemon(args: ParsedArgs) {
   if (!Number.isFinite(idleSuspendMs) || idleSuspendMs < 0) {
     throw new Error("--idle-suspend-ms must be >= 0");
   }
+  const sharedOpencodeEngineRequested = readBool(
+    args.flags,
+    "shared-opencode-engine",
+    false,
+    "VESLO_SHARED_OPENCODE_ENGINE",
+  );
+  const configuredSandboxBackend = resolveConfiguredSandboxBackend();
+  const engineTopology = resolveEngineTopology({
+    env: {
+      ...process.env,
+      VESLO_SHARED_OPENCODE_ENGINE: sharedOpencodeEngineRequested ? "1" : "0",
+    },
+    sandboxKind: configuredSandboxBackend,
+  });
+  traceRuntime("orchestrator:engine-topology", {
+    mode: engineTopology.mode,
+    reason: engineTopology.reason,
+    sharedRequested: engineTopology.sharedRequested,
+    sandboxKind: configuredSandboxBackend,
+  });
+  if (engineTopology.mode === "shared-unsandboxed") {
+    const warning = buildSharedOpencodeEngineWarning();
+    console.error(warning);
+    logger.warn(
+      "shared unsandboxed OpenCode engine enabled",
+      {
+        reason: engineTopology.reason,
+        sandboxKind: configuredSandboxBackend,
+        disableSandbox: process.env.VESLO_DISABLE_SANDBOX ?? null,
+      },
+      "opencode",
+    );
+  }
 
   const opencodeBin = readFlag(args.flags, "opencode-bin") ?? process.env.VESLO_OPENCODE_BIN;
   const opencodeHost =
@@ -3888,6 +3930,131 @@ async function runRouterDaemon(args: ParsedArgs) {
     config: { maxEngines, idleSuspendMs },
   });
 
+  const sharedOpenCodeEngine =
+    engineTopology.mode === "shared-unsandboxed"
+      ? new SharedOpenCodeEngine({
+          runtimeDirectory: join(dataDir, "shared-opencode-runtime"),
+          configDirectory: join(dataDir, "opencode-config", "shared-unsandboxed"),
+          deps: {
+            prepareRuntime: async () => {
+              await ensureWorkspace(join(dataDir, "shared-opencode-runtime"));
+              await ensureOpencodeManagedToolsRuntime(join(dataDir, "opencode-config", "shared-unsandboxed"), {
+                toolSources: {
+                  send: opencodeRouterSendToolSource(),
+                  status: opencodeRouterStatusToolSource(),
+                },
+                emit: (event, payload) =>
+                  traceRuntime(event, {
+                    workspaceId: "shared-unsandboxed",
+                    workspacePath: join(dataDir, "shared-opencode-runtime"),
+                    ...payload,
+                  }),
+              });
+            },
+            spawnEngine: async ({ workspaceId, workdir, configDir, port }) => {
+              const startedAt = Date.now();
+              traceRuntime("orchestrator:shared-engine-spawn:start", {
+                workspaceId,
+                workdir,
+                configDir,
+                port,
+                opencodeBin: opencodeBinary.bin,
+              });
+              const spawned = await startOpencode({
+                bin: opencodeBinary.bin,
+                workspace: workdir,
+                configDir,
+                hotReload: opencodeHotReload,
+                bindHost: opencodeHost,
+                port,
+                expectedVersion: opencodeBinary.expectedVersion,
+                username: opencodePassword ? opencodeUsername : undefined,
+                password: opencodePassword,
+                corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+                logger,
+                runId: `${runId}-shared`,
+                logFormat,
+                sandbox: null,
+              });
+              const clientHost =
+                spawned.connectHost ??
+                (opencodeHost === "0.0.0.0" || opencodeHost === "::" ? "127.0.0.1" : opencodeHost);
+              traceRuntime("orchestrator:shared-engine-spawn:done", {
+                workspaceId,
+                workdir,
+                configDir,
+                port,
+                childPid: spawned.child.pid ?? null,
+                childKind: spawned.childKind ?? "direct",
+                connectHost: spawned.connectHost ?? null,
+                clientHost,
+                durationMs: Date.now() - startedAt,
+              });
+              return {
+                child: spawned.child,
+                baseUrl: `http://${clientHost}:${port}`,
+                childKind: spawned.childKind,
+              };
+            },
+            waitForHealthy: async (baseUrl) => {
+              const startedAt = Date.now();
+              traceRuntime("orchestrator:shared-engine-health:start", { baseUrl });
+              const client = createOpencodeClient({ baseUrl, headers: authHeaders });
+              const raw = process.env.VESLO_OPENCODE_HEALTH_TIMEOUT_MS;
+              const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+              const timeoutMs = Number.isFinite(parsed) && parsed >= 1_000 ? parsed : 60_000;
+              try {
+                await waitForOpencodeHealthy(client, timeoutMs, 250, logger, { baseUrl }, { baseUrl, headers: authHeaders });
+                const projectApi = await probeOpenCodeProjectApi({
+                  baseUrl,
+                  directory: join(dataDir, "shared-opencode-runtime"),
+                  headers: authHeaders,
+                });
+                logger.info(
+                  "opencode project api probe",
+                  {
+                    available: projectApi.available,
+                    projectStatus: projectApi.project.status ?? null,
+                    projectError: projectApi.project.error ?? null,
+                    configStatus: projectApi.config?.status ?? null,
+                    providerStatus: projectApi.provider?.status ?? null,
+                  },
+                  "opencode",
+                );
+                traceRuntime("orchestrator:shared-engine-project-api-probe", {
+                  baseUrl,
+                  available: projectApi.available,
+                  projectStatus: projectApi.project.status ?? null,
+                  projectError: projectApi.project.error ?? null,
+                  configStatus: projectApi.config?.status ?? null,
+                  providerStatus: projectApi.provider?.status ?? null,
+                });
+                traceRuntime("orchestrator:shared-engine-health:done", {
+                  baseUrl,
+                  timeoutMs,
+                  durationMs: Date.now() - startedAt,
+                });
+              } catch (error) {
+                traceRuntime("orchestrator:shared-engine-health:error", {
+                  baseUrl,
+                  timeoutMs,
+                  durationMs: Date.now() - startedAt,
+                  error: error instanceof Error ? error.message : String(error),
+                });
+                throw error;
+              }
+            },
+            stopChild,
+            findFreePort: () => findFreePort(opencodeHost),
+            isProcessAlive,
+            log: (msg, attrs) => {
+              logger.info(msg, attrs, "shared-opencode-engine");
+              traceRuntime(runtimeTraceEventName("shared-opencode-engine", msg), attrs ?? {});
+            },
+          },
+        })
+      : null;
+
   const buildEngineRequest = (
     engine: EngineProcess,
     input: {
@@ -3923,7 +4090,10 @@ async function runRouterDaemon(args: ParsedArgs) {
     };
   };
   const probeRunActivity = createRunActivityProbe({
-    getEngine: (workspaceId) => pool.get(workspaceId),
+    getEngine: (workspaceId) =>
+      engineTopology.mode === "shared-unsandboxed"
+        ? sharedOpenCodeEngine?.getRunning()
+        : pool.get(workspaceId),
     buildEngineRequest,
   });
   const runRegistry = createRunRegistry({ store: runStore, probeRunActivity });
@@ -4025,7 +4195,9 @@ async function runRouterDaemon(args: ParsedArgs) {
           send(200, {
             ok: true,
             daemon: state.daemon ?? null,
+            engineTopology: engineTopology.mode,
             engines: pool.snapshot(),
+            sharedEngine: sharedOpenCodeEngine?.snapshot() ?? null,
             activeId: state.activeId,
             workspaceCount: state.workspaces.length,
             cliVersion: state.cliVersion ?? null,
@@ -4146,10 +4318,14 @@ async function runRouterDaemon(args: ParsedArgs) {
             workspacePath: workspace.path,
           });
           try {
-            const ensured = await pool.ensure({ id: workspace.id, path: workspace.path });
+            const ensured =
+              engineTopology.mode === "shared-unsandboxed"
+                ? await sharedOpenCodeEngine!.ensureStarted(`activate ${workspace.id}`)
+                : await pool.ensure({ id: workspace.id, path: workspace.path });
             traceRuntime("orchestrator:activate-ensure:done", {
               workspaceId: workspace.id,
               workspacePath: workspace.path,
+              engineTopology: engineTopology.mode,
               state: ensured.state,
               pid: ensured.pid,
               port: ensured.port,
@@ -4192,7 +4368,13 @@ async function runRouterDaemon(args: ParsedArgs) {
         // VSLO-171 fáze 2 F2Ú3: dispose mapuje na pool.suspend. Engine je
         // killnut, lazy respawn na další proxy request. Pro remote workspaces
         // dispose je no-op (vzdálený server si engine spravuje sám).
-        if (workspace.workspaceType === "local") {
+        if (workspace.workspaceType === "local" && engineTopology.mode === "shared-unsandboxed") {
+          logger.info(
+            "workspace dispose skipped for shared OpenCode engine",
+            { workspaceId: workspace.id, engineTopology: engineTopology.mode },
+            "shared-opencode-engine",
+          );
+        } else if (workspace.workspaceType === "local") {
           await pool.suspend(workspace.id, "api-dispose");
           persistEnginesSnapshot();
         }
@@ -4323,43 +4505,53 @@ async function runRouterDaemon(args: ParsedArgs) {
         // fail fast with 503 engine_not_running; the engine still spawns via
         // explicit activate and via non-GET requests (prompt_async, session create).
         const proxyMethod = (req.method ?? "GET").toUpperCase();
-        if (proxyMethod === "GET" || proxyMethod === "HEAD") {
-          const running = pool.getRunning(ws.id);
-          if (!running) {
-            traceRuntime("orchestrator:proxy-engine-not-running", {
-              workspaceId: ws.id,
-              workspacePath: ws.path,
-              method: req.method,
-              path: url.pathname,
-              search: url.search,
-              poolState: pool.get(ws.id)?.state ?? "absent",
-            });
-            send(503, { error: "engine_not_running", workspaceId: ws.id });
-            return;
-          }
-        }
-
-        let engine: EngineProcess;
+        let proxyTarget: Awaited<ReturnType<typeof resolveOpencodeProxyTarget>>;
         const ensureStartedAt = Date.now();
         traceRuntime("orchestrator:proxy-ensure:start", {
           workspaceId: ws.id,
           workspacePath: ws.path,
+          engineTopology: engineTopology.mode,
           method: req.method,
           path: url.pathname,
           search: url.search,
         });
         try {
-          engine = await pool.ensure({ id: ws.id, path: ws.path });
+          proxyTarget = await resolveOpencodeProxyTarget({
+            topology: engineTopology.mode,
+            method: proxyMethod,
+            workspaceId: ws.id,
+            workspacePath: ws.path,
+            pooledEngine: pool,
+            sharedEngine: sharedOpenCodeEngine ?? undefined,
+          });
+          if (!proxyTarget.engine) {
+            traceRuntime("orchestrator:proxy-engine-not-running", {
+              workspaceId: ws.id,
+              workspacePath: ws.path,
+              engineTopology: engineTopology.mode,
+              engineKind: proxyTarget.engineKind,
+              method: req.method,
+              path: url.pathname,
+              search: url.search,
+              poolState: engineTopology.mode === "pooled-per-workspace" ? pool.get(ws.id)?.state ?? "absent" : undefined,
+              sharedEngine: engineTopology.mode === "shared-unsandboxed" ? sharedOpenCodeEngine?.snapshot() : undefined,
+            });
+            send(503, { error: "engine_not_running", workspaceId: ws.id });
+            return;
+          }
           traceRuntime("orchestrator:proxy-ensure:done", {
             workspaceId: ws.id,
             workspacePath: ws.path,
+            engineTopology: engineTopology.mode,
+            engineKind: proxyTarget.engineKind,
+            spawnedByRequest: proxyTarget.spawnedByRequest,
             method: req.method,
             path: url.pathname,
-            state: engine.state,
-            pid: engine.pid,
-            port: engine.port,
-            baseUrl: engine.baseUrl,
-            childKind: engine.childKind ?? "direct",
+            state: proxyTarget.engine.state,
+            pid: proxyTarget.engine.pid,
+            port: proxyTarget.engine.port,
+            baseUrl: proxyTarget.engine.baseUrl,
+            childKind: proxyTarget.engine.childKind ?? "direct",
             durationMs: Date.now() - ensureStartedAt,
           });
         } catch (err) {
@@ -4377,14 +4569,15 @@ async function runRouterDaemon(args: ParsedArgs) {
           send(status, { error: "engine spawn failed", detail });
           return;
         }
+        const engine = proxyTarget.engine;
 
         const restPath = "/" + parts.slice(3).join("/");
         const pathMapping: EnginePathMapping = {
-          backend: resolveConfiguredSandboxBackend(),
-          hostWorkspacePath: ws.path,
+          backend: engineTopology.mode === "shared-unsandboxed" ? "none" : resolveConfiguredSandboxBackend(),
+          hostWorkspacePath: proxyTarget.directory,
         };
         const rewriteEnginePaths = pathMapping.backend === "windows-wsl2";
-        const engineDirectory = hostDirectoryToEngineDirectory(ws.path, pathMapping) ?? ws.path;
+        const engineDirectory = hostDirectoryToEngineDirectory(proxyTarget.directory, pathMapping) ?? proxyTarget.directory;
         const targetSearch = rewriteDirectoryQueryForEngine(url.search, {
           method: req.method,
           targetPath: restPath,
@@ -4451,6 +4644,8 @@ async function runRouterDaemon(args: ParsedArgs) {
             "x-forwarded-for",
             "x-forwarded-host",
             "x-forwarded-proto",
+            "x-opencode-directory",
+            "x-veslo-workspace-id",
           ],
           rewriteJsonBody: rewriteEnginePaths
             ? (value) => rewriteDirectoryFieldsForEngine(value, pathMapping)
@@ -4462,7 +4657,11 @@ async function runRouterDaemon(args: ParsedArgs) {
             finishUpstreamTrace("orchestrator:proxy-upstream:done", {
               statusCode: res.statusCode,
             });
-            pool.touch(ws.id);
+            if (engineTopology.mode === "pooled-per-workspace") {
+              pool.touch(ws.id);
+            } else {
+              sharedOpenCodeEngine?.getRunning();
+            }
             persistEnginesSnapshot();
           },
           onError: (err) => {
@@ -4501,6 +4700,7 @@ async function runRouterDaemon(args: ParsedArgs) {
     }
 
     await pool.killAll();
+    await sharedOpenCodeEngine?.dispose();
 
     state.daemon = undefined;
     state.engines = {};

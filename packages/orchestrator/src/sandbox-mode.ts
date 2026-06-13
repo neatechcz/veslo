@@ -1,4 +1,5 @@
 import type { WorkerSandbox } from "./sandbox/types.js";
+import { envFlagEnabled } from "./engine-topology.js";
 
 type SandboxLogger = {
   warn: (message: string, attributes?: Record<string, unknown>, component?: string) => void;
@@ -29,7 +30,7 @@ export function buildUnsandboxedSandboxWarning(input: {
 }
 
 export function sandboxDisabledByEnv(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.VESLO_DISABLE_SANDBOX === "1";
+  return envFlagEnabled(env.VESLO_DISABLE_SANDBOX);
 }
 
 export function resolveEngineSandbox(input: {
