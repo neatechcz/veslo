@@ -12,9 +12,7 @@ import {
   addOpencodeCacheHint,
   clearStartupPreference,
   isTauriRuntime,
-  isPrivateWorkspacePathForRoot,
   normalizeDirectoryQueryPath,
-  normalizeDirectoryPath,
   readStartupPreference,
   safeStringify,
   writeStartupPreference,
@@ -23,29 +21,19 @@ import { LANGUAGE_PREF_KEY, ONBOARDING_COMPLETE_STORAGE_KEY } from "../constants
 import { reportError } from "../lib/error-reporter";
 import { readDenAuth, clearDenAuth, validateDenAuth } from "../lib/den-auth";
 import {
-  buildVesloWorkspaceBaseUrl,
-  createVesloServerClient,
   normalizeVesloServerUrl,
   type VesloServerClient,
   type VesloServerSettings,
-  type VesloWorkspaceInfo,
 } from "../lib/veslo-server";
-import { homeDir } from "@tauri-apps/api/path";
 import {
   engineInfo,
   engineStart,
   engineStop,
   orchestratorInstanceDispose,
   orchestratorWorkspaceActivate,
-  pickDirectory,
   workspaceBootstrap,
-  workspaceCreate,
   workspaceForget,
-  workspacePrivateRoot,
   workspaceVesloRead,
-  workspaceSetActive,
-  workspaceUpdateDisplayName,
-  workspaceUpdateRemote,
   type EngineInfo,
   type WorkspaceInfo,
 } from "../lib/tauri";
@@ -78,6 +66,13 @@ import { createWorkspaceConnectionController } from "./workspace-connection-cont
 import { createWorkspaceSkillMaterializationGate } from "./workspace-skill-materialization";
 import { createWorkspaceServerRegistry } from "./workspace-server-registry";
 import { createWorkspaceRuntimeController } from "./workspace-runtime-controller";
+import { createWorkspaceLocalWorkspaces } from "./workspace-local-workspaces";
+import {
+  createWorkspaceActivationController,
+  type WorkspaceActivationRunContext,
+} from "./workspace-activation-controller";
+import { createWorkspaceRemoteActivation } from "./workspace-activation-remote";
+import { createWorkspaceLocalActivation } from "./workspace-activation-local";
 
 export type { MigrationRepairResult } from "../stores/config-store";
 export type {
@@ -364,19 +359,6 @@ export function createWorkspaceStore(options: {
     });
   };
 
-  const buildPrivateWorkspaceRoot = async () => {
-    const cached = privateWorkspaceRoot().trim();
-    if (cached) return cached;
-    if (!isTauriRuntime()) return "";
-    const next = (await workspacePrivateRoot()).replace(/[\\/]+$/, "");
-    setPrivateWorkspaceRoot(next);
-    return next;
-  };
-
-  if (isTauriRuntime()) {
-    void buildPrivateWorkspaceRoot().catch(e => reportError(e, "workspace.buildPrivateRoot"));
-  }
-
   const resolveEngineRuntime = () => options.engineRuntime?.() ?? "veslo-orchestrator";
 
   const resolveWorkspacePaths = () => {
@@ -503,660 +485,93 @@ export function createWorkspaceStore(options: {
   const syncWorkspaceSkillMaterializationBeforeRuntime =
     skillMaterializationGate.syncWorkspaceSkillMaterializationBeforeRuntime;
 
-  async function activateWorkspace(
-    workspaceId: string | undefined,
-    activationOptions: WorkspaceActivationOptions,
-  ) {
-    const id = workspaceId?.trim() ?? "";
-    if (!id) return false;
-
-    const next = workspaces().find((w) => w.id === id) ?? null;
-    if (!next) return false;
+  const runWorkspaceActivation = async ({
+    id,
+    next,
+    isSuperseded,
+    activateStart,
+    activationOptions,
+  }: WorkspaceActivationRunContext) => {
     const isRemote = next.workspaceType === "remote";
-    if (CLOUD_ONLY_MODE && !isRemote) {
-      updateWorkspaceConnectionState(id, {
-        status: "error",
-        message: cloudOnlyMessage("cloud_only_local_workspace_filtered", "Local workers are disabled."),
-      });
-      return blockLocalAction("cloud_only_local_workspace_filtered", "Local workers are disabled.");
-    }
-
-    const myVersion = wsActivateGuard.enter(id);
-    const isSuperseded = () => wsActivateGuard.isSuperseded(myVersion);
-
-    console.log("[workspace] activate", {
-      id: next.id,
-      type: next.workspaceType,
-      origin: activationOptions.origin,
-    });
-    const activateStart = Date.now();
-    wsDebug("activate:start", {
-      id: next.id,
-      type: next.workspaceType,
-      remoteType: next.remoteType ?? null,
-      prevActiveId: activeWorkspaceId(),
-      prevProjectDir: projectDir(),
-      startupPref: options.startupPreference(),
-      hasClient: Boolean(options.routing.active()),
-      origin: activationOptions.origin,
-      stack: workspaceDebugStack(),
-    });
-
     const remoteType = isRemote ? normalizeRemoteType(next.remoteType) : "opencode";
     const baseUrl = isRemote ? next.baseUrl?.trim() ?? "" : "";
-
-    setConnectingWorkspaceId(id);
-    updateWorkspaceConnectionState(id, { status: "connecting", message: null });
-
-    let activateTimeoutId: ReturnType<typeof setTimeout> | null = null;
-    if (typeof window !== "undefined") {
-      activateTimeoutId = setTimeout(() => {
-        if (wsActivateGuard.isSuperseded(myVersion)) return;
-        const message = `Timed out switching worker after ${Math.round(WORKSPACE_ACTIVATE_TIMEOUT_MS / 1000)}s.`;
-        wsDebug("activate:timeout", { id, timeoutMs: WORKSPACE_ACTIVATE_TIMEOUT_MS });
-        options.setError(message);
-        updateWorkspaceConnectionState(id, { status: "error", message });
-        wsActivateGuard.exit(myVersion, setConnectingWorkspaceId);
-        options.setBusy(false);
-        options.setBusyLabel(null);
-        options.setBusyStartedAt(null);
-      }, WORKSPACE_ACTIVATE_TIMEOUT_MS);
-    }
-
-    // Allow the UI to paint the "switching" state before we kick off work that can
-    // trigger expensive reactive updates (e.g. sidebar session refreshes).
-    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
-      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
-    }
-
-    if (isSuperseded()) {
-      wsDebug("activate:superseded:early", { id });
-      return false;
-    }
-
-    try {
-      if (isRemote) {
-        options.setStartupPreference("server");
-
-        if (remoteType === "veslo") {
-          const hostUrl = next.vesloHostUrl?.trim() ?? "";
-          if (!hostUrl) {
-            options.setError(__vesloIndirectT("ui.indirect.veslo_server_url_is_required_63g0jb", __vesloIndirectLocale()));
-            updateWorkspaceConnectionState(id, {
-              status: "error",
-              message: __vesloIndirectT("ui.indirect.veslo_server_url_is_required_63g0jb", __vesloIndirectLocale()),
-            });
-            return false;
-          }
-
-          const workspaceToken = next.vesloToken?.trim() ?? "";
-          const fallbackToken = options.vesloServerSettings().token ?? "";
-          const token = workspaceToken || fallbackToken;
-
-          const currentSettings = options.vesloServerSettings();
-          if (
-            currentSettings.urlOverride?.trim() !== hostUrl ||
-            (token && currentSettings.token?.trim() !== token)
-          ) {
-            options.updateVesloServerSettings({
-              ...currentSettings,
-              urlOverride: hostUrl,
-              token: token || currentSettings.token,
-            });
-          }
-
-          let resolvedBaseUrl = baseUrl;
-          let resolvedDirectory = next.directory?.trim() ?? "";
-          let workspaceInfo: VesloWorkspaceInfo | null = null;
-          let resolvedAuth: OpencodeAuth | undefined = undefined;
-
-          try {
-            const resolved = await remoteStoreRef.resolveVesloHost({
-              hostUrl,
-              token,
-              workspaceId: next.vesloWorkspaceId ?? null,
-              directoryHint: next.directory ?? null,
-            });
-            if (resolved.kind !== "veslo") {
-              options.setError(__vesloIndirectT("ui.indirect.veslo_server_unavailable_check_the_url_and_tok_pthxtb", __vesloIndirectLocale()));
-              updateWorkspaceConnectionState(id, {
-                status: "error",
-                message: __vesloIndirectT("ui.indirect.veslo_server_unavailable_check_the_url_and_tok_pthxtb", __vesloIndirectLocale()),
-              });
-              return false;
-            }
-
-            resolvedBaseUrl = resolved.opencodeBaseUrl;
-            resolvedDirectory = resolved.directory;
-            workspaceInfo = resolved.workspace;
-            resolvedAuth = resolved.auth;
-          } catch (error) {
-            const message = error instanceof Error ? error.message : safeStringify(error);
-            options.setError(addOpencodeCacheHint(message));
-            updateWorkspaceConnectionState(id, { status: "error", message });
-            return false;
-          }
-
-          if (isSuperseded()) {
-            wsDebug("activate:superseded:after-veslo-resolve", { id });
-            return false;
-          }
-
-          if (!resolvedBaseUrl) {
-            options.setError(t("app.error.remote_base_url_required", currentLocale()));
-            updateWorkspaceConnectionState(id, {
-              status: "error",
-              message: __vesloIndirectT("ui.indirect.remote_base_url_is_required_1ig1w2", __vesloIndirectLocale()),
-            });
-            return false;
-          }
-
-          const ok = await connectToServer(
-            resolvedBaseUrl,
-            resolvedDirectory || undefined,
-            {
-              workspaceId: next.id,
-              workspaceType: next.workspaceType,
-              targetRoot: resolvedDirectory ?? "",
-              reason: "workspace-switch-veslo",
-            },
-            resolvedAuth,
-            { navigate: false },
-          );
-
-          if (isSuperseded()) {
-            wsDebug("activate:superseded:after-veslo-connect", { id });
-            return false;
-          }
-
-          if (!ok) {
-            updateWorkspaceConnectionState(id, {
-              status: "error",
-              message: __vesloIndirectT("ui.indirect.failed_to_connect_to_worker_bjt8ig", __vesloIndirectLocale()),
-            });
-            return false;
-          }
-
-          if (workspaceInfo?.id) {
-            try {
-              const scopedHostUrl =
-                buildVesloWorkspaceBaseUrl(hostUrl, workspaceInfo.id) ?? hostUrl;
-              const provisionClient = createVesloServerClient({
-                baseUrl: scopedHostUrl,
-                token: token || undefined,
-              });
-              const provision = await provisionClient.provisionWorkspaceSystem(workspaceInfo.id);
-              wsDebug("activate:veslo:provision", {
-                id: workspaceInfo.id,
-                status: provision.status,
-                version: provision.version,
-                written: provision.written,
-                unchanged: provision.unchanged,
-              });
-            } catch (error) {
-              wsDebug("activate:veslo:provision:failed", {
-                id: workspaceInfo.id,
-                message: error instanceof Error ? error.message : safeStringify(error),
-              });
-            }
-          }
-
-          if (isTauriRuntime()) {
-            try {
-              const ws = await workspaceUpdateRemote({
-                workspaceId: next.id,
-                remoteType: "veslo",
-                baseUrl: resolvedBaseUrl,
-                directory: resolvedDirectory || null,
-                vesloHostUrl: hostUrl,
-                vesloToken: token ? token : null,
-                vesloWorkspaceId: workspaceInfo?.id ?? next.vesloWorkspaceId ?? null,
-                vesloWorkspaceName: workspaceInfo?.name ?? next.vesloWorkspaceName ?? null,
-              });
-              setWorkspaces(ws.workspaces);
-              syncActiveWorkspaceId(ws.activeId);
-            } catch {
-              // ignore
-            }
-          } else {
-            // In web mode, we still need to persist the resolved Veslo connection
-            // details onto the workspace entry so that the sidebar can list sessions
-            // for multiple remotes at once (without relying on global server settings).
-            const resolvedToken = token.trim();
-            setWorkspaces((prev) =>
-              prev.map((ws) => {
-                if (ws.id !== next.id) return ws;
-                return {
-                  ...ws,
-                  remoteType: "veslo",
-                  baseUrl: resolvedBaseUrl.replace(/\/+$/, ""),
-                  directory: resolvedDirectory || null,
-                  vesloHostUrl: hostUrl,
-                  vesloToken: resolvedToken || null,
-                  vesloWorkspaceId: workspaceInfo?.id ?? ws.vesloWorkspaceId ?? null,
-                  vesloWorkspaceName: workspaceInfo?.name ?? ws.vesloWorkspaceName ?? null,
-                };
-              }),
-            );
-          }
-
-          syncActiveWorkspaceId(id);
-          setProjectDir(resolvedDirectory || "");
-          setWorkspaceConfig(null);
-          setWorkspaceConfigLoaded(true);
-          setAuthorizedDirs([]);
-
-          if (isTauriRuntime()) {
-            try {
-              const ws = await withTimeoutOrThrow(
-                workspaceSetActive(id, { promoteToFront: activationOptions?.promoteToFront ?? false }),
-                { timeoutMs: WORKSPACE_SET_ACTIVE_TIMEOUT_MS, label: "workspace_set_active" },
-              );
-              setWorkspaces(ws.workspaces);
-              syncActiveWorkspaceId(ws.activeId);
-            } catch {
-              // ignore
-            }
-          }
-
-          updateWorkspaceConnectionState(id, { status: "connected", message: null });
-          return true;
-        }
-
-        if (!baseUrl) {
-          options.setError(t("app.error.remote_base_url_required", currentLocale()));
-          updateWorkspaceConnectionState(id, {
-            status: "error",
-            message: __vesloIndirectT("ui.indirect.remote_base_url_is_required_1ig1w2", __vesloIndirectLocale()),
-          });
-          return false;
-        }
-
-        const ok = await connectToServer(
-          baseUrl,
-          next.directory?.trim() || undefined,
-          {
-            workspaceId: next.id,
-            workspaceType: next.workspaceType,
-            targetRoot: next.directory?.trim() ?? "",
-            reason: "workspace-switch-direct",
-          },
-          undefined,
-          { navigate: false },
-        );
-
-        if (isSuperseded()) {
-          wsDebug("activate:superseded:after-direct-connect", { id });
-          return false;
-        }
-
-        if (!ok) {
-          updateWorkspaceConnectionState(id, {
-            status: "error",
-            message: __vesloIndirectT("ui.indirect.failed_to_connect_to_worker_bjt8ig", __vesloIndirectLocale()),
-          });
-          return false;
-        }
-
-        syncActiveWorkspaceId(id);
-        setProjectDir(next.directory?.trim() ?? "");
-        setWorkspaceConfig(null);
-        setWorkspaceConfigLoaded(true);
-        setAuthorizedDirs([]);
-
-        if (isTauriRuntime()) {
-          try {
-            const ws = await withTimeoutOrThrow(
-              workspaceSetActive(id, { promoteToFront: activationOptions?.promoteToFront ?? false }),
-              { timeoutMs: WORKSPACE_SET_ACTIVE_TIMEOUT_MS, label: "workspace_set_active" },
-            );
-            setWorkspaces(ws.workspaces);
-            syncActiveWorkspaceId(ws.activeId);
-          } catch {
-            // ignore
-          }
-        }
-
-        updateWorkspaceConnectionState(id, { status: "connected", message: null });
-        wsDebug("activate:remote:done", { id, ms: Date.now() - activateStart });
-        return true;
-      }
-
-    const wasLocalConnection = options.startupPreference() === "local" && options.routing.active();
-    options.setStartupPreference("local");
-    const nextRoot = isRemote ? next.directory?.trim() ?? "" : next.path;
-    const oldWorkspacePath = projectDir();
-    const oldWorkspaceScope = normalizeWorkspaceScopePath(oldWorkspacePath, "local");
-    const nextWorkspaceScope = normalizeWorkspaceScopePath(nextRoot, "local");
-    // Compare against the actual engine directory as a safety net.
-    // projectDir() reflects the intended workspace; actualEngineDir is
-    // what the engine is actually running on.
-    const actualEngineDir = engineStore.engine()?.projectDir?.trim() ?? "";
-    const actualEngineScope = normalizeWorkspaceScopePath(actualEngineDir, "local");
-    const workspaceChanged =
-      workspaceScopeChanged(oldWorkspacePath, nextRoot, "local") ||
-      (actualEngineScope !== "" && actualEngineScope !== nextWorkspaceScope);
-
-    wsDebug("activate:local:prep", {
-      id,
-      nextRoot,
-      nextWorkspaceScope,
-      workspaceChanged,
-      wasLocalConnection: Boolean(wasLocalConnection),
-      prevProjectDir: oldWorkspacePath,
-      prevWorkspaceScope: oldWorkspaceScope,
-      actualEngineDir,
-      actualEngineScope,
-    });
-    _wsLog("[workspace:activate] STEP 1 — syncActiveWorkspaceId + setProjectDir", { id, nextRoot, workspaceChanged, wasLocalConnection, actualEngineDir });
-
-    syncActiveWorkspaceId(id);
-    setProjectDir(nextRoot);
-
-    // For local→local workspace switches in Tauri, signal that the engine is not ready
-    // for the new workspace BEFORE any await. This prevents reactive effects (idle-loader,
-    // SSE sync) from trying to contact the engine API during the async setup phase.
-    if (!isRemote && wasLocalConnection && workspaceChanged && isTauriRuntime() && options.populateSidebarFromDb) {
-      options.setEngineReady?.(false);
-    }
-
-    if (isTauriRuntime()) {
-      if (isRemote) {
-        setWorkspaceConfig(null);
-        setWorkspaceConfigLoaded(true);
-        setAuthorizedDirs([]);
-      } else {
-        setWorkspaceConfigLoaded(false);
-        _wsLog("[workspace:activate] STEP 2 — workspaceVesloRead...", { path: next.path });
-        try {
-          const cfg = await withTimeoutOrThrow(
-            workspaceVesloRead({ workspacePath: next.path }),
-            { timeoutMs: WORKSPACE_IO_TIMEOUT_MS, label: "workspace_veslo_read" },
-          );
-          _wsLog("[workspace:activate] STEP 2 — workspaceVesloRead DONE");
-          setWorkspaceConfig(cfg);
-          setWorkspaceConfigLoaded(true);
-
-          const roots = Array.isArray(cfg.authorizedRoots) ? cfg.authorizedRoots : [];
-          if (roots.length) {
-            setAuthorizedDirs(roots);
-          } else {
-            setAuthorizedDirs([next.path]);
-          }
-        } catch (e) {
-          _wsLog("[workspace:activate] STEP 2 — workspaceVesloRead FAILED", e instanceof Error ? e.message : String(e));
-          setWorkspaceConfig(null);
-          setWorkspaceConfigLoaded(true);
-          setAuthorizedDirs([next.path]);
-        }
-      }
-
-      _wsLog("[workspace:activate] STEP 3 — workspaceSetActive...", { id });
-      try {
-        const ws = await withTimeoutOrThrow(
-          workspaceSetActive(id, { promoteToFront: activationOptions?.promoteToFront ?? false }),
-          { timeoutMs: WORKSPACE_SET_ACTIVE_TIMEOUT_MS, label: "workspace_set_active" },
-        );
-        setWorkspaces(ws.workspaces);
-        syncActiveWorkspaceId(ws.activeId);
-        _wsLog("[workspace:activate] STEP 3 — workspaceSetActive DONE");
-      } catch (e) {
-        _wsLog("[workspace:activate] STEP 3 — workspaceSetActive FAILED", e instanceof Error ? e.message : String(e));
-      }
-    } else if (!isRemote) {
-      if (!authorizedDirs().includes(next.path)) {
-        const merged = authorizedDirs().length ? authorizedDirs().slice() : [];
-        if (!merged.includes(next.path)) merged.push(next.path);
-        setAuthorizedDirs(merged);
-      }
-    } else {
-      setAuthorizedDirs([]);
-    }
-
-    // If we were previously connected to a remote engine, switching back to a local workspace
-    // requires starting (or reconnecting) the local host engine.
-    //
-    // Without this, we end up keeping the remote client while `startupPreference` flips to
-    // "local", and subsequent session/file actions behave inconsistently.
-    _wsLog("[workspace:activate] STEP 4 — branch decision", {
-      isRemote,
-      hasClient: Boolean(options.routing.active()),
-      wasLocalConnection,
-      workspaceChanged,
-    });
-
-    if (!isRemote && options.routing.active() && !wasLocalConnection) {
-      if (isSuperseded()) {
-        wsDebug("activate:superseded:before-remote-to-local", { id });
-        return false;
-      }
-      _wsLog("[workspace:activate] STEP 4a — remote→local reconnect path");
-      wsDebug("activate:remote->local:reconnect", {
-        id,
-        nextPath: next.path,
-        engine: engineStore.engine()?.baseUrl ?? null,
-        engineRunning: Boolean(engineStore.engine()?.running),
+    if (isRemote) {
+      const remoteActivation = createWorkspaceRemoteActivation({
+        setStartupPreference: options.setStartupPreference,
+        vesloServerSettings: options.vesloServerSettings,
+        updateVesloServerSettings: options.updateVesloServerSettings,
+        resolveVesloHost: remoteStoreRef.resolveVesloHost,
+        connectToServer,
+        setWorkspaces,
+        syncActiveWorkspaceId,
+        setProjectDir,
+        setWorkspaceConfig,
+        setWorkspaceConfigLoaded,
+        setAuthorizedDirs,
+        updateWorkspaceConnectionState,
+        setError: options.setError,
+        isSuperseded,
+        activationOptions,
+        activateStart,
+        workspaceSetActiveTimeoutMs: WORKSPACE_SET_ACTIVE_TIMEOUT_MS,
+        withTimeoutOrThrow,
+        t,
+        currentLocale,
+        indirectT: __vesloIndirectT,
+        indirectLocale: __vesloIndirectLocale,
+        safeStringify,
+        addOpencodeCacheHint,
+        wsDebug,
       });
-      if (workspaceChanged) {
-        clearDisplayedSessionState("remote_to_local_workspace_changed", {
-          workspaceId: id,
-          workspaceType: "local",
-          previousDirectory: oldWorkspacePath,
-          nextDirectory: nextRoot,
-          activeWorkspaceRoot: nextRoot,
-          clearPendingPermissions: true,
-        });
-      } else {
-        wsDebug("ui-reset:displayed-session:skip", {
-          reason: "remote_to_local_same_workspace_scope",
-          workspaceId: id,
-          previousDirectory: oldWorkspacePath,
-          nextDirectory: nextRoot,
-          previousDirectoryNormalized: oldWorkspaceScope,
-          nextDirectoryNormalized: nextWorkspaceScope,
-        });
-      }
-
-      // If a local host engine is already running (common when bouncing between remote/local),
-      // reuse it instead of restarting to keep switching snappy.
-      let connectedToLocalHost = false;
-      const existingEngine = engineStore.engine();
-      const runtime = existingEngine?.runtime ?? resolveEngineRuntime();
-      const canReuseHost =
-        isTauriRuntime() &&
-        Boolean(existingEngine?.running && existingEngine.baseUrl);
-
-      wsDebug("activate:remote->local:hostReuse", {
-        canReuseHost,
-        runtime,
-        existingEngineBaseUrl: existingEngine?.baseUrl ?? null,
-        existingEngineProjectDir: existingEngine?.projectDir ?? null,
-      });
-
-      if (canReuseHost && runtime === "veslo-orchestrator") {
-        try {
-          const reuseStart = Date.now();
-          _wsLog("[workspace:activate] STEP 4a.1 — localRuntimeLifecycle.reattachOrchestratorWorkspace...", {
-            path: next.path,
-          });
-          connectedToLocalHost = await localRuntimeLifecycle.reattachOrchestratorWorkspace({
-            workspacePath: next.path,
-            workspaceId: next.id,
-            workspaceName: next.displayName?.trim() || next.name?.trim() || null,
-            reason: "workspace-attach-local",
-            navigate: false,
-          });
-          wsDebug("activate:remote->local:reuseHost:done", {
-            ok: connectedToLocalHost,
-            ms: Date.now() - reuseStart,
-          });
-        } catch {
-          connectedToLocalHost = false;
-          wsDebug("activate:remote->local:reuseHost:error");
-        }
-      }
-
-      if (!connectedToLocalHost) {
-        _wsLog("[workspace:activate] STEP 4a.5 — startHost (no reuse)...", { path: next.path });
-        const startHostAt = Date.now();
-        const ok = await withTimeoutOrThrow(
-          engineStore.startHost({ workspacePath: next.path, navigate: false }),
-          { timeoutMs: START_HOST_TIMEOUT_MS, label: "startHost" },
-        );
-        _wsLog("[workspace:activate] STEP 4a.5 — startHost DONE", { ok, ms: Date.now() - startHostAt });
-        wsDebug("activate:remote->local:startHost:done", { ok, ms: Date.now() - startHostAt });
-        if (!ok) {
-          updateWorkspaceConnectionState(id, {
-            status: "error",
-            message: __vesloIndirectT("ui.indirect.failed_to_start_local_engine_1uglec", __vesloIndirectLocale()),
-          });
-          return false;
-        }
-      }
+      return await remoteActivation.activateRemoteWorkspace(id, next, remoteType, baseUrl);
     }
-
-    // BROWSING MODE: Load sessions/messages directly from SQLite so the user
-    // can browse history without waiting for engine startup.  Entered when
-    // switching between local workspaces (wasLocalConnection truthy) OR on
-    // cold boot when no engine is running yet (client is null and startup
-    // preference has already been set to "local" by this function), OR when
-    // the user clicks the already-active workspace but no engine is running
-    // for it yet (post-restart lazy-boot state — without this branch the
-    // engine never spawns until a proxy request triggers pool.ensure, which
-    // then races the UI's 10s session-list timeout).
-    const enginePresentForActiveWorkspace = Boolean(
-      engineStore.engine()?.baseUrl?.trim() &&
-        normalizeWorkspaceScopePath(engineStore.engine()?.projectDir?.trim() ?? "", "local") ===
-          normalizeWorkspaceScopePath(next.path, "local"),
-    );
-    const needsEngineWarmup = !isRemote && !workspaceChanged && !enginePresentForActiveWorkspace;
-    const canBrowseOffline =
-      !isRemote && (workspaceChanged || needsEngineWarmup) && isTauriRuntime() && options.populateSidebarFromDb;
-    const isColdBoot = !options.routing.active() && options.startupPreference() === "local";
-    if (canBrowseOffline && (wasLocalConnection || isColdBoot || needsEngineWarmup)) {
-      _wsLog("[workspace:activate] STEP 5-BROWSE — browsing mode, loading from SQLite", { id, path: next.path });
-      wsDebug("activate:local->local:browsingMode", { id, nextPath: next.path });
-
-      // Don't clear session state or client connection here.
-      // Session state (selectedSessionId, messages, todos) is keyed by
-      // session ID so data from different workspaces doesn't collide.
-      // The client + server connection is kept alive so the status dot
-      // stays green — engineReady(false) below prevents API calls for
-      // the wrong workspace, and ensureEngineForWorkspace reconnects
-      // to the correct workspace on demand.
-
-      // VSLO-86 — flip engineReady BEFORE the DB hydration calls. selectSession
-      // (invoked indirectly by hydrateLatestSessionFromDb) reads this signal
-      // to decide whether to hit the SDK or the offline transcript; leaving it
-      // at the stale `true` from the previous active workspace forces an SDK
-      // session.messages call and pulls a fresh sandbox-exec engine into
-      // existence even though the user is just browsing history.
-      options.setEngineReady?.(false);
-
-      try {
-        await options.populateSidebarFromDb!(id, next.path);
-      } catch (e) {
-        _wsLog("[workspace:activate] STEP 5-BROWSE — populateSidebarFromDb failed", e);
-      }
-
-      try {
-        if (options.hydrateLatestSessionFromDb) {
-          await options.hydrateLatestSessionFromDb(id, next.path);
-        }
-      } catch (e) {
-        _wsLog("[workspace:activate] STEP 5-BROWSE — hydrateLatestSessionFromDb failed", e);
-      }
-
-      updateWorkspaceConnectionState(id, { status: "connected", message: null });
-
-      // VSLO-86 — DO NOT eager-spawn the engine here. The user is just
-      // browsing history; spawning sandbox-exec + opencode serve takes
-      // 30-60s of cold-start and locks the UI behind an "Otevírám
-      // konverzaci…" spinner before they've even decided to send anything.
-      // sendPrompt (app.tsx) already calls ensureEngineForWorkspace + the
-      // AI-access bootstrap before sending, so the engine spawns on the
-      // first real interaction (~10-15s) instead of on every sidebar click.
-
-      wsDebug("activate:local->local:browsingMode:done", { id, ms: Date.now() - activateStart });
-      return true;
-    }
-
-    // When running locally, restart the engine when workspace changes (fallback for non-Tauri)
-    let engineRestartFailed = false;
-    if (!isRemote && wasLocalConnection && workspaceChanged) {
-      if (isSuperseded()) {
-        wsDebug("activate:superseded:before-engine-restart", { id });
-        return false;
-      }
-      _wsLog("[workspace:activate] STEP 5 — local→local engine restart", { id, path: next.path });
-      wsDebug("activate:local->local:restartEngine", { id, nextPath: next.path });
-      options.setError(null);
-      options.setBusy(true);
-      options.setBusyLabel("status.restarting_engine");
-      options.setBusyStartedAt(Date.now());
-
-      try {
-        const skillsReady = await syncWorkspaceSkillMaterializationBeforeRuntime(next, {
-          reason: "workspace-restart",
-        });
-        if (!skillsReady) {
-          engineRestartFailed = true;
-          return false;
-        }
-        const runtime = resolveEngineRuntime();
-        _wsLog("[workspace:activate] STEP 5 — runtime =", runtime);
-        _wsLog("[workspace:activate] STEP 5.1 — localRuntimeLifecycle.restartWorkspaceRuntime...", {
-          path: next.path,
-          runtime,
-        });
-        const ok = await localRuntimeLifecycle.restartWorkspaceRuntime({
-          workspacePath: next.path,
-          workspaceId: next.id,
-          workspaceName: next.displayName?.trim() || next.name?.trim() || null,
-          reason: runtime === "veslo-orchestrator" ? "workspace-orchestrator-switch" : "workspace-restart",
-          navigate: false,
-        });
-        if (!ok) {
-          engineRestartFailed = true;
-          options.setError("Failed to reconnect after worker switch");
-        }
-      } catch (e) {
-        engineRestartFailed = true;
-        const message = e instanceof Error ? e.message : safeStringify(e);
-        options.setError(addOpencodeCacheHint(message));
-      } finally {
-        options.setBusy(false);
-        options.setBusyLabel(null);
-        options.setBusyStartedAt(null);
-      }
-    }
-
-      if (engineRestartFailed) {
-        _wsLog("[workspace:activate] STEP 6 — engineRestartFailed!", { id, ms: Date.now() - activateStart });
-        updateWorkspaceConnectionState(id, {
-          status: "error",
-          message: __vesloIndirectT("ui.indirect.failed_to_switch_worker_ayyxrj", __vesloIndirectLocale()),
-        });
-        wsDebug("activate:local:engineRestartFailed", { id, ms: Date.now() - activateStart });
-        return false;
-      }
-
-      _wsLog("[workspace:activate] STEP 6 — SUCCESS, refreshing skills/plugins", { id, ms: Date.now() - activateStart });
-      options.refreshSkills({ force: true }).catch(e => reportError(e, "workspace.refreshSkills"));
-      options.refreshPlugins().catch(e => reportError(e, "workspace.refreshPlugins"));
-      updateWorkspaceConnectionState(id, { status: "connected", message: null });
-      wsDebug("activate:local:done", { id, ms: Date.now() - activateStart });
-      return true;
-    } finally {
-      if (activateTimeoutId !== null) {
-        clearTimeout(activateTimeoutId);
-      }
-      _wsLog("[workspace:activate] FINALLY — clearing connectingWorkspaceId", { id, ms: Date.now() - activateStart });
-      wsActivateGuard.exit(myVersion, setConnectingWorkspaceId);
-      wsDebug("activate:finally", { id, ms: Date.now() - activateStart });
-    }
-  }
-
+    const localActivation = createWorkspaceLocalActivation({
+      routingActive: () => options.routing.active(),
+      startupPreference: options.startupPreference,
+      setStartupPreference: options.setStartupPreference,
+      projectDir,
+      setProjectDir,
+      authorizedDirs,
+      setAuthorizedDirs,
+      setWorkspaces,
+      syncActiveWorkspaceId,
+      normalizeWorkspaceScopePath,
+      workspaceScopeChanged,
+      engine: engineStore.engine,
+      resolveEngineRuntime,
+      localRuntimeLifecycle,
+      startHost: engineStore.startHost,
+      syncWorkspaceSkillMaterializationBeforeRuntime,
+      clearDisplayedSessionState,
+      updateWorkspaceConnectionState,
+      setWorkspaceConfig,
+      setWorkspaceConfigLoaded,
+      setEngineReady: options.setEngineReady,
+      populateSidebarFromDb: options.populateSidebarFromDb,
+      hydrateLatestSessionFromDb: options.hydrateLatestSessionFromDb,
+      setError: options.setError,
+      setBusy: options.setBusy,
+      setBusyLabel: options.setBusyLabel,
+      setBusyStartedAt: options.setBusyStartedAt,
+      refreshSkills: options.refreshSkills,
+      refreshPlugins: options.refreshPlugins,
+      reportError,
+      isSuperseded,
+      activationOptions,
+      activateStart,
+      workspaceIoTimeoutMs: WORKSPACE_IO_TIMEOUT_MS,
+      workspaceSetActiveTimeoutMs: WORKSPACE_SET_ACTIVE_TIMEOUT_MS,
+      startHostTimeoutMs: START_HOST_TIMEOUT_MS,
+      withTimeoutOrThrow,
+      indirectT: __vesloIndirectT,
+      indirectLocale: __vesloIndirectLocale,
+      safeStringify,
+      addOpencodeCacheHint,
+      wsDebug,
+      wsLog: _wsLog,
+    });
+    return await localActivation.activateLocalWorkspace(id, next);
+  };
   const connectionController = createWorkspaceConnectionController({
     routing: options.routing,
     activeWorkspaceId,
@@ -1185,340 +600,30 @@ export function createWorkspaceStore(options: {
     wsDebug,
   });
   const connectToServer = connectionController.connectToServer;
-
-  const openEmptySession = async (scopeRoot?: string) => {
-    const root = (scopeRoot ?? activeWorkspaceRoot().trim()).trim();
-    if (options.routing.active()) {
-      try {
-        await options.loadSessions(root || undefined);
-      } catch {
-        // If session loading fails, still fall back to an empty session draft view.
-      }
-    }
-    clearDisplayedSessionState("open_empty_session", {
-      workspaceId: activeWorkspaceId().trim(),
-      workspaceType: activeWorkspaceInfo()?.workspaceType ?? null,
-      nextDirectory: root || null,
-      activeWorkspaceRoot: root || activeWorkspaceRoot().trim(),
-      clearPendingPermissions: true,
-    });
-    options.setView("session");
-  };
-
-  const activateFreshLocalWorkspace = async (workspaceId: string | null, workspacePath: string) => {
-    if (!workspaceId) {
-      await openEmptySession(workspacePath);
-      return true;
-    }
-    const hasClient = Boolean(options.routing.client(workspaceId));
-    const ok = hasClient
-      ? await activateWorkspace(workspaceId, { origin: "workspace:activate-fresh-local" })
-      : await engineStore.startHost({ workspacePath, navigate: false });
-    if (!ok) return false;
-    await openEmptySession(activeWorkspaceRoot().trim() || workspacePath);
-    return true;
-  };
-
-  async function createLocalWorkspace(
-    preset: WorkspacePreset,
-    folder: string | null,
-    flowOptions?: {
-      markOnboardingComplete?: boolean;
-      navigateToDashboard?: boolean;
-      closeModal?: boolean;
-      workspaceName?: string | null;
-    },
-  ) {
-    if (CLOUD_ONLY_MODE) {
-      blockLocalAction("cloud_only_local_disabled", "Local workspace creation is disabled.");
-      return null;
-    }
-
-    if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
-      return null;
-    }
-
-    if (!folder) {
-      options.setError(t("app.error.choose_folder", currentLocale()));
-      return null;
-    }
-
-    options.setBusy(true);
-    options.setBusyLabel("status.creating_workspace");
-    options.setBusyStartedAt(Date.now());
-    options.setError(null);
-
-    try {
-      const resolvedFolder = await resolveWorkspacePath(folder);
-      if (!resolvedFolder) {
-        options.setError(t("app.error.choose_folder", currentLocale()));
-        return null;
-      }
-
-      const explicitName = flowOptions?.workspaceName?.trim() ?? "";
-      const name =
-        explicitName ||
-        resolvedFolder.replace(/\\/g, "/").split("/").filter(Boolean).pop() ||
-        "Workspace";
-      const ws = await workspaceCreate({ folderPath: resolvedFolder, name, preset });
-      setWorkspaces(ws.workspaces);
-      syncActiveWorkspaceId(ws.activeId);
-      if (ws.activeId) {
-        updateWorkspaceConnectionState(ws.activeId, { status: "connected", message: null });
-      }
-
-      const active = ws.workspaces.find((w) => w.id === ws.activeId) ?? null;
-
-      if (flowOptions?.closeModal !== false) {
-        setCreateWorkspaceOpen(false);
-      }
-      if (flowOptions?.navigateToDashboard !== false) {
-        options.setTab("scheduled");
-        options.setView("dashboard");
-      }
-      if (flowOptions?.markOnboardingComplete !== false) {
-        markOnboardingComplete();
-      }
-      return active;
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
-      return null;
-    } finally {
-      options.setBusy(false);
-      options.setBusyLabel(null);
-      options.setBusyStartedAt(null);
-    }
-  }
-
-  async function createWorkspaceFlow(preset: WorkspacePreset, folder: string | null) {
-    const created = await createLocalWorkspace(preset, folder, {
-      markOnboardingComplete: true,
-      navigateToDashboard: false,
-      closeModal: true,
-    });
-    if (!created) return;
-    const opened = await activateFreshLocalWorkspace(created.id ?? null, created.path);
-    if (!opened) return;
-  }
-
-  async function createScratchWorkspace() {
-    if (CLOUD_ONLY_MODE) {
-      blockLocalAction("cloud_only_local_disabled", "Local workspace creation is disabled.");
-      return null;
-    }
-    if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
-      return null;
-    }
-
-    const root = await buildPrivateWorkspaceRoot();
-    if (!root) {
-      options.setError("Failed to resolve private workspace root.");
-      return null;
-    }
-
-    const name = "Private workspace";
-    const runId = makeRunId().replace(/[^a-z0-9-]+/gi, "").slice(0, 24) || `${Date.now()}`;
-    const folder = `${root}/${Date.now()}-${runId}`;
-    return await createLocalWorkspace("starter", folder, {
-      markOnboardingComplete: true,
-      navigateToDashboard: false,
-      closeModal: false,
-      workspaceName: name,
-    });
-  }
-
-  const findLocalWorkspaceByPath = (folder: string) => {
-    const normalized = normalizeDirectoryPath(folder);
-    if (!normalized) return null;
-    return workspaces().find(
-      (workspace) =>
-        workspace.workspaceType === "local" &&
-        normalizeDirectoryPath(workspace.path?.trim() ?? "") === normalized,
-    ) ?? null;
-  };
-
-  async function ensureWorkspaceForFolder(folder: string) {
-    const resolvedFolder = await resolveWorkspacePath(folder);
-    if (!resolvedFolder) {
-      options.setError(t("app.error.choose_folder", currentLocale()));
-      return null;
-    }
-
-    const existing = findLocalWorkspaceByPath(resolvedFolder);
-    if (existing) {
-      setWorkspaces((prev) => {
-        const rest = prev.filter((workspace) => workspace.id !== existing.id);
-        return [existing, ...rest];
-      });
-      return existing;
-    }
-
-    return await createLocalWorkspace("starter", resolvedFolder, {
-      markOnboardingComplete: true,
-      navigateToDashboard: false,
-      closeModal: false,
-    });
-  }
-
-  const isPrivateWorkspacePath = (folder: string | null | undefined) => {
-    return isPrivateWorkspacePathForRoot(folder, privateWorkspaceRoot());
-  };
-
-  async function ensureLocalWorkspaceActive(workspaceId: string) {
-    const id = workspaceId.trim();
-    if (!id) return false;
-    const activated = await activateWorkspace(id, { origin: "workspace:ensure-local-active" });
-    if (activated === false) return false;
-    if (options.routing.client(id)) return true;
-
-    const workspace = workspaces().find((entry) => entry.id === id) ?? null;
-    if (!workspace || workspace.workspaceType !== "local") {
-      options.setError("Local workspace is not available.");
-      return false;
-    }
-
-    const started = await engineStore.startHost({ workspacePath: workspace.path, navigate: false });
-    if (!started) return false;
-    return Boolean(options.routing.client(id));
-  }
-
-  async function forgetWorkspace(
-    workspaceId: string,
-    forgetOptions?: { deleteLocalData?: boolean },
-  ): Promise<boolean> {
-    if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
-      return false;
-    }
-
-    const id = workspaceId.trim();
-    if (!id) return false;
-
-    console.log("[workspace] forget", { id });
-
-    try {
-      const previousActive = activeWorkspaceId();
-      const mode = forgetOptions?.deleteLocalData ? "delete_local_data" : "detach_only";
-      const ws = await workspaceForget(id, mode);
-      setWorkspaces(ws.workspaces);
-      clearWorkspaceConnectionState(id);
-      syncActiveWorkspaceId(ws.activeId);
-
-      const active = ws.workspaces.find((w) => w.id === ws.activeId) ?? null;
-      if (active) {
-        setProjectDir(active.workspaceType === "remote" ? active.directory?.trim() ?? "" : active.path);
-      }
-
-      if (ws.activeId && ws.activeId !== previousActive) {
-        const activated = await activateWorkspace(ws.activeId, { origin: "workspace:forget-next-active" });
-        if (!activated) return false;
-      }
-      return true;
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
-      return false;
-    }
-  }
-
-  async function pickWorkspaceFolder(defaultPath?: string | null) {
-    if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
-      return null;
-    }
-
-    try {
-      const preferredPath = defaultPath?.trim() ?? "";
-      const selection = await pickDirectory({
-        title: t("onboarding.choose_workspace_folder", currentLocale()),
-        defaultPath: preferredPath || undefined,
-      });
-      const folder =
-        typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
-
-      return folder ?? null;
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
-      return null;
-    }
-  }
-
-  async function updateWorkspaceDisplayName(workspaceId: string, displayName: string | null) {
-    const id = workspaceId.trim();
-    if (!id) return false;
-    const workspace = workspaces().find((item) => item.id === id) ?? null;
-    if (!workspace) return false;
-
-    const nextDisplayName = displayName?.trim() || null;
-    options.setError(null);
-
-    if (isTauriRuntime()) {
-      try {
-        const ws = await workspaceUpdateDisplayName({ workspaceId: id, displayName: nextDisplayName });
-        setWorkspaces(ws.workspaces);
-        if (ws.activeId) {
-          updateWorkspaceConnectionState(ws.activeId, { status: "connected", message: null });
-        }
-        return true;
-      } catch (e) {
-        const message = e instanceof Error ? e.message : safeStringify(e);
-        options.setError(addOpencodeCacheHint(message));
-        return false;
-      }
-    }
-
-    setWorkspaces((prev) =>
-      prev.map((entry) =>
-        entry.id === id
-          ? {
-              ...entry,
-              displayName: nextDisplayName,
-              name: nextDisplayName ?? entry.name,
-            }
-          : entry
-      )
-    );
-    return true;
-  }
-
-  function normalizeRoots(list: string[]) {
-    const out: string[] = [];
-    for (const entry of list) {
-      const trimmed = entry.trim().replace(/\/+$/, "");
-      if (!trimmed) continue;
-      if (!out.includes(trimmed)) out.push(trimmed);
-    }
-    return out;
-  }
-
-  async function resolveWorkspacePath(input: string) {
-    const trimmed = input.trim();
-    if (!trimmed) return "";
-    if (!isTauriRuntime()) return trimmed;
-
-    if (trimmed === "~") {
-      try {
-        return (await homeDir()).replace(/[\\/]+$/, "");
-      } catch {
-        return trimmed;
-      }
-    }
-
-    if (trimmed.startsWith("~/") || trimmed.startsWith("~\\")) {
-      try {
-        const home = (await homeDir()).replace(/[\\/]+$/, "");
-        return `${home}${trimmed.slice(1)}`;
-      } catch {
-        return trimmed;
-      }
-    }
-
-    return trimmed;
-  }
+  const activationController = createWorkspaceActivationController({
+    workspaces,
+    activeWorkspaceId,
+    projectDir,
+    startupPreference: options.startupPreference,
+    hasActiveRoute: () => Boolean(options.routing.active()),
+    setConnectingWorkspaceId,
+    updateWorkspaceConnectionState,
+    wsActivateGuard,
+    runActivationBody: runWorkspaceActivation,
+    blockLocalAction,
+    cloudOnlyMessage,
+    setError: options.setError,
+    setBusy: options.setBusy,
+    setBusyLabel: options.setBusyLabel,
+    setBusyStartedAt: options.setBusyStartedAt,
+    safeStringify,
+    addOpencodeCacheHint,
+    workspaceDebugStack,
+    wsDebug,
+    wsLog: _wsLog,
+    activateTimeoutMs: WORKSPACE_ACTIVATE_TIMEOUT_MS,
+  });
+  const activateWorkspace = activationController.activateWorkspace;
 
   function markOnboardingComplete() {
     if (typeof window === "undefined") return;
@@ -1593,6 +698,53 @@ export function createWorkspaceStore(options: {
   const configStoreRef: { setMigrationRepairResult: (value: any) => void } = {
     setMigrationRepairResult: () => {},
   };
+
+  const localWorkspaces = createWorkspaceLocalWorkspaces({
+    workspaces,
+    setWorkspaces,
+    activeWorkspaceId,
+    activeWorkspaceRoot,
+    activeWorkspaceInfo,
+    privateWorkspaceRoot,
+    setPrivateWorkspaceRoot,
+    syncActiveWorkspaceId,
+    routing: options.routing,
+    activateWorkspace,
+    startHost: engineStore.startHost,
+    openSessionState: {
+      loadSessions: options.loadSessions,
+      setView: options.setView,
+      setTab: options.setTab,
+    },
+    clearDisplayedSessionState,
+    updateWorkspaceConnectionState,
+    clearWorkspaceConnectionState,
+    setProjectDir,
+    setCreateWorkspaceOpen,
+    setError: options.setError,
+    setBusy: options.setBusy,
+    setBusyLabel: options.setBusyLabel,
+    setBusyStartedAt: options.setBusyStartedAt,
+    markOnboardingComplete,
+    makeRunId,
+    blockLocalAction,
+  });
+  const openEmptySession = localWorkspaces.openEmptySession;
+  const activateFreshLocalWorkspace = localWorkspaces.activateFreshLocalWorkspace;
+  const createWorkspaceFlow = localWorkspaces.createWorkspaceFlow;
+  const createScratchWorkspace = localWorkspaces.createScratchWorkspace;
+  const ensureLocalWorkspaceActive = localWorkspaces.ensureLocalWorkspaceActive;
+  const ensureWorkspaceForFolder = localWorkspaces.ensureWorkspaceForFolder;
+  const forgetWorkspace = localWorkspaces.forgetWorkspace;
+  const pickWorkspaceFolder = localWorkspaces.pickWorkspaceFolder;
+  const updateWorkspaceDisplayName = localWorkspaces.updateWorkspaceDisplayName;
+  const normalizeRoots = localWorkspaces.normalizeRoots;
+  const resolveWorkspacePath = localWorkspaces.resolveWorkspacePath;
+  const isPrivateWorkspacePath = localWorkspaces.isPrivateWorkspacePath;
+
+  if (isTauriRuntime()) {
+    void localWorkspaces.buildPrivateWorkspaceRoot().catch(e => reportError(e, "workspace.buildPrivateRoot"));
+  }
 
   const configStore = createConfigStore({
     getActiveWorkspacePath: () => activeWorkspacePath(),

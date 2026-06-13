@@ -1984,7 +1984,7 @@ git commit -m "refactor: extract workspace runtime controller"
 - Modify: `packages/app/src/app/context/workspace.ts`
 - Modify: `packages/app/src/app/tests/context/workspace-forget-mode.test.ts`
 
-- [ ] **Step 1: Write source test**
+- [x] **Step 1: Write source test**
 
 Create `packages/app/src/app/tests/context/workspace-local-workspaces-source.test.ts`:
 
@@ -2006,7 +2006,7 @@ test("local workspace CRUD lives outside workspace facade", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run:
 
@@ -2016,7 +2016,7 @@ pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/
 
 Expected: FAIL because the module does not exist.
 
-- [ ] **Step 3: Create local workspace module**
+- [x] **Step 3: Create local workspace module**
 
 Create `packages/app/src/app/context/workspace-local-workspaces.ts` and move:
 
@@ -2079,7 +2079,7 @@ export type WorkspaceLocalWorkspacesDeps = {
 
 Move the existing bodies and replace captured names with `deps.*`.
 
-- [ ] **Step 4: Wire workspace.ts**
+- [x] **Step 4: Wire workspace.ts**
 
 Instantiate after `engineStore` and before `configStore`:
 
@@ -2137,7 +2137,7 @@ const resolveWorkspacePath = localWorkspaces.resolveWorkspacePath;
 const isPrivateWorkspacePath = localWorkspaces.isPrivateWorkspacePath;
 ```
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run:
 
@@ -2166,7 +2166,7 @@ git commit -m "refactor: extract local workspace operations"
 - Modify: `packages/app/src/app/tests/context/workspace-activate-order-sync.test.ts`
 - Modify: `packages/app/src/app/tests/context/workspace-skill-materialization-sync.test.ts`
 
-- [ ] **Step 1: Write source test**
+- [x] **Step 1: Write source test**
 
 Create `packages/app/src/app/tests/context/workspace-activation-controller-source.test.ts`:
 
@@ -2193,7 +2193,7 @@ test("activateWorkspace is implemented by activation controller", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run:
 
@@ -2203,7 +2203,17 @@ pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/
 
 Expected: FAIL because the module does not exist.
 
-- [ ] **Step 3: Create activation controller**
+- [x] **Step 3: Create activation controller**
+
+Progress: the high-risk activation shell is extracted into `workspace-activation-controller.ts`.
+It now owns workspace lookup, cloud-only blocking, `wsActivateGuard.enter/isSuperseded/exit`,
+activation timeout handling, `requestAnimationFrame` yielding, concrete catch-all error reporting,
+and `connectingWorkspaceId` cleanup. Remote Veslo/direct activation is extracted into
+`workspace-activation-remote.ts`, and local activation is extracted into
+`workspace-activation-local.ts` (`prepareLocalWorkspaceSelection`,
+`reconnectRemoteToLocalHost`, `enterLocalBrowseMode`, `restartLocalRuntimeForSwitch`).
+The local restart helper now distinguishes superseded activations from real restart failures so
+stale switches do not publish false engine errors.
 
 Create `packages/app/src/app/context/workspace-activation-controller.ts`. Move the current `activateWorkspace` implementation and split it into these internal functions:
 

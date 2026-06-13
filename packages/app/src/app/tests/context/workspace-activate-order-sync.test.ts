@@ -13,7 +13,7 @@ const connectionControllerSource = readContextSource("workspace-connection-contr
 test("local activation path applies workspace_set_active response back into the workspace list", () => {
   assert.match(
     source,
-    /_wsLog\("\[workspace:activate\] STEP 3 — workspaceSetActive\.\.\.", \{ id \}\);[\s\S]*const ws = await withTimeoutOrThrow\([\s\S]*workspaceSetActive\(id, \{ promoteToFront: activationOptions\?\.promoteToFront \?\? false \}\),[\s\S]*\);[\s\S]*setWorkspaces\(ws\.workspaces\);/s,
+    /deps\.wsLog\("\[workspace:activate\] STEP 3 — workspaceSetActive\.\.\.", \{ id \}\);[\s\S]*const ws = await deps\.withTimeoutOrThrow\([\s\S]*workspaceSetActive\(id, \{ promoteToFront: deps\.activationOptions\?\.promoteToFront \?\? false \}\),[\s\S]*\);[\s\S]*deps\.setWorkspaces\(ws\.workspaces\);/s,
   );
 });
 
@@ -121,15 +121,17 @@ test("routing ensure failures preserve concrete UI error messages", () => {
 });
 
 test("browsing mode keeps the live client but marks the engine not ready before SQLite-backed browsing", () => {
+  const localActivationSource = readContextSource("workspace-activation-local.ts");
+
   assert.match(
-    source,
-    /if \(!isRemote && wasLocalConnection && workspaceChanged && isTauriRuntime\(\) && options\.populateSidebarFromDb\) \{[\s\S]*options\.setEngineReady\?\.\(false\);[\s\S]*\}/s,
+    localActivationSource,
+    /if \(wasLocalConnection && workspaceChanged && isTauriRuntime\(\) && deps\.populateSidebarFromDb\) \{[\s\S]*deps\.setEngineReady\?\.\(false\);[\s\S]*\}/s,
     "browse mode must mark the engine not ready before async SQLite hydration",
   );
 
-  assert.match(
-    source,
-    /Don't clear session state or client connection here\.[\s\S]*engineReady\(false\) below prevents API calls/,
+  assert.doesNotMatch(
+    localActivationSource,
+    /setClient|setBaseUrl|setClientDirectory/,
     "browse mode should keep the live client attached while preventing wrong-workspace API calls",
   );
 });
@@ -185,8 +187,18 @@ test("quiet port-rotation only binds the workspace proxy client without reading 
   );
   assert.match(
     connectionControllerSource,
-    /if \(quietPortRefresh\) \{[\s\S]*deps\.wsDebug\("connect:proxy-bound"[\s\S]*return true;[\s\S]*\}[\s\S]*await deps\.loadSessions\(context\?\.targetRoot\);[\s\S]*await deps\.refreshPendingPermissions\(\);[\s\S]*deps\.onEngineStable\?\.\(\);/s,
+    /if \(quietPortRefresh\) \{[\s\S]*deps\.wsDebug\("connect:proxy-bound"[\s\S]*return true;[\s\S]*\}[\s\S]*await runPostConnectSideEffects\(context, navigate\);/s,
     "quiet port-rotation must not load sessions, poll permissions, or mark the engine stable before it has actually started",
+  );
+  assert.match(
+    connectionControllerSource,
+    /const runPostConnectSideEffects = async[\s\S]*await deps\.loadSessions\(context\?\.targetRoot\);[\s\S]*await deps\.refreshPendingPermissions\(\);[\s\S]*deps\.onEngineStable\?\.\(\);/s,
+    "non-quiet connect should keep session, permission, and engine-stable side effects grouped after routed client commit",
+  );
+  assert.match(
+    connectionControllerSource,
+    /if \(!quiet\) \{\s*deps\.setError\(null\);[\s\S]*deps\.setSseConnected\(false\);[\s\S]*\}/s,
+    "quiet port-rotation must not clear global errors or flip SSE disconnected state during active UI work",
   );
 });
 
@@ -211,19 +223,19 @@ test("workspace activation delegates local runtime reuse and restart flows to th
 
   assert.match(
     source,
-    /connectedToLocalHost = await localRuntimeLifecycle\.reattachOrchestratorWorkspace\(\{/,
+    /connectedToLocalHost = await deps\.localRuntimeLifecycle\.reattachOrchestratorWorkspace\(\{/,
     "remote-to-local reuse should delegate to the shared helper",
   );
 
   assert.match(
     source,
-    /const ok = await localRuntimeLifecycle\.restartWorkspaceRuntime\(\{/,
+    /const ok = await deps\.localRuntimeLifecycle\.restartWorkspaceRuntime\(\{/,
     "local-to-local engine switching should delegate to the shared helper",
   );
 
   assert.match(
     source,
-    /const ok = await localRuntimeLifecycle\.restartWorkspaceRuntime\(\{[\s\S]*connectMode: "quiet"/s,
+    /ok = await deps\.localRuntimeLifecycle\.restartWorkspaceRuntime\(\{[\s\S]*connectMode: "quiet"/s,
     "browsing-mode engine attach should use the shared helper's quiet reconnect path",
   );
 });

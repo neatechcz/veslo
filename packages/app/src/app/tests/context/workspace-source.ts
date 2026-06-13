@@ -24,6 +24,7 @@ export function readWorkspaceBehaviorSources(): string {
     "workspace-runtime-controller.ts",
     "workspace-local-workspaces.ts",
     "workspace-activation-controller.ts",
+    "workspace-activation-local.ts",
     "workspace-bootstrap-controller.ts",
   ]
     .map((name) => {

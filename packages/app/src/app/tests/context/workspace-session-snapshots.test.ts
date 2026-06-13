@@ -123,7 +123,7 @@ test("workspace debug traces include activation caller stack", () => {
   );
   assert.match(
     workspaceSource,
-    /wsDebug\("activate:start", \{[\s\S]*stack: workspaceDebugStack\(\),/s,
+    /\/\* workspace-activation-controller\.ts \*\/[\s\S]*deps\.wsDebug\("activate:start", \{[\s\S]*stack: deps\.workspaceDebugStack\(\),/s,
     "workspace activation debug logs should include a trimmed caller stack",
   );
 });

@@ -65,6 +65,38 @@ export function createWorkspaceConnectionController(
 ) {
   const connectInFlightByKey = new Map<string, Promise<boolean>>();
 
+  const commitRoutedClient = (
+    entry: { client: unknown; directory?: string | null },
+    nextBaseUrl: string,
+    incomingDirectory: string,
+  ) => {
+    deps.setClient(entry.client);
+    deps.setConnectedVersion(null);
+    deps.setBaseUrl(nextBaseUrl);
+    deps.setClientDirectory(entry.directory ?? incomingDirectory);
+  };
+
+  const runPostConnectSideEffects = async (
+    context: WorkspaceConnectContext | undefined,
+    navigate: boolean,
+  ) => {
+    try {
+      await deps.loadSessions(context?.targetRoot);
+    } catch (error) {
+      console.warn("[workspace] multi loadSessions failed", error);
+    }
+    try {
+      await deps.refreshPendingPermissions();
+    } catch (error) {
+      console.warn("[workspace] multi refreshPendingPermissions failed", error);
+    }
+    if (navigate && !deps.selectedSessionId()) {
+      deps.setTab("scheduled");
+      deps.setView("session");
+    }
+    deps.onEngineStable?.();
+  };
+
   async function connectToServer(
     nextBaseUrl: string,
     directory?: string,
@@ -160,13 +192,13 @@ export function createWorkspaceConnectionController(
       const quiet = connectOptions?.quiet ?? false;
       const quietPortRefresh = quiet && context?.reason === "port-rotation";
       const navigate = connectOptions?.navigate ?? true;
-      deps.setError(null);
       if (!quiet) {
+        deps.setError(null);
         deps.setBusy(true);
         deps.setBusyLabel("status.connecting");
         deps.setBusyStartedAt(Date.now());
+        deps.setSseConnected(false);
       }
-      deps.setSseConnected(false);
       deps.wsDebug("connect:multi:start", {
         workspaceId,
         baseUrl: nextBaseUrl,
@@ -241,10 +273,7 @@ export function createWorkspaceConnectionController(
           return false;
         }
 
-        deps.setClient(entry.client);
-        deps.setConnectedVersion(null);
-        deps.setBaseUrl(nextBaseUrl);
-        deps.setClientDirectory(entry.directory ?? incomingDirectory);
+        commitRoutedClient(entry, nextBaseUrl, incomingDirectory);
         deps.wsDebug("connect:ensured", {
           workspaceId,
           ms: Date.now() - connectStart,
@@ -259,21 +288,7 @@ export function createWorkspaceConnectionController(
           return true;
         }
 
-        try {
-          await deps.loadSessions(context?.targetRoot);
-        } catch (error) {
-          console.warn("[workspace] multi loadSessions failed", error);
-        }
-        try {
-          await deps.refreshPendingPermissions();
-        } catch (error) {
-          console.warn("[workspace] multi refreshPendingPermissions failed", error);
-        }
-        if (navigate && !deps.selectedSessionId()) {
-          deps.setTab("scheduled");
-          deps.setView("session");
-        }
-        deps.onEngineStable?.();
+        await runPostConnectSideEffects(context, navigate);
         deps.setOpencodeConnectStatus?.({
           at: Date.now(),
           baseUrl: nextBaseUrl,

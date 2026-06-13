@@ -54,12 +54,10 @@ test("local runtime starts are gated behind skill materialization sync", () => {
 });
 
 test("workspace activation local restart is gated behind skill materialization sync", () => {
-  const activationStart = behaviorSource.indexOf("async function activateWorkspace(");
-  assert.notStrictEqual(activationStart, -1, "activateWorkspace is missing");
-  const activationSource = behaviorSource.slice(activationStart, behaviorSource.indexOf("const connectionController = createWorkspaceConnectionController(", activationStart));
+  const activationSource = readContextSource("workspace-activation-local.ts");
 
-  const syncIdx = activationSource.indexOf("await syncWorkspaceSkillMaterializationBeforeRuntime(next,");
-  const restartIdx = activationSource.indexOf("localRuntimeLifecycle.restartWorkspaceRuntime({");
+  const syncIdx = activationSource.indexOf("await deps.syncWorkspaceSkillMaterializationBeforeRuntime(next,");
+  const restartIdx = activationSource.indexOf("deps.localRuntimeLifecycle.restartWorkspaceRuntime({");
 
   assert.notStrictEqual(syncIdx, -1, "activateWorkspace should sync skills before local runtime restart");
   assert.ok(syncIdx < restartIdx, "sync must happen before local-to-local runtime restart");
