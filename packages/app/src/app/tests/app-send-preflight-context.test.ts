@@ -38,7 +38,7 @@ test("sendPrompt carries a preflight context into first-session creation", () =>
 
 test("createSessionAndOpen skips duplicate preflight gates when sendPrompt already passed them", () => {
   const start = source.indexOf("async function createSessionAndOpen(");
-  const end = source.indexOf("const openNewSessionWithDirectory = async () =>", start);
+  const end = source.indexOf("const chooseFolderForCurrentSession = async () =>", start);
   assert.ok(start >= 0 && end > start, "createSessionAndOpen source should be present");
   const createSource = source.slice(start, end);
 

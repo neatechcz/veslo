@@ -2,7 +2,7 @@
   "name": "@neatech/veslo",
   "private": true,
   "version": "2026.6.1",
-  "opencodeVersion": "1.14.29",
+  "opencodeVersion": "1.17.4",
   "opencodeRouterVersion": "2026.6.1",
   "type": "module",
   "scripts": {

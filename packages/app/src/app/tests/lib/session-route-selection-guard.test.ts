@@ -5,6 +5,10 @@ import test from "node:test";
 import { shouldFallbackFromSessionRoute } from "../../lib/session-route-selection-guard.js";
 
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
+const pendingDraftControllerSource = readFileSync(
+  new URL("../../context/pending-session-draft-controller.ts", import.meta.url),
+  "utf8",
+);
 const workspaceSessionSelectionSource = readFileSync(
   new URL("../../context/workspace-session-selection.ts", import.meta.url),
   "utf8",
@@ -72,8 +76,8 @@ test("falls back when loaded and id is in neither store nor sidebar", () => {
 });
 
 test("real session route fallback ignores active pending draft context", () => {
-  const routeStart = appSource.indexOf('    if (path.startsWith("/session")) {');
-  const routeEnd = appSource.indexOf('    if (path.startsWith("/proto-v1-ux")) {', routeStart);
+  const routeStart = appSource.indexOf('      case "session-route": {');
+  const routeEnd = appSource.indexOf("  return (", routeStart);
   assert.notStrictEqual(routeStart, -1, "session route block should exist");
   assert.notStrictEqual(routeEnd, -1, "session route block end should exist");
   const routeSource = appSource.slice(routeStart, routeEnd);
@@ -93,27 +97,28 @@ test("real session route fallback ignores active pending draft context", () => {
     /pendingRouteSessionId|pendingSessionLoad/,
     "real session route fallback should not depend on pending-session preloader state",
   );
+  const fallbackCallStart = routeSource.indexOf("shouldFallbackFromSessionRoute({");
+  const fallbackCallEnd = routeSource.indexOf("})", fallbackCallStart);
+  assert.notStrictEqual(fallbackCallStart, -1, "session route fallback call should exist");
+  assert.notStrictEqual(fallbackCallEnd, -1, "session route fallback call should end");
+  const fallbackCallSource = routeSource.slice(fallbackCallStart, fallbackCallEnd);
+
   assert.doesNotMatch(
-    routeSource,
-    /shouldFallbackFromSessionRoute\(\{[\s\S]*activePendingDraftKey/s,
+    fallbackCallSource,
+    /activePendingDraftKey/,
     "pending draft context must not make /session/<real-id> look valid",
   );
 });
 
 test("pending draft hydration error paths clear stale active draft state", () => {
   assert.match(
-    appSource,
-    /if \(!matchingPendingDraft\) \{\s*clearActivePendingDraftState\(\);/s,
-    "missing desktop drafts should clear the active pending draft state",
+    pendingDraftControllerSource,
+    /const hydrationDecision = resolvePendingDraftStartupHydration\(\{[\s\S]*matchingPendingDraft,[\s\S]*loadedPendingDraft,[\s\S]*\}\);[\s\S]*case "clear":[\s\S]*clearActivePendingDraftState\(\);/s,
+    "missing or null desktop drafts should clear the active pending draft state through the hydration decision",
   );
   assert.match(
-    appSource,
-    /if \(!loadedPendingDraft\) \{\s*clearActivePendingDraftState\(\);/s,
-    "null desktop draft loads should clear the active pending draft state",
-  );
-  assert.match(
-    appSource,
-    /catch \(error\) \{\s*reportError\(error, "pendingDrafts\.hydrate"\);\s*clearActivePendingDraftState\(\);\s*\}/s,
+    pendingDraftControllerSource,
+    /catch \(error\) \{\s*deps\.reportError\(error, "pendingDrafts\.hydrate"\);\s*clearActivePendingDraftState\(\);\s*\}/s,
     "desktop draft load failures should clear the active pending draft state",
   );
 });

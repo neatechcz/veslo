@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 // `<configDir>/node_modules/` by the orchestrator (`ensureOpencodeManagedTools`)
 // for managed tool files. Keep these aligned with the constants in
 // `packages/orchestrator/src/cli.ts`.
-const VESLO_MANAGED_PLUGIN_VERSION: &str = "1.14.29";
+const VESLO_MANAGED_PLUGIN_VERSION: &str = "1.17.4";
 const VESLO_MANAGED_ZOD_VERSION: &str = "4.1.8";
 
 const INTERNAL_PACK_VERSION: &str = "2026-04-22.1";
@@ -1564,11 +1564,11 @@ mod tests {
             &[
                 (
                     "@opencode-ai/plugin",
-                    "1.14.29",
+                    "1.17.4",
                     vec![
                         (
                             "package.json",
-                            r#"{"name":"@opencode-ai/plugin","version":"1.14.29","type":"module","exports":{".":{"import":"./dist/index.js"},"./tool":{"import":"./dist/tool.js"}}}"#,
+                            r#"{"name":"@opencode-ai/plugin","version":"1.17.4","type":"module","exports":{".":{"import":"./dist/index.js"},"./tool":{"import":"./dist/tool.js"}}}"#,
                         ),
                         ("dist/index.js", "export * from './tool.js';\n"),
                         (
@@ -1605,7 +1605,7 @@ mod tests {
                     .join("plugin")
             )
             .as_deref(),
-            Some("1.14.29")
+            Some("1.17.4")
         );
         assert_eq!(
             package_json_version(

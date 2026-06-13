@@ -30,35 +30,39 @@ const sidebarWorkspaceSessionsSource = readFileSync(
   new URL("../../context/sidebar-workspace-sessions.ts", import.meta.url),
   "utf8",
 );
+const pendingDraftControllerSource = readFileSync(
+  new URL("../../context/pending-session-draft-controller.ts", import.meta.url),
+  "utf8",
+);
 
-const openNewSessionStart = appSource.indexOf("  const openNewSessionWithDirectory = async () => {");
-const openNewSessionEnd = appSource.indexOf("  const openDirectorySessionFromPicker = async () => {", openNewSessionStart);
+const openNewSessionStart = pendingDraftControllerSource.indexOf("  const openNewSessionWithDirectory = async () => {");
+const openNewSessionEnd = pendingDraftControllerSource.indexOf("  const openDirectoryPendingDraft = async", openNewSessionStart);
 const openNewSessionSource =
   openNewSessionStart >= 0 && openNewSessionEnd >= 0
-    ? appSource.slice(openNewSessionStart, openNewSessionEnd)
+    ? pendingDraftControllerSource.slice(openNewSessionStart, openNewSessionEnd)
     : "";
-const openDirectorySessionStart = appSource.indexOf("  const openDirectorySessionFromPicker = async () => {");
-const openDirectorySessionEnd = appSource.indexOf("  const chooseFolderForCurrentSession = async () => {", openDirectorySessionStart);
+const openDirectorySessionStart = pendingDraftControllerSource.indexOf("  const openDirectorySessionFromPicker = async () => {");
+const openDirectorySessionEnd = pendingDraftControllerSource.indexOf("  return {", openDirectorySessionStart);
 const openDirectorySessionSource =
   openDirectorySessionStart >= 0 && openDirectorySessionEnd >= 0
-    ? appSource.slice(openDirectorySessionStart, openDirectorySessionEnd)
+    ? pendingDraftControllerSource.slice(openDirectorySessionStart, openDirectorySessionEnd)
     : "";
-const openDirectoryPendingDraftStart = appSource.indexOf("  const openDirectoryPendingDraft = async (input: { workspaceId: string; directory: string }) => {");
-const openDirectoryPendingDraftEnd = appSource.indexOf("  const openPendingDirectoryDraftInWorkspace = async (workspaceId: string) => {", openDirectoryPendingDraftStart);
+const openDirectoryPendingDraftStart = pendingDraftControllerSource.indexOf("  const openDirectoryPendingDraft = async (input: { workspaceId: string; directory: string }) => {");
+const openDirectoryPendingDraftEnd = pendingDraftControllerSource.indexOf("  const openPendingDirectoryDraftInWorkspace = async (workspaceId: string) => {", openDirectoryPendingDraftStart);
 const openDirectoryPendingDraftSource =
   openDirectoryPendingDraftStart >= 0 && openDirectoryPendingDraftEnd >= 0
-    ? appSource.slice(openDirectoryPendingDraftStart, openDirectoryPendingDraftEnd)
+    ? pendingDraftControllerSource.slice(openDirectoryPendingDraftStart, openDirectoryPendingDraftEnd)
     : "";
-const openPendingDirectoryDraftInWorkspaceStart = appSource.indexOf(
+const openPendingDirectoryDraftInWorkspaceStart = pendingDraftControllerSource.indexOf(
   "  const openPendingDirectoryDraftInWorkspace = async (workspaceId: string) => {",
 );
-const openPendingDirectoryDraftInWorkspaceEnd = appSource.indexOf(
+const openPendingDirectoryDraftInWorkspaceEnd = pendingDraftControllerSource.indexOf(
   "  const openDirectorySessionFromPicker = async () => {",
   openPendingDirectoryDraftInWorkspaceStart,
 );
 const openPendingDirectoryDraftInWorkspaceSource =
   openPendingDirectoryDraftInWorkspaceStart >= 0 && openPendingDirectoryDraftInWorkspaceEnd >= 0
-    ? appSource.slice(openPendingDirectoryDraftInWorkspaceStart, openPendingDirectoryDraftInWorkspaceEnd)
+    ? pendingDraftControllerSource.slice(openPendingDirectoryDraftInWorkspaceStart, openPendingDirectoryDraftInWorkspaceEnd)
     : "";
 const sendPromptStart = appSource.indexOf("  async function sendPrompt(");
 const sendPromptEnd = appSource.indexOf("  async function abortSession(", sendPromptStart);
@@ -650,29 +654,29 @@ test("picker-driven pending directory draft flow publishes the workspace before 
 });
 
 test("first New session creates one private workspace and opens a persisted pending draft", () => {
-  assert.notEqual(openNewSessionSource, "", "New session flow should exist in app.tsx");
+  assert.notEqual(openNewSessionSource, "", "New session flow should exist in pending draft controller");
   assert.match(
     openNewSessionSource,
-    /const newPrivatePendingDraftKey = resolvePendingDraftKey\(\{ kind: "new-private" \}\);[\s\S]*const pendingDrafts = \(await pendingSessionDraftsList\(\)\)\.filter\(\(draft\) => !isConsumedPendingDraftId\(draft\.id\)\);[\s\S]*const existingPendingDraft = pendingDrafts\.find\(\(draft\) => draft\.kind === "new-private"\) \?\? null;/s,
+    /const newPrivatePendingDraftKey = resolvePendingDraftKey\(\{ kind: "new-private" \}\);[\s\S]*const pendingDrafts = \(await deps\.pendingSessionDraftsList\(\)\)\.filter\(\(draft\) => !isConsumedPendingDraftId\(draft\.id\)\);[\s\S]*const existingPendingDraft = pendingDrafts\.find\(\(draft\) => draft\.kind === "new-private"\) \?\? null;/s,
     "New session should look for an existing private pending draft before creating a workspace",
   );
   assert.match(
     openNewSessionSource,
-    /const scratch = await workspaceStore\.createScratchWorkspace\(\);[\s\S]*const cleanupFreshScratchWorkspace = async \(\) => \{[\s\S]*const cleanupSucceeded = await workspaceStore\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*if \(!cleanupSucceeded\) \{[\s\S]*throw new Error\(`Failed to clean up failed scratch workspace \$\{scratch\.id\}\.`\);[\s\S]*\}[\s\S]*\};[\s\S]*const emptyPendingDraft = createEmptyComposerDraft\(\);[\s\S]*const now = Date\.now\(\);[\s\S]*try \{[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id, \{[\s\S]*origin: "app:new-private-scratch-workspace"[\s\S]*\}\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*return;[\s\S]*\}[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*kind: "new-private"[\s\S]*workspaceId: scratch\.id[\s\S]*privateWorkspaceId: scratch\.id[\s\S]*createdAt: now[\s\S]*updatedAt: now[\s\S]*composer: emptyPendingDraft[\s\S]*\}\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\([\s\S]*?\{ storageKey: newPrivatePendingDraftKey \}[\s\S]*?emptyPendingDraft[\s\S]*?\)\);[\s\S]*setView\("session"\);[\s\S]*return;[\s\S]*\} catch \(error\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*throw error;[\s\S]*\}/s,
+    /const scratch = await deps\.workspace\.createScratchWorkspace\(\);[\s\S]*const cleanupFreshScratchWorkspace = async \(\) => \{[\s\S]*const cleanupSucceeded = await deps\.workspace\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*if \(!cleanupSucceeded\) \{[\s\S]*throw new Error\(`Failed to clean up failed scratch workspace \$\{scratch\.id\}\.`\);[\s\S]*\}[\s\S]*\};[\s\S]*const emptyPendingDraft = deps\.createEmptyComposerDraft\(\);[\s\S]*const now = Date\.now\(\);[\s\S]*try \{[\s\S]*const activatedScratchWorkspace = await deps\.workspace\.activateWorkspace\(scratch\.id, \{[\s\S]*origin: "app:new-private-scratch-workspace"[\s\S]*\}\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*return;[\s\S]*\}[\s\S]*const pendingDraft = await deps\.pendingSessionDraftsPut\(\{[\s\S]*kind: "new-private"[\s\S]*workspaceId: scratch\.id[\s\S]*privateWorkspaceId: scratch\.id[\s\S]*createdAt: now[\s\S]*updatedAt: now[\s\S]*composer: emptyPendingDraft[\s\S]*\}\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*restorePendingDraftComposer\(newPrivatePendingDraftKey, emptyPendingDraft\);[\s\S]*deps\.setView\("session"\);[\s\S]*return;[\s\S]*\} catch \(error\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*throw error;[\s\S]*\}/s,
     "the first New session should create one private workspace, persist one pending draft, and open the draft route",
   );
   assert.doesNotMatch(
     openNewSessionSource,
-    /const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);/s,
+    /const pendingDraft = await deps\.pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*const activatedScratchWorkspace = await deps\.workspace\.activateWorkspace\(scratch\.id\);/s,
     "the fresh private pending draft must not be persisted before scratch workspace activation succeeds",
   );
 });
 
 test("second New session reopens the same pending draft and does not create another private workspace", () => {
-  assert.notEqual(openNewSessionSource, "", "New session flow should exist in app.tsx");
+  assert.notEqual(openNewSessionSource, "", "New session flow should exist in pending draft controller");
   assert.match(
     openNewSessionSource,
-    /if \(existingPendingDraft\) \{\s*const pendingDraft = await pendingSessionDraftsGet\(existingPendingDraft\.id\);[\s\S]*if \(pendingDraft\) \{\s*const restoreError = formatPendingDraftAttachmentRestoreError\(pendingDraft\.attachmentFailures\);[\s\S]*if \(restoreError\) \{\s*setError\(restoreError\);[\s\S]*\}\s*const pendingWorkspaceId = \(existingPendingDraft\.privateWorkspaceId \?\? existingPendingDraft\.workspaceId\)\.trim\(\);[\s\S]*const activatedPendingWorkspace = await workspaceStore\.activateWorkspace\(pendingWorkspaceId, \{[\s\S]*origin: "app:new-private-existing-pending-draft"[\s\S]*\}\);[\s\S]*if \(!activatedPendingWorkspace\) \{[\s\S]*await pendingSessionDraftsDelete\(existingPendingDraft\.id\);[\s\S]*markPendingDraftConsumed\(existingPendingDraft\.id\);[\s\S]*\} else \{[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(existingPendingDraft\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\([\s\S]*?\{ storageKey: newPrivatePendingDraftKey \}[\s\S]*?pendingDraft\.draft\.composer[\s\S]*?\)\);[\s\S]*setView\("session"\);[\s\S]*return;[\s\S]*\}[\s\S]*\}[\s\S]*\}/s,
+    /if \(existingPendingDraft\) \{\s*const pendingDraft = await deps\.pendingSessionDraftsGet\(existingPendingDraft\.id\);[\s\S]*if \(pendingDraft\) \{\s*const restoreError = formatPendingDraftAttachmentRestoreError\(pendingDraft\.attachmentFailures\);[\s\S]*if \(restoreError\) \{\s*deps\.setError\(restoreError\);[\s\S]*\}\s*const pendingWorkspaceId = \(existingPendingDraft\.privateWorkspaceId \?\? existingPendingDraft\.workspaceId\)\.trim\(\);[\s\S]*const activatedPendingWorkspace = await deps\.workspace\.activateWorkspace\(pendingWorkspaceId, \{[\s\S]*origin: "app:new-private-existing-pending-draft"[\s\S]*\}\);[\s\S]*if \(!activatedPendingWorkspace\) \{[\s\S]*await deps\.pendingSessionDraftsDelete\(existingPendingDraft\.id\);[\s\S]*markPendingDraftConsumed\(existingPendingDraft\.id\);[\s\S]*\} else \{[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(existingPendingDraft\);[\s\S]*restorePendingDraftComposer\(newPrivatePendingDraftKey, pendingDraft\.draft\.composer\);[\s\S]*deps\.setView\("session"\);[\s\S]*return;[\s\S]*\}[\s\S]*\}[\s\S]*\}/s,
     "repeat New session should reopen the existing private pending draft instead of creating a new workspace",
   );
   const existingBranchMatch = openNewSessionSource.match(/if \(existingPendingDraft\) \{[\s\S]*?return;\s*\}/);
@@ -690,33 +694,33 @@ test("second New session reopens the same pending draft and does not create anot
 });
 
 test("New session skips stale existing private pending draft when workspace activation fails", () => {
-  assert.notEqual(openNewSessionSource, "", "New session flow should exist in app.tsx");
+  assert.notEqual(openNewSessionSource, "", "New session flow should exist in pending draft controller");
   assert.match(
     openNewSessionSource,
-    /const activatedPendingWorkspace = await workspaceStore\.activateWorkspace\(pendingWorkspaceId, \{[\s\S]*origin: "app:new-private-existing-pending-draft"[\s\S]*\}\);[\s\S]*if \(!activatedPendingWorkspace\) \{[\s\S]*await pendingSessionDraftsDelete\(existingPendingDraft\.id\);[\s\S]*markPendingDraftConsumed\(existingPendingDraft\.id\);[\s\S]*\} else \{[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(existingPendingDraft\);[\s\S]*setView\("session"\);[\s\S]*return;[\s\S]*\}/s,
+    /const activatedPendingWorkspace = await deps\.workspace\.activateWorkspace\(pendingWorkspaceId, \{[\s\S]*origin: "app:new-private-existing-pending-draft"[\s\S]*\}\);[\s\S]*if \(!activatedPendingWorkspace\) \{[\s\S]*await deps\.pendingSessionDraftsDelete\(existingPendingDraft\.id\);[\s\S]*markPendingDraftConsumed\(existingPendingDraft\.id\);[\s\S]*\} else \{[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(existingPendingDraft\);[\s\S]*deps\.setView\("session"\);[\s\S]*return;[\s\S]*\}/s,
     "reopening an existing private pending draft must remove stale draft state and continue to fresh workspace creation when activation fails",
   );
   assert.match(
     openNewSessionSource,
-    /const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id, \{[\s\S]*origin: "app:new-private-scratch-workspace"[\s\S]*\}\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*return;[\s\S]*\}[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*setView\("session"\);/s,
+    /const activatedScratchWorkspace = await deps\.workspace\.activateWorkspace\(scratch\.id, \{[\s\S]*origin: "app:new-private-scratch-workspace"[\s\S]*\}\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*return;[\s\S]*\}[\s\S]*const pendingDraft = await deps\.pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*deps\.setView\("session"\);/s,
     "creating a fresh private pending draft must stop before route activation when workspace activation fails",
   );
 });
 
 test("fresh New session cleans up the scratch workspace when activation or persistence throws", () => {
-  assert.notEqual(openNewSessionSource, "", "New session flow should exist in app.tsx");
+  assert.notEqual(openNewSessionSource, "", "New session flow should exist in pending draft controller");
   assert.match(
     openNewSessionSource,
-    /const cleanupFreshScratchWorkspace = async \(\) => \{[\s\S]*const cleanupSucceeded = await workspaceStore\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*if \(!cleanupSucceeded\) \{[\s\S]*throw new Error\(`Failed to clean up failed scratch workspace \$\{scratch\.id\}\.`\);[\s\S]*\}[\s\S]*\};[\s\S]*try \{[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id, \{[\s\S]*origin: "app:new-private-scratch-workspace"[\s\S]*\}\);[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*\} catch \(error\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*throw error;[\s\S]*\}/s,
+    /const cleanupFreshScratchWorkspace = async \(\) => \{[\s\S]*const cleanupSucceeded = await deps\.workspace\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*if \(!cleanupSucceeded\) \{[\s\S]*throw new Error\(`Failed to clean up failed scratch workspace \$\{scratch\.id\}\.`\);[\s\S]*\}[\s\S]*\};[\s\S]*try \{[\s\S]*const activatedScratchWorkspace = await deps\.workspace\.activateWorkspace\(scratch\.id, \{[\s\S]*origin: "app:new-private-scratch-workspace"[\s\S]*\}\);[\s\S]*const pendingDraft = await deps\.pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*\} catch \(error\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*throw error;[\s\S]*\}/s,
     "fresh New session must roll back the scratch workspace when activation or draft persistence throws",
   );
 });
 
 test("fresh New session surfaces cleanup failure instead of silently assuming rollback succeeded", () => {
-  assert.notEqual(openNewSessionSource, "", "New session flow should exist in app.tsx");
+  assert.notEqual(openNewSessionSource, "", "New session flow should exist in pending draft controller");
   assert.match(
     openNewSessionSource,
-    /const cleanupSucceeded = await workspaceStore\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*if \(!cleanupSucceeded\) \{[\s\S]*throw new Error\(`Failed to clean up failed scratch workspace \$\{scratch\.id\}\.`\);[\s\S]*\}/s,
+    /const cleanupSucceeded = await deps\.workspace\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*if \(!cleanupSucceeded\) \{[\s\S]*throw new Error\(`Failed to clean up failed scratch workspace \$\{scratch\.id\}\.`\);[\s\S]*\}/s,
     "fresh New session must treat scratch-workspace cleanup failure as an error",
   );
 });
@@ -740,10 +744,10 @@ test("picker-driven directory session flow forwards the selected path unchanged 
 });
 
 test("directory picker flow opens a pending draft instead of creating a real session immediately", () => {
-  assert.notEqual(openDirectorySessionSource, "", "Directory picker flow should exist in app.tsx");
+  assert.notEqual(openDirectorySessionSource, "", "Directory picker flow should exist in pending draft controller");
   assert.match(
     openDirectorySessionSource,
-    /return await openPendingDraftFromDirectorySelection\(\{[\s\S]*pickDirectory: \(\) => workspaceStore\.pickWorkspaceFolder\(\),[\s\S]*ensureWorkspaceForFolder: workspaceStore\.ensureWorkspaceForFolder,[\s\S]*activateWorkspace: \(workspaceId\) =>[\s\S]*workspaceStore\.activateWorkspace\(workspaceId, \{[\s\S]*origin: "app:open-directory-session-from-picker"[\s\S]*promoteToFront: true,[\s\S]*\}\),/s,
+    /return await openPendingDraftFromDirectorySelection\(\{[\s\S]*pickDirectory: \(\) => deps\.workspace\.pickWorkspaceFolder\(\),[\s\S]*ensureWorkspaceForFolder: deps\.workspace\.ensureWorkspaceForFolder,[\s\S]*activateWorkspace: \(workspaceId\) =>[\s\S]*deps\.workspace\.activateWorkspace\(workspaceId, \{[\s\S]*origin: "app:open-directory-session-from-picker"[\s\S]*promoteToFront: true,[\s\S]*\}\),/s,
     "the picker flow should use the pending-draft navigation helper with the existing workspace activation contract",
   );
   assert.doesNotMatch(
@@ -754,7 +758,7 @@ test("directory picker flow opens a pending draft instead of creating a real ses
 });
 
 test("directory picker flow publishes the registered workspace into the sidebar before continuing", () => {
-  assert.notEqual(openDirectorySessionSource, "", "Directory picker flow should exist in app.tsx");
+  assert.notEqual(openDirectorySessionSource, "", "Directory picker flow should exist in pending draft controller");
   assert.match(
     sidebarWorkspaceSessionsSource,
     /const publishRegisteredWorkspaceToSidebar = \(workspaceId: string\) => \{[\s\S]*setSidebarSessionsByWorkspaceId\(\(prev\) =>[\s\S]*setSidebarSessionStatusByWorkspaceId\(\(prev\) =>[\s\S]*setSidebarSessionErrorByWorkspaceId\(\(prev\) =>[\s\S]*setSidebarSessionHasMoreByWorkspaceId\(\(prev\) =>/s,
@@ -767,7 +771,7 @@ test("directory picker flow publishes the registered workspace into the sidebar 
   );
   assert.match(
     openDirectorySessionSource,
-    /ensureWorkspaceForFolder: workspaceStore\.ensureWorkspaceForFolder,[\s\S]*onWorkspaceRegistered: \(\{ workspaceId \}\) => publishRegisteredWorkspaceToSidebar\(workspaceId\),[\s\S]*activateWorkspace: \(workspaceId\) =>[\s\S]*workspaceStore\.activateWorkspace\(workspaceId, \{[\s\S]*origin: "app:open-directory-session-from-picker"[\s\S]*promoteToFront: true,[\s\S]*\}\),/s,
+    /ensureWorkspaceForFolder: deps\.workspace\.ensureWorkspaceForFolder,[\s\S]*onWorkspaceRegistered: \(\{ workspaceId \}\) => deps\.publishRegisteredWorkspaceToSidebar\(workspaceId\),[\s\S]*activateWorkspace: \(workspaceId\) =>[\s\S]*deps\.workspace\.activateWorkspace\(workspaceId, \{[\s\S]*origin: "app:open-directory-session-from-picker"[\s\S]*promoteToFront: true,[\s\S]*\}\),/s,
     "the picker flow should publish the registered workspace before the existing activation continuation",
   );
 });
@@ -776,7 +780,7 @@ test("project plus resolves the directory after workspace activation instead of 
   assert.notEqual(
     openPendingDirectoryDraftInWorkspaceSource,
     "",
-    "Project plus flow should exist in app.tsx",
+    "Project plus flow should exist in pending draft controller",
   );
   assert.doesNotMatch(
     openPendingDirectoryDraftInWorkspaceSource,
@@ -785,13 +789,13 @@ test("project plus resolves the directory after workspace activation instead of 
   );
   assert.match(
     openPendingDirectoryDraftInWorkspaceSource,
-    /openPendingDraft: \(\) => \{[\s\S]*const activeWorkspace = workspaceStore\.activeWorkspaceDisplay\(\);[\s\S]*const directory = activeWorkspace\.directory\?\.trim\(\) \|\| activeWorkspace\.path\?\.trim\(\) \|\| "";\s*if \(!directory\) return "";\s*return openDirectoryPendingDraft\(\{ workspaceId: id, directory \}\);[\s\S]*\}/s,
+    /openPendingDraft: \(\) => \{[\s\S]*const activeWorkspace = deps\.workspace\.activeWorkspaceDisplay\(\);[\s\S]*const directory = activeWorkspace\.directory\?\.trim\(\) \|\| activeWorkspace\.path\?\.trim\(\) \|\| "";\s*if \(!directory\) return "";\s*return openDirectoryPendingDraft\(\{ workspaceId: id, directory \}\);[\s\S]*\}/s,
     "project plus should resolve the directory from the activated workspace state right before opening the pending draft",
   );
 });
 
 test("fresh directory pending drafts use collision-resistant ids", () => {
-  assert.notEqual(openDirectoryPendingDraftSource, "", "Directory pending draft flow should exist in app.tsx");
+  assert.notEqual(openDirectoryPendingDraftSource, "", "Directory pending draft flow should exist in pending draft controller");
   assert.doesNotMatch(
     openDirectoryPendingDraftSource,
     /id: `pending-directory-\$\{workspaceId\}-\$\{now\}`/,

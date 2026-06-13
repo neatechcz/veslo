@@ -51,7 +51,7 @@ describe("ensureOpencodeManagedTools", () => {
       join(configDir, "node_modules", "@opencode-ai", "plugin"),
       {
         name: "@opencode-ai/plugin",
-        version: "1.14.29",
+        version: "1.17.4",
         type: "module",
       },
     );
@@ -97,7 +97,7 @@ describe("ensureOpencodeManagedTools", () => {
       join(configDir, "node_modules", "@opencode-ai", "plugin"),
       {
         name: "@opencode-ai/plugin",
-        version: "1.14.29",
+        version: "1.17.4",
         type: "module",
       },
     );
@@ -166,13 +166,13 @@ describe("ensureOpencodeManagedTools", () => {
     await writeManagedDepsManifest(manifestPath, [
       {
         name: "@opencode-ai/plugin",
-        version: "1.14.29",
+        version: "1.17.4",
         files: [
           {
             path: "package.json",
             content: `${JSON.stringify({
               name: "@opencode-ai/plugin",
-              version: "1.14.29",
+              version: "1.17.4",
               type: "module",
               exports: {
                 ".": { import: "./dist/index.js" },
@@ -213,14 +213,14 @@ describe("ensureOpencodeManagedTools", () => {
     const zodPackageJson = JSON.parse(
       await readFile(join(configDir, "node_modules", "zod", "package.json"), "utf8"),
     ) as { version?: string };
-    expect(pluginPackageJson.version).toBe("1.14.29");
+    expect(pluginPackageJson.version).toBe("1.17.4");
     expect(zodPackageJson.version).toBe("4.1.8");
 
     const status = events.find((entry) => entry.event === "opencode-managed-dependencies:status");
     expect(status?.payload).toMatchObject({
       configDir,
       pluginMode: "vendored",
-      pluginVersion: "1.14.29",
+      pluginVersion: "1.17.4",
       zodMode: "vendored",
       zodVersion: "4.1.8",
     });
@@ -238,7 +238,7 @@ describe("ensureOpencodeManagedTools", () => {
       join(repoRoot, "node_modules", "@opencode-ai", "plugin"),
       {
         name: "@opencode-ai/plugin",
-        version: "1.14.29",
+        version: "1.17.4",
         type: "module",
       },
     );
@@ -263,7 +263,7 @@ describe("ensureOpencodeManagedTools", () => {
     const zodPackageJson = JSON.parse(
       await readFile(join(configDir, "node_modules", "zod", "package.json"), "utf8"),
     ) as { version?: string };
-    expect(pluginPackageJson.version).toBe("1.14.29");
+    expect(pluginPackageJson.version).toBe("1.17.4");
     expect(zodPackageJson.version).toBe("4.1.8");
 
     const vendoredSources = events

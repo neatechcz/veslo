@@ -3,20 +3,24 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const pendingDraftControllerSource = readFileSync(
+  new URL("../context/pending-session-draft-controller.ts", import.meta.url),
+  "utf8",
+);
 
 test("app delegates pending draft startup matching and hydration decisions to the controller", () => {
   assert.match(
-    source,
-    /import \{\s*findStoredPendingDraftSummary,\s*resolvePendingDraftStartupHydration,\s*\} from "\.\/controllers\/pending-draft-startup-controller";/,
-    "app.tsx should import pending draft startup helpers",
+    pendingDraftControllerSource,
+    /import \{\s*findStoredPendingDraftSummary,\s*resolvePendingDraftStartupHydration,\s*\} from "\.\.\/controllers\/pending-draft-startup-controller";/,
+    "pending draft controller should import pending draft startup helpers",
   );
 });
 
 test("startup pending draft hydration validates before mutating active pending draft state", () => {
-  const start = source.indexOf("const storedPendingDraftKey = readActivePendingDraftKey();");
-  const end = source.indexOf("setActivePendingDraftStorageReady(true);", start);
+  const start = pendingDraftControllerSource.indexOf("const hydrateActivePendingDraft = async () => {");
+  const end = pendingDraftControllerSource.indexOf("const openNewSessionWithDirectory = async () =>", start);
   assert.ok(start >= 0 && end > start, "startup pending draft hydration block should be present");
-  const hydrationSource = source.slice(start, end);
+  const hydrationSource = pendingDraftControllerSource.slice(start, end);
 
   assert.doesNotMatch(
     hydrationSource,
@@ -35,7 +39,7 @@ test("startup pending draft hydration validates before mutating active pending d
   );
   assert.match(
     hydrationSource,
-    /case "hydrate":[\s\S]*setActivePendingDraftKey\(hydrationDecision\.storageKey\);[\s\S]*setActivePendingDraftMeta\(hydrationDecision\.summary\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\(current, \{ storageKey: hydrationDecision\.storageKey \}, hydrationDecision\.loadedDraft\.draft\.composer\)\);/s,
+    /case "hydrate":[\s\S]*setActivePendingDraftKey\(hydrationDecision\.storageKey\);[\s\S]*setActivePendingDraftMeta\(hydrationDecision\.summary\);[\s\S]*restorePendingDraftComposer\(hydrationDecision\.storageKey, hydrationDecision\.loadedDraft\.draft\.composer\);/s,
     "hydration should update pending draft state and composer draft together from the controller decision",
   );
 });

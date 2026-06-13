@@ -3,17 +3,26 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const pendingDraftControllerSource = readFileSync(
+  new URL("../context/pending-session-draft-controller.ts", import.meta.url),
+  "utf8",
+);
 
 test("hydrates active pending draft state from the desktop draft store and prefers real session composer keys", () => {
   assert.match(
-    source,
+    pendingDraftControllerSource,
     /const \[activePendingDraftKey, setActivePendingDraftKey\] = createSignal<string \| null>\(null\);/,
-    "app state should track the active pending draft key",
+    "pending draft controller should track the active pending draft key",
+  );
+  assert.match(
+    pendingDraftControllerSource,
+    /const \[activePendingDraftMeta, setActivePendingDraftMeta\] = createSignal<PendingSessionDraftSummary \| null>\(null\);/,
+    "pending draft controller should track the active pending draft metadata",
   );
   assert.match(
     source,
-    /const \[activePendingDraftMeta, setActivePendingDraftMeta\] = createSignal<PendingSessionDraftSummary \| null>\(null\);/,
-    "app state should track the active pending draft metadata",
+    /const \{[\s\S]*activePendingDraftKey,[\s\S]*activePendingDraftMeta,[\s\S]*\} = pendingSessionDraftController;/,
+    "app should consume pending draft state from the controller",
   );
   assert.match(
     source,
@@ -21,27 +30,27 @@ test("hydrates active pending draft state from the desktop draft store and prefe
     "real sessions should keep their own composer key even when a pending draft remains active in the background",
   );
   assert.doesNotMatch(
-    source,
-    /const storedPendingDraftKey = readActivePendingDraftKey\(\);[\s\S]*setActivePendingDraftKey\(storedPendingDraftKey\);[\s\S]*const pendingDrafts = await pendingSessionDraftsList\(\);/s,
+    pendingDraftControllerSource,
+    /const storedPendingDraftKey = readActivePendingDraftKey\(\);[\s\S]*setActivePendingDraftKey\(storedPendingDraftKey\);[\s\S]*const pendingDrafts = await deps\.pendingSessionDraftsList\(\);/s,
     "startup should not mark a pending draft active before the desktop draft has been validated and loaded",
   );
   assert.match(
-    source,
-    /const storedPendingDraftKey = readActivePendingDraftKey\(\);[\s\S]*const pendingDrafts = \(await pendingSessionDraftsList\(\)\)\.filter\(\(draft\) => !isConsumedPendingDraftId\(draft\.id\)\);[\s\S]*const matchingPendingDraft = findStoredPendingDraftSummary\(\{[\s\S]*storedPendingDraftKey,[\s\S]*pendingDrafts,[\s\S]*\}\);[\s\S]*const loadedPendingDraft = matchingPendingDraft[\s\S]*await pendingSessionDraftsGet\(matchingPendingDraft\.id\)[\s\S]*const hydrationDecision = resolvePendingDraftStartupHydration\(\{[\s\S]*storedPendingDraftKey,[\s\S]*matchingPendingDraft,[\s\S]*loadedPendingDraft,[\s\S]*restoreError,[\s\S]*\}\);[\s\S]*case "hydrate":[\s\S]*setActivePendingDraftKey\(hydrationDecision\.storageKey\);[\s\S]*setActivePendingDraftMeta\(hydrationDecision\.summary\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\(current, \{ storageKey: hydrationDecision\.storageKey \}, hydrationDecision\.loadedDraft\.draft\.composer\)\);/s,
+    pendingDraftControllerSource,
+    /const storedPendingDraftKey = readActivePendingDraftKey\(\);[\s\S]*const pendingDrafts = \(await deps\.pendingSessionDraftsList\(\)\)\.filter\(\(draft\) => !isConsumedPendingDraftId\(draft\.id\)\);[\s\S]*const matchingPendingDraft = findStoredPendingDraftSummary\(\{[\s\S]*storedPendingDraftKey,[\s\S]*pendingDrafts,[\s\S]*\}\);[\s\S]*const loadedPendingDraft = matchingPendingDraft[\s\S]*await deps\.pendingSessionDraftsGet\(matchingPendingDraft\.id\)[\s\S]*const hydrationDecision = resolvePendingDraftStartupHydration\(\{[\s\S]*storedPendingDraftKey,[\s\S]*matchingPendingDraft,[\s\S]*loadedPendingDraft,[\s\S]*restoreError,[\s\S]*\}\);[\s\S]*case "hydrate":[\s\S]*setActivePendingDraftKey\(hydrationDecision\.storageKey\);[\s\S]*setActivePendingDraftMeta\(hydrationDecision\.summary\);[\s\S]*restorePendingDraftComposer\(hydrationDecision\.storageKey, hydrationDecision\.loadedDraft\.draft\.composer\);/s,
     "startup should hydrate the active pending draft from durable desktop storage",
   );
 });
 
 test("pending draft hydration failures clear the active draft key in memory and local storage", () => {
   assert.match(
-    source,
+    pendingDraftControllerSource,
     /const clearActivePendingDraftState = \(\) => \{\s*setActivePendingDraftKey\(null\);\s*setActivePendingDraftMeta\(null\);\s*writeActivePendingDraftKey\(null\);\s*\};/s,
-    "app should define one explicit cleanup path for stale pending draft state",
+    "pending draft controller should define one explicit cleanup path for stale pending draft state",
   );
   assert.match(
-    source,
+    pendingDraftControllerSource,
     /const CONSUMED_PENDING_DRAFT_IDS_KEY = "veslo\.consumed-pending-draft-ids\.v1";[\s\S]*const isConsumedPendingDraftId = \(value: string \| null \| undefined\) => \{[\s\S]*return readConsumedPendingDraftIds\(\)\.has\(trimmed\);[\s\S]*\};/s,
-    "app should keep an explicit consumed-draft id set so cleanup failures cannot resurrect a draft on restart",
+    "pending draft controller should keep an explicit consumed-draft id set so cleanup failures cannot resurrect a draft on restart",
   );
 });
 
@@ -97,7 +106,7 @@ test("session route re-selects once when a client becomes available after bootst
 
 test("createSessionAndOpen injects the new session before selecting it", () => {
   const createStart = source.indexOf("  async function createSessionAndOpen(");
-  const createEnd = source.indexOf("  const openNewSessionWithDirectory = async", createStart);
+  const createEnd = source.indexOf("  const chooseFolderForCurrentSession = async () =>", createStart);
   assert.notStrictEqual(createStart, -1, "createSessionAndOpen should exist");
   assert.notStrictEqual(createEnd, -1, "createSessionAndOpen block end should exist");
   const createSource = source.slice(createStart, createEnd);
@@ -111,7 +120,7 @@ test("createSessionAndOpen injects the new session before selecting it", () => {
 
 test("bare /session keeps the active pending draft context while clearing real session transcript state", () => {
   const routeStart = source.indexOf('      case "session-route": {');
-  const routeEnd = source.indexOf('    }\n  });', routeStart);
+  const routeEnd = source.indexOf("  return (", routeStart);
   assert.notStrictEqual(routeStart, -1, "session route block should exist");
   assert.notStrictEqual(routeEnd, -1, "session route block end should exist");
   const routeSource = source.slice(routeStart, routeEnd);

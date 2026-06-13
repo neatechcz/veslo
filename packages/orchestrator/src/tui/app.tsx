@@ -179,7 +179,6 @@ export function startOrchestratorTui(options: TuiOptions): TuiHandle {
     () => {
       const renderer = useRenderer();
       const dimensions = useTerminalDimensions();
-      renderer.disableStdoutInterception();
 
       const [state, setState] = createStore({
         view: "overview" as ViewName,
@@ -874,6 +873,7 @@ export function startOrchestratorTui(options: TuiOptions): TuiHandle {
       enableMouseMovement: true,
       useKittyKeyboard: {},
       autoFocus: false,
+      externalOutputMode: "passthrough",
       consoleOptions: {
         keyBindings: [{ name: "y", ctrl: true, action: "copy-selection" }],
       },

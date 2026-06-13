@@ -512,7 +512,7 @@ export type PendingQuestion = QuestionRequest & {
 };
 
 export type TodoItem = {
-  id: string;
+  id?: string;
   content: string;
   status: string;
   priority: string;

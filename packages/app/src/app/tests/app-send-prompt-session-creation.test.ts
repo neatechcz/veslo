@@ -34,7 +34,7 @@ test("sendPrompt keeps the session id returned by createSessionAndOpen before pr
 
 test("createSessionAndOpen persists the first composer text as the initial backend title", () => {
   const start = source.indexOf("async function createSessionAndOpen(");
-  const end = source.indexOf("const openNewSessionWithDirectory = async () =>");
+  const end = source.indexOf("const chooseFolderForCurrentSession = async () =>");
   assert.ok(start >= 0 && end > start, "createSessionAndOpen source should be present");
 
   const createSessionAndOpenSource = source.slice(start, end);

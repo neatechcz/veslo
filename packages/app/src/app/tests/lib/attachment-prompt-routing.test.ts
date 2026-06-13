@@ -4,39 +4,43 @@ import test from "node:test";
 import type { ComposerAttachment, ComposerDraft, ModelRef, ProviderListItem } from "../../types";
 import { routeStagedAttachmentsForModel } from "../../lib/attachment-prompt-routing.js";
 
+const buildModel = (
+  id: string,
+  name: string,
+  imageInput: boolean,
+  reasoning: boolean,
+): ProviderListItem["models"][string] => ({
+  id,
+  name,
+  attachment: imageInput,
+  reasoning,
+  temperature: true,
+  tool_call: true,
+  options: {},
+  cost: {
+    input: 0,
+    output: 0,
+    cache_read: 0,
+    cache_write: 0,
+  },
+  limit: {
+    context: 128000,
+    output: 8192,
+  },
+  release_date: "",
+});
+
 const buildProviders = (): ProviderListItem[] => [
   {
     id: "opencode",
     name: "OpenCode",
     env: [],
     models: {
-      "minimax-m2.5-free": {
-        id: "minimax-m2.5-free",
-        name: "MiniMax M2.5 Free",
-        release_date: "",
-        attachment: false,
-        reasoning: false,
-        temperature: false,
-        tool_call: true,
-        limit: { context: 128000, output: 8192 },
-        modalities: { input: ["text"], output: ["text"] },
-        options: {},
-      },
-      "gpt-4.1": {
-        id: "gpt-4.1",
-        name: "GPT-4.1",
-        release_date: "",
-        attachment: true,
-        reasoning: true,
-        temperature: true,
-        tool_call: true,
-        limit: { context: 128000, output: 8192 },
-        modalities: { input: ["text", "image"], output: ["text"] },
-        options: {},
-      },
+      "minimax-m2.5-free": buildModel("minimax-m2.5-free", "MiniMax M2.5 Free", false, false),
+      "gpt-4.1": buildModel("gpt-4.1", "GPT-4.1", true, true),
     },
   },
-] as ProviderListItem[];
+];
 
 const baseDraft = (attachments: ComposerAttachment[]): ComposerDraft => ({
   mode: "prompt",

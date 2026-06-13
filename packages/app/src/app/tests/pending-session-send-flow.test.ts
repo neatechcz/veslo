@@ -90,9 +90,9 @@ test("first pending draft send materializes workspace and session without global
   );
 
   const createSessionStart = appSource.indexOf("  async function createSessionAndOpen(");
-  const createSessionEnd = appSource.indexOf("  const openNewSessionWithDirectory = async () =>", createSessionStart);
+  const createSessionEnd = appSource.indexOf("  const chooseFolderForCurrentSession = async () =>", createSessionStart);
   assert.notEqual(createSessionStart, -1, "createSessionAndOpen should exist");
-  assert.notEqual(createSessionEnd, -1, "createSessionAndOpen block should end before openNewSessionWithDirectory");
+  assert.notEqual(createSessionEnd, -1, "createSessionAndOpen block should end before chooseFolderForCurrentSession");
   const createSessionSource = appSource.slice(createSessionStart, createSessionEnd);
 
   assert.match(

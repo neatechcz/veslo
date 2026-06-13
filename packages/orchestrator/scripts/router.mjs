@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const cliPath = resolve(__dirname, "..", "dist", "cli.js");
+const cliRuntime = process.env.VESLO_ORCHESTRATOR_TEST_RUNTIME || "bun";
 
 async function findFreePort() {
   return new Promise((resolve, reject) => {
@@ -65,7 +66,7 @@ async function waitFor(url, daemon, daemonLogs, timeoutMs = 30_000, pollMs = 250
 }
 
 async function runCli(args, dataDir) {
-  const child = spawn("node", [cliPath, ...args], {
+  const child = spawn(cliRuntime, [cliPath, ...args], {
     env: {
       ...process.env,
       VESLO_DATA_DIR: dataDir,
@@ -109,7 +110,7 @@ const opencodePort = await findFreePort();
 const daemonUrl = `http://127.0.0.1:${daemonPort}`;
 
 const daemon = spawn(
-  "node",
+  cliRuntime,
   [
     cliPath,
     "daemon",

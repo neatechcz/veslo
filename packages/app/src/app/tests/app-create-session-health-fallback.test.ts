@@ -6,7 +6,7 @@ const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 
 test("createSessionAndOpen does not abort session creation solely because the health preflight timed out", () => {
   const start = source.indexOf("async function createSessionAndOpen(");
-  const end = source.indexOf("const openNewSessionWithDirectory = async () =>");
+  const end = source.indexOf("const chooseFolderForCurrentSession = async () =>");
   assert.ok(start >= 0 && end > start, "createSessionAndOpen source should be present");
 
   const createSessionAndOpenSource = source.slice(start, end);
@@ -19,7 +19,7 @@ test("createSessionAndOpen does not abort session creation solely because the he
 
 test("createSessionAndOpen attempts local runtime recovery before reading the routed client", () => {
   const start = source.indexOf("async function createSessionAndOpen(");
-  const end = source.indexOf("const openNewSessionWithDirectory = async () =>");
+  const end = source.indexOf("const chooseFolderForCurrentSession = async () =>");
   assert.ok(start >= 0 && end > start, "createSessionAndOpen source should be present");
 
   const createSessionAndOpenSource = source.slice(start, end);
