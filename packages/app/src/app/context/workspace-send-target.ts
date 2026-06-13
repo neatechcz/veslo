@@ -1,5 +1,5 @@
 import type { SendTargetWorkspaceScope } from "./workspace-session-selection";
-import type { WorkspaceActivationOptions } from "./workspace";
+import type { WorkspaceActivationOptions } from "./workspace-types";
 
 type PendingDraftSendTarget = {
   workspaceId?: string | null;

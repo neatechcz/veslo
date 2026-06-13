@@ -102,7 +102,7 @@ Expected after each completed task: the targeted test command passes. Expected a
 - Modify: `packages/app/src/app/tests/context/workspace-forget-mode.test.ts`
 - Modify if needed: `packages/app/src/app/tests/context/workspace-session-snapshots.test.ts`
 
-- [ ] **Step 1: Write the helper**
+- [x] **Step 1: Write the helper**
 
 Create `packages/app/src/app/tests/context/workspace-source.ts`:
 
@@ -146,7 +146,7 @@ export function readWorkspaceBehaviorSources(): string {
 }
 ```
 
-- [ ] **Step 2: Update source-reading tests**
+- [x] **Step 2: Update source-reading tests**
 
 In tests that currently do this:
 
@@ -172,7 +172,7 @@ import { readWorkspaceFacadeSource } from "./workspace-source";
 const source = readWorkspaceFacadeSource();
 ```
 
-- [ ] **Step 3: Run the context source tests**
+- [x] **Step 3: Run the context source tests**
 
 Run:
 
@@ -197,7 +197,7 @@ git commit -m "test: make workspace context source tests module-aware"
 - Create: `packages/app/src/app/context/workspace-lifecycle-state.ts`
 - Create: `packages/app/src/app/tests/context/workspace-lifecycle-state.test.ts`
 
-- [ ] **Step 1: Write failing lifecycle tests**
+- [x] **Step 1: Write failing lifecycle tests**
 
 Create `packages/app/src/app/tests/context/workspace-lifecycle-state.test.ts`:
 
@@ -302,7 +302,7 @@ test("runtime-starting and failed events are scoped per workspace", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run:
 
@@ -312,7 +312,7 @@ pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/
 
 Expected: FAIL with module not found for `workspace-lifecycle-state`.
 
-- [ ] **Step 3: Implement the reducer**
+- [x] **Step 3: Implement the reducer**
 
 Create `packages/app/src/app/context/workspace-lifecycle-state.ts`:
 
@@ -492,7 +492,7 @@ export function reduceWorkspaceLifecycleState(
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run:
 
@@ -520,7 +520,7 @@ git commit -m "feat: add workspace lifecycle reducer"
 - Modify: `packages/app/src/app/context/workspace-send-target.ts`
 - Modify if needed: `packages/app/src/app/pages/session-navigation.ts`
 
-- [ ] **Step 1: Write source assertion**
+- [x] **Step 1: Write source assertion**
 
 Add this test to `packages/app/src/app/tests/context/workspace-activate-order-sync.test.ts`:
 
@@ -553,7 +553,7 @@ import {
 } from "./workspace-source";
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run:
 
@@ -563,7 +563,7 @@ pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/
 
 Expected: FAIL because `workspace-types.ts` does not exist or does not export the type.
 
-- [ ] **Step 3: Create shared type module**
+- [x] **Step 3: Create shared type module**
 
 Create `packages/app/src/app/context/workspace-types.ts`:
 
@@ -598,7 +598,7 @@ export type ConnectToServer = (
 ) => Promise<boolean>;
 ```
 
-- [ ] **Step 4: Update imports and re-export**
+- [x] **Step 4: Update imports and re-export**
 
 In `packages/app/src/app/context/workspace.ts`, replace the local `WorkspaceActivationOptions` type with:
 
@@ -631,7 +631,7 @@ import type { WorkspaceActivationOptions, WorkspaceConnectOptions } from "../con
 
 Then update the `connectToServer` dependency type to use `WorkspaceConnectOptions`.
 
-- [ ] **Step 5: Run typecheck and source test**
+- [x] **Step 5: Run typecheck and source test**
 
 Run:
 
@@ -659,7 +659,7 @@ git commit -m "refactor: share workspace context types"
 - Create: `packages/app/src/app/tests/context/workspace-busy-state.test.ts`
 - Modify: `packages/app/src/app/context/workspace.ts`
 
-- [ ] **Step 1: Write busy-state test**
+- [x] **Step 1: Write busy-state test**
 
 Create `packages/app/src/app/tests/context/workspace-busy-state.test.ts`:
 
@@ -708,7 +708,7 @@ test("clear all except preserves the selected workspace only", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run:
 
@@ -718,7 +718,7 @@ pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/
 
 Expected: FAIL with module not found.
 
-- [ ] **Step 3: Create debug helpers**
+- [x] **Step 3: Create debug helpers**
 
 Create `packages/app/src/app/context/workspace-debug.ts`:
 
@@ -831,7 +831,7 @@ export function createWorkspaceDebugEvents(enabled: () => boolean) {
 }
 ```
 
-- [ ] **Step 4: Create busy state helper**
+- [x] **Step 4: Create busy state helper**
 
 Create `packages/app/src/app/context/workspace-busy-state.ts`:
 
@@ -914,7 +914,7 @@ export function createWorkspaceBusyState(
 }
 ```
 
-- [ ] **Step 5: Wire workspace.ts**
+- [x] **Step 5: Wire workspace.ts**
 
 In `workspace.ts`, import:
 
@@ -950,7 +950,7 @@ const {
 
 Remove the old local `WorkspaceBusyMap`, `WorkspaceBusyTraceRoot`, `recordWorkspaceBusyTrace`, `_wsLog`, `workspaceDebugStack`, debug event helpers, and busy functions from `workspace.ts`.
 
-- [ ] **Step 6: Run targeted tests and typecheck**
+- [x] **Step 6: Run targeted tests and typecheck**
 
 Run:
 

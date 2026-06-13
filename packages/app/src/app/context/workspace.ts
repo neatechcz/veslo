@@ -68,22 +68,27 @@ import { createEngineStore } from "../stores/engine-store";
 import { createRemoteStore } from "../stores/remote-store";
 import { shouldAutoBootstrapRemoteServer } from "../utils/startup-server-bootstrap";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
+import type {
+  WorkspaceActivationOptions,
+  WorkspaceConnectContext,
+  WorkspaceConnectOptions,
+} from "./workspace-types";
+import {
+  createWorkspaceDebugEvents,
+  recordWorkspaceBusyTrace,
+  workspaceDebugStack,
+  wsLog,
+} from "./workspace-debug";
+import { createWorkspaceBusyState } from "./workspace-busy-state";
 
 export type { MigrationRepairResult } from "../stores/config-store";
+export type {
+  ConnectToServer,
+  WorkspaceActivationOptions,
+  WorkspaceConnectContext,
+  WorkspaceConnectOptions,
+} from "./workspace-types";
 export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
-
-export type WorkspaceDebugEvent = {
-  at: number;
-  label: string;
-  payload?: unknown;
-};
-
-export type WorkspaceActivationOptions = {
-  origin: string;
-  promoteToFront?: boolean;
-};
-
-type WorkspaceBusyMap = Record<string, { sessionId: string; startedAt: number }>;
 
 type DisplayedSessionResetReason =
   | "remote_to_local_workspace_changed"
@@ -99,57 +104,7 @@ type DisplayedSessionResetScope = {
   clearPendingPermissions?: boolean;
 };
 
-type WorkspaceBusyTraceRoot = typeof window & {
-  __vesloWorkspaceBusyTrace?: Array<Record<string, unknown>>;
-  __vesloWorkspaceBusySnapshot?: WorkspaceBusyMap;
-};
-
-function recordWorkspaceBusyTrace(event: string, payload?: Record<string, unknown>) {
-  if (typeof window === "undefined") return;
-  try {
-    const root = window as WorkspaceBusyTraceRoot;
-    const logs = root.__vesloWorkspaceBusyTrace ?? [];
-    logs.push({
-      at: new Date().toISOString(),
-      ts: Date.now(),
-      source: "workspace",
-      event,
-      ...(payload ?? {}),
-    });
-    if (logs.length > 500) logs.splice(0, logs.length - 500);
-    root.__vesloWorkspaceBusyTrace = logs;
-    if (payload?.next && typeof payload.next === "object") {
-      root.__vesloWorkspaceBusySnapshot = payload.next as WorkspaceBusyMap;
-    }
-    console.log("[workspace:busy]", event, payload ?? {});
-  } catch {
-    // ignore
-  }
-}
-
-function _wsLog(msg: string, data?: unknown) {
-  const line = `[${new Date().toISOString()}] ${msg}${data !== undefined ? " " + (typeof data === "string" ? data : JSON.stringify(data)) : ""}`;
-  console.log(line);
-  try { (window as any).__wsActivateLog = ((window as any).__wsActivateLog || "") + line + "\n"; } catch {}
-  // VSLO-86 — forward to Tauri stderr (/tmp/veslo.log) so ensureEngine /
-  // workspace:activate diagnostics survive without DevTools. Lazy import so
-  // module load order is preserved (workspace.ts imports tauri.ts already).
-  try {
-    void import("../lib/tauri").then((mod) => mod.logUiEvent("workspace", msg, data)).catch(() => {});
-  } catch {}
-}
-
-const workspaceDebugStack = () => {
-  try {
-    return (new Error().stack ?? "")
-      .split("\n")
-      .slice(2, 9)
-      .map((line) => line.trim())
-      .filter(Boolean);
-  } catch {
-    return [];
-  }
-};
+const _wsLog = wsLog;
 
 function isSkillRegistryMaterializationError(error: unknown): boolean {
   if (error instanceof VesloServerError) {
@@ -236,35 +191,7 @@ export function createWorkspaceStore(options: {
   };
 
   const wsDebugEnabled = () => options.developerMode();
-
-  const WORKSPACE_DEBUG_EVENT_LIMIT = 200;
-  const [workspaceDebugEvents, setWorkspaceDebugEvents] = createSignal<WorkspaceDebugEvent[]>([]);
-  const clearWorkspaceDebugEvents = () => setWorkspaceDebugEvents([]);
-  const pushWorkspaceDebugEvent = (label: string, payload?: unknown) => {
-    if (!wsDebugEnabled()) return;
-    const entry: WorkspaceDebugEvent = { at: Date.now(), label, payload };
-    setWorkspaceDebugEvents((prev) => {
-      if (!prev.length) return [entry];
-      const sliceStart = Math.max(0, prev.length - WORKSPACE_DEBUG_EVENT_LIMIT + 1);
-      const next = prev.slice(sliceStart);
-      next.push(entry);
-      return next;
-    });
-  };
-
-  const wsDebug = (label: string, payload?: unknown) => {
-    if (!wsDebugEnabled()) return;
-    try {
-      if (payload === undefined) {
-        console.log(`[WSDBG] ${label}`);
-      } else {
-        console.log(`[WSDBG] ${label}`, payload);
-      }
-      pushWorkspaceDebugEvent(label, payload);
-    } catch {
-      // ignore
-    }
-  };
+  const { workspaceDebugEvents, clearWorkspaceDebugEvents, wsDebug } = createWorkspaceDebugEvents(wsDebugEnabled);
 
   const wsActivateGuard = createWorkspaceActivateGuard();
   const connectInFlightByKey = new Map<string, Promise<boolean>>();
@@ -315,14 +242,9 @@ export function createWorkspaceStore(options: {
   const connectRequestKey = (
     nextBaseUrl: string,
     directory?: string,
-    context?: {
-      workspaceId?: string;
-      workspaceType?: WorkspaceInfo["workspaceType"];
-      targetRoot?: string;
-      reason?: string;
-    },
+    context?: WorkspaceConnectContext,
     auth?: OpencodeAuth,
-    connectOptions?: { quiet?: boolean; navigate?: boolean },
+    connectOptions?: WorkspaceConnectOptions,
   ) =>
     [
       nextBaseUrl.trim(),
@@ -376,61 +298,8 @@ export function createWorkspaceStore(options: {
   // Cross-workspace busy tracker: which workspaces have a running session.
   // Survives workspace switch (sessionStatus is reset on switch) so we can
   // warn the user before sendPrompt kills another workspace's engine.
-  const [workspaceBusy, setWorkspaceBusy] = createSignal<
-    Record<string, { sessionId: string; startedAt: number }>
-  >({});
-
-  function markWorkspaceBusy(workspaceId: string, sessionId: string) {
-    const id = workspaceId.trim();
-    if (!id || !sessionId) return;
-    setWorkspaceBusy((prev) => {
-      const next = {
-        ...prev,
-        [id]: { sessionId, startedAt: Date.now() },
-      };
-      recordWorkspaceBusyTrace("mark", {
-        workspaceId: id,
-        sessionId,
-        previous: prev,
-        next,
-      });
-      return next;
-    });
-  }
-
-  function clearWorkspaceBusy(workspaceId: string, sessionId?: string) {
-    const id = workspaceId.trim();
-    if (!id) return;
-    setWorkspaceBusy((prev) => {
-      const entry = prev[id];
-      if (!entry) return prev;
-      if (sessionId && entry.sessionId !== sessionId) return prev;
-      const next = { ...prev };
-      delete next[id];
-      recordWorkspaceBusyTrace("clear", {
-        workspaceId: id,
-        sessionId: sessionId ?? null,
-        previous: prev,
-        next,
-      });
-      return next;
-    });
-  }
-
-  function clearWorkspaceBusyAllExcept(workspaceId: string) {
-    const keep = workspaceId.trim();
-    setWorkspaceBusy((prev) => {
-      const next: Record<string, { sessionId: string; startedAt: number }> = {};
-      if (keep && prev[keep]) next[keep] = prev[keep];
-      recordWorkspaceBusyTrace("clear-all-except", {
-        keepWorkspaceId: keep || null,
-        previous: prev,
-        next,
-        droppedWorkspaceIds: Object.keys(prev).filter((id) => id !== keep),
-      });
-      return next;
-    });
-  }
+  const { workspaceBusy, markWorkspaceBusy, clearWorkspaceBusy, clearWorkspaceBusyAllExcept } =
+    createWorkspaceBusyState(recordWorkspaceBusyTrace);
 
   // VSLO-171 F3Ú8: isAnyOtherWorkspaceBusy() byla smazána — multi mode
   // garantuje paralelní engine pool, single-active fallback ztratí task
@@ -1618,14 +1487,9 @@ export function createWorkspaceStore(options: {
   async function connectToServer(
     nextBaseUrl: string,
     directory?: string,
-    context?: {
-      workspaceId?: string;
-      workspaceType?: WorkspaceInfo["workspaceType"];
-      targetRoot?: string;
-      reason?: string;
-    },
+    context?: WorkspaceConnectContext,
     auth?: OpencodeAuth,
-    connectOptions?: { quiet?: boolean; navigate?: boolean; forceRefresh?: boolean },
+    connectOptions?: WorkspaceConnectOptions,
   ) {
     const requestKey = connectRequestKey(nextBaseUrl, directory, context, auth, connectOptions);
     const existing = connectInFlightByKey.get(requestKey);

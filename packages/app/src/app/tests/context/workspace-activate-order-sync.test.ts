@@ -1,13 +1,35 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const source = readFileSync(new URL("../../context/workspace.ts", import.meta.url), "utf8");
+import {
+  readContextSource,
+  readWorkspaceBehaviorSources,
+  readWorkspaceFacadeSource,
+} from "./workspace-source";
+
+const source = readWorkspaceBehaviorSources();
 
 test("local activation path applies workspace_set_active response back into the workspace list", () => {
   assert.match(
     source,
     /_wsLog\("\[workspace:activate\] STEP 3 — workspaceSetActive\.\.\.", \{ id \}\);[\s\S]*const ws = await withTimeoutOrThrow\([\s\S]*workspaceSetActive\(id, \{ promoteToFront: activationOptions\?\.promoteToFront \?\? false \}\),[\s\S]*\);[\s\S]*setWorkspaces\(ws\.workspaces\);/s,
+  );
+});
+
+test("workspace activation options live in the shared workspace-types module", () => {
+  const typesSource = readContextSource("workspace-types.ts");
+  const facadeSource = readWorkspaceFacadeSource();
+
+  assert.match(
+    typesSource,
+    /export type WorkspaceActivationOptions = \{/,
+    "WorkspaceActivationOptions should live in workspace-types.ts",
+  );
+
+  assert.doesNotMatch(
+    facadeSource,
+    /export type WorkspaceActivationOptions = \{/,
+    "workspace.ts should re-export shared activation types instead of owning them",
   );
 });
 

@@ -8,7 +8,10 @@ import {
 import { t, currentLocale } from "../../i18n";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 import type { OpencodeAuth } from "../lib/opencode";
-import type { WorkspaceActivationOptions } from "../context/workspace";
+import type {
+  ConnectToServer,
+  WorkspaceActivationOptions,
+} from "../context/workspace-types";
 import {
   buildVesloWorkspaceBaseUrl,
   createVesloServerClient,
@@ -57,18 +60,7 @@ export interface RemoteStoreDeps {
   getClientDirectory: () => string;
 
   // Server connection
-  connectToServer: (
-    nextBaseUrl: string,
-    directory?: string,
-    context?: {
-      workspaceId?: string;
-      workspaceType?: WorkspaceInfo["workspaceType"];
-      targetRoot?: string;
-      reason?: string;
-    },
-    auth?: OpencodeAuth,
-    connectOptions?: { quiet?: boolean; navigate?: boolean },
-  ) => Promise<boolean>;
+  connectToServer: ConnectToServer;
 
   // Workspace activation & testing
   activateWorkspace: (workspaceId: string, options: WorkspaceActivationOptions) => Promise<boolean>;

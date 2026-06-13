@@ -150,7 +150,7 @@ import type { ArtifactFamily } from "../components/session/artifact-family-model
 import SessionCapabilitiesPanel from "../components/session/session-capabilities-panel";
 import type { SessionCapabilitiesSnapshot } from "../lib/session-capabilities";
 import { openSessionWithWorkspaceActivation, type SessionBrowseScope } from "./session-navigation";
-import type { WorkspaceActivationOptions } from "../context/workspace";
+import type { WorkspaceActivationOptions } from "../context/workspace-types";
 import { availableChatWidthForLayout, reconcileSidebarLayoutForRootWidth } from "./session-layout-width";
 import { resolveSessionTitlebarContext } from "./session-titlebar-context";
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
