@@ -106,16 +106,27 @@ export function messageFromUnknownError(
   safeStringify: (value: unknown) => string = stringifyUnknown,
 ): string {
   if (error instanceof Error) return error.message;
-  const message = safeStringify(error);
+  let message: string;
+  try {
+    message = safeStringify(error);
+  } catch {
+    message = stringifyUnknown(error);
+  }
   return typeof message === "string" ? message : String(message);
 }
 
-export function isLocalRuntimeHealthTimeoutError(error: unknown): boolean {
-  return messageFromUnknownError(error).includes(localRuntimeHealthTimeoutMessage);
+export function isLocalRuntimeHealthTimeoutError(
+  error: unknown,
+  safeStringify?: (value: unknown) => string,
+): boolean {
+  return messageFromUnknownError(error, safeStringify).includes(localRuntimeHealthTimeoutMessage);
 }
 
-export function shouldRecoverLocalRuntimeFromHealthError(error: unknown): boolean {
-  const message = messageFromUnknownError(error);
+export function shouldRecoverLocalRuntimeFromHealthError(
+  error: unknown,
+  safeStringify?: (value: unknown) => string,
+): boolean {
+  const message = messageFromUnknownError(error, safeStringify);
   const normalized = message.toLowerCase();
   return (
     normalized.includes("error sending request") ||
@@ -223,7 +234,10 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
           ...(tracePayload ?? {}),
           message,
         });
-        if (!isLocalRuntimeHealthTimeoutError(error) && !shouldRecoverLocalRuntimeFromHealthError(error)) {
+        if (
+          !isLocalRuntimeHealthTimeoutError(error, deps.safeStringify) &&
+          !shouldRecoverLocalRuntimeFromHealthError(error, deps.safeStringify)
+        ) {
           return true;
         }
       }

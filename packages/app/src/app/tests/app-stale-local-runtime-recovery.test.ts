@@ -65,17 +65,17 @@ test("local runtime client reconnect uses workspace-scoped engine info", () => {
 test("local runtime recovery restarts for dead endpoints and health timeouts", () => {
   assert.match(
     readinessSource,
-    /export function shouldRecoverLocalRuntimeFromHealthError\(error: unknown\): boolean \{[\s\S]*error sending request[\s\S]*connection refused[\s\S]*ECONNREFUSED/s,
+    /export function shouldRecoverLocalRuntimeFromHealthError\([\s\S]*error: unknown,[\s\S]*safeStringify\?: \(value: unknown\) => string,[\s\S]*\): boolean \{[\s\S]*error sending request[\s\S]*connection refused[\s\S]*ECONNREFUSED/s,
     "dead local endpoint errors should be classified as runtime recovery candidates",
   );
   assert.match(
     readinessSource,
-    /export const localRuntimeHealthTimeoutMessage = "Timed out waiting for local runtime health";[\s\S]*export function isLocalRuntimeHealthTimeoutError\(error: unknown\): boolean \{[\s\S]*localRuntimeHealthTimeoutMessage/s,
+    /export const localRuntimeHealthTimeoutMessage = "Timed out waiting for local runtime health";[\s\S]*export function isLocalRuntimeHealthTimeoutError\([\s\S]*safeStringify\?: \(value: unknown\) => string,[\s\S]*\): boolean \{[\s\S]*localRuntimeHealthTimeoutMessage/s,
     "health timeouts should stay separately detectable so stale daemon probes can trigger runtime recovery",
   );
   assert.match(
     readinessSource,
-    /if \(!isLocalRuntimeHealthTimeoutError\(error\) && !shouldRecoverLocalRuntimeFromHealthError\(error\)\) \{[\s\S]*return true;[\s\S]*deps\.setEngineReady\(false\);[\s\S]*deps\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined\)/s,
+    /if \([\s\S]*!isLocalRuntimeHealthTimeoutError\(error, deps\.safeStringify\)[\s\S]*!shouldRecoverLocalRuntimeFromHealthError\(error, deps\.safeStringify\)[\s\S]*\) \{[\s\S]*return true;[\s\S]*deps\.setEngineReady\(false\);[\s\S]*deps\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined\)/s,
     "runtime recovery should restart before send when the endpoint is dead or the local health probe times out",
   );
 });

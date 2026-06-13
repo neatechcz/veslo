@@ -8383,6 +8383,36 @@ export default function App() {
       }
       if (preflight) preflight.managedAiReady = true;
     }
+    let createRuntimeReady = true;
+    if (preflight?.runtimeHealthOk) {
+      recordSendTrace("createSessionAndOpen:health-skip", {
+        ...(tracePayload ?? {}),
+        reason: "send-preflight-already-healthy",
+      });
+    } else {
+      const createRuntimePreflight: SendRuntimePreflightContext = preflight ?? {
+        traceId: sendTraceId,
+        targetWorkspace,
+        runtimeHealthOk: false,
+      };
+      createRuntimeReady = await sendTraceStep(
+        "createSessionAndOpen:ensure-local-runtime-reachable",
+        () => ensureLocalRuntimeReachableForSend("createSessionAndOpen", createRuntimePreflight),
+        {
+          ...(tracePayload ?? {}),
+          activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
+          targetWorkspaceId: targetWorkspace?.workspaceId ?? null,
+          workspaceType: workspaceStore.activeWorkspaceDisplay().workspaceType,
+          hasClient: Boolean(routedClient(targetWorkspace?.workspaceId)),
+        },
+      );
+      if (createRuntimePreflight.runtimeHealthOk) {
+        recordSendTrace("createSessionAndOpen:health-ok", tracePayload);
+      }
+    }
+    if (!createRuntimeReady) {
+      recordSendTrace("createSessionAndOpen:runtime-unreachable-continue", tracePayload);
+    }
     const c = routedClientForSendTarget(targetWorkspace);
     if (!c) {
       recordSendTrace("createSessionAndOpen:blocked-no-client", tracePayload);
@@ -8448,58 +8478,7 @@ export default function App() {
       setCreatingSession(true);
     }
 
-    const withTimeout = async <T,>(
-      promise: Promise<T>,
-      ms: number,
-      label: string
-    ) => {
-      let timeoutId: ReturnType<typeof setTimeout> | null = null;
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(
-          () => reject(new Error(`Timed out waiting for ${label}`)),
-          ms
-        );
-      });
-      try {
-        return await Promise.race([promise, timeoutPromise]);
-      } finally {
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
-      }
-    };
-
     try {
-      // Quick health check to detect stale connection
-      mark("health:start");
-      if (preflight?.runtimeHealthOk) {
-        recordSendTrace("createSessionAndOpen:health-skip", {
-          ...(tracePayload ?? {}),
-          reason: "send-preflight-already-healthy",
-        });
-        mark("health:skip");
-      } else {
-        try {
-          await sendTraceStep(
-            "createSessionAndOpen:health",
-            () => withTimeout(c.global.health(), 3_000, "health"),
-            tracePayload,
-          );
-          recordSendTrace("createSessionAndOpen:health-ok", tracePayload);
-          if (preflight) preflight.runtimeHealthOk = true;
-          mark("health:ok");
-        } catch (healthErr) {
-          recordSendTrace("createSessionAndOpen:health-error", {
-            ...(tracePayload ?? {}),
-            message: healthErr instanceof Error ? healthErr.message : safeStringify(healthErr),
-          });
-          mark("health:error", {
-            error: healthErr instanceof Error ? healthErr.message : safeStringify(healthErr),
-          });
-          console.warn("[createSessionAndOpen] health preflight failed; continuing to session.create", healthErr);
-        }
-      }
-
       const initialSessionTitle = initialTitle.trim();
       let session: Session & {
         conversationId?: string | null;

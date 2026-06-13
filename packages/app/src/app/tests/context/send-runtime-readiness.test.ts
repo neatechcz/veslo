@@ -203,6 +203,44 @@ test("local runtime readiness restarts the target workspace engine for dead endp
   assert.ok(events.some((entry) => entry.event === "sendPrompt:runtime-recovery-ok"));
 });
 
+test("local runtime readiness classifies circular non-Error endpoint failures through the injected serializer", async () => {
+  const { readiness, clients, ensureEngineCalls } = createHarness({
+    safeStringify: (value) => {
+      const seen = new WeakSet<object>();
+      return JSON.stringify(value, (_key, entry) => {
+        if (entry && typeof entry === "object") {
+          if (seen.has(entry)) return "<circular>";
+          seen.add(entry);
+        }
+        return entry;
+      });
+    },
+    ensureEngineForWorkspace: async (workspaceId?: string) => {
+      ensureEngineCalls.push(workspaceId);
+      clients.set("target", createClient("target-recovered"));
+      return true;
+    },
+  });
+  const error = { message: "ECONNREFUSED" } as { message: string; self?: unknown };
+  error.self = error;
+  clients.set(
+    "target",
+    createClient("target-stale", async () => {
+      throw error;
+    }),
+  );
+
+  const preflight = {
+    traceId: "trace-circular-recovery",
+    targetWorkspace: { workspaceId: "target", workspaceRoot: "/repo/target", directory: "/repo/target" },
+    runtimeHealthOk: false,
+  };
+
+  assert.equal(await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight), true);
+  assert.deepEqual(ensureEngineCalls, ["target"]);
+  assert.equal(preflight.runtimeHealthOk, true);
+});
+
 test("engine-info reconnect scopes the lookup and connection to the active local workspace", async () => {
   const reconnectedClient = createClient("reconnected");
   const { readiness, clients, connectCalls, engineInfoCalls, engineReadyValues } = createHarness({
