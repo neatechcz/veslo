@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const cliPath = resolve(__dirname, "..", "dist", "cli.js");
 const serverCliPath = resolve(__dirname, "..", "..", "server", "src", "cli.ts");
+const cliRuntime = process.env.VESLO_ORCHESTRATOR_TEST_RUNTIME || "bun";
 
 async function findFreePort() {
   return new Promise((resolvePort, reject) => {
@@ -98,7 +99,7 @@ async function terminateProcessTree(child, { gracefulMs = 3000, forceMs = 2000 }
 }
 
 async function runCli(args) {
-  const child = spawn("node", [cliPath, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(cliRuntime, [cliPath, ...args], { stdio: ["ignore", "pipe", "pipe"] });
   let stdout = "";
   let stderr = "";
   child.stdout.setEncoding("utf8");

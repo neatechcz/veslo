@@ -50,7 +50,7 @@ describe("version manifest resolution", () => {
     await writeFile(
       join(dir, "versions.json.exe"),
       JSON.stringify({
-        "veslo-code": { version: "1.14.29", sha256: "codehash" },
+        "veslo-code": { version: "1.17.4", sha256: "codehash" },
       }),
       "utf8",
     );
@@ -61,6 +61,6 @@ describe("version manifest resolution", () => {
 
     expect(manifest).not.toBeNull();
     expect(manifest?.dir).toBe(dir);
-    expect(manifest?.entries["veslo-code"]?.version).toBe("1.14.29");
+    expect(manifest?.entries["veslo-code"]?.version).toBe("1.17.4");
   });
 });

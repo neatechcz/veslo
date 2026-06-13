@@ -25,7 +25,7 @@ toolchain, so the installer/first-run onboarding can invoke it directly.
 powershell -ExecutionPolicy Bypass -File scripts/windows-wsl2-sandbox-provision.ps1
 
 .EXAMPLE
-powershell -ExecutionPolicy Bypass -File scripts/windows-wsl2-sandbox-provision.ps1 -Force -OpencodeVersion 1.14.29
+powershell -ExecutionPolicy Bypass -File scripts/windows-wsl2-sandbox-provision.ps1 -Force -OpencodeVersion 1.17.4
 #>
 [CmdletBinding()]
 param(
@@ -177,7 +177,7 @@ function Resolve-OpencodeVersion {
             if ($pkg.opencodeVersion) { return ([string]$pkg.opencodeVersion).Trim() }
         } catch {}
     }
-    return "1.14.29"
+    return "1.17.4"
 }
 
 # --- 1. Preconditions ---------------------------------------------------------

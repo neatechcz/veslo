@@ -18,6 +18,7 @@ import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import type { TuiHandle } from "./tui/app.js";
 import { reconcileOpencodeVersion } from "./opencode-version.js";
 import { sanitizeRuntimePayloadForLogs } from "./security.js";
+import { resolveEngineSandbox } from "./sandbox-mode.js";
 import { readVersionManifestFromDirs, type VersionInfo, type VersionManifest } from "./version-manifest.js";
 import type { SerializedEngineState } from "./engine-pool.js";
 import { atomicWriteJson, cleanupStaleTmpFiles, createDebouncedPersister } from "./persistence.js";
@@ -2444,33 +2445,15 @@ async function startOpencode(options: {
       : {}),
   };
 
-  // F4Ú4 — resolve sandbox: explicit `null` disables; explicit object wraps;
-  // omitted -> platform default unless VESLO_DISABLE_SANDBOX=1 (escape hatch
-  // for headless tests, never for prod).
-  let sandbox: WorkerSandbox | null;
-  if (options.sandbox === null) {
-    sandbox = null;
-  } else if (options.sandbox) {
-    sandbox = options.sandbox;
-  } else if (process.env.VESLO_DISABLE_SANDBOX === "1") {
-    sandbox = null;
-    options.logger.warn(
-      "engine spawn unsandboxed (VESLO_DISABLE_SANDBOX=1)",
-      { workspace: options.workspace },
-      "sandbox",
-    );
-  } else {
-    try {
-      sandbox = resolveSandbox();
-    } catch (err) {
-      options.logger.warn(
-        "sandbox unavailable, spawning unsandboxed",
-        { workspace: options.workspace, error: err instanceof Error ? err.message : String(err) },
-        "sandbox",
-      );
-      sandbox = null;
-    }
-  }
+  // VESLO_DISABLE_SANDBOX=1 is a hard kill switch: it bypasses platform
+  // backend resolution entirely, including the Windows WSL2 sandbox branch.
+  const sandbox = resolveEngineSandbox({
+    env: process.env,
+    workspace: options.workspace,
+    sandbox: options.sandbox,
+    resolveSandbox,
+    logger: options.logger,
+  });
 
   let child: ChildProcess;
   let connectHost: string | undefined;

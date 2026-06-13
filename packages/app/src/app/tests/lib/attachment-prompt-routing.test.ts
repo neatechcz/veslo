@@ -4,39 +4,72 @@ import test from "node:test";
 import type { ComposerAttachment, ComposerDraft, ModelRef, ProviderListItem } from "../../types";
 import { routeStagedAttachmentsForModel } from "../../lib/attachment-prompt-routing.js";
 
+const buildModel = (
+  id: string,
+  name: string,
+  imageInput: boolean,
+  reasoning: boolean,
+): ProviderListItem["models"][string] => ({
+  id,
+  providerID: "opencode",
+  api: {
+    id: "opencode",
+    url: "",
+    npm: "@ai-sdk/openai-compatible",
+  },
+  name,
+  capabilities: {
+    attachment: imageInput,
+    reasoning,
+    temperature: true,
+    toolcall: true,
+    input: {
+      text: true,
+      audio: false,
+      image: imageInput,
+      video: false,
+      pdf: false,
+    },
+    output: {
+      text: true,
+      audio: false,
+      image: false,
+      video: false,
+      pdf: false,
+    },
+    interleaved: false,
+  },
+  cost: {
+    input: 0,
+    output: 0,
+    cache: {
+      read: 0,
+      write: 0,
+    },
+  },
+  limit: {
+    context: 128000,
+    output: 8192,
+  },
+  status: "active",
+  options: {},
+  headers: {},
+  release_date: "",
+});
+
 const buildProviders = (): ProviderListItem[] => [
   {
     id: "opencode",
     name: "OpenCode",
+    source: "custom",
     env: [],
+    options: {},
     models: {
-      "minimax-m2.5-free": {
-        id: "minimax-m2.5-free",
-        name: "MiniMax M2.5 Free",
-        release_date: "",
-        attachment: false,
-        reasoning: false,
-        temperature: false,
-        tool_call: true,
-        limit: { context: 128000, output: 8192 },
-        modalities: { input: ["text"], output: ["text"] },
-        options: {},
-      },
-      "gpt-4.1": {
-        id: "gpt-4.1",
-        name: "GPT-4.1",
-        release_date: "",
-        attachment: true,
-        reasoning: true,
-        temperature: true,
-        tool_call: true,
-        limit: { context: 128000, output: 8192 },
-        modalities: { input: ["text", "image"], output: ["text"] },
-        options: {},
-      },
+      "minimax-m2.5-free": buildModel("minimax-m2.5-free", "MiniMax M2.5 Free", false, false),
+      "gpt-4.1": buildModel("gpt-4.1", "GPT-4.1", true, true),
     },
   },
-] as ProviderListItem[];
+];
 
 const baseDraft = (attachments: ComposerAttachment[]): ComposerDraft => ({
   mode: "prompt",

@@ -189,7 +189,7 @@ fn managed_deps_manifest_has_expected_packages(path: &Path) -> bool {
         })
     };
 
-    has_package("@opencode-ai/plugin", "1.14.29") && has_package("zod", "4.1.8")
+    has_package("@opencode-ai/plugin", "1.17.4") && has_package("zod", "4.1.8")
 }
 
 pub(crate) fn resolve_opencode_managed_deps_manifest(sidecar_paths: &[PathBuf]) -> Option<PathBuf> {
@@ -513,12 +513,12 @@ mod tests {
         fs::create_dir_all(&dir).expect("create test dir");
         fs::write(
             dir.join("versions.json.exe"),
-            r#"{"veslo-code":{"version":"1.14.29","sha256":"abc"}}"#,
+            r#"{"veslo-code":{"version":"1.17.4","sha256":"abc"}}"#,
         )
         .expect("write manifest");
 
         let version = resolve_manifest_opencode_version(&[dir.clone()]);
-        assert_eq!(version.as_deref(), Some("1.14.29"));
+        assert_eq!(version.as_deref(), Some("1.17.4"));
 
         let _ = fs::remove_dir_all(dir);
     }
@@ -541,7 +541,7 @@ mod tests {
             r#"{
   "schemaVersion": 1,
   "packages": [
-    { "name": "@opencode-ai/plugin", "version": "1.14.29", "files": [{ "path": "package.json", "contentBase64": "e30=" }] },
+    { "name": "@opencode-ai/plugin", "version": "1.17.4", "files": [{ "path": "package.json", "contentBase64": "e30=" }] },
     { "name": "zod", "version": "4.1.8", "files": [{ "path": "package.json", "contentBase64": "e30=" }] }
   ]
 }"#,

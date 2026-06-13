@@ -97,7 +97,7 @@ test("session route re-selects once when a client becomes available after bootst
 
 test("createSessionAndOpen injects the new session before selecting it", () => {
   const createStart = source.indexOf("  async function createSessionAndOpen(");
-  const createEnd = source.indexOf("  const openNewSessionWithDirectory = async", createStart);
+  const createEnd = source.indexOf("  const chooseFolderForCurrentSession = async () =>", createStart);
   assert.notStrictEqual(createStart, -1, "createSessionAndOpen should exist");
   assert.notStrictEqual(createEnd, -1, "createSessionAndOpen block end should exist");
   const createSource = source.slice(createStart, createEnd);

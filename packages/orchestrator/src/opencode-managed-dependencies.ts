@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const VESLO_MANAGED_PLUGIN_VERSION = "1.14.29";
+export const VESLO_MANAGED_PLUGIN_VERSION = "1.17.4";
 export const VESLO_MANAGED_ZOD_VERSION = "4.1.8";
 
 type ManagedDependencyEvent = {

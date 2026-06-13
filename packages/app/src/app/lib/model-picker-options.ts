@@ -88,7 +88,7 @@ export function buildModelPickerOptions(input: BuildModelPickerOptionsInput): Mo
       if (defaultModelID === model.id || isDefault) {
         footer = appendFooterBit(footer, labels.default);
       }
-      if (model.reasoning) {
+      if (model.capabilities.reasoning) {
         footer = appendFooterBit(footer, labels.reasoning);
       }
 

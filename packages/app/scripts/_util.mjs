@@ -2,9 +2,24 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import net from "node:net";
-import { realpathSync, statSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
+
+const bundledOpencode = fileURLToPath(
+  new URL(
+    `../../desktop/src-tauri/sidecars/${process.platform === "win32" ? "veslo-code.exe" : "veslo-code"}`,
+    import.meta.url,
+  ),
+);
+
+function resolveOpencodeBin() {
+  const explicit = process.env.VESLO_OPENCODE_BIN?.trim() || process.env.OPENCODE_BIN_PATH?.trim();
+  if (explicit) return explicit;
+  if (existsSync(bundledOpencode)) return bundledOpencode;
+  return "opencode";
+}
 
 function resolveAuthHeader(auth) {
   if (auth?.mode === "veslo" && auth.token) {
@@ -59,7 +74,7 @@ export async function spawnOpencodeServe({
     args.push("--cors", origin);
   }
 
-  const child = spawn("opencode", args, {
+  const child = spawn(resolveOpencodeBin(), args, {
     cwd,
     stdio: ["ignore", "ignore", "pipe"],
     env: {
