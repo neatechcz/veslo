@@ -76,8 +76,8 @@ test("session route re-selects once when a client becomes available after bootst
   );
   assert.match(
     routeSource,
-    /routeResumeSelectionAlreadyHandledForSession === id && selectedSessionId\(\) === id[\s\S]*routeResumeSelectionAlreadyHandledForSession = "";[\s\S]*lastRouteClientResumeKey = connectionKey;[\s\S]*return;/s,
-    "route resume should not immediately re-select a session that createSessionAndOpen already selected before navigating",
+    /routeResumeSelectionAlreadyHandledForSession === id[\s\S]*if \(selectedSessionId\(\) !== id\) \{[\s\S]*setSelectedSessionId\(id\);[\s\S]*\}[\s\S]*routeResumeSelectionAlreadyHandledForSession = "";[\s\S]*lastRouteClientResumeKey = connectionKey;[\s\S]*return;/s,
+    "route resume should not immediately re-select a session that createSessionAndOpen is selecting after navigating",
   );
   assert.match(
     routeSource,
@@ -95,8 +95,8 @@ test("createSessionAndOpen injects the new session before selecting it", () => {
 
   assert.match(
     createSource,
-    /const displaySession = applyPendingInitialSessionTitle\(session\);[\s\S]*setSessions\(\[session, \.\.\.currentStoreSessions\]\);[\s\S]*materializePendingSessionInWorkspaceSidebar\(\{[\s\S]*mark\("session:select:start", \{ sessionID: session\.id \}\);[\s\S]*routeResumeSelectionAlreadyHandledForSession = session\.id;[\s\S]*"createSessionAndOpen:select-session"/s,
-    "newly created sessions should be present in session/sidebar state before selectSession runs",
+    /const displaySession = applyPendingInitialSessionTitle\(session\);[\s\S]*setSessions\(\[session, \.\.\.currentStoreSessions\]\);[\s\S]*materializePendingSessionInWorkspaceSidebar\(\{[\s\S]*routeResumeSelectionAlreadyHandledForSession = session\.id;[\s\S]*goToSession\(session\.id\);[\s\S]*mark\("session:select:start", \{ sessionID: session\.id \}\);[\s\S]*"createSessionAndOpen:select-session"/s,
+    "newly created sessions should be present in session/sidebar state before route navigation and selectSession run",
   );
 });
 

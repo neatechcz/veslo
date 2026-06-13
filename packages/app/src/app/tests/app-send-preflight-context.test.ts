@@ -3,6 +3,10 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const runtimeReadinessSource = readFileSync(
+  new URL("../context/send-runtime-readiness.ts", import.meta.url),
+  "utf8",
+);
 
 test("sendPrompt carries a preflight context into first-session creation", () => {
   const start = source.indexOf("async function sendPrompt(");
@@ -51,10 +55,10 @@ test("createSessionAndOpen skips duplicate preflight gates when sendPrompt alrea
 });
 
 test("send runtime preflight skips duplicate health after workspace engine ensure", () => {
-  const start = source.indexOf("async function ensureLocalRuntimeReachableForSend(");
-  const end = source.indexOf("async function connectLocalRuntimeClientFromEngineInfo", start);
+  const start = runtimeReadinessSource.indexOf("async function ensureLocalRuntimeReachableForSend(");
+  const end = runtimeReadinessSource.indexOf("async function connectLocalRuntimeClientFromEngineInfo", start);
   assert.ok(start >= 0 && end > start, "ensureLocalRuntimeReachableForSend source should be present");
-  const ensureSource = source.slice(start, end);
+  const ensureSource = runtimeReadinessSource.slice(start, end);
 
   assert.match(
     ensureSource,

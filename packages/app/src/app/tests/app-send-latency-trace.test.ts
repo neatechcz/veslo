@@ -120,8 +120,8 @@ test("create session preflight records duration for duplicate gates and fallback
 
   for (const event of [
     "createSessionAndOpen:ensure-managed-ai-bootstrap-ready",
+    "createSessionAndOpen:ensure-local-runtime-reachable",
     "createSessionAndOpen:abort-refresh-settle",
-    "createSessionAndOpen:health",
     "createSessionAndOpen:veslo-conversation-create",
     "createSessionAndOpen:legacy-session-create",
     "createSessionAndOpen:select-session",
