@@ -3,6 +3,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
+import { Transform } from "node:stream";
 
 export type ProxyToEngineOptions = {
   clientReq: IncomingMessage;
@@ -46,6 +47,11 @@ function isJsonContentType(value: string | string[] | number | undefined): boole
   return typeof value === "string" && /\bjson\b/i.test(value);
 }
 
+function isEventStreamContentType(value: string | string[] | number | undefined): boolean {
+  if (Array.isArray(value)) return value.some((item) => isEventStreamContentType(item));
+  return typeof value === "string" && /^text\/event-stream\b/i.test(value.trim());
+}
+
 async function readBody(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
@@ -85,6 +91,48 @@ function writeJsonResponse(
   }
 }
 
+function rewriteSseLine(
+  line: string,
+  rewriteJsonResponse: (value: unknown) => unknown,
+): string {
+  const match = /^(data:\s?)(.*?)(\r?)$/.exec(line);
+  if (!match) return line;
+  const payload = match[2]?.trim();
+  if (!payload || payload === "[DONE]") return line;
+  if (!payload.startsWith("{") && !payload.startsWith("[")) return line;
+
+  try {
+    const rewritten = rewriteJsonResponse(JSON.parse(payload));
+    return `${match[1]}${JSON.stringify(rewritten)}${match[3] ?? ""}`;
+  } catch {
+    return line;
+  }
+}
+
+function createSseRewriteTransform(
+  rewriteJsonResponse: (value: unknown) => unknown,
+): Transform {
+  let pending = "";
+  return new Transform({
+    transform(chunk, _encoding, callback) {
+      pending += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+      const lines = pending.split("\n");
+      pending = lines.pop() ?? "";
+      for (const line of lines) {
+        this.push(`${rewriteSseLine(line, rewriteJsonResponse)}\n`);
+      }
+      callback();
+    },
+    flush(callback) {
+      if (pending) {
+        this.push(rewriteSseLine(pending, rewriteJsonResponse));
+        pending = "";
+      }
+      callback();
+    },
+  });
+}
+
 export function proxyToEngine(opts: ProxyToEngineOptions): void {
   const target = new URL(opts.targetBaseUrl);
   const stripSet = new Set(ALWAYS_STRIPPED_REQUEST_HEADERS);
@@ -122,10 +170,13 @@ export function proxyToEngine(opts: ProxyToEngineOptions): void {
       const rewriteResponse = Boolean(
         opts.rewriteJsonResponse && isJsonContentType(upstreamRes.headers["content-type"]),
       );
+      const rewriteEventStream = Boolean(
+        opts.rewriteJsonResponse && isEventStreamContentType(upstreamRes.headers["content-type"]),
+      );
       for (const [k, v] of Object.entries(upstreamRes.headers)) {
         if (v === undefined) continue;
         if (HOP_BY_HOP_RESPONSE_HEADERS.has(k.toLowerCase())) continue;
-        if (rewriteResponse && k.toLowerCase() === "content-length") continue;
+        if ((rewriteResponse || rewriteEventStream) && k.toLowerCase() === "content-length") continue;
         opts.clientRes.setHeader(k, v);
       }
       if (rewriteResponse) {
@@ -135,6 +186,21 @@ export function proxyToEngine(opts: ProxyToEngineOptions): void {
         });
         upstreamRes.on("end", () => {
           writeJsonResponse(opts, upstreamRes, Buffer.concat(chunks));
+        });
+        upstreamRes.on("error", (err) => {
+          opts.onError?.(err);
+          if (!opts.clientRes.writableEnded) {
+            opts.clientRes.destroy(err);
+          }
+        });
+        return;
+      }
+      if (rewriteEventStream && opts.rewriteJsonResponse) {
+        upstreamRes
+          .pipe(createSseRewriteTransform(opts.rewriteJsonResponse))
+          .pipe(opts.clientRes);
+        upstreamRes.on("end", () => {
+          opts.onSuccess?.();
         });
         upstreamRes.on("error", (err) => {
           opts.onError?.(err);

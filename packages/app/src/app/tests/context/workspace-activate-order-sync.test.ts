@@ -105,6 +105,39 @@ test("bootstrap pre-loads the sidebar from SQLite without starting the engine", 
   );
 });
 
+test("bootstrap clears stale onboarding gates restored before persisted metadata", () => {
+  assert.match(
+    source,
+    /if \(options\.onboardingStep\(\) === "language"\) \{[\s\S]*persisted language found - clearing stale language gate[\s\S]*options\.setOnboardingStep\(resolveWelcomeOnboardingStep\(\)\);[\s\S]*\}/s,
+    "bootstrap should leave the language gate when a persisted language is available",
+  );
+
+  assert.match(
+    source,
+    /if \(options\.onboardingStep\(\) === "auth"\) \{[\s\S]*cached DEN auth found - clearing stale auth gate[\s\S]*options\.setOnboardingStep\(resolveWelcomeOnboardingStep\(\)\);[\s\S]*\}/s,
+    "bootstrap should leave the auth gate when cached auth is available",
+  );
+});
+
+test("quiet port-rotation only binds the workspace proxy client without reading the engine", () => {
+  const connectStart = source.indexOf("async function connectToServer(");
+  const connectEnd = source.indexOf("const openEmptySession = async", connectStart);
+  assert.notStrictEqual(connectStart, -1, "connectToServer definition missing");
+  assert.notStrictEqual(connectEnd, -1, "connectToServer end marker missing");
+  const connectSource = source.slice(connectStart, connectEnd);
+
+  assert.match(
+    connectSource,
+    /const quietPortRefresh = quiet && context\?\.reason === "port-rotation";[\s\S]*skipHealth: quietPortRefresh,/s,
+    "quiet port-rotation should bind the routed client without eager workspace proxy health polling",
+  );
+  assert.match(
+    connectSource,
+    /if \(quietPortRefresh\) \{[\s\S]*wsDebug\("connect:proxy-bound"[\s\S]*return true;[\s\S]*\}[\s\S]*await options\.loadSessions\(context\?\.targetRoot\);[\s\S]*await options\.refreshPendingPermissions\(\);[\s\S]*options\.onEngineStable\?\.\(\);/s,
+    "quiet port-rotation must not load sessions, poll permissions, or mark the engine stable before it has actually started",
+  );
+});
+
 test("orchestrator activation timeout covers cold engine spawn", () => {
   const raw = source.match(/const ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS = ([\d_]+);/)?.[1];
   assert.ok(raw, "ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS constant missing");

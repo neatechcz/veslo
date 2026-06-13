@@ -214,6 +214,14 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
     }
 
     const currentClient = targetWorkspaceId ? deps.routedClient(targetWorkspaceId) : deps.routedClient();
+    if (preflight?.runtimeHealthOk) {
+      deps.recordSendTrace(`${reason}:runtime-health-skip`, {
+        ...(tracePayload ?? {}),
+        reason: "send-preflight-already-healthy",
+        targetWorkspaceId: targetWorkspaceId || null,
+      });
+      return true;
+    }
     if (currentClient) {
       try {
         await deps.sendTraceStep(

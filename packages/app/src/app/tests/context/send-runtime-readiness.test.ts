@@ -170,6 +170,23 @@ test("local runtime readiness probes the snapshotted target workspace client", a
   assert.ok(events.some((entry) => entry.event === "sendPrompt:runtime-health-ok"));
 });
 
+test("local runtime readiness skips duplicate health probes when preflight is already healthy", async () => {
+  const healthCalls: string[] = [];
+  const { readiness, clients, events, ensureEngineCalls } = createHarness();
+  clients.set("target", createClient("target", async () => healthCalls.push("target")));
+
+  const preflight = {
+    traceId: "trace-skip",
+    targetWorkspace: { workspaceId: "target", workspaceRoot: "/repo/target", directory: "/repo/target" },
+    runtimeHealthOk: true,
+  };
+
+  assert.equal(await readiness.ensureLocalRuntimeReachableForSend("createSessionAndOpen", preflight), true);
+  assert.deepEqual(healthCalls, []);
+  assert.deepEqual(ensureEngineCalls, []);
+  assert.ok(events.some((entry) => entry.event === "createSessionAndOpen:runtime-health-skip"));
+});
+
 test("local runtime readiness restarts the target workspace engine for dead endpoints", async () => {
   const { readiness, clients, events, ensureEngineCalls, engineReadyValues, sseConnectedValues, busyValues, busyLabels } =
     createHarness({

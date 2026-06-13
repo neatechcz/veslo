@@ -89,6 +89,7 @@ export type ClientEntry = {
 export type EnsureOptions = {
   directory?: string;
   auth?: OpencodeAuth;
+  skipHealth?: boolean;
   context?: {
     workspaceType?: "local" | "remote";
     targetRoot?: string;
@@ -246,14 +247,16 @@ export function createWorkspaceRouting(
           directory,
           auth
         );
-        try {
-          await opts.waitForHealthy(client, { timeoutMs: 10_000 });
-        } catch (error) {
-          ensureErrors.set(
-            workspaceId,
-            error instanceof Error ? error.message : String(error),
-          );
-          return null;
+        if (!options?.skipHealth) {
+          try {
+            await opts.waitForHealthy(client, { timeoutMs: 10_000 });
+          } catch (error) {
+            ensureErrors.set(
+              workspaceId,
+              error instanceof Error ? error.message : String(error),
+            );
+            return null;
+          }
         }
         const entry: ClientEntry = {
           workspaceId,

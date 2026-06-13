@@ -1545,7 +1545,9 @@ export function createSessionStore(options: {
           notifySessionBusy(sessionID, "idle", sourceWsId);
           // VSLO-171.F3Ú6: SSE event handler will dispatch on per-workspace
           // client (from event payload workspaceId) once SSE multiplex lands.
-          const c = options.client();
+          const c = sourceWsId
+            ? options.routing.client(sourceWsId) ?? options.client()
+            : options.client();
           if (c) {
             try {
               const latest = applySessionDirectoryOverride(unwrap(await c.session.get({ sessionID })));

@@ -74,6 +74,8 @@ export async function engineSseSubscribe(
     throw new Error("engine SSE proxy is desktop-only");
   }
 
+  const subscriptionId = createSubscriptionId();
+
   // Queue of pending events buffered between Rust emit and JS consumer.
   const queue: unknown[] = [];
   const resolvers: Array<(value: IteratorResult<unknown>) => void> = [];
@@ -100,22 +102,11 @@ export async function engineSseSubscribe(
     }
   };
 
-  const sub = await invoke<{ subscriptionId: string }>("engine_sse_subscribe", {
-    options: {
-      workspaceId: options.workspaceId,
-      baseUrl: options.baseUrl,
-      directory: options.directory ?? null,
-      username: options.username ?? null,
-      password: options.password ?? null,
-      bearerToken: options.bearerToken ?? null,
-    },
-  });
-
   let unlisten: UnlistenFn | null = null;
   try {
     unlisten = await listen<SsePayload>(SSE_EVENT_NAME, (event) => {
       const payload = event.payload;
-      if (!payload || payload.subscriptionId !== sub.subscriptionId) return;
+      if (!payload || payload.subscriptionId !== subscriptionId) return;
 
       switch (payload.kind) {
         case "open":
@@ -144,10 +135,26 @@ export async function engineSseSubscribe(
           break;
       }
     });
+
+    await invoke<{ subscriptionId: string }>("engine_sse_subscribe", {
+      options: {
+        subscriptionId,
+        workspaceId: options.workspaceId,
+        baseUrl: options.baseUrl,
+        directory: options.directory ?? null,
+        username: options.username ?? null,
+        password: options.password ?? null,
+        bearerToken: options.bearerToken ?? null,
+      },
+    });
   } catch (err) {
     // Couldn't register listener — try to clean up Rust subscription.
     try {
-      await invoke("engine_sse_unsubscribe", { subscriptionId: sub.subscriptionId });
+      if (unlisten) {
+        unlisten();
+        unlisten = null;
+      }
+      await invoke("engine_sse_unsubscribe", { subscriptionId });
     } catch {
       // ignore
     }
@@ -165,7 +172,7 @@ export async function engineSseSubscribe(
       unlisten = null;
     }
     try {
-      await invoke("engine_sse_unsubscribe", { subscriptionId: sub.subscriptionId });
+      await invoke("engine_sse_unsubscribe", { subscriptionId });
     } catch {
       // ignore — Rust side may already be torn down
     }
@@ -204,8 +211,14 @@ export async function engineSseSubscribe(
   };
 
   return {
-    subscriptionId: sub.subscriptionId,
+    subscriptionId,
     stream,
     close,
   };
+}
+
+function createSubscriptionId(): string {
+  const randomUUID = globalThis.crypto?.randomUUID?.bind(globalThis.crypto);
+  if (randomUUID) return randomUUID();
+  return `engine-sse-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
