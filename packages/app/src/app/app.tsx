@@ -3138,6 +3138,7 @@ export default function App() {
           stopSendPromptBusy();
           return false;
         }
+        sendPreflight.runtimeHealthOk = true;
       } catch (error) {
         recordSendTrace("sendPrompt:engine-start-error", {
           traceId: sendTraceId,
@@ -4591,6 +4592,14 @@ export default function App() {
     }
 
     const currentClient = targetWorkspaceId ? routedClient(targetWorkspaceId) : routedClient();
+    if (preflight?.runtimeHealthOk) {
+      recordSendTrace(`${reason}:runtime-health-skip`, {
+        ...(tracePayload ?? {}),
+        reason: "send-preflight-already-healthy",
+        targetWorkspaceId: targetWorkspaceId || null,
+      });
+      return true;
+    }
     if (currentClient) {
       try {
         await sendTraceStep(
@@ -5698,6 +5707,7 @@ export default function App() {
   });
 
   let lastRouteClientResumeKey = "";
+  let routeResumeSelectionAlreadyHandledForSession = "";
   createEffect(() => {
     const rawPath = location.pathname.trim();
     const path = rawPath.toLowerCase();
@@ -5715,6 +5725,11 @@ export default function App() {
 
     const routeBrowseScope = resolveSelectedSessionBrowseScope(id);
     const routeWorkspaceId = routeBrowseScope?.workspaceId?.trim() || undefined;
+    const activeRouteWorkspaceId = workspaceStore.activeWorkspaceId().trim();
+    if (routeWorkspaceId && activeRouteWorkspaceId && routeWorkspaceId !== activeRouteWorkspaceId) {
+      lastRouteClientResumeKey = "";
+      return;
+    }
     const routeWorkspaceRoot =
       routeBrowseScope?.workspaceRoot?.trim() ||
       clientDirectory() ||
@@ -5733,6 +5748,12 @@ export default function App() {
 
     const alreadyLoaded = !routeBrowseScope && selectedSessionId() === id && visibleMessages().length > 0;
     if (alreadyLoaded) {
+      lastRouteClientResumeKey = connectionKey;
+      return;
+    }
+
+    if (routeResumeSelectionAlreadyHandledForSession === id && selectedSessionId() === id) {
+      routeResumeSelectionAlreadyHandledForSession = "";
       lastRouteClientResumeKey = connectionKey;
       return;
     }
@@ -8766,21 +8787,10 @@ export default function App() {
         registerPendingInitialSessionTitle(session.id, initialSessionTitle);
       }
       const displaySession = applyPendingInitialSessionTitle(session);
-      // Immediately select and show the new session before background list refresh.
+      // Inject before selecting so route effects can resolve the new session immediately.
       if (blockAppDuringCreate) {
         setBusyLabel("status.loading_session");
       }
-      mark("session:select:start", { sessionID: session.id });
-      await sendTraceStep(
-        "createSessionAndOpen:select-session",
-        () => selectSession(session.id),
-        {
-          ...(tracePayload ?? {}),
-          sessionID: session.id,
-        },
-      );
-      mark("session:select:ok", { sessionID: session.id });
-
       // Inject the new session into the reactive sessions() store so
       // the createEffect bridge (sessions → sidebar) will always include it,
       // even if the background loadSessionsWithReady hasn't returned yet.
@@ -8813,6 +8823,18 @@ export default function App() {
           item: newItem,
         });
       }
+
+      mark("session:select:start", { sessionID: session.id });
+      routeResumeSelectionAlreadyHandledForSession = session.id;
+      await sendTraceStep(
+        "createSessionAndOpen:select-session",
+        () => selectSession(session.id),
+        {
+          ...(tracePayload ?? {}),
+          sessionID: session.id,
+        },
+      );
+      mark("session:select:ok", { sessionID: session.id });
 
       // setSessionViewLockUntil(Date.now() + 1200);
       if (blockAppDuringCreate || currentView() === "session") {

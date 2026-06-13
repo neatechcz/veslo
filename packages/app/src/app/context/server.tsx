@@ -20,8 +20,11 @@ export function serverDisplayName(url: string) {
 export function isWorkspaceOpencodeProxyUrl(url: string) {
   try {
     const parsed = new URL(url);
-    return /\/workspace\/[^/]+\/opencode(?:\/|$)/.test(parsed.pathname);
+    const pathname = decodeURIComponent(parsed.pathname).replace(/\/+/g, "/");
+    return /\/workspace\/[^/]+\/opencode(?:\/|$)/i.test(pathname);
   } catch {
+    const normalized = url.trim().replace(/\\/g, "/").replace(/\/+/g, "/");
+    if (/\/workspace\/[^/]+\/opencode(?:\/|$)/i.test(normalized)) return true;
     return false;
   }
 }

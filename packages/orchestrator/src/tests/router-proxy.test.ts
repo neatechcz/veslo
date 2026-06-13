@@ -725,6 +725,45 @@ describe("proxyToEngine — unit-level edge cases", () => {
     try { target.close(); } catch { /* see EchoServer comment */ }
   });
 
+  test("rewrites JSON payloads inside SSE data lines", async () => {
+    const target = createServer((_req, res) => {
+      res.setHeader("content-type", "text/event-stream");
+      res.write('event: session.updated\n');
+      res.write('data: {"directory":"/workspace","nested":{"cwd":"/workspace"}}\n\n');
+      res.write(': keepalive\n\n');
+      res.end();
+    });
+    await new Promise<void>((resolve) => target.listen(0, "127.0.0.1", resolve));
+    target.unref();
+    const port = (target.address() as AddressInfo).port;
+
+    const front = createServer((req, res) => {
+      proxyToEngine({
+        clientReq: req,
+        clientRes: res,
+        targetBaseUrl: `http://127.0.0.1:${port}`,
+        targetPath: "/event",
+        rewriteJsonResponse: (value) => ({ ...(value as Record<string, unknown>), directory: "C:\\Work\\project" }),
+      });
+    });
+    await new Promise<void>((resolve) => front.listen(0, "127.0.0.1", resolve));
+    front.unref();
+    const frontPort = (front.address() as AddressInfo).port;
+
+    const res = await fetch(`http://127.0.0.1:${frontPort}/event`);
+    expect(res.headers.get("content-type")).toBe("text/event-stream");
+    expect(res.headers.get("content-length")).toBeNull();
+    const text = await res.text();
+    expect(text).toContain('event: session.updated');
+    expect(text).toContain('data: {"directory":"C:\\\\Work\\\\project","nested":{"cwd":"/workspace"}}');
+    expect(text).toContain(': keepalive');
+
+    front.unref();
+    target.unref();
+    try { front.close(); } catch { /* see EchoServer comment */ }
+    try { target.close(); } catch { /* see EchoServer comment */ }
+  });
+
   test("forces identity encoding when rewriting JSON responses", async () => {
     let acceptEncoding: string | string[] | undefined;
     const target = createServer((req, res) => {

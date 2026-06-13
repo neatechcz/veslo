@@ -63,6 +63,11 @@ test("session route re-selects once when a client becomes available after bootst
     /const routeBrowseScope = resolveSelectedSessionBrowseScope\(id\);[\s\S]*const routeWorkspaceId = routeBrowseScope\?\.workspaceId\?\.trim\(\) \|\| undefined;[\s\S]*const routeWorkspaceRoot =\s*routeBrowseScope\?\.workspaceRoot\?\.trim\(\) \|\|\s*clientDirectory\(\) \|\|\s*workspaceStore\.activeWorkspaceRoot\(\)\.trim\(\);[\s\S]*const connectionKey = \[\s*id,\s*routedClient\(routeWorkspaceId\) \? "live" : "offline",\s*routeWorkspaceId \?\? "",\s*routeWorkspaceRoot,\s*routeBrowseScope\?\.directory\?\.trim\(\) \|\| "",\s*routeBrowseScope\?\.conversationId\?\.trim\(\) \|\| "",\s*routeBrowseScope\?\.opencodeSessionId\?\.trim\(\) \|\| "",\s*connectedVersion\(\) \?\? "",\s*\]\.join\("::"\);/s,
     "route resume key should distinguish live vs offline selection, workspace scope, and workspace root availability",
   );
+  assert.match(
+    routeSource,
+    /const activeRouteWorkspaceId = workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*if \(routeWorkspaceId && activeRouteWorkspaceId && routeWorkspaceId !== activeRouteWorkspaceId\) \{[\s\S]*lastRouteClientResumeKey = "";[\s\S]*return;[\s\S]*\}/s,
+    "route resume should not reselect an old workspace session after the active workspace changes",
+  );
   assert.match(routeSource, /if \(connectionKey === lastRouteClientResumeKey\) return;/);
   assert.match(
     routeSource,
@@ -71,8 +76,27 @@ test("session route re-selects once when a client becomes available after bootst
   );
   assert.match(
     routeSource,
+    /routeResumeSelectionAlreadyHandledForSession === id && selectedSessionId\(\) === id[\s\S]*routeResumeSelectionAlreadyHandledForSession = "";[\s\S]*lastRouteClientResumeKey = connectionKey;[\s\S]*return;/s,
+    "route resume should not immediately re-select a session that createSessionAndOpen already selected before navigating",
+  );
+  assert.match(
+    routeSource,
     /lastRouteClientResumeKey = connectionKey;[\s\S]*void selectSession\(id\);/s,
     "route session should be re-selected once after the client reconnects so deep links survive bootstrap/startHost races",
+  );
+});
+
+test("createSessionAndOpen injects the new session before selecting it", () => {
+  const createStart = source.indexOf("  async function createSessionAndOpen(");
+  const createEnd = source.indexOf("  const openNewSessionWithDirectory = async", createStart);
+  assert.notStrictEqual(createStart, -1, "createSessionAndOpen should exist");
+  assert.notStrictEqual(createEnd, -1, "createSessionAndOpen block end should exist");
+  const createSource = source.slice(createStart, createEnd);
+
+  assert.match(
+    createSource,
+    /const displaySession = applyPendingInitialSessionTitle\(session\);[\s\S]*setSessions\(\[session, \.\.\.currentStoreSessions\]\);[\s\S]*materializePendingSessionInWorkspaceSidebar\(\{[\s\S]*mark\("session:select:start", \{ sessionID: session\.id \}\);[\s\S]*routeResumeSelectionAlreadyHandledForSession = session\.id;[\s\S]*"createSessionAndOpen:select-session"/s,
+    "newly created sessions should be present in session/sidebar state before selectSession runs",
   );
 });
 

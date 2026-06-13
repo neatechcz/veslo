@@ -22,6 +22,11 @@ test("background SSE events update only the source workspace busy marker", () =>
     "background SSE events should not mutate the active session store",
   );
   assert.match(
+    sessionSource,
+    /const c = sourceWsId\s*\?\s*options\.routing\.client\(sourceWsId\) \?\? options\.client\(\)\s*:\s*options\.client\(\);/,
+    "session idle refreshes should use the source workspace client before falling back to the active client",
+  );
+  assert.match(
     appSource,
     /onSessionBusyChange: \(sessionId, busy, sourceWorkspaceId\) => \{[\s\S]*const wsId = sourceWorkspaceId\?\.trim\(\) \|\| workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*workspaceStore\.markWorkspaceBusy\(wsId, sessionId\);[\s\S]*workspaceStore\.clearWorkspaceBusy\(wsId, sessionId\);[\s\S]*\},/,
     "app should use the SSE source workspace id instead of assuming the active workspace",

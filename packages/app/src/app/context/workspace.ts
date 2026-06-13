@@ -1630,6 +1630,7 @@ export function createWorkspaceStore(options: {
       const multiRun = (async () => {
         const connectStart = Date.now();
         const quiet = connectOptions?.quiet ?? false;
+        const quietPortRefresh = quiet && context?.reason === "port-rotation";
         const navigate = connectOptions?.navigate ?? true;
         options.setError(null);
         if (!quiet) {
@@ -1651,6 +1652,7 @@ export function createWorkspaceStore(options: {
             {
               directory: incomingDirectory || undefined,
               auth,
+              skipHealth: quietPortRefresh,
               context: {
                 workspaceType: context?.workspaceType,
                 targetRoot: context?.targetRoot,
@@ -1712,6 +1714,14 @@ export function createWorkspaceStore(options: {
             workspaceId: multiWorkspaceId,
             ms: Date.now() - connectStart,
           });
+          if (quietPortRefresh) {
+            wsDebug("connect:proxy-bound", {
+              workspaceId: multiWorkspaceId,
+              ms: Date.now() - connectStart,
+              reason: context?.reason ?? null,
+            });
+            return true;
+          }
           // Per-workspace cache effect in app.tsx already restored sessions/
           // messages/todos on activeWorkspaceId change. We still refresh
           // sessions to catch updates the cache didn't have, but the cache
@@ -2678,6 +2688,11 @@ export function createWorkspaceStore(options: {
       return;
     }
 
+    if (options.onboardingStep() === "language") {
+      bootTrace("persisted language found - clearing stale language gate");
+      options.setOnboardingStep(resolveWelcomeOnboardingStep());
+    }
+
     const activeWorkspace = activeWorkspaceInfo();
 
     // Full login gate: every startup flow requires a valid DEN session.
@@ -2688,6 +2703,11 @@ export function createWorkspaceStore(options: {
       options.setOnboardingStep("auth");
       return;
     }
+    if (options.onboardingStep() === "auth") {
+      bootTrace("cached DEN auth found - clearing stale auth gate");
+      options.setOnboardingStep(resolveWelcomeOnboardingStep());
+    }
+
     // Fire-and-forget validation: app proceeds with cached token immediately.
     // If the token turns out to be invalid (401/403), the handler clears it
     // and pushes the user to the auth screen reactively.

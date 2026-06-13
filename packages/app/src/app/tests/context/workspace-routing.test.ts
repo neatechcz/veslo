@@ -114,6 +114,45 @@ test("explicit workspace client lookup can call a non-active workspace client", 
   });
 });
 
+test("workspace routing can skip eager health checks for quiet workspace proxy refreshes", async () => {
+  await new Promise<void>((resolve, reject) => {
+    createRoot((dispose) => {
+      void (async () => {
+        let healthChecks = 0;
+        try {
+          const routing = createWorkspaceRouting({
+            clientSource: () => null,
+            activeWorkspaceId: () => "ws-active",
+            createClient: (_baseUrl, directory) => makeClient(directory ?? "missing"),
+            waitForHealthy: async () => {
+              healthChecks += 1;
+              throw new Error("engine not running");
+            },
+          });
+
+          const skipped = await routing.ensure("ws-active", "http://active", {
+            directory: "active-client",
+            skipHealth: true,
+          });
+          assert.ok(skipped);
+          assert.equal(healthChecks, 0);
+
+          const checked = await routing.ensure("ws-other", "http://other", {
+            directory: "other-client",
+          });
+          assert.equal(checked, null);
+          assert.equal(healthChecks, 1);
+          resolve();
+        } catch (error) {
+          reject(error);
+        } finally {
+          dispose();
+        }
+      })();
+    });
+  });
+});
+
 test("implicit active client lookup still rejects calls after an active workspace switch", async () => {
   await new Promise<void>((resolve, reject) => {
     createRoot((dispose) => {

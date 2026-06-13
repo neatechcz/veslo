@@ -242,10 +242,20 @@ pub fn reset_veslo_state(
 /// and the SSE/session loggers when running inside the Tauri runtime, so
 /// production diagnostics don't require opening DevTools.
 #[tauri::command]
-pub fn log_ui_event(scope: String, message: String, payload: Option<String>) {
-    match payload {
-        Some(p) if !p.is_empty() => eprintln!("[ui:{}] {} {}", scope, message, p),
-        _ => eprintln!("[ui:{}] {}", scope, message),
+pub fn log_ui_event(app: AppHandle, scope: String, message: String, payload: Option<String>) {
+    let line = match payload {
+        Some(p) if !p.is_empty() => format!("[ui:{}] {} {}", scope, message, p),
+        _ => format!("[ui:{}] {}", scope, message),
+    };
+    eprintln!("{}", line);
+    if let Some(forwarder) =
+        app.try_state::<std::sync::Arc<crate::debug_logs_forwarder::DebugLogsForwarder>>()
+    {
+        forwarder.append(
+            "Veslo UI",
+            crate::debug_logs_forwarder::LogStream::Stderr,
+            &line,
+        );
     }
 }
 
