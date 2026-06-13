@@ -114,7 +114,7 @@ test("latest-run artifacts resolve workspace from scoped selected session", () =
 
 test("create session preflight records duration for duplicate gates and fallback branches", () => {
   const start = source.indexOf("async function createSessionAndOpen(");
-  const end = source.indexOf("const openNewSessionWithDirectory", start);
+  const end = source.indexOf("const chooseFolderForCurrentSession", start);
   assert.ok(start >= 0 && end > start, "createSessionAndOpen source should be present");
   const createSource = source.slice(start, end);
 
@@ -136,7 +136,7 @@ test("create session preflight records duration for duplicate gates and fallback
 
 test("create session preflight does not add a fixed abort-refresh settle delay", () => {
   const start = source.indexOf("async function createSessionAndOpen(");
-  const end = source.indexOf("const openNewSessionWithDirectory", start);
+  const end = source.indexOf("const chooseFolderForCurrentSession", start);
   assert.ok(start >= 0 && end > start, "createSessionAndOpen source should be present");
   const createSource = source.slice(start, end);
   const settleStart = createSource.indexOf('"createSessionAndOpen:abort-refresh-settle"');

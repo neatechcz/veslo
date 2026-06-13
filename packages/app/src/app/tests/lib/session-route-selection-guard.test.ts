@@ -5,6 +5,10 @@ import test from "node:test";
 import { shouldFallbackFromSessionRoute } from "../../lib/session-route-selection-guard.js";
 
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
+const pendingDraftControllerSource = readFileSync(
+  new URL("../../context/pending-session-draft-controller.ts", import.meta.url),
+  "utf8",
+);
 const workspaceSessionSelectionSource = readFileSync(
   new URL("../../context/workspace-session-selection.ts", import.meta.url),
   "utf8",
@@ -102,18 +106,18 @@ test("real session route fallback ignores active pending draft context", () => {
 
 test("pending draft hydration error paths clear stale active draft state", () => {
   assert.match(
-    appSource,
+    pendingDraftControllerSource,
     /if \(!matchingPendingDraft\) \{\s*clearActivePendingDraftState\(\);/s,
     "missing desktop drafts should clear the active pending draft state",
   );
   assert.match(
-    appSource,
+    pendingDraftControllerSource,
     /if \(!loadedPendingDraft\) \{\s*clearActivePendingDraftState\(\);/s,
     "null desktop draft loads should clear the active pending draft state",
   );
   assert.match(
-    appSource,
-    /catch \(error\) \{\s*reportError\(error, "pendingDrafts\.hydrate"\);\s*clearActivePendingDraftState\(\);\s*\}/s,
+    pendingDraftControllerSource,
+    /catch \(error\) \{\s*deps\.reportError\(error, "pendingDrafts\.hydrate"\);\s*clearActivePendingDraftState\(\);\s*\}/s,
     "desktop draft load failures should clear the active pending draft state",
   );
 });

@@ -28,7 +28,7 @@ test("send preflight snapshots the target workspace before cold-start awaits", (
 
 test("createSessionAndOpen uses preflight target only when send preflight provides one", () => {
   const start = source.indexOf("async function createSessionAndOpen(");
-  const end = source.indexOf("  const openNewSessionWithDirectory = async () =>", start);
+  const end = source.indexOf("  const chooseFolderForCurrentSession = async () =>", start);
   assert.ok(start >= 0 && end > start, "createSessionAndOpen source should be present");
   const createSource = source.slice(start, end);
 

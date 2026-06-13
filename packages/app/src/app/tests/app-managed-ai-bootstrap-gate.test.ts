@@ -28,7 +28,7 @@ test("sendPrompt blocks when managed bootstrap readiness is unavailable before r
   const end = source.indexOf("async function abortSession", start);
   assert.ok(start >= 0 && end > start, "sendPrompt source should be present");
   const createStart = source.indexOf("async function createSessionAndOpen(");
-  const createEnd = source.indexOf("const openNewSessionWithDirectory = async () =>", createStart);
+  const createEnd = source.indexOf("const chooseFolderForCurrentSession = async () =>", createStart);
   assert.ok(createStart >= 0 && createEnd > createStart, "createSessionAndOpen source should be present");
   const createSource = source.slice(createStart, createEnd);
   const skipIndex = createSource.indexOf("createSessionAndOpen:managed-ai-bootstrap-skip");

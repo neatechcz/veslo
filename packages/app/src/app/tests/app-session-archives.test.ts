@@ -48,10 +48,10 @@ test("update preference persistence waits for startup preference hydration", () 
     "auto-download persistence should not write the default before startup hydration reads stored preferences",
   );
 
-  const startupMount = source.match(/onMount\(async \(\) => \{[\s\S]*?setActivePendingDraftStorageReady\(true\);/)?.[0] ?? "";
+  const startupMount = source.match(/onMount\(async \(\) => \{[\s\S]*?pendingSessionDraftController\.markActivePendingDraftStorageReady\(\);/)?.[0] ?? "";
   assert.ok(startupMount, "app should define the async startup mount flow");
   const updatePrefsIndex = startupMount.indexOf("const storedUpdateAutoDownload = window.localStorage.getItem");
-  const pendingDraftAwaitIndex = startupMount.indexOf("await pendingSessionDraftsList()");
+  const pendingDraftAwaitIndex = startupMount.indexOf("await pendingSessionDraftController.hydrateActivePendingDraft()");
   assert.ok(updatePrefsIndex >= 0, "startup flow should read stored update auto-download preference");
   assert.ok(pendingDraftAwaitIndex >= 0, "startup flow should hydrate pending drafts on desktop startup");
   assert.ok(

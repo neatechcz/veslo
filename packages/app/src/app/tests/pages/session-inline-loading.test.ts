@@ -4,6 +4,10 @@ import test from "node:test";
 
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
 const sessionSource = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
+const pendingDraftControllerSource = readFileSync(
+  new URL("../../context/pending-session-draft-controller.ts", import.meta.url),
+  "utf8",
+);
 
 test("session loading stays route-owned without a pending preloader", () => {
   assert.match(
@@ -52,8 +56,8 @@ test("session switch records browse scope and routes immediately without arming 
 
 test("pending draft write-back only runs while the bare pending draft route owns the composer bucket", () => {
   assert.match(
-    appSource,
-    /createEffect\(\(\) => \{[\s\S]*if \(!isTauriRuntime\(\)\) return;[\s\S]*if \(!activePendingDraftStorageReady\(\)\) return;[\s\S]*const pendingDraftKey = activePendingDraftKey\(\);[\s\S]*const pendingDraftMetaValue = activePendingDraftMeta\(\);[\s\S]*if \(!pendingDraftKey \|\| !pendingDraftMetaValue\) return;[\s\S]*if \(selectedSessionId\(\)\) return;/s,
+    pendingDraftControllerSource,
+    /createEffect\(\(\) => \{[\s\S]*if \(!deps\.isTauriRuntime\(\)\) return;[\s\S]*if \(!activePendingDraftStorageReady\(\)\) return;[\s\S]*const pendingDraftKey = activePendingDraftKey\(\);[\s\S]*const pendingDraftMetaValue = activePendingDraftMeta\(\);[\s\S]*if \(!pendingDraftKey \|\| !pendingDraftMetaValue\) return;[\s\S]*if \(input\.selectedSessionId\(\)\) return;/s,
     "pending-draft persistence should stop once a real session is selected so a failed send cannot overwrite the pending draft with the real-session composer bucket",
   );
 });
