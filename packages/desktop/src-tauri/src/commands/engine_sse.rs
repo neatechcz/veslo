@@ -86,6 +86,10 @@ pub enum EngineSseEvent {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EngineSseSubscribeOptions {
+    /// Client-generated subscription id. JS registers its event listener
+    /// before invoking this command so fast Rust-side open/error/closed events
+    /// cannot be lost between command start and command return.
+    pub subscription_id: Option<String>,
     pub workspace_id: String,
     /// Full base URL of the orchestrator proxy or engine, e.g.
     /// `http://127.0.0.1:51494/workspace/ws-XXX/opencode` or the bare engine
@@ -118,7 +122,7 @@ pub async fn engine_sse_subscribe(
     registry: State<'_, EngineSseRegistry>,
     options: EngineSseSubscribeOptions,
 ) -> Result<EngineSseSubscribeResult, String> {
-    let subscription_id = Uuid::new_v4().to_string();
+    let subscription_id = resolve_subscription_id(options.subscription_id.as_deref());
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
     registry.insert(subscription_id.clone(), cancel_tx);
 
@@ -180,6 +184,14 @@ fn build_basic_auth_header(username: Option<&str>, password: Option<&str>) -> Op
     let token = format!("{}:{}", user, pass);
     let encoded = base64::engine::general_purpose::STANDARD.encode(token.as_bytes());
     Some(format!("Basic {}", encoded))
+}
+
+fn resolve_subscription_id(subscription_id: Option<&str>) -> String {
+    subscription_id
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| Uuid::new_v4().to_string())
 }
 
 fn build_event_url(base_url: &str, directory: &Option<String>) -> String {
@@ -444,6 +456,13 @@ mod tests {
         assert_eq!(u, "http://127.0.0.1:1234/event");
         let u = build_event_url("http://127.0.0.1:1234", &Some("".into()));
         assert_eq!(u, "http://127.0.0.1:1234/event");
+    }
+
+    #[test]
+    fn subscribe_options_accept_client_subscription_id() {
+        assert_eq!(resolve_subscription_id(Some(" client-sub ")), "client-sub");
+        assert!(!resolve_subscription_id(Some("   ")).is_empty());
+        assert!(!resolve_subscription_id(None).is_empty());
     }
 
     #[test]
