@@ -2,6 +2,7 @@ import {
   Match,
   Show,
   Switch,
+  batch,
   createEffect,
   createMemo,
   createSignal,
@@ -96,6 +97,37 @@ import {
   openPendingDraftFromDirectorySelection,
   openPendingDraftWithWorkspaceActivation,
 } from "./pages/session-navigation";
+import {
+  resolveRouteResumeDecision,
+  resolveSessionPathDecision,
+} from "./controllers/session-route-controller";
+import {
+  buildCreatedSidebarSessionItem,
+  resolveCreatedSessionWorkspaceId,
+  shouldRouteCreatedSessionAfterSelect,
+} from "./controllers/session-creation-flow";
+import {
+  resolveAppStartupRouteDecision,
+  resolveDashboardRouteTab,
+} from "./controllers/app-startup-controller";
+import {
+  findStoredPendingDraftSummary,
+  resolvePendingDraftStartupHydration,
+} from "./controllers/pending-draft-startup-controller";
+import {
+  resolveManagedAiAccessRefreshFailure,
+  resolveManagedAiAccessRefreshPreflight,
+  resolveManagedAiAccessRefreshSuccess,
+} from "./controllers/managed-ai-runtime-controller";
+import {
+  resolveManagedAiConfigSyncPreflight,
+  resolveManagedAiConfigWriteDecision,
+} from "./controllers/managed-ai-config-sync";
+import {
+  resolveCreateSessionManagedAiPreflightDecision,
+  resolveCreateSessionRuntimeHealthPreflightDecision,
+  resolveSendPromptBusyOwnership,
+} from "./controllers/send-orchestration-controller";
 import { shouldFallbackFromSessionRoute } from "./lib/session-route-selection-guard";
 import { partitionVesloUtilitySessions } from "./lib/veslo-utility-session";
 import {
@@ -3028,7 +3060,8 @@ export default function App() {
       workspaceRoot: sendTargetWorkspace?.workspaceRoot ?? null,
       directory: sendTargetWorkspace?.directory ?? null,
     });
-    const blockAppDuringPromptSend = Boolean(sessionID);
+    const sendPromptBusyOwnership = resolveSendPromptBusyOwnership({ sessionId: sessionID });
+    const blockAppDuringPromptSend = sendPromptBusyOwnership.ownsBusy;
     let ownsSendPromptBusy = false;
     const startSendPromptBusy = (label: string) => {
       if (!blockAppDuringPromptSend) return;
@@ -5509,6 +5542,14 @@ export default function App() {
 
   let lastRouteClientResumeKey = "";
   let routeResumeSelectionAlreadyHandledForSession = "";
+  const clearDisplayedSessionForBareRoute = () => {
+    batch(() => {
+      setSelectedSessionId(null);
+      setMessages([]);
+      setTodos([]);
+    });
+  };
+
   createEffect(() => {
     const rawPath = location.pathname.trim();
     const path = rawPath.toLowerCase();
@@ -5516,21 +5557,9 @@ export default function App() {
 
     const [, , sessionSegment] = rawPath.split("/");
     const id = (sessionSegment ?? "").trim();
-    if (!id) return;
-    if (isPendingSessionInstanceId(id)) {
-      if (selectedSessionId() !== id) {
-        setSelectedSessionId(id);
-      }
-      return;
-    }
 
     const routeBrowseScope = resolveSelectedSessionBrowseScope(id);
     const routeWorkspaceId = routeBrowseScope?.workspaceId?.trim() || undefined;
-    const activeRouteWorkspaceId = workspaceStore.activeWorkspaceId().trim();
-    if (routeWorkspaceId && activeRouteWorkspaceId && routeWorkspaceId !== activeRouteWorkspaceId) {
-      lastRouteClientResumeKey = "";
-      return;
-    }
     const routeWorkspaceRoot =
       routeBrowseScope?.workspaceRoot?.trim() ||
       clientDirectory() ||
@@ -5545,27 +5574,39 @@ export default function App() {
       routeBrowseScope?.opencodeSessionId?.trim() || "",
       connectedVersion() ?? "",
     ].join("::");
-    if (connectionKey === lastRouteClientResumeKey) return;
+    const routeResumeDecision = resolveRouteResumeDecision({
+      path: rawPath,
+      routeSessionId: id,
+      isPendingSession: isPendingSessionInstanceId(id),
+      routeWorkspaceId,
+      activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
+      connectionKey,
+      lastConnectionKey: lastRouteClientResumeKey,
+      selectedSessionId: selectedSessionId(),
+      hasBrowseScope: Boolean(routeBrowseScope),
+      visibleMessageCount: visibleMessages().length,
+      selectedSessionLoadingEarlierMessages: selectedSessionLoadingEarlierMessages(),
+      ownNavigationSessionId: routeResumeSelectionAlreadyHandledForSession,
+    });
 
-    const alreadyLoaded = !routeBrowseScope && selectedSessionId() === id && visibleMessages().length > 0;
-    if (alreadyLoaded) {
-      lastRouteClientResumeKey = connectionKey;
-      return;
+    switch (routeResumeDecision.type) {
+      case "ignore":
+        if (routeResumeDecision.reason === "foreign-workspace") {
+          lastRouteClientResumeKey = "";
+        }
+        if (routeResumeDecision.reason === "already-loaded") {
+          lastRouteClientResumeKey = connectionKey;
+        }
+        return;
+      case "consume-own-navigation":
+        routeResumeSelectionAlreadyHandledForSession = "";
+        lastRouteClientResumeKey = routeResumeDecision.connectionKey;
+        return;
+      case "select-session":
+        lastRouteClientResumeKey = routeResumeDecision.connectionKey;
+        void selectSession(routeResumeDecision.sessionId);
+        return;
     }
-
-    if (routeResumeSelectionAlreadyHandledForSession === id) {
-      if (selectedSessionId() !== id) {
-        setSelectedSessionId(id);
-      }
-      routeResumeSelectionAlreadyHandledForSession = "";
-      lastRouteClientResumeKey = connectionKey;
-      return;
-    }
-
-    if (selectedSessionLoadingEarlierMessages()) return;
-
-    lastRouteClientResumeKey = connectionKey;
-    void selectSession(id);
   });
 
   createEffect(() => {
@@ -6660,15 +6701,19 @@ export default function App() {
       gatewayBaseUrl: managedAiBaseUrl || gatewayClient?.baseUrl || "",
     });
     const gatewayLocalAuth = vesloServerAuth();
-    if (
-      (!gatewayClient && !managedAiBaseUrl) ||
-      !userToken ||
-      shouldDeferManagedAiAccessRefresh({
+    const cachedAccess = readManagedAiAccessCache(managedAiCacheKey);
+    const refreshPreflight = resolveManagedAiAccessRefreshPreflight({
+      hasGatewayClient: Boolean(gatewayClient),
+      managedAiBaseUrl,
+      userToken,
+      deferForLocalGateway: shouldDeferManagedAiAccessRefresh({
         gatewayBaseUrl: managedAiBaseUrl || gatewayClient?.baseUrl || "",
         isDesktopRuntime: isTauriRuntime(),
         localClientToken: gatewayLocalAuth.token,
-      })
-    ) {
+      }),
+      cachedAccessPresent: Boolean(cachedAccess),
+    });
+    if (refreshPreflight.type === "reset") {
       setManagedAiAccess(null);
       setManagedAiGatewayAccessToken("");
       setManagedAiAccessBusy(false);
@@ -6679,8 +6724,7 @@ export default function App() {
 
     let cancelled = false;
     let retryTimeoutId: number | null = null;
-    const cachedAccess = readManagedAiAccessCache(managedAiCacheKey);
-    if (cachedAccess) {
+    if (refreshPreflight.applyCachedAccessFirst && cachedAccess) {
       setManagedAiAccess(cachedAccess.profile);
       setManagedAiGatewayAccessToken(cachedAccess.gatewayAccessToken);
       setManagedAiAccessError(null);
@@ -6725,24 +6769,42 @@ export default function App() {
           fallbackAccessToken: userToken,
           requireGatewayAccessToken: Boolean(managedAiBaseUrl),
         });
-        setManagedAiAccess(profile);
-        setManagedAiGatewayAccessToken(profile ? gatewayAccessToken : "");
-        setManagedAiAccessError(profile ? null : reason ?? AI_ACCESS_NOT_CONFIGURED_MESSAGE);
-        if (profile) {
-          writeManagedAiAccessCache(managedAiCacheKey, profile, gatewayAccessToken);
+        const successDecision = resolveManagedAiAccessRefreshSuccess({
+          profile,
+          gatewayAccessToken,
+          reason,
+        });
+        if (successDecision.type === "apply-profile") {
+          setManagedAiAccess(successDecision.profile);
+          setManagedAiGatewayAccessToken(successDecision.gatewayAccessToken);
+          setManagedAiAccessError(successDecision.error);
+          writeManagedAiAccessCache(
+            managedAiCacheKey,
+            successDecision.profile,
+            successDecision.gatewayAccessToken,
+          );
           setManagedAiAccessRetryAttempt(0);
           return;
         }
+        setManagedAiAccess(null);
+        setManagedAiGatewayAccessToken(successDecision.gatewayAccessToken);
+        setManagedAiAccessError(successDecision.error);
         clearManagedAiAccessCache();
         scheduleRetry(false);
       })
       .catch((error) => {
         if (cancelled) return;
-        if (!cachedAccess) {
+        const failureDecision = resolveManagedAiAccessRefreshFailure({
+          cachedAccessPresent: Boolean(cachedAccess),
+          errorMessage: describeRequestError(error, "Failed to load AI access"),
+        });
+        if (failureDecision.clearProfile) {
           setManagedAiAccess(null);
-          setManagedAiGatewayAccessToken("");
         }
-        setManagedAiAccessError(describeRequestError(error, "Failed to load AI access"));
+        if (failureDecision.gatewayAccessToken !== null) {
+          setManagedAiGatewayAccessToken(failureDecision.gatewayAccessToken);
+        }
+        setManagedAiAccessError(failureDecision.error);
         scheduleRetry(false);
       })
       .finally(() => {
@@ -8376,10 +8438,14 @@ export default function App() {
       });
     }
 
-    if (preflight?.managedAiReady || options.managedAiRuntimeAlreadyPrepared) {
+    const managedAiPreflightDecision = resolveCreateSessionManagedAiPreflightDecision({
+      preflightManagedAiReady: Boolean(preflight?.managedAiReady),
+      runtimeAlreadyPrepared: Boolean(options.managedAiRuntimeAlreadyPrepared),
+    });
+    if (managedAiPreflightDecision.type === "skip") {
       recordSendTrace("createSessionAndOpen:managed-ai-bootstrap-skip", {
         ...(tracePayload ?? {}),
-        reason: "send-preflight-already-ready",
+        reason: managedAiPreflightDecision.reason,
       });
       if (preflight) preflight.managedAiReady = true;
     } else {
@@ -8400,10 +8466,13 @@ export default function App() {
       if (preflight) preflight.managedAiReady = true;
     }
     let createRuntimeReady = true;
-    if (preflight?.runtimeHealthOk) {
+    const runtimeHealthPreflightDecision = resolveCreateSessionRuntimeHealthPreflightDecision({
+      preflightRuntimeHealthOk: Boolean(preflight?.runtimeHealthOk),
+    });
+    if (runtimeHealthPreflightDecision.type === "skip") {
       recordSendTrace("createSessionAndOpen:health-skip", {
         ...(tracePayload ?? {}),
-        reason: "send-preflight-already-healthy",
+        reason: runtimeHealthPreflightDecision.reason,
       });
     } else {
       const createRuntimePreflight: SendRuntimePreflightContext = preflight ?? {
@@ -8582,34 +8651,23 @@ export default function App() {
         setSessions([session, ...currentStoreSessions]);
       }
 
-      const newItem: SidebarSessionItem = {
-        id: displaySession.id,
-        title: displaySession.title,
-        slug: displaySession.slug,
-        parentID: displaySession.parentID,
-        time: displaySession.time,
-        directory: displaySession.directory,
-        conversationId: session.conversationId ?? null,
-        opencodeSessionId: session.opencodeSessionId ?? session.id,
-        parentConversationId: session.parentConversationId ?? null,
-        branchId: session.branchId ?? null,
-        pendingSessionInstanceId: pendingSidebarSession?.id?.trim() || null,
-      };
-      const wsId =
-        pendingSidebarSession?.workspaceId?.trim() ||
-        targetWorkspace?.workspaceId ||
-        (workspaceStore.connectingWorkspaceId() ?? workspaceStore.activeWorkspaceId()).trim();
+      const newItem = buildCreatedSidebarSessionItem({
+        session,
+        displaySession,
+        pendingSidebarSession,
+      });
+      const wsId = resolveCreatedSessionWorkspaceId({
+        pendingSidebarSession,
+        targetWorkspaceId: targetWorkspace?.workspaceId,
+        connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
+        activeWorkspaceId: workspaceStore.activeWorkspaceId(),
+      });
       if (wsId) {
         materializePendingSessionInWorkspaceSidebar({
           workspaceId: wsId,
           pendingSessionInstanceId: pendingSidebarSession?.id ?? null,
           item: newItem,
         });
-      }
-
-      routeResumeSelectionAlreadyHandledForSession = session.id;
-      if (blockAppDuringCreate || currentView() === "session") {
-        goToSession(session.id);
       }
 
       mark("session:select:start", { sessionID: session.id });
@@ -8624,6 +8682,10 @@ export default function App() {
       mark("session:select:ok", { sessionID: session.id });
 
       // setSessionViewLockUntil(Date.now() + 1200);
+      if (shouldRouteCreatedSessionAfterSelect({ blockAppDuringCreate, currentView: currentView() })) {
+        routeResumeSelectionAlreadyHandledForSession = session.id;
+        goToSession(session.id);
+      }
 
       // The new session is already in the sessions() store (injected above)
       // and in the sidebar signal. SSE session.created events will handle
@@ -9177,27 +9239,37 @@ export default function App() {
       if (storedPendingDraftKey) {
         try {
           const pendingDrafts = (await pendingSessionDraftsList()).filter((draft) => !isConsumedPendingDraftId(draft.id));
-          const matchingPendingDraft = pendingDrafts.find((draft) => resolvePendingDraftKey({
-            kind: draft.kind,
-            workspaceId: draft.workspaceId,
-            directory: draft.directory ?? null,
-            privateWorkspaceId: draft.privateWorkspaceId ?? null,
-          }) === storedPendingDraftKey) ?? null;
-          if (!matchingPendingDraft) {
-            clearActivePendingDraftState();
-          } else {
-            const loadedPendingDraft = await pendingSessionDraftsGet(matchingPendingDraft.id);
-            if (!loadedPendingDraft) {
+          const matchingPendingDraft = findStoredPendingDraftSummary({
+            storedPendingDraftKey,
+            pendingDrafts,
+          });
+          const loadedPendingDraft = matchingPendingDraft
+            ? await pendingSessionDraftsGet(matchingPendingDraft.id)
+            : null;
+          const restoreError = loadedPendingDraft
+            ? formatPendingDraftAttachmentRestoreError(loadedPendingDraft.attachmentFailures)
+            : null;
+          const hydrationDecision = resolvePendingDraftStartupHydration({
+            storedPendingDraftKey,
+            matchingPendingDraft,
+            loadedPendingDraft,
+            restoreError,
+          });
+
+          switch (hydrationDecision.type) {
+            case "skip":
+              break;
+            case "clear":
               clearActivePendingDraftState();
-            } else {
-              const restoreError = formatPendingDraftAttachmentRestoreError(loadedPendingDraft.attachmentFailures);
-              if (restoreError) {
-                setError(restoreError);
+              break;
+            case "hydrate":
+              if (hydrationDecision.restoreError) {
+                setError(hydrationDecision.restoreError);
               }
-              setActivePendingDraftKey(storedPendingDraftKey);
-              setActivePendingDraftMeta(matchingPendingDraft);
-              setComposerDraftBySessionId((current) => setSessionComposerDraft(current, { storageKey: storedPendingDraftKey }, loadedPendingDraft.draft.composer));
-            }
+              setActivePendingDraftKey(hydrationDecision.storageKey);
+              setActivePendingDraftMeta(hydrationDecision.summary);
+              setComposerDraftBySessionId((current) => setSessionComposerDraft(current, { storageKey: hydrationDecision.storageKey }, hydrationDecision.loadedDraft.draft.composer));
+              break;
           }
         } catch (error) {
           reportError(error, "pendingDrafts.hydrate");
@@ -9634,16 +9706,18 @@ export default function App() {
   });
 
   createEffect(() => {
-    if (!workspaceDefaultModelReady()) return;
-    if (!isTauriRuntime()) return;
-    if (!defaultModelExplicit()) return;
+    const workspace = workspaceStore.activeWorkspaceDisplay();
+    const syncPreflight = resolveManagedAiConfigSyncPreflight({
+      workspaceDefaultModelReady: workspaceDefaultModelReady(),
+      isDesktopRuntime: isTauriRuntime(),
+      defaultModelExplicit: defaultModelExplicit(),
+      workspaceType: workspace.workspaceType,
+      workspaceRoot: workspaceStore.activeWorkspacePath(),
+    });
+    if (syncPreflight.type === "skip") return;
     denAuthRevision();
 
-    const workspace = workspaceStore.activeWorkspaceDisplay();
-    if (workspace.workspaceType !== "local") return;
-
-    const root = workspaceStore.activeWorkspacePath().trim();
-    if (!root) return;
+    const root = syncPreflight.workspaceRoot;
     const nextModel = defaultModel();
     const managedProfile = managedAiAccess();
     const managedAccessBusy = managedProfile ? false : managedAiAccessBusy();
@@ -9682,7 +9756,17 @@ export default function App() {
 
     const writeConfig = async () => {
       try {
-        if (managedProfile && !providerRoutingReady) {
+        const providerReadinessDecision = resolveManagedAiConfigWriteDecision({
+          managedProfilePresent: Boolean(managedProfile),
+          providerRoutingReady,
+          managedConfigAlreadyCurrent: false,
+          shouldPreserveManagedConfig: false,
+          defaultModelAlreadyCurrent: false,
+        });
+        if (
+          providerReadinessDecision.type === "skip" &&
+          providerReadinessDecision.reason === "provider-routing-not-ready"
+        ) {
           return;
         }
 
@@ -9711,10 +9795,25 @@ export default function App() {
             if (currentApiKey && currentApiKey !== providerRoutingTarget.serverClientToken) {
               lastKnownConfigSnapshotByWs.delete(wsKey);
             }
-            if (lastKnownConfigSnapshotByWs.get(wsKey) === desiredSnapshot) {
+            const cachedSnapshotMatches = lastKnownConfigSnapshotByWs.get(wsKey) === desiredSnapshot;
+            const redactedServerConfigMatches = managedConfigContentsMatchForServerPatch(
+              currentOpencodeContent,
+              content,
+            );
+            const managedDecision = resolveManagedAiConfigWriteDecision({
+              managedProfilePresent: Boolean(managedProfile),
+              providerRoutingReady,
+              managedConfigAlreadyCurrent: cachedSnapshotMatches || redactedServerConfigMatches,
+              shouldPreserveManagedConfig: false,
+              defaultModelAlreadyCurrent: false,
+            });
+            if (managedDecision.type === "skip") {
+              if (!cachedSnapshotMatches && redactedServerConfigMatches) {
+                lastKnownConfigSnapshotByWs.set(wsKey, desiredSnapshot);
+              }
               return;
             }
-            if (managedConfigContentsMatchForServerPatch(currentOpencodeContent, content)) {
+            if (managedDecision.type !== "write-managed-config") {
               lastKnownConfigSnapshotByWs.set(wsKey, desiredSnapshot);
               return;
             }
@@ -9742,8 +9841,7 @@ export default function App() {
             return;
           }
 
-          if (
-            shouldPreserveManagedAiConfig({
+          const preserveManagedConfig = shouldPreserveManagedAiConfig({
               content: currentOpencodeContent,
               managedProfile,
               gatewayBaseUrl: providerRoutingTarget?.engineBaseUrl ?? providerRoutingTarget?.baseUrl ?? "",
@@ -9751,13 +9849,20 @@ export default function App() {
               gatewayAccessToken,
               accessBusy: managedAccessBusy,
               accessError: managedAccessError,
-            })
-          ) {
+          });
+          const currentModel = typeof config.opencode?.model === "string" ? parseModelRef(config.opencode.model) : null;
+          const defaultModelAlreadyCurrent = Boolean(currentModel && modelEquals(currentModel, nextModel));
+          const defaultModelDecision = resolveManagedAiConfigWriteDecision({
+            managedProfilePresent: Boolean(managedProfile),
+            providerRoutingReady,
+            managedConfigAlreadyCurrent: false,
+            shouldPreserveManagedConfig: preserveManagedConfig,
+            defaultModelAlreadyCurrent,
+          });
+          if (defaultModelDecision.type === "skip") {
             return;
           }
-
-          const currentModel = typeof config.opencode?.model === "string" ? parseModelRef(config.opencode.model) : null;
-          if (currentModel && modelEquals(currentModel, nextModel)) return;
+          if (defaultModelDecision.type !== "write-default-model") return;
 
           await vesloClient.patchConfig(vesloWorkspaceId, {
             opencode: { model: formatModelRef(nextModel) },
@@ -9775,7 +9880,15 @@ export default function App() {
             serverClientToken: providerRoutingTarget.serverClientToken,
             gatewayAccessToken,
           });
-          if ((configFile.content ?? "").trim() === content.trim()) return;
+          const fileDecision = resolveManagedAiConfigWriteDecision({
+            managedProfilePresent: Boolean(managedProfile),
+            providerRoutingReady,
+            managedConfigAlreadyCurrent: (configFile.content ?? "").trim() === content.trim(),
+            shouldPreserveManagedConfig: false,
+            defaultModelAlreadyCurrent: false,
+          });
+          if (fileDecision.type === "skip") return;
+          if (fileDecision.type !== "write-managed-config") return;
 
           const result = await writeOpencodeConfig("project", root, content);
           if (!result.ok) {
@@ -9798,8 +9911,7 @@ export default function App() {
           return;
         }
 
-        if (
-          shouldPreserveManagedAiConfig({
+        const preserveManagedConfig = shouldPreserveManagedAiConfig({
             content: configFile.content,
             managedProfile,
             gatewayBaseUrl: providerRoutingTarget?.engineBaseUrl ?? providerRoutingTarget?.baseUrl ?? "",
@@ -9807,13 +9919,20 @@ export default function App() {
             gatewayAccessToken,
             accessBusy: managedAccessBusy,
             accessError: managedAccessError,
-          })
-        ) {
+        });
+        const existingModel = parseDefaultModelFromConfig(configFile.content);
+        const defaultModelAlreadyCurrent = Boolean(existingModel && modelEquals(existingModel, nextModel));
+        const fileDecision = resolveManagedAiConfigWriteDecision({
+          managedProfilePresent: Boolean(managedProfile),
+          providerRoutingReady,
+          managedConfigAlreadyCurrent: false,
+          shouldPreserveManagedConfig: preserveManagedConfig,
+          defaultModelAlreadyCurrent,
+        });
+        if (fileDecision.type === "skip") {
           return;
         }
-
-        const existingModel = parseDefaultModelFromConfig(configFile.content);
-        if (existingModel && modelEquals(existingModel, nextModel)) return;
+        if (fileDecision.type !== "write-default-model") return;
 
         const content = formatConfigWithDefaultModel(configFile.content, nextModel);
         const result = await writeOpencodeConfig("project", root, content);
@@ -10945,25 +11064,6 @@ export default function App() {
     });
   }
 
-  const dashboardTabs = new Set<DashboardTab>([
-    "scheduled",
-    "soul",
-    "skills",
-    "plugins",
-    "mcp",
-    "config",
-    "settings",
-  ]);
-
-  const resolveDashboardTab = (value?: string | null) => {
-    const normalized = value?.trim().toLowerCase() ?? "";
-    if (normalized === "plugins") return "mcp";
-    if (dashboardTabs.has(normalized as DashboardTab)) {
-      return normalized as DashboardTab;
-    }
-    return "scheduled";
-  };
-
   const syncExternalHashRoute = () => {
     if (!isTauriRuntime()) return;
     const hashPath = window.location.hash.replace(/^#/, "").trim();
@@ -10972,7 +11072,7 @@ export default function App() {
     const pathname = hashPath.split(/[?#]/, 1)[0]?.toLowerCase() ?? "";
     if (pathname.startsWith("/dashboard")) {
       const [, , tabSegment] = pathname.split("/");
-      const resolvedTab = resolveDashboardTab(tabSegment);
+      const resolvedTab = resolveDashboardRouteTab(tabSegment);
       if (resolvedTab !== tab()) {
         setTabState(resolvedTab);
       }
@@ -10993,139 +11093,85 @@ export default function App() {
     window.removeEventListener("hashchange", syncExternalHashRoute);
   });
 
-  const initialRoute = () => {
-    if (typeof window === "undefined") return "/session";
-    return "/session";
-  };
-
   createEffect(() => {
     const rawPath = location.pathname.trim();
-    const path = rawPath.toLowerCase();
+    const startupRouteDecision = resolveAppStartupRouteDecision({
+      rawPath,
+      onboardingStep: onboardingStep(),
+      isTauriRuntime: isTauriRuntime(),
+      activeSessionId: activeSessionId(),
+    });
 
-    if ((onboardingStep() === "language" || onboardingStep() === "auth") && !path.startsWith("/onboarding")) {
-      navigate("/onboarding", { replace: true });
-      return;
-    }
-
-    if (path === "" || path === "/") {
-      navigate(initialRoute(), { replace: true });
-      return;
-    }
-
-    if (path.startsWith("/dashboard")) {
-      const [, , tabSegment] = path.split("/");
-      const resolvedTab = resolveDashboardTab(tabSegment);
-
-      if (resolvedTab !== tab()) {
-        setTabState(resolvedTab);
-      }
-      if (!tabSegment || tabSegment !== resolvedTab) {
-        goToDashboard(resolvedTab, { replace: true });
-      }
-      return;
-    }
-
-    if (path.startsWith("/session")) {
-      const [, , sessionSegment] = rawPath.split("/");
-      const id = (sessionSegment ?? "").trim();
-
-      if (!id) {
-        if (activePendingDraftKey()) {
-          void activePendingDraftMeta();
-          if (selectedSessionId()) {
-            setSelectedSessionId(null);
-            setMessages([]);
-            setTodos([]);
-          }
-          return;
+    switch (startupRouteDecision.type) {
+      case "navigate":
+        navigate(startupRouteDecision.to, { replace: startupRouteDecision.replace });
+        return;
+      case "dashboard-route":
+        if (startupRouteDecision.tab !== tab()) {
+          setTabState(startupRouteDecision.tab);
         }
-        if (selectedSessionId()) {
-          setSelectedSessionId(null);
-          setMessages([]);
-          setTodos([]);
+        if (startupRouteDecision.canonicalize) {
+          goToDashboard(startupRouteDecision.tab, { replace: true });
         }
         return;
-      }
-
-      const sessionIdsInStore = sessions().map((session) => session.id);
-      const sessionIdsInSidebar = sidebarWorkspaceGroups().flatMap((group) =>
-        group.sessions.map((session) => session.id)
-      );
-      if (isPendingSessionInstanceId(id)) {
-        if (selectedSessionId() !== id) {
-          setSelectedSessionId(id);
-        }
+      case "ignore":
         return;
-      }
-      // If the URL points at a session that no longer exists (e.g. after deletion),
-      // route back to /session so the app can fall back safely.
-      // Sidebar-backed ids are accepted here so selection can proceed even when
-      // session store hydration is briefly behind sidebar refreshes. Scope-backed
-      // ids cover browse-only conversations while their source workspace is idle.
-      if (
-        shouldFallbackFromSessionRoute({
-          sessionsLoaded: sessionsLoaded(),
+      case "session-route": {
+        const [, , sessionSegment] = rawPath.split("/");
+        const id = (sessionSegment ?? "").trim();
+        const sessionIdsInStore = sessions().map((session) => session.id);
+        const sessionIdsInSidebar = sidebarWorkspaceGroups().flatMap((group) =>
+          group.sessions.map((session) => session.id)
+        );
+        const shouldFallbackFromRoute = id
+          ? shouldFallbackFromSessionRoute({
+            sessionsLoaded: sessionsLoaded(),
+            routeSessionId: id,
+            sessionIdsInStore,
+            sessionIdsInSidebar,
+            scopedSessionIds: scopedSessionIds(),
+          })
+          : false;
+        const sessionPathDecision = resolveSessionPathDecision({
+          path: rawPath,
           routeSessionId: id,
-          sessionIdsInStore,
-          sessionIdsInSidebar,
-          scopedSessionIds: scopedSessionIds(),
-        })
-      ) {
-        if (selectedSessionId() === id) {
-          setSelectedSessionId(null);
+          activePendingDraftKey: activePendingDraftKey(),
+          selectedSessionId: selectedSessionId(),
+          isPendingSession: isPendingSessionInstanceId(id),
+          shouldFallbackFromRoute,
+          ownNavigationSessionId: routeResumeSelectionAlreadyHandledForSession,
+        });
+
+        switch (sessionPathDecision.type) {
+          case "ignore":
+            return;
+          case "clear-session-view":
+            if (sessionPathDecision.preservePendingDraft) {
+              void activePendingDraftMeta();
+            }
+            if (selectedSessionId()) {
+              clearDisplayedSessionForBareRoute();
+            }
+            return;
+          case "select-pending-session":
+            setSelectedSessionId(sessionPathDecision.sessionId);
+            return;
+          case "fallback-to-session-list":
+            if (sessionPathDecision.clearSelectedSession) {
+              setSelectedSessionId(null);
+            }
+            navigate("/session", { replace: true });
+            return;
+          case "consume-own-navigation":
+            routeResumeSelectionAlreadyHandledForSession = "";
+            return;
+          case "select-session":
+            void selectSession(sessionPathDecision.sessionId);
+            return;
         }
-        navigate("/session", { replace: true });
         return;
       }
-
-      if (routeResumeSelectionAlreadyHandledForSession === id) {
-        if (selectedSessionId() !== id) {
-          setSelectedSessionId(id);
-        }
-        routeResumeSelectionAlreadyHandledForSession = "";
-        return;
-      }
-
-      if (selectedSessionId() !== id) {
-        void selectSession(id);
-      }
-      return;
     }
-
-    if (path.startsWith("/proto-v1-ux")) {
-      if (isTauriRuntime()) {
-        navigate("/dashboard/scheduled", { replace: true });
-      }
-      return;
-    }
-
-    if (path.startsWith("/proto")) {
-      if (isTauriRuntime()) {
-        navigate("/dashboard/scheduled", { replace: true });
-        return;
-      }
-
-      const [, , protoSegment] = rawPath.split("/");
-      if (!protoSegment) {
-        navigate("/proto/workspaces", { replace: true });
-      }
-      return;
-    }
-
-    if (path.startsWith("/onboarding")) {
-      if (onboardingStep() === "language" || onboardingStep() === "auth") {
-        return;
-      }
-      navigate("/session", { replace: true });
-      return;
-    }
-
-    const fallback = activeSessionId();
-    if (fallback) {
-      goToSession(fallback, { replace: true });
-      return;
-    }
-    navigate("/session", { replace: true });
   });
 
   return (

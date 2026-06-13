@@ -1,3 +1,8 @@
+import {
+  resolveManagedAiBootstrapCurrentConfigCheck,
+  resolveManagedAiBootstrapWaitDecision,
+} from "../controllers/managed-ai-bootstrap-readiness-controller";
+
 export const localRuntimeHealthTimeoutMessage = "Timed out waiting for local runtime health";
 
 export type SendRuntimePreflightTargetWorkspace = {
@@ -171,13 +176,21 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
 
   const ensureManagedAiBootstrapReady = async (): Promise<boolean> => {
     try {
+      const currentConfigCheck = resolveManagedAiBootstrapCurrentConfigCheck({
+        accessBusy: deps.managedAiAccessBusy(),
+        bootstrapPendingCount: deps.managedAiBootstrapPendingCount(),
+        reloadBusy: deps.reloadBusy(),
+      });
       const canUseCurrentManagedConfig =
-        deps.managedAiAccessBusy() &&
-        deps.managedAiBootstrapPendingCount() === 0 &&
-        !deps.reloadBusy() &&
+        currentConfigCheck.type === "check-current-config" &&
         (await deps.hasUsableManagedAiRuntimeConfigForSend());
+      const waitDecision = resolveManagedAiBootstrapWaitDecision({
+        managedProfilePresent: Boolean(deps.managedAiAccess()),
+        bootstrapBusy: deps.managedAiBootstrapBusy(),
+        canUseCurrentManagedConfig,
+      });
       await deps.waitForManagedAiBootstrapReady({
-        hasManagedProfile: (Boolean(deps.managedAiAccess()) || deps.managedAiBootstrapBusy()) && !canUseCurrentManagedConfig,
+        hasManagedProfile: waitDecision.hasManagedProfile,
         isBootstrapBusy: deps.managedAiBootstrapBusy,
         isReloadBusy: deps.reloadBusy,
         hasClient: () => Boolean(deps.routedClient()),

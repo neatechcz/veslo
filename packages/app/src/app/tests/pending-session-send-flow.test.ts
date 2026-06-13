@@ -80,7 +80,7 @@ test("first pending draft send materializes workspace and session without global
 
   assert.match(
     sendPromptSource,
-    /const blockAppDuringPromptSend = Boolean\(sessionID\);/,
+    /const sendPromptBusyOwnership = resolveSendPromptBusyOwnership\(\{ sessionId: sessionID \}\);[\s\S]*const blockAppDuringPromptSend = sendPromptBusyOwnership\.ownsBusy;/,
     "a brand-new pending draft send should be identifiable so workspace/session materialization can stay scoped to the session view",
   );
   assert.match(
@@ -112,7 +112,7 @@ test("first pending draft send materializes workspace and session without global
   );
   assert.match(
     createSessionSource,
-    /if \(blockAppDuringCreate \|\| currentView\(\) === "session"\) \{\s*goToSession\(session\.id\);\s*\}/s,
+    /if \(shouldRouteCreatedSessionAfterSelect\(\{[^}]*blockAppDuringCreate,[^}]*currentView: currentView\(\)[^}]*\}\)\) \{[\s\S]*goToSession\(session\.id\);[\s\S]*\}/s,
     "non-blocking first-send materialization should not force the user back to chat after they navigate elsewhere",
   );
 });

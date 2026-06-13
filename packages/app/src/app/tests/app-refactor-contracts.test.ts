@@ -108,18 +108,14 @@ test("web startup consumes all URL deep-link formats but strips only non-auth qu
 
 test("desktop hash routing owns dashboard aliases and cleans up its hashchange listener", () => {
   const hashRouting = sectionBetween(
-    "const dashboardTabs = new Set<DashboardTab>([",
-    "const initialRoute = () => {",
+    "const syncExternalHashRoute = () => {",
+    "  createEffect(() => {",
     "desktop hash routing",
   );
 
-  for (const tab of ["scheduled", "soul", "skills", "plugins", "mcp", "config", "settings"]) {
-    assert.match(hashRouting, new RegExp(`"${tab}"`), `dashboard hash routing should recognize ${tab}`);
-  }
-
   assert.match(
-    hashRouting,
-    /const resolveDashboardTab = \(value\?: string \| null\) => \{[\s\S]*?if \(normalized === "plugins"\) return "mcp";[\s\S]*?if \(dashboardTabs\.has\(normalized as DashboardTab\)\) \{[\s\S]*?return normalized as DashboardTab;[\s\S]*?\}[\s\S]*?return "scheduled";[\s\S]*?\};/s,
+    source,
+    /import \{[\s\S]*resolveAppStartupRouteDecision,[\s\S]*resolveDashboardRouteTab,[\s\S]*\} from "\.\/controllers\/app-startup-controller";/s,
     "dashboard hash tab resolution should preserve the legacy plugins-to-mcp alias and scheduled fallback",
   );
   assert.match(
@@ -129,7 +125,7 @@ test("desktop hash routing owns dashboard aliases and cleans up its hashchange l
   );
   assert.match(
     hashRouting,
-    /if \(pathname\.startsWith\("\/dashboard"\)\) \{[\s\S]*?const resolvedTab = resolveDashboardTab\(tabSegment\);[\s\S]*?setTabState\(resolvedTab\);[\s\S]*?\}[\s\S]*?if \(location\.pathname\.toLowerCase\(\) !== pathname\) \{[\s\S]*?navigate\(hashPath, \{ replace: true \}\);/s,
+    /if \(pathname\.startsWith\("\/dashboard"\)\) \{[\s\S]*?const resolvedTab = resolveDashboardRouteTab\(tabSegment\);[\s\S]*?setTabState\(resolvedTab\);[\s\S]*?\}[\s\S]*?if \(location\.pathname\.toLowerCase\(\) !== pathname\) \{[\s\S]*?navigate\(hashPath, \{ replace: true \}\);/s,
     "desktop hash routing should sync both dashboard tab state and router location",
   );
   assertInOrder(hashRouting, "desktop hash routing listener lifecycle", [

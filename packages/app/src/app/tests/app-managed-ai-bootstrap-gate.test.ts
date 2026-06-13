@@ -83,7 +83,7 @@ test("managed AI access refresh keeps the proxied gateway access token when usin
 test("managed AI bootstrap skips veslo-server config patches when the computed managed config is unchanged", () => {
   assert.match(
     source,
-    /const currentOpencodeContent = JSON\.stringify\(config\.opencode \?\? \{\}, null, 2\);[\s\S]*?const content = formatManagedAiAccessConfig\([\s\S]*?const desiredSnapshot = getConfigSnapshot\(content\);[\s\S]*?if \(lastKnownConfigSnapshotByWs\.get\(wsKey\) === desiredSnapshot\) \{\s*return;\s*\}[\s\S]*?if \(managedConfigContentsMatchForServerPatch\(currentOpencodeContent, content\)\) \{\s*lastKnownConfigSnapshotByWs\.set\(wsKey, desiredSnapshot\);\s*return;\s*\}[\s\S]*?await vesloClient\.patchConfig/s,
+    /const currentOpencodeContent = JSON\.stringify\(config\.opencode \?\? \{\}, null, 2\);[\s\S]*?const content = formatManagedAiAccessConfig\([\s\S]*?const desiredSnapshot = getConfigSnapshot\(content\);[\s\S]*?const cachedSnapshotMatches = lastKnownConfigSnapshotByWs\.get\(wsKey\) === desiredSnapshot;[\s\S]*?const redactedServerConfigMatches = managedConfigContentsMatchForServerPatch\([\s\S]*?const managedDecision = resolveManagedAiConfigWriteDecision\(\{[\s\S]*?managedConfigAlreadyCurrent: cachedSnapshotMatches \|\| redactedServerConfigMatches,[\s\S]*?\}\);[\s\S]*?if \(managedDecision\.type === "skip"\) \{\s*if \(!cachedSnapshotMatches && redactedServerConfigMatches\) \{\s*lastKnownConfigSnapshotByWs\.set\(wsKey, desiredSnapshot\);\s*\}\s*return;\s*\}[\s\S]*?await vesloClient\.patchConfig/s,
     "managed AI config writes through veslo-server should no-op when the generated config only differs by server-redacted secrets, while still tracking the real secret-bearing snapshot",
   );
 });
@@ -118,12 +118,12 @@ test("managed AI bootstrap can use a validated current runtime config while acce
 
   assert.match(
     ensureSource,
-    /const canUseCurrentManagedConfig =[\s\S]*deps\.managedAiAccessBusy\(\)[\s\S]*deps\.hasUsableManagedAiRuntimeConfigForSend\(\)/,
+    /const currentConfigCheck = resolveManagedAiBootstrapCurrentConfigCheck\(\{[\s\S]*accessBusy: deps\.managedAiAccessBusy\(\),[\s\S]*bootstrapPendingCount: deps\.managedAiBootstrapPendingCount\(\),[\s\S]*reloadBusy: deps\.reloadBusy\(\),[\s\S]*\}\);[\s\S]*const canUseCurrentManagedConfig =[\s\S]*currentConfigCheck\.type === "check-current-config"[\s\S]*deps\.hasUsableManagedAiRuntimeConfigForSend\(\)/,
     "managed bootstrap should validate current runtime config before bypassing a busy access refresh",
   );
   assert.match(
     ensureSource,
-    /hasManagedProfile:\s*\(Boolean\(deps\.managedAiAccess\(\)\) \|\| deps\.managedAiBootstrapBusy\(\)\) && !canUseCurrentManagedConfig/,
+    /const waitDecision = resolveManagedAiBootstrapWaitDecision\(\{[\s\S]*managedProfilePresent: Boolean\(deps\.managedAiAccess\(\)\),[\s\S]*bootstrapBusy: deps\.managedAiBootstrapBusy\(\),[\s\S]*canUseCurrentManagedConfig,[\s\S]*\}\);[\s\S]*hasManagedProfile: waitDecision\.hasManagedProfile,/,
     "managed bootstrap should only skip waiting when the current runtime config is usable",
   );
 });

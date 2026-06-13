@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal } from "solid-js";
+import { batch, createEffect, createMemo, createSignal } from "solid-js";
 import type {
   Client,
   StartupPreference,
@@ -15,6 +15,7 @@ import {
   createSingleFlight,
   isTauriRuntime,
   isPrivateWorkspacePathForRoot,
+  normalizeDirectoryQueryPath,
   normalizeDirectoryPath,
   readStartupPreference,
   safeStringify,
@@ -83,6 +84,20 @@ export type WorkspaceActivationOptions = {
 };
 
 type WorkspaceBusyMap = Record<string, { sessionId: string; startedAt: number }>;
+
+type DisplayedSessionResetReason =
+  | "remote_to_local_workspace_changed"
+  | "connect_workspace_scope_changed"
+  | "open_empty_session";
+
+type DisplayedSessionResetScope = {
+  workspaceId?: string | null;
+  workspaceType?: WorkspaceInfo["workspaceType"] | null;
+  previousDirectory?: string | null;
+  nextDirectory?: string | null;
+  activeWorkspaceRoot?: string | null;
+  clearPendingPermissions?: boolean;
+};
 
 type WorkspaceBusyTraceRoot = typeof window & {
   __vesloWorkspaceBusyTrace?: Array<Record<string, unknown>>;
@@ -311,10 +326,10 @@ export function createWorkspaceStore(options: {
   ) =>
     [
       nextBaseUrl.trim(),
-      (directory ?? "").trim(),
+      normalizeWorkspaceScopePath(directory ?? "", context?.workspaceType),
       context?.workspaceId?.trim() ?? "",
       context?.workspaceType ?? "",
-      context?.targetRoot?.trim() ?? "",
+      normalizeWorkspaceScopePath(context?.targetRoot ?? "", context?.workspaceType),
       context?.reason ?? "",
       auth?.mode ?? (auth ? "basic" : "none"),
       String(connectOptions?.quiet ?? false),
@@ -470,6 +485,63 @@ export function createWorkspaceStore(options: {
     return ws.path ?? "";
   });
   const activeWorkspaceRoot = createMemo(() => activeWorkspacePath().trim());
+
+  const normalizeWorkspaceScopePath = (
+    value?: string | null,
+    workspaceType?: WorkspaceInfo["workspaceType"] | null,
+  ) => {
+    const normalized = normalizeDirectoryQueryPath(value ?? "");
+    if (!normalized) return "";
+    return workspaceType === "local" && options.isWindowsPlatform()
+      ? normalized.toLowerCase()
+      : normalized;
+  };
+
+  const workspaceScopeChanged = (
+    previous?: string | null,
+    next?: string | null,
+    workspaceType?: WorkspaceInfo["workspaceType"] | null,
+  ) => normalizeWorkspaceScopePath(previous, workspaceType) !== normalizeWorkspaceScopePath(next, workspaceType);
+
+  const clearDisplayedSessionState = (
+    reason: DisplayedSessionResetReason,
+    scope: DisplayedSessionResetScope = {},
+  ) => {
+    const workspaceId = scope.workspaceId ?? activeWorkspaceId().trim();
+    const activeRoot = scope.activeWorkspaceRoot ?? activeWorkspaceRoot().trim();
+    wsDebug("ui-reset:displayed-session", {
+      reason,
+      workspaceId: workspaceId || null,
+      workspaceType: scope.workspaceType ?? activeWorkspaceInfo()?.workspaceType ?? null,
+      selectedSessionId: options.selectedSessionId(),
+      previousDirectory: scope.previousDirectory ?? null,
+      nextDirectory: scope.nextDirectory ?? null,
+      previousDirectoryNormalized: normalizeWorkspaceScopePath(
+        scope.previousDirectory,
+        scope.workspaceType ?? activeWorkspaceInfo()?.workspaceType ?? null,
+      ),
+      nextDirectoryNormalized: normalizeWorkspaceScopePath(
+        scope.nextDirectory,
+        scope.workspaceType ?? activeWorkspaceInfo()?.workspaceType ?? null,
+      ),
+      activeWorkspaceRoot: activeRoot || null,
+      activeWorkspaceRootNormalized: normalizeWorkspaceScopePath(
+        activeRoot,
+        scope.workspaceType ?? activeWorkspaceInfo()?.workspaceType ?? null,
+      ),
+      clearPendingPermissions: scope.clearPendingPermissions ?? false,
+    });
+
+    batch(() => {
+      options.setSelectedSessionId(null);
+      options.setMessages([]);
+      options.setTodos([]);
+      if (scope.clearPendingPermissions) {
+        options.setPendingPermissions([]);
+      }
+      options.setSessionStatusById({});
+    });
+  };
 
   const buildPrivateWorkspaceRoot = async () => {
     const cached = privateWorkspaceRoot().trim();
@@ -1212,21 +1284,27 @@ export function createWorkspaceStore(options: {
     options.setStartupPreference("local");
     const nextRoot = isRemote ? next.directory?.trim() ?? "" : next.path;
     const oldWorkspacePath = projectDir();
+    const oldWorkspaceScope = normalizeWorkspaceScopePath(oldWorkspacePath, "local");
+    const nextWorkspaceScope = normalizeWorkspaceScopePath(nextRoot, "local");
     // Compare against the actual engine directory as a safety net.
     // projectDir() reflects the intended workspace; actualEngineDir is
     // what the engine is actually running on.
     const actualEngineDir = engineStore.engine()?.projectDir?.trim() ?? "";
+    const actualEngineScope = normalizeWorkspaceScopePath(actualEngineDir, "local");
     const workspaceChanged =
-      oldWorkspacePath !== nextRoot ||
-      (actualEngineDir !== "" && actualEngineDir !== nextRoot);
+      workspaceScopeChanged(oldWorkspacePath, nextRoot, "local") ||
+      (actualEngineScope !== "" && actualEngineScope !== nextWorkspaceScope);
 
     wsDebug("activate:local:prep", {
       id,
       nextRoot,
+      nextWorkspaceScope,
       workspaceChanged,
       wasLocalConnection: Boolean(wasLocalConnection),
       prevProjectDir: oldWorkspacePath,
+      prevWorkspaceScope: oldWorkspaceScope,
       actualEngineDir,
+      actualEngineScope,
     });
     _wsLog("[workspace:activate] STEP 1 — syncActiveWorkspaceId + setProjectDir", { id, nextRoot, workspaceChanged, wasLocalConnection, actualEngineDir });
 
@@ -1317,11 +1395,25 @@ export function createWorkspaceStore(options: {
         engine: engineStore.engine()?.baseUrl ?? null,
         engineRunning: Boolean(engineStore.engine()?.running),
       });
-      options.setSelectedSessionId(null);
-      options.setMessages([]);
-      options.setTodos([]);
-      options.setPendingPermissions([]);
-      options.setSessionStatusById({});
+      if (workspaceChanged) {
+        clearDisplayedSessionState("remote_to_local_workspace_changed", {
+          workspaceId: id,
+          workspaceType: "local",
+          previousDirectory: oldWorkspacePath,
+          nextDirectory: nextRoot,
+          activeWorkspaceRoot: nextRoot,
+          clearPendingPermissions: true,
+        });
+      } else {
+        wsDebug("ui-reset:displayed-session:skip", {
+          reason: "remote_to_local_same_workspace_scope",
+          workspaceId: id,
+          previousDirectory: oldWorkspacePath,
+          nextDirectory: nextRoot,
+          previousDirectoryNormalized: oldWorkspaceScope,
+          nextDirectoryNormalized: nextWorkspaceScope,
+        });
+      }
 
       // If a local host engine is already running (common when bouncing between remote/local),
       // reuse it instead of restarting to keep switching snappy.
@@ -1392,7 +1484,8 @@ export function createWorkspaceStore(options: {
     // then races the UI's 10s session-list timeout).
     const enginePresentForActiveWorkspace = Boolean(
       engineStore.engine()?.baseUrl?.trim() &&
-        (engineStore.engine()?.projectDir?.trim() ?? "") === next.path,
+        normalizeWorkspaceScopePath(engineStore.engine()?.projectDir?.trim() ?? "", "local") ===
+          normalizeWorkspaceScopePath(next.path, "local"),
     );
     const needsEngineWarmup = !isRemote && !workspaceChanged && !enginePresentForActiveWorkspace;
     const canBrowseOffline =
@@ -1547,6 +1640,8 @@ export function createWorkspaceStore(options: {
     }
 
     const incomingDirectory = directory?.trim() ?? "";
+    const connectWorkspaceType = context?.workspaceType ?? activeWorkspaceInfo()?.workspaceType ?? null;
+    const incomingDirectoryScope = normalizeWorkspaceScopePath(incomingDirectory, connectWorkspaceType);
 
     // Stale-workspace abort: if this connect targets a local workspace that
     // is no longer active (the user switched away while a delayed engine
@@ -1554,16 +1649,19 @@ export function createWorkspaceStore(options: {
     // to the previous workspace and the UI would show its sessions instead
     // of the one the user just selected.
     const activeRoot = activeWorkspaceRoot().trim();
+    const activeRootScope = normalizeWorkspaceScopePath(activeRoot, connectWorkspaceType);
     if (
       context?.workspaceType === "local" &&
-      activeRoot &&
-      incomingDirectory &&
-      activeRoot !== incomingDirectory
+      activeRootScope &&
+      incomingDirectoryScope &&
+      activeRootScope !== incomingDirectoryScope
     ) {
       wsDebug("connect:abort-stale-workspace", {
         baseUrl: nextBaseUrl,
         directory: incomingDirectory,
+        directoryScope: incomingDirectoryScope,
         activeRoot,
+        activeRootScope,
         reason: context?.reason ?? null,
       });
       console.log("[workspace] connect ABORT (stale workspace — user switched away)", {
@@ -1576,10 +1674,9 @@ export function createWorkspaceStore(options: {
     }
 
     // Idempotent reconnect: if we are already connected to the same baseUrl
-    // and directory, skip. connectToServer always wipes selectedSessionId,
-    // messages and todos, so a redundant call (e.g. delayed auth-hydration
-    // retry firing bootstrapOnboarding a second time) would race the user's
-    // current session view and force a re-fetch.
+    // and normalized directory, skip. A redundant call (e.g. delayed
+    // auth-hydration retry firing bootstrapOnboarding a second time) can race
+    // the user's current session view and force a re-fetch.
     // VSLO-171.F3Ú5: idempotent-skip check stays on options.client() inside
     // connectToServer; will be replaced by routing.ensure cached-match.
     // `forceRefresh` bypasses this guard for callers (refreshActiveClient)
@@ -1596,7 +1693,7 @@ export function createWorkspaceStore(options: {
       options.client() &&
       cachedRoutingClient &&
       (options.baseUrl()?.trim() ?? "") === nextBaseUrl &&
-      (options.clientDirectory()?.trim() ?? "") === incomingDirectory
+      normalizeWorkspaceScopePath(options.clientDirectory(), connectWorkspaceType) === incomingDirectoryScope
     ) {
       wsDebug("connect:idempotent-skip", {
         baseUrl: nextBaseUrl,
@@ -1678,17 +1775,25 @@ export function createWorkspaceStore(options: {
           }
           const currentActiveId = activeWorkspaceId().trim();
           const currentActiveRoot = activeWorkspaceRoot().trim();
+          const currentActiveRootScope = normalizeWorkspaceScopePath(
+            currentActiveRoot,
+            connectWorkspaceType,
+          );
           if (
             context?.workspaceType === "local" &&
             ((currentActiveId && currentActiveId !== multiWorkspaceId) ||
-              (currentActiveRoot && incomingDirectory && currentActiveRoot !== incomingDirectory))
+              (currentActiveRootScope &&
+                incomingDirectoryScope &&
+                currentActiveRootScope !== incomingDirectoryScope))
           ) {
             wsDebug("connect:abort-stale-after-ensure", {
               workspaceId: multiWorkspaceId,
               activeWorkspaceId: currentActiveId || null,
               baseUrl: nextBaseUrl,
               directory: incomingDirectory || null,
+              directoryScope: incomingDirectoryScope || null,
               activeRoot: currentActiveRoot || null,
+              activeRootScope: currentActiveRootScope || null,
               reason: context?.reason ?? null,
               ms: Date.now() - connectStart,
             });
@@ -1865,13 +1970,28 @@ export function createWorkspaceStore(options: {
         // VSLO-171.F3Ú5: directory-changed check inside connectToServer; will
         // be subsumed by routing.ensure lifecycle in multi mode.
         const previousDirectory = (options.clientDirectory()?.trim() ?? "");
+        const previousDirectoryScope = normalizeWorkspaceScopePath(previousDirectory, connectWorkspaceType);
+        const resolvedDirectoryScope = normalizeWorkspaceScopePath(resolvedDirectory, connectWorkspaceType);
         const directoryChanged =
-          !options.client() || previousDirectory !== (resolvedDirectory ?? "");
+          !options.client() ||
+          workspaceScopeChanged(previousDirectory, resolvedDirectory, connectWorkspaceType);
         if (directoryChanged) {
-          options.setSelectedSessionId(null);
-          options.setMessages([]);
-          options.setTodos([]);
-          options.setSessionStatusById({});
+          clearDisplayedSessionState("connect_workspace_scope_changed", {
+            workspaceId: context?.workspaceId ?? activeWorkspaceId().trim(),
+            workspaceType: context?.workspaceType ?? activeWorkspaceInfo()?.workspaceType ?? null,
+            previousDirectory,
+            nextDirectory: resolvedDirectory,
+            activeWorkspaceRoot: context?.targetRoot ?? activeWorkspaceRoot().trim(),
+          });
+        } else {
+          wsDebug("ui-reset:displayed-session:skip", {
+            reason: "connect_same_workspace_scope",
+            workspaceId: (context?.workspaceId ?? activeWorkspaceId().trim()) || null,
+            previousDirectory,
+            nextDirectory: resolvedDirectory,
+            previousDirectoryNormalized: previousDirectoryScope,
+            nextDirectoryNormalized: resolvedDirectoryScope,
+          });
         }
 
         options.setClient(nextClient);
@@ -2028,11 +2148,13 @@ export function createWorkspaceStore(options: {
         // If session loading fails, still fall back to an empty session draft view.
       }
     }
-    options.setSelectedSessionId(null);
-    options.setMessages([]);
-    options.setTodos([]);
-    options.setPendingPermissions([]);
-    options.setSessionStatusById({});
+    clearDisplayedSessionState("open_empty_session", {
+      workspaceId: activeWorkspaceId().trim(),
+      workspaceType: activeWorkspaceInfo()?.workspaceType ?? null,
+      nextDirectory: root || null,
+      activeWorkspaceRoot: root || activeWorkspaceRoot().trim(),
+      clearPendingPermissions: true,
+    });
     options.setView("session");
   };
 

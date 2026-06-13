@@ -54,7 +54,7 @@ test("createSessionAndOpen uses preflight target only when send preflight provid
   );
   assert.match(
     createSource,
-    /const wsId =[\s\S]*pendingSidebarSession\?\.workspaceId\?\.trim\(\) \|\|[\s\S]*targetWorkspace\?\.workspaceId \|\|[\s\S]*\(workspaceStore\.connectingWorkspaceId\(\) \?\? workspaceStore\.activeWorkspaceId\(\)\)\.trim\(\);/,
+    /const wsId = resolveCreatedSessionWorkspaceId\(\{[\s\S]*pendingSidebarSession,[\s\S]*targetWorkspaceId: targetWorkspace\?\.workspaceId,[\s\S]*connectingWorkspaceId: workspaceStore\.connectingWorkspaceId\(\),[\s\S]*activeWorkspaceId: workspaceStore\.activeWorkspaceId\(\),[\s\S]*\}\);/,
     "sidebar injection should attach the new session to the target workspace",
   );
 });

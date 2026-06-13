@@ -44,12 +44,12 @@ test("createSessionAndOpen skips duplicate preflight gates when sendPrompt alrea
 
   assert.match(
     createSource,
-    /if \(preflight\?\.managedAiReady \|\| options\.managedAiRuntimeAlreadyPrepared\) \{[\s\S]*recordSendTrace\("createSessionAndOpen:managed-ai-bootstrap-skip"/,
+    /const managedAiPreflightDecision = resolveCreateSessionManagedAiPreflightDecision\(\{[\s\S]*preflightManagedAiReady: Boolean\(preflight\?\.managedAiReady\),[\s\S]*runtimeAlreadyPrepared: Boolean\(options\.managedAiRuntimeAlreadyPrepared\),[\s\S]*\}\);[\s\S]*if \(managedAiPreflightDecision\.type === "skip"\) \{[\s\S]*recordSendTrace\("createSessionAndOpen:managed-ai-bootstrap-skip"/,
     "createSessionAndOpen should log and skip the duplicate managed AI gate",
   );
   assert.match(
     createSource,
-    /if \(preflight\?\.runtimeHealthOk\) \{[\s\S]*recordSendTrace\("createSessionAndOpen:health-skip"/,
+    /const runtimeHealthPreflightDecision = resolveCreateSessionRuntimeHealthPreflightDecision\(\{[\s\S]*preflightRuntimeHealthOk: Boolean\(preflight\?\.runtimeHealthOk\),[\s\S]*\}\);[\s\S]*if \(runtimeHealthPreflightDecision\.type === "skip"\) \{[\s\S]*recordSendTrace\("createSessionAndOpen:health-skip"/,
     "createSessionAndOpen should log and skip the duplicate runtime health probe",
   );
 });

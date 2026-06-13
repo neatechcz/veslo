@@ -21,30 +21,65 @@ test("ensuring an existing folder promotes that workspace to the top immediately
 test("connect flow keeps pending permissions loaded by refreshPendingPermissions", () => {
   assert.match(
     source,
-    /await withTimeoutOrThrow\(\s*options\.refreshPendingPermissions\(\),[\s\S]*options\.setSelectedSessionId\(null\);[\s\S]*options\.setMessages\(\[\]\);[\s\S]*options\.setTodos\(\[\]\);[\s\S]*options\.setSessionStatusById\(\{\}\);/s,
+    /clearDisplayedSessionState\("connect_workspace_scope_changed", \{[\s\S]*previousDirectory,[\s\S]*nextDirectory: resolvedDirectory,[\s\S]*\}\);/s,
+    "connect flow should reset displayed session state through the shared helper",
   );
 
   assert.doesNotMatch(
-    source,
-    /await withTimeoutOrThrow\(\s*options\.refreshPendingPermissions\(\),[\s\S]{0,900}options\.setPendingPermissions\(\[\]\);/s,
+    source.slice(source.indexOf('clearDisplayedSessionState("connect_workspace_scope_changed"')),
+    /clearDisplayedSessionState\("connect_workspace_scope_changed"[\s\S]{0,900}clearPendingPermissions: true/s,
+    "connect flow should preserve pending permissions refreshed later in the connect path",
   );
 });
 
-test("connect flow clears stale session selection before publishing the client", () => {
+test("connect flow clears stale displayed session state before publishing the client", () => {
   const connectStart = source.indexOf("async function connectToServer(");
   const connectEnd = source.indexOf("const openEmptySession = async", connectStart);
   assert.notStrictEqual(connectStart, -1, "connectToServer definition missing");
   assert.notStrictEqual(connectEnd, -1, "connectToServer end marker missing");
   const connectSource = source.slice(connectStart, connectEnd);
 
-  const clearSelectionIdx = connectSource.indexOf("options.setSelectedSessionId(null);");
+  const clearSelectionIdx = connectSource.indexOf('clearDisplayedSessionState("connect_workspace_scope_changed"');
   const publishClientIdx = connectSource.indexOf("options.setClient(nextClient);");
 
-  assert.notStrictEqual(clearSelectionIdx, -1, "connect flow should clear selected session");
+  assert.notStrictEqual(clearSelectionIdx, -1, "connect flow should clear displayed session state");
   assert.notStrictEqual(publishClientIdx, -1, "connect flow should publish the client");
   assert.ok(
     clearSelectionIdx < publishClientIdx,
-    "connectToServer must reset the previous session before route effects can observe the new client and immediately re-open a session that then gets cleared again",
+    "connectToServer must reset the previous displayed session before route effects can observe the new client and immediately re-open a session that then gets cleared again",
+  );
+});
+
+test("workspace scope comparisons use scope-aware normalized directory paths", () => {
+  assert.match(
+    source,
+    /const normalizeWorkspaceScopePath = \([\s\S]*workspaceType\?: WorkspaceInfo\["workspaceType"\] \| null,[\s\S]*const normalized = normalizeDirectoryQueryPath\(value \?\? ""\);[\s\S]*workspaceType === "local" && options\.isWindowsPlatform\(\)[\s\S]*normalized\.toLowerCase\(\)[\s\S]*: normalized;/s,
+    "workspace store should only apply case-insensitive path comparison to local Windows paths",
+  );
+  assert.match(
+    source,
+    /const workspaceChanged =[\s\S]*workspaceScopeChanged\(oldWorkspacePath, nextRoot, "local"\)/s,
+    "activateWorkspace should compare local workspace paths using local filesystem semantics",
+  );
+  assert.match(
+    source,
+    /const connectWorkspaceType = context\?\.workspaceType \?\? activeWorkspaceInfo\(\)\?\.workspaceType \?\? null;[\s\S]*const incomingDirectoryScope = normalizeWorkspaceScopePath\(incomingDirectory, connectWorkspaceType\)/s,
+    "connect flow should resolve the path comparison scope from workspace type",
+  );
+  assert.match(
+    source,
+    /normalizeWorkspaceScopePath\(options\.clientDirectory\(\), connectWorkspaceType\) === incomingDirectoryScope/s,
+    "connect idempotency should compare normalized client directories with workspace scope semantics",
+  );
+  assert.match(
+    source,
+    /const connectRequestKey =[\s\S]*normalizeWorkspaceScopePath\(directory \?\? "", context\?\.workspaceType\)[\s\S]*normalizeWorkspaceScopePath\(context\?\.targetRoot \?\? "", context\?\.workspaceType\)/s,
+    "connect dedupe key should normalize directory and target root paths with explicit workspace type semantics",
+  );
+  assert.match(
+    source,
+    /const directoryChanged =[\s\S]*workspaceScopeChanged\(previousDirectory, resolvedDirectory, connectWorkspaceType\)/s,
+    "connect reset gating should compare normalized directories with workspace scope semantics",
   );
 });
 

@@ -27,7 +27,7 @@ test("hydrates active pending draft state from the desktop draft store and prefe
   );
   assert.match(
     source,
-    /const storedPendingDraftKey = readActivePendingDraftKey\(\);[\s\S]*const pendingDrafts = \(await pendingSessionDraftsList\(\)\)\.filter\(\(draft\) => !isConsumedPendingDraftId\(draft\.id\)\);[\s\S]*const matchingPendingDraft = pendingDrafts\.find\(\(draft\) => resolvePendingDraftKey\(\{[\s\S]*\}\) === storedPendingDraftKey\) \?\? null;[\s\S]*const loadedPendingDraft = await pendingSessionDraftsGet\(matchingPendingDraft\.id\);[\s\S]*const restoreError = formatPendingDraftAttachmentRestoreError\(loadedPendingDraft\.attachmentFailures\);[\s\S]*if \(restoreError\) \{\s*setError\(restoreError\);\s*\}[\s\S]*setActivePendingDraftKey\(storedPendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(matchingPendingDraft\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\(current, \{ storageKey: storedPendingDraftKey \}, loadedPendingDraft\.draft\.composer\)\);/s,
+    /const storedPendingDraftKey = readActivePendingDraftKey\(\);[\s\S]*const pendingDrafts = \(await pendingSessionDraftsList\(\)\)\.filter\(\(draft\) => !isConsumedPendingDraftId\(draft\.id\)\);[\s\S]*const matchingPendingDraft = findStoredPendingDraftSummary\(\{[\s\S]*storedPendingDraftKey,[\s\S]*pendingDrafts,[\s\S]*\}\);[\s\S]*const loadedPendingDraft = matchingPendingDraft[\s\S]*await pendingSessionDraftsGet\(matchingPendingDraft\.id\)[\s\S]*const hydrationDecision = resolvePendingDraftStartupHydration\(\{[\s\S]*storedPendingDraftKey,[\s\S]*matchingPendingDraft,[\s\S]*loadedPendingDraft,[\s\S]*restoreError,[\s\S]*\}\);[\s\S]*case "hydrate":[\s\S]*setActivePendingDraftKey\(hydrationDecision\.storageKey\);[\s\S]*setActivePendingDraftMeta\(hydrationDecision\.summary\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\(current, \{ storageKey: hydrationDecision\.storageKey \}, hydrationDecision\.loadedDraft\.draft\.composer\)\);/s,
     "startup should hydrate the active pending draft from durable desktop storage",
   );
 });
@@ -65,23 +65,32 @@ test("session route re-selects once when a client becomes available after bootst
   );
   assert.match(
     routeSource,
-    /const activeRouteWorkspaceId = workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*if \(routeWorkspaceId && activeRouteWorkspaceId && routeWorkspaceId !== activeRouteWorkspaceId\) \{[\s\S]*lastRouteClientResumeKey = "";[\s\S]*return;[\s\S]*\}/s,
+    /const routeResumeDecision = resolveRouteResumeDecision\(\{[\s\S]*routeWorkspaceId,[\s\S]*activeWorkspaceId: workspaceStore\.activeWorkspaceId\(\)\.trim\(\),[\s\S]*\}\);[\s\S]*case "ignore":[\s\S]*if \(routeResumeDecision\.reason === "foreign-workspace"\) \{[\s\S]*lastRouteClientResumeKey = "";[\s\S]*\}/s,
     "route resume should not reselect an old workspace session after the active workspace changes",
   );
-  assert.match(routeSource, /if \(connectionKey === lastRouteClientResumeKey\) return;/);
   assert.match(
     routeSource,
-    /const alreadyLoaded = !routeBrowseScope && selectedSessionId\(\) === id && visibleMessages\(\)\.length > 0;/,
+    /lastConnectionKey: lastRouteClientResumeKey,/,
+    "route resume should pass the previous connection key to the controller for duplicate suppression",
+  );
+  assert.match(
+    routeSource,
+    /hasBrowseScope: Boolean\(routeBrowseScope\),[\s\S]*visibleMessageCount: visibleMessages\(\)\.length,/s,
     "route resume guard should not skip explicit browse-scope reselection just because another transcript is visible",
   );
   assert.match(
     routeSource,
-    /routeResumeSelectionAlreadyHandledForSession === id[\s\S]*if \(selectedSessionId\(\) !== id\) \{[\s\S]*setSelectedSessionId\(id\);[\s\S]*\}[\s\S]*routeResumeSelectionAlreadyHandledForSession = "";[\s\S]*lastRouteClientResumeKey = connectionKey;[\s\S]*return;/s,
-    "route resume should not immediately re-select a session that createSessionAndOpen is selecting after navigating",
+    /ownNavigationSessionId: routeResumeSelectionAlreadyHandledForSession,[\s\S]*case "consume-own-navigation":[\s\S]*routeResumeSelectionAlreadyHandledForSession = "";[\s\S]*lastRouteClientResumeKey = routeResumeDecision\.connectionKey;[\s\S]*return;/s,
+    "route resume should consume createSessionAndOpen's own navigation without re-loading or clearing the new session",
+  );
+  assert.doesNotMatch(
+    routeSource,
+    /routeResumeSelectionAlreadyHandledForSession === id[\s\S]*setSelectedSessionId\(id\);/s,
+    "route resume guard must not write selectedSessionId; selectSession owns selection state",
   );
   assert.match(
     routeSource,
-    /lastRouteClientResumeKey = connectionKey;[\s\S]*void selectSession\(id\);/s,
+    /case "select-session":[\s\S]*lastRouteClientResumeKey = routeResumeDecision\.connectionKey;[\s\S]*void selectSession\(routeResumeDecision\.sessionId\);/s,
     "route session should be re-selected once after the client reconnects so deep links survive bootstrap/startHost races",
   );
 });
@@ -95,22 +104,22 @@ test("createSessionAndOpen injects the new session before selecting it", () => {
 
   assert.match(
     createSource,
-    /const displaySession = applyPendingInitialSessionTitle\(session\);[\s\S]*setSessions\(\[session, \.\.\.currentStoreSessions\]\);[\s\S]*materializePendingSessionInWorkspaceSidebar\(\{[\s\S]*routeResumeSelectionAlreadyHandledForSession = session\.id;[\s\S]*goToSession\(session\.id\);[\s\S]*mark\("session:select:start", \{ sessionID: session\.id \}\);[\s\S]*"createSessionAndOpen:select-session"/s,
-    "newly created sessions should be present in session/sidebar state before route navigation and selectSession run",
+    /const displaySession = applyPendingInitialSessionTitle\(session\);[\s\S]*setSessions\(\[session, \.\.\.currentStoreSessions\]\);[\s\S]*materializePendingSessionInWorkspaceSidebar\(\{[\s\S]*mark\("session:select:start", \{ sessionID: session\.id \}\);[\s\S]*"createSessionAndOpen:select-session"[\s\S]*mark\("session:select:ok", \{ sessionID: session\.id \}\);[\s\S]*routeResumeSelectionAlreadyHandledForSession = session\.id;[\s\S]*goToSession\(session\.id\);/s,
+    "newly created sessions should be present in session/sidebar state before selectSession, then route after selection",
   );
 });
 
 test("bare /session keeps the active pending draft context while clearing real session transcript state", () => {
-  const routeStart = source.indexOf('    if (path.startsWith("/session")) {');
-  const routeEnd = source.indexOf('    if (path.startsWith("/proto-v1-ux")) {', routeStart);
+  const routeStart = source.indexOf('      case "session-route": {');
+  const routeEnd = source.indexOf('    }\n  });', routeStart);
   assert.notStrictEqual(routeStart, -1, "session route block should exist");
   assert.notStrictEqual(routeEnd, -1, "session route block end should exist");
   const routeSource = source.slice(routeStart, routeEnd);
 
   assert.match(
     routeSource,
-    /if \(!id\) \{\s*if \(activePendingDraftKey\(\)\) \{\s*(?:void activePendingDraftMeta\(\);\s*)?if \(selectedSessionId\(\)\) \{\s*setSelectedSessionId\(null\);\s*setMessages\(\[\]\);\s*setTodos\(\[\]\);\s*\}\s*return;\s*\}/s,
-    "switching from a real session to bare /session should clear transcript state but keep the pending draft active",
+    /const sessionPathDecision = resolveSessionPathDecision\(\{[\s\S]*path: rawPath,[\s\S]*routeSessionId: id,[\s\S]*activePendingDraftKey: activePendingDraftKey\(\),[\s\S]*\}\);[\s\S]*case "clear-session-view":[\s\S]*if \(sessionPathDecision\.preservePendingDraft\) \{[\s\S]*void activePendingDraftMeta\(\);[\s\S]*\}[\s\S]*if \(selectedSessionId\(\)\) \{[\s\S]*clearDisplayedSessionForBareRoute\(\);[\s\S]*\}/s,
+    "switching from a real session to bare /session should use the explicit route clear helper and keep pending draft context",
   );
   assert.doesNotMatch(
     routeSource,

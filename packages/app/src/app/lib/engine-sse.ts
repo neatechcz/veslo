@@ -81,6 +81,29 @@ export async function engineSseSubscribe(
   const resolvers: Array<(value: IteratorResult<unknown>) => void> = [];
   let closed = false;
   let closeReason: string | null = null;
+  let opened = false;
+  let settleReady: (() => void) | null = null;
+  let rejectReady: ((reason: Error) => void) | null = null;
+  const ready = new Promise<void>((resolve, reject) => {
+    settleReady = resolve;
+    rejectReady = reject;
+  });
+
+  const resolveReady = () => {
+    if (!settleReady) return;
+    const resolve = settleReady;
+    settleReady = null;
+    rejectReady = null;
+    resolve();
+  };
+
+  const failReady = (message: string) => {
+    if (!rejectReady) return;
+    const reject = rejectReady;
+    settleReady = null;
+    rejectReady = null;
+    reject(new Error(message));
+  };
 
   const pushEvent = (event: unknown) => {
     if (closed) return;
@@ -110,6 +133,8 @@ export async function engineSseSubscribe(
 
       switch (payload.kind) {
         case "open":
+          opened = true;
+          resolveReady();
           // Engine accepted the stream — nothing to surface to caller, the
           // first real event in the queue is enough signal.
           break;
@@ -128,10 +153,17 @@ export async function engineSseSubscribe(
           break;
         }
         case "error":
-          console.warn("[engine-sse] stream error", { message: payload.message, workspaceId: payload.workspaceId });
+          if (!opened) {
+            failReady(payload.message);
+          } else {
+            console.warn("[engine-sse] stream error", { message: payload.message, workspaceId: payload.workspaceId });
+          }
           break;
         case "closed":
           closeStream(payload.reason);
+          if (!opened) {
+            failReady(`stream closed before open: ${payload.reason}`);
+          }
           break;
       }
     });
@@ -147,6 +179,7 @@ export async function engineSseSubscribe(
         bearerToken: options.bearerToken ?? null,
       },
     });
+    await ready;
   } catch (err) {
     // Couldn't register listener — try to clean up Rust subscription.
     try {
