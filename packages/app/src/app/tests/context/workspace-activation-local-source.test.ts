@@ -19,6 +19,16 @@ test("local workspace activation lives in a scoped activation module", () => {
   );
   assert.match(
     localSource,
+    /deps\.isSuperseded\(\)[\s\S]*activate:superseded:before-local-set-active[\s\S]*workspaceSetActive\(id/,
+    "stale local activations should not call workspaceSetActive after being superseded",
+  );
+  assert.match(
+    localSource,
+    /workspaceSetActive\(id[\s\S]*deps\.isSuperseded\(\)[\s\S]*activate:superseded:after-local-set-active[\s\S]*deps\.setWorkspaces\(ws\.workspaces\)/,
+    "stale local workspaceSetActive responses should not be applied to UI state",
+  );
+  assert.match(
+    localSource,
     /deps\.setEngineReady\?\.\(false\);[\s\S]*await deps\.populateSidebarFromDb!\(id, next\.path\);/,
     "browse mode must mark engine not-ready before DB hydration",
   );

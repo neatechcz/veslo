@@ -163,12 +163,21 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
         deps.setAuthorizedDirs([next.path]);
       }
 
+      if (deps.isSuperseded()) {
+        deps.wsDebug("activate:superseded:before-local-set-active", { id });
+        return false;
+      }
+
       deps.wsLog("[workspace:activate] STEP 3 — workspaceSetActive...", { id });
       try {
         const ws = await deps.withTimeoutOrThrow(
           workspaceSetActive(id, { promoteToFront: deps.activationOptions?.promoteToFront ?? false }),
           { timeoutMs: deps.workspaceSetActiveTimeoutMs, label: "workspace_set_active" },
         );
+        if (deps.isSuperseded()) {
+          deps.wsDebug("activate:superseded:after-local-set-active", { id });
+          return false;
+        }
         deps.setWorkspaces(ws.workspaces);
         deps.syncActiveWorkspaceId(ws.activeId);
         deps.wsLog("[workspace:activate] STEP 3 — workspaceSetActive DONE");
@@ -182,6 +191,7 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
         deps.setAuthorizedDirs(merged);
       }
     }
+    return true;
   }
 
   async function reconnectRemoteToLocalHost(
@@ -376,7 +386,7 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
     next: WorkspaceInfo,
   ) {
     const selection = prepareLocalWorkspaceSelection(id, next);
-    await persistLocalWorkspaceSelection(id, next);
+    if (!(await persistLocalWorkspaceSelection(id, next))) return false;
 
     deps.wsLog("[workspace:activate] STEP 4 — branch decision", {
       isRemote: false,

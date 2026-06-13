@@ -15,6 +15,16 @@ test("remote workspace activation lives in a scoped activation module", () => {
   assert.match(remoteSource, /deps\.isSuperseded\(\)/);
   assert.match(
     remoteSource,
+    /deps\.isSuperseded\(\)[\s\S]*activate:superseded:before-remote-persist[\s\S]*workspaceSetActive\(id/,
+    "stale remote activations should not persist active workspace after being superseded",
+  );
+  assert.match(
+    remoteSource,
+    /workspaceSetActive\(id[\s\S]*deps\.isSuperseded\(\)[\s\S]*activate:superseded:after-remote-set-active[\s\S]*deps\.setWorkspaces\(ws\.workspaces\)/,
+    "stale remote workspaceSetActive responses should not be applied to UI state",
+  );
+  assert.match(
+    remoteSource,
     /const message = error instanceof Error \? error\.message : deps\.safeStringify\(error\);[\s\S]*deps\.setError\(deps\.addOpencodeCacheHint\(message\)\);/,
     "remote activation errors should keep concrete messages for the UI",
   );

@@ -50,6 +50,11 @@ export function createWorkspaceRemoteActivation(deps: WorkspaceRemoteActivationD
     id: string,
     directory: string,
   ) {
+    if (deps.isSuperseded()) {
+      deps.wsDebug("activate:superseded:before-remote-persist", { id });
+      return false;
+    }
+
     deps.syncActiveWorkspaceId(id);
     deps.setProjectDir(directory);
     deps.setWorkspaceConfig(null);
@@ -62,12 +67,17 @@ export function createWorkspaceRemoteActivation(deps: WorkspaceRemoteActivationD
           workspaceSetActive(id, { promoteToFront: deps.activationOptions?.promoteToFront ?? false }),
           { timeoutMs: deps.workspaceSetActiveTimeoutMs, label: "workspace_set_active" },
         );
+        if (deps.isSuperseded()) {
+          deps.wsDebug("activate:superseded:after-remote-set-active", { id });
+          return false;
+        }
         deps.setWorkspaces(ws.workspaces);
         deps.syncActiveWorkspaceId(ws.activeId);
       } catch {
         // ignore
       }
     }
+    return true;
   }
 
   async function activateRemoteVesloWorkspace(
@@ -233,7 +243,7 @@ export function createWorkspaceRemoteActivation(deps: WorkspaceRemoteActivationD
       );
     }
 
-    await persistRemoteSelection(id, resolvedDirectory || "");
+    if (!(await persistRemoteSelection(id, resolvedDirectory || ""))) return false;
     deps.updateWorkspaceConnectionState(id, { status: "connected", message: null });
     return true;
   }
@@ -279,7 +289,7 @@ export function createWorkspaceRemoteActivation(deps: WorkspaceRemoteActivationD
     }
 
     const directory = next.directory?.trim() ?? "";
-    await persistRemoteSelection(id, directory);
+    if (!(await persistRemoteSelection(id, directory))) return false;
     deps.updateWorkspaceConnectionState(id, { status: "connected", message: null });
     deps.wsDebug("activate:remote:done", { id, ms: Date.now() - deps.activateStart });
     return true;
