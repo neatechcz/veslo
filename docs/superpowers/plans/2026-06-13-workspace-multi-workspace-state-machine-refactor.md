@@ -977,7 +977,7 @@ git commit -m "refactor: extract workspace debug and busy state"
 - Create: `packages/app/src/app/tests/context/workspace-connection-state.test.ts`
 - Modify: `packages/app/src/app/context/workspace.ts`
 
-- [ ] **Step 1: Write connection-state tests**
+- [x] **Step 1: Write connection-state tests**
 
 Create `packages/app/src/app/tests/context/workspace-connection-state.test.ts`:
 
@@ -1036,7 +1036,7 @@ test("connection state can be cleared by workspace id", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run:
 
@@ -1046,7 +1046,7 @@ pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/
 
 Expected: FAIL with module not found.
 
-- [ ] **Step 3: Implement connection-state module**
+- [x] **Step 3: Implement connection-state module**
 
 Create `packages/app/src/app/context/workspace-connection-state.ts`:
 
@@ -1117,7 +1117,7 @@ export function createWorkspaceConnectionState(
 }
 ```
 
-- [ ] **Step 4: Wire workspace.ts**
+- [x] **Step 4: Wire workspace.ts**
 
 In `workspace.ts`, import:
 
@@ -1136,7 +1136,7 @@ const {
 } = createWorkspaceConnectionState(workspaces);
 ```
 
-- [ ] **Step 5: Run targeted tests and typecheck**
+- [x] **Step 5: Run targeted tests and typecheck**
 
 Run:
 
@@ -1164,7 +1164,7 @@ git commit -m "refactor: extract workspace connection state"
 - Modify: `packages/app/src/app/context/workspace.ts`
 - Modify: `packages/app/src/app/tests/context/workspace-activate-order-sync.test.ts`
 
-- [ ] **Step 1: Write source test for the controller boundary**
+- [x] **Step 1: Write source test for the controller boundary**
 
 Create `packages/app/src/app/tests/context/workspace-connection-controller-source.test.ts`:
 
@@ -1201,7 +1201,7 @@ test("connectToServer lives in routing-only connection controller", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run:
 
@@ -1211,7 +1211,7 @@ pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/
 
 Expected: FAIL because the controller does not exist.
 
-- [ ] **Step 3: Create controller shell**
+- [x] **Step 3: Create controller shell**
 
 Create `packages/app/src/app/context/workspace-connection-controller.ts` with the dependency interface and `connectRequestKey` helpers:
 
@@ -1469,7 +1469,7 @@ export function createWorkspaceConnectionController(
 }
 ```
 
-- [ ] **Step 4: Wire workspace.ts**
+- [x] **Step 4: Wire workspace.ts**
 
 In `workspace.ts`, import:
 
@@ -1510,7 +1510,7 @@ const connectToServer = connectionController.connectToServer;
 
 Remove the old local `connectInFlightByKey`, `connectRequestKey`, `resolveConnectHealthTimeoutMs`, provider-list fallback code, and old single-active unreachable block from `workspace.ts`.
 
-- [ ] **Step 5: Update characterization test expectations**
+- [x] **Step 5: Update characterization test expectations**
 
 In `workspace-activate-order-sync.test.ts`, update `connectStart` source slicing to use `readContextSource("workspace-connection-controller.ts")`.
 
@@ -1523,7 +1523,7 @@ assert.match(connectSource, /deps\.setClient\(entry\.client\);/);
 assert.doesNotMatch(connectSource, /createClient\(nextBaseUrl/);
 ```
 
-- [ ] **Step 6: Run targeted tests and typecheck**
+- [x] **Step 6: Run targeted tests and typecheck**
 
 Run:
 
@@ -1550,7 +1550,7 @@ git commit -m "refactor: extract routing workspace connection controller"
 - Modify: `packages/app/src/app/context/workspace.ts`
 - Modify: `packages/app/src/app/tests/context/workspace-skill-materialization-sync.test.ts`
 
-- [ ] **Step 1: Update source test target**
+- [x] **Step 1: Update source test target**
 
 In `workspace-skill-materialization-sync.test.ts`, replace ranges based on `workspace.ts` function order with:
 
@@ -1569,7 +1569,7 @@ Keep assertions for:
 /function isSkillRegistryMaterializationError\(error: unknown\): boolean \{/
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run:
 
@@ -1579,7 +1579,7 @@ pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/
 
 Expected: FAIL because the module does not exist.
 
-- [ ] **Step 3: Create skill materialization module**
+- [x] **Step 3: Create skill materialization module**
 
 Create `packages/app/src/app/context/workspace-skill-materialization.ts` by moving the exact current implementations of:
 
@@ -1628,7 +1628,7 @@ updateWorkspaceConnectionState -> deps.updateWorkspaceConnectionState
 wsDebug -> deps.wsDebug
 ```
 
-- [ ] **Step 4: Wire workspace.ts**
+- [x] **Step 4: Wire workspace.ts**
 
 In `workspace.ts`, import:
 
@@ -1654,7 +1654,7 @@ const syncWorkspaceSkillMaterializationBeforeRuntime =
 
 Remove the old local `isSkillRegistryMaterializationError` and `syncWorkspaceSkillMaterializationBeforeRuntime` from `workspace.ts`.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run:
 
@@ -1681,7 +1681,7 @@ git commit -m "refactor: extract workspace skill materialization gate"
 - Create: `packages/app/src/app/tests/context/workspace-server-registry-source.test.ts`
 - Modify: `packages/app/src/app/context/workspace.ts`
 
-- [ ] **Step 1: Write source test**
+- [x] **Step 1: Write source test**
 
 Create `packages/app/src/app/tests/context/workspace-server-registry-source.test.ts`:
 
@@ -1703,7 +1703,7 @@ test("veslo server registry sync lives outside workspace facade", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run:
 
@@ -1713,7 +1713,7 @@ pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/
 
 Expected: FAIL because the module does not exist.
 
-- [ ] **Step 3: Create server registry module**
+- [x] **Step 3: Create server registry module**
 
 Create `packages/app/src/app/context/workspace-server-registry.ts` and move the current implementations of:
 
@@ -1768,7 +1768,7 @@ workspaces() -> deps.getWorkspaces()
 wsDebug -> deps.wsDebug
 ```
 
-- [ ] **Step 4: Wire workspace.ts**
+- [x] **Step 4: Wire workspace.ts**
 
 In `workspace.ts`, import:
 
@@ -1792,7 +1792,7 @@ const reconcileVesloServerWorkspaces = serverRegistry.reconcileVesloServerWorksp
 
 Keep `reconcileVesloServerWorkspaces` in the returned store object.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run:
 
@@ -1820,7 +1820,7 @@ git commit -m "refactor: extract veslo server workspace registry"
 - Modify: `packages/app/src/app/context/workspace.ts`
 - Modify: `packages/app/src/app/tests/context/workspace-activate-order-sync.test.ts`
 
-- [ ] **Step 1: Write source test**
+- [x] **Step 1: Write source test**
 
 Create `packages/app/src/app/tests/context/workspace-runtime-controller-source.test.ts`:
 
@@ -1842,7 +1842,7 @@ test("lazy runtime ensure lives in workspace runtime controller", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run:
 
@@ -1852,7 +1852,7 @@ pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/
 
 Expected: FAIL because the module does not exist.
 
-- [ ] **Step 3: Create runtime controller**
+- [x] **Step 3: Create runtime controller**
 
 Create `packages/app/src/app/context/workspace-runtime-controller.ts` and move:
 
@@ -1922,7 +1922,7 @@ if (deps.resolveEngineRuntime() !== "veslo-orchestrator") {
 }
 ```
 
-- [ ] **Step 4: Wire workspace.ts**
+- [x] **Step 4: Wire workspace.ts**
 
 Instantiate the runtime controller after `localRuntimeLifecycle` exists:
 
@@ -1956,7 +1956,7 @@ const ensureEngineForWorkspace = runtimeController.ensureEngineForWorkspace;
 
 Remove the local runtime-controller functions from `workspace.ts`.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run:
 

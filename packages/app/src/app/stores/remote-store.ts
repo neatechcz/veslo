@@ -23,7 +23,7 @@ import {
 } from "../lib/veslo-server";
 import { createClient, waitForHealthy } from "../lib/opencode";
 import {
-  workspaceCreateRemote,
+  workspaceCreateRemote as invokeWorkspaceCreateRemote,
   workspaceUpdateRemote,
   type WorkspaceInfo,
 } from "../lib/tauri";
@@ -324,22 +324,7 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
       return false;
     }
 
-    const ok = await deps.connectToServer(
-      resolvedBaseUrl,
-      resolvedDirectory || undefined,
-      {
-        workspaceType: "remote",
-        targetRoot: resolvedDirectory ?? "",
-        reason: "workspace-create-remote",
-      },
-      resolvedAuth,
-    );
-
-    if (!ok) {
-      return false;
-    }
-
-    const finalDirectory = deps.getClientDirectory().trim() || resolvedDirectory || "";
+    const finalDirectory = resolvedDirectory || "";
 
     const manageBusy = input.manageBusy ?? true;
     if (manageBusy) {
@@ -349,8 +334,9 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
     }
 
     try {
+      let remoteWorkspaceId = "";
       if (isTauriRuntime()) {
-        const ws = await workspaceCreateRemote({
+        const ws = await invokeWorkspaceCreateRemote({
           baseUrl: resolvedBaseUrl.replace(/\/+$/, ""),
           directory: finalDirectory ? finalDirectory : null,
           displayName,
@@ -362,6 +348,7 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
         });
         deps.setWorkspaces(ws.workspaces);
         deps.syncActiveWorkspaceId(ws.activeId);
+        remoteWorkspaceId = ws.activeId;
         console.log("[workspace] create remote complete:", ws.activeId ?? "none");
       } else {
         const workspaceId = `remote:${resolvedBaseUrl}:${finalDirectory}`;
@@ -386,7 +373,24 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
           return [...withoutMatch, nextWorkspace];
         });
         deps.syncActiveWorkspaceId(workspaceId);
+        remoteWorkspaceId = workspaceId;
         console.log("[workspace] create remote complete:", workspaceId);
+      }
+
+      const ok = await deps.connectToServer(
+        resolvedBaseUrl,
+        finalDirectory || undefined,
+        {
+          workspaceId: remoteWorkspaceId,
+          workspaceType: "remote",
+          targetRoot: finalDirectory,
+          reason: "workspace-create-remote",
+        },
+        resolvedAuth,
+      );
+
+      if (!ok) {
+        return false;
       }
 
       deps.setProjectDir(finalDirectory);

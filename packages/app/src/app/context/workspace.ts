@@ -6,13 +6,11 @@ import type {
   WorkspaceDisplay,
   WorkspaceVesloConfig,
   WorkspacePreset,
-  WorkspaceConnectionState,
   EngineRuntime,
 } from "../types";
 import {
   addOpencodeCacheHint,
   clearStartupPreference,
-  createSingleFlight,
   isTauriRuntime,
   isPrivateWorkspacePathForRoot,
   normalizeDirectoryQueryPath,
@@ -23,13 +21,11 @@ import {
 } from "../utils";
 import { LANGUAGE_PREF_KEY, ONBOARDING_COMPLETE_STORAGE_KEY } from "../constants";
 import { reportError } from "../lib/error-reporter";
-import { unwrap } from "../lib/opencode";
 import { readDenAuth, clearDenAuth, validateDenAuth } from "../lib/den-auth";
 import {
   buildVesloWorkspaceBaseUrl,
   createVesloServerClient,
   normalizeVesloServerUrl,
-  VesloServerError,
   type VesloServerClient,
   type VesloServerSettings,
   type VesloWorkspaceInfo,
@@ -57,7 +53,6 @@ import { waitForHealthy, createClient, type OpencodeAuth } from "../lib/opencode
 import type { WorkspaceRouting } from "./workspace-routing";
 import type { OpencodeConnectStatus, ProviderListItem } from "../types";
 import { t, currentLocale, isLanguage } from "../../i18n";
-import { mapConfigProvidersToList } from "../utils/providers";
 import { withTimeoutOrThrow } from "../utils/promise-timeout";
 import { createLocalRuntimeLifecycle } from "../utils/local-runtime-lifecycle";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
@@ -70,8 +65,6 @@ import { shouldAutoBootstrapRemoteServer } from "../utils/startup-server-bootstr
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 import type {
   WorkspaceActivationOptions,
-  WorkspaceConnectContext,
-  WorkspaceConnectOptions,
 } from "./workspace-types";
 import {
   createWorkspaceDebugEvents,
@@ -80,6 +73,11 @@ import {
   wsLog,
 } from "./workspace-debug";
 import { createWorkspaceBusyState } from "./workspace-busy-state";
+import { createWorkspaceConnectionState } from "./workspace-connection-state";
+import { createWorkspaceConnectionController } from "./workspace-connection-controller";
+import { createWorkspaceSkillMaterializationGate } from "./workspace-skill-materialization";
+import { createWorkspaceServerRegistry } from "./workspace-server-registry";
+import { createWorkspaceRuntimeController } from "./workspace-runtime-controller";
 
 export type { MigrationRepairResult } from "../stores/config-store";
 export type {
@@ -105,16 +103,6 @@ type DisplayedSessionResetScope = {
 };
 
 const _wsLog = wsLog;
-
-function isSkillRegistryMaterializationError(error: unknown): boolean {
-  if (error instanceof VesloServerError) {
-    const code = error.code.trim();
-    if (code.startsWith("skill_registry_")) return true;
-    return error.message.includes("Skill registry") || error.message.includes("skill registry");
-  }
-  const message = error instanceof Error ? error.message : safeStringify(error);
-  return message.includes("Skill registry") || message.includes("skill registry");
-}
 
 export function createWorkspaceStore(options: {
   startupPreference: () => StartupPreference | null;
@@ -194,8 +182,6 @@ export function createWorkspaceStore(options: {
   const { workspaceDebugEvents, clearWorkspaceDebugEvents, wsDebug } = createWorkspaceDebugEvents(wsDebugEnabled);
 
   const wsActivateGuard = createWorkspaceActivateGuard();
-  const connectInFlightByKey = new Map<string, Promise<boolean>>();
-  const ensureEngineForWorkspaceSingleFlight = createSingleFlight<boolean>();
 
   // VSLO-171 — flip to true once workspaceBootstrap() has populated workspaces()
   // (or skipped on non-Tauri). Callers that need the full workspace set (engine
@@ -211,11 +197,6 @@ export function createWorkspaceStore(options: {
     createRemoteWorkspaceFlow: () => { throw new Error("remoteStore not initialized"); },
   };
 
-  const DEFAULT_CONNECT_HEALTH_TIMEOUT_MS = 12_000;
-  const LOCAL_BOOT_CONNECT_HEALTH_TIMEOUT_MS = 180_000;
-  const CONNECT_PROVIDER_LIST_TIMEOUT_MS = 12_000;
-  const CONNECT_LOAD_SESSIONS_TIMEOUT_MS = 20_000;
-  const CONNECT_PENDING_PERMISSIONS_TIMEOUT_MS = 8_000;
   const WORKSPACE_IO_TIMEOUT_MS = 8_000;
   const WORKSPACE_SET_ACTIVE_TIMEOUT_MS = 8_000;
   const START_HOST_TIMEOUT_MS = 45_000;
@@ -227,44 +208,12 @@ export function createWorkspaceStore(options: {
   // otherwise the UI falls back to startHost while the original activation is
   // still alive, producing competing daemons and stale base URLs.
   const ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS = 75_000;
-  const LONG_BOOT_CONNECT_REASONS = new Set([
-    "host-start",
-    "workspace-orchestrator-switch",
-    "workspace-restart",
-  ]);
   const DB_MIGRATE_UNSUPPORTED_PATTERNS = [
     /unknown(?:\s+sub)?command\s+['"`]?db['"`]?/i,
     /unrecognized(?:\s+sub)?command\s+['"`]?db['"`]?/i,
     /no such command[:\s]+db/i,
     /found argument ['"`]db['"`] which wasn't expected/i,
   ] as const;
-
-  const connectRequestKey = (
-    nextBaseUrl: string,
-    directory?: string,
-    context?: WorkspaceConnectContext,
-    auth?: OpencodeAuth,
-    connectOptions?: WorkspaceConnectOptions,
-  ) =>
-    [
-      nextBaseUrl.trim(),
-      normalizeWorkspaceScopePath(directory ?? "", context?.workspaceType),
-      context?.workspaceId?.trim() ?? "",
-      context?.workspaceType ?? "",
-      normalizeWorkspaceScopePath(context?.targetRoot ?? "", context?.workspaceType),
-      context?.reason ?? "",
-      auth?.mode ?? (auth ? "basic" : "none"),
-      String(connectOptions?.quiet ?? false),
-      String(connectOptions?.navigate ?? true),
-    ].join("::");
-
-  const resolveConnectHealthTimeoutMs = (reason?: string) => {
-    const normalizedReason = reason?.trim() ?? "";
-    if (LONG_BOOT_CONNECT_REASONS.has(normalizedReason)) {
-      return LOCAL_BOOT_CONNECT_HEALTH_TIMEOUT_MS;
-    }
-    return DEFAULT_CONNECT_HEALTH_TIMEOUT_MS;
-  };
 
   const formatExecOutput = (result: { stdout: string; stderr: string }) => {
     const stderr = result.stderr.trim();
@@ -310,9 +259,12 @@ export function createWorkspaceStore(options: {
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = createSignal(false);
   const [createRemoteWorkspaceOpen, setCreateRemoteWorkspaceOpen] = createSignal(false);
   const [connectingWorkspaceId, setConnectingWorkspaceId] = createSignal<string | null>(null);
-  const [workspaceConnectionStateById, setWorkspaceConnectionStateById] = createSignal<
-    Record<string, WorkspaceConnectionState>
-  >({});
+  const {
+    workspaceConnectionStateById,
+    setWorkspaceConnectionStateById,
+    updateWorkspaceConnectionState,
+    clearWorkspaceConnectionState,
+  } = createWorkspaceConnectionState(workspaces);
 
   const activeWorkspaceInfo = createMemo(() => workspaces().find((w) => w.id === activeWorkspaceId()) ?? null);
   const activeWorkspaceDisplay = createMemo<WorkspaceDisplay>(() => {
@@ -425,52 +377,6 @@ export function createWorkspaceStore(options: {
     void buildPrivateWorkspaceRoot().catch(e => reportError(e, "workspace.buildPrivateRoot"));
   }
 
-  const updateWorkspaceConnectionState = (
-    workspaceId: string,
-    next: Partial<WorkspaceConnectionState>,
-  ) => {
-    const id = workspaceId.trim();
-    if (!id) return;
-    setWorkspaceConnectionStateById((prev) => {
-      const current = prev[id] ?? { status: "idle", message: null, checkedAt: null };
-      return {
-        ...prev,
-        [id]: {
-          ...current,
-          ...next,
-          checkedAt: Date.now(),
-        },
-      };
-    });
-  };
-
-  const clearWorkspaceConnectionState = (workspaceId: string) => {
-    const id = workspaceId.trim();
-    if (!id) return;
-    setWorkspaceConnectionStateById((prev) => {
-      if (!prev[id]) return prev;
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-  };
-
-  createEffect(() => {
-    const ids = new Set(workspaces().map((workspace) => workspace.id));
-    setWorkspaceConnectionStateById((prev) => {
-      let changed = false;
-      const next: Record<string, WorkspaceConnectionState> = {};
-      for (const [id, state] of Object.entries(prev)) {
-        if (!ids.has(id)) {
-          changed = true;
-          continue;
-        }
-        next[id] = state;
-      }
-      return changed ? next : prev;
-    });
-  });
-
   const resolveEngineRuntime = () => options.engineRuntime?.() ?? "veslo-orchestrator";
 
   const resolveWorkspacePaths = () => {
@@ -498,156 +404,15 @@ export function createWorkspaceStore(options: {
     );
   }
 
-  const activateVesloHostWorkspace = async (workspacePath: string) => {
-    const client = options.vesloServerClient?.();
-    if (!client) return;
-    const targetPath = normalizeDirectoryPath(workspacePath);
-    if (!targetPath) return;
-    try {
-      const response = await client.listWorkspaces();
-      const items = Array.isArray(response.items) ? response.items : [];
-      let match = items.find((entry) => normalizeDirectoryPath(entry.path) === targetPath);
-      // VSLO-171 — workspace may not be registered with veslo-server yet (race
-      // with workspaceBootstrap / lazily added after spawn). Hot-register it.
-      if (!match) {
-        const local = workspaces().find(
-          (w) =>
-            w.workspaceType === "local" &&
-            normalizeDirectoryPath(w.path?.trim() ?? "") === targetPath,
-        );
-        if (local?.path) {
-          await addLocalWorkspaceOnServer(local.path, local.displayName?.trim() || local.name?.trim());
-          const refreshed = await client.listWorkspaces();
-          const refreshedItems = Array.isArray(refreshed.items) ? refreshed.items : [];
-          match = refreshedItems.find((entry) => normalizeDirectoryPath(entry.path) === targetPath);
-          if (refreshed.activeId === match?.id) return;
-        }
-      }
-      if (!match?.id) return;
-      if (response.activeId === match.id) return;
-      await client.activateWorkspace(match.id);
-    } catch {
-      // ignore
-    }
-  };
-
-  // POST /workspaces/local to veslo-server. 409 (workspace already exists) is
-  // treated as success — the server already knows about this path.
-  const addLocalWorkspaceOnServer = async (path: string, name?: string) => {
-    const client = options.vesloServerClient?.();
-    if (!client) return;
-    const trimmed = path.trim();
-    if (!trimmed) return;
-    try {
-      await client.addLocalWorkspace({ path: trimmed, name: name?.trim() || undefined });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      // 409 Conflict from POST /workspaces/local means the workspace is
-      // already registered — that's the desired end state, swallow silently.
-      if (!/workspace_exists|409/i.test(message)) {
-        wsDebug("addLocalWorkspaceOnServer:failed", { path: trimmed, error: message });
-      }
-    }
-  };
-
-  // VSLO-171 — bring veslo-server's workspace set in sync with the local
-  // store. Called after workspaceBootstrap so the server knows about every
-  // local workspace even if engine_start was issued before bootstrap completed.
-  const reconcileVesloServerWorkspaces = async () => {
-    const client = options.vesloServerClient?.();
-    if (!client) return;
-    let knownPaths = new Set<string>();
-    try {
-      const response = await client.listWorkspaces();
-      const items = Array.isArray(response.items) ? response.items : [];
-      knownPaths = new Set(items.map((entry) => normalizeDirectoryPath(entry.path)));
-    } catch {
-      return;
-    }
-    const missing = workspaces().filter((w) => {
-      if (w.workspaceType !== "local") return false;
-      const path = normalizeDirectoryPath(w.path?.trim() ?? "");
-      return path.length > 0 && !knownPaths.has(path);
-    });
-    for (const w of missing) {
-      if (!w.path) continue;
-      await addLocalWorkspaceOnServer(w.path, w.displayName?.trim() || w.name?.trim());
-    }
-    await reconcileManagedAiApiKeys();
-  };
-
-  // VSLO-171 — every workspace's opencode.jsonc stores the veslo-server bearer
-  // token in provider.<id>.options.apiKey (plus baseURL with the server's
-  // port). When the server respawns/relocates these values become stale and
-  // the embedded engine starts returning 401 "Invalid bearer token". The
-  // active-workspace effect in app.tsx patches the on-disk file when the user
-  // visits a workspace; this reconciliation extends the same fix to every
-  // local workspace at boot so the user doesn't need to "warm up" each one.
-  //
-  // baseURL is consumed by OpenCode, not by the browser UI. On Windows the
-  // OpenCode engine can run inside WSL, where 127.0.0.1 points at the Linux
-  // distro instead of the Windows veslo-server. Prefer engineUrl when Tauri
-  // provides it and keep baseUrl only as the Windows/UI fallback.
-  const reconcileManagedAiApiKeys = async () => {
-    const client = options.vesloServerClient?.();
-    const hostInfo = options.vesloServerHostInfo?.();
-    const currentToken = hostInfo?.clientToken?.trim() ?? "";
-    const currentBaseUrl = (
-      hostInfo?.engineUrl?.trim() ||
-      hostInfo?.baseUrl?.trim() ||
-      ""
-    ).replace(/\/+$/, "");
-    if (!client || !currentToken) return;
-    let serverItems: Array<{ id: string; workspaceType?: string; path?: string }> = [];
-    try {
-      const response = await client.listWorkspaces();
-      serverItems = Array.isArray(response.items) ? response.items : [];
-    } catch {
-      return;
-    }
-    for (const ws of serverItems) {
-      if (ws.workspaceType !== "local" || !ws.id) continue;
-      try {
-        const config = await client.getConfig(ws.id);
-        const opencode = (config.opencode ?? {}) as Record<string, unknown>;
-        const provider = opencode.provider;
-        if (!provider || typeof provider !== "object") continue;
-        let changed = false;
-        for (const entry of Object.values(provider as Record<string, unknown>)) {
-          if (!entry || typeof entry !== "object") continue;
-          const opts = (entry as Record<string, unknown>).options;
-          if (!opts || typeof opts !== "object") continue;
-          const optsRecord = opts as Record<string, unknown>;
-          if (
-            typeof optsRecord.apiKey === "string" &&
-            optsRecord.apiKey !== currentToken
-          ) {
-            optsRecord.apiKey = currentToken;
-            changed = true;
-          }
-          if (
-            currentBaseUrl &&
-            typeof optsRecord.baseURL === "string"
-          ) {
-            const rest = optsRecord.baseURL.replace(/^https?:\/\/[^/]+/, "");
-            const next = `${currentBaseUrl}${rest}`;
-            if (optsRecord.baseURL !== next) {
-              optsRecord.baseURL = next;
-              changed = true;
-            }
-          }
-        }
-        if (changed) {
-          await client.patchConfig(ws.id, { opencode });
-        }
-      } catch (err) {
-        wsDebug("reconcileManagedAiApiKeys:skip", {
-          workspaceId: ws.id,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-  };
+  const serverRegistry = createWorkspaceServerRegistry({
+    getWorkspaces: workspaces,
+    vesloServerClient: options.vesloServerClient,
+    vesloServerHostInfo: options.vesloServerHostInfo,
+    wsDebug,
+  });
+  const activateVesloHostWorkspace = serverRegistry.activateVesloHostWorkspace;
+  const addLocalWorkspaceOnServer = serverRegistry.addLocalWorkspaceOnServer;
+  const reconcileVesloServerWorkspaces = serverRegistry.reconcileVesloServerWorkspaces;
 
   async function testWorkspaceConnection(workspaceId: string) {
     const id = workspaceId.trim();
@@ -726,109 +491,17 @@ export function createWorkspaceStore(options: {
     }
   }
 
-  async function syncWorkspaceSkillMaterializationBeforeRuntime(
-    workspace: WorkspaceInfo,
-    context?: { reason?: string },
-  ) {
-    const workspaceId = workspace.id?.trim() ?? "";
-    if (!workspaceId) return true;
-
-    try {
-      if (isTauriRuntime() && workspace.workspaceType === "local") {
-        const ensured = await options.ensureLocalVesloServerRunning?.();
-        if (ensured === false) {
-          wsDebug("skills:materialization:failed:server-unavailable", {
-            workspaceId,
-            reason: context?.reason ?? null,
-          });
-          updateWorkspaceConnectionState(workspaceId, {
-            status: "error",
-            message: __vesloIndirectT("ui.indirect.veslo_server_unavailable_failed_to_prepare_wor_y4yrip", __vesloIndirectLocale()),
-          });
-          return false;
-        }
-      }
-
-      const client = options.vesloServerClient?.();
-      if (!client) return true;
-
-      const denAuth = readDenAuth();
-      const materializationAuth = {
-        denApiBase: denAuth?.denApiBase?.trim() || undefined,
-        denToken: denAuth?.token?.trim() || undefined,
-        denOrgId: denAuth?.orgId?.trim() || undefined,
-        denUserId: denAuth?.user?.id?.trim() || undefined,
-      };
-
-      const status = await client.getWorkspaceSkillMaterializationStatus(workspaceId);
-      if (!status.registryConfigured) {
-        wsDebug("skills:materialization:skip:not-configured", {
-          workspaceId,
-          reason: context?.reason ?? null,
-        });
-        return true;
-      }
-
-      const activeRun = Boolean(workspaceBusy()[workspace.id]);
-      if (activeRun) {
-        await client.syncWorkspaceSkillMaterialization(workspaceId, { ...materializationAuth, activeRun: true });
-        wsDebug("skills:materialization:pending:active-run", {
-          workspaceId,
-          reason: context?.reason ?? null,
-        });
-        return true;
-      }
-
-      if (status.status === "current" && status.reloadRequired !== true) {
-        wsDebug("skills:materialization:skip:current", {
-          workspaceId,
-          reason: context?.reason ?? null,
-        });
-        return true;
-      }
-
-      const result = await client.syncWorkspaceSkillMaterialization(workspaceId, materializationAuth);
-      wsDebug("skills:materialization:synced", {
-        workspaceId,
-        reason: context?.reason ?? null,
-        status: result.status,
-        synced: result.synced,
-        reloadRequired: result.reloadRequired ?? false,
-        materializedCount: result.materializedSkills.length,
-        removedCount: result.removedSkillNames?.length ?? 0,
-      });
-      if (result.synced || result.reloadRequired === true) {
-        options.refreshSkills({ force: true }).catch(e => reportError(e, "workspace.refreshSkills"));
-      }
-      return true;
-    } catch (error) {
-      if (error instanceof VesloServerError && error.status === 404) {
-        wsDebug("skills:materialization:skip:unsupported-server", {
-          workspaceId,
-          reason: context?.reason ?? null,
-        });
-        return true;
-      }
-      const message = error instanceof Error ? error.message : safeStringify(error);
-      if (isSkillRegistryMaterializationError(error)) {
-        wsDebug("skills:materialization:degraded", {
-          workspaceId,
-          reason: context?.reason ?? null,
-          message,
-        });
-        reportError(error, "workspace.skillMaterialization");
-        return true;
-      }
-      wsDebug("skills:materialization:failed", {
-        workspaceId,
-        reason: context?.reason ?? null,
-        message,
-      });
-      options.setError(addOpencodeCacheHint(message));
-      updateWorkspaceConnectionState(workspaceId, { status: "error", message });
-      return false;
-    }
-  }
+  const skillMaterializationGate = createWorkspaceSkillMaterializationGate({
+    workspaceBusy,
+    ensureLocalVesloServerRunning: options.ensureLocalVesloServerRunning,
+    vesloServerClient: options.vesloServerClient,
+    refreshSkills: options.refreshSkills,
+    setError: options.setError,
+    updateWorkspaceConnectionState,
+    wsDebug,
+  });
+  const syncWorkspaceSkillMaterializationBeforeRuntime =
+    skillMaterializationGate.syncWorkspaceSkillMaterializationBeforeRuntime;
 
   async function activateWorkspace(
     workspaceId: string | undefined,
@@ -1484,524 +1157,34 @@ export function createWorkspaceStore(options: {
     }
   }
 
-  async function connectToServer(
-    nextBaseUrl: string,
-    directory?: string,
-    context?: WorkspaceConnectContext,
-    auth?: OpencodeAuth,
-    connectOptions?: WorkspaceConnectOptions,
-  ) {
-    const requestKey = connectRequestKey(nextBaseUrl, directory, context, auth, connectOptions);
-    const existing = connectInFlightByKey.get(requestKey);
-    if (existing) {
-      wsDebug("connect:dedupe", {
-        baseUrl: nextBaseUrl,
-        directory: directory ?? null,
-        reason: context?.reason ?? null,
-        workspaceType: context?.workspaceType ?? null,
-      });
-      return existing;
-    }
-
-    const incomingDirectory = directory?.trim() ?? "";
-    const connectWorkspaceType = context?.workspaceType ?? activeWorkspaceInfo()?.workspaceType ?? null;
-    const incomingDirectoryScope = normalizeWorkspaceScopePath(incomingDirectory, connectWorkspaceType);
-
-    // Stale-workspace abort: if this connect targets a local workspace that
-    // is no longer active (the user switched away while a delayed engine
-    // reload was in flight), bail out. Otherwise we would rebind the client
-    // to the previous workspace and the UI would show its sessions instead
-    // of the one the user just selected.
-    const activeRoot = activeWorkspaceRoot().trim();
-    const activeRootScope = normalizeWorkspaceScopePath(activeRoot, connectWorkspaceType);
-    if (
-      context?.workspaceType === "local" &&
-      activeRootScope &&
-      incomingDirectoryScope &&
-      activeRootScope !== incomingDirectoryScope
-    ) {
-      wsDebug("connect:abort-stale-workspace", {
-        baseUrl: nextBaseUrl,
-        directory: incomingDirectory,
-        directoryScope: incomingDirectoryScope,
-        activeRoot,
-        activeRootScope,
-        reason: context?.reason ?? null,
-      });
-      console.log("[workspace] connect ABORT (stale workspace — user switched away)", {
-        baseUrl: nextBaseUrl,
-        directory: incomingDirectory,
-        activeRoot,
-        reason: context?.reason ?? null,
-      });
-      return false;
-    }
-
-    // Idempotent reconnect: if we are already connected to the same baseUrl
-    // and normalized directory, skip. A redundant call (e.g. delayed
-    // auth-hydration retry firing bootstrapOnboarding a second time) can race
-    // the user's current session view and force a re-fetch.
-    // VSLO-171.F3Ú5: idempotent-skip check stays on options.client() inside
-    // connectToServer; will be replaced by routing.ensure cached-match.
-    // `forceRefresh` bypasses this guard for callers (refreshActiveClient)
-    // who *know* the cached client is stale (orchestrator port rotated).
-    // Also require that the routing entry actually still exists — without
-    // this, a released entry leaves us with a stale options.client() and
-    // the guard skips reconnect even though no per-workspace client is set.
-    const guardWorkspaceId = (context?.workspaceId ?? activeWorkspaceId() ?? "").trim();
-    const cachedRoutingClient = guardWorkspaceId
-      ? options.routing.client(guardWorkspaceId)
-      : null;
-    if (
-      !connectOptions?.forceRefresh &&
-      options.client() &&
-      cachedRoutingClient &&
-      (options.baseUrl()?.trim() ?? "") === nextBaseUrl &&
-      normalizeWorkspaceScopePath(options.clientDirectory(), connectWorkspaceType) === incomingDirectoryScope
-    ) {
-      wsDebug("connect:idempotent-skip", {
-        baseUrl: nextBaseUrl,
-        directory: incomingDirectory || null,
-        reason: context?.reason ?? null,
-      });
-      console.log("[workspace] connect SKIP (idempotent — already connected)", {
-        baseUrl: nextBaseUrl,
-        directory: incomingDirectory || null,
-        reason: context?.reason ?? null,
-      });
-      return true;
-    }
-
-    // VSLO-171 — connectToServer delegates to routing.ensure so the per-WS
-    // Client cached in workspace-routing.ts is reused on subsequent switches
-    // (no kill-restart, no Managed AI bootstrap timeout when returning to a
-    // previously-visited workspace). State RESET is handled by the
-    // per-workspace cache effect in app.tsx (save/load on activeWorkspaceId).
-    const multiWorkspaceId =
-      context?.workspaceId ?? activeWorkspaceId().trim() ?? "";
-    if (!multiWorkspaceId) {
-      wsDebug("connect:no-workspace-id", {
-        baseUrl: nextBaseUrl,
-        directory: directory ?? null,
-      });
-      options.setError("Connect requires a workspace id");
-      return false;
-    }
-    {
-      const multiRun = (async () => {
-        const connectStart = Date.now();
-        const quiet = connectOptions?.quiet ?? false;
-        const quietPortRefresh = quiet && context?.reason === "port-rotation";
-        const navigate = connectOptions?.navigate ?? true;
-        options.setError(null);
-        if (!quiet) {
-          options.setBusy(true);
-          options.setBusyLabel("status.connecting");
-          options.setBusyStartedAt(Date.now());
-        }
-        options.setSseConnected(false);
-        wsDebug("connect:multi:start", {
-          workspaceId: multiWorkspaceId,
-          baseUrl: nextBaseUrl,
-          directory: incomingDirectory || null,
-          reason: context?.reason ?? null,
-        });
-        try {
-          const entry = await options.routing.ensure(
-            multiWorkspaceId,
-            nextBaseUrl,
-            {
-              directory: incomingDirectory || undefined,
-              auth,
-              skipHealth: quietPortRefresh,
-              context: {
-                workspaceType: context?.workspaceType,
-                targetRoot: context?.targetRoot,
-                reason: context?.reason,
-              },
-            }
-          );
-          if (!entry) {
-            const detail = options.routing.lastEnsureError(multiWorkspaceId);
-            const message = detail
-              ? `Failed to ensure workspace client: ${detail}`
-              : "Failed to ensure workspace client";
-            options.setError(message);
-            options.setOpencodeConnectStatus?.({
-              at: Date.now(),
-              baseUrl: nextBaseUrl,
-              directory: directory ?? null,
-              reason: context?.reason ?? null,
-              status: "error",
-              error: message,
-            });
-            return false;
-          }
-          const currentActiveId = activeWorkspaceId().trim();
-          const currentActiveRoot = activeWorkspaceRoot().trim();
-          const currentActiveRootScope = normalizeWorkspaceScopePath(
-            currentActiveRoot,
-            connectWorkspaceType,
-          );
-          if (
-            context?.workspaceType === "local" &&
-            ((currentActiveId && currentActiveId !== multiWorkspaceId) ||
-              (currentActiveRootScope &&
-                incomingDirectoryScope &&
-                currentActiveRootScope !== incomingDirectoryScope))
-          ) {
-            wsDebug("connect:abort-stale-after-ensure", {
-              workspaceId: multiWorkspaceId,
-              activeWorkspaceId: currentActiveId || null,
-              baseUrl: nextBaseUrl,
-              directory: incomingDirectory || null,
-              directoryScope: incomingDirectoryScope || null,
-              activeRoot: currentActiveRoot || null,
-              activeRootScope: currentActiveRootScope || null,
-              reason: context?.reason ?? null,
-              ms: Date.now() - connectStart,
-            });
-            console.log("[workspace] connect ABORT (stale workspace after ensure)", {
-              workspaceId: multiWorkspaceId,
-              activeWorkspaceId: currentActiveId || null,
-              baseUrl: nextBaseUrl,
-              directory: incomingDirectory || null,
-              activeRoot: currentActiveRoot || null,
-              reason: context?.reason ?? null,
-            });
-            return false;
-          }
-          // Publish on the global client signal so callsites that still read
-          // `client()` directly (rather than `routedClient()`) see the active
-          // workspace's client. `routedClient()` prefers
-          // routing.client(activeWorkspaceId) which hits the entries Map.
-          options.setClient(entry.client);
-          options.setConnectedVersion(null);
-          options.setBaseUrl(nextBaseUrl);
-          options.setClientDirectory(entry.directory ?? incomingDirectory);
-          wsDebug("connect:ensured", {
-            workspaceId: multiWorkspaceId,
-            ms: Date.now() - connectStart,
-          });
-          if (quietPortRefresh) {
-            wsDebug("connect:proxy-bound", {
-              workspaceId: multiWorkspaceId,
-              ms: Date.now() - connectStart,
-              reason: context?.reason ?? null,
-            });
-            return true;
-          }
-          // Per-workspace cache effect in app.tsx already restored sessions/
-          // messages/todos on activeWorkspaceId change. We still refresh
-          // sessions to catch updates the cache didn't have, but the cache
-          // hit means UI is responsive immediately.
-          try {
-            await options.loadSessions(context?.targetRoot);
-          } catch (e) {
-            console.warn("[workspace] multi loadSessions failed", e);
-          }
-          try {
-            await options.refreshPendingPermissions();
-          } catch (e) {
-            console.warn("[workspace] multi refreshPendingPermissions failed", e);
-          }
-          if (navigate && !options.selectedSessionId()) {
-            options.setTab("scheduled");
-            options.setView("session");
-          }
-          options.onEngineStable?.();
-          options.setOpencodeConnectStatus?.({
-            at: Date.now(),
-            baseUrl: nextBaseUrl,
-            directory: directory ?? null,
-            reason: context?.reason ?? null,
-            status: "connected",
-            error: null,
-          });
-          return true;
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "Unknown connect error";
-          options.setError(message);
-          options.setOpencodeConnectStatus?.({
-            at: Date.now(),
-            baseUrl: nextBaseUrl,
-            directory: directory ?? null,
-            reason: context?.reason ?? null,
-            status: "error",
-            error: message,
-          });
-          return false;
-        } finally {
-          if (!connectOptions?.quiet) options.setBusy(false);
-        }
-      })();
-      connectInFlightByKey.set(requestKey, multiRun);
-      try {
-        return await multiRun;
-      } finally {
-        connectInFlightByKey.delete(requestKey);
-      }
-    }
-
-    // Unreachable — single-active fallback was removed along with the flag.
-    // The early `if (!multiWorkspaceId)` above is the only exit besides the
-    // multiRun result. Leaving this dead block deliberately empty so the
-    // diff stays small; future cleanup can drop the labeled scope above.
-    const run = (async () => {
-      console.log("[workspace] connect", {
-        baseUrl: nextBaseUrl,
-        directory: directory ?? null,
-        workspaceType: context?.workspaceType ?? null,
-        reason: context?.reason ?? null,
-        quiet: connectOptions?.quiet ?? false,
-      });
-      const connectStart = Date.now();
-      wsDebug("connect:start", {
-        baseUrl: nextBaseUrl,
-        directory: directory ?? null,
-        reason: context?.reason ?? null,
-        workspaceType: context?.workspaceType ?? null,
-        targetRoot: context?.targetRoot ?? null,
-        healthTimeoutMs: resolveConnectHealthTimeoutMs(context?.reason),
-        quiet: connectOptions?.quiet ?? false,
-        navigate: connectOptions?.navigate ?? true,
-        authMode: auth && "mode" in auth ? (auth as any).mode : auth ? "basic" : "none",
-      });
-      const quiet = connectOptions?.quiet ?? false;
-      const navigate = connectOptions?.navigate ?? true;
-      options.setError(null);
-      if (!quiet) {
-        options.setBusy(true);
-        options.setBusyLabel("status.connecting");
-        options.setBusyStartedAt(Date.now());
-      }
-      options.setSseConnected(false);
-
-      const connectMeta: OpencodeConnectStatus = {
-        at: Date.now(),
-        baseUrl: nextBaseUrl,
-        directory: directory ?? null,
-        reason: context?.reason ?? null,
-        status: "connecting",
-        error: null,
-      };
-      options.setOpencodeConnectStatus?.(connectMeta);
-
-      const connectMetrics: NonNullable<OpencodeConnectStatus["metrics"]> = {};
-      let publishedClient = false;
-
-      try {
-        let resolvedDirectory = directory?.trim() ?? "";
-        let nextClient = createClient(nextBaseUrl, resolvedDirectory || undefined, auth);
-        const healthTimeoutMs = resolveConnectHealthTimeoutMs(context?.reason);
-        const health = await waitForHealthy(nextClient, { timeoutMs: healthTimeoutMs });
-        connectMetrics.healthyMs = Date.now() - connectStart;
-        wsDebug("connect:healthy", {
-          ms: Date.now() - connectStart,
-          version: health.version,
-          timeoutMs: healthTimeoutMs,
-        });
-
-        if (context?.workspaceType === "remote" && !resolvedDirectory) {
-          try {
-            const pathInfo = unwrap(await nextClient.path.get());
-            const discovered = pathInfo.directory?.trim() ?? "";
-            if (discovered) {
-              resolvedDirectory = discovered;
-              console.log("[workspace] remote directory resolved", resolvedDirectory);
-              if (isTauriRuntime() && context.workspaceId) {
-                const updated = await workspaceUpdateRemote({
-                  workspaceId: context.workspaceId,
-                  directory: resolvedDirectory,
-                });
-                setWorkspaces(updated.workspaces);
-                syncActiveWorkspaceId(updated.activeId);
-              }
-              setProjectDir(resolvedDirectory);
-              nextClient = createClient(nextBaseUrl, resolvedDirectory, auth);
-            }
-          } catch (error) {
-            console.log("[workspace] remote directory lookup failed", error);
-          }
-        }
-
-        // Only wipe session view state when we are switching to a DIFFERENT
-        // workspace directory. Engine reloads on the same directory (e.g.
-        // managed AI config patch, manual reload, hot config swap) just need
-        // a fresh client + baseUrl — the session/messages on disk are still
-        // valid, and clearing them forces a redundant re-fetch and visibly
-        // blanks the UI for ~300ms.
-        // VSLO-171.F3Ú5: directory-changed check inside connectToServer; will
-        // be subsumed by routing.ensure lifecycle in multi mode.
-        const previousDirectory = (options.clientDirectory()?.trim() ?? "");
-        const previousDirectoryScope = normalizeWorkspaceScopePath(previousDirectory, connectWorkspaceType);
-        const resolvedDirectoryScope = normalizeWorkspaceScopePath(resolvedDirectory, connectWorkspaceType);
-        const directoryChanged =
-          !options.client() ||
-          workspaceScopeChanged(previousDirectory, resolvedDirectory, connectWorkspaceType);
-        if (directoryChanged) {
-          clearDisplayedSessionState("connect_workspace_scope_changed", {
-            workspaceId: context?.workspaceId ?? activeWorkspaceId().trim(),
-            workspaceType: context?.workspaceType ?? activeWorkspaceInfo()?.workspaceType ?? null,
-            previousDirectory,
-            nextDirectory: resolvedDirectory,
-            activeWorkspaceRoot: context?.targetRoot ?? activeWorkspaceRoot().trim(),
-          });
-        } else {
-          wsDebug("ui-reset:displayed-session:skip", {
-            reason: "connect_same_workspace_scope",
-            workspaceId: (context?.workspaceId ?? activeWorkspaceId().trim()) || null,
-            previousDirectory,
-            nextDirectory: resolvedDirectory,
-            previousDirectoryNormalized: previousDirectoryScope,
-            nextDirectoryNormalized: resolvedDirectoryScope,
-          });
-        }
-
-        options.setClient(nextClient);
-        options.setConnectedVersion(health.version);
-        options.setBaseUrl(nextBaseUrl);
-        options.setClientDirectory(resolvedDirectory);
-        publishedClient = true;
-
-        const providersPromise = (async () => {
-          const providersAt = Date.now();
-          wsDebug("connect:providers:start", { baseUrl: nextBaseUrl });
-          try {
-            const providerList = unwrap(
-              await withTimeoutOrThrow(
-                nextClient.provider.list(),
-                { timeoutMs: CONNECT_PROVIDER_LIST_TIMEOUT_MS, label: "provider.list" },
-              ),
-            );
-            wsDebug("connect:providers:done", {
-              ms: Date.now() - providersAt,
-              source: "provider.list",
-              available: providerList.all?.length ?? 0,
-              connected: providerList.connected?.length ?? 0,
-            });
-            return {
-              providers: providerList.all,
-              defaults: providerList.default,
-              connectedIds: providerList.connected,
-            };
-          } catch (error) {
-            const message = error instanceof Error ? error.message : safeStringify(error);
-            wsDebug("connect:providers:fallback", { ms: Date.now() - providersAt, message });
-            try {
-              const cfg = unwrap(
-                await withTimeoutOrThrow(
-                  nextClient.config.providers(),
-                  { timeoutMs: CONNECT_PROVIDER_LIST_TIMEOUT_MS, label: "config.providers" },
-                ),
-              );
-              const mapped = mapConfigProvidersToList(cfg.providers);
-              wsDebug("connect:providers:done", {
-                ms: Date.now() - providersAt,
-                source: "config.providers",
-                available: mapped.length,
-                connected: 0,
-              });
-              return {
-                providers: mapped,
-                defaults: cfg.default,
-                connectedIds: [],
-              };
-            } catch (fallbackError) {
-              const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : safeStringify(fallbackError);
-              wsDebug("connect:providers:error", { ms: Date.now() - providersAt, message: fallbackMessage });
-              return {
-                providers: [],
-                defaults: {},
-                connectedIds: [],
-              };
-            }
-          } finally {
-            connectMetrics.providersMs = Date.now() - providersAt;
-          }
-        })();
-
-        const targetRoot = context?.targetRoot ?? (resolvedDirectory || activeWorkspaceRoot().trim());
-        wsDebug("connect:loadSessions", { targetRoot, resolvedDirectory });
-        const sessionsAt = Date.now();
-        await withTimeoutOrThrow(
-          options.loadSessions(targetRoot),
-          { timeoutMs: CONNECT_LOAD_SESSIONS_TIMEOUT_MS, label: "loadSessions" },
-        );
-        connectMetrics.loadSessionsMs = Date.now() - sessionsAt;
-        wsDebug("connect:loadSessions:done", { ms: Date.now() - sessionsAt });
-        const pendingPermissionsAt = Date.now();
-        await withTimeoutOrThrow(
-          options.refreshPendingPermissions(),
-          { timeoutMs: CONNECT_PENDING_PERMISSIONS_TIMEOUT_MS, label: "refreshPendingPermissions" },
-        );
-        connectMetrics.pendingPermissionsMs = Date.now() - pendingPermissionsAt;
-
-        const providerState = await providersPromise;
-        options.setProviders(providerState.providers);
-        options.setProviderDefaults(providerState.defaults);
-        options.setProviderConnectedIds(providerState.connectedIds);
-
-        options.refreshSkills({ force: true }).catch(e => reportError(e, "workspace.refreshSkills"));
-        options.refreshPlugins().catch(e => reportError(e, "workspace.refreshPlugins"));
-        if (navigate && !options.selectedSessionId()) {
-          options.setTab("scheduled");
-          options.setView("session");
-        }
-
-        // If the user successfully connected, treat onboarding as complete so we
-        // don't force the onboarding flow on subsequent launches.
-        markOnboardingComplete();
-        options.onEngineStable?.();
-        connectMetrics.totalMs = Date.now() - connectStart;
-        options.setOpencodeConnectStatus?.({ ...connectMeta, status: "connected", metrics: connectMetrics });
-        wsDebug("connect:done", { ok: true, ms: Date.now() - connectStart });
-        return true;
-      } catch (e) {
-        const message = e instanceof Error ? e.message : safeStringify(e);
-        connectMetrics.totalMs = Date.now() - connectStart;
-        if (publishedClient) {
-          wsDebug("connect:degraded", { ms: Date.now() - connectStart, message });
-          reportError(e, "workspace.connect.postHealthy");
-          options.setOpencodeConnectStatus?.({
-            ...connectMeta,
-            status: "connected",
-            error: addOpencodeCacheHint(message),
-            metrics: connectMetrics,
-          });
-          return true;
-        }
-        options.setClient(null);
-        options.setConnectedVersion(null);
-        wsDebug("connect:error", { ms: Date.now() - connectStart, message });
-        options.setOpencodeConnectStatus?.({
-          ...connectMeta,
-          status: "error",
-          error: addOpencodeCacheHint(message),
-          metrics: connectMetrics,
-        });
-        if (!quiet) {
-          options.setError(addOpencodeCacheHint(message));
-        }
-        return false;
-      } finally {
-        if (!quiet) {
-          options.setBusy(false);
-          options.setBusyLabel(null);
-          options.setBusyStartedAt(null);
-        }
-      }
-    })();
-
-    connectInFlightByKey.set(requestKey, run);
-    try {
-      return await run;
-    } finally {
-      if (connectInFlightByKey.get(requestKey) === run) {
-        connectInFlightByKey.delete(requestKey);
-      }
-    }
-  }
+  const connectionController = createWorkspaceConnectionController({
+    routing: options.routing,
+    activeWorkspaceId,
+    activeWorkspaceRoot,
+    activeWorkspaceType: () => activeWorkspaceInfo()?.workspaceType ?? null,
+    baseUrl: options.baseUrl,
+    client: options.client,
+    clientDirectory: options.clientDirectory,
+    selectedSessionId: options.selectedSessionId,
+    normalizeWorkspaceScopePath,
+    setClient: options.setClient,
+    setConnectedVersion: options.setConnectedVersion,
+    setBaseUrl: options.setBaseUrl,
+    setClientDirectory: options.setClientDirectory,
+    setError: options.setError,
+    setBusy: options.setBusy,
+    setBusyLabel: options.setBusyLabel,
+    setBusyStartedAt: options.setBusyStartedAt,
+    setSseConnected: options.setSseConnected,
+    setTab: options.setTab,
+    setView: options.setView,
+    setOpencodeConnectStatus: options.setOpencodeConnectStatus,
+    loadSessions: options.loadSessions,
+    refreshPendingPermissions: options.refreshPendingPermissions,
+    onEngineStable: options.onEngineStable,
+    wsDebug,
+  });
+  const connectToServer = connectionController.connectToServer;
 
   const openEmptySession = async (scopeRoot?: string) => {
     const root = (scopeRoot ?? activeWorkspaceRoot().trim()).trim();
@@ -2920,24 +2103,11 @@ export function createWorkspaceStore(options: {
     }
   }
 
-  /**
-   * Minimal engine connection — creates client, waits for healthy, sets client signal.
-   * Does NOT clear session state, load sessions, or navigate.
-   * SSE subscription starts automatically via createEffect watching client().
-   */
-  async function connectToEngineQuiet(
-    baseUrl: string,
-    directory: string,
-    auth?: OpencodeAuth,
-  ): Promise<boolean> {
-    const nextClient = createClient(baseUrl, directory, auth);
-    const health = await waitForHealthy(nextClient, { timeoutMs: DEFAULT_CONNECT_HEALTH_TIMEOUT_MS });
-    options.setClient(nextClient);
-    options.setConnectedVersion(health.version);
-    options.setBaseUrl(baseUrl);
-    options.setClientDirectory(directory);
-    return true;
-  }
+  let runtimeControllerRef: ReturnType<typeof createWorkspaceRuntimeController> | null = null;
+  const connectToEngineQuiet = (baseUrl: string, directory: string, auth?: OpencodeAuth) => {
+    if (!runtimeControllerRef) throw new Error("workspace runtime controller not initialized");
+    return runtimeControllerRef.connectToEngineQuiet(baseUrl, directory, auth);
+  };
 
   const localRuntimeLifecycle = createLocalRuntimeLifecycle({
     engineSource: options.engineSource,
@@ -2957,120 +2127,34 @@ export function createWorkspaceStore(options: {
     connectQuiet: connectToEngineQuiet,
   });
 
-  /**
-   * Start the engine for the active workspace and connect without disrupting
-   * the current session view. Used when sending a message in browsing mode.
-   *
-   * Order: engine restart → quiet connect → loadSessions → engineReady(true)
-   * The engineReady guard in SSE sync prevents sidebar overwrite until sessions are loaded.
-   */
-  // Re-bind the active workspace's OpenCode client to a new orchestrator
-   // base URL (port rotation after `pnpm dev` restart). Drops the cached
-   // routing entry so `routing.ensure` recreates the client against the
-   // fresh URL; `connectToServer` then re-publishes it on `client()` and
-   // `baseUrl()`. Idempotent / silent: no navigate, no busy spinner.
-  async function refreshActiveClient(nextBaseUrl: string): Promise<boolean> {
-    const url = nextBaseUrl.trim();
-    if (!url) return false;
-    const id = activeWorkspaceId().trim();
-    if (!id) return false;
-    const workspace = workspaces().find((w) => w.id === id);
-    options.routing.release(id);
-    // `forceRefresh: true` bypasses the idempotent guard in connectToServer.
-    // Without it, when the orchestrator rotates to a new port but the
-    // signal-level baseUrl was already set to the new URL by upstream code,
-    // the guard would skip and the routing entry never gets re-created.
-    return await connectToServer(
-      url,
-      workspace?.path || undefined,
-      {
-        workspaceId: id,
-        workspaceType: workspace?.workspaceType,
-        targetRoot: workspace?.path,
-        reason: "port-rotation",
-      },
-      undefined,
-      { quiet: true, navigate: false, forceRefresh: true },
-    );
-  }
+  const runtimeController = createWorkspaceRuntimeController({
+    activeWorkspaceId,
+    workspaces,
+    workspacesHydrated,
+    routing: options.routing,
+    resolveEngineRuntime,
+    localRuntimeLifecycle,
+    connectToServer,
+    loadSessions: options.loadSessions,
+    setClient: options.setClient,
+    setConnectedVersion: options.setConnectedVersion,
+    setBaseUrl: options.setBaseUrl,
+    setClientDirectory: options.setClientDirectory,
+    setEngineReady: options.setEngineReady,
+    setError: options.setError,
+    updateWorkspaceConnectionState,
+    onEngineStable: options.onEngineStable,
+    clearWorkspaceBusyAllExcept,
+    syncWorkspaceSkillMaterializationBeforeRuntime,
+    createClient,
+    waitForHealthy,
+    safeStringify,
+    wsLog: _wsLog,
+  });
+  runtimeControllerRef = runtimeController;
 
-  async function ensureEngineForWorkspace(workspaceId?: string | null): Promise<boolean> {
-    const id = workspaceId?.trim() || activeWorkspaceId();
-    const workspace = workspaces().find((w) => w.id === id);
-    if (!workspace?.path) return false;
-
-    return await ensureEngineForWorkspaceSingleFlight(workspace.id || workspace.path, async () => {
-      _wsLog("[workspace:ensureEngine] starting engine for browsing mode", { id, path: workspace.path });
-
-      // VSLO-171 — wait for workspaces() to be fully hydrated before any
-      // engine_start call. The Rust side reads resolveWorkspacePaths() to
-      // build --workspace args for veslo-server; if bootstrap is still in
-      // flight we'd spawn the server with only the active path and later
-      // workspace switches would 404.
-      if (!workspacesHydrated()) {
-        const start = Date.now();
-        while (!workspacesHydrated() && Date.now() - start < 5_000) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
-      }
-
-      // Direct runtime switches replace the single host process. The
-      // orchestrator owns a workspace pool, so switching the browsed workspace
-      // must not erase busy state from other live workspaces.
-      if (resolveEngineRuntime() !== "veslo-orchestrator") {
-        clearWorkspaceBusyAllExcept(workspace.id);
-      }
-
-      try {
-        const skillsReady = await syncWorkspaceSkillMaterializationBeforeRuntime(workspace, {
-          reason: "browse-attach",
-        });
-        if (!skillsReady) return false;
-
-        let ok = false;
-        try {
-          const runtime = resolveEngineRuntime();
-          ok = await localRuntimeLifecycle.restartWorkspaceRuntime({
-            workspacePath: workspace.path,
-            workspaceId: workspace.id,
-            workspaceName: workspace.displayName?.trim() || workspace.name?.trim() || null,
-            reason: runtime === "veslo-orchestrator" ? "browse-attach-orchestrator" : "browse-attach-direct",
-            connectMode: "quiet",
-          });
-        } catch (restartError) {
-          // Orchestrator not running yet (cold boot browsing mode).
-          // Fall back to startHost which launches from scratch.
-          _wsLog("[workspace:ensureEngine] restartWorkspaceRuntime failed, trying startHost...", {
-            id,
-            error: restartError instanceof Error ? restartError.message : String(restartError),
-          });
-          ok = await localRuntimeLifecycle.startHost({
-            workspacePath: workspace.path,
-            workspaceId: workspace.id,
-            reason: "browse-cold-start",
-            navigate: false,
-          });
-        }
-        if (!ok) return false;
-
-        // Load sessions while engineReady is still false (SSE sync guard protects sidebar)
-        await options.loadSessions(workspace.path);
-
-        // Now set engineReady — SSE sync fires with correct session data
-        options.setEngineReady?.(true);
-        updateWorkspaceConnectionState(id, { status: "connected", message: null });
-        options.onEngineStable?.();
-        _wsLog("[workspace:ensureEngine] engine started successfully", { id });
-        return true;
-      } catch (e) {
-        const message = e instanceof Error ? e.message : safeStringify(e);
-        _wsLog("[workspace:ensureEngine] engine start failed", { id, error: message });
-        options.setError(message);
-        return false;
-      }
-    });
-  }
-
+  const ensureEngineForWorkspace = runtimeController.ensureEngineForWorkspace;
+  const refreshActiveClient = runtimeController.refreshActiveClient;
   return {
     engine: engineStore.engine,
     engineDoctorResult: engineStore.engineDoctorResult,

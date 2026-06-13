@@ -8,6 +8,7 @@ import {
 } from "./workspace-source";
 
 const source = readWorkspaceBehaviorSources();
+const connectionControllerSource = readContextSource("workspace-connection-controller.ts");
 
 test("local activation path applies workspace_set_active response back into the workspace list", () => {
   assert.match(
@@ -42,33 +43,33 @@ test("ensuring an existing folder promotes that workspace to the top immediately
 
 test("connect flow keeps pending permissions loaded by refreshPendingPermissions", () => {
   assert.match(
-    source,
-    /clearDisplayedSessionState\("connect_workspace_scope_changed", \{[\s\S]*previousDirectory,[\s\S]*nextDirectory: resolvedDirectory,[\s\S]*\}\);/s,
-    "connect flow should reset displayed session state through the shared helper",
+    connectionControllerSource,
+    /await deps\.loadSessions\(context\?\.targetRoot\);[\s\S]*await deps\.refreshPendingPermissions\(\);/s,
+    "connect flow should refresh sessions and then pending permissions after routing ensure",
   );
 
   assert.doesNotMatch(
-    source.slice(source.indexOf('clearDisplayedSessionState("connect_workspace_scope_changed"')),
-    /clearDisplayedSessionState\("connect_workspace_scope_changed"[\s\S]{0,900}clearPendingPermissions: true/s,
-    "connect flow should preserve pending permissions refreshed later in the connect path",
+    connectionControllerSource,
+    /clearPendingPermissions: true/s,
+    "connect flow should not clear pending permissions that are refreshed later in the connect path",
   );
 });
 
-test("connect flow clears stale displayed session state before publishing the client", () => {
-  const connectStart = source.indexOf("async function connectToServer(");
-  const connectEnd = source.indexOf("const openEmptySession = async", connectStart);
-  assert.notStrictEqual(connectStart, -1, "connectToServer definition missing");
-  assert.notStrictEqual(connectEnd, -1, "connectToServer end marker missing");
-  const connectSource = source.slice(connectStart, connectEnd);
-
-  const clearSelectionIdx = connectSource.indexOf('clearDisplayedSessionState("connect_workspace_scope_changed"');
-  const publishClientIdx = connectSource.indexOf("options.setClient(nextClient);");
-
-  assert.notStrictEqual(clearSelectionIdx, -1, "connect flow should clear displayed session state");
-  assert.notStrictEqual(publishClientIdx, -1, "connect flow should publish the client");
-  assert.ok(
-    clearSelectionIdx < publishClientIdx,
-    "connectToServer must reset the previous displayed session before route effects can observe the new client and immediately re-open a session that then gets cleared again",
+test("connect flow publishes the routed workspace client only after routing ensure", () => {
+  assert.match(
+    connectionControllerSource,
+    /const entry = await deps\.routing\.ensure\(/,
+    "connect flow should ensure the workspace route before publishing a client",
+  );
+  assert.match(
+    connectionControllerSource,
+    /deps\.setClient\(entry\.client\);/,
+    "connect flow should publish the routed client entry",
+  );
+  assert.doesNotMatch(
+    connectionControllerSource,
+    /createClient\(nextBaseUrl/,
+    "connect flow should not recreate the old single-active client directly",
   );
 });
 
@@ -84,38 +85,38 @@ test("workspace scope comparisons use scope-aware normalized directory paths", (
     "activateWorkspace should compare local workspace paths using local filesystem semantics",
   );
   assert.match(
-    source,
-    /const connectWorkspaceType = context\?\.workspaceType \?\? activeWorkspaceInfo\(\)\?\.workspaceType \?\? null;[\s\S]*const incomingDirectoryScope = normalizeWorkspaceScopePath\(incomingDirectory, connectWorkspaceType\)/s,
+    connectionControllerSource,
+    /const connectWorkspaceType = context\?\.workspaceType \?\? deps\.activeWorkspaceType\(\);[\s\S]*const incomingDirectoryScope = deps\.normalizeWorkspaceScopePath\([\s\S]*incomingDirectory,[\s\S]*connectWorkspaceType,/s,
     "connect flow should resolve the path comparison scope from workspace type",
   );
   assert.match(
-    source,
-    /normalizeWorkspaceScopePath\(options\.clientDirectory\(\), connectWorkspaceType\) === incomingDirectoryScope/s,
+    connectionControllerSource,
+    /deps\.normalizeWorkspaceScopePath\(deps\.clientDirectory\(\), connectWorkspaceType\) === incomingDirectoryScope/s,
     "connect idempotency should compare normalized client directories with workspace scope semantics",
   );
   assert.match(
-    source,
+    connectionControllerSource,
     /const connectRequestKey =[\s\S]*normalizeWorkspaceScopePath\(directory \?\? "", context\?\.workspaceType\)[\s\S]*normalizeWorkspaceScopePath\(context\?\.targetRoot \?\? "", context\?\.workspaceType\)/s,
     "connect dedupe key should normalize directory and target root paths with explicit workspace type semantics",
   );
   assert.match(
-    source,
-    /const directoryChanged =[\s\S]*workspaceScopeChanged\(previousDirectory, resolvedDirectory, connectWorkspaceType\)/s,
-    "connect reset gating should compare normalized directories with workspace scope semantics",
+    connectionControllerSource,
+    /currentActiveRootScope[\s\S]*incomingDirectoryScope[\s\S]*currentActiveRootScope !== incomingDirectoryScope/s,
+    "connect stale-after-ensure gating should compare normalized directories with workspace scope semantics",
   );
 });
 
-test("post-health connect failures keep the healthy client attached", () => {
+test("routing ensure failures preserve concrete UI error messages", () => {
   assert.match(
-    source,
-    /let publishedClient = false;[\s\S]*options\.setClient\(nextClient\);[\s\S]*publishedClient = true;/s,
-    "connect flow should mark when the healthy client has already been published",
+    connectionControllerSource,
+    /const detail = deps\.routing\.lastEnsureError\(workspaceId\);[\s\S]*`Failed to ensure workspace client: \$\{detail\}`/s,
+    "connect flow should include routing ensure details in the UI error message",
   );
 
   assert.match(
-    source,
-    /if \(publishedClient\) \{[\s\S]*status: "connected",[\s\S]*return true;[\s\S]*\}[\s\S]*options\.setClient\(null\);[\s\S]*options\.setConnectedVersion\(null\);/s,
-    "post-health failures must degrade the connect step instead of dropping the live client back to null",
+    connectionControllerSource,
+    /deps\.setOpencodeConnectStatus\?\.\(\{[\s\S]*status: "error",[\s\S]*error: message,/s,
+    "connect flow should forward the concrete error message into connect status diagnostics",
   );
 });
 
@@ -177,20 +178,14 @@ test("bootstrap clears stale onboarding gates restored before persisted metadata
 });
 
 test("quiet port-rotation only binds the workspace proxy client without reading the engine", () => {
-  const connectStart = source.indexOf("async function connectToServer(");
-  const connectEnd = source.indexOf("const openEmptySession = async", connectStart);
-  assert.notStrictEqual(connectStart, -1, "connectToServer definition missing");
-  assert.notStrictEqual(connectEnd, -1, "connectToServer end marker missing");
-  const connectSource = source.slice(connectStart, connectEnd);
-
   assert.match(
-    connectSource,
+    connectionControllerSource,
     /const quietPortRefresh = quiet && context\?\.reason === "port-rotation";[\s\S]*skipHealth: quietPortRefresh,/s,
     "quiet port-rotation should bind the routed client without eager workspace proxy health polling",
   );
   assert.match(
-    connectSource,
-    /if \(quietPortRefresh\) \{[\s\S]*wsDebug\("connect:proxy-bound"[\s\S]*return true;[\s\S]*\}[\s\S]*await options\.loadSessions\(context\?\.targetRoot\);[\s\S]*await options\.refreshPendingPermissions\(\);[\s\S]*options\.onEngineStable\?\.\(\);/s,
+    connectionControllerSource,
+    /if \(quietPortRefresh\) \{[\s\S]*deps\.wsDebug\("connect:proxy-bound"[\s\S]*return true;[\s\S]*\}[\s\S]*await deps\.loadSessions\(context\?\.targetRoot\);[\s\S]*await deps\.refreshPendingPermissions\(\);[\s\S]*deps\.onEngineStable\?\.\(\);/s,
     "quiet port-rotation must not load sessions, poll permissions, or mark the engine stable before it has actually started",
   );
 });
@@ -234,15 +229,11 @@ test("workspace activation delegates local runtime reuse and restart flows to th
 });
 
 test("orchestrator browse attach preserves busy state for other live workspaces", () => {
-  const ensureStart = source.indexOf("async function ensureEngineForWorkspace(");
-  const ensureEnd = source.indexOf("\n  return {", ensureStart);
-  assert.notStrictEqual(ensureStart, -1, "ensureEngineForWorkspace definition missing");
-  assert.notStrictEqual(ensureEnd, -1, "ensureEngineForWorkspace end marker missing");
-  const ensureSource = source.slice(ensureStart, ensureEnd);
+  const ensureSource = readContextSource("workspace-runtime-controller.ts");
 
   assert.match(
     ensureSource,
-    /if \(resolveEngineRuntime\(\) !== "veslo-orchestrator"\) \{\s*clearWorkspaceBusyAllExcept\(workspace\.id\);\s*\}/,
+    /if \(deps\.resolveEngineRuntime\(\) !== "veslo-orchestrator"\) \{\s*deps\.clearWorkspaceBusyAllExcept\(workspace\.id\);\s*\}/,
     "orchestrator workspace switching must not clear busy state for other pooled workspaces",
   );
 });
