@@ -9,7 +9,7 @@ import {
   openSessionWithWorkspaceActivation,
 } from "../../pages/session-navigation.js";
 import * as sessionNavigation from "../../pages/session-navigation.js";
-import type { WorkspaceActivationOptions } from "../../context/workspace.js";
+import type { WorkspaceActivationOptions } from "../../context/workspace-types.js";
 
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
 const sessionPageSource = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");

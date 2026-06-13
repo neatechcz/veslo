@@ -78,7 +78,7 @@ import {
   writeLeftSidebarWidth,
 } from "../components/layout/left-sidebar-width-prefs";
 import { openSessionWithWorkspaceActivation, type SessionBrowseScope } from "./session-navigation";
-import type { WorkspaceActivationOptions } from "../context/workspace";
+import type { WorkspaceActivationOptions } from "../context/workspace-types";
 import {
   resolveDashboardTabSelectionAction,
   resolveLeftMenuAction,

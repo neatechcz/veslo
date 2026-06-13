@@ -20,7 +20,7 @@ import type {
 } from "../lib/tauri";
 import type { ComposerDraft, View } from "../types";
 import { normalizeDirectoryPath } from "../utils/paths";
-import type { WorkspaceActivationOptions } from "./workspace";
+import type { WorkspaceActivationOptions } from "./workspace-types";
 
 type PendingDraftStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 

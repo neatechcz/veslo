@@ -1,4 +1,4 @@
-import type { WorkspaceActivationOptions } from "../context/workspace";
+import type { WorkspaceActivationOptions } from "../context/workspace-types";
 
 export type OpenSessionWithWorkspaceActivationInput = {
   activeWorkspaceId: string;

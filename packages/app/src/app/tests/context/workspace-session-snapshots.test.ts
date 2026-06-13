@@ -5,13 +5,14 @@ import test from "node:test";
 import {
   resolveWorkspaceSessionSnapshotAction,
 } from "../../context/workspace-session-snapshots.js";
+import { readWorkspaceBehaviorSources } from "./workspace-source";
 
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
 const snapshotSource = readFileSync(
   new URL("../../context/workspace-session-snapshots.ts", import.meta.url),
   "utf8",
 );
-const workspaceSource = readFileSync(new URL("../../context/workspace.ts", import.meta.url), "utf8");
+const workspaceSource = readWorkspaceBehaviorSources();
 
 test("switching workspaces saves outgoing and loads incoming when selected session is unscoped", () => {
   assert.deepEqual(
@@ -117,7 +118,12 @@ test("workspace switch clears stale selected session when incoming workspace has
 test("workspace debug traces include activation caller stack", () => {
   assert.match(
     workspaceSource,
-    /const workspaceDebugStack = \(\) => \{[\s\S]*new Error\(\)\.stack[\s\S]*wsDebug\("activate:start", \{[\s\S]*stack: workspaceDebugStack\(\),/s,
+    /\/\* workspace-debug\.ts \*\/[\s\S]*export const workspaceDebugStack = \(\) => \{[\s\S]*new Error\(\)\.stack/s,
+    "workspace debug helper should include a trimmed caller stack",
+  );
+  assert.match(
+    workspaceSource,
+    /\/\* workspace-activation-controller\.ts \*\/[\s\S]*deps\.wsDebug\("activate:start", \{[\s\S]*stack: deps\.workspaceDebugStack\(\),/s,
     "workspace activation debug logs should include a trimmed caller stack",
   );
 });

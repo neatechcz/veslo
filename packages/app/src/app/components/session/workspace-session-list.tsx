@@ -22,7 +22,7 @@ import type {
   WorkspaceConnectionState,
   WorkspaceSessionGroup,
 } from "../../types";
-import type { WorkspaceActivationOptions } from "../../context/workspace";
+import type { WorkspaceActivationOptions } from "../../context/workspace-types";
 import {
   getWorkspaceTaskLoadErrorDisplay,
   isWindowsPlatform,
