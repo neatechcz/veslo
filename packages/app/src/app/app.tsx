@@ -105,6 +105,10 @@ import {
   createWorkspaceSendTarget,
   type SendTargetWorkspaceScope,
 } from "./context/workspace-send-target";
+import {
+  createSendRuntimeReadiness,
+  type SendRuntimePreflightContext,
+} from "./context/send-runtime-readiness";
 import ResetModal from "./components/reset-modal";
 import ConfirmModal from "./components/confirm-modal";
 import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
@@ -441,7 +445,7 @@ type SendConversationWorkspaceResolution = {
   directory: string;
 };
 
-type SendPreflightContext = {
+type SendPreflightContext = SendRuntimePreflightContext & {
   traceId: string;
   managedAiReady: boolean;
   runtimeHealthOk: boolean;
@@ -4500,236 +4504,41 @@ export default function App() {
     }
   };
 
-  const ensureManagedAiBootstrapReady = async (): Promise<boolean> => {
-    try {
-      const canUseCurrentManagedConfig =
-        managedAiAccessBusy() &&
-        managedAiBootstrapPendingCount() === 0 &&
-        !reloadBusy() &&
-        (await hasUsableManagedAiRuntimeConfigForSend());
-      await waitForManagedAiBootstrapReady({
-        hasManagedProfile: (Boolean(managedAiAccess()) || managedAiBootstrapBusy()) && !canUseCurrentManagedConfig,
-        isBootstrapBusy: managedAiBootstrapBusy,
-        isReloadBusy: reloadBusy,
-        hasClient: () => Boolean(routedClient()),
-      });
-      return true;
-    } catch (error) {
-      setError(error instanceof Error ? error.message : safeStringify(error));
-      return false;
-    }
-  };
-
-  const localRuntimeHealthTimeoutMessage = "Timed out waiting for local runtime health";
-
-  const messageFromUnknownError = (error: unknown): string => {
-    if (error instanceof Error) return error.message;
-    return safeStringify(error);
-  };
-
-  const isLocalRuntimeHealthTimeoutError = (error: unknown): boolean =>
-    messageFromUnknownError(error).includes(localRuntimeHealthTimeoutMessage);
-
-  const shouldRecoverLocalRuntimeFromHealthError = (error: unknown): boolean => {
-    const message = messageFromUnknownError(error);
-    const normalized = message.toLowerCase();
-    return (
-      normalized.includes("error sending request") ||
-      normalized.includes("connection refused") ||
-      message.includes("ECONNREFUSED") ||
-      normalized.includes("failed to connect") ||
-      normalized.includes("could not connect") ||
-      normalized.includes("couldn't connect") ||
-      normalized.includes("failed to fetch") ||
-      normalized.includes("fetch failed") ||
-      normalized.includes("load failed") ||
-      normalized.includes("connection reset") ||
-      message.includes("ECONNRESET") ||
-      normalized.includes("networkerror")
-    );
-  };
-
-  const withLocalRuntimeHealthTimeout = async <T,>(promise: Promise<T>): Promise<T> => {
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(
-        () => reject(new Error(localRuntimeHealthTimeoutMessage)),
-        3_000,
-      );
-    });
-    try {
-      return await Promise.race([promise, timeoutPromise]);
-    } finally {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-    }
-  };
-
-  async function ensureLocalRuntimeReachableForSend(
-    reason: string,
-    preflightOrTraceId?: SendPreflightContext | string | null,
-  ): Promise<boolean> {
-    const preflight = typeof preflightOrTraceId === "object" ? preflightOrTraceId ?? undefined : undefined;
-    const traceId = typeof preflightOrTraceId === "string"
-      ? preflightOrTraceId
-      : preflightOrTraceId?.traceId ?? null;
-    const tracePayload = traceId ? { traceId } : undefined;
-    const targetWorkspaceId = preflight?.targetWorkspace?.workspaceId?.trim() ?? "";
-    const targetWorkspace = targetWorkspaceId
-      ? workspaceStore.workspaces().find((workspace) => workspace.id === targetWorkspaceId) ?? null
-      : null;
-    const targetWorkspaceType = targetWorkspace?.workspaceType ?? workspaceStore.activeWorkspaceDisplay().workspaceType;
-    if (!isTauriRuntime() || targetWorkspaceType !== "local") {
-      recordSendTrace(`${reason}:runtime-health-skipped`, {
-        ...(tracePayload ?? {}),
-        isTauriRuntime: isTauriRuntime(),
-        workspaceType: targetWorkspaceType,
-        targetWorkspaceId: targetWorkspaceId || null,
-      });
-      return true;
-    }
-
-    const currentClient = targetWorkspaceId ? routedClient(targetWorkspaceId) : routedClient();
-    if (currentClient) {
-      try {
-        await sendTraceStep(
-          `${reason}:runtime-health`,
-          () => withLocalRuntimeHealthTimeout(currentClient.global.health()),
-          {
-            ...(tracePayload ?? {}),
-            hasClient: true,
-            targetWorkspaceId: targetWorkspaceId || null,
-          },
-        );
-        recordSendTrace(`${reason}:runtime-health-ok`, tracePayload);
-        if (preflight) preflight.runtimeHealthOk = true;
-        return true;
-      } catch (error) {
-        const message = messageFromUnknownError(error);
-        recordSendTrace(`${reason}:runtime-health-error`, {
-          ...(tracePayload ?? {}),
-          message,
-        });
-        if (!isLocalRuntimeHealthTimeoutError(error) && !shouldRecoverLocalRuntimeFromHealthError(error)) {
-          return true;
-        }
-      }
-    } else {
-      recordSendTrace(`${reason}:runtime-missing-client`, tracePayload);
-    }
-
-    recordSendTrace(`${reason}:runtime-recovery-start`, tracePayload);
-    setEngineReady(false);
-    setSseConnected(false);
-    setBusy(true);
-    setBusyLabel("status.connecting");
-    setBusyStartedAt(Date.now());
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    try {
-      const started = await sendTraceStep(
-        `${reason}:runtime-recovery-ensure-engine`,
-        () => workspaceStore.ensureEngineForWorkspace(targetWorkspaceId || undefined),
-        {
-          ...(tracePayload ?? {}),
-          activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
-          activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
-          targetWorkspaceId: targetWorkspaceId || null,
-        },
-      );
-      const recoveredClient = targetWorkspaceId ? routedClient(targetWorkspaceId) : routedClient();
-      if (!started || !recoveredClient) {
-        recordSendTrace(`${reason}:runtime-recovery-not-started`, {
-          ...(tracePayload ?? {}),
-          started,
-          hasClient: Boolean(recoveredClient),
-          targetWorkspaceId: targetWorkspaceId || null,
-        });
-        setBusy(false);
-        setBusyLabel(null);
-        setBusyStartedAt(null);
-        return false;
-      }
-      recordSendTrace(`${reason}:runtime-recovery-ok`, {
-        ...(tracePayload ?? {}),
-        hasClient: Boolean(recoveredClient),
-        targetWorkspaceId: targetWorkspaceId || null,
-      });
-      if (preflight) preflight.runtimeHealthOk = true;
-      return true;
-    } catch (error) {
-      recordSendTrace(`${reason}:runtime-recovery-error`, {
-        ...(tracePayload ?? {}),
-        message: messageFromUnknownError(error),
-      });
-      setBusy(false);
-      setBusyLabel(null);
-      setBusyStartedAt(null);
-      return false;
-    }
-  }
-
-  async function connectLocalRuntimeClientFromEngineInfo(reason: string): Promise<Client | null> {
-    if (!isTauriRuntime() || workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") {
-      return routedClient();
-    }
-
-    try {
-      const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
-      const activeWorkspaceRoot = workspaceStore.activeWorkspaceRoot().trim();
-      const info = await engineInfo(activeWorkspaceId || undefined, activeWorkspaceRoot || undefined);
-      const nextBaseUrl = info.baseUrl?.trim() ?? "";
-      if (!info.running || !nextBaseUrl) {
-        recordSendTrace(`${reason}:engine-info-unavailable`, {
-          activeWorkspaceId: activeWorkspaceId || null,
-          activeWorkspaceRoot: activeWorkspaceRoot || null,
-          running: Boolean(info.running),
-          hasBaseUrl: Boolean(nextBaseUrl),
-        });
-        return null;
-      }
-
-      const directory = info.projectDir?.trim() || activeWorkspaceRoot || clientDirectory().trim() || undefined;
-      const username = info.opencodeUsername?.trim() ?? "";
-      const password = info.opencodePassword?.trim() ?? "";
-      const auth = username && password ? { username, password } : undefined;
-      const connected = await workspaceStore.connectToServer(
-        nextBaseUrl,
-        directory,
-        {
-          workspaceId: activeWorkspaceId || undefined,
-          workspaceType: "local",
-          targetRoot: directory,
-          reason,
-        },
-        auth,
-        { quiet: true, navigate: false, forceRefresh: true },
-      );
-      const nextClient = activeWorkspaceId ? routedClient(activeWorkspaceId) : routedClient();
-      if (!connected || !nextClient) {
-        recordSendTrace(`${reason}:engine-info-connect-failed`, {
-          activeWorkspaceId: activeWorkspaceId || null,
-          activeWorkspaceRoot: activeWorkspaceRoot || null,
-          hasClient: Boolean(nextClient),
-        });
-        return null;
-      }
-      setEngineReady(true);
-      recordSendTrace(`${reason}:engine-info-client`, {
-        activeWorkspaceId: activeWorkspaceId || null,
-        activeWorkspaceRoot: activeWorkspaceRoot || null,
-        hasDirectory: Boolean(directory),
-        hasAuth: Boolean(auth),
-      });
-      return nextClient;
-    } catch (error) {
-      recordSendTrace(`${reason}:engine-info-error`, {
-        message: messageFromUnknownError(error),
-      });
-      return null;
-    }
-  }
+  const sendRuntimeReadiness = createSendRuntimeReadiness<Client>({
+    isTauriRuntime,
+    activeWorkspaceDisplay: () => workspaceStore.activeWorkspaceDisplay(),
+    activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
+    activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
+    clientDirectory: () => clientDirectory(),
+    workspaces: () => workspaceStore.workspaces(),
+    routedClient,
+    ensureEngineForWorkspace: (workspaceId) => workspaceStore.ensureEngineForWorkspace(workspaceId),
+    connectToServer: (nextBaseUrl, directory, context, auth, connectOptions) =>
+      workspaceStore.connectToServer(nextBaseUrl, directory, context, auth, connectOptions),
+    engineInfo,
+    managedAiAccess,
+    managedAiAccessBusy,
+    managedAiBootstrapBusy,
+    managedAiBootstrapPendingCount,
+    reloadBusy: () => reloadBusy(),
+    hasUsableManagedAiRuntimeConfigForSend,
+    waitForManagedAiBootstrapReady,
+    sendTraceStep,
+    recordSendTrace,
+    setError,
+    setEngineReady,
+    setSseConnected,
+    setBusy,
+    setBusyLabel,
+    setBusyStartedAt,
+    safeStringify,
+  });
+  const {
+    ensureManagedAiBootstrapReady,
+    ensureLocalRuntimeReachableForSend,
+    connectLocalRuntimeClientFromEngineInfo,
+    messageFromUnknownError,
+  } = sendRuntimeReadiness;
 
   const [showThinking, setShowThinking] = createSignal(false);
   const [hideTitlebar, setHideTitlebar] = createSignal(false);

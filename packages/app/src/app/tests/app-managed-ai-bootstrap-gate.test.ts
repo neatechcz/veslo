@@ -3,10 +3,11 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const readinessSource = readFileSync(new URL("../context/send-runtime-readiness.ts", import.meta.url), "utf8");
 
 test("managed AI bootstrap readiness returns a blocking result when setup is not ready", () => {
-  const start = source.indexOf("const ensureManagedAiBootstrapReady = async");
-  const end = source.indexOf("const localRuntimeHealthTimeoutMessage", start);
+  const start = readinessSource.indexOf("const ensureManagedAiBootstrapReady = async");
+  const end = readinessSource.indexOf("async function ensureLocalRuntimeReachableForSend", start);
   assert.ok(start >= 0 && end > start, "ensureManagedAiBootstrapReady source should be present");
   const sendStart = source.indexOf("async function sendPrompt(");
   const sendEnd = source.indexOf("async function abortSession", sendStart);
@@ -110,19 +111,19 @@ test("managed AI config patching does not auto-dispose the engine before Send", 
 });
 
 test("managed AI bootstrap can use a validated current runtime config while access refresh is busy", () => {
-  const start = source.indexOf("const ensureManagedAiBootstrapReady = async");
-  const end = source.indexOf("const localRuntimeHealthTimeoutMessage", start);
+  const start = readinessSource.indexOf("const ensureManagedAiBootstrapReady = async");
+  const end = readinessSource.indexOf("async function ensureLocalRuntimeReachableForSend", start);
   assert.ok(start >= 0 && end > start, "ensureManagedAiBootstrapReady source should be present");
-  const ensureSource = source.slice(start, end);
+  const ensureSource = readinessSource.slice(start, end);
 
   assert.match(
     ensureSource,
-    /const canUseCurrentManagedConfig =[\s\S]*managedAiAccessBusy\(\)[\s\S]*hasUsableManagedAiRuntimeConfigForSend\(\)/,
+    /const canUseCurrentManagedConfig =[\s\S]*deps\.managedAiAccessBusy\(\)[\s\S]*deps\.hasUsableManagedAiRuntimeConfigForSend\(\)/,
     "managed bootstrap should validate current runtime config before bypassing a busy access refresh",
   );
   assert.match(
     ensureSource,
-    /hasManagedProfile:\s*\(Boolean\(managedAiAccess\(\)\) \|\| managedAiBootstrapBusy\(\)\) && !canUseCurrentManagedConfig/,
+    /hasManagedProfile:\s*\(Boolean\(deps\.managedAiAccess\(\)\) \|\| deps\.managedAiBootstrapBusy\(\)\) && !canUseCurrentManagedConfig/,
     "managed bootstrap should only skip waiting when the current runtime config is usable",
   );
 });
