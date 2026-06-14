@@ -12,8 +12,11 @@ const buildModel = (
 ): ProviderListItem["models"][string] => ({
   id,
   name,
-  attachment: imageInput,
   reasoning,
+  modalities: {
+    input: imageInput ? ["text", "image"] : ["text"],
+    output: ["text"],
+  },
   temperature: true,
   tool_call: true,
   options: {},

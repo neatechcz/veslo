@@ -3,6 +3,10 @@ import type { Agent, Part } from "@opencode-ai/sdk/v2/client";
 import type {
   ArtifactItem,
   DashboardTab,
+  ComposerTargetConflict,
+  ComposerTargetOption,
+  ComposerTargetSwitchResolution,
+  ComposerTargetSwitchResult,
   ComposerDraft,
   MessageGroup,
   MessageWithParts,
@@ -87,7 +91,7 @@ import {
 } from "../utils";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
 import { normalizeLocalFilePath } from "../lib/local-file-path";
-import { shouldStopRunOnEscape } from "./session-shortcuts";
+import { resolveEscapeStopShortcut } from "./session-shortcuts";
 import { currentLocale, t } from "../../i18n";
 import type { UpdateDownloadRetryInfo } from "../context/updater";
 
@@ -97,6 +101,8 @@ import soulSetupTemplate from "../data/commands/give-me-a-soul.md?raw";
 import MessageList, { type PendingMessageState } from "../components/session/message-list";
 import Composer from "../components/session/composer";
 import type { ComposerSendOptions } from "../components/session/composer";
+import ComposerTargetConflictModal from "../components/session/composer-target-conflict-modal";
+import ComposerTargetPicker from "../components/session/composer-target-picker";
 import QueuedMessageList from "../components/session/queued-message-list";
 import { getEditableUserMessageDraft, type EditableUserMessageDraft } from "../components/session/message-editability";
 import {
@@ -179,6 +185,12 @@ export type SessionViewProps = {
   selectedSessionId: string | null;
   activePendingDraftKey: string | null;
   activePendingDraftMeta: PendingSessionDraftSummary | null;
+  composerTargetOptions: ComposerTargetOption[];
+  activeComposerTargetId: string | null;
+  switchComposerTarget: (
+    targetId: string,
+    resolution?: ComposerTargetSwitchResolution,
+  ) => Promise<ComposerTargetSwitchResult>;
   setView: (view: View, sessionId?: string) => void;
   setSessionBrowseScope: (scope: SessionBrowseScope) => void;
   tab: DashboardTab;
@@ -474,6 +486,7 @@ export default function SessionView(props: SessionViewProps) {
   const topInitializedSessionIds = new Set<string>();
 
   const [toastMessage, setToastMessage] = createSignal<string | null>(null);
+  const [composerTargetConflict, setComposerTargetConflict] = createSignal<ComposerTargetConflict | null>(null);
   const [renameModalOpen, setRenameModalOpen] = createSignal(false);
   const [renameTitle, setRenameTitle] = createSignal("");
   const [renameBusy, setRenameBusy] = createSignal(false);
@@ -769,6 +782,19 @@ export default function SessionView(props: SessionViewProps) {
     workspace.name?.trim() ||
     workspace.path?.trim() ||
     tr("sidebar.workspace_fallback");
+  const activeComposerTargetOption = createMemo(() =>
+    props.composerTargetOptions.find((option) => option.id === props.activeComposerTargetId) ??
+    props.composerTargetOptions[0] ??
+    null,
+  );
+  const composerEntryTargetName = createMemo(() =>
+    activeComposerTargetOption()?.label ?? workspaceLabel(props.activeWorkspaceDisplay),
+  );
+  const composerEntryHeading = createMemo(() => {
+    const target = activeComposerTargetOption();
+    if (target?.kind === "chat") return tr("session.target_heading_chat");
+    return formatTr("session.target_heading_workspace", { name: composerEntryTargetName() });
+  });
   const todoList = createMemo(() => props.todos.filter((todo) => todo.content.trim()));
   const todoCount = createMemo(() => todoList().length);
   const todoCompletedCount = createMemo(() =>
@@ -1777,8 +1803,10 @@ export default function SessionView(props: SessionViewProps) {
   const [editingQueuedDraftId, setEditingQueuedDraftId] = createSignal<string | null>(null);
   const [editingTranscriptMessageId, setEditingTranscriptMessageId] = createSignal<string | null>(null);
   const [abortBusy, setAbortBusy] = createSignal(false);
+  const [escapeStopConfirmationPending, setEscapeStopConfirmationPending] = createSignal(false);
   const [todoExpanded, setTodoExpanded] = createSignal(false);
   let queueDrainAttemptInFlight = false;
+  let escapeStopConfirmationSessionId = props.selectedSessionId;
 
   const queuedDrafts = createMemo(() => queuedDraftsBySessionKey()[currentSessionQueueKey()] ?? []);
   const queuePaused = createMemo(() => Boolean(queuePausedAfterStopBySessionKey()[currentSessionQueueKey()]));
@@ -1947,6 +1975,17 @@ export default function SessionView(props: SessionViewProps) {
 
   const showRunIndicator = createMemo(() => runPhase() !== "idle");
   const showFooterRunIndicator = createMemo(() => showRunIndicator());
+  createEffect(() => {
+    const sessionId = props.selectedSessionId;
+    if (sessionId === escapeStopConfirmationSessionId) return;
+    escapeStopConfirmationSessionId = sessionId;
+    setEscapeStopConfirmationPending(false);
+  });
+  createEffect(() => {
+    if (!showRunIndicator() || abortBusy() || commandPaletteOpen() || searchOpen() || overlayOpenSide()) {
+      setEscapeStopConfirmationPending(false);
+    }
+  });
   const workspaceSendWarmupActive = createMemo(() => {
     const submitted = optimisticSubmittedDraft();
     if (!submitted || submitted.state !== "sending") return false;
@@ -2370,21 +2409,28 @@ export default function SessionView(props: SessionViewProps) {
         }
       }
 
-      if (
-        shouldStopRunOnEscape({
-          key: event.key,
-          defaultPrevented: event.defaultPrevented,
-          metaKey: event.metaKey,
-          ctrlKey: event.ctrlKey,
-          altKey: event.altKey,
-          shiftKey: event.shiftKey,
-          commandPaletteOpen: commandPaletteOpen(),
-          searchOpen: searchOpen(),
-          showRunIndicator: showRunIndicator(),
-          abortBusy: abortBusy(),
-        })
-      ) {
+      if (overlayOpenSide()) return;
+
+      const escapeStopAction = resolveEscapeStopShortcut({
+        key: event.key,
+        defaultPrevented: event.defaultPrevented,
+        metaKey: event.metaKey,
+        ctrlKey: event.ctrlKey,
+        altKey: event.altKey,
+        shiftKey: event.shiftKey,
+        commandPaletteOpen: commandPaletteOpen(),
+        searchOpen: searchOpen(),
+        showRunIndicator: showRunIndicator(),
+        abortBusy: abortBusy(),
+        confirmationPending: escapeStopConfirmationPending(),
+      });
+      if (escapeStopAction !== "ignore") {
         event.preventDefault();
+        if (escapeStopAction === "request-confirmation") {
+          setEscapeStopConfirmationPending(true);
+          return;
+        }
+        setEscapeStopConfirmationPending(false);
         void cancelRun();
       }
     };
@@ -2585,6 +2631,7 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const cancelRun = async () => {
+    setEscapeStopConfirmationPending(false);
     if (abortBusy()) return;
 
     setQueuePausedForCurrentSession(true);
@@ -3835,6 +3882,27 @@ export default function SessionView(props: SessionViewProps) {
     });
   };
 
+  const handleComposerTargetSelect = async (targetId: string) => {
+    const result = await props.switchComposerTarget(targetId);
+    if (result.status === "conflict") {
+      setComposerTargetConflict(result.conflict);
+      return;
+    }
+    if (result.status === "blocked") setToastMessage(result.message);
+  };
+
+  const resolveComposerTargetConflictModal = async (resolution: ComposerTargetSwitchResolution) => {
+    const conflict = composerTargetConflict();
+    if (!conflict) return;
+    const result = await props.switchComposerTarget(conflict.targetId, resolution);
+    if (result.status === "conflict") {
+      setComposerTargetConflict(result.conflict);
+      return;
+    }
+    setComposerTargetConflict(null);
+    if (result.status === "blocked") setToastMessage(result.message);
+  };
+
   const handleDraftChange = (draft: ComposerDraft) => {
     props.setComposerDraft(draft);
   };
@@ -4792,12 +4860,31 @@ export default function SessionView(props: SessionViewProps) {
                   />
                 </div>
               </Show>
+              <Show when={!props.selectedSessionId}>
+                <div class={`mx-auto mb-5 flex w-full ${railWidthClass()} flex-col items-center gap-3 text-center`}>
+                  <ComposerTargetPicker
+                    options={props.composerTargetOptions}
+                    activeTargetId={props.activeComposerTargetId}
+                    disabled={props.busy}
+                    onSelect={(targetId) => {
+                      void handleComposerTargetSelect(targetId);
+                    }}
+                  />
+                  <h2
+                    data-testid="composer-entry-target-heading"
+                    class="font-product type-title-sm w-full text-balance text-dls-text"
+                  >
+                    {composerEntryHeading()}
+                  </h2>
+                </div>
+              </Show>
               <Composer
                 initialDraft={props.composerDraft}
                 prompt={props.composerDraft.text}
                 developerMode={props.developerMode}
                 busy={props.busy}
                 isStreaming={showRunIndicator()}
+                stopShortcutConfirmPending={escapeStopConfirmationPending()}
                 compactTopSpacing={todoCount() > 0}
                 compactWidth={useCompactCenterColumn()}
                 onSend={handleSendPrompt}
@@ -5031,6 +5118,14 @@ export default function SessionView(props: SessionViewProps) {
             }
         }
         exportDisabledReason={exportDisabledReason()}
+      />
+
+      <ComposerTargetConflictModal
+        conflict={composerTargetConflict()}
+        onResolve={(resolution) => {
+          void resolveComposerTargetConflictModal(resolution);
+        }}
+        onCancel={() => setComposerTargetConflict(null)}
       />
 
       <Show when={props.activePermission}>

@@ -10,10 +10,13 @@ test("lazy runtime ensure lives in workspace runtime controller", () => {
   assert.match(runtimeSource, /export function createWorkspaceRuntimeController\(/);
   assert.match(runtimeSource, /async function ensureEngineForWorkspace/);
   assert.match(runtimeSource, /connectMode: "quiet"/);
+  assert.match(runtimeSource, /reattachOrchestratorWorkspace\(/);
+  assert.match(runtimeSource, /withTimeoutOrThrow\(deps\.loadSessions\(workspace\.path\)/);
+  assert.match(runtimeSource, /loadSessions failed; continuing first prompt/);
   assert.match(runtimeSource, /clearWorkspaceBusyAllExcept\(workspace\.id\)/);
   assert.match(
     runtimeSource,
-    /const message = e instanceof Error \? e\.message : deps\.safeStringify\(e\);[\s\S]*deps\.setError\(message\);/,
+    /const message = messageFromUnknownError\(e, deps\.safeStringify\);[\s\S]*deps\.setError\(message\);/,
     "runtime ensure failures should keep concrete engine startup messages for the UI",
   );
   assert.doesNotMatch(facadeSource, /async function ensureEngineForWorkspace/);

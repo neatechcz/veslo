@@ -589,21 +589,22 @@ const buildWorkspaceOnlyProjectGroup = (
   if (group.workspace.workspaceType !== "local") return null;
 
   const projectRoot = rootForWorkspace(group.workspace);
-  if (!projectRoot || isPrivateProjectRoot(group.workspace, projectRoot, isPrivateWorkspacePath)) {
+  if (!projectRoot) {
     return null;
   }
+  const isPrivateProject = isPrivateProjectRoot(group.workspace, projectRoot, isPrivateWorkspacePath);
 
   return {
-    key: projectRoot,
+    key: isPrivateProject ? PRIVATE_PROJECT_GROUP_KEY : projectRoot,
     workspace: group.workspace,
     sessions: [],
     status: group.status,
     error: group.error ?? null,
     activityAt: 0,
     projectRoot,
-    projectLabel: basenameFromRoot(projectRoot) || workspaceLabel(group.workspace),
-    projectTitle: projectRoot || workspaceLabel(group.workspace),
-    isPrivateProject: false,
+    projectLabel: isPrivateProject ? "" : basenameFromRoot(projectRoot) || workspaceLabel(group.workspace),
+    projectTitle: isPrivateProject ? "" : projectRoot || workspaceLabel(group.workspace),
+    isPrivateProject,
     isWorkspaceOnlyProject: true,
   };
 };

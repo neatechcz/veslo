@@ -10,7 +10,7 @@ export const LEGACY_SESSION_SIDEBAR_DOCKED_PREF_KEY = "veslo.session.sidebar.doc
 
 export const DEFAULT_GLOBAL_SIDEBAR_DOCKED_VISIBILITY: GlobalSidebarDockedVisibility = {
   left: true,
-  right: true,
+  right: false,
 };
 
 const normalizeDockedVisibility = (value: unknown): GlobalSidebarDockedVisibility | null => {

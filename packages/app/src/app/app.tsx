@@ -130,6 +130,7 @@ import {
   type SendTargetWorkspaceScope,
 } from "./context/workspace-send-target";
 import { createPendingSessionDraftController } from "./context/pending-session-draft-controller";
+import { createComposerTargetController } from "./context/composer-target-controller";
 import {
   createSendRuntimeReadiness,
   type SendRuntimePreflightContext,
@@ -254,9 +255,15 @@ import type {
   SessionErrorTurn,
   UpdateHandle,
   OpencodeConnectStatus,
+  AutomationWorkspaceSummary,
   ScheduledJob,
   SuggestedPlugin,
+  VesloAutomation,
+  VesloAutomationCreatePayload,
+  VesloAutomationUpdatePayload,
+  WorkspaceAutomationItem,
 } from "./types";
+import { buildAutomationWorkspaceSummaries } from "./lib/automation-workspace-map";
 import {
   clearStartupPreference,
   deriveArtifacts,
@@ -307,6 +314,7 @@ import {
   safeStringify,
   summarizeStep,
   addOpencodeCacheHint,
+  normalizeTodoItems,
 } from "./utils";
 import {
   applyThemeMode,
@@ -341,8 +349,6 @@ import {
   readOpencodeConfig,
   writeOpencodeConfig,
   engineInfo,
-  schedulerDeleteJob,
-  schedulerListJobs,
   vesloServerInfo,
   vesloServerRestart,
   orchestratorStatus,
@@ -387,6 +393,7 @@ import {
   clearVesloServerSettings,
   type VesloAuditEntry,
   type VesloSoulHeartbeatEntry,
+  type VesloSoulOverviewResponse,
   type VesloSoulStatus,
   type VesloSessionArchiveRecord,
   type VesloSessionLatestRunArtifacts,
@@ -2498,6 +2505,49 @@ export default function App() {
   const setPrompt = (value: string) => {
     setComposerDraftBySessionId((current) => setSessionComposerPrompt(current, { storageKey: currentComposerStorageKey() }, value));
   };
+  const composerTargetController = createComposerTargetController({
+    isTauriRuntime,
+    labels: {
+      chat: () => t("session.target_chat_label", currentLocale()),
+      chooseWorkspace: () => t("session.target_choose_workspace_label", currentLocale()),
+      chooseWorkspaceDescription: () => t("session.target_choose_workspace_description", currentLocale()),
+      targetUnavailable: () => t("session.target_not_available", currentLocale()),
+    },
+    activePendingDraftKey,
+    setActivePendingDraftKey,
+    activePendingDraftMeta,
+    setActivePendingDraftMeta,
+    currentComposerStorageKey,
+    composerDraft,
+    createEmptyComposerDraft,
+    pendingSessionDraftsList,
+    pendingSessionDraftsGet,
+    pendingSessionDraftsPut,
+    pendingSessionDraftsDelete,
+    formatPendingDraftAttachmentRestoreError: pendingSessionDraftController.formatPendingDraftAttachmentRestoreError,
+    isConsumedPendingDraftId: pendingSessionDraftController.isConsumedPendingDraftId,
+    markPendingDraftConsumed,
+    clearConsumedPendingDraftId,
+    workspace: {
+      workspaces: () => workspaceStore.workspaces(),
+      activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
+      activeWorkspaceDisplay: () => workspaceStore.activeWorkspaceDisplay(),
+      activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
+      isPrivateWorkspacePath: (folder) => workspaceStore.isPrivateWorkspacePath(folder),
+      createScratchWorkspace: () => workspaceStore.createScratchWorkspace(),
+      forgetWorkspace: (workspaceId, options) => workspaceStore.forgetWorkspace(workspaceId, options),
+      activateWorkspace: (workspaceId, options) => workspaceStore.activateWorkspace(workspaceId, options),
+      pickWorkspaceFolder: () => workspaceStore.pickWorkspaceFolder(),
+      ensureWorkspaceForFolder: (folder) => workspaceStore.ensureWorkspaceForFolder(folder),
+    },
+    publishRegisteredWorkspaceToSidebar: (workspaceId) => publishRegisteredWorkspaceToSidebar(workspaceId),
+    setComposerDraftBySessionId: (updater) => setComposerDraftBySessionId(updater),
+    setView,
+    setError,
+    reportError,
+    safeStringify,
+    addOpencodeCacheHint,
+  });
   const prompt = createMemo(() => composerDraft().text);
   const [lastPromptSent, setLastPromptSent] = createSignal("");
 
@@ -2601,13 +2651,11 @@ export default function App() {
   const resolveWorkspaceIdForAttachmentStaging = async (
     client: NonNullable<ReturnType<typeof vesloServerClient>>,
   ) => {
-    let workspaceId = (vesloServerWorkspaceId() ?? "").trim();
-    if (workspaceId) return workspaceId;
-
     const response = await client.listWorkspaces();
     const items = Array.isArray(response.items) ? response.items : [];
     const active = workspaceStore.activeWorkspaceDisplay();
     const activeId = response.activeId?.trim() ?? "";
+    const cachedWorkspaceId = (vesloServerWorkspaceId() ?? "").trim();
 
     const findByPath = (targetPath: string) => {
       const normalizedTarget = normalizeDirectoryPath(targetPath.trim());
@@ -2631,13 +2679,15 @@ export default function App() {
       const storedId = active.vesloWorkspaceId?.trim() || inferredWorkspaceId || envVesloWorkspaceId || "";
       resolved =
         (storedId && items.find((entry) => entry.id === storedId)?.id) ||
+        (cachedWorkspaceId && items.find((entry) => entry.id === cachedWorkspaceId)?.id) ||
         findByPath(active.directory?.trim() ?? active.path?.trim() ?? "")?.id ||
         activeId ||
         (items.length === 1 ? items[0]?.id ?? "" : "");
     } else if (active.workspaceType === "local") {
+      const activeRoot = workspaceStore.activeWorkspaceRoot().trim();
       resolved =
-        findByPath(workspaceStore.activeWorkspaceRoot().trim())?.id ||
-        (items.length === 1 ? (activeId || items[0]?.id || "") : "");
+        findByPath(activeRoot)?.id ||
+        (!activeRoot && items.length === 1 ? (activeId || items[0]?.id || "") : "");
     }
 
     if (resolved) {
@@ -2645,6 +2695,70 @@ export default function App() {
     }
 
     return resolved;
+  };
+
+  type AttachmentStagingWorkspaceReady = {
+    client: NonNullable<ReturnType<typeof vesloServerClient>>;
+    workspaceId: string;
+  };
+
+  const recoverWorkspaceReadyForAttachmentStaging = async (
+    fallbackClient: NonNullable<ReturnType<typeof vesloServerClient>>,
+  ): Promise<AttachmentStagingWorkspaceReady> => {
+    const active = workspaceStore.activeWorkspaceDisplay();
+    if (!isTauriRuntime() || startupPreference() === "server" || active.workspaceType !== "local") {
+      throw new Error("Veslo server workspace is not ready for attachments.");
+    }
+
+    recordSendTrace("sendPrompt:attachment-workspace-recover", {
+      activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
+      activeRoot: workspaceStore.activeWorkspaceRoot().trim(),
+    });
+
+    const restarted = await vesloServerRestart();
+    setVesloServerHostInfo(restarted);
+    const running = resolveRunningVesloServerHostInfo(restarted);
+    if (!running?.baseUrl?.trim()) {
+      setVesloServerStatus("disconnected");
+      setVesloServerCapabilities(null);
+      setVesloServerCheckedAt(Date.now());
+      throw new Error("Veslo server workspace is not ready for attachments.");
+    }
+
+    const result = await checkVesloServer(
+      running.baseUrl.trim(),
+      running.clientToken?.trim() || undefined,
+      running.hostToken?.trim() || undefined,
+    );
+    setVesloServerStatus(result.status);
+    setVesloServerCapabilities(result.capabilities);
+    setVesloServerCheckedAt(Date.now());
+    if (result.status !== "connected") {
+      throw new Error("Veslo server workspace is not ready for attachments.");
+    }
+
+    const client = vesloServerClient() ?? fallbackClient;
+    const workspaceId = await resolveWorkspaceIdForAttachmentStaging(client);
+    if (!workspaceId) {
+      throw new Error("Veslo server workspace is not ready for attachments.");
+    }
+    return { client, workspaceId };
+  };
+
+  const ensureWorkspaceReadyForAttachmentStaging = async (
+    client: NonNullable<ReturnType<typeof vesloServerClient>>,
+  ): Promise<AttachmentStagingWorkspaceReady> => {
+    const workspaceId = await resolveWorkspaceIdForAttachmentStaging(client);
+    if (workspaceId) return { client, workspaceId };
+    return await recoverWorkspaceReadyForAttachmentStaging(client);
+  };
+
+  const shouldRecoverAttachmentStagingWorkspace = (error: unknown) => {
+    if (error instanceof VesloServerError) {
+      return error.status === 404;
+    }
+    const message = messageFromUnknownError(error).toLowerCase();
+    return message.includes("workspace") && message.includes("not");
   };
 
   const stageAttachmentsIntoSessionDirectory = async (
@@ -2684,34 +2798,59 @@ export default function App() {
     if (resolution) {
       client = resolution.serverClient;
     }
-    const workspaceId = resolution?.serverWorkspaceId || await resolveWorkspaceIdForAttachmentStaging(client);
-    if (!workspaceId) {
-      throw new Error("Veslo server workspace is not ready for attachments.");
-    }
+    let ready: AttachmentStagingWorkspaceReady = resolution?.serverWorkspaceId
+      ? { client, workspaceId: resolution.serverWorkspaceId }
+      : await ensureWorkspaceReadyForAttachmentStaging(client);
 
     const reservedPaths = new Set<string>();
     const stagedAttachments: StagedSessionAttachment[] = [];
-    const fileSession = await sendTraceStep(
-      "stageAttachmentsIntoSessionDirectory:create-file-session",
-      () => client.createFileSession(workspaceId, {
-        ttlSeconds: 15 * 60,
-        write: true,
-      }),
-      {
-        ...(tracePayload ?? {}),
-        sessionID,
-        workspaceId,
-        attachmentCount: attachmentsToStage.length,
-      },
-    );
+    let fileSession: Awaited<ReturnType<typeof ready.client.createFileSession>>;
+    try {
+      fileSession = await sendTraceStep(
+        "stageAttachmentsIntoSessionDirectory:create-file-session",
+        () => ready.client.createFileSession(ready.workspaceId, {
+          ttlSeconds: 15 * 60,
+          write: true,
+        }),
+        {
+          ...(tracePayload ?? {}),
+          sessionID,
+          workspaceId: ready.workspaceId,
+          attachmentCount: attachmentsToStage.length,
+        },
+      );
+    } catch (error) {
+      if (!shouldRecoverAttachmentStagingWorkspace(error)) {
+        throw error;
+      }
+      ready = await recoverWorkspaceReadyForAttachmentStaging(ready.client);
+      fileSession = await sendTraceStep(
+        "stageAttachmentsIntoSessionDirectory:create-file-session",
+        () => ready.client.createFileSession(ready.workspaceId, {
+          ttlSeconds: 15 * 60,
+          write: true,
+        }),
+        {
+          ...(tracePayload ?? {}),
+          sessionID,
+          workspaceId: ready.workspaceId,
+          attachmentCount: attachmentsToStage.length,
+        },
+      );
+    }
 
     try {
       for (const attachment of attachmentsToStage) {
         const file = await attachmentToFile(attachment);
         const preferredPath = resolveSessionDirectoryRelativePath(sessionID, file.name);
-        const relativePath = await resolveCollisionSafeAttachmentPath(client, fileSession.session.id, preferredPath, reservedPaths);
+        const relativePath = await resolveCollisionSafeAttachmentPath(
+          ready.client,
+          fileSession.session.id,
+          preferredPath,
+          reservedPaths,
+        );
         const contentBase64 = arrayBufferToBase64(await file.arrayBuffer());
-        const writeResult = await client.writeFileBatch(fileSession.session.id, [
+        const writeResult = await ready.client.writeFileBatch(fileSession.session.id, [
           {
             path: relativePath,
             contentBase64,
@@ -2732,11 +2871,11 @@ export default function App() {
       recordSendTrace("stageAttachmentsIntoSessionDirectory:done", {
         ...(tracePayload ?? {}),
         sessionID,
-        workspaceId,
+        workspaceId: ready.workspaceId,
         attachmentCount: stagedAttachments.length,
       });
     } finally {
-      await client.closeFileSession(fileSession.session.id).catch(() => undefined);
+      await ready.client.closeFileSession(fileSession.session.id).catch(() => undefined);
     }
 
     return stagedAttachments;
@@ -4179,7 +4318,7 @@ export default function App() {
     const messages = unwrap(await c.session.messages({ sessionID }));
     let todos: TodoItem[] = [];
     try {
-      todos = unwrap(await c.session.todo({ sessionID }));
+      todos = normalizeTodoItems(unwrap(await c.session.todo({ sessionID })));
     } catch {
       // ignore
     }
@@ -4240,6 +4379,8 @@ export default function App() {
   const mcpRuntimeStatusRefreshInFlightByKey = new Map<string, Promise<void>>();
   const [mcpConnectingName, setMcpConnectingName] = createSignal<string | null>(null);
   const [selectedMcp, setSelectedMcp] = createSignal<string | null>(null);
+  const [automationItems, setAutomationItems] = createSignal<WorkspaceAutomationItem[]>([]);
+  const [automationWorkspaces, setAutomationWorkspaces] = createSignal<AutomationWorkspaceSummary[]>([]);
   const [scheduledJobs, setScheduledJobs] = createSignal<ScheduledJob[]>([]);
   const [scheduledJobsStatus, setScheduledJobsStatus] = createSignal<string | null>(null);
   const [scheduledJobsBusy, setScheduledJobsBusy] = createSignal(false);
@@ -4247,6 +4388,9 @@ export default function App() {
   const [soulStatusByWorkspaceId, setSoulStatusByWorkspaceId] = createSignal<
     Record<string, VesloSoulStatus | null>
   >({});
+  const [soulOverview, setSoulOverview] = createSignal<VesloSoulOverviewResponse | null>(null);
+  const [soulOverviewError, setSoulOverviewError] = createSignal<string | null>(null);
+  const [soulOverviewBusy, setSoulOverviewBusy] = createSignal(false);
   const [activeSoulHeartbeats, setActiveSoulHeartbeats] = createSignal<VesloSoulHeartbeatEntry[]>([]);
   const [soulStatusBusy, setSoulStatusBusy] = createSignal(false);
   const [soulHeartbeatsBusy, setSoulHeartbeatsBusy] = createSignal(false);
@@ -4677,29 +4821,6 @@ export default function App() {
       }
     },
     debug: wsDebug,
-  });
-
-  let lastLocalVesloEnsureKey = "";
-  createEffect(() => {
-    if (!isTauriRuntime()) return;
-    if (startupPreference() === "server") return;
-    if (!routedClient()) return;
-    if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") return;
-
-    const nextKey = [
-      workspaceStore.activeWorkspaceId().trim(),
-      workspaceStore.activeWorkspaceRoot().trim(),
-      baseUrl().trim(),
-    ].join("::");
-    if (!nextKey.replace(/:/g, "")) return;
-    if (nextKey === lastLocalVesloEnsureKey) return;
-    lastLocalVesloEnsureKey = nextKey;
-
-    void ensureLocalVesloServerRunning().catch((error) => {
-      const message = error instanceof Error ? error.message : safeStringify(error);
-      setError(addOpencodeCacheHint(message));
-      reportError(error, "veslo-server.ensure.effect");
-    });
   });
 
   type PendingSkillRegistryReplay = {
@@ -5564,7 +5685,14 @@ export default function App() {
           const response = await client.listWorkspaces();
           if (cancelled) return;
           const items = Array.isArray(response.items) ? response.items : [];
-          const match = items.find((entry) => normalizeDirectoryPath(entry.path) === root);
+          const match = items.find((entry) => {
+            const candidates = [
+              normalizeDirectoryPath(entry.path),
+              normalizeDirectoryPath(entry.directory),
+              normalizeDirectoryPath(entry.opencode?.directory),
+            ].filter(Boolean);
+            return candidates.includes(root);
+          });
           setVesloServerWorkspaceId(match?.id ?? null);
         } catch {
           if (!cancelled) setVesloServerWorkspaceId(null);
@@ -6999,6 +7127,34 @@ export default function App() {
     return ensureLocalVesloServerRunningInFlight;
   };
 
+  let lastLocalVesloEnsureKey = "";
+  createEffect(() => {
+    if (!isTauriRuntime()) return;
+    if (startupPreference() === "server") return;
+    if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") return;
+
+    const nextKey = [
+      workspaceStore.activeWorkspaceId().trim(),
+      workspaceStore.activeWorkspaceRoot().trim(),
+      baseUrl().trim(),
+    ].join("::");
+    if (!nextKey.replace(/:/g, "")) return;
+    if (nextKey === lastLocalVesloEnsureKey) return;
+
+    const scheduledKey = nextKey;
+    void ensureLocalVesloServerRunning()
+      .then((ok) => {
+        if (ok) {
+          lastLocalVesloEnsureKey = scheduledKey;
+        }
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : safeStringify(error);
+        setError(addOpencodeCacheHint(message));
+        reportError(error, "veslo-server.ensure.effect");
+      });
+  });
+
   const restartLocalServer = async () => {
     const activeWorkspace = workspaceStore.activeWorkspaceDisplay();
     const activeLocalPath =
@@ -7313,13 +7469,49 @@ export default function App() {
   } = workspaceStore;
 
   // Scheduler helpers - must be defined after workspaceStore
-  const resolveVesloScheduler = () => {
-    const isRemoteWorkspace = workspaceStore.activeWorkspaceDisplay().workspaceType === "remote";
-    if (!isRemoteWorkspace) return null;
-    const client = vesloServerClient();
-    const workspaceId = vesloServerWorkspaceId();
-    if (vesloServerStatus() !== "connected" || !client || !workspaceId) return null;
-    return { client, workspaceId };
+  const automationItemKey = (workspaceId: string, automationId: string) => `${workspaceId}:${automationId}`;
+
+  const automationWorkspaceName = (workspace: WorkspaceInfo) =>
+    workspace.vesloWorkspaceName?.trim() ||
+    workspace.displayName?.trim() ||
+    workspace.name?.trim() ||
+    workspace.path?.trim() ||
+    workspace.id;
+
+  const activeAutomationWorkspace = createMemo(() => {
+    const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
+    if (!activeWorkspaceId) return null;
+    return automationWorkspaces().find((workspace) =>
+      workspace.appWorkspaceId === activeWorkspaceId &&
+      workspace.status === "ready" &&
+      Boolean(workspace.serverWorkspaceId)
+    ) ?? null;
+  });
+
+  const resolveAutomationWorkspaceMap = async (
+    client = vesloServerClient(),
+  ): Promise<AutomationWorkspaceSummary[]> => {
+    const appWorkspaces = workspaceStore.workspaces();
+
+    if (vesloServerStatus() !== "connected" || !client) {
+      return appWorkspaces.map((workspace) => ({
+        appWorkspaceId: workspace.id,
+        serverWorkspaceId: null,
+        name: automationWorkspaceName(workspace),
+        path: workspace.directory ?? workspace.path ?? null,
+        workspaceType: workspace.workspaceType,
+        status: "unavailable",
+        error: "Veslo server not ready.",
+      }));
+    }
+
+    const response = await client.listWorkspaces();
+    const items = Array.isArray(response.items) ? response.items : [];
+    return buildAutomationWorkspaceSummaries({
+      appWorkspaces,
+      serverWorkspaces: items,
+      connectedServerBaseUrl: client.baseUrl,
+    });
   };
 
   const scheduledJobsSource = createMemo<"local" | "remote">(() => {
@@ -7327,105 +7519,233 @@ export default function App() {
   });
 
   const scheduledJobsSourceReady = createMemo(() => {
-    if (scheduledJobsSource() !== "remote") return true;
     const client = vesloServerClient();
-    const workspaceId = vesloServerWorkspaceId();
-    return vesloServerStatus() === "connected" && Boolean(client && workspaceId);
+    return vesloServerStatus() === "connected" && Boolean(client);
   });
 
-  const schedulerPluginInstalled = createMemo(() => isPluginInstalledByName("opencode-scheduler"));
+  const ensureScheduledJobsSourceReady = async () => {
+    if (scheduledJobsSourceReady()) return true;
+    if (scheduledJobsSource() !== "local" || !isTauriRuntime() || startupPreference() === "server") {
+      return false;
+    }
+    return await ensureLocalVesloServerRunning({ ignoreStartupPreference: true });
+  };
+
+  const ensureScheduledJobsClient = async (): Promise<VesloServerClient | null> => {
+    const currentClient = vesloServerClient();
+    if (vesloServerStatus() === "connected" && currentClient) {
+      return currentClient;
+    }
+
+    if (scheduledJobsSource() !== "local" || !isTauriRuntime() || startupPreference() === "server") {
+      return null;
+    }
+
+    await ensureLocalVesloServerRunning({ ignoreStartupPreference: true });
+
+    const ensuredClient = vesloServerClient();
+    if (vesloServerStatus() === "connected" && ensuredClient) {
+      return ensuredClient;
+    }
+
+    let liveInfo: VesloServerInfo | null = null;
+    try {
+      liveInfo = await vesloServerInfo();
+      setVesloServerHostInfo(liveInfo);
+    } catch {
+      setVesloServerHostInfo(null);
+    }
+
+    const runningInfo = resolveRunningVesloServerHostInfo(liveInfo);
+    const baseUrl = runningInfo?.baseUrl?.trim() ?? "";
+    if (!baseUrl) {
+      return null;
+    }
+
+    const clientToken = runningInfo?.clientToken?.trim() || undefined;
+    const hostToken = runningInfo?.hostToken?.trim() || undefined;
+    const result = await checkVesloServer(baseUrl, clientToken, hostToken);
+    setVesloServerStatus(result.status);
+    setVesloServerCapabilities(result.capabilities);
+    setVesloServerCheckedAt(Date.now());
+
+    if (result.status !== "connected") {
+      return null;
+    }
+
+    return createVesloServerClient({ baseUrl, token: clientToken, hostToken });
+  };
 
   const refreshScheduledJobs = async (options?: { force?: boolean }) => {
     if (scheduledJobsBusy() && !options?.force) return;
 
-    if (scheduledJobsSource() === "remote") {
-      const scheduler = resolveVesloScheduler();
-      if (!scheduler) {
-        setScheduledJobs([]);
-        const status =
-          vesloServerStatus() === "disconnected"
-            ? "Veslo server unavailable. Connect to sync scheduled tasks."
-            : vesloServerStatus() === "limited"
-              ? "Veslo server needs a token to load scheduled tasks."
-              : "Veslo server not ready.";
-        setScheduledJobsStatus(status);
-        return;
-      }
-
-      setScheduledJobsBusy(true);
-      setScheduledJobsStatus(null);
-
-      try {
-        const response = await scheduler.client.listScheduledJobs(scheduler.workspaceId);
-        const jobs = Array.isArray(response.items) ? response.items : [];
-        setScheduledJobs(jobs);
-        setScheduledJobsUpdatedAt(Date.now());
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        setScheduledJobs([]);
-        setScheduledJobsStatus(message || "Failed to load scheduled tasks.");
-      } finally {
-        setScheduledJobsBusy(false);
-      }
-      return;
-    }
-
-    if (!isTauriRuntime()) {
-      setScheduledJobs([]);
-      setScheduledJobsStatus(null);
-      return;
-    }
-
-    if (isWindowsPlatform()) {
-      setScheduledJobs([]);
-      setScheduledJobsStatus(null);
-      return;
-    }
-
-    if (!schedulerPluginInstalled()) {
-      setScheduledJobs([]);
-      setScheduledJobsStatus(null);
-      return;
-    }
-
     setScheduledJobsBusy(true);
     setScheduledJobsStatus(null);
 
+    const client = await ensureScheduledJobsClient().catch((error) => {
+      reportError(error, "scheduled.ensureSourceReady");
+      return null;
+    });
+
+    const serverStatus = vesloServerStatus();
+    if (!client || serverStatus !== "connected") {
+      setScheduledJobs([]);
+      setAutomationItems([]);
+      setAutomationWorkspaces([]);
+      const statusMessage =
+        serverStatus === "disconnected"
+          ? "Veslo server unavailable. Connect to sync automations."
+          : serverStatus === "limited"
+            ? "Veslo server needs a token to load automations."
+            : "Veslo server not ready.";
+      setScheduledJobsStatus(statusMessage);
+      setScheduledJobsBusy(false);
+      return;
+    }
+
     try {
-      const root = workspaceStore.activeWorkspaceRoot().trim();
-      const jobs = await schedulerListJobs(root || undefined);
-      setScheduledJobs(jobs);
+      const workspaceMap = await resolveAutomationWorkspaceMap(client);
+      const nextWorkspaces = [...workspaceMap];
+      const readyWorkspaces = nextWorkspaces.filter((workspace) => workspace.status === "ready" && workspace.serverWorkspaceId);
+      let partialFailure = false;
+
+      const itemGroups = await Promise.all(
+        readyWorkspaces.map(async (workspace) => {
+          const serverWorkspaceId = workspace.serverWorkspaceId!;
+          try {
+            const response = await client.listAutomations(serverWorkspaceId);
+            const items = Array.isArray(response.items) ? response.items : [];
+            const runEntries = await Promise.all(
+              items.map(async (automation) => {
+                try {
+                  const runs = await client.listAutomationRuns(serverWorkspaceId, automation.id);
+                  return [automation.id, Array.isArray(runs.items) ? runs.items : []] as const;
+                } catch {
+                  return [automation.id, []] as const;
+                }
+              }),
+            );
+            const runsByAutomationId = Object.fromEntries(runEntries);
+            return items.map((automation) => ({
+              key: automationItemKey(serverWorkspaceId, automation.id),
+              workspace,
+              automation,
+              runs: runsByAutomationId[automation.id] ?? [],
+            }));
+          } catch (error) {
+            partialFailure = true;
+            const message = error instanceof Error ? error.message : String(error);
+            const index = nextWorkspaces.findIndex((item) => item.appWorkspaceId === workspace.appWorkspaceId);
+            if (index >= 0) {
+              nextWorkspaces[index] = { ...workspace, status: "error", error: message || "Failed to load automations." };
+            }
+            return [] as WorkspaceAutomationItem[];
+          }
+        }),
+      );
+
+      setScheduledJobs([]);
+      setAutomationWorkspaces(nextWorkspaces);
+      setAutomationItems(itemGroups.flat());
       setScheduledJobsUpdatedAt(Date.now());
+      setScheduledJobsStatus(partialFailure ? "Some workspaces could not load automations." : null);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setScheduledJobs([]);
-      setScheduledJobsStatus(message || "Failed to load scheduled tasks.");
+      setAutomationItems([]);
+      setAutomationWorkspaces([]);
+      setScheduledJobsStatus(message || "Failed to load automations.");
     } finally {
       setScheduledJobsBusy(false);
     }
   };
 
-  const deleteScheduledJob = async (name: string) => {
-    if (scheduledJobsSource() === "remote") {
-      const scheduler = resolveVesloScheduler();
-      if (!scheduler) {
-        throw new Error("Veslo server unavailable. Connect to sync scheduled tasks.");
-      }
-      const response = await scheduler.client.deleteScheduledJob(scheduler.workspaceId, name);
-      setScheduledJobs((current) => current.filter((entry) => entry.slug !== response.job.slug));
-      return;
-    }
+  const reloadScheduledJobsSource = async () => {
+    await ensureScheduledJobsSourceReady().catch((error) => {
+      reportError(error, "scheduled.reloadSource");
+      return false;
+    });
+    await refreshScheduledJobs({ force: true });
+  };
 
-    if (!isTauriRuntime()) {
-      throw new Error("Scheduled tasks require the desktop app.");
+  const requireAutomationClient = (workspaceId: string) => {
+    const client = vesloServerClient();
+    if (!client || vesloServerStatus() !== "connected") {
+      throw new Error("Veslo server unavailable. Connect to sync automations.");
     }
-    if (isWindowsPlatform()) {
-      throw new Error("Scheduler is not supported on Windows yet.");
+    if (!workspaceId) {
+      throw new Error("Workspace is required to manage automations.");
     }
-    const root = workspaceStore.activeWorkspaceRoot().trim();
-    const job = await schedulerDeleteJob(name, root || undefined);
-    setScheduledJobs((current) => current.filter((entry) => entry.slug !== job.slug));
-    return;
+    return client;
+  };
+
+  const workspaceSummaryForServerId = (workspaceId: string): AutomationWorkspaceSummary => {
+    return automationWorkspaces().find((workspace) => workspace.serverWorkspaceId === workspaceId) ?? {
+      appWorkspaceId: workspaceId,
+      serverWorkspaceId: workspaceId,
+      name: workspaceId,
+      path: null,
+      workspaceType: "remote",
+      status: "ready",
+      error: null,
+    };
+  };
+
+  const upsertAutomationItem = (workspaceId: string, automation: VesloAutomation) => {
+    const key = automationItemKey(workspaceId, automation.id);
+    setAutomationItems((current) => {
+      const existing = current.find((item) => item.key === key);
+      const nextItem: WorkspaceAutomationItem = {
+        key,
+        workspace: existing?.workspace ?? workspaceSummaryForServerId(workspaceId),
+        automation,
+        runs: existing?.runs ?? [],
+      };
+      return [nextItem, ...current.filter((item) => item.key !== key)];
+    });
+  };
+
+  const createAutomation = async (workspaceId: string, payload: VesloAutomationCreatePayload) => {
+    const client = requireAutomationClient(workspaceId);
+    const response = await client.createAutomation(workspaceId, payload);
+    upsertAutomationItem(workspaceId, response.automation);
+    setScheduledJobsUpdatedAt(Date.now());
+  };
+
+  const updateAutomation = async (workspaceId: string, automationId: string, payload: VesloAutomationUpdatePayload) => {
+    const client = requireAutomationClient(workspaceId);
+    const response = await client.updateAutomation(workspaceId, automationId, payload);
+    upsertAutomationItem(workspaceId, response.automation);
+    setScheduledJobsUpdatedAt(Date.now());
+  };
+
+  const deleteAutomation = async (workspaceId: string, automationId: string) => {
+    const client = requireAutomationClient(workspaceId);
+    const response = await client.deleteAutomation(workspaceId, automationId);
+    upsertAutomationItem(workspaceId, response.automation);
+    setScheduledJobsUpdatedAt(Date.now());
+  };
+
+  const runAutomation = async (workspaceId: string, automationId: string) => {
+    const client = requireAutomationClient(workspaceId);
+    const response = await client.runAutomation(workspaceId, automationId);
+    const key = automationItemKey(workspaceId, automationId);
+    setAutomationItems((current) =>
+      current.map((item) =>
+        item.key === key
+          ? {
+              ...item,
+              runs: [response.run, ...item.runs.filter((run) => run.id !== response.run.id)],
+              automation: {
+                ...item.automation,
+                lastRunId: response.run.id,
+                updatedAt: response.run.finishedAt ?? response.run.startedAt ?? item.automation.updatedAt,
+              },
+            }
+          : item,
+      ),
+    );
+    setScheduledJobsUpdatedAt(Date.now());
   };
 
   const resolveSoulWorkspaceMap = async () => {
@@ -7485,17 +7805,49 @@ export default function App() {
     return map;
   };
 
-  const refreshSoulData = async (options?: { force?: boolean }) => {
-    if (soulStatusBusy() && !options?.force) return;
+  let soulOverviewRefreshSeq = 0;
+  const refreshSoulOverview = async (client: VesloServerClient) => {
+    const requestSeq = ++soulOverviewRefreshSeq;
+    setSoulOverviewBusy(true);
+    const isCurrentRequest = () =>
+      requestSeq === soulOverviewRefreshSeq && vesloServerClient() === client && vesloServerStatus() === "connected";
+    try {
+      const overview = await client.getSoulOverview(skillRegistryMaterializationAuthContext());
+      if (!isCurrentRequest()) {
+        return;
+      }
+      setSoulOverview(overview);
+      setSoulOverviewError(null);
+    } catch (error) {
+      if (!isCurrentRequest()) {
+        return;
+      }
+      const message = error instanceof Error ? error.message : "Failed to load Soul overview.";
+      setSoulOverview(null);
+      setSoulOverviewError(message);
+    } finally {
+      if (isCurrentRequest()) {
+        setSoulOverviewBusy(false);
+      }
+    }
+  };
 
+  const refreshSoulData = async (options?: { force?: boolean }) => {
     const client = vesloServerClient();
     if (!client || vesloServerStatus() !== "connected") {
+      soulOverviewRefreshSeq += 1;
+      setSoulOverview(null);
+      setSoulOverviewError(null);
+      setSoulOverviewBusy(false);
       setSoulStatusByWorkspaceId({});
       setActiveSoulHeartbeats([]);
       setSoulHeartbeatsBusy(false);
       setSoulError(null);
       return;
     }
+
+    void refreshSoulOverview(client);
+    if (soulStatusBusy() && !options?.force) return;
 
     setSoulStatusBusy(true);
     setSoulError(null);
@@ -7550,6 +7902,7 @@ export default function App() {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load soul status.";
+      setSoulOverview(null);
       setSoulStatusByWorkspaceId({});
       setActiveSoulHeartbeats([]);
       setSoulHeartbeatsBusy(false);
@@ -10212,6 +10565,7 @@ export default function App() {
       testVesloServerConnection,
       canReloadWorkspace: canReloadWorkspace(),
       reloadWorkspaceEngine: reloadWorkspaceEngineAndResume,
+      reloadScheduledAutomationsSource: reloadScheduledJobsSource,
       reloadBusy: reloadBusy(),
       reloadError: reloadError(),
       workspaceAutoReloadAvailable: workspaceAutoReloadAvailable(),
@@ -10273,16 +10627,27 @@ export default function App() {
       openRenameWorkspace,
       editWorkspaceConnection: openWorkspaceConnectionSettings,
       forgetWorkspace: workspaceStore.forgetWorkspace,
+      automationItems: automationItems(),
+      automationWorkspaces: automationWorkspaces(),
+      defaultAutomationWorkspaceId: activeAutomationWorkspace()?.serverWorkspaceId ?? null,
       scheduledJobs: scheduledJobs(),
       scheduledJobsSource: scheduledJobsSource(),
       scheduledJobsSourceReady: scheduledJobsSourceReady(),
-      schedulerPluginInstalled: schedulerPluginInstalled(),
       scheduledJobsStatus: scheduledJobsStatus(),
       scheduledJobsBusy: scheduledJobsBusy(),
       scheduledJobsUpdatedAt: scheduledJobsUpdatedAt(),
       refreshScheduledJobs: (options?: { force?: boolean }) =>
         refreshScheduledJobs(options).catch(e => reportError(e, "scheduled.refresh")),
-      deleteScheduledJob,
+      createAutomation,
+      updateAutomation,
+      deleteAutomation,
+      runAutomation,
+      soulOverview: soulOverview(),
+      soulOverviewError: soulOverviewError(),
+      soulOverviewBusy: soulOverviewBusy(),
+      soulClient: vesloServerClient(),
+      soulServerConnected: vesloServerStatus() === "connected",
+      soulAuthContext: skillRegistryMaterializationAuthContext(),
       soulStatusByWorkspaceId: soulStatusByWorkspaceId(),
       activeSoulStatus: activeSoulStatus(),
       activeSoulHeartbeats: activeSoulHeartbeats(),
@@ -10482,6 +10847,9 @@ export default function App() {
     selectedSessionId: activeSessionId(),
     activePendingDraftKey: activePendingDraftKey(),
     activePendingDraftMeta: activePendingDraftMeta(),
+    composerTargetOptions: composerTargetController.composerTargetOptions(),
+    activeComposerTargetId: composerTargetController.activeComposerTargetId(),
+    switchComposerTarget: composerTargetController.switchComposerTarget,
     setView,
     setSessionBrowseScope,
     tab: tab(),

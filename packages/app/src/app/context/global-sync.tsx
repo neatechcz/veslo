@@ -8,7 +8,6 @@ import type {
   GlobalHealthResponse,
   LspStatus,
   Project,
-  ProviderListResponse,
   ProviderAuthResponse,
   Message,
   Part,
@@ -16,7 +15,7 @@ import type {
   VcsInfo,
 } from "@opencode-ai/sdk/v2/client";
 
-import type { McpStatusMap, TodoItem } from "../types";
+import type { McpStatusMap, ProviderListState, TodoItem } from "../types";
 import { unwrap } from "../lib/opencode";
 import { safeStringify } from "../utils";
 import { isGatewayOwnedProvider, mapConfigProvidersToList, mergeConnectedProviderIds } from "../utils/providers";
@@ -44,7 +43,7 @@ type GlobalState = {
   error?: string;
   serverVersion?: string;
   config: Config;
-  provider: ProviderListResponse;
+  provider: ProviderListState;
   providerAuth: ProviderAuthResponse;
   mcp: Record<string, McpStatusMap>;
   lsp: Record<string, LspStatus[]>;
@@ -75,7 +74,7 @@ const createWorkspaceState = (): WorkspaceState => ({
 export function GlobalSyncProvider(props: ParentProps) {
   const globalSDK = useGlobalSDK();
   const server = useServer();
-  const defaultProvider: ProviderListResponse = { all: [], connected: [], default: {} };
+  const defaultProvider: ProviderListState = { all: [], connected: [], default: {} };
   const [globalStore, setGlobalStore] = createStore<GlobalState>({
     ready: false,
     error: undefined,

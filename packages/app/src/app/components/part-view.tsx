@@ -133,10 +133,10 @@ const LARGE_TEXT_COLLAPSE_CHAR_THRESHOLD = 12_000;
 const LARGE_TEXT_PREVIEW_CHARS = 3_200;
 const markdownHtmlCache = new Map<string, string>();
 const expandedLargeTextPartIds = new Set<string>();
-const rendererByTone = new Map<"light" | "dark", ReturnType<typeof createCustomRenderer>>();
+const rendererByTone = new Map<string, ReturnType<typeof createCustomRenderer>>();
 
-function markdownCacheKey(tone: "light" | "dark", text: string) {
-  return `${tone}\u0000${text}`;
+function markdownCacheKey(tone: "light" | "dark", copyCodeLabel: string, text: string) {
+  return `${tone}\u0000${copyCodeLabel}\u0000${text}`;
 }
 
 function readMarkdownCache(key: string) {
@@ -160,11 +160,12 @@ function writeMarkdownCache(key: string, html: string) {
   }
 }
 
-function rendererForTone(tone: "light" | "dark") {
-  const cached = rendererByTone.get(tone);
+function rendererForTone(tone: "light" | "dark", copyCodeLabel: string) {
+  const key = `${tone}\u0000${copyCodeLabel}`;
+  const cached = rendererByTone.get(key);
   if (cached) return cached;
-  const next = createCustomRenderer(tone);
-  rendererByTone.set(tone, next);
+  const next = createCustomRenderer(tone, { copyCodeLabel });
+  rendererByTone.set(key, next);
   return next;
 }
 
@@ -214,6 +215,13 @@ export default function PartView(props: Props) {
     return `${text.slice(0, LARGE_TEXT_PREVIEW_CHARS)}\n\n...`;
   });
   let textContainerEl: HTMLDivElement | undefined;
+  let codeCopyResetTimer: number | undefined;
+  let copiedCodeButton: HTMLButtonElement | null = null;
+  onCleanup(() => {
+    if (codeCopyResetTimer !== undefined) {
+      window.clearTimeout(codeCopyResetTimer);
+    }
+  });
   const fileInfo = () => {
     if (p().type !== "file") return null;
     const part = p() as {
@@ -261,6 +269,8 @@ export default function PartView(props: Props) {
   const panelBgClass = () => (tone() === "dark" ? "bg-gray-2/10" : "bg-gray-2/30");
   const toolOnly = () => true;
   const showToolOutput = () => developerMode();
+  const copyCodeLabel = () => __vesloT("common.copy", __vesloCurrentLocale());
+  const copiedCodeLabel = () => __vesloT("common.copied", __vesloCurrentLocale());
   const markdownSource = createMemo(() => {
     if (!renderMarkdown() || p().type !== "text") return "";
     if (collapsedLongText()) return "";
@@ -274,13 +284,13 @@ export default function PartView(props: Props) {
     if (!text.trim()) return "";
 
     const toneKey = tone();
-    const cacheKey = markdownCacheKey(toneKey, text);
+    const cacheKey = markdownCacheKey(toneKey, copyCodeLabel(), text);
     const cachedHtml = readMarkdownCache(cacheKey);
     if (cachedHtml !== undefined) return cachedHtml;
     
     try {
       const startedAt = perfNow();
-      const renderer = rendererForTone(toneKey);
+      const renderer = rendererForTone(toneKey, copyCodeLabel());
       const result = marked.parse(text, { 
         breaks: true, 
         gfm: true,
@@ -311,6 +321,72 @@ export default function PartView(props: Props) {
       return null;
     }
   });
+
+  const copyPlainText = async (text: string) => {
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    } catch {
+      // navigator.clipboard can fail in Tauri WKWebView; fall back to execCommand.
+    }
+    if (!ok) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch {
+        // ignore
+      }
+    }
+    return ok;
+  };
+
+  const setCodeCopyButtonLabel = (button: HTMLButtonElement, label: string) => {
+    button.title = label;
+    button.setAttribute("aria-label", label);
+  };
+
+  const handleMarkdownCodeCopy = async (event: MouseEvent) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return false;
+    const copyButton = target.closest("[data-markdown-code-copy]");
+    if (!(copyButton instanceof HTMLButtonElement)) return false;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const codeBlock = copyButton.closest("[data-markdown-code-block]");
+    const code = codeBlock?.querySelector("pre code");
+    const text = code?.textContent ?? "";
+    if (!text) return true;
+
+    const copied = await copyPlainText(text);
+    if (!copied) return true;
+
+    if (copiedCodeButton && copiedCodeButton !== copyButton) {
+      setCodeCopyButtonLabel(copiedCodeButton, copyCodeLabel());
+    }
+    copiedCodeButton = copyButton;
+    setCodeCopyButtonLabel(copyButton, copiedCodeLabel());
+    if (codeCopyResetTimer !== undefined) {
+      window.clearTimeout(codeCopyResetTimer);
+    }
+    codeCopyResetTimer = window.setTimeout(() => {
+      if (copiedCodeButton === copyButton) {
+        setCodeCopyButtonLabel(copyButton, copyCodeLabel());
+        copiedCodeButton = null;
+      }
+      codeCopyResetTimer = undefined;
+    }, 2000);
+    return true;
+  };
 
   const openLink = async (href: string, type: LinkType) => {
     if (type === "url") {
@@ -350,6 +426,11 @@ export default function PartView(props: Props) {
     event.preventDefault();
     event.stopPropagation();
     await openLink(link.href, link.type);
+  };
+
+  const handleMarkdownClick = async (event: MouseEvent) => {
+    if (await handleMarkdownCodeCopy(event)) return;
+    await openMarkdownLink(event);
   };
 
   const renderTextWithLinks = () => {
@@ -620,7 +701,7 @@ export default function PartView(props: Props) {
                 [&_td]:border [&_td]:border-dls-border [&_td]:px-2 [&_td]:py-1 [&_td]:text-[12px] [&_td]:leading-4
               `.trim()}
               innerHTML={renderedMarkdown()!}
-              onClick={openMarkdownLink}
+              onClick={(event) => void handleMarkdownClick(event)}
             />
           </Show>
         </Show>

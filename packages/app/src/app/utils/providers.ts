@@ -1,7 +1,5 @@
-import type { Provider as ConfigProvider, ProviderListResponse } from "@opencode-ai/sdk/v2/client";
-
-type ProviderListItem = ProviderListResponse["all"][number];
-type ProviderListModel = ProviderListItem["models"][string];
+import type { Provider as ConfigProvider } from "@opencode-ai/sdk/v2/client";
+import type { ProviderListItem, ProviderListModel } from "../types";
 
 type ProviderConnectionItem = Pick<ProviderListItem, "id" | "env">;
 
@@ -76,42 +74,74 @@ export const extractOpenAiCompatibleModelIds = (payload: unknown) => {
   return Array.from(ids);
 };
 
+const MODEL_MODALITIES = ["text", "audio", "image", "video", "pdf"] as const;
+type ModelModality = (typeof MODEL_MODALITIES)[number];
+
+const enabledModalities = (value: unknown): ModelModality[] => {
+  if (!value || typeof value !== "object") return [];
+  const record = value as Record<string, unknown>;
+  return MODEL_MODALITIES.filter((key) => record[key] === true);
+};
+
+const buildModalities = (caps?: ConfigProvider["models"][string]["capabilities"]) => {
+  if (!caps) return undefined;
+  const input = enabledModalities(caps.input);
+  const output = enabledModalities(caps.output);
+  if (!input.length && !output.length) return undefined;
+  return { input, output };
+};
+
 const normalizeModelStatus = (value: unknown): ProviderListModel["status"] => {
-  return value === "alpha" || value === "beta" || value === "deprecated" ? value : undefined;
+  return value === "alpha" || value === "beta" || value === "deprecated" || value === "active" ? value : undefined;
 };
 
-const normalizeProviderModels = (models: ConfigProvider["models"] | undefined): ProviderListItem["models"] => {
-  const next: ProviderListItem["models"] = {};
-  for (const [modelId, model] of Object.entries(models ?? {})) {
-    const record = model as Record<string, unknown>;
-    const capabilities = (record.capabilities && typeof record.capabilities === "object")
-      ? record.capabilities as Record<string, unknown>
-      : {};
-    const input = (capabilities.input && typeof capabilities.input === "object")
-      ? capabilities.input as Record<string, unknown>
-      : {};
-
-    next[modelId] = {
-      ...model,
-      id: model.id ?? modelId,
-      name: model.name ?? model.id ?? modelId,
-      release_date: model.release_date ?? "",
-      attachment: Boolean(record.attachment ?? capabilities.attachment ?? input.image),
-      reasoning: Boolean(record.reasoning ?? capabilities.reasoning),
-      temperature: Boolean(record.temperature ?? capabilities.temperature),
-      tool_call: Boolean(record.tool_call ?? record.toolcall ?? capabilities.tool_call ?? capabilities.toolcall),
-      status: normalizeModelStatus(record.status),
-    };
-  }
-  return next;
+const mapModel = (modelId: string, model: ConfigProvider["models"][string]): ProviderListModel => {
+  const status = normalizeModelStatus(model.status);
+  return {
+    id: model.id ?? modelId,
+    name: model.name ?? model.id ?? modelId,
+    family: model.family,
+    release_date: model.release_date ?? "",
+    attachment: model.capabilities?.attachment ?? false,
+    reasoning: Boolean(model.capabilities?.reasoning),
+    temperature: model.capabilities?.temperature ?? false,
+    tool_call: model.capabilities?.toolcall ?? false,
+    interleaved: model.capabilities?.interleaved ? true : undefined,
+    cost: model.cost
+      ? {
+          input: model.cost.input,
+          output: model.cost.output,
+          cache_read: model.cost.cache.read,
+          cache_write: model.cost.cache.write,
+          context_over_200k: model.cost.experimentalOver200K
+            ? {
+                input: model.cost.experimentalOver200K.input,
+                output: model.cost.experimentalOver200K.output,
+                cache_read: model.cost.experimentalOver200K.cache.read,
+                cache_write: model.cost.experimentalOver200K.cache.write,
+              }
+            : undefined,
+        }
+      : undefined,
+    limit: model.limit,
+    modalities: buildModalities(model.capabilities),
+    experimental: status === "alpha" ? true : undefined,
+    status,
+    options: model.options ?? {},
+    headers: model.headers ?? undefined,
+    provider: model.api?.npm ? { npm: model.api.npm } : undefined,
+    variants: model.variants,
+  };
 };
 
-export const mapConfigProvidersToList = (providers: ConfigProvider[]): ProviderListResponse["all"] =>
+export const mapConfigProvidersToList = (providers: ConfigProvider[]): ProviderListItem[] =>
   providers.map((provider) => ({
     id: provider.id,
     name: provider.name ?? provider.id,
     env: provider.env ?? [],
-    models: normalizeProviderModels(provider.models),
+    models: Object.fromEntries(
+      Object.entries(provider.models ?? {}).map(([modelId, model]) => [modelId, mapModel(modelId, model)]),
+    ),
   }));
 
 export const resolveEffectiveConnectedProviderIds = (

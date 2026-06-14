@@ -126,6 +126,40 @@ describe("conversation binding store", () => {
     }))?.engineSessionId).toBe("sess-same");
   });
 
+  test("resolves Veslo conversation ids by workspace without requiring a directory", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-bindings-route-"));
+    tempDirs.push(dataDir);
+    const workspaceOne = join(dataDir, "workspace-one");
+    const workspaceTwo = join(dataDir, "workspace-two");
+    const store = createConversationBindingStore({ dataDir, now: () => 1_000 });
+
+    const one = await store.bindOpenCodeSession({
+      workspaceId: "ws-one",
+      directory: workspaceOne,
+      engineSessionId: "sess-one",
+      updatedAt: 20,
+    });
+    await store.bindOpenCodeSession({
+      workspaceId: "ws-two",
+      directory: workspaceTwo,
+      engineSessionId: "sess-two",
+      updatedAt: 40,
+    });
+
+    const resolved = await store.resolveOpenCodeSession({
+      workspaceId: "ws-one",
+      directory: null,
+      sessionOrConversationId: one.conversationId,
+    });
+
+    expect(resolved?.engineSessionId).toBe("sess-one");
+    expect(resolved?.directory).toBe(workspaceOne);
+    expect(await store.resolveOpenCodeSession({
+      workspaceId: "ws-two",
+      sessionOrConversationId: one.conversationId,
+    })).toBeNull();
+  });
+
   test("lists OpenCode sessions for a single workspace directory by recent activity", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-bindings-list-"));
     tempDirs.push(dataDir);

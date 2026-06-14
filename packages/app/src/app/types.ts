@@ -3,7 +3,6 @@ import type {
   Part,
   PermissionRequest as ApiPermissionRequest,
   QuestionRequest,
-  ProviderListResponse,
   Session,
 } from "@opencode-ai/sdk/v2/client";
 import type { createClient } from "./lib/opencode";
@@ -11,7 +10,141 @@ import type { OpencodeConfigFile, ScheduledJob as TauriScheduledJob, WorkspaceIn
 
 export type Client = ReturnType<typeof createClient>;
 
-export type ProviderListItem = ProviderListResponse["all"][number];
+export type ProviderListModel = {
+  id: string;
+  name: string;
+  family?: string;
+  release_date?: string;
+  attachment?: boolean;
+  reasoning?: boolean;
+  temperature?: boolean;
+  tool_call?: boolean;
+  interleaved?: boolean | { field: "reasoning_content" | "reasoning_details" };
+  cost?: {
+    input: number;
+    output: number;
+    cache_read?: number;
+    cache_write?: number;
+    context_over_200k?: {
+      input: number;
+      output: number;
+      cache_read?: number;
+      cache_write?: number;
+    };
+  };
+  limit?: {
+    context: number;
+    output: number;
+  };
+  modalities?: {
+    input: Array<"text" | "audio" | "image" | "video" | "pdf">;
+    output: Array<"text" | "audio" | "image" | "video" | "pdf">;
+  };
+  experimental?: boolean;
+  status?: "alpha" | "beta" | "deprecated" | "active";
+  options?: Record<string, unknown>;
+  headers?: Record<string, string>;
+  provider?: {
+    npm: string;
+  };
+  variants?: unknown;
+};
+
+export type ProviderListItem = {
+  api?: string;
+  name: string;
+  env: string[];
+  id: string;
+  npm?: string;
+  models: Record<string, ProviderListModel>;
+};
+
+export type ProviderListState = {
+  all: ProviderListItem[];
+  connected: string[];
+  default: Record<string, string>;
+};
+
+export type VesloAutomationSchedule =
+  | { kind: "oneShot"; runAt: string; timezone?: string }
+  | { kind: "cron"; expression: string; timezone?: string }
+  | { kind: "interval"; seconds: number }
+  | { kind: "daily"; hour: number; minute: number; timezone?: string }
+  | { kind: "weekly"; weekday: number; hour: number; minute: number; timezone?: string };
+
+export type VesloAutomationStatus = "active" | "paused" | "completed" | "failed" | "cancelled";
+
+export type VesloAutomationRunStatus = "queued" | "running" | "success" | "failed" | "skipped";
+
+export type VesloAutomationTarget = {
+  preferredSessionId?: string;
+  fallbackTitle?: string;
+  agent?: string;
+  model?: string | null;
+  variant?: string | null;
+};
+
+export type VesloAutomation = {
+  id: string;
+  workspaceId: string;
+  name: string;
+  enabled: boolean;
+  status: VesloAutomationStatus;
+  schedule: VesloAutomationSchedule;
+  prompt: string;
+  target?: VesloAutomationTarget;
+  createdAt: string;
+  updatedAt: string;
+  nextRunAt?: string | null;
+  lastRunAt?: string | null;
+  lastRunId?: string | null;
+};
+
+export type VesloAutomationRun = {
+  id: string;
+  automationId: string;
+  scheduledFor: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  status: VesloAutomationRunStatus;
+  sessionId?: string | null;
+  createdSession: boolean;
+  error?: string | null;
+};
+
+export type VesloAutomationCreatePayload = {
+  name: string;
+  schedule: VesloAutomationSchedule;
+  prompt: string;
+  target?: VesloAutomationTarget;
+  enabled?: boolean;
+};
+
+export type VesloAutomationUpdatePayload = Partial<{
+  name: string;
+  schedule: VesloAutomationSchedule;
+  prompt: string;
+  target: VesloAutomationTarget | null;
+  enabled: boolean;
+  status: VesloAutomationStatus;
+}>;
+
+export type AutomationWorkspaceSummary = {
+  appWorkspaceId: string;
+  serverWorkspaceId: string | null;
+  name: string;
+  path?: string | null;
+  workspaceType: "local" | "remote";
+  status: "ready" | "unavailable" | "error";
+  error?: string | null;
+};
+
+export type WorkspaceAutomationItem = {
+  key: string;
+  workspace: AutomationWorkspaceSummary;
+  automation: VesloAutomation;
+  runs: VesloAutomationRun[];
+};
 
 export type PendingSidebarSessionMetadata = {
   id: string;
@@ -147,6 +280,33 @@ export type SlashCommandOption = {
   description?: string;
   source?: "command" | "mcp" | "skill";
 };
+
+export type ComposerTargetKind = "chat" | "workspace" | "choose-workspace";
+
+export type ComposerTargetOption = {
+  id: string;
+  kind: ComposerTargetKind;
+  label: string;
+  description: string;
+  workspaceId?: string;
+  directory?: string | null;
+  draftStatus?: "draft" | null;
+};
+
+export type ComposerTargetConflict = {
+  targetId: string;
+  targetLabel: string;
+  currentPreview: string;
+  destinationPreview: string;
+};
+
+export type ComposerTargetSwitchResolution = "use-current" | "load-existing";
+
+export type ComposerTargetSwitchResult =
+  | { status: "switched" }
+  | { status: "cancelled" }
+  | { status: "blocked"; message: string }
+  | { status: "conflict"; conflict: ComposerTargetConflict };
 
 export type ComposerDraft = {
   mode: PromptMode;

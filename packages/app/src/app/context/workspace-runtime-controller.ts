@@ -5,9 +5,14 @@ import type { EngineInfo, WorkspaceInfo } from "../lib/tauri";
 import type { Client, WorkspaceConnectionState } from "../types";
 import { createSingleFlight } from "../utils";
 import type { createLocalRuntimeLifecycle } from "../utils/local-runtime-lifecycle";
+import { withTimeoutOrThrow } from "../utils/promise-timeout";
 import type { ConnectToServer } from "./workspace-types";
 
 const DEFAULT_CONNECT_HEALTH_TIMEOUT_MS = 12_000;
+const CONNECT_LOAD_SESSIONS_TIMEOUT_MS = 20_000;
+
+const messageFromUnknownError = (error: unknown, safeStringify: (value: unknown) => string) =>
+  error instanceof Error ? error.message : safeStringify(error);
 
 export type WorkspaceRuntimeControllerDeps = {
   activeWorkspaceId: Accessor<string>;
@@ -121,25 +126,57 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
         } catch (restartError) {
           deps.wsLog("[workspace:ensureEngine] restartWorkspaceRuntime failed, trying startHost...", {
             id,
-            error: restartError instanceof Error ? restartError.message : String(restartError),
+            error: messageFromUnknownError(restartError, deps.safeStringify),
           });
-          ok = await deps.localRuntimeLifecycle.startHost({
-            workspacePath: workspace.path,
-            workspaceId: workspace.id,
-            reason: "browse-cold-start",
-            navigate: false,
-          });
+          try {
+            ok = await deps.localRuntimeLifecycle.startHost({
+              workspacePath: workspace.path,
+              workspaceId: workspace.id,
+              reason: "browse-cold-start",
+              connectMode: "quiet",
+              navigate: false,
+            });
+          } catch (startHostError) {
+            if (
+              deps.resolveEngineRuntime() !== "veslo-orchestrator" ||
+              !messageFromUnknownError(startHostError, deps.safeStringify).includes("Request timed out")
+            ) {
+              throw startHostError;
+            }
+            deps.wsLog("[workspace:ensureEngine] startHost timed out, trying orchestrator reattach...", {
+              id,
+              error: messageFromUnknownError(startHostError, deps.safeStringify),
+            });
+            ok = await deps.localRuntimeLifecycle.reattachOrchestratorWorkspace({
+              workspacePath: workspace.path,
+              workspaceId: workspace.id,
+              workspaceName: workspace.displayName?.trim() || workspace.name?.trim() || null,
+              reason: "browse-cold-start-reattach",
+              connectMode: "quiet",
+              navigate: false,
+            });
+          }
         }
         if (!ok) return false;
 
-        await deps.loadSessions(workspace.path);
+        try {
+          await withTimeoutOrThrow(deps.loadSessions(workspace.path), {
+            timeoutMs: CONNECT_LOAD_SESSIONS_TIMEOUT_MS,
+            label: "loadSessions",
+          });
+        } catch (loadSessionsError) {
+          deps.wsLog("[workspace:ensureEngine] loadSessions failed; continuing first prompt", {
+            id,
+            error: messageFromUnknownError(loadSessionsError, deps.safeStringify),
+          });
+        }
         deps.setEngineReady?.(true);
         deps.updateWorkspaceConnectionState(id, { status: "connected", message: null });
         deps.onEngineStable?.();
         deps.wsLog("[workspace:ensureEngine] engine started successfully", { id });
         return true;
       } catch (e) {
-        const message = e instanceof Error ? e.message : deps.safeStringify(e);
+        const message = messageFromUnknownError(e, deps.safeStringify);
         deps.wsLog("[workspace:ensureEngine] engine start failed", { id, error: message });
         deps.setError(message);
         return false;

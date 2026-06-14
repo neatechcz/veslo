@@ -59,7 +59,12 @@ export interface LocalRuntimeLifecycleDeps {
     auth?: OpencodeAuth,
     connectOptions?: { quiet?: boolean; navigate?: boolean },
   ) => Promise<boolean>;
-  connectQuiet: (baseUrl: string, directory: string, auth?: OpencodeAuth) => Promise<boolean>;
+  connectQuiet: (
+    baseUrl: string,
+    directory: string,
+    auth?: OpencodeAuth,
+    context?: { reason?: string },
+  ) => Promise<boolean>;
 }
 
 export function resolveEngineAuth(
@@ -147,6 +152,12 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
 
     if (!baseUrl) return true;
 
+    if ((options.connectMode ?? "server") === "quiet") {
+      return await deps.connectQuiet(baseUrl, options.workspacePath, auth ?? undefined, {
+        reason: options.reason,
+      });
+    }
+
     return await deps.connectToServer(
       baseUrl,
       options.workspacePath,
@@ -157,9 +168,7 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
         reason: options.reason,
       },
       auth,
-      (options.connectMode ?? "server") === "quiet"
-        ? { quiet: true, navigate: false }
-        : buildConnectOptions(options),
+      buildConnectOptions(options),
     );
   };
 
@@ -177,7 +186,10 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
   };
 
   async function startHost(
-    options: Pick<LocalRuntimeReconnectOptions, "workspacePath" | "workspaceId" | "reason" | "navigate">,
+    options: Pick<
+      LocalRuntimeReconnectOptions,
+      "workspacePath" | "workspaceId" | "reason" | "connectMode" | "navigate"
+    >,
   ) {
     const runtime = deps.resolveEngineRuntime();
     const info = await deps.startEngine(options.workspacePath, buildStartOptions(runtime));
@@ -211,7 +223,10 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
   }
 
   async function reattachOrchestratorWorkspace(
-    options: Pick<LocalRuntimeReconnectOptions, "workspacePath" | "workspaceId" | "workspaceName" | "reason" | "navigate">,
+    options: Pick<
+      LocalRuntimeReconnectOptions,
+      "workspacePath" | "workspaceId" | "workspaceName" | "reason" | "connectMode" | "navigate"
+    >,
   ) {
     await activateOrchestratorWorkspace(options);
     const nextInfo = await withTimeoutOrThrow(

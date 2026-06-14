@@ -17,6 +17,10 @@ import type {
   SkillSaveResult,
   StartupPreference,
   LoadedSessionPrefetchInterestChangeHandler,
+  AutomationWorkspaceSummary,
+  VesloAutomationCreatePayload,
+  VesloAutomationUpdatePayload,
+  WorkspaceAutomationItem,
   WorkspaceConnectionState,
   WorkspaceSessionGroup,
   View,
@@ -38,7 +42,9 @@ import {
 import { reportError } from "../lib/error-reporter";
 import type {
   VesloAuditEntry,
+  VesloSoulAuthContext,
   VesloSoulHeartbeatEntry,
+  VesloSoulOverviewResponse,
   VesloSoulStatus,
   VesloServerClient,
   VesloServerCapabilities,
@@ -149,6 +155,7 @@ export type DashboardViewProps = {
   testVesloServerConnection: (next: VesloServerSettings) => Promise<boolean>;
   canReloadWorkspace: boolean;
   reloadWorkspaceEngine: () => Promise<void>;
+  reloadScheduledAutomationsSource: () => Promise<void>;
   reloadBusy: boolean;
   reloadError: string | null;
   workspaceAutoReloadAvailable: boolean;
@@ -188,15 +195,26 @@ export type DashboardViewProps = {
   openRenameWorkspace: (workspaceId: string) => void;
   editWorkspaceConnection: (workspaceId: string) => void;
   forgetWorkspace: (workspaceId: string) => void;
+  automationItems: WorkspaceAutomationItem[];
+  automationWorkspaces: AutomationWorkspaceSummary[];
+  defaultAutomationWorkspaceId: string | null;
   scheduledJobs: ScheduledJob[];
   scheduledJobsSource: "local" | "remote";
   scheduledJobsSourceReady: boolean;
-  schedulerPluginInstalled: boolean;
   scheduledJobsStatus: string | null;
   scheduledJobsBusy: boolean;
   scheduledJobsUpdatedAt: number | null;
   refreshScheduledJobs: (options?: { force?: boolean }) => void;
-  deleteScheduledJob: (name: string) => Promise<void> | void;
+  createAutomation: (workspaceId: string, payload: VesloAutomationCreatePayload) => Promise<void> | void;
+  updateAutomation: (workspaceId: string, automationId: string, payload: VesloAutomationUpdatePayload) => Promise<void> | void;
+  deleteAutomation: (workspaceId: string, automationId: string) => Promise<void> | void;
+  runAutomation: (workspaceId: string, automationId: string) => Promise<void> | void;
+  soulOverview: VesloSoulOverviewResponse | null;
+  soulOverviewError: string | null;
+  soulOverviewBusy: boolean;
+  soulClient: VesloServerClient | null;
+  soulServerConnected: boolean;
+  soulAuthContext: VesloSoulAuthContext;
   soulStatusByWorkspaceId: Record<string, VesloSoulStatus | null>;
   activeSoulStatus: VesloSoulStatus | null;
   activeSoulHeartbeats: VesloSoulHeartbeatEntry[];
@@ -1603,39 +1621,36 @@ export default function DashboardView(props: DashboardViewProps) {
           <Switch>
             <Match when={props.tab === "scheduled"}>
               <ScheduledTasksView
-                jobs={props.scheduledJobs}
+                automationItems={props.automationItems}
+                automationWorkspaces={props.automationWorkspaces}
+                defaultAutomationWorkspaceId={props.defaultAutomationWorkspaceId}
                 source={props.scheduledJobsSource}
                 sourceReady={props.scheduledJobsSourceReady}
                 status={props.scheduledJobsStatus}
                 busy={props.scheduledJobsBusy}
                 lastUpdatedAt={props.scheduledJobsUpdatedAt}
                 refreshJobs={props.refreshScheduledJobs}
-                deleteJob={props.deleteScheduledJob}
-                isWindows={props.isWindows}
-                activeWorkspaceRoot={props.activeWorkspaceRoot}
-                createSessionAndOpen={props.createSessionAndOpen}
-                setPrompt={props.setPrompt}
+                createAutomation={props.createAutomation}
+                updateAutomation={props.updateAutomation}
+                deleteAutomation={props.deleteAutomation}
+                runAutomation={props.runAutomation}
                 newTaskDisabled={props.newTaskDisabled}
-                schedulerInstalled={props.schedulerPluginInstalled}
-                canEditPlugins={props.canEditPlugins}
-                addPlugin={props.addPlugin}
-                reloadWorkspaceEngine={props.reloadWorkspaceEngine}
+                reloadWorkspaceEngine={props.reloadScheduledAutomationsSource}
                 reloadBusy={props.reloadBusy}
                 canReloadWorkspace={props.canReloadWorkspace}
               />
             </Match>
             <Match when={props.tab === "soul"}>
               <SoulView
-                workspaceName={props.activeWorkspaceDisplay.name}
-                workspaceRoot={props.activeWorkspaceRoot}
-                status={props.activeSoulStatus}
-                heartbeats={props.activeSoulHeartbeats}
-                loading={props.soulStatusBusy}
-                loadingHeartbeats={props.soulHeartbeatsBusy}
-                error={props.soulError}
-                newTaskDisabled={props.newTaskDisabled}
+                soulOverview={props.soulOverview}
+                soulOverviewError={props.soulOverviewError}
+                soulOverviewBusy={props.soulOverviewBusy}
+                client={props.soulClient}
+                serverConnected={props.soulServerConnected}
+                authContext={props.soulAuthContext}
                 refresh={props.refreshSoulData}
-                runSoulPrompt={props.runSoulPrompt}
+                workspaces={props.workspaces}
+                isPrivateWorkspacePath={props.isPrivateWorkspacePath}
               />
             </Match>
             <Match when={props.tab === "skills"}>
