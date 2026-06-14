@@ -52,6 +52,10 @@ strip = true
 tauri-plugin-process = "2.3.1"
 tauri-plugin-updater = "2.9.0"
 
+[target.'cfg(windows)'.dependencies]
+os_pipe = "1"
+shared_child = "1"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSPasteboard"] }

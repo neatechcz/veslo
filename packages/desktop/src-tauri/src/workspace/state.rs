@@ -567,21 +567,24 @@ mod tests {
         let loaded = load_workspace_state_from_paths(&current_data_dir, &current_state_path)
             .expect("load merged state");
 
-        assert_eq!(loaded.active_id, "ws-local-a");
+        let workspace_a_id = stable_workspace_id("/tmp/workspace-a");
+        let workspace_b_id = stable_workspace_id("/tmp/company-searcher");
+
+        assert_eq!(loaded.active_id, workspace_a_id);
         assert_eq!(loaded.workspaces.len(), 2);
+        assert!(loaded.workspaces.iter().any(
+            |workspace| workspace.id == workspace_a_id && workspace.path == "/tmp/workspace-a"
+        ));
         assert!(loaded
             .workspaces
             .iter()
-            .any(|workspace| workspace.id == "ws-local-a" && workspace.path == "/tmp/workspace-a"));
-        assert!(loaded
-            .workspaces
-            .iter()
-            .any(|workspace| workspace.id == "ws-local-b"
+            .any(|workspace| workspace.id == workspace_b_id
                 && workspace.path == "/tmp/company-searcher"));
 
         let persisted = fs::read_to_string(&current_state_path).expect("read persisted state");
         let parsed: WorkspaceState =
             serde_json::from_str(&persisted).expect("parse persisted state");
+        assert_eq!(parsed.active_id, workspace_a_id);
         assert_eq!(parsed.workspaces.len(), 2);
 
         fs::remove_dir_all(root).expect("cleanup temp dir");
@@ -616,7 +619,10 @@ mod tests {
         let loaded = load_workspace_state_from_paths(&current_data_dir, &current_state_path)
             .expect("load merged state");
         assert_eq!(loaded.workspaces.len(), 1);
-        assert_eq!(loaded.workspaces[0].id, "ws-local-a");
+        assert_eq!(
+            loaded.workspaces[0].id,
+            stable_workspace_id("/tmp/workspace-a")
+        );
 
         fs::remove_dir_all(root).expect("cleanup temp dir");
     }

@@ -527,6 +527,7 @@ mod tests {
         update_session_directory_in_db,
     };
     use rusqlite::Connection;
+    use std::path::PathBuf;
 
     #[test]
     fn sanitize_workspace_id_collapses_separators() {
@@ -538,11 +539,11 @@ mod tests {
     fn normalize_mirror_path_strips_workspace_prefixes() {
         let path = normalize_obsidian_mirror_relative_path("/workspace/notes/plan.md")
             .expect("path should normalize");
-        assert_eq!(path.to_string_lossy(), "notes/plan.md");
+        assert_eq!(path, PathBuf::from("notes").join("plan.md"));
 
         let path = normalize_obsidian_mirror_relative_path("workspace/notes/plan.md")
             .expect("path should normalize");
-        assert_eq!(path.to_string_lossy(), "notes/plan.md");
+        assert_eq!(path, PathBuf::from("notes").join("plan.md"));
     }
 
     #[test]

@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
+#[cfg(target_os = "macos")]
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
@@ -40,6 +41,7 @@ struct DenAuthSnapshotFile {
     source: Option<String>,
 }
 
+#[cfg(target_os = "macos")]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PersistedDenAuthState {
@@ -57,12 +59,14 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
     })
 }
 
+#[cfg(target_os = "macos")]
 fn snapshot_den_api_base(snapshot: &DenAuthSnapshot) -> Option<String> {
     let raw = snapshot.auth_json.as_deref()?;
     let parsed = serde_json::from_str::<PersistedDenAuthState>(raw).ok()?;
     normalize_optional_text(parsed.den_api_base)
 }
 
+#[cfg(target_os = "macos")]
 fn den_api_base_uses_loopback(base: &str) -> bool {
     let lower = base.trim().to_ascii_lowercase();
     lower.starts_with("http://127.0.0.1")
@@ -75,6 +79,7 @@ fn den_api_base_uses_loopback(base: &str) -> bool {
         || lower.starts_with("https://0.0.0.0")
 }
 
+#[cfg(target_os = "macos")]
 fn snapshot_uses_loopback(snapshot: &DenAuthSnapshot) -> bool {
     snapshot_den_api_base(snapshot)
         .as_deref()
@@ -186,6 +191,7 @@ fn decode_webkit_storage_hex_value(raw_hex: &str) -> Option<String> {
         .map(|value| value.trim_end_matches('\u{0}').to_string())
 }
 
+#[cfg(target_os = "macos")]
 fn sqlite3_command() -> Command {
     #[cfg(target_os = "macos")]
     {
@@ -412,13 +418,19 @@ pub fn den_auth_snapshot_write(
 mod tests {
     use crate::env_guard::EnvVarGuard;
 
+    #[cfg(target_os = "macos")]
+    use super::resolve_den_auth_snapshot_path;
+    #[cfg(target_os = "macos")]
+    use super::sqlite3_command;
     use super::{
         decode_webkit_storage_hex_value, den_auth_snapshot_read, den_auth_snapshot_write,
-        parse_keep_signed_in, resolve_den_auth_snapshot_path, sqlite3_command,
+        parse_keep_signed_in,
     };
     use std::fs;
     use std::path::PathBuf;
+    #[cfg(target_os = "macos")]
     use std::thread::sleep;
+    #[cfg(target_os = "macos")]
     use std::time::Duration;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -430,6 +442,7 @@ mod tests {
         std::env::temp_dir().join(format!("{prefix}-{nonce}"))
     }
 
+    #[cfg(target_os = "macos")]
     fn hex_utf16le(input: &str) -> String {
         let mut out = String::new();
         for code_unit in input.encode_utf16() {
@@ -439,6 +452,7 @@ mod tests {
         out
     }
 
+    #[cfg(target_os = "macos")]
     fn create_legacy_webkit_db(temp_home: &PathBuf, bucket: &str, auth_json: &str) -> PathBuf {
         let legacy_db = temp_home
             .join("Library")
@@ -498,6 +512,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn den_auth_snapshot_read_migrates_from_legacy_webkit_storage() {
         let temp_home = unique_temp_home("veslo-den-auth-migration");
         fs::create_dir_all(&temp_home).expect("temp home");
@@ -530,6 +545,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn den_auth_snapshot_read_migrates_when_path_excludes_sqlite3() {
         let temp_home = unique_temp_home("veslo-den-auth-path-isolation");
         let temp_path = unique_temp_home("veslo-den-auth-empty-path");
@@ -553,6 +569,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn den_auth_snapshot_read_prefers_app_bundle_snapshot_over_generic_webkit_bucket() {
         let temp_home = unique_temp_home("veslo-den-auth-priority");
         fs::create_dir_all(&temp_home).expect("temp home");
@@ -598,6 +615,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn den_auth_snapshot_read_repairs_loopback_snapshot_file_from_legacy_storage() {
         let temp_home = unique_temp_home("veslo-den-auth-repair");
         fs::create_dir_all(&temp_home).expect("temp home");

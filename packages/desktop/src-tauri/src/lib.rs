@@ -11,6 +11,7 @@ mod orchestrator;
 mod paths;
 mod platform;
 mod process_supervisor;
+mod supervised_process;
 mod types;
 mod updater;
 mod utils;
