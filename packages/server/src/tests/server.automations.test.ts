@@ -299,6 +299,44 @@ test("DELETE /workspaces/:id clears scheduled automation timers before they can 
   expect(fixture.openCodeCalls).toEqual([]);
 });
 
+test("POST /workspaces/local registers the new workspace with the automation runner", async () => {
+  const fixture = await startFixture();
+  const addedWorkspaceRoot = await mkdtemp(join(tmpdir(), "veslo-automations-added-route-"));
+  tempDirs.push(addedWorkspaceRoot);
+
+  const addResponse = await fixture.hostFetch("/workspaces/local", {
+    method: "POST",
+    body: {
+      path: addedWorkspaceRoot,
+      name: "Added Workspace",
+      baseUrl: fixture.openCodeBaseUrl,
+    },
+  });
+  expect(addResponse.status).toBe(201);
+  const addPayload = await addResponse.json() as { activeId: string };
+
+  const createResponse = await fixture.clientFetch(`/workspace/${addPayload.activeId}/automations`, {
+    method: "POST",
+    body: {
+      name: "Added workspace automation",
+      prompt: "Run from added workspace",
+      schedule: { kind: "oneShot", runAt: futureRunAt() },
+    },
+  });
+  expect(createResponse.status).toBe(201);
+  const createPayload = await createResponse.json() as { automation: VesloAutomation };
+
+  const runResponse = await fixture.clientFetch(`/workspace/${addPayload.activeId}/automations/${createPayload.automation.id}/run`, {
+    method: "POST",
+  });
+  expect(runResponse.status).toBe(200);
+  expect((await runResponse.json() as { run: AutomationRun }).run).toMatchObject({
+    automationId: createPayload.automation.id,
+    status: "success",
+    sessionId: "ses_new",
+  });
+});
+
 test("failed workspace deletion preserves automation runner state for later runs", async () => {
   const configDir = await mkdtemp(join(tmpdir(), "veslo-automations-bad-config-"));
   tempDirs.push(configDir);
@@ -622,6 +660,7 @@ async function startFixture(options: FixtureOptions = {}) {
     server,
     workspaceRoot,
     openCodeCalls,
+    openCodeBaseUrl: `http://127.0.0.1:${upstream.port}`,
     clientFetch,
     hostFetch,
     createViewerToken,

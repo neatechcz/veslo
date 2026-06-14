@@ -60,7 +60,11 @@ function document(input: {
   };
 }
 
-async function startFixture(input: { denApiBase?: string; readOnly?: boolean } = {}) {
+async function startFixture(input: {
+  denApiBase?: string;
+  readOnly?: boolean;
+  approval?: { mode: "auto" | "manual"; timeoutMs: number };
+} = {}) {
   const dataDir = await tempDir("veslo-soul-routes-data-");
   const workspaceRoot = await tempDir("veslo-soul-routes-workspace-");
   const inactiveWorkspaceRoot = await tempDir("veslo-soul-routes-inactive-workspace-");
@@ -71,7 +75,7 @@ async function startFixture(input: { denApiBase?: string; readOnly?: boolean } =
     port: 0,
     token: "client-token",
     hostToken: "host-token",
-    approval: { mode: "auto", timeoutMs: 1_000 },
+    approval: input.approval ?? { mode: "auto", timeoutMs: 1_000 },
     corsOrigins: ["*"],
     configPath: join(dataDir, "server.json"),
     workspaces: [
@@ -541,6 +545,37 @@ test("workspace soul routes work for configured workspaces that are not active",
   expect(await read.json()).toEqual(updatePayload);
 });
 
+test("workspace Soul writes require approval before local cache and materialization writes", async () => {
+  const server = await startFixture({ approval: { mode: "manual", timeoutMs: 1_000 } });
+  const workspaceRoot = tempDirs[tempDirs.length - 2]!;
+
+  const patchPromise = fetch(`http://127.0.0.1:${server.port}/workspace/ws_active/soul`, {
+    method: "PATCH",
+    headers: { ...denHeaders, "content-type": "application/json" },
+    body: JSON.stringify({ content: "Denied workspace memory", changeSummary: "Denied", baseVersionId: null }),
+  });
+
+  const approval = await waitForApproval(server);
+  expect(approval).toMatchObject({
+    workspaceId: "ws_active",
+    action: "soul.workspace.update",
+  });
+  expect(approval.paths).toContain(join(workspaceRoot, ".opencode", "soul-workspace.md"));
+
+  const deny = await fetch(`http://127.0.0.1:${server.port}/approvals/${approval.id}`, {
+    method: "POST",
+    headers: { "x-veslo-host-token": "host-token", "content-type": "application/json" },
+    body: JSON.stringify({ reply: "deny" }),
+  });
+  expect(deny.status).toBe(200);
+
+  const response = await patchPromise;
+  expect(response.status).toBe(403);
+  expect((await response.json() as { code: string }).code).toBe("write_denied");
+  await expect(readFile(join(workspaceRoot, ".opencode", "soul-workspace.md"), "utf8")).rejects.toThrow();
+  await expect(readFile(join(workspaceRoot, ".opencode", "veslo", "soul-manifest.json"), "utf8")).rejects.toThrow();
+});
+
 test("concurrent Soul materializations preserve newest scope content", async () => {
   const updatedUser = document({
     scope: "user",
@@ -627,3 +662,23 @@ test("POST /workspace/:id/soul/heartbeat-toggle toggles workspace Heartbeat", as
   expect(on.status).toBe(200);
   expect((await on.json() as { document: SoulDocument }).document.heartbeatEnabled).toBe(true);
 });
+
+async function waitForApproval(server: { port: number }): Promise<{
+  id: string;
+  workspaceId: string;
+  action: string;
+  paths: string[];
+}> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const response = await fetch(`http://127.0.0.1:${server.port}/approvals`, {
+      headers: { "x-veslo-host-token": "host-token" },
+    });
+    expect(response.status).toBe(200);
+    const payload = await response.json() as {
+      items: Array<{ id: string; workspaceId: string; action: string; paths: string[] }>;
+    };
+    if (payload.items[0]) return payload.items[0];
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error("Approval request did not appear");
+}

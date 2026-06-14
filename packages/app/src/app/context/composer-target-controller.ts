@@ -70,6 +70,7 @@ export type ComposerTargetControllerDeps = {
   setActivePendingDraftKey: (value: string | null) => void;
   activePendingDraftMeta: Accessor<PendingSessionDraftSummary | null>;
   setActivePendingDraftMeta: (value: PendingSessionDraftSummary | null) => void;
+  pendingDraftsReady?: Accessor<boolean>;
   currentComposerStorageKey: Accessor<string>;
   composerDraft: Accessor<ComposerDraft>;
   createEmptyComposerDraft: () => ComposerDraft;
@@ -112,10 +113,14 @@ const composerTargetWorkspaceLabel = (workspace: ComposerTargetWorkspace) =>
 
 export function createComposerTargetController(deps: ComposerTargetControllerDeps) {
   const [pendingDraftSummaries, setPendingDraftSummaries] = createSignal<PendingSessionDraftSummary[]>([]);
+  let pendingDraftRefreshSeq = 0;
 
-  const refreshPendingDraftSummaries = async () => {
-    if (!deps.isTauriRuntime()) {
-      setPendingDraftSummaries([]);
+  const refreshPendingDraftSummaries = async (options: { force?: boolean } = {}) => {
+    const seq = ++pendingDraftRefreshSeq;
+    if (!deps.isTauriRuntime() || (!options.force && deps.pendingDraftsReady && !deps.pendingDraftsReady())) {
+      if (seq === pendingDraftRefreshSeq) {
+        setPendingDraftSummaries([]);
+      }
       return [];
     }
 
@@ -123,8 +128,11 @@ export function createComposerTargetController(deps: ComposerTargetControllerDep
       const summaries = (await deps.pendingSessionDraftsList()).filter(
         (draft) => !deps.isConsumedPendingDraftId(draft.id),
       );
-      setPendingDraftSummaries(summaries);
-      return summaries;
+      if (seq === pendingDraftRefreshSeq) {
+        setPendingDraftSummaries(summaries);
+        return summaries;
+      }
+      return pendingDraftSummaries();
     } catch (error) {
       deps.reportError(error, "pendingDrafts.targets.list");
       return pendingDraftSummaries();
@@ -133,6 +141,7 @@ export function createComposerTargetController(deps: ComposerTargetControllerDep
 
   createEffect(() => {
     deps.activePendingDraftKey();
+    if (deps.pendingDraftsReady && !deps.pendingDraftsReady()) return;
     void refreshPendingDraftSummaries();
   });
 
@@ -142,8 +151,11 @@ export function createComposerTargetController(deps: ComposerTargetControllerDep
     return composerTargetOptions().find((target) => target.id === id) ?? null;
   };
 
-  const findPendingDraftSummaryForTarget = (target: ComposerTargetOption): PendingSessionDraftSummary | null => {
-    for (const draft of pendingDraftSummaries()) {
+  const findPendingDraftSummaryForTarget = (
+    target: ComposerTargetOption,
+    summaries = pendingDraftSummaries(),
+  ): PendingSessionDraftSummary | null => {
+    for (const draft of summaries) {
       try {
         const draftKey = resolvePendingDraftKey({
           kind: draft.kind,
@@ -183,11 +195,12 @@ export function createComposerTargetController(deps: ComposerTargetControllerDep
   const putPendingDraftForTarget = async (
     target: ComposerTargetOption,
     draft: ComposerDraft,
+    summaries = pendingDraftSummaries(),
   ): Promise<PendingSessionDraftSummary | null> => {
     if (!deps.isTauriRuntime()) return null;
 
     const now = Date.now();
-    const existingSummary = findPendingDraftSummaryForTarget(target);
+    const existingSummary = findPendingDraftSummaryForTarget(target, summaries);
 
     if (target.kind === "workspace") {
       const workspaceId = target.workspaceId?.trim() ?? "";
@@ -420,8 +433,9 @@ export function createComposerTargetController(deps: ComposerTargetControllerDep
     if (target.id === deps.activePendingDraftKey()) return { status: "switched" };
     if (!deps.isTauriRuntime()) return { status: "blocked", message: deps.labels.targetUnavailable() };
 
+    const summaries = await refreshPendingDraftSummaries({ force: true });
     const currentDraft = deps.composerDraft();
-    const destinationSummary = findPendingDraftSummaryForTarget(target);
+    const destinationSummary = findPendingDraftSummaryForTarget(target, summaries);
     const destinationDraft = destinationSummary ? await loadPendingDraftComposer(destinationSummary) : null;
     if (destinationSummary && !destinationDraft) {
       return { status: "blocked", message: deps.labels.targetUnavailable() };
@@ -448,7 +462,7 @@ export function createComposerTargetController(deps: ComposerTargetControllerDep
       const previousPendingDraftMeta = deps.activePendingDraftMeta();
       const activated = await activateTargetWorkspace(target, destinationSummary);
       if (!activated) return { status: "blocked", message: deps.labels.targetUnavailable() };
-      const summary = await putPendingDraftForTarget(target, currentDraft);
+      const summary = await putPendingDraftForTarget(target, currentDraft, summaries);
       if (!summary) return { status: "blocked", message: deps.labels.targetUnavailable() };
       deps.setComposerDraftBySessionId((current) =>
         setSessionComposerDraft(current, { storageKey: target.id }, currentDraft),
@@ -480,7 +494,7 @@ export function createComposerTargetController(deps: ComposerTargetControllerDep
     const emptyDraft = deps.createEmptyComposerDraft();
     const activated = await activateTargetWorkspace(target, destinationSummary);
     if (!activated) return { status: "blocked", message: deps.labels.targetUnavailable() };
-    const summary = await putPendingDraftForTarget(target, emptyDraft);
+    const summary = await putPendingDraftForTarget(target, emptyDraft, summaries);
     if (!summary) return { status: "blocked", message: deps.labels.targetUnavailable() };
     deps.setComposerDraftBySessionId((current) =>
       setSessionComposerDraft(current, { storageKey: target.id }, emptyDraft),

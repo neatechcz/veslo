@@ -22,15 +22,16 @@ export type AutomationExecutionInput = {
 
 export type AutomationExecutionResult = { sessionId: string; createdSession: boolean };
 
+export type WorkspaceRef = { id: string; path: string };
+
 export type AutomationRunner = {
   start(): Promise<void>;
   stop(): void;
+  upsertWorkspace(workspace: WorkspaceRef): Promise<void>;
   removeWorkspace(workspaceId: string): void;
   refreshWorkspace(workspaceId: string): Promise<void>;
   runNow(workspaceId: string, automationId: string): Promise<AutomationRun>;
 };
-
-type WorkspaceRef = { id: string; path: string };
 
 type TimerHandle = unknown;
 
@@ -80,6 +81,21 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
     }
     for (const workspaceId of timersByWorkspace.keys()) {
       clearWorkspaceTimers(workspaceId);
+    }
+  }
+
+  async function upsertWorkspace(workspace: WorkspaceRef): Promise<void> {
+    const current = workspaceById.get(workspace.id);
+    workspaceById.set(workspace.id, workspace);
+
+    if (current?.path !== workspace.path) {
+      generation += 1;
+      bumpWorkspaceRefreshGeneration(workspace.id);
+      clearWorkspaceTimers(workspace.id);
+    }
+
+    if (!stopped) {
+      await refreshWorkspace(workspace.id);
     }
   }
 
@@ -523,7 +539,7 @@ export function createAutomationRunner(options: RunnerOptions): AutomationRunner
     return !stopped && workspaceById.has(workspaceId) && refreshGenerationsByWorkspace.get(workspaceId) === refreshGeneration;
   }
 
-  return { start, stop, removeWorkspace, refreshWorkspace, runNow };
+  return { start, stop, upsertWorkspace, removeWorkspace, refreshWorkspace, runNow };
 }
 
 function isRunnableAutomation(automation: VesloAutomation): boolean {

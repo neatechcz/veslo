@@ -1,6 +1,6 @@
 ﻿import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 
 import type { SoulDocument } from "../soul-memory.js";
@@ -55,8 +55,30 @@ describe("soul cache", () => {
     const path = await cacheSoulDocument({ dataDir, document: userSoul });
 
     expect(path).toBe(soulCachePath({ dataDir, scope: "user", ownerId: "user_123" }));
-    expect(path).toBe(join(dataDir, "soul-cache", "user", "user_123.json"));
+    expect(path).toBe(join(dataDir, "soul-cache", "user", "dXNlcl8xMjM.json"));
     expect(await exists(path)).toBe(true);
+    await expect(readCachedSoulDocument({ dataDir, scope: "user", ownerId: "user_123" })).resolves.toEqual(userSoul);
+  });
+
+  test("keeps Den owner identity intact while using a safe cache filename", async () => {
+    const dataDir = await tempDataDir();
+    const userSoul = document("user", "auth0|user@example.com");
+
+    const path = await cacheSoulDocument({ dataDir, document: userSoul });
+
+    expect(path).toBe(soulCachePath({ dataDir, scope: "user", ownerId: "auth0|user@example.com" }));
+    expect(basename(path)).not.toContain("|");
+    expect(basename(path)).not.toContain("@");
+    await expect(readCachedSoulDocument({ dataDir, scope: "user", ownerId: "auth0|user@example.com" })).resolves.toEqual(userSoul);
+  });
+
+  test("reads legacy cache filenames for previously safe owner ids", async () => {
+    const dataDir = await tempDataDir();
+    const userSoul = document("user", "user_123");
+
+    await mkdir(join(dataDir, "soul-cache", "user"), { recursive: true });
+    await writeFile(join(dataDir, "soul-cache", "user", "user_123.json"), `${JSON.stringify(userSoul, null, 2)}\n`, "utf8");
+
     await expect(readCachedSoulDocument({ dataDir, scope: "user", ownerId: "user_123" })).resolves.toEqual(userSoul);
   });
 

@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { Buffer } from "node:buffer";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
@@ -40,8 +41,8 @@ export type WritePendingSoulEditInput = SoulCacheInput & {
   };
 };
 
-const OWNER_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 const PENDING_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
+const LEGACY_OWNER_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 const SOUL_SCOPES: readonly SoulScope[] = ["organization", "user", "workspace"];
 const SOUL_VERSION_SOURCES: ReadonlyArray<SoulVersion["source"]> = ["manual", "api", "heartbeat", "restore", "system"];
 
@@ -55,7 +56,13 @@ export function soulCacheRoot(dataDir?: string): string {
 }
 
 export function soulCachePath(input: ReadCachedSoulDocumentInput): string {
-  return join(soulCacheRoot(input.dataDir), input.scope, `${normalizeOwnerId(input.ownerId)}.json`);
+  return join(soulCacheRoot(input.dataDir), input.scope, `${ownerIdPathPart(input.ownerId)}.json`);
+}
+
+function legacySoulCachePath(input: ReadCachedSoulDocumentInput): string | null {
+  const ownerId = normalizeOwnerId(input.ownerId);
+  if (!LEGACY_OWNER_ID_PATTERN.test(ownerId)) return null;
+  return join(soulCacheRoot(input.dataDir), input.scope, `${ownerId}.json`);
 }
 
 export function soulPendingCacheDir(dataDir?: string): string {
@@ -68,10 +75,17 @@ export function soulPendingEditPath(input: SoulCacheInput & { pendingEditId: str
 
 function normalizeOwnerId(ownerId: string): string {
   const normalized = ownerId.trim();
-  if (!OWNER_ID_PATTERN.test(normalized)) {
+  if (!normalized) {
     throw new Error("Soul cache owner id is invalid");
   }
   return normalized;
+}
+
+function ownerIdPathPart(ownerId: string): string {
+  const normalized = normalizeOwnerId(ownerId);
+  const encoded = Buffer.from(normalized, "utf8").toString("base64url");
+  if (encoded.length <= 160) return encoded;
+  return `sha256_${createHash("sha256").update(normalized).digest("hex")}`;
 }
 
 function normalizePendingId(pendingEditId: string): string {
@@ -172,8 +186,12 @@ export async function cacheSoulDocument(input: CacheSoulDocumentInput): Promise<
 
 export async function readCachedSoulDocument(input: ReadCachedSoulDocumentInput): Promise<SoulDocument | null> {
   const ownerId = normalizeOwnerId(input.ownerId);
-  const path = soulCachePath({ ...input, ownerId });
-  if (!(await exists(path))) return null;
+  let path = soulCachePath({ ...input, ownerId });
+  if (!(await exists(path))) {
+    const legacyPath = legacySoulCachePath({ ...input, ownerId });
+    if (!legacyPath || !(await exists(legacyPath))) return null;
+    path = legacyPath;
+  }
 
   try {
     const parsed = JSON.parse(await readFile(path, "utf8")) as SoulDocument;

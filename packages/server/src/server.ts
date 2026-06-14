@@ -51,6 +51,8 @@ import {
   cacheSoulDocument,
   listPendingSoulEdits,
   readCachedSoulDocument,
+  soulCachePath,
+  soulPendingCacheDir,
   writePendingSoulEdit,
   type SoulPendingEdit,
 } from "./soul-cache.js";
@@ -2838,6 +2840,53 @@ async function buildSoulMaterializationStatus(workspace: WorkspaceInfo): Promise
   return readSoulMaterializationStatus(workspace.path);
 }
 
+function uniqueApprovalPaths(paths: string[]): string[] {
+  return [...new Set(paths.filter((path) => path.trim().length > 0))];
+}
+
+function soulMaterializationApprovalPaths(workspace: WorkspaceInfo): string[] {
+  return [
+    opencodeConfigPath(workspace.path),
+    join(workspace.path, ".opencode", "soul-company.md"),
+    join(workspace.path, ".opencode", "soul-user.md"),
+    join(workspace.path, ".opencode", "soul-workspace.md"),
+    join(workspace.path, ".opencode", "veslo", "soul-manifest.json"),
+  ];
+}
+
+async function configuredSoulMaterializationApprovalPaths(
+  config: ServerConfig,
+  extraPaths: string[],
+): Promise<string[]> {
+  const paths = [...extraPaths];
+  for (const configuredWorkspace of config.workspaces) {
+    const workspace = await resolveWorkspace(config, configuredWorkspace.id);
+    paths.push(...soulMaterializationApprovalPaths(workspace));
+  }
+  return uniqueApprovalPaths(paths);
+}
+
+function globalSoulApprovalWorkspaceId(config: ServerConfig): string {
+  return config.workspaces[0]?.id ?? "__soul__";
+}
+
+async function requireSoulApproval(
+  ctx: RequestContext,
+  input: {
+    workspaceId: string;
+    action: string;
+    summary: string;
+    paths: string[];
+  },
+): Promise<void> {
+  await requireApproval(ctx, {
+    workspaceId: input.workspaceId,
+    action: input.action,
+    summary: input.summary,
+    paths: uniqueApprovalPaths(input.paths),
+  });
+}
+
 function materializationEntryPayload(entry: WorkspaceSkillMaterialization & {
   skillDir?: string;
   materializedAt?: string;
@@ -4084,6 +4133,7 @@ function createRoutes(
       config.authorizedRoots = [...config.authorizedRoots, workspacePath];
     }
     const persisted = await persistServerWorkspaceState(config);
+    await ctx.automationRunner.upsertWorkspace({ id: workspace.id, path: workspacePath });
 
     return jsonResponse(
       {
@@ -8093,17 +8143,28 @@ function createRoutes(
     requireClientScope(ctx, "collaborator");
     const den = soulDenContext(ctx);
     const denToken = requireSoulDenToken(den);
-    requireSoulOrgId(den);
+    const orgId = requireSoulOrgId(den);
     if (!den.baseUrl) {
       throw new ApiError(503, "soul_den_misconfigured", "Soul Den base URL is missing");
     }
     const body = await readJsonBody(ctx.request);
+    const content = requireSoulText(body, "content");
+    const changeSummary = requireSoulText(body, "changeSummary");
+    const baseVersionId = optionalSoulBaseVersionId(body);
+    await requireSoulApproval(ctx, {
+      workspaceId: globalSoulApprovalWorkspaceId(config),
+      action: "soul.organization.update",
+      summary: "Update Organization Soul",
+      paths: await configuredSoulMaterializationApprovalPaths(config, [
+        soulCachePath({ dataDir: serverDataDir, scope: "organization", ownerId: orgId }),
+      ]),
+    });
     const document = await updateOrganizationSoul({
       ...den,
       token: denToken,
-      content: requireSoulText(body, "content"),
-      changeSummary: requireSoulText(body, "changeSummary"),
-      baseVersionId: optionalSoulBaseVersionId(body),
+      content,
+      changeSummary,
+      baseVersionId,
     });
     await cacheSoulDocument({ dataDir: serverDataDir, document });
     const materialization = await materializeSoulForConfiguredWorkspaces(serverDataDir, config, ctx, {
@@ -8131,6 +8192,15 @@ function createRoutes(
     const content = requireSoulText(body, "content");
     const changeSummary = requireSoulText(body, "changeSummary");
     const baseVersionId = optionalSoulBaseVersionId(body);
+    await requireSoulApproval(ctx, {
+      workspaceId: globalSoulApprovalWorkspaceId(config),
+      action: "soul.user.update",
+      summary: "Update User Soul",
+      paths: await configuredSoulMaterializationApprovalPaths(config, [
+        soulCachePath({ dataDir: serverDataDir, scope: "user", ownerId: userId }),
+        soulPendingCacheDir(serverDataDir),
+      ]),
+    });
 
     if (den.baseUrl && den.denToken) {
       try {
@@ -8193,19 +8263,28 @@ function createRoutes(
     requireClientScope(ctx, "collaborator");
     const den = soulDenContext(ctx);
     const denToken = requireSoulDenToken(den);
-    requireSoulOrgId(den);
+    const orgId = requireSoulOrgId(den);
     if (!den.baseUrl) {
       throw new ApiError(503, "soul_den_misconfigured", "Soul Den base URL is missing");
     }
     const body = await readOptionalJsonBody(ctx.request);
+    const changeSummary = typeof body.changeSummary === "string" && body.changeSummary.trim()
+      ? body.changeSummary
+      : "Restore Organization Soul version";
+    await requireSoulApproval(ctx, {
+      workspaceId: globalSoulApprovalWorkspaceId(config),
+      action: "soul.organization.restore",
+      summary: `Restore Organization Soul version ${ctx.params.versionId}`,
+      paths: await configuredSoulMaterializationApprovalPaths(config, [
+        soulCachePath({ dataDir: serverDataDir, scope: "organization", ownerId: orgId }),
+      ]),
+    });
     const document = await restoreDenSoulVersion({
       ...den,
       token: denToken,
       scope: "organization",
       versionId: ctx.params.versionId,
-      changeSummary: typeof body.changeSummary === "string" && body.changeSummary.trim()
-        ? body.changeSummary
-        : "Restore Organization Soul version",
+      changeSummary,
     });
     await cacheSoulDocument({ dataDir: serverDataDir, document });
     const materialization = await materializeSoulForConfiguredWorkspaces(serverDataDir, config, ctx, {
@@ -8233,6 +8312,14 @@ function createRoutes(
     const changeSummary = typeof body.changeSummary === "string" && body.changeSummary.trim()
       ? body.changeSummary
       : "Restore User Soul version";
+    await requireSoulApproval(ctx, {
+      workspaceId: globalSoulApprovalWorkspaceId(config),
+      action: "soul.user.restore",
+      summary: `Restore User Soul version ${ctx.params.versionId}`,
+      paths: await configuredSoulMaterializationApprovalPaths(config, [
+        soulCachePath({ dataDir: serverDataDir, scope: "user", ownerId: userId }),
+      ]),
+    });
     if (den.baseUrl && den.denToken) {
       try {
         const document = await restoreDenSoulVersion({
@@ -8295,6 +8382,18 @@ function createRoutes(
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
+    const content = requireSoulText(body, "content");
+    const changeSummary = requireSoulText(body, "changeSummary");
+    const baseVersionId = optionalSoulBaseVersionId(body);
+    await requireSoulApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "soul.workspace.update",
+      summary: `Update Workspace Soul for ${workspace.name}`,
+      paths: [
+        soulCachePath({ dataDir: serverDataDir, scope: "workspace", ownerId: workspace.id }),
+        ...soulMaterializationApprovalPaths(workspace),
+      ],
+    });
     const existing = await readCachedSoulDocument({
       dataDir: serverDataDir,
       scope: "workspace",
@@ -8304,12 +8403,12 @@ function createRoutes(
       existing ?? { ...emptySoulDocument("workspace", workspace.id), heartbeatEnabled: true },
       {
         id: soulVersionId("workspace_"),
-        content: requireSoulText(body, "content"),
-        changeSummary: requireSoulText(body, "changeSummary"),
+        content,
+        changeSummary,
         createdAt: new Date().toISOString(),
         createdBy: soulActorId(ctx),
         source: "api",
-        baseVersionId: optionalSoulBaseVersionId(body),
+        baseVersionId,
       },
     );
     const nextDocument = { ...document, heartbeatEnabled: existing?.heartbeatEnabled ?? true };
@@ -8337,12 +8436,22 @@ function createRoutes(
     const document = await readCachedSoulDocument({ dataDir: serverDataDir, scope: "workspace", ownerId: workspace.id });
     if (!document) throw new ApiError(404, "soul_not_found", "Soul document not found");
     const body = await readOptionalJsonBody(ctx.request);
+    const changeSummary = typeof body.changeSummary === "string" && body.changeSummary.trim()
+      ? body.changeSummary
+      : "Restore Workspace Soul version";
+    await requireSoulApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "soul.workspace.restore",
+      summary: `Restore Workspace Soul version ${ctx.params.versionId}`,
+      paths: [
+        soulCachePath({ dataDir: serverDataDir, scope: "workspace", ownerId: workspace.id }),
+        ...soulMaterializationApprovalPaths(workspace),
+      ],
+    });
     const restored = restoreLocalSoulVersion(document, {
       id: soulVersionId("workspace_restore_"),
       restoreSourceVersionId: ctx.params.versionId,
-      changeSummary: typeof body.changeSummary === "string" && body.changeSummary.trim()
-        ? body.changeSummary
-        : "Restore Workspace Soul version",
+      changeSummary,
       createdAt: new Date().toISOString(),
       createdBy: soulActorId(ctx),
     });
@@ -8370,6 +8479,14 @@ function createRoutes(
     const body = await readOptionalJsonBody(ctx.request);
     const existing = await readCachedSoulDocument({ dataDir: serverDataDir, scope: "workspace", ownerId: workspace.id });
     const enabled = typeof body.enabled === "boolean" ? body.enabled : !(existing?.heartbeatEnabled ?? false);
+    await requireSoulApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "soul.workspace.heartbeat-toggle",
+      summary: `${enabled ? "Enable" : "Disable"} Workspace Soul heartbeat`,
+      paths: [
+        soulCachePath({ dataDir: serverDataDir, scope: "workspace", ownerId: workspace.id }),
+      ],
+    });
     const document = { ...(existing ?? emptySoulDocument("workspace", workspace.id)), heartbeatEnabled: enabled };
     await cacheSoulDocument({ dataDir: serverDataDir, document });
     return jsonResponse(soulReadPayload({

@@ -1560,6 +1560,7 @@ export default function App() {
     setActivePendingDraftKey,
     activePendingDraftMeta,
     setActivePendingDraftMeta,
+    activePendingDraftStorageReady,
     markPendingDraftConsumed,
     clearConsumedPendingDraftId,
     clearActivePendingDraftState,
@@ -2517,6 +2518,7 @@ export default function App() {
     setActivePendingDraftKey,
     activePendingDraftMeta,
     setActivePendingDraftMeta,
+    pendingDraftsReady: activePendingDraftStorageReady,
     currentComposerStorageKey,
     composerDraft,
     createEmptyComposerDraft,
@@ -3648,6 +3650,7 @@ export default function App() {
           clearActivePendingDraftState();
         }
         setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, { storageKey: pendingDraftStorageKey }));
+        void composerTargetController.refreshPendingDraftSummaries();
       }
 
       finishPerf(perfEnabled, "session.prompt", "done", startedAt, {
