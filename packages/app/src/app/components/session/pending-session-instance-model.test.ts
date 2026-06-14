@@ -72,6 +72,7 @@ test("two pending sessions in the same workspace keep separate submitted drafts"
     first.sessionKey,
     createPendingSubmittedDraft({
       id: "optimistic:first",
+      clientMessageId: "optimistic:first",
       sessionKey: first.sessionKey,
       sessionId: null,
       createdAt: 100,
@@ -83,6 +84,7 @@ test("two pending sessions in the same workspace keep separate submitted drafts"
     second.sessionKey,
     createPendingSubmittedDraft({
       id: "optimistic:second",
+      clientMessageId: "optimistic:second",
       sessionKey: second.sessionKey,
       sessionId: null,
       createdAt: 101,
@@ -101,6 +103,7 @@ test("materializing one pending session remaps only its submitted draft", () => 
     "pending-session:first",
     createPendingSubmittedDraft({
       id: "optimistic:first",
+      clientMessageId: "optimistic:first",
       sessionKey: "pending-session:first",
       sessionId: null,
       createdAt: 100,
@@ -112,6 +115,7 @@ test("materializing one pending session remaps only its submitted draft", () => 
     "pending-session:second",
     createPendingSubmittedDraft({
       id: "optimistic:second",
+      clientMessageId: "optimistic:second",
       sessionKey: "pending-session:second",
       sessionId: null,
       createdAt: 101,
@@ -135,6 +139,7 @@ test("materializing ignores non-pending session keys", () => {
   const submitted: PendingSubmittedDraftBySessionKey = {
     "session-real-existing": createPendingSubmittedDraft({
       id: "optimistic:existing",
+      clientMessageId: "optimistic:existing",
       sessionKey: "session-real-existing",
       sessionId: "session-real-existing",
       createdAt: 100,
@@ -155,6 +160,7 @@ test("materializing ignores non-pending session keys", () => {
 test("removing a pending submitted draft removes only the matching key and id", () => {
   const pending = createPendingSubmittedDraft({
     id: "optimistic:first",
+    clientMessageId: "optimistic:first",
     sessionKey: "pending-session:first",
     sessionId: null,
     createdAt: 100,

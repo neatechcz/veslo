@@ -197,6 +197,24 @@ test("session-store sidebar sync skips unchanged sidebar rows", () => {
   );
 });
 
+test("local sidebar runtime failures fall back to passive conversation read", () => {
+  assert.match(
+    sidebarWorkspaceSessionsSource,
+    /const isSidebarRuntimeUnavailableError = \(message: string\) =>[\s\S]*engine_not_running[\s\S]*Request timed out[\s\S]*unauthorized/i,
+    "sidebar should classify local engine runtime failures separately from real remote errors",
+  );
+  assert.match(
+    sidebarWorkspaceSessionsSource,
+    /if \(wsDirectory && isSidebarRuntimeUnavailableError\(message\)\) \{[\s\S]*await refreshSidebarWorkspaceSessionsFromReadApi\(id, wsDirectory, "engine-runtime-unavailable"\);[\s\S]*return;/,
+    "local sidebar refresh should fall back to Veslo read API when a stale engine route reports runtime unavailable",
+  );
+  assert.match(
+    sidebarWorkspaceSessionsSource,
+    /setSidebarSessionErrorByWorkspaceId\(\(prev\) => \(\{ \.\.\.prev, \[workspaceId\]: null \}\)\);/,
+    "passive sidebar fallback should clear stale sidebar errors after publishing rows",
+  );
+});
+
 test("MCP server refresh joins duplicate refreshes for the same workspace context", () => {
   assert.match(
     mcpRefreshSource,

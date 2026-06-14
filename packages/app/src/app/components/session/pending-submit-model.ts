@@ -8,9 +8,11 @@ export type PendingSubmittedDraftState = "sending" | "error";
 
 export type PendingSubmittedDraft = {
   id: string;
+  clientMessageId: string;
   sessionKey: string;
   sessionId: string | null;
   createdAt: number;
+  transcriptMessageIdsAtSubmit?: string[];
   draft: ComposerDraft;
   state: PendingSubmittedDraftState;
   error?: string;
@@ -123,6 +125,7 @@ export function pendingSubmittedDraftToMessage(
   return {
     info: {
       id: pending.id,
+      clientMessageId: pending.clientMessageId,
       sessionID,
       role: "user",
       time: { created: pending.createdAt },

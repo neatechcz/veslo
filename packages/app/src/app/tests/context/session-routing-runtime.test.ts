@@ -16,7 +16,7 @@ function ok<T>(data: T) {
   };
 }
 
-function createRuntimeStore(options: { routing: any; client?: () => any }) {
+function createRuntimeStore(options: { routing: any; client?: () => any; setSseConnected?: (connected: boolean) => void }) {
   const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(null);
   return createSessionStore({
     client: options.client ?? (() => null),
@@ -26,7 +26,7 @@ function createRuntimeStore(options: { routing: any; client?: () => any }) {
     setSelectedSessionId,
     developerMode: () => false,
     setError: () => {},
-    setSseConnected: () => {},
+    setSseConnected: options.setSseConnected ?? (() => {}),
     engineReady: () => true,
   });
 }
@@ -36,6 +36,14 @@ test("session SSE subscription passes workspace routing auth to the Rust proxy",
     sessionSource,
     /engineSseSubscribe\(\{[\s\S]*baseUrl: entry\.baseUrl,[\s\S]*directory: entry\.directory \?\? null,[\s\S]*\.\.\.engineSseAuthOptions\(entry\.auth\),[\s\S]*signal: controller\.signal,/,
     "per-workspace desktop SSE must use the same auth as the SDK client",
+  );
+});
+
+test("session SSE releases stale non-active workspace routes before reconnecting", () => {
+  assert.match(
+    sessionSource,
+    /const activeWs = options\.routing\.activeWorkspaceId\(\);[\s\S]*if \(shouldReleaseStaleWorkspaceRoute\(sourceWsId, activeWs, message\)\) \{[\s\S]*options\.routing\.release\(sourceWsId\);[\s\S]*sessionWarn\("sse:released-stale-route"[\s\S]*return;[\s\S]*\}[\s\S]*options\.setSseConnected\(false\);[\s\S]*recordPerfLog\(sessionDebugEnabled\(\), "session\.sse", "stream-error"/,
+    "stale background SSE failures should release the route without marking the active stream disconnected",
   );
 });
 

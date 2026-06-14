@@ -123,6 +123,11 @@ import {
 import { shouldFallbackFromSessionRoute } from "./lib/session-route-selection-guard";
 import { partitionVesloUtilitySessions } from "./lib/veslo-utility-session";
 import {
+  createSessionClientMessageId,
+  normalizeSessionSendCorrelation,
+  type SessionSendOptionsBase,
+} from "./lib/session-send-contract";
+import {
   createWorkspaceSessionSelection,
 } from "./context/workspace-session-selection";
 import {
@@ -484,6 +489,16 @@ type SendPreflightContext = SendRuntimePreflightContext & {
   runtimeHealthOk: boolean;
   targetWorkspace: SendTargetWorkspaceScope | null;
   conversationWorkspaceByDirectory: Map<string, Promise<SendConversationWorkspaceResolution | null>>;
+};
+
+type AppSendPromptOptions = SessionSendOptionsBase & {
+  targetSessionId?: string | null;
+  onMaterializedSessionId?: (sessionId: string) => void;
+  pendingSession?: PendingSidebarSessionMetadata | null;
+};
+
+type AppReplaceUserMessageOptions = SessionSendOptionsBase & {
+  targetSessionId?: string | null;
 };
 
 const SEND_TRACE_LIMIT = 500;
@@ -2140,7 +2155,11 @@ export default function App() {
   const runConversationFromVesloWriteApi = async (
     sessionId: string,
     input: VesloConversationRunInput,
-    options: { sendTraceId?: string | null; preflight?: SendPreflightContext } = {},
+    options: {
+      sendTraceId?: string | null;
+      preflight?: SendPreflightContext;
+      targetWorkspace?: SendTargetWorkspaceScope | null;
+    } = {},
   ) => {
     const traceId = options.preflight?.traceId || options.sendTraceId?.trim() || activeSendTraceId() || "";
     const tracePayload = traceId ? { traceId } : undefined;
@@ -2149,12 +2168,17 @@ export default function App() {
       throw new Error("Session id is required.");
     }
     const scope = resolveSelectedSessionBrowseScope(normalizedSessionId);
-    const workspaceId = scope?.workspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
+    const targetWorkspace = options.targetWorkspace ?? options.preflight?.targetWorkspace ?? null;
+    const workspaceId = scope?.workspaceId?.trim() || targetWorkspace?.workspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
     if (!workspaceId) {
       throw new Error("Workspace id is required for conversation run.");
     }
-    const workspaceRoot = scope?.workspaceRoot?.trim() || workspaceStore.activeWorkspaceRoot().trim();
-    const directory = input.directory?.trim() || scope?.directory?.trim() || workspaceRoot;
+    const targetWorkspaceId = targetWorkspace?.workspaceId?.trim() || "";
+    if (targetWorkspaceId && workspaceId !== targetWorkspaceId) {
+      throw new Error("Conversation workspace does not match the send target workspace.");
+    }
+    const workspaceRoot = scope?.workspaceRoot?.trim() || targetWorkspace?.workspaceRoot?.trim() || workspaceStore.activeWorkspaceRoot().trim();
+    const directory = input.directory?.trim() || scope?.directory?.trim() || targetWorkspace?.directory?.trim() || workspaceRoot;
     if (!directory) {
       throw new Error("Conversation directory is required.");
     }
@@ -2165,6 +2189,8 @@ export default function App() {
       workspaceId,
       directory,
       kind: input.kind,
+      clientMessageId: typeof input.clientMessageId === "string" ? input.clientMessageId : null,
+      origin: typeof input.origin === "string" ? input.origin : null,
       hasConversationScope: Boolean(scope?.conversationId),
     });
     const resolution = await resolveConversationServerWorkspaceForSend(
@@ -2998,14 +3024,6 @@ export default function App() {
     return parts;
   };
 
-  const createClientMessageID = () => {
-    const suffix =
-      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-        ? crypto.randomUUID()
-        : `${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`;
-    return `msg_${suffix.replace(/[^a-zA-Z0-9]/g, "")}`;
-  };
-
   async function maybeResolveSkillCommand(
     draft: ComposerDraft,
     traceId?: string | null,
@@ -3115,14 +3133,16 @@ export default function App() {
   }
 
   async function sendPrompt(
-    draft?: ComposerDraft,
-    options: {
-      targetSessionId?: string | null;
-      sendTraceId?: string | null;
-      onMaterializedSessionId?: (sessionId: string) => void;
-      pendingSession?: PendingSidebarSessionMetadata | null;
-    } = {},
+    draft: ComposerDraft,
+    options: AppSendPromptOptions,
   ): Promise<boolean> {
+    const sendCorrelation = normalizeSessionSendCorrelation(options);
+    if (!sendCorrelation.clientMessageId) {
+      recordSendTrace("sendPrompt:blocked-missing-client-message-id", {
+        origin: sendCorrelation.origin,
+      });
+      return false;
+    }
     const sendPreflight = createSendPreflightContext(options.sendTraceId);
     const sendTraceId = sendPreflight.traceId;
     const pendingSidebarSession = options.pendingSession ?? null;
@@ -3141,6 +3161,8 @@ export default function App() {
     recordSendTrace("sendPrompt:start", {
       traceId: sendTraceId,
       uiSendTraceId: options.sendTraceId ?? null,
+      clientMessageId: sendCorrelation.clientMessageId,
+      origin: sendCorrelation.origin,
       engineReady: engineReady(),
       selectedSessionId: selectedSessionCandidate,
       targetSessionId: options.targetSessionId ?? null,
@@ -3156,6 +3178,8 @@ export default function App() {
       workspaceId: sendTargetWorkspace?.workspaceId ?? null,
       workspaceRoot: sendTargetWorkspace?.workspaceRoot ?? null,
       directory: sendTargetWorkspace?.directory ?? null,
+      clientMessageId: sendCorrelation.clientMessageId,
+      origin: sendCorrelation.origin,
     });
     const sendPromptBusyOwnership = resolveSendPromptBusyOwnership({ sessionId: sessionID });
     const blockAppDuringPromptSend = sendPromptBusyOwnership.ownsBusy;
@@ -3513,15 +3537,23 @@ export default function App() {
         legacy: () => Promise<void>,
       ) => {
         const scope = resolveSelectedSessionBrowseScope(sessionID);
+        const inputWithCorrelation: VesloConversationRunInput = {
+          ...input,
+          clientMessageId: sendCorrelation.clientMessageId,
+          origin: sendCorrelation.origin,
+        };
         try {
-          const result = await runConversationFromVesloWriteApi(sessionID, input, {
+          const result = await runConversationFromVesloWriteApi(sessionID, inputWithCorrelation, {
             preflight: sendPreflight,
+            targetWorkspace: sendTargetWorkspace,
           });
           if (result) return;
           recordSendTrace("sendPrompt:conversation-run-unavailable", {
             traceId: sendTraceId,
             sessionID,
             kind: input.kind,
+            clientMessageId: sendCorrelation.clientMessageId,
+            origin: sendCorrelation.origin,
             hasConversationScope: Boolean(scope?.conversationId),
           });
           if (scope?.conversationId) {
@@ -3532,6 +3564,8 @@ export default function App() {
             traceId: sendTraceId,
             sessionID,
             kind: input.kind,
+            clientMessageId: sendCorrelation.clientMessageId,
+            origin: sendCorrelation.origin,
             hasConversationScope: Boolean(scope?.conversationId),
             message: messageFromUnknownError(error),
           });
@@ -3545,6 +3579,8 @@ export default function App() {
           traceId: sendTraceId,
           sessionID,
           kind: input.kind,
+          clientMessageId: sendCorrelation.clientMessageId,
+          origin: sendCorrelation.origin,
         });
         await legacy();
       };
@@ -3583,7 +3619,7 @@ export default function App() {
         }
 
         // Slash command: route through session.command() API
-        commandMessageIDToClear = createClientMessageID();
+        commandMessageIDToClear = sendCorrelation.clientMessageId;
         const commandMessageID = commandMessageIDToClear;
         sessionStore.setCommandDisplay(commandMessageID, command.name, command.arguments);
         const modelString = `${model.providerID}/${model.modelID}`;
@@ -3681,6 +3717,8 @@ export default function App() {
       recordSendTrace("sendPrompt:success", {
         traceId: sendTraceId,
         sessionID,
+        clientMessageId: sendCorrelation.clientMessageId,
+        origin: sendCorrelation.origin,
         mode: resolvedDraft.mode,
         command: commandName,
       });
@@ -3699,6 +3737,8 @@ export default function App() {
         recordSendTrace("sendPrompt:stale-client", {
           traceId: sendTraceId,
           sessionID,
+          clientMessageId: sendCorrelation.clientMessageId,
+          origin: sendCorrelation.origin,
           entryWorkspaceId: e.entryWorkspaceId,
           currentWorkspaceId: e.currentWorkspaceId,
         });
@@ -3714,6 +3754,8 @@ export default function App() {
       recordSendTrace("sendPrompt:error", {
         traceId: sendTraceId,
         sessionID,
+        clientMessageId: sendCorrelation.clientMessageId,
+        origin: sendCorrelation.origin,
         message,
       });
       reportSendErrorToDisplayedTarget(message);
@@ -3787,6 +3829,9 @@ export default function App() {
       text,
       parts: [{ type: "text", text }],
       attachments: [],
+    }, {
+      clientMessageId: createSessionClientMessageId(),
+      origin: "app:retry-last-prompt",
     });
   }
 
@@ -4069,27 +4114,51 @@ export default function App() {
   async function replaceUserMessage(
     messageID: string,
     draft: ComposerDraft,
-    options: { targetSessionId?: string | null; sendTraceId?: string | null } = {},
+    options: AppReplaceUserMessageOptions,
   ): Promise<boolean> {
+    const sendCorrelation = normalizeSessionSendCorrelation(options);
+    if (!sendCorrelation.clientMessageId) {
+      recordSendTrace("replaceUserMessage:blocked-missing-client-message-id", {
+        origin: sendCorrelation.origin,
+      });
+      return false;
+    }
+    const replacePreflight = createSendPreflightContext(options.sendTraceId);
+    const sendTraceId = replacePreflight.traceId;
     const sessionID = (options.targetSessionId?.trim() || selectedSessionId() || "").trim();
     if (!sessionID || !messageID.trim()) return false;
 
     recordSendTrace("replaceUserMessage:start", {
-      traceId: options.sendTraceId ?? undefined,
+      traceId: sendTraceId,
       sessionID,
       messageID,
+      clientMessageId: sendCorrelation.clientMessageId,
+      origin: sendCorrelation.origin,
       engineReady: engineReady(),
       hasClient: Boolean(client()),
     });
 
-    let c = routedClient() ?? await connectLocalRuntimeClientFromEngineInfo("replaceUserMessage");
-    if (!c) {
-      if (!(await ensureLocalRuntimeReachableForSend("replaceUserMessage"))) return false;
-      c = routedClient() ?? await connectLocalRuntimeClientFromEngineInfo("replaceUserMessage");
+    if (
+      !(await sendTraceStep(
+        "replaceUserMessage:ensure-scoped-workspace-active",
+        () => ensureSelectedSessionWorkspaceActiveForSend(sessionID, sendTraceId),
+        { traceId: sendTraceId, sessionID },
+      ))
+    ) {
+      recordSendTrace("replaceUserMessage:blocked-scoped-workspace", { traceId: sendTraceId, sessionID });
+      return false;
     }
+    const sendTargetWorkspace = resolveSendTargetWorkspaceScope(sessionID);
+    replacePreflight.targetWorkspace = sendTargetWorkspace;
     if (!(await ensureManagedAiBootstrapReady())) return false;
+    if (!(await ensureLocalRuntimeReachableForSend("replaceUserMessage", replacePreflight))) return false;
+    const c = routedClientForSendTarget(sendTargetWorkspace);
     if (!c) {
-      recordSendTrace("replaceUserMessage:blocked-no-client");
+      recordSendTrace("replaceUserMessage:blocked-no-client", {
+        traceId: sendTraceId,
+        sessionID,
+        workspaceId: sendTargetWorkspace?.workspaceId ?? null,
+      });
       return false;
     }
 
@@ -4099,7 +4168,12 @@ export default function App() {
     const next = await revertSession(c, sessionID, messageID);
     upsertLocalSession(next);
 
-    const accepted = await sendPrompt(draft, { targetSessionId: sessionID, sendTraceId: options.sendTraceId });
+    const accepted = await sendPrompt(draft, {
+      targetSessionId: sessionID,
+      sendTraceId: options.sendTraceId,
+      clientMessageId: sendCorrelation.clientMessageId,
+      origin: sendCorrelation.origin,
+    });
     if (!accepted) {
       try {
         const restored = previousRevertMessageID
@@ -4559,7 +4633,6 @@ export default function App() {
     return readDenAuth()?.token?.trim() ?? "";
   });
   const managedAiAccessCacheContext = createMemo(() => {
-    authenticatedUser();
     denAuthRevision();
     const gatewayClient = gatewayVesloServerClient();
     const managedAiBaseUrl = managedAiGatewayBaseUrl();
@@ -9340,6 +9413,10 @@ export default function App() {
         resolvedText: text,
         parts: [{ type: "text", text }],
         attachments: [],
+      }, {
+        targetSessionId: sessionId,
+        clientMessageId: createSessionClientMessageId(),
+        origin: "app:soul-prompt",
       });
     })();
   }

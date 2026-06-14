@@ -62,6 +62,17 @@ test("session view stores run UI state by session key", () => {
 
   assert.match(
     source,
+    /const runUiStateEqual = \(left: RunUiState, right: RunUiState\) =>[\s\S]*left\.baseline\.partCount === right\.baseline\.partCount;/,
+    "run UI updates should detect no-op writes so status effects cannot recurse forever",
+  );
+  assert.match(
+    source,
+    /const next = update\(previous\);\s*if \(runUiStateEqual\(previous, next\)\) return current;/,
+    "run UI state writes should preserve signal identity when the computed state is unchanged",
+  );
+
+  assert.match(
+    source,
     /const activeRunState = createMemo\(\(\) => runStateBySessionKey\(\)\[currentSessionQueueKey\(\)\] \?\? EMPTY_RUN_STATE\);/,
     "run UI reads should derive from the currently active session key",
   );
@@ -102,8 +113,8 @@ test("sendPromptImmediate starts run UI state by captured key and resets failure
 
   assert.match(
     source,
-    /const startRun = \(sessionKey = currentSessionQueueKey\(\)\) => \{/,
-    "startRun should default to the active key but allow a captured send key",
+    /const startRun = \(sessionKey = currentSessionQueueKey\(\)\) => \{[\s\S]*if \(untrack\(runStateBySessionKey\)\[key\]\?\.startedAt\) return;/,
+    "startRun should default to the active key, allow a captured send key, and avoid tracking run-state reads",
   );
   assert.match(
     source,
@@ -376,7 +387,7 @@ test("pending handoffs materialize from the app callback with captured keys", ()
 
   assert.match(
     source,
-    /sendPromptAsync: \(\s*draft: ComposerDraft,\s*options\?: \{[\s\S]*targetSessionId\?: string \| null;[\s\S]*sendTraceId\?: string \| null;[\s\S]*onMaterializedSessionId\?: \(sessionId: string\) => void;[\s\S]*pendingSession\?: PendingSidebarSessionMetadata \| null;[\s\S]*\},\s*\) => Promise<boolean>;/,
+    /sendPromptAsync: \(\s*draft: ComposerDraft,\s*options: SessionSendOptionsBase & \{[\s\S]*targetSessionId\?: string \| null;[\s\S]*onMaterializedSessionId\?: \(sessionId: string\) => void;[\s\S]*pendingSession\?: PendingSidebarSessionMetadata \| null;[\s\S]*\},\s*\) => Promise<boolean>;/,
     "session props should let app prompt sends report the materialized session id for that handoff",
   );
   assert.match(
@@ -431,7 +442,7 @@ test("pending first sends pass captured sidebar placeholder metadata to app prom
   );
   assert.match(
     sendImmediateSource,
-    /const promptSendOptions: \{[\s\S]*targetSessionId\?: string \| null;[\s\S]*sendTraceId\?: string \| null;[\s\S]*onMaterializedSessionId\?: \(sessionId: string\) => void;[\s\S]*pendingSession\?: PendingSidebarSessionMetadata \| null;[\s\S]*\} \| undefined =/,
+    /const promptSendOptions: \{[\s\S]*clientMessageId: string;[\s\S]*origin: SessionSendOrigin;[\s\S]*targetSessionId\?: string \| null;[\s\S]*sendTraceId\?: string \| null;[\s\S]*onMaterializedSessionId\?: \(sessionId: string\) => void;[\s\S]*pendingSession\?: PendingSidebarSessionMetadata \| null;[\s\S]*\} =/,
     "prompt send options should allow pending sidebar metadata",
   );
   assert.match(
@@ -474,11 +485,12 @@ test("app sendPrompt reports the created first-session id to the handoff callbac
 
   assert.match(
     sendPromptSource,
-    /options: \{[\s\S]*targetSessionId\?: string \| null;[\s\S]*sendTraceId\?: string \| null;[\s\S]*onMaterializedSessionId\?: \(sessionId: string\) => void;[\s\S]*pendingSession\?: PendingSidebarSessionMetadata \| null;[\s\S]*\} = \{\},/,
+    /options: AppSendPromptOptions,/,
     "app sendPrompt options should accept a per-send materialized session callback",
   );
 
-  const createNeededStart = sendPromptSource.indexOf('if (!sessionID) {\n      recordSendTrace("sendPrompt:create-session-needed"');
+  const createNeededMatch = /if \(!sessionID\) \{\s*recordSendTrace\("sendPrompt:create-session-needed"/.exec(sendPromptSource);
+  const createNeededStart = createNeededMatch?.index ?? -1;
   const createNeededEnd = sendPromptSource.indexOf("    if (!sessionID) {", createNeededStart + 1);
   assert.notEqual(createNeededStart, -1, "first-send create-session branch should exist");
   assert.notEqual(createNeededEnd, -1, "first-send branch should end before blocked-no-session branch");
@@ -498,6 +510,24 @@ test("app sendPrompt reports the created first-session id to the handoff callbac
     createNeededSource,
     /onMaterializedSessionId\?\.\(selectedSessionId/,
     "the materialized callback should not be fed from current selected session state",
+  );
+});
+
+test("materializing an active pending first send does not immediately drain the queue", () => {
+  const effectMatch = /createEffect\(\s*on\(\s*\(\) => props\.selectedSessionId,/.exec(source);
+  const effectStart = effectMatch?.index ?? -1;
+  assert.notEqual(effectStart, -1, "selected session effect should exist");
+  const effectSource = source.slice(effectStart, effectStart + 2500);
+
+  assert.match(
+    effectSource,
+    /const materializedPendingSubmit =\s*pendingKey \? pendingSubmittedDraftBySessionKey\(\)\[pendingKey\]\?\.state === "sending" : false;/,
+    "selected-session materialization should detect an in-flight pending first send before remapping",
+  );
+  assert.match(
+    effectSource,
+    /if \(\s*!materializedPendingSubmit &&\s*props\.sessionStatusById\[sessionId\] === "idle" &&\s*!queuePausedForSessionKey\(sessionKey\)\s*\) \{\s*void drainNextQueuedDraft\("queue-drain", sessionKey\);/s,
+    "selected-session materialization should not drain a just-materialized sending first draft",
   );
 });
 

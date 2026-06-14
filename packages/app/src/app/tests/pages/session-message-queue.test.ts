@@ -117,7 +117,7 @@ test("queued drain uses a stable session key and guards stale navigation", () =>
 
   assert.match(
     source,
-    /const promptSendOptions:[\s\S]*targetSessionId \|\| options\.sendTraceId \|\| pendingSessionKeyBeforeHandoff[\s\S]*\.\.\.\(targetSessionId \? \{ targetSessionId \} : \{\}\),[\s\S]*\.\.\.\(options\.sendTraceId \? \{ sendTraceId: options\.sendTraceId \} : \{\}\),[\s\S]*props\.sendPromptAsync\(draft, promptSendOptions\)/s,
+    /const promptSendOptions:[\s\S]*clientMessageId: string;[\s\S]*origin: SessionSendOrigin;[\s\S]*= \{[\s\S]*clientMessageId,[\s\S]*origin,[\s\S]*\.\.\.\(targetSessionId \? \{ targetSessionId \} : \{\}\),[\s\S]*\.\.\.\(options\.sendTraceId \? \{ sendTraceId: options\.sendTraceId \} : \{\}\),[\s\S]*props\.sendPromptAsync\(draft, promptSendOptions\)/s,
     "queue drains should pass their captured target session and trace id to the parent send path",
   );
 

@@ -72,7 +72,7 @@ function engineSseAuthOptions(auth?: OpencodeAuth | null) {
   };
 }
 
-function shouldReleaseStalePermissionRoute(wsId: string, activeWs: string, message: string) {
+function shouldReleaseStaleWorkspaceRoute(wsId: string, activeWs: string, message: string) {
   if (!wsId || wsId === activeWs) return false;
   return /engine_not_running|Workspace client is stale|Failed to fetch|Request timed out|ECONN|upstream status (?:401|404|502|503)|status (?:401|404|502|503)|Invalid bearer token|unauthorized/i.test(
     message,
@@ -967,7 +967,7 @@ export function createSessionStore(options: {
             }));
           } catch (error) {
             const message = error instanceof Error ? error.message : safeStringify(error);
-            if (shouldReleaseStalePermissionRoute(wsId, activeWs, message)) {
+            if (shouldReleaseStaleWorkspaceRoute(wsId, activeWs, message)) {
               releasedRouteCount += 1;
               options.routing.release(wsId);
               sessionWarn("permissions:released-stale-route", {
@@ -2070,6 +2070,19 @@ export function createSessionStore(options: {
         if (controller.signal.aborted) return;
 
         const message = e instanceof Error ? e.message : String(e);
+        const activeWs = options.routing.activeWorkspaceId();
+        if (shouldReleaseStaleWorkspaceRoute(sourceWsId, activeWs, message)) {
+          options.routing.release(sourceWsId);
+          sessionWarn("sse:released-stale-route", {
+            workspaceId: sourceWsId,
+            error: truncateErrorField(message),
+          });
+          recordPerfLog(sessionDebugEnabled(), "session.sse", "released-stale-route", {
+            workspaceId: sourceWsId,
+            error: truncateErrorField(message),
+          });
+          return;
+        }
 
         // Mark SSE as disconnected and schedule reconnect
         options.setSseConnected(false);

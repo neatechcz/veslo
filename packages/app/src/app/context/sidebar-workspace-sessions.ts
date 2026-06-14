@@ -330,6 +330,32 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
     });
   };
 
+  const isSidebarRuntimeUnavailableError = (message: string) =>
+    /engine_not_running|Failed to fetch|Request timed out|ECONN|upstream status (?:401|404|502|503)|status (?:401|404|502|503)|Invalid bearer token|unauthorized/i.test(
+      message,
+    );
+
+  const refreshSidebarWorkspaceSessionsFromReadApi = async (
+    workspaceId: string,
+    directory: string,
+    reason: string,
+  ) => {
+    const result = await options.listConversationsFromVesloReadApi(workspaceId, directory);
+    const { visible: items } = partitionVesloUtilitySessions(
+      result.items.map(options.applyPendingInitialSessionTitle),
+    );
+    setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [workspaceId]: items }));
+    setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [workspaceId]: "ready" as const }));
+    setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [workspaceId]: null }));
+    setSidebarSessionHasMoreByWorkspaceId((prev) => ({ ...prev, [workspaceId]: false }));
+    options.wsDebug("sidebar:conversation-read", {
+      id: workspaceId,
+      reason,
+      source: result.source ?? "unknown",
+      count: items.length,
+    });
+  };
+
   const resolveSidebarClientConfig = (workspaceId: string) => {
     const workspace = options.workspaceStore.workspaces().find((entry) => entry.id === workspaceId) ?? null;
     if (!workspace) return null;
@@ -384,19 +410,7 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
       const wsDirectory = workspace?.path?.trim() ?? "";
       if (wsDirectory) {
         try {
-          const result = await options.listConversationsFromVesloReadApi(id, wsDirectory);
-          const { visible: items } = partitionVesloUtilitySessions(
-            result.items.map(options.applyPendingInitialSessionTitle),
-          );
-          setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [id]: items }));
-          setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" as const }));
-          setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
-          setSidebarSessionHasMoreByWorkspaceId((prev) => ({ ...prev, [id]: false }));
-          options.wsDebug("sidebar:conversation-read", {
-            id,
-            source: result.source ?? "unknown",
-            count: items.length,
-          });
+          await refreshSidebarWorkspaceSessionsFromReadApi(id, wsDirectory, "no-engine-base-url");
           return;
         } catch (e) {
           options.wsDebug("sidebar:conversation-read:error", { id, error: String(e) });
@@ -530,6 +544,19 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
     } catch (error) {
       if (sidebarRefreshSeqByWorkspaceId[id] !== seq) return;
       const message = error instanceof Error ? error.message : safeStringify(error);
+      const workspace = options.workspaceStore.workspaces().find((w) => w.id === id) ?? null;
+      const wsDirectory = workspace?.workspaceType === "local" ? workspace.path?.trim() ?? "" : "";
+      if (wsDirectory && isSidebarRuntimeUnavailableError(message)) {
+        try {
+          await refreshSidebarWorkspaceSessionsFromReadApi(id, wsDirectory, "engine-runtime-unavailable");
+          return;
+        } catch (readError) {
+          options.wsDebug("sidebar:conversation-read:fallback-error", {
+            id,
+            error: readError instanceof Error ? readError.message : safeStringify(readError),
+          });
+        }
+      }
       options.wsDebug("sidebar:error", { id, message });
       setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "error" }));
       setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: message }));

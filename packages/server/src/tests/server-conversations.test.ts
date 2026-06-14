@@ -334,6 +334,8 @@ describe("conversation routes", () => {
           directory: workspaceRoot,
           sessionID: "must-not-forward",
           extra: "must-not-forward",
+          clientMessageId: "msg-client-1",
+          origin: "session:normal",
           parts: [{ type: "text", text: "Hello" }],
         }),
       },
@@ -344,6 +346,8 @@ describe("conversation routes", () => {
       conversationId: string;
       opencodeSessionId: string;
       runId: string;
+      clientMessageId?: string | null;
+      origin?: string | null;
       status: string;
       kind: string;
     };
@@ -352,13 +356,18 @@ describe("conversation routes", () => {
     expect(runPayload.opencodeSessionId).toBe("sess-created");
     expect(runPayload.status).toBe("submitted");
     expect(runPayload.kind).toBe("prompt_async");
+    expect(runPayload.clientMessageId).toBe("msg-client-1");
+    expect(runPayload.origin).toBe("session:normal");
     expect(receivedRunPaths[0]).toBe(`/session/sess-created/prompt_async?directory=${encodeURIComponent(workspaceRoot)}`);
     expect(receivedRunDirectories[0]).toBe(workspaceRoot);
     expect(receivedBodies[1]?.parts).toEqual([{ type: "text", text: "Hello" }]);
+    expect(receivedBodies[1]?.messageID).toBeUndefined();
     expect(receivedBodies[1]?.directory).toBeUndefined();
     expect(receivedBodies[1]?.kind).toBeUndefined();
     expect(receivedBodies[1]?.sessionID).toBeUndefined();
     expect(receivedBodies[1]?.extra).toBeUndefined();
+    expect(receivedBodies[1]?.clientMessageId).toBeUndefined();
+    expect(receivedBodies[1]?.origin).toBeUndefined();
 
     const abortResponse = await fetch(
       `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(payload.conversationId)}/abort`,

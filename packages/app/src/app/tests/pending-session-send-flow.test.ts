@@ -49,7 +49,7 @@ test("slash command sends preassign the message id used for optimistic display",
   assert.notEqual(commandBranchEnd, -1, "slash command branch should end before promptAsync branch");
 
   const commandBranch = appSource.slice(commandBranchStart, commandBranchEnd);
-  assert.match(commandBranch, /commandMessageIDToClear = createClientMessageID\(\);/);
+  assert.match(commandBranch, /commandMessageIDToClear = sendCorrelation\.clientMessageId;/);
   assert.match(
     commandBranch,
     /sessionStore\.setCommandDisplay\(commandMessageID,\s*command\.name,\s*command\.arguments\);/,

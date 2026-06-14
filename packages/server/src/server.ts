@@ -4522,6 +4522,15 @@ function createRoutes(
     }
     const body = await readJsonBody(ctx.request);
     const kind = parseConversationRunKind(body.kind);
+    const clientMessageId = optionalBodyString(body, "clientMessageId") || optionalBodyString(body, "messageID");
+    const origin = optionalBodyString(body, "origin");
+    runTrace.record("server:conversation-run:payload", {
+      workspaceId: workspace.id,
+      conversationId: sessionOrConversationId,
+      kind,
+      clientMessageId: clientMessageId || null,
+      origin: origin || null,
+    });
     const target = await runTrace.step(
       "server:conversation-run:resolve-target",
       () => resolveConversationExecutionTarget({
@@ -4541,6 +4550,8 @@ function createRoutes(
     runTrace.record("server:conversation-run:lifecycle-owner", {
       workspaceId: workspace.id,
       runId,
+      clientMessageId: clientMessageId || null,
+      origin: origin || null,
       enabled: Boolean(lifecycleOwner),
       workspaceType: workspace.workspaceType,
     });
@@ -4600,6 +4611,8 @@ function createRoutes(
           conversationId: target.conversationId,
           runId,
           kind,
+          clientMessageId: clientMessageId || null,
+          origin: origin || null,
           opencodeSessionId: target.opencodeSessionId,
         },
       );
@@ -4627,6 +4640,8 @@ function createRoutes(
       conversationId: target.conversationId,
       opencodeSessionId: target.opencodeSessionId,
       runId,
+      clientMessageId: clientMessageId || null,
+      origin: origin || null,
       status: "submitted",
       kind,
       upstream,

@@ -2,11 +2,13 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import type { Part, Session } from "@opencode-ai/sdk/v2/client";
 import type {
   MessageInfo,
+  ModelRef,
   VesloAutomation,
   VesloAutomationCreatePayload,
   VesloAutomationRun,
   VesloAutomationUpdatePayload,
 } from "../types";
+import type { SessionSendOrigin } from "./session-send-contract";
 import { isTauriRuntime } from "../utils";
 import type { ScheduledJob } from "./tauri";
 import { mergeVesloServerSettingsWithEnv } from "./cloud-policy";
@@ -984,9 +986,26 @@ export type VesloConversationCreateResult = Session & {
 
 export type VesloConversationRunKind = "prompt_async" | "command" | "shell" | "summarize";
 
-export type VesloConversationRunInput = Record<string, unknown> & {
+export type VesloConversationRunInput = {
   kind: VesloConversationRunKind;
   directory?: string | null;
+  clientMessageId?: string | null;
+  origin?: SessionSendOrigin | string | null;
+  sessionID?: string;
+  messageID?: string;
+  model?: ModelRef | string;
+  agent?: string;
+  variant?: string;
+  parts?: unknown[];
+  system?: string;
+  command?: string;
+  arguments?: string;
+  reasoning_effort?: string;
+  noReply?: boolean;
+  tools?: unknown;
+  providerID?: string;
+  modelID?: string;
+  auto?: boolean;
 };
 
 export type VesloConversationRunDebugTraceEntry = {
@@ -1003,6 +1022,8 @@ export type VesloConversationRunResult = {
   conversationId: string;
   opencodeSessionId: string;
   runId: string;
+  clientMessageId?: string | null;
+  origin?: string | null;
   status: "submitted";
   kind: VesloConversationRunKind;
   upstream?: unknown;

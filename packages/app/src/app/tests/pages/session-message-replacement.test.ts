@@ -49,8 +49,8 @@ test("clicking a transcript edit action loads the draft and arms replacement sen
 test("replacement send path reverts to the original message before sending the edited draft", () => {
   assert.match(
     appSource,
-    /async function sendPrompt\(\s*draft\?: ComposerDraft,\s*options: \{[\s\S]*targetSessionId\?: string \| null;[\s\S]*sendTraceId\?: string \| null;[\s\S]*onMaterializedSessionId\?: \(sessionId: string\) => void;[\s\S]*pendingSession\?: PendingSidebarSessionMetadata \| null;[\s\S]*\} = \{\},[\s\S]*\): Promise<boolean> \{/,
-    "app send API should not accept a replacement message id; edited transcript sends must create a new backend message after revert",
+    /async function sendPrompt\(\s*draft: ComposerDraft,\s*options: AppSendPromptOptions,[\s\S]*\): Promise<boolean> \{/,
+    "app send API should require a typed send contract for every prompt handoff",
   );
   assert.doesNotMatch(
     appSource.slice(appSource.indexOf("async function sendPrompt("), appSource.indexOf("async function abortSession")),
@@ -65,11 +65,11 @@ test("replacement send path reverts to the original message before sending the e
   assert.doesNotMatch(
     promptAsyncCall,
     /\bmessageID\b/,
-    "normal conversation prompt sends, including transcript replacements after revert, should let OpenCode allocate a fresh message id",
+    "normal conversation prompt sends should keep OpenCode message id allocation unchanged",
   );
   assert.match(
     sessionSource,
-    /replaceUserMessageAsync: \(\s*messageId: string,\s*draft: ComposerDraft,\s*options\?: \{ targetSessionId\?: string \| null; sendTraceId\?: string \| null \},\s*\) => Promise<boolean>;/,
+    /replaceUserMessageAsync: \(\s*messageId: string,\s*draft: ComposerDraft,\s*options: SessionSendOptionsBase & \{ targetSessionId\?: string \| null \},\s*\) => Promise<boolean>;/,
     "session props should expose a replacement send API",
   );
   assert.match(
@@ -79,8 +79,8 @@ test("replacement send path reverts to the original message before sending the e
   );
   assert.match(
     appSource,
-    /async function replaceUserMessage\([\s\S]*messageID: string,[\s\S]*draft: ComposerDraft,[\s\S]*options: \{ targetSessionId\?: string \| null; sendTraceId\?: string \| null \} = \{},[\s\S]*\): Promise<boolean> \{[\s\S]*const sessionID = \(options\.targetSessionId\?\.trim\(\) \|\| selectedSessionId\(\) \|\| ""\)\.trim\(\);[\s\S]*if \(!sessionID \|\| !messageID\.trim\(\)\) return false;[\s\S]*let c = routedClient\(\) \?\? await connectLocalRuntimeClientFromEngineInfo\("replaceUserMessage"\);[\s\S]*if \(!c\) \{[\s\S]*if \(!\(await ensureLocalRuntimeReachableForSend\("replaceUserMessage"\)\)\) return false;[\s\S]*c = routedClient\(\) \?\? await connectLocalRuntimeClientFromEngineInfo\("replaceUserMessage"\);[\s\S]*\}[\s\S]*if \(!\(await ensureManagedAiBootstrapReady\(\)\)\) return false;[\s\S]*if \(!c\) \{[\s\S]*recordSendTrace\("replaceUserMessage:blocked-no-client"\);[\s\S]*return false;[\s\S]*\}[\s\S]*const previousRevertMessageID = selectedSession\(\)\?\.revert\?\.messageID \?\? null;[\s\S]*const next = await revertSession\(c, sessionID, messageID\);[\s\S]*upsertLocalSession\(next\);[\s\S]*const accepted = await sendPrompt\(draft, \{ targetSessionId: sessionID, sendTraceId: options\.sendTraceId \}\);/,
-    "app replacement API should recover the runtime, revert to the target user message, and send the edited draft as a new message",
+    /async function replaceUserMessage\([\s\S]*messageID: string,[\s\S]*draft: ComposerDraft,[\s\S]*options: AppReplaceUserMessageOptions,[\s\S]*\): Promise<boolean> \{[\s\S]*ensureSelectedSessionWorkspaceActiveForSend\(sessionID, sendTraceId\)[\s\S]*const sendTargetWorkspace = resolveSendTargetWorkspaceScope\(sessionID\);[\s\S]*replacePreflight\.targetWorkspace = sendTargetWorkspace;[\s\S]*ensureLocalRuntimeReachableForSend\("replaceUserMessage", replacePreflight\)[\s\S]*const c = routedClientForSendTarget\(sendTargetWorkspace\);[\s\S]*const next = await revertSession\(c, sessionID, messageID\);[\s\S]*const accepted = await sendPrompt\(draft, \{[\s\S]*targetSessionId: sessionID,[\s\S]*clientMessageId: sendCorrelation\.clientMessageId,[\s\S]*origin: sendCorrelation\.origin,[\s\S]*\}\);/,
+    "app replacement API should scope runtime/client selection before revert and reuse the same send correlation for the edited draft",
   );
   assert.match(
     appSource,
