@@ -12,7 +12,11 @@ const snapshotSource = readFileSync(
   new URL("../../context/workspace-session-snapshots.ts", import.meta.url),
   "utf8",
 );
+const sessionSource = readFileSync(new URL("../../context/session.ts", import.meta.url), "utf8");
 const workspaceSource = readWorkspaceBehaviorSources();
+const snapshotWiringStart = appSource.indexOf("createWorkspaceSessionSnapshots({");
+const snapshotWiringEnd = appSource.indexOf("  type PendingSkillRegistryReplay", snapshotWiringStart);
+const snapshotWiringSource = appSource.slice(snapshotWiringStart, snapshotWiringEnd);
 
 test("switching workspaces saves outgoing and loads incoming when selected session is unscoped", () => {
   assert.deepEqual(
@@ -105,13 +109,31 @@ test("selected session scope changes inside the same active workspace do not rel
 test("workspace switch clears stale selected session when incoming workspace has no snapshot", () => {
   assert.match(
     snapshotSource,
-    /const loaded = options\.loadWorkspaceSnapshot\(action\.loadWorkspaceId\);[\s\S]*options\.debug\?\.\("snapshot:load",[\s\S]*if \(loaded === false && selectedId\) \{[\s\S]*options\.debug\?\.\("snapshot:clear-stale-selected-session",[\s\S]*options\.clearSelectedSession\?\.\(\);/s,
-    "snapshot controller should clear stale selected sessions when the incoming workspace has no cached snapshot",
+    /const canClear = options\.canClearSelectedSession\?\.\(\{[\s\S]*workspaceId: action\.loadWorkspaceId,[\s\S]*selectedSessionId: selectedId,[\s\S]*\}\) \?\? true;[\s\S]*if \(loaded === false && selectedId && canClear\) \{[\s\S]*options\.clearSelectedSession\?\.\(\);/s,
+    "snapshot controller should clear stale selected sessions only when the app-level guard allows it",
   );
   assert.match(
-    appSource,
-    /clearSelectedSession: \(\) => \{[\s\S]*wsDebug\("snapshot:clearSelectedSession:app",[\s\S]*setSelectedSessionId\(null\);[\s\S]*if \(location\.pathname\.toLowerCase\(\)\.startsWith\("\/session\/"\)\) \{[\s\S]*navigate\("\/session", \{ replace: true \}\);[\s\S]*debug: wsDebug,/s,
-    "app wiring should log and clear the stale session route when a workspace switch cannot restore an incoming snapshot",
+    snapshotWiringSource,
+    /createWorkspaceSessionSnapshots\(\{[\s\S]*enabled: \(\) => activeWorkspaceIsHydrated\(\) && !workspaceStore\.connectingWorkspaceId\(\),[\s\S]*canClearSelectedSession: \(\) => activeWorkspaceIsHydrated\(\),[\s\S]*clearSelectedSession: \(\) => \{[\s\S]*wsDebug\("snapshot:clearSelectedSession:app",[\s\S]*setSelectedSessionId\(null\);[\s\S]*debug: wsDebug,/s,
+    "app wiring should defer snapshot work during activation and clear selected state without forcing route navigation",
+  );
+  assert.doesNotMatch(
+    snapshotWiringSource,
+    /navigate\("\/session"/,
+    "snapshot clear must not navigate away from a routed session before the scoped route guard decides",
+  );
+});
+
+test("workspace snapshot restore does not keep a selected session missing from that workspace", () => {
+  assert.match(
+    sessionSource,
+    /const selectedSessionIdForSnapshot = \(\) => \{[\s\S]*const selectedSessionId = options\.selectedSessionId\(\)\?\.trim\(\) \?\? "";[\s\S]*return store\.sessions\.some\(\(session\) => session\.id === selectedSessionId\) \? selectedSessionId : null;[\s\S]*selectedSessionId: selectedSessionIdForSnapshot\(\),/s,
+    "saved workspace snapshots should only persist selections present in that workspace session list",
+  );
+  assert.match(
+    sessionSource,
+    /const snapshotSelectedSessionId = snapshot\.selectedSessionId\?\.trim\(\) \?\? "";[\s\S]*snapshot\.sessions\.some\(\(session\) => session\.id === snapshotSelectedSessionId\)[\s\S]*options\.setSelectedSessionId\(selectedSessionId\);[\s\S]*snapshot\.selectedSessionId = selectedSessionId;/s,
+    "loading a workspace snapshot should clear stale cross-workspace selections instead of preserving them",
   );
 });
 

@@ -215,6 +215,19 @@ test("local sidebar runtime failures fall back to passive conversation read", ()
   );
 });
 
+test("local sidebar refresh keeps routed auth and does not clear rows when runtime is unavailable", () => {
+  assert.match(
+    sidebarWorkspaceSessionsSource,
+    /const auth = entry\?\.auth \?\? activeEngineAuth;/,
+    "local sidebar refresh should prefer the routed workspace entry auth over the active engine auth",
+  );
+  assert.match(
+    sidebarWorkspaceSessionsSource,
+    /const markSidebarRefreshUnavailable = \(id: string, reason: string\) => \{[\s\S]*existingCount: untrack\(\(\) => sidebarSessionsByWorkspaceId\(\)\[id\]\?\.length \?\? 0\),[\s\S]*\};[\s\S]*markSidebarRefreshUnavailable\(id, "no-engine-base-url"\);/s,
+    "sidebar refresh should preserve existing rows when no runtime base URL is available",
+  );
+});
+
 test("MCP server refresh joins duplicate refreshes for the same workspace context", () => {
   assert.match(
     mcpRefreshSource,

@@ -368,10 +368,10 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
       const activeInfoDirectory = activeInfo?.projectDir?.trim() ?? "";
       const info = activeInfo && activeInfoDirectory === directory ? activeInfo : null;
       const baseUrl = entry?.baseUrl?.trim() || info?.baseUrl?.trim() || "";
-      const authInfo = options.workspaceStore.engine();
-      const username = authInfo?.opencodeUsername?.trim() ?? "";
-      const password = authInfo?.opencodePassword?.trim() ?? "";
-      const auth: OpencodeAuth | undefined = username && password ? { username, password } : undefined;
+      const username = info?.opencodeUsername?.trim() ?? "";
+      const password = info?.opencodePassword?.trim() ?? "";
+      const activeEngineAuth: OpencodeAuth | undefined = username && password ? { username, password } : undefined;
+      const auth = entry?.auth ?? activeEngineAuth;
       return {
         baseUrl,
         directory,
@@ -398,6 +398,18 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
   };
 
   const sidebarRefreshSeqByWorkspaceId: Record<string, number> = {};
+  const markSidebarRefreshUnavailable = (id: string, reason: string) => {
+    setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" as const }));
+    setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
+    setSidebarSessionHasMoreByWorkspaceId((prev) => ({ ...prev, [id]: false }));
+    setSidebarSessionLoadingMoreByWorkspaceId((prev) => ({ ...prev, [id]: false }));
+    options.wsDebug("sidebar:conversation-read:unavailable", {
+      id,
+      reason,
+      existingCount: untrack(() => sidebarSessionsByWorkspaceId()[id]?.length ?? 0),
+    });
+  };
+
   const refreshSidebarWorkspaceSessions = async (workspaceId: string) => {
     const id = workspaceId.trim();
     if (!id) return;
@@ -417,11 +429,7 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
         }
       }
 
-      setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [id]: [] }));
-      setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" as const }));
-      setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
-      setSidebarSessionHasMoreByWorkspaceId((prev) => ({ ...prev, [id]: false }));
-      options.wsDebug("sidebar:conversation-read:unavailable", { id });
+      markSidebarRefreshUnavailable(id, "no-engine-base-url");
       return;
     }
 

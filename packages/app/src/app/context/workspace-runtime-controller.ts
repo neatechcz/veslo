@@ -170,9 +170,12 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
             error: messageFromUnknownError(loadSessionsError, deps.safeStringify),
           });
         }
-        deps.setEngineReady?.(true);
+        const isActiveWorkspace = workspace.id === deps.activeWorkspaceId().trim();
+        if (isActiveWorkspace) {
+          deps.setEngineReady?.(true);
+          deps.onEngineStable?.();
+        }
         deps.updateWorkspaceConnectionState(id, { status: "connected", message: null });
-        deps.onEngineStable?.();
         deps.wsLog("[workspace:ensureEngine] engine started successfully", { id });
         return true;
       } catch (e) {

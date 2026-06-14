@@ -63,6 +63,39 @@ test("does not fallback when session id is known only from scoped conversation r
   );
 });
 
+test("does not fallback from a known scoped route that belongs to another workspace", () => {
+  assert.equal(
+    shouldFallbackFromSessionRoute({
+      sessionsLoaded: false,
+      routeSessionId: "sess-1",
+      routeWorkspaceId: "ws-old",
+      activeWorkspaceId: "ws-new",
+      sessionIdsInStore: ["sess-1"],
+      sessionIdsInSidebar: ["sess-1"],
+      scopedSessionIds: ["sess-1"],
+      selectedSessionId: "sess-1",
+      visibleMessageCount: 4,
+      selectedSessionStatus: "running",
+    }),
+    false,
+  );
+});
+
+test("falls back from an unknown scoped route that belongs to another active workspace", () => {
+  assert.equal(
+    shouldFallbackFromSessionRoute({
+      sessionsLoaded: false,
+      routeSessionId: "sess-1",
+      routeWorkspaceId: "ws-old",
+      activeWorkspaceId: "ws-new",
+      sessionIdsInStore: [],
+      sessionIdsInSidebar: [],
+      scopedSessionIds: [],
+    }),
+    true,
+  );
+});
+
 test("does not fallback while the routed session is still displayed or running", () => {
   assert.equal(
     shouldFallbackFromSessionRoute({
@@ -114,8 +147,13 @@ test("real session route fallback ignores active pending draft context", () => {
   );
   assert.match(
     routeSource,
-    /shouldFallbackFromSessionRoute\(\{\s*sessionsLoaded: sessionsLoaded\(\),\s*routeSessionId: id,\s*sessionIdsInStore,\s*sessionIdsInSidebar,\s*scopedSessionIds: scopedSessionIds\(\),\s*selectedSessionId: selectedSessionId\(\),\s*visibleMessageCount: visibleMessages\(\)\.length,\s*selectedSessionStatus: selectedSessionStatus\(\),\s*selectedSessionLoadingEarlierMessages: selectedSessionLoadingEarlierMessages\(\),\s*\}\)/s,
+    /shouldFallbackFromSessionRoute\(\{\s*sessionsLoaded: sessionsLoadedForActiveWorkspace\(\),\s*routeSessionId: id,\s*routeWorkspaceId: resolveSelectedSessionBrowseScope\(id\)\?\.workspaceId \?\? null,\s*activeWorkspaceId: workspaceStore\.activeWorkspaceId\(\),\s*sessionIdsInStore,\s*sessionIdsInSidebar,\s*scopedSessionIds: scopedSessionIds\(\),\s*selectedSessionId: selectedSessionId\(\),\s*visibleMessageCount: visibleMessages\(\)\.length,\s*selectedSessionStatus: selectedSessionStatus\(\),\s*selectedSessionLoadingEarlierMessages: selectedSessionLoadingEarlierMessages\(\),\s*\}\)/s,
     "real session route fallback should use persisted, sidebar, scoped, and currently displayed session state without pending preloader state",
+  );
+  assert.match(
+    appSource,
+    /const sessionsLoadedForActiveWorkspace = \(\) => \{[\s\S]*if \(!activeWorkspaceId \|\| !activeWorkspaceIsHydrated\(\) \|\| !ready\) return false;[\s\S]*if \(!workspaceRouting\.entry\(activeWorkspaceId\) && !routedClient\(activeWorkspaceId\)\) return false;[\s\S]*if \(ready\.workspaceId !== activeWorkspaceId\) return false;[\s\S]*ready\.workspaceRoot !== activeWorkspaceRoot/s,
+    "route fallback readiness should be scoped to the hydrated active workspace and root",
   );
   assert.doesNotMatch(
     routeSource,

@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { shouldSyncSidebarFromSessionStore } from "../../lib/sidebar-session-sync-guard.js";
+
+const sidebarWorkspaceSessionsSource = readFileSync(
+  new URL("../../context/sidebar-workspace-sessions.ts", import.meta.url),
+  "utf8",
+);
 
 test("blocks sidebar sync during workspace switch when session store is still scoped to previous workspace", () => {
   assert.equal(
@@ -68,4 +74,18 @@ test("allows sidebar sync when no workspace switch is in progress", () => {
     }),
     true,
   );
+});
+
+test("sidebar unavailable fallback preserves rows and clears paging state", () => {
+  const start = sidebarWorkspaceSessionsSource.indexOf("  const markSidebarRefreshUnavailable = ");
+  const end = sidebarWorkspaceSessionsSource.indexOf("  const refreshSidebarWorkspaceSessions = ", start);
+  assert.notEqual(start, -1, "markSidebarRefreshUnavailable should exist");
+  assert.notEqual(end, -1, "markSidebarRefreshUnavailable block should end before refreshSidebarWorkspaceSessions");
+  const block = sidebarWorkspaceSessionsSource.slice(start, end);
+
+  assert.match(block, /setSidebarSessionStatusByWorkspaceId\(\(prev\) => \(\{ \.\.\.prev, \[id\]: "ready" as const \}\)\)/);
+  assert.match(block, /setSidebarSessionErrorByWorkspaceId\(\(prev\) => \(\{ \.\.\.prev, \[id\]: null \}\)\)/);
+  assert.match(block, /setSidebarSessionHasMoreByWorkspaceId\(\(prev\) => \(\{ \.\.\.prev, \[id\]: false \}\)\)/);
+  assert.match(block, /setSidebarSessionLoadingMoreByWorkspaceId\(\(prev\) => \(\{ \.\.\.prev, \[id\]: false \}\)\)/);
+  assert.doesNotMatch(block, /setSidebarSessionsByWorkspaceId/, "unavailable runtime must not wipe existing sidebar rows");
 });

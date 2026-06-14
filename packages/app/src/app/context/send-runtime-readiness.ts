@@ -227,12 +227,14 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
     }
 
     const currentClient = targetWorkspaceId ? deps.routedClient(targetWorkspaceId) : deps.routedClient();
+    const targetIsActiveWorkspace = !targetWorkspaceId || targetWorkspaceId === deps.activeWorkspaceId().trim();
     if (preflight?.runtimeHealthOk) {
       deps.recordSendTrace(`${reason}:runtime-health-skip`, {
         ...(tracePayload ?? {}),
         reason: "send-preflight-already-healthy",
         targetWorkspaceId: targetWorkspaceId || null,
       });
+      if (targetIsActiveWorkspace) deps.setEngineReady(true);
       return true;
     }
     if (currentClient) {
@@ -248,6 +250,7 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         );
         deps.recordSendTrace(`${reason}:runtime-health-ok`, tracePayload);
         if (preflight) preflight.runtimeHealthOk = true;
+        if (targetIsActiveWorkspace) deps.setEngineReady(true);
         return true;
       } catch (error) {
         const message = errorMessage(error);
@@ -267,11 +270,13 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
     }
 
     deps.recordSendTrace(`${reason}:runtime-recovery-start`, tracePayload);
-    deps.setEngineReady(false);
-    deps.setSseConnected(false);
-    deps.setBusy(true);
-    deps.setBusyLabel("status.connecting");
-    deps.setBusyStartedAt(Date.now());
+    if (targetIsActiveWorkspace) {
+      deps.setEngineReady(false);
+      deps.setSseConnected(false);
+      deps.setBusy(true);
+      deps.setBusyLabel("status.connecting");
+      deps.setBusyStartedAt(Date.now());
+    }
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     try {
@@ -293,9 +298,11 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
           hasClient: Boolean(recoveredClient),
           targetWorkspaceId: targetWorkspaceId || null,
         });
-        deps.setBusy(false);
-        deps.setBusyLabel(null);
-        deps.setBusyStartedAt(null);
+        if (targetIsActiveWorkspace) {
+          deps.setBusy(false);
+          deps.setBusyLabel(null);
+          deps.setBusyStartedAt(null);
+        }
         return false;
       }
       deps.recordSendTrace(`${reason}:runtime-recovery-ok`, {
@@ -310,9 +317,11 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         ...(tracePayload ?? {}),
         message: errorMessage(error),
       });
-      deps.setBusy(false);
-      deps.setBusyLabel(null);
-      deps.setBusyStartedAt(null);
+      if (targetIsActiveWorkspace) {
+        deps.setBusy(false);
+        deps.setBusyLabel(null);
+        deps.setBusyStartedAt(null);
+      }
       return false;
     }
   }

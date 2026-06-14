@@ -1352,7 +1352,7 @@ export default function DashboardView(props: DashboardViewProps) {
   const feedbackButtonLabel = createMemo(() => t("feedback.button", currentLocale()));
 
   const returnToSession = () => {
-    const sessionId = props.selectedSessionId?.trim();
+    const sessionId = props.selectedSessionId?.trim() || props.lastWorkspaceSessionId?.trim();
     props.setView("session", sessionId);
   };
 

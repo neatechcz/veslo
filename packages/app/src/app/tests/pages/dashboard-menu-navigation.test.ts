@@ -406,6 +406,13 @@ test("dashboard header exposes settings and back-to-chat actions", () => {
   assert.match(headerSource, /onClick=\{returnToSession\}/);
 });
 
+test("dashboard header back uses the active workspace last-session fallback", () => {
+  assert.match(
+    dashboardSource,
+    /const\s+returnToSession\s*=\s*\(\)\s*=>\s*\{\s*const\s+sessionId\s*=\s*props\.selectedSessionId\?\.trim\(\)\s*\|\|\s*props\.lastWorkspaceSessionId\?\.trim\(\);[\s\S]*props\.setView\(\s*["']session["']\s*,\s*sessionId\s*\)/,
+  );
+});
+
 test("dashboard header keeps back-to-chat visible even without a selected session", () => {
   assert.doesNotMatch(headerSource, /<Show when=\{canReturnToSession\(\)\}>/);
   assert.doesNotMatch(

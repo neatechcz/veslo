@@ -128,6 +128,11 @@ test("browsing mode keeps the live client but marks the engine not ready before 
     /if \(wasLocalConnection && workspaceChanged && isTauriRuntime\(\) && deps\.populateSidebarFromDb\) \{[\s\S]*deps\.setEngineReady\?\.\(false\);[\s\S]*\}/s,
     "browse mode must mark the engine not ready before async SQLite hydration",
   );
+  assert.match(
+    localActivationSource,
+    /if \(selection\.workspaceChanged\) \{[\s\S]*deps\.clearDisplayedSessionState\("local_browse_workspace_changed", \{[\s\S]*workspaceId: id,[\s\S]*nextDirectory: selection\.nextRoot,[\s\S]*clearPendingPermissions: true,[\s\S]*\}\);[\s\S]*\}[\s\S]*await deps\.populateSidebarFromDb!\(id, next\.path\);/s,
+    "browse mode should clear the stale visible session before SQLite hydration can reuse it",
+  );
 
   assert.doesNotMatch(
     localActivationSource,
@@ -149,6 +154,19 @@ test("bootstrap does not auto-connect or start the engine under lazy boot policy
     source,
     /reason: "bootstrap-local"/,
     "no connectToServer call may run with reason 'bootstrap-local' — bootstrap must not connect",
+  );
+});
+
+test("workspace id is empty until workspace bootstrap hydrates the real active workspace", () => {
+  assert.match(
+    source,
+    /const \[activeWorkspaceId, setActiveWorkspaceId\] = createSignal<string>\(""\);/,
+    "activeWorkspaceId should not use the starter preset as a fake workspace id before hydration",
+  );
+  assert.doesNotMatch(
+    source,
+    /createSignal<string>\("starter"\)/,
+    "the starter preset must not leak into workspace identity state",
   );
 });
 

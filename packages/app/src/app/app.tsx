@@ -788,7 +788,7 @@ const recordExternalSendTraceEntries = (entries: unknown) => {
 export default function App() {
   const cloudEnvironment = resolveVesloCloudEnvironment(import.meta.env as Record<string, string | undefined>);
   const envVesloWorkspaceId = cloudEnvironment.workspaceId ?? null;
-  const developerMode = () => false;
+  const developerMode = () => true;
   const [documentVisible, setDocumentVisible] = createSignal(true);
   const [appFocused, setAppFocused] = createSignal(true);
 
@@ -1666,6 +1666,9 @@ export default function App() {
     moveWorkspaceLastSession,
     activeWorkspaceLastSessionId,
     scopedSessionIds,
+    activeUiConversationRef,
+    activeUiScopeToken,
+    isUiScopeTokenCurrent,
   } = workspaceSessionSelection;
   const [unreadSessionIds, setUnreadSessionIds] = createSignal<UnreadSessionMap>({});
   const SESSION_DIRECTORY_OVERRIDE_KEY = "veslo.session-workspace-override.v1";
@@ -2562,17 +2565,68 @@ export default function App() {
     });
   });
 
-  const [sessionsLoaded, setSessionsLoaded] = createSignal(false);
-  const loadSessionsWithReady = async (scopeRoot?: string) => {
-    await loadSessions(scopeRoot);
-    setSessionsLoaded(true);
+  type SessionsLoadReadyState = {
+    workspaceId: string;
+    workspaceRoot: string;
+    scopeRoot: string;
+    loadedAt: number;
   };
 
-  createEffect(() => {
-    if (!routedClient()) {
-      setSessionsLoaded(false);
-    }
-  });
+  const [sessionsLoadReady, setSessionsLoadReady] = createSignal<SessionsLoadReadyState | null>(null);
+  const normalizeSessionLoadRoot = (value?: string | null) => normalizeDirectoryPath(value?.trim() ?? "");
+  const resolveSessionsLoadReadyScope = (scopeRoot?: string): Omit<SessionsLoadReadyState, "loadedAt"> => {
+    const requestedRoot = normalizeSessionLoadRoot(scopeRoot);
+    const activeId = workspaceStore.activeWorkspaceId().trim();
+    const activeRoot = normalizeSessionLoadRoot(workspaceStore.activeWorkspaceRoot());
+    const workspace =
+      (requestedRoot
+        ? workspaceStore.workspaces().find((item) => {
+          const candidates = [
+            normalizeSessionLoadRoot(item.path),
+            normalizeSessionLoadRoot(item.directory),
+          ].filter(Boolean);
+          return candidates.includes(requestedRoot);
+        })
+        : null) ??
+      (activeId ? workspaceStore.workspaces().find((item) => item.id === activeId) ?? null : null);
+    const workspaceRoot =
+      normalizeSessionLoadRoot(workspace?.path) ||
+      normalizeSessionLoadRoot(workspace?.directory) ||
+      requestedRoot ||
+      activeRoot;
+    return {
+      workspaceId: workspace?.id?.trim() || activeId,
+      workspaceRoot,
+      scopeRoot: requestedRoot || workspaceRoot,
+    };
+  };
+  const loadSessionsWithReady = async (scopeRoot?: string) => {
+    const readyScope = resolveSessionsLoadReadyScope(scopeRoot);
+    await loadSessions(scopeRoot);
+    setSessionsLoadReady({ ...readyScope, loadedAt: Date.now() });
+  };
+
+  const activeWorkspaceIsHydrated = () => {
+    const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
+    if (!activeWorkspaceId || !workspaceStore.workspacesHydrated()) return false;
+    return workspaceStore.workspaces().some((workspace) => workspace.id === activeWorkspaceId);
+  };
+  const activeWorkspaceHasRoutingEntry = () => {
+    const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
+    workspaceRouting.entryIds();
+    return Boolean(activeWorkspaceId && workspaceRouting.entry(activeWorkspaceId));
+  };
+  const sessionsLoadedForActiveWorkspace = () => {
+    const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
+    const activeWorkspaceRoot = normalizeSessionLoadRoot(workspaceStore.activeWorkspaceRoot());
+    const ready = sessionsLoadReady();
+    workspaceRouting.entryIds();
+    if (!activeWorkspaceId || !activeWorkspaceIsHydrated() || !ready) return false;
+    if (!workspaceRouting.entry(activeWorkspaceId) && !routedClient(activeWorkspaceId)) return false;
+    if (ready.workspaceId !== activeWorkspaceId) return false;
+    if (activeWorkspaceRoot && ready.workspaceRoot && ready.workspaceRoot !== activeWorkspaceRoot) return false;
+    return true;
+  };
 
   const [composerDraftBySessionId, setComposerDraftBySessionId] = createSignal<Record<string, ComposerDraft>>({});
   const currentComposerStorageKey = createMemo(() => {
@@ -3146,8 +3200,21 @@ export default function App() {
     const sendPreflight = createSendPreflightContext(options.sendTraceId);
     const sendTraceId = sendPreflight.traceId;
     const pendingSidebarSession = options.pendingSession ?? null;
+    const sendStartUiScopeToken = activeUiScopeToken();
     const selectedSessionCandidate = selectedSessionId();
-    const selectedRealSessionId = isPendingSessionInstanceId(selectedSessionCandidate) ? null : selectedSessionCandidate;
+    const selectedSessionScopeForSend = selectedSessionCandidate
+      ? resolveSelectedSessionBrowseScope(selectedSessionCandidate)
+      : null;
+    const selectedSessionScopeWorkspaceId = selectedSessionScopeForSend?.workspaceId?.trim() ?? "";
+    const activeWorkspaceIdForSend = workspaceStore.activeWorkspaceId().trim();
+    const selectedSessionBelongsToActiveWorkspace =
+      !selectedSessionScopeWorkspaceId ||
+      !activeWorkspaceIdForSend ||
+      selectedSessionScopeWorkspaceId === activeWorkspaceIdForSend;
+    const selectedRealSessionId =
+      isPendingSessionInstanceId(selectedSessionCandidate) || !selectedSessionBelongsToActiveWorkspace
+        ? null
+        : selectedSessionCandidate;
     let sessionID = isPendingSessionInstanceId(options.targetSessionId)
       ? null
       : options.targetSessionId?.trim() || selectedRealSessionId;
@@ -3165,6 +3232,14 @@ export default function App() {
       origin: sendCorrelation.origin,
       engineReady: engineReady(),
       selectedSessionId: selectedSessionCandidate,
+      selectedSessionScopeWorkspaceId: selectedSessionScopeWorkspaceId || null,
+      activeWorkspaceId: activeWorkspaceIdForSend || null,
+      selectedSessionIgnoredForForeignWorkspace: Boolean(
+        selectedSessionCandidate && !selectedSessionBelongsToActiveWorkspace,
+      ),
+      uiScopeKey: sendStartUiScopeToken.key,
+      uiScopeWorkspaceId: sendStartUiScopeToken.workspaceId || null,
+      uiScopeGeneration: sendStartUiScopeToken.generation,
       targetSessionId: options.targetSessionId ?? null,
       hasClient: Boolean(routedClient()),
       busy: busy(),
@@ -3414,7 +3489,9 @@ export default function App() {
     }
 
     const displayedConversationGuard = captureDisplayedConversationGuard(sessionID);
-    const sendTargetStillDisplayed = () => displayedConversationStillMatches(displayedConversationGuard);
+    const displayedUiScopeToken = activeUiScopeToken();
+    const sendTargetStillDisplayed = () =>
+      displayedConversationStillMatches(displayedConversationGuard) && isUiScopeTokenCurrent(displayedUiScopeToken);
     const reportSendErrorToDisplayedTarget = (message: string) => {
       if (!sendTargetStillDisplayed()) {
         recordSendTrace("sendPrompt:error-skipped-stale-display", {
@@ -4998,11 +5075,13 @@ export default function App() {
   // messages/permissions don't get wiped between switches. connectToServer
   // skips its own state RESET — this cache is the source of truth.
   createWorkspaceSessionSnapshots({
+    enabled: () => activeWorkspaceIsHydrated() && !workspaceStore.connectingWorkspaceId(),
     activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
     selectedSessionId,
     resolveSelectedSessionBrowseScope,
     saveWorkspaceSnapshot: (workspaceId) => sessionStore.saveWorkspaceSnapshot(workspaceId),
     loadWorkspaceSnapshot: (workspaceId) => sessionStore.loadWorkspaceSnapshot(workspaceId),
+    canClearSelectedSession: () => activeWorkspaceIsHydrated(),
     clearSelectedSession: () => {
       wsDebug("snapshot:clearSelectedSession:app", {
         selectedSessionId: selectedSessionId(),
@@ -5010,9 +5089,6 @@ export default function App() {
         route: location.pathname,
       });
       setSelectedSessionId(null);
-      if (location.pathname.toLowerCase().startsWith("/session/")) {
-        navigate("/session", { replace: true });
-      }
     },
     debug: wsDebug,
   });
@@ -5741,7 +5817,7 @@ export default function App() {
     const normalizedPath = location.pathname.toLowerCase().replace(/\/+$/, "");
     if (normalizedPath !== "/session") return;
     if (!routedClient()) return;
-    if (!sessionsLoaded()) return;
+    if (!sessionsLoadedForActiveWorkspace()) return;
     if (creatingSession()) return;
     if (selectedSessionId()) return;
 
@@ -11084,7 +11160,11 @@ export default function App() {
         workspaceStore.activeWorkspaceRoot().trim(),
       ),
     workspaces: workspaceStore.workspaces(),
+    workspacesHydrated: workspaceStore.workspacesHydrated(),
     activeWorkspaceId: workspaceStore.activeWorkspaceId(),
+    activeUiConversationRef: activeUiConversationRef(),
+    activeWorkspaceHasRoutingEntry: activeWorkspaceHasRoutingEntry(),
+    activeWorkspaceSessionsLoaded: sessionsLoadedForActiveWorkspace(),
     connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
     workspaceConnectionStateById: workspaceStore.workspaceConnectionStateById(),
     readyEngineWorkspaceIds: readyEngineWorkspaceIds(),
@@ -11354,8 +11434,10 @@ export default function App() {
         );
         const shouldFallbackFromRoute = id
           ? shouldFallbackFromSessionRoute({
-            sessionsLoaded: sessionsLoaded(),
+            sessionsLoaded: sessionsLoadedForActiveWorkspace(),
             routeSessionId: id,
+            routeWorkspaceId: resolveSelectedSessionBrowseScope(id)?.workspaceId ?? null,
+            activeWorkspaceId: workspaceStore.activeWorkspaceId(),
             sessionIdsInStore,
             sessionIdsInSidebar,
             scopedSessionIds: scopedSessionIds(),

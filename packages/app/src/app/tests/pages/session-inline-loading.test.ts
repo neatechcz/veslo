@@ -35,6 +35,27 @@ test("session loading stays route-owned without a pending preloader", () => {
   );
 });
 
+test("workspace setup empty state waits for hydrated workspace metadata", () => {
+  assert.match(
+    sessionSource,
+    /const showWorkspaceSetupEmptyState = createMemo\(\s*\(\) =>\s*props\.workspacesHydrated === true &&\s*!hasWorkspaceConfigured\(\) &&\s*!props\.selectedSessionId &&\s*props\.messages\.length === 0,\s*\);/s,
+    "the workspace setup empty state must not flash before bootstrap hydrates the workspace list",
+  );
+});
+
+test("temporary runtime UI diagnostic is developer-mode only", () => {
+  assert.match(
+    sessionSource,
+    /const markTempRuntimeUiRenderSource =[\s\S]*if \(!props\.developerMode\) return;[\s\S]*setTempRuntimeUiRenderSource\(createTempRuntimeUiRenderSnapshot/s,
+    "runtime UI diagnostic updates should not run during normal user sessions",
+  );
+  assert.match(
+    sessionSource,
+    /const tempRuntimeUiDiagnosticBadge =[\s\S]*<Show when=\{props\.developerMode\}>[\s\S]*TEMP UI render source/s,
+    "the temporary runtime UI badge must be hidden outside developer mode",
+  );
+});
+
 test("session switch records browse scope and routes immediately without arming a preloader", () => {
   const openSessionStart = sessionSource.indexOf("  const openSessionFromList = (workspaceId: string, sessionId: string) => {");
   const openSessionEnd = sessionSource.indexOf("  const resolveVesloWorkspaceId = (workspaceId: string) => {", openSessionStart);

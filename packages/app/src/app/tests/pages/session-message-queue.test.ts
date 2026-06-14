@@ -100,6 +100,11 @@ test("idle transition drains only after a non-idle status and only when queue is
     /createEffect\(\s*on\(\s*\(\) => props\.sessionStatus,\s*\(status, previousStatus\) => \{\s*if \(previousStatus === undefined \|\| previousStatus === "idle" \|\| status !== "idle"\) return;\s*const sessionKey = currentSessionQueueKey\(\);\s*if \(queuePausedForSessionKey\(sessionKey\)\) return;\s*void drainNextQueuedDraft\("queue-drain", sessionKey\);/s,
     "idle transitions should drain only after a previous non-idle status and while not paused",
   );
+  assert.match(
+    source,
+    /const sessionId = sessionIdForQueueKey\(sessionKey\);[\s\S]*if \(!sessionId\) continue;[\s\S]*previousStatuses\[sessionId\][\s\S]*statuses\[sessionId\]/s,
+    "background queue status checks should resolve scoped UI keys back to raw session ids",
+  );
 });
 
 test("queued drain uses a stable session key and guards stale navigation", () => {
@@ -145,6 +150,32 @@ test("pending draft queues remap to the real session key without replacing exist
     source,
     /setQueuePausedAfterStopBySessionKey\(\(current\) => \{[\s\S]*const pendingPaused = Boolean\(current\[pendingKey\]\);[\s\S]*return \{[\s\S]*\[sessionKey\]: pendingPaused \|\| Boolean\(current\[sessionKey\]\),[\s\S]*\};[\s\S]*\}\);/s,
     "pending queue pause state should remap to the real-session key without clearing an existing real pause",
+  );
+});
+
+test("session queue keys follow the UI conversation workspace scope", () => {
+  assert.match(
+    source,
+    /activeUiConversationRef\?: UiConversationRef;/,
+    "session props should accept the UI conversation scope used by the app-level selection controller",
+  );
+
+  assert.match(
+    source,
+    /const activeUiConversationWorkspaceId = \(\) =>[\s\S]*props\.activeUiConversationRef\?\.workspaceId\?\.trim\(\) \|\| props\.activeWorkspaceId \|\| "default";/,
+    "session queue keys should prefer the visible conversation workspace over the active workspace fallback",
+  );
+
+  assert.match(
+    source,
+    /const workspaceIdForSessionQueue = \(sessionId: string\) => \{[\s\S]*ref\.sessionId\?\.trim\(\)[\s\S]*ref\.conversationId\?\.trim\(\)[\s\S]*ref\.opencodeSessionId\?\.trim\(\)[\s\S]*return ref\.workspaceId\?\.trim\(\) \|\| activeUiConversationWorkspaceId\(\);[\s\S]*\};/s,
+    "real session queue keys should stay anchored to the scoped visible conversation across send-time workspace activation",
+  );
+
+  assert.match(
+    appSource,
+    /activeUiConversationRef: activeUiConversationRef\(\),/,
+    "app should pass the scoped visible conversation identity into SessionView",
   );
 });
 

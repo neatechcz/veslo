@@ -223,6 +223,16 @@ test("app routes selected session browsing through DB scope", () => {
 
 test("app activates selected session workspace at send time, not browse time", () => {
   assert.match(
+    sendPromptSource,
+    /const selectedSessionScopeForSend = selectedSessionCandidate[\s\S]*resolveSelectedSessionBrowseScope\(selectedSessionCandidate\)[\s\S]*const selectedSessionBelongsToActiveWorkspace =[\s\S]*selectedSessionScopeWorkspaceId === activeWorkspaceIdForSend;[\s\S]*const selectedRealSessionId =[\s\S]*isPendingSessionInstanceId\(selectedSessionCandidate\) \|\| !selectedSessionBelongsToActiveWorkspace[\s\S]*\? null[\s\S]*: selectedSessionCandidate;/s,
+    "implicit sends should ignore a selected session whose browse scope belongs to another workspace",
+  );
+  assert.match(
+    sendPromptSource,
+    /selectedSessionIgnoredForForeignWorkspace: Boolean\([\s\S]*selectedSessionCandidate && !selectedSessionBelongsToActiveWorkspace,[\s\S]*\),/s,
+    "send trace should expose when a stale selected session was ignored for active-workspace sends",
+  );
+  assert.match(
     workspaceSendTargetSource,
     /const transcriptScope = options\.resolveSelectedSessionBrowseScope\s*\? options\.resolveSelectedSessionBrowseScope\(sessionId\)\s*: options\.resolveSessionSendTargetScope\(sessionId\);[\s\S]*options\.sendTraceStep\(\s*"sendPrompt:activate-scoped-workspace-call",[\s\S]*options\.activateWorkspace\(targetWorkspaceId, \{ origin: "send-target:selected-session-workspace" \}\)/s,
     "send path should activate the workspace from the selected browse scope, falling back to the send target scope",

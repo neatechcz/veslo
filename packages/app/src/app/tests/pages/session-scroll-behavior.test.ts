@@ -14,14 +14,14 @@ test("session view accepts active pending draft key for pending queue identity",
 
   assert.match(
     source,
-    /const pendingDraftKey = props\.activePendingDraftKey\?\.trim\(\);[\s\S]*return `pending-draft:\$\{pendingDraftKey\}`;/,
-    "pending sessions should key queues by pending draft identity when available",
+    /const pendingDraftKey = props\.activePendingDraftKey\?\.trim\(\);[\s\S]*return createUiConversationKey\(\{[\s\S]*workspaceId,[\s\S]*kind: "pending-draft",[\s\S]*id: pendingDraftKey,[\s\S]*\}\);/s,
+    "pending sessions should key queues by pending draft identity and workspace scope when available",
   );
 
   assert.match(
     source,
-    /return `pending-workspace:\$\{props\.activeWorkspaceId \|\| "default"\}`;/,
-    "pending queue identity should fall back to workspace only when no pending draft key exists",
+    /return createUiConversationKey\(\{[\s\S]*workspaceId,[\s\S]*kind: "pending-workspace",[\s\S]*id: "active",[\s\S]*\}\);/s,
+    "pending queue identity should fall back to a workspace-scoped active key when no pending draft key exists",
   );
 });
 

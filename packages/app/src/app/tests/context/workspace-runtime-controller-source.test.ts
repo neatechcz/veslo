@@ -16,6 +16,11 @@ test("lazy runtime ensure lives in workspace runtime controller", () => {
   assert.match(runtimeSource, /clearWorkspaceBusyAllExcept\(workspace\.id\)/);
   assert.match(
     runtimeSource,
+    /const isActiveWorkspace = workspace\.id === deps\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*if \(isActiveWorkspace\) \{[\s\S]*deps\.setEngineReady\?\.\(true\);[\s\S]*deps\.onEngineStable\?\.\(\);[\s\S]*\}/s,
+    "runtime ensure should reflect engine readiness only for the currently active workspace",
+  );
+  assert.match(
+    runtimeSource,
     /const message = messageFromUnknownError\(e, deps\.safeStringify\);[\s\S]*deps\.setError\(message\);/,
     "runtime ensure failures should keep concrete engine startup messages for the UI",
   );

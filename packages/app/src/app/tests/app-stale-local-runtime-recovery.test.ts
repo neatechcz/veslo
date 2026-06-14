@@ -75,8 +75,8 @@ test("local runtime recovery restarts for dead endpoints and health timeouts", (
   );
   assert.match(
     readinessSource,
-    /if \([\s\S]*!isLocalRuntimeHealthTimeoutError\(error, deps\.safeStringify\)[\s\S]*!shouldRecoverLocalRuntimeFromHealthError\(error, deps\.safeStringify\)[\s\S]*\) \{[\s\S]*return true;[\s\S]*deps\.setEngineReady\(false\);[\s\S]*deps\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined\)/s,
-    "runtime recovery should restart before send when the endpoint is dead or the local health probe times out",
+    /const targetIsActiveWorkspace = !targetWorkspaceId \|\| targetWorkspaceId === deps\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*if \([\s\S]*!isLocalRuntimeHealthTimeoutError\(error, deps\.safeStringify\)[\s\S]*!shouldRecoverLocalRuntimeFromHealthError\(error, deps\.safeStringify\)[\s\S]*\) \{[\s\S]*return true;[\s\S]*if \(targetIsActiveWorkspace\) \{[\s\S]*deps\.setEngineReady\(false\);[\s\S]*deps\.ensureEngineForWorkspace\(targetWorkspaceId \|\| undefined\)/s,
+    "runtime recovery should restart before send but reflect readiness changes only when the target is still the active workspace",
   );
 });
 

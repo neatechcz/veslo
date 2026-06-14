@@ -1,4 +1,4 @@
-import { createEffect, createSignal } from "solid-js";
+import { createEffect, createMemo, createSignal } from "solid-js";
 
 import type { SessionBrowseScope } from "../pages/session-navigation";
 import type {
@@ -9,6 +9,12 @@ import {
   resolveUiConversationScope,
   upsertUiConversationScope,
 } from "../lib/conversation-scope";
+import {
+  createUiConversationKey,
+  createUiScopeToken,
+  type UiConversationRef,
+  type UiScopeToken,
+} from "../lib/ui-conversation-scope";
 import type { VesloSessionTranscriptSnapshot } from "../lib/veslo-server";
 import type { SidebarSessionItem } from "../types";
 
@@ -305,7 +311,10 @@ export function createWorkspaceSessionSelection(options: WorkspaceSessionSelecti
     const selectedScope = selected ? resolveSelectedSessionBrowseScope(selected) : null;
     if (selected && (!selectedScope || selectedScope.workspaceId === workspaceId)) return selected;
     const stored = readSessionByWorkspace()[workspaceId]?.trim() ?? "";
-    return stored || null;
+    if (!stored) return null;
+    const storedScope = resolveSelectedSessionBrowseScope(stored);
+    if (storedScope?.workspaceId && storedScope.workspaceId !== workspaceId) return null;
+    return stored;
   };
 
   const scopedSessionIds = () => [
@@ -325,6 +334,61 @@ export function createWorkspaceSessionSelection(options: WorkspaceSessionSelecti
     const workspace = options.workspaces().find((item) => item.id === id) ?? null;
     return workspace?.directory?.trim() || workspace?.path?.trim() || fallbackDirectory?.trim() || "";
   };
+
+  const activeUiConversationRef = createMemo<UiConversationRef>(() => {
+    const selected = selectedSessionId()?.trim() ?? "";
+    const selectedScope = selected ? resolveSelectedSessionBrowseScope(selected) : null;
+    const activeWorkspaceId = options.activeWorkspaceId().trim();
+    const activeWorkspaceRoot = options.activeWorkspaceRoot?.().trim() ?? "";
+    const workspaceId = selectedScope?.workspaceId?.trim() || activeWorkspaceId;
+    const workspaceRoot =
+      selectedScope?.workspaceRoot?.trim() ||
+      workspaceRootForId(workspaceId, activeWorkspaceRoot) ||
+      activeWorkspaceRoot;
+    const directory = selectedScope?.directory?.trim() || workspaceRoot;
+    return {
+      workspaceId,
+      workspaceRoot,
+      directory,
+      sessionId: selected || null,
+      conversationId: selectedScope?.conversationId?.trim() || null,
+      opencodeSessionId: selectedScope?.opencodeSessionId?.trim() || null,
+      key: createUiConversationKey({
+        workspaceId,
+        kind: selected ? "session" : "pending-workspace",
+        id: selected || "active",
+      }),
+    };
+  });
+
+  const activeUiScopeTokenState = createMemo<{
+    signature: string;
+    token: UiScopeToken;
+  }>((previous) => {
+    const ref = activeUiConversationRef();
+    const signature = [
+      ref.key,
+      ref.workspaceId,
+      ref.workspaceRoot,
+      ref.directory,
+      ref.sessionId ?? "",
+      ref.conversationId ?? "",
+      ref.opencodeSessionId ?? "",
+    ].join("\0");
+    const generation =
+      previous && previous.signature === signature
+        ? previous.token.generation
+        : (previous?.token.generation ?? 0) + 1;
+    return {
+      signature,
+      token: createUiScopeToken(ref, generation),
+    };
+  });
+
+  const activeUiScopeToken = () => activeUiScopeTokenState().token;
+
+  const isUiScopeTokenCurrent = (token: Pick<UiScopeToken, "key" | "generation"> | null | undefined) =>
+    Boolean(token && token.key === activeUiScopeToken().key && token.generation === activeUiScopeToken().generation);
 
   const resolveSendTargetWorkspaceScope = (sessionId?: string | null): SendTargetWorkspaceScope | null => {
     const normalizedSessionId = normalize(sessionId);
@@ -360,6 +424,9 @@ export function createWorkspaceSessionSelection(options: WorkspaceSessionSelecti
     moveWorkspaceLastSession,
     activeWorkspaceLastSessionId,
     scopedSessionIds,
+    activeUiConversationRef,
+    activeUiScopeToken,
+    isUiScopeTokenCurrent,
     resolveSendTargetWorkspaceScope,
   };
 }

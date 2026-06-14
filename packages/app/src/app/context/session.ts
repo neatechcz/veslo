@@ -2170,6 +2170,12 @@ export function createSessionStore(options: {
   // active routing mode these are no-ops; in multi mode app.tsx wires them to
   // a createEffect on activeWorkspaceId so each switch saves the outgoing
   // workspace state and loads the incoming one.
+  const selectedSessionIdForSnapshot = () => {
+    const selectedSessionId = options.selectedSessionId()?.trim() ?? "";
+    if (!selectedSessionId) return null;
+    return store.sessions.some((session) => session.id === selectedSessionId) ? selectedSessionId : null;
+  };
+
   const saveWorkspaceSnapshot = (workspaceId: string) => {
     if (!workspaceId) return;
     perWorkspaceCache.set(workspaceId, {
@@ -2182,7 +2188,7 @@ export function createSessionStore(options: {
       todos: { ...store.todos },
       pendingPermissions: store.pendingPermissions.slice(),
       pendingQuestions: store.pendingQuestions.slice(),
-      selectedSessionId: options.selectedSessionId(),
+      selectedSessionId: selectedSessionIdForSnapshot(),
       lastUsed: Date.now(),
     });
   };
@@ -2211,9 +2217,13 @@ export function createSessionStore(options: {
     );
     workspaceSessionIds.clear();
     for (const s of snapshot.sessions) workspaceSessionIds.add(s.id);
-    if (snapshot.selectedSessionId) {
-      options.setSelectedSessionId(snapshot.selectedSessionId);
-    }
+    const snapshotSelectedSessionId = snapshot.selectedSessionId?.trim() ?? "";
+    const selectedSessionId =
+      snapshotSelectedSessionId && snapshot.sessions.some((session) => session.id === snapshotSelectedSessionId)
+        ? snapshotSelectedSessionId
+        : null;
+    options.setSelectedSessionId(selectedSessionId);
+    snapshot.selectedSessionId = selectedSessionId;
     snapshot.lastUsed = Date.now();
     return true;
   };

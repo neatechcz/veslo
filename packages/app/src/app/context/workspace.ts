@@ -86,6 +86,7 @@ export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
 type DisplayedSessionResetReason =
   | "remote_to_local_workspace_changed"
   | "connect_workspace_scope_changed"
+  | "local_browse_workspace_changed"
   | "open_empty_session";
 
 type DisplayedSessionResetScope = {
@@ -230,7 +231,7 @@ export function createWorkspaceStore(options: {
   };
   const [projectDir, setProjectDir] = createSignal("");
   const [workspaces, setWorkspaces] = createSignal<WorkspaceInfo[]>([]);
-  const [activeWorkspaceId, setActiveWorkspaceId] = createSignal<string>("starter");
+  const [activeWorkspaceId, setActiveWorkspaceId] = createSignal<string>("");
   const [privateWorkspaceRoot, setPrivateWorkspaceRoot] = createSignal("");
 
   const syncActiveWorkspaceId = (id?: string) => {

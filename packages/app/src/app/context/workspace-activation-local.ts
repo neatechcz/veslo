@@ -46,7 +46,11 @@ export type WorkspaceLocalActivationDeps = {
     options: { reason: string },
   ) => Promise<boolean>;
   clearDisplayedSessionState: (
-    reason: "remote_to_local_workspace_changed" | "connect_workspace_scope_changed" | "open_empty_session",
+    reason:
+      | "remote_to_local_workspace_changed"
+      | "connect_workspace_scope_changed"
+      | "local_browse_workspace_changed"
+      | "open_empty_session",
     scope?: {
       workspaceId?: string | null;
       workspaceType?: WorkspaceInfo["workspaceType"] | null;
@@ -310,6 +314,16 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
     deps.wsDebug("activate:local->local:browsingMode", { id, nextPath: next.path });
 
     deps.setEngineReady?.(false);
+    if (selection.workspaceChanged) {
+      deps.clearDisplayedSessionState("local_browse_workspace_changed", {
+        workspaceId: id,
+        workspaceType: "local",
+        previousDirectory: selection.oldWorkspacePath,
+        nextDirectory: selection.nextRoot,
+        activeWorkspaceRoot: selection.nextRoot,
+        clearPendingPermissions: true,
+      });
+    }
 
     try {
       await deps.populateSidebarFromDb!(id, next.path);
