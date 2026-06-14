@@ -8,6 +8,7 @@ const globalSyncSource = readFileSync(
   "utf8",
 );
 const serverSource = readFileSync(new URL("../context/server.tsx", import.meta.url), "utf8");
+const sessionSource = readFileSync(new URL("../context/session.ts", import.meta.url), "utf8");
 const workspaceServerSyncSource = readFileSync(
   new URL("../context/workspace-server-sync.tsx", import.meta.url),
   "utf8",
@@ -23,6 +24,14 @@ test("engineReady boots false so guards block engine API calls until a real conn
     appSource,
     /const \[engineReady, setEngineReady\] = createSignal\(false\);/,
     "engineReady must start false — connectToServer/onEngineStable flips it true after a successful connect",
+  );
+});
+
+test("session SSE does not connect while lazy boot has no ready engine", () => {
+  assert.match(
+    sessionSource,
+    /createEffect\(\(\) => \{\s*if \(options\.engineReady\?\.\(\) === false\) \{\s*options\.setSseConnected\(false\);\s*return;\s*\}/s,
+    "lazy boot must not open engine SSE streams before the engine is ready; expected not-ready state should not produce reconnect errors",
   );
 });
 

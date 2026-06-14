@@ -6,6 +6,7 @@ export type PermissionPollingSchedulerOptions = {
   routedWorkspaceCount: () => number;
   activeWorkspaceId: () => string | null;
   activeSendTraceId: () => string | null;
+  engineReady?: () => boolean;
   refreshPendingPermissions: () => Promise<void>;
   intervalMs?: number;
 };
@@ -24,6 +25,9 @@ export function createPermissionPollingScheduler(options: PermissionPollingSched
           routedWorkspaceCount: options.routedWorkspaceCount(),
           activeSendTraceId,
         });
+        return;
+      }
+      if (options.engineReady?.() === false) {
         return;
       }
       const routedWorkspaceCount = options.routedWorkspaceCount();

@@ -341,6 +341,9 @@ import {
   WorkspaceRoutingProvider,
 } from "./context/workspace-routing";
 import {
+  accessProofAiClear,
+  accessProofAiRead,
+  accessProofAiWrite,
   updaterEnvironment,
   pendingSessionDraftsDelete,
   pendingSessionDraftsGet,
@@ -436,6 +439,7 @@ import {
   shouldDeferManagedAiAccessRefresh,
   type ManagedAiAccessProfile,
 } from "./lib/ai-access";
+import { isGatewayOwnedProvider } from "./utils/providers";
 import {
   resolveManagedAiAccessRetryDelayMs,
   shouldRetryManagedAiAccessRefresh,
@@ -485,6 +489,7 @@ type SendPreflightContext = SendRuntimePreflightContext & {
 const SEND_TRACE_LIMIT = 500;
 const MANAGED_AI_ACCESS_CACHE_STORAGE_KEY = "veslo.managedAiAccess.v1";
 const MANAGED_AI_ACCESS_CACHE_TTL_MS = 30 * 60 * 1000;
+const MANAGED_AI_ACCESS_PROOF_CACHE_TTL_MS = 3 * 24 * 60 * 60 * 1000;
 
 type ManagedAiAccessCacheRecord = {
   schemaVersion: 1;
@@ -492,6 +497,12 @@ type ManagedAiAccessCacheRecord = {
   fetchedAt: number;
   profile: ManagedAiAccessProfile;
   gatewayAccessToken: string;
+};
+
+type ManagedAiAccessProofCacheState = {
+  cacheKey: string;
+  loaded: boolean;
+  record: ManagedAiAccessCacheRecord | null;
 };
 
 let managedAiAccessRefreshInFlight: {
@@ -554,6 +565,7 @@ const buildManagedAiAccessCacheKey = (input: {
 };
 
 const readManagedAiAccessCache = (cacheKey: string): ManagedAiAccessCacheRecord | null => {
+  if (isTauriRuntime()) return null;
   if (!cacheKey || typeof window === "undefined") return null;
   try {
     const raw = window.localStorage.getItem(MANAGED_AI_ACCESS_CACHE_STORAGE_KEY);
@@ -581,6 +593,18 @@ const readManagedAiAccessCache = (cacheKey: string): ManagedAiAccessCacheRecord 
 
 const writeManagedAiAccessCache = (cacheKey: string, profile: ManagedAiAccessProfile, gatewayAccessToken: string) => {
   if (!cacheKey || typeof window === "undefined") return;
+  if (isTauriRuntime()) {
+    void accessProofAiWrite({
+      cacheKey,
+      proof: {
+        providerId: profile.providerId,
+        defaultModel: profile.defaultModel,
+        allowedModels: profile.allowedModels,
+        updatedAt: profile.updatedAt,
+      },
+    }).catch(() => undefined);
+    return;
+  }
   const token = gatewayAccessToken.trim();
   if (!token || token === "[REDACTED]") return;
   try {
@@ -597,12 +621,52 @@ const writeManagedAiAccessCache = (cacheKey: string, profile: ManagedAiAccessPro
   }
 };
 
-const clearManagedAiAccessCache = () => {
+const clearManagedAiAccessCache = (cacheKey?: string | null) => {
+  if (isTauriRuntime()) {
+    void accessProofAiClear(cacheKey).catch(() => undefined);
+  }
   if (typeof window === "undefined") return;
   try {
     window.localStorage.removeItem(MANAGED_AI_ACCESS_CACHE_STORAGE_KEY);
   } catch {
     // ignore
+  }
+};
+
+const readManagedAiAccessProofCache = async (
+  cacheKey: string,
+  userId: string,
+): Promise<ManagedAiAccessCacheRecord | null> => {
+  if (!cacheKey || !userId || !isTauriRuntime()) return null;
+  try {
+    const proof = await accessProofAiRead({
+      cacheKey,
+      maxAgeMs: MANAGED_AI_ACCESS_PROOF_CACHE_TTL_MS,
+    });
+    if (!proof) return null;
+    if (!isGatewayOwnedProvider(proof.providerId)) return null;
+    if (proof.defaultModel.providerID !== proof.providerId || !proof.defaultModel.modelID.trim()) return null;
+    const allowedModels = Array.isArray(proof.allowedModels)
+      ? proof.allowedModels.map((value) => value.trim()).filter(Boolean)
+      : [];
+    if (allowedModels.length > 0 && !allowedModels.includes(proof.defaultModel.modelID)) return null;
+    const profile: ManagedAiAccessProfile = {
+      userId,
+      providerId: proof.providerId,
+      defaultModel: proof.defaultModel,
+      allowedModels,
+      updatedAt: proof.updatedAt ?? null,
+    };
+    if (!isManagedAiAccessProfileValue(profile)) return null;
+    return {
+      schemaVersion: 1,
+      cacheKey,
+      fetchedAt: proof.fetchedAt,
+      profile,
+      gatewayAccessToken: "",
+    };
+  } catch {
+    return null;
   }
 };
 
@@ -2506,50 +2570,6 @@ export default function App() {
   const setPrompt = (value: string) => {
     setComposerDraftBySessionId((current) => setSessionComposerPrompt(current, { storageKey: currentComposerStorageKey() }, value));
   };
-  const composerTargetController = createComposerTargetController({
-    isTauriRuntime,
-    labels: {
-      chat: () => t("session.target_chat_label", currentLocale()),
-      chooseWorkspace: () => t("session.target_choose_workspace_label", currentLocale()),
-      chooseWorkspaceDescription: () => t("session.target_choose_workspace_description", currentLocale()),
-      targetUnavailable: () => t("session.target_not_available", currentLocale()),
-    },
-    activePendingDraftKey,
-    setActivePendingDraftKey,
-    activePendingDraftMeta,
-    setActivePendingDraftMeta,
-    pendingDraftsReady: activePendingDraftStorageReady,
-    currentComposerStorageKey,
-    composerDraft,
-    createEmptyComposerDraft,
-    pendingSessionDraftsList,
-    pendingSessionDraftsGet,
-    pendingSessionDraftsPut,
-    pendingSessionDraftsDelete,
-    formatPendingDraftAttachmentRestoreError: pendingSessionDraftController.formatPendingDraftAttachmentRestoreError,
-    isConsumedPendingDraftId: pendingSessionDraftController.isConsumedPendingDraftId,
-    markPendingDraftConsumed,
-    clearConsumedPendingDraftId,
-    workspace: {
-      workspaces: () => workspaceStore.workspaces(),
-      activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
-      activeWorkspaceDisplay: () => workspaceStore.activeWorkspaceDisplay(),
-      activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
-      isPrivateWorkspacePath: (folder) => workspaceStore.isPrivateWorkspacePath(folder),
-      createScratchWorkspace: () => workspaceStore.createScratchWorkspace(),
-      forgetWorkspace: (workspaceId, options) => workspaceStore.forgetWorkspace(workspaceId, options),
-      activateWorkspace: (workspaceId, options) => workspaceStore.activateWorkspace(workspaceId, options),
-      pickWorkspaceFolder: () => workspaceStore.pickWorkspaceFolder(),
-      ensureWorkspaceForFolder: (folder) => workspaceStore.ensureWorkspaceForFolder(folder),
-    },
-    publishRegisteredWorkspaceToSidebar: (workspaceId) => publishRegisteredWorkspaceToSidebar(workspaceId),
-    setComposerDraftBySessionId: (updater) => setComposerDraftBySessionId(updater),
-    setView,
-    setError,
-    reportError,
-    safeStringify,
-    addOpencodeCacheHint,
-  });
   const prompt = createMemo(() => composerDraft().text);
   const [lastPromptSent, setLastPromptSent] = createSignal("");
 
@@ -4538,6 +4558,58 @@ export default function App() {
     denAuthRevision();
     return readDenAuth()?.token?.trim() ?? "";
   });
+  const managedAiAccessCacheContext = createMemo(() => {
+    authenticatedUser();
+    denAuthRevision();
+    const gatewayClient = gatewayVesloServerClient();
+    const managedAiBaseUrl = managedAiGatewayBaseUrl();
+    const denAuth = readDenAuth();
+    const gatewayBaseUrl = managedAiBaseUrl || (isTauriRuntime() ? denAuth?.denApiBase ?? "" : "") || gatewayClient?.baseUrl || "";
+    return {
+      cacheKey: buildManagedAiAccessCacheKey({
+        userId: denAuth?.user?.id,
+        orgId: denAuth?.orgId || denAuth?.org?.id,
+        gatewayBaseUrl,
+      }),
+      userId: denAuth?.user?.id?.trim() ?? "",
+      gatewayBaseUrl,
+    };
+  });
+  const [managedAiAccessProofCacheState, setManagedAiAccessProofCacheState] =
+    createSignal<ManagedAiAccessProofCacheState>({
+      cacheKey: "",
+      loaded: true,
+      record: null,
+    });
+
+  createEffect(() => {
+    if (!isTauriRuntime()) return;
+    const context = managedAiAccessCacheContext();
+    const cacheKey = context.cacheKey.trim();
+    const userId = context.userId.trim();
+    if (!cacheKey || !userId) {
+      setManagedAiAccessProofCacheState({ cacheKey, loaded: true, record: null });
+      return;
+    }
+    const currentState = untrack(managedAiAccessProofCacheState);
+    if (currentState.cacheKey === cacheKey && currentState.loaded) return;
+
+    let cancelled = false;
+    setManagedAiAccessProofCacheState({ cacheKey, loaded: false, record: null });
+    void readManagedAiAccessProofCache(cacheKey, userId)
+      .then((record) => {
+        if (cancelled) return;
+        setManagedAiAccessProofCacheState({ cacheKey, loaded: true, record });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setManagedAiAccessProofCacheState({ cacheKey, loaded: true, record: null });
+      });
+
+    onCleanup(() => {
+      cancelled = true;
+    });
+  });
 
   const getConfigSnapshot = (content: string | null) => {
     if (!content?.trim()) return "";
@@ -4763,6 +4835,51 @@ export default function App() {
   });
   workspaceStoreRef = workspaceStore;
 
+  const composerTargetController = createComposerTargetController({
+    isTauriRuntime,
+    labels: {
+      chat: () => t("session.target_chat_label", currentLocale()),
+      chooseWorkspace: () => t("session.target_choose_workspace_label", currentLocale()),
+      chooseWorkspaceDescription: () => t("session.target_choose_workspace_description", currentLocale()),
+      targetUnavailable: () => t("session.target_not_available", currentLocale()),
+    },
+    activePendingDraftKey,
+    setActivePendingDraftKey,
+    activePendingDraftMeta,
+    setActivePendingDraftMeta,
+    pendingDraftsReady: activePendingDraftStorageReady,
+    currentComposerStorageKey,
+    composerDraft,
+    createEmptyComposerDraft,
+    pendingSessionDraftsList,
+    pendingSessionDraftsGet,
+    pendingSessionDraftsPut,
+    pendingSessionDraftsDelete,
+    formatPendingDraftAttachmentRestoreError: pendingSessionDraftController.formatPendingDraftAttachmentRestoreError,
+    isConsumedPendingDraftId: pendingSessionDraftController.isConsumedPendingDraftId,
+    markPendingDraftConsumed,
+    clearConsumedPendingDraftId,
+    workspace: {
+      workspaces: () => workspaceStore.workspaces(),
+      activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
+      activeWorkspaceDisplay: () => workspaceStore.activeWorkspaceDisplay(),
+      activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
+      isPrivateWorkspacePath: (folder) => workspaceStore.isPrivateWorkspacePath(folder),
+      createScratchWorkspace: () => workspaceStore.createScratchWorkspace(),
+      forgetWorkspace: (workspaceId, options) => workspaceStore.forgetWorkspace(workspaceId, options),
+      activateWorkspace: (workspaceId, options) => workspaceStore.activateWorkspace(workspaceId, options),
+      pickWorkspaceFolder: () => workspaceStore.pickWorkspaceFolder(),
+      ensureWorkspaceForFolder: (folder) => workspaceStore.ensureWorkspaceForFolder(folder),
+    },
+    publishRegisteredWorkspaceToSidebar: (workspaceId) => publishRegisteredWorkspaceToSidebar(workspaceId),
+    setComposerDraftBySessionId: (updater) => setComposerDraftBySessionId(updater),
+    setView,
+    setError,
+    reportError,
+    safeStringify,
+    addOpencodeCacheHint,
+  });
+
   const workspaceRootForId = (workspaceId: string, fallbackDirectory?: string | null) => {
     const id = workspaceId.trim();
     const workspace = workspaceStore.workspaces().find((item) => item.id === id) ?? null;
@@ -4793,6 +4910,7 @@ export default function App() {
     routedWorkspaceCount: () => workspaceRouting.entryIds().length,
     activeWorkspaceId: () => workspaceStore.activeWorkspaceId().trim() || null,
     activeSendTraceId: () => activeSendTraceId() ?? null,
+    engineReady: () => engineReady(),
     refreshPendingPermissions: () => sessionStore.refreshPendingPermissions(),
   });
 
@@ -6720,14 +6838,26 @@ export default function App() {
     const gatewayClient = gatewayVesloServerClient();
     const managedAiBaseUrl = managedAiGatewayBaseUrl();
     const userToken = denGatewayAccessToken();
-    const denAuth = readDenAuth();
-    const managedAiCacheKey = buildManagedAiAccessCacheKey({
-      userId: denAuth?.user?.id,
-      orgId: denAuth?.orgId || denAuth?.org?.id,
-      gatewayBaseUrl: managedAiBaseUrl || gatewayClient?.baseUrl || "",
-    });
+    const cacheContext = managedAiAccessCacheContext();
+    const managedAiCacheKey = cacheContext.cacheKey;
     const gatewayLocalAuth = vesloServerAuth();
-    const cachedAccess = readManagedAiAccessCache(managedAiCacheKey);
+    const proofCacheState = managedAiAccessProofCacheState();
+    if (
+      isTauriRuntime() &&
+      managedAiCacheKey &&
+      (!proofCacheState.loaded || proofCacheState.cacheKey !== managedAiCacheKey)
+    ) {
+      if (!managedAiAccess()) {
+        setManagedAiAccessBusy(true);
+      }
+      return;
+    }
+
+    const proofCachedAccess =
+      isTauriRuntime() && proofCacheState.cacheKey === managedAiCacheKey
+        ? proofCacheState.record
+        : null;
+    const cachedAccess = proofCachedAccess ?? readManagedAiAccessCache(managedAiCacheKey);
     const refreshPreflight = resolveManagedAiAccessRefreshPreflight({
       hasGatewayClient: Boolean(gatewayClient),
       managedAiBaseUrl,
@@ -6738,12 +6868,23 @@ export default function App() {
         localClientToken: gatewayLocalAuth.token,
       }),
       cachedAccessPresent: Boolean(cachedAccess),
+      freshCachedAccessPresent: Boolean(proofCachedAccess),
     });
     if (refreshPreflight.type === "reset") {
       setManagedAiAccess(null);
       setManagedAiGatewayAccessToken("");
       setManagedAiAccessBusy(false);
       setManagedAiAccessError(null);
+      setManagedAiAccessRetryAttempt(0);
+      return;
+    }
+    if (refreshPreflight.type === "use-cache") {
+      if (cachedAccess) {
+        setManagedAiAccess(cachedAccess.profile);
+        setManagedAiGatewayAccessToken(cachedAccess.gatewayAccessToken);
+        setManagedAiAccessError(null);
+      }
+      setManagedAiAccessBusy(false);
       setManagedAiAccessRetryAttempt(0);
       return;
     }
@@ -6815,7 +6956,7 @@ export default function App() {
         setManagedAiAccess(null);
         setManagedAiGatewayAccessToken(successDecision.gatewayAccessToken);
         setManagedAiAccessError(successDecision.error);
-        clearManagedAiAccessCache();
+        clearManagedAiAccessCache(managedAiCacheKey);
         scheduleRetry(false);
       })
       .catch((error) => {
@@ -11141,6 +11282,10 @@ export default function App() {
             sessionIdsInStore,
             sessionIdsInSidebar,
             scopedSessionIds: scopedSessionIds(),
+            selectedSessionId: selectedSessionId(),
+            visibleMessageCount: visibleMessages().length,
+            selectedSessionStatus: selectedSessionStatus(),
+            selectedSessionLoadingEarlierMessages: selectedSessionLoadingEarlierMessages(),
           })
           : false;
         const sessionPathDecision = resolveSessionPathDecision({

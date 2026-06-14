@@ -4,6 +4,10 @@ type SessionRouteSelectionGuardInput = {
   sessionIdsInStore: string[];
   sessionIdsInSidebar: string[];
   scopedSessionIds?: string[];
+  selectedSessionId?: string | null;
+  visibleMessageCount?: number;
+  selectedSessionStatus?: string | null;
+  selectedSessionLoadingEarlierMessages?: boolean;
 };
 
 const includesNormalizedId = (ids: string[], sessionId: string) => {
@@ -21,5 +25,19 @@ export const shouldFallbackFromSessionRoute = (
   if (includesNormalizedId(input.sessionIdsInStore, routeSessionId)) return false;
   if (includesNormalizedId(input.sessionIdsInSidebar, routeSessionId)) return false;
   if (includesNormalizedId(input.scopedSessionIds ?? [], routeSessionId)) return false;
+
+  const selectedSessionId = input.selectedSessionId?.trim() ?? "";
+  if (selectedSessionId === routeSessionId) {
+    const visibleMessageCount = Math.max(0, Math.floor(input.visibleMessageCount ?? 0));
+    const selectedSessionStatus = input.selectedSessionStatus?.trim() || "idle";
+    if (
+      visibleMessageCount > 0 ||
+      selectedSessionStatus !== "idle" ||
+      input.selectedSessionLoadingEarlierMessages === true
+    ) {
+      return false;
+    }
+  }
+
   return true;
 };

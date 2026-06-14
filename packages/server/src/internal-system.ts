@@ -30,6 +30,7 @@ const INTERNAL_AGENT_FILES = [
 ] as const;
 
 type ProvisionStats = { written: number; unchanged: number };
+type InternalPacksMode = "symlink" | "copy" | "symlink-fallback-copy";
 
 export type WorkspaceProvisionResult = {
   version: string;
@@ -46,7 +47,7 @@ type InternalManifest = {
   agents: string[];
   plugins: string[];
   routingBlockVersion: number;
-  packsMode?: string;
+  packsMode?: InternalPacksMode;
   centralPacksDir?: string;
 };
 
@@ -873,17 +874,45 @@ export async function provisionCentralPacks(appDataDir: string): Promise<string>
   return centralRoot;
 }
 
+async function copyPackDirectory(sourcePack: string, destinationPack: string, stats: ProvisionStats) {
+  if (!(await exists(sourcePack))) {
+    throw new Error(`Missing internal pack source: ${sourcePack}`);
+  }
+  await ensureDir(destinationPack);
+
+  const files = await collectFiles(sourcePack);
+  for (const relativePath of files) {
+    const sourcePath = join(sourcePack, relativePath);
+    const destinationPath = join(destinationPack, relativePath);
+    const content = await readFile(sourcePath);
+    await writeIfChanged(destinationPath, content, stats);
+  }
+}
+
+function isSymlinkPermissionError(error: unknown) {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "EPERM" || code === "EACCES";
+}
+
 /**
- * Create a directory symlink from `linkPath` to `targetPath`.
- * Handles migration from real directories and stale symlinks.
+ * Point a workspace internal pack at the central store. On Windows installs
+ * without directory-symlink privileges, fall back to an in-place copy so
+ * workspace activation still completes.
  */
-async function ensureSymlink(targetPath: string, linkPath: string): Promise<boolean> {
+async function ensureCentralPackReference(
+  targetPath: string,
+  linkPath: string,
+  stats: ProvisionStats,
+): Promise<{ mode: "symlink" | "copy"; symlinkChanged: boolean }> {
   try {
     const stat = await lstat(linkPath);
     if (stat.isSymbolicLink()) {
       const currentTarget = await readlink(linkPath);
-      if (currentTarget === targetPath) return false;
+      if (currentTarget === targetPath) return { mode: "symlink", symlinkChanged: false };
       await rm(linkPath);
+    } else if (stat.isDirectory() && platform() === "win32") {
+      await copyPackDirectory(targetPath, linkPath, stats);
+      return { mode: "copy", symlinkChanged: false };
     } else {
       await rm(linkPath, { recursive: stat.isDirectory(), force: true });
     }
@@ -891,50 +920,61 @@ async function ensureSymlink(targetPath: string, linkPath: string): Promise<bool
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
   }
 
-  await symlink(targetPath, linkPath, "dir");
-  return true;
+  try {
+    await symlink(targetPath, linkPath, "dir");
+    return { mode: "symlink", symlinkChanged: true };
+  } catch (error) {
+    if (!isSymlinkPermissionError(error)) throw error;
+    await copyPackDirectory(targetPath, linkPath, stats);
+    return { mode: "copy", symlinkChanged: false };
+  }
 }
 
-async function copyInternalPacks(workspaceRoot: string, stats: ProvisionStats, centralPacksDir?: string) {
+async function copyInternalPacks(
+  workspaceRoot: string,
+  stats: ProvisionStats,
+  centralPacksDir?: string,
+): Promise<InternalPacksMode> {
   const destinationRoot = join(workspaceRoot, ".opencode", "veslo", "internal");
   await ensureDir(destinationRoot);
 
   if (centralPacksDir) {
     // Symlink mode: point each pack to the central store
     let anyPackUpdated = false;
+    let fallbackCopyUsed = false;
     for (const pack of INTERNAL_PACKS) {
       const linkPath = join(destinationRoot, pack);
       const targetPath = join(centralPacksDir, pack);
-      if (await ensureSymlink(targetPath, linkPath)) {
+      const result = await ensureCentralPackReference(targetPath, linkPath, stats);
+      if (result.mode === "copy") {
+        fallbackCopyUsed = true;
+      }
+      if (result.symlinkChanged) {
         anyPackUpdated = true;
       }
     }
     if (anyPackUpdated) {
       stats.written += 1;
     }
+    return fallbackCopyUsed ? "symlink-fallback-copy" : "symlink";
   } else {
     // Copy mode: write packs directly (fallback when no central store)
     const sourceRoot = await resolveInternalPackSourceRoot();
     for (const pack of INTERNAL_PACKS) {
       const sourcePack = join(sourceRoot, pack);
       const destinationPack = join(destinationRoot, pack);
-      if (!(await exists(sourcePack))) {
-        throw new Error(`Missing internal pack source: ${pack}`);
-      }
-      await ensureDir(destinationPack);
-
-      const files = await collectFiles(sourcePack);
-      for (const relativePath of files) {
-        const sourcePath = join(sourcePack, relativePath);
-        const destinationPath = join(destinationPack, relativePath);
-        const content = await readFile(sourcePath);
-        await writeIfChanged(destinationPath, content, stats);
-      }
+      await copyPackDirectory(sourcePack, destinationPack, stats);
     }
+    return "copy";
   }
 }
 
-async function writeInternalManifest(workspaceRoot: string, stats: ProvisionStats, centralPacksDir?: string) {
+async function writeInternalManifest(
+  workspaceRoot: string,
+  stats: ProvisionStats,
+  packsMode: InternalPacksMode,
+  centralPacksDir?: string,
+) {
   const manifest: InternalManifest = {
     schemaVersion: MANIFEST_SCHEMA_VERSION,
     version: INTERNAL_SYSTEM_VERSION,
@@ -943,7 +983,7 @@ async function writeInternalManifest(workspaceRoot: string, stats: ProvisionStat
     agents: INTERNAL_AGENT_FILES.map((name) => name.replace(/\.md$/i, "")),
     plugins: [DELEGATE_PLUGIN_FILE],
     routingBlockVersion: ROUTING_BLOCK_VERSION,
-    packsMode: centralPacksDir ? "symlink" : "copy",
+    packsMode,
     centralPacksDir: centralPacksDir ?? undefined,
   };
   const path = join(workspaceRoot, ".opencode", "veslo", "internal", "manifest.json");
@@ -963,13 +1003,13 @@ export async function provisionWorkspaceInternalSystem(
 
   await removeLegacyOnboardingSkills(workspaceRoot, stats);
   await ensureSoulFiles(workspaceRoot, stats);
-  await copyInternalPacks(workspaceRoot, stats, centralPacksDir);
+  const packsMode = await copyInternalPacks(workspaceRoot, stats, centralPacksDir);
   await writeInternalAgents(workspaceRoot, stats);
   await writeDelegatePlugin(workspaceRoot, stats);
   await ensureVesloAgentRouting(workspaceRoot, stats);
   await ensureWorkspaceInstructions(workspaceRoot, stats);
   await ensureSoulInstructions(workspaceRoot, stats);
-  await writeInternalManifest(workspaceRoot, stats, centralPacksDir);
+  await writeInternalManifest(workspaceRoot, stats, packsMode, centralPacksDir);
 
   return {
     version: INTERNAL_SYSTEM_VERSION,

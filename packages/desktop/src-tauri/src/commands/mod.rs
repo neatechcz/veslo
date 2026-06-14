@@ -1,3 +1,4 @@
+pub mod access_proofs;
 pub mod clipboard;
 pub mod command_files;
 pub mod config;

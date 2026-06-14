@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { isTauriRuntime } from "../utils";
 import { validateMcpServerName } from "../mcp";
-import type { ComposerAttachment, ComposerDraft, ComposerPart, SkillInventoryRegistryMetadata } from "../types";
+import type { ComposerAttachment, ComposerDraft, ComposerPart, ModelRef, SkillInventoryRegistryMetadata } from "../types";
 
 export type EngineInfo = {
   running: boolean;
@@ -32,6 +32,37 @@ export type VesloServerInfo = {
   pid: number | null;
   lastStdout: string | null;
   lastStderr: string | null;
+};
+
+type ManagedAiAccessProofCommandModelRef = {
+  providerId: string;
+  modelId: string;
+};
+
+type ManagedAiAccessProofCommandRead = {
+  fetchedAt: number;
+  providerId: string;
+  defaultModel: ManagedAiAccessProofCommandModelRef;
+  allowedModels: string[];
+  updatedAt: string | null;
+  runtimeConfigFingerprint?: string | null;
+};
+
+export type ManagedAiAccessProofRead = {
+  fetchedAt: number;
+  providerId: string;
+  defaultModel: ModelRef;
+  allowedModels: string[];
+  updatedAt: string | null;
+  runtimeConfigFingerprint?: string | null;
+};
+
+export type ManagedAiAccessProofWrite = {
+  providerId: string;
+  defaultModel: ModelRef;
+  allowedModels: string[];
+  updatedAt: string | null;
+  runtimeConfigFingerprint?: string | null;
 };
 
 export type OrchestratorDaemonState = {
@@ -314,6 +345,60 @@ export async function readClipboardFilePaths(): Promise<string[]> {
   } catch {
     return [];
   }
+}
+
+const toCommandModelRef = (model: ModelRef): ManagedAiAccessProofCommandModelRef => ({
+  providerId: model.providerID,
+  modelId: model.modelID,
+});
+
+const fromCommandModelRef = (model: ManagedAiAccessProofCommandModelRef): ModelRef => ({
+  providerID: model.providerId,
+  modelID: model.modelId,
+});
+
+export async function accessProofAiRead(input: {
+  cacheKey: string;
+  maxAgeMs: number;
+}): Promise<ManagedAiAccessProofRead | null> {
+  if (!isTauriRuntime()) return null;
+  const result = await invoke<ManagedAiAccessProofCommandRead | null>("access_proof_ai_read", {
+    cacheKey: input.cacheKey,
+    maxAgeMs: input.maxAgeMs,
+  });
+  if (!result) return null;
+  return {
+    fetchedAt: result.fetchedAt,
+    providerId: result.providerId,
+    defaultModel: fromCommandModelRef(result.defaultModel),
+    allowedModels: Array.isArray(result.allowedModels) ? result.allowedModels : [],
+    updatedAt: result.updatedAt ?? null,
+    runtimeConfigFingerprint: result.runtimeConfigFingerprint ?? null,
+  };
+}
+
+export async function accessProofAiWrite(input: {
+  cacheKey: string;
+  proof: ManagedAiAccessProofWrite;
+}): Promise<boolean> {
+  if (!isTauriRuntime()) return false;
+  return invoke<boolean>("access_proof_ai_write", {
+    cacheKey: input.cacheKey,
+    proof: {
+      providerId: input.proof.providerId,
+      defaultModel: toCommandModelRef(input.proof.defaultModel),
+      allowedModels: input.proof.allowedModels,
+      updatedAt: input.proof.updatedAt,
+      runtimeConfigFingerprint: input.proof.runtimeConfigFingerprint ?? null,
+    },
+  });
+}
+
+export async function accessProofAiClear(cacheKey?: string | null): Promise<boolean> {
+  if (!isTauriRuntime()) return false;
+  return invoke<boolean>("access_proof_ai_clear", {
+    cacheKey: cacheKey?.trim() || null,
+  });
 }
 
 export async function pendingSessionDraftsList(): Promise<PendingSessionDraftSummary[]> {

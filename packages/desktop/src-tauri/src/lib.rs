@@ -20,6 +20,7 @@ mod workspace;
 
 pub use types::*;
 
+use commands::access_proofs::{access_proof_ai_clear, access_proof_ai_read, access_proof_ai_write};
 use commands::clipboard::clipboard_file_paths;
 use commands::command_files::{
     opencode_command_delete, opencode_command_list, opencode_command_write,
@@ -259,6 +260,9 @@ pub fn run() {
             engine_doctor,
             engine_install,
             engine_restart,
+            access_proof_ai_read,
+            access_proof_ai_write,
+            access_proof_ai_clear,
             engine_sse_subscribe,
             engine_sse_unsubscribe,
             orchestrator_status,

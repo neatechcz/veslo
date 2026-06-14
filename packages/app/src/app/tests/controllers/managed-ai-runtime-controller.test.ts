@@ -62,6 +62,20 @@ test("managed AI access preflight loads while preserving cached profile state", 
   );
 });
 
+test("managed AI access preflight uses a fresh local proof without a network refresh", () => {
+  assert.deepEqual(
+    resolveManagedAiAccessRefreshPreflight({
+      hasGatewayClient: true,
+      managedAiBaseUrl: "https://ai.veslo.work",
+      userToken: "token",
+      deferForLocalGateway: false,
+      cachedAccessPresent: true,
+      freshCachedAccessPresent: true,
+    }),
+    { type: "use-cache" },
+  );
+});
+
 test("managed AI access success writes profile/cache or clears stale access and retries", () => {
   assert.deepEqual(
     resolveManagedAiAccessRefreshSuccess({

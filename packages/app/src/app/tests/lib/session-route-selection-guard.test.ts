@@ -63,6 +63,31 @@ test("does not fallback when session id is known only from scoped conversation r
   );
 });
 
+test("does not fallback while the routed session is still displayed or running", () => {
+  assert.equal(
+    shouldFallbackFromSessionRoute({
+      sessionsLoaded: true,
+      routeSessionId: "sess-1",
+      sessionIdsInStore: [],
+      sessionIdsInSidebar: [],
+      selectedSessionId: "sess-1",
+      visibleMessageCount: 1,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldFallbackFromSessionRoute({
+      sessionsLoaded: true,
+      routeSessionId: "sess-1",
+      sessionIdsInStore: [],
+      sessionIdsInSidebar: [],
+      selectedSessionId: "sess-1",
+      selectedSessionStatus: "busy",
+    }),
+    false,
+  );
+});
+
 test("falls back when loaded and id is in neither store nor sidebar", () => {
   assert.equal(
     shouldFallbackFromSessionRoute({
@@ -89,8 +114,8 @@ test("real session route fallback ignores active pending draft context", () => {
   );
   assert.match(
     routeSource,
-    /shouldFallbackFromSessionRoute\(\{\s*sessionsLoaded: sessionsLoaded\(\),\s*routeSessionId: id,\s*sessionIdsInStore,\s*sessionIdsInSidebar,\s*scopedSessionIds: scopedSessionIds\(\),\s*\}\)/s,
-    "real session route fallback should use persisted, sidebar, and scoped conversation ids without pending preloader state",
+    /shouldFallbackFromSessionRoute\(\{\s*sessionsLoaded: sessionsLoaded\(\),\s*routeSessionId: id,\s*sessionIdsInStore,\s*sessionIdsInSidebar,\s*scopedSessionIds: scopedSessionIds\(\),\s*selectedSessionId: selectedSessionId\(\),\s*visibleMessageCount: visibleMessages\(\)\.length,\s*selectedSessionStatus: selectedSessionStatus\(\),\s*selectedSessionLoadingEarlierMessages: selectedSessionLoadingEarlierMessages\(\),\s*\}\)/s,
+    "real session route fallback should use persisted, sidebar, scoped, and currently displayed session state without pending preloader state",
   );
   assert.doesNotMatch(
     routeSource,

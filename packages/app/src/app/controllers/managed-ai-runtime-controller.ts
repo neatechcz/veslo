@@ -6,6 +6,7 @@ const trim = (value: string | null | undefined) => value?.trim() ?? "";
 
 export type ManagedAiAccessRefreshPreflightDecision =
   | { type: "reset"; reason: "missing-gateway" | "missing-user-token" | "deferred-local-gateway" }
+  | { type: "use-cache" }
   | { type: "load"; applyCachedAccessFirst: boolean };
 
 export function resolveManagedAiAccessRefreshPreflight(input: {
@@ -14,6 +15,7 @@ export function resolveManagedAiAccessRefreshPreflight(input: {
   userToken?: string | null;
   deferForLocalGateway: boolean;
   cachedAccessPresent: boolean;
+  freshCachedAccessPresent?: boolean;
 }): ManagedAiAccessRefreshPreflightDecision {
   if (!input.hasGatewayClient && !trim(input.managedAiBaseUrl)) {
     return { type: "reset", reason: "missing-gateway" };
@@ -23,6 +25,9 @@ export function resolveManagedAiAccessRefreshPreflight(input: {
   }
   if (input.deferForLocalGateway) {
     return { type: "reset", reason: "deferred-local-gateway" };
+  }
+  if (input.freshCachedAccessPresent) {
+    return { type: "use-cache" };
   }
   return { type: "load", applyCachedAccessFirst: input.cachedAccessPresent };
 }

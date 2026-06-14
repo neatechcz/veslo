@@ -3,10 +3,11 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const sessionSource = readFileSync(new URL("../context/session.ts", import.meta.url), "utf8");
 
 function createSessionAndOpenSource(): string {
   const start = source.indexOf("  async function createSessionAndOpen(");
-  const end = source.indexOf("  const openNewSessionWithDirectory = async", start);
+  const end = source.indexOf("  const chooseFolderForCurrentSession = async", start);
   assert.ok(start >= 0 && end > start, "createSessionAndOpen block should be present");
   return source.slice(start, end);
 }
@@ -36,5 +37,13 @@ test("createSessionAndOpen uses the creation flow helpers before selecting the s
     createSource,
     /mark\("session:select:start", \{ sessionID: session\.id \}\);[\s\S]*"createSessionAndOpen:select-session"[\s\S]*mark\("session:select:ok", \{ sessionID: session\.id \}\);[\s\S]*if \(shouldRouteCreatedSessionAfterSelect\(\{[^}]*blockAppDuringCreate,[^}]*currentView: currentView\(\)[^}]*\}\)\) \{[\s\S]*routeResumeSelectionAlreadyHandledForSession = session\.id;[\s\S]*goToSession\(session\.id\);[\s\S]*\}/s,
     "created sessions should select before routing so route effects only consume already-selected own navigation",
+  );
+});
+
+test("late session refreshes retain the selected session injected by createSessionAndOpen", () => {
+  assert.match(
+    sessionSource,
+    /let nextSessions = sortSessionsByActivity\(Array\.from\(merged\.values\(\)\)\);[\s\S]*const selectedSessionId = options\.selectedSessionId\(\)\?\.trim\(\) \?\? "";[\s\S]*!nextSessions\.some\(\(session\) => session\.id === selectedSessionId\)[\s\S]*store\.sessions\.find\(\(session\) => session\.id === selectedSessionId\)[\s\S]*sessionDirectoryMatchesRoot\(selectedSessionDirectory, root\)[\s\S]*nextSessions = sortSessionsByActivity\(\[selectedSession, \.\.\.nextSessions\]\);/s,
+    "loadSessions should not let a delayed list response remove the currently displayed session before the backend index catches up",
   );
 });

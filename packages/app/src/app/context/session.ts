@@ -28,7 +28,7 @@ import {
   sessionDirectoryMatchesRoot,
   safeStringify,
 } from "../utils";
-import { unwrap } from "../lib/opencode";
+import { unwrap, type OpencodeAuth } from "../lib/opencode";
 import { engineSseSubscribe, isEngineSseAvailable } from "../lib/engine-sse";
 import type { WorkspaceRouting, RoutingClient } from "./workspace-routing";
 import { finishPerf, perfNow, recordPerfLog, runtimePerfAuditEnabled } from "../lib/perf-log";
@@ -59,6 +59,24 @@ type RuntimeEffectTraceRoot = typeof window & {
 function activeSendTraceId() {
   if (typeof window === "undefined") return null;
   return (window as RuntimeEffectTraceRoot).__vesloActiveSendTraceId ?? null;
+}
+
+function engineSseAuthOptions(auth?: OpencodeAuth | null) {
+  if (!auth) return {};
+  if (auth.mode === "veslo") {
+    return { bearerToken: auth.token ?? null };
+  }
+  return {
+    username: auth.username ?? null,
+    password: auth.password ?? null,
+  };
+}
+
+function shouldReleaseStalePermissionRoute(wsId: string, activeWs: string, message: string) {
+  if (!wsId || wsId === activeWs) return false;
+  return /engine_not_running|Workspace client is stale|Failed to fetch|Request timed out|ECONN|upstream status (?:401|404|502|503)|status (?:401|404|502|503)|Invalid bearer token|unauthorized/i.test(
+    message,
+  );
 }
 
 function recordSessionStatusTrace(event: string, payload?: Record<string, unknown>) {
@@ -828,7 +846,19 @@ export function createSessionStore(options: {
       }
     }
 
-    const nextSessions = sortSessionsByActivity(Array.from(merged.values()));
+    let nextSessions = sortSessionsByActivity(Array.from(merged.values()));
+    const selectedSessionId = options.selectedSessionId()?.trim() ?? "";
+    if (selectedSessionId && !nextSessions.some((session) => session.id === selectedSessionId)) {
+      const selectedSession = store.sessions.find((session) => session.id === selectedSessionId) ?? null;
+      const selectedSessionDirectory = selectedSession ? resolveSessionDirectory(selectedSession) : "";
+      if (selectedSession && (!root || sessionDirectoryMatchesRoot(selectedSessionDirectory, root))) {
+        nextSessions = sortSessionsByActivity([selectedSession, ...nextSessions]);
+        sessionDebug("sessions:load:retained-selected", {
+          sessionID: selectedSession.id,
+          root: root || null,
+        });
+      }
+    }
     sessionDebug("sessions:load:filtered", { root: root || null, count: nextSessions.length });
 
     // Rebuild the workspace session ID set so SSE event filtering stays in sync.
@@ -923,6 +953,7 @@ export function createSessionStore(options: {
         return;
       }
       let errorCount = 0;
+      let releasedRouteCount = 0;
       await Promise.all(
         clientsToProbe.map(async ({ wsId, client }) => {
           try {
@@ -934,7 +965,17 @@ export function createSessionStore(options: {
               workspaceId: wsId,
               receivedAt: byId.get(perm.id)?.receivedAt ?? now,
             }));
-          } catch {
+          } catch (error) {
+            const message = error instanceof Error ? error.message : safeStringify(error);
+            if (shouldReleaseStalePermissionRoute(wsId, activeWs, message)) {
+              releasedRouteCount += 1;
+              options.routing.release(wsId);
+              sessionWarn("permissions:released-stale-route", {
+                workspaceId: wsId,
+                error: truncateErrorField(message),
+              });
+              return;
+            }
             errorCount += 1;
             nextByWs[wsId] = prevByWs[wsId] ?? [];
           }
@@ -950,6 +991,7 @@ export function createSessionStore(options: {
         source: "workspace-routing",
         permissionCount: Object.values(nextByWs).reduce((sum, list) => sum + list.length, 0),
         errorCount,
+        releasedRouteCount,
       });
     })();
 
@@ -1953,6 +1995,7 @@ export function createSessionStore(options: {
               workspaceId: sourceWsId,
               baseUrl: entry.baseUrl,
               directory: entry.directory ?? null,
+              ...engineSseAuthOptions(entry.auth),
               signal: controller.signal,
             })
           : c.event.subscribe(undefined, { signal: controller.signal }));
@@ -2071,6 +2114,11 @@ export function createSessionStore(options: {
   };
 
   createEffect(() => {
+    if (options.engineReady?.() === false) {
+      options.setSseConnected(false);
+      return;
+    }
+
     // VSLO-86 F4Ú12 — outer effect tracks routing.entryIds() so streams
     // re-fan-out when workspaces are ensured/released. Falls back to the
     // global client signal so the legacy single-active boot path keeps

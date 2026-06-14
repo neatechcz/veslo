@@ -238,8 +238,8 @@ test("pending permission interval skips active sends and single-client mode cove
   );
   assert.match(
     schedulerSource,
-    /if \(activeSendTraceId\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const routedWorkspaceCount = options\.routedWorkspaceCount\(\);[\s\S]*if \(routedWorkspaceCount <= 1\) \{[\s\S]*return;[\s\S]*\}[\s\S]*void options\.refreshPendingPermissions\(\);/,
-    "permission polling should not call refreshPendingPermissions during an active send or in single-client mode",
+    /if \(activeSendTraceId\) \{[\s\S]*return;[\s\S]*\}[\s\S]*if \(options\.engineReady\?\.\(\) === false\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const routedWorkspaceCount = options\.routedWorkspaceCount\(\);[\s\S]*if \(routedWorkspaceCount <= 1\) \{[\s\S]*return;[\s\S]*\}[\s\S]*void options\.refreshPendingPermissions\(\);/,
+    "permission polling should not call refreshPendingPermissions during an active send, lazy boot, or single-client mode",
   );
   assert.match(
     composerSource,
@@ -253,8 +253,8 @@ test("pending permission interval skips active sends and single-client mode cove
   );
   assert.match(
     source,
-    /createPermissionPollingScheduler\(\{[\s\S]*routedWorkspaceCount: \(\) => workspaceRouting\.entryIds\(\)\.length,[\s\S]*activeWorkspaceId: \(\) => workspaceStore\.activeWorkspaceId\(\)\.trim\(\) \|\| null,[\s\S]*refreshPendingPermissions: \(\) => sessionStore\.refreshPendingPermissions\(\),[\s\S]*\}\);/,
-    "app should wire permission polling to workspace routing and session store state",
+    /createPermissionPollingScheduler\(\{[\s\S]*routedWorkspaceCount: \(\) => workspaceRouting\.entryIds\(\)\.length,[\s\S]*activeWorkspaceId: \(\) => workspaceStore\.activeWorkspaceId\(\)\.trim\(\) \|\| null,[\s\S]*engineReady: \(\) => engineReady\(\),[\s\S]*refreshPendingPermissions: \(\) => sessionStore\.refreshPendingPermissions\(\),[\s\S]*\}\);/,
+    "app should wire permission polling to workspace routing, engine readiness, and session store state",
   );
 });
 
