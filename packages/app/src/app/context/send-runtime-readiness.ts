@@ -4,6 +4,8 @@ import {
 } from "../controllers/managed-ai-bootstrap-readiness-controller";
 
 export const localRuntimeHealthTimeoutMessage = "Timed out waiting for local runtime health";
+export const managedAiRuntimeConfigNotReadyMessage =
+  "Managed AI gateway setup is not ready for this runtime. Please wait a moment and try again.";
 
 export type SendRuntimePreflightTargetWorkspace = {
   workspaceId?: string | null;
@@ -80,7 +82,9 @@ export type SendRuntimeReadinessDeps<Client extends SendRuntimeClient = SendRunt
   managedAiBootstrapBusy: () => boolean;
   managedAiBootstrapPendingCount: () => number;
   reloadBusy: () => boolean;
-  hasUsableManagedAiRuntimeConfigForSend: () => Promise<boolean>;
+  hasUsableManagedAiRuntimeConfigForSend: (
+    targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
+  ) => Promise<boolean>;
   waitForManagedAiBootstrapReady: (options: SendRuntimeManagedAiBootstrapReadyOptions) => Promise<void>;
   sendTraceStep: <T>(
     event: string,
@@ -174,26 +178,41 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
 ) {
   const errorMessage = (error: unknown) => messageFromUnknownError(error, deps.safeStringify);
 
-  const ensureManagedAiBootstrapReady = async (): Promise<boolean> => {
+  const ensureManagedAiBootstrapReady = async (
+    preflightOrTraceId?: SendRuntimePreflightContext | string | null,
+  ): Promise<boolean> => {
     try {
+      const preflight = typeof preflightOrTraceId === "object" ? preflightOrTraceId ?? undefined : undefined;
+      const targetWorkspace = preflight?.targetWorkspace ?? null;
+      const targetWorkspaceId = targetWorkspace?.workspaceId?.trim() ?? "";
+      const hasManagedProfile = Boolean(deps.managedAiAccess());
       const currentConfigCheck = resolveManagedAiBootstrapCurrentConfigCheck({
         accessBusy: deps.managedAiAccessBusy(),
         bootstrapPendingCount: deps.managedAiBootstrapPendingCount(),
         reloadBusy: deps.reloadBusy(),
       });
       const canUseCurrentManagedConfig =
-        currentConfigCheck.type === "check-current-config" &&
-        (await deps.hasUsableManagedAiRuntimeConfigForSend());
+        (hasManagedProfile || currentConfigCheck.type === "check-current-config") &&
+        (await deps.hasUsableManagedAiRuntimeConfigForSend(targetWorkspace));
       const waitDecision = resolveManagedAiBootstrapWaitDecision({
-        managedProfilePresent: Boolean(deps.managedAiAccess()),
+        managedProfilePresent: hasManagedProfile,
         bootstrapBusy: deps.managedAiBootstrapBusy(),
         canUseCurrentManagedConfig,
       });
+      if (
+        hasManagedProfile &&
+        !canUseCurrentManagedConfig &&
+        !deps.managedAiBootstrapBusy() &&
+        !deps.reloadBusy()
+      ) {
+        deps.setError(managedAiRuntimeConfigNotReadyMessage);
+        return false;
+      }
       await deps.waitForManagedAiBootstrapReady({
         hasManagedProfile: waitDecision.hasManagedProfile,
         isBootstrapBusy: deps.managedAiBootstrapBusy,
         isReloadBusy: deps.reloadBusy,
-        hasClient: () => Boolean(deps.routedClient()),
+        hasClient: () => Boolean(targetWorkspaceId ? deps.routedClient(targetWorkspaceId) : deps.routedClient()),
       });
       return true;
     } catch (error) {

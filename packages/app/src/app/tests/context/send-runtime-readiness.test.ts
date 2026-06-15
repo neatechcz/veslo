@@ -5,6 +5,7 @@ import {
   createSendRuntimeReadiness,
   isLocalRuntimeHealthTimeoutError,
   localRuntimeHealthTimeoutMessage,
+  managedAiRuntimeConfigNotReadyMessage,
   shouldRecoverLocalRuntimeFromHealthError,
   type SendRuntimeReadinessDeps,
 } from "../../context/send-runtime-readiness.js";
@@ -150,6 +151,49 @@ test("managed AI bootstrap readiness waits when the current runtime config is no
 
   assert.equal(await readiness.ensureManagedAiBootstrapReady(), true);
   assert.deepEqual(waits, [{ hasManagedProfile: true }]);
+});
+
+test("managed AI bootstrap readiness blocks managed sends when runtime config is not usable", async () => {
+  const waits: Array<{ hasManagedProfile: boolean }> = [];
+  const { readiness, errors } = createHarness({
+    managedAiAccess: () => ({ providerId: "codex_oauth" }),
+    managedAiAccessBusy: () => false,
+    managedAiBootstrapBusy: () => false,
+    hasUsableManagedAiRuntimeConfigForSend: async () => false,
+    waitForManagedAiBootstrapReady: async (options) => {
+      waits.push({ hasManagedProfile: options.hasManagedProfile });
+    },
+  });
+
+  assert.equal(await readiness.ensureManagedAiBootstrapReady(), false);
+  assert.deepEqual(waits, []);
+  assert.deepEqual(errors, [managedAiRuntimeConfigNotReadyMessage]);
+});
+
+test("managed AI bootstrap readiness validates the snapshotted target workspace config", async () => {
+  const targets: Array<{ workspaceId?: string | null; workspaceRoot?: string | null; directory?: string | null } | null | undefined> = [];
+  const waits: Array<{ hasClient: boolean }> = [];
+  const { readiness, clients } = createHarness({
+    managedAiAccess: () => ({ providerId: "codex_oauth" }),
+    hasUsableManagedAiRuntimeConfigForSend: async (targetWorkspace) => {
+      targets.push(targetWorkspace);
+      return true;
+    },
+    waitForManagedAiBootstrapReady: async (options) => {
+      waits.push({ hasClient: options.hasClient() });
+    },
+  });
+  clients.set("target", createClient("target"));
+
+  const preflight = {
+    traceId: "trace-managed-target",
+    targetWorkspace: { workspaceId: "target", workspaceRoot: "/repo/target", directory: "/repo/target" },
+    runtimeHealthOk: false,
+  };
+
+  assert.equal(await readiness.ensureManagedAiBootstrapReady(preflight), true);
+  assert.deepEqual(targets, [preflight.targetWorkspace]);
+  assert.deepEqual(waits, [{ hasClient: true }]);
 });
 
 test("local runtime readiness probes the snapshotted target workspace client", async () => {

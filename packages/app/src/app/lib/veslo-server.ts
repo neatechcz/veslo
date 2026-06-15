@@ -984,6 +984,21 @@ export type VesloConversationCreateResult = Session & {
   branchId?: string | null;
 };
 
+export type VesloConversationImportInput = {
+  directory?: string | null;
+  sessions: Array<Pick<Session, "id" | "title" | "parentID" | "time">>;
+};
+
+export type VesloConversationImportResult = {
+  workspaceId: string;
+  items: Array<Session & {
+    conversationId?: string;
+    opencodeSessionId?: string;
+    parentConversationId?: string | null;
+    branchId?: string | null;
+  }>;
+};
+
 export type VesloConversationRunKind = "prompt_async" | "command" | "shell" | "summarize";
 
 export type VesloConversationRunInput = {
@@ -991,6 +1006,7 @@ export type VesloConversationRunInput = {
   directory?: string | null;
   clientMessageId?: string | null;
   origin?: SessionSendOrigin | string | null;
+  expectAiGatewayStart?: boolean;
   sessionID?: string;
   messageID?: string;
   model?: ModelRef | string;
@@ -2490,6 +2506,26 @@ export function createVesloServerClient(options: {
             ...(input?.title?.trim() ? { title: input.title.trim() } : {}),
           },
           timeoutMs: timeouts.conversationCreate,
+        },
+      ),
+    importConversations: (workspaceId: string, input: VesloConversationImportInput) =>
+      requestJson<VesloConversationImportResult>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/conversations/import`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: {
+            ...(input.directory?.trim() ? { directory: input.directory.trim() } : {}),
+            sessions: input.sessions.map((session) => ({
+              id: session.id,
+              title: session.title,
+              parentID: session.parentID,
+              time: session.time,
+            })),
+          },
+          timeoutMs: timeouts.sessionTranscript,
         },
       ),
     runConversation: (

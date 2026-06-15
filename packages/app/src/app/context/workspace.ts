@@ -162,6 +162,7 @@ export function createWorkspaceStore(options: {
   onEngineStable?: () => void;
   engineRuntime?: () => EngineRuntime;
   developerMode: () => boolean;
+  activeSendTraceId?: () => string | null;
   setEngineReady?: (value: boolean) => void;
   populateSidebarFromDb?: (workspaceId: string, directory: string) => Promise<void>;
   hydrateLatestSessionFromDb?: (workspaceId: string, directory: string) => Promise<void>;
@@ -197,6 +198,7 @@ export function createWorkspaceStore(options: {
   const WORKSPACE_SET_ACTIVE_TIMEOUT_MS = 8_000;
   const START_HOST_TIMEOUT_MS = 45_000;
   const WORKSPACE_ACTIVATE_TIMEOUT_MS = 30_000;
+  const BOOT_TRACE_SINK_STORAGE_KEY = "veslo:boot-trace-sink";
   // VSLO-86 -- orchestrator_workspace_activate waits for the daemon's
   // /workspaces/:id/activate path. That route eagerly spawns the per-workspace
   // OpenCode engine and its default health window is 60s on cold dev starts
@@ -320,15 +322,49 @@ export function createWorkspaceStore(options: {
     workspaceType?: WorkspaceInfo["workspaceType"] | null,
   ) => normalizeWorkspaceScopePath(previous, workspaceType) !== normalizeWorkspaceScopePath(next, workspaceType);
 
+  let lastProjectDirActiveRootMismatchKey = "";
+  createEffect(() => {
+    const active = activeWorkspaceInfo();
+    if (!active || active.workspaceType !== "local") return;
+    const activeRoot = activeWorkspaceRoot().trim();
+    const runtimeProjectDir = projectDir().trim();
+    if (!activeRoot || !runtimeProjectDir) return;
+    const activeRootScope = normalizeWorkspaceScopePath(activeRoot, "local");
+    const projectDirScope = normalizeWorkspaceScopePath(runtimeProjectDir, "local");
+    if (!activeRootScope || !projectDirScope || activeRootScope === projectDirScope) {
+      lastProjectDirActiveRootMismatchKey = "";
+      return;
+    }
+    const key = [
+      active.id,
+      activeRootScope,
+      projectDirScope,
+      engineStore.engine()?.projectDir?.trim() ?? "",
+    ].join("\0");
+    if (key === lastProjectDirActiveRootMismatchKey) return;
+    lastProjectDirActiveRootMismatchKey = key;
+    wsDebug("workspace:projectDir-activeRoot-mismatch", {
+      activeWorkspaceId: active.id,
+      activeWorkspaceRoot: activeRoot,
+      activeWorkspaceRootScope: activeRootScope,
+      projectDir: runtimeProjectDir,
+      projectDirScope,
+      engineProjectDir: engineStore.engine()?.projectDir?.trim() || null,
+      engineRunning: Boolean(engineStore.engine()?.running),
+    });
+  });
+
   const clearDisplayedSessionState = (
     reason: DisplayedSessionResetReason,
     scope: DisplayedSessionResetScope = {},
   ) => {
     const workspaceId = scope.workspaceId ?? activeWorkspaceId().trim();
     const activeRoot = scope.activeWorkspaceRoot ?? activeWorkspaceRoot().trim();
+    const activeSendTraceId = options.activeSendTraceId?.()?.trim() ?? "";
     wsDebug("ui-reset:displayed-session", {
       reason,
       workspaceId: workspaceId || null,
+      activeSendTraceId: activeSendTraceId || null,
       workspaceType: scope.workspaceType ?? activeWorkspaceInfo()?.workspaceType ?? null,
       selectedSessionId: options.selectedSessionId(),
       previousDirectory: scope.previousDirectory ?? null,
@@ -531,6 +567,7 @@ export function createWorkspaceStore(options: {
       startupPreference: options.startupPreference,
       setStartupPreference: options.setStartupPreference,
       projectDir,
+      activeWorkspaceRoot,
       setProjectDir,
       authorizedDirs,
       setAuthorizedDirs,
@@ -846,14 +883,31 @@ export function createWorkspaceStore(options: {
     });
   }
 
-  /** Send boot trace to local debug server + console */
+  function bootTraceSinkUrl() {
+    if (typeof window === "undefined") return "";
+    try {
+      const raw = window.localStorage.getItem(BOOT_TRACE_SINK_STORAGE_KEY)?.trim() ?? "";
+      if (!raw) return "";
+      const url = new URL(raw);
+      const protocol = url.protocol.toLowerCase();
+      const host = url.hostname.toLowerCase();
+      if (protocol !== "http:" && protocol !== "https:") return "";
+      if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1") return "";
+      return url.toString();
+    } catch {
+      return "";
+    }
+  }
+
+  /** Send boot trace to console and an explicitly configured local debug sink. */
   function bootTrace(...args: unknown[]) {
     const msg = args.map(a => typeof a === "string" ? a : String(a)).join(" ");
     const line = `[${Date.now()}] ${msg}`;
     console.log("[boot]", msg);
     if (!wsDebugEnabled() || !isTauriRuntime()) return;
-    // Intentionally silent: localhost debug telemetry — failure is expected when no debug server is running
-    try { fetch("http://127.0.0.1:9876", { method: "POST", body: line, mode: "no-cors" }).catch(() => {}); } catch { /* ignore */ }
+    const sinkUrl = bootTraceSinkUrl();
+    if (!sinkUrl) return;
+    try { fetch(sinkUrl, { method: "POST", body: line, mode: "no-cors" }).catch(() => {}); } catch { /* ignore */ }
   }
 
   async function bootstrapConfiguredRemoteServer(input: {

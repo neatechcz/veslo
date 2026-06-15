@@ -16,7 +16,7 @@ const recentRenderBranch = () => {
 test("project header click activates workspace while collapse stays on the folder icon", () => {
   assert.match(
     source,
-    /const handleProjectOpenClick = \(projectKey: string, workspaceId: string\) => \{[\s\S]*void Promise\.resolve\(props\.onActivateWorkspace\(workspaceId\)\);[\s\S]*\};/,
+    /const handleProjectOpenClick = \(projectKey: string, workspaceId: string\) => \{[\s\S]*void Promise\.resolve\(props\.onActivateWorkspace\(workspaceId, \{ origin: "workspace-session-list:project-open" \}\)\);[\s\S]*\};/,
     "project header should route clicks through workspace activation",
   );
 

@@ -54,7 +54,7 @@ test("managed AI bootstrap writes config with the managed gateway token when pre
 test("managed AI bootstrap routes desktop local providers through the local Veslo server target", () => {
   assert.match(
     source,
-    /const providerRoutingLocalHost = activeVesloServerHostInfo\(\);[\s\S]*?const providerRoutingLocalBaseUrl =[\s\S]*?providerRoutingLocalHost\?\.baseUrl \?\? deriveLocalVesloServerUrlFromOpencodeBaseUrl\(baseUrl\(\)\) \?\? "";[\s\S]*?const providerRoutingEngineBaseUrl =[\s\S]*?providerRoutingLocalHost\?\.engineUrl \?\? providerRoutingLocalBaseUrl;[\s\S]*?resolveManagedAiProviderRoutingTarget\(\{[\s\S]*?workspaceType: workspace\.workspaceType,[\s\S]*?activeBaseUrl: providerRoutingLocalBaseUrl,[\s\S]*?engineBaseUrl: providerRoutingEngineBaseUrl,[\s\S]*?activeToken: providerRoutingLocalHost\?\.clientToken \?\? "",[\s\S]*?gatewayBaseUrl: gatewayClient\?\.baseUrl \?\? "",[\s\S]*?\}\)/s,
+    /const providerRoutingLocalHost = activeVesloServerHostInfo\(\);[\s\S]*?const providerRoutingLocalBaseUrl =[\s\S]*?providerRoutingLocalHost\?\.baseUrl \?\? deriveLocalVesloServerUrlFromOpencodeBaseUrl\(baseUrl\(\)\) \?\? "";[\s\S]*?const providerRoutingRequiresEngineBaseUrl = requiresManagedAiEngineBaseUrl\(\{[\s\S]*?const providerRoutingEngineBaseUrl =[\s\S]*?providerRoutingLocalHost\?\.engineUrl \?\? "";[\s\S]*?resolveManagedAiProviderRoutingTarget\(\{[\s\S]*?workspaceType: workspace\.workspaceType,[\s\S]*?activeBaseUrl: providerRoutingLocalBaseUrl,[\s\S]*?engineBaseUrl: providerRoutingEngineBaseUrl,[\s\S]*?requireEngineBaseUrl: providerRoutingRequiresEngineBaseUrl,[\s\S]*?activeToken: providerRoutingLocalHost\?\.clientToken \?\? "",[\s\S]*?gatewayBaseUrl: gatewayClient\?\.baseUrl \?\? "",[\s\S]*?\}\)/s,
     "managed AI config writes should resolve provider routing from the local host snapshot instead of the remote access gateway client",
   );
   assert.match(
@@ -118,12 +118,12 @@ test("managed AI bootstrap can use a validated current runtime config while acce
 
   assert.match(
     ensureSource,
-    /const currentConfigCheck = resolveManagedAiBootstrapCurrentConfigCheck\(\{[\s\S]*accessBusy: deps\.managedAiAccessBusy\(\),[\s\S]*bootstrapPendingCount: deps\.managedAiBootstrapPendingCount\(\),[\s\S]*reloadBusy: deps\.reloadBusy\(\),[\s\S]*\}\);[\s\S]*const canUseCurrentManagedConfig =[\s\S]*currentConfigCheck\.type === "check-current-config"[\s\S]*deps\.hasUsableManagedAiRuntimeConfigForSend\(\)/,
+    /const currentConfigCheck = resolveManagedAiBootstrapCurrentConfigCheck\(\{[\s\S]*accessBusy: deps\.managedAiAccessBusy\(\),[\s\S]*bootstrapPendingCount: deps\.managedAiBootstrapPendingCount\(\),[\s\S]*reloadBusy: deps\.reloadBusy\(\),[\s\S]*\}\);[\s\S]*const canUseCurrentManagedConfig =[\s\S]*currentConfigCheck\.type === "check-current-config"[\s\S]*deps\.hasUsableManagedAiRuntimeConfigForSend\(targetWorkspace\)/,
     "managed bootstrap should validate current runtime config before bypassing a busy access refresh",
   );
   assert.match(
     ensureSource,
-    /const waitDecision = resolveManagedAiBootstrapWaitDecision\(\{[\s\S]*managedProfilePresent: Boolean\(deps\.managedAiAccess\(\)\),[\s\S]*bootstrapBusy: deps\.managedAiBootstrapBusy\(\),[\s\S]*canUseCurrentManagedConfig,[\s\S]*\}\);[\s\S]*hasManagedProfile: waitDecision\.hasManagedProfile,/,
+    /const waitDecision = resolveManagedAiBootstrapWaitDecision\(\{[\s\S]*managedProfilePresent: hasManagedProfile,[\s\S]*bootstrapBusy: deps\.managedAiBootstrapBusy\(\),[\s\S]*canUseCurrentManagedConfig,[\s\S]*\}\);[\s\S]*hasManagedProfile: waitDecision\.hasManagedProfile,/,
     "managed bootstrap should only skip waiting when the current runtime config is usable",
   );
 });
@@ -136,8 +136,8 @@ test("managed AI access cache has a bounded TTL and hydrates before background r
   );
   assert.match(
     source,
-    /const cachedAccess = readManagedAiAccessCache\(managedAiCacheKey\);[\s\S]*setManagedAiAccess\(cachedAccess\.profile\);[\s\S]*setManagedAiGatewayAccessToken\(cachedAccess\.gatewayAccessToken\);[\s\S]*setManagedAiAccessBusy\(true\);/,
-    "managed AI access cache should hydrate usable state before the refresh request marks access busy",
+    /const proofCachedAccess =[\s\S]*proofCacheState\.record[\s\S]*const cachedAccess = proofCachedAccess \?\? readManagedAiAccessCache\(managedAiCacheKey\);[\s\S]*if \(refreshPreflight\.applyCachedAccessFirst && cachedAccess\) \{[\s\S]*setManagedAiAccess\(cachedAccess\.profile\);[\s\S]*setManagedAiGatewayAccessToken\(cachedAccess\.gatewayAccessToken\);[\s\S]*setManagedAiAccessBusy\(true\);/,
+    "managed AI access cache should hydrate usable proof or local state before the refresh request marks access busy",
   );
 });
 

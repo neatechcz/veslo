@@ -81,6 +81,7 @@ export function resolveManagedAiProviderRoutingTarget(input: {
   workspaceType: "local" | "remote" | null | undefined;
   activeBaseUrl: string | null | undefined;
   engineBaseUrl?: string | null | undefined;
+  requireEngineBaseUrl?: boolean;
   activeToken: string | null | undefined;
   gatewayBaseUrl: string | null | undefined;
   gatewayToken: string | null | undefined;
@@ -93,6 +94,9 @@ export function resolveManagedAiProviderRoutingTarget(input: {
     input.workspaceType === "local" &&
     isLoopbackHttpUrl(activeBaseUrl)
   ) {
+    if (input.requireEngineBaseUrl && (!engineBaseUrl || isLoopbackHttpUrl(engineBaseUrl))) {
+      return null;
+    }
     return {
       baseUrl: activeBaseUrl,
       engineBaseUrl: engineBaseUrl || activeBaseUrl,
@@ -115,6 +119,20 @@ export function resolveManagedAiProviderRoutingTarget(input: {
     engineBaseUrl: gatewayBaseUrl,
     serverClientToken: gatewayToken,
   };
+}
+
+export function requiresManagedAiEngineBaseUrl(input: {
+  isDesktopRuntime: boolean;
+  workspaceType: "local" | "remote" | null | undefined;
+  sandboxEnabled?: boolean | null;
+  sandboxBackend?: string | null;
+}): boolean {
+  return (
+    input.isDesktopRuntime &&
+    input.workspaceType === "local" &&
+    input.sandboxEnabled === true &&
+    input.sandboxBackend === "windows-wsl2"
+  );
 }
 
 function readConfigObject(value: unknown): Record<string, unknown> {

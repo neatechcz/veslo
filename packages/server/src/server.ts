@@ -159,6 +159,7 @@ import { createConversationBindingStore } from "./conversation-binding-store.js"
 import { createConversationService } from "./conversation-service.js";
 import {
   createOrchestratorLifecycleClient,
+  type OrchestratorLifecycleClient,
   OrchestratorLifecycleRequestError,
   RunAlreadyActiveError,
 } from "./orchestrator-lifecycle-client.js";
@@ -191,6 +192,9 @@ const OPENCODE_CONVERSATION_SUBMIT_TIMEOUT_MS = 30_000;
 // the orchestrator's 60s cold OpenCode health window so a legitimate POST that
 // cold-spawns the engine is not aborted mid-spawn.
 const OPENCODE_PROXY_HEADERS_DEFAULT_TIMEOUT_MS = 75_000;
+const AI_GATEWAY_PROXY_HEADERS_DEFAULT_TIMEOUT_MS = 45_000;
+const AI_GATEWAY_PROVIDER_START_DEFAULT_TIMEOUT_MS = 30_000;
+const AI_GATEWAY_SESSION_HIT_TTL_MS = 5 * 60 * 1000;
 const AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS = 30_000;
 export const REDACTED_SECRET_VALUE = "[REDACTED]";
 const GATEWAY_CALLER_AUTH_HEADER = "x-veslo-gateway-authorization";
@@ -1310,6 +1314,121 @@ function resolveAiGatewayProvider(gatewayPath: string): string | undefined {
   return match?.[1] ? decodeURIComponent(match[1]) : undefined;
 }
 
+type AiGatewaySessionHit = {
+  at: number;
+  requestId: string;
+  provider: string | null;
+  gatewayPath: string;
+};
+
+const aiGatewaySessionHits = new Map<string, AiGatewaySessionHit[]>();
+
+function pruneAiGatewaySessionHits(now = Date.now()): void {
+  const cutoff = now - AI_GATEWAY_SESSION_HIT_TTL_MS;
+  for (const [sessionId, hits] of aiGatewaySessionHits) {
+    const liveHits = hits.filter((hit) => hit.at >= cutoff);
+    if (liveHits.length) {
+      aiGatewaySessionHits.set(sessionId, liveHits);
+    } else {
+      aiGatewaySessionHits.delete(sessionId);
+    }
+  }
+}
+
+function recordAiGatewaySessionHit(input: {
+  sessionId?: string;
+  requestId: string;
+  provider: string | null;
+  gatewayPath: string;
+  now?: number;
+}): void {
+  const sessionId = input.sessionId?.trim() ?? "";
+  if (!sessionId) return;
+  const now = input.now ?? Date.now();
+  pruneAiGatewaySessionHits(now);
+  const hits = aiGatewaySessionHits.get(sessionId) ?? [];
+  hits.push({
+    at: now,
+    requestId: input.requestId,
+    provider: input.provider,
+    gatewayPath: input.gatewayPath,
+  });
+  aiGatewaySessionHits.set(sessionId, hits.slice(-50));
+}
+
+function hasAiGatewaySessionHitAfter(sessionId: string, startedAt: number): boolean {
+  const normalizedSessionId = sessionId.trim();
+  if (!normalizedSessionId) return false;
+  pruneAiGatewaySessionHits();
+  return (aiGatewaySessionHits.get(normalizedSessionId) ?? []).some((hit) => hit.at >= startedAt);
+}
+
+function logAiGatewayProviderStartTimeout(input: Record<string, unknown>): void {
+  try {
+    console.warn(`[veslo:ai-gateway] provider-start-timeout ${JSON.stringify(input)}`);
+  } catch {
+    console.warn("[veslo:ai-gateway] provider-start-timeout");
+  }
+}
+
+function logAiGatewayProviderStartWatch(input: Record<string, unknown>): void {
+  try {
+    console.log(`[veslo:ai-gateway] provider-start-watch ${JSON.stringify(input)}`);
+  } catch {
+    console.log("[veslo:ai-gateway] provider-start-watch");
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForAiGatewayProviderStart(input: {
+  workspaceId: string;
+  conversationId: string;
+  runId: string;
+  opencodeSessionId: string;
+  clientMessageId?: string | null;
+  origin?: string | null;
+  startedAt: number;
+}): Promise<{ started: boolean; timeoutMs: number }> {
+  const timeoutMs = resolveAiGatewayProviderStartTimeoutMs();
+  const opencodeSessionId = input.opencodeSessionId.trim();
+  if (!opencodeSessionId) return { started: false, timeoutMs };
+
+  logAiGatewayProviderStartWatch({
+    workspaceId: input.workspaceId,
+    conversationId: input.conversationId,
+    runId: input.runId,
+    opencodeSessionId,
+    clientMessageId: input.clientMessageId ?? null,
+    origin: input.origin ?? null,
+    timeoutMs,
+  });
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (hasAiGatewaySessionHitAfter(opencodeSessionId, input.startedAt)) {
+      return { started: true, timeoutMs };
+    }
+    await sleep(Math.min(100, Math.max(5, deadline - Date.now())));
+  }
+
+  const started = hasAiGatewaySessionHitAfter(opencodeSessionId, input.startedAt);
+  if (!started) {
+    logAiGatewayProviderStartTimeout({
+      workspaceId: input.workspaceId,
+      conversationId: input.conversationId,
+      runId: input.runId,
+      opencodeSessionId,
+      clientMessageId: input.clientMessageId ?? null,
+      origin: input.origin ?? null,
+      timeoutMs,
+    });
+  }
+  return { started, timeoutMs };
+}
+
 async function readAiGatewayRequestModel(request: Request): Promise<string | undefined> {
   const contentType = request.headers.get("content-type") ?? "";
   if (!contentType.toLowerCase().includes("application/json")) return undefined;
@@ -1528,6 +1647,12 @@ async function proxyAiGatewayRequest(input: {
   const authorization =
     input.auth === "caller" ? requireAiGatewayCallerAuth(input.request) : requireAiGatewayAccessToken(input.request);
   const sessionId = input.requireSessionId ? requireAiGatewaySessionId(input.request) : undefined;
+  recordAiGatewaySessionHit({
+    sessionId,
+    requestId,
+    provider: resolveAiGatewayProvider(input.gatewayPath) ?? null,
+    gatewayPath: input.gatewayPath,
+  });
   let model: string | undefined;
   modelDiagnosticStartedAt = perfMs();
   const modelDiagnosticPromise = readAiGatewayRequestModel(input.request)
@@ -1556,6 +1681,24 @@ async function proxyAiGatewayRequest(input: {
   const method = input.request.method.toUpperCase();
   const body = method === "GET" || method === "HEAD" ? undefined : input.request.body;
   headersPreparedAt = perfMs();
+
+  const logEvent = (event: "start", extra: Record<string, unknown> = {}) => {
+    const attributes = {
+      requestId,
+      method,
+      gatewayPath: input.gatewayPath,
+      provider: resolveAiGatewayProvider(input.gatewayPath) ?? null,
+      sessionId: sessionId ?? null,
+      targetOrigin: target.origin,
+      targetPath: target.pathname,
+      ...extra,
+    };
+    try {
+      console.log(`[veslo:ai-gateway] proxy-${event} ${JSON.stringify(attributes)}`);
+    } catch {
+      console.log(`[veslo:ai-gateway] proxy-${event}`);
+    }
+  };
 
   const logTiming = (status: number, outcome: "ok" | "error", extra: Record<string, unknown> = {}) => {
     const finishedAt = perfMs();
@@ -1596,17 +1739,45 @@ async function proxyAiGatewayRequest(input: {
     }
   };
 
+  const headersTimeoutMs = resolveAiGatewayProxyHeadersTimeoutMs();
+  const controller = new AbortController();
+  let timedOut = false;
+  const headersTimer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, headersTimeoutMs);
+  if (typeof headersTimer === "object" && headersTimer && "unref" in headersTimer) {
+    (headersTimer as { unref?: () => void }).unref?.();
+  }
+
   let response: Response;
   try {
     upstreamFetchStartedAt = perfMs();
+    logEvent("start", { timeoutMs: headersTimeoutMs });
     response = await fetch(target.toString(), {
       method,
       headers,
       body,
+      signal: controller.signal,
     });
     upstreamHeadersReceivedAt = perfMs();
   } catch (error) {
     const diagnosticModel = model ?? await modelDiagnosticPromise;
+    if (timedOut || isAbortError(error)) {
+      logTiming(504, "error", {
+        error: "AI gateway upstream did not send response headers before timeout",
+        timeoutMs: headersTimeoutMs,
+      });
+      throw new ApiError(504, "ai_gateway_timeout", "AI gateway timed out waiting for upstream response", {
+        requestId,
+        provider: resolveAiGatewayProvider(input.gatewayPath),
+        model: diagnosticModel,
+        sessionId,
+        baseUrl,
+        targetUrl: target.toString(),
+        timeoutMs: headersTimeoutMs,
+      });
+    }
     logTiming(503, "error", {
       error: error instanceof Error ? error.message : String(error),
     });
@@ -1619,6 +1790,8 @@ async function proxyAiGatewayRequest(input: {
       targetUrl: target.toString(),
       error: error instanceof Error ? error.message : String(error),
     });
+  } finally {
+    clearTimeout(headersTimer);
   }
 
   const contentType = response.headers.get("content-type") ?? "";
@@ -2274,6 +2447,47 @@ function buildConversationRunBody(kind: "prompt_async" | "command" | "shell" | "
     if (body[field] !== undefined) result[field] = body[field];
   }
   return result;
+}
+
+function summarizeConversationRunBodyForTrace(body: Record<string, unknown>) {
+  const model = body.model;
+  const modelSummary =
+    typeof model === "string"
+      ? { type: "string", value: model }
+      : model && typeof model === "object" && !Array.isArray(model)
+        ? {
+            type: "object",
+            providerID:
+              typeof (model as { providerID?: unknown }).providerID === "string"
+                ? (model as { providerID: string }).providerID
+                : null,
+            modelID:
+              typeof (model as { modelID?: unknown }).modelID === "string"
+                ? (model as { modelID: string }).modelID
+                : null,
+          }
+        : model === undefined
+          ? null
+          : { type: typeof model };
+  const parts = Array.isArray(body.parts) ? body.parts : [];
+  const textChars = parts.reduce((total, part) => {
+    if (!part || typeof part !== "object") return total;
+    const text = (part as { text?: unknown }).text;
+    return total + (typeof text === "string" ? text.length : 0);
+  }, 0);
+  return {
+    fields: Object.keys(body).sort(),
+    messageID: typeof body.messageID === "string" ? body.messageID : null,
+    agent: typeof body.agent === "string" ? body.agent : null,
+    variant: typeof body.variant === "string" ? body.variant : null,
+    model: modelSummary,
+    partCount: parts.length,
+    textChars,
+    hasSystem: typeof body.system === "string" && body.system.length > 0,
+    hasTools: Boolean(body.tools && typeof body.tools === "object"),
+    hasReasoningEffort: typeof body.reasoning_effort === "string" && body.reasoning_effort.length > 0,
+    noReply: body.noReply === true,
+  };
 }
 
 function lifecycleRunKind(kind: "prompt_async" | "command" | "shell" | "summarize") {
@@ -4085,6 +4299,9 @@ function createRoutes(
     const id = workspaceIdForPath(workspacePath);
     const existing = config.workspaces.find((entry) => entry.id === id);
     if (existing) {
+      const hasOpencodeMetadata = Boolean(
+        baseUrl || directory || opencodeUsername || opencodePassword,
+      );
       const nextWorkspace: WorkspaceInfo = {
         ...existing,
         ...(name && existing.name !== name ? { name } : {}),
@@ -4108,6 +4325,13 @@ function createRoutes(
           activeId: config.workspaces[0]?.id ?? null,
           items: config.workspaces.map(serializeWorkspace),
           persisted,
+        });
+      }
+      if (hasOpencodeMetadata) {
+        return jsonResponse({
+          activeId: config.workspaces[0]?.id ?? null,
+          items: config.workspaces.map(serializeWorkspace),
+          persisted: false,
         });
       }
       throw new ApiError(409, "workspace_exists", "Workspace already exists", {
@@ -4487,6 +4711,45 @@ function createRoutes(
     return jsonResponse(result, 201);
   });
 
+  addRoute(routes, "POST", "/workspace/:id/conversations/import", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const rawSessions = body.sessions;
+    if (!Array.isArray(rawSessions)) {
+      throw new ApiError(400, "invalid_payload", "sessions must be an array");
+    }
+    const directory = await resolveConversationReadDirectory(
+      workspace,
+      optionalBodyNullableString(body, "directory") ?? null,
+    );
+    const sessions = rawSessions.map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        throw new ApiError(400, "invalid_payload", "sessions must contain objects");
+      }
+      const record = item as Record<string, unknown>;
+      const time = record.time && typeof record.time === "object" && !Array.isArray(record.time)
+        ? record.time as Record<string, unknown>
+        : null;
+      return {
+        id: typeof record.id === "string" ? record.id : "",
+        title: typeof record.title === "string" ? record.title : null,
+        parentID: typeof record.parentID === "string" ? record.parentID : null,
+        time: {
+          created: typeof time?.created === "number" ? time.created : null,
+          updated: typeof time?.updated === "number" ? time.updated : null,
+        },
+      };
+    });
+    const result = await conversationService.importOpenCodeSessions({
+      workspace,
+      directory,
+      sessions,
+    });
+    return jsonResponse(result);
+  });
+
   addRoute(routes, "GET", "/workspace/:id/conversations/:conversationId/transcript", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const conversationId = (ctx.params.conversationId ?? "").trim();
@@ -4524,12 +4787,14 @@ function createRoutes(
     const kind = parseConversationRunKind(body.kind);
     const clientMessageId = optionalBodyString(body, "clientMessageId") || optionalBodyString(body, "messageID");
     const origin = optionalBodyString(body, "origin");
+    const expectAiGatewayStart = optionalBodyBoolean(body, "expectAiGatewayStart") === true;
     runTrace.record("server:conversation-run:payload", {
       workspaceId: workspace.id,
       conversationId: sessionOrConversationId,
       kind,
       clientMessageId: clientMessageId || null,
       origin: origin || null,
+      expectAiGatewayStart,
     });
     const target = await runTrace.step(
       "server:conversation-run:resolve-target",
@@ -4594,17 +4859,29 @@ function createRoutes(
         ? `/session/${encodeURIComponent(target.opencodeSessionId)}/prompt_async?${query.toString()}`
         : kind === "command"
           ? `/session/${encodeURIComponent(target.opencodeSessionId)}/command?${query.toString()}`
-          : kind === "shell"
-            ? `/session/${encodeURIComponent(target.opencodeSessionId)}/shell?${query.toString()}`
-            : `/session/${encodeURIComponent(target.opencodeSessionId)}/summarize?${query.toString()}`;
+            : kind === "shell"
+              ? `/session/${encodeURIComponent(target.opencodeSessionId)}/shell?${query.toString()}`
+              : `/session/${encodeURIComponent(target.opencodeSessionId)}/summarize?${query.toString()}`;
     let upstream: unknown;
+    const aiGatewayProviderWatchStartedAt = Date.now();
+    const opencodeRunBody = buildConversationRunBody(kind, body);
+    runTrace.record("server:conversation-run:opencode-submit-body", {
+      workspaceId: workspace.id,
+      conversationId: target.conversationId,
+      runId,
+      kind,
+      clientMessageId: clientMessageId || null,
+      origin: origin || null,
+      opencodeSessionId: target.opencodeSessionId,
+      body: summarizeConversationRunBodyForTrace(opencodeRunBody),
+    });
     try {
       upstream = await runTrace.step(
         "server:conversation-run:opencode-submit",
         () => fetchOpencodeJson({ ...workspace, directory: target.directory }, path, {
           method: "POST",
           timeoutMs: OPENCODE_CONVERSATION_SUBMIT_TIMEOUT_MS,
-          body: buildConversationRunBody(kind, body),
+          body: opencodeRunBody,
         }),
         {
           workspaceId: workspace.id,
@@ -4633,6 +4910,75 @@ function createRoutes(
         ).catch(() => undefined);
       }
       throw error;
+    }
+    if (lifecycleOwner && kind === "prompt_async" && expectAiGatewayStart) {
+      const providerStart = await runTrace.step(
+        "server:conversation-run:ai-gateway-provider-start-watch",
+        () => waitForAiGatewayProviderStart({
+          workspaceId: workspace.id,
+          conversationId: target.conversationId,
+          runId,
+          opencodeSessionId: target.opencodeSessionId,
+          clientMessageId: clientMessageId || null,
+          origin: origin || null,
+          startedAt: aiGatewayProviderWatchStartedAt,
+        }),
+        {
+          workspaceId: workspace.id,
+          conversationId: target.conversationId,
+          runId,
+          clientMessageId: clientMessageId || null,
+          origin: origin || null,
+          opencodeSessionId: target.opencodeSessionId,
+        },
+      );
+      if (!providerStart.started) {
+        const error = `AI gateway provider request did not start within ${providerStart.timeoutMs}ms.`;
+        await runTrace.step(
+          "server:conversation-run:lifecycle-mark-failed-ai-gateway-provider-start-timeout",
+          () => lifecycleOwner.markFailed(workspace.id, runId, error),
+          {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            runId,
+            opencodeSessionId: target.opencodeSessionId,
+            timeoutMs: providerStart.timeoutMs,
+          },
+        ).catch(() => undefined);
+        const abortQuery = new URLSearchParams();
+        abortQuery.set("directory", target.directory);
+        await runTrace.step(
+          "server:conversation-run:opencode-abort-ai-gateway-provider-start-timeout",
+          () => fetchOpencodeJson(
+            { ...workspace, directory: target.directory },
+            `/session/${encodeURIComponent(target.opencodeSessionId)}/abort?${abortQuery.toString()}`,
+            { method: "POST" },
+          ),
+          {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            runId,
+            opencodeSessionId: target.opencodeSessionId,
+          },
+        ).catch((abortError) => {
+          runTrace.record("server:conversation-run:opencode-abort-ai-gateway-provider-start-timeout:error", {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            runId,
+            opencodeSessionId: target.opencodeSessionId,
+            error: abortError instanceof Error ? abortError.message : String(abortError),
+          });
+        });
+        throw new ApiError(504, "ai_gateway_provider_start_timeout", error, {
+          workspaceId: workspace.id,
+          conversationId: target.conversationId,
+          runId,
+          opencodeSessionId: target.opencodeSessionId,
+          clientMessageId: clientMessageId || null,
+          origin: origin || null,
+          timeoutMs: providerStart.timeoutMs,
+        });
+      }
     }
     return jsonResponse({
       ok: true,
@@ -8735,6 +9081,22 @@ function resolveOpencodeProxyHeadersTimeoutMs(): number {
     return clampNumber(parsed, 100, 600_000);
   }
   return OPENCODE_PROXY_HEADERS_DEFAULT_TIMEOUT_MS;
+}
+
+function resolveAiGatewayProxyHeadersTimeoutMs(): number {
+  const parsed = parseInteger(process.env.VESLO_AI_GATEWAY_PROXY_HEADERS_TIMEOUT_MS);
+  if (parsed && parsed > 0) {
+    return clampNumber(parsed, 100, 600_000);
+  }
+  return AI_GATEWAY_PROXY_HEADERS_DEFAULT_TIMEOUT_MS;
+}
+
+function resolveAiGatewayProviderStartTimeoutMs(): number {
+  const parsed = parseInteger(process.env.VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS);
+  if (parsed && parsed > 0) {
+    return clampNumber(parsed, 10, 600_000);
+  }
+  return AI_GATEWAY_PROVIDER_START_DEFAULT_TIMEOUT_MS;
 }
 
 function isAbortError(error: unknown): boolean {

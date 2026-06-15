@@ -46,7 +46,55 @@ test("route resume selects own navigation when create flow has not selected yet"
   );
 });
 
-test("route resume selects again when live/offline connection key changes", () => {
+test("route resume waits for workspace and route scope before selecting a cold route", () => {
+  assert.deepEqual(
+    resolveRouteResumeDecision({
+      path: "/session/sess-a",
+      routeSessionId: "sess-a",
+      isPendingSession: false,
+      routeWorkspaceId: "",
+      activeWorkspaceId: "",
+      connectionKey: "sess-a::offline",
+      lastConnectionKey: "",
+      routeConversationKey: "",
+      lastRouteConversationKey: "",
+      workspaceReady: false,
+      routeSessionKnown: false,
+      sessionsLoaded: false,
+      selectedSessionId: "",
+      hasBrowseScope: false,
+      visibleMessageCount: 0,
+      selectedSessionLoadingEarlierMessages: false,
+      ownNavigationSessionId: "",
+    }),
+    { type: "ignore", reason: "workspace-not-ready" },
+  );
+
+  assert.deepEqual(
+    resolveRouteResumeDecision({
+      path: "/session/sess-a",
+      routeSessionId: "sess-a",
+      isPendingSession: false,
+      routeWorkspaceId: "",
+      activeWorkspaceId: "ws-a",
+      connectionKey: "sess-a::offline::ws-a",
+      lastConnectionKey: "",
+      routeConversationKey: "sess-a::ws-a",
+      lastRouteConversationKey: "",
+      workspaceReady: true,
+      routeSessionKnown: false,
+      sessionsLoaded: false,
+      selectedSessionId: "",
+      hasBrowseScope: false,
+      visibleMessageCount: 0,
+      selectedSessionLoadingEarlierMessages: false,
+      ownNavigationSessionId: "",
+    }),
+    { type: "ignore", reason: "route-session-not-ready" },
+  );
+});
+
+test("route resume ignores live/offline connection changes for an already visible scoped conversation", () => {
   assert.deepEqual(
     resolveRouteResumeDecision({
       path: "/session/sess-a",
@@ -56,6 +104,50 @@ test("route resume selects again when live/offline connection key changes", () =
       activeWorkspaceId: "ws-a",
       connectionKey: "sess-a::live::ws-a",
       lastConnectionKey: "sess-a::offline::ws-a",
+      routeConversationKey: "sess-a::ws-a::root-a::dir-a::conv-a::sess-a",
+      lastRouteConversationKey: "sess-a::ws-a::root-a::dir-a::conv-a::sess-a",
+      selectedSessionId: "sess-a",
+      hasBrowseScope: true,
+      visibleMessageCount: 4,
+      selectedSessionLoadingEarlierMessages: false,
+      ownNavigationSessionId: "",
+    }),
+    { type: "ignore", reason: "already-loaded" },
+  );
+});
+
+test("route resume selects when the visible scoped conversation is empty or the route scope changed", () => {
+  assert.deepEqual(
+    resolveRouteResumeDecision({
+      path: "/session/sess-a",
+      routeSessionId: "sess-a",
+      isPendingSession: false,
+      routeWorkspaceId: "ws-a",
+      activeWorkspaceId: "ws-a",
+      connectionKey: "sess-a::live::ws-a",
+      lastConnectionKey: "sess-a::offline::ws-a",
+      routeConversationKey: "sess-a::ws-a::root-a::dir-a::conv-a::sess-a",
+      lastRouteConversationKey: "sess-a::ws-a::root-a::dir-a::conv-a::sess-a",
+      selectedSessionId: "sess-a",
+      hasBrowseScope: true,
+      visibleMessageCount: 0,
+      selectedSessionLoadingEarlierMessages: false,
+      ownNavigationSessionId: "",
+    }),
+    { type: "select-session", sessionId: "sess-a", connectionKey: "sess-a::live::ws-a" },
+  );
+
+  assert.deepEqual(
+    resolveRouteResumeDecision({
+      path: "/session/sess-a",
+      routeSessionId: "sess-a",
+      isPendingSession: false,
+      routeWorkspaceId: "ws-a",
+      activeWorkspaceId: "ws-a",
+      connectionKey: "sess-a::live::ws-a",
+      lastConnectionKey: "sess-a::offline::ws-a",
+      routeConversationKey: "sess-a::ws-a::root-a::dir-b::conv-b::sess-a",
+      lastRouteConversationKey: "sess-a::ws-a::root-a::dir-a::conv-a::sess-a",
       selectedSessionId: "sess-a",
       hasBrowseScope: true,
       visibleMessageCount: 4,
@@ -96,6 +188,8 @@ test("route resume skips duplicate, already loaded, and pagination-driven select
       activeWorkspaceId: "ws-a",
       connectionKey: "sess-a::live::ws-a",
       lastConnectionKey: "sess-a::live::ws-a",
+      routeConversationKey: "sess-a::ws-a::root-a::dir-a::conv-a::sess-a",
+      lastRouteConversationKey: "sess-a::ws-a::root-a::dir-a::conv-a::sess-a",
       selectedSessionId: "sess-a",
       hasBrowseScope: true,
       visibleMessageCount: 4,
@@ -174,6 +268,55 @@ test("bare session route clears real transcript state but preserves pending draf
       ownNavigationSessionId: "",
     }),
     { type: "clear-session-view", preservePendingDraft: true },
+  );
+});
+
+test("bare session route does not clear a real session during create-session own navigation", () => {
+  assert.deepEqual(
+    resolveSessionPathDecision({
+      path: "/session",
+      routeSessionId: "",
+      activePendingDraftKey: "pending:ws-a:123",
+      selectedSessionId: "sess-new",
+      isPendingSession: false,
+      shouldFallbackFromRoute: false,
+      ownNavigationSessionId: "sess-new",
+    }),
+    { type: "ignore", reason: "own-navigation-pending" },
+  );
+});
+
+test("session path waits for workspace and route scope before selecting a cold route", () => {
+  assert.deepEqual(
+    resolveSessionPathDecision({
+      path: "/session/sess-a",
+      routeSessionId: "sess-a",
+      activePendingDraftKey: "",
+      selectedSessionId: "",
+      isPendingSession: false,
+      shouldFallbackFromRoute: false,
+      ownNavigationSessionId: "",
+      workspaceReady: false,
+      routeSessionKnown: false,
+      sessionsLoaded: false,
+    }),
+    { type: "ignore", reason: "workspace-not-ready" },
+  );
+
+  assert.deepEqual(
+    resolveSessionPathDecision({
+      path: "/session/sess-a",
+      routeSessionId: "sess-a",
+      activePendingDraftKey: "",
+      selectedSessionId: "",
+      isPendingSession: false,
+      shouldFallbackFromRoute: false,
+      ownNavigationSessionId: "",
+      workspaceReady: true,
+      routeSessionKnown: false,
+      sessionsLoaded: false,
+    }),
+    { type: "ignore", reason: "route-session-not-ready" },
   );
 });
 

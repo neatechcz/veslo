@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, untrack } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
 
 import type { Session } from "@opencode-ai/sdk/v2/client";
 
@@ -45,6 +45,7 @@ type SidebarWorkspaceSessionsOptions = {
   workspaceStore: WorkspaceStore;
   workspaceRouting: WorkspaceRouting;
   engineReady: () => boolean;
+  activeSendTraceId?: () => string | null;
   developerMode: () => boolean;
   sessions: () => Session[];
   sessionDirectoryOverrideById: () => Record<string, string>;
@@ -55,6 +56,11 @@ type SidebarWorkspaceSessionsOptions = {
     workspaceId: string,
     directory?: string,
   ) => Promise<ConversationReadResult>;
+  backfillConversationsToVesloReadApi?: (
+    workspaceId: string,
+    directory: string,
+    sessions: Session[],
+  ) => Promise<void>;
   reportError: (error: unknown, scope: string) => void;
   wsDebug: (label: string, payload?: unknown) => void;
 };
@@ -331,7 +337,7 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
   };
 
   const isSidebarRuntimeUnavailableError = (message: string) =>
-    /engine_not_running|Failed to fetch|Request timed out|ECONN|upstream status (?:401|404|502|503)|status (?:401|404|502|503)|Invalid bearer token|unauthorized/i.test(
+    /engine_not_running|Failed to fetch|error sending request for url|Request timed out|ECONN|connection refused|upstream status (?:401|404|502|503)|status (?:401|404|502|503)|Invalid bearer token|unauthorized/i.test(
       message,
     );
 
@@ -398,6 +404,34 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
   };
 
   const sidebarRefreshSeqByWorkspaceId: Record<string, number> = {};
+  const deferredSidebarRefreshTimers = new Map<string, number>();
+  onCleanup(() => {
+    for (const timer of deferredSidebarRefreshTimers.values()) {
+      window.clearTimeout(timer);
+    }
+    deferredSidebarRefreshTimers.clear();
+  });
+  const scheduleDeferredSidebarRefresh = (workspaceId: string, activeSendTraceId: string) => {
+    const id = workspaceId.trim();
+    if (!id) return;
+    if (deferredSidebarRefreshTimers.has(id)) return;
+    recordPerfLog(options.developerMode(), "sidebar.sessions", "refresh-defer-active-send", {
+      workspaceId: id,
+      activeSendTraceId,
+    });
+    const timer = window.setTimeout(() => {
+      deferredSidebarRefreshTimers.delete(id);
+      const nextActiveSendTraceId = options.activeSendTraceId?.()?.trim() ?? "";
+      if (nextActiveSendTraceId) {
+        scheduleDeferredSidebarRefresh(id, nextActiveSendTraceId);
+        return;
+      }
+      void refreshSidebarWorkspaceSessions(id)
+        .catch(e => options.reportError(e, "sidebar.refreshDeferred"));
+    }, 750);
+    deferredSidebarRefreshTimers.set(id, timer);
+  };
+
   const markSidebarRefreshUnavailable = (id: string, reason: string) => {
     setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" as const }));
     setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
@@ -413,6 +447,11 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
   const refreshSidebarWorkspaceSessions = async (workspaceId: string) => {
     const id = workspaceId.trim();
     if (!id) return;
+    const activeSendTraceId = options.activeSendTraceId?.()?.trim() ?? "";
+    if (activeSendTraceId) {
+      scheduleDeferredSidebarRefresh(id, activeSendTraceId);
+      return;
+    }
 
     const config = resolveSidebarClientConfig(id);
     if (!config) return;
@@ -528,6 +567,15 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
       }
 
       const visible = expandSidebarSessionSliceWithAncestors(visibleSessions, requestLimit);
+      if (queryDirectory && visibleSessions.length > 0) {
+        void options.backfillConversationsToVesloReadApi?.(id, queryDirectory, visibleSessions)
+          .catch((error) => {
+            options.wsDebug("sidebar:conversation-read:backfill-error", {
+              id,
+              error: error instanceof Error ? error.message : safeStringify(error),
+            });
+          });
+      }
       const items: SidebarSessionItem[] = visible.map((session) => {
         const displaySession = options.applyPendingInitialSessionTitle(session);
         return {

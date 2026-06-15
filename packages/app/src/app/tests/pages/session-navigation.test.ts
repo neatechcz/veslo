@@ -206,7 +206,7 @@ test("app routes selected session browsing through DB scope", () => {
   );
   assert.match(
     appSource,
-    /const workspaceSessionSelection = createWorkspaceSessionSelection\(\{[\s\S]*activeWorkspaceId: \(\) => workspaceStoreRef\?\.activeWorkspaceId\(\) \?\? "",[\s\S]*workspaces: \(\) => workspaceStoreRef\?\.workspaces\(\) \?\? \[\],[\s\S]*\}\);/,
+    /const \[workspaceStoreRefVersion, setWorkspaceStoreRefVersion\] = createSignal\(0\);[\s\S]*const currentWorkspaceStoreRef = \(\) => \{[\s\S]*workspaceStoreRefVersion\(\);[\s\S]*return workspaceStoreRef;[\s\S]*\};[\s\S]*const workspaceSessionSelection = createWorkspaceSessionSelection\(\{[\s\S]*activeWorkspaceId: \(\) => currentWorkspaceStoreRef\(\)\?\.activeWorkspaceId\(\) \?\? "",[\s\S]*workspaces: \(\) => currentWorkspaceStoreRef\(\)\?\.workspaces\(\) \?\? \[\],[\s\S]*\}\);[\s\S]*workspaceStoreRef = workspaceStore;[\s\S]*setWorkspaceStoreRefVersion\(\(version\) => version \+ 1\);/,
     "app should wire selected session browsing through the workspace session selection controller",
   );
   assert.match(

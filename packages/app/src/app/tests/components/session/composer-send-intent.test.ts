@@ -102,7 +102,12 @@ test("composer exposes button intents for queue and streaming send-now", () => {
 
   assert.match(
     composerSource,
-    /when=\{props\.isStreaming\}[\s\S]*props\.onStop\(\)[\s\S]*translate\("session\.stop_label"\)[\s\S]*<Show when=\{hasDraftContent\(\)\}>[\s\S]*void sendDraft\(\{ sendNow: true, source: "button" \}\);[\s\S]*translate\("session\.send_now_title"\)[\s\S]*translate\("session\.send_now_label"\)/s,
+    /when=\{props\.isStreaming\}[\s\S]*onClick=\{\(\) => props\.onStop\(\)\}[\s\S]*translate\("session\.stop_label"\)/s,
+    "streaming UI should keep a localized Stop affordance",
+  );
+  assert.match(
+    composerSource,
+    /<Show when=\{hasDraftContent\(\)\}>[\s\S]*void sendDraft\(\{ sendNow: true, source: "button" \}\);[\s\S]*title=\{translate\("session\.send_now_title"\)\}[\s\S]*aria-label=\{translate\("session\.send_now_label"\)\}/s,
     "streaming UI should keep Stop and add a localized send-now affordance when draft content exists",
   );
 
@@ -120,7 +125,7 @@ test("composer exposes button intents for queue and streaming send-now", () => {
 
   assert.match(
     composerSource,
-    /finally \{\s*if \(options\.sendNow\) setSendNowPending\(false\);\s*\}/,
+    /finally \{[\s\S]*setActiveSendTraceId\(null\);[\s\S]*if \(options\.sendNow\) setSendNowPending\(false\);[\s\S]*\}/,
     "send-now pending state should reset after the onSend promise settles",
   );
 });

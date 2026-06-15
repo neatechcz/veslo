@@ -8,6 +8,7 @@ const globalSyncSource = readFileSync(
   "utf8",
 );
 const serverSource = readFileSync(new URL("../context/server.tsx", import.meta.url), "utf8");
+const serverUrlSource = readFileSync(new URL("../context/server-url.ts", import.meta.url), "utf8");
 const sessionSource = readFileSync(new URL("../context/session.ts", import.meta.url), "utf8");
 const workspaceServerSyncSource = readFileSync(
   new URL("../context/workspace-server-sync.tsx", import.meta.url),
@@ -45,9 +46,14 @@ test("global sync refresh waits for a healthy server before bursting engine-prox
 
 test("server health polling does not probe workspace OpenCode proxy URLs", () => {
   assert.match(
-    serverSource,
+    serverUrlSource,
     /export function isWorkspaceOpencodeProxyUrl\(url: string\)/,
     "workspace-scoped OpenCode proxy URLs must be recognized separately from global /opencode proxies",
+  );
+  assert.match(
+    serverSource,
+    /import \{[\s\S]*isWorkspaceOpencodeProxyUrl[\s\S]*\} from "\.\/server-url";/,
+    "ServerProvider must use the pure server-url helper instead of duplicating workspace proxy detection in the JSX provider",
   );
   assert.match(
     serverSource,

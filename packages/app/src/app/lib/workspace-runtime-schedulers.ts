@@ -60,16 +60,52 @@ export function createPermissionPollingScheduler(options: PermissionPollingSched
 export type McpAutoRefreshSchedulerOptions = {
   isTauriRuntime: () => boolean;
   engineReady: () => unknown;
+  activeWorkspaceId?: () => string | null;
+  activeSendTraceId?: () => string | null;
   workspaceProjectDir: () => string;
   refreshMcpServers: () => Promise<void>;
 };
 
 export function createMcpAutoRefreshScheduler(options: McpAutoRefreshSchedulerOptions) {
+  let deferredRefreshTimer: number | null = null;
+  onCleanup(() => {
+    if (deferredRefreshTimer !== null) {
+      window.clearTimeout(deferredRefreshTimer);
+      deferredRefreshTimer = null;
+    }
+  });
+
+  const scheduleDeferredRefresh = (activeSendTraceId: string, projectDir: string) => {
+    if (deferredRefreshTimer !== null) return;
+    recordPerfLog(runtimePerfAuditEnabled(), "workspace.mcp", "refresh-skip-active-send", {
+      activeWorkspaceId: options.activeWorkspaceId?.() ?? null,
+      activeSendTraceId,
+      projectDir,
+    });
+    deferredRefreshTimer = window.setTimeout(() => {
+      deferredRefreshTimer = null;
+      const nextActiveSendTraceId = options.activeSendTraceId?.()?.trim() ?? "";
+      if (nextActiveSendTraceId) {
+        scheduleDeferredRefresh(nextActiveSendTraceId, options.workspaceProjectDir().trim());
+        return;
+      }
+      if (!options.isTauriRuntime()) return;
+      const nextProjectDir = options.workspaceProjectDir().trim();
+      if (!nextProjectDir) return;
+      void options.refreshMcpServers();
+    }, 750);
+  };
+
   createEffect(() => {
     if (!options.isTauriRuntime()) return;
-    options.engineReady();
+    if (options.engineReady() === false) return;
     const projectDir = options.workspaceProjectDir().trim();
     if (!projectDir) return;
+    const activeSendTraceId = options.activeSendTraceId?.()?.trim() ?? "";
+    if (activeSendTraceId) {
+      scheduleDeferredRefresh(activeSendTraceId, projectDir);
+      return;
+    }
     void options.refreshMcpServers();
   });
 }

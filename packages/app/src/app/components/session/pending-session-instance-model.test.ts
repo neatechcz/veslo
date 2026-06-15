@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { ComposerDraft } from "../../types";
+import { createUiConversationKey } from "../../lib/ui-conversation-scope.js";
 import {
   createPendingSessionInstance,
   createPendingSessionInstanceId,
@@ -133,6 +134,41 @@ test("materializing one pending session remaps only its submitted draft", () => 
   assert.equal(selectPendingSubmittedDraft(remapped, "session-real-first")?.sessionId, "session-real-first");
   assert.equal(selectPendingSubmittedDraft(remapped, "pending-session:first"), null);
   assert.equal(selectPendingSubmittedDraft(remapped, "pending-session:second")?.draft.text, "second message");
+});
+
+test("materializing a scoped pending session key preserves optimistic draft across workspace handoff", () => {
+  const pendingKey = createUiConversationKey({
+    workspaceId: "ws-a",
+    kind: "pending-session",
+    id: "pending-session:first",
+  });
+  const realKey = createUiConversationKey({
+    workspaceId: "ws-a",
+    kind: "session",
+    id: "session-real-first",
+  });
+  const submitted = setPendingSubmittedDraftForKey(
+    {},
+    pendingKey,
+    createPendingSubmittedDraft({
+      id: "optimistic:first",
+      clientMessageId: "optimistic:first",
+      sessionKey: pendingKey,
+      sessionId: null,
+      createdAt: 100,
+      draft: draft("first message"),
+    }),
+  );
+
+  const remapped = materializePendingSessionInstance(submitted, {
+    pendingSessionKey: pendingKey,
+    realSessionKey: realKey,
+    realSessionId: "session-real-first",
+  });
+
+  assert.equal(selectPendingSubmittedDraft(remapped, realKey)?.draft.text, "first message");
+  assert.equal(selectPendingSubmittedDraft(remapped, realKey)?.sessionId, "session-real-first");
+  assert.equal(selectPendingSubmittedDraft(remapped, pendingKey), null);
 });
 
 test("materializing ignores non-pending session keys", () => {

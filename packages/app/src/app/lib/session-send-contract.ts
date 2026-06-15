@@ -15,6 +15,16 @@ export type SessionSendOptionsBase = SessionSendCorrelation & {
   sendTraceId?: string | null;
 };
 
+export type MaterializedSessionHandoff = {
+  workspaceId: string;
+  pendingSessionKey?: string | null;
+  sessionId: string;
+  clientMessageId: string;
+  sendTraceId?: string | null;
+  conversationId?: string | null;
+  opencodeSessionId?: string | null;
+};
+
 export function createSessionClientMessageId(): string {
   const suffix =
     typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"

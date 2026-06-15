@@ -551,6 +551,19 @@ async function ensureWorkspace(workspace: string): Promise<string> {
   return resolved;
 }
 
+async function syncWorkspaceOpencodeConfigToConfigDir(workspace: string, configDir: string): Promise<void> {
+  await mkdir(configDir, { recursive: true });
+  for (const name of ["opencode.jsonc", "opencode.json"] as const) {
+    const source = join(workspace, name);
+    const target = join(configDir, name);
+    if (await fileExists(source)) {
+      await copyFile(source, target);
+    } else {
+      await rm(target, { force: true });
+    }
+  }
+}
+
 async function canBind(host: string, port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const server = createNetServer();
@@ -3801,6 +3814,7 @@ async function runRouterDaemon(args: ParsedArgs) {
         });
         const workdir = await ensureWorkspace(ws.path ?? "");
         const configDir = join(dataDir, "opencode-config", ws.id || workspaceIdForLocal(workdir));
+        await syncWorkspaceOpencodeConfigToConfigDir(workdir, configDir);
         await ensureOpencodeManagedToolsRuntime(configDir, {
           toolSources: {
             send: opencodeRouterSendToolSource(),
@@ -3817,6 +3831,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           workspaceId: ws.id,
           workdir,
           configDir,
+          configMirrored: true,
           durationMs: Date.now() - startedAt,
         });
         return { workdir, configDir };
@@ -3937,8 +3952,10 @@ async function runRouterDaemon(args: ParsedArgs) {
           configDirectory: join(dataDir, "opencode-config", "shared-unsandboxed"),
           deps: {
             prepareRuntime: async () => {
-              await ensureWorkspace(join(dataDir, "shared-opencode-runtime"));
-              await ensureOpencodeManagedToolsRuntime(join(dataDir, "opencode-config", "shared-unsandboxed"), {
+              const sharedWorkdir = await ensureWorkspace(join(dataDir, "shared-opencode-runtime"));
+              const sharedConfigDir = join(dataDir, "opencode-config", "shared-unsandboxed");
+              await syncWorkspaceOpencodeConfigToConfigDir(sharedWorkdir, sharedConfigDir);
+              await ensureOpencodeManagedToolsRuntime(sharedConfigDir, {
                 toolSources: {
                   send: opencodeRouterSendToolSource(),
                   status: opencodeRouterStatusToolSource(),
@@ -4570,6 +4587,21 @@ async function runRouterDaemon(args: ParsedArgs) {
           return;
         }
         const engine = proxyTarget.engine;
+        if (proxyMethod !== "GET" && proxyMethod !== "HEAD") {
+          const syncStartedAt = Date.now();
+          await syncWorkspaceOpencodeConfigToConfigDir(proxyTarget.directory, engine.configDir);
+          traceRuntime("orchestrator:proxy-config-sync:done", {
+            workspaceId: ws.id,
+            workspacePath: ws.path,
+            engineTopology: engineTopology.mode,
+            engineKind: proxyTarget.engineKind,
+            method: req.method,
+            path: url.pathname,
+            configDir: engine.configDir,
+            directory: proxyTarget.directory,
+            durationMs: Date.now() - syncStartedAt,
+          });
+        }
 
         const restPath = "/" + parts.slice(3).join("/");
         const pathMapping: EnginePathMapping = {
@@ -5161,6 +5193,7 @@ async function runStart(args: ParsedArgs) {
     logFormat,
   });
   const opencodeConfigDir = join(dataDir, "opencode-config", workspaceIdForLocal(resolvedWorkspace));
+  await syncWorkspaceOpencodeConfigToConfigDir(resolvedWorkspace, opencodeConfigDir);
   await ensureOpencodeManagedToolsRuntime(opencodeConfigDir, {
     toolSources: {
       send: opencodeRouterSendToolSource(),

@@ -13,6 +13,7 @@ import {
   resolveManagedAiAccessBundleState,
   resolveManagedAiGatewayBaseUrl,
   resolveManagedAiProviderRoutingTarget,
+  requiresManagedAiEngineBaseUrl,
   shouldPreserveManagedAiConfig,
   shouldEnsureManagedAiLocalGateway,
   shouldDeferManagedAiAccessRefresh,
@@ -259,6 +260,80 @@ test("resolveManagedAiProviderRoutingTarget keeps the UI URL separate from the e
     {
       baseUrl: "http://127.0.0.1:8787",
       engineBaseUrl: "http://engine-host.internal:8787",
+      serverClientToken: "local-client-token",
+    },
+  );
+});
+
+test("resolveManagedAiProviderRoutingTarget requires an engine URL for WSL sandbox routing", () => {
+  assert.equal(
+    requiresManagedAiEngineBaseUrl({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      sandboxEnabled: true,
+      sandboxBackend: "windows-wsl2",
+    }),
+    true,
+  );
+
+  assert.equal(
+    resolveManagedAiProviderRoutingTarget({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      activeBaseUrl: "http://127.0.0.1:8787",
+      engineBaseUrl: "",
+      requireEngineBaseUrl: true,
+      activeToken: "local-client-token",
+      gatewayBaseUrl: "",
+      gatewayToken: "",
+    }),
+    null,
+  );
+
+  assert.deepEqual(
+    resolveManagedAiProviderRoutingTarget({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      activeBaseUrl: "http://127.0.0.1:8787",
+      engineBaseUrl: "http://172.29.64.1:8787",
+      requireEngineBaseUrl: true,
+      activeToken: "local-client-token",
+      gatewayBaseUrl: "",
+      gatewayToken: "",
+    }),
+    {
+      baseUrl: "http://127.0.0.1:8787",
+      engineBaseUrl: "http://172.29.64.1:8787",
+      serverClientToken: "local-client-token",
+    },
+  );
+});
+
+test("resolveManagedAiProviderRoutingTarget keeps loopback fallback for non-WSL local routing", () => {
+  assert.equal(
+    requiresManagedAiEngineBaseUrl({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      sandboxEnabled: false,
+      sandboxBackend: "none",
+    }),
+    false,
+  );
+
+  assert.deepEqual(
+    resolveManagedAiProviderRoutingTarget({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      activeBaseUrl: "http://127.0.0.1:8787",
+      engineBaseUrl: "",
+      requireEngineBaseUrl: false,
+      activeToken: "local-client-token",
+      gatewayBaseUrl: "",
+      gatewayToken: "",
+    }),
+    {
+      baseUrl: "http://127.0.0.1:8787",
+      engineBaseUrl: "http://127.0.0.1:8787",
       serverClientToken: "local-client-token",
     },
   );

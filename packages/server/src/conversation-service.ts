@@ -80,6 +80,23 @@ export type ConversationService = {
     directory: string | null;
     title?: string | null;
   }): Promise<ConversationCreateResult>;
+
+  importOpenCodeSessions(input: {
+    workspace: WorkspaceInfo;
+    directory: string | null;
+    sessions: Array<{
+      id: string;
+      title?: string | null;
+      parentID?: string | null;
+      time?: {
+        created?: number | null;
+        updated?: number | null;
+      } | null;
+    }>;
+  }): Promise<{
+    workspaceId: string;
+    items: ConversationSummary[];
+  }>;
 };
 
 const normalizeText = (value: string | null | undefined) => value?.trim() ?? "";
@@ -257,11 +274,14 @@ export function createConversationService(options: {
         directory: input.directory,
         workspace: input.workspace,
       });
+      const persistedBindings = async () => listPersistedBindings(input.workspace.id, input.directory);
       const items = result.source === "sqlite"
-        ? await attachConversationBindings(input.workspace.id, input.directory, result.items)
+        ? result.items.length > 0
+          ? await attachConversationBindings(input.workspace.id, input.directory, result.items)
+          : await persistedBindings()
         : result.items.length > 0
           ? result.items
-          : await listPersistedBindings(input.workspace.id, input.directory);
+          : await persistedBindings();
       return { ...result, items };
     },
 
@@ -352,6 +372,48 @@ export function createConversationService(options: {
         opencodeSessionId: binding.engineSessionId,
         parentConversationId: binding.parentConversationId,
         branchId: binding.branchId,
+      };
+    },
+
+    async importOpenCodeSessions(input) {
+      const workspaceId = normalizeText(input.workspace.id);
+      const directory = normalizeText(input.directory);
+      if (!workspaceId || !directory) {
+        throw new ApiError(400, "invalid_directory", "Conversation directory is required");
+      }
+
+      const sessions = input.sessions
+        .map((session) => {
+          const engineSessionId = normalizeText(session.id);
+          if (!engineSessionId) return null;
+          const title = normalizeNullableText(session.title) ?? engineSessionId;
+          const parentEngineSessionId = normalizeNullableText(session.parentID);
+          const createdAt = normalizeTimestamp(session.time?.created, now());
+          const updatedAt = normalizeTimestamp(session.time?.updated, createdAt);
+          return {
+            engineSessionId,
+            title,
+            parentEngineSessionId,
+            createdAt,
+            updatedAt,
+          };
+        })
+        .filter((session): session is NonNullable<typeof session> => Boolean(session));
+
+      if (sessions.length === 0) return { workspaceId, items: [] };
+
+      const bindings = await options.bindingStore.bindOpenCodeSessions({
+        workspaceId,
+        directory,
+        sessions,
+      });
+
+      return {
+        workspaceId,
+        items: sessions
+          .map((session) => bindings.get(session.engineSessionId))
+          .filter((binding): binding is ConversationBinding => Boolean(binding))
+          .map(bindingToSummary),
       };
     },
   };

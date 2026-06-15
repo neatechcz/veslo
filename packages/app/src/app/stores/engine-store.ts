@@ -141,17 +141,15 @@ export function createEngineStore(deps: EngineStoreDeps) {
       const syncLocalState = !isRemoteWorkspace;
       const activeWorkspaceRoot = normalizeDirectoryPath(deps.activeWorkspaceRoot().trim());
       const engineProjectDir = normalizeDirectoryPath(info.projectDir?.trim() ?? "");
-      const browsingDifferentLocalWorkspace =
-        syncLocalState &&
-        !deps.routing.active() &&
-        activeWorkspaceRoot.length > 0 &&
-        engineProjectDir.length > 0 &&
-        activeWorkspaceRoot !== engineProjectDir;
+      const engineSnapshotMatchesActiveWorkspace =
+        !activeWorkspaceRoot ||
+        !engineProjectDir ||
+        activeWorkspaceRoot === engineProjectDir;
 
-      if (info.projectDir && syncLocalState && !browsingDifferentLocalWorkspace) {
+      if (info.projectDir && syncLocalState && engineSnapshotMatchesActiveWorkspace) {
         deps.setProjectDir(info.projectDir);
       }
-      if (info.baseUrl && syncLocalState && !browsingDifferentLocalWorkspace) {
+      if (info.baseUrl && syncLocalState && engineSnapshotMatchesActiveWorkspace) {
         deps.setBaseUrl(info.baseUrl);
       }
 

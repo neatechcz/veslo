@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -9,6 +10,7 @@ import {
 
 const source = readWorkspaceBehaviorSources();
 const connectionControllerSource = readContextSource("workspace-connection-controller.ts");
+const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
 
 test("local activation path applies workspace_set_active response back into the workspace list", () => {
   assert.match(
@@ -31,6 +33,26 @@ test("workspace activation options live in the shared workspace-types module", (
     facadeSource,
     /export type WorkspaceActivationOptions = \{/,
     "workspace.ts should re-export shared activation types instead of owning them",
+  );
+});
+
+test("boot trace sink is explicit opt-in instead of hardcoded localhost telemetry", () => {
+  const facadeSource = readWorkspaceFacadeSource();
+
+  assert.match(
+    facadeSource,
+    /const BOOT_TRACE_SINK_STORAGE_KEY = "veslo:boot-trace-sink";/,
+    "workspace boot trace should expose an explicit local debug sink key",
+  );
+  assert.match(
+    facadeSource,
+    /const sinkUrl = bootTraceSinkUrl\(\);[\s\S]*if \(!sinkUrl\) return;[\s\S]*fetch\(sinkUrl,/,
+    "bootTrace should only fetch when the local sink was explicitly configured",
+  );
+  assert.doesNotMatch(
+    facadeSource,
+    /fetch\("http:\/\/127\.0\.0\.1:9876"/,
+    "bootTrace must not spam WebView console with a hardcoded unavailable localhost sink",
   );
 });
 
@@ -73,6 +95,26 @@ test("connect flow publishes the routed workspace client only after routing ensu
   );
 });
 
+test("displayed-session reset logs active send trace context", () => {
+  const facadeSource = readWorkspaceFacadeSource();
+
+  assert.match(
+    facadeSource,
+    /activeSendTraceId\?: \(\) => string \| null;/,
+    "workspace store should accept the active send trace accessor for reset diagnostics",
+  );
+  assert.match(
+    facadeSource,
+    /const activeSendTraceId = options\.activeSendTraceId\?\.\(\)\?\.trim\(\) \?\? "";[\s\S]*wsDebug\("ui-reset:displayed-session", \{[\s\S]*activeSendTraceId: activeSendTraceId \|\| null,/s,
+    "displayed-session reset logs must say whether a send was active during the reset",
+  );
+  assert.match(
+    appSource,
+    /developerMode,[\s\S]*activeSendTraceId,[\s\S]*setEngineReady,/s,
+    "App should wire the active send trace into workspace reset diagnostics",
+  );
+});
+
 test("workspace scope comparisons use scope-aware normalized directory paths", () => {
   assert.match(
     source,
@@ -81,8 +123,23 @@ test("workspace scope comparisons use scope-aware normalized directory paths", (
   );
   assert.match(
     source,
+    /createEffect\(\(\) => \{[\s\S]*const activeRoot = activeWorkspaceRoot\(\)\.trim\(\);[\s\S]*const runtimeProjectDir = projectDir\(\)\.trim\(\);[\s\S]*wsDebug\("workspace:projectDir-activeRoot-mismatch"/s,
+    "workspace store should log when mutable runtime projectDir drifts from the active workspace root",
+  );
+  assert.match(
+    source,
+    /const startedFromLocalMode = deps\.startupPreference\(\) === "local";[\s\S]*const wasLocalConnection = startedFromLocalMode && Boolean\(deps\.routingActive\(\)\);[\s\S]*const previousProjectDir = deps\.projectDir\(\);[\s\S]*const previousActiveWorkspaceRoot = deps\.activeWorkspaceRoot\(\)\.trim\(\);[\s\S]*const oldWorkspacePath = previousActiveWorkspaceRoot \|\| previousProjectDir;/s,
+    "activateWorkspace should use the scoped active workspace root before falling back to the mutable runtime projectDir",
+  );
+  assert.match(
+    source,
+    /const projectDirOutOfSync =[\s\S]*previousProjectDirScope !== oldWorkspaceScope;[\s\S]*deps\.wsDebug\("activate:local:projectDir-out-of-sync"/s,
+    "activation should log when mutable projectDir drifts away from the active workspace root",
+  );
+  assert.match(
+    source,
     /const workspaceChanged =[\s\S]*workspaceScopeChanged\(oldWorkspacePath, nextRoot, "local"\)/s,
-    "activateWorkspace should compare local workspace paths using local filesystem semantics",
+    "activateWorkspace should compare local workspace paths using active-root-aware local filesystem semantics",
   );
   assert.match(
     connectionControllerSource,
@@ -125,19 +182,48 @@ test("browsing mode keeps the live client but marks the engine not ready before 
 
   assert.match(
     localActivationSource,
-    /if \(wasLocalConnection && workspaceChanged && isTauriRuntime\(\) && deps\.populateSidebarFromDb\) \{[\s\S]*deps\.setEngineReady\?\.\(false\);[\s\S]*\}/s,
+    /if \(startedFromLocalMode && workspaceChanged && isTauriRuntime\(\) && deps\.populateSidebarFromDb\) \{[\s\S]*deps\.setEngineReady\?\.\(false\);[\s\S]*\}/s,
     "browse mode must mark the engine not ready before async SQLite hydration",
   );
   assert.match(
     localActivationSource,
-    /if \(selection\.workspaceChanged\) \{[\s\S]*deps\.clearDisplayedSessionState\("local_browse_workspace_changed", \{[\s\S]*workspaceId: id,[\s\S]*nextDirectory: selection\.nextRoot,[\s\S]*clearPendingPermissions: true,[\s\S]*\}\);[\s\S]*\}[\s\S]*await deps\.populateSidebarFromDb!\(id, next\.path\);/s,
-    "browse mode should clear the stale visible session before SQLite hydration can reuse it",
+    /const displayedSessionCleared = workspaceChanged;[\s\S]*deps\.clearDisplayedSessionState\("connect_workspace_scope_changed", \{[\s\S]*workspaceId: id,[\s\S]*previousDirectory: oldWorkspacePath,[\s\S]*nextDirectory: nextRoot,[\s\S]*clearPendingPermissions: true,[\s\S]*\}\);[\s\S]*batch\(\(\) => \{[\s\S]*deps\.syncActiveWorkspaceId\(id\);[\s\S]*deps\.setProjectDir\(nextRoot\);[\s\S]*\}\);/s,
+    "workspace switch should clear the stale visible session before atomically publishing active workspace identity and projectDir",
+  );
+  assert.match(
+    localActivationSource,
+    /if \(!deps\.routingActive\(\) \|\| selection\.wasLocalConnection \|\| selection\.startedFromLocalMode\) return true;/s,
+    "local browse mode without an active client must not be treated as a remote-to-local reconnect",
+  );
+  assert.match(
+    localActivationSource,
+    /!\(selection\.startedFromLocalMode \|\| selection\.wasLocalConnection \|\| isColdBoot \|\| needsEngineWarmup\)/s,
+    "local browse mode should allow SQLite-backed browsing even when no routed client was active at activation start",
+  );
+  assert.match(
+    localActivationSource,
+    /if \(selection\.workspaceChanged && !selection\.displayedSessionCleared\) \{[\s\S]*deps\.clearDisplayedSessionState\("local_browse_workspace_changed"/s,
+    "browse mode should keep its fallback clear path for callers that did not clear before identity switch",
   );
 
   assert.doesNotMatch(
     localActivationSource,
     /setClient|setBaseUrl|setClientDirectory/,
     "browse mode should keep the live client attached while preventing wrong-workspace API calls",
+  );
+});
+
+test("project-open workspace switches clear stale session routes before activation", () => {
+  assert.match(
+    appSource,
+    /const shouldClearSessionRouteForProjectOpen = \(workspaceId: string, origin\?: string \| null\) => \{[\s\S]*origin !== "workspace-session-list:project-open"[\s\S]*location\.pathname\.toLowerCase\(\)\.startsWith\("\/session\/"\)[\s\S]*nextWorkspaceId !== workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*\};/s,
+    "explicit project-open switches should only reset concrete session routes when moving to another workspace",
+  );
+
+  assert.match(
+    appSource,
+    /if \(shouldClearSessionRouteForProjectOpen\(workspaceId, options\?\.origin\)\) \{[\s\S]*wsDebug\("route:workspace-project-open:clear-session-route"[\s\S]*navigate\("\/session", \{ replace: true \}\);[\s\S]*\}[\s\S]*return workspaceStore\.activateWorkspace\(workspaceId, options\);/s,
+    "route reset must happen before workspace activation so route effects cannot reselect the old session",
   );
 });
 

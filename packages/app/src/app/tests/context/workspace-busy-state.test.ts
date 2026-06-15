@@ -28,6 +28,35 @@ test("workspace busy state tracks and clears by session id", () => {
   });
 });
 
+test("workspace busy state preserves startedAt for repeated busy marks of the same session", () => {
+  const originalNow = Date.now;
+  let now = 1_000;
+  Date.now = () => now;
+
+  try {
+    createRoot((dispose) => {
+      const events: Array<{ event: string; payload?: Record<string, unknown> }> = [];
+      const busy = createWorkspaceBusyState((event, payload) => {
+        events.push({ event, payload });
+      });
+
+      busy.markWorkspaceBusy("ws-a", "session-1");
+      const startedAt = busy.workspaceBusy()["ws-a"]?.startedAt;
+      assert.equal(startedAt, 1_000);
+
+      now = 2_000;
+      busy.markWorkspaceBusy("ws-a", "session-1");
+
+      assert.equal(busy.workspaceBusy()["ws-a"]?.startedAt, startedAt);
+      assert.deepEqual(events.map((entry) => entry.event), ["mark", "mark-existing"]);
+
+      dispose();
+    });
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
 test("clear all except preserves the selected workspace only", () => {
   createRoot((dispose) => {
     const events: Array<{ event: string; payload?: Record<string, unknown> }> = [];

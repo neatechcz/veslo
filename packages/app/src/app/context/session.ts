@@ -224,6 +224,7 @@ export function createSessionStore(options: {
   activeWorkspaceRoot: () => string;
   selectedSessionId: () => string | null;
   setSelectedSessionId: (id: string | null) => void;
+  selectSessionScopeKey?: (sessionID: string) => string;
   sessionDirectoryOverrideById?: () => Record<string, string>;
   developerMode: () => boolean;
   setError: (message: string | null) => void;
@@ -1099,11 +1100,13 @@ export function createSessionStore(options: {
     const perfEnabled = options.developerMode();
     options.setSelectedSessionId(sessionID);
     options.setError(null);
+    const selectionKey = options.selectSessionScopeKey?.(sessionID)?.trim() || sessionID;
 
-    const existing = selectGuard.tryDedup(sessionID);
+    const existing = selectGuard.tryDedup(selectionKey);
     if (existing) {
       recordPerfLog(perfEnabled, "session.select", "dedupe join", {
         sessionID,
+        selectionKey,
       });
       return existing;
     }
@@ -1116,11 +1119,15 @@ export function createSessionStore(options: {
       recordPerfLog(perfEnabled, "session.select", event, {
         runId,
         sessionID,
+        selectionKey,
         elapsedMs,
         ...(payload ?? {}),
       });
     };
-    const isStale = () => version !== selectGuard.currentVersion() || options.selectedSessionId() !== sessionID;
+    const isStale = () =>
+      version !== selectGuard.currentVersion() ||
+      options.selectedSessionId() !== sessionID ||
+      (options.selectSessionScopeKey?.(sessionID)?.trim() || sessionID) !== selectionKey;
     const abortIfStale = (reason: string) => {
       if (!isStale()) return false;
       mark(`aborting: ${reason}`);
@@ -1217,12 +1224,12 @@ export function createSessionStore(options: {
       })();
     })();
 
-    selectGuard.register(sessionID, version, run);
+    selectGuard.register(selectionKey, version, run);
     try {
       await run;
     } finally {
       setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
-      selectGuard.cleanup(sessionID, run);
+      selectGuard.cleanup(selectionKey, run);
       options.onSessionLoadComplete?.();
     }
   }

@@ -60,6 +60,24 @@ test("send flow preserves UI trace id and forwards trace entries to native logs"
   );
 });
 
+test("skill command resolution uses the scoped send target workspace", () => {
+  assert.match(
+    source,
+    /async function maybeResolveSkillCommand\(\s*draft: ComposerDraft,\s*traceId\?: string \| null,\s*targetWorkspace\?: SendTargetWorkspaceScope \| null,/,
+    "skill resolution should accept the workspace resolved for the current send",
+  );
+  assert.match(
+    source,
+    /const targetWorkspaceId = targetWorkspace\?\.workspaceId\?\.trim\(\) \|\| "";\s*const workspaceId = targetWorkspaceId \|\| resolvedDevtoolsWorkspaceId\(\);/,
+    "skill resolution should prefer the scoped send workspace before the devtools fallback",
+  );
+  assert.match(
+    source,
+    /\(\) => maybeResolveSkillCommand\(resolvedDraft, sendTraceId, sendTargetWorkspace\)/,
+    "sendPrompt should pass the scoped target workspace into skill resolution",
+  );
+});
+
 test("send-time workspace activation preserves scoped browsed conversation state", () => {
   assert.match(
     source,
@@ -81,7 +99,7 @@ test("send-time workspace activation preserves scoped browsed conversation state
 test("active conversation busy state follows scoped selected session workspace", () => {
   assert.match(
     source,
-    /const activeConversationBusy = createMemo\(\(\) => \{[\s\S]*const sessionId = activeSessionId\(\);[\s\S]*const scope = sessionId \? resolveSelectedSessionBrowseScope\(sessionId\) : null;[\s\S]*const workspaceId = scope\?\.workspaceId\?\.trim\(\) \|\| workspaceStoreRef\?\.activeWorkspaceId\(\)\.trim\(\) \|\| "";[\s\S]*const entry = workspaceId \? busySessionByWorkspaceId\(\)\[workspaceId\] : null;[\s\S]*return Boolean\(entry && sessionId && entry\.sessionId === sessionId\);[\s\S]*\}\);/,
+    /const activeConversationBusy = createMemo\(\(\) => \{[\s\S]*const sessionId = activeSessionId\(\);[\s\S]*const scope = sessionId \? resolveSelectedSessionBrowseScope\(sessionId\) : null;[\s\S]*const workspaceId = scope\?\.workspaceId\?\.trim\(\) \|\| currentWorkspaceStoreRef\(\)\?\.activeWorkspaceId\(\)\.trim\(\) \|\| "";[\s\S]*const entry = workspaceId \? busySessionByWorkspaceId\(\)\[workspaceId\] : null;[\s\S]*return Boolean\(entry && sessionId && entry\.sessionId === sessionId\);[\s\S]*\}\);/,
     "composer busy state should use the displayed scoped session workspace instead of only the active workspace",
   );
 });
@@ -174,7 +192,7 @@ test("sidebar bulk refresh is single-flight to avoid duplicate cold workspace se
   );
   assert.match(
     source,
-    /const sidebarWorkspaceSessions = createSidebarWorkspaceSessions\(\{[\s\S]*workspaceStore,[\s\S]*workspaceRouting,[\s\S]*listConversationsFromVesloReadApi,[\s\S]*\}\);/,
+    /const sidebarWorkspaceSessions = createSidebarWorkspaceSessions\(\{[\s\S]*workspaceStore,[\s\S]*workspaceRouting,[\s\S]*listConversationsFromVesloReadApi,[\s\S]*backfillConversationsToVesloReadApi,[\s\S]*\}\);/,
     "app should wire sidebar session behavior through the sidebar workspace sessions controller",
   );
 });
@@ -200,13 +218,23 @@ test("session-store sidebar sync skips unchanged sidebar rows", () => {
 test("local sidebar runtime failures fall back to passive conversation read", () => {
   assert.match(
     sidebarWorkspaceSessionsSource,
-    /const isSidebarRuntimeUnavailableError = \(message: string\) =>[\s\S]*engine_not_running[\s\S]*Request timed out[\s\S]*unauthorized/i,
-    "sidebar should classify local engine runtime failures separately from real remote errors",
+    /const isSidebarRuntimeUnavailableError = \(message: string\) =>[\s\S]*engine_not_running[\s\S]*error sending request for url[\s\S]*Request timed out[\s\S]*unauthorized/i,
+    "sidebar should classify local engine runtime failures and stale local proxy errors separately from real remote errors",
   );
   assert.match(
     sidebarWorkspaceSessionsSource,
     /if \(wsDirectory && isSidebarRuntimeUnavailableError\(message\)\) \{[\s\S]*await refreshSidebarWorkspaceSessionsFromReadApi\(id, wsDirectory, "engine-runtime-unavailable"\);[\s\S]*return;/,
     "local sidebar refresh should fall back to Veslo read API when a stale engine route reports runtime unavailable",
+  );
+  assert.match(
+    sidebarWorkspaceSessionsSource,
+    /void options\.backfillConversationsToVesloReadApi\?\.\(id, queryDirectory, visibleSessions\)[\s\S]*sidebar:conversation-read:backfill-error/,
+    "successful live sidebar reads should backfill Veslo conversation bindings without blocking visible UI",
+  );
+  assert.match(
+    source,
+    /const backfillConversationsToVesloReadApi = async[\s\S]*serverClient\.importConversations\(serverWorkspaceId,[\s\S]*rememberConversationScopesFromSessions\(workspaceId, directory, result\.items\);/,
+    "app should backfill imported live sessions through the Veslo read API registration path",
   );
   assert.match(
     sidebarWorkspaceSessionsSource,
@@ -231,7 +259,7 @@ test("local sidebar refresh keeps routed auth and does not clear rows when runti
 test("MCP server refresh joins duplicate refreshes for the same workspace context", () => {
   assert.match(
     mcpRefreshSource,
-    /const refreshInFlightByKey = new Map<string, Promise<void>>\(\);/,
+    /const refreshInFlightByKey = new Map<string, McpRefreshInFlight>\(\);/,
     "MCP server refresh should track in-flight refreshes by workspace context",
   );
   assert.match(
@@ -246,22 +274,67 @@ test("MCP server refresh joins duplicate refreshes for the same workspace contex
   );
   assert.match(
     mcpRefreshSource,
-    /const existingRefresh = refreshInFlightByKey\.get\(refreshKey\);[\s\S]*await existingRefresh;[\s\S]*"refresh-joined"/,
+    /const existingRefresh = refreshInFlightByKey\.get\(refreshKey\);[\s\S]*await existingRefresh\.promise;[\s\S]*"refresh-joined"/,
     "duplicate MCP refreshes for the same key should join the existing promise",
   );
   assert.match(
     mcpRefreshSource,
-    /if \(refreshInFlightByKey\.get\(refreshKey\) === run\) \{[\s\S]*refreshInFlightByKey\.delete\(refreshKey\);/,
+    /if \(refreshInFlightByKey\.get\(refreshKey\)\?\.promise === run\) \{[\s\S]*refreshInFlightByKey\.delete\(refreshKey\);/,
     "MCP refresh single-flight entry should be cleared after the owning run completes",
   );
   assert.match(
+    mcpRefreshSource,
+    /if \(refreshMode !== "explicit" \|\| existingRefresh\.mode === "explicit"\) \{[\s\S]*return;[\s\S]*\}/,
+    "explicit MCP refresh should not inherit an older auto refresh skip via single-flight join",
+  );
+  assert.match(
+    mcpRefreshSource,
+    /const isCurrentRefreshTarget = \(\) =>[\s\S]*options\.activeWorkspaceId\(\)\.trim\(\) === activeWorkspaceId[\s\S]*options\.projectDir\(\)\.trim\(\) === projectDir;/,
+    "MCP refresh should re-check workspace and project directory before applying async results",
+  );
+  assert.match(
+    mcpRefreshSource,
+    /"refresh-stale-skip"/,
+    "stale MCP refresh results should be logged and ignored instead of overwriting the current workspace UI",
+  );
+  assert.match(
+    mcpRefreshSource,
+    /return async function refreshMcpServers\(refreshOptions: McpServersRefreshOptions = \{\}\)[\s\S]*const refreshMode = refreshOptions\.mode \?\? "auto";[\s\S]*const skipForActiveRuntimeActivity = \(phase: string\) => \{[\s\S]*if \(refreshMode === "explicit"\) return false;[\s\S]*"workspace\.mcp", "refresh-skip-active-send"[\s\S]*activeSendTraceId: activeRuntimeActivityId,[\s\S]*phase,[\s\S]*return true;[\s\S]*if \(skipForActiveRuntimeActivity\("start"\)\) \{[\s\S]*return;[\s\S]*\}/,
+    "MCP auto refresh should skip while visible runtime activity is active, while explicit post-mutation refreshes can still update config state",
+  );
+  assert.match(
+    mcpRefreshSource,
+    /const applyEntriesForRun = \(entries: McpServerEntry\[\], phase: string\) => \{[\s\S]*if \(skipForActiveRuntimeActivity\(phase\)\) \{[\s\S]*return;[\s\S]*\}[\s\S]*if \(!isCurrentRefreshTarget\(\)\)/,
+    "MCP refresher should also skip late async apply results if a send handoff became active after the refresh started",
+  );
+  assert.match(
     source,
-    /const refreshMcpServers = createMcpServersRefresher\(\{[\s\S]*projectDir: \(\) => workspaceProjectDir\(\),[\s\S]*workspaceType: \(\) => workspaceStore\.activeWorkspaceDisplay\(\)\.workspaceType,[\s\S]*scheduleRuntimeStatusRefresh: scheduleMcpRuntimeStatusRefresh,[\s\S]*\}\);/,
+    /const refreshMcpServers = createMcpServersRefresher\(\{[\s\S]*projectDir: \(\) => workspaceProjectDir\(\),[\s\S]*workspaceType: \(\) => workspaceStore\.activeWorkspaceDisplay\(\)\.workspaceType,[\s\S]*activeRuntimeActivityId: activeVisibleRuntimeActivityId,[\s\S]*scheduleRuntimeStatusRefresh: scheduleMcpRuntimeStatusRefresh,[\s\S]*\}\);/,
     "app should wire MCP refresh through the dedicated MCP refresh module",
+  );
+  assert.match(
+    source,
+    /await refreshMcpServers\(\{ mode: "explicit", reason: "mcp-activate-installed" \}\);[\s\S]*await refreshMcpServers\(\{ mode: "explicit", reason: "mcp-activate-installed-complete" \}\);/,
+    "post-install MCP refreshes should be explicit so active conversation runs do not leave the MCP UI stale",
+  );
+  assert.match(
+    source,
+    /await refreshMcpServers\(\{ mode: "explicit", reason: "mcp-remove" \}\);/,
+    "post-remove MCP refresh should be explicit so active conversation runs do not hide the mutation result",
   );
 });
 
 test("pending permission interval skips active sends and single-client mode covered by SSE", () => {
+  assert.match(
+    source,
+    /const \[visibleRuntimeActivityHold, setVisibleRuntimeActivityHold\] = createSignal[\s\S]*const holdVisibleRuntimeActivity = \(sessionId: string \| null \| undefined, reason: string\) => \{[\s\S]*const token = `run-handoff:\$\{id\}`;[\s\S]*setVisibleRuntimeActivityHold\(\{ sessionId: id, token, expiresAt \}\);[\s\S]*const activeVisibleRuntimeActivityId = \(\) => \{[\s\S]*const sendTraceId = activeSendTraceId\(\)\?\.trim\(\);[\s\S]*if \(sendTraceId\) return sendTraceId;[\s\S]*const sessionId = selectedSessionId\(\)\?\.trim\(\);[\s\S]*const status = sessionStatusById\(\)\[sessionId\] \?\? "idle";[\s\S]*if \(status === "running" \|\| status === "retry"\) return `run:\$\{sessionId\}`;[\s\S]*const hold = visibleRuntimeActivityHold\(\);[\s\S]*if \(hold\?\.sessionId === sessionId && hold\.expiresAt > Date\.now\(\)\) return hold\.token;/,
+    "app should keep runtime refresh guards active for the visible send, accepted-before-SSE handoff, and selected running session",
+  );
+  assert.match(
+    source,
+    /recordSendTrace\("sendPrompt:success"[\s\S]*holdVisibleRuntimeActivity\(sessionID, "sendPrompt:success"\);[\s\S]*return true;/,
+    "successful sends should hold visible runtime activity until session status catches up",
+  );
   assert.match(
     schedulerSource,
     /const activeSendTraceId = options\.activeSendTraceId\(\);[\s\S]*if \(activeSendTraceId\) \{[\s\S]*"session\.permissions", "poll-skip-active-send"/,
@@ -284,8 +357,23 @@ test("pending permission interval skips active sends and single-client mode cove
   );
   assert.match(
     source,
-    /createPermissionPollingScheduler\(\{[\s\S]*routedWorkspaceCount: \(\) => workspaceRouting\.entryIds\(\)\.length,[\s\S]*activeWorkspaceId: \(\) => workspaceStore\.activeWorkspaceId\(\)\.trim\(\) \|\| null,[\s\S]*engineReady: \(\) => engineReady\(\),[\s\S]*refreshPendingPermissions: \(\) => sessionStore\.refreshPendingPermissions\(\),[\s\S]*\}\);/,
-    "app should wire permission polling to workspace routing, engine readiness, and session store state",
+    /createPermissionPollingScheduler\(\{[\s\S]*routedWorkspaceCount: \(\) => workspaceRouting\.entryIds\(\)\.length,[\s\S]*activeWorkspaceId: \(\) => workspaceStore\.activeWorkspaceId\(\)\.trim\(\) \|\| null,[\s\S]*activeSendTraceId: activeVisibleRuntimeActivityId,[\s\S]*engineReady: \(\) => engineReady\(\),[\s\S]*refreshPendingPermissions: \(\) => sessionStore\.refreshPendingPermissions\(\),[\s\S]*\}\);/,
+    "app should wire permission polling to workspace routing, engine readiness, visible send/run activity, and session store state",
+  );
+  assert.match(
+    source,
+    /const sidebarWorkspaceSessions = createSidebarWorkspaceSessions\(\{[\s\S]*engineReady: \(\) => engineReady\(\),[\s\S]*activeSendTraceId: activeVisibleRuntimeActivityId,[\s\S]*developerMode: \(\) => developerMode\(\),/,
+    "sidebar live refresh should defer for the same visible send/run activity token",
+  );
+  assert.match(
+    source,
+    /const loadSessionMcpStatuses = async[\s\S]*const activeRuntimeActivityId = activeVisibleRuntimeActivityId\(\)\?\.trim\(\);[\s\S]*"session-capabilities-skip-active-send"[\s\S]*return \{\};[\s\S]*const status = unwrap\(await runtimeClient\.mcp\.status\(\{ directory \}\)\);[\s\S]*"session-capabilities-result-skip-active-send"[\s\S]*return \{\};/,
+    "session capability MCP status reads should not run or apply results during the visible send handoff",
+  );
+  assert.match(
+    source,
+    /function scheduleMcpRuntimeStatusRefresh\(projectDir: string, entries: McpServerEntry\[\]\) \{[\s\S]*const activeRuntimeActivityId = activeVisibleRuntimeActivityId\(\)\?\.trim\(\);[\s\S]*"runtime-status-skip-active-send"[\s\S]*return;[\s\S]*const status = unwrap\(await activeClient\.mcp\.status\(\{ directory \}\)\);[\s\S]*"runtime-status-result-skip-active-send"[\s\S]*return;/,
+    "MCP runtime status scheduling should skip direct runtime calls and late applies during visible send handoff",
   );
 });
 
@@ -297,12 +385,27 @@ test("MCP auto refresh scheduler keeps UI wiring thin", () => {
   );
   assert.match(
     schedulerSource,
-    /if \(!options\.isTauriRuntime\(\)\) return;[\s\S]*options\.engineReady\(\);[\s\S]*const projectDir = options\.workspaceProjectDir\(\)\.trim\(\);[\s\S]*if \(!projectDir\) return;[\s\S]*void options\.refreshMcpServers\(\);/,
-    "MCP scheduler should preserve the previous Tauri, engine and project directory gates",
+    /if \(!options\.isTauriRuntime\(\)\) return;[\s\S]*if \(options\.engineReady\(\) === false\) return;[\s\S]*const projectDir = options\.workspaceProjectDir\(\)\.trim\(\);[\s\S]*if \(!projectDir\) return;[\s\S]*const activeSendTraceId = options\.activeSendTraceId\?\.\(\)\?\.trim\(\) \?\? "";[\s\S]*if \(activeSendTraceId\) \{[\s\S]*scheduleDeferredRefresh\(activeSendTraceId, projectDir\);[\s\S]*return;[\s\S]*\}[\s\S]*void options\.refreshMcpServers\(\);/,
+    "MCP scheduler should preserve Tauri, engine and project directory gates while deferring during active sends",
+  );
+  assert.match(
+    schedulerSource,
+    /"workspace\.mcp", "refresh-skip-active-send"/,
+    "MCP scheduler should log and defer automatic refresh while a send is active",
+  );
+  assert.match(
+    schedulerSource,
+    /const nextActiveSendTraceId = options\.activeSendTraceId\?\.\(\)\?\.trim\(\) \?\? "";[\s\S]*if \(nextActiveSendTraceId\) \{[\s\S]*scheduleDeferredRefresh\(nextActiveSendTraceId, options\.workspaceProjectDir\(\)\.trim\(\)\);[\s\S]*return;[\s\S]*\}/,
+    "deferred MCP refresh should keep waiting until the active send clears",
   );
   assert.match(
     source,
-    /createMcpAutoRefreshScheduler\(\{[\s\S]*isTauriRuntime,[\s\S]*engineReady: \(\) => engineReady\(\),[\s\S]*workspaceProjectDir: \(\) => workspaceProjectDir\(\),[\s\S]*refreshMcpServers,[\s\S]*\}\);/,
-    "app should wire MCP auto refresh to existing runtime signals without duplicating scheduler logic",
+    /createMcpAutoRefreshScheduler\(\{[\s\S]*isTauriRuntime,[\s\S]*engineReady: \(\) => engineReady\(\),[\s\S]*activeWorkspaceId: \(\) => workspaceStore\.activeWorkspaceId\(\),[\s\S]*activeSendTraceId: activeVisibleRuntimeActivityId,[\s\S]*workspaceProjectDir: \(\) => workspaceProjectDir\(\),[\s\S]*refreshMcpServers,[\s\S]*\}\);/,
+    "app should wire MCP auto refresh to runtime and visible send/run activity without duplicating scheduler logic",
+  );
+  assert.doesNotMatch(
+    source,
+    /createEffect\(\(\) => \{\s*if \(!isTauriRuntime\(\)\) return;\s*workspaceStore\.activeWorkspaceId\(\);\s*workspaceProjectDir\(\);\s*void refreshMcpServers\(\);\s*\}\);/,
+    "app must not keep a raw MCP auto-refresh effect that bypasses the scheduler active-send guard",
   );
 });

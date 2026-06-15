@@ -11,6 +11,15 @@ export function createWorkspaceBusyState(recordTrace?: WorkspaceBusyTrace) {
     const id = workspaceId.trim();
     if (!id || !sessionId) return;
     setWorkspaceBusy((prev) => {
+      const existing = prev[id];
+      if (existing?.sessionId === sessionId) {
+        recordTrace?.("mark-existing", {
+          workspaceId: id,
+          sessionId,
+          previous: prev,
+        });
+        return prev;
+      }
       const next = {
         ...prev,
         [id]: { sessionId, startedAt: Date.now() },

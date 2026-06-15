@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount, untrack } from "solid-js";
+import { For, Show, batch, createEffect, createMemo, createSignal, on, onCleanup, onMount, untrack } from "solid-js";
 import type { Agent, Part } from "@opencode-ai/sdk/v2/client";
 import type {
   ArtifactItem,
@@ -93,6 +93,7 @@ import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
 import { normalizeLocalFilePath } from "../lib/local-file-path";
 import {
   createSessionClientMessageId,
+  type MaterializedSessionHandoff,
   type SessionSendOptionsBase,
   type SessionSendOrigin,
 } from "../lib/session-send-contract";
@@ -302,7 +303,7 @@ export type SessionViewProps = {
     draft: ComposerDraft,
     options: SessionSendOptionsBase & {
       targetSessionId?: string | null;
-      onMaterializedSessionId?: (sessionId: string) => void;
+      onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
       pendingSession?: PendingSidebarSessionMetadata | null;
     },
   ) => Promise<boolean>;
@@ -848,14 +849,6 @@ export default function SessionView(props: SessionViewProps) {
       !hasWorkspaceConfigured() &&
       !props.selectedSessionId &&
       props.messages.length === 0,
-  );
-  const showSessionLoadingState = createMemo(() =>
-    shouldShowSessionLoadingState({
-      hasWorkspaceSetupEmptyState: showWorkspaceSetupEmptyState(),
-      selectedSessionId: props.selectedSessionId,
-      messageCount: props.messages.length,
-      loadingEarlierMessages: props.loadingEarlierMessages,
-    })
   );
   const sessionWorkspaceContextLabel = createMemo(() => {
     if (showWorkspaceSetupEmptyState()) return "";
@@ -1445,6 +1438,14 @@ export default function SessionView(props: SessionViewProps) {
   // (idle → running, browsing → engine start).  The memo path is
   // reliable because SolidJS memos propagate synchronously.
   const effectiveRenderedMessages = renderedMessages;
+  const showSessionLoadingState = createMemo(() =>
+    shouldShowSessionLoadingState({
+      hasWorkspaceSetupEmptyState: showWorkspaceSetupEmptyState(),
+      selectedSessionId: props.selectedSessionId,
+      messageCount: effectiveRenderedMessages().length,
+      loadingEarlierMessages: props.loadingEarlierMessages,
+    })
+  );
   const showQuickstartEmptyState = createMemo(() =>
     effectiveRenderedMessages().length === 0 &&
     !showWorkspaceSetupEmptyState() &&
@@ -3734,22 +3735,31 @@ export default function SessionView(props: SessionViewProps) {
       const materializedSessionId = materializedSessionIdForRunStateReset ?? materializedSessionIdFromHandoff;
       return materializedSessionId ? sessionQueueKeyForSessionId(materializedSessionId) : sessionKey;
     };
-    const materializePendingHandoffToSession = (sessionId: string | null | undefined) => {
+    const materializePendingHandoffToSession = (handoff: MaterializedSessionHandoff | null | undefined) => {
       if (!pendingSessionBaseKeyBeforeHandoff || !pendingSessionKeyBeforeHandoff) return;
-      const materializedSessionId = sessionId?.trim();
+      const materializedPendingKey = handoff?.pendingSessionKey?.trim() || pendingSessionKeyBeforeHandoff;
+      if (materializedPendingKey !== pendingSessionKeyBeforeHandoff) return;
+      if (handoff?.clientMessageId?.trim() && handoff.clientMessageId.trim() !== clientMessageId) return;
+      const materializedSessionId = handoff?.sessionId?.trim();
       if (!materializedSessionId || isPendingSessionInstanceId(materializedSessionId)) return;
       materializedSessionIdFromHandoff = materializedSessionId;
       materializedSessionIdForRunStateReset = materializedSessionId;
-      remapPendingQueueToSession(pendingSessionKeyBeforeHandoff, materializedSessionId);
-      clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff);
+      const materializedSessionKey = sessionQueueKeyForSessionId(materializedSessionId);
+      batch(() => {
+        setPendingQueueKeyAwaitingSessionIdForBaseKey(
+          pendingSessionBaseKeyBeforeHandoff,
+          materializedSessionKey,
+        );
+        remapPendingQueueToSession(pendingSessionKeyBeforeHandoff, materializedSessionId);
+      });
     };
-    const handleMaterializedSessionId = (sessionId: string) => {
+    const handleMaterializedSessionId = (handoff: MaterializedSessionHandoff) => {
       markTempRuntimeUiRenderSource("SessionView.handleMaterializedSessionId", "pending-session-materialized", {
         clientMessageId,
         origin,
-        detail: `materializedSessionId=${sessionId}`,
+        detail: `workspaceId=${handoff.workspaceId} pendingSessionKey=${handoff.pendingSessionKey ?? "none"} materializedSessionId=${handoff.sessionId}`,
       });
-      materializePendingHandoffToSession(sessionId);
+      materializePendingHandoffToSession(handoff);
     };
     const clearMatchingPendingSubmit = () => {
       setPendingSubmittedDraftBySessionKey((current) => {
@@ -3794,7 +3804,7 @@ export default function SessionView(props: SessionViewProps) {
     const finishPendingSessionHandoffFailure = () => {
       if (!pendingSessionBaseKeyBeforeHandoff || !pendingSessionKeyBeforeHandoff) return;
       if (materializedSessionIdFromHandoff) {
-        clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff);
+        clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingSessionBaseKeyBeforeHandoff, null);
         return;
       }
       if (showOptimisticSubmit && !props.selectedSessionId?.trim()) {
@@ -3844,7 +3854,7 @@ export default function SessionView(props: SessionViewProps) {
         origin: SessionSendOrigin;
         targetSessionId?: string | null;
         sendTraceId?: string | null;
-        onMaterializedSessionId?: (sessionId: string) => void;
+        onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
         pendingSession?: PendingSidebarSessionMetadata | null;
       } = {
         clientMessageId,
@@ -3893,7 +3903,13 @@ export default function SessionView(props: SessionViewProps) {
       if (accepted && pendingSessionKeyBeforeHandoff) {
         const materializedSessionId = materializedSessionIdFromHandoff ?? props.selectedSessionId?.trim();
         if (materializedSessionId) {
-          materializePendingHandoffToSession(materializedSessionId);
+          materializePendingHandoffToSession({
+            workspaceId: expectedWorkspaceId || activeUiConversationWorkspaceId(),
+            pendingSessionKey: pendingSessionKeyBeforeHandoff,
+            sessionId: materializedSessionId,
+            clientMessageId,
+            sendTraceId: options.sendTraceId ?? null,
+          });
         }
       }
       if (options.expectedSessionKey && currentSessionQueueKey() !== options.expectedSessionKey) {
@@ -3904,7 +3920,7 @@ export default function SessionView(props: SessionViewProps) {
       }
       setStickToBottom(true);
       scheduleScrollToLatest("auto");
-      startRun(sessionKey);
+      startRun(materializedSessionIdFromHandoff ? sessionQueueKeyForSessionId(materializedSessionIdFromHandoff) : sessionKey);
       return true;
     } catch (e) {
       if (showOptimisticSubmit) {
@@ -5147,9 +5163,7 @@ export default function SessionView(props: SessionViewProps) {
       </Show>
 
       <Show when={!showWorkspaceSetupEmptyState()}>
-        <Show when={props.selectedSessionId ?? "__no-session"} keyed>
-          {(_sessionKey) => (
-            <>
+        <>
               <Show when={props.aiAccessBlockedReason}>
                 <div class="mx-auto mb-3 w-full max-w-[min(100%,72rem)] rounded-2xl border border-amber-7/30 bg-amber-2/30 px-4 py-3 text-sm text-amber-12">
                   {props.aiAccessBlockedReason}
@@ -5222,9 +5236,7 @@ export default function SessionView(props: SessionViewProps) {
                   </span>
                 </div>
               </div>
-            </>
-          )}
-        </Show>
+        </>
       </Show>
 
       </main>

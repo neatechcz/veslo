@@ -201,6 +201,48 @@ test("POST /workspaces/local updates existing workspace opencode metadata", asyn
   expect(onDisk.workspaces[0]!.opencodePassword).toBe("secret");
 });
 
+test("POST /workspaces/local treats repeated opencode metadata registration as idempotent", async () => {
+  const seedDir = await mkdtemp(join(tmpdir(), "veslo-ws-metadata-idempotent-"));
+  tempDirs.push(seedDir);
+  const workspaceId = workspaceIdForPath(seedDir);
+  const baseUrl = `http://127.0.0.1:62930/workspace/${workspaceId}/opencode`;
+  const seed: WorkspaceInfo = {
+    id: workspaceId,
+    name: "Seed",
+    path: seedDir,
+    workspaceType: "local",
+    baseUrl,
+    directory: seedDir,
+    opencodeUsername: "opencode",
+    opencodePassword: "secret",
+  };
+  const { server } = await startFixture([seed]);
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/workspaces/local`, {
+    method: "POST",
+    headers: hostHeaders(),
+    body: JSON.stringify({
+      path: seedDir,
+      name: "Seed",
+      baseUrl,
+      directory: seedDir,
+      opencodeUsername: "opencode",
+      opencodePassword: "secret",
+    }),
+  });
+
+  expect(response.status).toBe(200);
+  const payload = (await response.json()) as {
+    items: Array<{ id: string; baseUrl?: string; opencode?: { baseUrl?: string; username?: string } }>;
+    persisted: boolean;
+  };
+  const registered = payload.items.find((item) => item.id === seed.id);
+  expect(registered?.baseUrl).toBe(baseUrl);
+  expect(registered?.opencode?.baseUrl).toBe(baseUrl);
+  expect(registered?.opencode?.username).toBe("opencode");
+  expect(payload.persisted).toBe(false);
+});
+
 test("POST /workspaces/local requires host token (not client)", async () => {
   const { server } = await startFixture();
   const newDir = await mkdtemp(join(tmpdir(), "veslo-ws-auth-"));

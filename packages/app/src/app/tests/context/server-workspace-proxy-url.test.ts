@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { isWorkspaceOpencodeProxyUrl } from "../../context/server.js";
+import { isWorkspaceOpencodeProxyUrl } from "../../context/server-url.js";
 
 test("workspace OpenCode proxy urls are not treated as global health targets", () => {
   assert.equal(
