@@ -1305,6 +1305,13 @@ function requireAiGatewaySessionId(request: Request): string {
   return sessionId;
 }
 
+function normalizeAiGatewaySessionId(sessionId?: string | null): string {
+  const normalized = sessionId?.trim() ?? "";
+  if (!normalized) return "";
+  if (normalized === "${OPENCODE_SESSION_ID}") return "";
+  return normalized;
+}
+
 function trimmedHeader(request: Request, name: string): string | undefined {
   const value = request.headers.get(name)?.trim() ?? "";
   return value || undefined;
@@ -1320,48 +1327,83 @@ type AiGatewaySessionHit = {
   requestId: string;
   provider: string | null;
   gatewayPath: string;
+  sessionId: string | null;
+  workspaceId: string | null;
 };
 
 const aiGatewaySessionHits = new Map<string, AiGatewaySessionHit[]>();
+const aiGatewayWorkspaceHits = new Map<string, AiGatewaySessionHit[]>();
 
 function pruneAiGatewaySessionHits(now = Date.now()): void {
   const cutoff = now - AI_GATEWAY_SESSION_HIT_TTL_MS;
-  for (const [sessionId, hits] of aiGatewaySessionHits) {
-    const liveHits = hits.filter((hit) => hit.at >= cutoff);
-    if (liveHits.length) {
-      aiGatewaySessionHits.set(sessionId, liveHits);
-    } else {
-      aiGatewaySessionHits.delete(sessionId);
+  const prune = (hitsByKey: Map<string, AiGatewaySessionHit[]>) => {
+    for (const [key, hits] of hitsByKey) {
+      const liveHits = hits.filter((hit) => hit.at >= cutoff);
+      if (liveHits.length) {
+        hitsByKey.set(key, liveHits);
+      } else {
+        hitsByKey.delete(key);
+      }
     }
-  }
+  };
+  prune(aiGatewaySessionHits);
+  prune(aiGatewayWorkspaceHits);
 }
 
 function recordAiGatewaySessionHit(input: {
   sessionId?: string;
+  workspaceId?: string;
   requestId: string;
   provider: string | null;
   gatewayPath: string;
   now?: number;
 }): void {
-  const sessionId = input.sessionId?.trim() ?? "";
-  if (!sessionId) return;
+  const sessionId = normalizeAiGatewaySessionId(input.sessionId);
+  const workspaceId = input.workspaceId?.trim() ?? "";
+  if (!sessionId && !workspaceId) return;
   const now = input.now ?? Date.now();
   pruneAiGatewaySessionHits(now);
-  const hits = aiGatewaySessionHits.get(sessionId) ?? [];
-  hits.push({
+  const hit: AiGatewaySessionHit = {
     at: now,
     requestId: input.requestId,
     provider: input.provider,
     gatewayPath: input.gatewayPath,
-  });
-  aiGatewaySessionHits.set(sessionId, hits.slice(-50));
+    sessionId: sessionId || null,
+    workspaceId: workspaceId || null,
+  };
+  if (sessionId) {
+    const hits = aiGatewaySessionHits.get(sessionId) ?? [];
+    hits.push(hit);
+    aiGatewaySessionHits.set(sessionId, hits.slice(-50));
+  }
+  if (workspaceId) {
+    const hits = aiGatewayWorkspaceHits.get(workspaceId) ?? [];
+    hits.push(hit);
+    aiGatewayWorkspaceHits.set(workspaceId, hits.slice(-50));
+  }
 }
 
-function hasAiGatewaySessionHitAfter(sessionId: string, startedAt: number): boolean {
-  const normalizedSessionId = sessionId.trim();
-  if (!normalizedSessionId) return false;
+function hasAiGatewayProviderHitAfter(input: {
+  sessionId: string;
+  workspaceId: string;
+  startedAt: number;
+}): boolean {
+  const normalizedSessionId = normalizeAiGatewaySessionId(input.sessionId);
+  const normalizedWorkspaceId = input.workspaceId.trim();
   pruneAiGatewaySessionHits();
-  return (aiGatewaySessionHits.get(normalizedSessionId) ?? []).some((hit) => hit.at >= startedAt);
+  if (
+    normalizedSessionId &&
+    (aiGatewaySessionHits.get(normalizedSessionId) ?? []).some((hit) => hit.at >= input.startedAt)
+  ) {
+    return true;
+  }
+  if (
+    normalizedWorkspaceId &&
+    (aiGatewayWorkspaceHits.get(normalizedWorkspaceId) ?? []).some((hit) => hit.at >= input.startedAt)
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function logAiGatewayProviderStartTimeout(input: Record<string, unknown>): void {
@@ -1395,6 +1437,7 @@ async function waitForAiGatewayProviderStart(input: {
 }): Promise<{ started: boolean; timeoutMs: number }> {
   const timeoutMs = resolveAiGatewayProviderStartTimeoutMs();
   const opencodeSessionId = input.opencodeSessionId.trim();
+  const workspaceId = input.workspaceId.trim();
   if (!opencodeSessionId) return { started: false, timeoutMs };
 
   logAiGatewayProviderStartWatch({
@@ -1409,13 +1452,13 @@ async function waitForAiGatewayProviderStart(input: {
 
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (hasAiGatewaySessionHitAfter(opencodeSessionId, input.startedAt)) {
+    if (hasAiGatewayProviderHitAfter({ sessionId: opencodeSessionId, workspaceId, startedAt: input.startedAt })) {
       return { started: true, timeoutMs };
     }
     await sleep(Math.min(100, Math.max(5, deadline - Date.now())));
   }
 
-  const started = hasAiGatewaySessionHitAfter(opencodeSessionId, input.startedAt);
+  const started = hasAiGatewayProviderHitAfter({ sessionId: opencodeSessionId, workspaceId, startedAt: input.startedAt });
   if (!started) {
     logAiGatewayProviderStartTimeout({
       workspaceId: input.workspaceId,
@@ -1648,8 +1691,10 @@ async function proxyAiGatewayRequest(input: {
   const authorization =
     input.auth === "caller" ? requireAiGatewayCallerAuth(input.request) : requireAiGatewayAccessToken(input.request);
   const sessionId = input.requireSessionId ? requireAiGatewaySessionId(input.request) : undefined;
+  const workspaceId = trimmedHeader(input.request, GATEWAY_WORKSPACE_ID_HEADER);
   recordAiGatewaySessionHit({
     sessionId,
+    workspaceId,
     requestId,
     provider: resolveAiGatewayProvider(input.gatewayPath) ?? null,
     gatewayPath: input.gatewayPath,
@@ -1690,6 +1735,7 @@ async function proxyAiGatewayRequest(input: {
       gatewayPath: input.gatewayPath,
       provider: resolveAiGatewayProvider(input.gatewayPath) ?? null,
       sessionId: sessionId ?? null,
+      workspaceId: workspaceId ?? null,
       targetOrigin: target.origin,
       targetPath: target.pathname,
       ...extra,
@@ -1709,6 +1755,7 @@ async function proxyAiGatewayRequest(input: {
       gatewayPath: input.gatewayPath,
       provider: resolveAiGatewayProvider(input.gatewayPath) ?? null,
       sessionId: sessionId ?? null,
+      workspaceId: workspaceId ?? null,
       status,
       outcome,
       totalMs: roundTraceMs(finishedAt - startedAt),
@@ -1898,7 +1945,7 @@ function withCors(response: Response, request: Request, config: ServerConfig) {
   headers.set("Access-Control-Allow-Origin", allowOrigin);
   headers.set(
     "Access-Control-Allow-Headers",
-    "Authorization, Content-Type, X-Veslo-Host-Token, X-Veslo-Client-Id, X-Veslo-Send-Trace-Id, x-veslo-account-id, X-Veslo-User-Id, X-Veslo-Den-User-Id, X-Veslo-Org-Id, X-Veslo-Den-Org-Id, X-Veslo-Gateway-Authorization, X-Veslo-Gateway-Token, X-Veslo-Session-Id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
+    "Authorization, Content-Type, X-Veslo-Host-Token, X-Veslo-Client-Id, X-Veslo-Send-Trace-Id, x-veslo-account-id, X-Veslo-User-Id, X-Veslo-Den-User-Id, X-Veslo-Org-Id, X-Veslo-Den-Org-Id, X-Veslo-Gateway-Authorization, X-Veslo-Gateway-Token, X-Veslo-Session-Id, X-Veslo-Workspace-Id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
   );
   headers.set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
   headers.set("Vary", "Origin");

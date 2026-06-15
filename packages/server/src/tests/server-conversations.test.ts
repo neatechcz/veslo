@@ -1061,4 +1061,195 @@ describe("conversation routes", () => {
     expect(String(failedRequests[0]?.error ?? "")).toContain("AI gateway provider request did not start");
     expect(abortRequests).toEqual([workspaceRoot]);
   });
+
+  test("managed prompt provider-start watchdog matches placeholder session ids by workspace header", async () => {
+    setEnvVarForTest("VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS", "500");
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-gateway-workspace-watch-"));
+    tempDirs.push(workspaceRoot);
+    await useTempVesloDataDir();
+
+    let serverPort = 0;
+    let runIdFromRegister = "";
+    let conversationIdFromRegister = "";
+    let lifecycleStatus = "running";
+    let providerFetchError = "";
+    const failedRequests: Array<Record<string, unknown> | null> = [];
+    const abortRequests: string[] = [];
+    const providerRequests: Array<Record<string, string | null>> = [];
+
+    const gateway = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (request.method === "POST" && url.pathname === "/providers/codex_oauth/v1/chat/completions") {
+          providerRequests.push({
+            authorization: request.headers.get("authorization"),
+            sessionId: request.headers.get("x-veslo-session-id"),
+            workspaceId: request.headers.get("x-veslo-workspace-id"),
+          });
+          return Response.json({
+            id: "chatcmpl_test",
+            object: "chat.completion",
+            created: 1,
+            model: "gpt-5.5",
+            choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "ok" } }],
+          });
+        }
+        return Response.json({ error: "unexpected gateway route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(gateway as { stop?: (closeActiveConnections?: boolean) => void });
+    setEnvVarForTest("VESLO_AI_GATEWAY_BASE_URL", `http://127.0.0.1:${gateway.port}`);
+
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const body = request.method === "POST"
+          ? await request.json().catch(() => null) as Record<string, unknown> | null
+          : null;
+        if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session") {
+          return Response.json({
+            id: "sess-placeholder-watch",
+            title: body?.title,
+            directory: body?.directory,
+            parentID: null,
+            time: { created: 111, updated: 222 },
+          });
+        }
+        if (
+          request.method === "POST" &&
+          url.pathname === "/workspace/ws_1/opencode/session/sess-placeholder-watch/prompt_async"
+        ) {
+          void fetch(`http://127.0.0.1:${serverPort}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
+            method: "POST",
+            headers: {
+              Authorization: "Bearer client-token",
+              "Content-Type": "application/json",
+              "x-veslo-gateway-token": "gateway-access-token",
+              "x-veslo-session-id": "${OPENCODE_SESSION_ID}",
+              "x-veslo-workspace-id": "ws_1",
+            },
+            body: JSON.stringify({ model: "gpt-5.5", messages: [{ role: "user", content: "Hello" }] }),
+          }).catch((error) => {
+            providerFetchError = error instanceof Error ? error.message : String(error);
+          });
+          return Response.json({ ok: true });
+        }
+        if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session/sess-placeholder-watch/abort") {
+          abortRequests.push(url.searchParams.get("directory") ?? "");
+          return Response.json({ ok: true, aborted: true });
+        }
+        return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const orchestrator = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const body = request.method === "POST"
+          ? await request.json().catch(() => null) as Record<string, unknown> | null
+          : null;
+        if (request.headers.get(ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER) !== "lifecycle-token") {
+          return Response.json({ error: "unauthorized" }, { status: 401 });
+        }
+        if (request.method === "POST" && url.pathname === "/workspace/ws_1/runs/register") {
+          runIdFromRegister = typeof body?.runId === "string" ? body.runId : "";
+          conversationIdFromRegister = typeof body?.conversationId === "string" ? body.conversationId : "";
+          lifecycleStatus = "running";
+          return Response.json({ ok: true, ...body, workspaceId: "ws_1", status: lifecycleStatus, stale: false });
+        }
+        if (request.method === "POST" && url.pathname === `/workspace/ws_1/runs/${encodeURIComponent(runIdFromRegister)}/failed`) {
+          failedRequests.push(body);
+          lifecycleStatus = "failed";
+          return Response.json({ ok: true, runId: runIdFromRegister, status: lifecycleStatus });
+        }
+        if (
+          request.method === "GET" &&
+          url.pathname === `/workspace/ws_1/conversations/${encodeURIComponent(conversationIdFromRegister)}/runs/${encodeURIComponent(runIdFromRegister)}`
+        ) {
+          return Response.json({
+            ok: true,
+            workspaceId: "ws_1",
+            conversationId: conversationIdFromRegister,
+            runId: runIdFromRegister,
+            status: lifecycleStatus,
+            stale: false,
+          });
+        }
+        return Response.json({ error: "unexpected orchestrator route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(orchestrator as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+      workspaces: [
+        {
+          id: "ws_1",
+          name: "Workspace",
+          path: workspaceRoot,
+          baseUrl: `http://127.0.0.1:${upstream.port}/workspace/ws_1/opencode`,
+        },
+      ],
+      orchestratorDaemonUrl: `http://127.0.0.1:${orchestrator.port}`,
+      orchestratorLifecycleToken: "lifecycle-token",
+    });
+    serverPort = server.port;
+
+    const createResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          directory: workspaceRoot,
+          title: "Gateway Workspace Watch",
+        }),
+      },
+    );
+    expect(createResponse.status).toBe(201);
+    const created = await createResponse.json() as { conversationId: string };
+
+    const runResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          kind: "prompt_async",
+          directory: workspaceRoot,
+          parts: [{ type: "text", text: "Hello" }],
+          expectAiGatewayStart: true,
+        }),
+      },
+    );
+    expect(runResponse.status).toBe(200);
+    await waitForCondition(
+      () => providerRequests.length > 0 || Boolean(providerFetchError),
+      { timeoutMs: 1_000, message: "expected provider request to reach the managed gateway proxy" },
+    );
+    expect(providerFetchError).toBe("");
+    expect(providerRequests).toEqual([
+      {
+        authorization: "Bearer gateway-access-token",
+        sessionId: "${OPENCODE_SESSION_ID}",
+        workspaceId: "ws_1",
+      },
+    ]);
+    expect(failedRequests).toEqual([]);
+    expect(abortRequests).toEqual([]);
+  });
 });
