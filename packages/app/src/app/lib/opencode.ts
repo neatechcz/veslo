@@ -37,6 +37,7 @@ const GATEWAY_PROVIDER_SECRET_OPTION_KEYS = new Set([
 const GATEWAY_PROVIDER_ALLOWED_HEADER_KEYS = new Set([
   "xveslogatewaytoken",
   "xveslosessionid",
+  "xvesloworkspaceid",
 ]);
 const SERVER_PATCH_COMPARISON_GATEWAY_TOKEN_VALUE = "__veslo_gateway_token__";
 const SERVER_PATCH_COMPARISON_SECRET_VALUE = "__veslo_secret_value__";
@@ -49,6 +50,7 @@ const SERVER_PATCH_COMPARISON_REDACTED_LITERAL = "__veslo_broken_redacted_token_
 const REDACTED_LITERAL = "[REDACTED]";
 
 export const OPENCODE_SESSION_ID_TEMPLATE = "${OPENCODE_SESSION_ID}";
+export const VESLO_WORKSPACE_ID_HEADER = "x-veslo-workspace-id";
 
 function getRequestUrl(input: RequestInfo | URL): string {
   if (typeof input === "string") return input;
@@ -302,6 +304,7 @@ export function applyGatewayProviderRouting(
     serverBaseUrl: string;
     serverClientToken: string;
     gatewayAccessToken: string;
+    workspaceId?: string | null;
     models?: string[];
   },
 ) {
@@ -324,6 +327,7 @@ export function applyGatewayProviderRouting(
   if (!gatewayAccessToken) {
     throw new Error("Gateway access token is required");
   }
+  const workspaceId = input.workspaceId?.trim() ?? "";
 
   const parsed = parseConfigContent(content);
   const providerRoot = readConfigObject(parsed.provider);
@@ -351,6 +355,7 @@ export function applyGatewayProviderRouting(
         ...(isOpenAiCompatibleGatewayProvider ? {} : { Authorization: `Bearer ${serverClientToken}` }),
         "x-veslo-gateway-token": gatewayAccessToken,
         "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
+        ...(workspaceId ? { [VESLO_WORKSPACE_ID_HEADER]: workspaceId } : {}),
       },
     };
     return models;

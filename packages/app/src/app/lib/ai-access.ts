@@ -419,6 +419,7 @@ export function formatManagedAiAccessConfig(
     engineBaseUrl?: string | null;
     serverClientToken: string;
     gatewayAccessToken: string;
+    workspaceId?: string | null;
   },
 ): string {
   const withDefaultModel = formatConfigWithDefaultModel(content ?? "", input.profile.defaultModel);
@@ -427,6 +428,7 @@ export function formatManagedAiAccessConfig(
     serverBaseUrl: input.engineBaseUrl?.trim() || input.serverBaseUrl,
     serverClientToken: input.serverClientToken,
     gatewayAccessToken: input.gatewayAccessToken,
+    workspaceId: input.workspaceId,
     models: [input.profile.defaultModel.modelID, ...input.profile.allowedModels],
   })}\n`;
 }

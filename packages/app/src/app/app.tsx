@@ -10378,6 +10378,7 @@ export default function App() {
                 engineBaseUrl: providerRoutingTarget.engineBaseUrl,
                 serverClientToken: providerRoutingTarget.serverClientToken,
                 gatewayAccessToken,
+                workspaceId: vesloWorkspaceId,
               },
             );
             const desiredSnapshot = getConfigSnapshot(content);
@@ -10474,6 +10475,7 @@ export default function App() {
             engineBaseUrl: providerRoutingTarget.engineBaseUrl,
             serverClientToken: providerRoutingTarget.serverClientToken,
             gatewayAccessToken,
+            workspaceId: vesloWorkspaceId,
           });
           const fileDecision = resolveManagedAiConfigWriteDecision({
             managedProfilePresent: Boolean(managedProfile),
@@ -10622,6 +10624,7 @@ export default function App() {
             engineBaseUrl: providerRoutingTarget.engineBaseUrl,
             serverClientToken: providerRoutingTarget.serverClientToken,
             gatewayAccessToken,
+            workspaceId: workspace.id,
           });
           if (managedConfigContentsMatchForServerPatch(currentOpencodeContent, desiredContent)) {
             inactiveWorkspaceBaseUrlHealedFor.set(workspace.id, sessionToken);
