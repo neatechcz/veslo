@@ -70,10 +70,42 @@ test("credential alert monitor emails every platform admin for an active credent
   assert.match(sent[0]?.subject ?? "", /Credential health changed to unhealthy/);
   assert.match(sent[0]?.text ?? "", /cred_1/);
   assert.ok(auditEvents.some((entry) => entry.action === "credential_alert.email.sent"));
+  assert.ok(auditEvents.every((entry) => entry.entityId.length <= 64));
 });
 
 test("credential alert monitor skips resolved alerts", async () => {
   assert.equal(shouldEmailCredentialAlert(alert({ status: "resolved" })), false);
+});
+
+test("credential alert monitor skips non-fault credential state transitions", async () => {
+  assert.equal(shouldEmailCredentialAlert(alert({ reason: "manual_drain", title: "Credential health changed to draining" })), false);
+  assert.equal(shouldEmailCredentialAlert(alert({ reason: "codex_refresh_token_reused" })), true);
+  assert.equal(shouldEmailCredentialAlert(alert({ source: "provider-auth", credentialId: null })), true);
+});
+
+test("credential alert monitor compacts repeated credential reason alerts within one run", async () => {
+  const sent: Array<{ to: string }> = [];
+  const result = await runCredentialAlertEmailMonitor({
+    listAlerts: async () => [
+      alert({ id: "alert_health_older", lastSeenAt: "2026-06-17T10:00:00.000Z" }),
+      alert({ id: "alert_health_newer", lastSeenAt: "2026-06-17T10:05:00.000Z" }),
+    ],
+    listPlatformAdminRecipients: async () => [{ userId: "admin_1", email: "admin@example.test", name: null }],
+    listFallbackRecipients: async () => [],
+    sendEmail: async (input) => sent.push(input),
+    audit: {
+      async listEvents() {
+        return [];
+      },
+      async recordEvent() {
+        return;
+      },
+    },
+    now: () => new Date("2026-06-17T10:05:00.000Z"),
+  });
+
+  assert.deepEqual(result, { evaluatedAlerts: 1, emailsSent: 1, recipients: 1 });
+  assert.equal(sent.length, 1);
 });
 
 test("credential alert monitor dedupes alert recipient and throttles same credential reason", async () => {

@@ -9,6 +9,7 @@ const EMAIL_SENT_ENTITY_TYPE = "credential_alert_email";
 const EMAIL_THROTTLE_ENTITY_TYPE = "credential_alert_email_throttle";
 const EMAIL_DEDUPE_EVENT_LIMIT = 5000;
 const DEFAULT_THROTTLE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const MAX_AUDIT_ENTITY_ID_LENGTH = 64;
 
 export type CredentialAlertRecipient = {
   userId?: string | null;
@@ -64,7 +65,7 @@ export async function runCredentialAlertEmailMonitor(
   deps: CredentialAlertEmailMonitorDeps,
 ): Promise<CredentialAlertEmailMonitorResult> {
   const now = deps.now?.() ?? new Date();
-  const alerts = (await deps.listAlerts()).filter(shouldEmailCredentialAlert);
+  const alerts = compactAlertsByThrottleIdentity((await deps.listAlerts()).filter(shouldEmailCredentialAlert));
   const recipients = await resolveRecipients(deps);
 
   if (alerts.length === 0 || recipients.length === 0) {
@@ -109,14 +110,11 @@ export async function runCredentialAlertEmailMonitor(
 export function shouldEmailCredentialAlert(alert: AlertRecord): boolean {
   if (alert.status !== "active") return false;
   if (alert.source === "codex-capacity" || alert.source === "codex-capacity-visibility") return false;
-  if (alert.credentialId) return true;
-  return [
-    "credential-health",
-    "provider-auth",
-    "provider-rate-limit",
-    "gateway-operations",
-    "provider-availability",
-  ].includes(alert.source);
+  if (["provider-auth", "provider-rate-limit", "gateway-operations", "provider-availability"].includes(alert.source)) {
+    return true;
+  }
+  if (alert.source !== "credential-health") return false;
+  return isFaultReason(readAlertReason(alert) ?? alert.title);
 }
 
 export function buildCredentialAlertEmail(alert: AlertRecord) {
@@ -231,12 +229,32 @@ function uniqueRecipients(input: CredentialAlertRecipient[]): CredentialAlertRec
 }
 
 function buildAlertRecipientKey(alertId: string, recipient: string) {
-  return `alert:${alertId}:${hashRecipient(recipient)}`;
+  return buildAuditEntityKey("alert", [alertId, normalizeRecipient(recipient)]);
 }
 
 function buildThrottleKey(alert: AlertRecord, recipient: string) {
   const credentialKey = alert.credentialId ?? "credential-pool";
-  return `credential:${credentialKey}:${hashText(normalizeReason(readAlertReason(alert) ?? alert.title))}:${hashRecipient(recipient)}`;
+  return buildAuditEntityKey("cred", [
+    credentialKey,
+    normalizeReason(readAlertReason(alert) ?? alert.title),
+    normalizeRecipient(recipient),
+  ]);
+}
+
+function buildThrottleIdentity(alert: AlertRecord) {
+  return `${alert.credentialId ?? "credential-pool"}:${normalizeReason(readAlertReason(alert) ?? alert.title)}`;
+}
+
+function compactAlertsByThrottleIdentity(alerts: AlertRecord[]): AlertRecord[] {
+  const byIdentity = new Map<string, AlertRecord>();
+  for (const alert of alerts) {
+    const identity = buildThrottleIdentity(alert);
+    const existing = byIdentity.get(identity);
+    if (!existing || Date.parse(alert.lastSeenAt) > Date.parse(existing.lastSeenAt)) {
+      byIdentity.set(identity, alert);
+    }
+  }
+  return [...byIdentity.values()];
 }
 
 function readAlertReason(alert: AlertRecord): string | null {
@@ -248,12 +266,45 @@ function normalizeReason(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-function hashRecipient(value: string) {
-  return hashText(value.trim().toLowerCase()).slice(0, 20);
+function normalizeRecipient(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function buildAuditEntityKey(prefix: string, parts: string[]) {
+  const digest = hashText(parts.join("\0")).slice(0, MAX_AUDIT_ENTITY_ID_LENGTH - prefix.length - 1);
+  return `${prefix}:${digest}`;
 }
 
 function hashText(value: string) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function isFaultReason(value: string) {
+  const reason = normalizeReason(value);
+  return [
+    "invalid_grant",
+    "invalid_api_key",
+    "authentication",
+    "auth",
+    "oauth",
+    "token_reused",
+    "refresh_token",
+    "insufficient_quota",
+    "quota",
+    "rate_limit",
+    "provider_failure",
+    "provider_proxy_failure",
+    "upstream",
+    "network_",
+    "connect_timeout",
+    "connection_failed",
+    "dns",
+    "fetch_failed",
+    "unusual",
+    "exhausted",
+    "failed",
+    "error",
+  ].some((needle) => reason.includes(needle));
 }
 
 function isRecentEvent(event: AuditEventRecord, minimumTimestampMs: number) {
