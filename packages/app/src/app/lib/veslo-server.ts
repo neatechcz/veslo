@@ -2570,12 +2570,17 @@ export function createVesloServerClient(options: {
           timeoutMs: timeouts.conversationAbort,
         },
       ),
-    getSessionLatestRunArtifacts: (workspaceId: string, sessionId: string) =>
-      requestJson<VesloSessionLatestRunArtifacts>(
+    getSessionLatestRunArtifacts: (workspaceId: string, sessionId: string, directory?: string | null) => {
+      const search = new URLSearchParams();
+      const directoryRaw = directory?.trim() ?? "";
+      if (directoryRaw) search.set("directory", directoryRaw);
+      const query = search.toString();
+      return requestJson<VesloSessionLatestRunArtifacts>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/artifacts/latest-run`,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/artifacts/latest-run${query ? `?${query}` : ""}`,
         { token, hostToken, timeoutMs: timeouts.sessionArtifacts },
-      ),
+      );
+    },
     prefetchSessionTranscripts: (workspaceId: string, input: VesloSessionTranscriptPrefetchInput) =>
       requestJson<VesloSessionTranscriptPrefetchResult>(
         baseUrl,

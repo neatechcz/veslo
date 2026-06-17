@@ -1010,6 +1010,7 @@ async function fetchOpencodeJson(
   init: {
     method: string;
     body?: unknown;
+    directory?: string | null;
     maxResponseBytes?: number;
     timeoutMs?: number;
     sendTraceId?: string | null;
@@ -1035,7 +1036,10 @@ async function fetchOpencodeJson(
     headers.set("x-veslo-send-trace-id", sendTraceId);
   }
 
-  const directory = resolveOpencodeDirectory(workspace);
+  const directoryOverride = init.directory?.trim() ?? "";
+  const directory = directoryOverride
+    ? normalizeOpencodeDirectory(directoryOverride)
+    : resolveOpencodeDirectory(workspace);
   if (directory) {
     headers.set("x-opencode-directory", directory);
   }
@@ -5732,11 +5736,18 @@ function createRoutes(
     if (!sessionId) {
       throw new ApiError(400, "invalid_payload", "sessionId is required");
     }
+    const directory = await resolveConversationReadDirectory(
+      workspace,
+      ctx.url.searchParams.get("directory"),
+    );
+    const search = new URLSearchParams();
+    search.set("limit", "200");
+    if (directory) search.set("directory", directory);
 
     const messages = await fetchOpencodeJson(
       workspace,
-      `/session/${encodeURIComponent(sessionId)}/message?limit=200`,
-      { method: "GET", maxResponseBytes: OPENCODE_TRANSCRIPT_RESPONSE_MAX_BYTES },
+      `/session/${encodeURIComponent(sessionId)}/message?${search.toString()}`,
+      { method: "GET", directory, maxResponseBytes: OPENCODE_TRANSCRIPT_RESPONSE_MAX_BYTES },
     );
 
     return jsonResponse(

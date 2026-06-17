@@ -2720,7 +2720,7 @@ export default function App() {
           scope.directory,
         );
         if (!serverWorkspaceId) return null;
-        return await client.getSessionLatestRunArtifacts(serverWorkspaceId, scope.sessionId);
+        return await client.getSessionLatestRunArtifacts(serverWorkspaceId, scope.sessionId, scope.directory);
       })()
         .then((response) => {
           if (cancelled) return;
