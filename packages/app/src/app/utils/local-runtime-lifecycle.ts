@@ -63,7 +63,12 @@ export interface LocalRuntimeLifecycleDeps {
     baseUrl: string,
     directory: string,
     auth?: OpencodeAuth,
-    context?: { reason?: string },
+    context?: {
+      workspaceId?: string;
+      workspaceType?: WorkspaceInfo["workspaceType"];
+      targetRoot?: string;
+      reason?: string;
+    },
   ) => Promise<boolean>;
 }
 
@@ -154,6 +159,9 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
 
     if ((options.connectMode ?? "server") === "quiet") {
       return await deps.connectQuiet(baseUrl, options.workspacePath, auth ?? undefined, {
+        workspaceId: options.workspaceId,
+        workspaceType: "local",
+        targetRoot: options.workspacePath,
         reason: options.reason,
       });
     }

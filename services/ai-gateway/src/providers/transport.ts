@@ -36,6 +36,7 @@ export type ProviderTransportResponse = {
   body: unknown;
   headers?: Record<string, string>;
   usage?: TokenUsageAccounting;
+  usagePromise?: Promise<TokenUsageAccounting | undefined>;
 };
 
 export type ProviderTransportErrorOptions = {

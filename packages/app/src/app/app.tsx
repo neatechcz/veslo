@@ -31,6 +31,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { parse } from "jsonc-parser";
 
 import { reportError } from "./lib/error-reporter";
+import { recordSendWorkflowTrace } from "./lib/send-workflow-trace";
 import { resolveRunningVesloServerHostInfo } from "./lib/veslo-server-host";
 import {
   COMPACTION_THRESHOLD_RATIO,
@@ -744,6 +745,7 @@ function recordSendTrace(event: string, payload?: Record<string, unknown>) {
     logs.push(entry);
     if (logs.length > SEND_TRACE_LIMIT) logs.splice(0, logs.length - SEND_TRACE_LIMIT);
     root.__vesloSendTrace = logs;
+    recordSendWorkflowTrace("app", event, payload);
     console.log(`[SENDTRACE] app:${event}`, entry);
     logUiEvent("send-trace", event, entry);
   } catch {
@@ -2162,6 +2164,8 @@ export default function App() {
       () => resolution.serverClient.createConversation(resolution.serverWorkspaceId, {
         directory,
         title,
+      }, {
+        sendTraceId: preflight?.traceId ?? null,
       }),
       {
         ...(tracePayload ?? {}),
@@ -2198,7 +2202,8 @@ export default function App() {
     }
     const scope = resolveSelectedSessionBrowseScope(normalizedSessionId);
     const targetWorkspace = options.targetWorkspace ?? options.preflight?.targetWorkspace ?? null;
-    const expectAiGatewayStart = input.kind === "prompt_async" && Boolean(managedAiAccess());
+    const managedProfile = managedAiAccess();
+    const expectAiGatewayStart = input.kind === "prompt_async" && Boolean(managedProfile);
     const workspaceId = scope?.workspaceId?.trim() || targetWorkspace?.workspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
     if (!workspaceId) {
       throw new Error("Workspace id is required for conversation run.");
@@ -2222,6 +2227,11 @@ export default function App() {
       clientMessageId: typeof input.clientMessageId === "string" ? input.clientMessageId : null,
       origin: typeof input.origin === "string" ? input.origin : null,
       hasConversationScope: Boolean(scope?.conversationId),
+      expectAiGatewayStart,
+      managedProviderId: managedProfile?.providerId ?? null,
+      managedModelId: managedProfile?.defaultModel.modelID ?? null,
+      preflightManagedAiReady: options.preflight?.managedAiReady ?? null,
+      preflightRuntimeHealthOk: options.preflight?.runtimeHealthOk ?? null,
     });
     const resolution = await resolveConversationServerWorkspaceForSend(
       workspaceId,
@@ -2305,9 +2315,26 @@ export default function App() {
     if (!serverClient) return null;
     const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(serverClient, workspaceId, directory);
     if (!serverWorkspaceId) return null;
+    recordSendTrace("abortConversation:request", {
+      sessionID: normalizedSessionId,
+      workspaceId,
+      serverWorkspaceId,
+      conversationId,
+      opencodeSessionId: scope?.opencodeSessionId ?? null,
+      runId,
+    });
     const result = await serverClient.abortConversation(serverWorkspaceId, conversationId, {
       directory,
       runId,
+    });
+    recordSendTrace("abortConversation:success", {
+      sessionID: normalizedSessionId,
+      workspaceId,
+      serverWorkspaceId,
+      conversationId: result.conversationId,
+      opencodeSessionId: result.opencodeSessionId,
+      runId: result.runId,
+      status: result.status,
     });
     rememberConversationScope({
       sessionId: result.opencodeSessionId || normalizedSessionId,
@@ -3952,6 +3979,13 @@ export default function App() {
     const id = (sessionID ?? selectedSessionId() ?? "").trim();
     if (!id) return;
     const scope = resolveSelectedSessionBrowseScope(id);
+    recordSendTrace("abortSession:start", {
+      sessionID: id,
+      workspaceId: (scope?.workspaceId ?? workspaceStore.activeWorkspaceId().trim()) || null,
+      conversationId: scope?.conversationId ?? null,
+      opencodeSessionId: scope?.opencodeSessionId ?? null,
+      hasConversationScope: Boolean(scope?.conversationId),
+    });
     const abortSessionViaScopedLegacy = async (): Promise<boolean> => {
       if (!scope?.workspaceId) return false;
       const opencodeSessionId = scope.opencodeSessionId?.trim() || id;
@@ -3968,7 +4002,16 @@ export default function App() {
     };
     try {
       const result = await abortConversationFromVesloWriteApi(id);
-      if (result) return;
+      if (result) {
+        recordSendTrace("abortSession:conversation-abort-success", {
+          sessionID: id,
+          workspaceId: result.workspaceId,
+          conversationId: result.conversationId,
+          opencodeSessionId: result.opencodeSessionId,
+          runId: result.runId,
+        });
+        return;
+      }
       recordSendTrace("abortSession:conversation-abort-unavailable", {
         sessionID: id,
         hasConversationScope: Boolean(scope?.conversationId),
@@ -4892,16 +4935,51 @@ export default function App() {
     };
   };
 
+  const summarizeUrlForSendWorkflowTrace = (value: string | null | undefined): Record<string, unknown> => {
+    const trimmed = value?.trim() ?? "";
+    if (!trimmed) return { present: false };
+    try {
+      const parsed = new URL(trimmed);
+      return {
+        present: true,
+        origin: parsed.origin,
+        pathname: parsed.pathname.replace(/\/+$/, "") || "/",
+      };
+    } catch {
+      return {
+        present: true,
+        invalid: true,
+        length: trimmed.length,
+      };
+    }
+  };
+
+  const recordManagedAiWorkflowTrace = (event: string, payload: Record<string, unknown>) => {
+    recordSendWorkflowTrace("app", event, payload, { developerMode: developerMode() });
+  };
+
   const hasUsableManagedAiRuntimeConfigForSend = async (
     targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
   ): Promise<boolean> => {
-    if (!isTauriRuntime()) return false;
+    if (!isTauriRuntime()) {
+      recordManagedAiWorkflowTrace("managed-ai-runtime-config-check:skip", {
+        reason: "not-tauri-runtime",
+      });
+      return false;
+    }
     const targetWorkspaceId = targetWorkspace?.workspaceId?.trim() ?? "";
     const targetWorkspaceEntry = targetWorkspaceId
       ? workspaceStore.workspaces().find((entry) => entry.id === targetWorkspaceId)
       : undefined;
     const workspace = targetWorkspaceEntry || workspaceStore.activeWorkspaceDisplay();
-    if (workspace.workspaceType !== "local") return false;
+    if (workspace.workspaceType !== "local") {
+      recordManagedAiWorkflowTrace("managed-ai-runtime-config-check:skip", {
+        reason: "non-local-workspace",
+        targetWorkspaceId: targetWorkspaceId || null,
+        workspaceType: workspace.workspaceType,
+      });
+      return false;
+    }
     const targetWorkspaceRoot =
       targetWorkspace?.workspaceRoot?.trim() ||
       targetWorkspace?.directory?.trim() ||
@@ -4933,7 +5011,31 @@ export default function App() {
       gatewayBaseUrl: gatewayClient?.baseUrl ?? "",
       gatewayToken: gatewayClient?.token ?? "",
     });
-    if (!providerRoutingTarget?.serverClientToken) return false;
+    const routingTracePayload = {
+      targetWorkspaceId: targetWorkspaceId || null,
+      activeWorkspaceId: workspaceStore.activeWorkspaceId().trim() || null,
+      workspaceType: workspace.workspaceType,
+      workspaceRoot: targetWorkspaceRoot || null,
+      providerId: managedAiAccess()?.providerId ?? null,
+      requiresEngineBaseUrl: providerRoutingRequiresEngineBaseUrl,
+      localBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingLocalBaseUrl),
+      engineBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingEngineBaseUrl),
+      resolvedBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingTarget?.baseUrl ?? null),
+      resolvedEngineBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingTarget?.engineBaseUrl ?? null),
+      hasLocalClientToken: Boolean(providerRoutingLocalHost?.clientToken),
+      hasGatewayClient: Boolean(gatewayClient),
+      hasGatewayToken: Boolean(gatewayClient?.token),
+      hasRoutingTarget: Boolean(providerRoutingTarget),
+      hasServerClientToken: Boolean(providerRoutingTarget?.serverClientToken),
+    };
+    recordManagedAiWorkflowTrace("managed-ai-runtime-config-check:start", routingTracePayload);
+    if (!providerRoutingTarget?.serverClientToken) {
+      recordManagedAiWorkflowTrace("managed-ai-runtime-config-check:skip", {
+        ...routingTracePayload,
+        reason: "provider-routing-target-missing",
+      });
+      return false;
+    }
 
     const providerId = managedAiAccess()?.providerId ?? null;
     const vesloClient = vesloServerClient();
@@ -4955,26 +5057,60 @@ export default function App() {
             targetWorkspaceRoot,
           );
         }
-        if (!vesloWorkspaceId) return false;
+        if (!vesloWorkspaceId) {
+          recordManagedAiWorkflowTrace("managed-ai-runtime-config-check:result", {
+            ...routingTracePayload,
+            configSource: "veslo-server-config",
+            ok: false,
+            reason: "veslo-workspace-id-missing",
+          });
+          return false;
+        }
         const config = await vesloClient.getConfig(vesloWorkspaceId);
-        return hasUsableManagedAiRuntimeConfig({
+        const ok = hasUsableManagedAiRuntimeConfig({
           content: JSON.stringify(config.opencode ?? {}, null, 2),
           providerId,
           gatewayBaseUrl: providerRoutingTarget.engineBaseUrl,
           serverClientToken: providerRoutingTarget.serverClientToken,
         });
+        recordManagedAiWorkflowTrace("managed-ai-runtime-config-check:result", {
+          ...routingTracePayload,
+          configSource: "veslo-server-config",
+          vesloWorkspaceId,
+          ok,
+        });
+        return ok;
       }
 
       const root = targetWorkspaceRoot || workspaceStore.activeWorkspacePath().trim();
-      if (!root) return false;
+      if (!root) {
+        recordManagedAiWorkflowTrace("managed-ai-runtime-config-check:result", {
+          ...routingTracePayload,
+          configSource: "project-config-file",
+          ok: false,
+          reason: "workspace-root-missing",
+        });
+        return false;
+      }
       const configFile = await readOpencodeConfig("project", root);
-      return hasUsableManagedAiRuntimeConfig({
+      const ok = hasUsableManagedAiRuntimeConfig({
         content: configFile.content,
         providerId,
         gatewayBaseUrl: providerRoutingTarget.engineBaseUrl,
         serverClientToken: providerRoutingTarget.serverClientToken,
       });
-    } catch {
+      recordManagedAiWorkflowTrace("managed-ai-runtime-config-check:result", {
+        ...routingTracePayload,
+        configSource: "project-config-file",
+        root,
+        ok,
+      });
+      return ok;
+    } catch (error) {
+      recordManagedAiWorkflowTrace("managed-ai-runtime-config-check:error", {
+        ...routingTracePayload,
+        message: error instanceof Error ? error.message : safeStringify(error),
+      });
       return false;
     }
   };
@@ -10345,6 +10481,28 @@ export default function App() {
     const providerRoutingReloadKey = providerRoutingTarget
       ? `${providerRoutingTarget.serverClientToken}@${providerRoutingTarget.engineBaseUrl}`
       : "";
+    const configSyncTracePayload = {
+      workspaceId: workspace.id || null,
+      workspaceType: workspace.workspaceType,
+      workspaceRoot: root || null,
+      vesloWorkspaceId: vesloWorkspaceId || null,
+      managedProviderId: managedProfile?.providerId ?? null,
+      managedDefaultModelId: managedProfile?.defaultModel.modelID ?? null,
+      managedAllowedModelCount: managedProfile?.allowedModels.length ?? 0,
+      providerRoutingReady,
+      providerRoutingRequiresEngineBaseUrl,
+      localBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingLocalBaseUrl),
+      engineBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingEngineBaseUrl),
+      resolvedBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingTarget?.baseUrl ?? null),
+      resolvedEngineBaseUrl: summarizeUrlForSendWorkflowTrace(providerRoutingTarget?.engineBaseUrl ?? null),
+      hasLocalClientToken: Boolean(providerRoutingLocalHost?.clientToken),
+      hasGatewayClient: Boolean(gatewayClient),
+      hasGatewayToken: Boolean(gatewayClient?.token),
+      hasGatewayAccessToken: Boolean(gatewayAccessToken),
+      canUseVesloServer: Boolean(canUseVesloServer),
+      vesloConfigWriteCapable: Boolean(vesloCapabilities?.config?.write),
+    };
+    recordManagedAiWorkflowTrace("managed-ai-config-sync:preflight", configSyncTracePayload);
     let cancelled = false;
     const releaseManagedAiBootstrap =
       managedProfile && providerRoutingReady ? beginManagedAiBootstrap() : null;
@@ -10362,12 +10520,21 @@ export default function App() {
           providerReadinessDecision.type === "skip" &&
           providerReadinessDecision.reason === "provider-routing-not-ready"
         ) {
+          recordManagedAiWorkflowTrace("managed-ai-config-sync:skip", {
+            ...configSyncTracePayload,
+            reason: providerReadinessDecision.reason,
+          });
           return;
         }
 
         if (canUseVesloServer) {
           const config = await vesloClient.getConfig(vesloWorkspaceId);
           const currentOpencodeContent = JSON.stringify(config.opencode ?? {}, null, 2);
+          recordManagedAiWorkflowTrace("managed-ai-config-sync:read-current", {
+            ...configSyncTracePayload,
+            configSource: "veslo-server-config",
+            currentBytes: currentOpencodeContent.length,
+          });
 
           if (managedProfile && providerRoutingTarget && gatewayAccessToken) {
             const content = formatManagedAiAccessConfig(
@@ -10396,12 +10563,27 @@ export default function App() {
               currentOpencodeContent,
               content,
             );
+            const currentApiKeyMatches = currentApiKey
+              ? currentApiKey === providerRoutingTarget.serverClientToken
+              : null;
             const managedDecision = resolveManagedAiConfigWriteDecision({
               managedProfilePresent: Boolean(managedProfile),
               providerRoutingReady,
               managedConfigAlreadyCurrent: cachedSnapshotMatches || redactedServerConfigMatches,
               shouldPreserveManagedConfig: false,
               defaultModelAlreadyCurrent: false,
+            });
+            const managedDecisionReason = managedDecision.type === "skip" ? managedDecision.reason : null;
+            recordManagedAiWorkflowTrace("managed-ai-config-sync:managed-decision", {
+              ...configSyncTracePayload,
+              configSource: "veslo-server-config",
+              decision: managedDecision.type,
+              reason: managedDecisionReason,
+              cachedSnapshotMatches,
+              redactedServerConfigMatches,
+              currentApiKeyPresent: Boolean(currentApiKey),
+              currentApiKeyMatches,
+              desiredBytes: content.length,
             });
             if (managedDecision.type === "skip") {
               if (!cachedSnapshotMatches && redactedServerConfigMatches) {
@@ -10415,6 +10597,11 @@ export default function App() {
             }
             await vesloClient.patchConfig(vesloWorkspaceId, {
               opencode: JSON.parse(content) as Record<string, unknown>,
+            });
+            recordManagedAiWorkflowTrace("managed-ai-config-sync:patch-done", {
+              ...configSyncTracePayload,
+              configSource: "veslo-server-config",
+              desiredBytes: content.length,
             });
             lastKnownConfigSnapshotByWs.set(wsKey, desiredSnapshot);
             markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
@@ -10468,6 +10655,11 @@ export default function App() {
         }
 
         const configFile = await readOpencodeConfig("project", root);
+        recordManagedAiWorkflowTrace("managed-ai-config-sync:read-current", {
+          ...configSyncTracePayload,
+          configSource: "project-config-file",
+          currentBytes: configFile.content?.length ?? 0,
+        });
         if (managedProfile && providerRoutingTarget && gatewayAccessToken) {
           const content = formatManagedAiAccessConfig(configFile.content, {
             profile: managedProfile,
@@ -10484,6 +10676,15 @@ export default function App() {
             shouldPreserveManagedConfig: false,
             defaultModelAlreadyCurrent: false,
           });
+          const fileDecisionReason = fileDecision.type === "skip" ? fileDecision.reason : null;
+          recordManagedAiWorkflowTrace("managed-ai-config-sync:managed-decision", {
+            ...configSyncTracePayload,
+            configSource: "project-config-file",
+            decision: fileDecision.type,
+            reason: fileDecisionReason,
+            exactContentMatches: (configFile.content ?? "").trim() === content.trim(),
+            desiredBytes: content.length,
+          });
           if (fileDecision.type === "skip") return;
           if (fileDecision.type !== "write-managed-config") return;
 
@@ -10492,6 +10693,11 @@ export default function App() {
             throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
           }
           lastKnownConfigSnapshotByWs.set(root, getConfigSnapshot(content));
+          recordManagedAiWorkflowTrace("managed-ai-config-sync:patch-done", {
+            ...configSyncTracePayload,
+            configSource: "project-config-file",
+            desiredBytes: content.length,
+          });
           markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
           // Do not auto-dispose/reload the engine here — see comment above.
           if (
@@ -10541,6 +10747,10 @@ export default function App() {
       } catch (error) {
         if (cancelled) return;
         const message = error instanceof Error ? error.message : safeStringify(error);
+        recordManagedAiWorkflowTrace("managed-ai-config-sync:error", {
+          ...configSyncTracePayload,
+          message,
+        });
         setError(addOpencodeCacheHint(message));
       } finally {
         releaseManagedAiBootstrap?.();

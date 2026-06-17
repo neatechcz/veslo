@@ -126,6 +126,10 @@ describe("ai gateway proxy routes", () => {
       sessionId: string | null;
       hostToken: string | null;
       clientId: string | null;
+      workspaceId: string | null;
+      sendTraceId: string | null;
+      openCodeSessionId: string | null;
+      sessionAffinity: string | null;
       body: unknown;
     }> = [];
 
@@ -143,6 +147,10 @@ describe("ai gateway proxy routes", () => {
         sessionId: typeof req.headers["x-veslo-session-id"] === "string" ? req.headers["x-veslo-session-id"] : null,
         hostToken: typeof req.headers["x-veslo-host-token"] === "string" ? req.headers["x-veslo-host-token"] : null,
         clientId: typeof req.headers["x-veslo-client-id"] === "string" ? req.headers["x-veslo-client-id"] : null,
+        workspaceId: typeof req.headers["x-veslo-workspace-id"] === "string" ? req.headers["x-veslo-workspace-id"] : null,
+        sendTraceId: typeof req.headers["x-veslo-send-trace-id"] === "string" ? req.headers["x-veslo-send-trace-id"] : null,
+        openCodeSessionId: typeof req.headers["x-session-id"] === "string" ? req.headers["x-session-id"] : null,
+        sessionAffinity: typeof req.headers["x-session-affinity"] === "string" ? req.headers["x-session-affinity"] : null,
         body: rawBody ? JSON.parse(rawBody) : null,
       });
 
@@ -182,6 +190,10 @@ describe("ai gateway proxy routes", () => {
                 "x-veslo-session-id": "session_123",
                 "x-veslo-client-id": "desktop-app",
                 "x-veslo-host-token": "should-not-forward",
+                "x-veslo-workspace-id": "ws_1",
+                "x-veslo-send-trace-id": "send-trace-should-not-forward",
+                "x-session-id": "opencode-local-session",
+                "x-session-affinity": "opencode-local-affinity",
               },
               body: JSON.stringify({
                 model: "gpt-4o-mini",
@@ -205,6 +217,10 @@ describe("ai gateway proxy routes", () => {
                 sessionId: "session_123",
                 hostToken: null,
                 clientId: null,
+                workspaceId: null,
+                sendTraceId: null,
+                openCodeSessionId: null,
+                sessionAffinity: null,
                 body: {
                   model: "gpt-4o-mini",
                   messages: [{ role: "user", content: "Hello" }],

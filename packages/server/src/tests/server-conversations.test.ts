@@ -1075,7 +1075,14 @@ describe("conversation routes", () => {
     let providerFetchError = "";
     const failedRequests: Array<Record<string, unknown> | null> = [];
     const abortRequests: string[] = [];
-    const providerRequests: Array<Record<string, string | null>> = [];
+    const providerRequests: Array<{
+      authorization: string | null;
+      sessionId: string | null;
+      workspaceId: string | null;
+      sendTraceId: string | null;
+      gatewayToken: string | null;
+      body: unknown;
+    }> = [];
 
     const gateway = Bun.serve({
       hostname: "127.0.0.1",
@@ -1083,10 +1090,14 @@ describe("conversation routes", () => {
       fetch: async (request) => {
         const url = new URL(request.url);
         if (request.method === "POST" && url.pathname === "/providers/codex_oauth/v1/chat/completions") {
+          const requestBody = await request.json().catch(() => null) as unknown;
           providerRequests.push({
             authorization: request.headers.get("authorization"),
             sessionId: request.headers.get("x-veslo-session-id"),
             workspaceId: request.headers.get("x-veslo-workspace-id"),
+            sendTraceId: request.headers.get("x-veslo-send-trace-id"),
+            gatewayToken: request.headers.get("x-veslo-gateway-token"),
+            body: requestBody,
           });
           return Response.json({
             id: "chatcmpl_test",
@@ -1131,6 +1142,7 @@ describe("conversation routes", () => {
               "x-veslo-gateway-token": "gateway-access-token",
               "x-veslo-session-id": "${OPENCODE_SESSION_ID}",
               "x-veslo-workspace-id": "ws_1",
+              "x-veslo-send-trace-id": request.headers.get("x-veslo-send-trace-id") ?? "missing-trace",
             },
             body: JSON.stringify({ model: "gpt-5.5", messages: [{ role: "user", content: "Hello" }] }),
           }).catch((error) => {
@@ -1210,6 +1222,7 @@ describe("conversation routes", () => {
         headers: {
           Authorization: "Bearer client-token",
           "Content-Type": "application/json",
+          "X-Veslo-Send-Trace-Id": "send-workflow-test",
         },
         body: JSON.stringify({
           directory: workspaceRoot,
@@ -1245,8 +1258,14 @@ describe("conversation routes", () => {
     expect(providerRequests).toEqual([
       {
         authorization: "Bearer gateway-access-token",
-        sessionId: "${OPENCODE_SESSION_ID}",
-        workspaceId: "ws_1",
+        sessionId: "sess-placeholder-watch",
+        workspaceId: null,
+        sendTraceId: null,
+        gatewayToken: null,
+        body: {
+          model: "gpt-5.5",
+          messages: [{ role: "user", content: "Hello" }],
+        },
       },
     ]);
     expect(failedRequests).toEqual([]);

@@ -1311,9 +1311,19 @@ export function createWorkspaceStore(options: {
   }
 
   let runtimeControllerRef: ReturnType<typeof createWorkspaceRuntimeController> | null = null;
-  const connectToEngineQuiet = (baseUrl: string, directory: string, auth?: OpencodeAuth) => {
+  const connectToEngineQuiet = (
+    baseUrl: string,
+    directory: string,
+    auth?: OpencodeAuth,
+    context?: {
+      workspaceId?: string;
+      workspaceType?: WorkspaceInfo["workspaceType"];
+      targetRoot?: string;
+      reason?: string;
+    },
+  ) => {
     if (!runtimeControllerRef) throw new Error("workspace runtime controller not initialized");
-    return runtimeControllerRef.connectToEngineQuiet(baseUrl, directory, auth);
+    return runtimeControllerRef.connectToEngineQuiet(baseUrl, directory, auth, context);
   };
 
   const localRuntimeLifecycle = createLocalRuntimeLifecycle({

@@ -60,6 +60,16 @@ async function withMutedConsoleError<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+  const startedAt = Date.now()
+  while (!predicate()) {
+    if (Date.now() - startedAt > timeoutMs) {
+      assert.fail("timed out waiting for condition")
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+
 test("codex_oauth proxy forwards through the configured transport with a sticky lease", async () => {
   const recordUsageCalls: RecordUsageInput[] = []
   const leaseScopes: Array<{
@@ -338,19 +348,26 @@ test("codex_oauth proxy records usage metadata from streaming transport response
       },
       codexOAuthTransport: {
         async chatCompletions() {
+          const encoder = new TextEncoder()
           return {
             status: 200,
             headers: {
               "content-type": "text/event-stream",
               "x-request-id": "codex_req_stream_usage_1",
             },
-            body: 'data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n',
-            usage: {
+            body: new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'))
+                controller.enqueue(encoder.encode("data: [DONE]\n\n"))
+                controller.close()
+              },
+            }),
+            usagePromise: Promise.resolve({
               inputTokens: 17,
               outputTokens: 6,
               cachedTokens: 11,
               totalTokens: 23,
-            },
+            }),
           }
         },
       },
@@ -378,6 +395,7 @@ test("codex_oauth proxy records usage metadata from streaming transport response
 
     assert.equal(response.status, 200)
     assert.equal(await response.text(), 'data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n')
+    await waitFor(() => recordUsageCalls.length === 1)
     assert.deepEqual(recordUsageCalls, [
       {
         requestId: "codex_req_stream_usage_1",

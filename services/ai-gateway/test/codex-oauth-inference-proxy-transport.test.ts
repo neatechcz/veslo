@@ -245,18 +245,115 @@ test("codex oauth inference proxy translates responses streaming to chat complet
 
   assert.equal(response.status, 200);
   assert.equal(response.headers?.["content-type"], "text/event-stream");
-  const sse = String(response.body);
+  const sse = await readTransportBodyText(response.body);
   assert.match(sse, /^data: /m);
   assert.match(sse, /"object":"chat.completion.chunk"/);
   assert.match(sse, /"content":"Hotovo"/);
   assert.match(sse, /"content":" s mezerou\."/);
   assert.match(sse, /"finish_reason":"stop"/);
   assert.match(sse, /data: \[DONE\]/);
-  assert.deepEqual(response.usage, {
+  assert.deepEqual(await response.usagePromise, {
     inputTokens: 10,
     outputTokens: 3,
     cachedTokens: 0,
     totalTokens: 13,
+  });
+});
+
+test("codex oauth inference proxy returns streaming response before upstream body completes", async () => {
+  let upstreamController: ReadableStreamDefaultController<Uint8Array> | null = null;
+  const encoder = new TextEncoder();
+  const upstreamBody = new ReadableStream<Uint8Array>({
+    start(controller) {
+      upstreamController = controller;
+    },
+  });
+
+  const transport = new CodexOAuthInferenceProxyTransport({
+    baseUrl: "https://codex-inference.example.test",
+    fetchImpl: async () =>
+      new Response(upstreamBody, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      }),
+  });
+
+  const response = await transport.chatCompletions({
+    body: {
+      model: "gpt-5.5",
+      stream: true,
+      messages: [{ role: "user", content: "Say hello." }],
+    },
+    authJson: JSON.stringify({
+      auth_mode: "chatgpt",
+      tokens: {
+        access_token: "codex-access-token",
+        account_id: "acct_1",
+      },
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers?.["content-type"], "text/event-stream");
+  assert.ok(response.body instanceof ReadableStream);
+  assert.equal(upstreamController === null, false);
+
+  const textPromise = readTransportBodyText(response.body);
+  upstreamController?.enqueue(
+    encoder.encode(
+      makeResponsesSse([
+        {
+          event: "response.created",
+          data: {
+            type: "response.created",
+            response: { id: "resp_stream_live_1", created_at: 1777907100, model: "gpt-5.5" },
+          },
+        },
+        {
+          event: "response.output_text.delta",
+          data: {
+            type: "response.output_text.delta",
+            output_index: 0,
+            delta: "Ahoj",
+          },
+        },
+      ]),
+    ),
+  );
+
+  await Promise.resolve();
+  upstreamController?.enqueue(
+    encoder.encode(
+      makeResponsesSse([
+        {
+          event: "response.completed",
+          data: {
+            type: "response.completed",
+            response: {
+              id: "resp_stream_live_1",
+              created_at: 1777907100,
+              model: "gpt-5.5",
+              usage: {
+                input_tokens: 8,
+                output_tokens: 2,
+                total_tokens: 10,
+              },
+            },
+          },
+        },
+      ]),
+    ),
+  );
+  upstreamController?.close();
+
+  const sse = await textPromise;
+  assert.match(sse, /"content":"Ahoj"/);
+  assert.match(sse, /data: \[DONE\]/);
+  assert.deepEqual(await response.usagePromise, {
+    inputTokens: 8,
+    outputTokens: 2,
+    cachedTokens: 0,
+    totalTokens: 10,
   });
 });
 
@@ -363,4 +460,21 @@ test("codex oauth inference proxy treats blank base URL env values as unset", as
 
 function makeResponsesSse(events: Array<{ event: string; data: unknown }>): string {
   return events.map((entry) => `event: ${entry.event}\ndata: ${JSON.stringify(entry.data)}\n\n`).join("");
+}
+
+async function readTransportBodyText(body: unknown): Promise<string> {
+  if (body instanceof ReadableStream) {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let output = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      output += decoder.decode(value, { stream: true });
+    }
+    output += decoder.decode();
+    return output;
+  }
+
+  return String(body);
 }

@@ -10,6 +10,11 @@ test("lazy runtime ensure lives in workspace runtime controller", () => {
   assert.match(runtimeSource, /export function createWorkspaceRuntimeController\(/);
   assert.match(runtimeSource, /async function ensureEngineForWorkspace/);
   assert.match(runtimeSource, /connectMode: "quiet"/);
+  assert.match(
+    runtimeSource,
+    /async function connectToEngineQuiet[\s\S]*deps\.routing\.ensure\(workspaceId, baseUrl,[\s\S]*deps\.setClient\(nextClient\);/s,
+    "quiet reconnect must bind a workspace-scoped routed client before send uses routedClient(workspaceId)",
+  );
   assert.match(runtimeSource, /reattachOrchestratorWorkspace\(/);
   assert.match(runtimeSource, /withTimeoutOrThrow\(deps\.loadSessions\(workspace\.path\)/);
   assert.match(runtimeSource, /loadSessions failed; continuing first prompt/);

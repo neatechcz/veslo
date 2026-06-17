@@ -6,6 +6,7 @@ import { ArrowUp, File as FileIcon, Loader2, Paperclip, Square, Terminal, X, Zap
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, SlashCommandOption } from "../../types";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
 import { logUiEvent, readClipboardFilePaths } from "../../lib/tauri";
+import { recordSendWorkflowTrace } from "../../lib/send-workflow-trace";
 import { currentLocale, t, useTranslate } from "../../../i18n";
 import { extractFileReferencePathsFromDataTransfer, extractFilesFromDataTransfer, isFileDragTransfer } from "../../utils/data-transfer-files";
 import { looksLikePdfDocumentPrefix } from "../../utils/pdf-signature";
@@ -119,6 +120,7 @@ function recordSendTrace(event: string, payload?: Record<string, unknown>) {
     logs.push(entry);
     if (logs.length > 500) logs.splice(0, logs.length - 500);
     root.__vesloSendTrace = logs;
+    recordSendWorkflowTrace("composer", event, payload);
     console.log(`[SENDTRACE] composer:${event}`, entry);
     logUiEvent("send-trace", `composer:${event}`, entry);
   } catch {

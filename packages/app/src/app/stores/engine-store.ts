@@ -115,15 +115,15 @@ export function createEngineStore(deps: EngineStoreDeps) {
     activateOrchestratorWorkspace: deps.activateOrchestratorWorkspace,
     activateVesloHostWorkspace: deps.activateVesloHostWorkspace,
     connectToServer: deps.connectToServer,
-    connectQuiet: async (baseUrl, directory, auth) =>
+    connectQuiet: async (baseUrl, directory, auth, context) =>
       await deps.connectToServer(
         baseUrl,
         directory,
         {
-          workspaceId: deps.activeWorkspaceId().trim() || undefined,
-          workspaceType: "local",
-          targetRoot: directory,
-          reason: "engine-quiet-reconnect",
+          workspaceId: context?.workspaceId?.trim() || deps.activeWorkspaceId().trim() || undefined,
+          workspaceType: context?.workspaceType ?? "local",
+          targetRoot: context?.targetRoot ?? directory,
+          reason: context?.reason ?? "engine-quiet-reconnect",
         },
         auth,
         { quiet: true, navigate: false },

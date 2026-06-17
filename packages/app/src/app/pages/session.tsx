@@ -172,6 +172,7 @@ import type { WorkspaceActivationOptions } from "../context/workspace-types";
 import { availableChatWidthForLayout, reconcileSidebarLayoutForRootWidth } from "./session-layout-width";
 import { resolveSessionTitlebarContext } from "./session-titlebar-context";
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
+import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
 
 function recordSendTrace(event: string, payload?: Record<string, unknown>) {
   if (typeof window === "undefined") return;
@@ -188,6 +189,7 @@ function recordSendTrace(event: string, payload?: Record<string, unknown>) {
     });
     if (logs.length > 120) logs.splice(0, logs.length - 120);
     root.__vesloSendTrace = logs;
+    recordSendWorkflowTrace("session-page", event, payload);
   } catch {
     // ignore
   }
@@ -1323,6 +1325,15 @@ export default function SessionView(props: SessionViewProps) {
   const resetRunState = (sessionKey = currentSessionQueueKey()) => {
     const key = sessionKey.trim();
     if (!key) return;
+    const previous = untrack(runStateBySessionKey)[key];
+    if (previous) {
+      recordSendTrace("run-state:reset", {
+        sessionKey: key,
+        startedAt: previous.startedAt,
+        hasBegun: previous.hasBegun,
+        lastProgressAt: previous.lastProgressAt,
+      });
+    }
     setRunStateBySessionKey((current) => {
       if (!(key in current)) return current;
       const { [key]: _removedRunState, ...rest } = current;
@@ -1348,6 +1359,12 @@ export default function SessionView(props: SessionViewProps) {
     if (untrack(runStateBySessionKey)[key]?.startedAt) return;
     const now = Date.now();
     const snapshot = lastAssistantSnapshot();
+    recordSendTrace("run-state:start", {
+      sessionKey: key,
+      startedAt: now,
+      baselineAssistantId: snapshot.id,
+      baselinePartCount: snapshot.partCount,
+    });
     setRunStateBySessionKey((current) => ({
       ...current,
       [key]: {
@@ -1360,6 +1377,10 @@ export default function SessionView(props: SessionViewProps) {
     }));
   };
   const setRunHasBegunForSessionKey = (sessionKey: string, hasBegun: boolean) => {
+    recordSendTrace("run-state:has-begun", {
+      sessionKey,
+      hasBegun,
+    });
     updateRunStateForSessionKey(sessionKey, (current) => ({ ...current, hasBegun }));
   };
   const setRunTickForSessionKey = (sessionKey: string, tick: number) => {
@@ -1371,6 +1392,15 @@ export default function SessionView(props: SessionViewProps) {
   const remapPendingRunStateToSession = (pendingKey: string, sessionId: string) => {
     const sessionKey = sessionQueueKeyForSessionId(sessionId);
     if (!pendingKey || pendingKey === sessionKey) return;
+    const pendingRun = untrack(runStateBySessionKey)[pendingKey];
+    recordSendTrace("run-state:remap-pending-to-session", {
+      pendingKey,
+      sessionId,
+      sessionKey,
+      hadPendingRun: Boolean(pendingRun),
+      pendingStartedAt: pendingRun?.startedAt ?? null,
+      pendingHasBegun: pendingRun?.hasBegun ?? null,
+    });
     setRunStateBySessionKey((current) => {
       const pendingRun = current[pendingKey];
       if (!pendingRun) return current;
@@ -3728,6 +3758,20 @@ export default function SessionView(props: SessionViewProps) {
           createdAt: pendingSidebarSessionCreatedAt,
         }
       : null;
+    recordSendTrace("sendPromptImmediate:queue-scope", {
+      sendTraceId: options.sendTraceId ?? null,
+      clientMessageId,
+      origin,
+      baseSessionKey,
+      sessionKey,
+      pendingSessionBaseKeyBeforeHandoff,
+      pendingSessionKeyBeforeHandoff,
+      pendingSidebarWorkspaceId,
+      pendingSidebarWorkspaceRoot,
+      currentSessionQueueKey: currentSessionQueueKey(),
+      expectedWorkspaceId: expectedWorkspaceId || null,
+      targetSessionId,
+    });
     const pendingSubmitId = clientMessageId;
     let materializedSessionIdFromHandoff: string | null = null;
     let materializedSessionIdForRunStateReset: string | null = null;
@@ -3745,6 +3789,19 @@ export default function SessionView(props: SessionViewProps) {
       materializedSessionIdFromHandoff = materializedSessionId;
       materializedSessionIdForRunStateReset = materializedSessionId;
       const materializedSessionKey = sessionQueueKeyForSessionId(materializedSessionId);
+      recordSendTrace("sendPromptImmediate:pending-handoff-materialize", {
+        sendTraceId: handoff?.sendTraceId ?? options.sendTraceId ?? null,
+        clientMessageId,
+        origin,
+        pendingSessionBaseKeyBeforeHandoff,
+        pendingSessionKeyBeforeHandoff,
+        materializedPendingKey,
+        materializedSessionId,
+        materializedSessionKey,
+        handoffWorkspaceId: handoff?.workspaceId ?? null,
+        conversationId: handoff?.conversationId ?? null,
+        opencodeSessionId: handoff?.opencodeSessionId ?? null,
+      });
       batch(() => {
         setPendingQueueKeyAwaitingSessionIdForBaseKey(
           pendingSessionBaseKeyBeforeHandoff,
@@ -3814,6 +3871,15 @@ export default function SessionView(props: SessionViewProps) {
       clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff);
     };
     if (showOptimisticSubmit) {
+      recordSendTrace("sendPromptImmediate:optimistic-enqueue", {
+        sendTraceId: options.sendTraceId ?? null,
+        clientMessageId,
+        origin,
+        sessionKey,
+        targetSessionId,
+        pendingSessionKeyBeforeHandoff,
+        transcriptMessageCountAtSubmit: props.messages.length,
+      });
       setOptimisticSubmittedDraft(
         sessionKey,
         createPendingSubmittedDraft({

@@ -2493,7 +2493,11 @@ export function createVesloServerClient(options: {
         { token, hostToken, timeoutMs: timeouts.sessionTranscript },
       );
     },
-    createConversation: (workspaceId: string, input?: { directory?: string | null; title?: string | null }) =>
+    createConversation: (
+      workspaceId: string,
+      input?: { directory?: string | null; title?: string | null },
+      options?: { sendTraceId?: string | null },
+    ) =>
       requestJson<VesloConversationCreateResult>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/conversations`,
@@ -2506,6 +2510,9 @@ export function createVesloServerClient(options: {
             ...(input?.title?.trim() ? { title: input.title.trim() } : {}),
           },
           timeoutMs: timeouts.conversationCreate,
+          extraHeaders: options?.sendTraceId?.trim()
+            ? { "X-Veslo-Send-Trace-Id": options.sendTraceId.trim() }
+            : undefined,
         },
       ),
     importConversations: (workspaceId: string, input: VesloConversationImportInput) =>
