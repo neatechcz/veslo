@@ -116,7 +116,13 @@ sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/
 sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env exec -T worker-manager node -e "fetch('http://127.0.0.1:8790/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 ```
 
-Compose also defines container health checks for Den `/health`, AI Gateway `/health`, worker manager `/health`, and the web app `/`.
+For AI inference readiness after credentials and AI-access policies are expected to be configured, use:
+
+```bash
+curl -i https://ai.veslo.work/readiness
+```
+
+Compose also defines container health checks for Den `/health`, AI Gateway `/health`, worker manager `/health`, and the web app `/`. These intentionally remain liveness checks, not inference-readiness checks.
 
 ## Logs
 

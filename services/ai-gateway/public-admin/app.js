@@ -17,6 +17,7 @@ const state = {
   audit: [],
   users: [],
   usage: null,
+  readiness: null,
   usageFilters: {
     groupBy: "total",
     credentialId: "",
@@ -46,6 +47,8 @@ const els = {
   authUser: document.getElementById("auth-user"),
   signOutButton: document.getElementById("sign-out-button"),
   refreshButton: document.getElementById("refresh-button"),
+  readinessDot: document.getElementById("readiness-dot"),
+  readinessLabel: document.getElementById("readiness-label"),
   createUserButton: document.getElementById("create-user-button"),
   createUserButtonInline: document.getElementById("create-user-button-inline"),
   pageTitle: document.getElementById("page-title"),
@@ -720,6 +723,7 @@ async function signOut() {
 
 async function loadAllData() {
   await Promise.all([
+    loadReadiness(),
     loadCredentials(),
     loadSessions(),
     loadAlerts(),
@@ -728,6 +732,41 @@ async function loadAllData() {
     loadUsage(),
   ]);
   renderOverview();
+}
+
+async function loadReadiness() {
+  try {
+    const response = await fetch("/readiness");
+    state.readiness = await response.json().catch(() => null);
+  } catch (error) {
+    console.error("loadReadiness failed", error);
+    state.readiness = { ok: false, status: "not_ready" };
+  }
+  renderReadiness();
+}
+
+function renderReadiness() {
+  const readiness = state.readiness;
+  if (!readiness) {
+    setReadinessSignal("info", "Checking inference readiness");
+    return;
+  }
+
+  if (readiness.ok === true) {
+    setReadinessSignal("good", "Inference ready");
+    return;
+  }
+
+  setReadinessSignal("warn", "Inference unavailable");
+}
+
+function setReadinessSignal(tone, label) {
+  if (!els.readinessDot || !els.readinessLabel) {
+    return;
+  }
+  els.readinessDot.classList.remove("good", "warn", "info");
+  els.readinessDot.classList.add(tone);
+  els.readinessLabel.textContent = label;
 }
 
 async function loadCredentials() {

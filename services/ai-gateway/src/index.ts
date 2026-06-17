@@ -6,9 +6,11 @@ import { ensureAiGatewaySchema } from "./db/schema-reconcile.js";
 import { env } from "./env.js";
 import { createAdminRouter, createDefaultAdminService, type AdminService } from "./http/admin.js";
 import { createProxyRouter, type ProxyDependencies } from "./http/proxy.js";
+import { createReadinessRouter, type ReadinessDependencies } from "./http/readiness.js";
 import { createUserCredentialsRouter, type UserCredentialDependencies } from "./http/user-credentials.js";
 import {
   createDefaultProxyDependencies,
+  createDefaultReadinessDependencies,
   createDefaultRuntimeState,
   createDefaultUserCredentialDependencies,
   type RuntimeState,
@@ -17,6 +19,7 @@ import {
 export type AppDependencies = {
   admin?: AdminService;
   proxy?: ProxyDependencies;
+  readiness?: ReadinessDependencies;
   userCredentials?: UserCredentialDependencies;
   runtime?: RuntimeState;
 };
@@ -35,6 +38,7 @@ export function createApp(deps: AppDependencies = {}) {
     res.status(200).json({ ok: true, service: "ai-gateway" });
   });
 
+  app.use(createReadinessRouter(deps.readiness ?? createDefaultReadinessDependencies(runtime)));
   app.use(createAdminRouter(deps.admin ?? createDefaultAdminService(env.denApiBase)));
   app.use(createUserCredentialsRouter(deps.userCredentials ?? createDefaultUserCredentialDependencies(runtime)));
   const proxyDeps = deps.proxy ?? createDefaultProxyDependencies(runtime);
@@ -58,7 +62,12 @@ export async function startServer() {
   });
 }
 
-export { createDefaultProxyDependencies, createDefaultRuntimeState, createDefaultUserCredentialDependencies };
+export {
+  createDefaultProxyDependencies,
+  createDefaultReadinessDependencies,
+  createDefaultRuntimeState,
+  createDefaultUserCredentialDependencies,
+};
 export type { RuntimeState };
 
 const isMain =

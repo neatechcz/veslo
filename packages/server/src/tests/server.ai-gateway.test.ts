@@ -1069,6 +1069,73 @@ describe("ai gateway proxy routes", () => {
     }
   });
 
+  test("server proxies ai-gateway readiness to the readiness endpoint instead of health", async () => {
+    const requests: Array<{
+      method: string;
+      pathname: string;
+      authorization: string | null;
+    }> = [];
+
+    const upstream = createServer((req, res) => {
+      requests.push({
+        method: req.method ?? "GET",
+        pathname: req.url ?? "/",
+        authorization: req.headers.authorization ?? null,
+      });
+
+      res.statusCode = 503;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({
+        ok: false,
+        service: "ai-gateway",
+        status: "not_ready",
+        checks: {
+          providerReachability: { ok: false, probes: [] },
+          credentials: { ok: true, healthyCredentialCount: 1 },
+          aiAccessPolicies: { ok: true, enabledPolicyCount: 1 },
+        },
+      }));
+    });
+    const upstreamPort = await listenTestServer(upstream);
+
+    try {
+      await withManagedAiEnv(
+        {
+          managedAiBaseUrl: `http://127.0.0.1:${upstreamPort}`,
+        },
+        async () => {
+          const server = startServer(createTestConfig());
+
+          try {
+            const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/readiness`, {
+              headers: {
+                authorization: "Bearer client-token",
+                "x-veslo-gateway-authorization": "Bearer den-user-token",
+              },
+            });
+
+            expect(response.status).toBe(503);
+            const payload = await response.json() as { status: string; ok: boolean };
+            expect(payload.ok).toBe(false);
+            expect(payload.status).toBe("not_ready");
+            expect(requests).toEqual([
+              {
+                method: "GET",
+                pathname: "/readiness",
+                authorization: "Bearer den-user-token",
+              },
+            ]);
+          } finally {
+            stopTestServer(server);
+          }
+        },
+      );
+    } finally {
+      upstream.close();
+      await once(upstream, "close");
+    }
+  });
+
   test("server prefers VESLO_MANAGED_AI_BASE_URL over VESLO_AI_GATEWAY_BASE_URL", async () => {
     const managedRequests: string[] = [];
     const legacyRequests: string[] = [];

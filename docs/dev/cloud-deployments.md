@@ -45,7 +45,7 @@ To deploy production:
 3. Run the workflow manually.
 4. Leave the `branch` input empty to deploy the selected workflow branch, or enter a branch to override it for that run.
 
-The workflow creates or updates a stable Git checkout on the owned server, checks out the requested branch, validates the production environment file and Compose file, builds the app and worker images, runs Den and AI Gateway migrations, starts the Compose stack, and verifies internal plus public health endpoints.
+The workflow creates or updates a stable Git checkout on the owned server, checks out the requested branch, validates the production environment file and Compose file, builds the app and worker images, runs Den and AI Gateway migrations, starts the Compose stack, and verifies internal plus public health endpoints. AI Gateway health is process liveness; use AI Gateway `/readiness` separately when an operator needs the inference-available signal.
 
 Required GitHub Actions configuration:
 

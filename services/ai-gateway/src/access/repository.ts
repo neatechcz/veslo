@@ -32,4 +32,5 @@ export type UpsertUserAiAccessPolicyInput = {
 export interface AiAccessRepository {
   getUserAiAccess(userId: string): Promise<UserAiAccessPolicyRecord | null>;
   upsertUserAiAccess(input: UpsertUserAiAccessPolicyInput): Promise<UserAiAccessPolicyRecord>;
+  countEnabledPolicies?(): Promise<number>;
 }

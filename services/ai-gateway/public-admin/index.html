@@ -43,7 +43,10 @@
         <section class="sidebar-card subtle">
           <div class="eyebrow">Live signals</div>
           <div class="stack tight">
-            <div class="pill-row"><span class="dot good"></span> Gateway healthy</div>
+            <div class="pill-row" id="readiness-pill">
+              <span class="dot info" id="readiness-dot"></span>
+              <span id="readiness-label">Checking inference readiness</span>
+            </div>
             <div class="pill-row"><span class="dot warn"></span> 2 credential alerts</div>
             <div class="pill-row"><span class="dot info"></span> 18 active sessions</div>
           </div>

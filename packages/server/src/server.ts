@@ -1325,6 +1325,44 @@ function buildAiGatewayFailureDetails(input: {
   };
 }
 
+async function proxyAiGatewayReadinessRequest(input: {
+  request: Request;
+  url: URL;
+}) {
+  const baseUrl = resolveAiGatewayBaseUrl();
+  const target = new URL(baseUrl);
+  target.pathname = "/readiness";
+  target.search = input.url.search;
+
+  const requestId = randomUUID();
+  const headers = new Headers();
+  headers.set("Authorization", requireAiGatewayCallerAuth(input.request));
+  headers.set("accept", input.request.headers.get("accept") ?? "application/json");
+  headers.set("x-veslo-request-id", requestId);
+  headers.set("accept-encoding", "identity");
+
+  let response: Response;
+  try {
+    response = await fetch(target.toString(), {
+      method: "GET",
+      headers,
+    });
+  } catch (error) {
+    throw new ApiError(503, "ai_gateway_unreachable", "AI gateway readiness is not reachable on this host", {
+      requestId,
+      baseUrl,
+      targetUrl: target.toString(),
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: sanitizeDecodedProxyResponseHeaders(response.headers),
+  });
+}
+
 async function proxyAiGatewayRequest(input: {
   request: Request;
   url: URL;
@@ -3416,6 +3454,13 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       gatewayPath: "/api/me/ai-access",
       auth: "caller",
       preserveAiAccessToken: true,
+    });
+  });
+
+  addRoute(routes, "GET", "/ai-gateway/readiness", "client", async (ctx) => {
+    return proxyAiGatewayReadinessRequest({
+      request: ctx.request,
+      url: ctx.url,
     });
   });
 

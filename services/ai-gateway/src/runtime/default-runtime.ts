@@ -16,6 +16,7 @@ import type { SecretStore } from "../credentials/secret-store.js";
 import { createDb, type AiGatewayDb } from "../db/index.js";
 import { env } from "../env.js";
 import type { ProxyDependencies } from "../http/proxy.js";
+import type { ReadinessDependencies } from "../http/readiness.js";
 import type { UserCredentialDependencies } from "../http/user-credentials.js";
 import { DefaultBindingSelector } from "../leases/binding-selector.js";
 import { LeaseBroker } from "../leases/lease-broker.js";
@@ -128,6 +129,13 @@ export function createDefaultProxyDependencies(
     anthropicTransport: overrides.anthropicTransport ?? new AnthropicTransport(),
     codexOAuthTransport: overrides.codexOAuthTransport ?? new CodexOAuthInferenceProxyTransport(),
     openAiCompatibleTransport: overrides.openAiCompatibleTransport ?? new OpenAiCompatibleTransport(),
+  };
+}
+
+export function createDefaultReadinessDependencies(runtime: RuntimeState): ReadinessDependencies {
+  return {
+    credentials: runtime.credentials,
+    aiAccess: runtime.aiAccess,
   };
 }
 

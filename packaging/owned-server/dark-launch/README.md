@@ -138,6 +138,8 @@ curl -fsS https://ai.veslo.work/health
 curl -I https://app.veslo.work
 ```
 
+Use `https://ai.veslo.work/readiness` separately when checking AI inference availability; `/health` confirms only that the gateway process is live.
+
 Then verify:
 
 - Browser auth and desktop handoff against owned-server Den.
