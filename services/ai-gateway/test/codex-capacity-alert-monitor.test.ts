@@ -330,3 +330,70 @@ test("Codex capacity monitor sends critical email when Codex limits are not visi
   assert.match(sent[0]?.text ?? "", /server cannot see Codex limits/i);
   assert.match(sent[0]?.text ?? "", /Codex Invisible: 5h unknown, weekly unknown/);
 });
+
+test("Codex capacity monitor emails admins when any functional credential has unknown limits", async () => {
+  const sent: Array<{ to: string; subject: string; text: string }> = [];
+
+  const result = await runCodexCapacityAlertMonitor({
+    loadCapacityOverview: async () => createCapacity({
+      codexCredentials: {
+        total: 2,
+        measurable: 1,
+        unknown: 1,
+        unavailable: 0,
+      },
+      fiveHour: {
+        usedPercent: 30,
+        remainingPercent: 70,
+        measurableCredentials: 1,
+      },
+      weekly: {
+        usedPercent: 20,
+        remainingPercent: 80,
+        measurableCredentials: 1,
+      },
+      credentials: [
+        {
+          id: "cred_visible",
+          name: "Codex Visible",
+          state: "healthy",
+          fiveHourRemainingPercent: 70,
+          weeklyRemainingPercent: 80,
+          statusAvailable: true,
+          limitsAvailable: true,
+        },
+        {
+          id: "cred_unknown",
+          name: "Codex Unknown",
+          state: "healthy",
+          fiveHourRemainingPercent: null,
+          weeklyRemainingPercent: null,
+          statusAvailable: true,
+          limitsAvailable: false,
+        },
+      ],
+    }),
+    listAdminRecipients: async () => ["admin-one@example.test"],
+    sendEmail: async (input) => {
+      sent.push(input);
+    },
+    audit: {
+      async listEvents() {
+        return [];
+      },
+      async recordEvent() {
+        return;
+      },
+    },
+    now: () => new Date("2026-06-06T12:00:00.000Z"),
+  });
+
+  assert.deepEqual(result, {
+    evaluatedAlerts: 1,
+    emailsSent: 1,
+    recipients: 1,
+  });
+  assert.equal(sent[0]?.subject, "[HIGH] Codex limit visibility degraded");
+  assert.match(sent[0]?.text ?? "", /Some functional Codex credentials do not expose limits/i);
+  assert.match(sent[0]?.text ?? "", /Codex Unknown: 5h unknown, weekly unknown/);
+});

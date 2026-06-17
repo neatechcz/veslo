@@ -22,6 +22,13 @@ export function buildCodexCapacityAlerts(
   }
 
   const alerts: AlertRecord[] = [];
+  if (
+    capacity.codexCredentials.total > 0 &&
+    (capacity.codexCredentials.unknown > 0 || capacity.codexCredentials.unavailable > 0)
+  ) {
+    alerts.push(buildPartialLimitVisibilityAlert(capacity, timestamp));
+  }
+
   for (const key of ["fiveHour", "weekly"] as const) {
     const threshold = highestCrossedThreshold(capacity[key]);
     if (!threshold) {
@@ -44,7 +51,7 @@ export function buildCodexCapacityAlertEmail(
   alert: AlertRecord,
   capacity: CodexCapacityOverview,
 ): CodexCapacityAlertEmail {
-  const prefix = alert.id.endsWith("_95") ? "[URGENT]" : "[CRITICAL]";
+  const prefix = emailSeverityPrefix(alert);
   const subject = `${prefix} ${alert.title}`;
   const credentialLines = capacity.credentials.length > 0
     ? capacity.credentials.map((credential) => `- ${formatCredentialCapacity(credential)}`)
@@ -90,6 +97,27 @@ function buildLimitVisibilityAlert(capacity: CodexCapacityOverview, timestamp: s
       "The server cannot see Codex limits for any functional Codex credential.",
       credentialInventorySummary(capacity),
       "Check Codex auth.json access, Codex CLI status probing, and server egress before new requests exhaust the pool silently.",
+    ].join(" "),
+  };
+}
+
+function buildPartialLimitVisibilityAlert(capacity: CodexCapacityOverview, timestamp: string): AlertRecord {
+  return {
+    id: "alert_codex_capacity_limits_partially_unknown",
+    title: "Codex limit visibility degraded",
+    severity: "high",
+    source: "codex-capacity-visibility",
+    reason: null,
+    status: "active",
+    credentialId: null,
+    affectedSessions: 0,
+    firstSeenAt: timestamp,
+    lastSeenAt: timestamp,
+    owner: null,
+    runbook: [
+      "Some functional Codex credentials do not expose limits.",
+      credentialInventorySummary(capacity),
+      "Check Codex auth.json access, Codex CLI status probing, and server egress for credentials that show limits unknown or status unavailable.",
     ].join(" "),
   };
 }
@@ -169,6 +197,16 @@ function formatRemaining(value: number | null): string {
 
 function formatPercent(value: number | null): string {
   return typeof value === "number" && Number.isFinite(value) ? `${Math.round(value)}%` : "unknown";
+}
+
+function emailSeverityPrefix(alert: AlertRecord): string {
+  if (alert.id.endsWith("_95")) {
+    return "[URGENT]";
+  }
+  if (alert.severity === "high") {
+    return "[HIGH]";
+  }
+  return "[CRITICAL]";
 }
 
 function toIsoString(value: string | Date): string {
