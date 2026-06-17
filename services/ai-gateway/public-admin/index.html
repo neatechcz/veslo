@@ -669,5 +669,19 @@
         </section>
       </main>
     </div>
+    <div
+      id="backend-connection-status"
+      class="backend-connection-status hidden"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      data-state="connecting"
+    >
+      <span class="backend-connection-dot" aria-hidden="true"></span>
+      <div>
+        <strong id="backend-connection-label">Connecting to AI Gateway...</strong>
+        <span id="backend-connection-detail">Waiting for backend response.</span>
+      </div>
+    </div>
   </body>
 </html>

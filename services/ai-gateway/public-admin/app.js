@@ -103,8 +103,14 @@ const els = {
   auditEntityFilter: document.getElementById("audit-entity-filter"),
   auditList: document.getElementById("audit-list"),
   auditDetail: document.getElementById("audit-detail"),
+  backendConnectionStatus: document.getElementById("backend-connection-status"),
+  backendConnectionLabel: document.getElementById("backend-connection-label"),
+  backendConnectionDetail: document.getElementById("backend-connection-detail"),
   heroMetrics: Array.from(document.querySelectorAll(".hero-metrics .metric-card strong")),
 };
+
+let pendingAdminRequests = 0;
+let backendConnectionHideTimer = 0;
 
 function normalizePage(pathname) {
   const path = pathname.replace(/\/+$/, "");
@@ -395,6 +401,45 @@ function setStatus(text, userText = "") {
   els.authUser.textContent = userText || "";
 }
 
+function setBackendConnectionStatus(status, label = "", detail = "") {
+  if (!els.backendConnectionStatus) {
+    return;
+  }
+
+  if (backendConnectionHideTimer) {
+    window.clearTimeout(backendConnectionHideTimer);
+    backendConnectionHideTimer = 0;
+  }
+
+  if (status === "idle") {
+    els.backendConnectionStatus.classList.add("hidden");
+    return;
+  }
+
+  els.backendConnectionStatus.dataset.state = status;
+  els.backendConnectionStatus.classList.remove("hidden");
+  if (els.backendConnectionLabel && label) {
+    els.backendConnectionLabel.textContent = label;
+  }
+  if (els.backendConnectionDetail) {
+    els.backendConnectionDetail.textContent = detail;
+  }
+}
+
+function finishBackendConnectionRequest() {
+  pendingAdminRequests = Math.max(0, pendingAdminRequests - 1);
+  if (pendingAdminRequests > 0 || els.backendConnectionStatus?.dataset.state === "offline") {
+    return;
+  }
+
+  setBackendConnectionStatus("connected", "Connected to AI Gateway.", "Latest backend response received.");
+  backendConnectionHideTimer = window.setTimeout(() => {
+    if (pendingAdminRequests === 0 && els.backendConnectionStatus?.dataset.state === "connected") {
+      setBackendConnectionStatus("idle");
+    }
+  }, 900);
+}
+
 function setBrowserAuthBusy(busy, label = "Sign in with Browser") {
   state.authBusy = busy;
   if (!els.browserSignInButton) {
@@ -459,18 +504,32 @@ async function api(path, options = {}) {
     headers.set("Content-Type", "application/json");
   }
 
-  const response = await fetch(`/admin/api${path}`, {
-    credentials: "include",
-    ...options,
-    headers,
-  });
+  pendingAdminRequests += 1;
+  setBackendConnectionStatus("connecting", "Connecting to AI Gateway...", "Waiting for backend response.");
 
-  let payload = null;
-  const contentType = response.headers.get("content-type") || "";
-  if (contentType.includes("application/json")) {
-    payload = await response.json().catch(() => null);
+  try {
+    const response = await fetch(`/admin/api${path}`, {
+      credentials: "include",
+      ...options,
+      headers,
+    });
+
+    let payload = null;
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      payload = await response.json().catch(() => null);
+    }
+    return { response, payload };
+  } catch (error) {
+    setBackendConnectionStatus(
+      "offline",
+      "Still trying to connect to AI Gateway.",
+      "The admin page cannot reach the backend yet. Check your internet connection or wait for the server.",
+    );
+    throw error;
+  } finally {
+    finishBackendConnectionRequest();
   }
-  return { response, payload };
 }
 
 async function fetchJson(path, options = {}) {
