@@ -845,13 +845,17 @@ test("POST /admin/api/credentials creates a shared codex_oauth credential", asyn
 
 test("PATCH /admin/api/credentials/:credentialId renames a credential", async () => {
   const session = createSession()
+  let credentialName = "Vaclav CODEX"
   const calls = {
     rename: [] as Array<{ credentialId: string; name: string }>,
-    audit: [] as Array<{ action: string; entityId: string; summary?: string | null }>,
-  }
-  let credential = {
-    ...createCodexCredential(),
-    name: "Bad old name",
+    audit: [] as Array<{
+      actorUserId?: string | null
+      action: string
+      entityType: string
+      entityId: string
+      result: "ok" | "warning" | "error"
+      summary?: string | null
+    }>,
   }
   const app = express()
   app.use(express.json())
@@ -873,11 +877,7 @@ test("PATCH /admin/api/credentials/:credentialId renames a credential", async ()
         },
         audit: {
           async recordEvent(input) {
-            calls.audit.push({
-              action: input.action,
-              entityId: input.entityId,
-              summary: input.summary,
-            })
+            calls.audit.push(input)
           },
           async listEvents() {
             return []
@@ -885,14 +885,16 @@ test("PATCH /admin/api/credentials/:credentialId renames a credential", async ()
         },
         credentials: {
           async listAdminCredentials() {
-            return [credential]
+            return [
+              {
+                ...createCodexCredential(),
+                name: credentialName,
+              },
+            ]
           },
           async renameCredential(input) {
             calls.rename.push(input)
-            credential = {
-              ...credential,
-              name: input.name,
-            }
+            credentialName = input.name
             return true
           },
         } as any,
@@ -910,22 +912,41 @@ test("PATCH /admin/api/credentials/:credentialId renames a credential", async ()
     const { port } = server.address() as AddressInfo
     const response = await fetch(`http://127.0.0.1:${port}/admin/api/credentials/cred_platform_codex_1`, {
       method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "Vaclav CODEX" }),
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Václav Codex",
+      }),
     })
 
     assert.equal(response.status, 200)
     assert.deepEqual(await response.json(), {
       credential: {
         ...createCodexCredential(),
-        name: "Vaclav CODEX",
+        name: "Václav Codex",
+        cachedTokens: 0,
+        upstreamStatus: null,
+        eligibility: {
+          state: "unavailable",
+          reason: "No upstream status.",
+          resetAt: null,
+        },
       },
     })
-    assert.deepEqual(calls.rename, [{ credentialId: "cred_platform_codex_1", name: "Vaclav CODEX" }])
+    assert.deepEqual(calls.rename, [
+      {
+        credentialId: "cred_platform_codex_1",
+        name: "Václav Codex",
+      },
+    ])
     assert.deepEqual(calls.audit, [
       {
+        actorUserId: "admin@example.test",
         action: "credential.rename",
+        entityType: "credential",
         entityId: "cred_platform_codex_1",
+        result: "ok",
         summary: "Renamed credential cred_platform_codex_1.",
       },
     ])
@@ -962,11 +983,16 @@ test("Codex auth upload session returns a local helper command for the selected 
           },
         },
         credentials: {
-          async listAdminCredentials() {
-            return [createCodexCredential()]
+          async getCredentialRecordById(credentialId) {
+            return credentialId === "cred_platform_codex_1" ? createCodexCredentialRecord({ name: "Václav Codex" }) as any : null
           },
-          async getCredentialRecordById(credentialId: string) {
-            return credentialId === "cred_platform_codex_1" ? createCodexCredentialRecord() : null
+          async listAdminCredentials() {
+            return [
+              {
+                ...createCodexCredential(),
+                name: "Václav Codex",
+              },
+            ]
           },
         } as any,
         leases: {} as any,
@@ -984,31 +1010,28 @@ test("Codex auth upload session returns a local helper command for the selected 
     const { port } = server.address() as AddressInfo
     const response = await fetch(
       `http://127.0.0.1:${port}/admin/api/credentials/cred_platform_codex_1/codex-auth-upload-session`,
-      { method: "POST" },
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+      },
     )
 
     assert.equal(response.status, 200)
-    const payload = await response.json() as {
-      upload: {
-        token: string
-        credentialId: string
-        credentialName: string
-        expiresAt: string
-        uploadUrl: string
-        command: string
-      }
-    }
-    assert.equal(payload.upload.credentialId, "cred_platform_codex_1")
-    assert.equal(payload.upload.credentialName, "Shared Codex runtime")
-    assert.equal(payload.upload.expiresAt, "2026-06-17T08:10:00.000Z")
+    const payload = await response.json()
     assert.match(payload.upload.token, /^[a-f0-9]{48}$/)
+    assert.equal(payload.upload.credentialId, "cred_platform_codex_1")
+    assert.equal(payload.upload.credentialName, "Václav Codex")
+    assert.equal(payload.upload.expiresAt, "2026-06-17T08:10:00.000Z")
     assert.equal(
       payload.upload.uploadUrl,
       `http://127.0.0.1:${port}/admin/api/credentials/codex-auth-upload/${payload.upload.token}`,
     )
-    assert.match(payload.upload.command, /node scripts\/admin\/codex-auth-upload\.mjs/)
-    assert.match(payload.upload.command, new RegExp(payload.upload.token))
-    assert.match(payload.upload.command, /cred_platform_codex_1/)
+    assert.match(payload.command, /node scripts\/admin\/codex-auth-upload\.mjs/)
+    assert.match(payload.command, new RegExp(`--upload-url '${payload.upload.uploadUrl}'`))
+    assert.match(payload.command, /--credential-id 'cred_platform_codex_1'/)
+    assert.match(payload.command, /--credential-name 'Václav Codex'/)
   } finally {
     server.close()
     await once(server, "close")
@@ -1028,8 +1051,15 @@ test("Codex auth upload replaces the selected credential secret and rejects toke
   })
   const calls = {
     secrets: [] as Array<{ secretRef: string; secret: { kind: string; authJson?: string } }>,
-    state: [] as Array<{ credentialRecordId: string; state: string; reason?: string | null }>,
-    audit: [] as Array<{ actorUserId?: string | null; action: string; entityId: string; summary?: string | null }>,
+    states: [] as Array<{ credentialRecordId: string; state: string; reason?: string | null }>,
+    audit: [] as Array<{
+      actorUserId?: string | null
+      action: string
+      entityType: string
+      entityId: string
+      result: "ok" | "warning" | "error"
+      summary?: string | null
+    }>,
   }
   const app = express()
   app.use(express.json())
@@ -1051,28 +1081,26 @@ test("Codex auth upload replaces the selected credential secret and rejects toke
         },
         audit: {
           async recordEvent(input) {
-            calls.audit.push({
-              actorUserId: input.actorUserId,
-              action: input.action,
-              entityId: input.entityId,
-              summary: input.summary,
-            })
+            calls.audit.push(input)
           },
           async listEvents() {
             return []
           },
         },
         credentials: {
-          async listAdminCredentials() {
-            return [createCodexCredential()]
+          async getCredentialRecordById(credentialId) {
+            return credentialId === "cred_platform_codex_1" ? createCodexCredentialRecord({ name: "Václav Codex" }) as any : null
           },
-          async getCredentialRecordById(credentialId: string) {
-            return credentialId === "cred_platform_codex_1"
-              ? createCodexCredentialRecord({ state: "unhealthy" })
-              : null
+          async listAdminCredentials() {
+            return [
+              {
+                ...createCodexCredential(),
+                name: "Václav Codex",
+              },
+            ]
           },
           async markCredentialState(input) {
-            calls.state.push(input)
+            calls.states.push(input)
           },
         } as any,
         leases: {} as any,
@@ -1094,31 +1122,43 @@ test("Codex auth upload replaces the selected credential secret and rejects toke
     const { port } = server.address() as AddressInfo
     const sessionResponse = await fetch(
       `http://127.0.0.1:${port}/admin/api/credentials/cred_platform_codex_1/codex-auth-upload-session`,
-      { method: "POST" },
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+      },
     )
     assert.equal(sessionResponse.status, 200)
-    const sessionPayload = await sessionResponse.json() as { upload: { uploadUrl: string } }
+    const sessionPayload = await sessionResponse.json()
 
     const uploadResponse = await fetch(sessionPayload.upload.uploadUrl, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ authJson: codexAuthJson, accountId: "acct_codex_runtime" }),
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        authJson: codexAuthJson,
+      }),
     })
 
     assert.equal(uploadResponse.status, 200)
     assert.deepEqual(await uploadResponse.json(), {
-      credentialId: "cred_platform_codex_1",
-      credentialName: "Shared Codex runtime",
-      accountId: "acct_codex_runtime",
       ok: true,
+      credentialId: "cred_platform_codex_1",
+      credentialName: "Václav Codex",
+      accountId: "acct_codex_runtime",
     })
     assert.deepEqual(calls.secrets, [
       {
         secretRef: "secret_codex_1",
-        secret: { kind: "codex_auth_json", authJson: codexAuthJson },
+        secret: {
+          kind: "codex_auth_json",
+          authJson: codexAuthJson,
+        },
       },
     ])
-    assert.deepEqual(calls.state, [
+    assert.deepEqual(calls.states, [
       {
         credentialRecordId: "cred_platform_codex_1",
         state: "healthy",
@@ -1129,24 +1169,33 @@ test("Codex auth upload replaces the selected credential secret and rejects toke
       {
         actorUserId: "admin@example.test",
         action: "credential.codex_auth_upload_session.create",
+        entityType: "credential",
         entityId: "cred_platform_codex_1",
+        result: "ok",
         summary: "Created Codex auth upload session for credential cred_platform_codex_1.",
       },
       {
         actorUserId: "admin@example.test",
         action: "credential.codex_auth_upload",
+        entityType: "credential",
         entityId: "cred_platform_codex_1",
-        summary: "Uploaded Codex auth JSON for credential cred_platform_codex_1.",
+        result: "ok",
+        summary: "Uploaded Codex auth for credential cred_platform_codex_1.",
       },
     ])
 
-    const reuseResponse = await fetch(sessionPayload.upload.uploadUrl, {
+    const reusedResponse = await fetch(sessionPayload.upload.uploadUrl, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ authJson: codexAuthJson }),
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        authJson: codexAuthJson,
+      }),
     })
-    assert.equal(reuseResponse.status, 404)
-    assert.deepEqual(await reuseResponse.json(), { error: "codex_auth_upload_session_not_found" })
+
+    assert.equal(reusedResponse.status, 404)
+    assert.deepEqual(await reusedResponse.json(), { error: "codex_auth_upload_session_not_found" })
   } finally {
     server.close()
     await once(server, "close")

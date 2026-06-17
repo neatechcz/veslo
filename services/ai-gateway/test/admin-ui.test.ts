@@ -657,7 +657,7 @@ test("GET /admin/app.js supports showing and soft-deleting credential archive re
   }
 })
 
-test("GET /admin/app.js supports reconnecting Codex credentials in place", async () => {
+test("GET /admin/app.js supports renaming credentials and preparing local Codex auth upload", async () => {
   const app = createApp()
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
@@ -668,12 +668,23 @@ test("GET /admin/app.js supports reconnecting Codex credentials in place", async
 
     assert.equal(response.status, 200)
     const script = await response.text()
-    assert.match(script, /credential\.provider === "codex_oauth"[\s\S]*data-credential-action="reconnect"/)
-    assert.match(script, /Reconnect \$\{credential\.name\}\? Paste a fresh Codex auth\.json/)
-    assert.match(script, /window\.prompt\("Paste the fresh Codex auth\.json/)
-    assert.match(script, /\/credentials\/\$\{encodedCredentialId\}\/reconnect/)
-    assert.match(script, /body:\s*JSON\.stringify\(\{\s*secret:\s*reconnectSecret/)
+    assert.match(script, /codexAuthUploadByCredentialId/)
+    assert.match(script, /data-credential-rename-input/)
+    assert.match(script, /data-credential-rename/)
+    assert.match(script, /async function renameSelectedCredential\(\)/)
+    assert.match(script, /method: "PATCH"/)
+    assert.match(script, /data-credential-codex-upload/)
+    assert.match(script, /codex-auth-upload-session/)
+    assert.match(script, /credential-create-codex-upload/)
+    assert.match(script, /async function prepareNewCodexCredentialUpload\(\)/)
+    assert.match(script, /await fetchJson\("\/credentials\/codex-auth-upload-session"/)
+    assert.match(script, /data-codex-auth-upload-command/)
+    assert.match(script, /data-codex-auth-upload-copy/)
+    assert.match(script, /async function prepareCodexAuthUpload\(\)/)
+    assert.match(script, /async function copyCodexAuthUploadCommand\(\)/)
+    assert.match(script, /navigator\.clipboard\.writeText\(command\)/)
     assert.match(script, /await refreshSelectedUserAiAccessOptions\(\)/)
+    assert.doesNotMatch(script, /window\.prompt\("Paste the fresh Codex auth\.json/)
   } finally {
     server.close()
     await once(server, "close")

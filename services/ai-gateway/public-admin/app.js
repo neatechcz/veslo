@@ -29,6 +29,8 @@ const state = {
   selectedAlertId: null,
   selectedAuditId: null,
   selectedUserId: null,
+  codexAuthCredentialUpload: null,
+  codexAuthUploadByCredentialId: {},
   userMode: "edit",
   userAiAccessByUserId: {},
   userAiAccessAvailableCredentialsByUserId: {},
@@ -56,6 +58,9 @@ const els = {
   credentialCreateBaseUrl: document.getElementById("credential-create-base-url"),
   credentialCreateSecret: document.getElementById("credential-create-secret"),
   credentialCreateSubmit: document.getElementById("credential-create-submit"),
+  credentialCreateCodexUpload: document.getElementById("credential-create-codex-upload"),
+  credentialCreateCodexCopy: document.getElementById("credential-create-codex-copy"),
+  credentialCreateCodexCommand: document.getElementById("credential-create-codex-command"),
   credentialCreateStatus: document.getElementById("credential-create-status"),
   credentialsShowDeleted: document.getElementById("credentials-show-deleted"),
   credentialsTableBody: document.getElementById("credentials-table-body"),
@@ -914,10 +919,21 @@ function renderCredentials() {
   if (selected) {
     const selectedUpstreamStatus = formatCredentialUpstreamStatus(selected);
     const displayState = selected.deletedAt ? "deleted" : selected.state;
+    const codexAuthUpload = state.codexAuthUploadByCredentialId[selected.id] || null;
     els.credentialDetail.innerHTML = `
       <p class="eyebrow">Selected credential</p>
       <h3>${escapeHtml(selected.name)}</h3>
       <div class="stack">
+        ${selected.deletedAt ? "" : `
+          <label class="credential-detail-field">
+            <span>Display name</span>
+            <input class="input" data-credential-rename-input type="text" value="${escapeHtml(selected.name)}" />
+          </label>
+          <div class="button-row">
+            <button class="button button-secondary" type="button" data-credential-rename>Save name</button>
+            <p class="editor-note credential-detail-status" data-credential-rename-status></p>
+          </div>
+        `}
         <div class="detail-line"><span>Health</span><strong>${escapeHtml(displayState)}</strong></div>
         ${selected.deletedAt ? `<div class="detail-line"><span>Deleted</span><strong>${escapeHtml(formatDate(selected.deletedAt))}</strong></div>` : ""}
         <div class="detail-line"><span>Linked alerts</span><strong>${escapeHtml(String(selected.alertCount))}</strong></div>
@@ -929,6 +945,18 @@ function renderCredentials() {
           <div class="detail-line"><span>Eligibility</span><strong>${escapeHtml(selected.eligibility?.state || "unknown")}</strong></div>
           <div class="detail-line"><span>Codex upstream</span><strong>${escapeHtml(selectedUpstreamStatus.label)}</strong></div>
           <div class="detail-line"><span>Codex limits</span><strong>${escapeHtml(selectedUpstreamStatus.limitSummary || "5h: unknown | Weekly: unknown")}</strong></div>
+          ${selected.deletedAt ? "" : `
+            <div class="credential-command-block">
+              <div class="button-row">
+                <button class="button button-primary" type="button" data-credential-codex-upload>Prepare local upload</button>
+                ${codexAuthUpload?.command ? `<button class="button button-secondary" type="button" data-codex-auth-upload-copy>Copy command</button>` : ""}
+              </div>
+              ${codexAuthUpload?.command ? `
+                <textarea class="input credential-command-output" readonly data-codex-auth-upload-command>${escapeHtml(codexAuthUpload.command)}</textarea>
+                <p class="editor-note credential-detail-status" data-codex-auth-upload-status>Command expires ${escapeHtml(formatDate(codexAuthUpload.upload?.expiresAt))}</p>
+              ` : `<p class="editor-note credential-detail-status" data-codex-auth-upload-status></p>`}
+            </div>
+          `}
         ` : ""}
       </div>
       <div class="button-row">
@@ -944,7 +972,6 @@ function renderCredentialActionButtons(credential) {
   }
 
   return `
-    ${credential.provider === "codex_oauth" ? `<button class="button button-secondary" type="button" data-credential-action="reconnect">Reconnect</button>` : ""}
     <button class="button button-secondary" type="button" data-credential-action="drain">Drain</button>
     <button class="button button-secondary" type="button" data-credential-action="rotate">Rotate</button>
     <button class="button button-secondary" type="button" data-credential-action="revoke">Revoke</button>
@@ -1454,6 +1481,18 @@ function setCredentialCreateStatus(message, tone = "neutral") {
   els.credentialCreateStatus.dataset.tone = tone;
 }
 
+function setInlineStatus(node, message, tone = "neutral") {
+  if (!node) {
+    return;
+  }
+  node.textContent = message;
+  if (tone === "neutral") {
+    delete node.dataset.tone;
+    return;
+  }
+  node.dataset.tone = tone;
+}
+
 function setUserSaveStatus(message, tone = "neutral") {
   els.userSaveStatus.textContent = message;
   if (tone === "neutral") {
@@ -1525,6 +1564,46 @@ async function createCredential() {
   }
 }
 
+async function prepareNewCodexCredentialUpload() {
+  els.credentialCreateCodexUpload.disabled = true;
+  setCredentialCreateStatus("Preparing Codex upload command", "pending");
+
+  try {
+    const payload = await fetchJson("/credentials/codex-auth-upload-session", {
+      method: "POST",
+    });
+    state.codexAuthCredentialUpload = payload;
+    els.credentialCreateCodexCommand.value = payload.command || "";
+    els.credentialCreateCodexCommand.classList.toggle("hidden", !payload.command);
+    els.credentialCreateCodexCopy.classList.toggle("hidden", !payload.command);
+    setCredentialCreateStatus(`Run the command locally. It expires ${formatDate(payload.upload?.expiresAt)}.`, "success");
+  } catch (error) {
+    setCredentialCreateStatus(
+      `Unable to prepare Codex upload: ${error instanceof Error ? error.message : "unknown_error"}`,
+      "error",
+    );
+  } finally {
+    els.credentialCreateCodexUpload.disabled = false;
+  }
+}
+
+async function copyNewCodexCredentialUploadCommand() {
+  const command = state.codexAuthCredentialUpload?.command || els.credentialCreateCodexCommand.value.trim();
+  if (!command) {
+    setCredentialCreateStatus("Codex upload command is not ready.", "error");
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(command);
+    setCredentialCreateStatus("Command copied.", "success");
+  } catch {
+    els.credentialCreateCodexCommand.focus();
+    els.credentialCreateCodexCommand.select();
+    setCredentialCreateStatus("Copy failed. Select the command manually.", "error");
+  }
+}
+
 async function refreshAlertOperations() {
   await Promise.all([
     loadCredentials(),
@@ -1556,9 +1635,7 @@ function credentialActionRequest(credentialId, action) {
   return {
     path: action === "delete"
       ? `/credentials/${encodedCredentialId}`
-      : action === "reconnect"
-        ? `/credentials/${encodedCredentialId}/reconnect`
-        : `/credentials/${encodedCredentialId}/${action}`,
+      : `/credentials/${encodedCredentialId}/${action}`,
     method: action === "delete" ? "DELETE" : "POST",
   };
 }
@@ -1574,7 +1651,6 @@ async function runCredentialAction(action) {
     rotate: `Rotate ${credential.name}? Active sessions will move to another healthy credential if one is available.`,
     revoke: `Revoke ${credential.name}? Existing sessions may lose access if no replacement is available.`,
     delete: `Delete ${credential.name}? This moves it to Show Deleted and prevents future assignment or use.`,
-    reconnect: `Reconnect ${credential.name}? Paste a fresh Codex auth.json from a dedicated server-only login.`,
   };
 
   const confirmed = window.confirm(confirmationMessages[action] || `Apply ${action} to ${credential.name}?`);
@@ -1582,34 +1658,94 @@ async function runCredentialAction(action) {
     return;
   }
 
-  let reconnectSecret = "";
-  if (action === "reconnect") {
-    reconnectSecret = window.prompt("Paste the fresh Codex auth.json for this credential.") || "";
-    if (!reconnectSecret.trim()) {
-      return;
-    }
-  }
-
   try {
     const request = credentialActionRequest(credential.id, action);
-    await fetchJson(request.path, action === "reconnect"
-      ? {
-          method: request.method,
-          body: JSON.stringify({ secret: reconnectSecret.trim() }),
-        }
-      : {
-          method: request.method,
-        });
+    await fetchJson(request.path, {
+      method: request.method,
+    });
     if (action === "delete") {
       state.showDeletedCredentials = true;
       els.credentialsShowDeleted.checked = true;
     }
     await refreshCredentialOperations();
-    if (action === "delete" || action === "reconnect") {
+    if (action === "delete") {
       await refreshSelectedUserAiAccessOptions();
     }
   } catch (error) {
     window.alert(`Unable to ${action} credential: ${error instanceof Error ? error.message : "unknown_error"}`);
+  }
+}
+
+async function renameSelectedCredential() {
+  const credential = currentCredential();
+  const input = els.credentialDetail.querySelector("[data-credential-rename-input]");
+  const status = els.credentialDetail.querySelector("[data-credential-rename-status]");
+  const name = input?.value?.trim() || "";
+  if (!credential || !input) {
+    return;
+  }
+  if (!name) {
+    setInlineStatus(status, "Name is required.", "error");
+    return;
+  }
+
+  input.disabled = true;
+  setInlineStatus(status, "Saving name", "pending");
+  try {
+    const payload = await fetchJson(`/credentials/${encodeURIComponent(credential.id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    });
+    state.selectedCredentialId = payload?.credential?.id || credential.id;
+    setInlineStatus(status, "Name saved.", "success");
+    await refreshCredentialOperations();
+    await refreshSelectedUserAiAccessOptions();
+  } catch (error) {
+    setInlineStatus(status, `Unable to save name: ${error instanceof Error ? error.message : "unknown_error"}`, "error");
+  } finally {
+    input.disabled = false;
+  }
+}
+
+async function prepareCodexAuthUpload() {
+  const credential = currentCredential();
+  const status = els.credentialDetail.querySelector("[data-codex-auth-upload-status]");
+  if (!credential || credential.provider !== "codex_oauth") {
+    return;
+  }
+
+  setInlineStatus(status, "Preparing command", "pending");
+  try {
+    const payload = await fetchJson(`/credentials/${encodeURIComponent(credential.id)}/codex-auth-upload-session`, {
+      method: "POST",
+    });
+    state.codexAuthUploadByCredentialId[credential.id] = payload;
+    renderCredentials();
+  } catch (error) {
+    setInlineStatus(status, `Unable to prepare command: ${error instanceof Error ? error.message : "unknown_error"}`, "error");
+  }
+}
+
+async function copyCodexAuthUploadCommand() {
+  const credential = currentCredential();
+  if (!credential) {
+    return;
+  }
+  const command = state.codexAuthUploadByCredentialId[credential.id]?.command || "";
+  const status = els.credentialDetail.querySelector("[data-codex-auth-upload-status]");
+  if (!command) {
+    setInlineStatus(status, "Command is not ready.", "error");
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(command);
+    setInlineStatus(status, "Command copied.", "success");
+  } catch (error) {
+    const output = els.credentialDetail.querySelector("[data-codex-auth-upload-command]");
+    output?.focus();
+    output?.select();
+    setInlineStatus(status, "Copy failed. Select the command manually.", "error");
   }
 }
 
@@ -1777,6 +1913,8 @@ function bindActions() {
   els.createUserButtonInline.addEventListener("click", enterCreateMode);
   els.credentialCreateProvider.addEventListener("change", updateCredentialCreateFields);
   els.credentialCreateSubmit.addEventListener("click", () => void createCredential());
+  els.credentialCreateCodexUpload.addEventListener("click", () => void prepareNewCodexCredentialUpload());
+  els.credentialCreateCodexCopy.addEventListener("click", () => void copyNewCodexCredentialUploadCommand());
   els.credentialsShowDeleted.addEventListener("change", () => {
     state.showDeletedCredentials = els.credentialsShowDeleted.checked;
     void loadCredentials();
@@ -1793,6 +1931,24 @@ function bindActions() {
   });
 
   els.credentialDetail.addEventListener("click", (event) => {
+    const renameButton = event.target.closest("[data-credential-rename]");
+    if (renameButton) {
+      void renameSelectedCredential();
+      return;
+    }
+
+    const codexUploadButton = event.target.closest("[data-credential-codex-upload]");
+    if (codexUploadButton) {
+      void prepareCodexAuthUpload();
+      return;
+    }
+
+    const codexUploadCopyButton = event.target.closest("[data-codex-auth-upload-copy]");
+    if (codexUploadCopyButton) {
+      void copyCodexAuthUploadCommand();
+      return;
+    }
+
     const actionButton = event.target.closest("[data-credential-action]");
     if (actionButton) {
       void runCredentialAction(actionButton.dataset.credentialAction);

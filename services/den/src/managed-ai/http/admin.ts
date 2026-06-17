@@ -7,6 +7,8 @@ import express from "express"
 import type {
   AdminAlertRecord,
   AdminAuditRecord,
+  AdminCodexAuthUploadResponse,
+  AdminCodexAuthUploadSessionResponse,
   AdminCredentialEligibility,
   AdminCredentialOption,
   AdminCredentialRecord,
@@ -93,11 +95,22 @@ type DecoratedAdminCredentialRecord = AdminCredentialRecord & {
   eligibility?: AdminCredentialEligibility
 }
 
+type CodexAuthUploadSessionRecord = {
+  token: string
+  credentialId: string
+  credentialName: string
+  secretRef: string
+  actorUserId: string | null
+  expiresAt: Date
+}
+
 type AdminUsageFilters = {
   credentialId: string | null
   userId: string | null
   orgId: string | null
 }
+
+const CODEX_AUTH_UPLOAD_SESSION_TTL_MS = 10 * 60 * 1000
 
 export function createManagedAiAdminRouteDeps(
   deps: ManagedAiAdminRouteOptions,
@@ -107,6 +120,9 @@ export function createManagedAiAdminRouteDeps(
   | "upsertUserAiAccess"
   | "listCredentials"
   | "createCredential"
+  | "renameCredential"
+  | "createCodexAuthUploadSession"
+  | "uploadCodexAuth"
   | "revokeCredential"
   | "drainCredential"
   | "rotateCredential"
@@ -118,6 +134,7 @@ export function createManagedAiAdminRouteDeps(
   | "listAudit"
 > {
   const now = deps.now ?? (() => new Date())
+  const codexAuthUploadSessions = new Map<string, CodexAuthUploadSessionRecord>()
   const codexStatusProvider =
     deps.codexStatusProvider === null
       ? null
@@ -392,6 +409,58 @@ export function createManagedAiAdminRouteDeps(
     return credential
   }
 
+  async function getCodexCredentialRecordOrThrow(credentialId: string) {
+    const credential = await deps.credentials.getCredentialRecordById(credentialId)
+    if (!credential) {
+      throw new HttpError("credential_not_found", 404)
+    }
+    if (credential.provider !== "codex_oauth" || credential.credentialType !== "oauth") {
+      throw new HttpError("invalid_codex_auth_credential", 400)
+    }
+    return credential
+  }
+
+  function pruneExpiredCodexAuthUploadSessions() {
+    const timestamp = now().getTime()
+    for (const [token, session] of codexAuthUploadSessions) {
+      if (session.expiresAt.getTime() <= timestamp) {
+        codexAuthUploadSessions.delete(token)
+      }
+    }
+  }
+
+  function getCodexAuthUploadSession(token: string) {
+    pruneExpiredCodexAuthUploadSessions()
+    return codexAuthUploadSessions.get(token) ?? null
+  }
+
+  function createCodexAuthUploadUrl(req: express.Request, token: string) {
+    const protocol = readFirstHeader(req.headers["x-forwarded-proto"]) ?? req.protocol ?? "http"
+    const host = readFirstHeader(req.headers["x-forwarded-host"]) ?? req.get("host")
+    if (!host) {
+      throw new HttpError("codex_auth_upload_origin_unavailable", 500)
+    }
+
+    return `${protocol}://${host}/admin/api/credentials/codex-auth-upload/${token}`
+  }
+
+  function createCodexAuthUploadCommand(input: {
+    uploadUrl: string
+    credentialId: string
+    credentialName: string
+  }) {
+    return [
+      "node",
+      "scripts/admin/codex-auth-upload.mjs",
+      "--upload-url",
+      shellQuote(input.uploadUrl),
+      "--credential-id",
+      shellQuote(input.credentialId),
+      "--credential-name",
+      shellQuote(input.credentialName),
+    ].join(" ")
+  }
+
   async function requireAdminSession(req: express.Request, res: express.Response) {
     return deps.getAdminSession(req, res)
   }
@@ -513,6 +582,153 @@ export function createManagedAiAdminRouteDeps(
         }
       } catch (error) {
         return handleRouteError(res, error, "credential_create_failed")
+      }
+    },
+
+    async renameCredential(req, res) {
+      const session = await requireAdminSession(req, res)
+      if (!session) {
+        return null
+      }
+
+      const credentialId = readParam(req.params.credentialId)
+      if (!credentialId) {
+        res.status(400).json({ error: "invalid_credential_id" })
+        return null
+      }
+
+      try {
+        const name = validateCredentialName(req.body?.name)
+        const action = deps.credentials.renameCredential
+        if (!action) {
+          throw new HttpError("credential_actions_unavailable", 503)
+        }
+
+        const updated = await action.call(deps.credentials, { credentialId, name })
+        if (!updated) {
+          throw new HttpError("credential_not_found", 404)
+        }
+
+        await recordAuditEvent({
+          actorUserId: getAdminActorUserId(session),
+          action: "credential.rename",
+          entityType: "credential",
+          entityId: credentialId,
+          result: "ok",
+          summary: `Renamed credential ${credentialId}.`,
+        })
+
+        return {
+          credential: await getCredentialOrThrow(credentialId),
+        }
+      } catch (error) {
+        return handleRouteError(res, error, "credential_rename_failed")
+      }
+    },
+
+    async createCodexAuthUploadSession(req, res): Promise<AdminCodexAuthUploadSessionResponse | null> {
+      const session = await requireAdminSession(req, res)
+      if (!session) {
+        return null
+      }
+
+      const credentialId = readParam(req.params.credentialId)
+      if (!credentialId) {
+        res.status(400).json({ error: "invalid_credential_id" })
+        return null
+      }
+
+      try {
+        const credential = await getCodexCredentialRecordOrThrow(credentialId)
+        const token = crypto.randomBytes(24).toString("hex")
+        const expiresAt = new Date(now().getTime() + CODEX_AUTH_UPLOAD_SESSION_TTL_MS)
+        const credentialName = getCredentialRecordName(credential)
+        const uploadUrl = createCodexAuthUploadUrl(req, token)
+
+        pruneExpiredCodexAuthUploadSessions()
+        codexAuthUploadSessions.set(token, {
+          token,
+          credentialId,
+          credentialName,
+          secretRef: credential.secretRef,
+          actorUserId: getAdminActorUserId(session),
+          expiresAt,
+        })
+
+        await recordAuditEvent({
+          actorUserId: getAdminActorUserId(session),
+          action: "credential.codex_auth_upload_session.create",
+          entityType: "credential",
+          entityId: credentialId,
+          result: "ok",
+          summary: `Created Codex auth upload session for credential ${credentialId}.`,
+        })
+
+        return {
+          upload: {
+            token,
+            credentialId,
+            credentialName,
+            uploadUrl,
+            expiresAt: expiresAt.toISOString(),
+          },
+          command: createCodexAuthUploadCommand({
+            uploadUrl,
+            credentialId,
+            credentialName,
+          }),
+        }
+      } catch (error) {
+        return handleRouteError(res, error, "codex_auth_upload_session_create_failed")
+      }
+    },
+
+    async uploadCodexAuth(req, res): Promise<AdminCodexAuthUploadResponse | null> {
+      const token = readParam(req.params.token)
+      if (!token) {
+        res.status(400).json({ error: "invalid_codex_auth_upload_token" })
+        return null
+      }
+
+      try {
+        const uploadSession = getCodexAuthUploadSession(token)
+        if (!uploadSession) {
+          throw new HttpError("codex_auth_upload_session_not_found", 404)
+        }
+
+        const rawAuthJson = typeof req.body?.authJson === "string" ? req.body.authJson : ""
+        const authJson = validateCodexAuthJson(rawAuthJson)
+        const accountId = readCodexAuthAccountId(authJson)
+        const credential = await getCodexCredentialRecordOrThrow(uploadSession.credentialId)
+
+        await deps.secrets.replace(credential.secretRef || uploadSession.secretRef, {
+          kind: "codex_auth_json",
+          authJson,
+        })
+        await deps.credentials.markCredentialState({
+          credentialRecordId: credential.id,
+          state: "healthy",
+          reason: "codex_auth_upload",
+        })
+        codexAuthUploadSessions.delete(token)
+
+        await recordAuditEvent({
+          actorUserId: uploadSession.actorUserId,
+          action: "credential.codex_auth_upload",
+          entityType: "credential",
+          entityId: credential.id,
+          result: "ok",
+          summary: `Uploaded Codex auth for credential ${credential.id}.`,
+        })
+
+        return {
+          ok: true,
+          credentialId: credential.id,
+          credentialName: getCredentialRecordName(credential),
+          accountId,
+        }
+      } catch (error) {
+        return handleRouteError(res, error, "codex_auth_upload_failed")
       }
     },
 
@@ -1044,12 +1260,38 @@ function readParam(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : ""
 }
 
+function readFirstHeader(value: unknown): string | null {
+  const raw = Array.isArray(value) ? value[0] : value
+  if (typeof raw !== "string") {
+    return null
+  }
+  const [first] = raw.split(",")
+  const trimmed = first?.trim()
+  return trimmed || null
+}
+
 function readQueryString(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null
 }
 
 function getAdminActorUserId(session: AdminSessionSnapshot) {
   return session.user.email ?? session.user.id ?? null
+}
+
+function shellQuote(value: string) {
+  return `'${value.replace(/'/g, "'\\''")}'`
+}
+
+function validateCredentialName(value: unknown): string {
+  const name = typeof value === "string" ? value.trim() : ""
+  if (!name || name.length > 120) {
+    throw new HttpError("invalid_credential_name", 400)
+  }
+  return name
+}
+
+function getCredentialRecordName(record: CredentialRecord) {
+  return record.name?.trim() || `${formatProviderLabel(record.provider)} ${record.id}`
 }
 
 function validateCreateCredentialInput(input: CreateCredentialInput): {
@@ -1222,6 +1464,20 @@ function validateCodexAuthJson(secret: string): string {
   }
 
   return secret
+}
+
+function readCodexAuthAccountId(authJson: string): string {
+  try {
+    const parsed = JSON.parse(authJson) as { tokens?: { account_id?: unknown } }
+    const accountId = typeof parsed.tokens?.account_id === "string" ? parsed.tokens.account_id.trim() : ""
+    if (accountId) {
+      return accountId
+    }
+  } catch {
+    // validateCodexAuthJson already normalizes this error for callers.
+  }
+
+  throw new HttpError("invalid_credential_secret", 400)
 }
 
 function normalizeGroupBy(value: unknown): AdminUsageResponse["groupBy"] {

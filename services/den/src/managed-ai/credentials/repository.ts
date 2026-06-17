@@ -67,6 +67,11 @@ export type MarkCredentialStateInput = {
   reason?: string | null
 }
 
+export type RenameCredentialInput = {
+  credentialId: string
+  name: string
+}
+
 export type CreateUserCredentialInput = {
   ownerUserId: string
   name?: string | null
@@ -103,6 +108,7 @@ export interface CredentialRepository {
   getBindingByCredentialId?(credentialId: string): Promise<CredentialBinding | null>
   getCredentialRecordByBindingId?(bindingId: string): Promise<CredentialRecord | null>
   listAdminCredentials?(): Promise<AdminCredentialRecord[]>
+  renameCredential?(input: RenameCredentialInput): Promise<boolean>
   revokeCredential?(credentialId: string): Promise<boolean>
   drainCredential?(credentialId: string): Promise<boolean>
   rotateCredential?(credentialId: string): Promise<boolean>
