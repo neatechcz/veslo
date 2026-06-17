@@ -786,7 +786,7 @@ test("directory picker flow publishes the registered workspace into the sidebar 
   );
 });
 
-test("project plus resolves the directory after workspace activation instead of failing early on stale metadata", () => {
+test("project plus resolves the target workspace directory after activation", () => {
   assert.notEqual(
     openPendingDirectoryDraftInWorkspaceSource,
     "",
@@ -799,8 +799,8 @@ test("project plus resolves the directory after workspace activation instead of 
   );
   assert.match(
     openPendingDirectoryDraftInWorkspaceSource,
-    /openPendingDraft: \(\) => \{[\s\S]*const activeWorkspace = deps\.workspace\.activeWorkspaceDisplay\(\);[\s\S]*const directory = activeWorkspace\.directory\?\.trim\(\) \|\| activeWorkspace\.path\?\.trim\(\) \|\| "";\s*if \(!directory\) return "";\s*return openDirectoryPendingDraft\(\{ workspaceId: id, directory \}\);[\s\S]*\}/s,
-    "project plus should resolve the directory from the activated workspace state right before opening the pending draft",
+    /openPendingDraft: \(\) => \{[\s\S]*const activeWorkspaceId = deps\.workspace\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*if \(activeWorkspaceId !== id\) return "";[\s\S]*const targetWorkspace = deps\.workspace\.workspaces\(\)\.find\(\(workspace\) => workspace\.id\?\.trim\(\) === id\) \?\? null;[\s\S]*const directory = targetWorkspace\?\.directory\?\.trim\(\) \|\| targetWorkspace\?\.path\?\.trim\(\) \|\| "";[\s\S]*return openDirectoryPendingDraft\(\{ workspaceId: id, directory \}\);[\s\S]*\}/s,
+    "project plus should resolve the directory from the activated target workspace, not from a stale active display",
   );
 });
 

@@ -50,3 +50,21 @@ export const shouldSyncSidebarFromSessionStore = (
   // Otherwise this is likely old workspace data; keep existing sidebar rows.
   return false;
 };
+
+/**
+ * A read-API list result (browse mode / engine-unavailable fallback) must never
+ * destroy rows the user can still open. Preserve existing rows when the read was
+ * unavailable (server/sandbox unreachable, workspace not registered, sandbox
+ * path mismatch), or when it came back empty while the workspace still has rows.
+ * Only a genuine non-empty read — or an empty read for a workspace that has no
+ * rows yet — may replace the list. This is what prevents the "conversation
+ * disappears on workspace switch and I can't get back" symptom.
+ */
+export const shouldPreserveSidebarRowsOnRead = (input: {
+  available: boolean;
+  incomingCount: number;
+  existingCount: number;
+}): boolean => {
+  if (!input.available) return true;
+  return input.incomingCount === 0 && input.existingCount > 0;
+};

@@ -339,6 +339,10 @@ export function createSessionStore(options: {
     Record<string, PendingPermission[]>
   >({});
   let pendingPermissionsRefreshInFlight: Promise<void> | null = null;
+  const [pendingQuestionsByWs, setPendingQuestionsByWs] = createSignal<
+    Record<string, PendingQuestion[]>
+  >({});
+  let pendingQuestionsRefreshInFlight: Promise<void> | null = null;
 
   // VSLO-171 — flattened view of all per-workspace permissions for the
   // cross-workspace UI (sidebar badges, activePermission fallback).
@@ -355,6 +359,12 @@ export function createSessionStore(options: {
     const counts: Record<string, number> = {};
     for (const [wsId, list] of Object.entries(byWs)) counts[wsId] = list.length;
     return counts;
+  });
+  const allPendingQuestions = createMemo(() => {
+    const byWs = pendingQuestionsByWs();
+    const result: PendingQuestion[] = [];
+    for (const list of Object.values(byWs)) result.push(...list);
+    return result;
   });
 
   const skillPathPattern = /[\\/]\.opencode[\\/](skill|skills)[\\/]/i;
@@ -871,8 +881,11 @@ export function createSessionStore(options: {
     setStore("sessions", reconcile(nextSessions, { key: "id" }));
   }
 
-  async function renameSession(sessionID: string, title: string) {
-    const c = options.routing.active();
+  async function renameSession(sessionID: string, title: string, workspaceId?: string | null) {
+    const ownerWorkspaceId = workspaceId?.trim() ?? "";
+    const c = ownerWorkspaceId
+      ? options.routing.client(ownerWorkspaceId)
+      : options.routing.active();
     if (!c) return;
     const trimmed = title.trim();
     if (!trimmed) {
@@ -1007,13 +1020,71 @@ export function createSessionStore(options: {
   }
 
   async function refreshPendingQuestions() {
-    const c = options.routing.active();
-    if (!c) return;
-    const list = unwrap(await c.question.list());
-    const now = Date.now();
-    const byId = new Map(store.pendingQuestions.map((q) => [q.id, q] as const));
-    const next = list.map((q) => ({ ...q, receivedAt: byId.get(q.id)?.receivedAt ?? now }));
-    setStore("pendingQuestions", next);
+    if (pendingQuestionsRefreshInFlight) return pendingQuestionsRefreshInFlight;
+
+    const run = (async () => {
+      const activeWs = options.routing.activeWorkspaceId();
+      const clientsToProbe: Array<{ wsId: string; client: RoutingClient }> = [];
+      options.routing.forEach((wsId, client) => {
+        clientsToProbe.push({ wsId, client });
+      });
+      const now = Date.now();
+      const prevByWs = pendingQuestionsByWs();
+
+      if (clientsToProbe.length === 0) {
+        const c = options.routing.active();
+        if (!c) return;
+        const list = unwrap(await c.question.list());
+        const byId = new Map(store.pendingQuestions.map((q) => [q.id, q] as const));
+        const next = list.map((q) => ({
+          ...q,
+          workspaceId: activeWs || undefined,
+          receivedAt: byId.get(q.id)?.receivedAt ?? now,
+        }));
+        setStore("pendingQuestions", next);
+        if (activeWs) setPendingQuestionsByWs({ [activeWs]: next });
+        return;
+      }
+
+      const nextByWs: Record<string, PendingQuestion[]> = {};
+      await Promise.all(
+        clientsToProbe.map(async ({ wsId, client }) => {
+          try {
+            const list = unwrap(await client.question.list());
+            const prev = prevByWs[wsId] ?? [];
+            const byId = new Map(prev.map((q) => [q.id, q] as const));
+            nextByWs[wsId] = list.map((q) => ({
+              ...q,
+              workspaceId: wsId,
+              receivedAt: byId.get(q.id)?.receivedAt ?? now,
+            }));
+          } catch (error) {
+            const message = error instanceof Error ? error.message : safeStringify(error);
+            if (shouldReleaseStaleWorkspaceRoute(wsId, activeWs, message)) {
+              options.routing.release(wsId);
+              sessionWarn("questions:released-stale-route", {
+                workspaceId: wsId,
+                error: truncateErrorField(message),
+              });
+              return;
+            }
+            nextByWs[wsId] = prevByWs[wsId] ?? [];
+          }
+        }),
+      );
+      setPendingQuestionsByWs(nextByWs);
+      const activeList = activeWs ? nextByWs[activeWs] ?? [] : [];
+      setStore("pendingQuestions", activeList);
+    })();
+
+    pendingQuestionsRefreshInFlight = run;
+    try {
+      await run;
+    } finally {
+      if (pendingQuestionsRefreshInFlight === run) {
+        pendingQuestionsRefreshInFlight = null;
+      }
+    }
   }
 
   function setMessagesForSession(sessionID: string, list: MessageWithParts[]) {
@@ -1287,7 +1358,11 @@ export function createSessionStore(options: {
   }
 
   async function respondQuestion(requestID: string, answers: string[][]) {
-    const c = options.routing.active();
+    const question = allPendingQuestions().find((q) => q.id === requestID)
+      ?? store.pendingQuestions.find((q) => q.id === requestID);
+    const c = question?.workspaceId
+      ? options.routing.client(question.workspaceId)
+      : options.routing.active();
     if (!c || questionReplyBusy()) return;
 
     setQuestionReplyBusy(true);
@@ -1304,7 +1379,11 @@ export function createSessionStore(options: {
   }
 
   async function rejectQuestion(requestID: string) {
-    const c = options.routing.active();
+    const question = allPendingQuestions().find((q) => q.id === requestID)
+      ?? store.pendingQuestions.find((q) => q.id === requestID);
+    const c = question?.workspaceId
+      ? options.routing.client(question.workspaceId)
+      : options.routing.active();
     if (!c || questionReplyBusy()) return;
 
     setQuestionReplyBusy(true);
@@ -1377,6 +1456,14 @@ export function createSessionStore(options: {
     if (id) {
       const scoped = store.pendingQuestions.find((q) => q.sessionID === id) ?? null;
       if (scoped) return scoped;
+      const scopedFromAnyWorkspace = allPendingQuestions().find((q) => q.sessionID === id) ?? null;
+      if (scopedFromAnyWorkspace) return scopedFromAnyWorkspace;
+    }
+    const all = allPendingQuestions();
+    if (all.length > 0) {
+      const activeWsId = options.routing.activeWorkspaceId();
+      const fromActive = all.find((q) => q.workspaceId === activeWsId);
+      return fromActive ?? all[0];
     }
     return store.pendingQuestions[0] ?? null;
   });
@@ -2286,7 +2373,9 @@ export function createSessionStore(options: {
     loadWorkspaceSnapshot,
     clearWorkspaceSnapshot,
     allPendingPermissions,
+    allPendingQuestions,
     pendingPermissionCountByWs,
     pendingPermissionsByWs,
+    pendingQuestionsByWs,
   };
 }

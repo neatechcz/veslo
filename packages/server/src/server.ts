@@ -5744,7 +5744,7 @@ function createRoutes(
         sessionId,
         workspaceId: workspace.id,
         messages: Array.isArray(messages) ? messages : [],
-      }),
+      }, { workspaceRoot: workspace.path }),
     );
   });
 

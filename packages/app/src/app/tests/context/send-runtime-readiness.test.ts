@@ -309,8 +309,37 @@ test("local runtime readiness reflects recovery in active UI only for the active
   assert.equal(preflight.runtimeHealthOk, true);
   assert.deepEqual(engineReadyValues, [false]);
   assert.deepEqual(sseConnectedValues, [false]);
-  assert.deepEqual(busyValues, [true]);
-  assert.deepEqual(busyLabels, ["status.connecting"]);
+  assert.deepEqual(busyValues, [true, false]);
+  assert.deepEqual(busyLabels, ["status.connecting", null]);
+});
+
+test("local runtime readiness clears active busy state after successful recovery", async () => {
+  const { readiness, clients, ensureEngineCalls, busyValues, busyLabels } =
+    createHarness({
+      ensureEngineForWorkspace: async (workspaceId?: string) => {
+        ensureEngineCalls.push(workspaceId);
+        clients.set("active", createClient("active-recovered"));
+        return true;
+      },
+    });
+  clients.set(
+    "active",
+    createClient("active-stale", async () => {
+      throw new Error("ECONNREFUSED");
+    }),
+  );
+
+  assert.equal(
+    await readiness.ensureLocalRuntimeReachableForSend("replaceUserMessage", {
+      traceId: "trace-active-recovery-cleanup",
+      runtimeHealthOk: false,
+    }),
+    true,
+  );
+
+  assert.deepEqual(ensureEngineCalls, [undefined]);
+  assert.deepEqual(busyValues, [true, false]);
+  assert.deepEqual(busyLabels, ["status.connecting", null]);
 });
 
 test("local runtime readiness classifies circular non-Error endpoint failures through the injected serializer", async () => {

@@ -367,7 +367,78 @@ test("absolute system paths outside workspace root are filtered from file artifa
   assert.deepEqual(families.map(familyLabel), ["Files"]);
   const filesFamily = families[0] as Record<string, unknown>;
   const paths = familyItems(filesFamily).map((item) => String((item as Record<string, unknown>).path ?? ""));
-  assert.deepEqual(paths, ["/Users/vaclavsoukup/AI agent projects/Veslo/packages/app/src/app/pages/session.tsx"]);
+  assert.deepEqual(paths, ["packages/app/src/app/pages/session.tsx"]);
+});
+
+test("maps WSL and host absolute server artifact paths to workspace-relative file rows", () => {
+  const families = resolveArtifactFamilies({
+    serverArtifacts: [
+      artifact({
+        id: "wsl-workspace-file",
+        family: "files",
+        kind: "file_output",
+        status: "updated",
+        title: "changed.ts",
+        path: "/workspace/src/changed.ts",
+        timestamp: 30,
+      }),
+      artifact({
+        id: "wsl-mount-file",
+        family: "files",
+        kind: "file_discovered",
+        status: "scanned",
+        title: "opened.md",
+        path: "/mnt/c/Users/me/project/docs/opened.md",
+        timestamp: 20,
+      }),
+      artifact({
+        id: "host-file",
+        family: "files",
+        kind: "file_discovered",
+        status: "scanned",
+        title: "host.ts",
+        path: "C:/Users/me/project/src/host.ts",
+        timestamp: 10,
+      }),
+    ],
+    preferServerArtifacts: true,
+    workspaceRoot: "C:/Users/me/project",
+  });
+
+  assert.deepEqual(families.map(familyLabel), ["Files"]);
+  const filesFamily = families[0] as Record<string, unknown>;
+  const paths = familyItems(filesFamily).map((item) => String((item as Record<string, unknown>).path ?? "")).sort();
+  assert.deepEqual(paths, ["docs/opened.md", "src/changed.ts", "src/host.ts"]);
+});
+
+test("maps WSL paths in legacy fallback artifacts", () => {
+  const families = resolveArtifactFamilies({
+    legacyArtifacts: [
+      {
+        id: "legacy-wsl",
+        name: "changed.ts",
+        path: "/workspace/src/changed.ts",
+        kind: "file",
+        fileInteraction: "modified",
+      },
+      {
+        id: "legacy-mount",
+        name: "opened.md",
+        path: "/mnt/c/Users/me/project/docs/opened.md",
+        kind: "file",
+        fileInteraction: "opened",
+      },
+    ],
+    workspaceRoot: "C:/Users/me/project",
+  });
+
+  assert.deepEqual(families.map(familyLabel), ["Files"]);
+  const filesFamily = families[0] as Record<string, unknown>;
+  const rows = fileRows(filesFamily).sort((left, right) => left.path.localeCompare(right.path));
+  assert.deepEqual(rows, [
+    { kind: "file_discovered", path: "docs/opened.md", fileInteraction: "opened" },
+    { kind: "file_output", path: "src/changed.ts", fileInteraction: "modified" },
+  ]);
 });
 
 test("technical config and instruction files are filtered in fallback data", () => {

@@ -71,6 +71,7 @@ test("pending draft controller reopens an existing private draft without creatin
         workspace: {
           activeWorkspaceId: () => "scratch-1",
           activeWorkspaceDisplay: () => ({ id: "scratch-1", directory: "C:/scratch-1", path: "C:/scratch-1" }),
+          workspaces: () => [{ id: "scratch-1", directory: "C:/scratch-1", path: "C:/scratch-1" }],
           activateWorkspace: async (workspaceId) => {
             activatedWorkspaces.push(workspaceId);
             return true;

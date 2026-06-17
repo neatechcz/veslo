@@ -330,6 +330,11 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         targetWorkspaceId: targetWorkspaceId || null,
       });
       if (preflight) preflight.runtimeHealthOk = true;
+      if (targetIsActiveWorkspace) {
+        deps.setBusy(false);
+        deps.setBusyLabel(null);
+        deps.setBusyStartedAt(null);
+      }
       return true;
     } catch (error) {
       deps.recordSendTrace(`${reason}:runtime-recovery-error`, {

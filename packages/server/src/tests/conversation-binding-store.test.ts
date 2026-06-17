@@ -202,6 +202,44 @@ describe("conversation binding store", () => {
     expect(sessions.map((session) => session.engineSessionId)).toEqual(["sess-new", "sess-old"]);
   });
 
+  test("falls back to all workspace sessions when the directory form does not match", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-bindings-dir-fallback-"));
+    tempDirs.push(dataDir);
+    const store = createConversationBindingStore({ dataDir, now: () => 1_000 });
+
+    // Bound under the engine's WSL path form...
+    await store.bindOpenCodeSession({
+      workspaceId: "ws-a",
+      directory: "/mnt/c/Users/jajse/Desktop/test-repo/test-repo2",
+      engineSessionId: "sess-wsl",
+      title: "WSL",
+      updatedAt: 30,
+    });
+
+    // ...but browse passes the Windows path form, which the directory variants
+    // do NOT translate to /mnt/c. A strict directory match would return nothing
+    // and hide the conversation; the workspace-wide fallback must still list it.
+    const sessions = await store.listOpenCodeSessions({
+      workspaceId: "ws-a",
+      directory: "C:\\Users\\jajse\\Desktop\\test-repo\\test-repo2",
+    });
+
+    expect(sessions.map((session) => session.engineSessionId)).toEqual(["sess-wsl"]);
+
+    // Isolation: a different workspace must not be pulled in by the fallback.
+    await store.bindOpenCodeSession({
+      workspaceId: "ws-b",
+      directory: "/mnt/c/other",
+      engineSessionId: "sess-other-ws",
+      updatedAt: 40,
+    });
+    const isolated = await store.listOpenCodeSessions({
+      workspaceId: "ws-a",
+      directory: "C:\\Users\\jajse\\Desktop\\test-repo\\test-repo2",
+    });
+    expect(isolated.map((session) => session.engineSessionId)).toEqual(["sess-wsl"]);
+  });
+
   test("orders same-timestamp sessions deterministically for parallel conversation starts", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-bindings-stable-order-"));
     tempDirs.push(dataDir);

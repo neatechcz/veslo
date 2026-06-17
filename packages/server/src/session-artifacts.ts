@@ -99,6 +99,7 @@ export function deriveLatestRunArtifacts(source: SessionArtifactSource, options:
     workspaceId,
     runId: latestRun.runId ?? "latest-run",
     messages: latestRun.messages,
+    workspaceRoot: options.workspaceRoot,
     mcpServerNames: new Set((options.mcpServerNames ?? []).map((name) => name.trim().toLowerCase()).filter(Boolean)),
   });
 
@@ -140,6 +141,7 @@ function deriveArtifactsForRun(input: {
   workspaceId: string;
   runId: string;
   messages: SessionArtifactMessage[];
+  workspaceRoot?: string;
   mcpServerNames: Set<string>;
 }): SessionArtifactItem[] {
   const byKey = new Map<string, SessionArtifactItem>();
@@ -162,6 +164,7 @@ function deriveArtifactsForRun(input: {
         part,
         toolName,
         timestamp,
+        workspaceRoot: input.workspaceRoot,
         mcpServerNames: input.mcpServerNames,
       });
 
@@ -190,6 +193,7 @@ function classifyToolPart(input: {
   part: SessionArtifactPart;
   toolName: string;
   timestamp: number;
+  workspaceRoot?: string;
   mcpServerNames: Set<string>;
 }): SessionArtifactItem[] {
   const items: SessionArtifactItem[] = [];
@@ -223,7 +227,7 @@ function classifyToolPart(input: {
     );
   }
 
-  const soulKinds = resolveSoulKinds(input.part, state, input.toolName);
+  const soulKinds = resolveSoulKinds(input.part, state, input.toolName, input.workspaceRoot);
   if (soulKinds.has("soul_memory_used")) {
     items.push(
         createArtifact({
@@ -251,7 +255,7 @@ function classifyToolPart(input: {
 
   if (FILE_OUTPUT_TOOLS.has(input.toolName)) {
     for (const path of resolveFileOutputPaths(input.part, state, input.toolName)) {
-      const normalizedPath = normalizeArtifactPath(path);
+      const normalizedPath = normalizeArtifactPath(path, { workspaceRoot: input.workspaceRoot });
       if (!normalizedPath || shouldDropGenericFileArtifact(normalizedPath) || isSemanticSoulPath(normalizedPath)) continue;
       items.push(
         createArtifact({
@@ -269,7 +273,7 @@ function classifyToolPart(input: {
 
   if (FILE_OPEN_TOOLS.has(input.toolName)) {
     for (const path of resolveFileOpenedPaths(input.part, state)) {
-      const normalizedPath = normalizeArtifactPath(path);
+      const normalizedPath = normalizeArtifactPath(path, { workspaceRoot: input.workspaceRoot });
       if (!normalizedPath || shouldDropGenericFileArtifact(normalizedPath) || isSemanticSoulPath(normalizedPath)) continue;
       items.push(
         createArtifact({
@@ -335,7 +339,12 @@ function resolveMcpTitle(part: SessionArtifactPart, state: ToolStateLike, server
   return firstNonEmptyString([part.title, state.title]) ?? MCP_SERVER_LABELS[serverName] ?? humanizeIdentifier(serverName);
 }
 
-function resolveSoulKinds(part: SessionArtifactPart, state: ToolStateLike, toolName: string): Set<SessionArtifactKind> {
+function resolveSoulKinds(
+  part: SessionArtifactPart,
+  state: ToolStateLike,
+  toolName: string,
+  workspaceRoot?: string,
+): Set<SessionArtifactKind> {
   const kinds = new Set<SessionArtifactKind>();
   const titles = [
     part.title,
@@ -353,7 +362,7 @@ function resolveSoulKinds(part: SessionArtifactPart, state: ToolStateLike, toolN
   if (toolName === "soul.heartbeat" || titles.includes("soul-heartbeat")) kinds.add("heartbeat_used");
 
   for (const rawPath of collectPathCandidates(part, state)) {
-    const path = normalizeArtifactPath(rawPath);
+    const path = normalizeArtifactPath(rawPath, { workspaceRoot });
     if (!path) continue;
     if (path === ".opencode/soul.md") kinds.add("soul_memory_used");
     if (path === ".opencode/soul/heartbeat.jsonl") kinds.add("heartbeat_used");
@@ -548,7 +557,91 @@ function isSemanticSoulPath(path: string): boolean {
   return path === ".opencode/soul.md" || path === ".opencode/soul/heartbeat.jsonl";
 }
 
-function normalizeArtifactPath(input: string): string | null {
+function sanitizeRelativeArtifactPath(value: string): string | null {
+  const normalized = value.replace(/\\/g, "/").replace(/^\.\/+/, "").replace(/\/+$/, "");
+  const parts = normalized.split("/").filter(Boolean);
+  if (!parts.length) return null;
+  if (parts.some((part) => part === "." || part === "..")) return null;
+  return parts.join("/");
+}
+
+function normalizeWindowsExtendedPrefix(value: string): string {
+  if (/^\/\/\?\/UNC\//i.test(value)) return `//${value.slice("//?/UNC/".length)}`;
+  if (/^\/\/\?\//i.test(value)) return value.slice("//?/".length);
+  return value;
+}
+
+function normalizeComparablePath(value: string): string {
+  return normalizeWindowsExtendedPrefix(value.trim().replace(/\\/g, "/")).replace(/\/+$/, "");
+}
+
+function isWindowsLikePath(value: string): boolean {
+  return /^[A-Za-z]:\//.test(value) || value.startsWith("//");
+}
+
+function relativeFromRoot(value: string, root: string): string | null {
+  const candidate = normalizeComparablePath(value);
+  const workspaceRoot = normalizeComparablePath(root);
+  if (!candidate || !workspaceRoot) return null;
+
+  const caseInsensitive = isWindowsLikePath(candidate) || isWindowsLikePath(workspaceRoot);
+  const candidateKey = caseInsensitive ? candidate.toLowerCase() : candidate;
+  const rootKey = caseInsensitive ? workspaceRoot.toLowerCase() : workspaceRoot;
+  if (candidateKey === rootKey) return null;
+  if (rootKey === "/" && candidate.startsWith("/")) {
+    return sanitizeRelativeArtifactPath(candidate.slice(1));
+  }
+  if (!candidateKey.startsWith(`${rootKey}/`)) return null;
+  return sanitizeRelativeArtifactPath(candidate.slice(workspaceRoot.length + 1));
+}
+
+function wslMountPathToWindowsPath(value: string): string | null {
+  const normalized = value.trim().replace(/\\/g, "/");
+  const match = normalized.match(/^\/mnt\/([A-Za-z])(?:\/(.*))?$/);
+  if (!match) return null;
+  const drive = match[1]?.toUpperCase();
+  if (!drive) return null;
+  const rest = match[2]?.trim() ?? "";
+  return rest ? `${drive}:/${rest}` : `${drive}:/`;
+}
+
+function relativeFromWorkspaceAlias(value: string): string | null {
+  const normalized = value.trim().replace(/\\/g, "/");
+  if (normalized === "/workspace" || normalized === "workspace") return null;
+  if (normalized.startsWith("/workspace/")) {
+    return sanitizeRelativeArtifactPath(normalized.slice("/workspace/".length));
+  }
+  if (normalized.startsWith("workspace/")) {
+    return sanitizeRelativeArtifactPath(normalized.slice("workspace/".length));
+  }
+  return null;
+}
+
+function workspaceRelativeArtifactPath(input: string, workspaceRoot?: string): string | null {
+  const raw = input.trim().replace(/\\/g, "/");
+  if (!raw) return null;
+
+  const aliasRelative = relativeFromWorkspaceAlias(raw);
+  if (aliasRelative) return aliasRelative;
+
+  const root = workspaceRoot?.trim() ?? "";
+  if (!root) return null;
+
+  const hostRelative = relativeFromRoot(raw, root);
+  if (hostRelative) return hostRelative;
+
+  const windowsPath = wslMountPathToWindowsPath(raw);
+  if (windowsPath) {
+    return relativeFromRoot(windowsPath, root);
+  }
+
+  return null;
+}
+
+function normalizeArtifactPath(input: string, options: { workspaceRoot?: string } = {}): string | null {
+  const relative = workspaceRelativeArtifactPath(input, options.workspaceRoot);
+  if (relative) return relative;
+
   const raw = input.trim().replace(/\\/g, "/");
   if (!raw) return null;
 

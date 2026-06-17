@@ -797,7 +797,7 @@ test("keeps windows workspace containment case-insensitive", () => {
   });
 
   assert.equal(evidence.length, 1);
-  assert.equal(evidence[0]?.src, "file:///c:/users/me/project/result.png");
+  assert.equal(evidence[0]?.src, "file:///C:/Users/me/project/result.png");
 });
 
 test("keeps absolute file evidence inside workspace root", () => {
@@ -1093,6 +1093,42 @@ test("formats windows workspace file urls for relative created paths", () => {
 
   assert.equal(evidence.length, 1);
   assert.equal(evidence[0]?.src, "file:///C:/Users/me/project/artifacts/result.png");
+});
+
+test("formats WSL sandbox and mount created paths against the host workspace root", () => {
+  const evidence = buildMediaEvidenceForParts({
+    sourceId: "tool:p3e-wsl",
+    workspaceRoot: "C:/Users/me/project",
+    parts: [
+      part("p3e-wsl-workspace", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "/workspace/artifacts/result.png" } },
+      }),
+      part("p3e-wsl-mount", {
+        type: "tool",
+        tool: "write",
+        state: { status: "completed", input: { filePath: "/mnt/c/Users/me/project/artifacts/from-mount.webp" } },
+      }),
+    ],
+  });
+
+  assert.equal(evidence.length, 2);
+  assert.deepEqual(
+    evidence.map((item) => ({ path: item.path, src: item.src, status: item.status })),
+    [
+      {
+        path: "artifacts/result.png",
+        src: "file:///C:/Users/me/project/artifacts/result.png",
+        status: "available",
+      },
+      {
+        path: "artifacts/from-mount.webp",
+        src: "file:///C:/Users/me/project/artifacts/from-mount.webp",
+        status: "available",
+      },
+    ],
+  );
 });
 
 test("keeps relative created paths missing when workspace root is not absolute", () => {

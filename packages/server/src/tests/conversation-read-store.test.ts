@@ -105,6 +105,31 @@ describe("conversation read store DB path resolution", () => {
     expect(transcript.partsByMessageId["msg-1"]?.length).toBe(1);
   });
 
+  test("reports unavailable (not empty) when the session is not found under the directory", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversation-read-not-found-"));
+    tempDirs.push(workspaceRoot);
+    const dbPath = join(workspaceRoot, "workspace-opencode.db");
+    seedDb(dbPath, workspaceRoot);
+
+    const store = createConversationReadStore();
+    const transcript = await store.getTranscript({
+      workspaceId: "ws-a",
+      sessionId: "sess-does-not-exist",
+      limit: 10,
+      directory: workspaceRoot,
+      workspace: {
+        id: "ws-a",
+        path: workspaceRoot,
+        opencodeDbPath: dbPath,
+      },
+    });
+
+    // Not found under directory must be reported as unavailable so the UI does
+    // not render a misleading empty transcript as a completed read.
+    expect(transcript.source).toBe("unavailable");
+    expect(transcript.messages.length).toBe(0);
+  });
+
   test("matches Windows directory variants when reading OpenCode sqlite", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversation-read-windows-path-"));
     tempDirs.push(workspaceRoot);

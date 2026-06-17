@@ -669,6 +669,7 @@ export type PendingPermission = ApiPermissionRequest & {
 
 export type PendingQuestion = QuestionRequest & {
   receivedAt: number;
+  workspaceId?: string;
 };
 
 export type TodoItem = {

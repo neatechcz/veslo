@@ -405,17 +405,29 @@ export function createConversationBindingStore(options?: {
     async listOpenCodeSessions(input) {
       const workspaceId = normalizeText(input.workspaceId);
       const directory = normalizeText(input.directory);
-      if (!workspaceId || !directory) return [];
-      const { directories, lowerDirectories } = directoryLookupArgs(directory);
+      if (!workspaceId) return [];
       const limit =
         Number.isFinite(input.limit ?? NaN) && (input.limit ?? 0) > 0
           ? Math.min(Math.floor(input.limit as number), 500)
           : 200;
-      const lookupArgCount = directories.length + lowerDirectories.length;
-      const engineIndex = lookupArgCount + 2;
-      const limitIndex = lookupArgCount + 3;
+
+      const listForWorkspace = (db: Database): ConversationBinding[] =>
+        db.query<ConversationBindingRow, [string, string, number]>(
+          `SELECT * FROM conversation_binding
+           WHERE workspace_id = ?1 AND engine = ?2
+           ORDER BY updated_at DESC, created_at DESC, engine_session_id ASC
+           LIMIT ?3`,
+        ).all(workspaceId, ENGINE, limit).map(rowToBinding);
 
       return withDb((db) => {
+        if (!directory) {
+          return listForWorkspace(db);
+        }
+
+        const { directories, lowerDirectories } = directoryLookupArgs(directory);
+        const lookupArgCount = directories.length + lowerDirectories.length;
+        const engineIndex = lookupArgCount + 2;
+        const limitIndex = lookupArgCount + 3;
         const rows = db.query<ConversationBindingRow, Array<string | number>>(
           `SELECT * FROM conversation_binding
            WHERE workspace_id = ?1
@@ -424,7 +436,16 @@ export function createConversationBindingStore(options?: {
            ORDER BY updated_at DESC, created_at DESC, engine_session_id ASC
            LIMIT ?${limitIndex}`,
         ).all(workspaceId, ...directories, ...lowerDirectories, ENGINE, limit);
-        return rows.map(rowToBinding);
+        if (rows.length > 0) {
+          return rows.map(rowToBinding);
+        }
+
+        // Workspace-wide fallback: a local workspace maps to one directory, but
+        // the stored directory form (Windows `C:\…` vs WSL `/mnt/c/…` vs the
+        // engine's own path) can differ from the browse path. Don't hide the
+        // entire sidebar on a path-form mismatch — return everything bound to
+        // this workspace so the conversation still lists.
+        return listForWorkspace(db);
       });
     },
 

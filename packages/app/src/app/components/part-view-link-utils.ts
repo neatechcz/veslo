@@ -1,3 +1,5 @@
+import { workspaceArtifactPathToRelative } from "../utils/workspace-path";
+
 export type LinkType = "url" | "file";
 
 export type TextSegment =
@@ -293,6 +295,12 @@ const normalizeRelativePath = (relativePath: string, workspaceRoot: string) => {
   return normalized;
 };
 
+const normalizeArtifactAliasPath = (path: string, workspaceRoot: string): string | null => {
+  const relative = workspaceArtifactPathToRelative(path, workspaceRoot);
+  if (!relative) return path;
+  return normalizeRelativePath(relative, workspaceRoot);
+};
+
 export const normalizeFilePath = (href: string, workspaceRoot: string): string | null => {
   const strippedHref = stripFileReferenceSuffix(href);
   if (!strippedHref) return null;
@@ -304,20 +312,25 @@ export const normalizeFilePath = (href: string, workspaceRoot: string): string |
       const raw = decodeURIComponent(parsed.pathname || "");
       if (!raw) return null;
       if (/^\/[A-Za-z]:\//.test(raw)) {
-        return raw.slice(1);
+        return normalizeArtifactAliasPath(raw.slice(1), workspaceRoot);
       }
       if (parsed.hostname && !parsed.pathname.startsWith(`/${parsed.hostname}`) && !raw.startsWith("/")) {
-        return `/${parsed.hostname}${raw}`;
+        return normalizeArtifactAliasPath(`/${parsed.hostname}${raw}`, workspaceRoot);
       }
-      return raw;
+      return normalizeArtifactAliasPath(raw, workspaceRoot);
     } catch {
       const raw = decodeURIComponent(href.replace(/^file:\/\//, ""));
       if (!raw) return null;
-      return raw;
+      return normalizeArtifactAliasPath(raw, workspaceRoot);
     }
   }
 
   const trimmed = strippedHref.trim();
+  const artifactRelative = workspaceArtifactPathToRelative(trimmed, workspaceRoot);
+  if (artifactRelative) {
+    return normalizeRelativePath(artifactRelative, workspaceRoot);
+  }
+
   if (isRelativeFilePath(trimmed) || isBareRelativeFilePath(trimmed) || isWorkspaceRelativeFilePath(trimmed)) {
     if (!workspaceRoot) return null;
     return normalizeRelativePath(trimmed, workspaceRoot);

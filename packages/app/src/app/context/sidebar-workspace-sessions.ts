@@ -5,7 +5,10 @@ import type { Session } from "@opencode-ai/sdk/v2/client";
 import { promoteStoredProjectOrderKey } from "../components/session/workspace-session-list-prefs";
 import { createClient, unwrap, type OpencodeAuth } from "../lib/opencode";
 import { recordPerfLog } from "../lib/perf-log";
-import { shouldSyncSidebarFromSessionStore } from "../lib/sidebar-session-sync-guard";
+import {
+  shouldPreserveSidebarRowsOnRead,
+  shouldSyncSidebarFromSessionStore,
+} from "../lib/sidebar-session-sync-guard";
 import { deriveSidebarRowsFromSessionStore } from "../lib/sidebar-session-store-sync";
 import {
   parseVesloWorkspaceIdFromUrl,
@@ -336,6 +339,32 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
     });
   };
 
+  // Apply a read-API list result without ever destroying browsable rows. An
+  // unavailable read (server unreachable, workspace not yet registered, sandbox
+  // path mismatch) or a transient empty result must not wipe rows the user can
+  // still open — that is the "conversation disappeared and I can't get back"
+  // symptom. Only write rows when we actually read something, or when the
+  // workspace genuinely has no rows yet.
+  const applyWorkspaceSidebarReadResult = (input: {
+    workspaceId: string;
+    items: SidebarSessionItem[];
+    available: boolean;
+  }) => {
+    const id = input.workspaceId.trim();
+    if (!id) return;
+    const existingRows = untrack(() => sidebarSessionsByWorkspaceId()[id] ?? []);
+    const preserveExisting = shouldPreserveSidebarRowsOnRead({
+      available: input.available,
+      incomingCount: input.items.length,
+      existingCount: existingRows.length,
+    });
+    if (!preserveExisting) {
+      setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [id]: input.items }));
+    }
+    setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" as const }));
+    setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
+  };
+
   const isSidebarRuntimeUnavailableError = (message: string) =>
     /engine_not_running|Failed to fetch|error sending request for url|Request timed out|ECONN|connection refused|upstream status (?:401|404|502|503)|status (?:401|404|502|503)|Invalid bearer token|unauthorized/i.test(
       message,
@@ -350,9 +379,11 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
     const { visible: items } = partitionVesloUtilitySessions(
       result.items.map(options.applyPendingInitialSessionTitle),
     );
-    setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [workspaceId]: items }));
-    setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [workspaceId]: "ready" as const }));
-    setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [workspaceId]: null }));
+    applyWorkspaceSidebarReadResult({
+      workspaceId,
+      items,
+      available: result.source !== "unavailable",
+    });
     setSidebarSessionHasMoreByWorkspaceId((prev) => ({ ...prev, [workspaceId]: false }));
     options.wsDebug("sidebar:conversation-read", {
       id: workspaceId,
@@ -726,6 +757,7 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
   };
 
   let sidebarBulkRefreshInFlight: Promise<void> | null = null;
+  const sidebarReadyEmptyRetryKeyByWorkspaceId: Record<string, string> = {};
 
   const refreshAllSidebarWorkspaceSessions = async (prioritizeWorkspaceId?: string | null) => {
     const existingBulkRefresh = sidebarBulkRefreshInFlight;
@@ -843,7 +875,21 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
     if (!id) return;
     if (!options.engineReady()) return;
     const status = sidebarSessionStatusByWorkspaceId()[id] ?? "idle";
-    if (status !== "idle") return;
+    if (status === "idle") {
+      refreshSidebarWorkspaceSessions(id).catch(e => options.reportError(e, "sidebar.refreshSessions"));
+      return;
+    }
+    if (status !== "ready") return;
+    const existingRows = sidebarSessionsByWorkspaceId()[id] ?? [];
+    if (existingRows.length > 0) {
+      delete sidebarReadyEmptyRetryKeyByWorkspaceId[id];
+      return;
+    }
+    const config = resolveSidebarClientConfig(id);
+    if (!config?.baseUrl) return;
+    const retryKey = [config.baseUrl, config.directory, options.workspaceStore.engine()?.projectDir ?? ""].join("::");
+    if (sidebarReadyEmptyRetryKeyByWorkspaceId[id] === retryKey) return;
+    sidebarReadyEmptyRetryKeyByWorkspaceId[id] = retryKey;
     refreshSidebarWorkspaceSessions(id).catch(e => options.reportError(e, "sidebar.refreshSessions"));
   });
 
@@ -1012,6 +1058,7 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
     publishRegisteredWorkspaceToSidebar,
     markWorkspaceSidebarLoading,
     replaceWorkspaceSidebarSessions,
+    applyWorkspaceSidebarReadResult,
     removeSessionFromWorkspaceSidebar,
     prependSessionToWorkspaceSidebar,
     materializePendingSessionInWorkspaceSidebar,

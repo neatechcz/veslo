@@ -120,6 +120,26 @@ const normalizeTimestamp = (value: unknown, fallback: number) =>
 const readTimeRecord = (value: unknown): Record<string, unknown> =>
   isRecord(value) ? value : {};
 
+// Merge two summary lists, deduped by engine session id, preserving order.
+// `primary` (the sandbox read, already in its own order) comes first and wins
+// on conflict; owned-store entries the sandbox did not return are appended in
+// their existing newest-first order. Order is intentionally preserved (not
+// re-sorted) so the live-read ordering and existing callers stay stable.
+const mergeConversationSummaries = (
+  primary: ConversationSummary[],
+  secondary: ConversationSummary[],
+): ConversationSummary[] => {
+  const seen = new Set<string>();
+  const merged: ConversationSummary[] = [];
+  for (const item of [...primary, ...secondary]) {
+    const id = normalizeText(item.id);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    merged.push(item);
+  }
+  return merged;
+};
+
 export function createConversationService(options: {
   readStore: ConversationReadStore;
   bindingStore: ConversationBindingStore;
@@ -276,14 +296,18 @@ export function createConversationService(options: {
         directory: input.directory,
         workspace: input.workspace,
       });
-      const persistedBindings = async () => listPersistedBindings(input.workspace.id, input.directory);
-      const items = result.source === "sqlite"
-        ? result.items.length > 0
-          ? await attachConversationBindings(input.workspace.id, input.directory, result.items)
-          : await persistedBindings()
-        : result.items.length > 0
-          ? result.items
-          : await persistedBindings();
+      // Sandbox-read items get persisted into our owned binding store
+      // (tunnel-in) by attachConversationBindings. The owned store is our
+      // authoritative, sandbox-independent source. Return the UNION so a
+      // partial / empty / unavailable sandbox read can never shrink the
+      // sidebar below what we already own — a conversation we have seen once
+      // keeps listing even when the sandbox DB is unreachable or its stored
+      // directory form does not match the browse path.
+      const sandboxItems = result.source === "sqlite" && result.items.length > 0
+        ? await attachConversationBindings(input.workspace.id, input.directory, result.items)
+        : result.items;
+      const ownedItems = await listPersistedBindings(input.workspace.id, input.directory);
+      const items = mergeConversationSummaries(sandboxItems, ownedItems);
       return { ...result, items };
     },
 

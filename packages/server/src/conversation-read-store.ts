@@ -346,7 +346,11 @@ export function createConversationReadStore(): ConversationReadStore {
             )} LIMIT 1`,
           )
           .get(sessionId, ...directories, ...lowerDirectories);
-        if (!session) return { ...empty, source: "sqlite" };
+        // Session row not found under this directory (e.g. the stored
+        // directory form differs from the browse path). This is "could not
+        // locate", not "empty conversation" — report unavailable so the app
+        // does not render a misleading empty transcript as a finished read.
+        if (!session) return { ...empty, source: "unavailable" };
 
         const messageRows = db
           .query<MessageRow, [string, number]>(

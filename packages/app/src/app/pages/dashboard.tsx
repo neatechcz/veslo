@@ -700,10 +700,10 @@ export default function DashboardView(props: DashboardViewProps) {
   });
 
   const runtimeAvailableWithoutClient = createMemo(() => {
-    if (props.clientConnected) return false;
-    if (props.vesloServerStatus !== "connected") return false;
-    if (props.activeWorkspaceDisplay.workspaceType !== "local") return false;
-    return (props.workspaceConnectionStateById[props.activeWorkspaceId]?.status ?? "idle") === "connected";
+    void props.clientConnected;
+    void props.vesloServerStatus;
+    void props.activeWorkspaceDisplay;
+    return false;
   });
 
   const soulNavIconClass = () => (soulModeEnabled() ? "soul-nav-icon-active" : "");
@@ -744,7 +744,8 @@ export default function DashboardView(props: DashboardViewProps) {
     if (!id) return;
     void (async () => {
       if (id !== props.activeWorkspaceId) {
-        await Promise.resolve(props.activateWorkspace(id, { origin: "dashboard:open-soul-workspace" }));
+        const activated = await Promise.resolve(props.activateWorkspace(id, { origin: "dashboard:open-soul-workspace" }));
+        if (!activated) return;
       }
       props.setTab("soul");
     })();
