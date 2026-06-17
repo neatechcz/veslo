@@ -54,6 +54,7 @@ const schema = z.object({
   DEN_LOG_MASTER_KEY: z.string().optional(),
   DEN_LOG_MASTER_KEY_VERSION: z.string().optional(),
   DEN_LOG_RETENTION_DAYS: z.string().optional(),
+  DEN_AI_GATEWAY_INTERNAL_TOKEN: z.string().optional(),
   MANAGED_AI_DATABASE_URL: z.string().optional(),
   MANAGED_AI_SECRET_KEY: z.string().optional(),
   MANAGED_AI_OPENAI_CLIENT_ID: z.string().optional(),
@@ -178,6 +179,7 @@ export function parseEnv(input: NodeJS.ProcessEnv = process.env) {
       masterKeyVersion: parsed.DEN_LOG_MASTER_KEY_VERSION?.trim() || null,
       retentionDays: parsePositiveNumber(parsed.DEN_LOG_RETENTION_DAYS, 30, "DEN_LOG_RETENTION_DAYS"),
     },
+    aiGatewayInternalToken: parsed.DEN_AI_GATEWAY_INTERNAL_TOKEN?.trim() || null,
     managedAi: parseManagedAiEnv(parsed),
   }
 }

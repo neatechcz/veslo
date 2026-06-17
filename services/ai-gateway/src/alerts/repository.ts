@@ -3,6 +3,7 @@ export type AlertRecord = {
   title: string;
   severity: "critical" | "high" | "medium";
   source: string;
+  reason: string | null;
   status: "active" | "acknowledged" | "resolved";
   credentialId: string | null;
   affectedSessions: number;

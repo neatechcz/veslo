@@ -41,13 +41,15 @@ function createBinding(overrides: Partial<CredentialBinding> = {}): CredentialBi
 }
 
 function createProxyApp(input: {
-  secret?: StoredSecret;
+  binding?: CredentialBinding | null;
+  secret?: StoredSecret | null;
   transport?: { chatCompletions(transportInput: unknown): Promise<{ status: number; body: unknown; headers?: Record<string, string> }> };
   transportCalls?: unknown[];
   recordUsageCalls?: unknown[];
   leaseScopes?: unknown[];
+  recordProviderFailureCalls?: unknown[];
 }) {
-  const binding = createBinding();
+  const binding = input.binding === undefined ? createBinding() : input.binding;
   const credential = createCredentialRecord();
   return createApp({
     proxy: {
@@ -99,17 +101,25 @@ function createProxyApp(input: {
         },
         async markCredentialState() {},
       },
+      alertRepository: {
+        async listAlerts() {
+          return [];
+        },
+        async recordProviderFailure(alertInput: unknown) {
+          input.recordProviderFailureCalls?.push(alertInput);
+        },
+      },
       secrets: {
         async put() {
           throw new Error("unused");
         },
         async get(secretRef: string) {
           assert.equal(secretRef, "secret_custom_1");
-          return input.secret ?? {
+          return input.secret === undefined ? {
             kind: "openai_compatible_api_key",
             apiKey: "sk-compatible",
             baseUrl: "https://custom.example.test/v1",
-          };
+          } : input.secret;
         },
         async replace() {
           throw new Error("unused");
@@ -250,8 +260,50 @@ test("POST /providers/openai_compatible/v1/chat/completions forwards assigned cu
   }
 });
 
-test("openai-compatible proxy sanitizes upstream error bodies", async () => {
+test("openai-compatible proxy records alert when assigned credential binding is unavailable", async () => {
+  const recordProviderFailureCalls: unknown[] = [];
   const app = createProxyApp({
+    binding: null,
+    recordProviderFailureCalls,
+  });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/providers/openai_compatible/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        ...GATEWAY_AUTH_HEADER,
+        "content-type": "application/json",
+        "x-veslo-session-id": "session_custom_missing_1",
+      },
+      body: JSON.stringify({
+        model: "custom-model",
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: "assigned_credential_unavailable" });
+    assert.deepEqual(recordProviderFailureCalls, [
+      {
+        credentialId: "cred_custom_1",
+        provider: "openai_compatible",
+        sessionId: "session_custom_missing_1",
+        reason: "assigned_credential_unavailable",
+      },
+    ]);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("openai-compatible proxy sanitizes upstream error bodies", async () => {
+  const recordProviderFailureCalls: unknown[] = [];
+  const app = createProxyApp({
+    recordProviderFailureCalls,
     transport: {
         async chatCompletions() {
           throw new ProviderTransportError("upstream rejected request with sk-compatible", {
@@ -285,6 +337,14 @@ test("openai-compatible proxy sanitizes upstream error bodies", async () => {
     assert.equal(response.status, 401);
     assert.deepEqual(JSON.parse(responseText), { error: "openai_compatible_upstream_error" });
     assert.equal(responseText.includes("sk-compatible"), false);
+    assert.deepEqual(recordProviderFailureCalls, [
+      {
+        credentialId: "cred_custom_1",
+        provider: "openai_compatible",
+        sessionId: "session_custom_1",
+        reason: "authentication_error",
+      },
+    ]);
   } finally {
     server.close();
     await once(server, "close");

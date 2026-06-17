@@ -12,7 +12,10 @@ import type { ProviderTransportResponse } from "../../providers/transport.js";
 import { ProviderTransportError } from "../../providers/transport.js";
 import { readOpenAiCompatibleUsage } from "../../usage/token-accounting.js";
 import { applyAiAccessPolicy } from "./access-policy.js";
-import { recordProviderProxyFailureAlert } from "./proxy-failure-alert.js";
+import {
+  recordProviderCredentialFailureAlert,
+  recordProviderProxyFailureAlert,
+} from "./proxy-failure-alert.js";
 import { normalizeGatewaySessionId } from "./session-id.js";
 import type { ProxyDependencies } from "../proxy.js";
 
@@ -56,16 +59,37 @@ export function createOpenAiCompatibleProxyRouter(
       ? await resolveAssignedBinding(gatewayAiAccess)
       : null;
     if (gatewayAiAccess && !assignedBinding) {
+      await recordProviderCredentialFailureAlert({
+        alertRepository: deps.alertRepository,
+        credentialId: gatewayAiAccess.credentialId,
+        provider: "openai_compatible",
+        sessionId,
+        reason: "assigned_credential_unavailable",
+      });
       res.status(503).json({ error: "assigned_credential_unavailable" });
       return;
     }
 
     const assignedSecret = assignedBinding ? await loadAssignedSecret(assignedBinding.id) : null;
     if (assignedBinding && !assignedSecret) {
+      await recordProviderCredentialFailureAlert({
+        alertRepository: deps.alertRepository,
+        credentialId: assignedBinding.credentialRecordId,
+        provider: "openai_compatible",
+        sessionId,
+        reason: "assigned_credential_unavailable",
+      });
       res.status(503).json({ error: "assigned_credential_unavailable" });
       return;
     }
     if (assignedSecret && assignedSecret.kind !== "openai_compatible_api_key") {
+      await recordProviderCredentialFailureAlert({
+        alertRepository: deps.alertRepository,
+        credentialId: assignedBinding?.credentialRecordId ?? gatewayAiAccess?.credentialId ?? null,
+        provider: "openai_compatible",
+        sessionId,
+        reason: "invalid_custom_provider_config",
+      });
       res.status(503).json({ error: "invalid_custom_provider_config" });
       return;
     }

@@ -3,7 +3,7 @@ import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
 
-import type { CredentialRecord } from "../src/credentials/repository.js";
+import type { CredentialRecord, MarkCredentialStateInput } from "../src/credentials/repository.js";
 import type { UpstreamAuth } from "../src/credentials/token-broker.js";
 import type { BindingSelector } from "../src/leases/binding-selector.js";
 import { DefaultBindingSelector } from "../src/leases/binding-selector.js";
@@ -496,13 +496,19 @@ test("permanent credential failures call handleUpstreamFailure and retry once", 
 
   const tokenBrokerCalls: Array<{ bindingId: string }> = [];
   const transportCalls: Array<{ upstreamAuth: UpstreamAuth; body: unknown }> = [];
+  const markedStates: MarkCredentialStateInput[] = [];
   const app = createApp({
     proxy: {
       gatewaySessions: createGatewaySessions(),
-      credentials: createCredentialsByBindingId({
-        binding_openai_primary: createCredentialRecord("binding_openai_primary", "openai"),
-        binding_openai_failover: createCredentialRecord("binding_openai_failover", "openai"),
-      }),
+      credentials: {
+        ...createCredentialsByBindingId({
+          binding_openai_alpha: createCredentialRecord("binding_openai_alpha", "openai"),
+          binding_openai_beta: createCredentialRecord("binding_openai_beta", "openai"),
+        }),
+        async markCredentialState(input: MarkCredentialStateInput) {
+          markedStates.push(input);
+        },
+      },
       usageRepository: createNoopUsageRepository(),
       leaseBroker,
       tokenBroker: {
@@ -566,6 +572,13 @@ test("permanent credential failures call handleUpstreamFailure and retry once", 
     });
     assert.equal(leases.rebindCalls, 1);
     assert.equal(failureCalls.length, 1);
+    assert.deepEqual(markedStates, [
+      {
+        credentialRecordId: "cred_binding_openai_alpha",
+        state: "unhealthy",
+        reason: "invalid_api_key",
+      },
+    ]);
     assert.deepEqual(tokenBrokerCalls, [
       { bindingId: "binding_openai_alpha" },
       { bindingId: "binding_openai_beta" },
@@ -983,6 +996,7 @@ test("POST /providers/codex_oauth/v1/chat/completions repairs assigned access be
 });
 
 test("POST /providers/codex_oauth/v1/chat/completions fails when the assigned credential is unavailable", async () => {
+  const recordProviderFailureCalls: unknown[] = [];
   const app = createApp({
     proxy: {
       aiAccess: createCodexAiAccess("cred_codex_missing"),
@@ -1002,6 +1016,14 @@ test("POST /providers/codex_oauth/v1/chat/completions fails when the assigned cr
         },
         async markCredentialState() {},
       } as never,
+      alertRepository: {
+        async listAlerts() {
+          return [];
+        },
+        async recordProviderFailure(input: unknown) {
+          recordProviderFailureCalls.push(input);
+        },
+      },
       secrets: {
         async get() {
           assert.fail("secret store should not run when the assigned credential is unavailable");
@@ -1058,6 +1080,14 @@ test("POST /providers/codex_oauth/v1/chat/completions fails when the assigned cr
 
     assert.equal(response.status, 503);
     assert.deepEqual(await response.json(), { error: "assigned_credential_unavailable" });
+    assert.deepEqual(recordProviderFailureCalls, [
+      {
+        credentialId: "cred_codex_missing",
+        provider: "codex_oauth",
+        sessionId: "session_codex_missing_1",
+        reason: "assigned_credential_unavailable",
+      },
+    ]);
   } finally {
     server.close();
     await once(server, "close");
