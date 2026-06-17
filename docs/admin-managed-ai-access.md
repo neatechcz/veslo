@@ -50,6 +50,14 @@ This flow replaces the old user-managed BYOK provider/model settings in Veslo.
 - The hosted admin `Usage` and `Credentials` pages show best-effort Codex upstream status for inference credentials. When the Codex probe returns parseable 5h and weekly windows, both pages show those windows and reset times. When the probe succeeds but no windows are parsed, both pages show `Codex OK, limits unknown` without making the credential ineligible. Authentication failures such as `invalid_grant`, reused refresh tokens, or 401 responses remain visible as unavailable upstream status and require reconnecting or rotating the credential.
 - If a Codex probe reports that a specific model is unsupported for the credential's ChatGPT account, the credential remains usable and the unsupported model is removed from that credential's admin model choices. Admins should assign another listed Codex model for that credential instead of reconnecting it.
 
+## Admin alert emails
+
+Standalone AI Gateway sends credential/account fault emails to active platform admins resolved from DEN through the internal `GET /v1/internal/platform-admin-recipients` route. Configure the same bearer value as `DEN_AI_GATEWAY_INTERNAL_TOKEN` in DEN and `AI_GATEWAY_DEN_INTERNAL_TOKEN` in AI Gateway. `AI_GATEWAY_ALERT_EMAIL_RECIPIENTS` is only a fallback when the DEN recipient lookup is temporarily unavailable, and it remains the recipient source for Codex capacity emails.
+
+Email delivery requires the shared Lettr mailer env (`LETTR_API_KEY`, `AUTH_EMAIL_ADDRESS`, `AUTH_EMAIL_FROM_NAME`) in the AI Gateway service. Credential alert polling defaults to `AI_GATEWAY_CREDENTIAL_ALERT_EMAIL_INTERVAL_MS=60000`; Codex capacity alert polling defaults to `AI_GATEWAY_CODEX_CAPACITY_ALERT_EMAIL_INTERVAL_MS=300000`.
+
+Credential/account fault emails are sent for the first active unresolved alert per credential/account reason and recipient, including upstream auth failures, quota/rate-limit failures, provider network failures, unreachable OpenAI-compatible/Codex transports, and assigned credential records that can no longer be resolved. Repeats for the same credential, same normalized reason/title, and same recipient are throttled for 24 hours. Resolved alerts, request validation errors, missing gateway session/token errors, and policy-denied requests do not send email. Codex capacity emails are handled by the separate capacity monitor, not the per-credential alert monitor.
+
 ## Platform credential pools
 
 - Upstream provider credentials are selected from platform-owned pools, not from the signed-in end user's ID.
