@@ -10,9 +10,12 @@ import type { AlertRecord, AlertRepository } from "../alerts/repository.js";
 import { buildCodexCapacityAlerts } from "../alerts/codex-capacity-alerts.js";
 import {
   createCodexCapacityAlertMonitorRunner,
-  type CodexCapacityAlertEmailInput,
   type CodexCapacityAlertMonitorResult,
 } from "../alerts/codex-capacity-monitor.js";
+import {
+  createCredentialAlertEmailMonitorRunner,
+  type CredentialAlertEmailMonitorResult,
+} from "../alerts/credential-alert-email-monitor.js";
 import type { AiAccessProvider, AiAccessRepository, UpsertUserAiAccessPolicyInput, UserAiAccessPolicyRecord } from "../access/repository.js";
 import { MySqlAiAccessRepository } from "../access/mysql-repository.js";
 import { MySqlAlertRepository } from "../alerts/mysql-repository.js";
@@ -26,7 +29,7 @@ import type { SecretStore, StoredSecret } from "../credentials/secret-store.js";
 import type { AiGatewayDb } from "../db/index.js";
 import { createDb } from "../db/index.js";
 import { credentialBindingTable, credentialHealthEventTable, credentialRecordTable, credentialUsageEventTable, sessionLeaseTable, userAiAccessPolicyTable, type CredentialState } from "../db/schema.js";
-import { sendAdminAlertEmail } from "../email/admin-alert-mailer.js";
+import { sendAdminAlertEmail, type AdminAlertEmailInput } from "../email/admin-alert-mailer.js";
 import { env } from "../env.js";
 import type { AdminSessionRecord, LeaseProvider } from "../leases/repository.js";
 import { CODEX_DEFAULT_MODEL, listCodexModelCatalog, resolveCodexModelPolicy } from "../providers/codex-model-catalog.js";
@@ -261,6 +264,7 @@ export interface AdminService {
   getUsage(_token: string, input: { groupBy: UsageGroupBy; credentialId: string | null; userId: string | null; orgId: string | null }): Promise<UsageResponse>;
   listAlerts(_token: string): Promise<{ alerts: AlertRecord[] }>;
   runCodexCapacityAlertEmailMonitor?(): Promise<CodexCapacityAlertMonitorResult>;
+  runCredentialAlertEmailMonitor?(): Promise<CredentialAlertEmailMonitorResult>;
   acknowledgeAlert(_token: string, alertId: string, actorUserId: string | null): Promise<{ alert: AlertRecord }>;
   resolveAlert(_token: string, alertId: string, actorUserId: string | null): Promise<{ alert: AlertRecord }>;
   listAudit(_token: string): Promise<{ events: AuditRecord[] }>;
@@ -368,7 +372,7 @@ type AdminReadModelDependencies = {
   secretStore?: SecretStore;
   openAiCompatibleTransport?: OpenAiCompatibleProviderTransport;
   alertEmailRecipients?: string[];
-  sendAlertEmail?: (input: CodexCapacityAlertEmailInput) => Promise<void>;
+  sendAlertEmail?: (input: AdminAlertEmailInput) => Promise<void>;
   now?: () => Date;
 };
 
@@ -1063,6 +1067,7 @@ export function createDefaultAdminService(
   let credentialRotationService: AutoAssignedCodexCredentialRotationService | null =
     deps.credentialRotationService ?? null;
   let codexCapacityAlertEmailRunner: (() => Promise<CodexCapacityAlertMonitorResult>) | null = null;
+  let credentialAlertEmailRunner: (() => Promise<CredentialAlertEmailMonitorResult>) | null = null;
   const codexAuthUploadSessions = new Map<string, CodexAuthUploadSessionRecord>();
 
   function getCredentialRotationService() {
@@ -1555,6 +1560,21 @@ export function createDefaultAdminService(
     return codexCapacityAlertEmailRunner;
   }
 
+  function getCredentialAlertEmailRunner() {
+    if (!credentialAlertEmailRunner) {
+      credentialAlertEmailRunner = createCredentialAlertEmailMonitorRunner({
+        listAlerts: async () => getAlertRepository().listAlerts(),
+        listPlatformAdminRecipients: async () => denClient.listPlatformAdminRecipients?.(env.denInternalToken) ?? [],
+        listFallbackRecipients: async () => alertEmailRecipients,
+        sendEmail: sendAlertEmail,
+        audit: getAuditRepository(),
+        now,
+      });
+    }
+
+    return credentialAlertEmailRunner;
+  }
+
   return {
     async startBrowserAuth(input) {
       return denClient.startBrowserAuth(input);
@@ -2036,6 +2056,9 @@ export function createDefaultAdminService(
     },
     async runCodexCapacityAlertEmailMonitor() {
       return getCodexCapacityAlertEmailRunner()();
+    },
+    async runCredentialAlertEmailMonitor() {
+      return getCredentialAlertEmailRunner()();
     },
     async acknowledgeAlert(_token, alertId, actorUserId) {
       const acknowledge = getAlertRepository().acknowledgeAlert;

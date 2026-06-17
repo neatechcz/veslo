@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import test from "node:test";
 
 import { buildAlertRecord } from "../src/alerts/mysql-repository.js";
+import type { AlertRecord } from "../src/alerts/repository.js";
 import { createDefaultAdminService, type AdminSessionSnapshot } from "../src/http/admin.js";
 import { createApp } from "../src/index.js";
 
@@ -188,4 +189,64 @@ test("buildAlertRecord preserves the health event reason for email throttling", 
   });
 
   assert.equal(alert.reason, "invalid_grant");
+});
+
+test("createDefaultAdminService runs credential alert email monitor for platform admins", async () => {
+  const alert: AlertRecord = {
+    id: "alert_health_invalid_grant",
+    title: "invalid_grant returned by upstream OAuth",
+    severity: "high",
+    source: "provider-auth",
+    reason: "invalid_grant",
+    status: "active",
+    credentialId: "cred_openai_1",
+    affectedSessions: 1,
+    firstSeenAt: "2026-06-17T10:00:00.000Z",
+    lastSeenAt: "2026-06-17T10:00:00.000Z",
+    owner: null,
+    runbook: "Rotate the underlying grant.",
+  };
+  const sent: Array<{ to: string; subject: string; text: string }> = [];
+  const auditEvents: Array<{
+    entityType: string;
+    entityId: string;
+    action: string;
+    result: "ok" | "warning" | "error";
+    summary?: string | null;
+  }> = [];
+  const service = createDefaultAdminService(
+    "http://den.example.test",
+    {
+      denClient: {
+        ...createDenClient(),
+        async listPlatformAdminRecipients() {
+          return [{ userId: "admin_1", email: "admin@example.test", name: "Admin" }];
+        },
+      },
+      alertRepository: {
+        async listAlerts() {
+          return [alert];
+        },
+      },
+      auditRepository: {
+        async listEvents() {
+          return [];
+        },
+        async recordEvent(input) {
+          auditEvents.push(input);
+        },
+      },
+      alertEmailRecipients: [],
+      sendAlertEmail: async (input) => sent.push(input),
+      now: () => new Date("2026-06-17T10:02:00.000Z"),
+    } as never,
+  );
+
+  assert.equal(typeof service.runCredentialAlertEmailMonitor, "function");
+  const result = await service.runCredentialAlertEmailMonitor();
+
+  assert.equal(result.emailsSent, 1);
+  assert.equal(sent[0]?.to, "admin@example.test");
+  assert.match(sent[0]?.subject ?? "", /invalid_grant returned by upstream OAuth/);
+  assert.equal(auditEvents[0]?.action, "credential_alert.email.sent");
 });

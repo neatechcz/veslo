@@ -59,6 +59,7 @@ export async function startServer() {
     console.log(`ai-gateway listening on http://${env.host}:${env.port}`);
   });
   startCodexCapacityAlertEmailLoop(adminService);
+  startCredentialAlertEmailLoop(adminService);
   return server;
 }
 
@@ -101,6 +102,28 @@ function startCodexCapacityAlertEmailLoop(adminService: AdminService) {
 
   runMonitorBestEffort();
   const interval = setInterval(runMonitorBestEffort, env.alertEmail.codexCapacityIntervalMs);
+  unrefTimer(interval);
+}
+
+function startCredentialAlertEmailLoop(adminService: AdminService) {
+  if (!adminService.runCredentialAlertEmailMonitor) {
+    return;
+  }
+
+  if (!isAdminAlertEmailConfigured()) {
+    console.warn("[ai-gateway] credential alert emails disabled: Lettr email env is not configured");
+    return;
+  }
+
+  const runMonitorBestEffort = () => {
+    void adminService.runCredentialAlertEmailMonitor?.().catch((error) => {
+      const message = error instanceof Error ? error.stack ?? error.message : String(error);
+      console.error(`[ai-gateway] credential alert email monitor failed: ${message}`);
+    });
+  };
+
+  runMonitorBestEffort();
+  const interval = setInterval(runMonitorBestEffort, env.alertEmail.credentialAlertIntervalMs);
   unrefTimer(interval);
 }
 
