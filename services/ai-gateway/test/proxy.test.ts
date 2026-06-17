@@ -785,6 +785,89 @@ test("POST /providers/codex_oauth/v1/chat/completions routes through the assigne
   }
 });
 
+test("POST /providers/codex_oauth/v1/chat/completions records an admin alert on upstream network failure", async () => {
+  const leases = new InMemoryLeaseRepository();
+  const credentials = createCodexCredentialRepository();
+  const leaseBroker = new LeaseBroker(leases, new DefaultBindingSelector(credentials as never));
+  const alertCalls: Array<Record<string, unknown>> = [];
+
+  const app = createApp({
+    proxy: {
+      aiAccess: createCodexAiAccess(),
+      gatewaySessions: createGatewaySessions(),
+      credentials: credentials as never,
+      secrets: createCodexSecrets() as never,
+      usageRepository: createNoopUsageRepository(),
+      leaseBroker,
+      tokenBroker: {
+        async getUpstreamAuth() {
+          assert.fail("token broker should not run for codex worker routes");
+        },
+      },
+      openAiTransport: {
+        async chatCompletions() {
+          assert.fail("openai transport should not be used for codex routes");
+        },
+      },
+      anthropicTransport: {
+        async messages() {
+          assert.fail("anthropic transport should not be used for codex routes");
+        },
+      },
+      codexOAuthTransport: {
+        async chatCompletions() {
+          const cause = Object.assign(new Error("Connect Timeout Error"), {
+            code: "UND_ERR_CONNECT_TIMEOUT",
+          });
+          throw Object.assign(new TypeError("fetch failed"), { cause });
+        },
+      },
+      alertRepository: {
+        async listAlerts() {
+          return [];
+        },
+        async recordProviderFailure(input: Record<string, unknown>) {
+          alertCalls.push(input);
+        },
+      },
+    } as NonNullable<AppDependencies["proxy"]>,
+  });
+
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await withMutedConsoleError(async () =>
+      fetch(`http://127.0.0.1:${port}/providers/codex_oauth/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          ...GATEWAY_AUTH_HEADER,
+          "content-type": "application/json",
+          "x-veslo-session-id": "session_codex_network_1",
+        },
+        body: JSON.stringify({
+          model: "gpt-5.4",
+          messages: [{ role: "user", content: "hello" }],
+        }),
+      }),
+    );
+
+    assert.equal(response.status, 502);
+    assert.deepEqual(await response.json(), { error: "proxy_request_failed" });
+    assert.equal(alertCalls.length, 1);
+    assert.deepEqual(alertCalls[0], {
+      credentialId: "cred_codex_assigned",
+      provider: "codex_oauth",
+      sessionId: "session_codex_network_1",
+      reason: "network_connect_timeout",
+    });
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
 test("POST /providers/codex_oauth/v1/chat/completions repairs assigned access before resolving the binding", async () => {
   const leases = new InMemoryLeaseRepository();
   const credentials = createCodexCredentialRepository();

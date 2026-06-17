@@ -41,14 +41,18 @@ This flow replaces the old user-managed BYOK provider/model settings in Veslo.
 - Assigned Codex access is lazily repaired on the next Codex request, including both `auto_assigned` and `admin_assigned` rows. If the assigned credential is missing, no longer healthy, revoked, permanently unavailable, or currently exhausted, DEN selects another healthy eligible Codex credential and updates the user's policy before routing the request. If no replacement exists, the request fails explicitly and the existing assignment is kept.
 - Codex credential assignment options only include credentials whose provider is `codex_oauth`, whose stored state is `healthy`, and whose latest upstream status probe reports OK. A successful `codex | OK` probe is eligible even when rate-limit windows cannot be parsed; revoked, draining, unhealthy, invalid-grant, or probe-failing credentials are hidden from assignment.
 - When no eligible Codex credential exists, user creation still succeeds and AI access remains unassigned until an eligible credential is available.
-- The DEN admin `Credentials` page is the place to connect/reconnect OpenAI and create/rotate shared Anthropic, Codex OAuth inference, and OpenAI-compatible credentials.
-- Codex OAuth credentials must use a server-only `auth.json`; do not reuse the same ChatGPT login material from a workstation or another server process. If the Codex status probe reports that a refresh token was already used, the admin service marks that credential unhealthy so it is hidden from new assignments and eligible users can fail over to another healthy Codex credential. The Credentials page `Reconnect` action replaces the encrypted `auth.json` for the existing credential record and marks it healthy again, preserving credential id, usage, audit, alert, and assignment history.
+- The DEN admin and standalone AI Gateway admin `Credentials` pages are the place to connect/reconnect OpenAI and create/rotate shared Anthropic, Codex OAuth inference, and OpenAI-compatible credentials.
+- Codex OAuth credentials are refreshed from the selected credential detail. Admins can rename the credential, prepare a short-lived local upload command, run `node scripts/admin/codex-auth-upload.mjs` from a Veslo checkout, complete Codex device login locally, and upload the resulting `auth.json` through the one-time URL. The helper stores local Codex login material under `~/.veslo/codex-auth/<credential>` by default, validates that `id_token`, `access_token`, `refresh_token`, and `account_id` are present, uploads the full JSON to the selected admin service, and the service replaces the encrypted secret for the existing credential record while preserving credential id, usage, audit, alert, and assignment history.
+- New Codex OAuth credentials can be added from the standalone AI Gateway `Credentials` page with `Prepare Codex account upload`. That creates the same short-lived local helper command without a credential id. After the user completes Codex device login locally, the server reads the account email from the uploaded `id_token`, creates a new shared `codex_oauth` platform credential named `<email> Codex`, and stores the uploaded auth JSON as the encrypted secret. Uploads that do not contain a usable account email are rejected instead of creating an ambiguously named credential.
+- Codex OAuth credentials should use a dedicated server/runtime ChatGPT account. Do not reuse the same login material in another long-running runtime. If the Codex status probe reports that a refresh token was already used, the admin service marks that credential unhealthy so it is hidden from new assignments and eligible users can fail over to another healthy Codex credential.
 - OpenAI-compatible credentials require a display name, custom HTTP(S) `/v1` base URL, and bearer API key. Local `http://localhost`, `http://127.0.0.1`, and `http://[::1]` URLs are allowed for development; hosted/non-loopback URLs must use HTTPS.
 - OpenAI-compatible user access requires assigning a healthy `openai_compatible` credential. DEN does not automatically pick from a mixed custom-provider pool because the assigned credential determines the upstream base URL.
 - When an OpenAI-compatible credential is selected in the user AI access editor, the admin UI asks that credential's `/models` endpoint for available model IDs and uses the result as suggestions for the default model field. Admins can still type a model manually when discovery fails or the upstream returns an empty list.
 - The hosted admin `Usage` page shows recorded usage for every credential, including credentials with zero recorded traffic.
 - The hosted admin `Usage` and `Credentials` pages show best-effort Codex upstream status for inference credentials. When the Codex probe returns parseable 5h and weekly windows, both pages show those windows and reset times. When the probe succeeds but no windows are parsed, both pages show `Codex OK, limits unknown` without making the credential ineligible. Authentication failures such as `invalid_grant`, reused refresh tokens, or 401 responses remain visible as unavailable upstream status and require reconnecting or rotating the credential.
 - If a Codex probe reports that a specific model is unsupported for the credential's ChatGPT account, the credential remains usable and the unsupported model is removed from that credential's admin model choices. Admins should assign another listed Codex model for that credential instead of reconnecting it.
+- Provider proxy network failures, such as container outbound DNS, firewall/NAT, or upstream reachability timeouts, create a critical admin alert titled `AI inference upstream is unreachable` linked to the affected credential.
+- The hosted admin UI shows a bottom-right connection status whenever it is waiting for `/admin/api` responses. If the browser cannot reach the backend, the status remains visible and tells the admin that it is still trying to connect.
 
 ## Platform credential pools
 
@@ -109,6 +113,28 @@ Use these commands when verifying the admin-managed flow locally or against the 
   ```bash
   cd packages/e2e && pnpm run check:live-admin-user -- --email michal.sara99@gmail.com --provider openai_compatible --credential-id <credential-id> --default-model <custom-model> --allowed-model <custom-model>
   VESLO_E2E_EXPECTED_MANAGED_AI_PROVIDER=openai_compatible VESLO_E2E_EXPECTED_MANAGED_AI_MODEL=<custom-model> pnpm test --spec ./specs/den-managed-openai-anthropic.spec.ts
+  ```
+
+- Validate a local Codex `auth.json` without uploading:
+
+  ```bash
+  node scripts/admin/codex-auth-upload.mjs --upload-url https://ai.veslo.work/admin/api/credentials/codex-auth-upload/<token> --credential-id <credential-id> --credential-name "<credential name>" --auth-json-path ~/.veslo/codex-auth/<credential>/auth.json --dry-run --yes
+  ```
+
+- Validate a new Codex account upload command without creating the server credential:
+
+  ```bash
+  node scripts/admin/codex-auth-upload.mjs --upload-url https://ai.veslo.work/admin/api/credentials/codex-auth-upload/<token> --credential-name "New Codex account" --auth-json-path ~/.veslo/codex-auth/new-codex-account/auth.json --dry-run --yes
+  ```
+
+- Run the guarded live Playwright check that opens the production admin, selects the Václav Codex credential, prepares the upload session, and runs the local helper. By default it validates locally and skips the upload; add `E2E_LIVE_ADMIN_CODEX_AUTH_UPLOAD_COMMIT=1` only when the test should replace the production credential secret.
+
+  ```bash
+  cd packages/e2e
+  E2E_LIVE_ADMIN_CODEX_AUTH_UPLOAD=1 \
+  VESLO_E2E_ADMIN_TOKEN=<admin-token> \
+  VESLO_E2E_CODEX_AUTH_JSON_PATH=~/.veslo/codex-auth/vaclav-codex/auth.json \
+  pnpm run test:live-codex-auth-upload
   ```
 
 ## CI paths

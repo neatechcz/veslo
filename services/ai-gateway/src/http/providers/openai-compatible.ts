@@ -12,13 +12,14 @@ import type { ProviderTransportResponse } from "../../providers/transport.js";
 import { ProviderTransportError } from "../../providers/transport.js";
 import { readOpenAiCompatibleUsage } from "../../usage/token-accounting.js";
 import { applyAiAccessPolicy } from "./access-policy.js";
+import { recordProviderProxyFailureAlert } from "./proxy-failure-alert.js";
 import { normalizeGatewaySessionId } from "./session-id.js";
 import type { ProxyDependencies } from "../proxy.js";
 
 export function createOpenAiCompatibleProxyRouter(
   deps: Pick<
     ProxyDependencies,
-    "credentials" | "secrets" | "usageRepository" | "leaseBroker" | "openAiCompatibleTransport"
+    "credentials" | "alertRepository" | "secrets" | "usageRepository" | "leaseBroker" | "openAiCompatibleTransport"
   >,
 ) {
   const router = Router();
@@ -81,6 +82,14 @@ export function createOpenAiCompatibleProxyRouter(
       const upstreamResponse = await executeRequest(scope, policyResult.body, assignedSecret);
       applyUpstreamResponse(res, upstreamResponse);
     } catch (error) {
+      await recordProviderProxyFailureAlert({
+        alertRepository: deps.alertRepository,
+        credentialId: assignedBinding?.credentialRecordId ?? null,
+        provider: "openai_compatible",
+        sessionId,
+        error,
+      });
+
       if (error instanceof ProviderTransportError) {
         if (error.code === "openai_compatible_request_failed") {
           res.status(error.statusCode ?? 502).json({
