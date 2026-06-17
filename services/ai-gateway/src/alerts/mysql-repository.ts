@@ -106,7 +106,7 @@ export class MySqlAlertRepository implements AlertRepository {
       credential_record_id: input.credentialId,
       from_state: "healthy",
       to_state: "degraded",
-      reason: `provider_proxy_failure:${input.provider}:${input.reason}`,
+      reason: formatProviderFailureReason(input.provider, input.reason),
       created_at: input.occurredAt ?? new Date(),
     });
   }
@@ -256,6 +256,14 @@ function isProviderProxyFailure(reason: string) {
     reason.includes("network_connection_failed") ||
     reason.includes("network_fetch_failed")
   );
+}
+
+function formatProviderFailureReason(provider: string, reason: string): string {
+  const normalizedReason = reason.trim() || "unknown";
+  const prefix = isProviderProxyFailure(normalizedReason)
+    ? "provider_proxy_failure"
+    : "provider_failure";
+  return `${prefix}:${provider}:${normalizedReason}`;
 }
 
 function isAuthFailure(reason: string) {

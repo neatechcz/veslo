@@ -247,8 +247,10 @@ test("codex_oauth proxy forwards through the configured transport with a sticky 
       },
     ])
   } finally {
-    server.close()
-    await once(server, "close")
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve())
+      server.closeAllConnections()
+    })
   }
 })
 
@@ -706,6 +708,7 @@ test("codex_oauth proxy returns structured runtime incompatibility failures for 
 })
 
 test("codex_oauth proxy preserves transport failures with colliding exhaustion messages", async () => {
+  const recordProviderFailureCalls: unknown[] = []
   const app = createApp({
     proxy: {
       gatewaySessions: {
@@ -745,6 +748,14 @@ test("codex_oauth proxy preserves transport failures with colliding exhaustion m
           return createCredentialBinding()
         },
         async markCredentialState() {},
+      },
+      alertRepository: {
+        async listAlerts() {
+          return []
+        },
+        async recordProviderFailure(input: unknown) {
+          recordProviderFailureCalls.push(input)
+        },
       },
       secrets: {
         async get(secretRef: string) {
@@ -833,6 +844,14 @@ test("codex_oauth proxy preserves transport failures with colliding exhaustion m
         message: "Codex transport rate limited.",
       },
     })
+    assert.deepEqual(recordProviderFailureCalls, [
+      {
+        credentialId: "cred_codex_1",
+        provider: "codex_oauth",
+        sessionId: "session_codex_transport_collision_1",
+        reason: "codex_transport_rate_limited",
+      },
+    ])
   } finally {
     server.close()
     await once(server, "close")

@@ -10,7 +10,11 @@ import type { ResolveLeaseInput, SessionLease } from "../../leases/repository.js
 import type { ProviderTransportResponse } from "../../providers/transport.js";
 import { readOpenAiCompatibleUsage } from "../../usage/token-accounting.js";
 import { applyAiAccessPolicy } from "./access-policy.js";
-import { recordProviderProxyFailureAlert } from "./proxy-failure-alert.js";
+import {
+  markProviderCredentialFailure,
+  readUpstreamFailureReason,
+  recordProviderProxyFailureAlert,
+} from "./proxy-failure-alert.js";
 import { normalizeGatewaySessionId } from "./session-id.js";
 import type { ProxyDependencies } from "../proxy.js";
 
@@ -86,6 +90,12 @@ export function createOpenAiProxyRouter(
         });
         throw error;
       }
+
+      await markProviderCredentialFailure({
+        credentials: deps.credentials,
+        bindingId: initialLease.activeBindingId,
+        reason: readUpstreamFailureReason(failure),
+      });
 
       const reboundLease = await deps.leaseBroker.handleUpstreamFailure({
         ...scope,

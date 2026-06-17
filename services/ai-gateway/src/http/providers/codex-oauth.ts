@@ -11,7 +11,10 @@ import type { ProviderTransportResponse } from "../../providers/transport.js"
 import { ProviderTransportError } from "../../providers/transport.js"
 import { readOpenAiCompatibleUsage } from "../../usage/token-accounting.js"
 import { applyAiAccessPolicy } from "./access-policy.js"
-import { recordProviderProxyFailureAlert } from "./proxy-failure-alert.js"
+import {
+  recordProviderCredentialFailureAlert,
+  recordProviderProxyFailureAlert,
+} from "./proxy-failure-alert.js"
 import { normalizeGatewaySessionId } from "./session-id.js"
 import type { ProxyDependencies } from "../proxy.js"
 
@@ -73,6 +76,13 @@ export function createCodexOAuthProxyRouter(
       ? await resolveAssignedBinding(gatewayAiAccess)
       : null
     if (gatewayAiAccess && !assignedBinding) {
+      await recordProviderCredentialFailureAlert({
+        alertRepository: deps.alertRepository,
+        credentialId: gatewayAiAccess.credentialId,
+        provider: "codex_oauth",
+        sessionId,
+        reason: "assigned_credential_unavailable",
+      })
       res.status(503).json({ error: "assigned_credential_unavailable" })
       return
     }
@@ -81,6 +91,13 @@ export function createCodexOAuthProxyRouter(
       ? await loadAssignedAuthJson(assignedBinding.id)
       : null
     if (assignedBinding && !assignedAuthJson) {
+      await recordProviderCredentialFailureAlert({
+        alertRepository: deps.alertRepository,
+        credentialId: assignedBinding.credentialRecordId,
+        provider: "codex_oauth",
+        sessionId,
+        reason: "assigned_credential_unavailable",
+      })
       res.status(503).json({ error: "assigned_credential_unavailable" })
       return
     }
