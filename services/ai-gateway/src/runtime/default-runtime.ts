@@ -1,6 +1,8 @@
 import { MySqlAiAccessRepository } from "../access/mysql-repository.js";
 import { createAutoAssignedCodexCredentialRotationService } from "../access/auto-assignment-rotation.js";
 import type { AiAccessRepository } from "../access/repository.js";
+import { MySqlAlertRepository } from "../alerts/mysql-repository.js";
+import type { AlertRepository } from "../alerts/repository.js";
 import { MySqlAuditRepository } from "../audit/mysql-repository.js";
 import type { AuditRepository } from "../audit/repository.js";
 import { DenGatewaySessionResolver } from "../auth/gateway-session.js";
@@ -29,6 +31,7 @@ import type { UsageRepository } from "../usage/repository.js";
 
 export type RuntimeState = {
   aiAccess: AiAccessRepository;
+  alerts: AlertRepository;
   audit: AuditRepository;
   credentials: CredentialRepository;
   secrets: SecretStore;
@@ -48,6 +51,7 @@ export function createDefaultRuntimeState(options: DefaultRuntimeOptions = {}): 
 
   return {
     aiAccess: new MySqlAiAccessRepository(db),
+    alerts: new MySqlAlertRepository(db),
     audit: new MySqlAuditRepository(db),
     credentials: new MySqlCredentialRepository(db),
     secrets: new MySqlSecretStore(db, secretKey),
@@ -89,6 +93,7 @@ export function createDefaultProxyDependencies(
 
   return {
     aiAccess: runtime.aiAccess,
+    alertRepository: runtime.alerts,
     autoAssignedCodexCredentialRotation: createAutoAssignedCodexCredentialRotationService({
       aiAccess: runtime.aiAccess,
       credentials: runtime.credentials,

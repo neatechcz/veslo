@@ -167,3 +167,28 @@ test("buildAlertRecord classifies auth, rate-limit, and unusual-activity signals
     runbook: "Inspect recent upstream failures and failover churn for the affected credential pool.",
   });
 });
+
+test("buildAlertRecord classifies provider proxy network failures as inference outage alerts", () => {
+  const alert = buildAlertRecord({
+    eventId: "health_proxy_network",
+    credentialId: "cred_codex_1",
+    reason: "provider_proxy_failure:codex_oauth:network_connect_timeout",
+    toState: "degraded",
+    occurredAt: "2026-06-16T16:05:00.000Z",
+    affectedSessions: 8,
+  });
+
+  assert.deepEqual(alert, {
+    id: "alert_health_proxy_network",
+    title: "AI inference upstream is unreachable",
+    severity: "critical",
+    source: "gateway-operations",
+    status: "active",
+    credentialId: "cred_codex_1",
+    affectedSessions: 8,
+    firstSeenAt: "2026-06-16T16:05:00.000Z",
+    lastSeenAt: "2026-06-16T16:05:00.000Z",
+    owner: null,
+    runbook: "Check container outbound networking, DNS, firewall/NAT rules, and upstream provider reachability.",
+  });
+});

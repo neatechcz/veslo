@@ -2943,6 +2943,42 @@
           "markdownDescription": "Denies the reveal_item_in_dir command without any pre-configured scope."
         },
         {
+          "description": "Default permissions for tauri-plugin-pilot (allows eval callback)\n#### This default permission set includes:\n\n- `allow-eval-callbacks`",
+          "type": "string",
+          "const": "pilot:default",
+          "markdownDescription": "Default permissions for tauri-plugin-pilot (allows eval callback)\n#### This default permission set includes:\n\n- `allow-eval-callbacks`"
+        },
+        {
+          "description": "Enables the __callback command without any pre-configured scope.",
+          "type": "string",
+          "const": "pilot:allow---callback",
+          "markdownDescription": "Enables the __callback command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the callback command without any pre-configured scope.",
+          "type": "string",
+          "const": "pilot:allow-callback",
+          "markdownDescription": "Enables the callback command without any pre-configured scope."
+        },
+        {
+          "description": "Allow the internal callback IPC commands used by the eval engine",
+          "type": "string",
+          "const": "pilot:allow-eval-callbacks",
+          "markdownDescription": "Allow the internal callback IPC commands used by the eval engine"
+        },
+        {
+          "description": "Denies the __callback command without any pre-configured scope.",
+          "type": "string",
+          "const": "pilot:deny---callback",
+          "markdownDescription": "Denies the __callback command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the callback command without any pre-configured scope.",
+          "type": "string",
+          "const": "pilot:deny-callback",
+          "markdownDescription": "Denies the callback command without any pre-configured scope."
+        },
+        {
           "description": "This permission set configures which\nprocess features are by default exposed.\n\n#### Granted Permissions\n\nThis enables to quit via `allow-exit` and restart via `allow-restart`\nthe application.\n\n#### This default permission set includes:\n\n- `allow-exit`\n- `allow-restart`",
           "type": "string",
           "const": "process:default",
@@ -3091,12 +3127,6 @@
           "type": "string",
           "const": "updater:deny-install",
           "markdownDescription": "Denies the install command without any pre-configured scope."
-        },
-        {
-          "description": "Default permissions for the plugin",
-          "type": "string",
-          "const": "webdriver:default",
-          "markdownDescription": "Default permissions for the plugin"
         }
       ]
     },

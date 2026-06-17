@@ -11,6 +11,7 @@ import type { ProviderTransportResponse } from "../../providers/transport.js"
 import { ProviderTransportError } from "../../providers/transport.js"
 import { readOpenAiCompatibleUsage } from "../../usage/token-accounting.js"
 import { applyAiAccessPolicy } from "./access-policy.js"
+import { recordProviderProxyFailureAlert } from "./proxy-failure-alert.js"
 import { normalizeGatewaySessionId } from "./session-id.js"
 import type { ProxyDependencies } from "../proxy.js"
 
@@ -18,6 +19,7 @@ export function createCodexOAuthProxyRouter(
   deps: Pick<
     ProxyDependencies,
     | "credentials"
+    | "alertRepository"
     | "secrets"
     | "usageRepository"
     | "leaseBroker"
@@ -95,6 +97,14 @@ export function createCodexOAuthProxyRouter(
       const upstreamResponse = await executeRequest(scope, policyResult.body, assignedAuthJson)
       applyUpstreamResponse(res, upstreamResponse)
     } catch (error) {
+      await recordProviderProxyFailureAlert({
+        alertRepository: deps.alertRepository,
+        credentialId: assignedBinding?.credentialRecordId ?? null,
+        provider: "codex_oauth",
+        sessionId,
+        error,
+      })
+
       if (error instanceof ProviderTransportError) {
         if (error.body && typeof error.body === "object") {
           res.status(error.statusCode ?? 502).json(error.body as Record<string, unknown>)
