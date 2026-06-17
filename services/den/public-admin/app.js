@@ -29,6 +29,7 @@ const state = {
   selectedAlertId: null,
   selectedAuditId: null,
   selectedUserId: null,
+  codexAuthUploadByCredentialId: {},
   userMode: "edit",
   userAiAccessByUserId: {},
   userAiAccessAvailableCredentialsByUserId: {},
@@ -907,10 +908,19 @@ function renderCredentials() {
   const selected = currentCredential();
   if (selected) {
     const selectedUpstreamStatus = formatCredentialUpstreamStatus(selected);
+    const codexAuthUpload = state.codexAuthUploadByCredentialId[selected.id] || null;
     els.credentialDetail.innerHTML = `
       <p class="eyebrow">Selected credential</p>
       <h3>${escapeHtml(selected.name)}</h3>
       <div class="stack">
+        <label class="credential-detail-field">
+          <span>Display name</span>
+          <input class="input" data-credential-rename-input type="text" value="${escapeHtml(selected.name)}" />
+        </label>
+        <div class="button-row">
+          <button class="button button-secondary" type="button" data-credential-rename>Save name</button>
+          <p class="editor-note credential-detail-status" data-credential-rename-status></p>
+        </div>
         <div class="detail-line"><span>Health</span><strong>${escapeHtml(selected.state)}</strong></div>
         <div class="detail-line"><span>Linked alerts</span><strong>${escapeHtml(String(selected.alertCount))}</strong></div>
         <div class="detail-line"><span>Last failure</span><strong>${escapeHtml(formatDate(selected.lastFailureAt))}</strong></div>
@@ -921,6 +931,16 @@ function renderCredentials() {
           <div class="detail-line"><span>Eligibility</span><strong>${escapeHtml(selected.eligibility?.state || "unknown")}</strong></div>
           <div class="detail-line"><span>Codex upstream</span><strong>${escapeHtml(selectedUpstreamStatus.label)}</strong></div>
           <div class="detail-line"><span>Codex limits</span><strong>${escapeHtml(selectedUpstreamStatus.limitSummary || "5h: unknown | Weekly: unknown")}</strong></div>
+          <div class="credential-command-block">
+            <div class="button-row">
+              <button class="button button-primary" type="button" data-credential-codex-upload>Prepare local upload</button>
+              ${codexAuthUpload?.command ? `<button class="button button-secondary" type="button" data-codex-auth-upload-copy>Copy command</button>` : ""}
+            </div>
+            ${codexAuthUpload?.command ? `
+              <textarea class="input credential-command-output" readonly data-codex-auth-upload-command>${escapeHtml(codexAuthUpload.command)}</textarea>
+              <p class="editor-note credential-detail-status" data-codex-auth-upload-status>Command expires ${escapeHtml(formatDate(codexAuthUpload.upload?.expiresAt))}</p>
+            ` : `<p class="editor-note credential-detail-status" data-codex-auth-upload-status></p>`}
+          </div>
         ` : ""}
       </div>
       <div class="button-row">
@@ -1408,6 +1428,18 @@ function setCodexCredentialStatus(message, tone = "neutral") {
   els.credentialCodexStatus.dataset.tone = tone;
 }
 
+function setInlineStatus(node, message, tone = "neutral") {
+  if (!node) {
+    return;
+  }
+  node.textContent = message;
+  if (tone === "neutral") {
+    delete node.dataset.tone;
+    return;
+  }
+  node.dataset.tone = tone;
+}
+
 function setOpenAiCompatibleCredentialStatus(message, tone = "neutral") {
   els.credentialOpenAiCompatibleStatus.textContent = message;
   if (tone === "neutral") {
@@ -1676,6 +1708,79 @@ async function runCredentialAction(action) {
   }
 }
 
+async function renameSelectedCredential() {
+  const credential = currentCredential();
+  const input = els.credentialDetail.querySelector("[data-credential-rename-input]");
+  const status = els.credentialDetail.querySelector("[data-credential-rename-status]");
+  const name = input?.value?.trim() || "";
+  if (!credential || !input) {
+    return;
+  }
+  if (!name) {
+    setInlineStatus(status, "Name is required.", "error");
+    return;
+  }
+
+  input.disabled = true;
+  setInlineStatus(status, "Saving name", "pending");
+  try {
+    const payload = await fetchJson(`/credentials/${encodeURIComponent(credential.id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    });
+    state.selectedCredentialId = payload?.credential?.id || credential.id;
+    setInlineStatus(status, "Name saved.", "success");
+    await refreshCredentialOperations();
+    await refreshSelectedUserAiAccessOptions();
+  } catch (error) {
+    setInlineStatus(status, `Unable to save name: ${error instanceof Error ? error.message : "unknown_error"}`, "error");
+  } finally {
+    input.disabled = false;
+  }
+}
+
+async function prepareCodexAuthUpload() {
+  const credential = currentCredential();
+  const status = els.credentialDetail.querySelector("[data-codex-auth-upload-status]");
+  if (!credential || credential.provider !== "codex_oauth") {
+    return;
+  }
+
+  setInlineStatus(status, "Preparing command", "pending");
+  try {
+    const payload = await fetchJson(`/credentials/${encodeURIComponent(credential.id)}/codex-auth-upload-session`, {
+      method: "POST",
+    });
+    state.codexAuthUploadByCredentialId[credential.id] = payload;
+    renderCredentials();
+  } catch (error) {
+    setInlineStatus(status, `Unable to prepare command: ${error instanceof Error ? error.message : "unknown_error"}`, "error");
+  }
+}
+
+async function copyCodexAuthUploadCommand() {
+  const credential = currentCredential();
+  if (!credential) {
+    return;
+  }
+  const command = state.codexAuthUploadByCredentialId[credential.id]?.command || "";
+  const status = els.credentialDetail.querySelector("[data-codex-auth-upload-status]");
+  if (!command) {
+    setInlineStatus(status, "Command is not ready.", "error");
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(command);
+    setInlineStatus(status, "Command copied.", "success");
+  } catch (error) {
+    const output = els.credentialDetail.querySelector("[data-codex-auth-upload-command]");
+    output?.focus();
+    output?.select();
+    setInlineStatus(status, "Copy failed. Select the command manually.", "error");
+  }
+}
+
 async function runAlertAction(action) {
   const alert = currentAlert();
   if (!alert || !action) {
@@ -1852,6 +1957,24 @@ function bindActions() {
   });
 
   els.credentialDetail.addEventListener("click", (event) => {
+    const renameButton = event.target.closest("[data-credential-rename]");
+    if (renameButton) {
+      void renameSelectedCredential();
+      return;
+    }
+
+    const codexUploadButton = event.target.closest("[data-credential-codex-upload]");
+    if (codexUploadButton) {
+      void prepareCodexAuthUpload();
+      return;
+    }
+
+    const codexUploadCopyButton = event.target.closest("[data-codex-auth-upload-copy]");
+    if (codexUploadCopyButton) {
+      void copyCodexAuthUploadCommand();
+      return;
+    }
+
     const actionButton = event.target.closest("[data-credential-action]");
     if (actionButton) {
       void runCredentialAction(actionButton.dataset.credentialAction);

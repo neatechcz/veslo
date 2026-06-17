@@ -356,6 +356,26 @@ a {
   resize: vertical;
 }
 
+.credential-detail-field {
+  display: grid;
+  gap: 8px;
+}
+
+.credential-command-block {
+  display: grid;
+  gap: 10px;
+}
+
+.credential-command-output {
+  min-height: 108px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .credential-create-card {
   margin-bottom: 16px;
 }

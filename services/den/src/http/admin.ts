@@ -76,6 +76,24 @@ export type AdminCredentialRecord = {
   linkedAlertIds: string[]
 }
 
+export type AdminCodexAuthUploadSessionResponse = {
+  upload: {
+    token: string
+    credentialId: string
+    credentialName: string
+    uploadUrl: string
+    expiresAt: string
+  }
+  command: string
+}
+
+export type AdminCodexAuthUploadResponse = {
+  ok: true
+  credentialId: string
+  credentialName: string
+  accountId: string
+}
+
 export type AdminSessionRecord = {
   id: string
   sessionId: string
@@ -190,6 +208,18 @@ export type AdminRouteDeps = {
     req: express.Request,
     res: express.Response,
   ) => Promise<{ credential: AdminCredentialRecord } | null>
+  renameCredential?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<{ credential: AdminCredentialRecord } | null>
+  createCodexAuthUploadSession?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<AdminCodexAuthUploadSessionResponse | null>
+  uploadCodexAuth?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<AdminCodexAuthUploadResponse | null>
   revokeCredential?: (
     req: express.Request,
     res: express.Response,
@@ -413,6 +443,48 @@ export function createAdminRouter(deps: AdminRouteDeps) {
     }
 
     const payload = await deps.createCredential(req, res)
+    if (!payload) {
+      return
+    }
+
+    res.json(payload)
+  })
+
+  router.patch("/credentials/:credentialId", async (req, res) => {
+    if (!deps.renameCredential) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.renameCredential(req, res)
+    if (!payload) {
+      return
+    }
+
+    res.json(payload)
+  })
+
+  router.post("/credentials/codex-auth-upload/:token", async (req, res) => {
+    if (!deps.uploadCodexAuth) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.uploadCodexAuth(req, res)
+    if (!payload) {
+      return
+    }
+
+    res.json(payload)
+  })
+
+  router.post("/credentials/:credentialId/codex-auth-upload-session", async (req, res) => {
+    if (!deps.createCodexAuthUploadSession) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.createCodexAuthUploadSession(req, res)
     if (!payload) {
       return
     }
