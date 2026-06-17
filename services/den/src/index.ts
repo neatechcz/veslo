@@ -12,11 +12,12 @@ import { extractMetadataRows, shouldWidenVarcharColumn } from "./db/schema-recon
 import { env } from "./env.js"
 import { createDbFeedbackProjectorStore, createFeedbackProjector } from "./feedback/projector.js"
 import { createDebugLogsIngestRouter } from "./http/debug-logs.js"
+import { createInternalPlatformAdminRecipientsRouter } from "./http/internal-platform-admin-recipients.js"
 import { asyncRoute, errorMiddleware } from "./http/errors.js"
 import { requireSession } from "./http/session.js"
 import { desktopAuthRouter } from "./http/desktop-auth.js"
 import { desktopAuthV2Router } from "./http/desktop-auth-v2.js"
-import { createAdminRuntimeRouter, requirePlatformAdminSnapshot } from "./http/admin-runtime.js"
+import { createAdminRuntimeRouter, listActivePlatformAdminRecipients, requirePlatformAdminSnapshot } from "./http/admin-runtime.js"
 import { createFeedbackRouter } from "./http/feedback.js"
 import { createManagedAiAdminUiRouter } from "./managed-ai/http/admin.js"
 import {
@@ -93,6 +94,10 @@ if (corsOrigins.length > 0) {
 app.all("/api/auth/*", toNodeHandler(auth))
 app.use("/v1", feedbackRouter)
 app.use("/v1/internal", debugLogsIngestRouter)
+app.use("/v1/internal", createInternalPlatformAdminRecipientsRouter({
+  token: env.aiGatewayInternalToken,
+  listRecipients: listActivePlatformAdminRecipients,
+}))
 if (managedAiRuntime) {
   app.use("/providers", managedAiProxyJsonParser)
 }

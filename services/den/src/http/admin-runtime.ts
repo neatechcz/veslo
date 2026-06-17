@@ -34,6 +34,12 @@ type ListedUserRow = {
   emailVerified: boolean
 }
 
+export type PlatformAdminRecipient = {
+  userId: string
+  email: string
+  name: string | null
+}
+
 const bootstrapPlatformAdminEmails = new Set([
   "michal.sara@neatech.cz",
   "vaclav.soukup@neatec.cz",
@@ -167,6 +173,17 @@ async function loadAdminUsers() {
     disabled: disabledUsers.has(entry.id),
     memberships: membershipsByUser.get(entry.id) ?? [],
   }))
+}
+
+export async function listActivePlatformAdminRecipients(): Promise<PlatformAdminRecipient[]> {
+  const users = await loadAdminUsers()
+  return users
+    .filter((entry) => entry.platformAdmin && entry.disabled !== true && entry.email)
+    .map((entry) => ({
+      userId: entry.id,
+      email: entry.email.trim().toLowerCase(),
+      name: entry.name?.trim() || null,
+    }))
 }
 
 async function createUserViaAuth(req: express.Request, body: { email: string; name: string; password?: string }) {
