@@ -62,9 +62,12 @@ jobs:
           fi
 
           cd "$OWNED_SERVER_APP_DIR"
+          git reset --hard
+          git clean -fd
           git_auth fetch --prune origin "+refs/heads/$DEPLOY_BRANCH:refs/remotes/origin/$DEPLOY_BRANCH"
-          git checkout --detach "origin/$DEPLOY_BRANCH"
+          git checkout --force --detach "origin/$DEPLOY_BRANCH"
           git reset --hard "origin/$DEPLOY_BRANCH"
+          git clean -fd
 
           test -f "$OWNED_SERVER_ENV_FILE"
           test -f packaging/owned-server/compose.yml
