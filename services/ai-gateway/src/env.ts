@@ -18,10 +18,13 @@ const envSchema = z.object({
   AI_GATEWAY_DEN_API_BASE: z.string().optional(),
   AI_GATEWAY_ALERT_EMAIL_RECIPIENTS: z.string().optional(),
   AI_GATEWAY_CODEX_CAPACITY_ALERT_EMAIL_INTERVAL_MS: z.coerce.number().int().positive().optional(),
+  AI_GATEWAY_DEN_INTERNAL_TOKEN: z.string().optional(),
+  AI_GATEWAY_CREDENTIAL_ALERT_EMAIL_INTERVAL_MS: z.coerce.number().int().positive().optional(),
   NODE_ENV: z.string().optional(),
 });
 
 const DEFAULT_CODEX_CAPACITY_ALERT_EMAIL_INTERVAL_MS = 5 * 60 * 1000;
+const DEFAULT_CREDENTIAL_ALERT_EMAIL_INTERVAL_MS = 60 * 1000;
 
 export function parseEnv(source: NodeJS.ProcessEnv) {
   const parsed = envSchema.parse(source);
@@ -46,7 +49,11 @@ export function parseEnv(source: NodeJS.ProcessEnv) {
       codexCapacityIntervalMs:
         parsed.AI_GATEWAY_CODEX_CAPACITY_ALERT_EMAIL_INTERVAL_MS ??
         DEFAULT_CODEX_CAPACITY_ALERT_EMAIL_INTERVAL_MS,
+      credentialAlertIntervalMs:
+        parsed.AI_GATEWAY_CREDENTIAL_ALERT_EMAIL_INTERVAL_MS ??
+        DEFAULT_CREDENTIAL_ALERT_EMAIL_INTERVAL_MS,
     },
+    denInternalToken: parsed.AI_GATEWAY_DEN_INTERNAL_TOKEN?.trim() || null,
     denApiBase: (parsed.AI_GATEWAY_DEN_API_BASE ?? (parsed.NODE_ENV === "production" ? "https://api.veslo.work" : "http://127.0.0.1:8788")).replace(/\/+$/, ""),
   };
 }

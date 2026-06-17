@@ -61,7 +61,18 @@ test("parseEnv resolves alert email delivery settings", () => {
   assert.deepEqual(parsed.alertEmail, {
     recipients: ["admin@one.test", "admin@two.test"],
     codexCapacityIntervalMs: 120000,
+    credentialAlertIntervalMs: 60000,
   });
+});
+
+test("parseEnv resolves credential alert email monitor settings", () => {
+  const parsed = parseEnv({
+    AI_GATEWAY_DEN_INTERNAL_TOKEN: " den-internal ",
+    AI_GATEWAY_CREDENTIAL_ALERT_EMAIL_INTERVAL_MS: "45000",
+  });
+
+  assert.equal(parsed.denInternalToken, "den-internal");
+  assert.equal(parsed.alertEmail.credentialAlertIntervalMs, 45000);
 });
 
 test("parseEnv production fallback uses the owned Den API base", () => {

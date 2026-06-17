@@ -285,6 +285,7 @@ type DenAdminApi = {
   disableUser(token: string, userId: string): Promise<AdminUserRecord>;
   enableUser(token: string, userId: string): Promise<AdminUserRecord>;
   deleteUser(token: string, userId: string): Promise<void>;
+  listPlatformAdminRecipients?(token: string | null): Promise<Array<{ userId: string; email: string; name: string | null }>>;
 };
 
 const ADMIN_AUTH_COOKIE_NAME = "veslo.ai-gateway.admin.token";
@@ -980,6 +981,27 @@ class DenAdminClient {
           ? payload.message
           : "request_failed";
     throw new HttpError(message, response.status);
+  }
+
+  async listPlatformAdminRecipients(token: string | null) {
+    if (!token) {
+      throw new HttpError("den_internal_token_missing", 503);
+    }
+
+    const payload = await this.requestJson("/v1/internal/platform-admin-recipients", {
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${token}`,
+      },
+    }) as { recipients?: Array<{ userId?: string; email?: string; name?: string | null }> };
+
+    return (payload.recipients ?? [])
+      .map((entry) => ({
+        userId: typeof entry.userId === "string" ? entry.userId : "",
+        email: typeof entry.email === "string" ? entry.email.trim().toLowerCase() : "",
+        name: typeof entry.name === "string" ? entry.name : null,
+      }))
+      .filter((entry) => entry.email.includes("@"));
   }
 }
 
