@@ -420,7 +420,8 @@ test("admin alert email uses Lettr send-email payload", async () => {
     assert.equal((requests[0]?.init.headers as Record<string, string>).Authorization, "Bearer lettr-key");
   } finally {
     globalThis.fetch = originalFetch;
-    process.env = previousEnv;
+    for (const key of Object.keys(process.env)) delete process.env[key];
+    Object.assign(process.env, previousEnv);
   }
 });
 ```
@@ -827,6 +828,32 @@ export type CredentialAlertEmailMonitorDeps = {
   throttleWindowMs?: number;
   state?: { sentKeys: Set<string> };
 };
+
+export type CredentialAlertEmailMonitorResult = {
+  evaluatedAlerts: number;
+  emailsSent: number;
+  recipients: number;
+  skipped?: boolean;
+};
+
+export function createCredentialAlertEmailMonitorRunner(
+  deps: CredentialAlertEmailMonitorDeps,
+): () => Promise<CredentialAlertEmailMonitorResult> {
+  let inFlight: Promise<CredentialAlertEmailMonitorResult> | null = null;
+  const state = deps.state ?? { sentKeys: new Set<string>() };
+
+  return () => {
+    if (inFlight) {
+      return Promise.resolve({ evaluatedAlerts: 0, emailsSent: 0, recipients: 0, skipped: true });
+    }
+
+    const run = runCredentialAlertEmailMonitor({ ...deps, state }).finally(() => {
+      if (inFlight === run) inFlight = null;
+    });
+    inFlight = run;
+    return run;
+  };
+}
 
 export async function runCredentialAlertEmailMonitor(deps: CredentialAlertEmailMonitorDeps) {
   const now = deps.now?.() ?? new Date();
