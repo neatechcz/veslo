@@ -406,6 +406,41 @@ test("GET /admin/app.js keeps the stored admin token during transient session ve
   }
 })
 
+test("GET /admin serves a bottom-right backend connection status driven by admin API requests", async () => {
+  const app = createApp({ admin: createAdminServiceStub() })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const shellResponse = await fetch(`http://127.0.0.1:${port}/admin`, {
+      headers: {
+        cookie: ADMIN_COOKIE,
+      },
+    })
+    const scriptResponse = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+
+    assert.equal(shellResponse.status, 200)
+    assert.equal(scriptResponse.status, 200)
+
+    const html = await shellResponse.text()
+    const script = await scriptResponse.text()
+
+    assert.match(html, /id="backend-connection-status"/)
+    assert.match(html, /role="status"/)
+    assert.match(html, /aria-live="polite"/)
+    assert.match(html, /Connecting to AI Gateway/)
+    assert.match(script, /pendingAdminRequests/)
+    assert.match(script, /setBackendConnectionStatus\("connecting"/)
+    assert.match(script, /Still trying to connect to AI Gateway/)
+    assert.match(script, /setBackendConnectionStatus\(\s*"offline"/)
+    assert.match(script, /setBackendConnectionStatus\("connected"/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
 test("GET /admin/app.js checks the HTTP-only admin cookie before showing the login panel", async () => {
   const app = createApp()
   const server = app.listen(0, "127.0.0.1")
