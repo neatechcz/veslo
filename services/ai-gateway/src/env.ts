@@ -4,6 +4,9 @@ import { z } from "zod";
 loadEnv();
 
 const envSchema = z.object({
+  LETTR_API_KEY: z.string().optional(),
+  AUTH_EMAIL_ADDRESS: z.string().optional(),
+  AUTH_EMAIL_FROM_NAME: z.string().optional(),
   PORT: z.coerce.number().int().positive().optional(),
   AI_GATEWAY_HOST: z.string().default("0.0.0.0"),
   AI_GATEWAY_PORT: z.coerce.number().int().positive().default(4034),
@@ -13,8 +16,12 @@ const envSchema = z.object({
   AI_GATEWAY_OPENAI_CLIENT_SECRET: z.string().min(1).default("veslo-dev-openai-secret"),
   AI_GATEWAY_OPENAI_REDIRECT_BASE: z.string().url().default("http://127.0.0.1:4034/auth/openai"),
   AI_GATEWAY_DEN_API_BASE: z.string().optional(),
+  AI_GATEWAY_ALERT_EMAIL_RECIPIENTS: z.string().optional(),
+  AI_GATEWAY_CODEX_CAPACITY_ALERT_EMAIL_INTERVAL_MS: z.coerce.number().int().positive().optional(),
   NODE_ENV: z.string().optional(),
 });
+
+const DEFAULT_CODEX_CAPACITY_ALERT_EMAIL_INTERVAL_MS = 5 * 60 * 1000;
 
 export function parseEnv(source: NodeJS.ProcessEnv) {
   const parsed = envSchema.parse(source);
@@ -29,8 +36,32 @@ export function parseEnv(source: NodeJS.ProcessEnv) {
       clientSecret: parsed.AI_GATEWAY_OPENAI_CLIENT_SECRET,
       redirectBase: parsed.AI_GATEWAY_OPENAI_REDIRECT_BASE.replace(/\/+$/, ""),
     },
+    email: {
+      lettrApiKey: parsed.LETTR_API_KEY?.trim() || undefined,
+      address: parsed.AUTH_EMAIL_ADDRESS?.trim() || undefined,
+      fromName: parsed.AUTH_EMAIL_FROM_NAME?.trim() || undefined,
+    },
+    alertEmail: {
+      recipients: parseEmailList(parsed.AI_GATEWAY_ALERT_EMAIL_RECIPIENTS),
+      codexCapacityIntervalMs:
+        parsed.AI_GATEWAY_CODEX_CAPACITY_ALERT_EMAIL_INTERVAL_MS ??
+        DEFAULT_CODEX_CAPACITY_ALERT_EMAIL_INTERVAL_MS,
+    },
     denApiBase: (parsed.AI_GATEWAY_DEN_API_BASE ?? (parsed.NODE_ENV === "production" ? "https://api.veslo.work" : "http://127.0.0.1:8788")).replace(/\/+$/, ""),
   };
+}
+
+function parseEmailList(value: string | undefined): string[] {
+  if (!value) {
+    return [];
+  }
+
+  return Array.from(new Set(
+    value
+      .split(/[,\s]+/)
+      .map((entry) => entry.trim().toLowerCase())
+      .filter(Boolean),
+  ));
 }
 
 export const env = parseEnv(process.env);

@@ -44,6 +44,26 @@ test("parseEnv resolves gateway database, secret key, and OpenAI OAuth settings"
   assert.equal(parsed.denApiBase, "http://127.0.0.1:8788");
 });
 
+test("parseEnv resolves alert email delivery settings", () => {
+  const parsed = parseEnv({
+    LETTR_API_KEY: " lettr_test_key ",
+    AUTH_EMAIL_ADDRESS: " alerts@example.test ",
+    AUTH_EMAIL_FROM_NAME: " Veslo Ops ",
+    AI_GATEWAY_ALERT_EMAIL_RECIPIENTS: " Admin@One.test, admin@two.test admin@one.test ",
+    AI_GATEWAY_CODEX_CAPACITY_ALERT_EMAIL_INTERVAL_MS: "120000",
+  });
+
+  assert.deepEqual(parsed.email, {
+    lettrApiKey: "lettr_test_key",
+    address: "alerts@example.test",
+    fromName: "Veslo Ops",
+  });
+  assert.deepEqual(parsed.alertEmail, {
+    recipients: ["admin@one.test", "admin@two.test"],
+    codexCapacityIntervalMs: 120000,
+  });
+});
+
 test("parseEnv production fallback uses the owned Den API base", () => {
   const parsed = parseEnv({
     NODE_ENV: "production",

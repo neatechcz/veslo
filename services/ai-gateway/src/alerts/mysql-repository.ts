@@ -8,7 +8,13 @@ import {
   credentialHealthEventTable,
   sessionLeaseTable,
 } from "../db/schema.js";
-import type { AlertActionInput, AlertRecord, AlertRepository, AlertSignalSummary } from "./repository.js";
+import type {
+  AlertActionInput,
+  AlertRecord,
+  AlertRepository,
+  AlertSignalSummary,
+  RecordProviderFailureAlertInput,
+} from "./repository.js";
 
 export class MySqlAlertRepository implements AlertRepository {
   constructor(private readonly db: AiGatewayDb) {}
@@ -94,6 +100,17 @@ export class MySqlAlertRepository implements AlertRepository {
     });
   }
 
+  async recordProviderFailure(input: RecordProviderFailureAlertInput): Promise<void> {
+    await this.db.insert(credentialHealthEventTable).values({
+      id: `health_${randomUUID()}`,
+      credential_record_id: input.credentialId,
+      from_state: "healthy",
+      to_state: "degraded",
+      reason: `provider_proxy_failure:${input.provider}:${input.reason}`,
+      created_at: input.occurredAt ?? new Date(),
+    });
+  }
+
   async acknowledgeAlert(input: AlertActionInput): Promise<AlertRecord | null> {
     return this.recordAlertAction({
       alertId: input.alertId,
@@ -145,6 +162,22 @@ export class MySqlAlertRepository implements AlertRepository {
 export function buildAlertRecord(input: AlertSignalSummary): AlertRecord {
   const reason = (input.reason ?? "").toLowerCase();
   const status = input.toState === "healthy" ? "resolved" : "active";
+
+  if (isProviderProxyFailure(reason)) {
+    return {
+      id: `alert_${input.eventId}`,
+      title: "AI inference upstream is unreachable",
+      severity: "critical",
+      source: "gateway-operations",
+      status,
+      credentialId: input.credentialId,
+      affectedSessions: input.affectedSessions,
+      firstSeenAt: input.occurredAt,
+      lastSeenAt: input.occurredAt,
+      owner: null,
+      runbook: "Check container outbound networking, DNS, firewall/NAT rules, and upstream provider reachability.",
+    };
+  }
 
   if (isAuthFailure(reason)) {
     return {
@@ -205,8 +238,18 @@ export function buildAlertRecord(input: AlertSignalSummary): AlertRecord {
     firstSeenAt: input.occurredAt,
     lastSeenAt: input.occurredAt,
     owner: null,
-    runbook: "Inspect recent credential health transitions and active session impact.",
+    runbook: "Inspect recent credential health transitions and active routing impact.",
   };
+}
+
+function isProviderProxyFailure(reason: string) {
+  return (
+    reason.includes("provider_proxy_failure") ||
+    reason.includes("network_connect_timeout") ||
+    reason.includes("network_dns_failure") ||
+    reason.includes("network_connection_failed") ||
+    reason.includes("network_fetch_failed")
+  );
 }
 
 function isAuthFailure(reason: string) {

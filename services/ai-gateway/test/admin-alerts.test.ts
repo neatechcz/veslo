@@ -81,6 +81,11 @@ test("/admin/api/alerts returns repository-backed alerts instead of fixtures", a
           return expected;
         },
       },
+      credentialReadRepository: {
+        async listAdminCredentials() {
+          return [];
+        },
+      },
     } as never,
   );
   const app = createApp({ admin: service });

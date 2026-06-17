@@ -7,6 +7,12 @@ import { fileURLToPath } from "node:url";
 
 import { createAutoAssignedCodexCredentialRotationService, type AutoAssignedCodexCredentialRotationService } from "../access/auto-assignment-rotation.js";
 import type { AlertRecord, AlertRepository } from "../alerts/repository.js";
+import { buildCodexCapacityAlerts } from "../alerts/codex-capacity-alerts.js";
+import {
+  createCodexCapacityAlertMonitorRunner,
+  type CodexCapacityAlertEmailInput,
+  type CodexCapacityAlertMonitorResult,
+} from "../alerts/codex-capacity-monitor.js";
 import type { AiAccessProvider, AiAccessRepository, UpsertUserAiAccessPolicyInput, UserAiAccessPolicyRecord } from "../access/repository.js";
 import { MySqlAiAccessRepository } from "../access/mysql-repository.js";
 import { MySqlAlertRepository } from "../alerts/mysql-repository.js";
@@ -20,6 +26,7 @@ import type { SecretStore, StoredSecret } from "../credentials/secret-store.js";
 import type { AiGatewayDb } from "../db/index.js";
 import { createDb } from "../db/index.js";
 import { credentialBindingTable, credentialHealthEventTable, credentialRecordTable, credentialUsageEventTable, sessionLeaseTable, userAiAccessPolicyTable, type CredentialState } from "../db/schema.js";
+import { sendAdminAlertEmail } from "../email/admin-alert-mailer.js";
 import { env } from "../env.js";
 import type { AdminSessionRecord, LeaseProvider } from "../leases/repository.js";
 import { CODEX_DEFAULT_MODEL, listCodexModelCatalog, resolveCodexModelPolicy } from "../providers/codex-model-catalog.js";
@@ -27,6 +34,7 @@ import { formatAiGatewayProviderLabel, isAiGatewayProvider } from "../providers/
 import { OpenAiCompatibleTransport } from "../providers/openai-compatible-transport.js";
 import { ProviderTransportError, type OpenAiCompatibleProviderTransport } from "../providers/transport.js";
 import { evaluateCodexCredentialEligibility } from "../usage/codex-eligibility.js";
+import { buildCodexCapacityOverview, type CodexCapacityCredential, type CodexCapacityOverview } from "../usage/codex-capacity.js";
 import { MySqlUsageRepository } from "../usage/mysql-repository.js";
 import { CachedCodexCredentialStatusProvider, UnavailableCodexCredentialStatusProvider, type CodexCredentialStatusProvider, type CodexUsageStatus } from "../usage/codex-status.js";
 import type { AggregateUsageInput, UsageAggregateResponse, UsageCredentialAggregate, UsageGroupBy as RepositoryUsageGroupBy, UsageRepository } from "../usage/repository.js";
@@ -93,6 +101,7 @@ export type AdminCredentialUsageRecord = UsageCredentialAggregate & {
 
 export type UsageResponse = Omit<UsageAggregateResponse, "credentialUsage"> & {
   credentialUsage: AdminCredentialUsageRecord[];
+  capacity: CodexCapacityOverview;
 };
 
 export type AdminCredentialEligibility = {
@@ -251,6 +260,7 @@ export interface AdminService {
   listSessions(_token: string): Promise<{ sessions: SessionRecord[] }>;
   getUsage(_token: string, input: { groupBy: UsageGroupBy; credentialId: string | null; userId: string | null; orgId: string | null }): Promise<UsageResponse>;
   listAlerts(_token: string): Promise<{ alerts: AlertRecord[] }>;
+  runCodexCapacityAlertEmailMonitor?(): Promise<CodexCapacityAlertMonitorResult>;
   acknowledgeAlert(_token: string, alertId: string, actorUserId: string | null): Promise<{ alert: AlertRecord }>;
   resolveAlert(_token: string, alertId: string, actorUserId: string | null): Promise<{ alert: AlertRecord }>;
   listAudit(_token: string): Promise<{ events: AuditRecord[] }>;
@@ -283,6 +293,7 @@ const ADMIN_AUTH_COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 const ADMIN_PENDING_AUTH_COOKIE_MAX_AGE_SECONDS = 10 * 60;
 const ADMIN_AUTH_RANDOM_BYTES = 32;
 const CODEX_AUTH_UPLOAD_SESSION_TTL_MS = 10 * 60 * 1000;
+const DEFAULT_CODEX_CAPACITY_ALERT_READ_TIMEOUT_MS = 2500;
 
 type CodexAuthUploadSessionRecord = {
   token: string;
@@ -355,6 +366,8 @@ type AdminReadModelDependencies = {
   auditRepository?: AuditRepository;
   secretStore?: SecretStore;
   openAiCompatibleTransport?: OpenAiCompatibleProviderTransport;
+  alertEmailRecipients?: string[];
+  sendAlertEmail?: (input: CodexCapacityAlertEmailInput) => Promise<void>;
   now?: () => Date;
 };
 
@@ -997,6 +1010,8 @@ export function createDefaultAdminService(
   const getSecretStore = () =>
     deps.secretStore ?? getDefaultRepositories().secretStore;
   const openAiCompatibleTransport = deps.openAiCompatibleTransport ?? new OpenAiCompatibleTransport();
+  const alertEmailRecipients = deps.alertEmailRecipients ?? env.alertEmail.recipients;
+  const sendAlertEmail = deps.sendAlertEmail ?? sendAdminAlertEmail;
   const now = deps.now ?? (() => new Date());
   const codexStatusProvider =
     deps.codexStatusProvider ??
@@ -1025,6 +1040,7 @@ export function createDefaultAdminService(
       : new UnavailableCodexCredentialStatusProvider());
   let credentialRotationService: AutoAssignedCodexCredentialRotationService | null =
     deps.credentialRotationService ?? null;
+  let codexCapacityAlertEmailRunner: (() => Promise<CodexCapacityAlertMonitorResult>) | null = null;
   const codexAuthUploadSessions = new Map<string, CodexAuthUploadSessionRecord>();
 
   function getCredentialRotationService() {
@@ -1365,6 +1381,34 @@ export function createDefaultAdminService(
     throw new HttpError(result.reason, status);
   }
 
+  async function toCodexCapacityCredentials(
+    credentials: CredentialRecord[],
+    statusProvider: CodexCredentialStatusProvider,
+  ): Promise<CodexCapacityCredential[]> {
+    return Promise.all(
+      credentials
+        .filter((credential) => credential.provider === "codex_oauth")
+        .map(async (credential) => {
+          let upstreamStatus: CodexUsageStatus | null = null;
+          if (Object.hasOwn(credential, "upstreamStatus")) {
+            upstreamStatus = credential.upstreamStatus ?? null;
+          } else {
+            upstreamStatus = await statusProvider.getStatus({
+              credentialId: credential.id,
+              credentialName: credential.name,
+            });
+          }
+
+          return {
+            id: credential.id,
+            name: credential.name,
+            state: credential.state,
+            upstreamStatus,
+          };
+        }),
+    );
+  }
+
   async function withCredentialUsage(
     usage: UsageAggregateResponse,
     credentials: CredentialRecord[],
@@ -1424,6 +1468,8 @@ export function createDefaultAdminService(
       credentialUsage = [];
     }
 
+    const capacityCredentials = await toCodexCapacityCredentials(credentials, statusProvider);
+
     return {
       ...usage,
       filters: {
@@ -1442,7 +1488,49 @@ export function createDefaultAdminService(
         label: credentialLabels.get(entry.id) ?? entry.label,
       })),
       credentialUsage,
+      capacity: buildCodexCapacityOverview(capacityCredentials),
     };
+  }
+
+  async function listCodexCapacityAlerts(): Promise<AlertRecord[]> {
+    const capacity = await loadCodexCapacityOverview();
+    return buildCodexCapacityAlerts(capacity, now());
+  }
+
+  async function loadCodexCapacityOverview(): Promise<CodexCapacityOverview> {
+    const credentials = await withCodexUpstreamStatus(
+      await getCredentialReadRepository().listAdminCredentials(),
+      codexStatusProvider,
+    );
+    const capacityCredentials = await toCodexCapacityCredentials(credentials, codexStatusProvider);
+    return buildCodexCapacityOverview(capacityCredentials);
+  }
+
+  async function listCodexCapacityAlertsBestEffort(): Promise<AlertRecord[]> {
+    try {
+      return await withTimeout(
+        listCodexCapacityAlerts(),
+        readCodexCapacityAlertReadTimeoutMs(),
+        "codex_capacity_alerts_timeout",
+      );
+    } catch (error) {
+      console.error("ai_gateway_admin_codex_capacity_alerts_failed", error);
+      return [];
+    }
+  }
+
+  function getCodexCapacityAlertEmailRunner() {
+    if (!codexCapacityAlertEmailRunner) {
+      codexCapacityAlertEmailRunner = createCodexCapacityAlertMonitorRunner({
+        loadCapacityOverview: loadCodexCapacityOverview,
+        listAdminRecipients: async () => alertEmailRecipients,
+        sendEmail: sendAlertEmail,
+        audit: getAuditRepository(),
+        now,
+      });
+    }
+
+    return codexCapacityAlertEmailRunner;
   }
 
   return {
@@ -1918,7 +2006,14 @@ export function createDefaultAdminService(
       );
     },
     async listAlerts() {
-      return { alerts: await getAlertRepository().listAlerts() };
+      const [capacityAlerts, repositoryAlerts] = await Promise.all([
+        listCodexCapacityAlertsBestEffort(),
+        getAlertRepository().listAlerts(),
+      ]);
+      return { alerts: [...capacityAlerts, ...repositoryAlerts] };
+    },
+    async runCodexCapacityAlertEmailMonitor() {
+      return getCodexCapacityAlertEmailRunner()();
     },
     async acknowledgeAlert(_token, alertId, actorUserId) {
       const acknowledge = getAlertRepository().acknowledgeAlert;
@@ -3117,6 +3212,34 @@ export function createAdminRouter(adminService: AdminService) {
   router.use("/admin", express.static(publicDir, { index: false }));
 
   return router;
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+    unrefTimer(timeout);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  });
+}
+
+function readCodexCapacityAlertReadTimeoutMs(): number {
+  const raw = Number(process.env.AI_GATEWAY_CODEX_CAPACITY_ALERT_READ_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_CODEX_CAPACITY_ALERT_READ_TIMEOUT_MS;
+}
+
+function unrefTimer(handle: unknown) {
+  if (!handle || typeof handle !== "object") {
+    return;
+  }
+  const unref = (handle as { unref?: unknown }).unref;
+  if (typeof unref === "function") {
+    unref.call(handle);
+  }
 }
 
 function parseCredentialProvider(value: unknown): LeaseProvider | null {
