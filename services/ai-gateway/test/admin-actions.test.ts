@@ -129,6 +129,7 @@ function createAlert(id: string, status: AlertRecord["status"]): AlertRecord {
     title: "Provider rate limits increasing",
     severity: "high",
     source: "provider-rate-limit",
+    reason: "rate_limit_exceeded",
     status,
     credentialId: "cred_openai_1",
     affectedSessions: 3,

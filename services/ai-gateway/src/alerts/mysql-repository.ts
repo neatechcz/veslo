@@ -160,7 +160,8 @@ export class MySqlAlertRepository implements AlertRepository {
 }
 
 export function buildAlertRecord(input: AlertSignalSummary): AlertRecord {
-  const reason = (input.reason ?? "").toLowerCase();
+  const originalReason = input.reason ?? null;
+  const reason = (originalReason ?? "").toLowerCase();
   const status = input.toState === "healthy" ? "resolved" : "active";
 
   if (isProviderProxyFailure(reason)) {
@@ -169,6 +170,7 @@ export function buildAlertRecord(input: AlertSignalSummary): AlertRecord {
       title: "AI inference upstream is unreachable",
       severity: "critical",
       source: "gateway-operations",
+      reason: originalReason,
       status,
       credentialId: input.credentialId,
       affectedSessions: input.affectedSessions,
@@ -185,6 +187,7 @@ export function buildAlertRecord(input: AlertSignalSummary): AlertRecord {
       title: "invalid_grant returned by upstream OAuth",
       severity: "high",
       source: "provider-auth",
+      reason: originalReason,
       status,
       credentialId: input.credentialId,
       affectedSessions: input.affectedSessions,
@@ -201,6 +204,7 @@ export function buildAlertRecord(input: AlertSignalSummary): AlertRecord {
       title: "Provider rate limits increasing",
       severity: "high",
       source: "provider-rate-limit",
+      reason: originalReason,
       status,
       credentialId: input.credentialId,
       affectedSessions: input.affectedSessions,
@@ -217,6 +221,7 @@ export function buildAlertRecord(input: AlertSignalSummary): AlertRecord {
       title: "Unusual upstream error activity detected",
       severity: "critical",
       source: "gateway-operations",
+      reason: originalReason,
       status,
       credentialId: input.credentialId,
       affectedSessions: input.affectedSessions,
@@ -232,6 +237,7 @@ export function buildAlertRecord(input: AlertSignalSummary): AlertRecord {
     title: `Credential health changed to ${input.toState}`,
     severity: input.toState === "unhealthy" ? "high" : "medium",
     source: "credential-health",
+    reason: originalReason,
     status,
     credentialId: input.credentialId,
     affectedSessions: input.affectedSessions,

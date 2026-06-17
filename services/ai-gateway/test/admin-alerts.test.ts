@@ -62,6 +62,7 @@ test("/admin/api/alerts returns repository-backed alerts instead of fixtures", a
       title: "Provider rate limits increasing",
       severity: "high" as const,
       source: "provider-rate-limit",
+      reason: "rate_limit_exceeded",
       status: "active" as const,
       credentialId: "cred_openai_1",
       affectedSessions: 3,
@@ -137,6 +138,7 @@ test("buildAlertRecord classifies auth, rate-limit, and unusual-activity signals
     title: "invalid_grant returned by upstream OAuth",
     severity: "high",
     source: "provider-auth",
+    reason: "invalid_grant",
     status: "active",
     credentialId: "cred_openai_1",
     affectedSessions: 4,
@@ -150,6 +152,7 @@ test("buildAlertRecord classifies auth, rate-limit, and unusual-activity signals
     title: "Provider rate limits increasing",
     severity: "high",
     source: "provider-rate-limit",
+    reason: "rate_limit_exceeded",
     status: "active",
     credentialId: "cred_openai_2",
     affectedSessions: 2,
@@ -163,6 +166,7 @@ test("buildAlertRecord classifies auth, rate-limit, and unusual-activity signals
     title: "Unusual upstream error activity detected",
     severity: "critical",
     source: "gateway-operations",
+    reason: "upstream_5xx_spike",
     status: "active",
     credentialId: "cred_openai_3",
     affectedSessions: 6,
@@ -171,4 +175,17 @@ test("buildAlertRecord classifies auth, rate-limit, and unusual-activity signals
     owner: null,
     runbook: "Inspect recent upstream failures and failover churn for the affected credential pool.",
   });
+});
+
+test("buildAlertRecord preserves the health event reason for email throttling", () => {
+  const alert = buildAlertRecord({
+    eventId: "health_invalid_grant",
+    credentialId: "cred_openai_1",
+    reason: "invalid_grant",
+    toState: "unhealthy",
+    occurredAt: "2026-06-17T10:00:00.000Z",
+    affectedSessions: 1,
+  });
+
+  assert.equal(alert.reason, "invalid_grant");
 });
