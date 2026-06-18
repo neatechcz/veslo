@@ -9660,6 +9660,8 @@ export default function App() {
       ...(selectedEntry.url ? { url: selectedEntry.url } : {}),
       ...(selectedEntry.command ? { command: selectedEntry.command } : {}),
       oauth: selectedEntry.oauth,
+      provider: selectedEntry.provider,
+      source: selectedEntry.source,
     };
 
     try {

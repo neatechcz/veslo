@@ -572,6 +572,7 @@ export default {
   "mcp.available_apps": "Available apps",
   "mcp.one_click_connect": "One-click connect",
   "mcp.org_catalog_placeholder": "Org-provided MCP apps will appear here.",
+  "mcp.hub_provider_label": "Shared provider: {provider}",
   "mcp.tap_to_connect": "Tap to connect",
   "mcp.connected_badge": "Connected",
   "mcp.your_apps": "Your apps",
@@ -713,6 +714,7 @@ export default {
 
   // MCP Auth Modal
   "mcp.auth.open_browser_signin": "We'll open your browser to finish sign-in.",
+  "mcp.auth.local_token_notice": "Authorize Google in your browser. Veslo config contains only MCP OAuth client config; user OAuth tokens stay in the local MCP/OpenCode runtime or local profile and are not stored in Veslo cloud.",
   "mcp.auth.connect_server": "Connect {server}",
   "mcp.auth.already_connected": "Already Connected",
   "mcp.auth.already_connected_description": "{server} is already authenticated and ready to use.",

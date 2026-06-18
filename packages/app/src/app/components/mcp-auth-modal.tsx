@@ -873,6 +873,10 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     </p>
                   </div>
                 </div>
+
+                <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 text-xs text-gray-10">
+                  {translate("mcp.auth.local_token_notice")}
+                </div>
               </div>
 
               <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 text-sm text-gray-11">
