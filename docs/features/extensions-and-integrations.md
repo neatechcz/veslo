@@ -122,7 +122,9 @@ platform connector.
 For normal Veslo usage, Veslo owns and distributes the Google OAuth client
 configuration. Users should not create their own Google Cloud project, approve a
 Google CLI, or supply Google OAuth client values just to use the platform
-Google connectors.
+Google connectors. A Veslo deployment must still be configured with the
+Veslo-owned Google OAuth app values before these connectors are enabled for
+public users.
 
 The MVP token boundary is local-first: Veslo cloud and catalog metadata do not
 store user Google refresh tokens. The local MCP/OpenCode runtime starts the
