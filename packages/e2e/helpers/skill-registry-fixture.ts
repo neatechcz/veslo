@@ -36,6 +36,87 @@ export const E2E_SKILL_REGISTRY_ORG_ID = 'org_veslo_e2e_default';
 export const E2E_SKILL_REGISTRY_USER_ID = 'user_veslo_e2e_default';
 export const E2E_SKILL_REGISTRY_TOKEN = 'veslo-e2e-default-token';
 export const E2E_SKILL_REGISTRY_WORKSPACE_ID = 'e2e-visual-workspace';
+export const E2E_GOOGLE_MCP_CATALOG_USER_ID = 'user_veslo_google_mcp_e2e';
+
+const GOOGLE_MCP_OAUTH = {
+  clientId: '{env:VESLO_GOOGLE_MCP_CLIENT_ID}',
+  clientSecret: '{env:VESLO_GOOGLE_MCP_CLIENT_SECRET}',
+};
+
+export const E2E_GOOGLE_MCP_CONNECTORS = [
+  {
+    id: 'google-gmail',
+    name: 'Google Gmail',
+    description: 'Search Gmail threads and create draft email through Google MCP.',
+    config: {
+      type: 'remote',
+      url: 'https://gmailmcp.googleapis.com/mcp/v1',
+      oauth: {
+        ...GOOGLE_MCP_OAUTH,
+        scope: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose',
+      },
+    },
+    source: { scope: 'platform' },
+    provider: { id: 'google', group: 'Google' },
+  },
+  {
+    id: 'google-calendar',
+    name: 'Google Calendar',
+    description: 'List calendars, inspect availability, and manage events through Google MCP.',
+    config: {
+      type: 'remote',
+      url: 'https://calendarmcp.googleapis.com/mcp/v1',
+      oauth: {
+        ...GOOGLE_MCP_OAUTH,
+        scope: [
+          'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
+          'https://www.googleapis.com/auth/calendar.events.freebusy',
+          'https://www.googleapis.com/auth/calendar.events.readonly',
+        ].join(' '),
+      },
+    },
+    source: { scope: 'platform' },
+    provider: { id: 'google', group: 'Google' },
+  },
+  {
+    id: 'google-drive',
+    name: 'Google Drive',
+    description: 'Find and work with Google Drive files through Google MCP.',
+    config: {
+      type: 'remote',
+      url: 'https://drivemcp.googleapis.com/mcp/v1',
+      oauth: {
+        ...GOOGLE_MCP_OAUTH,
+        scope: 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file',
+      },
+    },
+    source: { scope: 'platform' },
+    provider: { id: 'google', group: 'Google' },
+  },
+] as const;
+
+export function shouldUseGoogleMcpCatalogFixture(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  return env.E2E_GOOGLE_MCP_CATALOG_FIXTURE?.trim() === '1';
+}
+
+export function createGoogleMcpCatalogDenAuthJson(baseUrl: string): string {
+  const denApiBase = baseUrl.trim().replace(/\/+$/, '');
+  return JSON.stringify({
+    denApiBase,
+    token: E2E_SKILL_REGISTRY_TOKEN,
+    orgId: E2E_SKILL_REGISTRY_ORG_ID,
+    user: {
+      id: E2E_GOOGLE_MCP_CATALOG_USER_ID,
+      email: 'veslo-google-mcp-e2e@example.test',
+    },
+    org: {
+      id: E2E_SKILL_REGISTRY_ORG_ID,
+      slug: 'veslo-google-mcp-e2e',
+    },
+  });
+}
 
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
@@ -289,6 +370,23 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
   }
   if (req.method === 'GET' && url.pathname === '/__e2e/events') {
     json(res, 200, { deletedInstallationCalls, updatedRolloutPolicyCalls });
+    return;
+  }
+
+  const googleMcpCatalogMatch = /^\/v1\/orgs\/([^/]+)\/mcp\/catalog$/.exec(url.pathname);
+  if (req.method === 'GET' && googleMcpCatalogMatch?.[1]) {
+    if (!shouldUseGoogleMcpCatalogFixture()) {
+      json(res, 404, { code: 'not_found', message: `Unhandled registry fixture path: ${url.pathname}` });
+      return;
+    }
+
+    const authHeader = req.headers.authorization?.trim() ?? '';
+    if (authHeader !== `Bearer ${E2E_SKILL_REGISTRY_TOKEN}`) {
+      json(res, 401, { code: 'den_token_required', message: 'Missing or invalid Den token header' });
+      return;
+    }
+
+    json(res, 200, { items: E2E_GOOGLE_MCP_CONNECTORS });
     return;
   }
 
