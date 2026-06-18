@@ -160,3 +160,37 @@ test("fetchOrgMcpCatalog throws ApiError on invalid payload shape", async () => 
     code: "den_catalog_invalid_payload",
   });
 });
+
+test("fetchOrgMcpCatalog rejects OAuth objects with non-string optional fields", async () => {
+  globalThis.fetch = asFetch(async () =>
+    new Response(JSON.stringify({
+      items: [
+        {
+          id: "google-gmail",
+          name: "Google Gmail",
+          config: {
+            type: "remote",
+            url: "https://gmailmcp.googleapis.com/mcp/v1",
+            oauth: {
+              clientId: "client",
+              clientSecret: 123,
+              scope: ["bad"],
+            },
+          },
+          source: { scope: "platform" },
+        },
+      ],
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+
+  await expect(fetchOrgMcpCatalog({
+    baseUrl: "https://den.example",
+    orgId: "org_123",
+    denToken: "token_abc",
+  })).rejects.toMatchObject({
+    status: 502,
+    code: "den_catalog_invalid_payload",
+  });
+});

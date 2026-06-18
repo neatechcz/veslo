@@ -53,6 +53,12 @@ function toMcpOAuthConfig(value: unknown, index: number) {
   if (typeof payload.clientId !== "string") {
     throw new ApiError(502, "den_catalog_invalid_payload", `Invalid Den catalog item at index ${index}`);
   }
+  if (payload.clientSecret !== undefined && typeof payload.clientSecret !== "string") {
+    throw new ApiError(502, "den_catalog_invalid_payload", `Invalid Den catalog item at index ${index}`);
+  }
+  if (payload.scope !== undefined && typeof payload.scope !== "string") {
+    throw new ApiError(502, "den_catalog_invalid_payload", `Invalid Den catalog item at index ${index}`);
+  }
 
   return {
     clientId: payload.clientId,
