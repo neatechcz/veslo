@@ -33,7 +33,6 @@ describe('Settings dashboard link tabs', () => {
     expect(await settingsTabs()).toEqual([
       { kind: 'settings', tab: 'general', label: 'General', current: 'page' },
       { kind: 'settings', tab: 'archived', label: 'Archived', current: null },
-      { kind: 'dashboard', tab: 'scheduled', label: 'Automations', current: null },
       { kind: 'dashboard', tab: 'soul', label: 'Soul', current: null },
       { kind: 'dashboard', tab: 'skills', label: 'Skills', current: null },
       { kind: 'dashboard', tab: 'mcp', label: 'Extensions', current: null },
@@ -42,7 +41,6 @@ describe('Settings dashboard link tabs', () => {
 
   it('routes dashboard link tabs to the existing dashboard pages', async () => {
     const destinations = [
-      ['scheduled', '#/dashboard/scheduled'],
       ['soul', '#/dashboard/soul'],
       ['skills', '#/dashboard/skills'],
       ['mcp', '#/dashboard/mcp'],

@@ -4,7 +4,7 @@ import type { DashboardTab, SettingsTab } from "../types";
 import { resolveSettingsTabLabel } from "../lib/settings-tab-label";
 import { currentLocale, t } from "../../i18n";
 
-export type DashboardTabRailDashboardTab = Extract<DashboardTab, "scheduled" | "soul" | "skills" | "mcp">;
+export type DashboardTabRailDashboardTab = Extract<DashboardTab, "soul" | "skills" | "mcp">;
 export type DashboardTabRailSettingsTab = Extract<SettingsTab, "general" | "archived">;
 
 type DashboardTabRailItem =
@@ -21,7 +21,6 @@ export type DashboardTabRailProps = {
 const items: DashboardTabRailItem[] = [
   { kind: "settings", tab: "general" },
   { kind: "settings", tab: "archived" },
-  { kind: "dashboard", tab: "scheduled" },
   { kind: "dashboard", tab: "soul" },
   { kind: "dashboard", tab: "skills" },
   { kind: "dashboard", tab: "mcp" },
@@ -32,8 +31,6 @@ export const shouldShowDashboardTabRail = (tab: DashboardTab) =>
 
 const resolveDashboardTabLabel = (tab: DashboardTabRailDashboardTab) => {
   switch (tab) {
-    case "scheduled":
-      return t("nav.automations", currentLocale());
     case "soul":
       return t("nav.soul", currentLocale());
     case "skills":

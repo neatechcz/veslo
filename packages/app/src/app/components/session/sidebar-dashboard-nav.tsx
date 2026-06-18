@@ -1,5 +1,5 @@
 import { Show, createSignal } from "solid-js";
-import { Box, ChevronDown, ChevronUp, HeartPulse, History, Zap } from "lucide-solid";
+import { Box, ChevronDown, ChevronUp, HeartPulse, Zap } from "lucide-solid";
 
 import type { DashboardTab } from "../../types";
 import { currentLocale, t } from "../../../i18n";
@@ -42,14 +42,6 @@ export default function SidebarDashboardNav(props: SidebarDashboardNavProps) {
     <div class="mt-1.5">
       <Show when={!collapsed()}>
         <div class="space-y-0 border-t border-gray-6/70 pt-1.5">
-          <button
-            type="button"
-            class={buttonClass(isActiveTab(props.currentTab, "scheduled"))}
-            onClick={() => props.onSelect("scheduled")}
-          >
-            <History size={18} />
-            {t("nav.automations", currentLocale())}
-          </button>
           <button
             type="button"
             class={buttonClass(isActiveTab(props.currentTab, "soul"))}

@@ -355,7 +355,7 @@ test("dashboard routes active nav re-clicks through the session return helper", 
     dashboardSource,
     /onClick\s*=\s*\{\s*\(\)\s*=>\s*handleDashboardTabSelection\s*\(\s*["']skills["']\s*\)\s*\}/,
   );
-  assert.match(
+  assert.doesNotMatch(
     dashboardSource,
     /onClick\s*=\s*\{\s*\(\)\s*=>\s*handleDashboardTabSelection\s*\(\s*["']scheduled["']\s*\)\s*\}/,
   );

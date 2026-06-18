@@ -16,7 +16,7 @@ test("settings exposes archived tab and keeps developer tabs unavailable", () =>
   assert.match(source, /onOpenDashboardTab=\{\(tab\) => props\.onOpenDashboardTab\?\.\(tab\)\}/);
   assert.match(dashboardTabRailSource, /\{\s*kind:\s*"settings",\s*tab:\s*"general"\s*\}/);
   assert.match(dashboardTabRailSource, /\{\s*kind:\s*"settings",\s*tab:\s*"archived"\s*\}/);
-  assert.match(dashboardTabRailSource, /\{\s*kind:\s*"dashboard",\s*tab:\s*"scheduled"\s*\}/);
+  assert.doesNotMatch(dashboardTabRailSource, /\{\s*kind:\s*"dashboard",\s*tab:\s*"scheduled"\s*\}/);
   assert.match(dashboardTabRailSource, /\{\s*kind:\s*"dashboard",\s*tab:\s*"soul"\s*\}/);
   assert.match(dashboardTabRailSource, /\{\s*kind:\s*"dashboard",\s*tab:\s*"skills"\s*\}/);
   assert.match(dashboardTabRailSource, /\{\s*kind:\s*"dashboard",\s*tab:\s*"mcp"\s*\}/);
@@ -88,7 +88,7 @@ test("settings exposes updater download retry states", () => {
 test("settings locales include Settings and dashboard labels", () => {
   assert.match(enLocaleSource, /"settings\.archived": "Archived"/);
   assert.match(csLocaleSource, /"settings\.archived": "Archivované"/);
-  assert.match(dashboardTabRailSource, /case\s+"scheduled":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.automations", currentLocale\(\)\)/);
+  assert.doesNotMatch(dashboardTabRailSource, /case\s+"scheduled":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.automations", currentLocale\(\)\)/);
   assert.match(dashboardTabRailSource, /case\s+"soul":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.soul", currentLocale\(\)\)/);
   assert.match(dashboardTabRailSource, /case\s+"skills":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.skills", currentLocale\(\)\)/);
   assert.match(dashboardTabRailSource, /case\s+"mcp":(?:(?!\s*(?:case\s+"|default\s*:))[\s\S])*t\("nav\.extensions", currentLocale\(\)\)/);

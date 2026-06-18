@@ -30,14 +30,14 @@ test("dashboard keeps the right sidebar reserved for advanced nav only", () => {
   assert.doesNotMatch(rightSidebar, /<SidebarDashboardNav/);
 });
 
-test("dashboard keeps the mobile bottom nav intact", () => {
+test("dashboard mobile bottom nav hides automations", () => {
   assert.match(
     source,
-    /<nav class="md:hidden border-t border-dls-border bg-dls-surface">[\s\S]*\{t\("nav\.automations", currentLocale\(\)\)\}[\s\S]*\{t\("nav\.soul", currentLocale\(\)\)\}[\s\S]*\{t\("nav\.skills", currentLocale\(\)\)\}[\s\S]*\{t\("nav\.extensions", currentLocale\(\)\)\}/,
+    /<nav class="md:hidden border-t border-dls-border bg-dls-surface">[\s\S]*\{t\("nav\.soul", currentLocale\(\)\)\}[\s\S]*\{t\("nav\.skills", currentLocale\(\)\)\}[\s\S]*\{t\("nav\.extensions", currentLocale\(\)\)\}/,
   );
   assert.doesNotMatch(
     source,
-    /<nav class="md:hidden border-t border-dls-border bg-dls-surface">[\s\S]*Automations[\s\S]*Soul[\s\S]*Skills[\s\S]*Extensions/,
+    /<nav class="md:hidden border-t border-dls-border bg-dls-surface">[\s\S]*\{t\("nav\.automations", currentLocale\(\)\)\}/,
   );
 });
 

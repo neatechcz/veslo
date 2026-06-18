@@ -96,7 +96,6 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
-  History,
   HeartPulse,
   Loader2,
   MoreHorizontal,
@@ -1923,16 +1922,7 @@ export default function DashboardView(props: DashboardViewProps) {
         </div>
 
         <nav class="md:hidden border-t border-dls-border bg-dls-surface">
-          <div class={`mx-auto max-w-5xl px-4 py-3 grid gap-2 ${props.developerMode ? "grid-cols-5" : "grid-cols-4"}`}>
-            <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "scheduled" ? "text-gray-12" : "text-gray-10"
-              }`}
-              onClick={() => handleDashboardTabSelection("scheduled")}
-            >
-              <History size={18} />
-              {t("nav.automations", currentLocale())}
-            </button>
+          <div class={`mx-auto max-w-5xl px-4 py-3 grid gap-2 ${props.developerMode ? "grid-cols-4" : "grid-cols-3"}`}>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
                 props.tab === "soul" ? "text-gray-12" : "text-gray-10"
