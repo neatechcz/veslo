@@ -78,6 +78,8 @@ export class MySqlAlertRepository implements AlertRepository {
       }
     }
 
+    const latestRecoveryByCredential = latestHealthyRecoveryByCredential(healthEventRows);
+
     return healthEventRows.map((row) => {
       const alert = buildAlertRecord({
         eventId: row.eventId,
@@ -87,13 +89,16 @@ export class MySqlAlertRepository implements AlertRepository {
         occurredAt: toIsoString(row.occurredAt),
         affectedSessions: activeLeasesByCredential.get(row.credentialId) ?? 0,
       });
+      const derivedAlert = isRecoveredByLaterHealthyEvent(row, latestRecoveryByCredential)
+        ? { ...alert, status: "resolved" as const, owner: null }
+        : alert;
       const override = latestAuditByAlertId.get(alert.id);
-      if (!override) {
-        return alert;
+      if (!override || derivedAlert.status === "resolved") {
+        return derivedAlert;
       }
 
       return {
-        ...alert,
+        ...derivedAlert,
         status: override.action === "alert.resolve" ? "resolved" : "acknowledged",
         owner: override.actor,
       };
@@ -292,6 +297,39 @@ function isUnusualActivity(reason: string) {
     reason.includes("upstream_5xx") ||
     reason.includes("error_activity")
   );
+}
+
+function latestHealthyRecoveryByCredential(
+  rows: Array<{ credentialId: string; toState: string; occurredAt: Date | string }>,
+) {
+  const latest = new Map<string, number>();
+  for (const row of rows) {
+    if (row.toState !== "healthy") continue;
+
+    const occurredAt = toTimestampMs(row.occurredAt);
+    const previous = latest.get(row.credentialId);
+    if (previous === undefined || occurredAt > previous) {
+      latest.set(row.credentialId, occurredAt);
+    }
+  }
+
+  return latest;
+}
+
+function isRecoveredByLaterHealthyEvent(
+  row: { credentialId: string; toState: string; occurredAt: Date | string },
+  latestRecoveryByCredential: Map<string, number>,
+) {
+  if (row.toState === "healthy") {
+    return false;
+  }
+
+  const recoveredAt = latestRecoveryByCredential.get(row.credentialId);
+  return recoveredAt !== undefined && recoveredAt > toTimestampMs(row.occurredAt);
+}
+
+function toTimestampMs(value: Date | string) {
+  return value instanceof Date ? value.getTime() : Date.parse(value);
 }
 
 function toIsoString(value: Date | string | null) {
