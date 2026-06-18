@@ -150,9 +150,6 @@ export function createWorkspaceLocalWorkspaces(deps: WorkspaceLocalWorkspacesDep
       const ws = await workspaceCreate({ folderPath: resolvedFolder, name, preset });
       deps.setWorkspaces(ws.workspaces);
       deps.syncActiveWorkspaceId(ws.activeId);
-      if (ws.activeId) {
-        deps.updateWorkspaceConnectionState(ws.activeId, { status: "connected", message: null });
-      }
 
       const active = ws.workspaces.find((w) => w.id === ws.activeId) ?? null;
 
@@ -186,7 +183,12 @@ export function createWorkspaceLocalWorkspaces(deps: WorkspaceLocalWorkspacesDep
     });
     if (!created) return;
     const opened = await activateFreshLocalWorkspace(created.id ?? null, created.path);
-    if (!opened) return;
+    if (!opened) {
+      const message = "Workspace was created, but the local runtime did not start.";
+      deps.updateWorkspaceConnectionState(created.id, { status: "error", message });
+      deps.setError(message);
+      return;
+    }
   }
 
   async function createScratchWorkspace() {

@@ -115,15 +115,15 @@ export function createEngineStore(deps: EngineStoreDeps) {
     activateOrchestratorWorkspace: deps.activateOrchestratorWorkspace,
     activateVesloHostWorkspace: deps.activateVesloHostWorkspace,
     connectToServer: deps.connectToServer,
-    connectQuiet: async (baseUrl, directory, auth) =>
+    connectQuiet: async (baseUrl, directory, auth, context) =>
       await deps.connectToServer(
         baseUrl,
         directory,
         {
-          workspaceId: deps.activeWorkspaceId().trim() || undefined,
-          workspaceType: "local",
-          targetRoot: directory,
-          reason: "engine-quiet-reconnect",
+          workspaceId: context?.workspaceId?.trim() || deps.activeWorkspaceId().trim() || undefined,
+          workspaceType: context?.workspaceType ?? "local",
+          targetRoot: context?.targetRoot ?? directory,
+          reason: context?.reason ?? "engine-quiet-reconnect",
         },
         auth,
         { quiet: true, navigate: false },
@@ -141,17 +141,15 @@ export function createEngineStore(deps: EngineStoreDeps) {
       const syncLocalState = !isRemoteWorkspace;
       const activeWorkspaceRoot = normalizeDirectoryPath(deps.activeWorkspaceRoot().trim());
       const engineProjectDir = normalizeDirectoryPath(info.projectDir?.trim() ?? "");
-      const browsingDifferentLocalWorkspace =
-        syncLocalState &&
-        !deps.routing.active() &&
-        activeWorkspaceRoot.length > 0 &&
-        engineProjectDir.length > 0 &&
-        activeWorkspaceRoot !== engineProjectDir;
+      const engineSnapshotMatchesActiveWorkspace =
+        !activeWorkspaceRoot ||
+        !engineProjectDir ||
+        activeWorkspaceRoot === engineProjectDir;
 
-      if (info.projectDir && syncLocalState && !browsingDifferentLocalWorkspace) {
+      if (info.projectDir && syncLocalState && engineSnapshotMatchesActiveWorkspace) {
         deps.setProjectDir(info.projectDir);
       }
-      if (info.baseUrl && syncLocalState && !browsingDifferentLocalWorkspace) {
+      if (info.baseUrl && syncLocalState && engineSnapshotMatchesActiveWorkspace) {
         deps.setBaseUrl(info.baseUrl);
       }
 

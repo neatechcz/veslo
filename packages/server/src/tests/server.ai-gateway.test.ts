@@ -6,6 +6,8 @@ import { brotliCompressSync } from "node:zlib";
 
 import { REDACTED_SECRET_VALUE, startServer } from "../server.js";
 
+const AI_GATEWAY_HEADERS_TIMEOUT_ENV = "VESLO_AI_GATEWAY_PROXY_HEADERS_TIMEOUT_MS";
+
 function createTestConfig() {
   return {
     host: "127.0.0.1",
@@ -73,6 +75,20 @@ async function withManagedAiEnv<T>(
   }
 }
 
+async function withEnvVar<T>(name: string, value: string, fn: () => Promise<T>): Promise<T> {
+  const previous = process.env[name];
+  process.env[name] = value;
+  try {
+    return await fn();
+  } finally {
+    if (previous === undefined) {
+      delete process.env[name];
+    } else {
+      process.env[name] = previous;
+    }
+  }
+}
+
 async function reserveLoopbackPort(): Promise<number> {
   const probe = createNetServer();
   probe.listen(0, "127.0.0.1");
@@ -110,6 +126,10 @@ describe("ai gateway proxy routes", () => {
       sessionId: string | null;
       hostToken: string | null;
       clientId: string | null;
+      workspaceId: string | null;
+      sendTraceId: string | null;
+      openCodeSessionId: string | null;
+      sessionAffinity: string | null;
       body: unknown;
     }> = [];
 
@@ -127,6 +147,10 @@ describe("ai gateway proxy routes", () => {
         sessionId: typeof req.headers["x-veslo-session-id"] === "string" ? req.headers["x-veslo-session-id"] : null,
         hostToken: typeof req.headers["x-veslo-host-token"] === "string" ? req.headers["x-veslo-host-token"] : null,
         clientId: typeof req.headers["x-veslo-client-id"] === "string" ? req.headers["x-veslo-client-id"] : null,
+        workspaceId: typeof req.headers["x-veslo-workspace-id"] === "string" ? req.headers["x-veslo-workspace-id"] : null,
+        sendTraceId: typeof req.headers["x-veslo-send-trace-id"] === "string" ? req.headers["x-veslo-send-trace-id"] : null,
+        openCodeSessionId: typeof req.headers["x-session-id"] === "string" ? req.headers["x-session-id"] : null,
+        sessionAffinity: typeof req.headers["x-session-affinity"] === "string" ? req.headers["x-session-affinity"] : null,
         body: rawBody ? JSON.parse(rawBody) : null,
       });
 
@@ -166,6 +190,10 @@ describe("ai gateway proxy routes", () => {
                 "x-veslo-session-id": "session_123",
                 "x-veslo-client-id": "desktop-app",
                 "x-veslo-host-token": "should-not-forward",
+                "x-veslo-workspace-id": "ws_1",
+                "x-veslo-send-trace-id": "send-trace-should-not-forward",
+                "x-session-id": "opencode-local-session",
+                "x-session-affinity": "opencode-local-affinity",
               },
               body: JSON.stringify({
                 model: "gpt-4o-mini",
@@ -189,6 +217,10 @@ describe("ai gateway proxy routes", () => {
                 sessionId: "session_123",
                 hostToken: null,
                 clientId: null,
+                workspaceId: null,
+                sendTraceId: null,
+                openCodeSessionId: null,
+                sessionAffinity: null,
                 body: {
                   model: "gpt-4o-mini",
                   messages: [{ role: "user", content: "Hello" }],
@@ -1268,5 +1300,92 @@ describe("ai gateway proxy routes", () => {
         process.env.VESLO_AI_GATEWAY_BASE_URL = previousBaseUrl;
       }
     }
+  });
+
+  test("server returns 504 when ai gateway upstream never sends response headers", async () => {
+    await withEnvVar(AI_GATEWAY_HEADERS_TIMEOUT_ENV, "300", async () => {
+      const upstream = createServer((_req, _res) => {
+        // Keep the socket open without response headers to simulate a wedged
+        // managed AI gateway/provider before the streaming response starts.
+      });
+      const upstreamPort = await listenTestServer(upstream);
+
+      await withManagedAiEnv({ managedAiBaseUrl: `http://127.0.0.1:${upstreamPort}` }, async () => {
+        const server = startServer(createTestConfig());
+
+        try {
+          const start = Date.now();
+          const response = await fetch(
+            `http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`,
+            {
+              method: "POST",
+              headers: {
+                authorization: "Bearer client-token",
+                "content-type": "application/json",
+                "x-veslo-gateway-token": "gateway-access-token",
+                "x-veslo-session-id": "session-timeout",
+              },
+              body: JSON.stringify({ model: "gpt-5.5", messages: [{ role: "user", content: "hello" }] }),
+            },
+          );
+          const elapsed = Date.now() - start;
+          const body = await response.json() as { code?: string; details?: { timeoutMs?: number } };
+
+          expect(response.status).toBe(504);
+          expect(body.code).toBe("ai_gateway_timeout");
+          expect(body.details?.timeoutMs).toBe(300);
+          expect(elapsed).toBeLessThan(5_000);
+        } finally {
+          stopTestServer(server);
+          upstream.closeAllConnections();
+          upstream.close();
+          await once(upstream, "close");
+        }
+      });
+    });
+  });
+
+  test("ai gateway headers timeout does not cut streaming response bodies", async () => {
+    await withEnvVar(AI_GATEWAY_HEADERS_TIMEOUT_ENV, "300", async () => {
+      const upstream = createServer((req, res) => {
+        req.resume();
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write("data: one\n\n");
+        setTimeout(() => {
+          res.end("data: two\n\n");
+        }, 450);
+      });
+      const upstreamPort = await listenTestServer(upstream);
+
+      await withManagedAiEnv({ managedAiBaseUrl: `http://127.0.0.1:${upstreamPort}` }, async () => {
+        const server = startServer(createTestConfig());
+
+        try {
+          const response = await fetch(
+            `http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`,
+            {
+              method: "POST",
+              headers: {
+                authorization: "Bearer client-token",
+                "content-type": "application/json",
+                "x-veslo-gateway-token": "gateway-access-token",
+                "x-veslo-session-id": "session-stream",
+              },
+              body: JSON.stringify({ model: "gpt-5.5", messages: [{ role: "user", content: "hello" }] }),
+            },
+          );
+
+          expect(response.status).toBe(200);
+          const text = await response.text();
+          expect(text).toContain("data: one");
+          expect(text).toContain("data: two");
+        } finally {
+          stopTestServer(server);
+          upstream.closeAllConnections();
+          upstream.close();
+          await once(upstream, "close");
+        }
+      });
+    });
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { INTERNAL_SYSTEM_VERSION, provisionWorkspaceInternalSystem } from "../internal-system.js";
 
@@ -244,6 +244,33 @@ description: User-owned onboarding notes.
       expect(second.status).toBe("unchanged");
       expect(second.written).toBe(0);
       expect(second.unchanged).toBeGreaterThan(0);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+      await rm(appDataDir, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps existing copied internal packs idempotent in Windows central mode", async () => {
+    if (platform() !== "win32") return;
+
+    const workspaceRoot = await createWorkspaceRoot("windows-copy-fallback");
+    const appDataDir = await createWorkspaceRoot("windows-copy-fallback-appdata");
+
+    try {
+      await provisionWorkspaceInternalSystem(workspaceRoot);
+
+      const second = await provisionWorkspaceInternalSystem(workspaceRoot, appDataDir);
+      expect(second.status).toBe("updated");
+
+      const manifest = JSON.parse(
+        await readFile(join(workspaceRoot, ".opencode", "veslo", "internal", "manifest.json"), "utf8"),
+      );
+      expect(manifest.packsMode).toBe("symlink-fallback-copy");
+      expect(manifest.centralPacksDir).toContain(INTERNAL_SYSTEM_VERSION);
+
+      const third = await provisionWorkspaceInternalSystem(workspaceRoot, appDataDir);
+      expect(third.status).toBe("unchanged");
+      expect(third.written).toBe(0);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
       await rm(appDataDir, { recursive: true, force: true });

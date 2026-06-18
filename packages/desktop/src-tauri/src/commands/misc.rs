@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -243,7 +244,10 @@ pub fn reset_veslo_state(
 /// production diagnostics don't require opening DevTools.
 #[tauri::command]
 pub fn log_ui_event(app: AppHandle, scope: String, message: String, payload: Option<String>) {
-    let line = match payload {
+    if scope == "send-workflow-trace" {
+        append_send_workflow_trace_event(&message, payload.as_deref());
+    }
+    let line = match payload.as_deref() {
         Some(p) if !p.is_empty() => format!("[ui:{}] {} {}", scope, message, p),
         _ => format!("[ui:{}] {}", scope, message),
     };
@@ -256,6 +260,61 @@ pub fn log_ui_event(app: AppHandle, scope: String, message: String, payload: Opt
             crate::debug_logs_forwarder::LogStream::Stderr,
             &line,
         );
+    }
+}
+
+fn truthy_env(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| {
+            let trimmed = value.trim();
+            trimmed == "1" || trimmed.eq_ignore_ascii_case("true") || trimmed.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(false)
+}
+
+fn resolve_send_workflow_trace_file() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("VESLO_SEND_WORKFLOW_TRACE_FILE") {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return Some(PathBuf::from(trimmed));
+        }
+    }
+    if !truthy_env("VESLO_SEND_WORKFLOW_TRACE") {
+        return None;
+    }
+    if let Ok(dir) = std::env::var("TAURI_PILOT_LOG_DIR") {
+        let trimmed = dir.trim();
+        if !trimmed.is_empty() {
+            return Some(PathBuf::from(trimmed).join("send-workflow-trace.ndjson"));
+        }
+    }
+    if let Ok(runtime_trace) = std::env::var("VESLO_RUNTIME_TRACE_FILE") {
+        let trimmed = runtime_trace.trim();
+        if !trimmed.is_empty() {
+            if let Some(parent) = PathBuf::from(trimmed).parent() {
+                return Some(parent.join("send-workflow-trace.ndjson"));
+            }
+        }
+    }
+    None
+}
+
+fn append_send_workflow_trace_event(message: &str, payload: Option<&str>) {
+    let Some(path) = resolve_send_workflow_trace_file() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let line = match payload {
+        Some(raw) if !raw.trim().is_empty() => raw.trim().to_string(),
+        _ => format!(
+            "{{\"schema\":\"send-workflow/v1\",\"source\":\"ui\",\"event\":{}}}",
+            serde_json::to_string(message).unwrap_or_else(|_| "\"ui-event\"".to_string())
+        ),
+    };
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{}", line);
     }
 }
 
@@ -527,6 +586,7 @@ mod tests {
         update_session_directory_in_db,
     };
     use rusqlite::Connection;
+    use std::path::PathBuf;
 
     #[test]
     fn sanitize_workspace_id_collapses_separators() {
@@ -538,11 +598,11 @@ mod tests {
     fn normalize_mirror_path_strips_workspace_prefixes() {
         let path = normalize_obsidian_mirror_relative_path("/workspace/notes/plan.md")
             .expect("path should normalize");
-        assert_eq!(path.to_string_lossy(), "notes/plan.md");
+        assert_eq!(path, PathBuf::from("notes").join("plan.md"));
 
         let path = normalize_obsidian_mirror_relative_path("workspace/notes/plan.md")
             .expect("path should normalize");
-        assert_eq!(path.to_string_lossy(), "notes/plan.md");
+        assert_eq!(path, PathBuf::from("notes").join("plan.md"));
     }
 
     #[test]

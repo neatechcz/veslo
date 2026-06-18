@@ -150,6 +150,139 @@ describe("conversation service", () => {
     expect(result.items[0]?.title).toBe("Created");
   });
 
+  test("falls back to persisted bindings when OpenCode sqlite has no matching sessions", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-service-empty-sqlite-"));
+    tempDirs.push(dataDir);
+    const directory = join(dataDir, "workspace-a");
+    const bindingStore = createConversationBindingStore({ dataDir, now: () => 3_000 });
+    await bindingStore.bindOpenCodeSession({
+      workspaceId: "ws-a",
+      directory,
+      engineSessionId: "sess-created",
+      title: "Created",
+      createdAt: 111,
+      updatedAt: 222,
+    });
+    const service = createConversationService({
+      readStore: {
+        ...unavailableReadStore,
+        async listConversations(input) {
+          return {
+            workspaceId: input.workspaceId,
+            source: "sqlite",
+            items: [],
+          };
+        },
+      },
+      bindingStore,
+      createOpenCodeSession: async () => ({ id: "unused" }),
+    });
+
+    const result = await service.listConversations({
+      workspace: workspaceFor(directory),
+      directory,
+    });
+
+    expect(result.source).toBe("sqlite");
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.id).toBe("sess-created");
+    expect(result.items[0]?.conversationId).toMatch(/^conv-/);
+  });
+
+  test("unions sandbox sessions with owned bindings the sandbox did not return", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-service-union-"));
+    tempDirs.push(dataDir);
+    const directory = join(dataDir, "workspace-a");
+    const bindingStore = createConversationBindingStore({ dataDir, now: () => 5_000 });
+    // An owned conversation that the current sandbox read does NOT return
+    // (e.g. directory-form mismatch or a stale sandbox DB). It must still list.
+    await bindingStore.bindOpenCodeSession({
+      workspaceId: "ws-a",
+      directory,
+      engineSessionId: "sess-owned-only",
+      title: "Owned only",
+      createdAt: 1,
+      updatedAt: 2,
+    });
+    const service = createConversationService({
+      readStore: {
+        ...unavailableReadStore,
+        async listConversations(input) {
+          return {
+            workspaceId: input.workspaceId,
+            source: "sqlite",
+            items: [
+              {
+                id: "sess-parent",
+                title: "Parent",
+                slug: "Parent",
+                directory,
+                parentID: null,
+                time: { created: 10, updated: 30 },
+              },
+            ],
+          };
+        },
+      },
+      bindingStore,
+      createOpenCodeSession: async () => ({ id: "unused" }),
+    });
+
+    const result = await service.listConversations({
+      workspace: workspaceFor(directory),
+      directory,
+    });
+    const ids = result.items.map((item) => item.id);
+
+    expect(result.source).toBe("sqlite");
+    expect(result.items).toHaveLength(2);
+    expect(ids).toContain("sess-parent");
+    expect(ids).toContain("sess-owned-only");
+    // Sandbox item stays first (primary order preserved); owned-only appended.
+    expect(ids[0]).toBe("sess-parent");
+  });
+
+  test("imports live OpenCode sessions into persisted conversation bindings", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-service-import-"));
+    tempDirs.push(dataDir);
+    const directory = join(dataDir, "workspace-a");
+    const bindingStore = createConversationBindingStore({ dataDir, now: () => 3_000 });
+    const service = createConversationService({
+      readStore: unavailableReadStore,
+      bindingStore,
+      createOpenCodeSession: async () => ({ id: "unused" }),
+    });
+
+    const imported = await service.importOpenCodeSessions({
+      workspace: workspaceFor(directory),
+      directory,
+      sessions: [
+        {
+          id: "sess-parent",
+          title: "Parent",
+          parentID: null,
+          time: { created: 100, updated: 200 },
+        },
+        {
+          id: "sess-child",
+          title: "Child",
+          parentID: "sess-parent",
+          time: { created: 150, updated: 250 },
+        },
+      ],
+    });
+
+    expect(imported.items).toHaveLength(2);
+    expect(imported.items[0]?.conversationId).toMatch(/^conv-/);
+    expect(imported.items[1]?.parentConversationId).toBe(imported.items[0]?.conversationId);
+
+    const listed = await service.listConversations({
+      workspace: workspaceFor(directory),
+      directory,
+    });
+    expect(listed.items.map((item) => item.id)).toEqual(["sess-child", "sess-parent"]);
+  });
+
   test("creates an OpenCode session and persists the binding before returning", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-service-create-"));
     tempDirs.push(dataDir);

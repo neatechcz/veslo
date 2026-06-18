@@ -4,7 +4,7 @@ import type { WorkerSandbox } from "./sandbox/index.js";
 import { resolveSandbox } from "./sandbox/index.js";
 import { randomUUID, createHash } from "node:crypto";
 import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile, realpath } from "node:fs/promises";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, mkdirSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { createServer as createHttpServer } from "node:http";
 import { homedir, hostname, networkInterfaces, tmpdir } from "node:os";
@@ -549,6 +549,32 @@ async function ensureWorkspace(workspace: string): Promise<string> {
   }
 
   return resolved;
+}
+
+async function syncWorkspaceOpencodeConfigToConfigDir(workspace: string, configDir: string): Promise<void> {
+  await mkdir(configDir, { recursive: true });
+  for (const name of ["opencode.jsonc", "opencode.json"] as const) {
+    const source = join(workspace, name);
+    const target = join(configDir, name);
+    if (await fileExists(source)) {
+      await copyFile(source, target);
+    } else {
+      await rm(target, { force: true });
+    }
+  }
+}
+
+async function opencodeConfigFileStats(configDir: string): Promise<Array<{ name: string; exists: boolean; bytes?: number }>> {
+  const files: Array<{ name: string; exists: boolean; bytes?: number }> = [];
+  for (const name of ["opencode.jsonc", "opencode.json"] as const) {
+    try {
+      const info = await stat(join(configDir, name));
+      files.push({ name, exists: true, bytes: info.size });
+    } catch {
+      files.push({ name, exists: false });
+    }
+  }
+  return files;
 }
 
 async function canBind(host: string, port: number): Promise<boolean> {
@@ -2196,6 +2222,54 @@ function writeRuntimeTrace(file: string, event: string, payload: LogAttributes =
   }
 }
 
+function truthyEnv(name: string): boolean {
+  const value = process.env[name]?.trim().toLowerCase() ?? "";
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
+function resolveSendWorkflowTraceFile(): string {
+  const override = process.env.VESLO_SEND_WORKFLOW_TRACE_FILE?.trim();
+  if (override) return override;
+  const pilotDir = process.env.TAURI_PILOT_LOG_DIR?.trim();
+  if (pilotDir) return join(pilotDir, "send-workflow-trace.ndjson");
+  const runtimeTraceFile = process.env.VESLO_RUNTIME_TRACE_FILE?.trim();
+  if (runtimeTraceFile) return join(dirname(runtimeTraceFile), "send-workflow-trace.ndjson");
+  const dataDir = process.env.VESLO_DATA_DIR?.trim() || join(homedir(), ".veslo", "veslo-orchestrator");
+  return join(dataDir, "send-workflow-trace.ndjson");
+}
+
+function sendWorkflowTraceEnabled(): boolean {
+  return truthyEnv("VESLO_SEND_WORKFLOW_TRACE") || Boolean(process.env.VESLO_SEND_WORKFLOW_TRACE_FILE?.trim());
+}
+
+function writeSendWorkflowTrace(event: string, payload: LogAttributes = {}): void {
+  if (!sendWorkflowTraceEnabled()) return;
+  const entry = {
+    schema: "send-workflow/v1",
+    at: new Date().toISOString(),
+    ts: Date.now(),
+    source: "orchestrator",
+    event,
+    processPid: process.pid,
+    processRunId: process.env.VESLO_RUN_ID?.trim() || null,
+    ...payload,
+  };
+  try {
+    const file = resolveSendWorkflowTraceFile();
+    mkdirSync(dirname(file), { recursive: true });
+    appendFileSync(file, `${JSON.stringify(entry)}\n`, "utf8");
+  } catch {
+    // Diagnostics must never affect runtime behavior.
+  }
+  if (truthyEnv("VESLO_SEND_WORKFLOW_TRACE_CONSOLE")) {
+    try {
+      console.log(`[veslo:send-workflow] ${event} ${JSON.stringify(entry)}`);
+    } catch {
+      console.log(`[veslo:send-workflow] ${event}`);
+    }
+  }
+}
+
 function runtimeTraceEventName(prefix: string, message: string): string {
   const slug = message
     .toLowerCase()
@@ -2601,6 +2675,18 @@ async function startOpencode(options: {
       })}`,
     );
   }
+  writeSendWorkflowTrace("orchestrator:engine-spawned", {
+    workspacePath: options.workspace,
+    configDir: options.configDir ?? null,
+    pid: child.pid ?? null,
+    bindHost: options.bindHost,
+    port: options.port,
+    connectHost: connectHost ?? null,
+    childKind,
+    sandboxed: Boolean(sandbox),
+    sandboxBackend: sandbox?.name ?? "none",
+    displayCommand: launchDiag?.displayCommand ?? null,
+  });
 
   prefixStream(child.stdout, "opencode", "stdout", options.logger, child.pid ?? undefined);
   prefixStream(child.stderr, "opencode", "stderr", options.logger, child.pid ?? undefined);
@@ -3801,6 +3887,8 @@ async function runRouterDaemon(args: ParsedArgs) {
         });
         const workdir = await ensureWorkspace(ws.path ?? "");
         const configDir = join(dataDir, "opencode-config", ws.id || workspaceIdForLocal(workdir));
+        await syncWorkspaceOpencodeConfigToConfigDir(workdir, configDir);
+        const configFiles = await opencodeConfigFileStats(configDir);
         await ensureOpencodeManagedToolsRuntime(configDir, {
           toolSources: {
             send: opencodeRouterSendToolSource(),
@@ -3817,6 +3905,16 @@ async function runRouterDaemon(args: ParsedArgs) {
           workspaceId: ws.id,
           workdir,
           configDir,
+          configFiles,
+          configMirrored: true,
+          durationMs: Date.now() - startedAt,
+        });
+        writeSendWorkflowTrace("orchestrator:workspace-resolve:done", {
+          workspaceId: ws.id,
+          workspacePath: ws.path ?? null,
+          workdir,
+          configDir,
+          configFiles,
           durationMs: Date.now() - startedAt,
         });
         return { workdir, configDir };
@@ -3937,8 +4035,10 @@ async function runRouterDaemon(args: ParsedArgs) {
           configDirectory: join(dataDir, "opencode-config", "shared-unsandboxed"),
           deps: {
             prepareRuntime: async () => {
-              await ensureWorkspace(join(dataDir, "shared-opencode-runtime"));
-              await ensureOpencodeManagedToolsRuntime(join(dataDir, "opencode-config", "shared-unsandboxed"), {
+              const sharedWorkdir = await ensureWorkspace(join(dataDir, "shared-opencode-runtime"));
+              const sharedConfigDir = join(dataDir, "opencode-config", "shared-unsandboxed");
+              await syncWorkspaceOpencodeConfigToConfigDir(sharedWorkdir, sharedConfigDir);
+              await ensureOpencodeManagedToolsRuntime(sharedConfigDir, {
                 toolSources: {
                   send: opencodeRouterSendToolSource(),
                   status: opencodeRouterStatusToolSource(),
@@ -4505,9 +4605,23 @@ async function runRouterDaemon(args: ParsedArgs) {
         // fail fast with 503 engine_not_running; the engine still spawns via
         // explicit activate and via non-GET requests (prompt_async, session create).
         const proxyMethod = (req.method ?? "GET").toUpperCase();
+        const sendTraceHeader = req.headers["x-veslo-send-trace-id"];
+        const sendTraceId = (
+          Array.isArray(sendTraceHeader) ? sendTraceHeader[0] : sendTraceHeader
+        )?.trim() ?? "";
+        const workflowBase = {
+          traceId: sendTraceId || null,
+          workspaceId: ws.id,
+          workspacePath: ws.path,
+          engineTopology: engineTopology.mode,
+          method: req.method,
+          path: url.pathname,
+          search: url.search,
+        };
         let proxyTarget: Awaited<ReturnType<typeof resolveOpencodeProxyTarget>>;
         const ensureStartedAt = Date.now();
         traceRuntime("orchestrator:proxy-ensure:start", {
+          traceId: sendTraceId || null,
           workspaceId: ws.id,
           workspacePath: ws.path,
           engineTopology: engineTopology.mode,
@@ -4515,6 +4629,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           path: url.pathname,
           search: url.search,
         });
+        writeSendWorkflowTrace("orchestrator:proxy-ensure:start", workflowBase);
         try {
           proxyTarget = await resolveOpencodeProxyTarget({
             topology: engineTopology.mode,
@@ -4526,6 +4641,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           });
           if (!proxyTarget.engine) {
             traceRuntime("orchestrator:proxy-engine-not-running", {
+              traceId: sendTraceId || null,
               workspaceId: ws.id,
               workspacePath: ws.path,
               engineTopology: engineTopology.mode,
@@ -4536,10 +4652,17 @@ async function runRouterDaemon(args: ParsedArgs) {
               poolState: engineTopology.mode === "pooled-per-workspace" ? pool.get(ws.id)?.state ?? "absent" : undefined,
               sharedEngine: engineTopology.mode === "shared-unsandboxed" ? sharedOpenCodeEngine?.snapshot() : undefined,
             });
+            writeSendWorkflowTrace("orchestrator:proxy-engine-not-running", {
+              ...workflowBase,
+              engineKind: proxyTarget.engineKind,
+              poolState: engineTopology.mode === "pooled-per-workspace" ? pool.get(ws.id)?.state ?? "absent" : undefined,
+              sharedEngine: engineTopology.mode === "shared-unsandboxed" ? sharedOpenCodeEngine?.snapshot() : undefined,
+            });
             send(503, { error: "engine_not_running", workspaceId: ws.id });
             return;
           }
           traceRuntime("orchestrator:proxy-ensure:done", {
+            traceId: sendTraceId || null,
             workspaceId: ws.id,
             workspacePath: ws.path,
             engineTopology: engineTopology.mode,
@@ -4554,13 +4677,30 @@ async function runRouterDaemon(args: ParsedArgs) {
             childKind: proxyTarget.engine.childKind ?? "direct",
             durationMs: Date.now() - ensureStartedAt,
           });
+          writeSendWorkflowTrace("orchestrator:proxy-ensure:done", {
+            ...workflowBase,
+            engineKind: proxyTarget.engineKind,
+            spawnedByRequest: proxyTarget.spawnedByRequest,
+            state: proxyTarget.engine.state,
+            pid: proxyTarget.engine.pid,
+            port: proxyTarget.engine.port,
+            baseUrl: proxyTarget.engine.baseUrl,
+            childKind: proxyTarget.engine.childKind ?? "direct",
+            durationMs: Date.now() - ensureStartedAt,
+          });
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
           traceRuntime("orchestrator:proxy-ensure:error", {
+            traceId: sendTraceId || null,
             workspaceId: ws.id,
             workspacePath: ws.path,
             method: req.method,
             path: url.pathname,
+            durationMs: Date.now() - ensureStartedAt,
+            error: detail,
+          });
+          writeSendWorkflowTrace("orchestrator:proxy-ensure:error", {
+            ...workflowBase,
             durationMs: Date.now() - ensureStartedAt,
             error: detail,
           });
@@ -4570,6 +4710,32 @@ async function runRouterDaemon(args: ParsedArgs) {
           return;
         }
         const engine = proxyTarget.engine;
+        if (proxyMethod !== "GET" && proxyMethod !== "HEAD") {
+          const syncStartedAt = Date.now();
+          await syncWorkspaceOpencodeConfigToConfigDir(proxyTarget.directory, engine.configDir);
+          const configFiles = await opencodeConfigFileStats(engine.configDir);
+          traceRuntime("orchestrator:proxy-config-sync:done", {
+            traceId: sendTraceId || null,
+            workspaceId: ws.id,
+            workspacePath: ws.path,
+            engineTopology: engineTopology.mode,
+            engineKind: proxyTarget.engineKind,
+            method: req.method,
+            path: url.pathname,
+            configDir: engine.configDir,
+            directory: proxyTarget.directory,
+            configFiles,
+            durationMs: Date.now() - syncStartedAt,
+          });
+          writeSendWorkflowTrace("orchestrator:proxy-config-sync:done", {
+            ...workflowBase,
+            engineKind: proxyTarget.engineKind,
+            configDir: engine.configDir,
+            directory: proxyTarget.directory,
+            configFiles,
+            durationMs: Date.now() - syncStartedAt,
+          });
+        }
 
         const restPath = "/" + parts.slice(3).join("/");
         const pathMapping: EnginePathMapping = {
@@ -4606,30 +4772,55 @@ async function runRouterDaemon(args: ParsedArgs) {
         ) => {
           if (upstreamTraceClosed) return;
           upstreamTraceClosed = true;
-          traceRuntime(event, {
+          const upstreamPayload = {
+            traceId: sendTraceId || null,
             requestId: proxyRequestId,
             workspaceId: ws.id,
             workspacePath: ws.path,
+            engineTopology: engineTopology.mode,
+            engineKind: proxyTarget.engineKind,
             method: req.method,
             path: url.pathname,
             search: url.search,
             targetBaseUrl: engine.baseUrl,
             targetPath: restPath,
             targetSearch,
+            sandboxBackend: pathMapping.backend,
+            rewriteEnginePaths,
+            engineDirectory,
             durationMs: Date.now() - upstreamStartedAt,
             ...payload,
-          });
+          };
+          traceRuntime(event, upstreamPayload);
+          writeSendWorkflowTrace(event, upstreamPayload);
         };
         traceRuntime("orchestrator:proxy-upstream:start", {
+          traceId: sendTraceId || null,
           requestId: proxyRequestId,
           workspaceId: ws.id,
           workspacePath: ws.path,
+          engineTopology: engineTopology.mode,
+          engineKind: proxyTarget.engineKind,
           method: req.method,
           path: url.pathname,
           search: url.search,
           targetBaseUrl: engine.baseUrl,
           targetPath: restPath,
           targetSearch,
+          sandboxBackend: pathMapping.backend,
+          rewriteEnginePaths,
+          engineDirectory,
+        });
+        writeSendWorkflowTrace("orchestrator:proxy-upstream:start", {
+          ...workflowBase,
+          requestId: proxyRequestId,
+          engineKind: proxyTarget.engineKind,
+          targetBaseUrl: engine.baseUrl,
+          targetPath: restPath,
+          targetSearch,
+          sandboxBackend: pathMapping.backend,
+          rewriteEnginePaths,
+          engineDirectory,
         });
 
         proxyToEngine({
@@ -5161,6 +5352,7 @@ async function runStart(args: ParsedArgs) {
     logFormat,
   });
   const opencodeConfigDir = join(dataDir, "opencode-config", workspaceIdForLocal(resolvedWorkspace));
+  await syncWorkspaceOpencodeConfigToConfigDir(resolvedWorkspace, opencodeConfigDir);
   await ensureOpencodeManagedToolsRuntime(opencodeConfigDir, {
     toolSources: {
       send: opencodeRouterSendToolSource(),

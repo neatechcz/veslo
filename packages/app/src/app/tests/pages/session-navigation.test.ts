@@ -206,7 +206,7 @@ test("app routes selected session browsing through DB scope", () => {
   );
   assert.match(
     appSource,
-    /const workspaceSessionSelection = createWorkspaceSessionSelection\(\{[\s\S]*activeWorkspaceId: \(\) => workspaceStoreRef\?\.activeWorkspaceId\(\) \?\? "",[\s\S]*workspaces: \(\) => workspaceStoreRef\?\.workspaces\(\) \?\? \[\],[\s\S]*\}\);/,
+    /const \[workspaceStoreRefVersion, setWorkspaceStoreRefVersion\] = createSignal\(0\);[\s\S]*const currentWorkspaceStoreRef = \(\) => \{[\s\S]*workspaceStoreRefVersion\(\);[\s\S]*return workspaceStoreRef;[\s\S]*\};[\s\S]*const workspaceSessionSelection = createWorkspaceSessionSelection\(\{[\s\S]*activeWorkspaceId: \(\) => currentWorkspaceStoreRef\(\)\?\.activeWorkspaceId\(\) \?\? "",[\s\S]*workspaces: \(\) => currentWorkspaceStoreRef\(\)\?\.workspaces\(\) \?\? \[\],[\s\S]*\}\);[\s\S]*workspaceStoreRef = workspaceStore;[\s\S]*setWorkspaceStoreRefVersion\(\(version\) => version \+ 1\);/,
     "app should wire selected session browsing through the workspace session selection controller",
   );
   assert.match(
@@ -222,6 +222,16 @@ test("app routes selected session browsing through DB scope", () => {
 });
 
 test("app activates selected session workspace at send time, not browse time", () => {
+  assert.match(
+    sendPromptSource,
+    /const selectedSessionScopeForSend = selectedSessionCandidate[\s\S]*resolveSelectedSessionBrowseScope\(selectedSessionCandidate\)[\s\S]*const selectedSessionBelongsToActiveWorkspace =[\s\S]*selectedSessionScopeWorkspaceId === activeWorkspaceIdForSend;[\s\S]*const selectedRealSessionId =[\s\S]*isPendingSessionInstanceId\(selectedSessionCandidate\) \|\| !selectedSessionBelongsToActiveWorkspace[\s\S]*\? null[\s\S]*: selectedSessionCandidate;/s,
+    "implicit sends should ignore a selected session whose browse scope belongs to another workspace",
+  );
+  assert.match(
+    sendPromptSource,
+    /selectedSessionIgnoredForForeignWorkspace: Boolean\([\s\S]*selectedSessionCandidate && !selectedSessionBelongsToActiveWorkspace,[\s\S]*\),/s,
+    "send trace should expose when a stale selected session was ignored for active-workspace sends",
+  );
   assert.match(
     workspaceSendTargetSource,
     /const transcriptScope = options\.resolveSelectedSessionBrowseScope\s*\? options\.resolveSelectedSessionBrowseScope\(sessionId\)\s*: options\.resolveSessionSendTargetScope\(sessionId\);[\s\S]*options\.sendTraceStep\(\s*"sendPrompt:activate-scoped-workspace-call",[\s\S]*options\.activateWorkspace\(targetWorkspaceId, \{ origin: "send-target:selected-session-workspace" \}\)/s,
@@ -776,7 +786,7 @@ test("directory picker flow publishes the registered workspace into the sidebar 
   );
 });
 
-test("project plus resolves the directory after workspace activation instead of failing early on stale metadata", () => {
+test("project plus resolves the target workspace directory after activation", () => {
   assert.notEqual(
     openPendingDirectoryDraftInWorkspaceSource,
     "",
@@ -789,8 +799,8 @@ test("project plus resolves the directory after workspace activation instead of 
   );
   assert.match(
     openPendingDirectoryDraftInWorkspaceSource,
-    /openPendingDraft: \(\) => \{[\s\S]*const activeWorkspace = deps\.workspace\.activeWorkspaceDisplay\(\);[\s\S]*const directory = activeWorkspace\.directory\?\.trim\(\) \|\| activeWorkspace\.path\?\.trim\(\) \|\| "";\s*if \(!directory\) return "";\s*return openDirectoryPendingDraft\(\{ workspaceId: id, directory \}\);[\s\S]*\}/s,
-    "project plus should resolve the directory from the activated workspace state right before opening the pending draft",
+    /openPendingDraft: \(\) => \{[\s\S]*const activeWorkspaceId = deps\.workspace\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*if \(activeWorkspaceId !== id\) return "";[\s\S]*const targetWorkspace = deps\.workspace\.workspaces\(\)\.find\(\(workspace\) => workspace\.id\?\.trim\(\) === id\) \?\? null;[\s\S]*const directory = targetWorkspace\?\.directory\?\.trim\(\) \|\| targetWorkspace\?\.path\?\.trim\(\) \|\| "";[\s\S]*return openDirectoryPendingDraft\(\{ workspaceId: id, directory \}\);[\s\S]*\}/s,
+    "project plus should resolve the directory from the activated target workspace, not from a stale active display",
   );
 });
 

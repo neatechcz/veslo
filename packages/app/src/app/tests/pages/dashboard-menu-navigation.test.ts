@@ -289,7 +289,7 @@ test("app derives the active workspace last session and passes it into Dashboard
   );
   assert.match(
     appSource,
-    /const workspaceSessionSelection = createWorkspaceSessionSelection\(\{[\s\S]*activeWorkspaceId: \(\) => workspaceStoreRef\?\.activeWorkspaceId\(\) \?\? "",[\s\S]*\}\);/,
+    /const \[workspaceStoreRefVersion, setWorkspaceStoreRefVersion\] = createSignal\(0\);[\s\S]*const currentWorkspaceStoreRef = \(\) => \{[\s\S]*workspaceStoreRefVersion\(\);[\s\S]*return workspaceStoreRef;[\s\S]*\};[\s\S]*const workspaceSessionSelection = createWorkspaceSessionSelection\(\{[\s\S]*activeWorkspaceId: \(\) => currentWorkspaceStoreRef\(\)\?\.activeWorkspaceId\(\) \?\? "",[\s\S]*\}\);[\s\S]*workspaceStoreRef = workspaceStore;[\s\S]*setWorkspaceStoreRefVersion\(\(version\) => version \+ 1\);/,
     "app should wire active workspace last-session fallback through the workspace session selection controller",
   );
   assert.match(
@@ -404,6 +404,13 @@ test("dashboard header exposes settings and back-to-chat actions", () => {
     /const\s+returnToSession\s*=\s*\(\)\s*=>\s*\{[\s\S]*props\.setView\(\s*["']session["']\s*,\s*sessionId\s*\)/,
   );
   assert.match(headerSource, /onClick=\{returnToSession\}/);
+});
+
+test("dashboard header back uses the active workspace last-session fallback", () => {
+  assert.match(
+    dashboardSource,
+    /const\s+returnToSession\s*=\s*\(\)\s*=>\s*\{\s*const\s+sessionId\s*=\s*props\.selectedSessionId\?\.trim\(\)\s*\|\|\s*props\.lastWorkspaceSessionId\?\.trim\(\);[\s\S]*props\.setView\(\s*["']session["']\s*,\s*sessionId\s*\)/,
+  );
 });
 
 test("dashboard header keeps back-to-chat visible even without a selected session", () => {

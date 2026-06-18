@@ -4,7 +4,7 @@ import test from "node:test";
 
 const extensionsSource = readFileSync(new URL("../pages/extensions.tsx", import.meta.url), "utf8");
 const mcpSource = readFileSync(new URL("../pages/mcp.tsx", import.meta.url), "utf8");
-const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const startupControllerSource = readFileSync(new URL("../controllers/app-startup-controller.ts", import.meta.url), "utf8");
 
 test("extensions screen no longer imports plugin view or section state", () => {
   assert.doesNotMatch(extensionsSource, /import PluginsView/);
@@ -21,5 +21,5 @@ test("mcp screen no longer renders advanced settings or technical details", () =
 });
 
 test("legacy dashboard plugins route normalizes to mcp", () => {
-  assert.match(appSource, /if \(normalized === "plugins"\) return "mcp";/);
+  assert.match(startupControllerSource, /if \(normalized === "plugins"\) return "mcp";/);
 });

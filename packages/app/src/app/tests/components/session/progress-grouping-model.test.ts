@@ -60,6 +60,39 @@ test("keeps the latest assistant text live while streaming", () => {
   assert.equal(blocks[2]?.kind, "message");
 });
 
+test("keeps progress group ids stable as later assistant activity joins the same turn", () => {
+  const initialBlocks = buildProgressRenderBlocks({
+    messages: [
+      message("u1", "user", [{ type: "text", text: "Fix it" } as any]),
+      message("a1", "assistant", [{ type: "tool", tool: "read", state: { input: { filePath: "README.md" } } } as any]),
+      message("a2", "assistant", [{ type: "text", text: "Initial answer." } as any]),
+    ],
+    isStreaming: true,
+    showThinking: false,
+    developerMode: false,
+  });
+  const updatedBlocks = buildProgressRenderBlocks({
+    messages: [
+      message("u1", "user", [{ type: "text", text: "Fix it" } as any]),
+      message("a1", "assistant", [{ type: "tool", tool: "read", state: { input: { filePath: "README.md" } } } as any]),
+      message("a2", "assistant", [{ type: "text", text: "Intermediate progress." } as any]),
+      message("a3", "assistant", [{ type: "tool", tool: "edit", state: { input: { filePath: "README.md" } } } as any]),
+      message("a4", "assistant", [{ type: "text", text: "Updated answer." } as any]),
+    ],
+    isStreaming: true,
+    showThinking: false,
+    developerMode: false,
+  });
+
+  const initialGroup = initialBlocks.find((block) => block.kind === "progress-group");
+  const updatedGroup = updatedBlocks.find((block) => block.kind === "progress-group");
+  assert.equal(initialGroup?.kind, "progress-group");
+  assert.equal(updatedGroup?.kind, "progress-group");
+  if (initialGroup?.kind !== "progress-group" || updatedGroup?.kind !== "progress-group") return;
+
+  assert.equal(updatedGroup.id, initialGroup.id);
+});
+
 test("showThinking hides reasoning but keeps comments and actions", () => {
   const blocks = buildProgressRenderBlocks({
     messages: [

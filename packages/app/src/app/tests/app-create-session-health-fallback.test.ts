@@ -4,16 +4,16 @@ import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 
-test("createSessionAndOpen does not abort session creation solely because the health preflight timed out", () => {
+test("createSessionAndOpen blocks session creation when runtime readiness cannot be proven", () => {
   const start = source.indexOf("async function createSessionAndOpen(");
   const end = source.indexOf("const chooseFolderForCurrentSession = async () =>");
   assert.ok(start >= 0 && end > start, "createSessionAndOpen source should be present");
 
   const createSessionAndOpenSource = source.slice(start, end);
-  assert.doesNotMatch(
+  assert.match(
     createSessionAndOpenSource,
-    /throw new Error\(t\("app\.connection_lost", currentLocale\(\)\)\);/,
-    "createSessionAndOpen should fall through to session.create when the health probe is flaky instead of failing the send immediately",
+    /if \(!createRuntimeReady\) \{[\s\S]*recordSendTrace\("createSessionAndOpen:blocked-runtime-unreachable"[\s\S]*setError\("Local runtime is not ready yet\."\);[\s\S]*return undefined;[\s\S]*\}/,
+    "createSessionAndOpen should not continue into session.create when runtime readiness cannot be proven",
   );
 });
 
@@ -33,10 +33,10 @@ test("createSessionAndOpen attempts local runtime recovery before reading the ro
     recoveryIndex < clientIndex,
     "createSessionAndOpen should try runtime recovery before capturing the client used for session.create",
   );
-  assert.match(
+  assert.doesNotMatch(
     createSessionAndOpenSource,
-    /if \(!createRuntimeReady\) \{[\s\S]*recordSendTrace\("createSessionAndOpen:runtime-unreachable-continue"/,
-    "createSessionAndOpen should preserve the flaky-health fallback and continue when recovery cannot prove readiness",
+    /recordSendTrace\("createSessionAndOpen:runtime-unreachable-continue"/,
+    "createSessionAndOpen should not preserve the stale-client fallback when recovery cannot prove readiness",
   );
   assert.doesNotMatch(
     createSessionAndOpenSource,

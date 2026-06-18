@@ -12,8 +12,8 @@ const pendingDraftControllerSource = readFileSync(
 test("session loading stays route-owned without a pending preloader", () => {
   assert.match(
     sessionSource,
-    /const showSessionLoadingState = createMemo\(\(\) =>[\s\S]*shouldShowSessionLoadingState\(\{[\s\S]*selectedSessionId: props\.selectedSessionId,[\s\S]*messageCount: props\.messages\.length,[\s\S]*loadingEarlierMessages: props\.loadingEarlierMessages,[\s\S]*\}\)[\s\S]*\);/,
-    "session page should derive inline loading from the selected session fetch state, not from a pre-route pending switch",
+    /const showSessionLoadingState = createMemo\(\(\) =>[\s\S]*shouldShowSessionLoadingState\(\{[\s\S]*selectedSessionId: props\.selectedSessionId,[\s\S]*messageCount: effectiveRenderedMessages\(\)\.length,[\s\S]*loadingEarlierMessages: props\.loadingEarlierMessages,[\s\S]*\}\)[\s\S]*\);/,
+    "session page should derive inline loading from the effectively rendered conversation, not raw backend messages only",
   );
 
   assert.match(
@@ -32,6 +32,27 @@ test("session loading stays route-owned without a pending preloader", () => {
     appSource,
     /pendingSessionLoad|setPendingSessionLoad/,
     "app shell should not own a separate pending-session preloader state",
+  );
+});
+
+test("workspace setup empty state waits for hydrated workspace metadata", () => {
+  assert.match(
+    sessionSource,
+    /const showWorkspaceSetupEmptyState = createMemo\(\s*\(\) =>\s*props\.workspacesHydrated === true &&\s*!hasWorkspaceConfigured\(\) &&\s*!props\.selectedSessionId &&\s*props\.messages\.length === 0,\s*\);/s,
+    "the workspace setup empty state must not flash before bootstrap hydrates the workspace list",
+  );
+});
+
+test("temporary runtime UI diagnostic is developer-mode only", () => {
+  assert.match(
+    sessionSource,
+    /const markTempRuntimeUiRenderSource =[\s\S]*if \(!props\.developerMode\) return;[\s\S]*setTempRuntimeUiRenderSource\(createTempRuntimeUiRenderSnapshot/s,
+    "runtime UI diagnostic updates should not run during normal user sessions",
+  );
+  assert.match(
+    sessionSource,
+    /const tempRuntimeUiDiagnosticBadge =[\s\S]*<Show when=\{props\.developerMode\}>[\s\S]*TEMP UI render source/s,
+    "the temporary runtime UI badge must be hidden outside developer mode",
   );
 });
 
@@ -87,6 +108,18 @@ test("materializing a pending submitted draft preserves the visible run indicato
     sessionSource,
     /const pendingBaseKey = pendingSessionQueueKey\(\);[\s\S]*const pendingKey = !previousSessionId[\s\S]*pendingQueueKeyAwaitingSessionIdByBaseKey\(\)\[pendingBaseKey\] \?\? null[\s\S]*const previousSessionKey = previousSessionId \? sessionQueueKeyForSessionId\(previousSessionId\) : null;[\s\S]*if \(!pendingKey && previousSessionKey\) \{\s*resetRunState\(previousSessionKey\);\s*\}/s,
     "selecting the real session created for a pending submit should remap the optimistic draft without resetting the active run indicator",
+  );
+
+  assert.doesNotMatch(
+    sessionSource,
+    /<Show when=\{props\.selectedSessionId \?\? "__no-session"\} keyed>/,
+    "the composer/runtime footer must not remount on pending-to-real session materialization",
+  );
+
+  assert.match(
+    sessionSource,
+    /startRun\(materializedSessionIdFromHandoff \? sessionQueueKeyForSessionId\(materializedSessionIdFromHandoff\) : sessionKey\);/,
+    "accepted pending sends should continue the visible run on the materialized real session key",
   );
 });
 

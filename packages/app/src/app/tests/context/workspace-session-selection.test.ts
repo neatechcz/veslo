@@ -104,3 +104,33 @@ test("direct session creation target ignores previously browsed workspace scope"
     }
   });
 });
+
+test("active workspace last session ignores stored ids scoped to another workspace", () => {
+  createRoot((dispose) => {
+    try {
+      const storage = memoryStorage({
+        [SESSION_BY_WORKSPACE_KEY]: JSON.stringify({ "ws-a": "b1" }),
+      });
+      const selection = createWorkspaceSessionSelection({
+        activeWorkspaceId: () => "ws-a",
+        activeWorkspaceRoot: () => "/repo/a",
+        workspaces: () => [
+          { id: "ws-a", path: "/repo/a", workspaceType: "local" },
+          { id: "ws-b", path: "/repo/b", workspaceType: "local" },
+        ],
+        storage,
+      });
+
+      selection.setSessionBrowseScope({
+        sessionId: "b1",
+        workspaceId: "ws-b",
+        workspaceRoot: "/repo/b",
+        directory: "/repo/b",
+      });
+
+      assert.equal(selection.activeWorkspaceLastSessionId(), null);
+    } finally {
+      dispose();
+    }
+  });
+});

@@ -4,30 +4,9 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
 import { isTauriRuntime } from "../utils";
 import { reportError } from "../lib/error-reporter";
+import { isWorkspaceOpencodeProxyUrl, normalizeServerUrl, serverDisplayName } from "./server-url";
 
-export function normalizeServerUrl(input: string) {
-  const trimmed = input.trim();
-  if (!trimmed) return;
-  const withProtocol = /^https?:\/\//.test(trimmed) ? trimmed : `http://${trimmed}`;
-  return withProtocol.replace(/\/+$/, "");
-}
-
-export function serverDisplayName(url: string) {
-  if (!url) return "";
-  return url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
-}
-
-export function isWorkspaceOpencodeProxyUrl(url: string) {
-  try {
-    const parsed = new URL(url);
-    const pathname = decodeURIComponent(parsed.pathname).replace(/\/+/g, "/");
-    return /\/workspace\/[^/]+\/opencode(?:\/|$)/i.test(pathname);
-  } catch {
-    const normalized = url.trim().replace(/\\/g, "/").replace(/\/+/g, "/");
-    if (/\/workspace\/[^/]+\/opencode(?:\/|$)/i.test(normalized)) return true;
-    return false;
-  }
-}
+export { isWorkspaceOpencodeProxyUrl, normalizeServerUrl, serverDisplayName } from "./server-url";
 
 type ServerContextValue = {
   url: string;

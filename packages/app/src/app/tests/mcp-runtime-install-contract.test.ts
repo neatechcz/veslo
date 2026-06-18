@@ -8,7 +8,7 @@ const storeSource = readFileSync(new URL("../context/extensions.ts", import.meta
 test("catalog MCP install refreshes MCP state after workspace config write", () => {
   const buildConfigSource = appSource.match(/function buildMcpAddConfig[\s\S]*?async function activateInstalledMcp/)?.[0] ?? "";
 
-  assert.match(appSource, /await refreshMcpServers\(\)/);
+  assert.match(appSource, /await refreshMcpServers\(\{ mode: "explicit", reason: "mcp-activate-installed" \}\)/);
   assert.match(appSource, /activeClient\.mcp\.add/);
   assert.match(appSource, /installHubMcpAndActivate/);
   assert.equal(buildConfigSource.length > 0, true);

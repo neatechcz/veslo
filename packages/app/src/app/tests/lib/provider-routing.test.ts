@@ -141,6 +141,36 @@ test("codex_oauth provider config points at ai-gateway codex route", () => {
   });
 });
 
+test("gateway provider config can carry a stable workspace correlation header", () => {
+  const updated = applyGatewayProviderRouting(
+    JSON.stringify({ provider: { codex_oauth: {} } }),
+    {
+      providerId: "codex_oauth",
+      serverBaseUrl: "http://127.0.0.1:4318/",
+      serverClientToken: "veslo-client-token",
+      gatewayAccessToken: "gateway-access-token",
+      workspaceId: "ws_1",
+      models: ["gpt-5.5"],
+    },
+  );
+
+  const parsed = JSON.parse(updated) as {
+    provider?: {
+      codex_oauth?: {
+        models?: Record<string, {
+          headers?: Record<string, string>;
+        }>;
+      };
+    };
+  };
+
+  assert.deepEqual(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.headers, {
+    "x-veslo-gateway-token": "gateway-access-token",
+    "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
+    "x-veslo-workspace-id": "ws_1",
+  });
+});
+
 test("openai_compatible provider config points at ai-gateway custom route", () => {
   const updated = applyGatewayProviderRouting(
     JSON.stringify({ provider: {} }),

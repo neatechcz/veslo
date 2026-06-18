@@ -4,6 +4,7 @@ import {
   getBasename as basename,
   normalizePath,
   normalizeForComparison as normalizeComparablePath,
+  normalizeWorkspaceArtifactPath,
 } from "../../utils/workspace-path";
 
 export type ArtifactFamilyId = "files" | "skills" | "mcp" | "soul";
@@ -99,7 +100,7 @@ function isPathWithinWorkspace(path: string, workspaceRoot: string): boolean {
 }
 
 function isTechnicalArtifactPath(path: string | undefined, workspaceRoot?: string): boolean {
-  const normalized = normalizePath(path ?? "");
+  const normalized = normalizeWorkspaceArtifactPath(path, workspaceRoot);
   const normalizedLower = normalized.toLowerCase();
   if (!normalized) return false;
 
@@ -162,7 +163,8 @@ function fileInteractionForKind(kind: string): ArtifactFileInteraction | undefin
 }
 
 function toFamilyItem(item: VesloSessionArtifactItem, workspaceRoot?: string): ArtifactFamilyItem | null {
-  if (item.family === "files" && isTechnicalArtifactPath(item.path, workspaceRoot)) {
+  const filePath = item.family === "files" ? normalizeWorkspaceArtifactPath(item.path, workspaceRoot) : "";
+  if (item.family === "files" && isTechnicalArtifactPath(filePath || item.path, workspaceRoot)) {
     return null;
   }
   if (item.family === "files") {
@@ -172,8 +174,8 @@ function toFamilyItem(item: VesloSessionArtifactItem, workspaceRoot?: string): A
       kind: item.kind,
       status: item.status,
       title: item.title,
-      subtitle: item.subtitle,
-      path: item.path,
+      subtitle: filePath || item.subtitle,
+      path: filePath || item.path,
       sourceName: item.sourceName,
       fileInteraction: fileInteractionForKind(item.kind),
       timestamp: item.timestamp,
@@ -294,7 +296,7 @@ function buildLegacyFallbackArtifacts(input: ResolveArtifactFamiliesInput): Vesl
   const results = new Map<string, VesloSessionArtifactItem>();
 
   const pushPath = (rawPath: string, timestamp: number, fileInteraction: ArtifactItem["fileInteraction"] = "opened") => {
-    const path = normalizePath(rawPath);
+    const path = normalizeWorkspaceArtifactPath(rawPath, input.workspaceRoot);
     if (!path || isTechnicalArtifactPath(path, input.workspaceRoot)) return;
     const key = path.toLowerCase();
     const kind = fileInteraction === "modified" ? "file_output" : "file_discovered";

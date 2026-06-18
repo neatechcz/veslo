@@ -24,10 +24,11 @@ const createMemoryStorage = (initial?: Record<string, string>) => {
   };
 };
 
-test("defaults to left-visible global prefs when storage is empty", () => {
+test("defaults to left-visible and right-collapsed global prefs when storage is empty", () => {
   const storage = createMemoryStorage();
   const value = readGlobalSidebarDockedPrefs(storage);
-  assert.deepEqual(value, DEFAULT_GLOBAL_SIDEBAR_DOCKED_VISIBILITY);
+  assert.deepEqual(value, { left: true, right: false });
+  assert.deepEqual(DEFAULT_GLOBAL_SIDEBAR_DOCKED_VISIBILITY, { left: true, right: false });
 });
 
 test("reads global prefs directly when present", () => {

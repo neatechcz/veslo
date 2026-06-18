@@ -5,6 +5,7 @@ import {
   createSendRuntimeReadiness,
   isLocalRuntimeHealthTimeoutError,
   localRuntimeHealthTimeoutMessage,
+  managedAiRuntimeConfigNotReadyMessage,
   shouldRecoverLocalRuntimeFromHealthError,
   type SendRuntimeReadinessDeps,
 } from "../../context/send-runtime-readiness.js";
@@ -152,9 +153,52 @@ test("managed AI bootstrap readiness waits when the current runtime config is no
   assert.deepEqual(waits, [{ hasManagedProfile: true }]);
 });
 
+test("managed AI bootstrap readiness blocks managed sends when runtime config is not usable", async () => {
+  const waits: Array<{ hasManagedProfile: boolean }> = [];
+  const { readiness, errors } = createHarness({
+    managedAiAccess: () => ({ providerId: "codex_oauth" }),
+    managedAiAccessBusy: () => false,
+    managedAiBootstrapBusy: () => false,
+    hasUsableManagedAiRuntimeConfigForSend: async () => false,
+    waitForManagedAiBootstrapReady: async (options) => {
+      waits.push({ hasManagedProfile: options.hasManagedProfile });
+    },
+  });
+
+  assert.equal(await readiness.ensureManagedAiBootstrapReady(), false);
+  assert.deepEqual(waits, []);
+  assert.deepEqual(errors, [managedAiRuntimeConfigNotReadyMessage]);
+});
+
+test("managed AI bootstrap readiness validates the snapshotted target workspace config", async () => {
+  const targets: Array<{ workspaceId?: string | null; workspaceRoot?: string | null; directory?: string | null } | null | undefined> = [];
+  const waits: Array<{ hasClient: boolean }> = [];
+  const { readiness, clients } = createHarness({
+    managedAiAccess: () => ({ providerId: "codex_oauth" }),
+    hasUsableManagedAiRuntimeConfigForSend: async (targetWorkspace) => {
+      targets.push(targetWorkspace);
+      return true;
+    },
+    waitForManagedAiBootstrapReady: async (options) => {
+      waits.push({ hasClient: options.hasClient() });
+    },
+  });
+  clients.set("target", createClient("target"));
+
+  const preflight = {
+    traceId: "trace-managed-target",
+    targetWorkspace: { workspaceId: "target", workspaceRoot: "/repo/target", directory: "/repo/target" },
+    runtimeHealthOk: false,
+  };
+
+  assert.equal(await readiness.ensureManagedAiBootstrapReady(preflight), true);
+  assert.deepEqual(targets, [preflight.targetWorkspace]);
+  assert.deepEqual(waits, [{ hasClient: true }]);
+});
+
 test("local runtime readiness probes the snapshotted target workspace client", async () => {
   const healthCalls: string[] = [];
-  const { readiness, clients, events, ensureEngineCalls } = createHarness();
+  const { readiness, clients, events, ensureEngineCalls, engineReadyValues } = createHarness();
   clients.set("target", createClient("target", async () => healthCalls.push("target")));
 
   const preflight = {
@@ -167,12 +211,30 @@ test("local runtime readiness probes the snapshotted target workspace client", a
   assert.deepEqual(healthCalls, ["target"]);
   assert.equal(preflight.runtimeHealthOk, true);
   assert.deepEqual(ensureEngineCalls, []);
+  assert.deepEqual(engineReadyValues, []);
   assert.ok(events.some((entry) => entry.event === "sendPrompt:runtime-health-ok"));
+});
+
+test("local runtime readiness marks the active workspace engine ready after a successful health probe", async () => {
+  const healthCalls: string[] = [];
+  const { readiness, clients, engineReadyValues, ensureEngineCalls } = createHarness();
+  clients.set("active", createClient("active", async () => healthCalls.push("active")));
+
+  const preflight = {
+    traceId: "trace-active",
+    runtimeHealthOk: false,
+  };
+
+  assert.equal(await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight), true);
+  assert.deepEqual(healthCalls, ["active"]);
+  assert.equal(preflight.runtimeHealthOk, true);
+  assert.deepEqual(ensureEngineCalls, []);
+  assert.deepEqual(engineReadyValues, [true]);
 });
 
 test("local runtime readiness skips duplicate health probes when preflight is already healthy", async () => {
   const healthCalls: string[] = [];
-  const { readiness, clients, events, ensureEngineCalls } = createHarness();
+  const { readiness, clients, events, ensureEngineCalls, engineReadyValues } = createHarness();
   clients.set("target", createClient("target", async () => healthCalls.push("target")));
 
   const preflight = {
@@ -184,6 +246,7 @@ test("local runtime readiness skips duplicate health probes when preflight is al
   assert.equal(await readiness.ensureLocalRuntimeReachableForSend("createSessionAndOpen", preflight), true);
   assert.deepEqual(healthCalls, []);
   assert.deepEqual(ensureEngineCalls, []);
+  assert.deepEqual(engineReadyValues, []);
   assert.ok(events.some((entry) => entry.event === "createSessionAndOpen:runtime-health-skip"));
 });
 
@@ -212,12 +275,71 @@ test("local runtime readiness restarts the target workspace engine for dead endp
   assert.equal(await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight), true);
   assert.deepEqual(ensureEngineCalls, ["target"]);
   assert.equal(preflight.runtimeHealthOk, true);
-  assert.deepEqual(engineReadyValues, [false]);
-  assert.deepEqual(sseConnectedValues, [false]);
-  assert.deepEqual(busyValues, [true]);
-  assert.deepEqual(busyLabels, ["status.connecting"]);
+  assert.deepEqual(engineReadyValues, []);
+  assert.deepEqual(sseConnectedValues, []);
+  assert.deepEqual(busyValues, []);
+  assert.deepEqual(busyLabels, []);
   assert.ok(events.some((entry) => entry.event === "sendPrompt:runtime-recovery-start"));
   assert.ok(events.some((entry) => entry.event === "sendPrompt:runtime-recovery-ok"));
+});
+
+test("local runtime readiness reflects recovery in active UI only for the active workspace", async () => {
+  const { readiness, clients, ensureEngineCalls, engineReadyValues, sseConnectedValues, busyValues, busyLabels } =
+    createHarness({
+      ensureEngineForWorkspace: async (workspaceId?: string) => {
+        ensureEngineCalls.push(workspaceId);
+        clients.set("active", createClient("active-recovered"));
+        return true;
+      },
+    });
+  clients.set(
+    "active",
+    createClient("active-stale", async () => {
+      throw new Error("ECONNREFUSED");
+    }),
+  );
+
+  const preflight = {
+    traceId: "trace-active-recovery",
+    runtimeHealthOk: false,
+  };
+
+  assert.equal(await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight), true);
+  assert.deepEqual(ensureEngineCalls, [undefined]);
+  assert.equal(preflight.runtimeHealthOk, true);
+  assert.deepEqual(engineReadyValues, [false]);
+  assert.deepEqual(sseConnectedValues, [false]);
+  assert.deepEqual(busyValues, [true, false]);
+  assert.deepEqual(busyLabels, ["status.connecting", null]);
+});
+
+test("local runtime readiness clears active busy state after successful recovery", async () => {
+  const { readiness, clients, ensureEngineCalls, busyValues, busyLabels } =
+    createHarness({
+      ensureEngineForWorkspace: async (workspaceId?: string) => {
+        ensureEngineCalls.push(workspaceId);
+        clients.set("active", createClient("active-recovered"));
+        return true;
+      },
+    });
+  clients.set(
+    "active",
+    createClient("active-stale", async () => {
+      throw new Error("ECONNREFUSED");
+    }),
+  );
+
+  assert.equal(
+    await readiness.ensureLocalRuntimeReachableForSend("replaceUserMessage", {
+      traceId: "trace-active-recovery-cleanup",
+      runtimeHealthOk: false,
+    }),
+    true,
+  );
+
+  assert.deepEqual(ensureEngineCalls, [undefined]);
+  assert.deepEqual(busyValues, [true, false]);
+  assert.deepEqual(busyLabels, ["status.connecting", null]);
 });
 
 test("local runtime readiness classifies circular non-Error endpoint failures through the injected serializer", async () => {

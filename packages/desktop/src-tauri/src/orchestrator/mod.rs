@@ -5,11 +5,10 @@ use std::path::{Path, PathBuf};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
-use tauri_plugin_shell::ShellExt;
 
 use crate::paths::home_dir;
 use crate::paths::{prepended_path_env, sidecar_path_candidates};
+use crate::supervised_process::{self, CommandEvent, SupervisedCommandChild};
 use crate::types::{
     OrchestratorBinaryState, OrchestratorDaemonState, OrchestratorEngineSnapshot,
     OrchestratorOpencodeState, OrchestratorSidecarInfo, OrchestratorStatus, OrchestratorWorkspace,
@@ -335,10 +334,16 @@ pub fn request_orchestrator_shutdown(data_dir: &str) -> Result<bool, String> {
 pub fn spawn_orchestrator_daemon(
     app: &AppHandle,
     options: &OrchestratorSpawnOptions,
-) -> Result<(tauri::async_runtime::Receiver<CommandEvent>, CommandChild), String> {
-    let command = match app.shell().sidecar("veslo-orchestrator") {
+) -> Result<
+    (
+        tauri::async_runtime::Receiver<CommandEvent>,
+        SupervisedCommandChild,
+    ),
+    String,
+> {
+    let command = match supervised_process::sidecar(app, "veslo-orchestrator") {
         Ok(command) => command,
-        Err(_) => app.shell().command("veslo"),
+        Err(_) => supervised_process::command(app, "veslo"),
     };
 
     let mut args = vec![

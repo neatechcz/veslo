@@ -16,6 +16,7 @@ type OpenCodeSessionCreateInput = {
   workspace: WorkspaceInfo;
   directory: string | null;
   title?: string | null;
+  sendTraceId?: string | null;
 };
 
 export type OpenCodeSessionCreate = (
@@ -79,7 +80,25 @@ export type ConversationService = {
     workspace: WorkspaceInfo;
     directory: string | null;
     title?: string | null;
+    sendTraceId?: string | null;
   }): Promise<ConversationCreateResult>;
+
+  importOpenCodeSessions(input: {
+    workspace: WorkspaceInfo;
+    directory: string | null;
+    sessions: Array<{
+      id: string;
+      title?: string | null;
+      parentID?: string | null;
+      time?: {
+        created?: number | null;
+        updated?: number | null;
+      } | null;
+    }>;
+  }): Promise<{
+    workspaceId: string;
+    items: ConversationSummary[];
+  }>;
 };
 
 const normalizeText = (value: string | null | undefined) => value?.trim() ?? "";
@@ -100,6 +119,26 @@ const normalizeTimestamp = (value: unknown, fallback: number) =>
 
 const readTimeRecord = (value: unknown): Record<string, unknown> =>
   isRecord(value) ? value : {};
+
+// Merge two summary lists, deduped by engine session id, preserving order.
+// `primary` (the sandbox read, already in its own order) comes first and wins
+// on conflict; owned-store entries the sandbox did not return are appended in
+// their existing newest-first order. Order is intentionally preserved (not
+// re-sorted) so the live-read ordering and existing callers stay stable.
+const mergeConversationSummaries = (
+  primary: ConversationSummary[],
+  secondary: ConversationSummary[],
+): ConversationSummary[] => {
+  const seen = new Set<string>();
+  const merged: ConversationSummary[] = [];
+  for (const item of [...primary, ...secondary]) {
+    const id = normalizeText(item.id);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    merged.push(item);
+  }
+  return merged;
+};
 
 export function createConversationService(options: {
   readStore: ConversationReadStore;
@@ -257,11 +296,18 @@ export function createConversationService(options: {
         directory: input.directory,
         workspace: input.workspace,
       });
-      const items = result.source === "sqlite"
+      // Sandbox-read items get persisted into our owned binding store
+      // (tunnel-in) by attachConversationBindings. The owned store is our
+      // authoritative, sandbox-independent source. Return the UNION so a
+      // partial / empty / unavailable sandbox read can never shrink the
+      // sidebar below what we already own — a conversation we have seen once
+      // keeps listing even when the sandbox DB is unreachable or its stored
+      // directory form does not match the browse path.
+      const sandboxItems = result.source === "sqlite" && result.items.length > 0
         ? await attachConversationBindings(input.workspace.id, input.directory, result.items)
-        : result.items.length > 0
-          ? result.items
-          : await listPersistedBindings(input.workspace.id, input.directory);
+        : result.items;
+      const ownedItems = await listPersistedBindings(input.workspace.id, input.directory);
+      const items = mergeConversationSummaries(sandboxItems, ownedItems);
       return { ...result, items };
     },
 
@@ -305,6 +351,7 @@ export function createConversationService(options: {
         workspace: input.workspace,
         directory,
         title: input.title,
+        sendTraceId: input.sendTraceId ?? null,
       });
       const record = isRecord(created) ? created : {};
       const engineSessionId = normalizeText(
@@ -352,6 +399,48 @@ export function createConversationService(options: {
         opencodeSessionId: binding.engineSessionId,
         parentConversationId: binding.parentConversationId,
         branchId: binding.branchId,
+      };
+    },
+
+    async importOpenCodeSessions(input) {
+      const workspaceId = normalizeText(input.workspace.id);
+      const directory = normalizeText(input.directory);
+      if (!workspaceId || !directory) {
+        throw new ApiError(400, "invalid_directory", "Conversation directory is required");
+      }
+
+      const sessions = input.sessions
+        .map((session) => {
+          const engineSessionId = normalizeText(session.id);
+          if (!engineSessionId) return null;
+          const title = normalizeNullableText(session.title) ?? engineSessionId;
+          const parentEngineSessionId = normalizeNullableText(session.parentID);
+          const createdAt = normalizeTimestamp(session.time?.created, now());
+          const updatedAt = normalizeTimestamp(session.time?.updated, createdAt);
+          return {
+            engineSessionId,
+            title,
+            parentEngineSessionId,
+            createdAt,
+            updatedAt,
+          };
+        })
+        .filter((session): session is NonNullable<typeof session> => Boolean(session));
+
+      if (sessions.length === 0) return { workspaceId, items: [] };
+
+      const bindings = await options.bindingStore.bindOpenCodeSessions({
+        workspaceId,
+        directory,
+        sessions,
+      });
+
+      return {
+        workspaceId,
+        items: sessions
+          .map((session) => bindings.get(session.engineSessionId))
+          .filter((binding): binding is ConversationBinding => Boolean(binding))
+          .map(bindingToSummary),
       };
     },
   };

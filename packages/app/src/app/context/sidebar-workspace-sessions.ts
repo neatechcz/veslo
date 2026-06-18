@@ -1,11 +1,14 @@
-import { createEffect, createMemo, createSignal, untrack } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
 
 import type { Session } from "@opencode-ai/sdk/v2/client";
 
 import { promoteStoredProjectOrderKey } from "../components/session/workspace-session-list-prefs";
 import { createClient, unwrap, type OpencodeAuth } from "../lib/opencode";
 import { recordPerfLog } from "../lib/perf-log";
-import { shouldSyncSidebarFromSessionStore } from "../lib/sidebar-session-sync-guard";
+import {
+  shouldPreserveSidebarRowsOnRead,
+  shouldSyncSidebarFromSessionStore,
+} from "../lib/sidebar-session-sync-guard";
 import { deriveSidebarRowsFromSessionStore } from "../lib/sidebar-session-store-sync";
 import {
   parseVesloWorkspaceIdFromUrl,
@@ -45,6 +48,7 @@ type SidebarWorkspaceSessionsOptions = {
   workspaceStore: WorkspaceStore;
   workspaceRouting: WorkspaceRouting;
   engineReady: () => boolean;
+  activeSendTraceId?: () => string | null;
   developerMode: () => boolean;
   sessions: () => Session[];
   sessionDirectoryOverrideById: () => Record<string, string>;
@@ -55,6 +59,11 @@ type SidebarWorkspaceSessionsOptions = {
     workspaceId: string,
     directory?: string,
   ) => Promise<ConversationReadResult>;
+  backfillConversationsToVesloReadApi?: (
+    workspaceId: string,
+    directory: string,
+    sessions: Session[],
+  ) => Promise<void>;
   reportError: (error: unknown, scope: string) => void;
   wsDebug: (label: string, payload?: unknown) => void;
 };
@@ -330,6 +339,60 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
     });
   };
 
+  // Apply a read-API list result without ever destroying browsable rows. An
+  // unavailable read (server unreachable, workspace not yet registered, sandbox
+  // path mismatch) or a transient empty result must not wipe rows the user can
+  // still open — that is the "conversation disappeared and I can't get back"
+  // symptom. Only write rows when we actually read something, or when the
+  // workspace genuinely has no rows yet.
+  const applyWorkspaceSidebarReadResult = (input: {
+    workspaceId: string;
+    items: SidebarSessionItem[];
+    available: boolean;
+  }) => {
+    const id = input.workspaceId.trim();
+    if (!id) return;
+    const existingRows = untrack(() => sidebarSessionsByWorkspaceId()[id] ?? []);
+    const preserveExisting = shouldPreserveSidebarRowsOnRead({
+      available: input.available,
+      incomingCount: input.items.length,
+      existingCount: existingRows.length,
+    });
+    if (!preserveExisting) {
+      setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [id]: input.items }));
+    }
+    setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" as const }));
+    setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
+  };
+
+  const isSidebarRuntimeUnavailableError = (message: string) =>
+    /engine_not_running|Failed to fetch|error sending request for url|Request timed out|ECONN|connection refused|upstream status (?:401|404|502|503)|status (?:401|404|502|503)|Invalid bearer token|unauthorized/i.test(
+      message,
+    );
+
+  const refreshSidebarWorkspaceSessionsFromReadApi = async (
+    workspaceId: string,
+    directory: string,
+    reason: string,
+  ) => {
+    const result = await options.listConversationsFromVesloReadApi(workspaceId, directory);
+    const { visible: items } = partitionVesloUtilitySessions(
+      result.items.map(options.applyPendingInitialSessionTitle),
+    );
+    applyWorkspaceSidebarReadResult({
+      workspaceId,
+      items,
+      available: result.source !== "unavailable",
+    });
+    setSidebarSessionHasMoreByWorkspaceId((prev) => ({ ...prev, [workspaceId]: false }));
+    options.wsDebug("sidebar:conversation-read", {
+      id: workspaceId,
+      reason,
+      source: result.source ?? "unknown",
+      count: items.length,
+    });
+  };
+
   const resolveSidebarClientConfig = (workspaceId: string) => {
     const workspace = options.workspaceStore.workspaces().find((entry) => entry.id === workspaceId) ?? null;
     if (!workspace) return null;
@@ -342,10 +405,10 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
       const activeInfoDirectory = activeInfo?.projectDir?.trim() ?? "";
       const info = activeInfo && activeInfoDirectory === directory ? activeInfo : null;
       const baseUrl = entry?.baseUrl?.trim() || info?.baseUrl?.trim() || "";
-      const authInfo = options.workspaceStore.engine();
-      const username = authInfo?.opencodeUsername?.trim() ?? "";
-      const password = authInfo?.opencodePassword?.trim() ?? "";
-      const auth: OpencodeAuth | undefined = username && password ? { username, password } : undefined;
+      const username = info?.opencodeUsername?.trim() ?? "";
+      const password = info?.opencodePassword?.trim() ?? "";
+      const activeEngineAuth: OpencodeAuth | undefined = username && password ? { username, password } : undefined;
+      const auth = entry?.auth ?? activeEngineAuth;
       return {
         baseUrl,
         directory,
@@ -372,9 +435,54 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
   };
 
   const sidebarRefreshSeqByWorkspaceId: Record<string, number> = {};
+  const deferredSidebarRefreshTimers = new Map<string, number>();
+  onCleanup(() => {
+    for (const timer of deferredSidebarRefreshTimers.values()) {
+      window.clearTimeout(timer);
+    }
+    deferredSidebarRefreshTimers.clear();
+  });
+  const scheduleDeferredSidebarRefresh = (workspaceId: string, activeSendTraceId: string) => {
+    const id = workspaceId.trim();
+    if (!id) return;
+    if (deferredSidebarRefreshTimers.has(id)) return;
+    recordPerfLog(options.developerMode(), "sidebar.sessions", "refresh-defer-active-send", {
+      workspaceId: id,
+      activeSendTraceId,
+    });
+    const timer = window.setTimeout(() => {
+      deferredSidebarRefreshTimers.delete(id);
+      const nextActiveSendTraceId = options.activeSendTraceId?.()?.trim() ?? "";
+      if (nextActiveSendTraceId) {
+        scheduleDeferredSidebarRefresh(id, nextActiveSendTraceId);
+        return;
+      }
+      void refreshSidebarWorkspaceSessions(id)
+        .catch(e => options.reportError(e, "sidebar.refreshDeferred"));
+    }, 750);
+    deferredSidebarRefreshTimers.set(id, timer);
+  };
+
+  const markSidebarRefreshUnavailable = (id: string, reason: string) => {
+    setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" as const }));
+    setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
+    setSidebarSessionHasMoreByWorkspaceId((prev) => ({ ...prev, [id]: false }));
+    setSidebarSessionLoadingMoreByWorkspaceId((prev) => ({ ...prev, [id]: false }));
+    options.wsDebug("sidebar:conversation-read:unavailable", {
+      id,
+      reason,
+      existingCount: untrack(() => sidebarSessionsByWorkspaceId()[id]?.length ?? 0),
+    });
+  };
+
   const refreshSidebarWorkspaceSessions = async (workspaceId: string) => {
     const id = workspaceId.trim();
     if (!id) return;
+    const activeSendTraceId = options.activeSendTraceId?.()?.trim() ?? "";
+    if (activeSendTraceId) {
+      scheduleDeferredSidebarRefresh(id, activeSendTraceId);
+      return;
+    }
 
     const config = resolveSidebarClientConfig(id);
     if (!config) return;
@@ -384,30 +492,14 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
       const wsDirectory = workspace?.path?.trim() ?? "";
       if (wsDirectory) {
         try {
-          const result = await options.listConversationsFromVesloReadApi(id, wsDirectory);
-          const { visible: items } = partitionVesloUtilitySessions(
-            result.items.map(options.applyPendingInitialSessionTitle),
-          );
-          setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [id]: items }));
-          setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" as const }));
-          setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
-          setSidebarSessionHasMoreByWorkspaceId((prev) => ({ ...prev, [id]: false }));
-          options.wsDebug("sidebar:conversation-read", {
-            id,
-            source: result.source ?? "unknown",
-            count: items.length,
-          });
+          await refreshSidebarWorkspaceSessionsFromReadApi(id, wsDirectory, "no-engine-base-url");
           return;
         } catch (e) {
           options.wsDebug("sidebar:conversation-read:error", { id, error: String(e) });
         }
       }
 
-      setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [id]: [] }));
-      setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" as const }));
-      setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
-      setSidebarSessionHasMoreByWorkspaceId((prev) => ({ ...prev, [id]: false }));
-      options.wsDebug("sidebar:conversation-read:unavailable", { id });
+      markSidebarRefreshUnavailable(id, "no-engine-base-url");
       return;
     }
 
@@ -506,6 +598,15 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
       }
 
       const visible = expandSidebarSessionSliceWithAncestors(visibleSessions, requestLimit);
+      if (queryDirectory && visibleSessions.length > 0) {
+        void options.backfillConversationsToVesloReadApi?.(id, queryDirectory, visibleSessions)
+          .catch((error) => {
+            options.wsDebug("sidebar:conversation-read:backfill-error", {
+              id,
+              error: error instanceof Error ? error.message : safeStringify(error),
+            });
+          });
+      }
       const items: SidebarSessionItem[] = visible.map((session) => {
         const displaySession = options.applyPendingInitialSessionTitle(session);
         return {
@@ -530,6 +631,19 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
     } catch (error) {
       if (sidebarRefreshSeqByWorkspaceId[id] !== seq) return;
       const message = error instanceof Error ? error.message : safeStringify(error);
+      const workspace = options.workspaceStore.workspaces().find((w) => w.id === id) ?? null;
+      const wsDirectory = workspace?.workspaceType === "local" ? workspace.path?.trim() ?? "" : "";
+      if (wsDirectory && isSidebarRuntimeUnavailableError(message)) {
+        try {
+          await refreshSidebarWorkspaceSessionsFromReadApi(id, wsDirectory, "engine-runtime-unavailable");
+          return;
+        } catch (readError) {
+          options.wsDebug("sidebar:conversation-read:fallback-error", {
+            id,
+            error: readError instanceof Error ? readError.message : safeStringify(readError),
+          });
+        }
+      }
       options.wsDebug("sidebar:error", { id, message });
       setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "error" }));
       setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: message }));
@@ -643,6 +757,7 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
   };
 
   let sidebarBulkRefreshInFlight: Promise<void> | null = null;
+  const sidebarReadyEmptyRetryKeyByWorkspaceId: Record<string, string> = {};
 
   const refreshAllSidebarWorkspaceSessions = async (prioritizeWorkspaceId?: string | null) => {
     const existingBulkRefresh = sidebarBulkRefreshInFlight;
@@ -760,7 +875,21 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
     if (!id) return;
     if (!options.engineReady()) return;
     const status = sidebarSessionStatusByWorkspaceId()[id] ?? "idle";
-    if (status !== "idle") return;
+    if (status === "idle") {
+      refreshSidebarWorkspaceSessions(id).catch(e => options.reportError(e, "sidebar.refreshSessions"));
+      return;
+    }
+    if (status !== "ready") return;
+    const existingRows = sidebarSessionsByWorkspaceId()[id] ?? [];
+    if (existingRows.length > 0) {
+      delete sidebarReadyEmptyRetryKeyByWorkspaceId[id];
+      return;
+    }
+    const config = resolveSidebarClientConfig(id);
+    if (!config?.baseUrl) return;
+    const retryKey = [config.baseUrl, config.directory, options.workspaceStore.engine()?.projectDir ?? ""].join("::");
+    if (sidebarReadyEmptyRetryKeyByWorkspaceId[id] === retryKey) return;
+    sidebarReadyEmptyRetryKeyByWorkspaceId[id] = retryKey;
     refreshSidebarWorkspaceSessions(id).catch(e => options.reportError(e, "sidebar.refreshSessions"));
   });
 
@@ -929,6 +1058,7 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
     publishRegisteredWorkspaceToSidebar,
     markWorkspaceSidebarLoading,
     replaceWorkspaceSidebarSessions,
+    applyWorkspaceSidebarReadResult,
     removeSessionFromWorkspaceSidebar,
     prependSessionToWorkspaceSidebar,
     materializePendingSessionInWorkspaceSidebar,

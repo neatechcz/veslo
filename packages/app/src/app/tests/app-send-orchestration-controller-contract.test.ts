@@ -13,7 +13,7 @@ function sendPromptSource(): string {
 
 function createSessionAndOpenSource(): string {
   const start = source.indexOf("async function createSessionAndOpen(");
-  const end = source.indexOf("const openNewSessionWithDirectory = async () =>", start);
+  const end = source.indexOf("const chooseFolderForCurrentSession", start);
   assert.ok(start >= 0 && end > start, "createSessionAndOpen source should be present");
   return source.slice(start, end);
 }

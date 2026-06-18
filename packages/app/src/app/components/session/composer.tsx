@@ -6,9 +6,11 @@ import { ArrowUp, File as FileIcon, Loader2, Paperclip, Square, Terminal, X, Zap
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, SlashCommandOption } from "../../types";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
 import { logUiEvent, readClipboardFilePaths } from "../../lib/tauri";
+import { recordSendWorkflowTrace } from "../../lib/send-workflow-trace";
 import { currentLocale, t, useTranslate } from "../../../i18n";
 import { extractFileReferencePathsFromDataTransfer, extractFilesFromDataTransfer, isFileDragTransfer } from "../../utils/data-transfer-files";
 import { looksLikePdfDocumentPrefix } from "../../utils/pdf-signature";
+import { findMentionTrigger } from "./composer-mention-trigger";
 
 
 type MentionOption = {
@@ -41,6 +43,7 @@ type ComposerProps = {
   developerMode: boolean;
   busy: boolean;
   isStreaming: boolean;
+  stopShortcutConfirmPending?: boolean;
   compactTopSpacing?: boolean;
   compactWidth?: boolean;
   onSend: (draft: ComposerDraft, options?: ComposerSendOptions) => Promise<boolean>;
@@ -117,6 +120,7 @@ function recordSendTrace(event: string, payload?: Record<string, unknown>) {
     logs.push(entry);
     if (logs.length > 500) logs.splice(0, logs.length - 500);
     root.__vesloSendTrace = logs;
+    recordSendWorkflowTrace("composer", event, payload);
     console.log(`[SENDTRACE] composer:${event}`, entry);
     logUiEvent("send-trace", `composer:${event}`, entry);
   } catch {
@@ -825,13 +829,13 @@ export default function Composer(props: ComposerProps) {
     }
     const text = currentText ?? readEditorText(editorRef);
     const before = text.slice(0, offsets.start);
-    const match = before.match(/@(\S*)$/);
-    if (!match) {
+    const trigger = findMentionTrigger(before, before.length);
+    if (!trigger) {
       setMentionOpen(false);
       setMentionQuery("");
       return;
     }
-    setMentionQuery(match[1] ?? "");
+    setMentionQuery(trigger.query);
     setMentionOpen(true);
   };
 
@@ -938,10 +942,10 @@ export default function Composer(props: ComposerProps) {
     beforeRange.selectNodeContents(editorRef);
     beforeRange.setEnd(range.endContainer, range.endOffset);
     const beforeText = normalizeText(beforeRange.toString());
-    const match = beforeText.match(/@(\S*)$/);
-    if (!match) return;
-    const start = match.index ?? beforeText.length - match[0].length;
-    const end = beforeText.length;
+    const trigger = findMentionTrigger(beforeText, beforeText.length);
+    if (!trigger) return;
+    const start = trigger.start;
+    const end = trigger.end;
     const deleteRange = buildRangeFromOffsets(editorRef, start, end);
     deleteRange.deleteContents();
 
@@ -2015,10 +2019,24 @@ export default function Composer(props: ComposerProps) {
                           <button
                             type="button"
                             onClick={() => props.onStop()}
-                            class="shrink-0 p-1.5 rounded-full bg-gray-12 text-gray-1 hover:bg-gray-11 transition-colors"
-                            title={translate("session.stop_label")}
+                            class="inline-flex h-8 w-10 shrink-0 items-center justify-center rounded-full bg-gray-12 text-gray-1 transition-colors hover:bg-gray-11"
+                            title={
+                              props.stopShortcutConfirmPending
+                                ? translate("session.stop_escape_confirm_label")
+                                : translate("session.stop_label")
+                            }
+                            aria-label={
+                              props.stopShortcutConfirmPending
+                                ? translate("session.stop_escape_confirm_label")
+                                : translate("session.stop_label")
+                            }
                           >
-                            <Square size={14} fill="currentColor" />
+                            <Show
+                              when={props.stopShortcutConfirmPending}
+                              fallback={<Square size={14} fill="currentColor" />}
+                            >
+                              <span class="font-product text-xs font-bold leading-none">Esc</span>
+                            </Show>
                           </button>
                           <Show when={hasDraftContent()}>
                             <button

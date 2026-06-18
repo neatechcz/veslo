@@ -1,4 +1,5 @@
 import { mkdir, readFile, writeFile, rm, readdir, realpath, rename, stat } from "node:fs/promises";
+import { appendFileSync, mkdirSync } from "node:fs";
 import { createHash, randomInt, randomUUID } from "node:crypto";
 import { homedir, hostname } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -38,6 +39,37 @@ import {
   type SkillRemovalScope,
 } from "./skill-removal-journal.js";
 import { fetchOrgMcpCatalog, fetchOrgSkillsCatalog } from "./den-catalog.js";
+import {
+  getOrganizationSoul,
+  getSoulVersion,
+  getUserSoul,
+  listSoulVersions,
+  restoreSoulVersion as restoreDenSoulVersion,
+  updateOrganizationSoul,
+  updateUserSoul,
+} from "./soul-den-client.js";
+import {
+  cacheSoulDocument,
+  listPendingSoulEdits,
+  readCachedSoulDocument,
+  soulCachePath,
+  soulPendingCacheDir,
+  writePendingSoulEdit,
+  type SoulPendingEdit,
+} from "./soul-cache.js";
+import {
+  createSoulVersion,
+  currentSoulVersion,
+  restoreSoulVersion as restoreLocalSoulVersion,
+  type SoulDocument,
+  type SoulScope,
+  type SoulVersion,
+} from "./soul-memory.js";
+import {
+  materializeEffectiveSoul,
+  readSoulMaterializationStatus,
+  type SoulMaterializationResult,
+} from "./soul-materializer.js";
 import {
   createRegistrySkill,
   createRegistrySkillInstallation,
@@ -102,11 +134,33 @@ import { FileSessionStore } from "./file-sessions.js";
 import { createSessionArchiveStore } from "./session-archives.js";
 import { deriveLatestRunArtifactsResponse } from "./session-artifacts.js";
 import { createSessionTranscriptPrefetchStore } from "./session-transcript-prefetch.js";
+import {
+  type AutomationExecutionInput,
+  type AutomationExecutionResult,
+  type AutomationRunner,
+  createAutomationRunner,
+} from "./automation-runner.js";
+import {
+  type AutomationRun,
+  type AutomationSchedule,
+  type AutomationStatus,
+  type AutomationTarget,
+  type VesloAutomation,
+  computeNextAutomationRunAt,
+  parseAutomationSchedule,
+  parseAutomationStatus,
+} from "./automations.js";
+import {
+  mutateAutomationStore,
+  readAutomationStore,
+  resolveAutomationsPath,
+} from "./automation-store.js";
 import { createConversationReadStore } from "./conversation-read-store.js";
 import { createConversationBindingStore } from "./conversation-binding-store.js";
 import { createConversationService } from "./conversation-service.js";
 import {
   createOrchestratorLifecycleClient,
+  type OrchestratorLifecycleClient,
   OrchestratorLifecycleRequestError,
   RunAlreadyActiveError,
 } from "./orchestrator-lifecycle-client.js";
@@ -139,10 +193,16 @@ const OPENCODE_CONVERSATION_SUBMIT_TIMEOUT_MS = 30_000;
 // the orchestrator's 60s cold OpenCode health window so a legitimate POST that
 // cold-spawns the engine is not aborted mid-spawn.
 const OPENCODE_PROXY_HEADERS_DEFAULT_TIMEOUT_MS = 75_000;
+const AI_GATEWAY_PROXY_HEADERS_DEFAULT_TIMEOUT_MS = 45_000;
+const AI_GATEWAY_PROVIDER_START_DEFAULT_TIMEOUT_MS = 30_000;
+const AI_GATEWAY_SESSION_HIT_TTL_MS = 5 * 60 * 1000;
+const AI_GATEWAY_ACTIVE_RUN_TTL_MS = 10 * 60 * 1000;
+const AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS = 30_000;
 export const REDACTED_SECRET_VALUE = "[REDACTED]";
 const GATEWAY_CALLER_AUTH_HEADER = "x-veslo-gateway-authorization";
 const GATEWAY_ACCESS_TOKEN_HEADER = "x-veslo-gateway-token";
 const GATEWAY_SESSION_ID_HEADER = "x-veslo-session-id";
+const GATEWAY_WORKSPACE_ID_HEADER = "x-veslo-workspace-id";
 const AI_GATEWAY_MODEL_DIAGNOSTIC_MAX_REQUEST_BYTES = 64 * 1024;
 const AI_GATEWAY_JSON_REDACTION_MAX_RESPONSE_BYTES = 64 * 1024;
 const AI_GATEWAY_ERROR_DIAGNOSTIC_MAX_RESPONSE_BYTES = 64 * 1024;
@@ -161,9 +221,95 @@ type LogLevel = "info" | "warn" | "error";
 
 type LogAttributes = Record<string, unknown>;
 
+const SEND_WORKFLOW_TRACE_SCHEMA = "send-workflow/v1";
+
+function truthyEnv(name: string): boolean {
+  const value = process.env[name]?.trim().toLowerCase() ?? "";
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
+function resolveSendWorkflowTraceFile(): string {
+  const override = process.env.VESLO_SEND_WORKFLOW_TRACE_FILE?.trim();
+  if (override) return override;
+  const pilotDir = process.env.TAURI_PILOT_LOG_DIR?.trim();
+  if (pilotDir) return join(pilotDir, "send-workflow-trace.ndjson");
+  const runtimeTraceFile = process.env.VESLO_RUNTIME_TRACE_FILE?.trim();
+  if (runtimeTraceFile) return join(dirname(runtimeTraceFile), "send-workflow-trace.ndjson");
+  return join(resolveVesloDataDir(), "send-workflow-trace.ndjson");
+}
+
+function sendWorkflowTraceEnabled(): boolean {
+  return truthyEnv("VESLO_SEND_WORKFLOW_TRACE") || Boolean(process.env.VESLO_SEND_WORKFLOW_TRACE_FILE?.trim());
+}
+
+function recordSendWorkflowTrace(
+  source: string,
+  event: string,
+  payload: Record<string, unknown> = {},
+): void {
+  if (!sendWorkflowTraceEnabled()) return;
+  const entry = {
+    schema: SEND_WORKFLOW_TRACE_SCHEMA,
+    at: new Date().toISOString(),
+    ts: Date.now(),
+    source,
+    event,
+    processPid: process.pid,
+    processRunId: process.env.VESLO_RUN_ID?.trim() || null,
+    ...payload,
+  };
+  try {
+    const file = resolveSendWorkflowTraceFile();
+    mkdirSync(dirname(file), { recursive: true });
+    appendFileSync(file, `${JSON.stringify(entry)}\n`, "utf8");
+  } catch {
+    // Diagnostics must never affect runtime behavior.
+  }
+  if (truthyEnv("VESLO_SEND_WORKFLOW_TRACE_CONSOLE")) {
+    try {
+      console.log(`[veslo:send-workflow] ${event} ${JSON.stringify(entry)}`);
+    } catch {
+      console.log(`[veslo:send-workflow] ${event}`);
+    }
+  }
+}
+
 type ServerLogger = {
   log: (level: LogLevel, message: string, attributes?: LogAttributes) => void;
 };
+
+type SoulMaterializationTestHookInput = {
+  workspaceId: string;
+  overrides: Partial<Record<SoulScope, SoulDocument | null>>;
+};
+
+let soulMaterializationTestHookForTests: ((input: SoulMaterializationTestHookInput) => Promise<void>) | null = null;
+const soulMaterializationLocks = new Map<string, Promise<void>>();
+
+export function setSoulMaterializationTestHookForTests(
+  hook: ((input: SoulMaterializationTestHookInput) => Promise<void>) | null,
+): void {
+  soulMaterializationTestHookForTests = hook;
+}
+
+async function withSoulMaterializationLock<T>(workspaceId: string, run: () => Promise<T>): Promise<T> {
+  const previous = soulMaterializationLocks.get(workspaceId)?.catch(() => undefined) ?? Promise.resolve();
+  let releaseCurrent!: () => void;
+  const current = new Promise<void>((resolveCurrent) => {
+    releaseCurrent = resolveCurrent;
+  });
+  const queued = previous.then(() => current);
+  soulMaterializationLocks.set(workspaceId, queued);
+  await previous;
+  try {
+    return await run();
+  } finally {
+    releaseCurrent();
+    if (soulMaterializationLocks.get(workspaceId) === queued) {
+      soulMaterializationLocks.delete(workspaceId);
+    }
+  }
+}
 
 function normalizeConfigKey(input: string): string {
   return input.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -406,6 +552,7 @@ interface RequestContext {
   approvals: ApprovalService;
   reloadEvents: ReloadEventStore;
   tokens: TokenService;
+  automationRunner: AutomationRunner;
   actor?: Actor;
 }
 
@@ -470,7 +617,16 @@ export function startServer(config: ServerConfig) {
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
-  const routes = createRoutes(config, approvals, tokens);
+  const runnerWorkspaces = config.readOnly
+    ? []
+    : config.workspaces
+      .filter((workspace) => isAuthorizedRootSync(resolve(workspace.path), config.authorizedRoots))
+      .map((workspace) => ({ ...workspace, path: resolve(workspace.path) }));
+  const automationRunner = createAutomationRunner({
+    workspaces: runnerWorkspaces,
+    execute: createOpenCodeAutomationExecutor(config),
+  });
+  const routes = createRoutes(config, approvals, tokens, automationRunner);
   const baseLogger = createServerLogger(config);
 
   const debugLogPipeline: DebugLogPipeline = createDebugLogPipeline({
@@ -741,6 +897,7 @@ export function startServer(config: ServerConfig) {
           approvals,
           reloadEvents,
           tokens,
+          automationRunner,
           actor,
         });
         return finalize(response);
@@ -760,7 +917,19 @@ export function startServer(config: ServerConfig) {
 
   (serverOptions as { idleTimeout?: number }).idleTimeout = 120;
 
-  const server = Bun.serve(serverOptions);
+  type StoppableServer = ReturnType<typeof Bun.serve> & { stop: (closeActiveConnections?: boolean) => void };
+  const server = Bun.serve(serverOptions) as StoppableServer;
+  void automationRunner.start().catch((error) => {
+    logger.log("error", "automation runner start failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+
+  const originalStop = server.stop.bind(server);
+  server.stop = (closeActiveConnections?: boolean) => {
+    automationRunner.stop();
+    return originalStop(closeActiveConnections);
+  };
 
   return server;
 }
@@ -806,6 +975,10 @@ const HOP_BY_HOP_REQUEST_HEADERS = [
 ];
 const ACCEPT_ENCODING_HEADER = "accept-encoding";
 const ACCEPT_ENCODING_IDENTITY = "identity";
+const AI_GATEWAY_LOCAL_ONLY_REQUEST_HEADERS = [
+  "x-session-affinity",
+  "x-session-id",
+];
 
 function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string, workspaceId?: string) {
   const target = new URL(baseUrl);
@@ -834,7 +1007,14 @@ function buildOrchestratorWorkspaceOpencodeBaseUrl(config: ServerConfig, workspa
 async function fetchOpencodeJson(
   workspace: WorkspaceInfo,
   path: string,
-  init: { method: string; body?: unknown; maxResponseBytes?: number; timeoutMs?: number },
+  init: {
+    method: string;
+    body?: unknown;
+    directory?: string | null;
+    maxResponseBytes?: number;
+    timeoutMs?: number;
+    sendTraceId?: string | null;
+  },
 ) {
   const baseUrl = workspace.baseUrl?.trim() ?? "";
   if (!baseUrl) {
@@ -851,8 +1031,15 @@ async function fetchOpencodeJson(
 
   const headers = new Headers();
   headers.set("Content-Type", "application/json");
+  const sendTraceId = init.sendTraceId?.trim() ?? "";
+  if (sendTraceId) {
+    headers.set("x-veslo-send-trace-id", sendTraceId);
+  }
 
-  const directory = resolveOpencodeDirectory(workspace);
+  const directoryOverride = init.directory?.trim() ?? "";
+  const directory = directoryOverride
+    ? normalizeOpencodeDirectory(directoryOverride)
+    : resolveOpencodeDirectory(workspace);
   if (directory) {
     headers.set("x-opencode-directory", directory);
   }
@@ -863,6 +1050,19 @@ async function fetchOpencodeJson(
   }
 
   const timeoutMs = init.timeoutMs ?? resolveOpenCodeJsonFetchTimeoutMs();
+  const requestStartedAt = Date.now();
+  recordSendWorkflowTrace("server", "server:opencode-json:start", {
+    traceId: sendTraceId || null,
+    workspaceId: workspace.id,
+    workspaceType: workspace.workspaceType,
+    method: init.method,
+    path,
+    targetUrl: url.toString(),
+    directory: directory || null,
+    timeoutMs,
+    hasAuth: Boolean(auth),
+    hasBody: init.body !== undefined,
+  });
   const controller = new AbortController();
   let timedOut = false;
   const timeout = setTimeout(() => {
@@ -910,21 +1110,53 @@ async function fetchOpencodeJson(
       json = null;
     }
     if (!response.ok) {
+      recordSendWorkflowTrace("server", "server:opencode-json:error-status", {
+        traceId: sendTraceId || null,
+        workspaceId: workspace.id,
+        method: init.method,
+        path,
+        status: response.status,
+        durationMs: Date.now() - requestStartedAt,
+      });
       throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
         status: response.status,
         body: json ?? text,
         path,
       });
     }
+    recordSendWorkflowTrace("server", "server:opencode-json:done", {
+      traceId: sendTraceId || null,
+      workspaceId: workspace.id,
+      method: init.method,
+      path,
+      status: response.status,
+      durationMs: Date.now() - requestStartedAt,
+    });
     return json;
   } catch (error) {
     if (error instanceof ApiError) throw error;
     if (timedOut || isAbortError(error)) {
+      recordSendWorkflowTrace("server", "server:opencode-json:timeout", {
+        traceId: sendTraceId || null,
+        workspaceId: workspace.id,
+        method: init.method,
+        path,
+        timeoutMs,
+        durationMs: Date.now() - requestStartedAt,
+      });
       throw new ApiError(502, "opencode_request_timeout", "OpenCode request timed out", {
         path,
         timeoutMs,
       });
     }
+    recordSendWorkflowTrace("server", "server:opencode-json:error", {
+      traceId: sendTraceId || null,
+      workspaceId: workspace.id,
+      method: init.method,
+      path,
+      error: error instanceof Error ? error.message : String(error),
+      durationMs: Date.now() - requestStartedAt,
+    });
     throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
       path,
       error: error instanceof Error ? error.message : String(error),
@@ -932,6 +1164,72 @@ async function fetchOpencodeJson(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function createOpenCodeAutomationExecutor(
+  config: ServerConfig,
+): (input: AutomationExecutionInput) => Promise<AutomationExecutionResult> {
+  return async (input) => {
+    const workspace = await resolveWorkspace(config, input.workspaceId);
+
+    const preferredSessionId = input.target.preferredSessionId?.trim() || "";
+    if (preferredSessionId) {
+      try {
+        const existing = await fetchOpencodeJson(
+          workspace,
+          `/session/${encodeURIComponent(preferredSessionId)}`,
+          { method: "GET", timeoutMs: AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS },
+        );
+        const existingId = typeof existing?.id === "string" ? existing.id.trim() : "";
+        if (existingId) {
+          await postAutomationPrompt(workspace, existingId, input.prompt, input.target);
+          return { sessionId: existingId, createdSession: false };
+        }
+      } catch {
+        // Missing or inaccessible preferred sessions fall back to a fresh session.
+      }
+    }
+
+    const created = await fetchOpencodeJson(workspace, "/session", {
+      method: "POST",
+      body: { title: input.target.fallbackTitle?.trim() || `Automation: ${input.automation.name}` },
+      timeoutMs: AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS,
+    });
+    const sessionId = typeof created?.id === "string" ? created.id.trim() : "";
+    if (!sessionId) {
+      throw new ApiError(502, "opencode_failed", "OpenCode session did not return an id");
+    }
+    await postAutomationPrompt(workspace, sessionId, input.prompt, input.target);
+    return { sessionId, createdSession: true };
+  };
+}
+
+async function postAutomationPrompt(
+  workspace: WorkspaceInfo,
+  sessionId: string,
+  prompt: string,
+  target: AutomationTarget,
+): Promise<void> {
+  const body: Record<string, unknown> = {
+    parts: [{ type: "text", text: prompt }],
+  };
+  const agent = target.agent?.trim();
+  if (agent) {
+    body.agent = agent;
+  }
+  const model = typeof target.model === "string" ? target.model.trim() : "";
+  if (model) {
+    body.model = model;
+  }
+  const variant = typeof target.variant === "string" ? target.variant.trim() : "";
+  if (variant) {
+    body.variant = variant;
+  }
+  await fetchOpencodeJson(workspace, `/session/${encodeURIComponent(sessionId)}/prompt_async`, {
+    method: "POST",
+    body,
+    timeoutMs: AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS,
+  });
 }
 
 function buildOpenCodeRouterProxyUrl(baseUrl: string, path: string, search: string) {
@@ -1125,9 +1423,20 @@ function requireAiGatewaySessionId(request: Request): string {
   return sessionId;
 }
 
+function normalizeAiGatewaySessionId(sessionId?: string | null): string {
+  const normalized = sessionId?.trim() ?? "";
+  if (!normalized) return "";
+  if (normalized === "${OPENCODE_SESSION_ID}") return "";
+  return normalized;
+}
+
 function trimmedHeader(request: Request, name: string): string | undefined {
   const value = request.headers.get(name)?.trim() ?? "";
   return value || undefined;
+}
+
+function headerNamesForTrace(headers: Headers): string[] {
+  return Array.from(headers.keys()).sort((a, b) => a.localeCompare(b));
 }
 
 function resolveAiGatewayProvider(gatewayPath: string): string | undefined {
@@ -1135,22 +1444,402 @@ function resolveAiGatewayProvider(gatewayPath: string): string | undefined {
   return match?.[1] ? decodeURIComponent(match[1]) : undefined;
 }
 
-async function readAiGatewayRequestModel(request: Request): Promise<string | undefined> {
+type AiGatewaySessionHit = {
+  at: number;
+  requestId: string;
+  provider: string | null;
+  gatewayPath: string;
+  sessionId: string | null;
+  workspaceId: string | null;
+};
+
+type ActiveAiGatewayRunContext = {
+  at: number;
+  traceId: string | null;
+  workspaceId: string;
+  conversationId: string;
+  runId: string;
+  opencodeSessionId: string;
+  clientMessageId: string | null;
+  origin: string | null;
+};
+
+type ActiveAiGatewayProxyRequest = {
+  requestId: string;
+  controller: AbortController;
+  startedAt: number;
+  abortReason: string | null;
+  provider: string | null;
+  gatewayPath: string;
+  sessionId: string | null;
+  workspaceId: string | null;
+  traceId: string | null;
+  conversationId: string | null;
+  runId: string | null;
+  opencodeSessionId: string | null;
+  clientMessageId: string | null;
+  origin: string | null;
+};
+
+const aiGatewaySessionHits = new Map<string, AiGatewaySessionHit[]>();
+const aiGatewayWorkspaceHits = new Map<string, AiGatewaySessionHit[]>();
+const activeAiGatewayRunsBySession = new Map<string, ActiveAiGatewayRunContext[]>();
+const activeAiGatewayRunsByWorkspace = new Map<string, ActiveAiGatewayRunContext[]>();
+const activeAiGatewayProxyRequests = new Map<string, ActiveAiGatewayProxyRequest>();
+
+function pruneAiGatewaySessionHits(now = Date.now()): void {
+  const cutoff = now - AI_GATEWAY_SESSION_HIT_TTL_MS;
+  const prune = (hitsByKey: Map<string, AiGatewaySessionHit[]>) => {
+    for (const [key, hits] of hitsByKey) {
+      const liveHits = hits.filter((hit) => hit.at >= cutoff);
+      if (liveHits.length) {
+        hitsByKey.set(key, liveHits);
+      } else {
+        hitsByKey.delete(key);
+      }
+    }
+  };
+  prune(aiGatewaySessionHits);
+  prune(aiGatewayWorkspaceHits);
+}
+
+function pruneActiveAiGatewayRuns(now = Date.now()): void {
+  const cutoff = now - AI_GATEWAY_ACTIVE_RUN_TTL_MS;
+  const prune = (itemsByKey: Map<string, ActiveAiGatewayRunContext[]>) => {
+    for (const [key, items] of itemsByKey) {
+      const liveItems = items.filter((item) => item.at >= cutoff);
+      if (liveItems.length) {
+        itemsByKey.set(key, liveItems);
+      } else {
+        itemsByKey.delete(key);
+      }
+    }
+  };
+  prune(activeAiGatewayRunsBySession);
+  prune(activeAiGatewayRunsByWorkspace);
+}
+
+function registerActiveAiGatewayRun(input: Omit<ActiveAiGatewayRunContext, "at">): void {
+  const now = Date.now();
+  pruneActiveAiGatewayRuns(now);
+  const context: ActiveAiGatewayRunContext = { ...input, at: now };
+  const sessionId = normalizeAiGatewaySessionId(input.opencodeSessionId);
+  if (sessionId) {
+    const items = activeAiGatewayRunsBySession.get(sessionId) ?? [];
+    items.push(context);
+    activeAiGatewayRunsBySession.set(sessionId, items.slice(-10));
+  }
+  const workspaceId = input.workspaceId.trim();
+  if (workspaceId) {
+    const items = activeAiGatewayRunsByWorkspace.get(workspaceId) ?? [];
+    items.push(context);
+    activeAiGatewayRunsByWorkspace.set(workspaceId, items.slice(-10));
+  }
+  recordSendWorkflowTrace("server", "server:ai-gateway-active-run:register", {
+    traceId: input.traceId,
+    workspaceId: input.workspaceId,
+    conversationId: input.conversationId,
+    runId: input.runId,
+    opencodeSessionId: input.opencodeSessionId,
+    clientMessageId: input.clientMessageId,
+    origin: input.origin,
+  });
+}
+
+function resolveActiveAiGatewayRunContext(input: {
+  sessionId?: string | null;
+  workspaceId?: string | null;
+}): ActiveAiGatewayRunContext | null {
+  pruneActiveAiGatewayRuns();
+  const sessionId = normalizeAiGatewaySessionId(input.sessionId);
+  if (sessionId) {
+    const bySession = activeAiGatewayRunsBySession.get(sessionId) ?? [];
+    if (bySession.length) return bySession[bySession.length - 1] ?? null;
+  }
+  const workspaceId = input.workspaceId?.trim() ?? "";
+  if (workspaceId) {
+    const byWorkspace = activeAiGatewayRunsByWorkspace.get(workspaceId) ?? [];
+    if (byWorkspace.length) return byWorkspace[byWorkspace.length - 1] ?? null;
+  }
+  return null;
+}
+
+function registerActiveAiGatewayProxyRequest(input: Omit<ActiveAiGatewayProxyRequest, "abortReason">): ActiveAiGatewayProxyRequest {
+  const entry: ActiveAiGatewayProxyRequest = {
+    ...input,
+    abortReason: null,
+  };
+  activeAiGatewayProxyRequests.set(entry.requestId, entry);
+  return entry;
+}
+
+function unregisterActiveAiGatewayProxyRequest(requestId: string): void {
+  activeAiGatewayProxyRequests.delete(requestId);
+}
+
+function abortActiveAiGatewayProxyRequests(input: {
+  workspaceId: string;
+  runId?: string | null;
+  sessionId?: string | null;
+  reason: string;
+}): ActiveAiGatewayProxyRequest[] {
+  const workspaceId = input.workspaceId.trim();
+  const runId = input.runId?.trim() ?? "";
+  const sessionId = normalizeAiGatewaySessionId(input.sessionId);
+  if (!workspaceId || (!runId && !sessionId)) return [];
+
+  const aborted: ActiveAiGatewayProxyRequest[] = [];
+  for (const entry of activeAiGatewayProxyRequests.values()) {
+    if (entry.workspaceId !== workspaceId) continue;
+    const runMatches = Boolean(runId && entry.runId === runId);
+    const sessionMatches = Boolean(sessionId && entry.sessionId === sessionId);
+    if (!runMatches && !sessionMatches) continue;
+    entry.abortReason = input.reason;
+    entry.controller.abort();
+    aborted.push(entry);
+  }
+
+  if (aborted.length) {
+    const first = aborted[0];
+    recordSendWorkflowTrace("server", "server:ai-gateway:proxy-abort-active", {
+      traceId: first?.traceId ?? null,
+      workspaceId,
+      runId: runId || null,
+      sessionId: sessionId || null,
+      reason: input.reason,
+      requestIds: aborted.map((entry) => entry.requestId),
+      count: aborted.length,
+      conversationIds: Array.from(new Set(aborted.map((entry) => entry.conversationId).filter(Boolean))),
+      clientMessageIds: Array.from(new Set(aborted.map((entry) => entry.clientMessageId).filter(Boolean))),
+    });
+  }
+
+  return aborted;
+}
+
+function recordAiGatewaySessionHit(input: {
+  sessionId?: string;
+  workspaceId?: string;
+  requestId: string;
+  provider: string | null;
+  gatewayPath: string;
+  now?: number;
+}): void {
+  const sessionId = normalizeAiGatewaySessionId(input.sessionId);
+  const workspaceId = input.workspaceId?.trim() ?? "";
+  if (!sessionId && !workspaceId) return;
+  const now = input.now ?? Date.now();
+  pruneAiGatewaySessionHits(now);
+  const hit: AiGatewaySessionHit = {
+    at: now,
+    requestId: input.requestId,
+    provider: input.provider,
+    gatewayPath: input.gatewayPath,
+    sessionId: sessionId || null,
+    workspaceId: workspaceId || null,
+  };
+  if (sessionId) {
+    const hits = aiGatewaySessionHits.get(sessionId) ?? [];
+    hits.push(hit);
+    aiGatewaySessionHits.set(sessionId, hits.slice(-50));
+  }
+  if (workspaceId) {
+    const hits = aiGatewayWorkspaceHits.get(workspaceId) ?? [];
+    hits.push(hit);
+    aiGatewayWorkspaceHits.set(workspaceId, hits.slice(-50));
+  }
+}
+
+function hasAiGatewayProviderHitAfter(input: {
+  sessionId: string;
+  workspaceId: string;
+  startedAt: number;
+}): boolean {
+  const normalizedSessionId = normalizeAiGatewaySessionId(input.sessionId);
+  const normalizedWorkspaceId = input.workspaceId.trim();
+  pruneAiGatewaySessionHits();
+  if (
+    normalizedSessionId &&
+    (aiGatewaySessionHits.get(normalizedSessionId) ?? []).some((hit) => hit.at >= input.startedAt)
+  ) {
+    return true;
+  }
+  if (
+    normalizedWorkspaceId &&
+    (aiGatewayWorkspaceHits.get(normalizedWorkspaceId) ?? []).some((hit) => hit.at >= input.startedAt)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function logAiGatewayProviderStartTimeout(input: Record<string, unknown>): void {
+  try {
+    console.warn(`[veslo:ai-gateway] provider-start-timeout ${JSON.stringify(input)}`);
+  } catch {
+    console.warn("[veslo:ai-gateway] provider-start-timeout");
+  }
+}
+
+function logAiGatewayProviderStartWatch(input: Record<string, unknown>): void {
+  try {
+    console.log(`[veslo:ai-gateway] provider-start-watch ${JSON.stringify(input)}`);
+  } catch {
+    console.log("[veslo:ai-gateway] provider-start-watch");
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForAiGatewayProviderStart(input: {
+  workspaceId: string;
+  conversationId: string;
+  runId: string;
+  opencodeSessionId: string;
+  clientMessageId?: string | null;
+  origin?: string | null;
+  startedAt: number;
+}): Promise<{ started: boolean; timeoutMs: number }> {
+  const timeoutMs = resolveAiGatewayProviderStartTimeoutMs();
+  const opencodeSessionId = input.opencodeSessionId.trim();
+  const workspaceId = input.workspaceId.trim();
+  if (!opencodeSessionId) return { started: false, timeoutMs };
+
+  logAiGatewayProviderStartWatch({
+    workspaceId: input.workspaceId,
+    conversationId: input.conversationId,
+    runId: input.runId,
+    opencodeSessionId,
+    clientMessageId: input.clientMessageId ?? null,
+    origin: input.origin ?? null,
+    timeoutMs,
+  });
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (hasAiGatewayProviderHitAfter({ sessionId: opencodeSessionId, workspaceId, startedAt: input.startedAt })) {
+      return { started: true, timeoutMs };
+    }
+    await sleep(Math.min(100, Math.max(5, deadline - Date.now())));
+  }
+
+  const started = hasAiGatewayProviderHitAfter({ sessionId: opencodeSessionId, workspaceId, startedAt: input.startedAt });
+  if (!started) {
+    logAiGatewayProviderStartTimeout({
+      workspaceId: input.workspaceId,
+      conversationId: input.conversationId,
+      runId: input.runId,
+      opencodeSessionId,
+      clientMessageId: input.clientMessageId ?? null,
+      origin: input.origin ?? null,
+      timeoutMs,
+    });
+  }
+  return { started, timeoutMs };
+}
+
+type AiGatewayRequestDiagnostic = {
+  contentType: string | null;
+  contentLength: number | null;
+  skipped?: string;
+  bodySha256?: string;
+  bodyBytes?: number;
+  jsonKeys?: string[];
+  model?: string;
+  stream?: boolean;
+  messageCount?: number;
+  messageRoles?: string[];
+  lastMessageRole?: string;
+  lastUserContentBytes?: number;
+  toolCount?: number;
+  hasTools?: boolean;
+  hasToolChoice?: boolean;
+  hasResponseFormat?: boolean;
+  hasReasoning?: boolean;
+};
+
+function summarizeChatCompletionBody(json: Record<string, unknown>, text: string): AiGatewayRequestDiagnostic {
+  const messages = Array.isArray(json.messages) ? json.messages : [];
+  const messageRoles = messages
+    .map((message) => {
+      if (!message || typeof message !== "object") return "";
+      const role = (message as { role?: unknown }).role;
+      return typeof role === "string" ? role : "";
+    })
+    .filter(Boolean);
+  const lastUserMessage = [...messages].reverse().find((message) => {
+    if (!message || typeof message !== "object") return false;
+    return (message as { role?: unknown }).role === "user";
+  }) as { content?: unknown } | undefined;
+  const lastUserContent = lastUserMessage?.content;
+  const lastUserContentBytes =
+    typeof lastUserContent === "string"
+      ? Buffer.byteLength(lastUserContent, "utf8")
+      : Array.isArray(lastUserContent)
+        ? Buffer.byteLength(JSON.stringify(lastUserContent), "utf8")
+        : undefined;
+  const model = typeof json.model === "string" && json.model.trim() ? json.model.trim() : undefined;
+  const tools = Array.isArray(json.tools) ? json.tools : undefined;
+
+  return {
+    contentType: null,
+    contentLength: null,
+    bodySha256: createHash("sha256").update(text).digest("hex"),
+    bodyBytes: Buffer.byteLength(text, "utf8"),
+    jsonKeys: Object.keys(json).sort((a, b) => a.localeCompare(b)),
+    model,
+    stream: typeof json.stream === "boolean" ? json.stream : undefined,
+    messageCount: messages.length,
+    messageRoles: messageRoles.slice(-12),
+    lastMessageRole: messageRoles[messageRoles.length - 1],
+    lastUserContentBytes,
+    toolCount: tools?.length,
+    hasTools: Boolean(tools?.length),
+    hasToolChoice: "tool_choice" in json || "toolChoice" in json,
+    hasResponseFormat: "response_format" in json || "responseFormat" in json,
+    hasReasoning: "reasoning" in json || "reasoning_effort" in json || "reasoningEffort" in json,
+  };
+}
+
+async function readAiGatewayRequestDiagnostic(request: Request): Promise<AiGatewayRequestDiagnostic> {
   const contentType = request.headers.get("content-type") ?? "";
-  if (!contentType.toLowerCase().includes("application/json")) return undefined;
+  if (!contentType.toLowerCase().includes("application/json")) {
+    return { contentType: contentType || null, contentLength: null, skipped: "non-json" };
+  }
 
   const contentLength = Number(request.headers.get("content-length") ?? NaN);
-  if (!Number.isFinite(contentLength) || contentLength < 0) return undefined;
-  if (contentLength > AI_GATEWAY_MODEL_DIAGNOSTIC_MAX_REQUEST_BYTES) return undefined;
+  if (!Number.isFinite(contentLength) || contentLength < 0) {
+    return { contentType: contentType || null, contentLength: null, skipped: "unknown-content-length" };
+  }
+  if (contentLength > AI_GATEWAY_MODEL_DIAGNOSTIC_MAX_REQUEST_BYTES) {
+    return {
+      contentType: contentType || null,
+      contentLength,
+      skipped: "content-length-too-large",
+    };
+  }
 
   try {
     const text = await request.clone().text();
     const json = text ? JSON.parse(text) : null;
-    if (!json || typeof json !== "object") return undefined;
-    const model = (json as { model?: unknown }).model;
-    return typeof model === "string" && model.trim() ? model.trim() : undefined;
+    if (!json || typeof json !== "object" || Array.isArray(json)) {
+      return {
+        contentType: contentType || null,
+        contentLength,
+        bodySha256: createHash("sha256").update(text).digest("hex"),
+        bodyBytes: Buffer.byteLength(text, "utf8"),
+        skipped: "non-object-json",
+      };
+    }
+    return {
+      ...summarizeChatCompletionBody(json as Record<string, unknown>, text),
+      contentType: contentType || null,
+      contentLength,
+    };
   } catch {
-    return undefined;
+    return { contentType: contentType || null, contentLength, skipped: "parse-failed" };
   }
 }
 
@@ -1390,13 +2079,84 @@ async function proxyAiGatewayRequest(input: {
   const gatewayCallerAuth = input.request.headers.get(GATEWAY_CALLER_AUTH_HEADER)?.trim() ?? "";
   const authorization =
     input.auth === "caller" ? requireAiGatewayCallerAuth(input.request) : requireAiGatewayAccessToken(input.request);
-  const sessionId = input.requireSessionId ? requireAiGatewaySessionId(input.request) : undefined;
+  const incomingSessionId = input.requireSessionId ? requireAiGatewaySessionId(input.request) : undefined;
+  const workspaceId = trimmedHeader(input.request, GATEWAY_WORKSPACE_ID_HEADER);
+  const activeRunContext = resolveActiveAiGatewayRunContext({ sessionId: incomingSessionId, workspaceId });
+  const sessionId = input.requireSessionId
+    ? normalizeAiGatewaySessionId(incomingSessionId) ||
+      normalizeAiGatewaySessionId(activeRunContext?.opencodeSessionId) ||
+      ""
+    : undefined;
+  if (input.requireSessionId && !sessionId) {
+    throw new ApiError(400, "gateway_session_unresolved", "Gateway session id placeholder could not be resolved", {
+      requestId,
+      provider: resolveAiGatewayProvider(input.gatewayPath),
+      incomingSessionId,
+      workspaceId,
+    });
+  }
+  const incomingSessionIdForTrace =
+    incomingSessionId && incomingSessionId !== sessionId ? incomingSessionId : undefined;
+  const sessionResolvedFromActiveRunContext =
+    Boolean(input.requireSessionId) &&
+    Boolean(incomingSessionId) &&
+    incomingSessionId !== sessionId &&
+    Boolean(activeRunContext?.opencodeSessionId);
+  const incomingHeaderNames = headerNamesForTrace(input.request.headers);
+  const incomingInternalHeaderSummary = {
+    hasGatewayAccessToken: Boolean(gatewayAccessToken),
+    hasGatewayCallerAuth: Boolean(gatewayCallerAuth),
+    hasWorkspaceId: Boolean(workspaceId),
+    hasSendTraceId: Boolean(trimmedHeader(input.request, "x-veslo-send-trace-id")),
+    hasSessionId: Boolean(incomingSessionId),
+    hasHostToken: Boolean(trimmedHeader(input.request, "x-veslo-host-token")),
+    hasClientId: Boolean(trimmedHeader(input.request, "x-veslo-client-id")),
+  };
+  recordAiGatewaySessionHit({
+    sessionId,
+    workspaceId,
+    requestId,
+    provider: resolveAiGatewayProvider(input.gatewayPath) ?? null,
+    gatewayPath: input.gatewayPath,
+  });
+  recordSendWorkflowTrace("server", "server:ai-gateway:provider-hit", {
+    traceId: activeRunContext?.traceId ?? null,
+    requestId,
+    provider: resolveAiGatewayProvider(input.gatewayPath) ?? null,
+    gatewayPath: input.gatewayPath,
+    sessionId: sessionId ?? null,
+    incomingSessionId: incomingSessionIdForTrace,
+    workspaceId: workspaceId ?? null,
+    conversationId: activeRunContext?.conversationId ?? null,
+    runId: activeRunContext?.runId ?? null,
+    opencodeSessionId: activeRunContext?.opencodeSessionId ?? null,
+    clientMessageId: activeRunContext?.clientMessageId ?? null,
+    origin: activeRunContext?.origin ?? null,
+    sessionResolvedFromActiveRunContext,
+    incomingHeaders: incomingHeaderNames,
+    incomingInternalHeaders: incomingInternalHeaderSummary,
+  });
   let model: string | undefined;
+  let requestDiagnostic: AiGatewayRequestDiagnostic | undefined;
   modelDiagnosticStartedAt = perfMs();
-  const modelDiagnosticPromise = readAiGatewayRequestModel(input.request)
+  const modelDiagnosticPromise = readAiGatewayRequestDiagnostic(input.request)
     .then((value) => {
-      model = value;
-      return value;
+      requestDiagnostic = value;
+      model = value.model;
+      recordSendWorkflowTrace("server", "server:ai-gateway:request-diagnostic", {
+        traceId: activeRunContext?.traceId ?? null,
+        requestId,
+        provider: resolveAiGatewayProvider(input.gatewayPath) ?? null,
+        gatewayPath: input.gatewayPath,
+        sessionId: sessionId ?? null,
+        workspaceId: workspaceId ?? null,
+        conversationId: activeRunContext?.conversationId ?? null,
+        runId: activeRunContext?.runId ?? null,
+        opencodeSessionId: activeRunContext?.opencodeSessionId ?? null,
+        clientMessageId: activeRunContext?.clientMessageId ?? null,
+        ...value,
+      });
+      return value.model;
     })
     .finally(() => {
       modelDiagnosticFinishedAt = perfMs();
@@ -1411,14 +2171,69 @@ async function proxyAiGatewayRequest(input: {
   headers.delete(GATEWAY_ACCESS_TOKEN_HEADER);
   headers.delete("x-veslo-host-token");
   headers.delete("x-veslo-client-id");
+  headers.delete(GATEWAY_WORKSPACE_ID_HEADER);
+  headers.delete("x-veslo-send-trace-id");
+  for (const name of AI_GATEWAY_LOCAL_ONLY_REQUEST_HEADERS) {
+    headers.delete(name);
+  }
+  for (const name of HOP_BY_HOP_REQUEST_HEADERS) {
+    headers.delete(name);
+  }
   headers.delete("host");
   headers.delete("origin");
   headers.delete("content-length");
   headers.set("accept-encoding", "identity");
+  const forwardedHeaderNames = headerNamesForTrace(headers);
 
   const method = input.request.method.toUpperCase();
   const body = method === "GET" || method === "HEAD" ? undefined : input.request.body;
   headersPreparedAt = perfMs();
+
+  const logEvent = (event: "start", extra: Record<string, unknown> = {}) => {
+    const attributes = {
+      requestId,
+      method,
+      gatewayPath: input.gatewayPath,
+      provider: resolveAiGatewayProvider(input.gatewayPath) ?? null,
+      sessionId: sessionId ?? null,
+      incomingSessionId: incomingSessionIdForTrace,
+      workspaceId: workspaceId ?? null,
+      traceId: activeRunContext?.traceId ?? null,
+      conversationId: activeRunContext?.conversationId ?? null,
+      runId: activeRunContext?.runId ?? null,
+      opencodeSessionId: activeRunContext?.opencodeSessionId ?? null,
+      clientMessageId: activeRunContext?.clientMessageId ?? null,
+      origin: activeRunContext?.origin ?? null,
+      targetOrigin: target.origin,
+      targetPath: target.pathname,
+      sessionResolvedFromActiveRunContext,
+      incomingHeaders: incomingHeaderNames,
+      forwardedHeaders: forwardedHeaderNames,
+      incomingInternalHeaders: incomingInternalHeaderSummary,
+      strippedInternalHeaders: [
+        GATEWAY_CALLER_AUTH_HEADER,
+        GATEWAY_ACCESS_TOKEN_HEADER,
+        "x-veslo-host-token",
+        "x-veslo-client-id",
+        GATEWAY_WORKSPACE_ID_HEADER,
+        "x-veslo-send-trace-id",
+      ],
+      strippedLocalOnlyHeaders: AI_GATEWAY_LOCAL_ONLY_REQUEST_HEADERS,
+      strippedTransportHeaders: [
+        ...HOP_BY_HOP_REQUEST_HEADERS,
+        "host",
+        "origin",
+        "content-length",
+      ],
+      ...extra,
+    };
+    recordSendWorkflowTrace("server", `server:ai-gateway:proxy-${event}`, attributes);
+    try {
+      console.log(`[veslo:ai-gateway] proxy-${event} ${JSON.stringify(attributes)}`);
+    } catch {
+      console.log(`[veslo:ai-gateway] proxy-${event}`);
+    }
+  };
 
   const logTiming = (status: number, outcome: "ok" | "error", extra: Record<string, unknown> = {}) => {
     const finishedAt = perfMs();
@@ -1428,6 +2243,16 @@ async function proxyAiGatewayRequest(input: {
       gatewayPath: input.gatewayPath,
       provider: resolveAiGatewayProvider(input.gatewayPath) ?? null,
       sessionId: sessionId ?? null,
+      incomingSessionId: incomingSessionIdForTrace,
+      workspaceId: workspaceId ?? null,
+      traceId: activeRunContext?.traceId ?? null,
+      conversationId: activeRunContext?.conversationId ?? null,
+      runId: activeRunContext?.runId ?? null,
+      opencodeSessionId: activeRunContext?.opencodeSessionId ?? null,
+      clientMessageId: activeRunContext?.clientMessageId ?? null,
+      origin: activeRunContext?.origin ?? null,
+      model: model ?? null,
+      requestDiagnostic,
       status,
       outcome,
       totalMs: roundTraceMs(finishedAt - startedAt),
@@ -1452,6 +2277,7 @@ async function proxyAiGatewayRequest(input: {
       targetPath: target.pathname,
       ...extra,
     };
+    recordSendWorkflowTrace("server", "server:ai-gateway:proxy:timing", attributes);
     try {
       console.log(`[veslo:ai-gateway] proxy ${JSON.stringify(attributes)}`);
     } catch {
@@ -1459,17 +2285,76 @@ async function proxyAiGatewayRequest(input: {
     }
   };
 
+  const headersTimeoutMs = resolveAiGatewayProxyHeadersTimeoutMs();
+  const controller = new AbortController();
+  const activeProxyRequest = registerActiveAiGatewayProxyRequest({
+    requestId,
+    controller,
+    startedAt,
+    provider: resolveAiGatewayProvider(input.gatewayPath) ?? null,
+    gatewayPath: input.gatewayPath,
+    sessionId: sessionId || null,
+    workspaceId: workspaceId ?? null,
+    traceId: activeRunContext?.traceId ?? null,
+    conversationId: activeRunContext?.conversationId ?? null,
+    runId: activeRunContext?.runId ?? null,
+    opencodeSessionId: activeRunContext?.opencodeSessionId ?? null,
+    clientMessageId: activeRunContext?.clientMessageId ?? null,
+    origin: activeRunContext?.origin ?? null,
+  });
+  let timedOut = false;
+  const headersTimer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, headersTimeoutMs);
+  if (typeof headersTimer === "object" && headersTimer && "unref" in headersTimer) {
+    (headersTimer as { unref?: () => void }).unref?.();
+  }
+
   let response: Response;
   try {
     upstreamFetchStartedAt = perfMs();
+    logEvent("start", { timeoutMs: headersTimeoutMs });
     response = await fetch(target.toString(), {
       method,
       headers,
       body,
+      signal: controller.signal,
     });
     upstreamHeadersReceivedAt = perfMs();
   } catch (error) {
     const diagnosticModel = model ?? await modelDiagnosticPromise;
+    if (activeProxyRequest.abortReason) {
+      logTiming(499, "error", {
+        error: "AI gateway proxy request was aborted",
+        abortReason: activeProxyRequest.abortReason,
+        timeoutMs: headersTimeoutMs,
+      });
+      throw new ApiError(499, "ai_gateway_aborted", "AI gateway request was aborted", {
+        requestId,
+        provider: resolveAiGatewayProvider(input.gatewayPath),
+        model: diagnosticModel,
+        sessionId,
+        baseUrl,
+        targetUrl: target.toString(),
+        abortReason: activeProxyRequest.abortReason,
+      });
+    }
+    if (timedOut || isAbortError(error)) {
+      logTiming(504, "error", {
+        error: "AI gateway upstream did not send response headers before timeout",
+        timeoutMs: headersTimeoutMs,
+      });
+      throw new ApiError(504, "ai_gateway_timeout", "AI gateway timed out waiting for upstream response", {
+        requestId,
+        provider: resolveAiGatewayProvider(input.gatewayPath),
+        model: diagnosticModel,
+        sessionId,
+        baseUrl,
+        targetUrl: target.toString(),
+        timeoutMs: headersTimeoutMs,
+      });
+    }
     logTiming(503, "error", {
       error: error instanceof Error ? error.message : String(error),
     });
@@ -1482,6 +2367,9 @@ async function proxyAiGatewayRequest(input: {
       targetUrl: target.toString(),
       error: error instanceof Error ? error.message : String(error),
     });
+  } finally {
+    clearTimeout(headersTimer);
+    unregisterActiveAiGatewayProxyRequest(requestId);
   }
 
   const contentType = response.headers.get("content-type") ?? "";
@@ -1587,7 +2475,7 @@ function withCors(response: Response, request: Request, config: ServerConfig) {
   headers.set("Access-Control-Allow-Origin", allowOrigin);
   headers.set(
     "Access-Control-Allow-Headers",
-    "Authorization, Content-Type, X-Veslo-Host-Token, X-Veslo-Client-Id, X-Veslo-Send-Trace-Id, x-veslo-account-id, X-Veslo-User-Id, X-Veslo-Den-User-Id, X-Veslo-Org-Id, X-Veslo-Den-Org-Id, X-Veslo-Gateway-Authorization, X-Veslo-Gateway-Token, X-Veslo-Session-Id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
+    "Authorization, Content-Type, X-Veslo-Host-Token, X-Veslo-Client-Id, X-Veslo-Send-Trace-Id, x-veslo-account-id, X-Veslo-User-Id, X-Veslo-Den-User-Id, X-Veslo-Org-Id, X-Veslo-Den-Org-Id, X-Veslo-Gateway-Authorization, X-Veslo-Gateway-Token, X-Veslo-Session-Id, X-Veslo-Workspace-Id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
   );
   headers.set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
   headers.set("Vary", "Origin");
@@ -2139,6 +3027,47 @@ function buildConversationRunBody(kind: "prompt_async" | "command" | "shell" | "
   return result;
 }
 
+function summarizeConversationRunBodyForTrace(body: Record<string, unknown>) {
+  const model = body.model;
+  const modelSummary =
+    typeof model === "string"
+      ? { type: "string", value: model }
+      : model && typeof model === "object" && !Array.isArray(model)
+        ? {
+            type: "object",
+            providerID:
+              typeof (model as { providerID?: unknown }).providerID === "string"
+                ? (model as { providerID: string }).providerID
+                : null,
+            modelID:
+              typeof (model as { modelID?: unknown }).modelID === "string"
+                ? (model as { modelID: string }).modelID
+                : null,
+          }
+        : model === undefined
+          ? null
+          : { type: typeof model };
+  const parts = Array.isArray(body.parts) ? body.parts : [];
+  const textChars = parts.reduce((total, part) => {
+    if (!part || typeof part !== "object") return total;
+    const text = (part as { text?: unknown }).text;
+    return total + (typeof text === "string" ? text.length : 0);
+  }, 0);
+  return {
+    fields: Object.keys(body).sort(),
+    messageID: typeof body.messageID === "string" ? body.messageID : null,
+    agent: typeof body.agent === "string" ? body.agent : null,
+    variant: typeof body.variant === "string" ? body.variant : null,
+    model: modelSummary,
+    partCount: parts.length,
+    textChars,
+    hasSystem: typeof body.system === "string" && body.system.length > 0,
+    hasTools: Boolean(body.tools && typeof body.tools === "object"),
+    hasReasoningEffort: typeof body.reasoning_effort === "string" && body.reasoning_effort.length > 0,
+    noReply: body.noReply === true,
+  };
+}
+
 function lifecycleRunKind(kind: "prompt_async" | "command" | "shell" | "summarize") {
   return kind === "prompt_async" ? "prompt" : kind;
 }
@@ -2195,6 +3124,7 @@ function createConversationRunTracer(request: Request) {
       ...payload,
     };
     entries.push(entry);
+    recordSendWorkflowTrace("server", event, entry);
     if (enabled) {
       try {
         console.log(`[veslo:send-flow] ${event} ${JSON.stringify(entry)}`);
@@ -2444,6 +3374,310 @@ function skillRegistryRequestInput(ctx: RequestContext) {
     orgId: ctx.request.headers.get("x-veslo-den-org-id")?.trim() || undefined,
     userId,
   };
+}
+
+type SoulSummary = {
+  scope: "organization" | "user" | "workspace";
+  ownerId: string;
+  title: string;
+  currentVersionId: string | null;
+  updatedAt: string | null;
+  updatedBy: string | null;
+  status: "active" | "pending" | "conflict" | "not_configured";
+  heartbeatEnabled: boolean;
+  pendingSuggestionCount: number;
+  canEdit: boolean;
+};
+
+type SoulDenContext = {
+  baseUrl: string;
+  denToken?: string;
+  orgId?: string;
+  userId?: string;
+};
+
+function soulDenContext(ctx: RequestContext): SoulDenContext {
+  const userId = ctx.request.headers.get("x-veslo-den-user-id")?.trim() ||
+    ctx.request.headers.get("x-veslo-user-id")?.trim() ||
+    ctx.request.headers.get("x-veslo-account-id")?.trim() ||
+    undefined;
+  return {
+    baseUrl: ctx.config.denApiBase?.trim() || normalizeSkillRegistryBaseUrl(ctx.request.headers.get("x-veslo-den-api-base")),
+    denToken: ctx.request.headers.get("x-veslo-den-token")?.trim() || undefined,
+    orgId: ctx.request.headers.get("x-veslo-den-org-id")?.trim() || undefined,
+    userId,
+  };
+}
+
+function requireSoulDenToken(ctx: SoulDenContext): string {
+  if (!ctx.denToken) {
+    throw new ApiError(401, "den_token_required", "Den token is required");
+  }
+  return ctx.denToken;
+}
+
+function requireSoulOrgId(ctx: SoulDenContext): string {
+  if (!ctx.orgId) {
+    throw new ApiError(400, "den_org_required", "Den organization id is required");
+  }
+  return ctx.orgId;
+}
+
+function requireSoulUserId(ctx: SoulDenContext): string {
+  if (!ctx.userId) {
+    throw new ApiError(400, "den_user_required", "Den user id is required");
+  }
+  return ctx.userId;
+}
+
+function soulCanEdit(ctx: RequestContext, scope: SoulScope): boolean {
+  if (ctx.config.readOnly) return false;
+  const tokenScope = ctx.actor?.scope;
+  const hasCollaboratorScope = Boolean(tokenScope && scopeRank(tokenScope) >= scopeRank("collaborator"));
+  if (scope === "organization") {
+    const den = soulDenContext(ctx);
+    return Boolean(hasCollaboratorScope && den.denToken && den.orgId);
+  }
+  return hasCollaboratorScope;
+}
+
+function soulUpdatedAt(document: SoulDocument | null): string | null {
+  if (!document) return null;
+  return currentSoulVersion(document)?.createdAt ?? null;
+}
+
+function soulUpdatedBy(document: SoulDocument | null): string | null {
+  if (!document) return null;
+  return currentSoulVersion(document)?.createdBy ?? null;
+}
+
+function soulTitle(scope: SoulScope, workspace?: WorkspaceInfo): string {
+  if (scope === "organization") return "Organization Soul";
+  if (scope === "user") return "User Soul";
+  return workspace?.name ? `${workspace.name} Soul` : "Workspace Soul";
+}
+
+function soulSummary(input: {
+  scope: SoulScope;
+  ownerId: string;
+  document: SoulDocument | null;
+  canEdit: boolean;
+  status?: SoulSummary["status"];
+  workspace?: WorkspaceInfo;
+}): SoulSummary {
+  const status = input.status ?? (input.document?.currentVersionId ? "active" : "not_configured");
+  return {
+    scope: input.scope,
+    ownerId: input.ownerId,
+    title: soulTitle(input.scope, input.workspace),
+    currentVersionId: input.document?.currentVersionId ?? null,
+    updatedAt: soulUpdatedAt(input.document),
+    updatedBy: soulUpdatedBy(input.document),
+    status,
+    heartbeatEnabled: input.document?.heartbeatEnabled ?? false,
+    pendingSuggestionCount: 0,
+    canEdit: input.canEdit,
+  };
+}
+
+function emptySoulDocument(scope: SoulScope, ownerId: string): SoulDocument {
+  return {
+    id: `${scope}_${ownerId}`,
+    scope,
+    ownerId,
+    currentVersionId: null,
+    heartbeatEnabled: false,
+    versions: [],
+  };
+}
+
+function isSoulDenUnavailable(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false;
+  return error.code === "soul_den_fetch_failed" || error.code === "soul_den_misconfigured";
+}
+
+function validateSoulScopeParam(value: string): SoulScope {
+  if (value === "organization" || value === "user" || value === "workspace") return value;
+  throw new ApiError(400, "invalid_soul_scope", "Soul scope is invalid");
+}
+
+function requireSoulText(body: Record<string, unknown>, field: "content" | "changeSummary"): string {
+  const value = body[field];
+  if (typeof value !== "string" || !value.trim()) {
+    throw new ApiError(400, "invalid_request", `Field ${field} is required`);
+  }
+  return value;
+}
+
+function optionalSoulBaseVersionId(body: Record<string, unknown>): string | null {
+  const value = body.baseVersionId;
+  if (value === undefined || value === null) return null;
+  if (typeof value === "string") return value;
+  throw new ApiError(400, "invalid_request", "Field baseVersionId must be a string or null");
+}
+
+function soulActorId(ctx: RequestContext): string {
+  return ctx.request.headers.get("x-veslo-den-user-id")?.trim() ||
+    ctx.request.headers.get("x-veslo-user-id")?.trim() ||
+    ctx.request.headers.get("x-veslo-account-id")?.trim() ||
+    ctx.actor?.tokenHash ||
+    ctx.actor?.clientId ||
+    "system";
+}
+
+function soulVersionId(prefix = "soul_v"): string {
+  return `${prefix}${shortId()}`;
+}
+
+function soulVersionResponse(document: SoulDocument, versionId: string): SoulVersion {
+  const version = document.versions.find((item) => item.id === versionId);
+  if (!version) {
+    throw new ApiError(404, "soul_version_not_found", "Soul version not found");
+  }
+  return version;
+}
+
+async function readCachedSoulVersions(dataDir: string, scope: SoulScope, ownerId: string): Promise<SoulVersion[]> {
+  const document = await readCachedSoulDocument({ dataDir, scope, ownerId });
+  return document?.versions ?? [];
+}
+
+async function readPendingSoulEditsFor(dataDir: string, scope: SoulScope, ownerId: string): Promise<SoulPendingEdit[]> {
+  const edits = await listPendingSoulEdits({ dataDir });
+  return edits.filter((edit) => edit.scope === scope && edit.ownerId === ownerId);
+}
+
+async function readCachedSoulForMaterialization(
+  dataDir: string,
+  scope: SoulScope,
+  ownerId: string | undefined,
+): Promise<SoulDocument | null> {
+  if (!ownerId) return null;
+  return readCachedSoulDocument({ dataDir, scope, ownerId });
+}
+
+async function materializeSoulForWorkspace(
+  dataDir: string,
+  ctx: RequestContext,
+  workspace: WorkspaceInfo,
+  overrides: Partial<Record<SoulScope, SoulDocument | null>> = {},
+  options: { workspaceActive?: boolean } = {},
+): Promise<SoulMaterializationResult> {
+  return withSoulMaterializationLock(workspace.id, async () => {
+    const den = soulDenContext(ctx);
+    const hasOverride = (scope: SoulScope) => Object.prototype.hasOwnProperty.call(overrides, scope);
+    const organization = hasOverride("organization")
+      ? overrides.organization ?? null
+      : await readCachedSoulForMaterialization(dataDir, "organization", den.orgId);
+    const user = hasOverride("user")
+      ? overrides.user ?? null
+      : await readCachedSoulForMaterialization(dataDir, "user", den.userId);
+    const workspaceDocument = hasOverride("workspace")
+      ? overrides.workspace ?? null
+      : await readCachedSoulForMaterialization(dataDir, "workspace", workspace.id);
+
+    await soulMaterializationTestHookForTests?.({ workspaceId: workspace.id, overrides });
+
+    return materializeEffectiveSoul({
+      workspaceRoot: workspace.path,
+      organization,
+      user,
+      workspace: workspaceDocument,
+      workspaceActive: options.workspaceActive,
+    });
+  });
+}
+
+async function materializeSoulForConfiguredWorkspaces(
+  dataDir: string,
+  config: ServerConfig,
+  ctx: RequestContext,
+  overrides: Partial<Record<SoulScope, SoulDocument | null>>,
+): Promise<{
+  ok: boolean;
+  pending: boolean;
+  manualSyncRequired: false;
+  workspaces: Array<{ workspaceId: string; result: SoulMaterializationResult }>;
+}> {
+  const workspaces = [];
+  for (const configuredWorkspace of config.workspaces) {
+    const workspace = await resolveWorkspace(config, configuredWorkspace.id);
+    const result = await materializeSoulForWorkspace(dataDir, ctx, workspace, overrides);
+    workspaces.push({ workspaceId: workspace.id, result });
+  }
+  return {
+    ok: workspaces.every((item) => item.result.ok),
+    pending: workspaces.some((item) => item.result.pending),
+    manualSyncRequired: false,
+    workspaces,
+  };
+}
+
+function soulReadPayload(input: {
+  document: SoulDocument | null;
+  summary: SoulSummary;
+  pendingEdits?: SoulPendingEdit[];
+  denSynced?: boolean;
+  materialization?: unknown;
+}) {
+  return {
+    document: input.document ?? emptySoulDocument(input.summary.scope, input.summary.ownerId),
+    summary: input.summary,
+    ...(input.pendingEdits ? { pendingEdits: input.pendingEdits } : {}),
+    ...(input.denSynced === undefined ? {} : { denSynced: input.denSynced }),
+    ...(input.materialization === undefined ? {} : { materialization: input.materialization }),
+  };
+}
+
+async function buildSoulMaterializationStatus(workspace: WorkspaceInfo): Promise<SoulMaterializationResult | undefined> {
+  return readSoulMaterializationStatus(workspace.path);
+}
+
+function uniqueApprovalPaths(paths: string[]): string[] {
+  return [...new Set(paths.filter((path) => path.trim().length > 0))];
+}
+
+function soulMaterializationApprovalPaths(workspace: WorkspaceInfo): string[] {
+  return [
+    opencodeConfigPath(workspace.path),
+    join(workspace.path, ".opencode", "soul-company.md"),
+    join(workspace.path, ".opencode", "soul-user.md"),
+    join(workspace.path, ".opencode", "soul-workspace.md"),
+    join(workspace.path, ".opencode", "veslo", "soul-manifest.json"),
+  ];
+}
+
+async function configuredSoulMaterializationApprovalPaths(
+  config: ServerConfig,
+  extraPaths: string[],
+): Promise<string[]> {
+  const paths = [...extraPaths];
+  for (const configuredWorkspace of config.workspaces) {
+    const workspace = await resolveWorkspace(config, configuredWorkspace.id);
+    paths.push(...soulMaterializationApprovalPaths(workspace));
+  }
+  return uniqueApprovalPaths(paths);
+}
+
+function globalSoulApprovalWorkspaceId(config: ServerConfig): string {
+  return config.workspaces[0]?.id ?? "__soul__";
+}
+
+async function requireSoulApproval(
+  ctx: RequestContext,
+  input: {
+    workspaceId: string;
+    action: string;
+    summary: string;
+    paths: string[];
+  },
+): Promise<void> {
+  await requireApproval(ctx, {
+    workspaceId: input.workspaceId,
+    action: input.action,
+    summary: input.summary,
+    paths: uniqueApprovalPaths(input.paths),
+  });
 }
 
 function materializationEntryPayload(entry: WorkspaceSkillMaterialization & {
@@ -3025,7 +4259,239 @@ function requireBodyObject(body: Record<string, unknown>, field: string): Record
   return value as Record<string, unknown>;
 }
 
-function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: TokenService): Route[] {
+function requireNonEmptyPayloadString(value: unknown, name: string): string {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (!trimmed) {
+    throw new ApiError(400, "invalid_payload", `${name} is required`);
+  }
+  return trimmed;
+}
+
+function optionalPayloadString(value: unknown, name: string): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value !== "string") {
+    throw new ApiError(400, "invalid_payload", `${name} must be a string or null`);
+  }
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function optionalNullablePayloadString(value: unknown, name: string): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value !== "string") {
+    throw new ApiError(400, "invalid_payload", `${name} must be a string or null`);
+  }
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function parseAutomationTargetPayload(value: unknown, previous: AutomationTarget = {}): AutomationTarget {
+  if (value === undefined) return previous;
+  if (value === null) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ApiError(400, "invalid_payload", "target must be an object or null");
+  }
+  const target = value as Record<string, unknown>;
+  const next: AutomationTarget = { ...previous };
+  const preferredSessionId = optionalPayloadString(target.preferredSessionId, "target.preferredSessionId");
+  const fallbackTitle = optionalPayloadString(target.fallbackTitle, "target.fallbackTitle");
+  const agent = optionalPayloadString(target.agent, "target.agent");
+  const model = optionalNullablePayloadString(target.model, "target.model");
+  const variant = optionalNullablePayloadString(target.variant, "target.variant");
+  if (preferredSessionId !== undefined) {
+    if (preferredSessionId) next.preferredSessionId = preferredSessionId;
+    else delete next.preferredSessionId;
+  }
+  if (fallbackTitle !== undefined) {
+    if (fallbackTitle) next.fallbackTitle = fallbackTitle;
+    else delete next.fallbackTitle;
+  }
+  if (agent !== undefined) {
+    if (agent) next.agent = agent;
+    else delete next.agent;
+  }
+  if (model !== undefined) next.model = model;
+  if (variant !== undefined) next.variant = variant;
+  return next;
+}
+
+function parseOptionalAutomationStatus(value: unknown): AutomationStatus | undefined {
+  if (value === undefined || value === null) return undefined;
+  return parseAutomationStatus(value);
+}
+
+function resolveAutomationState(
+  input: { enabled?: unknown; status?: unknown },
+  previous: { enabled: boolean; status: AutomationStatus },
+): { enabled: boolean; status: AutomationStatus } {
+  if (input.enabled !== undefined && typeof input.enabled !== "boolean") {
+    throw new ApiError(400, "invalid_payload", "enabled must be a boolean");
+  }
+  const explicitStatus = parseOptionalAutomationStatus(input.status);
+  let enabled = typeof input.enabled === "boolean" ? input.enabled : previous.enabled;
+  let status = explicitStatus ?? previous.status;
+
+  if (explicitStatus) {
+    enabled = explicitStatus === "active";
+  } else if (typeof input.enabled === "boolean") {
+    status = input.enabled ? "active" : "paused";
+  }
+
+  if (status !== "active") {
+    enabled = false;
+  }
+  if (status === "active" && !enabled) {
+    status = "paused";
+  }
+  return { enabled, status };
+}
+
+function isTerminalAutomationStatus(status: AutomationStatus): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
+}
+
+function canReactivateWithSchedule(schedule: AutomationSchedule): boolean {
+  if (schedule.kind !== "oneShot") {
+    return true;
+  }
+  return Date.parse(schedule.runAt) > Date.now();
+}
+
+function nextAutomationRunAt(
+  schedule: AutomationSchedule,
+  state: { enabled: boolean; status: AutomationStatus },
+): string | null {
+  if (!state.enabled || state.status !== "active") {
+    return null;
+  }
+  return computeNextAutomationRunAt(schedule, Date.now());
+}
+
+function validateAutomationId(value: unknown): string {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) {
+    throw new ApiError(400, "invalid_payload", "automation id is required");
+  }
+  if (raw.length > 80) {
+    throw new ApiError(400, "invalid_payload", "automation id is too long");
+  }
+  if (!/^[a-zA-Z0-9_-]+$/.test(raw)) {
+    throw new ApiError(400, "invalid_payload", "automation id must match /^[a-zA-Z0-9_-]+$/");
+  }
+  return raw;
+}
+
+function createAutomationFromPayload(
+  workspace: WorkspaceInfo,
+  body: Record<string, unknown>,
+): VesloAutomation {
+  const name = requireNonEmptyPayloadString(body.name, "name");
+  const prompt = requireNonEmptyPayloadString(body.prompt, "prompt");
+  const schedule = parseAutomationSchedule(body.schedule);
+  const state = resolveAutomationState(
+    { enabled: body.enabled, status: body.status },
+    { enabled: true, status: "active" },
+  );
+  const now = new Date().toISOString();
+  const id = body.id === undefined || body.id === null
+    ? `automation_${shortId().replace(/-/g, "")}`
+    : validateAutomationId(body.id);
+
+  return {
+    id,
+    workspaceId: workspace.id,
+    name,
+    enabled: state.enabled,
+    status: state.status,
+    schedule,
+    prompt,
+    target: parseAutomationTargetPayload(body.target),
+    createdAt: now,
+    updatedAt: now,
+    nextRunAt: nextAutomationRunAt(schedule, state),
+    completedAt: null,
+    lastRunId: null,
+  };
+}
+
+function updateAutomationFromPayload(
+  existing: VesloAutomation,
+  body: Record<string, unknown>,
+): VesloAutomation {
+  const name = body.name === undefined ? existing.name : requireNonEmptyPayloadString(body.name, "name");
+  const prompt = body.prompt === undefined ? existing.prompt : requireNonEmptyPayloadString(body.prompt, "prompt");
+  const schedule = body.schedule === undefined ? existing.schedule : parseAutomationSchedule(body.schedule);
+  const wantsActive = body.enabled === true || body.status === "active";
+  if (isTerminalAutomationStatus(existing.status) && wantsActive) {
+    const allowed = body.status === "active" && body.schedule !== undefined && canReactivateWithSchedule(schedule);
+    if (!allowed) {
+      throw new ApiError(
+        409,
+        "automation_terminal",
+        "Terminal automations require an explicit active status and updated future or recurring schedule to reactivate",
+      );
+    }
+  }
+  const state = resolveAutomationState(
+    { enabled: body.enabled, status: body.status },
+    { enabled: existing.enabled, status: existing.status },
+  );
+  return {
+    ...existing,
+    name,
+    prompt,
+    schedule,
+    enabled: state.enabled,
+    status: state.status,
+    target: parseAutomationTargetPayload(body.target, existing.target),
+    updatedAt: new Date().toISOString(),
+    nextRunAt: nextAutomationRunAt(schedule, state),
+    completedAt: state.status === "completed" ? existing.completedAt ?? new Date().toISOString() : existing.completedAt ?? null,
+  };
+}
+
+function toLegacyAgentLabAutomation(
+  automation: VesloAutomation,
+  runs: AutomationRun[],
+): AgentLabAutomation {
+  const lastRun = automation.lastRunId
+    ? runs.find((run) => run.id === automation.lastRunId)
+    : [...runs].reverse().find((run) => run.automationId === automation.id);
+  return {
+    id: automation.id,
+    name: automation.name,
+    enabled: automation.enabled,
+    schedule: automation.schedule as AgentLabSchedule,
+    prompt: automation.prompt,
+    createdAt: Date.parse(automation.createdAt),
+    updatedAt: Date.parse(automation.updatedAt),
+    lastRunAt: lastRun?.finishedAt ? Date.parse(lastRun.finishedAt) : undefined,
+    lastRunSessionId: lastRun?.sessionId ?? undefined,
+  };
+}
+
+function isLegacyAgentLabSchedule(schedule: AutomationSchedule): schedule is AgentLabSchedule {
+  return schedule.kind === "interval" || schedule.kind === "daily" || schedule.kind === "weekly";
+}
+
+function legacyAgentLabStoreFromAutomations(store: { updatedAt: string; items: VesloAutomation[]; runs: AutomationRun[] }): AgentLabAutomationStore {
+  return {
+    schemaVersion: 1,
+    updatedAt: Date.parse(store.updatedAt),
+    items: store.items
+      .filter((item) => isLegacyAgentLabSchedule(item.schedule))
+      .map((item) => toLegacyAgentLabAutomation(item, store.runs)),
+  };
+}
+
+function createRoutes(
+  config: ServerConfig,
+  approvals: ApprovalService,
+  tokens: TokenService,
+  automationRunner: AutomationRunner,
+): Route[] {
   const routes: Route[] = [];
   const serverDataDir = resolveVesloDataDir();
   const fileSessions = new FileSessionStore();
@@ -3035,11 +4501,12 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
   const conversationService = createConversationService({
     readStore: conversationReadStore,
     bindingStore: conversationBindingStore,
-    createOpenCodeSession: async ({ workspace, directory, title }) => {
+    createOpenCodeSession: async ({ workspace, directory, title, sendTraceId }) => {
       const scopedWorkspace = directory ? { ...workspace, directory } : workspace;
       return await fetchOpencodeJson(scopedWorkspace, "/session", {
         method: "POST",
         timeoutMs: OPENCODE_SESSION_CREATE_TIMEOUT_MS,
+        sendTraceId,
         body: {
           ...(directory ? { directory } : {}),
           ...(title?.trim() ? { title: title.trim() } : {}),
@@ -3166,6 +4633,104 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     }
 
     return { session, workspace };
+  };
+
+  const readOrganizationSoulModel = async (ctx: RequestContext) => {
+    const den = soulDenContext(ctx);
+    const ownerId = den.orgId ?? "organization";
+    if (den.baseUrl && den.denToken && den.orgId) {
+      try {
+        const document = await getOrganizationSoul({ ...den, token: den.denToken });
+        await cacheSoulDocument({ dataDir: serverDataDir, document });
+        return {
+          document,
+          summary: soulSummary({
+            scope: "organization",
+            ownerId: document.ownerId,
+            document,
+            canEdit: soulCanEdit(ctx, "organization"),
+          }),
+          denSynced: true,
+        };
+      } catch (error) {
+        if (!isSoulDenUnavailable(error)) throw error;
+      }
+    }
+
+    const cached = den.orgId
+      ? await readCachedSoulDocument({ dataDir: serverDataDir, scope: "organization", ownerId: den.orgId })
+      : null;
+    return {
+      document: cached,
+      summary: soulSummary({
+        scope: "organization",
+        ownerId,
+        document: cached,
+        canEdit: soulCanEdit(ctx, "organization"),
+      }),
+      denSynced: false,
+    };
+  };
+
+  const readUserSoulModel = async (ctx: RequestContext) => {
+    const den = soulDenContext(ctx);
+    const ownerId = den.userId ?? "user";
+    if (den.baseUrl && den.denToken && den.userId) {
+      try {
+        const document = await getUserSoul({ ...den, token: den.denToken });
+        await cacheSoulDocument({ dataDir: serverDataDir, document });
+        return {
+          document,
+          summary: soulSummary({
+            scope: "user",
+            ownerId: document.ownerId,
+            document,
+            canEdit: soulCanEdit(ctx, "user"),
+          }),
+          denSynced: true,
+        };
+      } catch (error) {
+        if (!isSoulDenUnavailable(error)) throw error;
+      }
+    }
+
+    const cached = den.userId
+      ? await readCachedSoulDocument({ dataDir: serverDataDir, scope: "user", ownerId: den.userId })
+      : null;
+    const pendingEdits = den.userId
+      ? await readPendingSoulEditsFor(serverDataDir, "user", den.userId)
+      : [];
+    return {
+      document: cached,
+      summary: soulSummary({
+        scope: "user",
+        ownerId,
+        document: cached,
+        canEdit: soulCanEdit(ctx, "user"),
+        status: pendingEdits.length > 0 ? "pending" : undefined,
+      }),
+      pendingEdits: pendingEdits.length > 0 ? pendingEdits : undefined,
+      denSynced: false,
+    };
+  };
+
+  const readWorkspaceSoulModel = async (ctx: RequestContext, workspace: WorkspaceInfo) => {
+    const document = await readCachedSoulDocument({
+      dataDir: serverDataDir,
+      scope: "workspace",
+      ownerId: workspace.id,
+    });
+    return {
+      document,
+      summary: soulSummary({
+        scope: "workspace",
+        ownerId: workspace.id,
+        document,
+        canEdit: soulCanEdit(ctx, "workspace"),
+        workspace,
+      }),
+      materialization: await buildSoulMaterializationStatus(workspace),
+    };
   };
 
   const recordWorkspaceFileEvent = (workspaceId: string, input: { type: "write" | "delete" | "rename" | "mkdir"; path: string; toPath?: string; revision?: string }) => {
@@ -3314,6 +4879,9 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     const id = workspaceIdForPath(workspacePath);
     const existing = config.workspaces.find((entry) => entry.id === id);
     if (existing) {
+      const hasOpencodeMetadata = Boolean(
+        baseUrl || directory || opencodeUsername || opencodePassword,
+      );
       const nextWorkspace: WorkspaceInfo = {
         ...existing,
         ...(name && existing.name !== name ? { name } : {}),
@@ -3339,6 +4907,13 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
           persisted,
         });
       }
+      if (hasOpencodeMetadata) {
+        return jsonResponse({
+          activeId: config.workspaces[0]?.id ?? null,
+          items: config.workspaces.map(serializeWorkspace),
+          persisted: false,
+        });
+      }
       throw new ApiError(409, "workspace_exists", "Workspace already exists", {
         id,
         path: workspacePath,
@@ -3362,6 +4937,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       config.authorizedRoots = [...config.authorizedRoots, workspacePath];
     }
     const persisted = await persistServerWorkspaceState(config);
+    await ctx.automationRunner.upsertWorkspace({ id: workspace.id, path: workspacePath });
 
     return jsonResponse(
       {
@@ -3594,6 +5170,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     if (deleted) {
       // Only remove exact matches; authorizedRoots can contain broader entries.
       config.authorizedRoots = config.authorizedRoots.filter((root) => resolve(root) !== resolve(workspace.path));
+      ctx.automationRunner.removeWorkspace(workspace.id);
     }
 
     await recordAudit(workspace.path, {
@@ -3707,18 +5284,85 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
   addRoute(routes, "POST", "/workspace/:id/conversations", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
+    const sendTraceId = ctx.request.headers.get("x-veslo-send-trace-id")?.trim() || null;
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readOptionalJsonBody(ctx.request);
     const directory = await resolveConversationReadDirectory(
       workspace,
       optionalBodyNullableString(body, "directory") ?? null,
     );
-    const result = await conversationService.createConversation({
+    const startedAt = Date.now();
+    recordSendWorkflowTrace("server", "server:conversation-create:start", {
+      traceId: sendTraceId,
+      workspaceId: workspace.id,
+      directory,
+      hasTitle: Boolean(optionalBodyNullableString(body, "title")?.trim()),
+    });
+    try {
+      const result = await conversationService.createConversation({
+        workspace,
+        directory,
+        title: optionalBodyNullableString(body, "title") ?? null,
+        sendTraceId,
+      });
+      recordSendWorkflowTrace("server", "server:conversation-create:done", {
+        traceId: sendTraceId,
+        workspaceId: workspace.id,
+        directory,
+        conversationId: result.conversationId,
+        opencodeSessionId: result.opencodeSessionId,
+        durationMs: Date.now() - startedAt,
+      });
+      return jsonResponse(result, 201);
+    } catch (error) {
+      recordSendWorkflowTrace("server", "server:conversation-create:error", {
+        traceId: sendTraceId,
+        workspaceId: workspace.id,
+        directory,
+        durationMs: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/conversations/import", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const rawSessions = body.sessions;
+    if (!Array.isArray(rawSessions)) {
+      throw new ApiError(400, "invalid_payload", "sessions must be an array");
+    }
+    const directory = await resolveConversationReadDirectory(
+      workspace,
+      optionalBodyNullableString(body, "directory") ?? null,
+    );
+    const sessions = rawSessions.map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        throw new ApiError(400, "invalid_payload", "sessions must contain objects");
+      }
+      const record = item as Record<string, unknown>;
+      const time = record.time && typeof record.time === "object" && !Array.isArray(record.time)
+        ? record.time as Record<string, unknown>
+        : null;
+      return {
+        id: typeof record.id === "string" ? record.id : "",
+        title: typeof record.title === "string" ? record.title : null,
+        parentID: typeof record.parentID === "string" ? record.parentID : null,
+        time: {
+          created: typeof time?.created === "number" ? time.created : null,
+          updated: typeof time?.updated === "number" ? time.updated : null,
+        },
+      };
+    });
+    const result = await conversationService.importOpenCodeSessions({
       workspace,
       directory,
-      title: optionalBodyNullableString(body, "title") ?? null,
+      sessions,
     });
-    return jsonResponse(result, 201);
+    return jsonResponse(result);
   });
 
   addRoute(routes, "GET", "/workspace/:id/conversations/:conversationId/transcript", "client", async (ctx) => {
@@ -3756,6 +5400,17 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     }
     const body = await readJsonBody(ctx.request);
     const kind = parseConversationRunKind(body.kind);
+    const clientMessageId = optionalBodyString(body, "clientMessageId") || optionalBodyString(body, "messageID");
+    const origin = optionalBodyString(body, "origin");
+    const expectAiGatewayStart = optionalBodyBoolean(body, "expectAiGatewayStart") === true;
+    runTrace.record("server:conversation-run:payload", {
+      workspaceId: workspace.id,
+      conversationId: sessionOrConversationId,
+      kind,
+      clientMessageId: clientMessageId || null,
+      origin: origin || null,
+      expectAiGatewayStart,
+    });
     const target = await runTrace.step(
       "server:conversation-run:resolve-target",
       () => resolveConversationExecutionTarget({
@@ -3775,6 +5430,8 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     runTrace.record("server:conversation-run:lifecycle-owner", {
       workspaceId: workspace.id,
       runId,
+      clientMessageId: clientMessageId || null,
+      origin: origin || null,
       enabled: Boolean(lifecycleOwner),
       workspaceType: workspace.workspaceType,
     });
@@ -3817,23 +5474,49 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
         ? `/session/${encodeURIComponent(target.opencodeSessionId)}/prompt_async?${query.toString()}`
         : kind === "command"
           ? `/session/${encodeURIComponent(target.opencodeSessionId)}/command?${query.toString()}`
-          : kind === "shell"
-            ? `/session/${encodeURIComponent(target.opencodeSessionId)}/shell?${query.toString()}`
-            : `/session/${encodeURIComponent(target.opencodeSessionId)}/summarize?${query.toString()}`;
+            : kind === "shell"
+              ? `/session/${encodeURIComponent(target.opencodeSessionId)}/shell?${query.toString()}`
+              : `/session/${encodeURIComponent(target.opencodeSessionId)}/summarize?${query.toString()}`;
     let upstream: unknown;
+    const aiGatewayProviderWatchStartedAt = Date.now();
+    const opencodeRunBody = buildConversationRunBody(kind, body);
+    runTrace.record("server:conversation-run:opencode-submit-body", {
+      workspaceId: workspace.id,
+      conversationId: target.conversationId,
+      runId,
+      kind,
+      clientMessageId: clientMessageId || null,
+      origin: origin || null,
+      opencodeSessionId: target.opencodeSessionId,
+      body: summarizeConversationRunBodyForTrace(opencodeRunBody),
+    });
+    if (kind === "prompt_async" && expectAiGatewayStart) {
+      registerActiveAiGatewayRun({
+        traceId: runTrace.traceId,
+        workspaceId: workspace.id,
+        conversationId: target.conversationId,
+        runId,
+        opencodeSessionId: target.opencodeSessionId,
+        clientMessageId: clientMessageId || null,
+        origin: origin || null,
+      });
+    }
     try {
       upstream = await runTrace.step(
         "server:conversation-run:opencode-submit",
         () => fetchOpencodeJson({ ...workspace, directory: target.directory }, path, {
           method: "POST",
           timeoutMs: OPENCODE_CONVERSATION_SUBMIT_TIMEOUT_MS,
-          body: buildConversationRunBody(kind, body),
+          body: opencodeRunBody,
+          sendTraceId: runTrace.traceId,
         }),
         {
           workspaceId: workspace.id,
           conversationId: target.conversationId,
           runId,
           kind,
+          clientMessageId: clientMessageId || null,
+          origin: origin || null,
           opencodeSessionId: target.opencodeSessionId,
         },
       );
@@ -3855,12 +5538,83 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       }
       throw error;
     }
+    if (lifecycleOwner && kind === "prompt_async" && expectAiGatewayStart) {
+      const providerStart = await runTrace.step(
+        "server:conversation-run:ai-gateway-provider-start-watch",
+        () => waitForAiGatewayProviderStart({
+          workspaceId: workspace.id,
+          conversationId: target.conversationId,
+          runId,
+          opencodeSessionId: target.opencodeSessionId,
+          clientMessageId: clientMessageId || null,
+          origin: origin || null,
+          startedAt: aiGatewayProviderWatchStartedAt,
+        }),
+        {
+          workspaceId: workspace.id,
+          conversationId: target.conversationId,
+          runId,
+          clientMessageId: clientMessageId || null,
+          origin: origin || null,
+          opencodeSessionId: target.opencodeSessionId,
+        },
+      );
+      if (!providerStart.started) {
+        const error = `AI gateway provider request did not start within ${providerStart.timeoutMs}ms.`;
+        await runTrace.step(
+          "server:conversation-run:lifecycle-mark-failed-ai-gateway-provider-start-timeout",
+          () => lifecycleOwner.markFailed(workspace.id, runId, error),
+          {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            runId,
+            opencodeSessionId: target.opencodeSessionId,
+            timeoutMs: providerStart.timeoutMs,
+          },
+        ).catch(() => undefined);
+        const abortQuery = new URLSearchParams();
+        abortQuery.set("directory", target.directory);
+        await runTrace.step(
+          "server:conversation-run:opencode-abort-ai-gateway-provider-start-timeout",
+          () => fetchOpencodeJson(
+            { ...workspace, directory: target.directory },
+            `/session/${encodeURIComponent(target.opencodeSessionId)}/abort?${abortQuery.toString()}`,
+            { method: "POST", sendTraceId: runTrace.traceId },
+          ),
+          {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            runId,
+            opencodeSessionId: target.opencodeSessionId,
+          },
+        ).catch((abortError) => {
+          runTrace.record("server:conversation-run:opencode-abort-ai-gateway-provider-start-timeout:error", {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            runId,
+            opencodeSessionId: target.opencodeSessionId,
+            error: abortError instanceof Error ? abortError.message : String(abortError),
+          });
+        });
+        throw new ApiError(504, "ai_gateway_provider_start_timeout", error, {
+          workspaceId: workspace.id,
+          conversationId: target.conversationId,
+          runId,
+          opencodeSessionId: target.opencodeSessionId,
+          clientMessageId: clientMessageId || null,
+          origin: origin || null,
+          timeoutMs: providerStart.timeoutMs,
+        });
+      }
+    }
     return jsonResponse({
       ok: true,
       workspaceId: workspace.id,
       conversationId: target.conversationId,
       opencodeSessionId: target.opencodeSessionId,
       runId,
+      clientMessageId: clientMessageId || null,
+      origin: origin || null,
       status: "submitted",
       kind,
       upstream,
@@ -3884,6 +5638,20 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       requestedDirectory: optionalBodyString(body, "directory"),
       missingDirectoryMessage: "Conversation abort directory is required",
     });
+    recordSendWorkflowTrace("server", "server:conversation-abort:start", {
+      traceId: null,
+      workspaceId: workspace.id,
+      conversationId: target.conversationId,
+      runId,
+      opencodeSessionId: target.opencodeSessionId,
+      sessionOrConversationId,
+    });
+    const abortedGatewayRequests = abortActiveAiGatewayProxyRequests({
+      workspaceId: workspace.id,
+      runId,
+      sessionId: target.opencodeSessionId,
+      reason: "conversation-abort",
+    });
     const query = new URLSearchParams();
     query.set("directory", target.directory);
     const upstream = await fetchOpencodeJson(
@@ -3895,6 +5663,15 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     if (lifecycleOwner) {
       await lifecycleOwner.markAbortRequested(workspace.id, runId).catch(() => undefined);
     }
+    recordSendWorkflowTrace("server", "server:conversation-abort:done", {
+      traceId: null,
+      workspaceId: workspace.id,
+      conversationId: target.conversationId,
+      runId,
+      opencodeSessionId: target.opencodeSessionId,
+      abortedGatewayRequestCount: abortedGatewayRequests.length,
+      upstreamStatus: typeof upstream === "object" && upstream && "status" in upstream ? upstream.status : null,
+    });
     return jsonResponse({
       ok: true,
       workspaceId: workspace.id,
@@ -4004,11 +5781,18 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     if (!sessionId) {
       throw new ApiError(400, "invalid_payload", "sessionId is required");
     }
+    const directory = await resolveConversationReadDirectory(
+      workspace,
+      ctx.url.searchParams.get("directory"),
+    );
+    const search = new URLSearchParams();
+    search.set("limit", "200");
+    if (directory) search.set("directory", directory);
 
     const messages = await fetchOpencodeJson(
       workspace,
-      `/session/${encodeURIComponent(sessionId)}/message?limit=200`,
-      { method: "GET", maxResponseBytes: OPENCODE_TRANSCRIPT_RESPONSE_MAX_BYTES },
+      `/session/${encodeURIComponent(sessionId)}/message?${search.toString()}`,
+      { method: "GET", directory, maxResponseBytes: OPENCODE_TRANSCRIPT_RESPONSE_MAX_BYTES },
     );
 
     return jsonResponse(
@@ -4016,7 +5800,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
         sessionId,
         workspaceId: workspace.id,
         messages: Array.isArray(messages) ? messages : [],
-      }),
+      }, { workspaceRoot: workspace.path }),
     );
   });
 
@@ -6914,10 +8698,180 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     return jsonResponse({ ok: true });
   });
 
+  addRoute(routes, "GET", "/workspace/:id/automations", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const store = await readAutomationStore(workspace.path, workspace.id, { migrateLegacy: !config.readOnly });
+    return jsonResponse({ items: store.items, updatedAt: store.updatedAt });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/automations", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const automation = createAutomationFromPayload(workspace, body);
+    const path = resolveAutomationsPath(workspace.path);
+
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "automations.create",
+      summary: `Create automation ${automation.name}`,
+      paths: [path],
+    });
+
+    await mutateAutomationStore(workspace.path, workspace.id, (store) => {
+      if (store.items.some((item) => item.id === automation.id)) {
+        throw new ApiError(409, "automation_conflict", "Automation id already exists");
+      }
+      return { ...store, updatedAt: automation.updatedAt, items: [automation, ...store.items] };
+    });
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "automations.create",
+      target: path,
+      summary: `Created automation ${automation.name}`,
+      timestamp: Date.now(),
+    });
+    await ctx.automationRunner.refreshWorkspace(workspace.id);
+    return jsonResponse({ automation }, 201);
+  });
+
+  addRoute(routes, "PATCH", "/workspace/:id/automations/:automationId", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const automationId = validateAutomationId(ctx.params.automationId);
+    const body = await readJsonBody(ctx.request);
+    const path = resolveAutomationsPath(workspace.path);
+
+    let automation: VesloAutomation | null = null;
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "automations.update",
+      summary: `Update automation ${automationId}`,
+      paths: [path],
+    });
+    await mutateAutomationStore(workspace.path, workspace.id, (store) => {
+      const items = store.items.map((item) => {
+        if (item.id !== automationId) return item;
+        automation = updateAutomationFromPayload(item, body);
+        return automation;
+      });
+      if (!automation) {
+        throw new ApiError(404, "automation_not_found", "Automation not found");
+      }
+      return { ...store, updatedAt: automation.updatedAt, items };
+    });
+    const updatedAutomation = automation as VesloAutomation | null;
+    if (!updatedAutomation) {
+      throw new ApiError(404, "automation_not_found", "Automation not found");
+    }
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "automations.update",
+      target: path,
+      summary: `Updated automation ${updatedAutomation.name}`,
+      timestamp: Date.now(),
+    });
+    await ctx.automationRunner.refreshWorkspace(workspace.id);
+    return jsonResponse({ automation: updatedAutomation });
+  });
+
+  addRoute(routes, "DELETE", "/workspace/:id/automations/:automationId", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const automationId = validateAutomationId(ctx.params.automationId);
+    const path = resolveAutomationsPath(workspace.path);
+
+    let automation: VesloAutomation | null = null;
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "automations.delete",
+      summary: `Cancel automation ${automationId}`,
+      paths: [path],
+    });
+    await mutateAutomationStore(workspace.path, workspace.id, (store) => {
+      const updatedAt = new Date().toISOString();
+      const items = store.items.map((item) => {
+        if (item.id !== automationId) return item;
+        automation = {
+          ...item,
+          enabled: false,
+          status: "cancelled",
+          nextRunAt: null,
+          updatedAt,
+        };
+        return automation;
+      });
+      if (!automation) {
+        throw new ApiError(404, "automation_not_found", "Automation not found");
+      }
+      return { ...store, updatedAt, items };
+    });
+    const cancelledAutomation = automation as VesloAutomation | null;
+    if (!cancelledAutomation) {
+      throw new ApiError(404, "automation_not_found", "Automation not found");
+    }
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "automations.delete",
+      target: path,
+      summary: `Cancelled automation ${cancelledAutomation.name}`,
+      timestamp: Date.now(),
+    });
+    await ctx.automationRunner.refreshWorkspace(workspace.id);
+    return jsonResponse({ automation: cancelledAutomation });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/automations/:automationId/run", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const automationId = validateAutomationId(ctx.params.automationId);
+    const path = resolveAutomationsPath(workspace.path);
+
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "automations.run",
+      summary: `Run automation ${automationId}`,
+      paths: [path],
+    });
+    const run = await ctx.automationRunner.runNow(workspace.id, automationId);
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "automations.run",
+      target: path,
+      summary: `Ran automation ${automationId}`,
+      timestamp: Date.now(),
+    });
+    return jsonResponse({ run });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/automations/:automationId/runs", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const automationId = validateAutomationId(ctx.params.automationId);
+    const store = await readAutomationStore(workspace.path, workspace.id, { migrateLegacy: !config.readOnly });
+    const items = store.runs.filter((run) => run.automationId === automationId);
+    if (!store.items.some((item) => item.id === automationId) && items.length === 0) {
+      throw new ApiError(404, "automation_not_found", "Automation not found");
+    }
+    return jsonResponse({ items });
+  });
+
   addRoute(routes, "GET", "/workspace/:id/agentlab/automations", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    const store = await readAgentLabAutomations(workspace.path);
-    return jsonResponse({ items: store.items, updatedAt: store.updatedAt });
+    const store = await readAutomationStore(workspace.path, workspace.id, { migrateLegacy: !config.readOnly });
+    const legacy = legacyAgentLabStoreFromAutomations(store);
+    return jsonResponse({ items: legacy.items, updatedAt: legacy.updatedAt });
   });
 
   addRoute(routes, "POST", "/workspace/:id/agentlab/automations", "client", async (ctx) => {
@@ -6925,65 +8879,38 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
-
-    const name = typeof body.name === "string" ? body.name.trim() : "";
-    const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
-    const enabled = typeof body.enabled === "boolean" ? body.enabled : true;
-    if (!name) {
-      throw new ApiError(400, "invalid_payload", "name is required");
-    }
-    if (!prompt) {
-      throw new ApiError(400, "invalid_payload", "prompt is required");
-    }
-
-    const schedule = parseAgentLabSchedule(body.schedule);
-    const id = body.id ? validateAgentLabAutomationId(body.id) : `agentlab_${shortId().replace(/-/g, "")}`;
-
-    const path = resolveAgentLabAutomationsPath(workspace.path);
+    const automation = createAutomationFromPayload(workspace, {
+      ...body,
+      id: body.id ? validateAgentLabAutomationId(body.id) : `agentlab_${shortId().replace(/-/g, "")}`,
+    });
+    const path = resolveAutomationsPath(workspace.path);
     await requireApproval(ctx, {
       workspaceId: workspace.id,
-      action: "agentlab.automations.upsert",
-      summary: `Upsert automation ${name}`,
+      action: "automations.create",
+      summary: `Upsert automation ${automation.name}`,
       paths: [path],
     });
 
-    const store = await readAgentLabAutomations(workspace.path);
-    const now = Date.now();
-    const existingIndex = store.items.findIndex((item) => item.id === id);
-    if (existingIndex !== -1) {
-      const prev = store.items[existingIndex];
-      store.items[existingIndex] = {
-        ...prev,
-        id,
-        name,
-        enabled,
-        schedule,
-        prompt,
-        updatedAt: now,
-      };
-    } else {
-      store.items.unshift({
-        id,
-        name,
-        enabled,
-        schedule,
-        prompt,
-        createdAt: now,
-        updatedAt: now,
-      });
-    }
-    await writeAgentLabAutomations(workspace.path, store);
+    await mutateAutomationStore(workspace.path, workspace.id, (store) => {
+      const existing = store.items.find((item) => item.id === automation.id);
+      const nextAutomation = existing
+        ? { ...automation, createdAt: existing.createdAt, lastRunId: existing.lastRunId ?? null }
+        : automation;
+      const items = store.items.filter((item) => item.id !== automation.id);
+      return { ...store, updatedAt: nextAutomation.updatedAt, items: [nextAutomation, ...items] };
+    });
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
-      action: "agentlab.automations.upsert",
+      action: "automations.create",
       target: path,
-      summary: `Upserted automation ${name}`,
-      timestamp: now,
+      summary: `Upserted automation ${automation.name}`,
+      timestamp: Date.now(),
     });
+    await ctx.automationRunner.refreshWorkspace(workspace.id);
 
-    const next = await readAgentLabAutomations(workspace.path);
+    const next = legacyAgentLabStoreFromAutomations(await readAutomationStore(workspace.path, workspace.id));
     return jsonResponse({ items: next.items, updatedAt: next.updatedAt }, 201);
   });
 
@@ -6993,79 +8920,75 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const automationId = validateAgentLabAutomationId(ctx.params.automationId);
 
-    const path = resolveAgentLabAutomationsPath(workspace.path);
+    const path = resolveAutomationsPath(workspace.path);
     await requireApproval(ctx, {
       workspaceId: workspace.id,
-      action: "agentlab.automations.delete",
-      summary: `Delete automation ${automationId}`,
+      action: "automations.delete",
+      summary: `Cancel automation ${automationId}`,
       paths: [path],
     });
 
-    const store = await readAgentLabAutomations(workspace.path);
-    const before = store.items.length;
-    store.items = store.items.filter((item) => item.id !== automationId);
-    if (store.items.length === before) {
-      throw new ApiError(404, "automation_not_found", "Automation not found");
-    }
-    await writeAgentLabAutomations(workspace.path, store);
+    let automation: VesloAutomation | null = null;
+    await mutateAutomationStore(workspace.path, workspace.id, (store) => {
+      const updatedAt = new Date().toISOString();
+      const items = store.items.map((item) => {
+        if (item.id !== automationId) return item;
+        automation = { ...item, enabled: false, status: "cancelled", nextRunAt: null, updatedAt };
+        return automation;
+      });
+      if (!automation) {
+        throw new ApiError(404, "automation_not_found", "Automation not found");
+      }
+      return { ...store, updatedAt, items };
+    });
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
-      action: "agentlab.automations.delete",
+      action: "automations.delete",
       target: path,
-      summary: `Deleted automation ${automationId}`,
+      summary: `Cancelled automation ${automationId}`,
       timestamp: Date.now(),
     });
+    await ctx.automationRunner.refreshWorkspace(workspace.id);
     return jsonResponse({ ok: true });
   });
 
   addRoute(routes, "POST", "/workspace/:id/agentlab/automations/:automationId/run", "client", async (ctx) => {
+    ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const automationId = validateAgentLabAutomationId(ctx.params.automationId);
-
-    const store = await readAgentLabAutomations(workspace.path);
-    const automation = store.items.find((item) => item.id === automationId);
-    if (!automation) {
-      throw new ApiError(404, "automation_not_found", "Automation not found");
-    }
-
-    const now = Date.now();
-    const created = await fetchOpencodeJson(workspace, "/session", {
-      method: "POST",
-      body: { title: `Automation: ${automation.name}` },
-    });
-    const sessionId = typeof created?.id === "string" ? created.id : String(created?.id ?? "");
-    if (!sessionId.trim()) {
-      throw new ApiError(502, "opencode_failed", "OpenCode session did not return an id");
-    }
-
-    await fetchOpencodeJson(workspace, `/session/${encodeURIComponent(sessionId)}/prompt_async`, {
-      method: "POST",
-      body: {
-        parts: [{ type: "text", text: automation.prompt }],
-      },
-    });
-
-    automation.lastRunAt = now;
-    automation.lastRunSessionId = sessionId;
-    automation.updatedAt = now;
-    if (!config.readOnly) {
-      await writeAgentLabAutomations(workspace.path, store);
-    }
+    const path = resolveAutomationsPath(workspace.path);
+    const run = await ctx.automationRunner.runNow(workspace.id, automationId);
 
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
-      action: "agentlab.automations.run",
-      target: resolveAgentLabAutomationsPath(workspace.path),
-      summary: `Ran automation ${automation.name}`,
-      timestamp: now,
+      action: "automations.run",
+      target: path,
+      summary: `Ran automation ${automationId}`,
+      timestamp: Date.now(),
     });
 
-    return jsonResponse({ ok: true, automationId, sessionId, ranAt: now });
+    if (run.status === "failed") {
+      return jsonResponse({
+        ok: false,
+        automationId,
+        sessionId: run.sessionId,
+        ranAt: run.finishedAt ? Date.parse(run.finishedAt) : Date.now(),
+        run,
+      }, 502);
+    }
+
+    return jsonResponse({
+      ok: true,
+      automationId,
+      sessionId: run.sessionId,
+      ranAt: run.finishedAt ? Date.parse(run.finishedAt) : Date.now(),
+      run,
+    });
   });
 
   addRoute(routes, "GET", "/workspace/:id/agentlab/automations/logs", "client", async (ctx) => {
@@ -7133,6 +9056,467 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       timestamp: Date.now(),
     });
     return jsonResponse({ job });
+  });
+
+  addRoute(routes, "GET", "/soul", "client", async (ctx) => {
+    const organization = await readOrganizationSoulModel(ctx);
+    const user = await readUserSoulModel(ctx);
+    const workspaces = await Promise.all(config.workspaces.map(async (configuredWorkspace) => {
+      const workspace = await resolveWorkspace(config, configuredWorkspace.id);
+      return (await readWorkspaceSoulModel(ctx, workspace)).summary;
+    }));
+    return jsonResponse({
+      organization: organization.summary,
+      user: user.summary,
+      workspaces,
+    });
+  });
+
+  addRoute(routes, "GET", "/soul/organization", "client", async (ctx) => {
+    return jsonResponse(soulReadPayload(await readOrganizationSoulModel(ctx)));
+  });
+
+  addRoute(routes, "GET", "/soul/user", "client", async (ctx) => {
+    return jsonResponse(soulReadPayload(await readUserSoulModel(ctx)));
+  });
+
+  addRoute(routes, "GET", "/soul/workspaces", "client", async (ctx) => {
+    const workspaces = await Promise.all(config.workspaces.map(async (configuredWorkspace) => {
+      const workspace = await resolveWorkspace(config, configuredWorkspace.id);
+      return (await readWorkspaceSoulModel(ctx, workspace)).summary;
+    }));
+    return jsonResponse({ workspaces });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/soul", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    return jsonResponse(soulReadPayload(await readWorkspaceSoulModel(ctx, workspace)));
+  });
+
+  addRoute(routes, "GET", "/soul/:scope/versions", "client", async (ctx) => {
+    const scope = validateSoulScopeParam(ctx.params.scope);
+    if (scope === "workspace") {
+      const workspaceId = ctx.url.searchParams.get("workspaceId")?.trim();
+      if (!workspaceId) {
+        throw new ApiError(400, "workspace_id_required", "workspaceId query parameter is required");
+      }
+      const workspace = await resolveWorkspace(config, workspaceId);
+      const versions = await readCachedSoulVersions(serverDataDir, "workspace", workspace.id);
+      return jsonResponse({ versions, nextCursor: null });
+    }
+
+    const den = soulDenContext(ctx);
+    const ownerId = scope === "organization" ? den.orgId : den.userId;
+    if (den.baseUrl && den.denToken && ownerId) {
+      try {
+        const response = await listSoulVersions({
+          ...den,
+          token: den.denToken,
+          scope,
+          cursor: ctx.url.searchParams.get("cursor")?.trim() || undefined,
+          limit: parseInteger(ctx.url.searchParams.get("limit") ?? undefined) ?? undefined,
+        });
+        return jsonResponse(response);
+      } catch (error) {
+        if (!isSoulDenUnavailable(error)) throw error;
+      }
+    }
+
+    const versions = ownerId ? await readCachedSoulVersions(serverDataDir, scope, ownerId) : [];
+    return jsonResponse({ versions, nextCursor: null, denSynced: false });
+  });
+
+  addRoute(routes, "GET", "/soul/:scope/versions/:versionId", "client", async (ctx) => {
+    const scope = validateSoulScopeParam(ctx.params.scope);
+    if (scope === "workspace") {
+      const workspaceId = ctx.url.searchParams.get("workspaceId")?.trim();
+      if (!workspaceId) {
+        throw new ApiError(400, "workspace_id_required", "workspaceId query parameter is required");
+      }
+      const workspace = await resolveWorkspace(config, workspaceId);
+      const document = await readCachedSoulDocument({ dataDir: serverDataDir, scope: "workspace", ownerId: workspace.id });
+      if (!document) throw new ApiError(404, "soul_not_found", "Soul document not found");
+      return jsonResponse({ version: soulVersionResponse(document, ctx.params.versionId) });
+    }
+
+    const den = soulDenContext(ctx);
+    const ownerId = scope === "organization" ? den.orgId : den.userId;
+    if (den.baseUrl && den.denToken && ownerId) {
+      try {
+        const version = await getSoulVersion({ ...den, token: den.denToken, scope, versionId: ctx.params.versionId });
+        return jsonResponse({ version });
+      } catch (error) {
+        if (!isSoulDenUnavailable(error)) throw error;
+      }
+    }
+
+    if (!ownerId) throw new ApiError(404, "soul_not_found", "Soul document not found");
+    const document = await readCachedSoulDocument({ dataDir: serverDataDir, scope, ownerId });
+    if (!document) throw new ApiError(404, "soul_not_found", "Soul document not found");
+    return jsonResponse({ version: soulVersionResponse(document, ctx.params.versionId), denSynced: false });
+  });
+
+  addRoute(routes, "PATCH", "/soul/organization", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const den = soulDenContext(ctx);
+    const denToken = requireSoulDenToken(den);
+    const orgId = requireSoulOrgId(den);
+    if (!den.baseUrl) {
+      throw new ApiError(503, "soul_den_misconfigured", "Soul Den base URL is missing");
+    }
+    const body = await readJsonBody(ctx.request);
+    const content = requireSoulText(body, "content");
+    const changeSummary = requireSoulText(body, "changeSummary");
+    const baseVersionId = optionalSoulBaseVersionId(body);
+    await requireSoulApproval(ctx, {
+      workspaceId: globalSoulApprovalWorkspaceId(config),
+      action: "soul.organization.update",
+      summary: "Update Organization Soul",
+      paths: await configuredSoulMaterializationApprovalPaths(config, [
+        soulCachePath({ dataDir: serverDataDir, scope: "organization", ownerId: orgId }),
+      ]),
+    });
+    const document = await updateOrganizationSoul({
+      ...den,
+      token: denToken,
+      content,
+      changeSummary,
+      baseVersionId,
+    });
+    await cacheSoulDocument({ dataDir: serverDataDir, document });
+    const materialization = await materializeSoulForConfiguredWorkspaces(serverDataDir, config, ctx, {
+      organization: document,
+    });
+    return jsonResponse(soulReadPayload({
+      document,
+      summary: soulSummary({
+        scope: "organization",
+        ownerId: document.ownerId,
+        document,
+        canEdit: soulCanEdit(ctx, "organization"),
+      }),
+      denSynced: true,
+      materialization,
+    }));
+  });
+
+  addRoute(routes, "PATCH", "/soul/user", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const den = soulDenContext(ctx);
+    const userId = requireSoulUserId(den);
+    const body = await readJsonBody(ctx.request);
+    const content = requireSoulText(body, "content");
+    const changeSummary = requireSoulText(body, "changeSummary");
+    const baseVersionId = optionalSoulBaseVersionId(body);
+    await requireSoulApproval(ctx, {
+      workspaceId: globalSoulApprovalWorkspaceId(config),
+      action: "soul.user.update",
+      summary: "Update User Soul",
+      paths: await configuredSoulMaterializationApprovalPaths(config, [
+        soulCachePath({ dataDir: serverDataDir, scope: "user", ownerId: userId }),
+        soulPendingCacheDir(serverDataDir),
+      ]),
+    });
+
+    if (den.baseUrl && den.denToken) {
+      try {
+        const document = await updateUserSoul({
+          ...den,
+          token: den.denToken,
+          content,
+          changeSummary,
+          baseVersionId,
+        });
+        await cacheSoulDocument({ dataDir: serverDataDir, document });
+        const materialization = await materializeSoulForConfiguredWorkspaces(serverDataDir, config, ctx, {
+          user: document,
+        });
+        return jsonResponse(soulReadPayload({
+          document,
+          summary: soulSummary({
+            scope: "user",
+            ownerId: document.ownerId,
+            document,
+            canEdit: soulCanEdit(ctx, "user"),
+          }),
+          denSynced: true,
+          materialization,
+        }));
+      } catch (error) {
+        if (!isSoulDenUnavailable(error)) throw error;
+      }
+    }
+
+    const pendingEdit = await writePendingSoulEdit({
+      dataDir: serverDataDir,
+      edit: {
+        scope: "user",
+        ownerId: userId,
+        content,
+        changeSummary,
+        baseVersionId,
+        createdAt: new Date().toISOString(),
+        createdBy: soulActorId(ctx),
+      },
+    });
+    const cached = await readCachedSoulDocument({ dataDir: serverDataDir, scope: "user", ownerId: userId });
+    return jsonResponse(soulReadPayload({
+      document: cached,
+      summary: soulSummary({
+        scope: "user",
+        ownerId: userId,
+        document: cached,
+        canEdit: soulCanEdit(ctx, "user"),
+        status: "pending",
+      }),
+      pendingEdits: [pendingEdit],
+      denSynced: false,
+    }), 202);
+  });
+
+  addRoute(routes, "POST", "/soul/organization/versions/:versionId/restore", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const den = soulDenContext(ctx);
+    const denToken = requireSoulDenToken(den);
+    const orgId = requireSoulOrgId(den);
+    if (!den.baseUrl) {
+      throw new ApiError(503, "soul_den_misconfigured", "Soul Den base URL is missing");
+    }
+    const body = await readOptionalJsonBody(ctx.request);
+    const changeSummary = typeof body.changeSummary === "string" && body.changeSummary.trim()
+      ? body.changeSummary
+      : "Restore Organization Soul version";
+    await requireSoulApproval(ctx, {
+      workspaceId: globalSoulApprovalWorkspaceId(config),
+      action: "soul.organization.restore",
+      summary: `Restore Organization Soul version ${ctx.params.versionId}`,
+      paths: await configuredSoulMaterializationApprovalPaths(config, [
+        soulCachePath({ dataDir: serverDataDir, scope: "organization", ownerId: orgId }),
+      ]),
+    });
+    const document = await restoreDenSoulVersion({
+      ...den,
+      token: denToken,
+      scope: "organization",
+      versionId: ctx.params.versionId,
+      changeSummary,
+    });
+    await cacheSoulDocument({ dataDir: serverDataDir, document });
+    const materialization = await materializeSoulForConfiguredWorkspaces(serverDataDir, config, ctx, {
+      organization: document,
+    });
+    return jsonResponse(soulReadPayload({
+      document,
+      summary: soulSummary({
+        scope: "organization",
+        ownerId: document.ownerId,
+        document,
+        canEdit: soulCanEdit(ctx, "organization"),
+      }),
+      denSynced: true,
+      materialization,
+    }));
+  });
+
+  addRoute(routes, "POST", "/soul/user/versions/:versionId/restore", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const den = soulDenContext(ctx);
+    const userId = requireSoulUserId(den);
+    const body = await readOptionalJsonBody(ctx.request);
+    const changeSummary = typeof body.changeSummary === "string" && body.changeSummary.trim()
+      ? body.changeSummary
+      : "Restore User Soul version";
+    await requireSoulApproval(ctx, {
+      workspaceId: globalSoulApprovalWorkspaceId(config),
+      action: "soul.user.restore",
+      summary: `Restore User Soul version ${ctx.params.versionId}`,
+      paths: await configuredSoulMaterializationApprovalPaths(config, [
+        soulCachePath({ dataDir: serverDataDir, scope: "user", ownerId: userId }),
+      ]),
+    });
+    if (den.baseUrl && den.denToken) {
+      try {
+        const document = await restoreDenSoulVersion({
+          ...den,
+          token: den.denToken,
+          scope: "user",
+          versionId: ctx.params.versionId,
+          changeSummary,
+        });
+        await cacheSoulDocument({ dataDir: serverDataDir, document });
+        const materialization = await materializeSoulForConfiguredWorkspaces(serverDataDir, config, ctx, {
+          user: document,
+        });
+        return jsonResponse(soulReadPayload({
+          document,
+          summary: soulSummary({
+            scope: "user",
+            ownerId: document.ownerId,
+            document,
+            canEdit: soulCanEdit(ctx, "user"),
+          }),
+          denSynced: true,
+          materialization,
+        }));
+      } catch (error) {
+        if (!isSoulDenUnavailable(error)) throw error;
+      }
+    }
+
+    const cached = await readCachedSoulDocument({ dataDir: serverDataDir, scope: "user", ownerId: userId });
+    if (!cached) throw new ApiError(404, "soul_not_found", "Soul document not found");
+    const restored = restoreLocalSoulVersion(cached, {
+      id: soulVersionId("user_restore_"),
+      restoreSourceVersionId: ctx.params.versionId,
+      changeSummary,
+      createdAt: new Date().toISOString(),
+      createdBy: soulActorId(ctx),
+    });
+    await cacheSoulDocument({ dataDir: serverDataDir, document: restored });
+    const materialization = await materializeSoulForConfiguredWorkspaces(serverDataDir, config, ctx, {
+      user: restored,
+    });
+    return jsonResponse(soulReadPayload({
+      document: restored,
+      summary: soulSummary({
+        scope: "user",
+        ownerId: restored.ownerId,
+        document: restored,
+        canEdit: soulCanEdit(ctx, "user"),
+        status: "pending",
+      }),
+      pendingEdits: await listPendingSoulEdits({ dataDir: serverDataDir }),
+      denSynced: false,
+      materialization,
+    }));
+  });
+
+  addRoute(routes, "PATCH", "/workspace/:id/soul", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const content = requireSoulText(body, "content");
+    const changeSummary = requireSoulText(body, "changeSummary");
+    const baseVersionId = optionalSoulBaseVersionId(body);
+    await requireSoulApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "soul.workspace.update",
+      summary: `Update Workspace Soul for ${workspace.name}`,
+      paths: [
+        soulCachePath({ dataDir: serverDataDir, scope: "workspace", ownerId: workspace.id }),
+        ...soulMaterializationApprovalPaths(workspace),
+      ],
+    });
+    const existing = await readCachedSoulDocument({
+      dataDir: serverDataDir,
+      scope: "workspace",
+      ownerId: workspace.id,
+    });
+    const document = createSoulVersion(
+      existing ?? { ...emptySoulDocument("workspace", workspace.id), heartbeatEnabled: true },
+      {
+        id: soulVersionId("workspace_"),
+        content,
+        changeSummary,
+        createdAt: new Date().toISOString(),
+        createdBy: soulActorId(ctx),
+        source: "api",
+        baseVersionId,
+      },
+    );
+    const nextDocument = { ...document, heartbeatEnabled: existing?.heartbeatEnabled ?? true };
+    await cacheSoulDocument({ dataDir: serverDataDir, document: nextDocument });
+    const materialization = await materializeSoulForWorkspace(serverDataDir, ctx, workspace, {
+      workspace: nextDocument,
+    });
+    return jsonResponse(soulReadPayload({
+      document: nextDocument,
+      summary: soulSummary({
+        scope: "workspace",
+        ownerId: workspace.id,
+        document: nextDocument,
+        canEdit: soulCanEdit(ctx, "workspace"),
+        workspace,
+      }),
+      materialization,
+    }));
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/soul/versions/:versionId/restore", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const document = await readCachedSoulDocument({ dataDir: serverDataDir, scope: "workspace", ownerId: workspace.id });
+    if (!document) throw new ApiError(404, "soul_not_found", "Soul document not found");
+    const body = await readOptionalJsonBody(ctx.request);
+    const changeSummary = typeof body.changeSummary === "string" && body.changeSummary.trim()
+      ? body.changeSummary
+      : "Restore Workspace Soul version";
+    await requireSoulApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "soul.workspace.restore",
+      summary: `Restore Workspace Soul version ${ctx.params.versionId}`,
+      paths: [
+        soulCachePath({ dataDir: serverDataDir, scope: "workspace", ownerId: workspace.id }),
+        ...soulMaterializationApprovalPaths(workspace),
+      ],
+    });
+    const restored = restoreLocalSoulVersion(document, {
+      id: soulVersionId("workspace_restore_"),
+      restoreSourceVersionId: ctx.params.versionId,
+      changeSummary,
+      createdAt: new Date().toISOString(),
+      createdBy: soulActorId(ctx),
+    });
+    await cacheSoulDocument({ dataDir: serverDataDir, document: restored });
+    const materialization = await materializeSoulForWorkspace(serverDataDir, ctx, workspace, {
+      workspace: restored,
+    });
+    return jsonResponse(soulReadPayload({
+      document: restored,
+      summary: soulSummary({
+        scope: "workspace",
+        ownerId: workspace.id,
+        document: restored,
+        canEdit: soulCanEdit(ctx, "workspace"),
+        workspace,
+      }),
+      materialization,
+    }));
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/soul/heartbeat-toggle", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readOptionalJsonBody(ctx.request);
+    const existing = await readCachedSoulDocument({ dataDir: serverDataDir, scope: "workspace", ownerId: workspace.id });
+    const enabled = typeof body.enabled === "boolean" ? body.enabled : !(existing?.heartbeatEnabled ?? false);
+    await requireSoulApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "soul.workspace.heartbeat-toggle",
+      summary: `${enabled ? "Enable" : "Disable"} Workspace Soul heartbeat`,
+      paths: [
+        soulCachePath({ dataDir: serverDataDir, scope: "workspace", ownerId: workspace.id }),
+      ],
+    });
+    const document = { ...(existing ?? emptySoulDocument("workspace", workspace.id)), heartbeatEnabled: enabled };
+    await cacheSoulDocument({ dataDir: serverDataDir, document });
+    return jsonResponse(soulReadPayload({
+      document,
+      summary: soulSummary({
+        scope: "workspace",
+        ownerId: workspace.id,
+        document,
+        canEdit: soulCanEdit(ctx, "workspace"),
+        workspace,
+      }),
+    }));
   });
 
   addRoute(routes, "GET", "/workspace/:id/soul/status", "client", async (ctx) => {
@@ -7214,6 +9598,20 @@ async function resolveWorkspace(config: ServerConfig, id: string): Promise<Works
     path: resolvedWorkspace,
     ...(baseUrl ? { baseUrl } : {}),
   };
+}
+
+function isAuthorizedRootSync(workspacePath: string, roots: string[]): boolean {
+  const normalizeAuthorizedPath = (value: string) => {
+    const resolved = normalizeOpencodeDirectory(resolve(value));
+    return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  };
+  const resolvedWorkspace = normalizeAuthorizedPath(workspacePath);
+  for (const root of roots) {
+    const resolvedRoot = normalizeAuthorizedPath(root);
+    if (resolvedWorkspace === resolvedRoot) return true;
+    if (resolvedWorkspace.startsWith(resolvedRoot + sep)) return true;
+  }
+  return false;
 }
 
 async function isAuthorizedRoot(workspacePath: string, roots: string[]): Promise<boolean> {
@@ -7340,6 +9738,22 @@ function resolveOpencodeProxyHeadersTimeoutMs(): number {
     return clampNumber(parsed, 100, 600_000);
   }
   return OPENCODE_PROXY_HEADERS_DEFAULT_TIMEOUT_MS;
+}
+
+function resolveAiGatewayProxyHeadersTimeoutMs(): number {
+  const parsed = parseInteger(process.env.VESLO_AI_GATEWAY_PROXY_HEADERS_TIMEOUT_MS);
+  if (parsed && parsed > 0) {
+    return clampNumber(parsed, 100, 600_000);
+  }
+  return AI_GATEWAY_PROXY_HEADERS_DEFAULT_TIMEOUT_MS;
+}
+
+function resolveAiGatewayProviderStartTimeoutMs(): number {
+  const parsed = parseInteger(process.env.VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS);
+  if (parsed && parsed > 0) {
+    return clampNumber(parsed, 10, 600_000);
+  }
+  return AI_GATEWAY_PROVIDER_START_DEFAULT_TIMEOUT_MS;
 }
 
 function isAbortError(error: unknown): boolean {

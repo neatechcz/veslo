@@ -183,3 +183,76 @@ test("implicit active client lookup still rejects calls after an active workspac
     });
   });
 });
+
+test("workspace routing preserves auth for runtime SSE callers", async () => {
+  await new Promise<void>((resolve, reject) => {
+    createRoot((dispose) => {
+      void (async () => {
+        try {
+          const routing = createWorkspaceRouting({
+            clientSource: () => null,
+            activeWorkspaceId: () => "ws-active",
+            createClient: (_baseUrl, _directory, auth) => ({ auth } as any),
+            waitForHealthy: async () => ({ healthy: true }),
+          });
+
+          const auth = { username: "opencode", password: "secret" };
+          const entry = await routing.ensure("ws-active", "http://engine", {
+            directory: "/workspace",
+            auth,
+          });
+
+          assert.deepEqual(entry?.auth, auth);
+          assert.notEqual(entry?.auth, auth);
+          assert.deepEqual(routing.entry("ws-active")?.auth, auth);
+          resolve();
+        } catch (error) {
+          reject(error);
+        } finally {
+          dispose();
+        }
+      })();
+    });
+  });
+});
+
+test("workspace routing refreshes cached clients when auth changes", async () => {
+  await new Promise<void>((resolve, reject) => {
+    createRoot((dispose) => {
+      void (async () => {
+        let createCalls = 0;
+        try {
+          const routing = createWorkspaceRouting({
+            clientSource: () => null,
+            activeWorkspaceId: () => "ws-active",
+            createClient: (_baseUrl, _directory, auth) => {
+              createCalls += 1;
+              return { password: auth?.password ?? "" } as any;
+            },
+            waitForHealthy: async () => ({ healthy: true }),
+          });
+
+          await routing.ensure("ws-active", "http://engine", {
+            auth: { username: "opencode", password: "one" },
+          });
+          await routing.ensure("ws-active", "http://engine", {
+            auth: { username: "opencode", password: "one" },
+          });
+          assert.equal(createCalls, 1);
+
+          const refreshed = await routing.ensure("ws-active", "http://engine", {
+            auth: { username: "opencode", password: "two" },
+          });
+          assert.equal(createCalls, 2);
+          assert.equal((refreshed?.client as any)?.password, "two");
+          assert.equal(refreshed?.auth?.password, "two");
+          resolve();
+        } catch (error) {
+          reject(error);
+        } finally {
+          dispose();
+        }
+      })();
+    });
+  });
+});

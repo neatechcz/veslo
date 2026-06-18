@@ -1,8 +1,12 @@
-import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount } from "solid-js";
+import { For, Show, batch, createEffect, createMemo, createSignal, on, onCleanup, onMount, untrack } from "solid-js";
 import type { Agent, Part } from "@opencode-ai/sdk/v2/client";
 import type {
   ArtifactItem,
   DashboardTab,
+  ComposerTargetConflict,
+  ComposerTargetOption,
+  ComposerTargetSwitchResolution,
+  ComposerTargetSwitchResult,
   ComposerDraft,
   MessageGroup,
   MessageWithParts,
@@ -87,7 +91,19 @@ import {
 } from "../utils";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
 import { normalizeLocalFilePath } from "../lib/local-file-path";
-import { shouldStopRunOnEscape } from "./session-shortcuts";
+import {
+  createSessionClientMessageId,
+  type MaterializedSessionHandoff,
+  type SessionSendOptionsBase,
+  type SessionSendOrigin,
+} from "../lib/session-send-contract";
+import {
+  createUiConversationKey,
+  parseUiConversationKey,
+  sessionIdFromUiConversationKey,
+  type UiConversationRef,
+} from "../lib/ui-conversation-scope";
+import { resolveEscapeStopShortcut } from "./session-shortcuts";
 import { currentLocale, t } from "../../i18n";
 import type { UpdateDownloadRetryInfo } from "../context/updater";
 
@@ -97,6 +113,8 @@ import soulSetupTemplate from "../data/commands/give-me-a-soul.md?raw";
 import MessageList, { type PendingMessageState } from "../components/session/message-list";
 import Composer from "../components/session/composer";
 import type { ComposerSendOptions } from "../components/session/composer";
+import ComposerTargetConflictModal from "../components/session/composer-target-conflict-modal";
+import ComposerTargetPicker from "../components/session/composer-target-picker";
 import QueuedMessageList from "../components/session/queued-message-list";
 import { getEditableUserMessageDraft, type EditableUserMessageDraft } from "../components/session/message-editability";
 import {
@@ -154,6 +172,7 @@ import type { WorkspaceActivationOptions } from "../context/workspace-types";
 import { availableChatWidthForLayout, reconcileSidebarLayoutForRootWidth } from "./session-layout-width";
 import { resolveSessionTitlebarContext } from "./session-titlebar-context";
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
+import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
 
 function recordSendTrace(event: string, payload?: Record<string, unknown>) {
   if (typeof window === "undefined") return;
@@ -170,15 +189,49 @@ function recordSendTrace(event: string, payload?: Record<string, unknown>) {
     });
     if (logs.length > 120) logs.splice(0, logs.length - 120);
     root.__vesloSendTrace = logs;
+    recordSendWorkflowTrace("session-page", event, payload);
   } catch {
     // ignore
   }
 }
 
+type TempRuntimeUiRenderSurface = "workspace-initial" | "conversation";
+
+type TempRuntimeUiRenderSource = {
+  source: string;
+  reason: string;
+  surface: TempRuntimeUiRenderSurface;
+  activeWorkspaceId: string;
+  activeWorkspaceRoot: string;
+  workspacesHydrated: boolean;
+  engineReady: boolean;
+  clientConnected: boolean;
+  activeWorkspaceHasRoutingEntry: boolean;
+  activeWorkspaceSessionsLoaded: boolean;
+  selectedSessionId: string | null;
+  currentSessionQueueKey: string;
+  messageCount: number;
+  effectiveMessageCount?: number;
+  workspaceSetupVisible?: boolean;
+  quickstartVisible?: boolean;
+  sessionLoadingVisible?: boolean;
+  activePendingDraftKey: string | null;
+  clientMessageId?: string;
+  origin?: SessionSendOrigin;
+  detail?: string;
+  at: number;
+};
+
 export type SessionViewProps = {
   selectedSessionId: string | null;
   activePendingDraftKey: string | null;
   activePendingDraftMeta: PendingSessionDraftSummary | null;
+  composerTargetOptions: ComposerTargetOption[];
+  activeComposerTargetId: string | null;
+  switchComposerTarget: (
+    targetId: string,
+    resolution?: ComposerTargetSwitchResolution,
+  ) => Promise<ComposerTargetSwitchResult>;
   setView: (view: View, sessionId?: string) => void;
   setSessionBrowseScope: (scope: SessionBrowseScope) => void;
   tab: DashboardTab;
@@ -188,7 +241,11 @@ export type SessionViewProps = {
   activeWorkspaceDisplay: WorkspaceDisplay;
   activeWorkspaceRoot: string;
   workspaces: WorkspaceInfo[];
+  workspacesHydrated?: boolean;
   activeWorkspaceId: string;
+  activeUiConversationRef?: UiConversationRef;
+  activeWorkspaceHasRoutingEntry?: boolean;
+  activeWorkspaceSessionsLoaded?: boolean;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   readyEngineWorkspaceIds?: Set<string>;
@@ -246,17 +303,16 @@ export type SessionViewProps = {
   createSessionAndOpen: () => Promise<string | undefined>;
   sendPromptAsync: (
     draft: ComposerDraft,
-    options?: {
+    options: SessionSendOptionsBase & {
       targetSessionId?: string | null;
-      sendTraceId?: string | null;
-      onMaterializedSessionId?: (sessionId: string) => void;
+      onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
       pendingSession?: PendingSidebarSessionMetadata | null;
     },
   ) => Promise<boolean>;
   replaceUserMessageAsync: (
     messageId: string,
     draft: ComposerDraft,
-    options?: { targetSessionId?: string | null; sendTraceId?: string | null },
+    options: SessionSendOptionsBase & { targetSessionId?: string | null },
   ) => Promise<boolean>;
   clearComposerDraftForSession: (sessionId: string | null | undefined) => void;
   abortSession: (sessionId?: string) => Promise<void>;
@@ -474,6 +530,7 @@ export default function SessionView(props: SessionViewProps) {
   const topInitializedSessionIds = new Set<string>();
 
   const [toastMessage, setToastMessage] = createSignal<string | null>(null);
+  const [composerTargetConflict, setComposerTargetConflict] = createSignal<ComposerTargetConflict | null>(null);
   const [renameModalOpen, setRenameModalOpen] = createSignal(false);
   const [renameTitle, setRenameTitle] = createSignal("");
   const [renameBusy, setRenameBusy] = createSignal(false);
@@ -769,6 +826,19 @@ export default function SessionView(props: SessionViewProps) {
     workspace.name?.trim() ||
     workspace.path?.trim() ||
     tr("sidebar.workspace_fallback");
+  const activeComposerTargetOption = createMemo(() =>
+    props.composerTargetOptions.find((option) => option.id === props.activeComposerTargetId) ??
+    props.composerTargetOptions[0] ??
+    null,
+  );
+  const composerEntryTargetName = createMemo(() =>
+    activeComposerTargetOption()?.label ?? workspaceLabel(props.activeWorkspaceDisplay),
+  );
+  const composerEntryHeading = createMemo(() => {
+    const target = activeComposerTargetOption();
+    if (target?.kind === "chat") return tr("session.target_heading_chat");
+    return formatTr("session.target_heading_workspace", { name: composerEntryTargetName() });
+  });
   const todoList = createMemo(() => props.todos.filter((todo) => todo.content.trim()));
   const todoCount = createMemo(() => todoList().length);
   const todoCompletedCount = createMemo(() =>
@@ -776,15 +846,11 @@ export default function SessionView(props: SessionViewProps) {
   );
   const hasWorkspaceConfigured = createMemo(() => props.workspaces.length > 0);
   const showWorkspaceSetupEmptyState = createMemo(
-    () => !hasWorkspaceConfigured() && !props.selectedSessionId && props.messages.length === 0,
-  );
-  const showSessionLoadingState = createMemo(() =>
-    shouldShowSessionLoadingState({
-      hasWorkspaceSetupEmptyState: showWorkspaceSetupEmptyState(),
-      selectedSessionId: props.selectedSessionId,
-      messageCount: props.messages.length,
-      loadingEarlierMessages: props.loadingEarlierMessages,
-    })
+    () =>
+      props.workspacesHydrated === true &&
+      !hasWorkspaceConfigured() &&
+      !props.selectedSessionId &&
+      props.messages.length === 0,
   );
   const sessionWorkspaceContextLabel = createMemo(() => {
     if (showWorkspaceSetupEmptyState()) return "";
@@ -975,25 +1041,77 @@ export default function SessionView(props: SessionViewProps) {
     return `${index + 1}/${size}`;
   });
 
+  const activeUiConversationWorkspaceId = () =>
+    props.activeUiConversationRef?.workspaceId?.trim() || props.activeWorkspaceId || "default";
+  const pendingDraftWorkspaceId = () => {
+    const meta = props.activePendingDraftMeta;
+    if (!meta) return activeUiConversationWorkspaceId();
+    const workspaceId =
+      meta.kind === "new-private"
+        ? (meta.privateWorkspaceId ?? meta.workspaceId).trim()
+        : meta.workspaceId.trim();
+    return workspaceId || activeUiConversationWorkspaceId();
+  };
+  const workspaceIdForSessionQueue = (sessionId: string) => {
+    const id = sessionId.trim();
+    if (!id) return pendingDraftWorkspaceId();
+    const ref = props.activeUiConversationRef;
+    if (
+      ref &&
+      [
+        ref.sessionId?.trim() ?? "",
+        ref.conversationId?.trim() ?? "",
+        ref.opencodeSessionId?.trim() ?? "",
+      ].includes(id)
+    ) {
+      return ref.workspaceId?.trim() || activeUiConversationWorkspaceId();
+    }
+    return props.activeWorkspaceId || activeUiConversationWorkspaceId();
+  };
   const pendingSessionQueueKey = () => {
     const pendingDraftKey = props.activePendingDraftKey?.trim();
+    const workspaceId = pendingDraftWorkspaceId();
     if (pendingDraftKey) {
-      if (pendingDraftKey === "__pending-draft__:new-private") {
-        return `pending-draft:${pendingDraftKey}:${props.activeWorkspaceId || "default"}`;
-      }
-      return `pending-draft:${pendingDraftKey}`;
+      return createUiConversationKey({
+        workspaceId,
+        kind: "pending-draft",
+        id: pendingDraftKey,
+      });
     }
-    return `pending-workspace:${props.activeWorkspaceId || "default"}`;
+    return createUiConversationKey({
+      workspaceId: activeUiConversationWorkspaceId(),
+      kind: "pending-workspace",
+      id: "active",
+    });
   };
-  const sessionQueueKeyForSessionId = (sessionId: string | null | undefined) =>
-    sessionId?.trim() || pendingSessionQueueKey();
-  const sessionIdForQueueKey = (sessionKey: string) =>
-    isPendingSessionInstanceId(sessionKey) ||
-    sessionKey.startsWith("pending:") ||
-    sessionKey.startsWith("pending-draft:") ||
-    sessionKey.startsWith("pending-workspace:")
+  const sessionQueueKeyForSessionId = (sessionId: string | null | undefined) => {
+    const id = sessionId?.trim() ?? "";
+    if (!id) return pendingSessionQueueKey();
+    const pending =
+      isPendingSessionInstanceId(id) ||
+      id.startsWith("pending:") ||
+      id.startsWith("pending-draft:") ||
+      id.startsWith("pending-workspace:");
+    return createUiConversationKey({
+      workspaceId: pending ? pendingDraftWorkspaceId() : workspaceIdForSessionQueue(id),
+      kind: pending ? "pending-session" : "session",
+      id,
+    });
+  };
+  const sessionIdForQueueKey = (sessionKey: string) => {
+    const scopedSessionId = sessionIdFromUiConversationKey(sessionKey);
+    if (scopedSessionId) return scopedSessionId;
+    const parsed = parseUiConversationKey(sessionKey);
+    if (parsed) return null;
+    return isPendingSessionInstanceId(sessionKey) ||
+      sessionKey.startsWith("pending:") ||
+      sessionKey.startsWith("pending-draft:") ||
+      sessionKey.startsWith("pending-workspace:")
       ? null
       : sessionKey;
+  };
+  const workspaceIdForQueueKey = (sessionKey: string) =>
+    parseUiConversationKey(sessionKey)?.workspaceId ?? props.activeWorkspaceId;
   const [pendingQueueKeyAwaitingSessionIdByBaseKey, setPendingQueueKeyAwaitingSessionIdByBaseKey] =
     createSignal<Record<string, string>>({});
   const currentSessionQueueKey = createMemo(() => {
@@ -1002,6 +1120,91 @@ export default function SessionView(props: SessionViewProps) {
     const basePendingKey = pendingSessionQueueKey();
     return pendingQueueKeyAwaitingSessionIdByBaseKey()[basePendingKey] ?? basePendingKey;
   });
+  const tempRuntimeUiSurface = (): TempRuntimeUiRenderSurface =>
+    showWorkspaceSetupEmptyState() ? "workspace-initial" : "conversation";
+  const createTempRuntimeUiRenderSnapshot = (
+    source: string,
+    reason: string,
+    extras: Pick<Partial<TempRuntimeUiRenderSource>, "clientMessageId" | "origin" | "detail"> = {},
+  ): TempRuntimeUiRenderSource => ({
+    source,
+    reason,
+    surface: tempRuntimeUiSurface(),
+    activeWorkspaceId: props.activeWorkspaceId.trim(),
+    activeWorkspaceRoot: props.activeWorkspaceRoot.trim(),
+    workspacesHydrated: props.workspacesHydrated === true,
+    engineReady: props.engineReady !== false,
+    clientConnected: props.clientConnected,
+    activeWorkspaceHasRoutingEntry: props.activeWorkspaceHasRoutingEntry === true,
+    activeWorkspaceSessionsLoaded: props.activeWorkspaceSessionsLoaded === true,
+    selectedSessionId: props.selectedSessionId?.trim() || null,
+    currentSessionQueueKey: currentSessionQueueKey(),
+    messageCount: props.messages.length,
+    activePendingDraftKey: props.activePendingDraftKey ?? null,
+    ...extras,
+    at: Date.now(),
+  });
+  // TEMP: runtime UI flicker diagnostic. Remove after duplicated workspace/conversation render handoff is identified.
+  const [tempRuntimeUiRenderSource, setTempRuntimeUiRenderSource] = createSignal<TempRuntimeUiRenderSource>(
+    createTempRuntimeUiRenderSnapshot("SessionView.initialRender", "component-created"),
+  );
+  const markTempRuntimeUiRenderSource = (
+    source: string,
+    reason: string,
+    extras: Pick<Partial<TempRuntimeUiRenderSource>, "clientMessageId" | "origin" | "detail"> = {},
+  ) => {
+    if (!props.developerMode) return;
+    setTempRuntimeUiRenderSource(createTempRuntimeUiRenderSnapshot(source, reason, extras));
+  };
+  createEffect(
+    on(
+      () => [
+        showWorkspaceSetupEmptyState(),
+        props.selectedSessionId,
+        props.messages.length,
+        props.activePendingDraftKey,
+        props.activeWorkspaceId,
+        props.activeWorkspaceRoot,
+        props.workspacesHydrated,
+        props.engineReady,
+        props.clientConnected,
+        props.activeWorkspaceHasRoutingEntry,
+        props.activeWorkspaceSessionsLoaded,
+        currentSessionQueueKey(),
+      ] as const,
+      ([
+        workspaceInitial,
+        selectedSessionId,
+        messageCount,
+        activePendingDraftKey,
+        activeWorkspaceId,
+        activeWorkspaceRoot,
+        workspacesHydrated,
+        engineReady,
+        clientConnected,
+        activeWorkspaceHasRoutingEntry,
+        activeWorkspaceSessionsLoaded,
+        sessionKey,
+      ]) => {
+        setTempRuntimeUiRenderSource((current) => ({
+          ...current,
+          surface: workspaceInitial ? "workspace-initial" : "conversation",
+          activeWorkspaceId: activeWorkspaceId.trim(),
+          activeWorkspaceRoot: activeWorkspaceRoot.trim(),
+          workspacesHydrated: workspacesHydrated === true,
+          engineReady: engineReady !== false,
+          clientConnected,
+          activeWorkspaceHasRoutingEntry: activeWorkspaceHasRoutingEntry === true,
+          activeWorkspaceSessionsLoaded: activeWorkspaceSessionsLoaded === true,
+          selectedSessionId: selectedSessionId?.trim() || null,
+          currentSessionQueueKey: sessionKey,
+          messageCount,
+          activePendingDraftKey: activePendingDraftKey ?? null,
+          at: Date.now(),
+        }));
+      },
+    ),
+  );
   const setPendingQueueKeyAwaitingSessionIdForBaseKey = (baseKey: string, pendingKey: string) => {
     const base = baseKey.trim();
     const pending = pendingKey.trim();
@@ -1027,12 +1230,32 @@ export default function SessionView(props: SessionViewProps) {
   const optimisticSubmittedDraft = createMemo(() =>
     selectPendingSubmittedDraft(pendingSubmittedDraftBySessionKey(), currentSessionQueueKey()),
   );
+  const messagePartMessageIds = (message: MessageWithParts) =>
+    message.parts
+      .map((part) => {
+        const messageID = (part as { messageID?: string | number }).messageID;
+        return typeof messageID === "string" ? messageID : typeof messageID === "number" ? String(messageID) : "";
+      })
+      .filter(Boolean);
   const submittedDraftHasMessageInTranscript = (submitted: ReturnType<typeof optimisticSubmittedDraft>) => {
     if (!submitted) return false;
+    const clientMessageId = submitted.clientMessageId.trim();
+    if (clientMessageId) {
+      const matchedById = props.messages.some((message) => {
+        if ((message.info as { role?: string }).role !== "user") return false;
+        if (messageIdFromInfo(message) === clientMessageId) return true;
+        return messagePartMessageIds(message).some((messageID) => messageID === clientMessageId);
+      });
+      if (matchedById) return true;
+    }
+
     const text = (submitted.draft.resolvedText ?? submitted.draft.text).trim();
     if (!text) return false;
+    const baselineIds = new Set(submitted.transcriptMessageIdsAtSubmit ?? []);
     return props.messages.some((message) => {
       if ((message.info as { role?: string }).role !== "user") return false;
+      const messageId = messageIdFromInfo(message);
+      if (messageId && baselineIds.has(messageId)) return false;
       return message.parts.some((part) => part.type === "text" && (part.text ?? "").trim() === text);
     });
   };
@@ -1082,18 +1305,35 @@ export default function SessionView(props: SessionViewProps) {
   const runTick = createMemo(() => activeRunState().tick);
   const runLastProgressAt = createMemo(() => activeRunState().lastProgressAt);
   const runBaseline = createMemo(() => activeRunState().baseline);
+  const runUiStateEqual = (left: RunUiState, right: RunUiState) =>
+    left.startedAt === right.startedAt &&
+    left.hasBegun === right.hasBegun &&
+    left.tick === right.tick &&
+    left.lastProgressAt === right.lastProgressAt &&
+    left.baseline.assistantId === right.baseline.assistantId &&
+    left.baseline.partCount === right.baseline.partCount;
   const updateRunStateForSessionKey = (sessionKey: string, update: (current: RunUiState) => RunUiState) => {
     const key = sessionKey.trim();
     if (!key) return;
     setRunStateBySessionKey((current) => {
       const previous = current[key] ?? createIdleRunState(Date.now());
       const next = update(previous);
+      if (runUiStateEqual(previous, next)) return current;
       return { ...current, [key]: next };
     });
   };
   const resetRunState = (sessionKey = currentSessionQueueKey()) => {
     const key = sessionKey.trim();
     if (!key) return;
+    const previous = untrack(runStateBySessionKey)[key];
+    if (previous) {
+      recordSendTrace("run-state:reset", {
+        sessionKey: key,
+        startedAt: previous.startedAt,
+        hasBegun: previous.hasBegun,
+        lastProgressAt: previous.lastProgressAt,
+      });
+    }
     setRunStateBySessionKey((current) => {
       if (!(key in current)) return current;
       const { [key]: _removedRunState, ...rest } = current;
@@ -1116,9 +1356,15 @@ export default function SessionView(props: SessionViewProps) {
   const startRun = (sessionKey = currentSessionQueueKey()) => {
     const key = sessionKey.trim();
     if (!key) return;
-    if (runStateBySessionKey()[key]?.startedAt) return;
+    if (untrack(runStateBySessionKey)[key]?.startedAt) return;
     const now = Date.now();
     const snapshot = lastAssistantSnapshot();
+    recordSendTrace("run-state:start", {
+      sessionKey: key,
+      startedAt: now,
+      baselineAssistantId: snapshot.id,
+      baselinePartCount: snapshot.partCount,
+    });
     setRunStateBySessionKey((current) => ({
       ...current,
       [key]: {
@@ -1131,6 +1377,10 @@ export default function SessionView(props: SessionViewProps) {
     }));
   };
   const setRunHasBegunForSessionKey = (sessionKey: string, hasBegun: boolean) => {
+    recordSendTrace("run-state:has-begun", {
+      sessionKey,
+      hasBegun,
+    });
     updateRunStateForSessionKey(sessionKey, (current) => ({ ...current, hasBegun }));
   };
   const setRunTickForSessionKey = (sessionKey: string, tick: number) => {
@@ -1142,6 +1392,15 @@ export default function SessionView(props: SessionViewProps) {
   const remapPendingRunStateToSession = (pendingKey: string, sessionId: string) => {
     const sessionKey = sessionQueueKeyForSessionId(sessionId);
     if (!pendingKey || pendingKey === sessionKey) return;
+    const pendingRun = untrack(runStateBySessionKey)[pendingKey];
+    recordSendTrace("run-state:remap-pending-to-session", {
+      pendingKey,
+      sessionId,
+      sessionKey,
+      hadPendingRun: Boolean(pendingRun),
+      pendingStartedAt: pendingRun?.startedAt ?? null,
+      pendingHasBegun: pendingRun?.hasBegun ?? null,
+    });
     setRunStateBySessionKey((current) => {
       const pendingRun = current[pendingKey];
       if (!pendingRun) return current;
@@ -1209,11 +1468,33 @@ export default function SessionView(props: SessionViewProps) {
   // (idle → running, browsing → engine start).  The memo path is
   // reliable because SolidJS memos propagate synchronously.
   const effectiveRenderedMessages = renderedMessages;
+  const showSessionLoadingState = createMemo(() =>
+    shouldShowSessionLoadingState({
+      hasWorkspaceSetupEmptyState: showWorkspaceSetupEmptyState(),
+      selectedSessionId: props.selectedSessionId,
+      messageCount: effectiveRenderedMessages().length,
+      loadingEarlierMessages: props.loadingEarlierMessages,
+    })
+  );
   const showQuickstartEmptyState = createMemo(() =>
     effectiveRenderedMessages().length === 0 &&
     !showWorkspaceSetupEmptyState() &&
     !showSessionLoadingState(),
   );
+  createEffect(() => {
+    const effectiveMessageCount = effectiveRenderedMessages().length;
+    const workspaceSetupVisible = showWorkspaceSetupEmptyState();
+    const quickstartVisible = showQuickstartEmptyState();
+    const sessionLoadingVisible = showSessionLoadingState();
+    setTempRuntimeUiRenderSource((current) => ({
+      ...current,
+      effectiveMessageCount,
+      workspaceSetupVisible,
+      quickstartVisible,
+      sessionLoadingVisible,
+      at: Date.now(),
+    }));
+  });
 
   createEffect(() => {
     const next = renderedMessages();
@@ -1777,8 +2058,10 @@ export default function SessionView(props: SessionViewProps) {
   const [editingQueuedDraftId, setEditingQueuedDraftId] = createSignal<string | null>(null);
   const [editingTranscriptMessageId, setEditingTranscriptMessageId] = createSignal<string | null>(null);
   const [abortBusy, setAbortBusy] = createSignal(false);
+  const [escapeStopConfirmationPending, setEscapeStopConfirmationPending] = createSignal(false);
   const [todoExpanded, setTodoExpanded] = createSignal(false);
   let queueDrainAttemptInFlight = false;
+  let escapeStopConfirmationSessionId = props.selectedSessionId;
 
   const queuedDrafts = createMemo(() => queuedDraftsBySessionKey()[currentSessionQueueKey()] ?? []);
   const queuePaused = createMemo(() => Boolean(queuePausedAfterStopBySessionKey()[currentSessionQueueKey()]));
@@ -1947,6 +2230,17 @@ export default function SessionView(props: SessionViewProps) {
 
   const showRunIndicator = createMemo(() => runPhase() !== "idle");
   const showFooterRunIndicator = createMemo(() => showRunIndicator());
+  createEffect(() => {
+    const sessionId = props.selectedSessionId;
+    if (sessionId === escapeStopConfirmationSessionId) return;
+    escapeStopConfirmationSessionId = sessionId;
+    setEscapeStopConfirmationPending(false);
+  });
+  createEffect(() => {
+    if (!showRunIndicator() || abortBusy() || commandPaletteOpen() || searchOpen() || overlayOpenSide()) {
+      setEscapeStopConfirmationPending(false);
+    }
+  });
   const workspaceSendWarmupActive = createMemo(() => {
     const submitted = optimisticSubmittedDraft();
     if (!submitted || submitted.state !== "sending") return false;
@@ -2189,6 +2483,11 @@ export default function SessionView(props: SessionViewProps) {
         if (sessionId === previousSessionId) {
           return;
         }
+        markTempRuntimeUiRenderSource(
+          "SessionView.selectedSessionIdEffect",
+          sessionId ? "selected-session-changed" : "selected-session-cleared",
+          { detail: `previous=${previousSessionId ?? "none"}` },
+        );
         setSearchOpen(false);
         setSearchQuery("");
         setSearchQueryDebounced("");
@@ -2214,12 +2513,18 @@ export default function SessionView(props: SessionViewProps) {
         setEditingTranscriptMessageId(null);
 
         if (!sessionId) return;
+        const materializedPendingSubmit =
+          pendingKey ? pendingSubmittedDraftBySessionKey()[pendingKey]?.state === "sending" : false;
         if (pendingKey && !isPendingSessionInstanceId(sessionId)) {
           remapPendingQueueToSession(pendingKey, sessionId);
           clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingBaseKey, pendingKey);
         }
         const sessionKey = sessionQueueKeyForSessionId(sessionId);
-        if (props.sessionStatusById[sessionId] === "idle" && !queuePausedForSessionKey(sessionKey)) {
+        if (
+          !materializedPendingSubmit &&
+          props.sessionStatusById[sessionId] === "idle" &&
+          !queuePausedForSessionKey(sessionKey)
+        ) {
           void drainNextQueuedDraft("queue-drain", sessionKey);
         }
         const firstVisit = !topInitializedSessionIds.has(sessionId);
@@ -2370,21 +2675,28 @@ export default function SessionView(props: SessionViewProps) {
         }
       }
 
-      if (
-        shouldStopRunOnEscape({
-          key: event.key,
-          defaultPrevented: event.defaultPrevented,
-          metaKey: event.metaKey,
-          ctrlKey: event.ctrlKey,
-          altKey: event.altKey,
-          shiftKey: event.shiftKey,
-          commandPaletteOpen: commandPaletteOpen(),
-          searchOpen: searchOpen(),
-          showRunIndicator: showRunIndicator(),
-          abortBusy: abortBusy(),
-        })
-      ) {
+      if (overlayOpenSide()) return;
+
+      const escapeStopAction = resolveEscapeStopShortcut({
+        key: event.key,
+        defaultPrevented: event.defaultPrevented,
+        metaKey: event.metaKey,
+        ctrlKey: event.ctrlKey,
+        altKey: event.altKey,
+        shiftKey: event.shiftKey,
+        commandPaletteOpen: commandPaletteOpen(),
+        searchOpen: searchOpen(),
+        showRunIndicator: showRunIndicator(),
+        abortBusy: abortBusy(),
+        confirmationPending: escapeStopConfirmationPending(),
+      });
+      if (escapeStopAction !== "ignore") {
         event.preventDefault();
+        if (escapeStopAction === "request-confirmation") {
+          setEscapeStopConfirmationPending(true);
+          return;
+        }
+        setEscapeStopConfirmationPending(false);
         void cancelRun();
       }
     };
@@ -2420,9 +2732,10 @@ export default function SessionView(props: SessionViewProps) {
       (statuses, previousStatuses) => {
         if (!previousStatuses) return;
         for (const sessionKey of Object.keys(queuedDraftsBySessionKey())) {
-          if (!sessionIdForQueueKey(sessionKey)) continue;
-          if (previousStatuses[sessionKey] === undefined || previousStatuses[sessionKey] === "idle") continue;
-          if (statuses[sessionKey] !== "idle") continue;
+          const sessionId = sessionIdForQueueKey(sessionKey);
+          if (!sessionId) continue;
+          if (previousStatuses[sessionId] === undefined || previousStatuses[sessionId] === "idle") continue;
+          if (statuses[sessionId] !== "idle") continue;
           if (queuePausedForSessionKey(sessionKey)) continue;
           void drainNextQueuedDraft("queue-drain", sessionKey);
         }
@@ -2585,6 +2898,7 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const cancelRun = async () => {
+    setEscapeStopConfirmationPending(false);
     if (abortBusy()) return;
 
     setQueuePausedForCurrentSession(true);
@@ -3374,6 +3688,15 @@ export default function SessionView(props: SessionViewProps) {
     return null;
   });
 
+  const sessionSendOriginForReason = (
+    reason: "normal" | "queue-drain" | "send-now" | "replacement" = "normal",
+  ): SessionSendOrigin => {
+    if (reason === "queue-drain") return "session:queue-drain";
+    if (reason === "send-now") return "session:send-now";
+    if (reason === "replacement") return "session:replacement";
+    return "session:normal";
+  };
+
   const sendPromptImmediate = async (
     draft: ComposerDraft,
     options: {
@@ -3384,16 +3707,27 @@ export default function SessionView(props: SessionViewProps) {
       sendTraceId?: string | null;
     } = {},
   ) => {
+    const origin = sessionSendOriginForReason(options.reason);
+    const clientMessageId = createSessionClientMessageId();
     const expectedSessionKey = options.expectedSessionKey;
     const targetSessionId = expectedSessionKey ? sessionIdForQueueKey(expectedSessionKey) : null;
+    const expectedWorkspaceId = expectedSessionKey ? workspaceIdForQueueKey(expectedSessionKey) : props.activeWorkspaceId;
+    markTempRuntimeUiRenderSource("SessionView.sendPromptImmediate", options.reason ?? "normal", {
+      clientMessageId,
+      origin,
+      detail: `expectedSessionKey=${expectedSessionKey ?? "current"} expectedWorkspace=${expectedWorkspaceId || "none"} targetSessionId=${targetSessionId ?? "none"}`,
+    });
     recordSendTrace("sendPromptImmediate:start", {
       sendTraceId: options.sendTraceId ?? null,
+      clientMessageId,
+      origin,
       aiAccessBlockedReason: props.aiAccessBlockedReason,
       busyHint: props.busyHint ?? null,
       busyLabel: props.busyLabel ?? null,
       activePendingDraftKey: props.activePendingDraftKey ?? null,
       currentSessionQueueKey: currentSessionQueueKey(),
       expectedSessionKey: expectedSessionKey ?? null,
+      expectedWorkspaceId: expectedWorkspaceId || null,
       targetSessionId,
       reason: options.reason ?? "normal",
     });
@@ -3424,24 +3758,65 @@ export default function SessionView(props: SessionViewProps) {
           createdAt: pendingSidebarSessionCreatedAt,
         }
       : null;
-    const pendingSubmitId = `optimistic-submit:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+    recordSendTrace("sendPromptImmediate:queue-scope", {
+      sendTraceId: options.sendTraceId ?? null,
+      clientMessageId,
+      origin,
+      baseSessionKey,
+      sessionKey,
+      pendingSessionBaseKeyBeforeHandoff,
+      pendingSessionKeyBeforeHandoff,
+      pendingSidebarWorkspaceId,
+      pendingSidebarWorkspaceRoot,
+      currentSessionQueueKey: currentSessionQueueKey(),
+      expectedWorkspaceId: expectedWorkspaceId || null,
+      targetSessionId,
+    });
+    const pendingSubmitId = clientMessageId;
     let materializedSessionIdFromHandoff: string | null = null;
     let materializedSessionIdForRunStateReset: string | null = null;
     const runStateSessionKeyForHandoffFailure = () => {
       const materializedSessionId = materializedSessionIdForRunStateReset ?? materializedSessionIdFromHandoff;
       return materializedSessionId ? sessionQueueKeyForSessionId(materializedSessionId) : sessionKey;
     };
-    const materializePendingHandoffToSession = (sessionId: string | null | undefined) => {
+    const materializePendingHandoffToSession = (handoff: MaterializedSessionHandoff | null | undefined) => {
       if (!pendingSessionBaseKeyBeforeHandoff || !pendingSessionKeyBeforeHandoff) return;
-      const materializedSessionId = sessionId?.trim();
+      const materializedPendingKey = handoff?.pendingSessionKey?.trim() || pendingSessionKeyBeforeHandoff;
+      if (materializedPendingKey !== pendingSessionKeyBeforeHandoff) return;
+      if (handoff?.clientMessageId?.trim() && handoff.clientMessageId.trim() !== clientMessageId) return;
+      const materializedSessionId = handoff?.sessionId?.trim();
       if (!materializedSessionId || isPendingSessionInstanceId(materializedSessionId)) return;
       materializedSessionIdFromHandoff = materializedSessionId;
       materializedSessionIdForRunStateReset = materializedSessionId;
-      remapPendingQueueToSession(pendingSessionKeyBeforeHandoff, materializedSessionId);
-      clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff);
+      const materializedSessionKey = sessionQueueKeyForSessionId(materializedSessionId);
+      recordSendTrace("sendPromptImmediate:pending-handoff-materialize", {
+        sendTraceId: handoff?.sendTraceId ?? options.sendTraceId ?? null,
+        clientMessageId,
+        origin,
+        pendingSessionBaseKeyBeforeHandoff,
+        pendingSessionKeyBeforeHandoff,
+        materializedPendingKey,
+        materializedSessionId,
+        materializedSessionKey,
+        handoffWorkspaceId: handoff?.workspaceId ?? null,
+        conversationId: handoff?.conversationId ?? null,
+        opencodeSessionId: handoff?.opencodeSessionId ?? null,
+      });
+      batch(() => {
+        setPendingQueueKeyAwaitingSessionIdForBaseKey(
+          pendingSessionBaseKeyBeforeHandoff,
+          materializedSessionKey,
+        );
+        remapPendingQueueToSession(pendingSessionKeyBeforeHandoff, materializedSessionId);
+      });
     };
-    const handleMaterializedSessionId = (sessionId: string) => {
-      materializePendingHandoffToSession(sessionId);
+    const handleMaterializedSessionId = (handoff: MaterializedSessionHandoff) => {
+      markTempRuntimeUiRenderSource("SessionView.handleMaterializedSessionId", "pending-session-materialized", {
+        clientMessageId,
+        origin,
+        detail: `workspaceId=${handoff.workspaceId} pendingSessionKey=${handoff.pendingSessionKey ?? "none"} materializedSessionId=${handoff.sessionId}`,
+      });
+      materializePendingHandoffToSession(handoff);
     };
     const clearMatchingPendingSubmit = () => {
       setPendingSubmittedDraftBySessionKey((current) => {
@@ -3486,7 +3861,7 @@ export default function SessionView(props: SessionViewProps) {
     const finishPendingSessionHandoffFailure = () => {
       if (!pendingSessionBaseKeyBeforeHandoff || !pendingSessionKeyBeforeHandoff) return;
       if (materializedSessionIdFromHandoff) {
-        clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff);
+        clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingSessionBaseKeyBeforeHandoff, null);
         return;
       }
       if (showOptimisticSubmit && !props.selectedSessionId?.trim()) {
@@ -3496,12 +3871,23 @@ export default function SessionView(props: SessionViewProps) {
       clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff);
     };
     if (showOptimisticSubmit) {
+      recordSendTrace("sendPromptImmediate:optimistic-enqueue", {
+        sendTraceId: options.sendTraceId ?? null,
+        clientMessageId,
+        origin,
+        sessionKey,
+        targetSessionId,
+        pendingSessionKeyBeforeHandoff,
+        transcriptMessageCountAtSubmit: props.messages.length,
+      });
       setOptimisticSubmittedDraft(
         sessionKey,
         createPendingSubmittedDraft({
           id: pendingSubmitId,
+          clientMessageId,
           sessionKey,
           createdAt: Date.now(),
+          transcriptMessageIdsAtSubmit: props.messages.map(messageIdFromInfo).filter(Boolean),
           sessionId: targetSessionId ?? (isPendingSessionInstanceId(props.selectedSessionId) ? null : props.selectedSessionId),
           draft,
         }),
@@ -3512,6 +3898,8 @@ export default function SessionView(props: SessionViewProps) {
     }
     if (props.aiAccessBlockedReason) {
       recordSendTrace("sendPromptImmediate:blocked-ai-access", {
+        clientMessageId,
+        origin,
         aiAccessBlockedReason: props.aiAccessBlockedReason,
         expectedSessionKey: expectedSessionKey ?? null,
         targetSessionId,
@@ -3528,33 +3916,35 @@ export default function SessionView(props: SessionViewProps) {
 
     try {
       const promptSendOptions: {
+        clientMessageId: string;
+        origin: SessionSendOrigin;
         targetSessionId?: string | null;
         sendTraceId?: string | null;
-        onMaterializedSessionId?: (sessionId: string) => void;
+        onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
         pendingSession?: PendingSidebarSessionMetadata | null;
-      } | undefined =
-        targetSessionId || options.sendTraceId || pendingSessionKeyBeforeHandoff
-          ? {
-              ...(targetSessionId ? { targetSessionId } : {}),
-              ...(options.sendTraceId ? { sendTraceId: options.sendTraceId } : {}),
-              ...(pendingSessionKeyBeforeHandoff
-                ? { onMaterializedSessionId: handleMaterializedSessionId, pendingSession: pendingSidebarSession }
-                : {}),
-            }
-          : undefined;
-      const replaceOptions =
-        targetSessionId || options.sendTraceId
-          ? {
-              ...(targetSessionId ? { targetSessionId } : {}),
-              ...(options.sendTraceId ? { sendTraceId: options.sendTraceId } : {}),
-            }
-          : undefined;
+      } = {
+        clientMessageId,
+        origin,
+        ...(targetSessionId ? { targetSessionId } : {}),
+        ...(options.sendTraceId ? { sendTraceId: options.sendTraceId } : {}),
+        ...(pendingSessionKeyBeforeHandoff
+          ? { onMaterializedSessionId: handleMaterializedSessionId, pendingSession: pendingSidebarSession }
+          : {}),
+      };
+      const replaceOptions: SessionSendOptionsBase & { targetSessionId?: string | null } = {
+        clientMessageId,
+        origin,
+        ...(targetSessionId ? { targetSessionId } : {}),
+        ...(options.sendTraceId ? { sendTraceId: options.sendTraceId } : {}),
+      };
       const accepted = await (options.replaceMessageId
         ? props.replaceUserMessageAsync(options.replaceMessageId, draft, replaceOptions)
         : props.sendPromptAsync(draft, promptSendOptions)
       );
       recordSendTrace("sendPromptImmediate:result", {
         sendTraceId: options.sendTraceId ?? null,
+        clientMessageId,
+        origin,
         accepted,
         error: props.error ?? null,
         expectedSessionKey: expectedSessionKey ?? null,
@@ -3571,10 +3961,21 @@ export default function SessionView(props: SessionViewProps) {
         setToastMessage(props.error ?? tr("session.connect_server_to_attach"));
         return false;
       }
+      markTempRuntimeUiRenderSource("SessionView.sendPromptImmediate:accepted", options.reason ?? "normal", {
+        clientMessageId,
+        origin,
+        detail: `sessionKey=${sessionKey}`,
+      });
       if (accepted && pendingSessionKeyBeforeHandoff) {
         const materializedSessionId = materializedSessionIdFromHandoff ?? props.selectedSessionId?.trim();
         if (materializedSessionId) {
-          materializePendingHandoffToSession(materializedSessionId);
+          materializePendingHandoffToSession({
+            workspaceId: expectedWorkspaceId || activeUiConversationWorkspaceId(),
+            pendingSessionKey: pendingSessionKeyBeforeHandoff,
+            sessionId: materializedSessionId,
+            clientMessageId,
+            sendTraceId: options.sendTraceId ?? null,
+          });
         }
       }
       if (options.expectedSessionKey && currentSessionQueueKey() !== options.expectedSessionKey) {
@@ -3585,7 +3986,7 @@ export default function SessionView(props: SessionViewProps) {
       }
       setStickToBottom(true);
       scheduleScrollToLatest("auto");
-      startRun(sessionKey);
+      startRun(materializedSessionIdFromHandoff ? sessionQueueKeyForSessionId(materializedSessionIdFromHandoff) : sessionKey);
       return true;
     } catch (e) {
       if (showOptimisticSubmit) {
@@ -3788,6 +4189,34 @@ export default function SessionView(props: SessionViewProps) {
     return sendPromptImmediate(draft, { reason: "normal", sendTraceId: options.sendTraceId });
   };
 
+  const tempRuntimeUiDiagnosticBadge = (visibleSurface: TempRuntimeUiRenderSurface) => (
+    <Show when={props.developerMode}>
+      <div
+        class="mb-3 rounded-lg border border-red-7/30 bg-red-1/80 px-3 py-2 font-mono text-[10px] leading-4 text-red-12"
+        data-temp-runtime-ui-render-source={visibleSurface}
+      >
+        TEMP UI render source: {tempRuntimeUiRenderSource().source} | reason: {tempRuntimeUiRenderSource().reason} |
+        visible: {visibleSurface} | state: {tempRuntimeUiRenderSource().surface} | session:{" "}
+        {tempRuntimeUiRenderSource().selectedSessionId ?? "none"} | key:{" "}
+        {tempRuntimeUiRenderSource().currentSessionQueueKey} | messages: {tempRuntimeUiRenderSource().messageCount} |
+        effective: {tempRuntimeUiRenderSource().effectiveMessageCount ?? "n/a"} | workspace:{" "}
+        {tempRuntimeUiRenderSource().activeWorkspaceId || "none"} | hydrated:{" "}
+        {String(tempRuntimeUiRenderSource().workspacesHydrated)} | engineReady:{" "}
+        {String(tempRuntimeUiRenderSource().engineReady)} | clientConnected:{" "}
+        {String(tempRuntimeUiRenderSource().clientConnected)} | routeEntry:{" "}
+        {String(tempRuntimeUiRenderSource().activeWorkspaceHasRoutingEntry)} | routeListReady:{" "}
+        {String(tempRuntimeUiRenderSource().activeWorkspaceSessionsLoaded)} | setup:{" "}
+        {String(tempRuntimeUiRenderSource().workspaceSetupVisible ?? false)} | quickstart:{" "}
+        {String(tempRuntimeUiRenderSource().quickstartVisible ?? false)} | loading:{" "}
+        {String(tempRuntimeUiRenderSource().sessionLoadingVisible ?? false)} |
+        pending: {tempRuntimeUiRenderSource().activePendingDraftKey ?? "none"} | client:{" "}
+        {tempRuntimeUiRenderSource().clientMessageId ?? "none"} | origin: {tempRuntimeUiRenderSource().origin ?? "none"} |
+        detail: {tempRuntimeUiRenderSource().detail ?? "none"} | at:{" "}
+        {new Date(tempRuntimeUiRenderSource().at).toISOString()}
+      </div>
+    </Show>
+  );
+
   const handleBrowserAutomationQuickstart = () => {
     const text =
       BROWSER_AUTOMATION_QUICKSTART_PROMPT ||
@@ -3835,6 +4264,27 @@ export default function SessionView(props: SessionViewProps) {
     });
   };
 
+  const handleComposerTargetSelect = async (targetId: string) => {
+    const result = await props.switchComposerTarget(targetId);
+    if (result.status === "conflict") {
+      setComposerTargetConflict(result.conflict);
+      return;
+    }
+    if (result.status === "blocked") setToastMessage(result.message);
+  };
+
+  const resolveComposerTargetConflictModal = async (resolution: ComposerTargetSwitchResolution) => {
+    const conflict = composerTargetConflict();
+    if (!conflict) return;
+    const result = await props.switchComposerTarget(conflict.targetId, resolution);
+    if (result.status === "conflict") {
+      setComposerTargetConflict(result.conflict);
+      return;
+    }
+    setComposerTargetConflict(null);
+    if (result.status === "blocked") setToastMessage(result.message);
+  };
+
   const handleDraftChange = (draft: ComposerDraft) => {
     props.setComposerDraft(draft);
   };
@@ -3874,7 +4324,6 @@ export default function SessionView(props: SessionViewProps) {
         props.setView("session", nextSessionId);
       };
 
-      openPendingSidebarSession(sessionId);
       void openSessionWithWorkspaceActivation({
         activeWorkspaceId: props.activeWorkspaceId,
         getActiveWorkspaceId: () => props.activeWorkspaceId,
@@ -4199,7 +4648,8 @@ export default function SessionView(props: SessionViewProps) {
     if (!id) return;
     void (async () => {
       if (id !== props.activeWorkspaceId) {
-        await Promise.resolve(props.activateWorkspace(id, { origin: "session:open-soul-workspace" }));
+        const activated = await Promise.resolve(props.activateWorkspace(id, { origin: "session:open-soul-workspace" }));
+        if (!activated) return;
       }
       props.setTab("soul");
       props.setView("dashboard");
@@ -4211,10 +4661,10 @@ export default function SessionView(props: SessionViewProps) {
   );
 
   const runtimeAvailableWithoutClient = createMemo(() => {
-    if (props.clientConnected) return false;
-    if (props.vesloServerStatus !== "connected") return false;
-    if (props.activeWorkspaceDisplay.workspaceType !== "local") return false;
-    return (props.workspaceConnectionStateById[props.activeWorkspaceId]?.status ?? "idle") === "connected";
+    void props.clientConnected;
+    void props.vesloServerStatus;
+    void props.activeWorkspaceDisplay;
+    return false;
   });
 
   const soulNavIconClass = () => (soulModeEnabled() ? "soul-nav-icon-active" : "");
@@ -4537,6 +4987,7 @@ export default function SessionView(props: SessionViewProps) {
             >
               <div class={`mx-auto w-full ${chatBodyWidthClass()}`}>
             <Show when={showWorkspaceSetupEmptyState()}>
+              {tempRuntimeUiDiagnosticBadge("workspace-initial")}
               <div class="mx-auto max-w-xl rounded-3xl border border-gray-6 bg-gray-2/60 p-8 text-center shadow-sm">
                 <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-gray-6 bg-gray-1 text-gray-11">
                   <MessageCircle size={24} />
@@ -4611,6 +5062,10 @@ export default function SessionView(props: SessionViewProps) {
                 </button>
               </div>
             </div>
+          </Show>
+
+          <Show when={!showWorkspaceSetupEmptyState()}>
+            {tempRuntimeUiDiagnosticBadge("conversation")}
           </Show>
 
           <Show when={hiddenMessageCount() > 0 || hasServerEarlierMessages()}>
@@ -4774,9 +5229,7 @@ export default function SessionView(props: SessionViewProps) {
       </Show>
 
       <Show when={!showWorkspaceSetupEmptyState()}>
-        <Show when={props.selectedSessionId ?? "__no-session"} keyed>
-          {(_sessionKey) => (
-            <>
+        <>
               <Show when={props.aiAccessBlockedReason}>
                 <div class="mx-auto mb-3 w-full max-w-[min(100%,72rem)] rounded-2xl border border-amber-7/30 bg-amber-2/30 px-4 py-3 text-sm text-amber-12">
                   {props.aiAccessBlockedReason}
@@ -4792,12 +5245,31 @@ export default function SessionView(props: SessionViewProps) {
                   />
                 </div>
               </Show>
+              <Show when={!props.selectedSessionId}>
+                <div class={`mx-auto mb-5 flex w-full ${railWidthClass()} flex-col items-center gap-3 text-center`}>
+                  <ComposerTargetPicker
+                    options={props.composerTargetOptions}
+                    activeTargetId={props.activeComposerTargetId}
+                    disabled={props.busy}
+                    onSelect={(targetId) => {
+                      void handleComposerTargetSelect(targetId);
+                    }}
+                  />
+                  <h2
+                    data-testid="composer-entry-target-heading"
+                    class="font-product type-title-sm w-full text-balance text-dls-text"
+                  >
+                    {composerEntryHeading()}
+                  </h2>
+                </div>
+              </Show>
               <Composer
                 initialDraft={props.composerDraft}
                 prompt={props.composerDraft.text}
                 developerMode={props.developerMode}
                 busy={props.busy}
                 isStreaming={showRunIndicator()}
+                stopShortcutConfirmPending={escapeStopConfirmationPending()}
                 compactTopSpacing={todoCount() > 0}
                 compactWidth={useCompactCenterColumn()}
                 onSend={handleSendPrompt}
@@ -4830,9 +5302,7 @@ export default function SessionView(props: SessionViewProps) {
                   </span>
                 </div>
               </div>
-            </>
-          )}
-        </Show>
+        </>
       </Show>
 
       </main>
@@ -5031,6 +5501,14 @@ export default function SessionView(props: SessionViewProps) {
             }
         }
         exportDisabledReason={exportDisabledReason()}
+      />
+
+      <ComposerTargetConflictModal
+        conflict={composerTargetConflict()}
+        onResolve={(resolution) => {
+          void resolveComposerTargetConflictModal(resolution);
+        }}
+        onCancel={() => setComposerTargetConflict(null)}
       />
 
       <Show when={props.activePermission}>

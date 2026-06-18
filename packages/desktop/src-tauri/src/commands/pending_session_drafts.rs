@@ -1016,7 +1016,13 @@ mod tests {
         updated.composer.resolved_text = Some("Updated draft text".to_string());
 
         let error = put_pending_session_draft_with_commit_hook(dir.path(), updated, |target_dir| {
-            fs::write(target_dir, b"conflict").map_err(|write_error| {
+            fs::create_dir_all(target_dir).map_err(|create_error| {
+                format!(
+                    "failed to create injected conflict dir at {}: {create_error}",
+                    target_dir.display()
+                )
+            })?;
+            fs::write(target_dir.join("conflict.txt"), b"conflict").map_err(|write_error| {
                 format!(
                     "failed to create injected conflict at {}: {write_error}",
                     target_dir.display()

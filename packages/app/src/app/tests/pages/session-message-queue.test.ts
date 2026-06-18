@@ -100,6 +100,11 @@ test("idle transition drains only after a non-idle status and only when queue is
     /createEffect\(\s*on\(\s*\(\) => props\.sessionStatus,\s*\(status, previousStatus\) => \{\s*if \(previousStatus === undefined \|\| previousStatus === "idle" \|\| status !== "idle"\) return;\s*const sessionKey = currentSessionQueueKey\(\);\s*if \(queuePausedForSessionKey\(sessionKey\)\) return;\s*void drainNextQueuedDraft\("queue-drain", sessionKey\);/s,
     "idle transitions should drain only after a previous non-idle status and while not paused",
   );
+  assert.match(
+    source,
+    /const sessionId = sessionIdForQueueKey\(sessionKey\);[\s\S]*if \(!sessionId\) continue;[\s\S]*previousStatuses\[sessionId\][\s\S]*statuses\[sessionId\]/s,
+    "background queue status checks should resolve scoped UI keys back to raw session ids",
+  );
 });
 
 test("queued drain uses a stable session key and guards stale navigation", () => {
@@ -117,7 +122,7 @@ test("queued drain uses a stable session key and guards stale navigation", () =>
 
   assert.match(
     source,
-    /const promptSendOptions:[\s\S]*targetSessionId \|\| options\.sendTraceId \|\| pendingSessionKeyBeforeHandoff[\s\S]*\.\.\.\(targetSessionId \? \{ targetSessionId \} : \{\}\),[\s\S]*\.\.\.\(options\.sendTraceId \? \{ sendTraceId: options\.sendTraceId \} : \{\}\),[\s\S]*props\.sendPromptAsync\(draft, promptSendOptions\)/s,
+    /const promptSendOptions:[\s\S]*clientMessageId: string;[\s\S]*origin: SessionSendOrigin;[\s\S]*= \{[\s\S]*clientMessageId,[\s\S]*origin,[\s\S]*\.\.\.\(targetSessionId \? \{ targetSessionId \} : \{\}\),[\s\S]*\.\.\.\(options\.sendTraceId \? \{ sendTraceId: options\.sendTraceId \} : \{\}\),[\s\S]*props\.sendPromptAsync\(draft, promptSendOptions\)/s,
     "queue drains should pass their captured target session and trace id to the parent send path",
   );
 
@@ -148,6 +153,32 @@ test("pending draft queues remap to the real session key without replacing exist
   );
 });
 
+test("session queue keys follow the UI conversation workspace scope", () => {
+  assert.match(
+    source,
+    /activeUiConversationRef\?: UiConversationRef;/,
+    "session props should accept the UI conversation scope used by the app-level selection controller",
+  );
+
+  assert.match(
+    source,
+    /const activeUiConversationWorkspaceId = \(\) =>[\s\S]*props\.activeUiConversationRef\?\.workspaceId\?\.trim\(\) \|\| props\.activeWorkspaceId \|\| "default";/,
+    "session queue keys should prefer the visible conversation workspace over the active workspace fallback",
+  );
+
+  assert.match(
+    source,
+    /const workspaceIdForSessionQueue = \(sessionId: string\) => \{[\s\S]*ref\.sessionId\?\.trim\(\)[\s\S]*ref\.conversationId\?\.trim\(\)[\s\S]*ref\.opencodeSessionId\?\.trim\(\)[\s\S]*return ref\.workspaceId\?\.trim\(\) \|\| activeUiConversationWorkspaceId\(\);[\s\S]*\};/s,
+    "real session queue keys should stay anchored to the scoped visible conversation across send-time workspace activation",
+  );
+
+  assert.match(
+    appSource,
+    /activeUiConversationRef: activeUiConversationRef\(\),/,
+    "app should pass the scoped visible conversation identity into SessionView",
+  );
+});
+
 test("accepted first pending submit captures and remaps the pending queue key", () => {
   assert.match(
     source,
@@ -157,7 +188,7 @@ test("accepted first pending submit captures and remaps the pending queue key", 
 
   assert.match(
     source,
-    /const pendingSessionBaseKeyBeforeHandoff =[\s\S]*const pendingSessionKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey\(sessionKey\) \? sessionKey : null;[\s\S]*setPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff\);[\s\S]*const accepted = await \(options\.replaceMessageId[\s\S]*if \(accepted && pendingSessionKeyBeforeHandoff\) \{[\s\S]*const materializedSessionId = materializedSessionIdFromHandoff \?\? props\.selectedSessionId\?\.trim\(\);[\s\S]*materializePendingHandoffToSession\(materializedSessionId\);/s,
+    /const pendingSessionBaseKeyBeforeHandoff =[\s\S]*const pendingSessionKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey\(sessionKey\) \? sessionKey : null;[\s\S]*setPendingQueueKeyAwaitingSessionIdForBaseKey\(pendingSessionBaseKeyBeforeHandoff, pendingSessionKeyBeforeHandoff\);[\s\S]*const accepted = await \(options\.replaceMessageId[\s\S]*if \(accepted && pendingSessionKeyBeforeHandoff\) \{[\s\S]*const materializedSessionId = materializedSessionIdFromHandoff \?\? props\.selectedSessionId\?\.trim\(\);[\s\S]*materializePendingHandoffToSession\(\{[\s\S]*pendingSessionKey: pendingSessionKeyBeforeHandoff,[\s\S]*sessionId: materializedSessionId,[\s\S]*clientMessageId,[\s\S]*\}\);/s,
     "sendPromptImmediate should capture the pending queue key before await and remap it after an accepted first submit",
   );
 

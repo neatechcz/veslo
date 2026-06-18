@@ -15,8 +15,13 @@ test("startHost clears the stale live client before launching a different local 
 test("refreshEngine still skips state sync when browsing a different local workspace", () => {
   assert.match(
     source,
-    /const browsingDifferentLocalWorkspace =[\s\S]*activeWorkspaceRoot !== engineProjectDir;/s,
-    "refreshEngine should detect when the active local workspace is only being browsed while the engine still points at another root",
+    /const engineSnapshotMatchesActiveWorkspace =[\s\S]*!activeWorkspaceRoot[\s\S]*!engineProjectDir[\s\S]*activeWorkspaceRoot === engineProjectDir;/s,
+    "refreshEngine should only sync mutable runtime state when the engine snapshot belongs to the active local workspace",
+  );
+  assert.match(
+    source,
+    /if \(info\.projectDir && syncLocalState && engineSnapshotMatchesActiveWorkspace\) \{[\s\S]*deps\.setProjectDir\(info\.projectDir\);[\s\S]*\}/s,
+    "refreshEngine must not overwrite projectDir with a different workspace's engine snapshot",
   );
 });
 

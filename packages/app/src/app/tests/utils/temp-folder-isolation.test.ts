@@ -12,7 +12,7 @@ const pendingDraftControllerSource = readFileSync(
   new URL("../../context/pending-session-draft-controller.ts", import.meta.url),
   "utf8",
 );
-const workspaceSource = readFileSync(new URL("../../context/workspace.ts", import.meta.url), "utf8");
+const workspaceSource = readFileSync(new URL("../../context/workspace-local-workspaces.ts", import.meta.url), "utf8");
 
 // ---------------------------------------------------------------------------
 // Temporary folder isolation tests
@@ -671,7 +671,7 @@ test("after pending draft deletion New session falls back to a fresh private wor
   );
   assert.match(
     workspaceSource,
-    /const runId = makeRunId\(\)\.replace\(\/\[\^a-z0-9-\]\+\/gi, ""\)\.slice\(0, 24\) \|\| `\$\{Date\.now\(\)\}`;/,
+    /const runId = deps\.makeRunId\(\)\.replace\(\/\[\^a-z0-9-\]\+\/gi, ""\)\.slice\(0, 24\) \|\| `\$\{Date\.now\(\)\}`;/,
     "scratch workspaces should still derive a fresh unique run id",
   );
   assert.match(
@@ -728,7 +728,7 @@ test("forgetWorkspace reports cleanup success to callers", () => {
   );
   assert.match(
     workspaceSource,
-    /return true;[\s\S]*\} catch \(e\) \{[\s\S]*options\.setError\(addOpencodeCacheHint\(message\)\);[\s\S]*return false;[\s\S]*\}/s,
+    /return true;[\s\S]*\} catch \(e\) \{[\s\S]*deps\.setError\(addOpencodeCacheHint\(message\)\);[\s\S]*return false;[\s\S]*\}/s,
     "forgetWorkspace should return false when cleanup throws instead of silently swallowing the failure",
   );
 });

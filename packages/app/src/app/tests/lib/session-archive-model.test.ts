@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  archivedSidebarSessionKeyFromRecord,
   buildArchivedSessionDisplayLabel,
+  buildArchivedSidebarSessionKey,
   buildLegacyArchiveMigration,
   buildSessionArchiveSnapshot,
   buildWorkspaceIdentity,
@@ -30,6 +32,21 @@ test("sortArchivedSessionsByRecency orders newest archived session first", () =>
   ];
 
   assert.deepEqual(sortArchivedSessionsByRecency(items).map((item) => item.sessionId), ["new", "old"]);
+});
+
+test("buildArchivedSidebarSessionKey scopes archived sidebar filtering by workspace", () => {
+  assert.notEqual(
+    buildArchivedSidebarSessionKey({ workspaceId: "workspace-a", sessionId: "shared" }),
+    buildArchivedSidebarSessionKey({ workspaceId: "workspace-b", sessionId: "shared" }),
+  );
+  assert.equal(
+    archivedSidebarSessionKeyFromRecord({
+      workspaceIdAtArchive: "workspace-a",
+      sessionId: "shared",
+    }),
+    buildArchivedSidebarSessionKey({ workspaceId: "workspace-a", sessionId: "shared" }),
+  );
+  assert.equal(buildArchivedSidebarSessionKey({ workspaceId: "", sessionId: "legacy" }), "legacy");
 });
 
 test("buildArchivedSessionDisplayLabel falls back to project and workspace snapshots", () => {

@@ -3,6 +3,7 @@ import test from "node:test";
 import { marked } from "marked";
 
 import {
+  normalizeFilePath,
   renderCodeSpanWithLink,
   renderInlineTextWithLinks,
   splitTextWithStandalonePathLinks,
@@ -81,6 +82,21 @@ test("renders a code-formatted file path as a clickable code link", () => {
   );
   assert.match(html, /<code class="inline-code-class">/);
   assert.match(html, />\/Users\/vaclavsoukup\/ai discussion projects\/test\/ulice_brno\.xlsx<\/code><\/a>$/);
+});
+
+test("normalizes WSL sandbox file links to host workspace paths", () => {
+  assert.equal(
+    normalizeFilePath("/workspace/reports/result.pdf", "C:/Users/me/project"),
+    "C:/Users/me/project/reports/result.pdf",
+  );
+  assert.equal(
+    normalizeFilePath("file:///workspace/screens/result.png", "C:/Users/me/project"),
+    "C:/Users/me/project/screens/result.png",
+  );
+  assert.equal(
+    normalizeFilePath("/mnt/c/Users/me/project/reports/result.pdf", "C:/Users/me/project"),
+    "C:/Users/me/project/reports/result.pdf",
+  );
 });
 
 test("does not treat Czech company suffix s.r.o. as a file link", () => {

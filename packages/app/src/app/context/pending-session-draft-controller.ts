@@ -33,6 +33,7 @@ type PendingDraftWorkspaceDisplay = {
 type PendingDraftWorkspace = {
   activeWorkspaceId: () => string;
   activeWorkspaceDisplay: () => PendingDraftWorkspaceDisplay;
+  workspaces: () => PendingDraftWorkspaceDisplay[];
   activateWorkspace: (
     workspaceId: string,
     options: WorkspaceActivationOptions,
@@ -457,8 +458,10 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
           promoteToFront: true,
         }),
       openPendingDraft: () => {
-        const activeWorkspace = deps.workspace.activeWorkspaceDisplay();
-        const directory = activeWorkspace.directory?.trim() || activeWorkspace.path?.trim() || "";
+        const activeWorkspaceId = deps.workspace.activeWorkspaceId().trim();
+        if (activeWorkspaceId !== id) return "";
+        const targetWorkspace = deps.workspace.workspaces().find((workspace) => workspace.id?.trim() === id) ?? null;
+        const directory = targetWorkspace?.directory?.trim() || targetWorkspace?.path?.trim() || "";
         if (!directory) return "";
         return openDirectoryPendingDraft({ workspaceId: id, directory });
       },

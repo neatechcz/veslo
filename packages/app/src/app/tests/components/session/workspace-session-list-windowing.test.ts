@@ -3,9 +3,11 @@ import test from "node:test";
 
 import {
   CHAT_SIDEBAR_COLLAPSE_THRESHOLD_PX,
+  CHAT_SIDEBAR_COMPACT_HEIGHT_PX,
   CHAT_SIDEBAR_DEFAULT_HEIGHT_PX,
   CHAT_SIDEBAR_MAX_HEIGHT_PX,
   CHAT_SIDEBAR_MIN_HEIGHT_PX,
+  compactChatSidebarHeight,
   computeVisibleRowLoadCount,
   planVisibleRowLoadMore,
   PROJECT_VISIBLE_DEFAULT,
@@ -26,6 +28,7 @@ test("project window defaults and step size are stable", () => {
   assert.equal(PROJECT_VISIBLE_DEFAULT, 7);
   assert.equal(VIEW_LOAD_MORE_STEP, 20);
   assert.equal(RECENT_OVERSCAN_ROWS, 3);
+  assert.equal(CHAT_SIDEBAR_COMPACT_HEIGHT_PX, 120);
   assert.equal(CHAT_SIDEBAR_DEFAULT_HEIGHT_PX, 288);
   assert.equal(CHAT_SIDEBAR_MIN_HEIGHT_PX, 56);
   assert.equal(CHAT_SIDEBAR_MAX_HEIGHT_PX, 480);
@@ -101,6 +104,12 @@ test("chat sidebar height clamps to useful minimum and available maximum", () =>
   assert.equal(clampChatSidebarHeight(20), CHAT_SIDEBAR_MIN_HEIGHT_PX);
   assert.equal(clampChatSidebarHeight(999), CHAT_SIDEBAR_MAX_HEIGHT_PX);
   assert.equal(clampChatSidebarHeight(420, 600), 390);
+});
+
+test("compact chat sidebar height shows at most about three rows", () => {
+  assert.equal(compactChatSidebarHeight(600), CHAT_SIDEBAR_COMPACT_HEIGHT_PX);
+  assert.equal(compactChatSidebarHeight(120), 78);
+  assert.equal(compactChatSidebarHeight(40), CHAT_SIDEBAR_MIN_HEIGHT_PX);
 });
 
 test("chat sidebar maximum follows available sidebar height with a hard cap", () => {

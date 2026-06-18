@@ -17,6 +17,7 @@ import { perfNow, recordPerfLog } from "../../lib/perf-log";
 import { getTaskPartSubagentInfo, isVesloInternalSubagentType } from "../../lib/internal-subagents";
 import { currentLocale, t } from "../../../i18n";
 import { buildTimelineDetailModel, type TimelineRowModel, type TimelineRowType, type TimelineSectionKind } from "./timeline-detail-model.js";
+import MediaEvidenceStrip from "./media-evidence-strip.js";
 import {
   createTimelineSectionStateId,
   reconcileTimelineOpenSectionIds,
@@ -300,6 +301,27 @@ export default function MessageList(props: MessageListProps) {
       0,
     );
   };
+  const countSectionMediaEvidence = (rows: TimelineRowView[], kind: "created" | "analyzed") =>
+    rows.reduce(
+      (count, entry) => count + (entry.row.mediaEvidence ?? []).filter((item) => item.kind === kind).length,
+      0,
+    );
+  const countTimelineMediaEvidence = (sections: TimelineSectionView[], kind: "created" | "analyzed") =>
+    sections.reduce((count, section) => count + countSectionMediaEvidence(section.rows, kind), 0);
+  const mediaEvidenceSummary = (count: number, kind: "created" | "analyzed") => {
+    if (count <= 0) return "";
+    if (kind === "created") {
+      return plural(count, "session.media_evidence_image_created_one", "session.media_evidence_image_created_other");
+    }
+    return plural(count, "session.media_evidence_image_analyzed_one", "session.media_evidence_image_analyzed_other");
+  };
+  const appendSectionMediaEvidenceSummaries = (items: string[], rows: TimelineRowView[]) => {
+    const createdImages = mediaEvidenceSummary(countSectionMediaEvidence(rows, "created"), "created");
+    const analyzedImages = mediaEvidenceSummary(countSectionMediaEvidence(rows, "analyzed"), "analyzed");
+    if (createdImages) items.push(createdImages);
+    if (analyzedImages) items.push(analyzedImages);
+    return items;
+  };
   const localizedSectionTitle = (section: TimelineSectionView) => timelineSectionTitle(section.labelKind);
   const sectionStatusFromRows = (rows: TimelineRowView[]) => {
     if (rows.some((entry) => entry.row.status === "error")) return "error" as const;
@@ -343,10 +365,14 @@ export default function MessageList(props: MessageListProps) {
   const localizedSectionSummary = (section: TimelineSectionView) => {
     switch (section.kind) {
       case "plan": {
+        const items: string[] = [];
         const plans = countSectionRows(section.rows, ["plan"]);
-        return plans === 1
-          ? tr("session.timeline_summary_plan_ready")
-          : tr("session.timeline_summary_plan_steps", { count: String(plans) });
+        items.push(
+          plans === 1
+            ? tr("session.timeline_summary_plan_ready")
+            : tr("session.timeline_summary_plan_steps", { count: String(plans) }),
+        );
+        return appendSectionMediaEvidenceSummaries(items, section.rows).join(" · ");
       }
       case "explore": {
         const items: string[] = [];
@@ -356,31 +382,33 @@ export default function MessageList(props: MessageListProps) {
         if (fileCount > 0) items.push(plural(fileCount, "session.timeline_file_one", "session.timeline_file_other"));
         if (searchCount > 0) items.push(plural(searchCount, "session.timeline_search_one", "session.timeline_search_other"));
         if (listCount > 0) items.push(plural(listCount, "session.timeline_list_one", "session.timeline_list_other"));
-        return items.length > 0 ? items.join(" · ") : tr("session.timeline_context_activity");
+        if (items.length === 0) items.push(tr("session.timeline_context_activity"));
+        return appendSectionMediaEvidenceSummaries(items, section.rows).join(" · ");
       }
       case "action": {
+        const items: string[] = [];
         const actions = countSectionRows(section.rows, ["edit", "write", "task", "skill", "command", "tool"]);
         const thoughts = countSectionRows(section.rows, ["note"]);
-        if (actions > 0 && thoughts > 0) {
-          return [
-            plural(actions, "session.timeline_summary_action_one", "session.timeline_summary_action_other"),
-            plural(thoughts, "session.timeline_summary_thinking_one", "session.timeline_summary_thinking_other"),
-          ].join(" · ");
-        }
-        if (thoughts > 0) {
-          return plural(thoughts, "session.timeline_summary_thinking_one", "session.timeline_summary_thinking_other");
-        }
-        return plural(actions, "session.timeline_summary_action_one", "session.timeline_summary_action_other");
+        if (actions > 0) items.push(plural(actions, "session.timeline_summary_action_one", "session.timeline_summary_action_other"));
+        if (thoughts > 0) items.push(plural(thoughts, "session.timeline_summary_thinking_one", "session.timeline_summary_thinking_other"));
+        if (items.length === 0) items.push(plural(actions, "session.timeline_summary_action_one", "session.timeline_summary_action_other"));
+        return appendSectionMediaEvidenceSummaries(items, section.rows).join(" · ");
       }
-      case "verify":
-        return section.rows.some((entry) => entry.row.status === "error")
-          ? tr("session.timeline_summary_verify_failed")
-          : section.rows.some((entry) => entry.row.status === "running")
-            ? tr("session.timeline_summary_verify_running")
-            : tr("session.timeline_summary_verify_ok");
+      case "verify": {
+        const items = [
+          section.rows.some((entry) => entry.row.status === "error")
+            ? tr("session.timeline_summary_verify_failed")
+            : section.rows.some((entry) => entry.row.status === "running")
+              ? tr("session.timeline_summary_verify_running")
+              : tr("session.timeline_summary_verify_ok"),
+        ];
+        return appendSectionMediaEvidenceSummaries(items, section.rows).join(" · ");
+      }
       case "issues": {
+        const items: string[] = [];
         const issues = countSectionRows(section.rows, ["issue"]);
-        return plural(issues, "session.timeline_summary_issue_one", "session.timeline_summary_issue_other");
+        items.push(plural(issues, "session.timeline_summary_issue_one", "session.timeline_summary_issue_other"));
+        return appendSectionMediaEvidenceSummaries(items, section.rows).join(" · ");
       }
     }
   };
@@ -393,6 +421,8 @@ export default function MessageList(props: MessageListProps) {
     const actionCount = countTimelineRows(sections, ["edit", "write", "task", "skill", "command", "tool"]);
     const thoughtCount = countTimelineRows(sections, ["note"]);
     const issueCount = countTimelineRows(sections, ["issue"]);
+    const createdImageCount = countTimelineMediaEvidence(sections, "created");
+    const analyzedImageCount = countTimelineMediaEvidence(sections, "analyzed");
     const verifySections = sections.filter((section) => section.kind === "verify");
 
     if (planCount > 0) {
@@ -407,6 +437,8 @@ export default function MessageList(props: MessageListProps) {
     if (listCount > 0) items.push(plural(listCount, "session.timeline_list_one", "session.timeline_list_other"));
     if (actionCount > 0) items.push(plural(actionCount, "session.timeline_summary_action_one", "session.timeline_summary_action_other"));
     if (thoughtCount > 0) items.push(plural(thoughtCount, "session.timeline_summary_thinking_one", "session.timeline_summary_thinking_other"));
+    if (createdImageCount > 0) items.push(mediaEvidenceSummary(createdImageCount, "created"));
+    if (analyzedImageCount > 0) items.push(mediaEvidenceSummary(analyzedImageCount, "analyzed"));
     if (verifySections.length > 0) {
       const hasVerifyError = verifySections.some((section) => section.rows.some((entry) => entry.row.status === "error"));
       const hasVerifyRunning = verifySections.some((section) => section.rows.some((entry) => entry.row.status === "running"));
@@ -725,19 +757,41 @@ export default function MessageList(props: MessageListProps) {
   const canShowTimelineTechnicalDetail = (entry: { part?: Part; row: TimelineRowModel }) =>
     Boolean(entry.row.technicalDetail) && (entry.part?.type !== "reasoning" || props.showThinking);
 
-  const ProgressComment = (commentProps: { item: ProgressCommentItem }) => (
-    <div data-testid="session-progress-comment" class="font-reading type-reading-md text-gray-12 antialiased">
-      <PartView
-        part={commentProps.item.part}
-        developerMode={props.developerMode}
-        showThinking={props.showThinking}
-        workspaceRoot={props.workspaceRoot}
-        tone="light"
-        renderMarkdown={true}
-        highlightQuery={props.searchHighlightQuery}
-      />
-    </div>
-  );
+  const ProgressComment = (commentProps: { item: ProgressCommentItem }) => {
+    const commentCopyId = () => `progress-comment:${commentProps.item.id}`;
+    const copyLabel = () => __vesloT("common.copy", __vesloCurrentLocale());
+    return (
+      <div data-testid="session-progress-comment" class="group/progress-comment relative font-reading type-reading-md text-gray-12 antialiased">
+        <div data-testid="session-progress-comment-value" class="select-text">
+          <PartView
+            part={commentProps.item.part}
+            developerMode={props.developerMode}
+            showThinking={props.showThinking}
+            workspaceRoot={props.workspaceRoot}
+            tone="light"
+            renderMarkdown={true}
+            highlightQuery={props.searchHighlightQuery}
+          />
+        </div>
+        <button
+          type="button"
+          data-testid="session-progress-comment-copy"
+          class="absolute -right-2 top-0 rounded p-1 text-dls-secondary opacity-0 pointer-events-none transition-colors transition-opacity hover:bg-dls-hover hover:text-dls-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.24)] group-hover/progress-comment:opacity-100 group-hover/progress-comment:pointer-events-auto group-focus-within/progress-comment:opacity-100 group-focus-within/progress-comment:pointer-events-auto select-none"
+          title={copyLabel()}
+          aria-label={copyLabel()}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            handleCopy(partToText(commentProps.item.part), commentCopyId());
+          }}
+        >
+          <Show when={copyingId() === commentCopyId()} fallback={<Copy size={12} />}>
+            <Check size={12} class="text-green-10" />
+          </Show>
+        </button>
+      </div>
+    );
+  };
 
   const ProgressStepGroup = (stepProps: { item: ProgressStepItem }) => (
     <div data-testid="session-progress-step-group">
@@ -900,6 +954,7 @@ export default function MessageList(props: MessageListProps) {
       buildTimelineDetailModel({
         parts: allStepParts(),
         latestLabel: latestStepLabel(),
+        workspaceRoot: props.workspaceRoot,
       }),
     );
     const timelineSections = createMemo<TimelineSectionView[]>(() => {
@@ -1234,16 +1289,47 @@ export default function MessageList(props: MessageListProps) {
                                         </Show>
                                       </div>
 
+                                      <Show when={row.mediaEvidence?.length}>
+                                        <MediaEvidenceStrip evidence={row.mediaEvidence ?? []} />
+                                      </Show>
+
                                       <Show when={canShowTimelineTechnicalDetail(entry)}>
-                                        <details class="mt-2">
-                                          <summary class="font-product type-ui-xs inline-flex cursor-pointer list-none items-center gap-1 text-gray-10 hover:text-gray-11">
-                                            <ChevronDown size={12} class="shrink-0" />
-                                            {tr("session.timeline_technical_detail")}
-                                          </summary>
-                                          <pre class="font-mono type-ui-xs mt-1 whitespace-pre-wrap break-all rounded-xl bg-gray-2 px-2 py-1 text-gray-10">
-                                            <code>{row.technicalDetail}</code>
-                                          </pre>
-                                        </details>
+                                        {(() => {
+                                          const detailCopyId = `${entry.id}:technical-detail:copy`;
+                                          const copyLabel = __vesloT("common.copy", __vesloCurrentLocale());
+                                          return (
+                                            <details class="mt-2">
+                                              <summary class="font-product type-ui-xs inline-flex cursor-pointer list-none items-center gap-1 text-gray-10 hover:text-gray-11">
+                                                <ChevronDown size={12} class="shrink-0" />
+                                                {tr("session.timeline_technical_detail")}
+                                              </summary>
+                                              <div class="mt-1 flex items-start gap-2 rounded-xl bg-gray-2 px-2 py-1">
+                                                <pre
+                                                  data-testid="session-timeline-technical-detail-value"
+                                                  class="min-w-0 flex-1 select-text whitespace-pre-wrap break-all bg-transparent p-0 font-mono type-ui-xs text-gray-10"
+                                                >
+                                                  <code>{row.technicalDetail}</code>
+                                                </pre>
+                                                <button
+                                                  type="button"
+                                                  data-testid="session-timeline-technical-detail-copy"
+                                                  class="mt-0.5 shrink-0 rounded p-1 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.24)] select-none"
+                                                  title={copyLabel}
+                                                  aria-label={copyLabel}
+                                                  onClick={(event) => {
+                                                    event.preventDefault();
+                                                    event.stopPropagation();
+                                                    handleCopy(String(row.technicalDetail ?? ""), detailCopyId);
+                                                  }}
+                                                >
+                                                  <Show when={copyingId() === detailCopyId} fallback={<Copy size={12} />}>
+                                                    <Check size={12} class="text-green-10" />
+                                                  </Show>
+                                                </button>
+                                              </div>
+                                            </details>
+                                          );
+                                        })()}
                                       </Show>
                                     </div>
                                   </div>

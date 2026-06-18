@@ -47,7 +47,7 @@ test("route resume effect executes controller decisions instead of owning route 
 test("top-level session route effect executes controller decisions instead of owning fallback policy inline", () => {
   const sessionRouteSource = sectionBetween(
     '      case "session-route": {',
-    '    }\n  });',
+    "  return (",
     "top-level session route effect",
   );
 

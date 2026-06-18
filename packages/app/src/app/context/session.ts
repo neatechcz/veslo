@@ -24,10 +24,11 @@ import {
   normalizeDirectoryPath,
   normalizeEvent,
   normalizeSessionStatus,
+  normalizeTodoItems,
   sessionDirectoryMatchesRoot,
   safeStringify,
 } from "../utils";
-import { unwrap } from "../lib/opencode";
+import { unwrap, type OpencodeAuth } from "../lib/opencode";
 import { engineSseSubscribe, isEngineSseAvailable } from "../lib/engine-sse";
 import type { WorkspaceRouting, RoutingClient } from "./workspace-routing";
 import { finishPerf, perfNow, recordPerfLog, runtimePerfAuditEnabled } from "../lib/perf-log";
@@ -58,6 +59,24 @@ type RuntimeEffectTraceRoot = typeof window & {
 function activeSendTraceId() {
   if (typeof window === "undefined") return null;
   return (window as RuntimeEffectTraceRoot).__vesloActiveSendTraceId ?? null;
+}
+
+function engineSseAuthOptions(auth?: OpencodeAuth | null) {
+  if (!auth) return {};
+  if (auth.mode === "veslo") {
+    return { bearerToken: auth.token ?? null };
+  }
+  return {
+    username: auth.username ?? null,
+    password: auth.password ?? null,
+  };
+}
+
+function shouldReleaseStaleWorkspaceRoute(wsId: string, activeWs: string, message: string) {
+  if (!wsId || wsId === activeWs) return false;
+  return /engine_not_running|Workspace client is stale|Failed to fetch|Request timed out|ECONN|upstream status (?:401|404|502|503)|status (?:401|404|502|503)|Invalid bearer token|unauthorized/i.test(
+    message,
+  );
 }
 
 function recordSessionStatusTrace(event: string, payload?: Record<string, unknown>) {
@@ -205,6 +224,7 @@ export function createSessionStore(options: {
   activeWorkspaceRoot: () => string;
   selectedSessionId: () => string | null;
   setSelectedSessionId: (id: string | null) => void;
+  selectSessionScopeKey?: (sessionID: string) => string;
   sessionDirectoryOverrideById?: () => Record<string, string>;
   developerMode: () => boolean;
   setError: (message: string | null) => void;
@@ -319,6 +339,10 @@ export function createSessionStore(options: {
     Record<string, PendingPermission[]>
   >({});
   let pendingPermissionsRefreshInFlight: Promise<void> | null = null;
+  const [pendingQuestionsByWs, setPendingQuestionsByWs] = createSignal<
+    Record<string, PendingQuestion[]>
+  >({});
+  let pendingQuestionsRefreshInFlight: Promise<void> | null = null;
 
   // VSLO-171 — flattened view of all per-workspace permissions for the
   // cross-workspace UI (sidebar badges, activePermission fallback).
@@ -335,6 +359,12 @@ export function createSessionStore(options: {
     const counts: Record<string, number> = {};
     for (const [wsId, list] of Object.entries(byWs)) counts[wsId] = list.length;
     return counts;
+  });
+  const allPendingQuestions = createMemo(() => {
+    const byWs = pendingQuestionsByWs();
+    const result: PendingQuestion[] = [];
+    for (const list of Object.values(byWs)) result.push(...list);
+    return result;
   });
 
   const skillPathPattern = /[\\/]\.opencode[\\/](skill|skills)[\\/]/i;
@@ -827,7 +857,19 @@ export function createSessionStore(options: {
       }
     }
 
-    const nextSessions = sortSessionsByActivity(Array.from(merged.values()));
+    let nextSessions = sortSessionsByActivity(Array.from(merged.values()));
+    const selectedSessionId = options.selectedSessionId()?.trim() ?? "";
+    if (selectedSessionId && !nextSessions.some((session) => session.id === selectedSessionId)) {
+      const selectedSession = store.sessions.find((session) => session.id === selectedSessionId) ?? null;
+      const selectedSessionDirectory = selectedSession ? resolveSessionDirectory(selectedSession) : "";
+      if (selectedSession && (!root || sessionDirectoryMatchesRoot(selectedSessionDirectory, root))) {
+        nextSessions = sortSessionsByActivity([selectedSession, ...nextSessions]);
+        sessionDebug("sessions:load:retained-selected", {
+          sessionID: selectedSession.id,
+          root: root || null,
+        });
+      }
+    }
     sessionDebug("sessions:load:filtered", { root: root || null, count: nextSessions.length });
 
     // Rebuild the workspace session ID set so SSE event filtering stays in sync.
@@ -839,8 +881,11 @@ export function createSessionStore(options: {
     setStore("sessions", reconcile(nextSessions, { key: "id" }));
   }
 
-  async function renameSession(sessionID: string, title: string) {
-    const c = options.routing.active();
+  async function renameSession(sessionID: string, title: string, workspaceId?: string | null) {
+    const ownerWorkspaceId = workspaceId?.trim() ?? "";
+    const c = ownerWorkspaceId
+      ? options.routing.client(ownerWorkspaceId)
+      : options.routing.active();
     if (!c) return;
     const trimmed = title.trim();
     if (!trimmed) {
@@ -922,6 +967,7 @@ export function createSessionStore(options: {
         return;
       }
       let errorCount = 0;
+      let releasedRouteCount = 0;
       await Promise.all(
         clientsToProbe.map(async ({ wsId, client }) => {
           try {
@@ -933,7 +979,17 @@ export function createSessionStore(options: {
               workspaceId: wsId,
               receivedAt: byId.get(perm.id)?.receivedAt ?? now,
             }));
-          } catch {
+          } catch (error) {
+            const message = error instanceof Error ? error.message : safeStringify(error);
+            if (shouldReleaseStaleWorkspaceRoute(wsId, activeWs, message)) {
+              releasedRouteCount += 1;
+              options.routing.release(wsId);
+              sessionWarn("permissions:released-stale-route", {
+                workspaceId: wsId,
+                error: truncateErrorField(message),
+              });
+              return;
+            }
             errorCount += 1;
             nextByWs[wsId] = prevByWs[wsId] ?? [];
           }
@@ -949,6 +1005,7 @@ export function createSessionStore(options: {
         source: "workspace-routing",
         permissionCount: Object.values(nextByWs).reduce((sum, list) => sum + list.length, 0),
         errorCount,
+        releasedRouteCount,
       });
     })();
 
@@ -963,13 +1020,71 @@ export function createSessionStore(options: {
   }
 
   async function refreshPendingQuestions() {
-    const c = options.routing.active();
-    if (!c) return;
-    const list = unwrap(await c.question.list());
-    const now = Date.now();
-    const byId = new Map(store.pendingQuestions.map((q) => [q.id, q] as const));
-    const next = list.map((q) => ({ ...q, receivedAt: byId.get(q.id)?.receivedAt ?? now }));
-    setStore("pendingQuestions", next);
+    if (pendingQuestionsRefreshInFlight) return pendingQuestionsRefreshInFlight;
+
+    const run = (async () => {
+      const activeWs = options.routing.activeWorkspaceId();
+      const clientsToProbe: Array<{ wsId: string; client: RoutingClient }> = [];
+      options.routing.forEach((wsId, client) => {
+        clientsToProbe.push({ wsId, client });
+      });
+      const now = Date.now();
+      const prevByWs = pendingQuestionsByWs();
+
+      if (clientsToProbe.length === 0) {
+        const c = options.routing.active();
+        if (!c) return;
+        const list = unwrap(await c.question.list());
+        const byId = new Map(store.pendingQuestions.map((q) => [q.id, q] as const));
+        const next = list.map((q) => ({
+          ...q,
+          workspaceId: activeWs || undefined,
+          receivedAt: byId.get(q.id)?.receivedAt ?? now,
+        }));
+        setStore("pendingQuestions", next);
+        if (activeWs) setPendingQuestionsByWs({ [activeWs]: next });
+        return;
+      }
+
+      const nextByWs: Record<string, PendingQuestion[]> = {};
+      await Promise.all(
+        clientsToProbe.map(async ({ wsId, client }) => {
+          try {
+            const list = unwrap(await client.question.list());
+            const prev = prevByWs[wsId] ?? [];
+            const byId = new Map(prev.map((q) => [q.id, q] as const));
+            nextByWs[wsId] = list.map((q) => ({
+              ...q,
+              workspaceId: wsId,
+              receivedAt: byId.get(q.id)?.receivedAt ?? now,
+            }));
+          } catch (error) {
+            const message = error instanceof Error ? error.message : safeStringify(error);
+            if (shouldReleaseStaleWorkspaceRoute(wsId, activeWs, message)) {
+              options.routing.release(wsId);
+              sessionWarn("questions:released-stale-route", {
+                workspaceId: wsId,
+                error: truncateErrorField(message),
+              });
+              return;
+            }
+            nextByWs[wsId] = prevByWs[wsId] ?? [];
+          }
+        }),
+      );
+      setPendingQuestionsByWs(nextByWs);
+      const activeList = activeWs ? nextByWs[activeWs] ?? [] : [];
+      setStore("pendingQuestions", activeList);
+    })();
+
+    pendingQuestionsRefreshInFlight = run;
+    try {
+      await run;
+    } finally {
+      if (pendingQuestionsRefreshInFlight === run) {
+        pendingQuestionsRefreshInFlight = null;
+      }
+    }
   }
 
   function setMessagesForSession(sessionID: string, list: MessageWithParts[]) {
@@ -1056,11 +1171,13 @@ export function createSessionStore(options: {
     const perfEnabled = options.developerMode();
     options.setSelectedSessionId(sessionID);
     options.setError(null);
+    const selectionKey = options.selectSessionScopeKey?.(sessionID)?.trim() || sessionID;
 
-    const existing = selectGuard.tryDedup(sessionID);
+    const existing = selectGuard.tryDedup(selectionKey);
     if (existing) {
       recordPerfLog(perfEnabled, "session.select", "dedupe join", {
         sessionID,
+        selectionKey,
       });
       return existing;
     }
@@ -1073,11 +1190,15 @@ export function createSessionStore(options: {
       recordPerfLog(perfEnabled, "session.select", event, {
         runId,
         sessionID,
+        selectionKey,
         elapsedMs,
         ...(payload ?? {}),
       });
     };
-    const isStale = () => version !== selectGuard.currentVersion() || options.selectedSessionId() !== sessionID;
+    const isStale = () =>
+      version !== selectGuard.currentVersion() ||
+      options.selectedSessionId() !== sessionID ||
+      (options.selectSessionScopeKey?.(sessionID)?.trim() || sessionID) !== selectionKey;
     const abortIfStale = (reason: string) => {
       if (!isStale()) return false;
       mark(`aborting: ${reason}`);
@@ -1152,7 +1273,7 @@ export function createSessionStore(options: {
           const list = unwrap(await withTimeout(c.session.todo({ sessionID }), 8000, "session.todo"));
           mark("session.todo done");
           if (abortIfStale("selection changed before todos applied")) return;
-          setStore("todos", sessionID, list);
+          setStore("todos", sessionID, normalizeTodoItems(list));
         } catch (error) {
           mark("session.todo failed/timeout", {
             error: error instanceof Error ? error.message : safeStringify(error),
@@ -1174,12 +1295,12 @@ export function createSessionStore(options: {
       })();
     })();
 
-    selectGuard.register(sessionID, version, run);
+    selectGuard.register(selectionKey, version, run);
     try {
       await run;
     } finally {
       setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
-      selectGuard.cleanup(sessionID, run);
+      selectGuard.cleanup(selectionKey, run);
       options.onSessionLoadComplete?.();
     }
   }
@@ -1237,7 +1358,11 @@ export function createSessionStore(options: {
   }
 
   async function respondQuestion(requestID: string, answers: string[][]) {
-    const c = options.routing.active();
+    const question = allPendingQuestions().find((q) => q.id === requestID)
+      ?? store.pendingQuestions.find((q) => q.id === requestID);
+    const c = question?.workspaceId
+      ? options.routing.client(question.workspaceId)
+      : options.routing.active();
     if (!c || questionReplyBusy()) return;
 
     setQuestionReplyBusy(true);
@@ -1254,7 +1379,11 @@ export function createSessionStore(options: {
   }
 
   async function rejectQuestion(requestID: string) {
-    const c = options.routing.active();
+    const question = allPendingQuestions().find((q) => q.id === requestID)
+      ?? store.pendingQuestions.find((q) => q.id === requestID);
+    const c = question?.workspaceId
+      ? options.routing.client(question.workspaceId)
+      : options.routing.active();
     if (!c || questionReplyBusy()) return;
 
     setQuestionReplyBusy(true);
@@ -1327,6 +1456,14 @@ export function createSessionStore(options: {
     if (id) {
       const scoped = store.pendingQuestions.find((q) => q.sessionID === id) ?? null;
       if (scoped) return scoped;
+      const scopedFromAnyWorkspace = allPendingQuestions().find((q) => q.sessionID === id) ?? null;
+      if (scopedFromAnyWorkspace) return scopedFromAnyWorkspace;
+    }
+    const all = allPendingQuestions();
+    if (all.length > 0) {
+      const activeWsId = options.routing.activeWorkspaceId();
+      const fromActive = all.find((q) => q.workspaceId === activeWsId);
+      return fromActive ?? all[0];
     }
     return store.pendingQuestions[0] ?? null;
   });
@@ -1728,7 +1865,7 @@ export function createSessionStore(options: {
         const record = event.properties as Record<string, unknown>;
         const sessionID = extractSessionId(record);
         if (sessionID && isKnownSessionId(sessionID) && Array.isArray(record.todos)) {
-          setStore("todos", sessionID, record.todos as TodoItem[]);
+          setStore("todos", sessionID, normalizeTodoItems(record.todos));
         }
       }
     }
@@ -1909,7 +2046,7 @@ export function createSessionStore(options: {
 
         try {
           const list = unwrap(await withTimeout(c.session.todo({ sessionID }), 8000, "session.todo"));
-          setStore("todos", sessionID, list);
+          setStore("todos", sessionID, normalizeTodoItems(list));
         } catch {
           // fail soft per session
         }
@@ -1952,6 +2089,7 @@ export function createSessionStore(options: {
               workspaceId: sourceWsId,
               baseUrl: entry.baseUrl,
               directory: entry.directory ?? null,
+              ...engineSseAuthOptions(entry.auth),
               signal: controller.signal,
             })
           : c.event.subscribe(undefined, { signal: controller.signal }));
@@ -2026,6 +2164,19 @@ export function createSessionStore(options: {
         if (controller.signal.aborted) return;
 
         const message = e instanceof Error ? e.message : String(e);
+        const activeWs = options.routing.activeWorkspaceId();
+        if (shouldReleaseStaleWorkspaceRoute(sourceWsId, activeWs, message)) {
+          options.routing.release(sourceWsId);
+          sessionWarn("sse:released-stale-route", {
+            workspaceId: sourceWsId,
+            error: truncateErrorField(message),
+          });
+          recordPerfLog(sessionDebugEnabled(), "session.sse", "released-stale-route", {
+            workspaceId: sourceWsId,
+            error: truncateErrorField(message),
+          });
+          return;
+        }
 
         // Mark SSE as disconnected and schedule reconnect
         options.setSseConnected(false);
@@ -2070,6 +2221,11 @@ export function createSessionStore(options: {
   };
 
   createEffect(() => {
+    if (options.engineReady?.() === false) {
+      options.setSseConnected(false);
+      return;
+    }
+
     // VSLO-86 F4Ú12 — outer effect tracks routing.entryIds() so streams
     // re-fan-out when workspaces are ensured/released. Falls back to the
     // global client signal so the legacy single-active boot path keeps
@@ -2108,6 +2264,12 @@ export function createSessionStore(options: {
   // active routing mode these are no-ops; in multi mode app.tsx wires them to
   // a createEffect on activeWorkspaceId so each switch saves the outgoing
   // workspace state and loads the incoming one.
+  const selectedSessionIdForSnapshot = () => {
+    const selectedSessionId = options.selectedSessionId()?.trim() ?? "";
+    if (!selectedSessionId) return null;
+    return store.sessions.some((session) => session.id === selectedSessionId) ? selectedSessionId : null;
+  };
+
   const saveWorkspaceSnapshot = (workspaceId: string) => {
     if (!workspaceId) return;
     perWorkspaceCache.set(workspaceId, {
@@ -2120,7 +2282,7 @@ export function createSessionStore(options: {
       todos: { ...store.todos },
       pendingPermissions: store.pendingPermissions.slice(),
       pendingQuestions: store.pendingQuestions.slice(),
-      selectedSessionId: options.selectedSessionId(),
+      selectedSessionId: selectedSessionIdForSnapshot(),
       lastUsed: Date.now(),
     });
   };
@@ -2149,9 +2311,13 @@ export function createSessionStore(options: {
     );
     workspaceSessionIds.clear();
     for (const s of snapshot.sessions) workspaceSessionIds.add(s.id);
-    if (snapshot.selectedSessionId) {
-      options.setSelectedSessionId(snapshot.selectedSessionId);
-    }
+    const snapshotSelectedSessionId = snapshot.selectedSessionId?.trim() ?? "";
+    const selectedSessionId =
+      snapshotSelectedSessionId && snapshot.sessions.some((session) => session.id === snapshotSelectedSessionId)
+        ? snapshotSelectedSessionId
+        : null;
+    options.setSelectedSessionId(selectedSessionId);
+    snapshot.selectedSessionId = selectedSessionId;
     snapshot.lastUsed = Date.now();
     return true;
   };
@@ -2207,7 +2373,9 @@ export function createSessionStore(options: {
     loadWorkspaceSnapshot,
     clearWorkspaceSnapshot,
     allPendingPermissions,
+    allPendingQuestions,
     pendingPermissionCountByWs,
     pendingPermissionsByWs,
+    pendingQuestionsByWs,
   };
 }

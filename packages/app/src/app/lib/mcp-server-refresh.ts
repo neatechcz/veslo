@@ -4,11 +4,23 @@ import type { VesloServerCapabilities, VesloServerClient } from "./veslo-server"
 import { recordPerfLog } from "./perf-log";
 
 type WorkspaceType = "local" | "remote" | string;
+type McpRefreshMode = "auto" | "explicit";
+
+export type McpServersRefreshOptions = {
+  mode?: McpRefreshMode;
+  reason?: string | null;
+};
+
+type McpRefreshInFlight = {
+  mode: McpRefreshMode;
+  promise: Promise<void>;
+};
 
 export type McpServersRefresherOptions = {
   projectDir: () => string;
   workspaceType: () => WorkspaceType;
   activeWorkspaceId: () => string;
+  activeRuntimeActivityId?: () => string | null;
   isTauriRuntime: () => boolean;
   developerMode: () => boolean;
   vesloServerStatus: () => string;
@@ -23,7 +35,7 @@ export type McpServersRefresherOptions = {
 };
 
 export function createMcpServersRefresher(options: McpServersRefresherOptions) {
-  const refreshInFlightByKey = new Map<string, Promise<void>>();
+  const refreshInFlightByKey = new Map<string, McpRefreshInFlight>();
 
   const applyEmptyState = (status: string) => {
     options.setMcpStatus(status);
@@ -51,7 +63,9 @@ export function createMcpServersRefresher(options: McpServersRefresherOptions) {
     }));
   };
 
-  return async function refreshMcpServers() {
+  return async function refreshMcpServers(refreshOptions: McpServersRefreshOptions = {}) {
+    const refreshMode = refreshOptions.mode ?? "auto";
+    const refreshReason = refreshOptions.reason?.trim() || refreshMode;
     const projectDir = options.projectDir().trim();
     const workspaceType = options.workspaceType();
     const isRemoteWorkspace = workspaceType === "remote";
@@ -64,70 +78,123 @@ export function createMcpServersRefresher(options: McpServersRefresherOptions) {
       vesloWorkspaceId &&
       options.vesloCapabilities()?.mcp?.read;
     const activeWorkspaceId = options.activeWorkspaceId().trim();
+    const currentActiveRuntimeActivityId = () => options.activeRuntimeActivityId?.()?.trim() ?? "";
+    const skipForActiveRuntimeActivity = (phase: string) => {
+      if (refreshMode === "explicit") return false;
+      const activeRuntimeActivityId = currentActiveRuntimeActivityId();
+      if (!activeRuntimeActivityId) return false;
+      recordPerfLog(options.developerMode(), "workspace.mcp", "refresh-skip-active-send", {
+        activeWorkspaceId,
+        activeSendTraceId: activeRuntimeActivityId,
+        phase,
+        projectDir,
+        mode: refreshMode,
+        reason: refreshReason,
+      });
+      return true;
+    };
+    if (skipForActiveRuntimeActivity("start")) {
+      return;
+    }
     const refreshKey = [
       activeWorkspaceId,
       workspaceType,
       projectDir,
       canUseVesloServer ? vesloWorkspaceId ?? "" : "",
     ].join("::");
+    const isCurrentRefreshTarget = () =>
+      options.activeWorkspaceId().trim() === activeWorkspaceId &&
+      options.projectDir().trim() === projectDir;
+    const skipStaleRefreshResult = (phase: string) => {
+      recordPerfLog(options.developerMode(), "workspace.mcp", "refresh-stale-skip", {
+        phase,
+        activeWorkspaceId,
+        projectDir,
+        currentActiveWorkspaceId: options.activeWorkspaceId().trim(),
+        currentProjectDir: options.projectDir().trim(),
+      });
+    };
+    const applyEmptyStateForRun = (status: string, phase: string) => {
+      if (skipForActiveRuntimeActivity(phase)) {
+        return;
+      }
+      if (!isCurrentRefreshTarget()) {
+        skipStaleRefreshResult(phase);
+        return;
+      }
+      applyEmptyState(status);
+    };
+    const applyEntriesForRun = (entries: McpServerEntry[], phase: string) => {
+      if (skipForActiveRuntimeActivity(phase)) {
+        return;
+      }
+      if (!isCurrentRefreshTarget()) {
+        skipStaleRefreshResult(phase);
+        return;
+      }
+      options.setMcpStatus(null);
+      applyEntries(projectDir, entries);
+    };
     const existingRefresh = refreshInFlightByKey.get(refreshKey);
     if (existingRefresh) {
-      await existingRefresh;
+      await existingRefresh.promise;
       recordPerfLog(options.developerMode(), "workspace.mcp", "refresh-joined", {
         activeWorkspaceId,
         projectDir,
+        mode: refreshMode,
+        reason: refreshReason,
+        joinedMode: existingRefresh.mode,
       });
-      return;
+      if (refreshMode !== "explicit" || existingRefresh.mode === "explicit") {
+        return;
+      }
     }
 
     const run = (async () => {
       if (isRemoteWorkspace) {
         if (!canUseVesloServer) {
-          applyEmptyState("Veslo server unavailable. MCP config is read-only.");
+          applyEmptyStateForRun("Veslo server unavailable. MCP config is read-only.", "remote-unavailable");
           return;
         }
 
         try {
-          options.setMcpStatus(null);
-          applyEntries(projectDir, await readFromVesloServer(vesloClient, vesloWorkspaceId));
+          applyEntriesForRun(await readFromVesloServer(vesloClient, vesloWorkspaceId), "remote-read");
         } catch (e) {
-          applyEmptyState(e instanceof Error ? e.message : "Failed to load MCP servers");
+          applyEmptyStateForRun(e instanceof Error ? e.message : "Failed to load MCP servers", "remote-error");
         }
         return;
       }
 
       if (isLocalWorkspace && canUseVesloServer) {
         try {
-          options.setMcpStatus(null);
-          applyEntries(projectDir, await readFromVesloServer(vesloClient, vesloWorkspaceId));
+          applyEntriesForRun(await readFromVesloServer(vesloClient, vesloWorkspaceId), "local-veslo-read");
         } catch (e) {
-          applyEmptyState(e instanceof Error ? e.message : "Failed to load MCP servers");
+          applyEmptyStateForRun(e instanceof Error ? e.message : "Failed to load MCP servers", "local-veslo-error");
         }
         return;
       }
 
       if (!options.isTauriRuntime()) {
-        applyEmptyState("MCP configuration is only available for local workspaces.");
+        applyEmptyStateForRun("MCP configuration is only available for local workspaces.", "non-tauri");
         return;
       }
 
       if (!projectDir) {
-        applyEmptyState("Pick a workspace folder to load MCP servers.");
+        applyEmptyStateForRun("Pick a workspace folder to load MCP servers.", "missing-project-dir");
         return;
       }
 
       try {
-        options.setMcpStatus(null);
-        applyEntries(projectDir, await readEffectiveMcpServerEntries(projectDir));
+        applyEntriesForRun(await readEffectiveMcpServerEntries(projectDir), "local-read");
       } catch (e) {
-        applyEmptyState(e instanceof Error ? e.message : "Failed to load MCP servers");
+        applyEmptyStateForRun(e instanceof Error ? e.message : "Failed to load MCP servers", "local-error");
       }
     })();
-    refreshInFlightByKey.set(refreshKey, run);
+    refreshInFlightByKey.set(refreshKey, { mode: refreshMode, promise: run });
     try {
       await run;
     } finally {
-      if (refreshInFlightByKey.get(refreshKey) === run) {
+      if (refreshInFlightByKey.get(refreshKey)?.promise === run) {
         refreshInFlightByKey.delete(refreshKey);
       }
     }

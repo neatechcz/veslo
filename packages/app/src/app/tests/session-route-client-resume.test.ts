@@ -110,11 +110,21 @@ test("createSessionAndOpen injects the new session before selecting it", () => {
   assert.notStrictEqual(createStart, -1, "createSessionAndOpen should exist");
   assert.notStrictEqual(createEnd, -1, "createSessionAndOpen block end should exist");
   const createSource = source.slice(createStart, createEnd);
+  const handoffIndex = createSource.indexOf("options.onMaterializedSessionId?.({");
+  const setSessionsIndex = createSource.indexOf("setSessions([session, ...currentStoreSessions]);");
+  const sidebarIndex = createSource.indexOf("materializePendingSessionInWorkspaceSidebar({");
+  const ownNavigationIndex = createSource.indexOf("routeResumeSelectionAlreadyHandledForSession = session.id;");
+  const selectIndex = createSource.indexOf('mark("session:select:start", { sessionID: session.id });');
+  assert.ok(handoffIndex >= 0, "createSessionAndOpen should publish the materialized scoped handoff");
+  assert.ok(setSessionsIndex > handoffIndex, "pending-to-real handoff should happen before session store injection");
+  assert.ok(sidebarIndex > setSessionsIndex, "sidebar materialization should happen after session store injection");
+  assert.ok(ownNavigationIndex > sidebarIndex, "own navigation guard should be set after sidebar materialization");
+  assert.ok(selectIndex > ownNavigationIndex, "selectSession should run only after the route guard is armed");
 
   assert.match(
     createSource,
-    /const displaySession = applyPendingInitialSessionTitle\(session\);[\s\S]*setSessions\(\[session, \.\.\.currentStoreSessions\]\);[\s\S]*materializePendingSessionInWorkspaceSidebar\(\{[\s\S]*mark\("session:select:start", \{ sessionID: session\.id \}\);[\s\S]*"createSessionAndOpen:select-session"[\s\S]*mark\("session:select:ok", \{ sessionID: session\.id \}\);[\s\S]*routeResumeSelectionAlreadyHandledForSession = session\.id;[\s\S]*goToSession\(session\.id\);/s,
-    "newly created sessions should be present in session/sidebar state before selectSession, then route after selection",
+    /const displaySession = applyPendingInitialSessionTitle\(session\);[\s\S]*options\.onMaterializedSessionId\?\.\(\{[\s\S]*setSessions\(\[session, \.\.\.currentStoreSessions\]\);[\s\S]*materializePendingSessionInWorkspaceSidebar\(\{[\s\S]*const shouldRouteCreatedSession = shouldRouteCreatedSessionAfterSelect\(\{[\s\S]*routeResumeSelectionAlreadyHandledForSession = session\.id;[\s\S]*mark\("session:select:start", \{ sessionID: session\.id \}\);[\s\S]*"createSessionAndOpen:select-session"[\s\S]*mark\("session:select:ok", \{ sessionID: session\.id \}\);[\s\S]*goToSession\(session\.id\);/s,
+    "newly created sessions should hand off pending UI, enter session/sidebar state, arm route guard, select, then route",
   );
 });
 

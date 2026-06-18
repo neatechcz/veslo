@@ -79,6 +79,7 @@ export type ClientEntry = {
   client: RoutingClient;
   baseUrl: string;
   directory?: string;
+  auth?: OpencodeAuth;
   lastUsed: number;
 };
 
@@ -151,6 +152,25 @@ export type CreateWorkspaceRoutingOptions = {
   ) => Promise<{ healthy: boolean; version?: string }>;
 };
 
+function authKey(auth?: OpencodeAuth): string {
+  return JSON.stringify({
+    mode: auth?.mode ?? "basic",
+    username: auth?.username ?? "",
+    password: auth?.password ?? "",
+    token: auth?.token ?? "",
+  });
+}
+
+function cloneAuth(auth?: OpencodeAuth): OpencodeAuth | undefined {
+  if (!auth) return undefined;
+  const next: OpencodeAuth = {};
+  if (auth.mode !== undefined) next.mode = auth.mode;
+  if (auth.username !== undefined) next.username = auth.username;
+  if (auth.password !== undefined) next.password = auth.password;
+  if (auth.token !== undefined) next.token = auth.token;
+  return next;
+}
+
 export function createWorkspaceRouting(
   opts: CreateWorkspaceRoutingOptions
 ): WorkspaceRouting {
@@ -161,7 +181,7 @@ export function createWorkspaceRouting(
     {
       baseUrl: string;
       directory?: string;
-      auth?: OpencodeAuth;
+      authKey: string;
       promise: Promise<ClientEntry | null>;
     }
   >();
@@ -223,11 +243,13 @@ export function createWorkspaceRouting(
     ) {
       const directory = options?.directory;
       const auth = options?.auth;
+      const nextAuthKey = authKey(auth);
       const cached = entries.get(workspaceId);
       if (
         cached &&
         cached.baseUrl === baseUrl &&
-        cached.directory === directory
+        cached.directory === directory &&
+        authKey(cached.auth) === nextAuthKey
       ) {
         cached.lastUsed = Date.now();
         return cached;
@@ -237,7 +259,7 @@ export function createWorkspaceRouting(
         pending &&
         pending.baseUrl === baseUrl &&
         pending.directory === directory &&
-        pending.auth === auth
+        pending.authKey === nextAuthKey
       ) {
         return pending.promise;
       }
@@ -263,6 +285,7 @@ export function createWorkspaceRouting(
           client,
           baseUrl,
           directory,
+          auth: cloneAuth(auth),
           lastUsed: Date.now(),
         };
         entries.set(workspaceId, entry);
@@ -270,7 +293,7 @@ export function createWorkspaceRouting(
         bumpEntryIds();
         return entry;
       })();
-      pendingEnsures.set(workspaceId, { baseUrl, directory, auth, promise });
+      pendingEnsures.set(workspaceId, { baseUrl, directory, authKey: nextAuthKey, promise });
       try {
         return await promise;
       } finally {

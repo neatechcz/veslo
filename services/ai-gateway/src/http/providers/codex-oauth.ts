@@ -112,7 +112,7 @@ export function createCodexOAuthProxyRouter(
 
     try {
       const upstreamResponse = await executeRequest(scope, policyResult.body, assignedAuthJson)
-      applyUpstreamResponse(res, upstreamResponse)
+      await applyUpstreamResponse(res, upstreamResponse)
     } catch (error) {
       await recordProviderProxyFailureAlert({
         alertRepository: deps.alertRepository,
@@ -169,13 +169,30 @@ export function createCodexOAuthProxyRouter(
   ): Promise<ProviderTransportResponse> {
     const upstreamResponse = await deps.codexOAuthTransport.chatCompletions({ body, authJson })
 
-    await recordUsage({
-      ownerUserId: lease.ownerUserId,
-      sessionId: lease.sessionId,
-      bindingId: lease.activeBindingId,
-      requestBody: body,
-      upstreamResponse,
-    })
+    if (upstreamResponse.usagePromise) {
+      upstreamResponse.usagePromise
+        .then(async (usage) => {
+          if (!usage) return
+          await recordUsage({
+            ownerUserId: lease.ownerUserId,
+            sessionId: lease.sessionId,
+            bindingId: lease.activeBindingId,
+            requestBody: body,
+            upstreamResponse: { ...upstreamResponse, usage },
+          })
+        })
+        .catch((error) => {
+          console.error("proxy_usage_record_failed", error)
+        })
+    } else {
+      await recordUsage({
+        ownerUserId: lease.ownerUserId,
+        sessionId: lease.sessionId,
+        bindingId: lease.activeBindingId,
+        requestBody: body,
+        upstreamResponse,
+      })
+    }
 
     return upstreamResponse
   }
@@ -259,7 +276,7 @@ function getHeaderAsString(value: string | string[] | undefined): string | null 
   return null
 }
 
-function applyUpstreamResponse(res: Response, upstreamResponse: ProviderTransportResponse) {
+async function applyUpstreamResponse(res: Response, upstreamResponse: ProviderTransportResponse) {
   if (upstreamResponse.headers) {
     for (const [headerName, headerValue] of Object.entries(upstreamResponse.headers)) {
       res.setHeader(headerName, headerValue)
@@ -268,12 +285,38 @@ function applyUpstreamResponse(res: Response, upstreamResponse: ProviderTranspor
 
   res.status(upstreamResponse.status)
 
+  if (isWebReadableStream(upstreamResponse.body)) {
+    await sendWebReadableStream(res, upstreamResponse.body)
+    return
+  }
+
   if (typeof upstreamResponse.body === "object") {
     res.json(upstreamResponse.body)
     return
   }
 
   res.send(upstreamResponse.body as never)
+}
+
+function isWebReadableStream(value: unknown): value is ReadableStream<Uint8Array> {
+  return Boolean(value && typeof value === "object" && typeof (value as { getReader?: unknown }).getReader === "function")
+}
+
+async function sendWebReadableStream(res: Response, body: ReadableStream<Uint8Array>) {
+  res.flushHeaders()
+  const reader = body.getReader()
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value && value.byteLength > 0) {
+        res.write(Buffer.from(value))
+      }
+    }
+    res.end()
+  } catch (error) {
+    res.destroy(error instanceof Error ? error : new Error(String(error)))
+  }
 }
 
 function getCodexRequestId(upstreamResponse: ProviderTransportResponse) {

@@ -3,10 +3,11 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const sessionSource = readFileSync(new URL("../context/session.ts", import.meta.url), "utf8");
 
 function createSessionAndOpenSource(): string {
   const start = source.indexOf("  async function createSessionAndOpen(");
-  const end = source.indexOf("  const openNewSessionWithDirectory = async", start);
+  const end = source.indexOf("  const chooseFolderForCurrentSession = async", start);
   assert.ok(start >= 0 && end > start, "createSessionAndOpen block should be present");
   return source.slice(start, end);
 }
@@ -34,7 +35,28 @@ test("createSessionAndOpen uses the creation flow helpers before selecting the s
   );
   assert.match(
     createSource,
-    /mark\("session:select:start", \{ sessionID: session\.id \}\);[\s\S]*"createSessionAndOpen:select-session"[\s\S]*mark\("session:select:ok", \{ sessionID: session\.id \}\);[\s\S]*if \(shouldRouteCreatedSessionAfterSelect\(\{[^}]*blockAppDuringCreate,[^}]*currentView: currentView\(\)[^}]*\}\)\) \{[\s\S]*routeResumeSelectionAlreadyHandledForSession = session\.id;[\s\S]*goToSession\(session\.id\);[\s\S]*\}/s,
-    "created sessions should select before routing so route effects only consume already-selected own navigation",
+    /const shouldRouteCreatedSession = shouldRouteCreatedSessionAfterSelect\(\{[^}]*blockAppDuringCreate,[^}]*currentView: currentView\(\)[^}]*\}\);[\s\S]*if \(shouldRouteCreatedSession\) \{[\s\S]*routeResumeSelectionAlreadyHandledForSession = session\.id;[\s\S]*\}[\s\S]*mark\("session:select:start", \{ sessionID: session\.id \}\);[\s\S]*"createSessionAndOpen:select-session"[\s\S]*mark\("session:select:ok", \{ sessionID: session\.id \}\);[\s\S]*if \(shouldRouteCreatedSession\) \{[\s\S]*routeResumeSelectionAlreadyHandledForSession = session\.id;[\s\S]*goToSession\(session\.id\);[\s\S]*\}/s,
+    "created sessions should mark their own navigation before selecting so bare /session cannot clear the handoff, then route after selection",
+  );
+});
+
+test("late session refreshes retain the selected session injected by createSessionAndOpen", () => {
+  assert.match(
+    sessionSource,
+    /let nextSessions = sortSessionsByActivity\(Array\.from\(merged\.values\(\)\)\);[\s\S]*const selectedSessionId = options\.selectedSessionId\(\)\?\.trim\(\) \?\? "";[\s\S]*!nextSessions\.some\(\(session\) => session\.id === selectedSessionId\)[\s\S]*store\.sessions\.find\(\(session\) => session\.id === selectedSessionId\)[\s\S]*sessionDirectoryMatchesRoot\(selectedSessionDirectory, root\)[\s\S]*nextSessions = sortSessionsByActivity\(\[selectedSession, \.\.\.nextSessions\]\);/s,
+    "loadSessions should not let a delayed list response remove the currently displayed session before the backend index catches up",
+  );
+});
+
+test("session route own-navigation records conversation identity for later route resume dedupe", () => {
+  assert.match(
+    source,
+    /let lastRouteClientResumeKey = "";[\s\S]*let lastRouteConversationKey = "";[\s\S]*const routeConversationIdentityKeyFor = \(/,
+    "app should track route conversation identity separately from connection freshness",
+  );
+  assert.match(
+    source,
+    /case "session-route": \{[\s\S]*const routeBrowseScope = id \? resolveSelectedSessionBrowseScope\(id\) : null;[\s\S]*const routeConversationKey = routeConversationIdentityKeyFor\(id, routeBrowseScope\);[\s\S]*case "consume-own-navigation":[\s\S]*routeResumeSelectionAlreadyHandledForSession = "";[\s\S]*if \(routeConversationKey\) \{[\s\S]*lastRouteConversationKey = routeConversationKey;[\s\S]*\}/s,
+    "the startup/session path effect should seed lastRouteConversationKey when it consumes create-session navigation",
   );
 });

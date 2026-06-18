@@ -1,5 +1,5 @@
 export type RouteResumeDecision =
-  | { type: "ignore"; reason: "not-session-route" | "empty-session-id" | "pending-session" | "foreign-workspace" | "same-key" | "already-loaded" | "loading-earlier-messages" }
+  | { type: "ignore"; reason: "not-session-route" | "empty-session-id" | "pending-session" | "foreign-workspace" | "same-key" | "already-loaded" | "loading-earlier-messages" | "workspace-not-ready" | "route-session-not-ready" }
   | { type: "consume-own-navigation"; sessionId: string; connectionKey: string }
   | { type: "select-session"; sessionId: string; connectionKey: string };
 
@@ -11,6 +11,11 @@ export type ResolveRouteResumeDecisionInput = {
   activeWorkspaceId?: string | null;
   connectionKey: string;
   lastConnectionKey: string;
+  routeConversationKey?: string | null;
+  lastRouteConversationKey?: string | null;
+  workspaceReady?: boolean;
+  routeSessionKnown?: boolean;
+  sessionsLoaded?: boolean;
   selectedSessionId?: string | null;
   hasBrowseScope: boolean;
   visibleMessageCount: number;
@@ -30,6 +35,9 @@ export function resolveRouteResumeDecision(input: ResolveRouteResumeDecisionInpu
 
   const routeWorkspaceId = trim(input.routeWorkspaceId);
   const activeWorkspaceId = trim(input.activeWorkspaceId);
+  const workspaceReady = input.workspaceReady ?? Boolean(routeWorkspaceId || activeWorkspaceId);
+  if (!workspaceReady) return { type: "ignore", reason: "workspace-not-ready" };
+
   if (routeWorkspaceId && activeWorkspaceId && routeWorkspaceId !== activeWorkspaceId) {
     return { type: "ignore", reason: "foreign-workspace" };
   }
@@ -37,12 +45,28 @@ export function resolveRouteResumeDecision(input: ResolveRouteResumeDecisionInpu
   if (input.connectionKey === input.lastConnectionKey) return { type: "ignore", reason: "same-key" };
 
   const selectedSessionId = trim(input.selectedSessionId);
+  if (trim(input.ownNavigationSessionId) === sessionId && selectedSessionId === sessionId) {
+    return { type: "consume-own-navigation", sessionId, connectionKey: input.connectionKey };
+  }
+
   if (!input.hasBrowseScope && selectedSessionId === sessionId && input.visibleMessageCount > 0) {
     return { type: "ignore", reason: "already-loaded" };
   }
 
-  if (trim(input.ownNavigationSessionId) === sessionId && selectedSessionId === sessionId) {
-    return { type: "consume-own-navigation", sessionId, connectionKey: input.connectionKey };
+  if (!input.routeSessionKnown && input.sessionsLoaded === false) {
+    return { type: "ignore", reason: "route-session-not-ready" };
+  }
+
+  const routeConversationKey = trim(input.routeConversationKey);
+  const lastRouteConversationKey = trim(input.lastRouteConversationKey);
+  if (
+    input.hasBrowseScope &&
+    selectedSessionId === sessionId &&
+    input.visibleMessageCount > 0 &&
+    routeConversationKey &&
+    routeConversationKey === lastRouteConversationKey
+  ) {
+    return { type: "ignore", reason: "already-loaded" };
   }
 
   if (input.selectedSessionLoadingEarlierMessages) {
@@ -58,7 +82,7 @@ export type SessionPathDecision =
   | { type: "fallback-to-session-list"; clearSelectedSession: boolean }
   | { type: "consume-own-navigation"; sessionId: string }
   | { type: "select-session"; sessionId: string }
-  | { type: "ignore"; reason: "not-session-route" | "already-selected" | "empty-session-id" };
+  | { type: "ignore"; reason: "not-session-route" | "already-selected" | "empty-session-id" | "own-navigation-pending" | "workspace-not-ready" | "route-session-not-ready" };
 
 export type ResolveSessionPathDecisionInput = {
   path: string;
@@ -68,6 +92,9 @@ export type ResolveSessionPathDecisionInput = {
   isPendingSession: boolean;
   shouldFallbackFromRoute: boolean;
   ownNavigationSessionId?: string | null;
+  workspaceReady?: boolean;
+  routeSessionKnown?: boolean;
+  sessionsLoaded?: boolean;
 };
 
 export function resolveSessionPathDecision(input: ResolveSessionPathDecisionInput): SessionPathDecision {
@@ -77,6 +104,10 @@ export function resolveSessionPathDecision(input: ResolveSessionPathDecisionInpu
   const sessionId = trim(input.routeSessionId);
   const selectedSessionId = trim(input.selectedSessionId);
   if (!sessionId) {
+    const ownNavigationSessionId = trim(input.ownNavigationSessionId);
+    if (ownNavigationSessionId && selectedSessionId === ownNavigationSessionId) {
+      return { type: "ignore", reason: "own-navigation-pending" };
+    }
     if (!selectedSessionId) return { type: "ignore", reason: "empty-session-id" };
     return { type: "clear-session-view", preservePendingDraft: Boolean(trim(input.activePendingDraftKey)) };
   }
@@ -84,6 +115,11 @@ export function resolveSessionPathDecision(input: ResolveSessionPathDecisionInpu
   if (input.isPendingSession) {
     if (selectedSessionId === sessionId) return { type: "ignore", reason: "already-selected" };
     return { type: "select-pending-session", sessionId };
+  }
+
+  if (input.workspaceReady === false) return { type: "ignore", reason: "workspace-not-ready" };
+  if (!input.routeSessionKnown && input.sessionsLoaded === false) {
+    return { type: "ignore", reason: "route-session-not-ready" };
   }
 
   if (input.shouldFallbackFromRoute) {

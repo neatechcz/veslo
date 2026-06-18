@@ -40,7 +40,7 @@ test("all attachment staging happens in session-directory send pipeline, not in 
 
   assert.match(
     appSource,
-    /client\.createFileSession\(workspaceId, \{[\s\S]*write: true,/,
+    /ready\.client\.createFileSession\(ready\.workspaceId, \{[\s\S]*write: true,/,
     "staging should open a writable file session",
   );
 
@@ -52,7 +52,7 @@ test("all attachment staging happens in session-directory send pipeline, not in 
 
   assert.match(
     appSource,
-    /const workspaceId = resolution\?\.serverWorkspaceId \|\| await resolveWorkspaceIdForAttachmentStaging\(client\);/,
+    /let ready: AttachmentStagingWorkspaceReady = resolution\?\.serverWorkspaceId[\s\S]*ensureWorkspaceReadyForAttachmentStaging\(client\);/,
     "staging should reuse the send preflight workspace resolution and lazily resolve the Veslo workspace id as a fallback",
   );
 
@@ -64,7 +64,7 @@ test("all attachment staging happens in session-directory send pipeline, not in 
 
   assert.match(
     appSource,
-    /await client\.writeFileBatch\([^,]+, \[/,
+    /await ready\.client\.writeFileBatch\([^,]+, \[/,
     "staging should write attachments into the session directory",
   );
 

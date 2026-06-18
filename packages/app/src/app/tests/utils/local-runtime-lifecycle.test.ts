@@ -50,6 +50,12 @@ function createHarness(options?: {
     baseUrl: string;
     directory: string;
     auth?: OpencodeAuth;
+    context?: {
+      workspaceId?: string;
+      workspaceType?: "local" | "remote";
+      targetRoot?: string;
+      reason?: string;
+    };
   }> = [];
 
   const runtime = options?.runtime ?? "direct";
@@ -106,9 +112,9 @@ function createHarness(options?: {
       serverConnections.push({ baseUrl, directory, context, auth, connectOptions });
       return options?.serverConnectResult ?? true;
     },
-    connectQuiet: async (baseUrl, directory, auth) => {
+    connectQuiet: async (baseUrl, directory, auth, context) => {
       calls.push(`connectQuiet:${directory}`);
-      quietConnections.push({ baseUrl, directory, auth });
+      quietConnections.push({ baseUrl, directory, auth, context });
       return options?.quietConnectResult ?? true;
     },
   });
@@ -156,6 +162,40 @@ test("startHost starts the engine once, derives auth, and reconnects through the
       },
       auth: { username: "demo-user", password: "demo-pass" },
       connectOptions: { navigate: false },
+    },
+  ]);
+});
+
+test("startHost can reconnect quietly without routing through the shared server connector", async () => {
+  const harness = createHarness();
+
+  const ok = await harness.lifecycle.startHost({
+    workspacePath: "/tmp/demo",
+    workspaceId: "ws-demo",
+    reason: "browse-cold-start",
+    connectMode: "quiet",
+    navigate: false,
+  });
+
+  assert.equal(ok, true);
+  assert.deepEqual(harness.calls, [
+    "startEngine:/tmp/demo:direct",
+    "setEngine:/tmp/demo",
+    "setEngineAuth:demo-user",
+    "connectQuiet:/tmp/demo",
+  ]);
+  assert.deepEqual(harness.serverConnections, []);
+  assert.deepEqual(harness.quietConnections, [
+    {
+      baseUrl: "http://127.0.0.1:4096",
+      directory: "/tmp/demo",
+      auth: { username: "demo-user", password: "demo-pass" },
+      context: {
+        workspaceId: "ws-demo",
+        workspaceType: "local",
+        targetRoot: "/tmp/demo",
+        reason: "browse-cold-start",
+      },
     },
   ]);
 });
@@ -266,16 +306,22 @@ test("restartWorkspaceRuntime can reconnect quietly after orchestrator workspace
     "readEngineInfo",
     "setEngine:/tmp/orchestrated",
     "setEngineAuth:demo-user",
-    "connectToServer:ensure-engine",
+    "connectQuiet:/tmp/orchestrated",
   ]);
-  assert.deepEqual(harness.quietConnections, []);
-  assert.deepEqual(harness.serverConnections[0]?.context, {
-    workspaceId: "ws-orch",
-    workspaceType: "local",
-    targetRoot: "/tmp/orchestrated",
-    reason: "ensure-engine",
-  });
-  assert.deepEqual(harness.serverConnections[0]?.connectOptions, { quiet: true, navigate: false });
+  assert.deepEqual(harness.serverConnections, []);
+  assert.deepEqual(harness.quietConnections, [
+    {
+      baseUrl: "http://127.0.0.1:6100",
+      directory: "/tmp/orchestrated",
+      auth: { username: "demo-user", password: "demo-pass" },
+      context: {
+        workspaceId: "ws-orch",
+        workspaceType: "local",
+        targetRoot: "/tmp/orchestrated",
+        reason: "ensure-engine",
+      },
+    },
+  ]);
 });
 
 test("reattachOrchestratorWorkspace reuses the shared engine snapshot flow without a stop/start cycle", async () => {

@@ -4,6 +4,8 @@ import {
 } from "../controllers/managed-ai-bootstrap-readiness-controller";
 
 export const localRuntimeHealthTimeoutMessage = "Timed out waiting for local runtime health";
+export const managedAiRuntimeConfigNotReadyMessage =
+  "Managed AI gateway setup is not ready for this runtime. Please wait a moment and try again.";
 
 export type SendRuntimePreflightTargetWorkspace = {
   workspaceId?: string | null;
@@ -80,7 +82,9 @@ export type SendRuntimeReadinessDeps<Client extends SendRuntimeClient = SendRunt
   managedAiBootstrapBusy: () => boolean;
   managedAiBootstrapPendingCount: () => number;
   reloadBusy: () => boolean;
-  hasUsableManagedAiRuntimeConfigForSend: () => Promise<boolean>;
+  hasUsableManagedAiRuntimeConfigForSend: (
+    targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
+  ) => Promise<boolean>;
   waitForManagedAiBootstrapReady: (options: SendRuntimeManagedAiBootstrapReadyOptions) => Promise<void>;
   sendTraceStep: <T>(
     event: string,
@@ -174,26 +178,41 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
 ) {
   const errorMessage = (error: unknown) => messageFromUnknownError(error, deps.safeStringify);
 
-  const ensureManagedAiBootstrapReady = async (): Promise<boolean> => {
+  const ensureManagedAiBootstrapReady = async (
+    preflightOrTraceId?: SendRuntimePreflightContext | string | null,
+  ): Promise<boolean> => {
     try {
+      const preflight = typeof preflightOrTraceId === "object" ? preflightOrTraceId ?? undefined : undefined;
+      const targetWorkspace = preflight?.targetWorkspace ?? null;
+      const targetWorkspaceId = targetWorkspace?.workspaceId?.trim() ?? "";
+      const hasManagedProfile = Boolean(deps.managedAiAccess());
       const currentConfigCheck = resolveManagedAiBootstrapCurrentConfigCheck({
         accessBusy: deps.managedAiAccessBusy(),
         bootstrapPendingCount: deps.managedAiBootstrapPendingCount(),
         reloadBusy: deps.reloadBusy(),
       });
       const canUseCurrentManagedConfig =
-        currentConfigCheck.type === "check-current-config" &&
-        (await deps.hasUsableManagedAiRuntimeConfigForSend());
+        (hasManagedProfile || currentConfigCheck.type === "check-current-config") &&
+        (await deps.hasUsableManagedAiRuntimeConfigForSend(targetWorkspace));
       const waitDecision = resolveManagedAiBootstrapWaitDecision({
-        managedProfilePresent: Boolean(deps.managedAiAccess()),
+        managedProfilePresent: hasManagedProfile,
         bootstrapBusy: deps.managedAiBootstrapBusy(),
         canUseCurrentManagedConfig,
       });
+      if (
+        hasManagedProfile &&
+        !canUseCurrentManagedConfig &&
+        !deps.managedAiBootstrapBusy() &&
+        !deps.reloadBusy()
+      ) {
+        deps.setError(managedAiRuntimeConfigNotReadyMessage);
+        return false;
+      }
       await deps.waitForManagedAiBootstrapReady({
         hasManagedProfile: waitDecision.hasManagedProfile,
         isBootstrapBusy: deps.managedAiBootstrapBusy,
         isReloadBusy: deps.reloadBusy,
-        hasClient: () => Boolean(deps.routedClient()),
+        hasClient: () => Boolean(targetWorkspaceId ? deps.routedClient(targetWorkspaceId) : deps.routedClient()),
       });
       return true;
     } catch (error) {
@@ -227,12 +246,14 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
     }
 
     const currentClient = targetWorkspaceId ? deps.routedClient(targetWorkspaceId) : deps.routedClient();
+    const targetIsActiveWorkspace = !targetWorkspaceId || targetWorkspaceId === deps.activeWorkspaceId().trim();
     if (preflight?.runtimeHealthOk) {
       deps.recordSendTrace(`${reason}:runtime-health-skip`, {
         ...(tracePayload ?? {}),
         reason: "send-preflight-already-healthy",
         targetWorkspaceId: targetWorkspaceId || null,
       });
+      if (targetIsActiveWorkspace) deps.setEngineReady(true);
       return true;
     }
     if (currentClient) {
@@ -248,6 +269,7 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         );
         deps.recordSendTrace(`${reason}:runtime-health-ok`, tracePayload);
         if (preflight) preflight.runtimeHealthOk = true;
+        if (targetIsActiveWorkspace) deps.setEngineReady(true);
         return true;
       } catch (error) {
         const message = errorMessage(error);
@@ -267,11 +289,13 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
     }
 
     deps.recordSendTrace(`${reason}:runtime-recovery-start`, tracePayload);
-    deps.setEngineReady(false);
-    deps.setSseConnected(false);
-    deps.setBusy(true);
-    deps.setBusyLabel("status.connecting");
-    deps.setBusyStartedAt(Date.now());
+    if (targetIsActiveWorkspace) {
+      deps.setEngineReady(false);
+      deps.setSseConnected(false);
+      deps.setBusy(true);
+      deps.setBusyLabel("status.connecting");
+      deps.setBusyStartedAt(Date.now());
+    }
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     try {
@@ -293,9 +317,11 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
           hasClient: Boolean(recoveredClient),
           targetWorkspaceId: targetWorkspaceId || null,
         });
-        deps.setBusy(false);
-        deps.setBusyLabel(null);
-        deps.setBusyStartedAt(null);
+        if (targetIsActiveWorkspace) {
+          deps.setBusy(false);
+          deps.setBusyLabel(null);
+          deps.setBusyStartedAt(null);
+        }
         return false;
       }
       deps.recordSendTrace(`${reason}:runtime-recovery-ok`, {
@@ -304,15 +330,22 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         targetWorkspaceId: targetWorkspaceId || null,
       });
       if (preflight) preflight.runtimeHealthOk = true;
+      if (targetIsActiveWorkspace) {
+        deps.setBusy(false);
+        deps.setBusyLabel(null);
+        deps.setBusyStartedAt(null);
+      }
       return true;
     } catch (error) {
       deps.recordSendTrace(`${reason}:runtime-recovery-error`, {
         ...(tracePayload ?? {}),
         message: errorMessage(error),
       });
-      deps.setBusy(false);
-      deps.setBusyLabel(null);
-      deps.setBusyStartedAt(null);
+      if (targetIsActiveWorkspace) {
+        deps.setBusy(false);
+        deps.setBusyLabel(null);
+        deps.setBusyStartedAt(null);
+      }
       return false;
     }
   }

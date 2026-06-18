@@ -167,6 +167,27 @@ describe("deriveLatestRunArtifacts", () => {
     ]);
   });
 
+  test("maps WSL and host absolute artifact paths to workspace-relative files when workspace root is known", () => {
+    const artifacts = deriveLatestRunArtifacts(
+      session(
+        userMessage("msg_1", "Inspect and update files."),
+        assistantMessage(
+          "msg_2",
+          toolPart("read", { path: "/workspace/src/opened.ts" }),
+          toolPart("write", { path: "C:\\Users\\alice\\project\\src\\changed.ts" }),
+          toolPart("edit", { path: "/mnt/c/Users/alice/project/src/from-wsl-mount.ts" }),
+        ),
+      ),
+      { workspaceRoot: "C:\\Users\\alice\\project" },
+    );
+
+    expect(files(artifacts).map((artifact) => [artifact.kind, artifact.path])).toEqual([
+      ["file_discovered", "src/opened.ts"],
+      ["file_output", "src/changed.ts"],
+      ["file_output", "src/from-wsl-mount.ts"],
+    ]);
+  });
+
   test("derives file_output artifacts from write/edit/apply-patch activity", () => {
     const artifacts = deriveLatestRunArtifacts(
       session(
@@ -305,6 +326,23 @@ describe("deriveLatestRunArtifacts", () => {
     );
 
     expect(families(artifacts)).toContain("soul");
+    expect(kinds(artifacts)).toEqual(["soul_memory_used", "heartbeat_used"]);
+    expect(files(artifacts)).toEqual([]);
+  });
+
+  test("maps WSL Soul paths before classifying semantic Soul artifacts", () => {
+    const artifacts = deriveLatestRunArtifacts(
+      session(
+        userMessage("msg_1", "Refresh Soul."),
+        assistantMessage(
+          "msg_2",
+          toolPart("read", { path: "/workspace/.opencode/soul.md" }),
+          toolPart("write", { path: "/workspace/.opencode/soul/heartbeat.jsonl" }),
+        ),
+      ),
+      { workspaceRoot: "C:\\Users\\alice\\project" },
+    );
+
     expect(kinds(artifacts)).toEqual(["soul_memory_used", "heartbeat_used"]);
     expect(files(artifacts)).toEqual([]);
   });

@@ -144,19 +144,19 @@ test("by-project session rows reserve right space and swap time for three-dot me
 test("session hover action uses archive icon instead of three dots", () => {
   assert.match(
     source,
-    /onClick=\{\(event\) => handleSessionArchiveAction\(event, session\(\)\.id\)\}/,
+    /onClick=\{\(event\) => handleSessionArchiveAction\(event, workspace\(\)\.id, session\(\)\.id\)\}/,
     "recent rows should wire hover action to the archive confirmation flow",
   );
 
   assert.match(
     source,
-    /onClick=\{\(event\) => handleSessionArchiveAction\(event, row\.session\.id\)\}/,
+    /onClick=\{\(event\) => handleSessionArchiveAction\(event, row\.workspace\.id, row\.session\.id\)\}/,
     "by-project rows should wire hover action to the archive confirmation flow",
   );
 
   assert.match(
     source,
-    /aria-label=\{archiveConfirmationPending\(\)\s*\?\s*tr\("sidebar\.archive_confirm"\)\s*:\s*isSessionArchived\(session\(\)\.id\)\s*\?\s*tr\("sidebar\.unarchive_session"\)\s*:\s*tr\("sidebar\.archive_session"\)\}/,
+    /aria-label=\{archiveConfirmationPending\(\)\s*\?\s*tr\("sidebar\.archive_confirm"\)\s*:\s*isSessionArchived\(workspace\(\)\.id, session\(\)\.id\)\s*\?\s*tr\("sidebar\.unarchive_session"\)\s*:\s*tr\("sidebar\.archive_session"\)\}/,
     "recent row action should expose localized confirm/archive/unarchive accessibility labels",
   );
 

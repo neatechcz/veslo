@@ -128,3 +128,36 @@ test("quiet port rotation only binds the routed proxy client without global disc
     "setClientDirectory",
   ]);
 });
+
+test("idempotent connect rebinds the global client to the target workspace route", async () => {
+  const clientA = { id: "client-a" };
+  const clientB = { id: "client-b" };
+  const harness = createDeps();
+  harness.state.activeWorkspaceId = "ws-b";
+  harness.state.activeWorkspaceRoot = "/b";
+  harness.state.baseUrl = "http://engine";
+  harness.state.clientDirectory = "/b";
+  harness.state.client = clientA;
+  const controller = createWorkspaceConnectionController({
+    ...harness.deps,
+    routing: {
+      ...harness.deps.routing,
+      client: (workspaceId?: string) => workspaceId === "ws-b" ? clientB as any : null,
+    },
+  });
+
+  const ok = await controller.connectToServer(
+    "http://engine",
+    "/b",
+    { workspaceId: "ws-b", workspaceType: "local", targetRoot: "/b", reason: "activate" },
+  );
+
+  assert.equal(ok, true);
+  assert.equal(harness.state.client, clientB);
+  assert.deepEqual(
+    harness.calls.filter((call) => call === "routing.ensure"),
+    [],
+    "idempotent rebind should not perform a fresh routing ensure",
+  );
+  assert.ok(harness.calls.includes("setClient"));
+});

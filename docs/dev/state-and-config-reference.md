@@ -9,6 +9,7 @@ This document describes the main persistence and config surfaces used by Veslo.
 - OpenCode config: `opencode.json` or `opencode.jsonc`.
 - Server connection state: browser storage keys managed by `veslo-server.ts`.
 - Den auth state: browser storage keys managed by `den-auth.ts`.
+- Desktop local proof cache: app-data JSON managed by Tauri commands.
 
 ## App-Global Browser Preferences
 
@@ -184,6 +185,14 @@ This backend-first slice is platform-admin-only. A narrower `debug-logs-reader` 
 Managed-AI inference routing is configured separately from signed-in app identity. Desktop and orchestrator defaults use the owned standalone AI Gateway at `https://ai.veslo.work`; `VESLO_MANAGED_AI_BASE_URL` overrides it, with `VESLO_AI_GATEWAY_BASE_URL` retained as the legacy fallback. The previous Render AI Gateway remains a transition and rollback surface, not the default for new builds.
 
 AI Gateway `/health` is process liveness only. Use `/readiness` when the product, admin UI, or monitors need to show AI inference availability: it checks upstream provider reachability, at least one healthy credential, and at least one enabled AI-access policy. The local server exposes the same frontend-visible readiness through `/ai-gateway/readiness`; send-time provider proxy failures remain authoritative and continue returning normalized upstream failure diagnostics.
+
+The desktop app keeps a local managed-AI access proof cache so it does not have to repeat `GET /ai-gateway/me/ai-access` on every reactive pass or process restart. The cache lives in:
+
+- `${VESLO_APP_DATA_DIR or app_data_dir()}/access-proofs.v1.json`
+
+Managed-AI proof entries are valid for 3 days. They store only non-secret policy metadata: a hashed cache key, fetch time, provider id, default model, allowed models, and optional policy timestamps/fingerprints. Gateway or Den bearer tokens are never written to this file; prompt/config paths still use the current Den auth token or local Veslo server client token at runtime. The cache key is based on Den user id, org id, and the managed gateway base URL. On desktop the app prefers stable Den/gateway identity over the local loopback Veslo server URL so local sidecar port changes do not invalidate the proof.
+
+The same file format has a reserved `workspacePermissions` array for future local permission proof caching. That path is not active in the frontend today; workspace permission polling is still governed by runtime engine readiness and existing workspace config.
 
 Desktop local workspaces separate the managed-AI access-policy source from the OpenCode provider routing target. The app may load the user's policy and gateway token from DEN or standalone AI Gateway, but the generated provider `baseURL` in `opencode.json` points at the active local Veslo server so prompts keep flowing through the local-first runtime.
 

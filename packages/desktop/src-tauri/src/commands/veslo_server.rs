@@ -83,19 +83,52 @@ fn sanitize_live_info_with_health(
     (info, true)
 }
 
+fn refresh_running_engine_url(
+    mut info: VesloServerInfo,
+    refresh: impl FnOnce(u16) -> Option<String>,
+) -> (VesloServerInfo, bool) {
+    if !info.running {
+        return (info, false);
+    }
+
+    let Some(port) = info.port else {
+        return (info, false);
+    };
+
+    let refreshed = refresh(port);
+    let changed = info.engine_url != refreshed;
+    info.engine_url = refreshed;
+    (info, changed)
+}
+
 #[tauri::command]
 pub fn veslo_server_info(app: AppHandle, manager: State<VesloServerManager>) -> VesloServerInfo {
-    {
+    let running_snapshot = {
         let mut state = manager.inner.lock().expect("veslo server mutex poisoned");
         let info = VesloServerManager::snapshot_locked(&mut state);
         let (sanitized, stale) = sanitize_live_info_with_health(info, server_health_identity);
         if sanitized.running {
-            return sanitized;
+            Some(sanitized)
+        } else {
+            if stale {
+                let _ = clear_persisted_veslo_server_info(&app);
+                return sanitized;
+            }
+            None
         }
-        if stale {
-            let _ = clear_persisted_veslo_server_info(&app);
-            return sanitized;
+    };
+
+    if let Some(sanitized) = running_snapshot {
+        let (sanitized, engine_url_changed) =
+            refresh_running_engine_url(sanitized, crate::veslo_server::resolve_engine_url);
+        if engine_url_changed {
+            let mut state = manager.inner.lock().expect("veslo server mutex poisoned");
+            let live = VesloServerManager::snapshot_locked(&mut state);
+            if live.running && live.port == sanitized.port {
+                state.engine_url = sanitized.engine_url.clone();
+            }
         }
+        return sanitized;
     }
 
     match recover_persisted_veslo_server_info(&app) {
@@ -196,7 +229,10 @@ pub fn veslo_server_restart(
 
 #[cfg(test)]
 mod tests {
-    use super::{active_local_workspace_path, sanitize_live_info_with_health, HealthIdentity};
+    use super::{
+        active_local_workspace_path, refresh_running_engine_url, sanitize_live_info_with_health,
+        HealthIdentity,
+    };
     use crate::types::{
         RemoteType, VesloServerInfo, WorkspaceInfo, WorkspaceState, WorkspaceType,
         WORKSPACE_STATE_VERSION,
@@ -253,6 +289,28 @@ mod tests {
             last_stdout: None,
             last_stderr: None,
         }
+    }
+
+    #[test]
+    fn refresh_running_engine_url_replaces_stale_url_with_probe_result() {
+        let info = sample_live_info();
+        let (refreshed, changed) =
+            refresh_running_engine_url(info, |_| Some("http://172.30.64.1:8787".to_string()));
+
+        assert!(changed);
+        assert_eq!(
+            refreshed.engine_url.as_deref(),
+            Some("http://172.30.64.1:8787")
+        );
+    }
+
+    #[test]
+    fn refresh_running_engine_url_clears_stale_url_when_probe_fails() {
+        let info = sample_live_info();
+        let (refreshed, changed) = refresh_running_engine_url(info, |_| None);
+
+        assert!(changed);
+        assert_eq!(refreshed.engine_url, None);
     }
 
     #[test]

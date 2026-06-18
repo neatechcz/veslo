@@ -53,7 +53,7 @@ describe("windows-wsl2 launch script", () => {
     );
   });
 
-  test("binds managed host config read-only instead of copying it", () => {
+  test("copies project config and binds managed dependency dirs read-only", () => {
     const script = buildWindowsWsl2Script(
       spawnOptions("C:\\Users\\alice\\.veslo\\opencode-config\\ws-a"),
       runtime,
@@ -61,6 +61,8 @@ describe("windows-wsl2 launch script", () => {
     );
 
     expect(script).toContain('--bind "$CONFIG_DIR" /config');
+    expect(script).toContain('cp "$HOST_CONFIG_DIR/$config_name" "$CONFIG_DIR/$config_name"');
+    expect(script).toContain('BWRAP_ARGS+=(--ro-bind "$HOST_CONFIG_DIR/$config_name" "/config/$config_name")');
     expect(script).toContain('--ro-bind "$HOST_CONFIG_DIR/tools" /config/tools');
     expect(script).toContain('--ro-bind "$HOST_CONFIG_DIR/node_modules" /config/node_modules');
     expect(script).not.toContain('cp -a "$src" "$stage"');

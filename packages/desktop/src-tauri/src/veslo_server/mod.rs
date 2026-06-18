@@ -67,11 +67,20 @@ fn generate_token() -> String {
     Uuid::new_v4().to_string()
 }
 
-fn resolve_engine_url(port: u16) -> Option<String> {
+pub(crate) fn resolve_engine_url(port: u16) -> Option<String> {
     #[cfg(windows)]
     {
-        resolve_engine_url_from_interfaces(port, list_afinet_netifas().ok()?.into_iter())
-            .or_else(|| resolve_engine_url_from_wsl_interface(port))
+        let mut candidates = Vec::new();
+        if let Ok(interfaces) = list_afinet_netifas() {
+            candidates.extend(resolve_engine_urls_from_interfaces(
+                port,
+                interfaces.into_iter(),
+            ));
+        }
+        if let Some(url) = resolve_engine_url_from_wsl_interface(port) {
+            candidates.push(url);
+        }
+        resolve_engine_url_from_candidates(candidates, probe_engine_url_from_wsl)
     }
 
     #[cfg(not(windows))]
@@ -90,17 +99,49 @@ fn format_engine_url_from_ip(ip: IpAddr, port: u16) -> Option<String> {
 }
 
 #[cfg(windows)]
+fn resolve_engine_urls_from_interfaces(
+    port: u16,
+    interfaces: impl IntoIterator<Item = (String, IpAddr)>,
+) -> Vec<String> {
+    interfaces
+        .into_iter()
+        .filter_map(|(name, ip)| {
+            let name = name.to_ascii_lowercase();
+            if !name.contains("wsl") {
+                return None;
+            }
+            format_engine_url_from_ip(ip, port)
+        })
+        .collect()
+}
+
+#[cfg(windows)]
 fn resolve_engine_url_from_interfaces(
     port: u16,
     interfaces: impl IntoIterator<Item = (String, IpAddr)>,
 ) -> Option<String> {
-    interfaces.into_iter().find_map(|(name, ip)| {
-        let name = name.to_ascii_lowercase();
-        if !name.contains("wsl") {
-            return None;
+    resolve_engine_urls_from_interfaces(port, interfaces)
+        .into_iter()
+        .next()
+}
+
+#[cfg(windows)]
+fn resolve_engine_url_from_candidates(
+    candidates: impl IntoIterator<Item = String>,
+    mut probe: impl FnMut(&str) -> bool,
+) -> Option<String> {
+    let mut seen = Vec::<String>::new();
+    for candidate in candidates {
+        let trimmed = candidate.trim().trim_end_matches('/').to_string();
+        if trimmed.is_empty() || seen.iter().any(|value| value == &trimmed) {
+            continue;
         }
-        format_engine_url_from_ip(ip, port)
-    })
+        seen.push(trimmed.clone());
+        if probe(&trimmed) {
+            return Some(trimmed);
+        }
+    }
+    None
 }
 
 #[cfg(windows)]
@@ -127,6 +168,46 @@ fn resolve_engine_url_from_wsl_interface(port: u16) -> Option<String> {
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     parse_wsl_engine_url_from_powershell_output(&stdout, port)
+}
+
+#[cfg(windows)]
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+#[cfg(windows)]
+fn probe_engine_url_from_wsl_once(url: &str) -> bool {
+    let health_url = format!("{}/health", url.trim_end_matches('/'));
+    let script = format!(
+        "URL={}; \
+         if command -v curl >/dev/null 2>&1; then \
+           curl --connect-timeout 1 --max-time 1 -fsS \"$URL\" >/dev/null; \
+         elif command -v wget >/dev/null 2>&1; then \
+           wget --timeout=1 --tries=1 -q -O /dev/null \"$URL\"; \
+         else \
+           exit 127; \
+         fi",
+        shell_quote(&health_url)
+    );
+    Command::new("wsl.exe")
+        .args(["-e", "sh", "-c", &script])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn probe_engine_url_from_wsl(url: &str) -> bool {
+    for attempt in 0..2 {
+        if probe_engine_url_from_wsl_once(url) {
+            return true;
+        }
+        if attempt == 0 {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+    }
+    eprintln!("[veslo-server] WSL engineUrl probe failed for {url}");
+    false
 }
 
 fn build_urls(
@@ -590,7 +671,10 @@ pub fn start_veslo_server(
 #[cfg(test)]
 mod tests {
     #[cfg(windows)]
-    use super::{parse_wsl_engine_url_from_powershell_output, resolve_engine_url_from_interfaces};
+    use super::{
+        parse_wsl_engine_url_from_powershell_output, resolve_engine_url_from_candidates,
+        resolve_engine_url_from_interfaces,
+    };
     use super::{
         read_persisted_veslo_server_info, read_persisted_veslo_server_info_with_cleanup,
         HealthIdentity, PersistedVesloServerState,
@@ -634,6 +718,42 @@ mod tests {
             parse_wsl_engine_url_from_powershell_output(output, 8787).as_deref(),
             Some("http://172.29.64.1:8787")
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolve_engine_url_from_candidates_requires_probe_success() {
+        let candidates = vec![
+            "http://172.29.64.1:8787".to_string(),
+            "http://172.30.64.1:8787".to_string(),
+        ];
+
+        assert_eq!(
+            resolve_engine_url_from_candidates(candidates, |url| {
+                url == "http://172.30.64.1:8787"
+            })
+            .as_deref(),
+            Some("http://172.30.64.1:8787")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolve_engine_url_from_candidates_dedupes_candidates() {
+        let mut probes = 0;
+        let candidates = vec![
+            "http://172.29.64.1:8787".to_string(),
+            "http://172.29.64.1:8787/".to_string(),
+        ];
+
+        assert_eq!(
+            resolve_engine_url_from_candidates(candidates, |_| {
+                probes += 1;
+                false
+            }),
+            None
+        );
+        assert_eq!(probes, 1);
     }
 
     #[test]

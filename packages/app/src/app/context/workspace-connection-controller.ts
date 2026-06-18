@@ -164,10 +164,15 @@ export function createWorkspaceConnectionController(
       (deps.baseUrl()?.trim() ?? "") === nextBaseUrl &&
       deps.normalizeWorkspaceScopePath(deps.clientDirectory(), connectWorkspaceType) === incomingDirectoryScope
     ) {
+      if (deps.client() !== cachedRoutingClient) {
+        commitRoutedClient({ client: cachedRoutingClient, directory: incomingDirectory }, nextBaseUrl, incomingDirectory);
+      }
       deps.wsDebug("connect:idempotent-skip", {
+        workspaceId: guardWorkspaceId || null,
         baseUrl: nextBaseUrl,
         directory: incomingDirectory || null,
         reason: context?.reason ?? null,
+        reboundGlobalClient: deps.client() === cachedRoutingClient,
       });
       console.log("[workspace] connect SKIP (idempotent - already connected)", {
         baseUrl: nextBaseUrl,

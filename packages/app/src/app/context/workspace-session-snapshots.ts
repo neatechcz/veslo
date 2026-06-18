@@ -5,11 +5,13 @@ type WorkspaceSessionSnapshotScope = {
 };
 
 type WorkspaceSessionSnapshotsOptions = {
+  enabled?: () => boolean;
   activeWorkspaceId: () => string;
   selectedSessionId: () => string | null | undefined;
   resolveSelectedSessionBrowseScope: (sessionId: string) => WorkspaceSessionSnapshotScope | null;
   saveWorkspaceSnapshot: (workspaceId: string) => void;
   loadWorkspaceSnapshot: (workspaceId: string) => boolean | void;
+  canClearSelectedSession?: (input: { workspaceId: string; selectedSessionId: string }) => boolean;
   clearSelectedSession?: () => void;
   debug?: (label: string, payload?: unknown) => void;
 };
@@ -77,7 +79,15 @@ export function createWorkspaceSessionSnapshots(options: WorkspaceSessionSnapsho
   let previousWorkspaceId: string | null = null;
 
   createEffect(() => {
+    if (options.enabled && !options.enabled()) {
+      options.debug?.("snapshot:skip-disabled", {
+        previousWorkspaceId,
+        stack: snapshotDebugStack(),
+      });
+      return;
+    }
     const activeWorkspaceId = options.activeWorkspaceId().trim();
+    if (!activeWorkspaceId) return;
     const selectedId = options.selectedSessionId()?.trim() ?? "";
     const selectedScope = selectedId ? options.resolveSelectedSessionBrowseScope(selectedId) : null;
     const action = resolveWorkspaceSessionSnapshotAction({
@@ -112,7 +122,11 @@ export function createWorkspaceSessionSnapshots(options: WorkspaceSessionSnapsho
         loaded: loaded !== false,
         selectedId,
       });
-      if (loaded === false && selectedId) {
+      const canClear = options.canClearSelectedSession?.({
+        workspaceId: action.loadWorkspaceId,
+        selectedSessionId: selectedId,
+      }) ?? true;
+      if (loaded === false && selectedId && canClear) {
         options.debug?.("snapshot:clear-stale-selected-session", {
           workspaceId: action.loadWorkspaceId,
           selectedId,

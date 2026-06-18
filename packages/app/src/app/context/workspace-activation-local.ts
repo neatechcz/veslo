@@ -1,4 +1,5 @@
 import type { EngineInfo, WorkspaceInfo } from "../lib/tauri";
+import { batch } from "solid-js";
 import {
   workspaceSetActive,
   workspaceVesloRead,
@@ -8,6 +9,7 @@ import type { createLocalRuntimeLifecycle } from "../utils/local-runtime-lifecyc
 import type { WorkspaceActivationOptions } from "./workspace-types";
 
 export type LocalActivationSelection = {
+  startedFromLocalMode: boolean;
   wasLocalConnection: boolean;
   nextRoot: string;
   oldWorkspacePath: string;
@@ -16,6 +18,7 @@ export type LocalActivationSelection = {
   actualEngineDir: string;
   actualEngineScope: string;
   workspaceChanged: boolean;
+  displayedSessionCleared: boolean;
 };
 
 export type WorkspaceLocalActivationDeps = {
@@ -23,6 +26,7 @@ export type WorkspaceLocalActivationDeps = {
   startupPreference: () => unknown;
   setStartupPreference: (value: any) => void;
   projectDir: () => string;
+  activeWorkspaceRoot: () => string;
   setProjectDir: (value: string) => void;
   authorizedDirs: () => string[];
   setAuthorizedDirs: (value: string[]) => void;
@@ -46,7 +50,11 @@ export type WorkspaceLocalActivationDeps = {
     options: { reason: string },
   ) => Promise<boolean>;
   clearDisplayedSessionState: (
-    reason: "remote_to_local_workspace_changed" | "connect_workspace_scope_changed" | "open_empty_session",
+    reason:
+      | "remote_to_local_workspace_changed"
+      | "connect_workspace_scope_changed"
+      | "local_browse_workspace_changed"
+      | "open_empty_session",
     scope?: {
       workspaceId?: string | null;
       workspaceType?: WorkspaceInfo["workspaceType"] | null;
@@ -88,14 +96,21 @@ type LocalRuntimeRestartResult = "ok" | "failed" | "superseded";
 
 export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDeps) {
   function prepareLocalWorkspaceSelection(id: string, next: WorkspaceInfo): LocalActivationSelection {
-    const wasLocalConnection = deps.startupPreference() === "local" && Boolean(deps.routingActive());
+    const startedFromLocalMode = deps.startupPreference() === "local";
+    const wasLocalConnection = startedFromLocalMode && Boolean(deps.routingActive());
     deps.setStartupPreference("local");
     const nextRoot = next.path;
-    const oldWorkspacePath = deps.projectDir();
+    const previousProjectDir = deps.projectDir();
+    const previousActiveWorkspaceRoot = deps.activeWorkspaceRoot().trim();
+    const oldWorkspacePath = previousActiveWorkspaceRoot || previousProjectDir;
     const oldWorkspaceScope = deps.normalizeWorkspaceScopePath(oldWorkspacePath, "local");
+    const previousProjectDirScope = deps.normalizeWorkspaceScopePath(previousProjectDir, "local");
     const nextWorkspaceScope = deps.normalizeWorkspaceScopePath(nextRoot, "local");
     const actualEngineDir = deps.engine()?.projectDir?.trim() ?? "";
     const actualEngineScope = deps.normalizeWorkspaceScopePath(actualEngineDir, "local");
+    const projectDirOutOfSync =
+      Boolean(previousProjectDirScope && oldWorkspaceScope) &&
+      previousProjectDirScope !== oldWorkspaceScope;
     const workspaceChanged =
       deps.workspaceScopeChanged(oldWorkspacePath, nextRoot, "local") ||
       (actualEngineScope !== "" && actualEngineScope !== nextWorkspaceScope);
@@ -105,28 +120,58 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
       nextRoot,
       nextWorkspaceScope,
       workspaceChanged,
+      startedFromLocalMode,
       wasLocalConnection: Boolean(wasLocalConnection),
-      prevProjectDir: oldWorkspacePath,
+      prevProjectDir: previousProjectDir,
+      prevProjectDirScope: previousProjectDirScope || null,
+      prevActiveWorkspaceRoot: previousActiveWorkspaceRoot || null,
       prevWorkspaceScope: oldWorkspaceScope,
+      projectDirOutOfSync,
       actualEngineDir,
       actualEngineScope,
     });
+    if (projectDirOutOfSync) {
+      deps.wsDebug("activate:local:projectDir-out-of-sync", {
+        id,
+        nextRoot,
+        previousProjectDir,
+        previousProjectDirScope,
+        previousActiveWorkspaceRoot,
+        previousActiveWorkspaceScope: oldWorkspaceScope,
+      });
+    }
     deps.wsLog("[workspace:activate] STEP 1 — syncActiveWorkspaceId + setProjectDir", {
       id,
       nextRoot,
       workspaceChanged,
+      startedFromLocalMode,
       wasLocalConnection,
       actualEngineDir,
     });
 
-    deps.syncActiveWorkspaceId(id);
-    deps.setProjectDir(nextRoot);
+    const displayedSessionCleared = workspaceChanged;
+    if (displayedSessionCleared) {
+      deps.clearDisplayedSessionState("connect_workspace_scope_changed", {
+        workspaceId: id,
+        workspaceType: "local",
+        previousDirectory: oldWorkspacePath,
+        nextDirectory: nextRoot,
+        activeWorkspaceRoot: nextRoot,
+        clearPendingPermissions: true,
+      });
+    }
 
-    if (wasLocalConnection && workspaceChanged && isTauriRuntime() && deps.populateSidebarFromDb) {
+    batch(() => {
+      deps.syncActiveWorkspaceId(id);
+      deps.setProjectDir(nextRoot);
+    });
+
+    if (startedFromLocalMode && workspaceChanged && isTauriRuntime() && deps.populateSidebarFromDb) {
       deps.setEngineReady?.(false);
     }
 
     return {
+      startedFromLocalMode,
       wasLocalConnection: Boolean(wasLocalConnection),
       nextRoot,
       oldWorkspacePath,
@@ -135,6 +180,7 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
       actualEngineDir,
       actualEngineScope,
       workspaceChanged,
+      displayedSessionCleared,
     };
   }
 
@@ -199,7 +245,7 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
     next: WorkspaceInfo,
     selection: LocalActivationSelection,
   ) {
-    if (!deps.routingActive() || selection.wasLocalConnection) return true;
+    if (!deps.routingActive() || selection.wasLocalConnection || selection.startedFromLocalMode) return true;
     if (deps.isSuperseded()) {
       deps.wsDebug("activate:superseded:before-remote-to-local", { id });
       return false;
@@ -211,7 +257,7 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
       engine: deps.engine()?.baseUrl ?? null,
       engineRunning: Boolean(deps.engine()?.running),
     });
-    if (selection.workspaceChanged) {
+    if (selection.workspaceChanged && !selection.displayedSessionCleared) {
       deps.clearDisplayedSessionState("remote_to_local_workspace_changed", {
         workspaceId: id,
         workspaceType: "local",
@@ -302,7 +348,10 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
     const canBrowseOffline =
       (selection.workspaceChanged || needsEngineWarmup) && isTauriRuntime() && deps.populateSidebarFromDb;
     const isColdBoot = !deps.routingActive() && deps.startupPreference() === "local";
-    if (!canBrowseOffline || !(selection.wasLocalConnection || isColdBoot || needsEngineWarmup)) {
+    if (
+      !canBrowseOffline ||
+      !(selection.startedFromLocalMode || selection.wasLocalConnection || isColdBoot || needsEngineWarmup)
+    ) {
       return false;
     }
 
@@ -310,6 +359,16 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
     deps.wsDebug("activate:local->local:browsingMode", { id, nextPath: next.path });
 
     deps.setEngineReady?.(false);
+    if (selection.workspaceChanged && !selection.displayedSessionCleared) {
+      deps.clearDisplayedSessionState("local_browse_workspace_changed", {
+        workspaceId: id,
+        workspaceType: "local",
+        previousDirectory: selection.oldWorkspacePath,
+        nextDirectory: selection.nextRoot,
+        activeWorkspaceRoot: selection.nextRoot,
+        clearPendingPermissions: true,
+      });
+    }
 
     try {
       await deps.populateSidebarFromDb!(id, next.path);
@@ -391,6 +450,7 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
     deps.wsLog("[workspace:activate] STEP 4 — branch decision", {
       isRemote: false,
       hasClient: Boolean(deps.routingActive()),
+      startedFromLocalMode: selection.startedFromLocalMode,
       wasLocalConnection: selection.wasLocalConnection,
       workspaceChanged: selection.workspaceChanged,
     });

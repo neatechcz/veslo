@@ -38,6 +38,7 @@ const attachmentOnlyDraft = (): ComposerDraft => ({
 test("pending submit creates a user message before a real session id exists", () => {
   const pending = createPendingSubmittedDraft({
     id: "pending-submit-1",
+    clientMessageId: "pending-submit-1",
     sessionKey: "pending-draft:abc",
     sessionId: null,
     createdAt: 10,
@@ -56,6 +57,7 @@ test("pending submit failure preserves the message as editable state", () => {
   const pending = markPendingSubmittedFailed(
     createPendingSubmittedDraft({
       id: "pending-submit-1",
+      clientMessageId: "pending-submit-1",
       sessionKey: "pending-draft:abc",
       sessionId: null,
       createdAt: 10,
@@ -75,6 +77,7 @@ test("pending submit failure preserves the message as editable state", () => {
 test("pending submit can be remapped to the real session id", () => {
   const pending = createPendingSubmittedDraft({
     id: "pending-submit-1",
+    clientMessageId: "pending-submit-1",
     sessionKey: "pending-draft:abc",
     sessionId: null,
     createdAt: 10,
@@ -90,6 +93,7 @@ test("pending submit can be remapped to the real session id", () => {
 test("pending submit creates a renderable text placeholder for attachment-only drafts", () => {
   const pending = createPendingSubmittedDraft({
     id: "pending-submit-1",
+    clientMessageId: "pending-submit-1",
     sessionKey: "pending-draft:abc",
     sessionId: null,
     createdAt: 10,

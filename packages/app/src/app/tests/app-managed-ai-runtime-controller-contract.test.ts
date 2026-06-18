@@ -25,8 +25,13 @@ test("managed AI access refresh effect executes controller decisions", () => {
 
   assert.match(
     effectSource,
-    /const refreshPreflight = resolveManagedAiAccessRefreshPreflight\(\{[\s\S]*hasGatewayClient: Boolean\(gatewayClient\),[\s\S]*managedAiBaseUrl,[\s\S]*userToken,[\s\S]*deferForLocalGateway:[\s\S]*cachedAccessPresent: Boolean\(cachedAccess\),[\s\S]*\}\);/,
+    /const refreshPreflight = resolveManagedAiAccessRefreshPreflight\(\{[\s\S]*hasGatewayClient: Boolean\(gatewayClient\),[\s\S]*managedAiBaseUrl,[\s\S]*userToken,[\s\S]*deferForLocalGateway:[\s\S]*cachedAccessPresent: Boolean\(cachedAccess\),[\s\S]*freshCachedAccessPresent: Boolean\(proofCachedAccess\),[\s\S]*\}\);/,
     "access refresh preflight should be delegated to the runtime controller",
+  );
+  assert.match(
+    effectSource,
+    /if \(refreshPreflight\.type === "use-cache"\) \{[\s\S]*setManagedAiAccess\(cachedAccess\.profile\);[\s\S]*setManagedAiAccessBusy\(false\);[\s\S]*return;[\s\S]*\}/,
+    "fresh local proof cache should short-circuit the network access refresh",
   );
   assert.match(
     effectSource,
@@ -37,5 +42,21 @@ test("managed AI access refresh effect executes controller decisions", () => {
     effectSource,
     /const failureDecision = resolveManagedAiAccessRefreshFailure\(\{[\s\S]*cachedAccessPresent: Boolean\(cachedAccess\),[\s\S]*errorMessage: describeRequestError\(error, "Failed to load AI access"\),[\s\S]*\}\);/,
     "failed access refresh state transition should be delegated",
+  );
+});
+
+test("desktop managed AI proof cache stores policy metadata without gateway tokens", () => {
+  const proofWriteCall = source.match(/void accessProofAiWrite\(\{[\s\S]*?\}\)\.catch/);
+  assert.ok(proofWriteCall, "desktop proof cache write should be present");
+
+  assert.match(
+    proofWriteCall[0],
+    /void accessProofAiWrite\(\{[\s\S]*cacheKey,[\s\S]*proof: \{[\s\S]*providerId: profile\.providerId,[\s\S]*defaultModel: profile\.defaultModel,[\s\S]*allowedModels: profile\.allowedModels,[\s\S]*updatedAt: profile\.updatedAt,[\s\S]*\},[\s\S]*\}\)/,
+    "desktop proof cache should write only profile metadata",
+  );
+  assert.doesNotMatch(
+    proofWriteCall[0],
+    /gatewayAccessToken/,
+    "desktop proof cache must not persist gateway access tokens",
   );
 });

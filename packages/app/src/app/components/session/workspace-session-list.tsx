@@ -16,6 +16,7 @@ import {
 
 import type { VesloSoulStatus } from "../../lib/veslo-server";
 import type { WorkspaceInfo } from "../../lib/tauri";
+import { buildArchivedSidebarSessionKey } from "../../lib/session-archive-model";
 import type {
   LoadedSessionPrefetchInterestChangeHandler,
   SidebarSubagentDecoration,
@@ -547,24 +548,17 @@ export default function WorkspaceSessionList(props: Props) {
     row.nestingLevel > 0 ? { "padding-left": `${12 + Math.min(row.nestingLevel, 6) * 14}px` } : undefined;
 
   const archivedSessionIds = () => props.archivedSessionIds ?? [];
-  const sessionWorkspaceById = createMemo(() => {
-    const map = new Map<string, string>();
-    for (const group of props.workspaceSessionGroups) {
-      const workspaceId = group.workspace.id;
-      for (const session of group.sessions) {
-        map.set(session.id, workspaceId);
-      }
-    }
-    return map;
-  });
   const archivedSessionIdSet = createMemo(
     () => new Set(archivedSessionIds().map((sessionId) => sessionId.trim()).filter(Boolean)),
   );
-  const isSessionArchived = (sessionId: string) => archivedSessionIdSet().has(sessionId.trim());
-  const isArchiveConfirmationPending = (sessionId: string) =>
-    pendingArchiveConfirmationSessionId() === sessionId.trim();
+  const archiveKeyFor = (workspaceId: string, sessionId: string) =>
+    buildArchivedSidebarSessionKey({ workspaceId, sessionId });
+  const isSessionArchived = (workspaceId: string, sessionId: string) =>
+    archivedSessionIdSet().has(archiveKeyFor(workspaceId, sessionId));
+  const isArchiveConfirmationPending = (workspaceId: string, sessionId: string) =>
+    pendingArchiveConfirmationSessionId() === archiveKeyFor(workspaceId, sessionId);
   const sessionHoverActionsSuspended = createMemo(() => Boolean(props.pendingSelectedSessionId?.trim()));
-  const shouldShowSessionRow = (row: FlatSessionRow) => !isSessionArchived(row.session.id);
+  const shouldShowSessionRow = (row: FlatSessionRow) => !isSessionArchived(row.workspace.id, row.session.id);
 
   const recentRows = createMemo<FlatSessionRow[]>(() =>
     buildRecentRows(props.workspaceSessionGroups, props.isPrivateWorkspacePath),
@@ -1035,29 +1029,28 @@ export default function WorkspaceSessionList(props: Props) {
     handleSessionRowClick(row, hasChildren);
   };
 
-  const handleSessionArchiveAction = async (event: MouseEvent, sessionId: string) => {
+  const handleSessionArchiveAction = async (event: MouseEvent, workspaceId: string, sessionId: string) => {
     event.stopPropagation();
+    const targetWorkspaceId = workspaceId.trim();
     const id = sessionId.trim();
-    if (!id) return;
-    const archived = isSessionArchived(id);
-    const workspaceId = sessionWorkspaceById().get(id) ?? "";
-    if (!workspaceId) return;
+    if (!targetWorkspaceId || !id) return;
+    const archived = isSessionArchived(targetWorkspaceId, id);
 
     if (archived) {
-      await Promise.resolve(props.onUnarchiveSession?.(workspaceId, id));
+      await Promise.resolve(props.onUnarchiveSession?.(targetWorkspaceId, id));
       return;
     }
 
-    if (!isArchiveConfirmationPending(id)) {
+    if (!isArchiveConfirmationPending(targetWorkspaceId, id)) {
       if (event.currentTarget instanceof HTMLButtonElement) {
         pendingArchiveConfirmButtonRef = event.currentTarget;
       }
-      setPendingArchiveConfirmationSessionId(id);
+      setPendingArchiveConfirmationSessionId(archiveKeyFor(targetWorkspaceId, id));
       return;
     }
 
     setPendingArchiveConfirmationSessionId(null);
-    await Promise.resolve(props.onArchiveSession?.(workspaceId, id));
+    await Promise.resolve(props.onArchiveSession?.(targetWorkspaceId, id));
   };
 
   const handleSessionRowContextMenu = (
@@ -1808,7 +1801,7 @@ export default function WorkspaceSessionList(props: Props) {
         : sessionLabelParts(row);
     };
     const labelColor = () => labelOverride() ? "" : sessionLabelColor(row);
-    const archiveConfirmationPending = () => isArchiveConfirmationPending(row.session.id);
+    const archiveConfirmationPending = () => isArchiveConfirmationPending(row.workspace.id, row.session.id);
     const showWorkspaceMenu = options.showWorkspaceMenu !== false;
 
     return (
@@ -1880,15 +1873,15 @@ export default function WorkspaceSessionList(props: Props) {
             class={archiveConfirmationPending()
               ? "rounded-md border border-amber-7 bg-amber-3 px-2 py-0.5 text-[11px] font-medium text-amber-11 hover:bg-amber-4"
               : "p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"}
-            onClick={(event) => handleSessionArchiveAction(event, row.session.id)}
+            onClick={(event) => handleSessionArchiveAction(event, row.workspace.id, row.session.id)}
             aria-label={archiveConfirmationPending()
               ? tr("sidebar.archive_confirm")
-              : isSessionArchived(row.session.id)
+              : isSessionArchived(row.workspace.id, row.session.id)
               ? tr("sidebar.unarchive_session")
               : tr("sidebar.archive_session")}
             title={archiveConfirmationPending()
               ? tr("sidebar.archive_confirm")
-              : isSessionArchived(row.session.id)
+              : isSessionArchived(row.workspace.id, row.session.id)
               ? tr("sidebar.unarchive_session")
               : tr("sidebar.archive_session")}
             ref={(el) => {
@@ -1923,7 +1916,7 @@ export default function WorkspaceSessionList(props: Props) {
     const taskLoadError = () => taskLoadErrorFor(workspace(), row.error);
     const label = () => sessionLabelParts(row);
     const labelColor = () => sessionLabelColor(row);
-    const archiveConfirmationPending = () => isArchiveConfirmationPending(session().id);
+    const archiveConfirmationPending = () => isArchiveConfirmationPending(workspace().id, session().id);
     const anchorKey = `${options.anchorPrefix}:${row.rowKey}`;
 
     return (
@@ -2025,15 +2018,15 @@ export default function WorkspaceSessionList(props: Props) {
             class={archiveConfirmationPending()
               ? "rounded-md border border-amber-7 bg-amber-3 px-2 py-0.5 text-[11px] font-medium text-amber-11 hover:bg-amber-4"
               : "p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"}
-            onClick={(event) => handleSessionArchiveAction(event, session().id)}
+            onClick={(event) => handleSessionArchiveAction(event, workspace().id, session().id)}
             aria-label={archiveConfirmationPending()
               ? tr("sidebar.archive_confirm")
-              : isSessionArchived(session().id)
+              : isSessionArchived(workspace().id, session().id)
               ? tr("sidebar.unarchive_session")
               : tr("sidebar.archive_session")}
             title={archiveConfirmationPending()
               ? tr("sidebar.archive_confirm")
-              : isSessionArchived(session().id)
+              : isSessionArchived(workspace().id, session().id)
               ? tr("sidebar.unarchive_session")
               : tr("sidebar.archive_session")}
             ref={(el) => {

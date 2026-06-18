@@ -1,5 +1,6 @@
 import type { PendingSubmittedDraft } from "./pending-submit-model";
 import { remapPendingSubmittedSession } from "./pending-submit-model";
+import { parseUiConversationKey } from "../../lib/ui-conversation-scope";
 
 export const PENDING_SESSION_INSTANCE_PREFIX = "pending-session:";
 
@@ -35,6 +36,17 @@ export const isPendingSessionInstanceId = (
     id.slice(PENDING_SESSION_INSTANCE_PREFIX.length) !== ""
   );
 };
+
+export function pendingSessionInstanceIdFromKey(
+  value: string | null | undefined,
+): PendingSessionInstanceId | null {
+  const key = (value ?? "").trim();
+  if (isPendingSessionInstanceId(key)) return key;
+
+  const parsed = parseUiConversationKey(key);
+  if (parsed?.kind !== "pending-session") return null;
+  return isPendingSessionInstanceId(parsed.id) ? parsed.id : null;
+}
 
 export const createPendingSessionInstanceId = (
   uuid: string | (() => string) = createDefaultPendingSessionInstanceSuffix,
@@ -107,7 +119,7 @@ export function materializePendingSessionInstance(
   const pendingKey = input.pendingSessionKey.trim();
   const realKey = input.realSessionKey.trim();
   const realSessionId = input.realSessionId.trim();
-  if (!isPendingSessionInstanceId(pendingKey) || !realKey || !realSessionId || pendingKey === realKey) {
+  if (!pendingSessionInstanceIdFromKey(pendingKey) || !realKey || !realSessionId || pendingKey === realKey) {
     return current;
   }
 
