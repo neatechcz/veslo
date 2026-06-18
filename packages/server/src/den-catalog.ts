@@ -42,6 +42,25 @@ function toHubSkillItem(item: unknown, index: number): HubSkillItem {
   };
 }
 
+function toMcpOAuthConfig(value: unknown, index: number) {
+  if (value === undefined) return undefined;
+  if (typeof value === "boolean") return value;
+  if (!value || typeof value !== "object") {
+    throw new ApiError(502, "den_catalog_invalid_payload", `Invalid Den catalog item at index ${index}`);
+  }
+
+  const payload = value as Record<string, unknown>;
+  if (typeof payload.clientId !== "string") {
+    throw new ApiError(502, "den_catalog_invalid_payload", `Invalid Den catalog item at index ${index}`);
+  }
+
+  return {
+    clientId: payload.clientId,
+    ...(typeof payload.clientSecret === "string" ? { clientSecret: payload.clientSecret } : {}),
+    ...(typeof payload.scope === "string" ? { scope: payload.scope } : {}),
+  };
+}
+
 function toHubMcpItem(item: unknown, index: number): HubMcpItem {
   if (!item || typeof item !== "object") {
     throw new ApiError(502, "den_catalog_invalid_payload", `Invalid Den catalog item at index ${index}`);
@@ -56,9 +75,33 @@ function toHubMcpItem(item: unknown, index: number): HubMcpItem {
     (payload.description !== undefined && typeof payload.description !== "string") ||
     !config ||
     (config.type !== "remote" && config.type !== "local") ||
-    !source ||
-    source.scope !== "org" ||
-    typeof source.orgId !== "string"
+    !source
+  ) {
+    throw new ApiError(502, "den_catalog_invalid_payload", `Invalid Den catalog item at index ${index}`);
+  }
+
+  let normalizedSource: HubMcpItem["source"];
+  if (source.scope === "org") {
+    if (typeof source.orgId !== "string") {
+      throw new ApiError(502, "den_catalog_invalid_payload", `Invalid Den catalog item at index ${index}`);
+    }
+    normalizedSource = {
+      scope: "org",
+      orgId: source.orgId,
+    };
+  } else if (source.scope === "platform") {
+    normalizedSource = { scope: "platform" };
+  } else {
+    throw new ApiError(502, "den_catalog_invalid_payload", `Invalid Den catalog item at index ${index}`);
+  }
+
+  const provider = payload.provider as Record<string, unknown> | undefined;
+  if (
+    provider !== undefined &&
+    (!provider ||
+      typeof provider !== "object" ||
+      typeof provider.id !== "string" ||
+      (provider.group !== undefined && typeof provider.group !== "string"))
   ) {
     throw new ApiError(502, "den_catalog_invalid_payload", `Invalid Den catalog item at index ${index}`);
   }
@@ -74,6 +117,8 @@ function toHubMcpItem(item: unknown, index: number): HubMcpItem {
     throw new ApiError(502, "den_catalog_invalid_payload", `Invalid Den catalog item at index ${index}`);
   }
 
+  const oauth = toMcpOAuthConfig(config.oauth, index);
+
   return {
     id: payload.id,
     name: payload.name,
@@ -82,12 +127,17 @@ function toHubMcpItem(item: unknown, index: number): HubMcpItem {
       type: config.type,
       ...(typeof config.url === "string" ? { url: config.url } : {}),
       ...(Array.isArray(config.command) ? { command: config.command as string[] } : {}),
-      ...(typeof config.oauth === "boolean" ? { oauth: config.oauth } : {}),
+      ...(oauth !== undefined ? { oauth } : {}),
     },
-    source: {
-      scope: "org",
-      orgId: source.orgId,
-    },
+    source: normalizedSource,
+    ...(provider !== undefined
+      ? {
+          provider: {
+            id: provider.id as string,
+            ...(typeof provider.group === "string" ? { group: provider.group } : {}),
+          },
+        }
+      : {}),
   };
 }
 

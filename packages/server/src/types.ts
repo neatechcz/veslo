@@ -335,6 +335,14 @@ export interface HubSkillItem {
   };
 }
 
+export type HubMcpOAuthConfig =
+  | boolean
+  | {
+      clientId: string;
+      clientSecret?: string;
+      scope?: string;
+    };
+
 export interface HubMcpItem {
   id: string;
   name: string;
@@ -343,11 +351,14 @@ export interface HubMcpItem {
     type: "remote" | "local";
     url?: string;
     command?: string[];
-    oauth?: boolean;
+    oauth?: HubMcpOAuthConfig;
   };
-  source: {
-    scope: "org";
-    orgId: string;
+  source:
+    | { scope: "org"; orgId: string }
+    | { scope: "platform" };
+  provider?: {
+    id: string;
+    group?: string;
   };
 }
 

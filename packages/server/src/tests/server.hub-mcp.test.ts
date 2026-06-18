@@ -161,6 +161,54 @@ test("GET /hub/mcp returns items from den org catalog", async () => {
   ]);
 });
 
+test("GET /hub/mcp accepts platform Google MCP entries with OAuth config", async () => {
+  const denServer = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async () =>
+      new Response(JSON.stringify({
+        items: [
+          {
+            id: "google-gmail",
+            name: "Google Gmail",
+            description: "Search Gmail.",
+            config: {
+              type: "remote",
+              url: "https://gmailmcp.googleapis.com/mcp/v1",
+              oauth: {
+                clientId: "{env:VESLO_GOOGLE_MCP_CLIENT_ID}",
+                clientSecret: "{env:VESLO_GOOGLE_MCP_CLIENT_SECRET}",
+                scope: "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+              },
+            },
+            source: { scope: "platform" },
+            provider: { id: "google", group: "Google" },
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+  });
+  runningServers.push(denServer as { stop?: (closeActiveConnections?: boolean) => void });
+
+  const { server } = await startFixture({ denApiBase: `http://127.0.0.1:${denServer.port}` });
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/hub/mcp`, {
+    headers: {
+      Authorization: "Bearer client-token",
+      "x-veslo-den-token": "den-token",
+      "x-veslo-den-org-id": "org_1",
+    },
+  });
+
+  expect(response.status).toBe(200);
+  const payload = await response.json() as { items: Array<any> };
+  expect(payload.items[0].source.scope).toBe("platform");
+  expect(payload.items[0].provider).toEqual({ id: "google", group: "Google" });
+  expect(payload.items[0].config.oauth.scope).toContain("gmail.readonly");
+});
+
 test("GET /capabilities exposes hub mcp access without repo metadata", async () => {
   const { server } = await startFixture({ denApiBase: "https://den.example" });
 
@@ -238,6 +286,57 @@ test("POST /workspace/:id/mcp/hub/:name installs catalog MCP config", async () =
   const configRaw = await readFile(join(workspaceRoot, "opencode.jsonc"), "utf8");
   expect(configRaw).toContain("\"demo\"");
   expect(configRaw).toContain("https://mcp.example.test/demo");
+});
+
+test("POST /workspace/:id/mcp/hub/:name preserves Google OAuth object", async () => {
+  const denServer = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async () =>
+      new Response(JSON.stringify({
+        items: [
+          {
+            id: "google-gmail",
+            name: "Google Gmail",
+            config: {
+              type: "remote",
+              url: "https://gmailmcp.googleapis.com/mcp/v1",
+              oauth: {
+                clientId: "{env:VESLO_GOOGLE_MCP_CLIENT_ID}",
+                clientSecret: "{env:VESLO_GOOGLE_MCP_CLIENT_SECRET}",
+                scope: "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+              },
+            },
+            source: { scope: "platform" },
+            provider: { id: "google", group: "Google" },
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+  });
+  runningServers.push(denServer as { stop?: (closeActiveConnections?: boolean) => void });
+
+  const { server, workspaceRoot } = await startFixture({ denApiBase: `http://127.0.0.1:${denServer.port}` });
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/mcp/hub/google-gmail`, {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer client-token",
+      "x-veslo-den-token": "den-token",
+      "x-veslo-den-org-id": "org_1",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({}),
+  });
+
+  expect(response.status).toBe(200);
+  const configRaw = await readFile(join(workspaceRoot, "opencode.jsonc"), "utf8");
+  expect(configRaw).toContain("\"google-gmail\"");
+  expect(configRaw).toContain("\"clientId\": \"{env:VESLO_GOOGLE_MCP_CLIENT_ID}\"");
+  expect(configRaw).toContain("\"clientSecret\": \"{env:VESLO_GOOGLE_MCP_CLIENT_SECRET}\"");
+  expect(configRaw).toContain("gmail.readonly");
 });
 
 test("POST /workspace/:id/mcp/hub/:name preserves oauth false in config", async () => {
