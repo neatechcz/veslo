@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { readContextSource, readWorkspaceFacadeSource } from "./workspace-source";
-import { shouldSuppressWorkspaceSwitchOverlayForActivation } from "../../context/workspace-activation-controller.js";
+import {
+  isPassiveLocalBrowseActivationOrigin,
+  shouldSuppressWorkspaceSwitchOverlayForActivation,
+} from "../../context/workspace-activation-controller.js";
 
 test("activateWorkspace is implemented by activation controller", () => {
   const activationSource = readContextSource("workspace-activation-controller.ts");
@@ -23,6 +26,11 @@ test("activateWorkspace is implemented by activation controller", () => {
 });
 
 test("passive local browse activations suppress the fullscreen switch overlay", () => {
+  assert.equal(isPassiveLocalBrowseActivationOrigin("workspace-session-list:project-open"), true);
+  assert.equal(isPassiveLocalBrowseActivationOrigin("session-navigation:open-session-before-open"), true);
+  assert.equal(isPassiveLocalBrowseActivationOrigin("send-target:selected-session-workspace"), false);
+  assert.equal(isPassiveLocalBrowseActivationOrigin("workspace:activate-fresh-local"), false);
+
   assert.equal(
     shouldSuppressWorkspaceSwitchOverlayForActivation({
       workspaceType: "local",

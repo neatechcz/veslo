@@ -177,13 +177,23 @@ test("routing ensure failures preserve concrete UI error messages", () => {
   );
 });
 
-test("browsing mode keeps the live client but marks the engine not ready before SQLite-backed browsing", () => {
+test("browsing mode keeps the live client and preserves target runtime readiness before SQLite-backed browsing", () => {
   const localActivationSource = readContextSource("workspace-activation-local.ts");
 
   assert.match(
     localActivationSource,
-    /if \(startedFromLocalMode && workspaceChanged && isTauriRuntime\(\) && deps\.populateSidebarFromDb\) \{[\s\S]*deps\.setEngineReady\?\.\(false\);[\s\S]*\}/s,
-    "browse mode must mark the engine not ready before async SQLite hydration",
+    /const targetRuntimeReady = Boolean\(deps\.isWorkspaceRuntimeReady\?\.\(id\)\);/,
+    "local activation should ask for workspace-scoped runtime readiness before touching global engineReady",
+  );
+  assert.match(
+    localActivationSource,
+    /if \(targetRuntimeReady\) \{[\s\S]*deps\.setEngineReady\?\.\(true\);[\s\S]*\} else if \(startedFromLocalMode && workspaceChanged && isTauriRuntime\(\) && deps\.populateSidebarFromDb\) \{[\s\S]*deps\.setEngineReady\?\.\(false\);[\s\S]*\}/s,
+    "browse mode must not demote engineReady when the target workspace already has a ready route/runtime",
+  );
+  assert.match(
+    localActivationSource,
+    /deps\.setEngineReady\?\.\(selection\.targetRuntimeReady\);[\s\S]*await deps\.populateSidebarFromDb!\(id, next\.path\);/s,
+    "SQLite-backed browse should publish target readiness before title-only DB hydration",
   );
   assert.match(
     localActivationSource,
@@ -199,6 +209,16 @@ test("browsing mode keeps the live client but marks the engine not ready before 
     localActivationSource,
     /!\(selection\.startedFromLocalMode \|\| selection\.wasLocalConnection \|\| isColdBoot \|\| needsEngineWarmup\)/s,
     "local browse mode should allow SQLite-backed browsing even when no routed client was active at activation start",
+  );
+  assert.match(
+    localActivationSource,
+    /!selection\.passiveBrowseActivation[\s\S]*!\(selection\.startedFromLocalMode \|\| selection\.wasLocalConnection \|\| isColdBoot \|\| needsEngineWarmup\)/s,
+    "local browse mode should be limited to explicit passive browse activations, not send or compose activations",
+  );
+  assert.match(
+    localActivationSource,
+    /if \(selection\.passiveBrowseActivation\) \{[\s\S]*activate:local:veslo-host-active:skip[\s\S]*\} else \{[\s\S]*await deps\.activateVesloHostWorkspace\(next\.path\);/s,
+    "passive browse should not call Veslo server /workspaces/:id/activate through host activation",
   );
   assert.match(
     localActivationSource,
@@ -264,8 +284,8 @@ test("bootstrap pre-loads the sidebar from SQLite without starting the engine", 
   );
   assert.match(
     source,
-    /async function bootstrapOnboarding\(\)[\s\S]*?await activateVesloHostWorkspace\(workspacePath\);[\s\S]*?options\.populateSidebarFromDb\(/s,
-    "bootstrap must sync the Veslo host active workspace before reading DB conversations",
+    /async function bootstrapOnboarding\(\)[\s\S]*?lazy boot — skip Veslo host activation[\s\S]*?options\.populateSidebarFromDb\(/s,
+    "bootstrap passive browse must skip Veslo host activation before reading DB conversation titles",
   );
   assert.match(
     source,
@@ -274,11 +294,28 @@ test("bootstrap pre-loads the sidebar from SQLite without starting the engine", 
   );
 });
 
-test("lazy DB hydration selects a stored or latest session only while the workspace is still active", () => {
+test("lazy browse stays title-only and does not auto-hydrate or auto-select the latest session", () => {
+  const localActivationSource = readContextSource("workspace-activation-local.ts");
+
   assert.match(
-    appSource,
-    /hydrateLatestSessionFromDb: async \(workspaceId: string, directory: string\) => \{[\s\S]*const \{ visible \} = partitionVesloUtilitySessions\(result\.items\);[\s\S]*const rememberedSessionId = activeWorkspaceLastSessionId\(\)\?\.trim\(\) \?\? "";[\s\S]*visible\[0\][\s\S]*sessionStore\.hydrateTranscriptSnapshot\(snapshot\);[\s\S]*if \(selectedSessionId\(\)\?\.trim\(\)\) return;[\s\S]*if \(workspaceStore\.activeWorkspaceId\(\)\.trim\(\) !== workspaceId\.trim\(\)\) return;[\s\S]*await selectSession\(latest\.id\);/s,
-    "lazy DB hydration should render at least the remembered/latest active workspace session without cold-starting another workspace engine",
+    localActivationSource,
+    /activate:local->local:browsingMode:skipLatestHydration[\s\S]*reason: "title-only-browse"/s,
+    "local browse mode should explicitly skip latest transcript hydration",
+  );
+  assert.doesNotMatch(
+    localActivationSource,
+    /await deps\.hydrateLatestSessionFromDb/,
+    "local browse mode must not hydrate transcript or auto-select latest conversation",
+  );
+  assert.match(
+    source,
+    /async function bootstrapOnboarding\(\)[\s\S]*?lazy boot — skip latest transcript hydration[\s\S]*?markOnboardingComplete\(\);/s,
+    "bootstrap passive browse should stay title-only",
+  );
+  assert.doesNotMatch(
+    source,
+    /await options\.hydrateLatestSessionFromDb\(activeWorkspace\.id, workspacePath\)/,
+    "bootstrap must not hydrate transcript or auto-select latest conversation",
   );
 });
 

@@ -50,9 +50,24 @@ export type StartupRequestAuditFetch = (
 
 export const STARTUP_REQUEST_AUDIT_WINDOW_MS = 30_000;
 const DEFAULT_MAX_SUMMARY_ENTRIES = 200;
+const MAX_STARTUP_REQUEST_AUDIT_WINDOW_MS = 30 * 60_000;
 
 function roundMs(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+export function resolveStartupRequestAuditWindowMs(input: {
+  envValue?: string | null;
+  storedValue?: string | null;
+  fallback?: number;
+} = {}): number {
+  const fallback = input.fallback ?? STARTUP_REQUEST_AUDIT_WINDOW_MS;
+  const raw = input.envValue?.trim() || input.storedValue?.trim() || "";
+  if (!raw) return fallback;
+
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(Math.floor(parsed), MAX_STARTUP_REQUEST_AUDIT_WINDOW_MS);
 }
 
 function normalizeMethod(method: unknown): string {

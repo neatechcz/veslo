@@ -6,6 +6,7 @@ import {
   installStartupRequestAudit,
   normalizeStartupRequestAuditUrl,
   recordStartupRequestAudit,
+  resolveStartupRequestAuditWindowMs,
   wrapStartupRequestAuditFetch,
 } from "../../lib/startup-request-audit.js";
 
@@ -42,6 +43,30 @@ test("startup request audit ignores requests after the startup window", () => {
   const summary = audit.stop("test");
   assert.equal(summary.totalCount, 1);
   assert.equal(summary.distinctCount, 1);
+});
+
+test("startup request audit window can be extended for manual diagnostics", () => {
+  assert.equal(resolveStartupRequestAuditWindowMs(), 30_000);
+  assert.equal(resolveStartupRequestAuditWindowMs({ envValue: "900000" }), 900_000);
+  assert.equal(resolveStartupRequestAuditWindowMs({ envValue: "", storedValue: "120000" }), 120_000);
+  assert.equal(resolveStartupRequestAuditWindowMs({ envValue: "bad", storedValue: "120000" }), 30_000);
+  assert.equal(resolveStartupRequestAuditWindowMs({ envValue: "3600000" }), 30 * 60_000);
+});
+
+test("startup request audit records through an extended window", () => {
+  let now = 0;
+  const audit = createStartupRequestAudit({
+    now: () => now,
+    windowMs: resolveStartupRequestAuditWindowMs({ envValue: "900000" }),
+  });
+
+  assert.equal(audit.record("http://127.0.0.1:4096/health"), true);
+  now = 120_000;
+  assert.equal(audit.record("http://127.0.0.1:4096/workspaces"), true);
+
+  const summary = audit.stop("test");
+  assert.equal(summary.totalCount, 2);
+  assert.equal(summary.distinctCount, 2);
 });
 
 test("startup request audit honors init method overrides for Request inputs", () => {

@@ -5445,6 +5445,10 @@ export default function App() {
     developerMode,
     activeSendTraceId,
     setEngineReady,
+    isWorkspaceRuntimeReady: (workspaceId: string) => {
+      const id = workspaceId.trim();
+      return Boolean(id && (readyEngineWorkspaceIds().has(id) || workspaceRouting.entry(id)));
+    },
     populateSidebarFromDb: async (workspaceId: string, directory: string) => {
       // Set status to "loading" SYNCHRONOUSLY before any await, so the idle-loader
       // effect (line ~2964) doesn't fire and try to contact the engine API.

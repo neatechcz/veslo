@@ -505,6 +505,7 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
       sync: result.sync,
       count: result.items.length,
     });
+    return result;
   };
 
   const resolveSidebarClientConfig = (workspaceId: string) => {
@@ -594,39 +595,37 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
     if (!id) return;
     const config = resolveSidebarClientConfig(id);
     if (!config) return;
+    const workspace = options.workspaceStore.workspaces().find((w) => w.id === id) ?? null;
+    const hostReadDirectory = workspace?.workspaceType === "local" ? workspace.path?.trim() ?? "" : "";
+    const refreshFromHostReadApi = async (
+      reason: string,
+      readOptions?: { sync?: boolean },
+    ) => {
+      if (!hostReadDirectory) return null;
+      try {
+        const result = await refreshSidebarWorkspaceSessionsFromReadApi(id, hostReadDirectory, reason, readOptions);
+        if (result.available) return result;
+      } catch (e) {
+        options.wsDebug("sidebar:conversation-read:host-first-error", {
+          id,
+          reason,
+          error: e instanceof Error ? e.message : safeStringify(e),
+        });
+      }
+      return null;
+    };
 
     const activeSendTraceId = options.activeSendTraceId?.()?.trim() ?? "";
     if (activeSendTraceId) {
       scheduleDeferredSidebarRefresh(id, activeSendTraceId);
-      const workspace = options.workspaceStore.workspaces().find((w) => w.id === id) ?? null;
-      const wsDirectory = workspace?.workspaceType === "local" ? workspace.path?.trim() ?? "" : "";
-      if (wsDirectory) {
-        try {
-          await refreshSidebarWorkspaceSessionsFromReadApi(id, wsDirectory, "active-send-host-read", {
-            sync: false,
-          });
-        } catch (e) {
-          options.wsDebug("sidebar:conversation-read:active-send-error", {
-            id,
-            error: e instanceof Error ? e.message : safeStringify(e),
-          });
-        }
-      }
+      await refreshFromHostReadApi("active-send-host-read", { sync: false });
       return;
     }
 
-    if (!config.baseUrl) {
-      const workspace = options.workspaceStore.workspaces().find((w) => w.id === id);
-      const wsDirectory = workspace?.path?.trim() ?? "";
-      if (wsDirectory) {
-        try {
-          await refreshSidebarWorkspaceSessionsFromReadApi(id, wsDirectory, "no-engine-base-url");
-          return;
-        } catch (e) {
-          options.wsDebug("sidebar:conversation-read:error", { id, error: String(e) });
-        }
-      }
+    const hostFirstResult = await refreshFromHostReadApi("host-first");
+    if (hostFirstResult) return;
 
+    if (!config.baseUrl) {
       markSidebarRefreshUnavailable(id, "no-engine-base-url");
       return;
     }
@@ -822,11 +821,9 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
     } catch (error) {
       if (sidebarRefreshSeqByWorkspaceId[id] !== seq) return;
       const message = error instanceof Error ? error.message : safeStringify(error);
-      const workspace = options.workspaceStore.workspaces().find((w) => w.id === id) ?? null;
-      const wsDirectory = workspace?.workspaceType === "local" ? workspace.path?.trim() ?? "" : "";
-      if (wsDirectory && isSidebarRuntimeUnavailableError(message)) {
+      if (hostReadDirectory && isSidebarRuntimeUnavailableError(message)) {
         try {
-          await refreshSidebarWorkspaceSessionsFromReadApi(id, wsDirectory, "engine-runtime-unavailable");
+          await refreshSidebarWorkspaceSessionsFromReadApi(id, hostReadDirectory, "engine-runtime-unavailable");
           return;
         } catch (readError) {
           options.wsDebug("sidebar:conversation-read:fallback-error", {

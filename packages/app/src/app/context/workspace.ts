@@ -164,6 +164,7 @@ export function createWorkspaceStore(options: {
   developerMode: () => boolean;
   activeSendTraceId?: () => string | null;
   setEngineReady?: (value: boolean) => void;
+  isWorkspaceRuntimeReady?: (workspaceId: string) => boolean;
   populateSidebarFromDb?: (workspaceId: string, directory: string) => Promise<void>;
   hydrateLatestSessionFromDb?: (workspaceId: string, directory: string) => Promise<void>;
 }) {
@@ -590,6 +591,7 @@ export function createWorkspaceStore(options: {
       setWorkspaceConfig,
       setWorkspaceConfigLoaded,
       setEngineReady: options.setEngineReady,
+      isWorkspaceRuntimeReady: options.isWorkspaceRuntimeReady,
       populateSidebarFromDb: options.populateSidebarFromDb,
       hydrateLatestSessionFromDb: options.hydrateLatestSessionFromDb,
       activateVesloHostWorkspace,
@@ -1178,25 +1180,17 @@ export function createWorkspaceStore(options: {
         _wsLog("[workspace:bootstrap] lazy boot — sidebar from DB", { workspacePath });
         bootTrace("lazy boot — populateSidebarFromDb...");
         options.setEngineReady?.(false);
-        if (activeWorkspace?.workspaceType === "local") {
-          try {
-            await activateVesloHostWorkspace(workspacePath);
-          } catch (e) {
-            _wsLog("[workspace:bootstrap] activateVesloHostWorkspace failed", e);
-          }
-        }
+        _wsLog("[workspace:bootstrap] lazy boot — skip Veslo host activation", {
+          workspaceId: activeWorkspace?.id ?? null,
+        });
         try {
           await options.populateSidebarFromDb(activeWorkspace?.id ?? "", workspacePath);
         } catch (e) {
           _wsLog("[workspace:bootstrap] populateSidebarFromDb failed", e);
         }
-        try {
-          if (options.hydrateLatestSessionFromDb && activeWorkspace) {
-            await options.hydrateLatestSessionFromDb(activeWorkspace.id, workspacePath);
-          }
-        } catch (e) {
-          _wsLog("[workspace:bootstrap] hydrateLatestSessionFromDb failed", e);
-        }
+        _wsLog("[workspace:bootstrap] lazy boot — skip latest transcript hydration", {
+          workspaceId: activeWorkspace?.id ?? null,
+        });
         markOnboardingComplete();
         return;
       }

@@ -228,8 +228,13 @@ test("sidebar conversation read sync follows warm workspace readiness", () => {
   );
   assert.match(
     sidebarWorkspaceSessionsSource,
-    /if \(activeSendTraceId\) \{[\s\S]*scheduleDeferredSidebarRefresh\(id, activeSendTraceId\);[\s\S]*await refreshSidebarWorkspaceSessionsFromReadApi\(id, wsDirectory, "active-send-host-read", \{[\s\S]*sync: false,[\s\S]*\}\);[\s\S]*return;/,
+    /const refreshFromHostReadApi = async[\s\S]*refreshSidebarWorkspaceSessionsFromReadApi\(id, hostReadDirectory, reason, readOptions\)[\s\S]*if \(result\.available\) return result;[\s\S]*if \(activeSendTraceId\) \{[\s\S]*scheduleDeferredSidebarRefresh\(id, activeSendTraceId\);[\s\S]*await refreshFromHostReadApi\("active-send-host-read", \{ sync: false \}\);[\s\S]*return;/,
     "sidebar refresh should still run host-first conversation reads during active sends while deferring live engine refresh",
+  );
+  assert.match(
+    sidebarWorkspaceSessionsSource,
+    /const hostFirstResult = await refreshFromHostReadApi\("host-first"\);[\s\S]*if \(hostFirstResult\) return;[\s\S]*if \(!config\.baseUrl\)/,
+    "normal local sidebar refresh should prefer host conversation reads before live OpenCode session listing",
   );
   assert.match(
     source,
@@ -264,7 +269,7 @@ test("local sidebar runtime failures fall back to passive conversation read", ()
   );
   assert.match(
     sidebarWorkspaceSessionsSource,
-    /if \(wsDirectory && isSidebarRuntimeUnavailableError\(message\)\) \{[\s\S]*await refreshSidebarWorkspaceSessionsFromReadApi\(id, wsDirectory, "engine-runtime-unavailable"\);[\s\S]*return;/,
+    /if \(hostReadDirectory && isSidebarRuntimeUnavailableError\(message\)\) \{[\s\S]*await refreshSidebarWorkspaceSessionsFromReadApi\(id, hostReadDirectory, "engine-runtime-unavailable"\);[\s\S]*return;/,
     "local sidebar refresh should fall back to Veslo read API when a stale engine route reports runtime unavailable",
   );
   assert.match(

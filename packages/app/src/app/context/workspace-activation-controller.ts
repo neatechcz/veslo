@@ -7,6 +7,10 @@ const NON_BLOCKING_LOCAL_BROWSE_ORIGINS = new Set([
   "workspace-session-list:project-open",
 ]);
 
+export function isPassiveLocalBrowseActivationOrigin(origin?: string | null) {
+  return NON_BLOCKING_LOCAL_BROWSE_ORIGINS.has(origin?.trim() ?? "");
+}
+
 export function shouldSuppressWorkspaceSwitchOverlayForActivation(input: {
   workspaceType?: WorkspaceInfo["workspaceType"] | null;
   origin?: string | null;
@@ -14,7 +18,7 @@ export function shouldSuppressWorkspaceSwitchOverlayForActivation(input: {
 }) {
   if (input.workspaceType !== "local") return false;
   if (input.promoteToFront) return false;
-  return NON_BLOCKING_LOCAL_BROWSE_ORIGINS.has(input.origin?.trim() ?? "");
+  return isPassiveLocalBrowseActivationOrigin(input.origin);
 }
 
 export type WorkspaceActivationRunContext = {
