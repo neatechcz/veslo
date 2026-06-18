@@ -19,6 +19,8 @@ import type {
 } from "../types";
 import {
   addOpencodeCacheHint,
+  type DirectoryQueryPathMode,
+  directoryQueryPathVariants,
   extractSessionId,
   normalizeDirectoryQueryPath,
   normalizeDirectoryPath,
@@ -226,6 +228,7 @@ export function createSessionStore(options: {
   setSelectedSessionId: (id: string | null) => void;
   selectSessionScopeKey?: (sessionID: string) => string;
   sessionDirectoryOverrideById?: () => Record<string, string>;
+  directoryQueryPathMode?: () => DirectoryQueryPathMode;
   developerMode: () => boolean;
   setError: (message: string | null) => void;
   setSseConnected: (connected: boolean) => void;
@@ -781,7 +784,10 @@ export function createSessionStore(options: {
     // Note: We intentionally normalize slashes + trailing separators but do NOT
     // lowercase on Windows for the query value because the server does strict
     // string equality against the stored session.directory.
-    const queryDirectory = normalizeDirectoryQueryPath(scopeRoot) || undefined;
+    const queryDirectories = directoryQueryPathVariants(scopeRoot, {
+      mode: options.directoryQueryPathMode?.() ?? "auto",
+    });
+    const queryDirectory = (queryDirectories[0] ?? normalizeDirectoryQueryPath(scopeRoot)) || undefined;
 
     const start = Date.now();
     sessionDebug("sessions:load:start", { scopeRoot: scopeRoot ?? null, queryDirectory: queryDirectory ?? null });
@@ -823,8 +829,24 @@ export function createSessionStore(options: {
     if (!list) {
       if (!c) return;
       // Keep `roots` unset so the backend returns both root sessions and child/subagent sessions.
-      list = unwrap(await c.session.list({ directory: queryDirectory }));
-      sessionDebug("sessions:load:raw", { count: list.length, ms: Date.now() - start });
+      const candidates: Array<string | undefined> = queryDirectories.length > 0 ? queryDirectories : [undefined];
+      const mergedById = new Map<string, Session>();
+      const usedQueryDirectories: Array<string | null> = [];
+      for (const candidate of candidates) {
+        usedQueryDirectories.push(candidate ?? null);
+        const fetchedList = unwrap(await c.session.list({ directory: candidate }));
+        for (const session of fetchedList) {
+          mergedById.set(session.id, session);
+        }
+      }
+      list = Array.from(mergedById.values());
+      sessionDebug("sessions:load:raw", {
+        count: list.length,
+        queryDirectory: usedQueryDirectories[0] ?? null,
+        queryDirectories: usedQueryDirectories,
+        queryDirectoryFallbacks: Math.max(0, candidates.length - 1),
+        ms: Date.now() - start,
+      });
     }
 
     // Defensive client-side filter in case the server returns sessions spanning
@@ -838,7 +860,7 @@ export function createSessionStore(options: {
 
     const overrideIds = root
       ? Object.entries(sessionDirectoryOverrides())
-        .filter(([, directory]) => normalizeDirectoryPath(directory) === root)
+        .filter(([, directory]) => sessionDirectoryMatchesRoot(directory, root))
         .map(([sessionID]) => sessionID)
       : [];
 

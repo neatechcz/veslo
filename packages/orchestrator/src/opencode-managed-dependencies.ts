@@ -581,7 +581,7 @@ function opencodeRouterStatusToolSource(): string {
     "    const enabledItems = scopedIdentityItems.filter((item) => item?.enabled)",
     "    const runningItems = scopedIdentityItems.filter((item) => item?.running)",
     "    const bindingItems = Array.isArray(bindings?.json?.items) ? bindings.json.items : []",
-    "    const filteredBindings = directory ? bindingItems.filter((item) => item?.directory === directory) : bindingItems",
+    "    const filteredBindings = bindingItems",
     "    const publicBindings = filteredBindings.map((item) => ({ identityId: item.identityId, directory: item.directory }))",
     "    return JSON.stringify({",
     "      channel,",

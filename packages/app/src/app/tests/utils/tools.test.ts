@@ -4,7 +4,7 @@ import test from "node:test";
 import { compactHumanStepText, deriveArtifacts, summarizeStep } from "../../utils/tools.js";
 
 const FULL_DIRECTORY_PROMPT =
-  "Dej mi přístup do adresáře /Users/vaclavsoukup/AI agent projects/Veslo/packages/app/src/app/components/session";
+  "Dej mi pristup do adresare /tmp/veslo-fixture/packages/app/src/app/components/session";
 
 const toolMessage = (...parts: Array<Record<string, unknown>>) =>
   [

@@ -267,7 +267,9 @@ fn truthy_env(name: &str) -> bool {
     std::env::var(name)
         .map(|value| {
             let trimmed = value.trim();
-            trimmed == "1" || trimmed.eq_ignore_ascii_case("true") || trimmed.eq_ignore_ascii_case("yes")
+            trimmed == "1"
+                || trimmed.eq_ignore_ascii_case("true")
+                || trimmed.eq_ignore_ascii_case("yes")
         })
         .unwrap_or(false)
 }

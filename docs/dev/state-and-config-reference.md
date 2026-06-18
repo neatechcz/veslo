@@ -113,6 +113,10 @@ The desktop shell also persists the managed local `veslo-server` process snapsho
 
 Managed local sidecars distinguish internal runtime URLs from advertised connect URLs. Same-machine communication between the desktop shell, `veslo-server`, `veslo-orchestrator`, OpenCode, and `veslo-code-router` uses loopback OpenCode URLs such as `http://127.0.0.1:<port>`. LAN or mDNS connect URLs are for external clients only; they must not be passed as the local `--opencode-base-url` or `--opencode-url`, because sleep/resume and network changes can invalidate those addresses while the local OpenCode process remains healthy.
 
+On Windows, OpenCode runs inside the WSL2/bwrap backend. Host workspace paths such as `C:\Users\...\repo`, WSL mount paths such as `/mnt/c/Users/.../repo`, and the sandbox alias `/workspace` can all describe the same active workspace. Session list filters, sidebar scoping, and conversation binding lookups must treat these forms as equivalent. This equivalence does not solve OpenCode data-home location by itself: a DB stored in WSL guest home still needs an explicit host-readable path or a server-side content tunnel.
+
+The local server reports the active path mode through `/capabilities.sandbox`. Desktop-launched `veslo-server` processes must receive `VESLO_SANDBOX_BACKEND` from the Tauri shell so the app can choose sandbox path aliases before host paths when WSL2 is active. `VESLO_DISABLE_SANDBOX=1` remains the hard opt-out and forces `backend=none`.
+
 ## Desktop Debug Log Forwarder
 
 The Tauri shell forwards stdout/stderr from every supervised sidecar (`veslo-server`, `opencode-router`, `veslo-orchestrator`, `engine`) into the veslo-server debug log pipeline. Implementation lives in `packages/desktop/src-tauri/src/debug_logs_forwarder.rs`.
@@ -148,7 +152,9 @@ Environment variables (all optional):
 Pipeline behavior:
 
 - `enabled` is derived as `Boolean(ingestUrl && ingestToken)`. Without both vars the spool keeps collecting and retention prunes the oldest entries; nothing is sent over the network. Flip the two vars and the pipeline starts uploading on the next tick — no restart required for the upload to start, but the running process must be restarted to pick up new env values.
-- Spool location: `${VESLO_DATA_DIR or ~/.veslo/veslo-server}/debug-log-spool/events/`. One JSON file per event today (file-per-event format owned by `debug-log-spool.ts`); switching to JSONL append-only is tracked separately as a follow-up.
+- Server data dir default: `VESLO_DATA_DIR` wins when set. Without it, Windows uses `%LOCALAPPDATA%\com.neatech.veslo\veslo-server` (falling back to `%APPDATA%`), while macOS/Linux keep `<home>/.veslo/veslo-server`. On Windows, an existing legacy `<home>\.veslo\veslo-server` directory is copied into the AppData default on first resolve; if that copy fails, the server falls back to the legacy path so existing bindings and caches do not disappear after update.
+- Desktop orchestrator data dir default: `VESLO_DATA_DIR` also controls the managed orchestrator. Dev startup sets it to `%LOCALAPPDATA%\com.neatech.veslo.dev\veslo-orchestrator-dev` on Windows so scratch, engine state, and OpenCode config stay under AppData. When that dev default is used, the Windows launcher copies missing files from the legacy `<home>\.veslo\veslo-orchestrator-dev` store and merges legacy `conversation_binding` rows into the AppData binding DB. Without an override, the production desktop fallback uses `%LOCALAPPDATA%\com.neatech.veslo\veslo-orchestrator` on Windows and `<home>/.veslo/veslo-orchestrator` on macOS/Linux.
+- Spool location: `<server data dir>/debug-log-spool/events/`. One JSON file per event today (file-per-event format owned by `debug-log-spool.ts`); switching to JSONL append-only is tracked separately as a follow-up.
 - Upload retry policy lives in `debug-log-uploader.ts` (3 attempts, 250 ms initial, 2× multiplier, capped at 2 s). Failed batches stay leased in the manifest and the next flush tick re-leases them after the lease TTL.
 - Retention is enforced asynchronously after appends and by a maintenance loop that runs even when remote upload is disabled. The spool can temporarily exceed `VESLO_LOG_SPOOL_MAX_BYTES`, but `/debug-logs` ingest stays off the cleanup hot path and bulk-prunes old unleased events back toward the low-water mark.
 - `POST /debug-logs` validates the host token and batch body before returning `202`, then appends the events to the durable spool asynchronously. Append failures are logged locally; sidecar log forwarding must not block server health or other UI-facing routes on disk cleanup.
@@ -283,8 +289,8 @@ Use product terminology consistently:
 
 Recoverable local skill removals are stored by Veslo server under:
 
-- `${VESLO_DATA_DIR or ~/.veslo/veslo-server}/skill-removals/records/`
-- `${VESLO_DATA_DIR or ~/.veslo/veslo-server}/skill-removals/snapshots/`
+- `<server data dir>/skill-removals/records/`
+- `<server data dir>/skill-removals/snapshots/`
 
 Each removal record stores the removal id, skill name, scope (`workspace` or
 `user-global`), original path, actor, optional reason, snapshot hash, status,
@@ -359,7 +365,7 @@ Registry-owned state:
 Local Veslo state:
 
 - downloaded package archives before install
-- cached package archives under `${VESLO_DATA_DIR or ~/.veslo/veslo-server}/skill-package-cache/`, keyed by package SHA-256 and verified before use
+- cached package archives under `<server data dir>/skill-package-cache/`, keyed by package SHA-256 and verified before use
 - unpacked runtime skill directories controlled by the local Veslo server
 - server-controlled workspace skill materializations under `.opencode/skills/veslo-managed/`, with a root manifest and per-skill ownership markers
 - pre-change backups for server-controlled materialization replacement/removal under the Veslo data directory

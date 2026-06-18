@@ -1596,6 +1596,23 @@ export default function WorkspaceSessionList(props: Props) {
   const isBusySession = (workspaceId: string, sessionId: string) =>
     props.busySessionByWorkspaceId?.[workspaceId]?.sessionId === sessionId;
 
+  const rowForcesProjectOpen = (row: FlatSessionRow) => {
+    const selectedSessionId = props.selectedSessionId?.trim() ?? "";
+    if (selectedSessionId && row.session.id === selectedSessionId) return true;
+
+    const pendingSessionId = props.pendingSelectedSessionId?.trim() ?? "";
+    if (pendingSessionId && row.session.id === pendingSessionId) {
+      const pendingWorkspaceId = props.pendingSelectedWorkspaceId?.trim() ?? "";
+      if (!pendingWorkspaceId || pendingWorkspaceId === row.workspace.id) return true;
+    }
+
+    if ((props.sessionStatusById?.[row.session.id] ?? "idle") !== "idle") return true;
+    return isBusySession(row.workspace.id, row.session.id);
+  };
+
+  const shouldForceProjectOpen = (group: ProjectSessionGroup) =>
+    group.sessions.some(rowForcesProjectOpen);
+
   const workspaceMenuContext = createMemo(() => {
     const target = workspaceMenuTarget();
     if (!target) return null;
@@ -2425,7 +2442,8 @@ export default function WorkspaceSessionList(props: Props) {
                 const isDraggedProject = () => draggingProjectKey() === project.key;
                 const dropIndicatorPosition = () =>
                   projectDropIndicator()?.key === project.key ? projectDropIndicator()?.position : null;
-                const collapsed = () => isProjectCollapsed(collapsedProjects(), project.key);
+                const collapsed = () =>
+                  isProjectCollapsed(collapsedProjects(), project.key) && !shouldForceProjectOpen(project);
                 const projectPaging = () => projectPagingForGroup(project);
                 const projectHierarchy = () => buildRowHierarchyLookup(project.sessions);
                 const visibleCount = () => projectVisibleCountForGroup(project);
@@ -2631,7 +2649,7 @@ export default function WorkspaceSessionList(props: Props) {
             shouldShowLessVisibleRowsControl(visibleCount(), PROJECT_VISIBLE_DEFAULT);
 
           return (
-            <Show when={!chatSidebarCollapsed()} fallback={
+            <Show when={!(chatSidebarCollapsed() && !shouldForceProjectOpen(chatGroup()))} fallback={
               <button
                 type="button"
                 data-sidebar-chat-collapsed="true"

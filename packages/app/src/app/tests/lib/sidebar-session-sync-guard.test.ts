@@ -91,6 +91,17 @@ test("preserves sidebar rows when a read is unavailable (server/sandbox unreacha
   );
 });
 
+test("uses non-empty read results even when the sandbox read source is unavailable", () => {
+  assert.equal(
+    shouldPreserveSidebarRowsOnRead({ available: false, incomingCount: 3, existingCount: 0 }),
+    false,
+  );
+  assert.equal(
+    shouldPreserveSidebarRowsOnRead({ available: false, incomingCount: 3, existingCount: 5 }),
+    false,
+  );
+});
+
 test("replaces sidebar rows on a genuine non-empty read, or empty read for a fresh workspace", () => {
   assert.equal(
     shouldPreserveSidebarRowsOnRead({ available: true, incomingCount: 3, existingCount: 5 }),

@@ -59,10 +59,107 @@ export function normalizeDirectoryQueryPath(input?: string | null) {
   return withoutTrailing || "/";
 }
 
-export function normalizeDirectoryPath(input?: string | null) {
+function wslMountPathToWindowsDirectoryPath(input: string) {
+  const normalized = normalizeDirectoryQueryPath(input);
+  const match = normalized.match(/^\/mnt\/([A-Za-z])(?:\/(.*))?$/);
+  if (!match) return null;
+  const drive = match[1]?.toUpperCase();
+  if (!drive) return null;
+  const rest = match[2]?.trim() ?? "";
+  return rest ? `${drive}:/${rest}` : `${drive}:/`;
+}
+
+function windowsDirectoryPathToWslMountPath(input: string) {
+  const normalized = normalizeDirectoryQueryPath(input);
+  const match = normalized.match(/^([A-Za-z]):(?:\/(.*))?$/);
+  if (!match) return null;
+  const drive = match[1]?.toLowerCase();
+  if (!drive) return null;
+  const rest = match[2]?.replace(/^\/+/, "").replace(/\/+$/, "") ?? "";
+  return rest ? `/mnt/${drive}/${rest}` : `/mnt/${drive}`;
+}
+
+function isWorkspaceAliasPath(input: string) {
+  const normalized = normalizeDirectoryQueryPath(input);
+  return normalized === "/workspace" || normalized === "workspace";
+}
+
+function workspaceAliasToRootPath(input: string, root: string) {
+  const normalized = normalizeDirectoryQueryPath(input);
+  if (!root) return normalized;
+  if (isWorkspaceAliasPath(normalized)) return root;
+  if (normalized.startsWith("/workspace/")) return `${root}/${normalized.slice("/workspace/".length)}`;
+  if (normalized.startsWith("workspace/")) return `${root}/${normalized.slice("workspace/".length)}`;
+  return normalized;
+}
+
+function normalizeDirectoryPathForPlatform(input: string | null | undefined, windows: boolean) {
   const normalized = normalizeDirectoryQueryPath(input);
   if (!normalized) return "";
-  return isWindowsPlatform() ? normalized.toLowerCase() : normalized;
+  const comparable = windows ? wslMountPathToWindowsDirectoryPath(normalized) ?? normalized : normalized;
+  return windows ? comparable.toLowerCase() : comparable;
+}
+
+export function normalizeDirectoryPath(input?: string | null) {
+  return normalizeDirectoryPathForPlatform(input, isWindowsPlatform());
+}
+
+export type DirectoryQueryPathMode = "auto" | "sandbox" | "non-sandbox";
+
+export function directoryQueryPathModeFromSandbox(
+  sandbox?: { enabled?: boolean | null; backend?: string | null } | null,
+): DirectoryQueryPathMode {
+  if (sandbox?.enabled === true && sandbox.backend === "windows-wsl2") return "sandbox";
+  if (sandbox?.enabled === false || sandbox?.backend === "none") return "non-sandbox";
+  return "auto";
+}
+
+function normalizeSessionDirectoryForRoot(
+  sessionDirectory: string | null | undefined,
+  normalizedRoot: string,
+) {
+  const aliased = workspaceAliasToRootPath(sessionDirectory ?? "", normalizedRoot);
+  return normalizeDirectoryPathForPlatform(aliased, isWindowsPlatform());
+}
+
+export function directoryQueryPathVariants(
+  input?: string | null,
+  options?: { mode?: DirectoryQueryPathMode },
+) {
+  const primary = normalizeDirectoryQueryPath(input);
+  if (!primary) return [];
+
+  if (isWindowsPlatform()) {
+    const wslMount = windowsDirectoryPathToWslMountPath(primary);
+    const windowsFromWsl = wslMountPathToWindowsDirectoryPath(primary);
+    const hostPath = windowsFromWsl ?? primary;
+    const mountPath = wslMount ?? (windowsFromWsl ? primary : null);
+    const workspaceAlias = wslMount || windowsFromWsl || isWorkspaceAliasPath(primary) ? "/workspace" : null;
+    const mode = options?.mode ?? "auto";
+    const ordered = new Set<string>();
+    const add = (value?: string | null) => {
+      if (value) ordered.add(value);
+    };
+
+    if (mode === "sandbox") {
+      add(workspaceAlias);
+      add(mountPath);
+      add(hostPath);
+    } else if (mode === "non-sandbox") {
+      add(hostPath);
+      add(mountPath);
+      add(workspaceAlias);
+    } else {
+      add(primary);
+      if (wslMount) add(wslMount);
+      if (windowsFromWsl) add(windowsFromWsl);
+      add(workspaceAlias);
+    }
+
+    return [...ordered];
+  }
+
+  return [primary];
 }
 
 // Sessions created in private/scratch flows may come back without directory metadata.
@@ -73,7 +170,7 @@ export function sessionDirectoryMatchesRoot(
 ) {
   const root = normalizeDirectoryPath(workspaceRoot ?? "");
   if (!root) return false;
-  const sessionRoot = normalizeDirectoryPath(sessionDirectory ?? "") || root;
+  const sessionRoot = normalizeSessionDirectoryForRoot(sessionDirectory ?? "", root) || root;
   return sessionRoot === root;
 }
 
@@ -81,9 +178,10 @@ export function preferredSessionWorkspaceRoot(
   sessionDirectory: string | null | undefined,
   activeWorkspaceRoot: string | null | undefined,
 ) {
-  const sessionRoot = normalizeDirectoryPath(sessionDirectory ?? "");
+  const root = normalizeDirectoryPath(activeWorkspaceRoot ?? "");
+  const sessionRoot = normalizeSessionDirectoryForRoot(sessionDirectory ?? "", root);
   if (sessionRoot) return sessionRoot;
-  return normalizeDirectoryPath(activeWorkspaceRoot ?? "");
+  return root;
 }
 
 export function isPrivateWorkspacePathForRoot(

@@ -296,7 +296,7 @@ test("re-selecting the same session while the first load is in flight still appl
       const store = createSessionStore({
         client: clientFn,
         routing: makeTestRouting(clientFn),
-        activeWorkspaceRoot: () => "/Users/vaclavsoukup/ai discussion projects/Client data and offer descriptions/Prometheus",
+        activeWorkspaceRoot: () => "/tmp/veslo-fixture/ai discussion projects/Client data and offer descriptions/Prometheus",
         selectedSessionId,
         setSelectedSessionId,
         developerMode: () => false,

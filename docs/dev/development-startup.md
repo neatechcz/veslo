@@ -25,7 +25,8 @@ pnpm dev
 `packages/desktop/scripts/tauri-dev.mjs`. The wrapper preserves the previous
 dev behavior while avoiding shell-specific inline environment syntax:
 
-- `VESLO_DATA_DIR` defaults to `<home>/.veslo/veslo-orchestrator-dev`
+- `VESLO_DATA_DIR` defaults to `%LOCALAPPDATA%\com.neatech.veslo.dev\veslo-orchestrator-dev` on Windows (falling back to `%APPDATA%`), and `<home>/.veslo/veslo-orchestrator-dev` on macOS/Linux.
+- On Windows, when `VESLO_DATA_DIR` is not explicitly set, the wrapper copies missing files from the legacy `<home>\.veslo\veslo-orchestrator-dev` dev store and merges legacy `conversation_binding` rows into the AppData store so existing local session history remains visible after the default path migration.
 - `VESLO_SERVER_DEV_WATCH` defaults to `1`
 - `VESLO_SERVER_DEV_DIR` defaults to `packages/server`
 - `PORT` defaults to `5173`

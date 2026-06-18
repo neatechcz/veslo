@@ -284,6 +284,7 @@ import {
   groupMessageParts,
   isVisibleTextPart,
   lastUserModelFromMessages,
+  directoryQueryPathModeFromSandbox,
   isTauriRuntime,
   modelEquals,
   normalizeDirectoryQueryPath,
@@ -1049,6 +1050,8 @@ export default function App() {
   const [vesloServerUrl, setVesloServerUrl] = createSignal("");
   const [vesloServerStatus, setVesloServerStatus] = createSignal<VesloServerStatus>("disconnected");
   const [vesloServerCapabilities, setVesloServerCapabilities] = createSignal<VesloServerCapabilities | null>(null);
+  const directoryQueryPathMode = () =>
+    directoryQueryPathModeFromSandbox(vesloServerCapabilities()?.sandbox);
   const [vesloServerCheckedAt, setVesloServerCheckedAt] = createSignal<number | null>(null);
   const [vesloServerWorkspaceId, setVesloServerWorkspaceId] = createSignal<string | null>(null);
   const [vesloServerHostInfo, setVesloServerHostInfo] = createSignal<VesloServerInfo | null>(null);
@@ -2419,6 +2422,7 @@ export default function App() {
     activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot().trim(),
     selectedSessionId,
     setSelectedSessionId,
+    directoryQueryPathMode,
     selectSessionScopeKey: (sessionId) => {
       const id = sessionId.trim();
       const scope = id ? resolveSelectedSessionBrowseScope(id) : null;
@@ -5131,10 +5135,9 @@ export default function App() {
 
     const providerId = managedAiAccess()?.providerId ?? null;
     const vesloClient = vesloServerClient();
-    let vesloWorkspaceId =
-      targetWorkspaceId && targetWorkspaceId !== workspaceStore.activeWorkspaceId().trim()
-        ? ""
-        : vesloServerWorkspaceId();
+    let vesloWorkspaceId = resolveConversationServerWorkspaceId(
+      targetWorkspaceId || workspaceStore.activeWorkspaceId().trim(),
+    );
     const canUseVesloServer =
       vesloServerStatus() === "connected" &&
       vesloClient &&
@@ -5344,15 +5347,21 @@ export default function App() {
     hydrateLatestSessionFromDb: async (workspaceId: string, directory: string) => {
       const result = await listConversationsFromVesloReadApi(workspaceId, directory);
       if (result.items.length === 0) return;
-      const latest = result.items[0];
+      const { visible } = partitionVesloUtilitySessions(result.items);
+      const rememberedSessionId = activeWorkspaceLastSessionId()?.trim() ?? "";
+      const latest =
+        (rememberedSessionId ? visible.find((item) => item.id === rememberedSessionId) : undefined) ??
+        visible[0] ??
+        result.items[0];
       if (!latest) return;
       const snapshot = await getTranscriptFromVesloReadApi(workspaceId, latest.id, 50, directory);
       if (!snapshot) return;
-      // Only populate the cache — don't change selectedSessionId.
-      // The route effect and selectSession will pick the correct session
-      // when the user clicks. Changing selectedSessionId here interfered
-      // with the user's session selection and caused race conditions.
+      // Warm the cache before selecting so browse-mode selectSession can stay on
+      // the passive DB path and avoid cold-starting the engine just to render.
       sessionStore.hydrateTranscriptSnapshot(snapshot);
+      if (selectedSessionId()?.trim()) return;
+      if (workspaceStore.activeWorkspaceId().trim() !== workspaceId.trim()) return;
+      await selectSession(latest.id);
     },
   });
   workspaceStoreRef = workspaceStore;
@@ -6076,6 +6085,7 @@ export default function App() {
     workspaceStore,
     workspaceRouting,
     engineReady: () => engineReady(),
+    directoryQueryPathMode,
     activeSendTraceId: activeVisibleRuntimeActivityId,
     developerMode: () => developerMode(),
     sessions: () => sessions(),
@@ -7129,8 +7139,11 @@ export default function App() {
         .workspaces()
         .find((workspace) =>
           [workspace.path, workspace.directory]
-            .map((candidate) => normalizeCapabilityDirectoryForMatch(candidate))
-            .some((candidate) => candidate === normalizedDirectory),
+            .filter((candidate): candidate is string => Boolean(candidate?.trim()))
+            .some((candidate) =>
+              normalizeCapabilityDirectoryForMatch(candidate) === normalizedDirectory ||
+              sessionDirectoryMatchesRoot(directory, candidate),
+            ),
         ) ?? null
     );
   };
@@ -10843,11 +10856,12 @@ export default function App() {
     if (!workspaceId) return;
 
     setWorkspaceDefaultModelReady(false);
-    const workspaceType = workspaceStore.activeWorkspaceDisplay().workspaceType;
+    const activeWorkspace = workspaceStore.activeWorkspaceDisplay();
+    const workspaceType = activeWorkspace.workspaceType;
     const workspaceRoot = workspaceStore.activeWorkspacePath().trim();
     const activeClient = routedClient();
     const vesloClient = vesloServerClient();
-    const vesloWorkspaceId = vesloServerWorkspaceId();
+    const vesloWorkspaceId = resolveConversationServerWorkspaceId(workspaceId);
     const vesloCapabilities = resolvedVesloCapabilities();
     const canUseVesloServer =
       vesloServerStatus() === "connected" &&
@@ -10951,7 +10965,8 @@ export default function App() {
     const managedAccessError = managedProfile ? null : managedAiAccessError();
     const gatewayClient = gatewayVesloServerClient();
     const vesloClient = vesloServerClient();
-    const vesloWorkspaceId = vesloServerWorkspaceId();
+    const workspaceId = workspace.id?.trim() || workspaceStore.activeWorkspaceId().trim();
+    const vesloWorkspaceId = resolveConversationServerWorkspaceId(workspaceId);
     const vesloCapabilities = resolvedVesloCapabilities();
     const providerRoutingLocalHost = activeVesloServerHostInfo();
     const providerRoutingLocalBaseUrl =

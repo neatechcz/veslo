@@ -842,6 +842,52 @@ test("buildProjectGroups orders directory groups by latest activity", () => {
   );
 });
 
+test("DB-backed Windows workspace conversations become visible sidebar rows", () => {
+  const workspace = {
+    id: "ws-113b3ee2698f",
+    name: "test-repo2",
+    path: "\\\\?\\C:\\Users\\test\\Desktop\\test-repo\\test-repo2",
+    preset: "starter",
+    workspaceType: "local" as const,
+  };
+  const session = {
+    id: "ses_12896d7cfffecY8j0tPcswbysF",
+    title: "ahoj",
+    directory: "c:\\users\\test\\desktop\\test-repo\\test-repo2",
+    conversationId: "conv-a5299012da89b2ae9d81",
+    opencodeSessionId: "ses_12896d7cfffecY8j0tPcswbysF",
+    time: { created: 1_781_730_478_191, updated: 1_781_730_478_191 },
+  };
+  const workspaceSessionGroups = [
+    {
+      workspace,
+      sessions: [session],
+      status: "ready" as const,
+    },
+  ];
+
+  const groups = buildProjectGroups(workspaceSessionGroups);
+  const visibleGroups = filterVisibleProjectGroups(groups, () => true);
+  const split = splitProjectGroupsForSidebar(visibleGroups);
+
+  assert.equal(split.chatGroup, null);
+  assert.equal(split.projectGroups.length, 1);
+  assert.equal(split.projectGroups[0].key, "c:/users/test/desktop/test-repo/test-repo2");
+  assert.equal(split.projectGroups[0].projectLabel, "test-repo2");
+  assert.equal(split.projectGroups[0].sessions.length, 1);
+  assert.equal(split.projectGroups[0].sessions[0].session.title, "ahoj");
+  assert.deepEqual(
+    rootRowsForSessionTree(split.projectGroups[0].sessions).map((row) => row.session.id),
+    ["ses_12896d7cfffecY8j0tPcswbysF"],
+  );
+
+  const recentRows = buildRecentRows(workspaceSessionGroups);
+  assert.deepEqual(
+    recentRows.map((row) => `${row.workspace.id}:${row.session.id}:${row.projectLabel}`),
+    ["ws-113b3ee2698f:ses_12896d7cfffecY8j0tPcswbysF:test-repo2"],
+  );
+});
+
 test("buildProjectGroups includes a local workspace without sessions", () => {
   const groups = buildProjectGroups([
     {

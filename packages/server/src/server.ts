@@ -5755,7 +5755,7 @@ function createRoutes(
         sessionId,
         workspaceId: workspace.id,
         messages: Array.isArray(messages) ? messages : [],
-      }, { workspaceRoot: workspace.path }),
+      }, { workspaceRoot: directory ?? workspace.path }),
     );
   });
 
@@ -10946,7 +10946,7 @@ async function resolveConversationReadDirectory(
   requestedRaw: string | null,
 ): Promise<string | null> {
   const fallback = resolveOpencodeDirectory(workspace);
-  const requested = requestedRaw?.trim() ?? "";
+  const requested = normalizeConversationReadDirectoryRequest(workspace, requestedRaw, fallback);
   if (!requested) return fallback;
 
   if (!isAbsolute(requested)) {
@@ -10963,6 +10963,36 @@ async function resolveConversationReadDirectory(
     throw new ApiError(403, "directory_unauthorized", "Conversation directory is outside this workspace");
   }
   return directory;
+}
+
+function normalizeConversationReadDirectoryRequest(
+  workspace: WorkspaceInfo,
+  requestedRaw: string | null,
+  fallback: string | null,
+): string {
+  const requested = requestedRaw?.trim() ?? "";
+  if (!requested) return "";
+
+  const workspaceRoot = fallback?.trim() || workspace.directory?.trim() || workspace.path?.trim() || "";
+  const slashRequested = requested.replace(/\\/g, "/");
+  if (slashRequested === "/workspace" || slashRequested === "workspace") {
+    return workspaceRoot;
+  }
+  if (slashRequested.startsWith("/workspace/") || slashRequested.startsWith("workspace/")) {
+    const relativePath = slashRequested.replace(/^\/?workspace\/+/, "");
+    return workspaceRoot ? join(workspaceRoot, relativePath) : requested;
+  }
+
+  if (process.platform === "win32") {
+    const wslMount = slashRequested.match(/^\/mnt\/([A-Za-z])(?:\/(.*))?$/);
+    if (wslMount) {
+      const drive = wslMount[1]?.toUpperCase();
+      const rest = wslMount[2]?.trim() ?? "";
+      return drive ? (rest ? `${drive}:/${rest}` : `${drive}:/`) : requested;
+    }
+  }
+
+  return requested;
 }
 
 export function normalizeOpencodeDirectory(directory: string): string {

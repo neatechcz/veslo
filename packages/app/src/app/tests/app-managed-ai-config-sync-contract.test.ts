@@ -5,7 +5,7 @@ import test from "node:test";
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 
 function managedAiConfigSyncEffectSource(): string {
-  const marker = source.indexOf("const managedProfile = managedAiAccess();");
+  const marker = source.indexOf("const syncPreflight = resolveManagedAiConfigSyncPreflight");
   const start = source.lastIndexOf("createEffect(() => {", marker);
   const end = source.indexOf("  // VSLO-86: heal stale gateway baseURL", marker);
   assert.ok(marker >= 0 && start >= 0 && end > start, "managed AI config sync effect should be present");
@@ -27,6 +27,16 @@ test("managed AI config sync effect executes controller decisions", () => {
     effectSource,
     /const syncPreflight = resolveManagedAiConfigSyncPreflight\(\{[\s\S]*workspaceDefaultModelReady: workspaceDefaultModelReady\(\),[\s\S]*isDesktopRuntime: isTauriRuntime\(\),[\s\S]*defaultModelExplicit: defaultModelExplicit\(\),[\s\S]*workspaceType: workspace\.workspaceType,[\s\S]*workspaceRoot: workspaceStore\.activeWorkspacePath\(\),[\s\S]*\}\);/,
     "sync preflight should be delegated to the config sync controller",
+  );
+  assert.match(
+    effectSource,
+    /const workspaceId = workspace\.id\?\.trim\(\) \|\| workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*const vesloWorkspaceId = resolveConversationServerWorkspaceId\(workspaceId\);/,
+    "sync should derive the Veslo workspace id from the current app workspace, not stale server active status",
+  );
+  assert.doesNotMatch(
+    effectSource,
+    /const vesloWorkspaceId = vesloServerWorkspaceId\(\);/,
+    "sync must not read the global server active workspace id while workspace activation is settling",
   );
 
   assert.match(

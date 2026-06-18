@@ -65,6 +65,7 @@ export const shouldPreserveSidebarRowsOnRead = (input: {
   incomingCount: number;
   existingCount: number;
 }): boolean => {
+  if (input.incomingCount > 0) return false;
   if (!input.available) return true;
-  return input.incomingCount === 0 && input.existingCount > 0;
+  return input.existingCount > 0;
 };

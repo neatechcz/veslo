@@ -27,6 +27,8 @@ import type {
   WorkspaceSessionGroup,
 } from "../types";
 import {
+  type DirectoryQueryPathMode,
+  directoryQueryPathVariants,
   normalizeDirectoryPath,
   normalizeDirectoryQueryPath,
   safeStringify,
@@ -48,6 +50,7 @@ type SidebarWorkspaceSessionsOptions = {
   workspaceStore: WorkspaceStore;
   workspaceRouting: WorkspaceRouting;
   engineReady: () => boolean;
+  directoryQueryPathMode?: () => DirectoryQueryPathMode;
   activeSendTraceId?: () => string | null;
   developerMode: () => boolean;
   sessions: () => Session[];
@@ -132,6 +135,66 @@ const sidebarSessionItemsEqual = (left: SidebarSessionItem[], right: SidebarSess
     }
   }
   return true;
+};
+
+const sidebarItemActivity = (item: SidebarSessionItem) =>
+  item.time?.updated ?? item.time?.created ?? 0;
+
+const latestOptionalTime = (
+  left: number | null | undefined,
+  right: number | null | undefined,
+) => {
+  const leftValue = Number.isFinite(left ?? NaN) ? Math.floor(left as number) : null;
+  const rightValue = Number.isFinite(right ?? NaN) ? Math.floor(right as number) : null;
+  if (leftValue === null) return rightValue;
+  if (rightValue === null) return leftValue;
+  return Math.max(leftValue, rightValue);
+};
+
+const mergeSidebarSessionItem = (
+  existing: SidebarSessionItem,
+  incoming: SidebarSessionItem,
+) => {
+  const created = latestOptionalTime(existing.time?.created, incoming.time?.created);
+  const updated = latestOptionalTime(existing.time?.updated, incoming.time?.updated);
+  return {
+    ...existing,
+    ...incoming,
+    title: incoming.title?.trim() ? incoming.title : existing.title,
+    slug: incoming.slug ?? existing.slug,
+    parentID: incoming.parentID ?? existing.parentID,
+    directory: incoming.directory ?? existing.directory,
+    conversationId: incoming.conversationId ?? existing.conversationId,
+    opencodeSessionId: incoming.opencodeSessionId ?? existing.opencodeSessionId,
+    parentConversationId: incoming.parentConversationId ?? existing.parentConversationId,
+    branchId: incoming.branchId ?? existing.branchId,
+    pendingSessionInstanceId: incoming.pendingSessionInstanceId ?? existing.pendingSessionInstanceId,
+    ...(created !== null || updated !== null
+      ? { time: { created, updated } }
+      : {}),
+  };
+};
+
+export const mergeSidebarSessionItemsByActivity = (
+  primary: SidebarSessionItem[],
+  secondary: SidebarSessionItem[],
+): SidebarSessionItem[] => {
+  const byId = new Map<string, SidebarSessionItem>();
+  const upsert = (item: SidebarSessionItem) => {
+    const id = item.id.trim();
+    if (!id) return;
+    const existing = byId.get(id);
+    byId.set(id, existing ? mergeSidebarSessionItem(existing, item) : item);
+  };
+
+  secondary.forEach(upsert);
+  primary.forEach(upsert);
+
+  return Array.from(byId.values()).sort((a, b) => {
+    const delta = sidebarItemActivity(b) - sidebarItemActivity(a);
+    if (delta !== 0) return delta;
+    return a.id.localeCompare(b.id);
+  });
 };
 
 export const removeSidebarSessionFromWorkspaceRows = (
@@ -370,26 +433,38 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
       message,
     );
 
-  const refreshSidebarWorkspaceSessionsFromReadApi = async (
+  const listSidebarWorkspaceSessionsFromReadApi = async (
     workspaceId: string,
     directory: string,
-    reason: string,
   ) => {
     const result = await options.listConversationsFromVesloReadApi(workspaceId, directory);
     const { visible: items } = partitionVesloUtilitySessions(
       result.items.map(options.applyPendingInitialSessionTitle),
     );
+    return {
+      items,
+      source: result.source ?? "unknown",
+      available: result.source !== "unavailable",
+    };
+  };
+
+  const refreshSidebarWorkspaceSessionsFromReadApi = async (
+    workspaceId: string,
+    directory: string,
+    reason: string,
+  ) => {
+    const result = await listSidebarWorkspaceSessionsFromReadApi(workspaceId, directory);
     applyWorkspaceSidebarReadResult({
       workspaceId,
-      items,
-      available: result.source !== "unavailable",
+      items: result.items,
+      available: result.available,
     });
     setSidebarSessionHasMoreByWorkspaceId((prev) => ({ ...prev, [workspaceId]: false }));
     options.wsDebug("sidebar:conversation-read", {
       id: workspaceId,
       reason,
-      source: result.source ?? "unknown",
-      count: items.length,
+      source: result.source,
+      count: result.items.length,
     });
   };
 
@@ -528,17 +603,32 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
       }
 
       const queryDirectory = normalizeDirectoryQueryPath(directory) || undefined;
+      const queryDirectories = directoryQueryPathVariants(directory, {
+        mode: options.directoryQueryPathMode?.() ?? "auto",
+      });
       const requestLimit = sidebarSessionLimitByWorkspaceId()[id] ?? initialSidebarSessionLimit();
       const root = normalizeDirectoryPath(directory);
       const listWorkspaceSessions = async (limit: number) => {
-        const list = unwrap(
-          await c.session.list({ directory: queryDirectory, limit }),
-        );
+        const candidates: Array<string | undefined> = queryDirectories.length > 0 ? queryDirectories : [undefined];
+        const mergedById = new Map<string, Session>();
+        const usedQueryDirectories: Array<string | null> = [];
+        for (const candidate of candidates) {
+          usedQueryDirectories.push(candidate ?? null);
+          const fetchedList = unwrap(
+            await c.session.list({ directory: candidate, limit }),
+          );
+          for (const session of fetchedList) {
+            mergedById.set(session.id, session);
+          }
+        }
+        const list = Array.from(mergedById.values());
         options.wsDebug("sidebar:list", {
           id,
           baseUrl: config.baseUrl,
           directory: directory || null,
-          queryDirectory: queryDirectory ?? null,
+          queryDirectory: usedQueryDirectories[0] ?? null,
+          queryDirectories: usedQueryDirectories,
+          queryDirectoryFallbacks: Math.max(0, candidates.length - 1),
           count: list.length,
           limit,
           ms: Date.now() - start,
@@ -552,7 +642,7 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
 
         const overrideIds = root
           ? Object.entries(options.sessionDirectoryOverrideById())
-            .filter(([, directory]) => normalizeDirectoryPath(directory) === root)
+            .filter(([, directory]) => sessionDirectoryMatchesRoot(directory, root))
             .map(([sessionID]) => sessionID)
           : [];
         const merged = new Map(filtered.map((session) => [session.id, session] as const));
@@ -618,16 +708,62 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
           directory: displaySession.directory,
         };
       });
+      const workspace = options.workspaceStore.workspaces().find((w) => w.id === id) ?? null;
+      const readDirectory = workspace?.workspaceType === "local"
+        ? workspace.path?.trim() || directory || config.directory
+        : "";
+      let nextItems = items;
+      let usedReadApiUnion = false;
+      if (readDirectory) {
+        try {
+          const readResult = await listSidebarWorkspaceSessionsFromReadApi(id, readDirectory);
+          if (sidebarRefreshSeqByWorkspaceId[id] !== seq) return;
+          if (readResult.items.length > 0) {
+            nextItems = mergeSidebarSessionItemsByActivity(items, readResult.items);
+            usedReadApiUnion = true;
+          } else if (items.length === 0) {
+            applyWorkspaceSidebarReadResult({
+              workspaceId: id,
+              items: readResult.items,
+              available: readResult.available,
+            });
+            setSidebarSessionHasMoreByWorkspaceId((prev) => ({ ...prev, [id]: false }));
+            options.wsDebug("sidebar:conversation-read", {
+              id,
+              reason: "live-empty",
+              source: readResult.source,
+              count: readResult.items.length,
+              liveCount: items.length,
+              mergedCount: readResult.items.length,
+            });
+            return;
+          }
+          options.wsDebug("sidebar:conversation-read", {
+            id,
+            reason: items.length === 0 ? "live-empty-union" : "live-union",
+            source: readResult.source,
+            count: readResult.items.length,
+            liveCount: items.length,
+            mergedCount: nextItems.length,
+          });
+        } catch (readError) {
+          options.wsDebug("sidebar:conversation-read:union-error", {
+            id,
+            liveCount: items.length,
+            error: readError instanceof Error ? readError.message : safeStringify(readError),
+          });
+        }
+      }
 
-      setSidebarSessionsByWorkspaceId((prev) => ({
-        ...prev,
-        [id]: items,
-      }));
+      applyWorkspaceSidebarReadResult({
+        workspaceId: id,
+        items: nextItems,
+        available: true,
+      });
       setSidebarSessionHasMoreByWorkspaceId((prev) => ({
         ...prev,
-        [id]: deriveSidebarHasMore(rawCount, requestLimit),
+        [id]: usedReadApiUnion ? false : deriveSidebarHasMore(rawCount, requestLimit),
       }));
-      setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" }));
     } catch (error) {
       if (sidebarRefreshSeqByWorkspaceId[id] !== seq) return;
       const message = error instanceof Error ? error.message : safeStringify(error);

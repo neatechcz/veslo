@@ -143,11 +143,14 @@ pub fn spawn_orchestrator_dev_autostart(app: AppHandle) {
             return;
         }
 
-        let Some(home) = crate::paths::home_dir() else {
-            eprintln!("[dev-autostart] HOME not found — skipping");
+        let scratch_root = crate::paths::app_local_data_dir_override()
+            .or_else(|| app.path().app_local_data_dir().ok())
+            .or_else(|| crate::paths::home_dir().map(|home| home.join(".veslo")));
+        let Some(scratch_root) = scratch_root else {
+            eprintln!("[dev-autostart] data dir not found — skipping");
             return;
         };
-        let scratch = home.join(".veslo").join("scratch");
+        let scratch = scratch_root.join("scratch");
         if let Err(e) = std::fs::create_dir_all(&scratch) {
             eprintln!("[dev-autostart] mkdir {:?} failed: {}", scratch, e);
             return;

@@ -18,6 +18,15 @@ function normalizeHostPath(path: string): string {
   return value.replace(/\\+$/, "").toLowerCase();
 }
 
+function wslMountPathToWindowsPath(path: string): string | null {
+  const match = path.trim().replace(/\\/g, "/").match(/^\/mnt\/([a-zA-Z])(?:\/(.*))?$/);
+  if (!match) return null;
+  const drive = match[1]?.toUpperCase();
+  if (!drive) return null;
+  const rest = (match[2] ?? "").replace(/\//g, "\\");
+  return rest ? `${drive}:\\${rest}` : `${drive}:\\`;
+}
+
 function appendEngineRelativePath(base: string, relative: string): string {
   const suffix = relative.replace(/\\/g, "/").replace(/^\/+/, "");
   return suffix ? `${base.replace(/\/+$/, "")}/${suffix}` : base.replace(/\/+$/, "") || "/";
@@ -44,7 +53,7 @@ export function hostDirectoryToEngineDirectory(
   }
 
   const hostRoot = normalizeHostPath(mapping.hostWorkspacePath);
-  const candidate = normalizeHostPath(value);
+  const candidate = normalizeHostPath(wslMountPathToWindowsPath(value) ?? value);
   if (candidate === hostRoot) return normalizedEngineRoot;
   if (candidate.startsWith(`${hostRoot}\\`)) {
     return appendEngineRelativePath(normalizedEngineRoot, candidate.slice(hostRoot.length + 1));
@@ -66,6 +75,16 @@ export function engineDirectoryToHostDirectory(
   if (unified === engineRoot) return mapping.hostWorkspacePath;
   if (unified.startsWith(`${engineRoot}/`)) {
     return appendHostRelativePath(mapping.hostWorkspacePath, unified.slice(engineRoot.length + 1));
+  }
+
+  const hostCandidate = wslMountPathToWindowsPath(unified);
+  if (hostCandidate) {
+    const hostRoot = normalizeHostPath(mapping.hostWorkspacePath);
+    const candidate = normalizeHostPath(hostCandidate);
+    if (candidate === hostRoot) return mapping.hostWorkspacePath;
+    if (candidate.startsWith(`${hostRoot}\\`)) {
+      return appendHostRelativePath(mapping.hostWorkspacePath, candidate.slice(hostRoot.length + 1));
+    }
   }
 
   return directory;

@@ -36,7 +36,15 @@ if (!routerVersion) {
 }
 
 const run = (command, args, cwd) => {
-  const result = spawnSync(command, args, { cwd, stdio: "inherit" });
+  const commandName = process.platform === "win32" ? "cmd.exe" : command;
+  const commandArgs = process.platform === "win32" ? ["/d", "/s", "/c", command, ...args] : args;
+  const result = spawnSync(commandName, commandArgs, {
+    cwd,
+    stdio: "inherit",
+  });
+  if (result.error) {
+    console.error(result.error.message);
+  }
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
   }

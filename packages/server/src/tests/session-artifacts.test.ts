@@ -1,10 +1,10 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { deriveLatestRunArtifacts } from "../session-artifacts.js";
-import { startServer } from "../server.js";
+import { normalizeOpencodeDirectory, startServer } from "../server.js";
 
 type FixturePart =
   | { type: "text"; text: string }
@@ -65,6 +65,13 @@ const families = (artifacts: Array<{ family: string }>) => artifacts.map((artifa
 
 const files = (artifacts: Array<{ family: string; path?: string; kind: string }>) =>
   artifacts.filter((artifact) => artifact.family === "files");
+
+const toWslMountPath = (path: string) => {
+  const normalized = path.replace(/\\/g, "/");
+  const match = normalized.match(/^([A-Za-z]):\/(.*)$/);
+  if (!match) return normalized;
+  return `/mnt/${match[1]?.toLowerCase()}/${match[2] ?? ""}`;
+};
 
 const runningServers: Array<{ stop?: (closeActiveConnections?: boolean) => void }> = [];
 
@@ -157,13 +164,13 @@ describe("deriveLatestRunArtifacts", () => {
         userMessage("msg_1", "Inspect the file."),
         assistantMessage(
           "msg_2",
-          toolPart("read", { path: "/Users/vaclavsoukup/project/notes.md" }),
+          toolPart("read", { path: "/tmp/veslo-artifact-fixture/project/notes.md" }),
         ),
       ),
     );
 
     expect(files(artifacts).map((artifact) => [artifact.kind, artifact.path])).toEqual([
-      ["file_discovered", "/Users/vaclavsoukup/project/notes.md"],
+      ["file_discovered", "/tmp/veslo-artifact-fixture/project/notes.md"],
     ]);
   });
 
@@ -174,17 +181,36 @@ describe("deriveLatestRunArtifacts", () => {
         assistantMessage(
           "msg_2",
           toolPart("read", { path: "/workspace/src/opened.ts" }),
-          toolPart("write", { path: "C:\\Users\\alice\\project\\src\\changed.ts" }),
-          toolPart("edit", { path: "/mnt/c/Users/alice/project/src/from-wsl-mount.ts" }),
+          toolPart("write", { path: "C:\\Users\\alice\\AppData\\Local\\Veslo\\fixtures\\artifact-workspace\\src\\changed.ts" }),
+          toolPart("edit", { path: "/mnt/c/Users/alice/AppData/Local/Veslo/fixtures/artifact-workspace/src/from-wsl-mount.ts" }),
         ),
       ),
-      { workspaceRoot: "C:\\Users\\alice\\project" },
+      { workspaceRoot: "C:\\Users\\alice\\AppData\\Local\\Veslo\\fixtures\\artifact-workspace" },
     );
 
     expect(files(artifacts).map((artifact) => [artifact.kind, artifact.path])).toEqual([
       ["file_discovered", "src/opened.ts"],
       ["file_output", "src/changed.ts"],
       ["file_output", "src/from-wsl-mount.ts"],
+    ]);
+  });
+
+  test("drops absolute file artifacts outside the known workspace root", () => {
+    const artifacts = deriveLatestRunArtifacts(
+      session(
+        userMessage("msg_1", "Inspect files."),
+        assistantMessage(
+          "msg_2",
+          toolPart("read", { path: "/tmp/veslo-artifact-fixture/project/src/inside.ts" }),
+          toolPart("read", { path: "/tmp/veslo-artifact-fixture/other/outside.ts" }),
+          toolPart("write", { path: "D:/outside/result.ts" }),
+        ),
+      ),
+      { workspaceRoot: "/tmp/veslo-artifact-fixture/project" },
+    );
+
+    expect(files(artifacts).map((artifact) => [artifact.kind, artifact.path])).toEqual([
+      ["file_discovered", "src/inside.ts"],
     ]);
   });
 
@@ -340,7 +366,7 @@ describe("deriveLatestRunArtifacts", () => {
           toolPart("write", { path: "/workspace/.opencode/soul/heartbeat.jsonl" }),
         ),
       ),
-      { workspaceRoot: "C:\\Users\\alice\\project" },
+      { workspaceRoot: "C:\\Users\\alice\\AppData\\Local\\Veslo\\fixtures\\artifact-workspace" },
     );
 
     expect(kinds(artifacts)).toEqual(["soul_memory_used", "heartbeat_used"]);
@@ -397,6 +423,9 @@ describe("latest-run artifact route", () => {
   test("returns typed artifacts for the latest session run via Veslo server", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-session-artifacts-"));
     const sessionId = "sess_1";
+    let upstreamDirectoryQuery = "";
+    let upstreamDirectoryHeader = "";
+    let upstreamLimitQuery = "";
 
     try {
       const upstream = Bun.serve({
@@ -405,6 +434,9 @@ describe("latest-run artifact route", () => {
         fetch(request) {
           const url = new URL(request.url);
           if (url.pathname === `/session/${sessionId}/message`) {
+            upstreamDirectoryQuery = url.searchParams.get("directory") ?? "";
+            upstreamDirectoryHeader = request.headers.get("x-opencode-directory") ?? "";
+            upstreamLimitQuery = url.searchParams.get("limit") ?? "";
             return Response.json([
               {
                 info: { id: "msg-old-user", role: "user" },
@@ -469,7 +501,7 @@ describe("latest-run artifact route", () => {
       runningServers.push(server as { stop?: (closeActiveConnections?: boolean) => void });
 
       const response = await fetch(
-        `http://127.0.0.1:${server.port}/workspace/ws_1/sessions/${sessionId}/artifacts/latest-run`,
+        `http://127.0.0.1:${server.port}/workspace/ws_1/sessions/${sessionId}/artifacts/latest-run?directory=${encodeURIComponent(workspaceRoot)}`,
         {
           headers: { Authorization: "Bearer client-token" },
         },
@@ -486,6 +518,9 @@ describe("latest-run artifact route", () => {
       expect(payload.sessionId).toBe(sessionId);
       expect(payload.workspaceId).toBe("ws_1");
       expect(payload.runId).toBe("msg-new-user");
+      expect(upstreamLimitQuery).toBe("200");
+      expect(upstreamDirectoryQuery).toBe(workspaceRoot);
+      expect(upstreamDirectoryHeader).toBe(workspaceRoot);
 
       expect(payload.items).toEqual([
         expect.objectContaining({
@@ -507,6 +542,200 @@ describe("latest-run artifact route", () => {
         }),
       ]);
       expect(payload.items.some((artifact) => artifact.title === "brainstorming")).toBe(false);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("accepts WSL mount directories and derives artifacts relative to the requested directory", async () => {
+    if (process.platform !== "win32") return;
+
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-session-artifacts-wsl-"));
+    const conversationDirectory = join(workspaceRoot, "nested");
+    await mkdir(conversationDirectory, { recursive: true });
+    const requestedDirectory = toWslMountPath(conversationDirectory);
+    const sessionId = "sess_wsl";
+    let upstreamDirectoryQuery = "";
+    let upstreamDirectoryHeader = "";
+
+    try {
+      const upstream = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(request) {
+          const url = new URL(request.url);
+          if (url.pathname === `/session/${sessionId}/message`) {
+            upstreamDirectoryQuery = url.searchParams.get("directory") ?? "";
+            upstreamDirectoryHeader = request.headers.get("x-opencode-directory") ?? "";
+            return Response.json([
+              {
+                info: { id: "msg-user", role: "user" },
+                parts: [{ type: "text", text: "latest run" }],
+              },
+              {
+                info: { id: "msg-assistant", role: "assistant" },
+                parts: [
+                  {
+                    type: "tool",
+                    tool: "read",
+                    state: {
+                      input: {
+                        path: `${requestedDirectory}/src/from-wsl.ts`,
+                      },
+                    },
+                  },
+                ],
+              },
+            ]);
+          }
+          return new Response("not found", { status: 404 });
+        },
+      });
+      runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+      const server = startServer({
+        host: "127.0.0.1",
+        port: 0,
+        token: "client-token",
+        hostToken: "host-token",
+        approval: { mode: "auto", timeoutMs: 1_000 },
+        corsOrigins: ["*"],
+        workspaces: [
+          {
+            id: "ws_1",
+            name: "Workspace",
+            path: workspaceRoot,
+            workspaceType: "local",
+            baseUrl: `http://127.0.0.1:${upstream.port}`,
+          },
+        ],
+        authorizedRoots: [workspaceRoot],
+        readOnly: false,
+        startedAt: Date.now(),
+        tokenSource: "cli",
+        hostTokenSource: "cli",
+        logFormat: "pretty",
+        logRequests: false,
+        debugLogs: {
+          enabled: false,
+          ingestUrl: null,
+          ingestToken: null,
+          batchMaxEvents: 200,
+          batchMaxBytes: 256 * 1024,
+          spoolMaxBytes: 100 * 1024 * 1024,
+          flushIntervalMs: 5000,
+        },
+      });
+      runningServers.push(server as { stop?: (closeActiveConnections?: boolean) => void });
+
+      const response = await fetch(
+        `http://127.0.0.1:${server.port}/workspace/ws_1/sessions/${sessionId}/artifacts/latest-run?directory=${encodeURIComponent(requestedDirectory)}`,
+        {
+          headers: { Authorization: "Bearer client-token" },
+        },
+      );
+
+      expect(response.status).toBe(200);
+      const payload = await response.json() as {
+        items: Array<{ family: string; kind: string; path?: string }>;
+      };
+      const expectedDirectory = normalizeOpencodeDirectory(conversationDirectory);
+
+      expect(upstreamDirectoryQuery).toBe(expectedDirectory);
+      expect(upstreamDirectoryHeader).toBe(expectedDirectory);
+      expect(files(payload.items).map((artifact) => artifact.path)).toEqual(["src/from-wsl.ts"]);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("maps /workspace directory requests to the effective OpenCode directory", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-session-artifacts-directory-root-"));
+    const conversationDirectory = join(workspaceRoot, "opencode-working-dir");
+    await mkdir(conversationDirectory, { recursive: true });
+    const sessionId = "sess_directory_alias";
+    let upstreamDirectoryQuery = "";
+    let upstreamDirectoryHeader = "";
+
+    try {
+      const upstream = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(request) {
+          const url = new URL(request.url);
+          if (url.pathname === `/session/${sessionId}/message`) {
+            upstreamDirectoryQuery = url.searchParams.get("directory") ?? "";
+            upstreamDirectoryHeader = request.headers.get("x-opencode-directory") ?? "";
+            return Response.json([
+              {
+                info: { id: "msg-user", role: "user" },
+                parts: [{ type: "text", text: "latest run" }],
+              },
+              {
+                info: { id: "msg-assistant", role: "assistant" },
+                parts: [
+                  { type: "tool", tool: "read", state: { input: { path: "/workspace/src/from-alias.ts" } } },
+                ],
+              },
+            ]);
+          }
+          return new Response("not found", { status: 404 });
+        },
+      });
+      runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+      const server = startServer({
+        host: "127.0.0.1",
+        port: 0,
+        token: "client-token",
+        hostToken: "host-token",
+        approval: { mode: "auto", timeoutMs: 1_000 },
+        corsOrigins: ["*"],
+        workspaces: [
+          {
+            id: "ws_1",
+            name: "Workspace",
+            path: workspaceRoot,
+            directory: conversationDirectory,
+            workspaceType: "local",
+            baseUrl: `http://127.0.0.1:${upstream.port}`,
+          },
+        ],
+        authorizedRoots: [workspaceRoot],
+        readOnly: false,
+        startedAt: Date.now(),
+        tokenSource: "cli",
+        hostTokenSource: "cli",
+        logFormat: "pretty",
+        logRequests: false,
+        debugLogs: {
+          enabled: false,
+          ingestUrl: null,
+          ingestToken: null,
+          batchMaxEvents: 200,
+          batchMaxBytes: 256 * 1024,
+          spoolMaxBytes: 100 * 1024 * 1024,
+          flushIntervalMs: 5000,
+        },
+      });
+      runningServers.push(server as { stop?: (closeActiveConnections?: boolean) => void });
+
+      const response = await fetch(
+        `http://127.0.0.1:${server.port}/workspace/ws_1/sessions/${sessionId}/artifacts/latest-run?directory=${encodeURIComponent("/workspace")}`,
+        {
+          headers: { Authorization: "Bearer client-token" },
+        },
+      );
+
+      expect(response.status).toBe(200);
+      const payload = await response.json() as {
+        items: Array<{ family: string; kind: string; path?: string }>;
+      };
+      const expectedDirectory = normalizeOpencodeDirectory(conversationDirectory);
+
+      expect(upstreamDirectoryQuery).toBe(expectedDirectory);
+      expect(upstreamDirectoryHeader).toBe(expectedDirectory);
+      expect(files(payload.items).map((artifact) => artifact.path)).toEqual(["src/from-alias.ts"]);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }

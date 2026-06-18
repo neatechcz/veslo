@@ -70,6 +70,7 @@ export type WorkspaceLocalActivationDeps = {
   setEngineReady?: (value: boolean) => void;
   populateSidebarFromDb?: (workspaceId: string, directory: string) => Promise<void>;
   hydrateLatestSessionFromDb?: (workspaceId: string, directory: string) => Promise<void>;
+  activateVesloHostWorkspace: (workspacePath: string) => Promise<void>;
   setError: (value: string | null) => void;
   setBusy: (value: boolean) => void;
   setBusyLabel: (value: string | null) => void;
@@ -226,6 +227,16 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
         }
         deps.setWorkspaces(ws.workspaces);
         deps.syncActiveWorkspaceId(ws.activeId);
+        try {
+          await deps.activateVesloHostWorkspace(next.path);
+          deps.wsDebug("activate:local:veslo-host-active:done", { id, path: next.path });
+        } catch (e) {
+          deps.wsDebug("activate:local:veslo-host-active:failed", {
+            id,
+            path: next.path,
+            error: e instanceof Error ? e.message : deps.safeStringify(e),
+          });
+        }
         deps.wsLog("[workspace:activate] STEP 3 — workspaceSetActive DONE");
       } catch (e) {
         deps.wsLog("[workspace:activate] STEP 3 — workspaceSetActive FAILED", e instanceof Error ? e.message : String(e));

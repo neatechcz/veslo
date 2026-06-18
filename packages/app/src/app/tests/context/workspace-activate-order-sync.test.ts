@@ -264,8 +264,21 @@ test("bootstrap pre-loads the sidebar from SQLite without starting the engine", 
   );
   assert.match(
     source,
+    /async function bootstrapOnboarding\(\)[\s\S]*?await activateVesloHostWorkspace\(workspacePath\);[\s\S]*?options\.populateSidebarFromDb\(/s,
+    "bootstrap must sync the Veslo host active workspace before reading DB conversations",
+  );
+  assert.match(
+    source,
     /async function bootstrapOnboarding\(\)[\s\S]*?options\.setEngineReady\?\.\(false\)/s,
     "bootstrap must explicitly mark engine as not-ready so browsing-mode UI activates",
+  );
+});
+
+test("lazy DB hydration selects a stored or latest session only while the workspace is still active", () => {
+  assert.match(
+    appSource,
+    /hydrateLatestSessionFromDb: async \(workspaceId: string, directory: string\) => \{[\s\S]*const \{ visible \} = partitionVesloUtilitySessions\(result\.items\);[\s\S]*const rememberedSessionId = activeWorkspaceLastSessionId\(\)\?\.trim\(\) \?\? "";[\s\S]*visible\[0\][\s\S]*sessionStore\.hydrateTranscriptSnapshot\(snapshot\);[\s\S]*if \(selectedSessionId\(\)\?\.trim\(\)\) return;[\s\S]*if \(workspaceStore\.activeWorkspaceId\(\)\.trim\(\) !== workspaceId\.trim\(\)\) return;[\s\S]*await selectSession\(latest\.id\);/s,
+    "lazy DB hydration should render at least the remembered/latest active workspace session without cold-starting another workspace engine",
   );
 });
 

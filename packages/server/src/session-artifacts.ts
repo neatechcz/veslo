@@ -648,6 +648,10 @@ function normalizeArtifactPath(input: string, options: { workspaceRoot?: string 
   const isWindowsDriveAbsolute = /^[A-Za-z]:\//.test(raw);
   const isUncAbsolute = raw.startsWith("//");
   const isUnixAbsolute = raw.startsWith("/") && !isUncAbsolute;
+  const hasWorkspaceRoot = Boolean(options.workspaceRoot?.trim());
+  if (hasWorkspaceRoot && (isWindowsDriveAbsolute || isUncAbsolute || isUnixAbsolute)) {
+    return null;
+  }
 
   let normalized = raw;
   if (isUnixAbsolute) {

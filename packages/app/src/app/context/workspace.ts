@@ -587,6 +587,7 @@ export function createWorkspaceStore(options: {
       setEngineReady: options.setEngineReady,
       populateSidebarFromDb: options.populateSidebarFromDb,
       hydrateLatestSessionFromDb: options.hydrateLatestSessionFromDb,
+      activateVesloHostWorkspace,
       setError: options.setError,
       setBusy: options.setBusy,
       setBusyLabel: options.setBusyLabel,
@@ -1171,6 +1172,13 @@ export function createWorkspaceStore(options: {
         _wsLog("[workspace:bootstrap] lazy boot — sidebar from DB", { workspacePath });
         bootTrace("lazy boot — populateSidebarFromDb...");
         options.setEngineReady?.(false);
+        if (activeWorkspace?.workspaceType === "local") {
+          try {
+            await activateVesloHostWorkspace(workspacePath);
+          } catch (e) {
+            _wsLog("[workspace:bootstrap] activateVesloHostWorkspace failed", e);
+          }
+        }
         try {
           await options.populateSidebarFromDb(activeWorkspace?.id ?? "", workspacePath);
         } catch (e) {

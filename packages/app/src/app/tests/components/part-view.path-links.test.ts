@@ -10,16 +10,20 @@ import {
 } from "../../components/part-view-link-utils.js";
 import { createCustomRenderer } from "../../components/part-view-markdown-renderer.js";
 
+const POSIX_WORKSPACE_ROOT = "/tmp/veslo path link workspace";
+const POSIX_SPACED_FILE = `${POSIX_WORKSPACE_ROOT}/test/ulice_brno.xlsx`;
+const POSIX_DOCX_OUTPUT = `${POSIX_WORKSPACE_ROOT}/offer_template/output/20260311 - Neatech JAVEX-TRADE_Interni_Automatizace_Procesu.docx`;
+const POSIX_PDF_OUTPUT = `${POSIX_WORKSPACE_ROOT}/offer_template/output/20260311 - Neatech JAVEX-TRADE_Interni_Automatizace_Procesu.pdf`;
+const WINDOWS_WORKSPACE_ROOT = "C:/Users/alice/AppData/Local/Veslo/fixtures/path-link-workspace";
+
 test("links an absolute POSIX path line that contains spaces", () => {
-  const segments = splitTextWithStandalonePathLinks(
-    "/Users/vaclavsoukup/ai discussion projects/test/ulice_brno.xlsx",
-  );
+  const segments = splitTextWithStandalonePathLinks(POSIX_SPACED_FILE);
 
   assert.deepEqual(segments, [
     {
       kind: "link",
-      value: "/Users/vaclavsoukup/ai discussion projects/test/ulice_brno.xlsx",
-      href: "/Users/vaclavsoukup/ai discussion projects/test/ulice_brno.xlsx",
+      value: POSIX_SPACED_FILE,
+      href: POSIX_SPACED_FILE,
       type: "file",
     },
   ]);
@@ -39,10 +43,8 @@ test("links a workspace-relative path line that contains spaces", () => {
 });
 
 test("keeps ordinary prose as plain text", () => {
-  const text = "Našel jsem online seznam ulic v Brně a uložil ho do Excelu.";
-  const segments = splitTextWithStandalonePathLinks(
-    text,
-  );
+  const text = "Nalezl jsem online seznam ulic v Brne a ulozil ho do Excelu.";
+  const segments = splitTextWithStandalonePathLinks(text);
 
   assert.equal(segments.every((segment) => segment.kind === "text"), true);
   assert.equal(
@@ -59,48 +61,37 @@ test("still renders ordinary web URLs as anchors", () => {
 });
 
 test("renders a multi-line assistant snippet with a path-only line as a file anchor", () => {
-  const html = renderInlineTextWithLinks(
-    "Soubor je tady:\n/Users/vaclavsoukup/ai discussion projects/test/ulice_brno.xlsx",
-  );
+  const html = renderInlineTextWithLinks(`Soubor je tady:\n${POSIX_SPACED_FILE}`);
 
-  assert.match(
-    html,
-    /href="\/Users\/vaclavsoukup\/ai discussion projects\/test\/ulice_brno\.xlsx"/,
-  );
+  assert.equal(html.includes(`href="${POSIX_SPACED_FILE}"`), true);
   assert.equal(html.startsWith("Soubor je tady:\n"), true);
 });
 
 test("renders a code-formatted file path as a clickable code link", () => {
-  const html = renderCodeSpanWithLink(
-    "/Users/vaclavsoukup/ai discussion projects/test/ulice_brno.xlsx",
-    "inline-code-class",
-  );
+  const html = renderCodeSpanWithLink(POSIX_SPACED_FILE, "inline-code-class");
 
-  assert.match(
-    html,
-    /^<a href="\/Users\/vaclavsoukup\/ai discussion projects\/test\/ulice_brno\.xlsx"/,
-  );
+  assert.equal(html.startsWith(`<a href="${POSIX_SPACED_FILE}"`), true);
   assert.match(html, /<code class="inline-code-class">/);
-  assert.match(html, />\/Users\/vaclavsoukup\/ai discussion projects\/test\/ulice_brno\.xlsx<\/code><\/a>$/);
+  assert.equal(html.endsWith(`>${POSIX_SPACED_FILE}</code></a>`), true);
 });
 
 test("normalizes WSL sandbox file links to host workspace paths", () => {
   assert.equal(
-    normalizeFilePath("/workspace/reports/result.pdf", "C:/Users/me/project"),
-    "C:/Users/me/project/reports/result.pdf",
+    normalizeFilePath("/workspace/reports/result.pdf", WINDOWS_WORKSPACE_ROOT),
+    `${WINDOWS_WORKSPACE_ROOT}/reports/result.pdf`,
   );
   assert.equal(
-    normalizeFilePath("file:///workspace/screens/result.png", "C:/Users/me/project"),
-    "C:/Users/me/project/screens/result.png",
+    normalizeFilePath("file:///workspace/screens/result.png", WINDOWS_WORKSPACE_ROOT),
+    `${WINDOWS_WORKSPACE_ROOT}/screens/result.png`,
   );
   assert.equal(
-    normalizeFilePath("/mnt/c/Users/me/project/reports/result.pdf", "C:/Users/me/project"),
-    "C:/Users/me/project/reports/result.pdf",
+    normalizeFilePath("/mnt/c/Users/alice/AppData/Local/Veslo/fixtures/path-link-workspace/reports/result.pdf", WINDOWS_WORKSPACE_ROOT),
+    `${WINDOWS_WORKSPACE_ROOT}/reports/result.pdf`,
   );
 });
 
 test("does not treat Czech company suffix s.r.o. as a file link", () => {
-  const text = "Firma Acme s.r.o. dodá zboží.";
+  const text = "Firma Acme s.r.o. dodava zbozi.";
   const segments = splitTextWithStandalonePathLinks(text);
   assert.equal(segments.every((s) => s.kind === "text"), true);
   assert.equal(
@@ -110,7 +101,7 @@ test("does not treat Czech company suffix s.r.o. as a file link", () => {
 });
 
 test("does not treat a Czech house number like 536/38 as a file link", () => {
-  const text = "Adresa: Hlavní 536/38, Praha.";
+  const text = "Adresa: Hlavni 536/38, Praha.";
   const segments = splitTextWithStandalonePathLinks(text);
   assert.equal(segments.every((s) => s.kind === "text"), true);
   assert.equal(
@@ -121,11 +112,11 @@ test("does not treat a Czech house number like 536/38 as a file link", () => {
 
 test("renders list-item code paths with spaces as a single clickable markdown link", () => {
   const markdown = [
-    "Výstupy:",
+    "Vystupy:",
     "- **DOCX:**  ",
-    "`/Users/vaclavsoukup/ai discussion projects/offer_template/output/20260311 - Neatech JAVEX-TRADE_Interni_Automatizace_Procesu.docx`",
+    `\`${POSIX_DOCX_OUTPUT}\``,
     "- **PDF:**  ",
-    "`/Users/vaclavsoukup/ai discussion projects/offer_template/output/20260311 - Neatech JAVEX-TRADE_Interni_Automatizace_Procesu.pdf`",
+    `\`${POSIX_PDF_OUTPUT}\``,
   ].join("\n");
 
   const html = marked.parse(markdown, {
@@ -137,13 +128,7 @@ test("renders list-item code paths with spaces as a single clickable markdown li
 
   const rendered = typeof html === "string" ? html : "";
   assert.match(rendered, /<strong>DOCX:<\/strong><br>/);
-  assert.match(
-    rendered,
-    /<a href="\/Users\/vaclavsoukup\/ai discussion projects\/offer_template\/output\/20260311 - Neatech JAVEX-TRADE_Interni_Automatizace_Procesu\.docx"/,
-  );
-  assert.match(
-    rendered,
-    /<a href="\/Users\/vaclavsoukup\/ai discussion projects\/offer_template\/output\/20260311 - Neatech JAVEX-TRADE_Interni_Automatizace_Procesu\.pdf"/,
-  );
-  assert.doesNotMatch(rendered, /href="\/Users\/vaclavsoukup\/ai"/);
+  assert.equal(rendered.includes(`<a href="${POSIX_DOCX_OUTPUT}"`), true);
+  assert.equal(rendered.includes(`<a href="${POSIX_PDF_OUTPUT}"`), true);
+  assert.equal(rendered.includes(`href="${POSIX_WORKSPACE_ROOT}`), true);
 });

@@ -120,7 +120,7 @@ test("latest-run artifacts resolve workspace from scoped selected session", () =
   );
   assert.match(
     source,
-    /ensureConversationReadWorkspaceRegistered\(\s*client,\s*scope\.workspaceId,\s*scope\.directory,\s*\);[\s\S]*client\.getSessionLatestRunArtifacts\(serverWorkspaceId, scope\.sessionId\)/,
+    /ensureConversationReadWorkspaceRegistered\(\s*client,\s*scope\.workspaceId,\s*scope\.directory,\s*\);[\s\S]*client\.getSessionLatestRunArtifacts\(serverWorkspaceId, scope\.sessionId, scope\.directory\)/,
     "latest-run artifact refresh should resolve the server workspace for the scoped session before reading artifacts",
   );
   assert.doesNotMatch(
@@ -238,7 +238,7 @@ test("local sidebar runtime failures fall back to passive conversation read", ()
   );
   assert.match(
     sidebarWorkspaceSessionsSource,
-    /setSidebarSessionErrorByWorkspaceId\(\(prev\) => \(\{ \.\.\.prev, \[workspaceId\]: null \}\)\);/,
+    /setSidebarSessionErrorByWorkspaceId\(\(prev\) => \(\{ \.\.\.prev, \[(?:workspaceId|id)\]: null \}\)\);/,
     "passive sidebar fallback should clear stale sidebar errors after publishing rows",
   );
 });

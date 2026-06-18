@@ -1851,6 +1851,7 @@ function opencodeRouterStatusToolSource(): string {
     "      const search = new URLSearchParams()",
     "      search.set('channel', channel)",
     "      if (identityId) search.set('identityId', identityId)",
+    "      if (directory) search.set('directory', directory)",
     "      bindings = await fetchJson(`/bindings?${search.toString()}`)",
     "    }",
     "",
@@ -1864,7 +1865,6 @@ function opencodeRouterStatusToolSource(): string {
     "    const bindingItems = Array.isArray(bindings?.json?.items) ? bindings.json.items : []",
     "    const filteredBindings = bindingItems.filter((item) => {",
     "      if (!item || typeof item !== 'object') return false",
-    "      if (directory && String(item.directory || '').trim() !== directory) return false",
     "      if (peerId && String(item.peerId || '').trim() !== peerId) return false",
     "      return true",
     "    })",
@@ -5334,6 +5334,7 @@ async function runStart(args: ParsedArgs) {
 
   const workspace = readFlag(args.flags, "workspace") ?? process.env.VESLO_WORKSPACE ?? process.cwd();
   const resolvedWorkspace = await ensureWorkspace(workspace);
+  const configuredSandboxBackend = resolveConfiguredSandboxBackend();
   logger.info("Run starting", { workspace: resolvedWorkspace, logFormat, runId }, "veslo-orchestrator");
 
   const dataDir = resolveRouterDataDir(args.flags);
@@ -5864,6 +5865,7 @@ async function runStart(args: ParsedArgs) {
         opencodePassword,
         opencodeRouterHealthPort: opencodeRouterReady ? opencodeRouterHealthPort : undefined,
         opencodeRouterDataDir: opencodeRouterReady ? (opencodeRouterDataDir ?? undefined) : undefined,
+        sandboxBackend: configuredSandboxBackend,
         logger,
         runId,
         logFormat,

@@ -11,12 +11,18 @@ const DEFAULT_VESLO_PORT: u16 = 8787;
 const DEFAULT_MANAGED_AI_BASE_URL: &str = "https://ai.veslo.work";
 const VESLO_SERVER_DEV_WATCH_ENV: &str = "VESLO_SERVER_DEV_WATCH";
 const VESLO_SERVER_DEV_DIR_ENV: &str = "VESLO_SERVER_DEV_DIR";
+const VESLO_SANDBOX_BACKEND_ENV: &str = "VESLO_SANDBOX_BACKEND";
+const VESLO_DISABLE_SANDBOX_ENV: &str = "VESLO_DISABLE_SANDBOX";
 
-fn parse_dev_watch_flag(value: Option<&str>) -> bool {
+fn parse_env_flag(value: Option<&str>) -> bool {
     matches!(
         value.map(|raw| raw.trim().to_ascii_lowercase()),
         Some(flag) if matches!(flag.as_str(), "1" | "true" | "yes" | "on")
     )
+}
+
+fn parse_dev_watch_flag(value: Option<&str>) -> bool {
+    parse_env_flag(value)
 }
 
 fn should_use_dev_watch_mode() -> bool {
@@ -256,6 +262,41 @@ fn resolve_managed_ai_base_url() -> String {
     )
 }
 
+fn default_server_sandbox_backend_for_platform() -> &'static str {
+    if cfg!(windows) {
+        "windows-wsl2"
+    } else if cfg!(target_os = "macos") {
+        "mac-sandbox-exec"
+    } else {
+        "none"
+    }
+}
+
+fn resolve_server_sandbox_backend_from_env(
+    explicit_backend: Option<&str>,
+    disable_sandbox: Option<&str>,
+) -> String {
+    if parse_env_flag(disable_sandbox) {
+        return "none".to_string();
+    }
+
+    if let Some(value) = explicit_backend
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return value.to_string();
+    }
+
+    default_server_sandbox_backend_for_platform().to_string()
+}
+
+fn resolve_server_sandbox_backend() -> String {
+    resolve_server_sandbox_backend_from_env(
+        env::var(VESLO_SANDBOX_BACKEND_ENV).ok().as_deref(),
+        env::var(VESLO_DISABLE_SANDBOX_ENV).ok().as_deref(),
+    )
+}
+
 pub fn spawn_veslo_server(
     app: &AppHandle,
     host: &str,
@@ -305,6 +346,7 @@ pub fn spawn_veslo_server(
         command.args(server_args).current_dir(cwd)
     }
     .env("VESLO_MANAGED_AI_BASE_URL", resolve_managed_ai_base_url());
+    command = command.env(VESLO_SANDBOX_BACKEND_ENV, resolve_server_sandbox_backend());
 
     if let Some(port) = opencode_router_health_port {
         command = command.env("OPENCODE_ROUTER_HEALTH_PORT", port.to_string());
@@ -444,5 +486,32 @@ mod tests {
         let resolved = resolve_managed_ai_base_url_from_env(None, None);
 
         assert_eq!(resolved, "https://ai.veslo.work");
+    }
+
+    #[test]
+    fn sandbox_backend_prefers_explicit_env() {
+        let resolved = resolve_server_sandbox_backend_from_env(Some(" windows-wsl2 "), None);
+
+        assert_eq!(resolved, "windows-wsl2");
+    }
+
+    #[test]
+    fn sandbox_backend_disable_flag_wins() {
+        let resolved = resolve_server_sandbox_backend_from_env(Some("windows-wsl2"), Some("true"));
+
+        assert_eq!(resolved, "none");
+    }
+
+    #[test]
+    fn sandbox_backend_defaults_by_platform() {
+        let resolved = resolve_server_sandbox_backend_from_env(None, None);
+
+        if cfg!(windows) {
+            assert_eq!(resolved, "windows-wsl2");
+        } else if cfg!(target_os = "macos") {
+            assert_eq!(resolved, "mac-sandbox-exec");
+        } else {
+            assert_eq!(resolved, "none");
+        }
     }
 }

@@ -491,6 +491,32 @@ test("collapsed project persistence writes only from explicit user toggles", () 
   );
 });
 
+test("collapsed sidebar sections still expose selected and active sessions", () => {
+  assert.match(
+    source,
+    /const rowForcesProjectOpen = \(row: FlatSessionRow\) => \{[\s\S]*selectedSessionId[\s\S]*pendingSessionId[\s\S]*sessionStatusById[\s\S]*isBusySession\(row\.workspace\.id, row\.session\.id\);[\s\S]*\};/,
+    "project visibility should force-open around selected, pending, and busy sessions",
+  );
+
+  assert.match(
+    source,
+    /const shouldForceProjectOpen = \(group: ProjectSessionGroup\) =>\s*group\.sessions\.some\(rowForcesProjectOpen\);/,
+    "forced open state should be derived from visible project rows",
+  );
+
+  assert.match(
+    source,
+    /isProjectCollapsed\(collapsedProjects\(\), project\.key\) && !shouldForceProjectOpen\(project\)/,
+    "collapsed project groups should still render their selected or active sessions",
+  );
+
+  assert.match(
+    source,
+    /chatSidebarCollapsed\(\) && !shouldForceProjectOpen\(chatGroup\(\)\)/,
+    "collapsed private chat section should still render its selected or active sessions",
+  );
+});
+
 test("session rows use archive action and open submenu on right-click", () => {
   assert.match(
     source,
