@@ -2,6 +2,21 @@ import type { WorkspaceInfo } from "../lib/tauri";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 import type { WorkspaceActivationOptions } from "./workspace-types";
 
+const NON_BLOCKING_LOCAL_BROWSE_ORIGINS = new Set([
+  "session-navigation:open-session-before-open",
+  "workspace-session-list:project-open",
+]);
+
+export function shouldSuppressWorkspaceSwitchOverlayForActivation(input: {
+  workspaceType?: WorkspaceInfo["workspaceType"] | null;
+  origin?: string | null;
+  promoteToFront?: boolean;
+}) {
+  if (input.workspaceType !== "local") return false;
+  if (input.promoteToFront) return false;
+  return NON_BLOCKING_LOCAL_BROWSE_ORIGINS.has(input.origin?.trim() ?? "");
+}
+
 export type WorkspaceActivationRunContext = {
   id: string;
   next: WorkspaceInfo;
@@ -18,6 +33,9 @@ export type WorkspaceActivationControllerDeps = {
   startupPreference: () => unknown;
   hasActiveRoute: () => boolean;
   setConnectingWorkspaceId: (
+    value: string | null | ((prev: string | null) => string | null),
+  ) => void;
+  setWorkspaceSwitchOverlaySuppressionToken?: (
     value: string | null | ((prev: string | null) => string | null),
   ) => void;
   updateWorkspaceConnectionState: (workspaceId: string, next: any) => void;
@@ -65,6 +83,19 @@ export function createWorkspaceActivationController(deps: WorkspaceActivationCon
 
     const myVersion = deps.wsActivateGuard.enter(id);
     const isSuperseded = () => deps.wsActivateGuard.isSuperseded(myVersion);
+    const overlaySuppressionToken = shouldSuppressWorkspaceSwitchOverlayForActivation({
+      workspaceType: next.workspaceType,
+      origin: activationOptions.origin,
+      promoteToFront: activationOptions.promoteToFront,
+    })
+      ? `${id}:${myVersion}`
+      : "";
+    const clearOverlaySuppressionToken = () => {
+      if (!overlaySuppressionToken) return;
+      deps.setWorkspaceSwitchOverlaySuppressionToken?.((current) =>
+        current === overlaySuppressionToken ? null : current,
+      );
+    };
 
     console.log("[workspace] activate", {
       id: next.id,
@@ -85,6 +116,14 @@ export function createWorkspaceActivationController(deps: WorkspaceActivationCon
     });
 
     deps.setConnectingWorkspaceId(id);
+    if (overlaySuppressionToken) {
+      deps.setWorkspaceSwitchOverlaySuppressionToken?.(overlaySuppressionToken);
+      deps.wsDebug("activate:overlay:suppressed", {
+        id: next.id,
+        origin: activationOptions.origin,
+        token: overlaySuppressionToken,
+      });
+    }
     deps.updateWorkspaceConnectionState(id, { status: "connecting", message: null });
 
     let activateTimeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -96,6 +135,7 @@ export function createWorkspaceActivationController(deps: WorkspaceActivationCon
         deps.setError(message);
         deps.updateWorkspaceConnectionState(id, { status: "error", message });
         deps.wsActivateGuard.exit(myVersion, deps.setConnectingWorkspaceId);
+        clearOverlaySuppressionToken();
         deps.setBusy(false);
         deps.setBusyLabel(null);
         deps.setBusyStartedAt(null);
@@ -108,6 +148,7 @@ export function createWorkspaceActivationController(deps: WorkspaceActivationCon
 
     if (isSuperseded()) {
       deps.wsDebug("activate:superseded:early", { id });
+      clearOverlaySuppressionToken();
       return false;
     }
 
@@ -134,6 +175,7 @@ export function createWorkspaceActivationController(deps: WorkspaceActivationCon
         ms: Date.now() - activateStart,
       });
       deps.wsActivateGuard.exit(myVersion, deps.setConnectingWorkspaceId);
+      clearOverlaySuppressionToken();
       deps.wsDebug("activate:finally", { id, ms: Date.now() - activateStart });
     }
   }

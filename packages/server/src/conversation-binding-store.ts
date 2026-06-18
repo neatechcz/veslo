@@ -472,16 +472,14 @@ export function createConversationBindingStore(options?: {
            ORDER BY updated_at DESC, created_at DESC, engine_session_id ASC
            LIMIT ?${limitIndex}`,
         ).all(workspaceId, ...directories, ...lowerDirectories, ENGINE, limit);
-        if (rows.length > 0) {
-          return rows.map(rowToBinding);
-        }
-
-        // Workspace-wide fallback: a local workspace maps to one directory, but
-        // the stored directory form (Windows `C:\…` vs WSL `/mnt/c/…` vs the
-        // engine's own path) can differ from the browse path. Don't hide the
-        // entire sidebar on a path-form mismatch — return everything bound to
-        // this workspace so the conversation still lists.
-        return listForWorkspace(db);
+        // Strict directory scoping. The directory *variants* above already
+        // bridge path-form differences (extended-prefix, case, slash vs
+        // backslash, Windows `C:\…` <-> WSL `/mnt/c/…`), so a non-empty
+        // workspace directory legitimately matches its rows here. We do NOT
+        // widen to a workspace-wide list on an empty result: a real
+        // subdirectory with no sessions must return [] (otherwise directory
+        // scoping, e.g. nested project folders, silently leaks sibling rows).
+        return rows.map(rowToBinding);
       });
     },
 

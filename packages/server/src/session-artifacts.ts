@@ -14,7 +14,7 @@ type SessionArtifactSource = {
   messages?: SessionArtifactMessage[];
 };
 
-type SessionArtifactMessage = {
+export type SessionArtifactMessage = {
   id?: string;
   role?: string;
   info?: {
@@ -31,7 +31,7 @@ type SessionArtifactMessage = {
   parts?: SessionArtifactPart[];
 };
 
-type SessionArtifactPart = {
+export type SessionArtifactPart = {
   id?: string;
   type?: string;
   tool?: string;

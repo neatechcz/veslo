@@ -51,3 +51,53 @@ test("managed AI config sync effect executes controller decisions", () => {
     "file config branch should delegate write decisions",
   );
 });
+
+test("managed AI config sync ignores stale async runs before writing config", () => {
+  const effectSource = managedAiConfigSyncEffectSource();
+
+  assert.match(
+    source,
+    /let managedAiConfigSyncGeneration = 0;/,
+    "sync should track async generations across effect reruns",
+  );
+  assert.match(
+    effectSource,
+    /const syncGeneration = \+\+managedAiConfigSyncGeneration;[\s\S]*const isCurrentManagedAiConfigSync = \(\) =>[\s\S]*!cancelled && syncGeneration === managedAiConfigSyncGeneration;/,
+    "each sync run should be invalidated when a newer reactive run starts",
+  );
+  assert.match(
+    effectSource,
+    /const config = await vesloClient\.getConfig\(vesloWorkspaceId\);\s*if \(!isCurrentManagedAiConfigSync\(\)\) return;/,
+    "server config reads must not continue into writes after the run is stale",
+  );
+  assert.match(
+    effectSource,
+    /if \(!isCurrentManagedAiConfigSync\(\)\) return;\s*await vesloClient\.patchConfig/s,
+    "server config writes should be guarded by the current sync generation",
+  );
+  assert.match(
+    effectSource,
+    /const configFile = await readOpencodeConfig\("project", root\);\s*if \(!isCurrentManagedAiConfigSync\(\)\) return;/,
+    "project config reads must not continue into writes after the run is stale",
+  );
+  assert.match(
+    effectSource,
+    /if \(!isCurrentManagedAiConfigSync\(\)\) return;\s*const result = await writeOpencodeConfig/s,
+    "project config writes should be guarded by the current sync generation",
+  );
+});
+
+test("project managed AI config comparison is semantic, not only byte-exact", () => {
+  const effectSource = managedAiConfigSyncEffectSource();
+
+  assert.match(
+    effectSource,
+    /const managedConfigMatches =[\s\S]*exactContentMatches \|\| managedConfigContentsMatchForServerPatch\(configFile\.content, content\);/,
+    "project config should use the same normalized managed-config comparison as server config",
+  );
+  assert.match(
+    effectSource,
+    /managedConfigAlreadyCurrent: managedConfigMatches,/,
+    "semantic matches should skip project config rewrites",
+  );
+});

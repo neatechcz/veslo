@@ -31,8 +31,11 @@ const HOT_EVENT_KEYS = new Set([
 
 const NATIVE_RUNTIME_PERF_SCOPES = new Set([
   "session.permissions",
+  "workspace.overlay",
+  "workspace.updater",
   "workspace.sidebar",
   "workspace.mcp",
+  "workspace.requests",
 ]);
 
 export const perfNow = () => {

@@ -202,8 +202,8 @@ describe("conversation binding store", () => {
     expect(sessions.map((session) => session.engineSessionId)).toEqual(["sess-new", "sess-old"]);
   });
 
-  test("falls back to all workspace sessions when the directory form does not match", async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-bindings-dir-fallback-"));
+  test("matches across Windows <-> WSL path forms via directory variants (no workspace-wide widening)", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-bindings-dir-bridge-"));
     tempDirs.push(dataDir);
     const store = createConversationBindingStore({ dataDir, now: () => 1_000 });
 
@@ -216,9 +216,8 @@ describe("conversation binding store", () => {
       updatedAt: 30,
     });
 
-    // ...but browse passes the Windows path form, which the directory variants
-    // do NOT translate to /mnt/c. A strict directory match would return nothing
-    // and hide the conversation; the workspace-wide fallback must still list it.
+    // ...but browse passes the Windows path form. The directory variants bridge
+    // C:\… <-> /mnt/c/… so the row is found by a STRICT directory match.
     const sessions = await store.listOpenCodeSessions({
       workspaceId: "ws-a",
       directory: "C:\\Users\\alice\\AppData\\Local\\Veslo\\test-repo\\test-repo2",
@@ -226,18 +225,26 @@ describe("conversation binding store", () => {
 
     expect(sessions.map((session) => session.engineSessionId)).toEqual(["sess-wsl"]);
 
-    // Isolation: a different workspace must not be pulled in by the fallback.
+    // A genuinely different directory in the same workspace must NOT leak in —
+    // directory scoping stays strict (no workspace-wide widening on miss).
     await store.bindOpenCodeSession({
-      workspaceId: "ws-b",
-      directory: "/mnt/c/other",
-      engineSessionId: "sess-other-ws",
+      workspaceId: "ws-a",
+      directory: "/mnt/c/Users/alice/AppData/Local/Veslo/test-repo/other-repo",
+      engineSessionId: "sess-other-dir",
       updatedAt: 40,
     });
-    const isolated = await store.listOpenCodeSessions({
+    const scoped = await store.listOpenCodeSessions({
       workspaceId: "ws-a",
       directory: "C:\\Users\\alice\\AppData\\Local\\Veslo\\test-repo\\test-repo2",
     });
-    expect(isolated.map((session) => session.engineSessionId)).toEqual(["sess-wsl"]);
+    expect(scoped.map((session) => session.engineSessionId)).toEqual(["sess-wsl"]);
+
+    // And a sibling subdirectory with no sessions returns [] (not the whole ws).
+    const emptyNested = await store.listOpenCodeSessions({
+      workspaceId: "ws-a",
+      directory: "C:\\Users\\alice\\AppData\\Local\\Veslo\\test-repo\\test-repo2\\nested",
+    });
+    expect(emptyNested).toEqual([]);
   });
 
   test("orders same-timestamp sessions deterministically for parallel conversation starts", async () => {

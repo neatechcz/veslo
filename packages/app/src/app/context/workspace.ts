@@ -257,6 +257,11 @@ export function createWorkspaceStore(options: {
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = createSignal(false);
   const [createRemoteWorkspaceOpen, setCreateRemoteWorkspaceOpen] = createSignal(false);
   const [connectingWorkspaceId, setConnectingWorkspaceId] = createSignal<string | null>(null);
+  const [workspaceSwitchOverlaySuppressionToken, setWorkspaceSwitchOverlaySuppressionToken] =
+    createSignal<string | null>(null);
+  const workspaceSwitchOverlaySuppressed = createMemo(() =>
+    Boolean(workspaceSwitchOverlaySuppressionToken()?.trim()),
+  );
   const {
     workspaceConnectionStateById,
     setWorkspaceConnectionStateById,
@@ -646,6 +651,7 @@ export function createWorkspaceStore(options: {
     startupPreference: options.startupPreference,
     hasActiveRoute: () => Boolean(options.routing.active()),
     setConnectingWorkspaceId,
+    setWorkspaceSwitchOverlaySuppressionToken,
     updateWorkspaceConnectionState,
     wsActivateGuard,
     runActivationBody: runWorkspaceActivation,
@@ -1395,6 +1401,7 @@ export function createWorkspaceStore(options: {
     createWorkspaceOpen,
     createRemoteWorkspaceOpen,
     connectingWorkspaceId,
+    workspaceSwitchOverlaySuppressed,
     workspaceConnectionStateById,
     exportingWorkspaceConfig: configStore.exportingWorkspaceConfig,
     importingWorkspaceConfig: configStore.importingWorkspaceConfig,

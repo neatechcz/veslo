@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  countFreshlyCreatedSessionsInSidebarRows,
   ensureSidebarSessionInWorkspaceRows,
   materializePendingSidebarSessionRows,
   moveSidebarSessionBetweenWorkspaceRows,
@@ -78,6 +79,45 @@ test("materialize pending replaces the pending row in the target workspace", () 
       "ws-b": [item("b1", "/repo/ws-b")],
     },
   );
+});
+
+test("materialize created session without a pending row still upserts without duplicating", () => {
+  const real = {
+    ...item("real-session", "/repo/ws-a"),
+    pendingSessionInstanceId: "pending-session:abc",
+  };
+  const current = {
+    "ws-a": [item("real-session", "/repo/ws-a"), item("a1", "/repo/ws-a")],
+  };
+
+  assert.deepEqual(
+    materializePendingSidebarSessionRows({
+      current,
+      workspaceId: "ws-a",
+      pendingSessionInstanceId: "pending-session:abc",
+      item: real,
+    }),
+    {
+      "ws-a": [real, item("a1", "/repo/ws-a")],
+    },
+  );
+});
+
+test("freshly created sidebar rows are matched back to live sessions", () => {
+  const rows = [
+    {
+      ...item("real-session", "/repo/ws-a"),
+      opencodeSessionId: "open-session",
+      pendingSessionInstanceId: "pending-session:abc",
+    },
+    item("old-session", "/repo/ws-a"),
+  ];
+  const sessions = [
+    { id: "open-session", title: "Open", directory: "/repo/ws-a", time: { created: 1, updated: 1 } },
+    { id: "unrelated", title: "Unrelated", directory: "/repo/ws-b", time: { created: 1, updated: 1 } },
+  ];
+
+  assert.equal(countFreshlyCreatedSessionsInSidebarRows(sessions as any, rows), 1);
 });
 
 test("move transfers a session between workspaces and preserves unrelated rows", () => {

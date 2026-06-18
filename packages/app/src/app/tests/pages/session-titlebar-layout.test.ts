@@ -119,7 +119,7 @@ test("session keeps centered titlebar context visible for new empty chats", () =
 test("session renders the disclaimer outside the composer", () => {
   assert.match(
     source,
-    /\{\(_sessionKey\) => \(\s*<>[\s\S]*<Composer[\s\S]*\/>[\s\S]*session\.composer_disclaimer[\s\S]*<\/>\s*\)\}/,
+    /<Composer[\s\S]*\/>\s*<div[^>]*>\s*<div[^>]*>\s*<span[^>]*>\s*\{tr\("session\.composer_disclaimer"\)\}/,
     "session should render the disclaimer in session layout, not inside the Composer component",
   );
 });

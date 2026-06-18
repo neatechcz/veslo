@@ -197,6 +197,29 @@ test("sidebar bulk refresh is single-flight to avoid duplicate cold workspace se
   );
 });
 
+test("sidebar conversation read sync follows warm workspace readiness", () => {
+  assert.match(
+    sidebarWorkspaceSessionsSource,
+    /listConversationsFromVesloReadApi: \([\s\S]*workspaceId: string,[\s\S]*directory\?: string,[\s\S]*options\?: \{ sync\?: boolean \},[\s\S]*\) => Promise<ConversationReadResult>;/,
+    "sidebar read API dependency should accept an explicit sync option",
+  );
+  assert.match(
+    sidebarWorkspaceSessionsSource,
+    /const sync = readOptions\?\.sync \?\? \(options\.shouldSyncConversationRead\?\.\(workspaceId\) === true\);[\s\S]*options\.listConversationsFromVesloReadApi\(workspaceId, directory, \{ sync \}\);/,
+    "sidebar read API calls should request sync through an explicit override or per-workspace readiness predicate",
+  );
+  assert.match(
+    sidebarWorkspaceSessionsSource,
+    /if \(activeSendTraceId\) \{[\s\S]*scheduleDeferredSidebarRefresh\(id, activeSendTraceId\);[\s\S]*await refreshSidebarWorkspaceSessionsFromReadApi\(id, wsDirectory, "active-send-host-read", \{[\s\S]*sync: false,[\s\S]*\}\);[\s\S]*return;/,
+    "sidebar refresh should still run host-first conversation reads during active sends while deferring live engine refresh",
+  );
+  assert.match(
+    source,
+    /const shouldSyncConversationReadForWorkspace = \(workspaceId: string\) => \{[\s\S]*readyEngineWorkspaceIds\(\)\.has\(id\)[\s\S]*workspaceStore\.workspaceBusy\(\)\[id\][\s\S]*workspaceStore\.activeWorkspaceId\(\)\.trim\(\) && engineReady\(\);[\s\S]*shouldSyncConversationRead: shouldSyncConversationReadForWorkspace,/,
+    "app should allow sync for any warm or busy routed workspace, with the active ready workspace as a fallback",
+  );
+});
+
 test("session-store sidebar sync skips unchanged sidebar rows", () => {
   assert.match(
     sidebarWorkspaceSessionsSource,
@@ -205,7 +228,7 @@ test("session-store sidebar sync skips unchanged sidebar rows", () => {
   );
   assert.match(
     sidebarWorkspaceSessionsSource,
-    /import \{ deriveSidebarRowsFromSessionStore \} from "\.\.\/lib\/sidebar-session-store-sync";[\s\S]*const incomingVisibleRows = expandSidebarSessionSliceWithAncestors\(visibleSessions, requestLimit\);[\s\S]*const existingTargetSidebarRows = untrack\(\(\) => sidebarSessionsByWorkspaceId\(\)\[wsId\] \?\? \[\]\);[\s\S]*const nextRows = deriveSidebarRowsFromSessionStore\(\{[\s\S]*incomingSessions: visibleSessions,[\s\S]*existingRows: existingTargetSidebarRows,[\s\S]*setSidebarSessionsByWorkspaceId\(\(prev\) => \{[\s\S]*const currentRows = prev\[wsId\] \?\? \[\];[\s\S]*if \(sidebarSessionItemsEqual\(currentRows, nextRows\)\) return prev;[\s\S]*\[wsId\]: nextRows,[\s\S]*\}\);/,
+    /import \{ deriveSidebarRowsFromSessionStore \} from "\.\.\/lib\/sidebar-session-store-sync";[\s\S]*const activeSendInProgress = Boolean\(options\.activeSendTraceId\?\.\(\)\?\.trim\(\)\);[\s\S]*const existingTargetSidebarRows = untrack\(\(\) => sidebarSessionsByWorkspaceId\(\)\[wsId\] \?\? \[\]\);[\s\S]*activeSendInProgress,[\s\S]*const incomingVisibleRows = expandSidebarSessionSliceWithAncestors\(visibleSessions, requestLimit\);[\s\S]*const nextRows = deriveSidebarRowsFromSessionStore\(\{[\s\S]*incomingSessions: visibleSessions,[\s\S]*existingRows: existingTargetSidebarRows,[\s\S]*setSidebarSessionsByWorkspaceId\(\(prev\) => \{[\s\S]*const currentRows = prev\[wsId\] \?\? \[\];[\s\S]*if \(sidebarSessionItemsEqual\(currentRows, nextRows\)\) return prev;[\s\S]*\[wsId\]: nextRows,[\s\S]*\}\);/,
     "session-store sync should preserve sidebar signal identity when visible rows are unchanged",
   );
   assert.match(

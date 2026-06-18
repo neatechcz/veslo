@@ -41,6 +41,7 @@ test("overlay only opens for delayed switch, hold-open, boot, or engine busy sta
     resolveWorkspaceSwitchOverlayOpen({
       booting: false,
       connectingWorkspaceId: "ws-b",
+      connectingOverlaySuppressed: false,
       switchDelayElapsed: false,
       holdOpen: false,
       busy: false,
@@ -52,6 +53,7 @@ test("overlay only opens for delayed switch, hold-open, boot, or engine busy sta
     resolveWorkspaceSwitchOverlayOpen({
       booting: false,
       connectingWorkspaceId: "ws-b",
+      connectingOverlaySuppressed: false,
       switchDelayElapsed: true,
       holdOpen: false,
       busy: false,
@@ -78,6 +80,34 @@ test("overlay only opens for delayed switch, hold-open, boot, or engine busy sta
       holdOpen: false,
       busy: true,
       busyLabel: "status.starting_engine",
+    }),
+    true,
+  );
+});
+
+test("overlay does not open for suppressed non-blocking connecting workspaces", () => {
+  assert.equal(
+    resolveWorkspaceSwitchOverlayOpen({
+      booting: false,
+      connectingWorkspaceId: "ws-b",
+      connectingOverlaySuppressed: true,
+      switchDelayElapsed: true,
+      holdOpen: false,
+      busy: false,
+      busyLabel: null,
+    }),
+    false,
+  );
+
+  assert.equal(
+    resolveWorkspaceSwitchOverlayOpen({
+      booting: false,
+      connectingWorkspaceId: "ws-b",
+      connectingOverlaySuppressed: true,
+      switchDelayElapsed: true,
+      holdOpen: false,
+      busy: true,
+      busyLabel: "status.restarting_engine",
     }),
     true,
   );

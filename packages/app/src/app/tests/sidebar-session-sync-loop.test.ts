@@ -7,7 +7,7 @@ const source = readFileSync(new URL("../context/sidebar-workspace-sessions.ts", 
 test("sidebar session-store sync reads existing sidebar rows without tracking the signal it updates", () => {
   assert.match(
     source,
-    /const existingTargetSessionCount = untrack\(\(\) => \(sidebarSessionsByWorkspaceId\(\)\[wsId\] \?\? \[\]\)\.length\);/,
-    "sidebar session-store sync should untrack the current sidebar row count so setting sidebarSessionsByWorkspaceId does not recursively retrigger the same effect",
+    /const existingTargetSidebarRows = untrack\(\(\) => sidebarSessionsByWorkspaceId\(\)\[wsId\] \?\? \[\]\);[\s\S]*const existingTargetSessionCount = existingTargetSidebarRows\.length;/,
+    "sidebar session-store sync should untrack the current sidebar rows so setting sidebarSessionsByWorkspaceId does not recursively retrigger the same effect",
   );
 });

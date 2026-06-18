@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { deriveLatestRunArtifacts } from "../session-artifacts.js";
-import { normalizeOpencodeDirectory, startServer } from "../server.js";
+import { startServer } from "../server.js";
 
 type FixturePart =
   | { type: "text"; text: string }
@@ -74,6 +74,8 @@ const toWslMountPath = (path: string) => {
 };
 
 const runningServers: Array<{ stop?: (closeActiveConnections?: boolean) => void }> = [];
+const tempDirs: string[] = [];
+const envRestores: Array<() => void> = [];
 
 afterEach(async () => {
   while (runningServers.length > 0) {
@@ -84,7 +86,57 @@ afterEach(async () => {
       // ignore
     }
   }
+  while (envRestores.length > 0) {
+    envRestores.pop()?.();
+  }
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (!dir) continue;
+    await rm(dir, { recursive: true, force: true });
+  }
 });
+
+const useTempVesloDataDir = async (prefix: string) => {
+  const dataDir = await mkdtemp(join(tmpdir(), prefix));
+  tempDirs.push(dataDir);
+  const previous = process.env.VESLO_DATA_DIR;
+  process.env.VESLO_DATA_DIR = dataDir;
+  envRestores.push(() => {
+    if (previous === undefined) {
+      delete process.env.VESLO_DATA_DIR;
+    } else {
+      process.env.VESLO_DATA_DIR = previous;
+    }
+  });
+  return dataDir;
+};
+
+const appendHostTranscript = async (input: {
+  port: number;
+  workspaceId: string;
+  sessionId: string;
+  directory: string;
+  messages: Array<Record<string, unknown>>;
+  partsByMessageId: Record<string, unknown[]>;
+}) => {
+  const response = await fetch(
+    `http://127.0.0.1:${input.port}/workspace/${input.workspaceId}/sessions/${input.sessionId}/transcript`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-token",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        directory: input.directory,
+        limit: input.messages.length,
+        messages: input.messages,
+        partsByMessageId: input.partsByMessageId,
+      }),
+    },
+  );
+  expect(response.status).toBe(200);
+};
 
 describe("deriveLatestRunArtifacts", () => {
   test("derives file_discovered artifacts only from concrete workspace files the run opened", () => {
@@ -420,51 +472,12 @@ describe("deriveLatestRunArtifacts", () => {
 });
 
 describe("latest-run artifact route", () => {
-  test("returns typed artifacts for the latest session run via Veslo server", async () => {
+  test("returns typed artifacts for the latest session run from the host transcript store", async () => {
+    await useTempVesloDataDir("veslo-session-artifacts-data-");
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-session-artifacts-"));
     const sessionId = "sess_1";
-    let upstreamDirectoryQuery = "";
-    let upstreamDirectoryHeader = "";
-    let upstreamLimitQuery = "";
 
     try {
-      const upstream = Bun.serve({
-        port: 0,
-        hostname: "127.0.0.1",
-        fetch(request) {
-          const url = new URL(request.url);
-          if (url.pathname === `/session/${sessionId}/message`) {
-            upstreamDirectoryQuery = url.searchParams.get("directory") ?? "";
-            upstreamDirectoryHeader = request.headers.get("x-opencode-directory") ?? "";
-            upstreamLimitQuery = url.searchParams.get("limit") ?? "";
-            return Response.json([
-              {
-                info: { id: "msg-old-user", role: "user" },
-                parts: [{ type: "text", text: "old run" }],
-              },
-              {
-                info: { id: "msg-old-assistant", role: "assistant" },
-                parts: [{ type: "tool", tool: "skill", title: "brainstorming", sourceName: "brainstorming" }],
-              },
-              {
-                info: { id: "msg-new-user", role: "user" },
-                parts: [{ type: "text", text: "latest run" }],
-              },
-              {
-                info: { id: "msg-new-assistant", role: "assistant" },
-                parts: [
-                  { type: "tool", tool: "read", state: { input: { path: "src/app.ts" } } },
-                  { type: "tool", tool: "chrome-devtools.evaluate", server: "chrome-devtools", title: "Chrome DevTools" },
-                  { type: "tool", tool: "read", state: { input: { path: ".opencode/soul.md" } } },
-                ],
-              },
-            ]);
-          }
-          return new Response("not found", { status: 404 });
-        },
-      });
-      runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
-
       const server = startServer({
         host: "127.0.0.1",
         port: 0,
@@ -478,7 +491,6 @@ describe("latest-run artifact route", () => {
             name: "Workspace",
             path: workspaceRoot,
             workspaceType: "local",
-            baseUrl: `http://127.0.0.1:${upstream.port}`,
           },
         ],
         authorizedRoots: [workspaceRoot],
@@ -500,6 +512,31 @@ describe("latest-run artifact route", () => {
       });
       runningServers.push(server as { stop?: (closeActiveConnections?: boolean) => void });
 
+      await appendHostTranscript({
+        port: server.port,
+        workspaceId: "ws_1",
+        sessionId,
+        directory: workspaceRoot,
+        messages: [
+          { id: "msg-001-user", sessionID: sessionId, role: "user" },
+          { id: "msg-002-assistant", sessionID: sessionId, role: "assistant" },
+          { id: "msg-003-user", sessionID: sessionId, role: "user" },
+          { id: "msg-004-assistant", sessionID: sessionId, role: "assistant" },
+        ],
+        partsByMessageId: {
+          "msg-001-user": [{ id: "part-001", type: "text", text: "old run" }],
+          "msg-002-assistant": [
+            { id: "part-002", type: "tool", tool: "skill", title: "brainstorming", sourceName: "brainstorming" },
+          ],
+          "msg-003-user": [{ id: "part-003", type: "text", text: "latest run" }],
+          "msg-004-assistant": [
+            { id: "part-004", type: "tool", tool: "read", state: { input: { path: "src/app.ts" } } },
+            { id: "part-005", type: "tool", tool: "chrome-devtools.evaluate", server: "chrome-devtools", title: "Chrome DevTools" },
+            { id: "part-006", type: "tool", tool: "read", state: { input: { path: ".opencode/soul.md" } } },
+          ],
+        },
+      });
+
       const response = await fetch(
         `http://127.0.0.1:${server.port}/workspace/ws_1/sessions/${sessionId}/artifacts/latest-run?directory=${encodeURIComponent(workspaceRoot)}`,
         {
@@ -517,10 +554,7 @@ describe("latest-run artifact route", () => {
 
       expect(payload.sessionId).toBe(sessionId);
       expect(payload.workspaceId).toBe("ws_1");
-      expect(payload.runId).toBe("msg-new-user");
-      expect(upstreamLimitQuery).toBe("200");
-      expect(upstreamDirectoryQuery).toBe(workspaceRoot);
-      expect(upstreamDirectoryHeader).toBe(workspaceRoot);
+      expect(payload.runId).toBe("msg-003-user");
 
       expect(payload.items).toEqual([
         expect.objectContaining({
@@ -550,49 +584,14 @@ describe("latest-run artifact route", () => {
   test("accepts WSL mount directories and derives artifacts relative to the requested directory", async () => {
     if (process.platform !== "win32") return;
 
+    await useTempVesloDataDir("veslo-session-artifacts-wsl-data-");
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-session-artifacts-wsl-"));
     const conversationDirectory = join(workspaceRoot, "nested");
     await mkdir(conversationDirectory, { recursive: true });
     const requestedDirectory = toWslMountPath(conversationDirectory);
     const sessionId = "sess_wsl";
-    let upstreamDirectoryQuery = "";
-    let upstreamDirectoryHeader = "";
 
     try {
-      const upstream = Bun.serve({
-        port: 0,
-        hostname: "127.0.0.1",
-        fetch(request) {
-          const url = new URL(request.url);
-          if (url.pathname === `/session/${sessionId}/message`) {
-            upstreamDirectoryQuery = url.searchParams.get("directory") ?? "";
-            upstreamDirectoryHeader = request.headers.get("x-opencode-directory") ?? "";
-            return Response.json([
-              {
-                info: { id: "msg-user", role: "user" },
-                parts: [{ type: "text", text: "latest run" }],
-              },
-              {
-                info: { id: "msg-assistant", role: "assistant" },
-                parts: [
-                  {
-                    type: "tool",
-                    tool: "read",
-                    state: {
-                      input: {
-                        path: `${requestedDirectory}/src/from-wsl.ts`,
-                      },
-                    },
-                  },
-                ],
-              },
-            ]);
-          }
-          return new Response("not found", { status: 404 });
-        },
-      });
-      runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
-
       const server = startServer({
         host: "127.0.0.1",
         port: 0,
@@ -606,7 +605,6 @@ describe("latest-run artifact route", () => {
             name: "Workspace",
             path: workspaceRoot,
             workspaceType: "local",
-            baseUrl: `http://127.0.0.1:${upstream.port}`,
           },
         ],
         authorizedRoots: [workspaceRoot],
@@ -628,6 +626,32 @@ describe("latest-run artifact route", () => {
       });
       runningServers.push(server as { stop?: (closeActiveConnections?: boolean) => void });
 
+      await appendHostTranscript({
+        port: server.port,
+        workspaceId: "ws_1",
+        sessionId,
+        directory: requestedDirectory,
+        messages: [
+          { id: "msg-001-user", sessionID: sessionId, role: "user" },
+          { id: "msg-002-assistant", sessionID: sessionId, role: "assistant" },
+        ],
+        partsByMessageId: {
+          "msg-001-user": [{ id: "part-001", type: "text", text: "latest run" }],
+          "msg-002-assistant": [
+            {
+              id: "part-002",
+              type: "tool",
+              tool: "read",
+              state: {
+                input: {
+                  path: `${requestedDirectory}/src/from-wsl.ts`,
+                },
+              },
+            },
+          ],
+        },
+      });
+
       const response = await fetch(
         `http://127.0.0.1:${server.port}/workspace/ws_1/sessions/${sessionId}/artifacts/latest-run?directory=${encodeURIComponent(requestedDirectory)}`,
         {
@@ -639,10 +663,7 @@ describe("latest-run artifact route", () => {
       const payload = await response.json() as {
         items: Array<{ family: string; kind: string; path?: string }>;
       };
-      const expectedDirectory = normalizeOpencodeDirectory(conversationDirectory);
 
-      expect(upstreamDirectoryQuery).toBe(expectedDirectory);
-      expect(upstreamDirectoryHeader).toBe(expectedDirectory);
       expect(files(payload.items).map((artifact) => artifact.path)).toEqual(["src/from-wsl.ts"]);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
@@ -650,40 +671,13 @@ describe("latest-run artifact route", () => {
   });
 
   test("maps /workspace directory requests to the effective OpenCode directory", async () => {
+    await useTempVesloDataDir("veslo-session-artifacts-alias-data-");
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-session-artifacts-directory-root-"));
     const conversationDirectory = join(workspaceRoot, "opencode-working-dir");
     await mkdir(conversationDirectory, { recursive: true });
     const sessionId = "sess_directory_alias";
-    let upstreamDirectoryQuery = "";
-    let upstreamDirectoryHeader = "";
 
     try {
-      const upstream = Bun.serve({
-        port: 0,
-        hostname: "127.0.0.1",
-        fetch(request) {
-          const url = new URL(request.url);
-          if (url.pathname === `/session/${sessionId}/message`) {
-            upstreamDirectoryQuery = url.searchParams.get("directory") ?? "";
-            upstreamDirectoryHeader = request.headers.get("x-opencode-directory") ?? "";
-            return Response.json([
-              {
-                info: { id: "msg-user", role: "user" },
-                parts: [{ type: "text", text: "latest run" }],
-              },
-              {
-                info: { id: "msg-assistant", role: "assistant" },
-                parts: [
-                  { type: "tool", tool: "read", state: { input: { path: "/workspace/src/from-alias.ts" } } },
-                ],
-              },
-            ]);
-          }
-          return new Response("not found", { status: 404 });
-        },
-      });
-      runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
-
       const server = startServer({
         host: "127.0.0.1",
         port: 0,
@@ -698,7 +692,6 @@ describe("latest-run artifact route", () => {
             path: workspaceRoot,
             directory: conversationDirectory,
             workspaceType: "local",
-            baseUrl: `http://127.0.0.1:${upstream.port}`,
           },
         ],
         authorizedRoots: [workspaceRoot],
@@ -720,6 +713,23 @@ describe("latest-run artifact route", () => {
       });
       runningServers.push(server as { stop?: (closeActiveConnections?: boolean) => void });
 
+      await appendHostTranscript({
+        port: server.port,
+        workspaceId: "ws_1",
+        sessionId,
+        directory: "/workspace",
+        messages: [
+          { id: "msg-001-user", sessionID: sessionId, role: "user" },
+          { id: "msg-002-assistant", sessionID: sessionId, role: "assistant" },
+        ],
+        partsByMessageId: {
+          "msg-001-user": [{ id: "part-001", type: "text", text: "latest run" }],
+          "msg-002-assistant": [
+            { id: "part-002", type: "tool", tool: "read", state: { input: { path: "/workspace/src/from-alias.ts" } } },
+          ],
+        },
+      });
+
       const response = await fetch(
         `http://127.0.0.1:${server.port}/workspace/ws_1/sessions/${sessionId}/artifacts/latest-run?directory=${encodeURIComponent("/workspace")}`,
         {
@@ -731,10 +741,7 @@ describe("latest-run artifact route", () => {
       const payload = await response.json() as {
         items: Array<{ family: string; kind: string; path?: string }>;
       };
-      const expectedDirectory = normalizeOpencodeDirectory(conversationDirectory);
 
-      expect(upstreamDirectoryQuery).toBe(expectedDirectory);
-      expect(upstreamDirectoryHeader).toBe(expectedDirectory);
       expect(files(payload.items).map((artifact) => artifact.path)).toEqual(["src/from-alias.ts"]);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });

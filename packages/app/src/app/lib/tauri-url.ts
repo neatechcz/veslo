@@ -1,4 +1,5 @@
 import { isTauriRuntime } from "../utils/paths";
+import { wrapStartupRequestAuditFetch } from "./startup-request-audit";
 
 export async function openExternalUrl(url: string): Promise<void> {
   if (!url) return;
@@ -15,7 +16,10 @@ export async function openExternalUrl(url: string): Promise<void> {
 export async function resolveFetchImpl(): Promise<typeof globalThis.fetch> {
   if (isTauriRuntime()) {
     const { fetch: tauriFetch } = await import("@tauri-apps/plugin-http");
-    return tauriFetch as unknown as typeof globalThis.fetch;
+    return wrapStartupRequestAuditFetch(
+      tauriFetch as unknown as typeof globalThis.fetch,
+      "tauri.dynamic-fetch",
+    );
   }
   return globalThis.fetch;
 }

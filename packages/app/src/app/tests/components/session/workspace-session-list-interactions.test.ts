@@ -13,11 +13,11 @@ const recentRenderBranch = () => {
   return source.slice(fallbackIndex, byProjectBranchIndex);
 };
 
-test("project header click activates workspace while collapse stays on the folder icon", () => {
+test("project header click opens the accordion and activates workspace while drawer icons only toggle", () => {
   assert.match(
     source,
-    /const handleProjectOpenClick = \(projectKey: string, workspaceId: string\) => \{[\s\S]*void Promise\.resolve\(props\.onActivateWorkspace\(workspaceId, \{ origin: "workspace-session-list:project-open" \}\)\);[\s\S]*\};/,
-    "project header should route clicks through workspace activation",
+    /const handleProjectOpenClick = \(projectKey: string, workspaceId: string\) => \{[\s\S]*openProjectAccordion\(projectKey\);[\s\S]*void Promise\.resolve\(props\.onActivateWorkspace\(workspaceId, \{ origin: "workspace-session-list:project-open" \}\)\);[\s\S]*\};/,
+    "project header should open the drawer before routing through workspace activation",
   );
 
   assert.match(
@@ -28,13 +28,19 @@ test("project header click activates workspace while collapse stays on the folde
 
   assert.match(
     source,
-    /<Folder[\s\S]*onClick=\{\(event\) => \{[\s\S]*event\.stopPropagation\(\);[\s\S]*toggleProjectCollapse\(project\.key\);[\s\S]*\}\}/,
-    "folder icon should remain the explicit collapse/expand target",
+    /data-sidebar-project-toggle=\{project\.key\}[\s\S]*aria-expanded=\{!drawerCollapsed\(\)\}[\s\S]*onClick=\{\(event\) => \{[\s\S]*event\.stopPropagation\(\);[\s\S]*toggleProjectAccordion\(project\.key\);[\s\S]*\}\}/,
+    "chevron button should toggle the project drawer without activating the workspace",
+  );
+
+  assert.match(
+    source,
+    /aria-label=\{project\.projectLabel \? `\$\{tr\("sidebar\.open_project"\)\} \$\{project\.projectLabel\}` : tr\("sidebar\.open_project"\)\}[\s\S]*onClick=\{\(\) => handleProjectOpenClick\(project\.key, workspace\(\)\.id\)\}/,
+    "project label button should browse/open the workspace",
   );
 
   assert.doesNotMatch(
     source,
-    /aria-label=\{project\.projectLabel \? `\$\{tr\("sidebar\.open_project"\)\} \$\{project\.projectLabel\}` : tr\("sidebar\.open_project"\)\}[\s\S]*onClick=\{\(\) => toggleProjectCollapse\(project\.key\)\}/,
+    /aria-label=\{project\.projectLabel \? `\$\{tr\("sidebar\.open_project"\)\} \$\{project\.projectLabel\}` : tr\("sidebar\.open_project"\)\}[\s\S]*onClick=\{\(\) => toggleProjectAccordion\(project\.key\)\}/,
     "open-project button must not be wired to collapse-only behavior",
   );
 });
@@ -444,12 +450,12 @@ test("recent and by-project session lists use accessor-backed animated session t
 test("by-project project contents use the animated project collapse region", () => {
   assert.match(
     source,
-    /<AnimatedCollapse\s+open=\{!collapsed\(\)\}\s+region="project"[\s\S]*innerClass="pl-5 pt-0\.5 space-y-0"/,
+    /<AnimatedCollapse\s+open=\{!drawerCollapsed\(\)\}\s+region="project"[\s\S]*innerClass="pl-5 pt-0\.5 space-y-0"/,
   );
 
   assert.doesNotMatch(
     source,
-    /<Show when=\{!collapsed\(\)\}>\s*<div class="pl-5 pt-0\.5 space-y-0">/,
+    /<Show when=\{!drawerCollapsed\(\)\}>\s*<div class="pl-5 pt-0\.5 space-y-0">/,
     "project collapse should not instantly unmount project rows",
   );
 });
@@ -474,40 +480,73 @@ test("animated session branch rendering keeps parent row click behavior and arch
   );
 });
 
-test("collapsed project persistence writes only from explicit user toggles", () => {
+test("project accordion uses a route-driven open key instead of persisted collapsed project state", () => {
   assert.match(
     source,
-    /const toggleProjectCollapse = \(projectKey: string\) =>\s*setCollapsedProjects\(\(previous\) => \{\s*const next = toggleProjectCollapsed\(previous, projectKey\);\s*writeCollapsedProjectMap\(next\);\s*return next;\s*\}\);/s,
-    "collapsed project state should persist when user toggles a project header",
+    /const \[openProjectKey, setOpenProjectKey\] = createSignal<string \| null>\(null\);/,
+    "accordion state should be an explicit single-open project key",
   );
 
-  const effectBlocks = Array.from(source.matchAll(/createEffect\(\(\) => \{[\s\S]*?\n  \}\);/g)).map(
-    (match) => match[0],
+  assert.match(
+    source,
+    /const openProjectAccordion = \(projectKey: string\) => \{[\s\S]*manualAccordionWorkspaceId = "";[\s\S]*manualAccordionProjectKey = "";[\s\S]*setProjectAccordionOpenKey\(key, "project-open"\);[\s\S]*\};/,
+    "explicit project-open clicks should clear manual drawer override",
   );
-  assert.equal(
-    effectBlocks.some((block) => /writeCollapsedProjectMap\(/.test(block)),
-    false,
-    "startup/effect paths must not overwrite persisted collapse preferences",
+
+  assert.match(
+    source,
+    /const toggleProjectAccordion = \(projectKey: string\) => \{[\s\S]*manualAccordionWorkspaceId = props\.activeWorkspaceId\.trim\(\);[\s\S]*manualAccordionProjectKey = key;[\s\S]*const next = current === key \? null : key;[\s\S]*recordAccordionOpenKey\("user-toggle", next\);[\s\S]*\};/,
+    "clicking the drawer control should toggle only the single open project key",
+  );
+
+  assert.match(
+    source,
+    /const activeWorkspaceChanged = activeWorkspaceId !== lastAccordionWorkspaceId;[\s\S]*setProjectAccordionOpenKey\([\s\S]*activeProjectKey,[\s\S]*projectAccordionInitialized \? "auto-active-workspace" : "auto-init",[\s\S]*\);/,
+    "changing the active browsed workspace should open that workspace drawer",
+  );
+
+  assert.match(
+    source,
+    /const userOwnsAccordionForActiveWorkspace =[\s\S]*manualAccordionWorkspaceId === activeWorkspaceId;[\s\S]*else if \(userOwnsAccordionForActiveWorkspace\) \{[\s\S]*A manual drawer click is user intent/s,
+    "sidebar title hydration should not immediately override a manual accordion toggle",
+  );
+
+  assert.match(
+    source,
+    /if \(userOwnsAccordionForActiveWorkspace && currentOpenKey === manualAccordionProjectKey\) \{[\s\S]*setProjectAccordionOpenKey\(null, "manual-current-key-missing"\);[\s\S]*return;[\s\S]*\}/,
+    "project group churn should not replace a manually owned drawer with an auto-open active drawer",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /readCollapsedProjectMap|writeCollapsedProjectMap|setCollapsedProjects|collapsedProjects\(/,
+    "old persisted collapsed-project prefs must not hide browse-mode workspace conversations",
   );
 });
 
-test("collapsed sidebar sections still expose selected and active sessions", () => {
+test("collapsed sidebar sections keep real drawer state while exposing selected and active sessions", () => {
   assert.match(
     source,
     /const rowForcesProjectOpen = \(row: FlatSessionRow\) => \{[\s\S]*selectedSessionId[\s\S]*pendingSessionId[\s\S]*sessionStatusById[\s\S]*isBusySession\(row\.workspace\.id, row\.session\.id\);[\s\S]*\};/,
-    "project visibility should force-open around selected, pending, and busy sessions",
+    "project visibility should identify selected, pending, and busy sessions",
   );
 
   assert.match(
     source,
     /const shouldForceProjectOpen = \(group: ProjectSessionGroup\) =>\s*group\.sessions\.some\(rowForcesProjectOpen\);/,
-    "forced open state should be derived from visible project rows",
+    "chat forced visibility should stay derived from visible rows",
   );
 
   assert.match(
     source,
-    /isProjectCollapsed\(collapsedProjects\(\), project\.key\) && !shouldForceProjectOpen\(project\)/,
-    "collapsed project groups should still render their selected or active sessions",
+    /const drawerCollapsed = \(\) => openProjectKey\(\) !== project\.key;[\s\S]*const forcedVisibleRows = \(\) =>\s*drawerCollapsed\(\) \? visibleRows\(\)\.filter\(rowForcesProjectOpen\) : \[\];/s,
+    "project drawer state should stay independent from forced selected or active row visibility",
+  );
+
+  assert.match(
+    source,
+    /<AnimatedCollapse[\s\S]*open=\{!drawerCollapsed\(\)\}[\s\S]*<Show when=\{drawerCollapsed\(\) && forcedVisibleRows\(\)\.length > 0\}>[\s\S]*renderSessionTreeRows\(\(\) => forcedVisibleRows\(\), hasChildren,/s,
+    "collapsed project groups should expose selected or active sessions as forced rows without marking the drawer expanded",
   );
 
   assert.match(

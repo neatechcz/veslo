@@ -1272,6 +1272,76 @@ test("skill inventory includes extra selected-session workspace directories", as
   });
 });
 
+test("skill inventory hides store-backed user skill runtime materializations from workspace rows", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      const listLocalSkillsScoped = async (
+        projectDir: string,
+        scope: LocalSkillListScope,
+      ): Promise<LocalSkillCard[]> => {
+        if (scope === "workspace" && projectDir === "/workspaces/alpha") {
+          return [
+            {
+              name: "portable-helper",
+              path: "/workspaces/alpha/.opencode/skills/veslo-user/portable-helper/SKILL.md",
+              description: "Portable helper",
+            },
+          ];
+        }
+        return [];
+      };
+      const vesloServerClient = {
+        async listUserGlobalSkillStore() {
+          return {
+            items: [
+              {
+                name: "portable-helper",
+                path: "veslo-user-store://portable-helper",
+                description: "Portable helper",
+                scope: "user-global",
+                source: "veslo-user-store",
+                hash: "a".repeat(64),
+                enabled: true,
+                createdAt: "2026-06-18T10:00:00.000Z",
+                updatedAt: "2026-06-18T10:01:00.000Z",
+              },
+            ],
+          };
+        },
+      };
+
+      try {
+        const store = createExtensionsStore({
+          client: () => null,
+          projectDir: () => "/workspaces/alpha",
+          activeWorkspaceId: () => "ws-alpha",
+          activeWorkspaceRoot: () => "/workspaces/alpha",
+          workspaceType: () => "local",
+          workspaces: () => [workspaces[0]],
+          vesloServerClient: () => vesloServerClient as never,
+          vesloServerStatus: () => "connected",
+          vesloServerCapabilities: () => ({ hub: { skills: { read: false } } }) as never,
+          vesloServerWorkspaceId: () => "ws-alpha",
+          listLocalSkillsScoped,
+          setBusy: () => undefined,
+          setBusyLabel: () => undefined,
+          setBusyStartedAt: () => undefined,
+          setError: () => undefined,
+        });
+
+        await store.refreshSkillInventory({ force: true });
+
+        const item = store.skillInventory().find((entry) => entry.name === "portable-helper");
+        assert.equal(item?.globalInstance?.path, "veslo-user-store://portable-helper");
+        assert.equal(item?.workspaceInstances.length, 0);
+        assert.equal(item?.status, "global");
+      } finally {
+        dispose();
+      }
+    });
+  });
+});
+
 test("skill inventory refreshes hub entries when the Veslo server client changes", async () => {
   await withDenAuthStorage(async () => {
     await createRoot(async (dispose) => {

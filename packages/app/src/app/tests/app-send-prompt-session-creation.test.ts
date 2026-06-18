@@ -32,6 +32,27 @@ test("sendPrompt keeps the session id returned by createSessionAndOpen before pr
   );
 });
 
+test("sendPrompt skips first-session creation when a browsed session is the explicit target", () => {
+  const start = source.indexOf("async function sendPrompt(");
+  const end = source.indexOf("async function abortSession", start);
+  assert.ok(start >= 0 && end > start, "sendPrompt source should be present");
+  const sendPromptSource = source.slice(start, end);
+
+  const explicitTargetIndex = sendPromptSource.indexOf("const explicitTargetSessionId = isPendingSessionInstanceId(options.targetSessionId)");
+  const sessionAssignmentIndex = sendPromptSource.indexOf("let sessionID = explicitTargetSessionId || selectedRealSessionId;", explicitTargetIndex);
+  const scopedActivationIndex = sendPromptSource.indexOf('"sendPrompt:ensure-scoped-workspace-active"', sessionAssignmentIndex);
+  const createGuardIndex = sendPromptSource.indexOf("if (!sessionID) {", scopedActivationIndex);
+  const createNeededIndex = sendPromptSource.indexOf('recordSendTrace("sendPrompt:create-session-needed"', createGuardIndex);
+  const conversationRunIndex = sendPromptSource.indexOf("runConversationFromVesloWriteApi(sessionID", createGuardIndex);
+
+  assert.ok(explicitTargetIndex >= 0, "sendPrompt should normalize an explicit target session id");
+  assert.ok(sessionAssignmentIndex > explicitTargetIndex, "explicit target should become the send session id before create checks");
+  assert.ok(scopedActivationIndex > sessionAssignmentIndex, "explicit target should activate its scoped workspace before sending");
+  assert.ok(createGuardIndex > scopedActivationIndex, "first-session creation should be guarded by the resolved session id");
+  assert.ok(createNeededIndex > createGuardIndex, "new-session creation should stay inside the missing-session branch");
+  assert.ok(conversationRunIndex > createGuardIndex, "prompt sends should still route existing sessions through the conversation run API");
+});
+
 test("createSessionAndOpen persists the first composer text as the initial backend title", () => {
   const start = source.indexOf("async function createSessionAndOpen(");
   const end = source.indexOf("const chooseFolderForCurrentSession = async () =>");

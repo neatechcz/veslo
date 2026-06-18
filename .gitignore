@@ -65,3 +65,6 @@ dev-specific/
 
 # Local Codex runtime artifact
 .codex
+
+# Veslo runtime logs
+docs/sandbox/runtime-logs/

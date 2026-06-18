@@ -38,6 +38,70 @@ test("allows sidebar sync during workspace switch once scoped sessions exist", (
   );
 });
 
+test("allows sidebar sync during workspace switch for freshly materialized created sessions", () => {
+  assert.equal(
+    shouldSyncSidebarFromSessionStore({
+      activeWorkspaceId: "ws-a",
+      connectingWorkspaceId: "ws-b",
+      targetWorkspaceId: "ws-b",
+      allSessionCount: 1,
+      scopedSessionCount: 0,
+      existingTargetSessionCount: 1,
+      freshlyCreatedSessionCount: 1,
+      activeSendInProgress: true,
+    }),
+    true,
+  );
+});
+
+test("blocks active-send live-only sidebar sync before target rows hydrate", () => {
+  assert.equal(
+    shouldSyncSidebarFromSessionStore({
+      activeWorkspaceId: "ws-a",
+      connectingWorkspaceId: "ws-b",
+      targetWorkspaceId: "ws-b",
+      allSessionCount: 1,
+      scopedSessionCount: 1,
+      existingTargetSessionCount: 0,
+      freshlyCreatedSessionCount: 0,
+      activeSendInProgress: true,
+    }),
+    false,
+  );
+});
+
+test("allows active-send sidebar sync once there are target rows to merge with", () => {
+  assert.equal(
+    shouldSyncSidebarFromSessionStore({
+      activeWorkspaceId: "ws-a",
+      connectingWorkspaceId: "ws-b",
+      targetWorkspaceId: "ws-b",
+      allSessionCount: 1,
+      scopedSessionCount: 1,
+      existingTargetSessionCount: 4,
+      freshlyCreatedSessionCount: 0,
+      activeSendInProgress: true,
+    }),
+    true,
+  );
+});
+
+test("blocks active-send live-only sidebar sync without a workspace switch", () => {
+  assert.equal(
+    shouldSyncSidebarFromSessionStore({
+      activeWorkspaceId: "ws-a",
+      connectingWorkspaceId: null,
+      targetWorkspaceId: "ws-a",
+      allSessionCount: 1,
+      scopedSessionCount: 1,
+      existingTargetSessionCount: 0,
+      freshlyCreatedSessionCount: 0,
+      activeSendInProgress: true,
+    }),
+    false,
+  );
+});
+
 test("allows sidebar sync when switch is in progress and target workspace legitimately has zero sessions", () => {
   assert.equal(
     shouldSyncSidebarFromSessionStore({

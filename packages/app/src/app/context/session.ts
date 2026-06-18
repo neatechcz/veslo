@@ -32,6 +32,10 @@ import {
 } from "../utils";
 import { unwrap, type OpencodeAuth } from "../lib/opencode";
 import { engineSseSubscribe, isEngineSseAvailable } from "../lib/engine-sse";
+import {
+  DEFAULT_WORKSPACE_SNAPSHOT_CACHE_LIMIT,
+  selectWorkspaceSnapshotEvictions,
+} from "../lib/workspace-snapshot-cache";
 import type { WorkspaceRouting, RoutingClient } from "./workspace-routing";
 import { finishPerf, perfNow, recordPerfLog, runtimePerfAuditEnabled } from "../lib/perf-log";
 import { formatSessionError, truncateErrorField } from "../lib/session-error";
@@ -135,6 +139,9 @@ export type WorkspaceSessionCache = {
   sessionErrorTurns: Record<string, SessionErrorTurn[]>;
   messages: Record<string, MessageInfo[]>;
   parts: Record<string, Part[]>;
+  messageLimitBySession: Record<string, number>;
+  messageCompleteBySession: Record<string, boolean>;
+  transcriptFreshnessBySession: Record<string, TranscriptFreshness>;
   todos: Record<string, TodoItem[]>;
   pendingPermissions: PendingPermission[];
   pendingQuestions: PendingQuestion[];
@@ -237,10 +244,22 @@ export function createSessionStore(options: {
   onHotReloadApplied?: () => void;
   onSessionLoadComplete?: () => void;
   loadOfflineTranscript?: (sessionID: string, limit: number) => Promise<VesloSessionTranscriptSnapshot | null>;
+  appendTranscriptSnapshot?: (input: {
+    workspaceId: string;
+    sessionId: string;
+    directory?: string | null;
+    limit?: number;
+    messages: MessageInfo[];
+    partsByMessageId: Record<string, Part[]>;
+    deletedMessageIds?: string[];
+    deletedPartsByMessageId?: Record<string, string[]>;
+    reason?: string;
+  }) => Promise<void> | void;
   conversationReader?: () => {
     listConversations: (
       workspaceId: string,
       directory?: string,
+      options?: { sync?: boolean },
     ) => Promise<{ items: Session[]; source?: "sqlite" | "unavailable" }>;
   } | null;
   /**
@@ -334,6 +353,18 @@ export function createSessionStore(options: {
   // VSLO-171 F3Ú6a — per-workspace cache for save/load on workspace switch.
   // Only populated in multi-routing mode (caller decides via options.routing.mode()).
   const perWorkspaceCache = new Map<string, WorkspaceSessionCache>();
+  const pruneWorkspaceSnapshotCache = (keepIds: Array<string | null | undefined> = []) => {
+    const activeWorkspaceId = options.routing.activeWorkspaceId()?.trim() ?? "";
+    const evictIds = selectWorkspaceSnapshotEvictions(
+      Array.from(perWorkspaceCache.values()).map((entry) => ({
+        workspaceId: entry.workspaceId,
+        lastUsed: entry.lastUsed,
+      })),
+      DEFAULT_WORKSPACE_SNAPSHOT_CACHE_LIMIT,
+      [activeWorkspaceId, ...keepIds],
+    );
+    for (const id of evictIds) perWorkspaceCache.delete(id);
+  };
   // VSLO-171 F3Ú7a — per-workspace pending permissions. In multi mode the
   // polling effect (in app.tsx) iterates routing.forEach() and refreshes each
   // workspace's permissions independently. Sidebar badge reads aggregate
@@ -370,11 +401,11 @@ export function createSessionStore(options: {
     return result;
   });
 
-  const skillPathPattern = /[\\/]\.opencode[\\/](skill|skills)[\\/]/i;
+  const skillPathPattern = /(?:^|[\\/])\.opencode[\\/](skill|skills)[\\/]/i;
   const skillNamePattern = /[\\/]\.opencode[\\/](?:skill|skills)[\\/]+([^\\/]+)/i;
-  const commandPathPattern = /[\\/]\.opencode[\\/](command|commands)[\\/]/i;
+  const commandPathPattern = /(?:^|[\\/])\.opencode[\\/](command|commands)[\\/]/i;
   const commandNamePattern = /[\\/]\.opencode[\\/](?:command|commands)[\\/]+([^\\/]+)/i;
-  const agentPathPattern = /[\\/]\.opencode[\\/](agent|agents)[\\/]/i;
+  const agentPathPattern = /(?:^|[\\/])\.opencode[\\/](agent|agents)[\\/]/i;
   const agentNamePattern = /[\\/]\.opencode[\\/](?:agent|agents)[\\/]+([^\\/]+)/i;
   const opencodeConfigPattern = /(?:^|[\\/])opencode\.jsonc?\b/i;
   const opencodePathPattern = /(?:^|[\\/])\.opencode[\\/]/i;
@@ -798,7 +829,9 @@ export function createSessionStore(options: {
     const reader = options.conversationReader?.() ?? null;
     if (workspaceId && reader) {
       try {
-        const result = await reader.listConversations(workspaceId, queryDirectory);
+        const result = await reader.listConversations(workspaceId, queryDirectory, {
+          sync: Boolean(c) && options.engineReady?.() === true,
+        });
         if (result.source !== "unavailable" || options.engineReady?.() === false || !c) {
           list = result.items;
           usedConversationRead = true;
@@ -1186,6 +1219,194 @@ export function createSessionStore(options: {
   function getTranscriptFreshness(sessionID: string) {
     return transcriptFreshnessBySession()[sessionID] ?? null;
   }
+
+  const transcriptIngestTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const transcriptIngestInFlight = new Map<string, Promise<void>>();
+  const pendingTranscriptDeletedMessageIds = new Map<string, Set<string>>();
+  const pendingTranscriptDeletedPartsByMessageId = new Map<string, Map<string, Set<string>>>();
+  const TRANSCRIPT_INGEST_DEBOUNCE_MS = 600;
+
+  const transcriptIngestKey = (workspaceId: string, sessionID: string) => `${workspaceId}\0${sessionID}`;
+
+  const resolveTranscriptIngestWorkspaceId = (sourceWsId?: string | null) =>
+    sourceWsId?.trim() || options.routing.activeWorkspaceId().trim();
+
+  const resolveSessionIdForMessage = (messageID: string) => {
+    const id = messageID.trim();
+    if (!id) return "";
+    for (const [sessionID, messages] of Object.entries(store.messages)) {
+      if (messages.some((message) => message.id === id)) return sessionID;
+    }
+    return "";
+  };
+
+  const recordPendingTranscriptMessageDeletion = (
+    workspaceId: string,
+    sessionID: string,
+    messageID: string,
+  ) => {
+    const key = transcriptIngestKey(workspaceId, sessionID);
+    const id = messageID.trim();
+    if (!id) return;
+    const messages = pendingTranscriptDeletedMessageIds.get(key) ?? new Set<string>();
+    messages.add(id);
+    pendingTranscriptDeletedMessageIds.set(key, messages);
+    pendingTranscriptDeletedPartsByMessageId.get(key)?.delete(id);
+  };
+
+  const recordPendingTranscriptPartDeletion = (
+    workspaceId: string,
+    sessionID: string,
+    messageID: string,
+    partID: string,
+  ) => {
+    const key = transcriptIngestKey(workspaceId, sessionID);
+    const messageId = messageID.trim();
+    const partId = partID.trim();
+    if (!messageId || !partId) return;
+    let partsByMessage = pendingTranscriptDeletedPartsByMessageId.get(key);
+    if (!partsByMessage) {
+      partsByMessage = new Map<string, Set<string>>();
+      pendingTranscriptDeletedPartsByMessageId.set(key, partsByMessage);
+    }
+    const parts = partsByMessage.get(messageId) ?? new Set<string>();
+    parts.add(partId);
+    partsByMessage.set(messageId, parts);
+  };
+
+  const pendingTranscriptDeletionsForKey = (key: string) => {
+    const deletedMessageIds = [...(pendingTranscriptDeletedMessageIds.get(key) ?? new Set<string>())];
+    const deletedPartsByMessageId: Record<string, string[]> = {};
+    for (const [messageID, partIds] of pendingTranscriptDeletedPartsByMessageId.get(key) ?? new Map()) {
+      const values = [...partIds];
+      if (values.length > 0) deletedPartsByMessageId[messageID] = values;
+    }
+    return { deletedMessageIds, deletedPartsByMessageId };
+  };
+
+  const clearPendingTranscriptDeletions = (
+    key: string,
+    deletions: { deletedMessageIds?: string[]; deletedPartsByMessageId?: Record<string, string[]> },
+  ) => {
+    const messageSet = pendingTranscriptDeletedMessageIds.get(key);
+    for (const messageID of deletions.deletedMessageIds ?? []) {
+      messageSet?.delete(messageID);
+    }
+    if (messageSet && messageSet.size === 0) pendingTranscriptDeletedMessageIds.delete(key);
+
+    const partsByMessage = pendingTranscriptDeletedPartsByMessageId.get(key);
+    for (const [messageID, partIds] of Object.entries(deletions.deletedPartsByMessageId ?? {})) {
+      const partSet = partsByMessage?.get(messageID);
+      for (const partID of partIds) partSet?.delete(partID);
+      if (partSet && partSet.size === 0) partsByMessage?.delete(messageID);
+    }
+    if (partsByMessage && partsByMessage.size === 0) {
+      pendingTranscriptDeletedPartsByMessageId.delete(key);
+    }
+  };
+
+  const buildTranscriptIngestPayload = (
+    workspaceId: string,
+    sessionID: string,
+    reason: string,
+  ) => {
+    const activeWorkspaceId = options.routing.activeWorkspaceId().trim();
+    if (activeWorkspaceId && activeWorkspaceId !== workspaceId) return null;
+    const key = transcriptIngestKey(workspaceId, sessionID);
+    const pendingDeletions = pendingTranscriptDeletionsForKey(key);
+
+    const session = store.sessions.find((candidate) => candidate.id === sessionID) ?? null;
+    const directory = session
+      ? resolveSessionDirectory(session)
+      : normalizeDirectoryPath(options.activeWorkspaceRoot());
+    if (!workspaceId || !sessionID || !directory) return null;
+
+    const messagesForSession = sortById(
+      (store.messages[sessionID] ?? []).filter((message): message is MessageInfo => Boolean(message?.id)),
+    );
+    const hasPendingDeletions =
+      pendingDeletions.deletedMessageIds.length > 0 ||
+      Object.keys(pendingDeletions.deletedPartsByMessageId).length > 0;
+    if (messagesForSession.length === 0 && !hasPendingDeletions) return null;
+
+    const partsByMessageId: Record<string, Part[]> = {};
+    for (const message of messagesForSession) {
+      partsByMessageId[message.id] = sortById(
+        (store.parts[message.id] ?? []).filter((part): part is Part => Boolean(part?.id)),
+      );
+    }
+
+    return {
+      workspaceId,
+      sessionId: sessionID,
+      directory,
+      limit: Math.max(messageLimitBySession()[sessionID] ?? 0, messagesForSession.length),
+      messages: messagesForSession,
+      partsByMessageId,
+      deletedMessageIds: pendingDeletions.deletedMessageIds,
+      deletedPartsByMessageId: pendingDeletions.deletedPartsByMessageId,
+      reason,
+    };
+  };
+
+  const flushTranscriptIngestion = (workspaceId: string, sessionID: string, reason: string) => {
+    const key = transcriptIngestKey(workspaceId, sessionID);
+    const timer = transcriptIngestTimers.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      transcriptIngestTimers.delete(key);
+    }
+
+    const writer = options.appendTranscriptSnapshot;
+    if (!writer) return;
+    const payload = buildTranscriptIngestPayload(workspaceId, sessionID, reason);
+    if (!payload) return;
+
+    const previous = transcriptIngestInFlight.get(key) ?? Promise.resolve();
+    const run = previous
+      .catch(() => undefined)
+      .then(async () => {
+        await writer(payload);
+        clearPendingTranscriptDeletions(key, payload);
+      })
+      .catch((error) => {
+        sessionWarn("transcript-ingest:failed", {
+          workspaceId,
+          sessionID,
+          reason,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    const tracked = run.finally(() => {
+      if (transcriptIngestInFlight.get(key) === tracked) {
+        transcriptIngestInFlight.delete(key);
+      }
+    });
+    transcriptIngestInFlight.set(key, tracked);
+  };
+
+  const scheduleTranscriptIngestion = (
+    sessionID: string,
+    sourceWsId: string | undefined,
+    reason: string,
+    delayMs = TRANSCRIPT_INGEST_DEBOUNCE_MS,
+  ) => {
+    if (!options.appendTranscriptSnapshot) return;
+    const workspaceId = resolveTranscriptIngestWorkspaceId(sourceWsId);
+    if (!workspaceId || !sessionID) return;
+    const key = transcriptIngestKey(workspaceId, sessionID);
+    const existing = transcriptIngestTimers.get(key);
+    if (existing) clearTimeout(existing);
+    transcriptIngestTimers.set(
+      key,
+      setTimeout(() => flushTranscriptIngestion(workspaceId, sessionID, reason), delayMs),
+    );
+  };
+
+  onCleanup(() => {
+    for (const timer of transcriptIngestTimers.values()) clearTimeout(timer);
+    transcriptIngestTimers.clear();
+  });
 
   async function selectSession(sessionID: string) {
     const c = options.routing.active();
@@ -1715,6 +1936,7 @@ export function createSessionStore(options: {
               // ignore
             }
           }
+          scheduleTranscriptIngestion(sessionID, sourceWsId, "session.idle", 0);
         }
       }
     }
@@ -1769,6 +1991,7 @@ export function createSessionStore(options: {
           if ((info as { role?: string }).role === "assistant") {
             options.onAssistantResponseObserved?.(info.sessionID);
           }
+          scheduleTranscriptIngestion(info.sessionID, sourceWsId, "message.updated");
         }
       }
     }
@@ -1779,6 +2002,10 @@ export function createSessionStore(options: {
         const sessionID = extractSessionId(record);
         const messageID = typeof record.messageID === "string" ? record.messageID : null;
         if (sessionID && messageID) {
+          const workspaceId = resolveTranscriptIngestWorkspaceId(sourceWsId);
+          if (workspaceId && isKnownSessionId(sessionID)) {
+            recordPendingTranscriptMessageDeletion(workspaceId, sessionID, messageID);
+          }
           setStore("messages", sessionID, (current = []) => removeMessageInfo(current, messageID));
           setStore("parts", messageID, []);
           setStore(
@@ -1787,6 +2014,9 @@ export function createSessionStore(options: {
               delete draft[messageID];
             }),
           );
+          if (workspaceId && isKnownSessionId(sessionID)) {
+            scheduleTranscriptIngestion(sessionID, sourceWsId, "message.removed", 0);
+          }
         }
       }
     }
@@ -1867,6 +2097,7 @@ export function createSessionStore(options: {
           maybeMarkReloadRequired(part);
           maybeHandleInvalidToolError(part);
           maybeHandleChromeMcpCompletedError(resolvedPart);
+          scheduleTranscriptIngestion(part.sessionID, sourceWsId, "message.part.updated");
         }
       }
     }
@@ -1874,10 +2105,19 @@ export function createSessionStore(options: {
     if (event.type === "message.part.removed") {
       if (event.properties && typeof event.properties === "object") {
         const record = event.properties as Record<string, unknown>;
+        const sessionID = extractSessionId(record);
         const messageID = typeof record.messageID === "string" ? record.messageID : null;
         const partID = typeof record.partID === "string" ? record.partID : null;
         if (messageID && partID) {
+          const resolvedSessionID = sessionID || resolveSessionIdForMessage(messageID);
+          const workspaceId = resolveTranscriptIngestWorkspaceId(sourceWsId);
+          if (workspaceId && resolvedSessionID && isKnownSessionId(resolvedSessionID)) {
+            recordPendingTranscriptPartDeletion(workspaceId, resolvedSessionID, messageID, partID);
+          }
           setStore("parts", messageID, (current = []) => removePartInfo(current, partID));
+          if (resolvedSessionID && isKnownSessionId(resolvedSessionID)) {
+            scheduleTranscriptIngestion(resolvedSessionID, sourceWsId, "message.part.removed");
+          }
         }
       }
     }
@@ -2292,21 +2532,44 @@ export function createSessionStore(options: {
     return store.sessions.some((session) => session.id === selectedSessionId) ? selectedSessionId : null;
   };
 
+  const pickSnapshotRecord = <T,>(
+    record: Record<string, T>,
+    keys: ReadonlySet<string>,
+  ): Record<string, T> => {
+    const next: Record<string, T> = {};
+    for (const [key, value] of Object.entries(record)) {
+      if (keys.has(key)) next[key] = value;
+    }
+    return next;
+  };
+
   const saveWorkspaceSnapshot = (workspaceId: string) => {
     if (!workspaceId) return;
+    const sessionIds = new Set(store.sessions.map((session) => session.id).filter(Boolean));
+    const messagesForSnapshot = pickSnapshotRecord(store.messages, sessionIds);
+    const messageIds = new Set<string>();
+    for (const messages of Object.values(messagesForSnapshot)) {
+      for (const message of messages) {
+        if (message.id) messageIds.add(message.id);
+      }
+    }
     perWorkspaceCache.set(workspaceId, {
       workspaceId,
       sessions: store.sessions.slice(),
-      sessionStatus: { ...store.sessionStatus },
-      sessionErrorTurns: { ...store.sessionErrorTurns },
-      messages: { ...store.messages },
-      parts: { ...store.parts },
-      todos: { ...store.todos },
+      sessionStatus: pickSnapshotRecord(store.sessionStatus, sessionIds),
+      sessionErrorTurns: pickSnapshotRecord(store.sessionErrorTurns, sessionIds),
+      messages: messagesForSnapshot,
+      parts: pickSnapshotRecord(store.parts, messageIds),
+      messageLimitBySession: pickSnapshotRecord(messageLimitBySession(), sessionIds),
+      messageCompleteBySession: pickSnapshotRecord(messageCompleteBySession(), sessionIds),
+      transcriptFreshnessBySession: pickSnapshotRecord(transcriptFreshnessBySession(), sessionIds),
+      todos: pickSnapshotRecord(store.todos, sessionIds),
       pendingPermissions: store.pendingPermissions.slice(),
       pendingQuestions: store.pendingQuestions.slice(),
       selectedSessionId: selectedSessionIdForSnapshot(),
       lastUsed: Date.now(),
     });
+    pruneWorkspaceSnapshotCache([workspaceId]);
   };
 
   const loadWorkspaceSnapshot = (workspaceId: string): boolean => {
@@ -2331,6 +2594,10 @@ export function createSessionStore(options: {
         { merge: false }
       )
     );
+    setMessageLimitBySession({ ...(snapshot.messageLimitBySession ?? {}) });
+    setMessageCompleteBySession({ ...(snapshot.messageCompleteBySession ?? {}) });
+    setMessageLoadBusyBySession({});
+    setTranscriptFreshnessBySession({ ...(snapshot.transcriptFreshnessBySession ?? {}) });
     workspaceSessionIds.clear();
     for (const s of snapshot.sessions) workspaceSessionIds.add(s.id);
     const snapshotSelectedSessionId = snapshot.selectedSessionId?.trim() ?? "";
@@ -2341,6 +2608,7 @@ export function createSessionStore(options: {
     options.setSelectedSessionId(selectedSessionId);
     snapshot.selectedSessionId = selectedSessionId;
     snapshot.lastUsed = Date.now();
+    pruneWorkspaceSnapshotCache([workspaceId]);
     return true;
   };
 

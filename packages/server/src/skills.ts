@@ -153,7 +153,7 @@ const isPathInside = (parent: string, child: string): boolean => {
   return rel === "" || (Boolean(rel) && !rel.startsWith("..") && !isAbsolute(rel));
 };
 
-const prepareSkillContent = (payload: { name: string; content: string; description?: string }): string => {
+export const prepareSkillContent = (payload: { name: string; content: string; description?: string }): string => {
   const name = payload.name.trim();
   validateSkillName(name);
   if (!payload.content) {

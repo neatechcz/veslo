@@ -9,6 +9,10 @@ import type {
   ConversationBindingStore,
 } from "./conversation-binding-store.js";
 import { deterministicConversationId } from "./conversation-binding-store.js";
+import type {
+  ConversationTranscriptStore,
+  TranscriptMessageInput,
+} from "./conversation-transcript-store.js";
 
 type LogFn = (message: string, details?: Record<string, unknown>) => void;
 
@@ -57,6 +61,7 @@ export type ConversationService = {
   listConversations(input: {
     workspace: WorkspaceInfo;
     directory: string | null;
+    sync?: boolean;
   }): Promise<{
     workspaceId: string;
     items: ConversationSummary[];
@@ -74,6 +79,17 @@ export type ConversationService = {
     sessionId: string;
     limit: number;
     directory: string | null;
+  }): Promise<ConversationTranscriptResult>;
+
+  appendTranscript(input: {
+    workspace: WorkspaceInfo;
+    sessionId: string;
+    directory: string | null;
+    limit?: number;
+    messages: unknown[];
+    partsByMessageId: Record<string, unknown[]>;
+    deletedMessageIds?: string[];
+    deletedPartsByMessageId?: Record<string, string[]>;
   }): Promise<ConversationTranscriptResult>;
 
   createConversation(input: {
@@ -120,11 +136,9 @@ const normalizeTimestamp = (value: unknown, fallback: number) =>
 const readTimeRecord = (value: unknown): Record<string, unknown> =>
   isRecord(value) ? value : {};
 
-// Merge two summary lists, deduped by engine session id, preserving order.
-// `primary` (the sandbox read, already in its own order) comes first and wins
-// on conflict; owned-store entries the sandbox did not return are appended in
-// their existing newest-first order. Order is intentionally preserved (not
-// re-sorted) so the live-read ordering and existing callers stay stable.
+// Merge two summary lists, deduped by engine session id. The primary list
+// keeps ordering/title freshness from the currently synced source; host rows
+// fill any gaps that the source did not return.
 const mergeConversationSummaries = (
   primary: ConversationSummary[],
   secondary: ConversationSummary[],
@@ -140,9 +154,29 @@ const mergeConversationSummaries = (
   return merged;
 };
 
+const normalizeStringList = (values: string[] | null | undefined): string[] => {
+  const seen = new Set<string>();
+  for (const value of values ?? []) {
+    const normalized = normalizeText(value);
+    if (normalized) seen.add(normalized);
+  }
+  return [...seen];
+};
+
+const normalizeStringListRecord = (value: Record<string, string[]> | null | undefined): Record<string, string[]> => {
+  const result: Record<string, string[]> = {};
+  for (const [rawKey, rawValues] of Object.entries(value ?? {})) {
+    const key = normalizeText(rawKey);
+    const values = normalizeStringList(rawValues);
+    if (key && values.length > 0) result[key] = values;
+  }
+  return result;
+};
+
 export function createConversationService(options: {
   readStore: ConversationReadStore;
   bindingStore: ConversationBindingStore;
+  transcriptStore?: ConversationTranscriptStore;
   createOpenCodeSession: OpenCodeSessionCreate;
   now?: () => number;
   warn?: LogFn;
@@ -289,26 +323,123 @@ export function createConversationService(options: {
     }
   };
 
+  const snapshotToTranscriptMessages = (
+    messages: unknown[],
+    partsByMessageId: Record<string, unknown[]>,
+  ): TranscriptMessageInput[] => {
+    const result: TranscriptMessageInput[] = [];
+    for (const raw of messages) {
+      const record = isRecord(raw) ? raw : {};
+      const id = normalizeText(typeof record.id === "string" ? record.id : "");
+      if (!id) continue;
+      const timeRecord = readTimeRecord(record.time);
+      const parts = (partsByMessageId[id] ?? [])
+        .map((part) => {
+          const partRecord = isRecord(part) ? part : {};
+          return {
+            id: normalizeText(typeof partRecord.id === "string" ? partRecord.id : ""),
+            type: typeof partRecord.type === "string" ? partRecord.type : null,
+            payload: part,
+          };
+        })
+        .filter((part) => part.id);
+      result.push({
+        id,
+        role: typeof record.role === "string" ? record.role : null,
+        createdAt: typeof timeRecord.created === "number" ? timeRecord.created : null,
+        updatedAt: typeof timeRecord.updated === "number" ? timeRecord.updated : null,
+        payload: raw,
+        parts,
+      });
+    }
+    return result;
+  };
+
+  const readPersistedTranscript = async (
+    workspaceId: string,
+    engineSessionId: string,
+    limit: number,
+  ) => {
+    if (!options.transcriptStore) return null;
+    try {
+      return await options.transcriptStore.getTranscript({ workspaceId, engineSessionId, limit });
+    } catch (error) {
+      warn("[veslo-server] conversation transcript read failed", {
+        workspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  };
+
+  const persistTranscriptSnapshot = async (
+    workspaceId: string,
+    engineSessionId: string,
+    messages: unknown[],
+    partsByMessageId: Record<string, unknown[]>,
+  ) => {
+    if (!options.transcriptStore || messages.length === 0) return;
+    try {
+      await options.transcriptStore.appendTranscript({
+        workspaceId,
+        engineSessionId,
+        messages: snapshotToTranscriptMessages(messages, partsByMessageId),
+      });
+    } catch (error) {
+      warn("[veslo-server] conversation transcript persist failed", {
+        workspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
   return {
     async listConversations(input) {
-      const result = await options.readStore.listConversations({
-        workspaceId: input.workspace.id,
-        directory: input.directory,
-        workspace: input.workspace,
-      });
-      // Sandbox-read items get persisted into our owned binding store
-      // (tunnel-in) by attachConversationBindings. The owned store is our
-      // authoritative, sandbox-independent source. Return the UNION so a
-      // partial / empty / unavailable sandbox read can never shrink the
-      // sidebar below what we already own — a conversation we have seen once
-      // keeps listing even when the sandbox DB is unreachable or its stored
-      // directory form does not match the browse path.
-      const sandboxItems = result.source === "sqlite" && result.items.length > 0
+      // Host-first listing. The owned host-side store (on the main OS) is the
+      // source of truth for the sidebar list. If we already own conversations
+      // for this workspace, serve them directly and NEVER reach into the
+      // workspace's sandbox (WSL) opencode.db — passively listing an inactive
+      // workspace must not spin up or touch WSL. The sandbox is read only to
+      // *seed* the host store the first time it is empty for this workspace
+      // (typically while the workspace is active); after that every later list
+      // is host-only. Ingestion sandbox -> host also happens while active via
+      // createConversation and importOpenCodeSessions (sidebar live backfill),
+      // so the host store stays populated without re-reading the sandbox.
+      const ownedItems = await listPersistedBindings(input.workspace.id, input.directory);
+      if (ownedItems.length > 0 && input.sync !== true) {
+        return { workspaceId: input.workspace.id, items: ownedItems, source: "sqlite" as const };
+      }
+
+      let result: Awaited<ReturnType<ConversationReadStore["listConversations"]>>;
+      try {
+        result = await options.readStore.listConversations({
+          workspaceId: input.workspace.id,
+          directory: input.directory,
+          workspace: input.workspace,
+        });
+      } catch (error) {
+        if (ownedItems.length > 0) {
+          warn("[veslo-server] conversation sync read failed; serving host bindings", {
+            workspaceId: input.workspace.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return { workspaceId: input.workspace.id, items: ownedItems, source: "sqlite" as const };
+        }
+        throw error;
+      }
+      // Host store empty -> seed it. Explicit sync -> read the active source
+      // once and union it with host rows so gaps get tunneled into the host DB.
+      const sourceItems = result.source === "sqlite" && result.items.length > 0
         ? await attachConversationBindings(input.workspace.id, input.directory, result.items)
         : result.items;
-      const ownedItems = await listPersistedBindings(input.workspace.id, input.directory);
-      const items = mergeConversationSummaries(sandboxItems, ownedItems);
-      return { ...result, items };
+      const items = ownedItems.length > 0
+        ? mergeConversationSummaries(sourceItems, ownedItems)
+        : sourceItems;
+      return {
+        ...result,
+        source: items.length > 0 ? "sqlite" as const : result.source,
+        items,
+      };
     },
 
     resolveOpenCodeSessionForRead,
@@ -320,23 +451,111 @@ export function createConversationService(options: {
         sessionOrConversationId: input.sessionId,
       });
       const opencodeSessionId = binding?.engineSessionId ?? input.sessionId;
+      const workspaceId = input.workspace.id;
+      const conversationIdField = binding?.conversationId
+        ? { conversationId: binding.conversationId }
+        : {};
+
+      // Host-first: serve the transcript from our durable host store. Only when
+      // the host has nothing for this session do we read the sandbox/engine
+      // opencode.db, then tunnel what we find back into the host store so every
+      // later read is host-only (survives sandbox reset and app restart).
+      const host = await readPersistedTranscript(workspaceId, opencodeSessionId, input.limit);
+      if (host && host.messages.length > 0) {
+        return {
+          workspaceId,
+          sessionId: opencodeSessionId,
+          ...conversationIdField,
+          opencodeSessionId,
+          limit: input.limit,
+          messages: host.messages,
+          partsByMessageId: host.partsByMessageId,
+          fetchedAt: now(),
+          source: "sqlite" as const,
+        };
+      }
+
       const snapshot = await options.readStore.getTranscript({
-        workspaceId: input.workspace.id,
+        workspaceId,
         sessionId: opencodeSessionId,
         limit: input.limit,
         directory: input.directory,
         workspace: input.workspace,
       });
+      if (snapshot.source === "sqlite" && snapshot.messages.length > 0) {
+        await persistTranscriptSnapshot(
+          workspaceId,
+          opencodeSessionId,
+          snapshot.messages,
+          snapshot.partsByMessageId,
+        );
+      }
       return {
-        workspaceId: input.workspace.id,
+        workspaceId,
         sessionId: opencodeSessionId,
-        ...(binding?.conversationId ? { conversationId: binding.conversationId } : {}),
+        ...conversationIdField,
         opencodeSessionId,
         limit: snapshot.limit,
         messages: snapshot.messages,
         partsByMessageId: snapshot.partsByMessageId,
         fetchedAt: snapshot.fetchedAt,
         source: snapshot.source,
+      };
+    },
+
+    async appendTranscript(input) {
+      if (!options.transcriptStore) {
+        throw new ApiError(503, "transcript_store_unavailable", "Conversation transcript store is unavailable");
+      }
+
+      const workspaceId = normalizeText(input.workspace.id);
+      const directory = normalizeText(input.directory);
+      const sessionId = normalizeText(input.sessionId);
+      if (!workspaceId || !directory || !sessionId) {
+        throw new ApiError(400, "invalid_payload", "workspace, directory, and sessionId are required");
+      }
+      if (!Array.isArray(input.messages)) {
+        throw new ApiError(400, "invalid_payload", "messages must be an array");
+      }
+      const deletedMessageIds = normalizeStringList(input.deletedMessageIds);
+      const deletedPartsByMessageId = normalizeStringListRecord(input.deletedPartsByMessageId);
+      const hasDeletions = deletedMessageIds.length > 0 || Object.keys(deletedPartsByMessageId).length > 0;
+      if (input.messages.length === 0 && !hasDeletions) {
+        throw new ApiError(400, "invalid_payload", "messages or transcript deletions are required");
+      }
+
+      const binding = await resolveOpenCodeSessionForRead({
+        workspaceId,
+        directory,
+        sessionOrConversationId: sessionId,
+      });
+      const opencodeSessionId = binding?.engineSessionId ?? sessionId;
+      const limit = Number.isFinite(input.limit ?? Number.NaN) && (input.limit ?? 0) > 0
+        ? Math.floor(input.limit as number)
+        : Math.max(input.messages.length, deletedMessageIds.length, 1);
+      const conversationIdField = binding?.conversationId
+        ? { conversationId: binding.conversationId }
+        : {};
+
+      await options.transcriptStore.appendTranscript({
+        workspaceId,
+        engineSessionId: opencodeSessionId,
+        messages: snapshotToTranscriptMessages(input.messages, input.partsByMessageId),
+        deletedMessageIds,
+        deletedPartsByMessageId,
+      });
+
+      const host = await readPersistedTranscript(workspaceId, opencodeSessionId, limit);
+      return {
+        workspaceId,
+        sessionId: opencodeSessionId,
+        ...conversationIdField,
+        opencodeSessionId,
+        limit,
+        messages: host?.messages ?? input.messages,
+        partsByMessageId: host?.partsByMessageId ?? input.partsByMessageId,
+        fetchedAt: now(),
+        source: "sqlite" as const,
       };
     },
 

@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
 
+import { recordPerfLog } from "../lib/perf-log";
 import type { WorkspaceDisplay } from "../types";
 import { computeWorkspaceSwitchOverlayHoldMs } from "../utils/workspace-switch-overlay";
 
@@ -9,6 +10,7 @@ export const WORKSPACE_SWITCH_OVERLAY_MIN_VISIBLE_MS = 350;
 type WorkspaceSwitchOverlayStateOptions = {
   booting: () => boolean;
   connectingWorkspaceId: () => string | null | undefined;
+  connectingOverlaySuppressed?: () => boolean;
   activeWorkspaceDisplay: () => WorkspaceDisplay;
   workspaces: () => WorkspaceDisplay[];
   busy: () => boolean;
@@ -33,16 +35,25 @@ export function resolveWorkspaceSwitchOverlayWorkspace(input: {
 export function resolveWorkspaceSwitchOverlayOpen(input: {
   booting: boolean;
   connectingWorkspaceId?: string | null;
+  connectingOverlaySuppressed?: boolean;
   switchDelayElapsed: boolean;
   holdOpen: boolean;
   busy: boolean;
   busyLabel?: string | null;
 }): boolean {
   if (input.booting) return true;
-  if (input.connectingWorkspaceId) return input.switchDelayElapsed;
   if (input.holdOpen) return true;
+  if (input.busy && (
+    input.busyLabel === "status.starting_engine" ||
+    input.busyLabel === "status.restarting_engine"
+  )) {
+    return true;
+  }
+  if (input.connectingWorkspaceId) {
+    return !input.connectingOverlaySuppressed && input.switchDelayElapsed;
+  }
   if (!input.busy || !input.busyLabel) return false;
-  return input.busyLabel === "status.starting_engine" || input.busyLabel === "status.restarting_engine";
+  return false;
 }
 
 export function resolveWorkspaceSwitchOverlayStatusKey(input: {
@@ -79,7 +90,7 @@ export function createWorkspaceSwitchOverlayState(options: WorkspaceSwitchOverla
   createEffect(() => {
     if (typeof window === "undefined") return;
     const switchingId = options.connectingWorkspaceId();
-    if (!switchingId) {
+    if (!switchingId || options.connectingOverlaySuppressed?.()) {
       setSwitchDelayElapsed(false);
       return;
     }
@@ -94,7 +105,7 @@ export function createWorkspaceSwitchOverlayState(options: WorkspaceSwitchOverla
 
   createEffect(() => {
     if (typeof window === "undefined") return;
-    const connecting = Boolean(options.connectingWorkspaceId());
+    const connecting = Boolean(options.connectingWorkspaceId()) && !options.connectingOverlaySuppressed?.();
     const shouldShowForSwitch = connecting && switchDelayElapsed();
     const previousVisibleSinceMs = untrack(visibleSinceMs);
 
@@ -130,6 +141,7 @@ export function createWorkspaceSwitchOverlayState(options: WorkspaceSwitchOverla
     resolveWorkspaceSwitchOverlayOpen({
       booting: options.booting(),
       connectingWorkspaceId: options.connectingWorkspaceId() ?? null,
+      connectingOverlaySuppressed: options.connectingOverlaySuppressed?.() ?? false,
       switchDelayElapsed: switchDelayElapsed(),
       holdOpen: holdOpen(),
       busy: options.busy(),
@@ -144,6 +156,37 @@ export function createWorkspaceSwitchOverlayState(options: WorkspaceSwitchOverla
       booting: options.booting(),
     }),
   );
+
+  let lastLoggedOpen = false;
+  let openLoggedAt: number | null = null;
+  createEffect(() => {
+    const open = workspaceSwitchOpen();
+    const workspace = workspaceSwitchWorkspace();
+    const nowMs = now();
+    if (open === lastLoggedOpen) return;
+    if (open) {
+      openLoggedAt = nowMs;
+      recordPerfLog(true, "workspace.overlay", "open", {
+        workspaceId: workspace?.id ?? null,
+        connectingWorkspaceId: options.connectingWorkspaceId() ?? null,
+        connectingOverlaySuppressed: options.connectingOverlaySuppressed?.() ?? false,
+        busy: options.busy(),
+        busyLabel: options.busyLabel() ?? null,
+        statusKey: workspaceSwitchStatusKey(),
+      });
+    } else {
+      recordPerfLog(true, "workspace.overlay", "close", {
+        workspaceId: workspace?.id ?? null,
+        connectingWorkspaceId: options.connectingWorkspaceId() ?? null,
+        connectingOverlaySuppressed: options.connectingOverlaySuppressed?.() ?? false,
+        busy: options.busy(),
+        busyLabel: options.busyLabel() ?? null,
+        ms: openLoggedAt === null ? null : Math.max(0, Math.round(nowMs - openLoggedAt)),
+      });
+      openLoggedAt = null;
+    }
+    lastLoggedOpen = open;
+  });
 
   return {
     workspaceSwitchWorkspace,

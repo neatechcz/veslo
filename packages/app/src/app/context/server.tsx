@@ -4,6 +4,7 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
 import { isTauriRuntime } from "../utils";
 import { reportError } from "../lib/error-reporter";
+import { wrapStartupRequestAuditFetch } from "../lib/startup-request-audit";
 import { isWorkspaceOpencodeProxyUrl, normalizeServerUrl, serverDisplayName } from "./server-url";
 
 export { isWorkspaceOpencodeProxyUrl, normalizeServerUrl, serverDisplayName } from "./server-url";
@@ -110,7 +111,12 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
       baseUrl: url,
       headers,
       signal: AbortSignal.timeout(3000),
-      fetch: isTauriRuntime() ? tauriFetch : undefined,
+      fetch: isTauriRuntime()
+        ? wrapStartupRequestAuditFetch(
+            tauriFetch as unknown as typeof globalThis.fetch,
+            "tauri.server.health",
+          )
+        : undefined,
     });
     return client.global
       .health()

@@ -61,7 +61,9 @@ type SidebarWorkspaceSessionsOptions = {
   listConversationsFromVesloReadApi: (
     workspaceId: string,
     directory?: string,
+    options?: { sync?: boolean },
   ) => Promise<ConversationReadResult>;
+  shouldSyncConversationRead?: (workspaceId: string) => boolean;
   backfillConversationsToVesloReadApi?: (
     workspaceId: string,
     directory: string,
@@ -290,6 +292,30 @@ export const ensureSidebarSessionInWorkspaceRows = (
   item: SidebarSessionItem,
 ): SidebarSessionsByWorkspaceId => prependSidebarSessionToWorkspaceRows(current, workspaceId, item);
 
+export const countFreshlyCreatedSessionsInSidebarRows = (
+  sessions: Session[],
+  rows: SidebarSessionItem[],
+): number => {
+  const freshIds = new Set<string>();
+  for (const row of rows) {
+    if (!row.pendingSessionInstanceId?.trim()) continue;
+    for (const value of [row.id, row.conversationId, row.opencodeSessionId]) {
+      const id = value?.trim() ?? "";
+      if (id) freshIds.add(id);
+    }
+  }
+  if (freshIds.size === 0) return 0;
+  let count = 0;
+  for (const session of sessions) {
+    const conversationId = (session as { conversationId?: string | null }).conversationId?.trim() ?? "";
+    const opencodeSessionId = (session as { opencodeSessionId?: string | null }).opencodeSessionId?.trim() ?? "";
+    if (freshIds.has(session.id) || (conversationId && freshIds.has(conversationId)) || (opencodeSessionId && freshIds.has(opencodeSessionId))) {
+      count += 1;
+    }
+  }
+  return count;
+};
+
 export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessionsOptions) {
   const [sidebarSessionsByWorkspaceId, setSidebarSessionsByWorkspaceId] = createSignal<
     Record<string, SidebarSessionItem[]>
@@ -421,6 +447,14 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
       incomingCount: input.items.length,
       existingCount: existingRows.length,
     });
+    recordPerfLog(options.developerMode(), "workspace.sidebar", "rows-read-result", {
+      workspaceId: id,
+      available: input.available,
+      preserved: preserveExisting,
+      previousCount: existingRows.length,
+      incomingCount: input.items.length,
+      nextCount: preserveExisting ? existingRows.length : input.items.length,
+    });
     if (!preserveExisting) {
       setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [id]: input.items }));
     }
@@ -436,8 +470,10 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
   const listSidebarWorkspaceSessionsFromReadApi = async (
     workspaceId: string,
     directory: string,
+    readOptions?: { sync?: boolean },
   ) => {
-    const result = await options.listConversationsFromVesloReadApi(workspaceId, directory);
+    const sync = readOptions?.sync ?? (options.shouldSyncConversationRead?.(workspaceId) === true);
+    const result = await options.listConversationsFromVesloReadApi(workspaceId, directory, { sync });
     const { visible: items } = partitionVesloUtilitySessions(
       result.items.map(options.applyPendingInitialSessionTitle),
     );
@@ -445,6 +481,7 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
       items,
       source: result.source ?? "unknown",
       available: result.source !== "unavailable",
+      sync,
     };
   };
 
@@ -452,8 +489,9 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
     workspaceId: string,
     directory: string,
     reason: string,
+    readOptions?: { sync?: boolean },
   ) => {
-    const result = await listSidebarWorkspaceSessionsFromReadApi(workspaceId, directory);
+    const result = await listSidebarWorkspaceSessionsFromReadApi(workspaceId, directory, readOptions);
     applyWorkspaceSidebarReadResult({
       workspaceId,
       items: result.items,
@@ -464,6 +502,7 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
       id: workspaceId,
       reason,
       source: result.source,
+      sync: result.sync,
       count: result.items.length,
     });
   };
@@ -553,14 +592,28 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
   const refreshSidebarWorkspaceSessions = async (workspaceId: string) => {
     const id = workspaceId.trim();
     if (!id) return;
+    const config = resolveSidebarClientConfig(id);
+    if (!config) return;
+
     const activeSendTraceId = options.activeSendTraceId?.()?.trim() ?? "";
     if (activeSendTraceId) {
       scheduleDeferredSidebarRefresh(id, activeSendTraceId);
+      const workspace = options.workspaceStore.workspaces().find((w) => w.id === id) ?? null;
+      const wsDirectory = workspace?.workspaceType === "local" ? workspace.path?.trim() ?? "" : "";
+      if (wsDirectory) {
+        try {
+          await refreshSidebarWorkspaceSessionsFromReadApi(id, wsDirectory, "active-send-host-read", {
+            sync: false,
+          });
+        } catch (e) {
+          options.wsDebug("sidebar:conversation-read:active-send-error", {
+            id,
+            error: e instanceof Error ? e.message : safeStringify(e),
+          });
+        }
+      }
       return;
     }
-
-    const config = resolveSidebarClientConfig(id);
-    if (!config) return;
 
     if (!config.baseUrl) {
       const workspace = options.workspaceStore.workspaces().find((w) => w.id === id);
@@ -732,6 +785,7 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
               id,
               reason: "live-empty",
               source: readResult.source,
+              sync: readResult.sync,
               count: readResult.items.length,
               liveCount: items.length,
               mergedCount: readResult.items.length,
@@ -742,6 +796,7 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
             id,
             reason: items.length === 0 ? "live-empty-union" : "live-union",
             source: readResult.source,
+            sync: readResult.sync,
             count: readResult.items.length,
             liveCount: items.length,
             mergedCount: nextItems.length,
@@ -1034,6 +1089,7 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
     const allSessions = options.sessions();
     const activeWorkspaceId = options.workspaceStore.activeWorkspaceId().trim();
     const connectingWorkspaceId = options.workspaceStore.connectingWorkspaceId()?.trim() ?? "";
+    const activeSendInProgress = Boolean(options.activeSendTraceId?.()?.trim());
     const wsId = (connectingWorkspaceId || activeWorkspaceId).trim();
     if (!wsId) return;
     const status = sidebarSessionStatusByWorkspaceId()[wsId];
@@ -1050,7 +1106,12 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
             sessionDirectoryMatchesRoot(options.resolveSessionDirectory(session), activeWorkspaceRoot),
           )
         : allSessions;
-      const existingTargetSessionCount = untrack(() => (sidebarSessionsByWorkspaceId()[wsId] ?? []).length);
+      const existingTargetSidebarRows = untrack(() => sidebarSessionsByWorkspaceId()[wsId] ?? []);
+      const existingTargetSessionCount = existingTargetSidebarRows.length;
+      const freshlyCreatedSessionCount = countFreshlyCreatedSessionsInSidebarRows(
+        allSessions,
+        existingTargetSidebarRows,
+      );
       if (
         !shouldSyncSidebarFromSessionStore({
           activeWorkspaceId,
@@ -1059,6 +1120,8 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
           allSessionCount: allSessions.length,
           scopedSessionCount: scopedSessions.length,
           existingTargetSessionCount,
+          freshlyCreatedSessionCount,
+          activeSendInProgress,
         })
       ) {
         options.wsDebug("sidebar:sync:skip-stale-session-store", {
@@ -1068,6 +1131,8 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
           allSessionCount: allSessions.length,
           scopedSessionCount: scopedSessions.length,
           existingTargetSessionCount,
+          freshlyCreatedSessionCount,
+          activeSendInProgress,
         });
         return;
       }
@@ -1075,7 +1140,6 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
       const { visible: visibleSessions } = partitionVesloUtilitySessions(sorted);
       const requestLimit = sidebarSessionLimitByWorkspaceId()[wsId] ?? initialSidebarSessionLimit();
       const incomingVisibleRows = expandSidebarSessionSliceWithAncestors(visibleSessions, requestLimit);
-      const existingTargetSidebarRows = untrack(() => sidebarSessionsByWorkspaceId()[wsId] ?? []);
       const nextRows = deriveSidebarRowsFromSessionStore({
         incomingSessions: visibleSessions,
         existingRows: existingTargetSidebarRows,
@@ -1097,6 +1161,19 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
       setSidebarSessionsByWorkspaceId((prev) => {
         const currentRows = prev[wsId] ?? [];
         if (sidebarSessionItemsEqual(currentRows, nextRows)) return prev;
+        recordPerfLog(options.developerMode(), "workspace.sidebar", "rows-session-store-sync", {
+          workspaceId: wsId,
+          activeWorkspaceId,
+          connectingWorkspaceId: connectingWorkspaceId || null,
+          previousCount: currentRows.length,
+          incomingVisibleCount: incomingVisibleRows.length,
+          nextCount: nextRows.length,
+          retainedExistingSidebarRows,
+          allSessionCount: allSessions.length,
+          scopedSessionCount: scopedSessions.length,
+          freshlyCreatedSessionCount,
+          activeSendInProgress,
+        });
         return {
           ...prev,
           [wsId]: nextRows,

@@ -229,8 +229,8 @@ test("app activates selected session workspace at send time, not browse time", (
   );
   assert.match(
     sendPromptSource,
-    /selectedSessionIgnoredForForeignWorkspace: Boolean\([\s\S]*selectedSessionCandidate && !selectedSessionBelongsToActiveWorkspace,[\s\S]*\),/s,
-    "send trace should expose when a stale selected session was ignored for active-workspace sends",
+    /const explicitTargetSessionId = isPendingSessionInstanceId\(options\.targetSessionId\)[\s\S]*let sessionID = explicitTargetSessionId \|\| selectedRealSessionId;[\s\S]*selectedSessionIgnoredForForeignWorkspace: Boolean\([\s\S]*selectedSessionCandidate && !selectedSessionBelongsToActiveWorkspace && !explicitTargetSessionId,[\s\S]*\),/s,
+    "send trace should expose when a stale selected session was ignored, but not when it was passed as the explicit send target",
   );
   assert.match(
     workspaceSendTargetSource,

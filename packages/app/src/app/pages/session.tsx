@@ -3710,8 +3710,9 @@ export default function SessionView(props: SessionViewProps) {
     const origin = sessionSendOriginForReason(options.reason);
     const clientMessageId = createSessionClientMessageId();
     const expectedSessionKey = options.expectedSessionKey;
-    const targetSessionId = expectedSessionKey ? sessionIdForQueueKey(expectedSessionKey) : null;
-    const expectedWorkspaceId = expectedSessionKey ? workspaceIdForQueueKey(expectedSessionKey) : props.activeWorkspaceId;
+    const baseSessionKey = expectedSessionKey ?? currentSessionQueueKey();
+    const targetSessionId = sessionIdForQueueKey(baseSessionKey);
+    const expectedWorkspaceId = workspaceIdForQueueKey(baseSessionKey) || props.activeWorkspaceId;
     markTempRuntimeUiRenderSource("SessionView.sendPromptImmediate", options.reason ?? "normal", {
       clientMessageId,
       origin,
@@ -3733,7 +3734,6 @@ export default function SessionView(props: SessionViewProps) {
     });
     if (expectedSessionKey && currentSessionQueueKey() !== expectedSessionKey && !targetSessionId) return false;
     const showOptimisticSubmit = !options.replaceMessageId && options.reason !== "queue-drain";
-    const baseSessionKey = expectedSessionKey ?? currentSessionQueueKey();
     const pendingSessionBaseKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey(baseSessionKey)
       ? isPendingSessionInstanceId(baseSessionKey)
         ? pendingSessionQueueKey()

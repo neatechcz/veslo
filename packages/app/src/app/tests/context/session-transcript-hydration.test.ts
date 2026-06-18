@@ -42,6 +42,13 @@ const makeMessageInfo = () => ({
   tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
 });
 
+const makeSession = (id: string) => ({
+  id,
+  title: id,
+  directory: `/tmp/${id}`,
+  time: { created: 1, updated: 1 },
+});
+
 test("hydrateTranscriptSnapshot stores messages and keeps the current selection unchanged", () => {
   createRoot((dispose) => {
     try {
@@ -78,8 +85,78 @@ test("hydrateTranscriptSnapshot stores messages and keeps the current selection 
   });
 });
 
+test("workspace snapshots restore transcript freshness and evict old workspace snapshots", () => {
+  createRoot((dispose) => {
+    try {
+      const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(null);
+
+      const store = createSessionStore({
+        client: () => null,
+        routing: makeTestRouting(() => null),
+        activeWorkspaceRoot: () => "",
+        selectedSessionId,
+        setSelectedSessionId,
+        developerMode: () => false,
+        setError: () => {},
+        setSseConnected: () => {},
+      });
+
+      store.setSessions([makeSession("sess-a") as any]);
+      setSelectedSessionId("sess-a");
+      store.hydrateTranscriptSnapshot({
+        workspaceId: "ws-a",
+        sessionId: "sess-a",
+        limit: 140,
+        messages: [makeMessageInfo()],
+        partsByMessageId: { "msg-1": [makeTextPart()] },
+        fetchedAt: 10,
+        staleAt: 20,
+      });
+      store.saveWorkspaceSnapshot("ws-a");
+
+      const messageB = { ...makeMessageInfo(), id: "msg-b", sessionID: "sess-b" };
+      const partB = { ...makeTextPart(), id: "part-b", sessionID: "sess-b", messageID: "msg-b" };
+      store.setSessions([makeSession("sess-b") as any]);
+      setSelectedSessionId("sess-b");
+      store.hydrateTranscriptSnapshot({
+        workspaceId: "ws-b",
+        sessionId: "sess-b",
+        limit: 140,
+        messages: [messageB],
+        partsByMessageId: { "msg-b": [partB] },
+        fetchedAt: 30,
+        staleAt: 40,
+      });
+      store.saveWorkspaceSnapshot("ws-b");
+
+      assert.equal(store.loadWorkspaceSnapshot("ws-b"), true);
+      assert.equal(store.getTranscriptFreshness("sess-a"), null);
+      assert.deepEqual(store.getTranscriptFreshness("sess-b"), { fetchedAt: 30, staleAt: 40 });
+
+      assert.equal(store.loadWorkspaceSnapshot("ws-a"), true);
+      assert.equal(selectedSessionId(), "sess-a");
+      assert.equal(store.getCachedTranscriptMessageCount("sess-a"), 1);
+      assert.deepEqual(store.getTranscriptFreshness("sess-a"), { fetchedAt: 10, staleAt: 20 });
+      assert.equal(store.getTranscriptFreshness("sess-b"), null);
+
+      for (let index = 2; index <= 7; index += 1) {
+        const sessionId = `sess-${index}`;
+        store.setSessions([makeSession(sessionId) as any]);
+        setSelectedSessionId(sessionId);
+        store.saveWorkspaceSnapshot(`ws-${index}`);
+      }
+
+      assert.equal(store.loadWorkspaceSnapshot("ws-b"), false);
+      assert.equal(store.loadWorkspaceSnapshot("ws-7"), true);
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("app hydrates transcript snapshots returned by veslo prefetch calls", () => {
   const source = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
+  const sessionSource = readFileSync(new URL("../../context/session.ts", import.meta.url), "utf8");
 
   assert.match(
     source,
@@ -110,5 +187,35 @@ test("app hydrates transcript snapshots returned by veslo prefetch calls", () =>
     source,
     /rememberConversationScopeFromTranscript\(workspaceId,\s*directory,\s*snapshot\);/s,
     "direct transcript fetches should register conversation scope sidecars",
+  );
+  assert.match(
+    source,
+    /appendTranscriptSnapshot:\s*async\s*\(input\)\s*=>/s,
+    "session store should receive a live transcript writer",
+  );
+  assert.match(
+    source,
+    /appendSessionTranscript\(serverWorkspaceId,\s*sessionId,\s*\{/s,
+    "live transcript writer should append to the host-side Veslo server transcript endpoint",
+  );
+  assert.match(
+    source,
+    /appendSessionTranscript:\s*async\s*\(workspaceId,\s*sessionId,\s*input\)\s*=>/s,
+    "hydrated Veslo client should wrap appendSessionTranscript",
+  );
+  assert.match(
+    sessionSource,
+    /scheduleTranscriptIngestion\(info\.sessionID,\s*sourceWsId,\s*"message\.updated"\);/s,
+    "message updates should schedule live transcript ingestion",
+  );
+  assert.match(
+    sessionSource,
+    /scheduleTranscriptIngestion\(part\.sessionID,\s*sourceWsId,\s*"message\.part\.updated"\);/s,
+    "part updates should schedule live transcript ingestion",
+  );
+  assert.match(
+    sessionSource,
+    /scheduleTranscriptIngestion\(sessionID,\s*sourceWsId,\s*"session\.idle",\s*0\);/s,
+    "idle events should flush live transcript ingestion immediately",
   );
 });

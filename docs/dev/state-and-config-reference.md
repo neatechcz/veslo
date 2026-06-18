@@ -266,9 +266,10 @@ Veslo pages that mutate plugins or MCP are usually editing this config, not `.op
 
 ## Skills Inventory
 
-The Skills page builds an app-wide inventory from three sources:
+The Skills page builds an app-wide inventory from four sources:
 
-- user skills from user-level OpenCode-compatible skill roots
+- user skills from the Veslo user skill store
+- legacy user skills from user-level OpenCode-compatible skill roots
 - workspace-local skills discovered per readable local workspace
 - Hub skills from the existing prepared catalog flow
 
@@ -317,11 +318,19 @@ User skills are runtime-available skills, not organization catalog or
 admin-approved skills. Organization promotion and bulk rollout remain future
 work until the Den/admin backend owns those concepts.
 
-For inventory correctness, user skill roots and workspace skill roots are read
-separately. Runtime-effective discovery may still include both scopes for active
-workspace behavior, but the inventory must not expand user skills under every
-workspace. Workspace rows represent only real workspace-local instances or
-overrides.
+For inventory correctness, Veslo user skill store entries, legacy user skill
+roots, and workspace skill roots are read separately. Runtime-effective
+discovery may still include both scopes for active workspace behavior, but the
+inventory must not expand user skills under every workspace. Workspace rows
+represent only real workspace-local instances or overrides.
+
+Veslo-created user skills are stored under the server data directory in the
+user skill store. Enabled store entries are materialized into each active
+workspace under `.opencode/skills/veslo-user/<name>/SKILL.md` during workspace
+activation or explicit store sync. The store remains the source of truth; the
+workspace copy is a runtime artifact for OpenCode and sandbox visibility. Sync
+must not overwrite an existing workspace skill with the same name and should
+return a conflict instead.
 
 Private app-created workspaces, including new private chat workspaces, remove
 workspace-local skill directories that are exact copies of user-root skills

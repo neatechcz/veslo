@@ -4,6 +4,7 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { isTauriRuntime } from "../utils";
 import { readDenAuth } from "./den-auth";
 import { fetchJson } from "./http";
+import { wrapStartupRequestAuditFetch } from "./startup-request-audit";
 
 export const FEEDBACK_CAPTURE_SELECTOR = "[data-feedback-capture-root]";
 
@@ -12,6 +13,10 @@ const FEEDBACK_IMAGE_QUALITY = 0.82;
 const FEEDBACK_SUBMIT_TIMEOUT_MS = 45_000;
 
 type FetchLike = typeof globalThis.fetch;
+const auditedTauriFetch = wrapStartupRequestAuditFetch(
+  tauriFetch as unknown as FetchLike,
+  "tauri.feedback",
+);
 
 export type FeedbackRuntimeContext = {
   view: string;
@@ -83,7 +88,7 @@ type FeedbackSubmitResponse = {
 };
 
 const resolveFetch = (): FetchLike =>
-  (isTauriRuntime() ? (tauriFetch as unknown as FetchLike) : globalThis.fetch);
+  (isTauriRuntime() ? auditedTauriFetch : globalThis.fetch);
 
 const normalizeOptional = (value?: string | null) => {
   const trimmed = value?.trim() ?? "";

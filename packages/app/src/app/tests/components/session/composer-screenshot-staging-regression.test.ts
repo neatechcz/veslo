@@ -30,7 +30,7 @@ test("staging failure blocks send with an explicit error and no draft clear", ()
 
 test("send flow snapshots pending draft context before materializing a real session", () => {
   const sendStart = appSource.indexOf("async function sendPrompt");
-  const sessionTarget = appSource.indexOf("let sessionID = isPendingSessionInstanceId(options.targetSessionId)", sendStart);
+  const sessionTarget = appSource.indexOf("const explicitTargetSessionId = isPendingSessionInstanceId(options.targetSessionId)", sendStart);
   const pendingSnapshot = appSource.indexOf("const pendingDraftSendState = (() => {", sessionTarget);
   const pendingKey = appSource.indexOf("const pendingDraftKey = (activePendingDraftKey() ?? \"\").trim();", pendingSnapshot);
   const sessionCreate = appSource.indexOf(
@@ -40,6 +40,11 @@ test("send flow snapshots pending draft context before materializing a real sess
 
   assert.notEqual(sendStart, -1, "sendPrompt should exist");
   assert.ok(sessionTarget > sendStart, "send flow should resolve the target session before pending draft snapshot");
+  assert.match(
+    appSource.slice(sessionTarget, pendingSnapshot),
+    /let sessionID = explicitTargetSessionId \|\| selectedRealSessionId;/,
+    "send flow should preserve the explicit target session before pending draft snapshot",
+  );
   assert.ok(pendingSnapshot > sessionTarget, "send flow should snapshot pending draft identity");
   assert.ok(pendingKey > pendingSnapshot, "pending draft snapshot should capture active pending draft key");
   assert.ok(sessionCreate > pendingSnapshot, "pending draft snapshot should happen before creating the real session");

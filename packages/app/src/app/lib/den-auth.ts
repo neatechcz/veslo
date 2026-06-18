@@ -2,6 +2,7 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { LANGUAGE_PREF_KEY, ONBOARDING_COMPLETE_STORAGE_KEY } from "../constants";
 import { isTauriRuntime } from "../utils";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
+import { wrapStartupRequestAuditFetch } from "./startup-request-audit";
 
 const DEN_AUTH_STORAGE_KEY = "veslo.den.auth";
 const DEN_KEEP_SIGNED_IN_STORAGE_KEY = "veslo.den.keepSignedIn";
@@ -20,7 +21,12 @@ const DESKTOP_AUTH_FALLBACK_TTL_MS = 10 * 60 * 1000;
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
-const resolveFetch = (): FetchLike => (isTauriRuntime() ? tauriFetch : globalThis.fetch);
+const auditedTauriFetch = wrapStartupRequestAuditFetch(
+  tauriFetch as unknown as typeof globalThis.fetch,
+  "tauri.den-auth",
+);
+
+const resolveFetch = (): FetchLike => (isTauriRuntime() ? auditedTauriFetch : globalThis.fetch);
 
 async function fetchWithTimeout(
   fetchImpl: FetchLike,

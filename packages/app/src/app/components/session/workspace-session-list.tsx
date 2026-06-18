@@ -3,6 +3,7 @@ import type { Accessor, JSX } from "solid-js";
 import { useOutsideClick } from "./use-outside-click";
 import {
   Archive,
+  ChevronRight,
   ChevronUp,
   Folder,
   FolderPlus,
@@ -16,6 +17,7 @@ import {
 
 import type { VesloSoulStatus } from "../../lib/veslo-server";
 import type { WorkspaceInfo } from "../../lib/tauri";
+import { recordPerfLog } from "../../lib/perf-log";
 import { buildArchivedSidebarSessionKey } from "../../lib/session-archive-model";
 import type {
   LoadedSessionPrefetchInterestChangeHandler,
@@ -38,7 +40,6 @@ import {
   displayTimestamp,
   formatSessionRelativeAge,
   formatSessionTimestampTooltip,
-  isProjectCollapsed,
   resolveSessionRowClickAction,
   requiredVisibleCountForExpandedSession,
   rowVisibleByExpansion,
@@ -47,7 +48,6 @@ import {
   splitProjectGroupsForSidebar,
   splitSessionDisplayLabel,
   rootRowsForSessionTree,
-  toggleProjectCollapsed,
   type FlatSessionRow,
   type ProjectSessionGroup,
 } from "./workspace-session-list-model";
@@ -75,13 +75,11 @@ import {
 import { resolveRenderableProjectGroups } from "./workspace-session-list-render-model";
 import {
   PROJECT_ORDER_PROMOTED_EVENT,
-  readCollapsedProjectMap,
   readChatSidebarCollapsed,
   readChatSidebarHeight,
   readExpandedParentSessionIds,
   readProjectOrder,
   readSidebarViewMode,
-  writeCollapsedProjectMap,
   writeChatSidebarCollapsed,
   writeChatSidebarHeight,
   writeExpandedParentSessionIds,
@@ -470,9 +468,7 @@ export default function WorkspaceSessionList(props: Props) {
   const loadMoreLabel = (count: number) => tr("sidebar.load_more").replace("{count}", String(count));
   const revealLabel = isWindowsPlatform() ? tr("sidebar.reveal_in_explorer") : tr("sidebar.reveal_in_finder");
   const [sidebarModeSignal, setSidebarModeSignal] = createSignal<SidebarViewMode>(readSidebarViewMode());
-  const [collapsedProjects, setCollapsedProjects] = createSignal<Record<string, boolean>>(
-    readCollapsedProjectMap(),
-  );
+  const [openProjectKey, setOpenProjectKey] = createSignal<string | null>(null);
   const [projectOrder, setProjectOrder] = createSignal<string[]>(readProjectOrder());
   const [projectVisibleByKey, setProjectVisibleByKey] = createSignal<Record<string, number>>({});
   const [recentVisibleCount, setRecentVisibleCount] = createSignal(3);
@@ -510,16 +506,46 @@ export default function WorkspaceSessionList(props: Props) {
   let clearSuppressedProjectClickTimer: number | null = null;
 
   const sidebarMode = createMemo(() => sidebarModeSignal());
+  const recordAccordionOpenKey = (reason: string, projectKey: string | null) => {
+    recordPerfLog(true, "workspace.sidebar", "accordion-open-key", {
+      reason,
+      projectKey,
+      activeWorkspaceId: props.activeWorkspaceId.trim() || null,
+    });
+  };
+  const setProjectAccordionOpenKey = (projectKey: string | null, reason: string) => {
+    setOpenProjectKey((current) => {
+      if (current === projectKey) return current;
+      recordAccordionOpenKey(reason, projectKey);
+      return projectKey;
+    });
+  };
   const setSidebarMode = (value: SidebarViewMode) => {
     setSidebarModeSignal(value);
     writeSidebarViewMode(value);
   };
-  const toggleProjectCollapse = (projectKey: string) =>
-    setCollapsedProjects((previous) => {
-      const next = toggleProjectCollapsed(previous, projectKey);
-      writeCollapsedProjectMap(next);
+  let manualAccordionWorkspaceId = "";
+  let manualAccordionProjectKey = "";
+  const openProjectAccordion = (projectKey: string) => {
+    const key = projectKey.trim();
+    if (!key) return;
+    manualAccordionWorkspaceId = "";
+    manualAccordionProjectKey = "";
+    setProjectAccordionOpenKey(key, "project-open");
+  };
+  const toggleProjectAccordion = (projectKey: string) => {
+    const key = projectKey.trim();
+    if (!key) return;
+    manualAccordionWorkspaceId = props.activeWorkspaceId.trim();
+    manualAccordionProjectKey = key;
+    setOpenProjectKey((current) => {
+      const next = current === key ? null : key;
+      if (current !== next) {
+        recordAccordionOpenKey("user-toggle", next);
+      }
       return next;
     });
+  };
   const suppressNextProjectClick = (projectKey: string) => {
     suppressedProjectClickKey = projectKey;
     if (clearSuppressedProjectClickTimer !== null && typeof window !== "undefined") {
@@ -537,6 +563,7 @@ export default function WorkspaceSessionList(props: Props) {
       suppressedProjectClickKey = null;
       return;
     }
+    openProjectAccordion(projectKey);
     void Promise.resolve(props.onActivateWorkspace(workspaceId, { origin: "workspace-session-list:project-open" }));
   };
   onCleanup(() => {
@@ -633,6 +660,67 @@ export default function WorkspaceSessionList(props: Props) {
   const recentFallbackProjectGroups = createMemo(() =>
     normalProjectGroups().filter((group) => group.isWorkspaceOnlyProject && group.sessions.length === 0),
   );
+  const projectKeyForWorkspaceId = (workspaceId: string) => {
+    const id = workspaceId.trim();
+    if (!id) return "";
+    return normalProjectGroups().find((group) => group.workspace.id === id)?.key ?? "";
+  };
+
+  let projectAccordionInitialized = false;
+  let lastAccordionWorkspaceId = "";
+  let lastAccordionWorkspaceProjectKey = "";
+  createEffect(() => {
+    if (sidebarMode() !== "by-project") return;
+    const activeWorkspaceId = props.activeWorkspaceId.trim();
+    const activeProjectKey = projectKeyForWorkspaceId(activeWorkspaceId);
+    const projectKeys = new Set(normalProjectGroups().map((group) => group.key));
+    const currentOpenKey = openProjectKey();
+    const userOwnsAccordionForActiveWorkspace =
+      Boolean(manualAccordionWorkspaceId) &&
+      manualAccordionWorkspaceId === activeWorkspaceId;
+
+    if (currentOpenKey && !projectKeys.has(currentOpenKey)) {
+      if (userOwnsAccordionForActiveWorkspace && currentOpenKey === manualAccordionProjectKey) {
+        setProjectAccordionOpenKey(null, "manual-current-key-missing");
+        projectAccordionInitialized = true;
+        lastAccordionWorkspaceId = activeWorkspaceId;
+        lastAccordionWorkspaceProjectKey = activeProjectKey;
+        return;
+      }
+      manualAccordionWorkspaceId = "";
+      manualAccordionProjectKey = "";
+      setProjectAccordionOpenKey(activeProjectKey || null, "auto-current-key-missing");
+    }
+
+    if (!activeProjectKey) return;
+    const activeWorkspaceChanged = activeWorkspaceId !== lastAccordionWorkspaceId;
+    const activeProjectKeyChanged = activeProjectKey !== lastAccordionWorkspaceProjectKey;
+    const currentTracksPreviousActiveProject =
+      !currentOpenKey || currentOpenKey === lastAccordionWorkspaceProjectKey;
+
+    if (
+      !projectAccordionInitialized ||
+      activeWorkspaceChanged
+    ) {
+      manualAccordionWorkspaceId = "";
+      manualAccordionProjectKey = "";
+      setProjectAccordionOpenKey(
+        activeProjectKey,
+        projectAccordionInitialized ? "auto-active-workspace" : "auto-init",
+      );
+    } else if (userOwnsAccordionForActiveWorkspace) {
+      // A manual drawer click is user intent. Sidebar title hydration and
+      // session-list refreshes must not immediately reopen the active project
+      // after the user collapsed it, or steal focus from a manually opened
+      // inactive project.
+    } else if (activeProjectKeyChanged && currentTracksPreviousActiveProject) {
+      setProjectAccordionOpenKey(activeProjectKey, "auto-active-project-key");
+    }
+
+    projectAccordionInitialized = true;
+    lastAccordionWorkspaceId = activeWorkspaceId;
+    lastAccordionWorkspaceProjectKey = activeProjectKey;
+  });
 
   const recentHierarchy = createMemo(() => buildRowHierarchyLookup(visibleRecentRows()));
   const recentHasChildren = (sessionId: string) =>
@@ -2442,8 +2530,7 @@ export default function WorkspaceSessionList(props: Props) {
                 const isDraggedProject = () => draggingProjectKey() === project.key;
                 const dropIndicatorPosition = () =>
                   projectDropIndicator()?.key === project.key ? projectDropIndicator()?.position : null;
-                const collapsed = () =>
-                  isProjectCollapsed(collapsedProjects(), project.key) && !shouldForceProjectOpen(project);
+                const drawerCollapsed = () => openProjectKey() !== project.key;
                 const projectPaging = () => projectPagingForGroup(project);
                 const projectHierarchy = () => buildRowHierarchyLookup(project.sessions);
                 const visibleCount = () => projectVisibleCountForGroup(project);
@@ -2451,6 +2538,8 @@ export default function WorkspaceSessionList(props: Props) {
                 const hasChildren = (sessionId: string) =>
                   (projectHierarchy().childrenByParentId.get(sessionId)?.length ?? 0) > 0;
                 const visibleRows = () => visibleProjectRowsForGroup(project);
+                const forcedVisibleRows = () =>
+                  drawerCollapsed() ? visibleRows().filter(rowForcesProjectOpen) : [];
                 const hasHiddenRows = () => projectTreeVisibleRows().length > visibleCount();
                 const canLoadMoreProjectRows = () => hasHiddenRows() || projectPaging().hasMore;
                 const projectLoadMoreCount = () =>
@@ -2494,68 +2583,87 @@ export default function WorkspaceSessionList(props: Props) {
                         onDragStart={(event) => handleProjectDragStart(event, project.key)}
                         onDragEnd={handleProjectDragEnd}
                       >
-                        <button
-                          type="button"
-                          class={`w-full rounded-lg px-1.5 py-1 text-left transition-colors ${
+                        <div
+                          class={`w-full rounded-lg px-1.5 py-1 transition-colors ${
                             isActiveWorkspace()
                               ? "text-gray-12"
                               : "text-gray-11 hover:text-gray-12 hover:bg-gray-2/70"
                           }`}
                           title={project.projectTitle}
-                          aria-label={project.projectLabel ? `${tr("sidebar.open_project")} ${project.projectLabel}` : tr("sidebar.open_project")}
                           onPointerDown={(event) => handleProjectPointerDown(event, project.key, projectDragLabel())}
-                          onClick={() => handleProjectOpenClick(project.key, workspace().id)}
                         >
-                          <div class="flex items-center gap-2 min-w-0">
-                            <Folder
-                              size={13}
-                              class="shrink-0 text-gray-8 cursor-pointer"
+                          <div class="flex items-center gap-1 min-w-0">
+                            <button
+                              type="button"
+                              class="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-gray-8 transition-colors hover:bg-gray-3 hover:text-gray-11"
+                              data-sidebar-project-toggle={project.key}
+                              aria-expanded={!drawerCollapsed()}
+                              aria-label={
+                                drawerCollapsed()
+                                  ? `${tr("sidebar.expand_project_conversations")} ${project.projectLabel}`
+                                  : `${tr("sidebar.collapse_project_conversations")} ${project.projectLabel}`
+                              }
                               onClick={(event) => {
                                 event.stopPropagation();
-                                toggleProjectCollapse(project.key);
+                                toggleProjectAccordion(project.key);
                               }}
-                            />
-                            <span class="truncate text-[12px] font-semibold text-gray-10">
-                              {project.projectLabel}
-                            </span>
-                            <Show when={props.readyEngineWorkspaceIds?.has(workspace().id)}>
-                              <span
-                                class="h-1.5 w-1.5 shrink-0 rounded-full bg-green-9"
-                                title="Engine ready — switching is instant"
+                            >
+                              <ChevronRight
+                                size={13}
+                                class={`transition-transform ${drawerCollapsed() ? "" : "rotate-90"}`}
                               />
-                            </Show>
-                            <Show when={workspace().workspaceType === "remote"}>
-                              <span class="shrink-0 text-[10px] text-gray-8 uppercase tracking-[0.12em]">
-                                {workspaceKindLabel(workspace())}
+                            </button>
+                            <button
+                              type="button"
+                              class="min-w-0 flex-1 appearance-none border-none bg-transparent p-0 text-left text-inherit"
+                              aria-label={project.projectLabel ? `${tr("sidebar.open_project")} ${project.projectLabel}` : tr("sidebar.open_project")}
+                              onClick={() => handleProjectOpenClick(project.key, workspace().id)}
+                            >
+                              <span class="flex items-center gap-2 min-w-0">
+                                <Folder size={13} class="shrink-0 text-gray-8" />
+                                <span class="truncate text-[12px] font-semibold text-gray-10">
+                                  {project.projectLabel}
+                                </span>
+                                <Show when={props.readyEngineWorkspaceIds?.has(workspace().id)}>
+                                  <span
+                                    class="h-1.5 w-1.5 shrink-0 rounded-full bg-green-9"
+                                    title="Engine ready — switching is instant"
+                                  />
+                                </Show>
+                                <Show when={workspace().workspaceType === "remote"}>
+                                  <span class="shrink-0 text-[10px] text-gray-8 uppercase tracking-[0.12em]">
+                                    {workspaceKindLabel(workspace())}
+                                  </span>
+                                </Show>
+                                <Show when={soulEnabled()}>
+                                  <span class="inline-flex items-center gap-1 rounded-full border border-ruby-7 bg-ruby-3 px-1.5 py-0.5 text-[10px] text-ruby-11">
+                                    <HeartPulse size={10} />
+                                    {tr("sidebar.soul_badge")}
+                                  </span>
+                                </Show>
+                                <Show when={isConnecting()}>
+                                  <Loader2 size={11} class="animate-spin text-gray-10" />
+                                </Show>
+                                <Show when={(props.pendingPermissionCountByWs?.[workspace().id] ?? 0) > 0}>
+                                  <span
+                                    class="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-9 text-white text-[10px] font-semibold"
+                                    title="Pending permission request"
+                                  >
+                                    {props.pendingPermissionCountByWs![workspace().id]}
+                                  </span>
+                                </Show>
+                                <Show when={project.status === "error"}>
+                                  <span
+                                    class="text-[10px] px-1.5 py-0.5 rounded-full border border-red-7 text-red-11 bg-red-3"
+                                    title={taskLoadError().title}
+                                  >
+                                    {taskLoadError().label}
+                                  </span>
+                                </Show>
                               </span>
-                            </Show>
-                            <Show when={soulEnabled()}>
-                              <span class="inline-flex items-center gap-1 rounded-full border border-ruby-7 bg-ruby-3 px-1.5 py-0.5 text-[10px] text-ruby-11">
-                                <HeartPulse size={10} />
-                                {tr("sidebar.soul_badge")}
-                              </span>
-                            </Show>
-                            <Show when={isConnecting()}>
-                              <Loader2 size={11} class="animate-spin text-gray-10" />
-                            </Show>
-                            <Show when={(props.pendingPermissionCountByWs?.[workspace().id] ?? 0) > 0}>
-                              <span
-                                class="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-9 text-white text-[10px] font-semibold"
-                                title="Pending permission request"
-                              >
-                                {props.pendingPermissionCountByWs![workspace().id]}
-                              </span>
-                            </Show>
-                            <Show when={project.status === "error"}>
-                              <span
-                                class="text-[10px] px-1.5 py-0.5 rounded-full border border-red-7 text-red-11 bg-red-3"
-                                title={taskLoadError().title}
-                              >
-                                {taskLoadError().label}
-                              </span>
-                            </Show>
+                            </button>
                           </div>
-                        </button>
+                        </div>
                       </div>
 
                       <div class="flex items-center gap-1 shrink-0">
@@ -2580,7 +2688,7 @@ export default function WorkspaceSessionList(props: Props) {
                     </div>
 
                     <AnimatedCollapse
-                      open={!collapsed()}
+                      open={!drawerCollapsed()}
                       region="project"
                       innerClass="pl-5 pt-0.5 space-y-0"
                     >
@@ -2619,6 +2727,16 @@ export default function WorkspaceSessionList(props: Props) {
                         </Show>
                       </>
                     </AnimatedCollapse>
+                    <Show when={drawerCollapsed() && forcedVisibleRows().length > 0}>
+                      <div class="pl-5 pt-0.5 space-y-0">
+                        {renderSessionTreeRows(() => forcedVisibleRows(), hasChildren, {
+                          anchorPrefix: "project-session-forced",
+                          soulEnabled,
+                          canRecover,
+                          isConnectionActionBusy,
+                        })}
+                      </div>
+                    </Show>
                     </div>
                   );
                 }}

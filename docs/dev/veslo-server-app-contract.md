@@ -148,6 +148,27 @@ Server-controlled registry package materialization is a local server responsibil
 - `POST /workspace/:id/skills/materialization/sync`
   Requires host or owner auth. Downloads the desired registry workspace skill set and matching selected-workspace rollout policies, validates package archives, writes server-controlled runtime skill directories, returns any resolver `conflicts`, and returns `pending` without mutating files when the caller reports an active run.
 
+Veslo-created user skills use a local server store separate from legacy
+filesystem user skill roots:
+
+- `GET /skills/user-global-store`
+  Requires client auth. Returns store-backed user skills with virtual
+  `veslo-user-store://<name>` paths.
+- `GET /skills/user-global-store/:name`
+  Requires client auth. Returns the normalized `SKILL.md` content for one
+  store-backed user skill.
+- `POST /skills/user-global-store`
+  Requires collaborator client auth. Creates or updates one store-backed user
+  skill in the Veslo data directory.
+- `DELETE /skills/user-global-store/:name`
+  Requires collaborator client auth. Deletes one store-backed user skill from
+  the Veslo data directory.
+- `POST /workspace/:id/skills/user-global-store/sync`
+  Requires collaborator client auth plus host approval for the materialization
+  path. Writes enabled store-backed user skills into
+  `.opencode/skills/veslo-user/` for that workspace, removes stale managed
+  copies, and returns conflicts instead of overwriting workspace-local skills.
+
 Rollout policy resolution must enforce target exclusivity: the same effective
 skill/audience cannot be materialized as both a user skill and a workspace skill.
 If registry state contains both because of legacy data or a race, the server
@@ -217,6 +238,23 @@ For desktop-local workspaces, the app should preserve the raw platform path when
 When a local workspace has no explicit OpenCode `baseUrl`, a desktop-launched server may derive the effective OpenCode base URL from its orchestrator daemon URL and the workspace id using the mounted workspace route: `{orchestratorDaemonUrl}/workspace/:id/opencode`. The app should still pass fresh engine metadata when it has it, because explicit routing data avoids stale path-only registrations.
 
 Windows path checks must tolerate extended-length prefixes such as `\\?\` and compare normalized roots case-insensitively for authorization. The raw path should remain available for persistence and engine handoff; normalized paths are for comparison.
+
+### Conversation and Transcript Reads
+
+`GET /workspace/:id/conversations` is host-first by default. When the host
+conversation store already has rows, the route returns those rows without
+touching the sandbox or OpenCode database. App code may pass `sync=true` only
+for a workspace whose engine is already warm or has an active run, including
+ready or busy routed workspaces that are not the selected UI workspace. That
+opt-in read unions the live source with host bindings and tunnels any missing
+sessions back into the host store; it must not be used to cold-start another
+workspace runtime.
+
+`POST /workspace/:id/sessions/:sessionId/transcript` persists live transcript
+snapshots into the host store. `messages` plus `partsByMessageId` are the
+current snapshot; callers may also send `deletedMessageIds` and
+`deletedPartsByMessageId` so host-first transcript reads do not resurrect parts
+or messages that the live stream removed.
 
 ## Capability Discovery
 

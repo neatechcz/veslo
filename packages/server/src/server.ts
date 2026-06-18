@@ -100,6 +100,15 @@ import {
   workspaceManagedSkillsRoot,
 } from "./skill-materializer.js";
 import type { SkillSetMaterializationResult } from "./skill-materializer.js";
+import {
+  deleteUserGlobalSkill,
+  listUserGlobalSkills,
+  materializeUserGlobalSkillsForWorkspace,
+  readUserGlobalSkill,
+  upsertUserGlobalSkill,
+  userGlobalMaterializedSkillsRoot,
+  userGlobalSkillStorePath,
+} from "./user-skill-store.js";
 import type {
   RegistrySkillPackageArchive,
   RegistrySkillRolloutPolicy,
@@ -132,7 +141,7 @@ import { TokenService } from "./tokens.js";
 import { TOY_UI_CSS, TOY_UI_HTML, TOY_UI_JS, cssResponse, htmlResponse, jsResponse } from "./toy-ui.js";
 import { FileSessionStore } from "./file-sessions.js";
 import { createSessionArchiveStore } from "./session-archives.js";
-import { deriveLatestRunArtifactsResponse } from "./session-artifacts.js";
+import { deriveLatestRunArtifactsResponse, type SessionArtifactMessage, type SessionArtifactPart } from "./session-artifacts.js";
 import { createSessionTranscriptPrefetchStore } from "./session-transcript-prefetch.js";
 import {
   type AutomationExecutionInput,
@@ -157,6 +166,7 @@ import {
 } from "./automation-store.js";
 import { createConversationReadStore } from "./conversation-read-store.js";
 import { createConversationBindingStore } from "./conversation-binding-store.js";
+import { createConversationTranscriptStore } from "./conversation-transcript-store.js";
 import { createConversationService } from "./conversation-service.js";
 import {
   createOrchestratorLifecycleClient,
@@ -2897,6 +2907,86 @@ function parseSessionTranscriptLimit(input: unknown): number {
   return Math.min(Math.floor(parsed), SESSION_TRANSCRIPT_MAX_LIMIT);
 }
 
+function parseSessionTranscriptMessages(input: unknown): unknown[] {
+  if (!Array.isArray(input)) {
+    throw new ApiError(400, "invalid_payload", "messages must be an array");
+  }
+  return input;
+}
+
+function parseSessionTranscriptParts(input: unknown): Record<string, unknown[]> {
+  if (input == null) return {};
+  if (typeof input !== "object" || Array.isArray(input)) {
+    throw new ApiError(400, "invalid_payload", "partsByMessageId must be an object");
+  }
+  const partsByMessageId: Record<string, unknown[]> = {};
+  for (const [messageId, parts] of Object.entries(input as Record<string, unknown>)) {
+    const id = messageId.trim();
+    if (!id) continue;
+    if (!Array.isArray(parts)) {
+      throw new ApiError(400, "invalid_payload", "partsByMessageId values must be arrays");
+    }
+    partsByMessageId[id] = parts;
+  }
+  return partsByMessageId;
+}
+
+function parseTranscriptStringArray(input: unknown, field: string): string[] {
+  if (input == null) return [];
+  if (!Array.isArray(input)) {
+    throw new ApiError(400, "invalid_payload", `${field} must be an array`);
+  }
+  return input
+    .map((value) => (typeof value === "string" ? value.trim() : ""))
+    .filter((value) => value.length > 0);
+}
+
+function parseSessionTranscriptDeletedParts(input: unknown): Record<string, string[]> {
+  if (input == null) return {};
+  if (typeof input !== "object" || Array.isArray(input)) {
+    throw new ApiError(400, "invalid_payload", "deletedPartsByMessageId must be an object");
+  }
+  const deletedPartsByMessageId: Record<string, string[]> = {};
+  for (const [messageId, partIds] of Object.entries(input as Record<string, unknown>)) {
+    const id = messageId.trim();
+    if (!id) continue;
+    const parsed = parseTranscriptStringArray(partIds, "deletedPartsByMessageId values");
+    if (parsed.length > 0) deletedPartsByMessageId[id] = parsed;
+  }
+  return deletedPartsByMessageId;
+}
+
+function isRecordLike(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function resolveTranscriptMessageIdForArtifacts(message: Record<string, unknown>): string {
+  const direct = typeof message.id === "string" ? message.id.trim() : "";
+  if (direct) return direct;
+  const info = isRecordLike(message.info) ? message.info : null;
+  return typeof info?.id === "string" ? info.id.trim() : "";
+}
+
+function attachTranscriptPartsForArtifacts(
+  messages: unknown[],
+  partsByMessageId: Record<string, unknown[]>,
+): SessionArtifactMessage[] {
+  const result: SessionArtifactMessage[] = [];
+  for (const rawMessage of messages) {
+    if (!isRecordLike(rawMessage)) continue;
+    const messageId = resolveTranscriptMessageIdForArtifacts(rawMessage);
+    const persistedParts = messageId ? partsByMessageId[messageId] ?? [] : [];
+    const inlineParts = Array.isArray(rawMessage.parts) ? rawMessage.parts : [];
+    const parts = (persistedParts.length > 0 ? persistedParts : inlineParts)
+      .filter(isRecordLike) as SessionArtifactPart[];
+    result.push({
+      ...rawMessage,
+      parts,
+    });
+  }
+  return result;
+}
+
 function parseSessionIdArray(input: unknown, fieldName: string): string[] {
   if (!Array.isArray(input)) {
     throw new ApiError(400, "invalid_payload", `${fieldName} must be an array`);
@@ -4460,9 +4550,11 @@ function createRoutes(
   const sessionArchives = createSessionArchiveStore();
   const conversationReadStore = createConversationReadStore();
   const conversationBindingStore = createConversationBindingStore({ dataDir: serverDataDir });
+  const conversationTranscriptStore = createConversationTranscriptStore({ dataDir: serverDataDir });
   const conversationService = createConversationService({
     readStore: conversationReadStore,
     bindingStore: conversationBindingStore,
+    transcriptStore: conversationTranscriptStore,
     createOpenCodeSession: async ({ workspace, directory, title, sendTraceId }) => {
       const scopedWorkspace = directory ? { ...workspace, directory } : workspace;
       return await fetchOpencodeJson(scopedWorkspace, "/session", {
@@ -5070,6 +5162,7 @@ function createRoutes(
     ];
 
     let provision: { version: string; status: "updated" | "unchanged"; written: number; unchanged: number } | null = null;
+    let userGlobalSkills: Awaited<ReturnType<typeof materializeUserGlobalSkillsForWorkspace>> | null = null;
     try {
       provision = await provisionWorkspaceInternalSystem(workspace.path, resolveVesloAppDataDir());
       if (provision.written > 0) {
@@ -5082,6 +5175,19 @@ function createRoutes(
           type: "agent",
           action: "updated",
           path: ".opencode/agents",
+        });
+      }
+      userGlobalSkills = await materializeUserGlobalSkillsForWorkspace({
+        workspaceRoot: workspace.path,
+        workspaceId: workspace.id,
+        dataDir: serverDataDir,
+      });
+      if (userGlobalSkills.reloadRequired) {
+        emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
+          type: "skill",
+          name: "veslo-user",
+          action: "updated",
+          path: userGlobalSkills.rootDir,
         });
       }
     } catch (error) {
@@ -5104,6 +5210,7 @@ function createRoutes(
       activeId: workspace.id,
       workspace: serializeWorkspace(workspace),
       provision,
+      userGlobalSkills,
     });
   });
 
@@ -5162,6 +5269,11 @@ function createRoutes(
     const workspace = await resolveWorkspace(config, ctx.params.id);
 
     const result = await provisionWorkspaceInternalSystem(workspace.path, resolveVesloAppDataDir());
+    const userGlobalSkills = await materializeUserGlobalSkillsForWorkspace({
+      workspaceRoot: workspace.path,
+      workspaceId: workspace.id,
+      dataDir: serverDataDir,
+    });
 
     await recordAudit(workspace.path, {
       id: shortId(),
@@ -5179,6 +5291,16 @@ function createRoutes(
         action: "updated",
         path: ".opencode/veslo/internal",
       });
+    }
+    if (userGlobalSkills.reloadRequired) {
+      emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
+        type: "skill",
+        name: "veslo-user",
+        action: "updated",
+        path: userGlobalSkills.rootDir,
+      });
+    }
+    if (result.written > 0) {
       emitReloadEvent(ctx.reloadEvents, workspace, "agents", {
         type: "agent",
         action: "updated",
@@ -5193,6 +5315,7 @@ function createRoutes(
       status: result.status,
       written: result.written,
       unchanged: result.unchanged,
+      userGlobalSkills,
     });
   });
 
@@ -5232,6 +5355,7 @@ function createRoutes(
     const result = await conversationService.listConversations({
       workspace,
       directory,
+      sync: ctx.url.searchParams.get("sync") === "true" || ctx.url.searchParams.get("sync") === "1",
     });
     return jsonResponse(result);
   });
@@ -5710,6 +5834,56 @@ function createRoutes(
     return jsonResponse(result);
   });
 
+  addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/transcript", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const sessionId = (ctx.params.sessionId ?? "").trim();
+    if (!sessionId) {
+      throw new ApiError(400, "invalid_payload", "sessionId is required");
+    }
+    const body = await readJsonBody(ctx.request);
+    const directory = await resolveConversationReadDirectory(
+      workspace,
+      optionalBodyNullableString(body, "directory") ?? null,
+    );
+    if (!directory) {
+      throw new ApiError(400, "invalid_directory", "Conversation directory is required");
+    }
+    const binding = await conversationService.resolveOpenCodeSessionForRead({
+      workspaceId: workspace.id,
+      directory,
+      sessionOrConversationId: sessionId,
+    });
+    if (!binding && isVesloConversationId(sessionId)) {
+      throw new ApiError(404, "conversation_not_found", "Conversation was not found in this workspace");
+    }
+
+    const result = await conversationService.appendTranscript({
+      workspace,
+      sessionId,
+      directory,
+      limit: parseSessionTranscriptLimit(body.limit),
+      messages: parseSessionTranscriptMessages(body.messages),
+      partsByMessageId: parseSessionTranscriptParts(body.partsByMessageId),
+      deletedMessageIds: parseTranscriptStringArray(body.deletedMessageIds, "deletedMessageIds"),
+      deletedPartsByMessageId: parseSessionTranscriptDeletedParts(body.deletedPartsByMessageId),
+    });
+    sessionTranscriptPrefetch.invalidate({
+      workspaceId: workspace.id,
+      sessionId: result.opencodeSessionId,
+      directory,
+    });
+    if (result.conversationId) {
+      sessionTranscriptPrefetch.invalidate({
+        workspaceId: workspace.id,
+        sessionId: result.conversationId,
+        directory,
+      });
+    }
+    return jsonResponse(result);
+  });
+
   addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId/transcript", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const sessionId = (ctx.params.sessionId ?? "").trim();
@@ -5740,21 +5914,22 @@ function createRoutes(
       workspace,
       ctx.url.searchParams.get("directory"),
     );
-    const search = new URLSearchParams();
-    search.set("limit", "200");
-    if (directory) search.set("directory", directory);
-
-    const messages = await fetchOpencodeJson(
+    const transcript = await loadConversationTranscriptResponse({
       workspace,
-      `/session/${encodeURIComponent(sessionId)}/message?${search.toString()}`,
-      { method: "GET", directory, maxResponseBytes: OPENCODE_TRANSCRIPT_RESPONSE_MAX_BYTES },
+      sessionOrConversationId: sessionId,
+      limit: SESSION_TRANSCRIPT_MAX_LIMIT,
+      directory,
+    });
+    const messages = attachTranscriptPartsForArtifacts(
+      transcript.messages,
+      transcript.partsByMessageId,
     );
 
     return jsonResponse(
       deriveLatestRunArtifactsResponse({
-        sessionId,
+        sessionId: transcript.opencodeSessionId,
         workspaceId: workspace.id,
-        messages: Array.isArray(messages) ? messages : [],
+        messages,
       }, { workspaceRoot: directory ?? workspace.path }),
     );
   });
@@ -7929,6 +8104,87 @@ function createRoutes(
     });
   });
 
+  addRoute(routes, "GET", "/skills/user-global-store", "client", async () => {
+    return jsonResponse({ items: await listUserGlobalSkills(serverDataDir) });
+  });
+
+  addRoute(routes, "GET", "/skills/user-global-store/:name", "client", async (ctx) => {
+    const name = String(ctx.params.name ?? "").trim();
+    if (!name) {
+      throw new ApiError(400, "invalid_skill_name", "Skill name is required");
+    }
+    return jsonResponse(await readUserGlobalSkill(name, serverDataDir));
+  });
+
+  addRoute(routes, "POST", "/skills/user-global-store", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const body = await readJsonBody(ctx.request);
+    const name = String(body.name ?? "").trim();
+    const content = String(body.content ?? "");
+    const description = body.description ? String(body.description) : undefined;
+    const enabled = typeof body.enabled === "boolean" ? body.enabled : undefined;
+    const result = await upsertUserGlobalSkill({ name, content, description, enabled }, serverDataDir);
+
+    await recordAudit(userGlobalSkillStorePath(serverDataDir), {
+      id: shortId(),
+      workspaceId: "global",
+      actor: ctx.actor ?? { type: "remote" },
+      action: "skills.user_global_store.upsert",
+      target: result.item.path,
+      summary: `Upserted user-global skill ${result.item.name}`,
+      timestamp: Date.now(),
+    });
+
+    return jsonResponse({
+      ok: true,
+      action: result.action,
+      item: result.item,
+      reloadRequired: true,
+      trigger: {
+        type: "skill",
+        name: result.item.name,
+        action: result.action,
+        path: result.item.path,
+        scope: "user-global",
+      },
+    });
+  });
+
+  addRoute(routes, "DELETE", "/skills/user-global-store/:name", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const name = String(ctx.params.name ?? "").trim();
+    if (!name) {
+      throw new ApiError(400, "invalid_skill_name", "Skill name is required");
+    }
+    const result = await deleteUserGlobalSkill(name, serverDataDir);
+
+    await recordAudit(userGlobalSkillStorePath(serverDataDir), {
+      id: shortId(),
+      workspaceId: "global",
+      actor: ctx.actor ?? { type: "remote" },
+      action: "skills.user_global_store.delete",
+      target: result.item.path,
+      summary: `Deleted user-global skill ${result.item.name}`,
+      timestamp: Date.now(),
+    });
+
+    return jsonResponse({
+      ok: true,
+      name: result.item.name,
+      path: result.item.path,
+      reloadRequired: true,
+      trigger: {
+        type: "skill",
+        name: result.item.name,
+        action: "removed",
+        path: result.item.path,
+        scope: "user-global",
+      },
+    });
+  });
+
   addRoute(routes, "DELETE", "/skills/user-global/:name", "none", async (ctx) => {
     ensureWritable(config);
     const actor = await requireHostOrClient(ctx.request, config, ctx.tokens);
@@ -8118,6 +8374,45 @@ function createRoutes(
   addRoute(routes, "GET", "/workspace/:id/skills/materialization", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     return jsonResponse(await buildWorkspaceSkillMaterializationStatus(config, workspace));
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/skills/user-global-store/sync", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "skills.user_global_store.sync",
+      summary: "Sync user-global skills into workspace runtime",
+      paths: [userGlobalMaterializedSkillsRoot(workspace.path)],
+    });
+
+    const result = await materializeUserGlobalSkillsForWorkspace({
+      workspaceRoot: workspace.path,
+      workspaceId: workspace.id,
+      dataDir: serverDataDir,
+    });
+
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "skills.user_global_store.sync",
+      target: result.rootDir,
+      summary: `Synced ${result.materializedSkills.length} user-global skill(s) into workspace runtime`,
+      timestamp: Date.now(),
+    });
+
+    if (result.reloadRequired) {
+      emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
+        type: "skill",
+        name: "veslo-user",
+        action: "updated",
+        path: result.rootDir,
+      });
+    }
+
+    return jsonResponse(result);
   });
 
   addRoute(routes, "POST", "/workspace/:id/skills/materialization/sync", "host", async (ctx) => {
