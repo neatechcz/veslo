@@ -13,8 +13,27 @@ export const AI_ACCESS_NOT_CONFIGURED_MESSAGE =
   "Your AI access has not been configured by the platform admin yet.";
 export const AI_ACCESS_INVALID_MESSAGE =
   "Assigned AI access is incomplete. Ask your platform admin to update it.";
+export const AI_ACCESS_LOAD_FAILED_MESSAGE = "Failed to load AI access";
+export const AI_ACCESS_ADMIN_MANAGED_MESSAGE_KEY = "ai_access.admin_managed";
+export const AI_ACCESS_LOADING_MESSAGE_KEY = "ai_access.loading";
+export const AI_ACCESS_NOT_CONFIGURED_MESSAGE_KEY = "ai_access.not_configured";
+export const AI_ACCESS_INVALID_MESSAGE_KEY = "ai_access.invalid";
+export const AI_ACCESS_LOAD_FAILED_MESSAGE_KEY = "ai_access.load_failed";
 export const DEFAULT_MANAGED_AI_GATEWAY_BASE_URL = "https://ai.veslo.work";
 const REDACTED_SECRET_VALUE = "[REDACTED]";
+
+const AI_ACCESS_MESSAGE_KEY_BY_TEXT = new Map<string, string>([
+  [AI_ACCESS_ADMIN_MANAGED_MESSAGE, AI_ACCESS_ADMIN_MANAGED_MESSAGE_KEY],
+  [AI_ACCESS_LOADING_MESSAGE, AI_ACCESS_LOADING_MESSAGE_KEY],
+  [AI_ACCESS_NOT_CONFIGURED_MESSAGE, AI_ACCESS_NOT_CONFIGURED_MESSAGE_KEY],
+  [AI_ACCESS_INVALID_MESSAGE, AI_ACCESS_INVALID_MESSAGE_KEY],
+  [AI_ACCESS_LOAD_FAILED_MESSAGE, AI_ACCESS_LOAD_FAILED_MESSAGE_KEY],
+]);
+
+export function resolveManagedAiAccessMessageKey(message: string | null | undefined): string | null {
+  const trimmed = message?.trim() ?? "";
+  return trimmed ? AI_ACCESS_MESSAGE_KEY_BY_TEXT.get(trimmed) ?? null : null;
+}
 
 export type ManagedAiAccessProfile = {
   userId: string;

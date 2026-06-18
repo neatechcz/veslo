@@ -435,12 +435,14 @@ import {
   type UnreadSessionMap,
 } from "./components/session/session-unread-model";
 import {
-  AI_ACCESS_ADMIN_MANAGED_MESSAGE,
-  AI_ACCESS_LOADING_MESSAGE,
-  AI_ACCESS_NOT_CONFIGURED_MESSAGE,
+  AI_ACCESS_ADMIN_MANAGED_MESSAGE_KEY,
+  AI_ACCESS_LOAD_FAILED_MESSAGE_KEY,
+  AI_ACCESS_LOADING_MESSAGE_KEY,
+  AI_ACCESS_NOT_CONFIGURED_MESSAGE_KEY,
   extractManagedApiKey,
   formatManagedAiAccessConfig,
   hasUsableManagedAiRuntimeConfig,
+  resolveManagedAiAccessMessageKey,
   resolveManagedAiAccessBundleState,
   resolveManagedAiGatewayBaseUrl,
   resolveManagedAiProviderRoutingTarget,
@@ -7784,10 +7786,17 @@ export default function App() {
     });
   });
 
+  const translateManagedAiAccessMessage = (message: string | null | undefined) => {
+    const trimmed = message?.trim() ?? "";
+    if (!trimmed) return t(AI_ACCESS_NOT_CONFIGURED_MESSAGE_KEY, currentLocale());
+    const translationKey = resolveManagedAiAccessMessageKey(trimmed);
+    return translationKey ? t(translationKey, currentLocale()) : trimmed;
+  };
+
   const managedAiAccessMessage = createMemo(() => {
-    if (managedAiAccess()) return AI_ACCESS_ADMIN_MANAGED_MESSAGE;
-    if (managedAiAccessBusy()) return AI_ACCESS_LOADING_MESSAGE;
-    return managedAiAccessError() ?? AI_ACCESS_NOT_CONFIGURED_MESSAGE;
+    if (managedAiAccess()) return t(AI_ACCESS_ADMIN_MANAGED_MESSAGE_KEY, currentLocale());
+    if (managedAiAccessBusy()) return t(AI_ACCESS_LOADING_MESSAGE_KEY, currentLocale());
+    return translateManagedAiAccessMessage(managedAiAccessError());
   });
 
   const managedAiAccessProviderLabel = createMemo(() => {
@@ -7809,8 +7818,8 @@ export default function App() {
       return null;
     }
     if (managedAiAccess()) return null;
-    if (managedAiAccessBusy()) return AI_ACCESS_LOADING_MESSAGE;
-    return managedAiAccessError() ?? AI_ACCESS_NOT_CONFIGURED_MESSAGE;
+    if (managedAiAccessBusy()) return t(AI_ACCESS_LOADING_MESSAGE_KEY, currentLocale());
+    return translateManagedAiAccessMessage(managedAiAccessError());
   });
 
   createEffect(() => {
@@ -7982,7 +7991,7 @@ export default function App() {
         if (cancelled) return;
         const failureDecision = resolveManagedAiAccessRefreshFailure({
           cachedAccessPresent: Boolean(cachedAccess),
-          errorMessage: describeRequestError(error, "Failed to load AI access"),
+          errorMessage: describeRequestError(error, t(AI_ACCESS_LOAD_FAILED_MESSAGE_KEY, currentLocale())),
         });
         if (failureDecision.clearProfile) {
           setManagedAiAccess(null);

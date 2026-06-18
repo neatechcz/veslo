@@ -1295,6 +1295,12 @@ export default {
   "workspace.switching_status_loading": "正在加载最近任务",
   "workspace.switching_status_almost": "快好了",
 
+  "ai_access.admin_managed": "提供商和模型选择由平台管理员管理。",
+  "ai_access.loading": "正在加载你的 AI 访问配置。",
+  "ai_access.not_configured": "平台管理员尚未为你配置 AI 访问权限。",
+  "ai_access.invalid": "分配的 AI 访问配置不完整。请联系平台管理员更新。",
+  "ai_access.load_failed": "无法加载 AI 访问配置",
+
   "app.connection_lost": "服务器连接已断开。请重新加载。",
   "app.unknown_error": "未知错误",
   "app.error.tauri_required": "此操作需要 Tauri 应用运行时。",

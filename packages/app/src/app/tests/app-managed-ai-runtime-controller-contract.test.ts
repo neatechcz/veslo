@@ -40,7 +40,7 @@ test("managed AI access refresh effect executes controller decisions", () => {
   );
   assert.match(
     effectSource,
-    /const failureDecision = resolveManagedAiAccessRefreshFailure\(\{[\s\S]*cachedAccessPresent: Boolean\(cachedAccess\),[\s\S]*errorMessage: describeRequestError\(error, "Failed to load AI access"\),[\s\S]*\}\);/,
+    /const failureDecision = resolveManagedAiAccessRefreshFailure\(\{[\s\S]*cachedAccessPresent: Boolean\(cachedAccess\),[\s\S]*errorMessage: describeRequestError\(error, t\(AI_ACCESS_LOAD_FAILED_MESSAGE_KEY, currentLocale\(\)\)\),[\s\S]*\}\);/,
     "failed access refresh state transition should be delegated",
   );
 });

@@ -1,4 +1,7 @@
-import type { ManagedAiAccessProfile } from "../lib/ai-access";
+import {
+  AI_ACCESS_NOT_CONFIGURED_MESSAGE,
+  type ManagedAiAccessProfile,
+} from "../lib/ai-access";
 
 export type ManagedAiRuntimeAccessProfile = ManagedAiAccessProfile;
 
@@ -67,7 +70,7 @@ export function resolveManagedAiAccessRefreshSuccess(input: {
   return {
     type: "clear-profile",
     gatewayAccessToken: "",
-    error: trim(input.reason) || "AI access is not configured.",
+    error: trim(input.reason) || AI_ACCESS_NOT_CONFIGURED_MESSAGE,
     clearCache: true,
     retry: true,
   };
