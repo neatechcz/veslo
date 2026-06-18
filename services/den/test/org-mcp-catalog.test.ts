@@ -140,13 +140,48 @@ test("org mcp catalog includes platform Google Workspace connectors", async () =
       "google-calendar",
       "google-drive",
     ])
-    assert.equal(payload.items[0].source.scope, "platform")
-    assert.equal(payload.items[0].provider?.id, "google")
-    assert.equal(payload.items[0].config.type, "remote")
-    assert.equal(payload.items[0].config.url, "https://gmailmcp.googleapis.com/mcp/v1")
-    assert.match(payload.items[0].config.oauth.scope, /gmail\.readonly/)
-    assert.equal(payload.items[0].config.oauth.clientId, "{env:VESLO_GOOGLE_MCP_CLIENT_ID}")
-    assert.equal(payload.items[0].config.oauth.clientSecret, "{env:VESLO_GOOGLE_MCP_CLIENT_SECRET}")
+
+    const expectedConnectors = [
+      {
+        id: "google-gmail",
+        url: "https://gmailmcp.googleapis.com/mcp/v1",
+        scopes: [
+          "https://www.googleapis.com/auth/gmail.readonly",
+          "https://www.googleapis.com/auth/gmail.compose",
+        ],
+      },
+      {
+        id: "google-calendar",
+        url: "https://calendarmcp.googleapis.com/mcp/v1",
+        scopes: [
+          "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+          "https://www.googleapis.com/auth/calendar.events.freebusy",
+          "https://www.googleapis.com/auth/calendar.events.readonly",
+        ],
+      },
+      {
+        id: "google-drive",
+        url: "https://drivemcp.googleapis.com/mcp/v1",
+        scopes: [
+          "https://www.googleapis.com/auth/drive.readonly",
+          "https://www.googleapis.com/auth/drive.file",
+        ],
+      },
+    ]
+
+    const itemsById = new Map(payload.items.map((item) => [item.id, item]))
+
+    for (const expected of expectedConnectors) {
+      const item = itemsById.get(expected.id)
+      assert.ok(item, `missing ${expected.id}`)
+      assert.equal(item.source.scope, "platform")
+      assert.equal(item.provider?.id, "google")
+      assert.equal(item.config.type, "remote")
+      assert.equal(item.config.url, expected.url)
+      assert.deepEqual(item.config.oauth.scope.split(" "), expected.scopes)
+      assert.equal(item.config.oauth.clientId, "{env:VESLO_GOOGLE_MCP_CLIENT_ID}")
+      assert.equal(item.config.oauth.clientSecret, "{env:VESLO_GOOGLE_MCP_CLIENT_SECRET}")
+    }
   } finally {
     await server.close()
   }
