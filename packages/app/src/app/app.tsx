@@ -1964,6 +1964,26 @@ export default function App() {
     return serverClient;
   };
 
+  const conversationWorkspaceRegistrationCacheByClient = new WeakMap<
+    object,
+    Map<string, Promise<{ id: string; cacheable: boolean }>>
+  >();
+  const conversationWorkspaceRegistrationCacheFor = (
+    serverClient: NonNullable<ReturnType<typeof vesloServerClient>>,
+  ) => {
+    const key = serverClient as object;
+    let cache = conversationWorkspaceRegistrationCacheByClient.get(key);
+    if (!cache) {
+      cache = new Map<string, Promise<{ id: string; cacheable: boolean }>>();
+      conversationWorkspaceRegistrationCacheByClient.set(key, cache);
+    }
+    return cache;
+  };
+  const conversationWorkspaceRegistrationCacheKey = (workspaceId: string, directory: string) => [
+    workspaceId.trim(),
+    normalizeDirectoryPath(directory) || directory.trim(),
+  ].join("\n");
+
   const ensureConversationReadWorkspaceRegistered = async (
     serverClient: NonNullable<ReturnType<typeof vesloServerClient>>,
     workspaceIdRaw: string,
@@ -2058,43 +2078,68 @@ export default function App() {
       return match ?? null;
     };
 
-    const opencodeRegistration = await resolveLocalOpencodeRegistration();
-
-    try {
-      const listed = await serverClient.listWorkspaces();
-      const existing = findMatchingWorkspace(listed.items);
-      if (existing && matchesRegistration(existing, opencodeRegistration)) return existing.id;
-    } catch (error) {
-      wsDebug("conversation-read:workspace-list:failed", {
-        workspaceId,
-        error: error instanceof Error ? error.message : safeStringify(error),
-      });
+    const registrationCache = conversationWorkspaceRegistrationCacheFor(serverClient);
+    const registrationCacheKey = conversationWorkspaceRegistrationCacheKey(workspaceId, targetDirectoryRaw);
+    const cachedRegistration = registrationCache.get(registrationCacheKey);
+    if (cachedRegistration) {
+      return (await cachedRegistration).id;
     }
 
-    try {
-      // Explicit read bootstrap: registers workspace metadata with Veslo server
-      // so passive reads can be routed by workspace id. This does not start
-      // or contact the OpenCode engine.
-      const added = await serverClient.addLocalWorkspace({
-        path: workspaceRootRaw || targetDirectoryRaw,
-        name: workspace.name?.trim() || undefined,
-        baseUrl: opencodeRegistration?.baseUrl ?? undefined,
-        directory: opencodeRegistration?.directory || targetDirectoryRaw,
-        opencodeUsername: opencodeRegistration?.opencodeUsername ?? undefined,
-        opencodePassword: opencodeRegistration?.opencodePassword ?? undefined,
-      });
-      const registered = findMatchingWorkspace(added.items);
-      if (registered) return registered.id;
-    } catch (error) {
-      wsDebug("conversation-read:workspace-register:failed", {
-        workspaceId,
-        directory: targetDirectory,
-        hasBaseUrl: Boolean(opencodeRegistration?.baseUrl),
-        error: error instanceof Error ? error.message : safeStringify(error),
-      });
-    }
+    const registrationPromise = (async (): Promise<{ id: string; cacheable: boolean }> => {
+      const opencodeRegistration = await resolveLocalOpencodeRegistration();
 
-    return fallback;
+      try {
+        const listed = await serverClient.listWorkspaces();
+        const existing = findMatchingWorkspace(listed.items);
+        if (existing && matchesRegistration(existing, opencodeRegistration)) {
+          return { id: existing.id, cacheable: true };
+        }
+      } catch (error) {
+        wsDebug("conversation-read:workspace-list:failed", {
+          workspaceId,
+          error: error instanceof Error ? error.message : safeStringify(error),
+        });
+      }
+
+      try {
+        // Explicit read bootstrap: registers workspace metadata with Veslo server
+        // so passive reads can be routed by workspace id. This does not start
+        // or contact the OpenCode engine.
+        const added = await serverClient.addLocalWorkspace({
+          path: workspaceRootRaw || targetDirectoryRaw,
+          name: workspace.name?.trim() || undefined,
+          baseUrl: opencodeRegistration?.baseUrl ?? undefined,
+          directory: opencodeRegistration?.directory || targetDirectoryRaw,
+          opencodeUsername: opencodeRegistration?.opencodeUsername ?? undefined,
+          opencodePassword: opencodeRegistration?.opencodePassword ?? undefined,
+        });
+        const registered = findMatchingWorkspace(added.items);
+        if (registered) return { id: registered.id, cacheable: true };
+      } catch (error) {
+        wsDebug("conversation-read:workspace-register:failed", {
+          workspaceId,
+          directory: targetDirectory,
+          hasBaseUrl: Boolean(opencodeRegistration?.baseUrl),
+          error: error instanceof Error ? error.message : safeStringify(error),
+        });
+      }
+
+      return { id: fallback, cacheable: false };
+    })();
+
+    registrationCache.set(registrationCacheKey, registrationPromise);
+    try {
+      const result = await registrationPromise;
+      if (!result.cacheable && registrationCache.get(registrationCacheKey) === registrationPromise) {
+        registrationCache.delete(registrationCacheKey);
+      }
+      return result.id;
+    } catch (error) {
+      if (registrationCache.get(registrationCacheKey) === registrationPromise) {
+        registrationCache.delete(registrationCacheKey);
+      }
+      throw error;
+    }
   };
 
   const conversationWorkspaceCacheKey = (workspaceId: string, directory: string) => [
@@ -5236,6 +5281,7 @@ export default function App() {
           providerId,
           gatewayBaseUrl: providerRoutingTarget.engineBaseUrl,
           serverClientToken: providerRoutingTarget.serverClientToken,
+          workspaceId: vesloWorkspaceId,
         });
         recordManagedAiWorkflowTrace("managed-ai-runtime-config-check:result", {
           ...routingTracePayload,
@@ -5262,6 +5308,7 @@ export default function App() {
         providerId,
         gatewayBaseUrl: providerRoutingTarget.engineBaseUrl,
         serverClientToken: providerRoutingTarget.serverClientToken,
+        workspaceId: vesloWorkspaceId,
       });
       recordManagedAiWorkflowTrace("managed-ai-runtime-config-check:result", {
         ...routingTracePayload,
@@ -6881,36 +6928,7 @@ export default function App() {
     }
 
     if (active.workspaceType === "local") {
-      const root = normalizeDirectoryPath(workspaceStore.activeWorkspaceRoot().trim());
-      if (!root) {
-        setVesloServerWorkspaceId(null);
-        return;
-      }
-
-      let cancelled = false;
-      const resolveWorkspace = async () => {
-        try {
-          const response = await client.listWorkspaces();
-          if (cancelled) return;
-          const items = Array.isArray(response.items) ? response.items : [];
-          const match = items.find((entry) => {
-            const candidates = [
-              normalizeDirectoryPath(entry.path),
-              normalizeDirectoryPath(entry.directory),
-              normalizeDirectoryPath(entry.opencode?.directory),
-            ].filter(Boolean);
-            return candidates.includes(root);
-          });
-          setVesloServerWorkspaceId(match?.id ?? null);
-        } catch {
-          if (!cancelled) setVesloServerWorkspaceId(null);
-        }
-      };
-
-      void resolveWorkspace();
-      onCleanup(() => {
-        cancelled = true;
-      });
+      setVesloServerWorkspaceId(active.id?.trim() || workspaceStore.activeWorkspaceId().trim() || null);
       return;
     }
 
@@ -11080,7 +11098,9 @@ export default function App() {
       vesloClient &&
       vesloWorkspaceId &&
       vesloCapabilities?.config?.write;
-    const providerRoutingReady = Boolean(providerRoutingTarget?.serverClientToken && gatewayAccessToken);
+    const providerRoutingReady = Boolean(
+      providerRoutingTarget?.serverClientToken && gatewayAccessToken && vesloWorkspaceId,
+    );
     const providerRoutingReloadKey = providerRoutingTarget
       ? `${providerRoutingTarget.serverClientToken}@${providerRoutingTarget.engineBaseUrl}`
       : "";

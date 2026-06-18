@@ -66,3 +66,26 @@ test("server health polling does not probe workspace OpenCode proxy URLs", () =>
     "WorkspaceServerSync may publish workspace proxy URLs, but ServerProvider must not treat them as global health targets",
   );
 });
+
+test("workspace server sync dedupes stable engine_info inputs", () => {
+  assert.match(
+    workspaceServerSyncSource,
+    /let inFlightWorkspaceServerSyncKey = "";/,
+    "workspace server sync should track an in-flight key",
+  );
+  assert.match(
+    workspaceServerSyncSource,
+    /const syncKey = \[workspaceId, workspacePath, orchestratorPort \?\? ""\]\.join\("::"\);/,
+    "workspace server sync should key engine_info calls by workspace id, path, and daemon port",
+  );
+  assert.match(
+    workspaceServerSyncSource,
+    /if \(syncKey === inFlightWorkspaceServerSyncKey\) return;/,
+    "workspace server sync should not start duplicate engine_info requests for the same key",
+  );
+  assert.match(
+    workspaceServerSyncSource,
+    /syncKey === lastResolvedWorkspaceServerSyncKey &&[\s\S]*currentServerUrl === lastResolvedWorkspaceServerSyncUrl/,
+    "workspace server sync should skip resolved inputs while the server URL is still current",
+  );
+});

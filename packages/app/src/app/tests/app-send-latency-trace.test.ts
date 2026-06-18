@@ -130,6 +130,24 @@ test("latest-run artifacts resolve workspace from scoped selected session", () =
   );
 });
 
+test("conversation read workspace registration dedupes per Veslo client", () => {
+  assert.match(
+    source,
+    /const conversationWorkspaceRegistrationCacheByClient = new WeakMap<[\s\S]*Map<string, Promise<\{ id: string; cacheable: boolean \}>>[\s\S]*>\(\);/,
+    "conversation workspace registration should keep a cache scoped to the current Veslo client object",
+  );
+  assert.match(
+    source,
+    /const cachedRegistration = registrationCache\.get\(registrationCacheKey\);[\s\S]*return \(await cachedRegistration\)\.id;/,
+    "repeated local conversation reads should join the same workspace registration lookup",
+  );
+  assert.match(
+    source,
+    /if \(!result\.cacheable && registrationCache\.get\(registrationCacheKey\) === registrationPromise\) \{[\s\S]*registrationCache\.delete\(registrationCacheKey\);[\s\S]*\}/,
+    "failed fallback-only registration attempts should not be cached forever",
+  );
+});
+
 test("create session preflight records duration for duplicate gates and fallback branches", () => {
   const start = source.indexOf("async function createSessionAndOpen(");
   const end = source.indexOf("const chooseFolderForCurrentSession", start);

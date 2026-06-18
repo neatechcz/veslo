@@ -57,18 +57,25 @@ test("local Veslo server ensure effect is registered after the real implementati
   );
 });
 
-test("local Veslo workspace readiness matches all server path candidates", () => {
+test("local Veslo workspace readiness uses the stable local workspace id", () => {
   const resolutionEffectStart = source.indexOf("const vesloUrl = vesloServerUrl().trim();");
   assert.notStrictEqual(resolutionEffectStart, -1, "Veslo workspace resolution effect is missing");
 
   const localBranchStart = source.indexOf('if (active.workspaceType === "local") {', resolutionEffectStart);
   assert.notStrictEqual(localBranchStart, -1, "local Veslo workspace resolution branch is missing");
 
-  const localBranchEnd = source.indexOf("void resolveWorkspace();", localBranchStart);
+  const localBranchEnd = source.indexOf("return;", localBranchStart);
   assert.notStrictEqual(localBranchEnd, -1, "local Veslo workspace resolution branch end marker is missing");
   const localBranch = source.slice(localBranchStart, localBranchEnd);
 
-  assert.match(localBranch, /entry\.path/);
-  assert.match(localBranch, /entry\.directory/);
-  assert.match(localBranch, /entry\.opencode\?\.directory/);
+  assert.match(
+    localBranch,
+    /setVesloServerWorkspaceId\(active\.id\?\.trim\(\) \|\| workspaceStore\.activeWorkspaceId\(\)\.trim\(\) \|\| null\);/,
+    "local workspace readiness should use the shared stable workspace id contract",
+  );
+  assert.doesNotMatch(
+    localBranch,
+    /listWorkspaces|entry\.path|entry\.directory|entry\.opencode\?\.directory/,
+    "local workspace readiness should not perform a server path scan during startup",
+  );
 });

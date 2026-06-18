@@ -24,6 +24,10 @@ export function WorkspaceServerSync(props: {
   orchestratorPort?: () => number | null;
 }) {
   const server = useServer();
+  let inFlightWorkspaceServerSyncKey = "";
+  let lastResolvedWorkspaceServerSyncKey = "";
+  let lastResolvedWorkspaceServerSyncUrl = "";
+  let latestWorkspaceServerSyncKey = "";
 
   createEffect(() => {
     if (!isTauriRuntime()) return;
@@ -40,12 +44,24 @@ export function WorkspaceServerSync(props: {
     // accept here. We DO NOT run a background setInterval; previous attempts
     // leaked timers when the component unmounted under HMR, leading to
     // hundreds of pending HTTP requests against veslo-server (~500% CPU).
-    props.orchestratorPort?.();
+    const orchestratorPort = props.orchestratorPort?.() ?? null;
+    const currentServerUrl = server.url;
+    const syncKey = [workspaceId, workspacePath, orchestratorPort ?? ""].join("::");
+    latestWorkspaceServerSyncKey = syncKey;
+    if (syncKey === inFlightWorkspaceServerSyncKey) return;
+    if (
+      syncKey === lastResolvedWorkspaceServerSyncKey &&
+      currentServerUrl === lastResolvedWorkspaceServerSyncUrl
+    ) return;
 
+    inFlightWorkspaceServerSyncKey = syncKey;
     void engineInfo(workspaceId, workspacePath || undefined)
       .then((info) => {
+        if (latestWorkspaceServerSyncKey !== syncKey) return;
         const nextUrl = info.baseUrl?.trim();
         if (!nextUrl) return;
+        lastResolvedWorkspaceServerSyncKey = syncKey;
+        lastResolvedWorkspaceServerSyncUrl = nextUrl;
         if (nextUrl === server.url) return;
         server.setActive(nextUrl);
         void props.workspaceStore.refreshActiveClient(nextUrl);
@@ -53,6 +69,11 @@ export function WorkspaceServerSync(props: {
       .catch(() => {
         // Engine not yet known to orchestrator (lazy spawn happens on first
         // proxy request). SDK will retry on the next workspace switch.
+      })
+      .finally(() => {
+        if (inFlightWorkspaceServerSyncKey === syncKey) {
+          inFlightWorkspaceServerSyncKey = "";
+        }
       });
   });
 

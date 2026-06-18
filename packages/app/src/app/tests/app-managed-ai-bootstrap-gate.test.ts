@@ -128,6 +128,24 @@ test("managed AI bootstrap can use a validated current runtime config while acce
   );
 });
 
+test("managed AI runtime config validation is workspace-scoped", () => {
+  const start = source.indexOf("const hasUsableManagedAiRuntimeConfigForSend = async");
+  const end = source.indexOf("const sendRuntimeReadiness = createSendRuntimeReadiness", start);
+  assert.ok(start >= 0 && end > start, "managed AI runtime config validation source should be present");
+  const validationSource = source.slice(start, end);
+
+  assert.match(
+    validationSource,
+    /hasUsableManagedAiRuntimeConfig\(\{[\s\S]*content: JSON\.stringify\(config\.opencode \?\? \{\}, null, 2\),[\s\S]*workspaceId: vesloWorkspaceId,[\s\S]*\}\)/,
+    "server-backed config validation should require the current Veslo workspace id",
+  );
+  assert.match(
+    validationSource,
+    /hasUsableManagedAiRuntimeConfig\(\{[\s\S]*content: configFile\.content,[\s\S]*workspaceId: vesloWorkspaceId,[\s\S]*\}\)/,
+    "project config validation should require the current Veslo workspace id when it is known",
+  );
+});
+
 test("managed AI access cache has a bounded TTL and hydrates before background refresh", () => {
   assert.match(
     source,

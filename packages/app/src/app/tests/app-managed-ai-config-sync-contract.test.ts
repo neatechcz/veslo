@@ -47,6 +47,12 @@ test("managed AI config sync effect executes controller decisions", () => {
 
   assert.match(
     effectSource,
+    /const providerRoutingReady = Boolean\(\s*providerRoutingTarget\?\.serverClientToken && gatewayAccessToken && vesloWorkspaceId,\s*\);/,
+    "managed provider routing should not be ready until the workspace correlation id is known",
+  );
+
+  assert.match(
+    effectSource,
     /const fileDecision = resolveManagedAiConfigWriteDecision\(\{[\s\S]*managedProfilePresent: Boolean\(managedProfile\),[\s\S]*providerRoutingReady,[\s\S]*managedConfigAlreadyCurrent:[\s\S]*shouldPreserveManagedConfig:[\s\S]*defaultModelAlreadyCurrent:[\s\S]*\}\);/,
     "file config branch should delegate write decisions",
   );
@@ -84,6 +90,25 @@ test("managed AI config sync ignores stale async runs before writing config", ()
     effectSource,
     /if \(!isCurrentManagedAiConfigSync\(\)\) return;\s*const result = await writeOpencodeConfig/s,
     "project config writes should be guarded by the current sync generation",
+  );
+});
+
+test("local Veslo workspace id resolves without listing server workspaces", () => {
+  const effectMarker = source.indexOf("const vesloUrl = vesloServerUrl().trim();");
+  const localBranchStart = source.indexOf('if (active.workspaceType === "local") {', effectMarker);
+  const localBranchEnd = source.indexOf("setVesloServerWorkspaceId(null);", localBranchStart);
+  assert.ok(effectMarker >= 0 && localBranchStart > effectMarker && localBranchEnd > localBranchStart);
+  const localBranchSource = source.slice(localBranchStart, localBranchEnd);
+
+  assert.match(
+    localBranchSource,
+    /setVesloServerWorkspaceId\(active\.id\?\.trim\(\) \|\| workspaceStore\.activeWorkspaceId\(\)\.trim\(\) \|\| null\);/,
+    "local workspace id should come from the local workspace state contract",
+  );
+  assert.doesNotMatch(
+    localBranchSource,
+    /listWorkspaces\(/,
+    "local workspace id resolution should not add a startup /workspaces request",
   );
 });
 
