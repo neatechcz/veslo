@@ -247,7 +247,9 @@ export function createExtensionsStore(options: {
               command: Array.isArray(entry.config.command)
                 ? entry.config.command.filter((part): part is string => typeof part === "string")
                 : undefined,
-              oauth: entry.config.oauth !== false,
+              oauth: entry.config.oauth === undefined ? true : entry.config.oauth,
+              provider: entry.provider,
+              source: entry.source,
             }))
           : [];
         setHubMcpCards(next);

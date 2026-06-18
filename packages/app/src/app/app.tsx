@@ -9426,7 +9426,8 @@ export default function App() {
       if (!entry.url) {
         throw new Error("Missing MCP URL.");
       }
-      const oauth: McpRemoteConfig["oauth"] = entry.oauth ? {} : false;
+      const oauth: McpRemoteConfig["oauth"] =
+        entry.oauth === false ? false : typeof entry.oauth === "object" ? entry.oauth : {};
       return {
         type: "remote",
         url: entry.url,

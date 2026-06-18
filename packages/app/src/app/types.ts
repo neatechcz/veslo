@@ -557,6 +557,14 @@ export type WorkspaceSkillSetResolution = {
   reloadRequired: boolean;
 };
 
+export type HubMcpOAuthConfig =
+  | boolean
+  | {
+      clientId: string;
+      clientSecret?: string;
+      scope?: string;
+    };
+
 export type HubMcpItem = {
   id: string;
   name: string;
@@ -565,11 +573,19 @@ export type HubMcpItem = {
     type: "remote" | "local";
     url?: string;
     command?: string[];
-    oauth?: boolean;
+    oauth?: HubMcpOAuthConfig;
   };
-  source: {
-    scope: "org";
-    orgId: string;
+  source:
+    | {
+        scope: "org";
+        orgId: string;
+      }
+    | {
+        scope: "platform";
+      };
+  provider?: {
+    id: string;
+    group?: string;
   };
 };
 
@@ -580,7 +596,12 @@ export type HubMcpCard = {
   type: "remote" | "local";
   url?: string;
   command?: string[];
-  oauth: boolean;
+  oauth: HubMcpOAuthConfig;
+  provider?: {
+    id: string;
+    group?: string;
+  };
+  source?: HubMcpItem["source"];
 };
 
 export type PluginInstallStep = {
