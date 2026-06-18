@@ -40,6 +40,8 @@ import {
 } from "./lib/auto-compaction";
 import {
   DEFAULT_UPDATE_AUTO_DOWNLOAD,
+  UPDATE_AUTO_DOWNLOAD_DEFAULT_OFF_MIGRATION_KEY,
+  resolveUpdateAutoDownloadDefaultOffMigration,
   resolveUpdateStartupPreferences,
   shouldAutoCheckForUpdatesAt,
 } from "./context/updater";
@@ -10603,9 +10605,23 @@ export default function App() {
         const storedUpdateAutoDownload = window.localStorage.getItem(
           "veslo.updateAutoDownload"
         );
+        const autoDownloadMigration = resolveUpdateAutoDownloadDefaultOffMigration({
+          storedAutoDownload: storedUpdateAutoDownload,
+          migrationComplete:
+            window.localStorage.getItem(UPDATE_AUTO_DOWNLOAD_DEFAULT_OFF_MIGRATION_KEY) === "1",
+        });
+        if (autoDownloadMigration.writeAutoDownload) {
+          window.localStorage.setItem(
+            "veslo.updateAutoDownload",
+            autoDownloadMigration.storedAutoDownload ?? "0",
+          );
+        }
+        if (autoDownloadMigration.writeMigration) {
+          window.localStorage.setItem(UPDATE_AUTO_DOWNLOAD_DEFAULT_OFF_MIGRATION_KEY, "1");
+        }
         const startupUpdatePreferences = resolveUpdateStartupPreferences({
           storedAutoCheck: storedUpdateAutoCheck,
-          storedAutoDownload: storedUpdateAutoDownload,
+          storedAutoDownload: autoDownloadMigration.storedAutoDownload,
         });
         setUpdateAutoCheck(startupUpdatePreferences.autoCheck);
         setUpdateAutoDownload(startupUpdatePreferences.autoDownload);

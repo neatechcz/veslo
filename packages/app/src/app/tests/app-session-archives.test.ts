@@ -47,6 +47,11 @@ test("update preference persistence waits for startup preference hydration", () 
     /if \(!updatePreferencesReady\(\)\) return;[\s\S]*?window\.localStorage\.setItem\(\s*"veslo\.updateAutoDownload"/,
     "auto-download persistence should not write the default before startup hydration reads stored preferences",
   );
+  assert.match(
+    source,
+    /resolveUpdateAutoDownloadDefaultOffMigration\(\{[\s\S]*?storedAutoDownload: storedUpdateAutoDownload,[\s\S]*?migrationComplete:[\s\S]*?UPDATE_AUTO_DOWNLOAD_DEFAULT_OFF_MIGRATION_KEY/,
+    "startup flow should migrate legacy default-on auto-download before resolving update preferences",
+  );
 
   const startupMount = source.match(/onMount\(async \(\) => \{[\s\S]*?pendingSessionDraftController\.markActivePendingDraftStorageReady\(\);/)?.[0] ?? "";
   assert.ok(startupMount, "app should define the async startup mount flow");
