@@ -712,7 +712,7 @@ export default {
 
   // MCP Auth Modal
   "mcp.auth.open_browser_signin": "Pro dokončení přihlášení otevřeme váš prohlížeč.",
-  "mcp.auth.local_token_notice": "Google autorizujete v prohlížeči. V konfiguraci Veslo je jen konfigurace MCP OAuth klienta; uživatelské OAuth tokeny zůstávají v lokální MCP/OpenCode runtime nebo lokálním profilu a neukládají do cloudu Veslo.",
+  "mcp.auth.local_token_notice": "Účet autorizujete v prohlížeči. V konfiguraci Veslo je jen konfigurace MCP OAuth klienta; uživatelské OAuth tokeny zůstávají v lokální MCP/OpenCode runtime nebo lokálním profilu a neukládají do cloudu Veslo.",
   "mcp.auth.connect_server": "Připojit {server}",
   "mcp.auth.already_connected": "Už je připojeno",
   "mcp.auth.already_connected_description": "{server} už je ověřený a připravený k použití.",

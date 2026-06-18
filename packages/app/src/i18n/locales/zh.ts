@@ -731,7 +731,7 @@ export default {
 
   // MCP Auth Modal
   "mcp.auth.open_browser_signin": "我们将打开您的浏览器完成登录。",
-  "mcp.auth.local_token_notice": "请在浏览器中授权 Google。Veslo 配置只包含 MCP OAuth 客户端配置；用户 OAuth 令牌由本地 MCP/OpenCode 运行时或本地配置文件处理，不会存储在 Veslo 云。",
+  "mcp.auth.local_token_notice": "请在浏览器中授权账户。Veslo 配置只包含 MCP OAuth 客户端配置；用户 OAuth 令牌由本地 MCP/OpenCode 运行时或本地配置文件处理，不会存储在 Veslo 云。",
   "mcp.auth.connect_server": "连接 {server}",
   "mcp.auth.already_connected": "已连接",
   "mcp.auth.already_connected_description": "{server} 已通过身份验证，可以正常使用。",

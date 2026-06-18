@@ -714,7 +714,7 @@ export default {
 
   // MCP Auth Modal
   "mcp.auth.open_browser_signin": "We'll open your browser to finish sign-in.",
-  "mcp.auth.local_token_notice": "Authorize Google in your browser. Veslo config contains only MCP OAuth client config; user OAuth tokens stay in the local MCP/OpenCode runtime or local profile and are not stored in Veslo cloud.",
+  "mcp.auth.local_token_notice": "Authorize the account in your browser. Veslo config contains only MCP OAuth client config; user OAuth tokens stay in the local MCP/OpenCode runtime or local profile and are not stored in Veslo cloud.",
   "mcp.auth.connect_server": "Connect {server}",
   "mcp.auth.already_connected": "Already Connected",
   "mcp.auth.already_connected_description": "{server} is already authenticated and ready to use.",

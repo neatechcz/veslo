@@ -141,7 +141,10 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     }
   };
 
-  const resolveSlug = (name: string) => validateMcpServerName(name).toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  const resolveServerKey = (entry: McpDirectoryInfo) => validateMcpServerName(entry.id?.trim() || entry.name);
+
+  const resolveSlug = (entry: McpDirectoryInfo) =>
+    resolveServerKey(entry).toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
   const waitForMcpAvailability = async (slug: string) => {
     const startedAt = Date.now();
@@ -183,7 +186,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
 
     let slug = "";
     try {
-      slug = resolveSlug(entry.name);
+      slug = resolveSlug(entry);
     } catch (err) {
       const message = err instanceof Error ? err.message : translate("mcp.auth.failed_to_start_oauth");
       setError(message);
@@ -327,7 +330,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     setCliAuthResult(null);
 
     try {
-      const result = await opencodeMcpAuth(props.projectDir, entry.name);
+      const result = await opencodeMcpAuth(props.projectDir, resolveServerKey(entry));
       if (result.ok) {
         setError(null);
         setNeedsReload(true);
@@ -381,7 +384,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
       try {
         await reloadEngine();
         if (!props.open) return;
-        const slug = resolveSlug(entry.name);
+        const slug = resolveSlug(entry);
         const status = await waitForMcpAvailability(slug);
         if (!status) {
           setAwaitingReload(false);
@@ -486,8 +489,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
 
     let slug = "";
     try {
-      const safeName = validateMcpServerName(entry.name);
-      slug = safeName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      slug = resolveSlug(entry);
     } catch (err) {
       const message = err instanceof Error ? err.message : translate("mcp.auth.failed_to_start_oauth");
       setError(message);
@@ -551,8 +553,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
 
     let slug = "";
     try {
-      const safeName = validateMcpServerName(entry.name);
-      slug = safeName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      slug = resolveSlug(entry);
     } catch (err) {
       const message = err instanceof Error ? err.message : translate("mcp.auth.failed_to_start_oauth");
       setError(message);

@@ -59,6 +59,19 @@ test("mcp auth modal explains local token ownership in localized copy", () => {
   assert.match(authModalSource, /mcp\.auth\.local_token_notice/);
 
   assert.match(enLocaleSource, /"mcp\.auth\.local_token_notice":\s*"[^"]*browser[^"]*Veslo config[^"]*MCP OAuth client config[^"]*local MCP\/OpenCode runtime[^"]*not stored in Veslo cloud/);
+  assert.doesNotMatch(enLocaleSource, /"mcp\.auth\.local_token_notice":\s*"[^"]*Google/);
   assert.match(csLocaleSource, /"mcp\.auth\.local_token_notice":\s*"[^"]*prohlížeči[^"]*konfiguraci Veslo[^"]*MCP OAuth klienta[^"]*lokální MCP\/OpenCode runtime[^"]*neukládají do cloudu Veslo/);
+  assert.doesNotMatch(csLocaleSource, /"mcp\.auth\.local_token_notice":\s*"[^"]*Google/);
   assert.match(zhLocaleSource, /"mcp\.auth\.local_token_notice":\s*"[^"]*浏览器[^"]*Veslo 配置[^"]*MCP OAuth 客户端配置[^"]*本地 MCP\/OpenCode 运行时[^"]*不会存储在 Veslo 云/);
+  assert.doesNotMatch(zhLocaleSource, /"mcp\.auth\.local_token_notice":\s*"[^"]*Google/);
+});
+
+test("mcp auth modal uses catalog id as the runtime server key when present", () => {
+  assert.match(
+    authModalSource,
+    /const resolveServerKey = \(entry: McpDirectoryInfo\) =>[\s\S]*validateMcpServerName\(entry\.id\?\.trim\(\) \|\| entry\.name\)/,
+  );
+  assert.match(authModalSource, /const resolveSlug = \(entry: McpDirectoryInfo\)/);
+  assert.doesNotMatch(authModalSource, /resolveSlug\(entry\.name\)/);
+  assert.doesNotMatch(authModalSource, /validateMcpServerName\(entry\.name\)/);
 });
