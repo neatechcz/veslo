@@ -18,6 +18,14 @@ test("beginOutageEpisode captures running sessions including retry states", () =
   assert.equal(state.shownReconnected, false);
 });
 
+test("beginOutageEpisode ignores scoped status keys as fetchable session ids", () => {
+  const state = beginOutageEpisode({
+    a: "running",
+    ["workspace-a\0a"]: "running",
+  });
+  assert.deepEqual(state.runningSessionIds, ["a"]);
+});
+
 test("beginOutageEpisode tracks idle-only outages without notices", () => {
   const state = beginOutageEpisode({ idleA: "idle", idleB: "idle" });
   assert.equal(state.active, true);

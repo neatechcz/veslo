@@ -6,7 +6,13 @@ export type WorkspaceDebugEvent = {
   payload?: unknown;
 };
 
-export type WorkspaceBusyMap = Record<string, { sessionId: string; startedAt: number }>;
+export type WorkspaceBusyEntry = {
+  startedAt: number;
+};
+
+export type WorkspaceBusySessions = Record<string, WorkspaceBusyEntry>;
+
+export type WorkspaceBusyMap = Record<string, WorkspaceBusySessions>;
 
 type WorkspaceBusyTraceRoot = typeof window & {
   __vesloWorkspaceBusyTrace?: Array<Record<string, unknown>>;

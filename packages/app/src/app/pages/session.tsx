@@ -173,6 +173,8 @@ import { availableChatWidthForLayout, reconcileSidebarLayoutForRootWidth } from 
 import { resolveSessionTitlebarContext } from "./session-titlebar-context";
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
+import { readSessionStatus } from "../lib/scoped-session-status";
+import type { WorkspaceBusyMap } from "../context/workspace-debug";
 
 function recordSendTrace(event: string, payload?: Record<string, unknown>) {
   if (typeof window === "undefined") return;
@@ -404,7 +406,7 @@ export type SessionViewProps = {
   setSessionAgent: (sessionId: string, agent: string | null) => void;
   saveSession: (sessionId: string) => Promise<string>;
   sessionStatusById: Record<string, string>;
-  busySessionByWorkspaceId?: Record<string, { sessionId: string; startedAt: number }>;
+  busySessionByWorkspaceId?: WorkspaceBusyMap;
   hasEarlierMessages: boolean;
   loadingEarlierMessages: boolean;
   loadEarlierMessages: (sessionId: string) => Promise<void>;
@@ -1112,6 +1114,13 @@ export default function SessionView(props: SessionViewProps) {
   };
   const workspaceIdForQueueKey = (sessionKey: string) =>
     parseUiConversationKey(sessionKey)?.workspaceId ?? props.activeWorkspaceId;
+  const statusForQueueKey = (sessionKey: string, statuses: Record<string, string>) => {
+    const sessionId = sessionIdForQueueKey(sessionKey);
+    if (!sessionId) return "idle";
+    return readSessionStatus(statuses, workspaceIdForQueueKey(sessionKey), sessionId);
+  };
+  const statusForSessionId = (sessionId: string, statuses: Record<string, string>) =>
+    readSessionStatus(statuses, workspaceIdForSessionQueue(sessionId), sessionId);
   const [pendingQueueKeyAwaitingSessionIdByBaseKey, setPendingQueueKeyAwaitingSessionIdByBaseKey] =
     createSignal<Record<string, string>>({});
   const currentSessionQueueKey = createMemo(() => {
@@ -2522,7 +2531,7 @@ export default function SessionView(props: SessionViewProps) {
         const sessionKey = sessionQueueKeyForSessionId(sessionId);
         if (
           !materializedPendingSubmit &&
-          props.sessionStatusById[sessionId] === "idle" &&
+          statusForSessionId(sessionId, props.sessionStatusById) === "idle" &&
           !queuePausedForSessionKey(sessionKey)
         ) {
           void drainNextQueuedDraft("queue-drain", sessionKey);
@@ -2734,8 +2743,8 @@ export default function SessionView(props: SessionViewProps) {
         for (const sessionKey of Object.keys(queuedDraftsBySessionKey())) {
           const sessionId = sessionIdForQueueKey(sessionKey);
           if (!sessionId) continue;
-          if (previousStatuses[sessionId] === undefined || previousStatuses[sessionId] === "idle") continue;
-          if (statuses[sessionId] !== "idle") continue;
+          if (statusForQueueKey(sessionKey, previousStatuses) === "idle") continue;
+          if (statusForQueueKey(sessionKey, statuses) !== "idle") continue;
           if (queuePausedForSessionKey(sessionKey)) continue;
           void drainNextQueuedDraft("queue-drain", sessionKey);
         }

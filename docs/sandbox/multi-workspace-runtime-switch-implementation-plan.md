@@ -292,3 +292,40 @@ Hotovo bude, kdyz plati:
 4. Navazat na `startup-request-audit` a sepsat spawn-entry matrix.
 5. Zprisnit implicit runtime call guard v `workspace-routing` / session callsites.
 6. Az potom sahat na overlay policy.
+
+## Implementation status
+
+Stav k 2026-06-18:
+
+- Hotovo: dedicated `browseWorkspace` metoda ve workspace store pro local passive browse origins.
+- Hotovo: app-level `handleActivateWorkspace` routuje passive origins nejdriv pres `browseWorkspace`; nepasivni flows zustavaji na `activateWorkspace`.
+- Hotovo: app-level browse policy pro local passive browse uz nema fallback `browseWorkspace -> activateWorkspace`; kdyz local browse selze, vrati `false` a nikdy tim nespusti runtime activation path.
+- Hotovo: passive browse nevola `activateVesloHostWorkspace`, `orchestratorWorkspaceActivate`, runtime ensure/restart ani transcript hydration.
+- Hotovo: lazy boot zustava title-only a preskakuje Veslo host activation/provisioning.
+- Hotovo: browse do workspace s ready route/runtime zachova target readiness misto slepeho global `engineReady(false)`.
+- Hotovo: source kontrakty hlidaji non-spawning/title-only browse path.
+- Hotovo: `workspace-lifecycle-state` je napojeny na realne app eventy:
+  - blocking activation publikuje `activation-started` a versioned `connected`/`failed`,
+  - passive browse publikuje `browse-ready`,
+  - explicitni `ensureEngineForWorkspace` publikuje `runtime-starting`, `connected` a `failed`.
+- Hotovo: reducer ignoruje pozdni superseded eventy i pri opakovane aktivaci stejne workspace.
+- Hotovo: fullscreen overlay uz necita `connectingWorkspaceId` jako trigger; blocking activation nastavuje verzovany explicitni overlay target, passive browse ho nenastavuje.
+- Hotovo: fullscreen overlay se neotevira jen kvuli globalnim `status.starting_engine` / `status.restarting_engine`; runtime warmup bez explicitniho blocking targetu zustava mimo fullscreen preloader.
+- Hotovo: local activation defaultne nezapina blocking overlay; explicitni `blockingOverlay: true` je nutny pro local blocking flow typu app reload.
+- Hotovo: pending draft, composer target a send target cesty pouzivaji sdileny app-level browse-policy wrapper misto raw `workspaceStore.activateWorkspace`.
+- Hotovo: app shell ma jeden `RuntimeOwner` bottleneck pro runtime readiness/client rozhodnuti; odvozuje `isWorkspaceRuntimeReady(workspaceId)`, active/any readiness, conversation-read sync readiness a routed client access z orchestrator ready snapshotu, routing entry, aktivniho legacy `engineReady` fallbacku a workspace busy mapy.
+- Hotovo: session store, extension/skill store, system-state reload flow a `WorkspaceRoutingProvider` dostavaji owner-gated routing wrapper. Lifecycle mutace (`ensure`, `release`, engine start/stop) zustavaji ve workspace/runtime controllerech.
+- Hotovo: `sessionStore` pouziva workspace-scoped readiness pro conversation-read sync, `selectSession`, SSE targety a pending permission/question refresh.
+- Hotovo: send path ensureuje runtime podle cilove workspace (`sendTargetWorkspace`) misto globalniho `engineReady`.
+- Hotovo: sidebar live sync, permission polling a MCP auto/runtime status refresh jsou napojene na active/any workspace readiness helpery misto raw `engineReady()`.
+- Hotovo: MCP runtime status refresh single-flight je oddeleny podle workspace, directory i aktualniho MCP entries key; zmena MCP seznamu behem stareho `mcp.status()` requestu spusti novy status read a stare vysledky/status chyby uz neprepisou aktualni UI.
+- Hotovo: sidebar a runtime schedulery uz nemaji option kontrakt pojmenovany `engineReady`; kontrakt explicitne rozlisuje `activeWorkspaceRuntimeReady` a `anyWorkspaceRuntimeReady`.
+- Hotovo: source/unit kontrakty hlidaji, ze fullscreen overlay je napojeny na explicitni blocking workspace id, ne na `connectingWorkspaceId`.
+- Hotovo: `browse-no-engine-spawn.spec.ts` rozsiruje budouci runtime E2E o kontrolu, ze passive workspace clicks nechavaji shell klikatelny a neukazuji blocking overlay.
+
+Zbyva:
+
+- Runtime overeni v realne Tauri appce: active A -> active B bez overlaye, bez engine stopu a s viditelnou aktivni konverzaci z A.
+- Docistit zbyla raw `engineReady` UI/debug mista mimo runtime rozhodovani a rozhodnout, jestli global signal zustane jen kompatibilitni active-workspace fallback.
+- Doresit direct-host/non-sandbox multi-workspace model: shared/directory-scoped runtime nebo explicitni legacy omezeni.
+- Doresit remote/cross-device view-only/unavailable semantics.

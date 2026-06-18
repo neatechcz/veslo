@@ -6,7 +6,7 @@ export type PermissionPollingSchedulerOptions = {
   routedWorkspaceCount: () => number;
   activeWorkspaceId: () => string | null;
   activeSendTraceId: () => string | null;
-  engineReady?: () => boolean;
+  anyWorkspaceRuntimeReady?: () => boolean;
   refreshPendingPermissions: () => Promise<void>;
   intervalMs?: number;
 };
@@ -27,7 +27,7 @@ export function createPermissionPollingScheduler(options: PermissionPollingSched
         });
         return;
       }
-      if (options.engineReady?.() === false) {
+      if (options.anyWorkspaceRuntimeReady?.() === false) {
         return;
       }
       const routedWorkspaceCount = options.routedWorkspaceCount();
@@ -59,7 +59,7 @@ export function createPermissionPollingScheduler(options: PermissionPollingSched
 
 export type McpAutoRefreshSchedulerOptions = {
   isTauriRuntime: () => boolean;
-  engineReady: () => unknown;
+  activeWorkspaceRuntimeReady: () => unknown;
   activeWorkspaceId?: () => string | null;
   activeSendTraceId?: () => string | null;
   workspaceProjectDir: () => string;
@@ -98,7 +98,7 @@ export function createMcpAutoRefreshScheduler(options: McpAutoRefreshSchedulerOp
 
   createEffect(() => {
     if (!options.isTauriRuntime()) return;
-    if (options.engineReady() === false) return;
+    if (options.activeWorkspaceRuntimeReady() === false) return;
     const projectDir = options.workspaceProjectDir().trim();
     if (!projectDir) return;
     const activeSendTraceId = options.activeSendTraceId?.()?.trim() ?? "";

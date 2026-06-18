@@ -31,8 +31,23 @@ test("engineReady boots false so guards block engine API calls until a real conn
 test("session SSE does not connect while lazy boot has no ready engine", () => {
   assert.match(
     sessionSource,
-    /createEffect\(\(\) => \{\s*if \(options\.engineReady\?\.\(\) === false\) \{\s*options\.setSseConnected\(false\);\s*return;\s*\}/s,
-    "lazy boot must not open engine SSE streams before the engine is ready; expected not-ready state should not produce reconnect errors",
+    /for \(const wsId of entryIds\) \{[\s\S]*if \(!isWorkspaceRuntimeReady\(wsId\)\) continue;[\s\S]*const c = options\.routing\.client\(wsId\);/s,
+    "workspace SSE streams should only open for routed workspaces whose runtime is ready",
+  );
+  assert.match(
+    sessionSource,
+    /else if \(fallback && isActiveWorkspaceRuntimeReady\(\)\) \{[\s\S]*targets\.push\(\{ wsId: "", client: fallback \}\);[\s\S]*\}/s,
+    "legacy fallback SSE should still require active workspace runtime readiness",
+  );
+  assert.match(
+    sessionSource,
+    /if \(targets\.length === 0\) \{[\s\S]*options\.setSseConnected\(false\);[\s\S]*return;[\s\S]*\}/s,
+    "lazy boot without any ready workspace target should not leave SSE marked connected",
+  );
+  assert.doesNotMatch(
+    sessionSource,
+    /if \(options\.engineReady\?\.\(\) === false\) \{[\s\S]*return;[\s\S]*\}[\s\S]*const entryIds = options\.routing\.entryIds\(\);/s,
+    "global engineReady must not block already-ready routed workspaces from opening SSE streams",
   );
 });
 

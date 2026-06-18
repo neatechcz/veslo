@@ -8,6 +8,7 @@ import type { createLocalRuntimeLifecycle } from "../utils/local-runtime-lifecyc
 import { withTimeoutOrThrow } from "../utils/promise-timeout";
 import type { ConnectToServer } from "./workspace-types";
 import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
+import type { WorkspaceLifecycleEvent } from "./workspace-lifecycle-state";
 
 const DEFAULT_CONNECT_HEALTH_TIMEOUT_MS = 12_000;
 const CONNECT_LOAD_SESSIONS_TIMEOUT_MS = 20_000;
@@ -63,6 +64,7 @@ export type WorkspaceRuntimeControllerDeps = {
   ) => Promise<{ version?: string | null }>;
   safeStringify: (value: unknown) => string;
   wsLog: (event: string, detail?: unknown) => void;
+  dispatchLifecycle?: (event: WorkspaceLifecycleEvent) => void;
 };
 
 export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControllerDeps) {
@@ -146,17 +148,24 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
   }
 
   async function ensureEngineForWorkspace(workspaceId?: string | null): Promise<boolean> {
-    const id = workspaceId?.trim() || deps.activeWorkspaceId();
+    const id = workspaceId?.trim() || deps.activeWorkspaceId().trim();
     const workspace = deps.workspaces().find((w) => w.id === id);
     if (!workspace?.path) return false;
 
     return await ensureEngineForWorkspaceSingleFlight(workspace.id || workspace.path, async () => {
+      const runtime = deps.resolveEngineRuntime();
+      deps.dispatchLifecycle?.({
+        type: "runtime-starting",
+        workspaceId: id,
+        runtime,
+        reason: "ensure-engine-for-workspace",
+      });
       deps.wsLog("[workspace:ensureEngine] starting engine for browsing mode", { id, path: workspace.path });
       recordSendWorkflowTrace("workspace-runtime", "ensure-engine:start", {
         workspaceId: id,
         workspacePath: workspace.path,
         workspaceType: workspace.workspaceType,
-        runtime: deps.resolveEngineRuntime(),
+        runtime,
         workspacesHydrated: deps.workspacesHydrated(),
       });
 
@@ -172,7 +181,7 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
         });
       }
 
-      if (deps.resolveEngineRuntime() !== "veslo-orchestrator") {
+      if (runtime !== "veslo-orchestrator") {
         deps.clearWorkspaceBusyAllExcept(workspace.id);
       }
 
@@ -184,11 +193,17 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
           workspaceId: id,
           skillsReady,
         });
-        if (!skillsReady) return false;
+        if (!skillsReady) {
+          deps.dispatchLifecycle?.({
+            type: "failed",
+            workspaceId: id,
+            message: "Workspace skills were not ready before runtime start",
+          });
+          return false;
+        }
 
         let ok = false;
         try {
-          const runtime = deps.resolveEngineRuntime();
           const startedAt = Date.now();
           recordSendWorkflowTrace("workspace-runtime", "ensure-engine:restart-runtime:start", {
             workspaceId: id,
@@ -270,6 +285,11 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
           recordSendWorkflowTrace("workspace-runtime", "ensure-engine:not-started", {
             workspaceId: id,
           });
+          deps.dispatchLifecycle?.({
+            type: "failed",
+            workspaceId: id,
+            message: "Workspace runtime did not start",
+          });
           return false;
         }
 
@@ -299,6 +319,12 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
           deps.onEngineStable?.();
         }
         deps.updateWorkspaceConnectionState(id, { status: "connected", message: null });
+        deps.dispatchLifecycle?.({
+          type: "connected",
+          workspaceId: id,
+          runtime,
+          reason: "ensure-engine-for-workspace",
+        });
         deps.wsLog("[workspace:ensureEngine] engine started successfully", { id });
         recordSendWorkflowTrace("workspace-runtime", "ensure-engine:success", {
           workspaceId: id,
@@ -313,6 +339,11 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
           error: message,
         });
         deps.setError(message);
+        deps.dispatchLifecycle?.({
+          type: "failed",
+          workspaceId: id,
+          message,
+        });
         return false;
       }
     });

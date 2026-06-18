@@ -16,6 +16,16 @@ const MCP_AUTH_POLL_INTERVAL_MS = 2_000;
 const MCP_AUTH_TIMEOUT_MS = 90_000;
 const MCP_AUTH_DISCOVERY_TIMEOUT_MS = 15_000;
 
+export type McpAuthActiveSession = {
+  id: string;
+  title: string;
+  workspaceId?: string | null;
+  workspaceRoot?: string | null;
+  directory?: string | null;
+  conversationId?: string | null;
+  opencodeSessionId?: string | null;
+};
+
 export type McpAuthModalProps = {
   open: boolean;
   onClose: () => void;
@@ -23,13 +33,13 @@ export type McpAuthModalProps = {
   onReloadEngine?: () => void | Promise<void>;
   reloadRequired?: boolean;
   reloadBlocked?: boolean;
-  activeSessions?: Array<{ id: string; title: string }>;
+  activeSessions?: McpAuthActiveSession[];
   isRemoteWorkspace?: boolean;
   client: Client | null;
   entry: McpDirectoryInfo | null;
   projectDir: string;
   language: Language;
-  onForceStopSession?: (sessionID: string) => void | Promise<void>;
+  onForceStopSession?: (sessionID: string, session?: McpAuthActiveSession) => void | Promise<void>;
 };
 
 export default function McpAuthModal(props: McpAuthModalProps) {
@@ -425,11 +435,14 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     startAuth(true);
   };
 
-  const handleForceStopSession = async (sessionID: string) => {
+  const handleForceStopSession = async (
+    sessionID: string,
+    session?: McpAuthActiveSession,
+  ) => {
     if (!props.onForceStopSession || forceStopBusySessionID()) return;
     setForceStopBusySessionID(sessionID);
     try {
-      await props.onForceStopSession(sessionID);
+      await props.onForceStopSession(sessionID, session);
     } finally {
       setForceStopBusySessionID(null);
     }
@@ -664,7 +677,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                           <button
                             type="button"
                             class="text-xs text-amber-11 underline underline-offset-2 hover:text-amber-12 transition-colors disabled:no-underline disabled:opacity-60"
-                            onClick={() => handleForceStopSession(session.id)}
+                            onClick={() => handleForceStopSession(session.id, session)}
                             disabled={forceStopBusySessionID() === session.id}
                           >
                             {forceStopBusySessionID() === session.id

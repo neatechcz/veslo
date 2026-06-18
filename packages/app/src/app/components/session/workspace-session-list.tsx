@@ -26,6 +26,8 @@ import type {
   WorkspaceSessionGroup,
 } from "../../types";
 import type { WorkspaceActivationOptions } from "../../context/workspace-types";
+import type { WorkspaceBusyMap } from "../../context/workspace-debug";
+import { readSessionStatus } from "../../lib/scoped-session-status";
 import {
   getWorkspaceTaskLoadErrorDisplay,
   isWindowsPlatform,
@@ -103,7 +105,7 @@ type Props = {
   pendingSelectedWorkspaceId?: string | null;
   suspendProjectReorder?: boolean;
   sessionStatusById?: Record<string, string>;
-  busySessionByWorkspaceId?: Record<string, { sessionId: string; startedAt: number }>;
+  busySessionByWorkspaceId?: WorkspaceBusyMap;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
@@ -1681,8 +1683,26 @@ export default function WorkspaceSessionList(props: Props) {
   const taskLoadErrorFor = (workspace: WorkspaceInfo, error: string | null) =>
     getWorkspaceTaskLoadErrorDisplay(workspace, error);
 
+  const sessionIdentityIds = (session: { id: string; conversationId?: string | null; opencodeSessionId?: string | null }) => [
+    session.id,
+    session.opencodeSessionId ?? "",
+    session.conversationId ?? "",
+  ].map((value) => value.trim()).filter(Boolean);
+
   const isBusySession = (workspaceId: string, sessionId: string) =>
-    props.busySessionByWorkspaceId?.[workspaceId]?.sessionId === sessionId;
+    Boolean(props.busySessionByWorkspaceId?.[workspaceId]?.[sessionId]);
+
+  const isBusyRowSession = (row: FlatSessionRow) =>
+    sessionIdentityIds(row.session).some((id) => isBusySession(row.workspace.id, id));
+
+  const rowSessionStatus = (row: FlatSessionRow) => {
+    const statuses = props.sessionStatusById ?? {};
+    for (const id of sessionIdentityIds(row.session)) {
+      const status = readSessionStatus(statuses, row.workspace.id, id);
+      if (status !== "idle") return status;
+    }
+    return "idle";
+  };
 
   const rowForcesProjectOpen = (row: FlatSessionRow) => {
     const selectedSessionId = props.selectedSessionId?.trim() ?? "";
@@ -1694,8 +1714,8 @@ export default function WorkspaceSessionList(props: Props) {
       if (!pendingWorkspaceId || pendingWorkspaceId === row.workspace.id) return true;
     }
 
-    if ((props.sessionStatusById?.[row.session.id] ?? "idle") !== "idle") return true;
-    return isBusySession(row.workspace.id, row.session.id);
+    if (rowSessionStatus(row) !== "idle") return true;
+    return isBusyRowSession(row);
   };
 
   const shouldForceProjectOpen = (group: ProjectSessionGroup) =>
@@ -1895,8 +1915,8 @@ export default function WorkspaceSessionList(props: Props) {
     const session = () => row.session;
     const isSelected = () => isRowSelected(workspace().id, session().id);
     const isSessionActive = () =>
-      (props.sessionStatusById?.[session().id] ?? "idle") !== "idle" ||
-      isBusySession(workspace().id, session().id);
+      rowSessionStatus(row) !== "idle" ||
+      isBusyRowSession(row);
     const isUnread = () => isSessionUnread(session().id);
     const labelOverride = () => options.label?.().trim() ?? "";
     const label = () => {
@@ -1929,7 +1949,7 @@ export default function WorkspaceSessionList(props: Props) {
           <span class="relative min-w-0 flex-1">
             <span class="flex items-center gap-1.5 min-w-0">
               <Show when={isSessionActive()}>
-                <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
+                <Loader2 size={11} class="shrink-0 animate-spin text-amber-10" />
               </Show>
               <span
                 class="text-[13px] text-gray-12 truncate"
@@ -2012,8 +2032,8 @@ export default function WorkspaceSessionList(props: Props) {
     const session = () => row.session;
     const isSelected = () => isRowSelected(workspace().id, session().id);
     const isSessionActive = () =>
-      (props.sessionStatusById?.[session().id] ?? "idle") !== "idle" ||
-      isBusySession(workspace().id, session().id);
+      rowSessionStatus(row) !== "idle" ||
+      isBusyRowSession(row);
     const isUnread = () => isSessionUnread(session().id);
     const isConnecting = () => isConnectingWorkspace(workspace().id);
     const soulStatus = () => props.soulStatusByWorkspaceId[workspace().id] ?? null;
@@ -2041,7 +2061,7 @@ export default function WorkspaceSessionList(props: Props) {
           <span class="relative min-w-0 flex-1">
             <span class="flex items-center gap-1.5 min-w-0">
               <Show when={isSessionActive()}>
-                <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
+                <Loader2 size={11} class="shrink-0 animate-spin text-amber-10" />
               </Show>
               <span
                 class="text-[13px] text-gray-12 truncate"

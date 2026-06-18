@@ -96,6 +96,31 @@ describe("orchestrator lifecycle client", () => {
     await expect(client.status("ws-a", "conv-a", "latest")).resolves.toBeNull();
   });
 
+  test("active reads the non-reconciled active run endpoint", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchImpl = mockFetch(async (input, init) => {
+      calls.push({ url: String(input), init });
+      return new Response(JSON.stringify({
+        ok: true,
+        runId: "run-active",
+        status: "running",
+        stale: false,
+      }), { status: 200 });
+    });
+    const client = createOrchestratorLifecycleClient({
+      daemonUrl: "http://127.0.0.1:1234",
+      token: "secret-token",
+      fetchImpl,
+    });
+
+    await expect(client.active("ws-a", "conv-a")).resolves.toEqual({
+      runId: "run-active",
+      status: "running",
+      stale: false,
+    });
+    expect(calls[0]?.url).toBe("http://127.0.0.1:1234/workspace/ws-a/conversations/conv-a/runs/active");
+  });
+
   test("status rejects malformed successful payloads", async () => {
     const fetchImpl = mockFetch(async () =>
       new Response(JSON.stringify({ ok: true }), { status: 200 }));

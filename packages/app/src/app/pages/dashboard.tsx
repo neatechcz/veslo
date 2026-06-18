@@ -85,6 +85,7 @@ import {
 } from "../components/layout/left-sidebar-width-prefs";
 import { openSessionWithWorkspaceActivation, type SessionBrowseScope } from "./session-navigation";
 import type { WorkspaceActivationOptions } from "../context/workspace-types";
+import type { WorkspaceBusyMap } from "../context/workspace-debug";
 import {
   resolveDashboardTabSelectionAction,
   resolveLeftMenuAction,
@@ -186,6 +187,8 @@ export type DashboardViewProps = {
   workspaceSessionPagingById: Record<string, { hasMore: boolean; loadingMore: boolean }>;
   subagentDecorationsBySessionId: Record<string, SidebarSubagentDecoration>;
   archivedSessionIds: string[];
+  sessionStatusById: Record<string, string>;
+  busySessionByWorkspaceId?: WorkspaceBusyMap;
   archiveSession: (workspaceId: string, sessionId: string) => Promise<void> | void;
   unarchiveSession: (workspaceId: string, sessionId: string) => Promise<void> | void;
   loadMoreWorkspaceSidebarSessions: (workspaceId: string) => Promise<void> | void;
@@ -1479,6 +1482,8 @@ export default function DashboardView(props: DashboardViewProps) {
               archivedSessionIds={props.archivedSessionIds}
               activeWorkspaceId={props.activeWorkspaceId}
               selectedSessionId={props.selectedSessionId}
+              sessionStatusById={props.sessionStatusById}
+              busySessionByWorkspaceId={props.busySessionByWorkspaceId}
               allowSelectedParentExpansion={false}
               connectingWorkspaceId={props.connectingWorkspaceId}
               pendingPermissionCountByWs={props.pendingPermissionCountByWs}

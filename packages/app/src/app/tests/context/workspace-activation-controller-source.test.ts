@@ -3,7 +3,9 @@ import test from "node:test";
 
 import { readContextSource, readWorkspaceFacadeSource } from "./workspace-source";
 import {
+  activateWorkspaceWithBrowsePolicy,
   isPassiveLocalBrowseActivationOrigin,
+  shouldShowBlockingWorkspaceOverlayForActivation,
   shouldSuppressWorkspaceSwitchOverlayForActivation,
 } from "../../context/workspace-activation-controller.js";
 
@@ -28,7 +30,9 @@ test("activateWorkspace is implemented by activation controller", () => {
 test("passive local browse activations suppress the fullscreen switch overlay", () => {
   assert.equal(isPassiveLocalBrowseActivationOrigin("workspace-session-list:project-open"), true);
   assert.equal(isPassiveLocalBrowseActivationOrigin("session-navigation:open-session-before-open"), true);
-  assert.equal(isPassiveLocalBrowseActivationOrigin("send-target:selected-session-workspace"), false);
+  assert.equal(isPassiveLocalBrowseActivationOrigin("send-target:selected-session-workspace"), true);
+  assert.equal(isPassiveLocalBrowseActivationOrigin("composer-target:workspace"), true);
+  assert.equal(isPassiveLocalBrowseActivationOrigin("app:open-pending-directory-draft-workspace"), true);
   assert.equal(isPassiveLocalBrowseActivationOrigin("workspace:activate-fresh-local"), false);
 
   assert.equal(
@@ -50,7 +54,7 @@ test("passive local browse activations suppress the fullscreen switch overlay", 
       workspaceType: "local",
       origin: "workspace:activate-fresh-local",
     }),
-    false,
+    true,
   );
   assert.equal(
     shouldSuppressWorkspaceSwitchOverlayForActivation({
@@ -65,13 +69,108 @@ test("passive local browse activations suppress the fullscreen switch overlay", 
       origin: "workspace-session-list:project-open",
       promoteToFront: true,
     }),
+    true,
+  );
+  assert.equal(
+    shouldShowBlockingWorkspaceOverlayForActivation({
+      workspaceType: "local",
+      origin: "workspace-session-list:project-open",
+      promoteToFront: true,
+    }),
     false,
   );
+  assert.equal(
+    shouldShowBlockingWorkspaceOverlayForActivation({
+      workspaceType: "local",
+      origin: "app:reload-workspace-engine",
+      blockingOverlay: true,
+    }),
+    true,
+  );
+});
+
+test("browse policy never falls back to activation for local passive browse", async () => {
+  const calls: string[] = [];
+  const ok = await activateWorkspaceWithBrowsePolicy(
+    {
+      workspaces: () => [{ id: "ws-local", workspaceType: "local" }],
+      browseWorkspace: async () => {
+        calls.push("browse");
+        return false;
+      },
+      activateWorkspace: async () => {
+        calls.push("activate");
+        return true;
+      },
+    },
+    "ws-local",
+    { origin: "workspace-session-list:project-open" },
+  );
+
+  assert.equal(ok, false);
+  assert.deepEqual(calls, ["browse"]);
+});
+
+test("browse policy keeps activation for remote or explicit runtime activation", async () => {
+  const remoteCalls: string[] = [];
+  const remoteOk = await activateWorkspaceWithBrowsePolicy(
+    {
+      workspaces: () => [{ id: "ws-remote", workspaceType: "remote" }],
+      browseWorkspace: async () => {
+        remoteCalls.push("browse");
+        return true;
+      },
+      activateWorkspace: async () => {
+        remoteCalls.push("activate");
+        return true;
+      },
+    },
+    "ws-remote",
+    { origin: "workspace-session-list:project-open" },
+  );
+
+  assert.equal(remoteOk, true);
+  assert.deepEqual(remoteCalls, ["activate"]);
+
+  const explicitCalls: string[] = [];
+  const explicitOk = await activateWorkspaceWithBrowsePolicy(
+    {
+      workspaces: () => [{ id: "ws-local", workspaceType: "local" }],
+      browseWorkspace: async () => {
+        explicitCalls.push("browse");
+        return true;
+      },
+      activateWorkspace: async () => {
+        explicitCalls.push("activate");
+        return true;
+      },
+    },
+    "ws-local",
+    { origin: "workspace:activate-fresh-local" },
+  );
+
+  assert.equal(explicitOk, true);
+  assert.deepEqual(explicitCalls, ["activate"]);
 });
 
 test("overlay suppression token is cleared on timeout, supersede, and completion", () => {
   const activationSource = readContextSource("workspace-activation-controller.ts");
 
+  assert.match(
+    activationSource,
+    /setWorkspaceSwitchOverlayTarget\?: \([\s\S]*WorkspaceSwitchOverlayTarget[\s\S]*\) => void;/,
+    "activation controller should expose an explicit blocking overlay target separate from connecting state",
+  );
+  assert.match(
+    activationSource,
+    /const overlayTarget = overlaySuppressionToken[\s\S]*workspaceId: id,[\s\S]*version: myVersion,/,
+    "blocking overlay target should be versioned so late activation cleanup cannot clear a newer overlay",
+  );
+  assert.match(
+    activationSource,
+    /deps\.setWorkspaceSwitchOverlayTarget\?\.\(\(current\) =>[\s\S]*current\?\.version === overlayTarget\.version \? null : current/,
+    "overlay target cleanup should only clear the activation version that owns it",
+  );
   assert.match(
     activationSource,
     /const clearOverlaySuppressionToken = \(\) => \{[\s\S]*current === overlaySuppressionToken \? null : current,[\s\S]*\};/,

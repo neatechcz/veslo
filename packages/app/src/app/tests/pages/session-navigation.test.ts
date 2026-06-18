@@ -211,8 +211,8 @@ test("app routes selected session browsing through DB scope", () => {
   );
   assert.match(
     appSource,
-    /shouldBrowseSessionFromDb: \(sessionId\) => \{[\s\S]*const transcriptScope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*if \(transcriptScope\) return true;[\s\S]*return !engineReady\(\);[\s\S]*\},/s,
-    "session store should force DB browsing for scoped sidebar selections",
+    /shouldBrowseSessionFromDb: \(sessionId\) => \{[\s\S]*const transcriptScope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*if \(transcriptScope\) return true;[\s\S]*return !isWorkspaceRuntimeReady\(workspaceStore\.activeWorkspaceId\(\)\.trim\(\)\);[\s\S]*\},/s,
+    "session store should force DB browsing for scoped sidebar selections or non-ready active workspace runtime",
   );
   assert.match(
     appSource,

@@ -33,6 +33,7 @@ import {
   orchestratorWorkspaceActivate,
   workspaceBootstrap,
   workspaceForget,
+  workspaceSetActive,
   workspaceVesloRead,
   type EngineInfo,
   type WorkspaceInfo,
@@ -69,10 +70,17 @@ import { createWorkspaceRuntimeController } from "./workspace-runtime-controller
 import { createWorkspaceLocalWorkspaces } from "./workspace-local-workspaces";
 import {
   createWorkspaceActivationController,
+  isPassiveLocalBrowseActivationOrigin,
   type WorkspaceActivationRunContext,
+  type WorkspaceSwitchOverlayTarget,
 } from "./workspace-activation-controller";
 import { createWorkspaceRemoteActivation } from "./workspace-activation-remote";
 import { createWorkspaceLocalActivation } from "./workspace-activation-local";
+import {
+  createInitialWorkspaceLifecycleState,
+  reduceWorkspaceLifecycleState,
+  type WorkspaceLifecycleEvent,
+} from "./workspace-lifecycle-state";
 
 export type { MigrationRepairResult } from "../stores/config-store";
 export type {
@@ -260,8 +268,13 @@ export function createWorkspaceStore(options: {
   const [connectingWorkspaceId, setConnectingWorkspaceId] = createSignal<string | null>(null);
   const [workspaceSwitchOverlaySuppressionToken, setWorkspaceSwitchOverlaySuppressionToken] =
     createSignal<string | null>(null);
+  const [workspaceSwitchOverlayTarget, setWorkspaceSwitchOverlayTarget] =
+    createSignal<WorkspaceSwitchOverlayTarget | null>(null);
   const workspaceSwitchOverlaySuppressed = createMemo(() =>
     Boolean(workspaceSwitchOverlaySuppressionToken()?.trim()),
+  );
+  const workspaceSwitchOverlayWorkspaceId = createMemo(() =>
+    workspaceSwitchOverlayTarget()?.workspaceId ?? null,
   );
   const {
     workspaceConnectionStateById,
@@ -269,6 +282,11 @@ export function createWorkspaceStore(options: {
     updateWorkspaceConnectionState,
     clearWorkspaceConnectionState,
   } = createWorkspaceConnectionState(workspaces);
+  const [workspaceLifecycleState, setWorkspaceLifecycleState] =
+    createSignal(createInitialWorkspaceLifecycleState());
+  const dispatchWorkspaceLifecycle = (event: WorkspaceLifecycleEvent) => {
+    setWorkspaceLifecycleState((state) => reduceWorkspaceLifecycleState(state, event));
+  };
 
   const activeWorkspaceInfo = createMemo(() => workspaces().find((w) => w.id === activeWorkspaceId()) ?? null);
   const activeWorkspaceDisplay = createMemo<WorkspaceDisplay>(() => {
@@ -531,6 +549,7 @@ export function createWorkspaceStore(options: {
   const runWorkspaceActivation = async ({
     id,
     next,
+    myVersion,
     isSuperseded,
     activateStart,
     activationOptions,
@@ -538,86 +557,241 @@ export function createWorkspaceStore(options: {
     const isRemote = next.workspaceType === "remote";
     const remoteType = isRemote ? normalizeRemoteType(next.remoteType) : "opencode";
     const baseUrl = isRemote ? next.baseUrl?.trim() ?? "" : "";
-    if (isRemote) {
-      const remoteActivation = createWorkspaceRemoteActivation({
-        setStartupPreference: options.setStartupPreference,
-        vesloServerSettings: options.vesloServerSettings,
-        updateVesloServerSettings: options.updateVesloServerSettings,
-        resolveVesloHost: remoteStoreRef.resolveVesloHost,
-        connectToServer,
-        setWorkspaces,
-        syncActiveWorkspaceId,
-        setProjectDir,
-        setWorkspaceConfig,
-        setWorkspaceConfigLoaded,
-        setAuthorizedDirs,
-        updateWorkspaceConnectionState,
-        setError: options.setError,
-        isSuperseded,
-        activationOptions,
-        activateStart,
-        workspaceSetActiveTimeoutMs: WORKSPACE_SET_ACTIVE_TIMEOUT_MS,
-        withTimeoutOrThrow,
-        t,
-        currentLocale,
-        indirectT: __vesloIndirectT,
-        indirectLocale: __vesloIndirectLocale,
-        safeStringify,
-        addOpencodeCacheHint,
-        wsDebug,
-      });
-      return await remoteActivation.activateRemoteWorkspace(id, next, remoteType, baseUrl);
-    }
-    const localActivation = createWorkspaceLocalActivation({
-      routingActive: () => options.routing.active(),
-      startupPreference: options.startupPreference,
-      setStartupPreference: options.setStartupPreference,
-      projectDir,
-      activeWorkspaceRoot,
-      setProjectDir,
-      authorizedDirs,
-      setAuthorizedDirs,
-      setWorkspaces,
-      syncActiveWorkspaceId,
-      normalizeWorkspaceScopePath,
-      workspaceScopeChanged,
-      engine: engineStore.engine,
-      resolveEngineRuntime,
-      localRuntimeLifecycle,
-      startHost: engineStore.startHost,
-      syncWorkspaceSkillMaterializationBeforeRuntime,
-      clearDisplayedSessionState,
-      updateWorkspaceConnectionState,
-      setWorkspaceConfig,
-      setWorkspaceConfigLoaded,
-      setEngineReady: options.setEngineReady,
-      isWorkspaceRuntimeReady: options.isWorkspaceRuntimeReady,
-      populateSidebarFromDb: options.populateSidebarFromDb,
-      hydrateLatestSessionFromDb: options.hydrateLatestSessionFromDb,
-      activateVesloHostWorkspace,
-      setError: options.setError,
-      setBusy: options.setBusy,
-      setBusyLabel: options.setBusyLabel,
-      setBusyStartedAt: options.setBusyStartedAt,
-      refreshSkills: options.refreshSkills,
-      refreshPlugins: options.refreshPlugins,
-      reportError,
-      isSuperseded,
-      activationOptions,
-      activateStart,
-      workspaceIoTimeoutMs: WORKSPACE_IO_TIMEOUT_MS,
-      workspaceSetActiveTimeoutMs: WORKSPACE_SET_ACTIVE_TIMEOUT_MS,
-      startHostTimeoutMs: START_HOST_TIMEOUT_MS,
-      withTimeoutOrThrow,
-      indirectT: __vesloIndirectT,
-      indirectLocale: __vesloIndirectLocale,
-      safeStringify,
-      addOpencodeCacheHint,
-      wsDebug,
-      wsLog: _wsLog,
+    dispatchWorkspaceLifecycle({
+      type: "activation-started",
+      workspaceId: id,
+      version: myVersion,
+      origin: activationOptions.origin ?? "unknown",
+      workspaceType: next.workspaceType,
     });
-    return await localActivation.activateLocalWorkspace(id, next);
+
+    try {
+      let ok = false;
+      if (isRemote) {
+        const remoteActivation = createWorkspaceRemoteActivation({
+          setStartupPreference: options.setStartupPreference,
+          vesloServerSettings: options.vesloServerSettings,
+          updateVesloServerSettings: options.updateVesloServerSettings,
+          resolveVesloHost: remoteStoreRef.resolveVesloHost,
+          connectToServer,
+          setWorkspaces,
+          syncActiveWorkspaceId,
+          setProjectDir,
+          setWorkspaceConfig,
+          setWorkspaceConfigLoaded,
+          setAuthorizedDirs,
+          updateWorkspaceConnectionState,
+          setError: options.setError,
+          isSuperseded,
+          activationOptions,
+          activateStart,
+          workspaceSetActiveTimeoutMs: WORKSPACE_SET_ACTIVE_TIMEOUT_MS,
+          withTimeoutOrThrow,
+          t,
+          currentLocale,
+          indirectT: __vesloIndirectT,
+          indirectLocale: __vesloIndirectLocale,
+          safeStringify,
+          addOpencodeCacheHint,
+          wsDebug,
+        });
+        ok = await remoteActivation.activateRemoteWorkspace(id, next, remoteType, baseUrl);
+      } else {
+        const localActivation = createWorkspaceLocalActivation({
+          routingActive: () => options.routing.active(),
+          startupPreference: options.startupPreference,
+          setStartupPreference: options.setStartupPreference,
+          projectDir,
+          activeWorkspaceRoot,
+          setProjectDir,
+          authorizedDirs,
+          setAuthorizedDirs,
+          setWorkspaces,
+          syncActiveWorkspaceId,
+          normalizeWorkspaceScopePath,
+          workspaceScopeChanged,
+          engine: engineStore.engine,
+          resolveEngineRuntime,
+          localRuntimeLifecycle,
+          startHost: engineStore.startHost,
+          syncWorkspaceSkillMaterializationBeforeRuntime,
+          clearDisplayedSessionState,
+          updateWorkspaceConnectionState,
+          setWorkspaceConfig,
+          setWorkspaceConfigLoaded,
+          setEngineReady: options.setEngineReady,
+          isWorkspaceRuntimeReady: options.isWorkspaceRuntimeReady,
+          populateSidebarFromDb: options.populateSidebarFromDb,
+          hydrateLatestSessionFromDb: options.hydrateLatestSessionFromDb,
+          activateVesloHostWorkspace,
+          setError: options.setError,
+          setBusy: options.setBusy,
+          setBusyLabel: options.setBusyLabel,
+          setBusyStartedAt: options.setBusyStartedAt,
+          refreshSkills: options.refreshSkills,
+          refreshPlugins: options.refreshPlugins,
+          reportError,
+          isSuperseded,
+          activationOptions,
+          activateStart,
+          workspaceIoTimeoutMs: WORKSPACE_IO_TIMEOUT_MS,
+          workspaceSetActiveTimeoutMs: WORKSPACE_SET_ACTIVE_TIMEOUT_MS,
+          startHostTimeoutMs: START_HOST_TIMEOUT_MS,
+          withTimeoutOrThrow,
+          indirectT: __vesloIndirectT,
+          indirectLocale: __vesloIndirectLocale,
+          safeStringify,
+          addOpencodeCacheHint,
+          wsDebug,
+          wsLog: _wsLog,
+        });
+        ok = await localActivation.activateLocalWorkspace(id, next);
+      }
+
+      dispatchWorkspaceLifecycle(
+        ok
+          ? {
+              type: "connected",
+              workspaceId: id,
+              version: myVersion,
+              runtime: isRemote ? undefined : resolveEngineRuntime(),
+              reason: activationOptions.origin ?? "activation",
+            }
+          : {
+              type: "failed",
+              workspaceId: id,
+              version: myVersion,
+              message: "Workspace activation failed",
+            },
+      );
+      return ok;
+    } catch (error) {
+      dispatchWorkspaceLifecycle({
+        type: "failed",
+        workspaceId: id,
+        version: myVersion,
+        message: error instanceof Error ? error.message : safeStringify(error),
+      });
+      throw error;
+    }
   };
+
+  let browseWorkspaceVersion = 0;
+  async function browseWorkspace(
+    workspaceId: string | undefined,
+    activationOptions: WorkspaceActivationOptions,
+  ) {
+    const id = workspaceId?.trim() ?? "";
+    if (!id) return false;
+    if (!isPassiveLocalBrowseActivationOrigin(activationOptions.origin)) return false;
+
+    const next = workspaces().find((w) => w.id === id) ?? null;
+    if (!next) return false;
+    if (next.workspaceType !== "local") return false;
+    if (CLOUD_ONLY_MODE) {
+      updateWorkspaceConnectionState(id, {
+        status: "error",
+        message: cloudOnlyMessage("cloud_only_local_workspace_filtered", "Local workers are disabled."),
+      });
+      return blockLocalAction("cloud_only_local_workspace_filtered", "Local workers are disabled.");
+    }
+
+    const nextRoot = next.path?.trim() ?? "";
+    if (!nextRoot) return false;
+
+    const version = ++browseWorkspaceVersion;
+    const isStaleBrowse = () => version !== browseWorkspaceVersion;
+    const previousProjectDir = projectDir();
+    const previousActiveWorkspaceRoot = activeWorkspaceRoot().trim();
+    const previousWorkspacePath = previousActiveWorkspaceRoot || previousProjectDir;
+    const workspaceChanged = workspaceScopeChanged(previousWorkspacePath, nextRoot, "local");
+    const targetRuntimeReady = Boolean(options.isWorkspaceRuntimeReady?.(id));
+
+    wsDebug("browse:local:start", {
+      id,
+      origin: activationOptions.origin,
+      nextRoot,
+      previousWorkspacePath: previousWorkspacePath || null,
+      workspaceChanged,
+      targetRuntimeReady,
+    });
+
+    options.setStartupPreference("local");
+    batch(() => {
+      syncActiveWorkspaceId(id);
+      setProjectDir(nextRoot);
+    });
+    options.setEngineReady?.(targetRuntimeReady);
+
+    if (isTauriRuntime()) {
+      setWorkspaceConfigLoaded(false);
+      try {
+        const cfg = await withTimeoutOrThrow(
+          workspaceVesloRead({ workspacePath: nextRoot }),
+          { timeoutMs: WORKSPACE_IO_TIMEOUT_MS, label: "workspace_veslo_read" },
+        );
+        if (isStaleBrowse()) return true;
+        setWorkspaceConfig(cfg);
+        setWorkspaceConfigLoaded(true);
+        const roots = Array.isArray(cfg.authorizedRoots) ? cfg.authorizedRoots : [];
+        setAuthorizedDirs(roots.length ? roots : [nextRoot]);
+      } catch (e) {
+        if (isStaleBrowse()) return true;
+        wsDebug("browse:local:workspace-config-failed", {
+          id,
+          error: e instanceof Error ? e.message : safeStringify(e),
+        });
+        setWorkspaceConfig(null);
+        setWorkspaceConfigLoaded(true);
+        setAuthorizedDirs([nextRoot]);
+      }
+
+      try {
+        const ws = await withTimeoutOrThrow(
+          workspaceSetActive(id, { promoteToFront: activationOptions.promoteToFront ?? false }),
+          { timeoutMs: WORKSPACE_SET_ACTIVE_TIMEOUT_MS, label: "workspace_set_active" },
+        );
+        if (isStaleBrowse()) return true;
+        setWorkspaces(ws.workspaces);
+        syncActiveWorkspaceId(ws.activeId);
+      } catch (e) {
+        wsDebug("browse:local:set-active-failed", {
+          id,
+          error: e instanceof Error ? e.message : safeStringify(e),
+        });
+      }
+    } else if (!authorizedDirs().includes(nextRoot)) {
+      const merged = authorizedDirs().length ? authorizedDirs().slice() : [];
+      if (!merged.includes(nextRoot)) merged.push(nextRoot);
+      setAuthorizedDirs(merged);
+    }
+
+    if (options.populateSidebarFromDb) {
+      try {
+        await options.populateSidebarFromDb(id, nextRoot);
+      } catch (e) {
+        wsDebug("browse:local:populate-sidebar-failed", {
+          id,
+          error: e instanceof Error ? e.message : safeStringify(e),
+        });
+      }
+    }
+
+    if (isStaleBrowse()) return true;
+    updateWorkspaceConnectionState(id, { status: "connected", message: null });
+    dispatchWorkspaceLifecycle({
+      type: "browse-ready",
+      workspaceId: id,
+      root: nextRoot,
+    });
+    wsDebug("browse:local:done", {
+      id,
+      origin: activationOptions.origin,
+      targetRuntimeReady,
+    });
+    return true;
+  }
+
   const connectionController = createWorkspaceConnectionController({
     routing: options.routing,
     activeWorkspaceId,
@@ -654,6 +828,7 @@ export function createWorkspaceStore(options: {
     hasActiveRoute: () => Boolean(options.routing.active()),
     setConnectingWorkspaceId,
     setWorkspaceSwitchOverlaySuppressionToken,
+    setWorkspaceSwitchOverlayTarget,
     updateWorkspaceConnectionState,
     wsActivateGuard,
     runActivationBody: runWorkspaceActivation,
@@ -1375,6 +1550,7 @@ export function createWorkspaceStore(options: {
     waitForHealthy,
     safeStringify,
     wsLog: _wsLog,
+    dispatchLifecycle: dispatchWorkspaceLifecycle,
   });
   runtimeControllerRef = runtimeController;
 
@@ -1396,7 +1572,9 @@ export function createWorkspaceStore(options: {
     createRemoteWorkspaceOpen,
     connectingWorkspaceId,
     workspaceSwitchOverlaySuppressed,
+    workspaceSwitchOverlayWorkspaceId,
     workspaceConnectionStateById,
+    workspaceLifecycleState,
     exportingWorkspaceConfig: configStore.exportingWorkspaceConfig,
     importingWorkspaceConfig: configStore.importingWorkspaceConfig,
     migrationRepairBusy: configStore.migrationRepairBusy,
@@ -1416,6 +1594,7 @@ export function createWorkspaceStore(options: {
     refreshEngine: engineStore.refreshEngine,
     refreshEngineDoctor: engineStore.refreshEngineDoctor,
     activateWorkspace,
+    browseWorkspace,
     ensureEngineForWorkspace,
     refreshActiveClient,
     workspacesHydrated,

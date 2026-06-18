@@ -36,3 +36,15 @@ test("recent and by-project session rows both use the helper and aria-current", 
   const ariaCurrentUses = source.match(/aria-current=\{isSelected\(\) \? "page" : undefined\}/g) ?? [];
   assert.equal(ariaCurrentUses.length, 2, "Both render paths should expose active session via aria-current");
 });
+
+test("active background session rows render a loading spinner", () => {
+  assert.match(
+    source,
+    /const rowSessionStatus = \(row: FlatSessionRow\) => \{[\s\S]*for \(const id of sessionIdentityIds\(row\.session\)\) \{[\s\S]*const status = readSessionStatus\(statuses, row\.workspace\.id, id\);[\s\S]*const isSessionActive = \(\) =>[\s\S]*rowSessionStatus\(row\) !== "idle"[\s\S]*isBusyRowSession\(row\);/,
+    "session rows should derive activity from live status and workspace busy state",
+  );
+
+  const spinnerUses =
+    source.match(/<Loader2 size=\{11\} class="shrink-0 animate-spin text-amber-10" \/>/g) ?? [];
+  assert.equal(spinnerUses.length, 2, "Recent and grouped session rows should both render a loading spinner");
+});

@@ -109,10 +109,18 @@ export type VesloWorkspaceList = {
   activeId?: string | null;
 };
 
+export type VesloResourceOwner = {
+  kind: "workspace" | "user" | "organization" | "platform";
+  id: string;
+  label?: string;
+  root?: string;
+};
+
 export type VesloPluginItem = {
   spec: string;
   source: "config" | "dir.project" | "dir.global";
   scope: "project" | "global";
+  owner?: VesloResourceOwner;
   path?: string;
 };
 
@@ -121,6 +129,7 @@ export type VesloSkillItem = {
   path: string;
   description: string;
   scope: "project" | "global";
+  owner?: VesloResourceOwner;
   trigger?: string;
   disableModelInvocation?: boolean;
   userInvocable?: boolean;
@@ -140,6 +149,7 @@ export type VesloUserGlobalSkillStoreItem = {
   description: string;
   scope: "user-global";
   source: "veslo-user-store";
+  owner?: VesloResourceOwner;
   hash: string;
   enabled: boolean;
   createdAt: string;
@@ -553,6 +563,7 @@ export type VesloSkillMaterializationEntry = {
   versionId?: string;
   packageSha256: string;
   target?: "workspace" | "personal-global";
+  owner?: VesloResourceOwner;
   skillDir?: string;
   materializedAt?: string;
 };
@@ -710,12 +721,14 @@ export type VesloCommandItem = {
   model?: string | null;
   subtask?: boolean;
   scope: "workspace" | "global";
+  owner?: VesloResourceOwner;
 };
 
 export type VesloMcpItem = {
   name: string;
   config: Record<string, unknown>;
   source: "config.project" | "config.global" | "config.remote";
+  owner?: VesloResourceOwner;
   disabledByTools?: boolean;
 };
 
@@ -1090,7 +1103,7 @@ export type VesloConversationRunDebugTraceEntry = {
   [key: string]: unknown;
 };
 
-export type VesloConversationRunResult = {
+export type VesloConversationRunSubmittedResult = {
   ok: boolean;
   workspaceId: string;
   conversationId: string;
@@ -1103,6 +1116,25 @@ export type VesloConversationRunResult = {
   upstream?: unknown;
   debugTrace?: VesloConversationRunDebugTraceEntry[];
 };
+
+export type VesloConversationRunQueuedResult = {
+  ok: boolean;
+  workspaceId: string;
+  conversationId: string;
+  opencodeSessionId: string;
+  runId?: string;
+  reservedRunId: string;
+  queueItemId: string;
+  activeRunId?: string | null;
+  queuePosition: number;
+  clientMessageId?: string | null;
+  origin?: string | null;
+  status: "queued";
+  kind: VesloConversationRunKind;
+  debugTrace?: VesloConversationRunDebugTraceEntry[];
+};
+
+export type VesloConversationRunResult = VesloConversationRunSubmittedResult | VesloConversationRunQueuedResult;
 
 export type VesloConversationAbortResult = {
   ok: boolean;

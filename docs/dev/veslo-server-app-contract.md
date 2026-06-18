@@ -18,6 +18,36 @@ The app treats Veslo server as the canonical workspace-control API for:
 
 The app should prefer these server surfaces over inventing parallel client-only behavior.
 
+## Resource Ownership Contract
+
+App-facing inventory records for local MCP entries, skills, plugins, commands,
+and Veslo-created user-global skills may include an `owner` envelope:
+
+```ts
+type ResourceOwner = {
+  kind: "workspace" | "user" | "organization" | "platform";
+  id: string;
+  label?: string;
+  root?: string;
+};
+```
+
+`owner` identifies who owns the durable definition of the item. Existing
+`scope` and `source` fields remain as legacy provenance and ordering metadata
+during migration.
+
+- Workspace-owned resources are definitions stored in workspace config or
+  workspace-local files. Workspace routes should use the configured
+  `workspace.id`; direct helper calls may fall back to a normalized root path.
+- User-owned resources are definitions stored in user-global config/files or
+  the Veslo user-global skill store. Local desktop without cloud identity uses
+  the local user owner fallback.
+- Organization and platform owners are reserved for registry-managed or
+  policy-managed resources.
+- For MCP, this owner is the config/listing owner only. MCP polling,
+  connection state, OAuth grant ownership, and runtime refresh ownership remain
+  separate concerns and must not be inferred from this field.
+
 ## Auth Model
 
 There are two important auth classes:
@@ -249,6 +279,16 @@ ready or busy routed workspaces that are not the selected UI workspace. That
 opt-in read unions the live source with host bindings and tunnels any missing
 sessions back into the host store; it must not be used to cold-start another
 workspace runtime.
+
+`POST /workspace/:id/conversations/:conversationId/runs` is server-authoritative
+for conversation run admission. A successful immediate submit returns
+`status: "submitted"` with `runId`. If the orchestrator lifecycle reports an
+active run for the conversation, the server persists the request in its durable
+run queue and returns `status: "queued"` with `queueItemId`, `reservedRunId`,
+`activeRunId`, and `queuePosition`. App clients must treat `queued` as an
+accepted send, not as a failed send or transcript error. `run_already_active`
+is an internal lifecycle lock signal and should not be surfaced as the normal
+client-facing response for this route.
 
 `POST /workspace/:id/sessions/:sessionId/transcript` persists live transcript
 snapshots into the host store. `messages` plus `partsByMessageId` are the

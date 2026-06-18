@@ -16,6 +16,11 @@ test("active workspace history retries after an empty ready fallback once the en
   assert.ok(activeRefreshEffectMatch, "active workspace refresh effect should exist");
   const activeRefreshEffect = activeRefreshEffectMatch[0];
 
+  assert.match(
+    activeRefreshEffect,
+    /options\.activeWorkspaceRuntimeReady\(\)/,
+    "active workspace sidebar retry should be gated by scoped runtime readiness",
+  );
   assert.doesNotMatch(
     activeRefreshEffect,
     /if \(status !== "idle"\) return;/,
@@ -25,6 +30,24 @@ test("active workspace history retries after an empty ready fallback once the en
     activeRefreshEffect,
     /sidebarSessionsByWorkspaceId\(\)\[id\]/,
     "active workspace refresh should inspect whether ready state actually has sidebar rows before skipping retry",
+  );
+});
+
+test("sidebar controller does not accept the old global engineReady option", () => {
+  assert.match(
+    sidebarWorkspaceSessionsSource,
+    /activeWorkspaceRuntimeReady: \(\) => boolean;/,
+    "sidebar controller should name its readiness dependency as active workspace scoped",
+  );
+  assert.doesNotMatch(
+    sidebarWorkspaceSessionsSource,
+    /engineReady: \(\) => boolean;/,
+    "sidebar controller must not expose a generic engineReady option that can be wired to the global app signal",
+  );
+  assert.doesNotMatch(
+    sidebarWorkspaceSessionsSource,
+    /options\.engineReady\(\)/,
+    "sidebar controller must not read the old global-ready option name",
   );
 });
 

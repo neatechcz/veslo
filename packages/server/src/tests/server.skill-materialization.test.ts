@@ -63,6 +63,7 @@ const archive = async (name: string): Promise<SkillPackageArchive> => {
 async function startFixture(input: { registryBaseUrl?: string } = {}) {
   const workspaceRoot = await tempDir("veslo-skill-materialization-route-");
   const dataDir = await tempDir("veslo-skill-materialization-data-");
+  await mkdir(join(workspaceRoot, ".git"), { recursive: true });
 
   const server = startServer({
     host: "127.0.0.1",

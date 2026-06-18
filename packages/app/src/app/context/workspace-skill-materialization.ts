@@ -14,7 +14,7 @@ import {
 } from "../utils";
 
 export type WorkspaceSkillMaterializationGateDeps = {
-  workspaceBusy: () => Record<string, { sessionId: string; startedAt: number }>;
+  workspaceBusy: () => Record<string, Record<string, { startedAt: number }>>;
   ensureLocalVesloServerRunning?: () => Promise<boolean>;
   vesloServerClient?: () => VesloServerClient | null;
   refreshSkills: (options?: { force?: boolean }) => Promise<void>;
@@ -82,7 +82,7 @@ export function createWorkspaceSkillMaterializationGate(
         return true;
       }
 
-      const activeRun = Boolean(deps.workspaceBusy()[workspace.id]);
+      const activeRun = Object.keys(deps.workspaceBusy()[workspace.id] ?? {}).length > 0;
       if (activeRun) {
         await client.syncWorkspaceSkillMaterialization(workspaceId, { ...materializationAuth, activeRun: true });
         deps.wsDebug("skills:materialization:pending:active-run", {

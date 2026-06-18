@@ -68,6 +68,10 @@ Workspace activation state is runtime-only state managed by `packages/app/src/ap
 - In Tauri local-to-local browsing mode, the active workspace can be `connected` even while the live OpenCode client is intentionally detached.
 - In that browsing mode the app loads sidebar/session history from SQLite first, and only re-attaches the engine when the user performs an action that requires it, such as sending a message.
 - The sidebar connection dot treats this state as runtime-available when the Veslo server is also connected, so browsing a different local workspace does not appear as a false runtime failure.
+- The fullscreen workspace switch overlay is driven by an explicit blocking switch target, not by `connectingWorkspaceId` itself or by global engine `busyLabel` values. `connectingWorkspaceId` remains a runtime/sidebar guard; passive local browsing and scoped runtime warmup must not create a blocking overlay target.
+- Runtime readiness checks that can target a concrete workspace should use workspace-scoped readiness (`isWorkspaceRuntimeReady(workspaceId)` in the app shell), not the global `engineReady` signal. The global signal remains a compatibility fallback for the active workspace; send, SSE, sidebar live sync, permission polling, and MCP runtime reads are expected to gate on the target workspace.
+- Runtime readiness and app-level routing client reads are owned by the app runtime owner. It derives runtime availability from orchestrator ready snapshots, workspace routing entries, active legacy `engineReady`, and workspace busy state, then exposes an owner-gated routing wrapper for session, extension/skill, system-state, and routing-context consumers. It does not start, stop, or activate engines; lifecycle mutations still belong to the workspace/runtime controllers.
+- MCP runtime status refresh is single-flight by workspace, project directory, and the current MCP entry list key. If the configured MCP entry list changes while an older status request is in flight, the new list must schedule its own runtime status read and stale older success or failure results must not overwrite or clear the current status UI.
 
 ## Den Auth State
 
@@ -377,6 +381,7 @@ Local Veslo state:
 - cached package archives under `<server data dir>/skill-package-cache/`, keyed by package SHA-256 and verified before use
 - unpacked runtime skill directories controlled by the local Veslo server
 - server-controlled workspace skill materializations under `.opencode/skills/veslo-managed/`, with a root manifest and per-skill ownership markers
+- app-facing resource inventory owner envelopes for MCP config entries, skills, plugins, commands, and Veslo user-global skill store records; these describe durable definition ownership and do not own MCP polling or connection state
 - pre-change backups for server-controlled materialization replacement/removal under the Veslo data directory
 - workspace activation or reload state after a skill set changes
 - any temporary install progress, errors, or selected install target in the app UI

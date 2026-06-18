@@ -49,7 +49,7 @@ type ConversationReadResult = {
 type SidebarWorkspaceSessionsOptions = {
   workspaceStore: WorkspaceStore;
   workspaceRouting: WorkspaceRouting;
-  engineReady: () => boolean;
+  activeWorkspaceRuntimeReady: () => boolean;
   directoryQueryPathMode?: () => DirectoryQueryPathMode;
   activeSendTraceId?: () => string | null;
   developerMode: () => boolean;
@@ -1061,7 +1061,7 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
   createEffect(() => {
     const id = options.workspaceStore.activeWorkspaceId().trim();
     if (!id) return;
-    if (!options.engineReady()) return;
+    if (!options.activeWorkspaceRuntimeReady()) return;
     const status = sidebarSessionStatusByWorkspaceId()[id] ?? "idle";
     if (status === "idle") {
       refreshSidebarWorkspaceSessions(id).catch(e => options.reportError(e, "sidebar.refreshSessions"));
@@ -1082,7 +1082,7 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
   });
 
   createEffect(() => {
-    if (!options.engineReady()) return;
+    if (!options.activeWorkspaceRuntimeReady()) return;
     const allSessions = options.sessions();
     const activeWorkspaceId = options.workspaceStore.activeWorkspaceId().trim();
     const connectingWorkspaceId = options.workspaceStore.connectingWorkspaceId()?.trim() ?? "";

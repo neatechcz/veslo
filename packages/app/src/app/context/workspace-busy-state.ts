@@ -9,24 +9,28 @@ export function createWorkspaceBusyState(recordTrace?: WorkspaceBusyTrace) {
 
   function markWorkspaceBusy(workspaceId: string, sessionId: string) {
     const id = workspaceId.trim();
-    if (!id || !sessionId) return;
+    const sid = sessionId.trim();
+    if (!id || !sid) return;
     setWorkspaceBusy((prev) => {
-      const existing = prev[id];
-      if (existing?.sessionId === sessionId) {
+      const existing = prev[id] ?? {};
+      if (existing[sid]) {
         recordTrace?.("mark-existing", {
           workspaceId: id,
-          sessionId,
+          sessionId: sid,
           previous: prev,
         });
         return prev;
       }
       const next = {
         ...prev,
-        [id]: { sessionId, startedAt: Date.now() },
+        [id]: {
+          ...existing,
+          [sid]: { startedAt: Date.now() },
+        },
       };
       recordTrace?.("mark", {
         workspaceId: id,
-        sessionId,
+        sessionId: sid,
         previous: prev,
         next,
       });
@@ -40,12 +44,23 @@ export function createWorkspaceBusyState(recordTrace?: WorkspaceBusyTrace) {
     setWorkspaceBusy((prev) => {
       const entry = prev[id];
       if (!entry) return prev;
-      if (sessionId && entry.sessionId !== sessionId) return prev;
+      const sid = sessionId?.trim() ?? "";
+      if (sid && !entry[sid]) return prev;
       const next = { ...prev };
-      delete next[id];
+      if (sid) {
+        const nextWorkspace = { ...entry };
+        delete nextWorkspace[sid];
+        if (Object.keys(nextWorkspace).length > 0) {
+          next[id] = nextWorkspace;
+        } else {
+          delete next[id];
+        }
+      } else {
+        delete next[id];
+      }
       recordTrace?.("clear", {
         workspaceId: id,
-        sessionId: sessionId ?? null,
+        sessionId: sid || null,
         previous: prev,
         next,
       });

@@ -4565,6 +4565,19 @@ async function runRouterDaemon(args: ParsedArgs) {
         if (!workspace) return;
         const conversationId = decodeURIComponent(parts[3] ?? "").trim();
         const runId = decodeURIComponent(parts[5] ?? "").trim();
+        if (runId === "active") {
+          const active = runStore.activeForConversation(workspace.id, conversationId);
+          if (!active) {
+            send(404, { error: "run not found" });
+            return;
+          }
+          send(200, {
+            ok: true,
+            ...active,
+            stale: false,
+          });
+          return;
+        }
         const reconciled =
           runId === "latest"
             ? await runRegistry.latest(workspace.id, conversationId)

@@ -16,7 +16,7 @@ test("workspace store defines a server-backed skill materialization sync gate", 
 
   assert.match(
     source,
-    /deps\.workspaceBusy\(\)\[workspace\.id\][\s\S]*activeRun: true/s,
+    /Object\.keys\(deps\.workspaceBusy\(\)\[workspace\.id\] \?\? \{\}\)\.length > 0[\s\S]*activeRun: true/s,
     "active workspace runs must request pending materialization instead of mutating managed skill files",
   );
 });

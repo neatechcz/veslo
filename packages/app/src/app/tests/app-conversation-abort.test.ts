@@ -13,8 +13,8 @@ test("conversation runs remember the submitted run id for scoped abort", () => {
   const runSource = source.slice(runStart, abortStart);
   assert.match(
     runSource,
-    /rememberLatestConversationRunId\(\{[\s\S]*workspaceId,[\s\S]*conversationId: result\.conversationId,[\s\S]*opencodeSessionId: result\.opencodeSessionId,[\s\S]*uiSessionId: normalizedSessionId,[\s\S]*runId: result\.runId,[\s\S]*\}\);/,
-    "successful conversation runs should remember their submitted run id under Veslo and UI identities",
+    /const latestRunId = result\.status === "submitted"[\s\S]*\? result\.runId[\s\S]*: result\.activeRunId\?\.trim\(\) \|\| result\.reservedRunId;[\s\S]*rememberLatestConversationRunId\(\{[\s\S]*workspaceId,[\s\S]*conversationId: result\.conversationId,[\s\S]*opencodeSessionId: result\.opencodeSessionId,[\s\S]*uiSessionId: normalizedSessionId,[\s\S]*runId: latestRunId,[\s\S]*\}\);/,
+    "conversation runs should remember submitted run ids and queued active/reserved run ids under Veslo and UI identities",
   );
 });
 
@@ -26,7 +26,7 @@ test("abortSession routes scoped conversations through Veslo abort and scoped le
   const abortWrapperSource = source.slice(abortWrapperStart, sessionStoreStart);
   assert.match(
     abortWrapperSource,
-    /const runId = resolveLatestConversationRunId\(\{[\s\S]*conversationId,[\s\S]*opencodeSessionId: scope\?\.opencodeSessionId,[\s\S]*uiSessionId: normalizedSessionId,[\s\S]*\}\);[\s\S]*if \(!runId\) \{[\s\S]*throw new Error\("Conversation run id is not available for abort\."\);[\s\S]*\}/,
+    /const runId = resolveLatestConversationRunId\(\{[\s\S]*conversationId,[\s\S]*opencodeSessionId: scope\.opencodeSessionId,[\s\S]*uiSessionId: normalizedSessionId,[\s\S]*\}\);[\s\S]*if \(!runId\) \{[\s\S]*throw new Error\("Conversation run id is not available for abort\."\);[\s\S]*\}/,
     "conversation abort should require an explicit run id from the scoped run map",
   );
   assert.match(
@@ -40,15 +40,17 @@ test("abortSession routes scoped conversations through Veslo abort and scoped le
   assert.notEqual(abortSessionStart, -1, "abortSession should exist");
   assert.notEqual(retryStart, -1, "abortSession should end before retryLastPrompt");
   const abortSessionSource = source.slice(abortSessionStart, retryStart);
-  const serviceCall = abortSessionSource.indexOf("abortConversationFromVesloWriteApi(id)");
+  const serviceCall = abortSessionSource.indexOf("abortConversationFromVesloWriteApi(id, target)");
   const scopedFallbackHelper = abortSessionSource.indexOf("const abortSessionViaScopedLegacy = async");
   const scopedFallbackCall = abortSessionSource.indexOf("if (await abortSessionViaScopedLegacy())");
+  const targetScopedFallbackCall = abortSessionSource.indexOf("target?.workspaceId?.trim() && await abortSessionViaScopedLegacy()");
   const fallbackWarn = abortSessionSource.indexOf('console.warn("[conversation-abort] falling back to OpenCode SDK", error);');
   const legacyAbort = abortSessionSource.indexOf("await abortSessionTyped(c, id);");
   const finalThrow = abortSessionSource.indexOf("throw error;", scopedFallbackCall);
   assert.ok(serviceCall >= 0, "abortSession should attempt Veslo abort first");
   assert.ok(scopedFallbackHelper >= 0 && scopedFallbackHelper < serviceCall, "abortSession should define a scoped legacy fallback before service errors");
   assert.ok(scopedFallbackCall > serviceCall, "known scoped conversations should try scoped legacy abort before throwing service errors");
+  assert.ok(targetScopedFallbackCall > serviceCall, "background workspace targets should try scoped abort before active-workspace legacy fallback");
   assert.ok(finalThrow > scopedFallbackCall, "scoped abort should throw only after scoped legacy fallback is unavailable");
   assert.ok(fallbackWarn > finalThrow, "active legacy fallback should only be reachable for unscoped migration cases");
   assert.ok(legacyAbort > fallbackWarn, "active OpenCode abort should remain only as an unscoped migration fallback");
@@ -56,5 +58,28 @@ test("abortSession routes scoped conversations through Veslo abort and scoped le
     abortSessionSource,
     /const scopedEntry = workspaceRouting\.entry\(scope\.workspaceId\);[\s\S]*scopedEntry\?\.client[\s\S]*await abortSessionTyped\(scopedClient, opencodeSessionId, \{[\s\S]*directory: scope\.directory\?\.trim\(\) \|\| undefined,[\s\S]*\}\);/,
     "scoped fallback should use the exact workspace entry client and directory, not the active workspace client",
+  );
+});
+
+test("reload guards include background workspace busy runs", () => {
+  assert.match(
+    source,
+    /createSystemState\(\{[\s\S]*sessions,[\s\S]*sessionStatusById,[\s\S]*workspaceBusy: workspaceStore\.workspaceBusy,[\s\S]*refreshPlugins,/,
+    "system state should receive the multi-workspace busy map, not only visible session statuses",
+  );
+  assert.match(
+    source,
+    /const activeReloadBlockingSessions = createMemo<ActiveReloadBlockingSession\[\]>\(\(\) => \{[\s\S]*for \(const \[workspaceId, busySessions\] of Object\.entries\(workspaceStore\.workspaceBusy\(\)\)\) \{[\s\S]*for \(const idRaw of Object\.keys\(busySessions\)\) \{[\s\S]*findSidebarSessionForWorkspace\(workspaceId, id\)[\s\S]*conversationId: sidebarSession\?\.conversationId \?\? null,[\s\S]*opencodeSessionId: sidebarSession\?\.opencodeSessionId \?\? id,[\s\S]*\}/,
+    "MCP reload blocking should include background busy workspaces and carry conversation metadata",
+  );
+  assert.match(
+    source,
+    /const forceStopActiveSessionsAndReload = async \(\) => \{[\s\S]*for \(const session of activeSessions\) \{[\s\S]*await abortSession\(session\.id, session\);/,
+    "force-stop reload should pass the scoped session metadata into abortSession",
+  );
+  assert.match(
+    source,
+    /onForceStopSession=\{\(sessionID, session\) => abortSession\(sessionID, session\)\}/,
+    "MCP auth modal force-stop should preserve the scoped background session metadata",
   );
 });

@@ -16,6 +16,7 @@ import type {
   ResetVesloMode,
   UpdateHandle,
 } from "./types";
+import type { WorkspaceBusyMap } from "./context/workspace-debug";
 import { currentLocale, t } from "../i18n";
 import { addOpencodeCacheHint, isTauriRuntime, safeStringify } from "./utils";
 import { mapConfigProvidersToList } from "./utils/providers";
@@ -79,6 +80,7 @@ export function createSystemState(options: {
   routing?: WorkspaceRouting;
   sessions: Accessor<Session[]>;
   sessionStatusById: Accessor<Record<string, string>>;
+  workspaceBusy?: Accessor<WorkspaceBusyMap>;
   refreshPlugins: (scopeOverride?: PluginScope) => Promise<void>;
   refreshSkills: (options?: { force?: boolean }) => Promise<void>;
   refreshMcpServers?: () => Promise<void>;
@@ -150,9 +152,15 @@ export function createSystemState(options: {
     return next;
   };
 
+  const isActiveSessionStatus = (status: string | null | undefined) => {
+    const normalized = status?.trim() ?? "";
+    return Boolean(normalized && normalized !== "idle");
+  };
+
   const anyActiveRuns = createMemo(() => {
     const statuses = options.sessionStatusById();
-    return options.sessions().some((s) => statuses[s.id] === "running");
+    if (options.sessions().some((s) => isActiveSessionStatus(statuses[s.id]))) return true;
+    return Object.values(options.workspaceBusy?.() ?? {}).some((sessions) => Object.keys(sessions).length > 0);
   });
 
   function clearVesloLocalStorage(mode: ResetVesloMode) {

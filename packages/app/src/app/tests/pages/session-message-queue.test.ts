@@ -102,7 +102,7 @@ test("idle transition drains only after a non-idle status and only when queue is
   );
   assert.match(
     source,
-    /const sessionId = sessionIdForQueueKey\(sessionKey\);[\s\S]*if \(!sessionId\) continue;[\s\S]*previousStatuses\[sessionId\][\s\S]*statuses\[sessionId\]/s,
+    /const sessionId = sessionIdForQueueKey\(sessionKey\);[\s\S]*if \(!sessionId\) continue;[\s\S]*statusForQueueKey\(sessionKey, previousStatuses\)[\s\S]*statusForQueueKey\(sessionKey, statuses\)/s,
     "background queue status checks should resolve scoped UI keys back to raw session ids",
   );
 });

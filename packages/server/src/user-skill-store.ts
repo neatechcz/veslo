@@ -4,8 +4,10 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { resolveVesloDataDir } from "./audit.js";
 import { ApiError } from "./errors.js";
+import { localUserResourceOwner } from "./resource-owner.js";
 import { parseSkillMarkdownMetadata } from "./skill-metadata.js";
 import { prepareSkillContent, SKILL_ENTRYPOINT, workspaceSkillRootsForMutation } from "./skills.js";
+import type { ResourceOwner } from "./types.js";
 import { exists } from "./utils.js";
 import { validateSkillName } from "./validators.js";
 import { projectSkillsDir } from "./workspace-files.js";
@@ -34,6 +36,11 @@ export type UserGlobalSkillSummary = Omit<UserGlobalSkillRecord, "content"> & {
   path: string;
   scope: "user-global";
   source: typeof USER_GLOBAL_SKILL_STORE_SOURCE;
+  owner?: ResourceOwner;
+};
+
+export type UserGlobalSkillStoreOptions = {
+  owner?: ResourceOwner;
 };
 
 type UserGlobalSkillStoreData = {
@@ -180,7 +187,10 @@ const writeStore = async (store: UserGlobalSkillStoreData, dataDirOverride?: str
   await rename(tempPath, path);
 };
 
-const toSummary = (record: UserGlobalSkillRecord): UserGlobalSkillSummary => ({
+const toSummary = (
+  record: UserGlobalSkillRecord,
+  owner: ResourceOwner = localUserResourceOwner(),
+): UserGlobalSkillSummary => ({
   name: record.name,
   description: record.description,
   hash: record.hash,
@@ -190,16 +200,22 @@ const toSummary = (record: UserGlobalSkillRecord): UserGlobalSkillSummary => ({
   path: userGlobalSkillVirtualPath(record.name),
   scope: "user-global",
   source: USER_GLOBAL_SKILL_STORE_SOURCE,
+  owner,
 });
 
-export async function listUserGlobalSkills(dataDirOverride?: string): Promise<UserGlobalSkillSummary[]> {
+export async function listUserGlobalSkills(
+  dataDirOverride?: string,
+  options: UserGlobalSkillStoreOptions = {},
+): Promise<UserGlobalSkillSummary[]> {
   const store = await readStore(dataDirOverride);
-  return store.skills.map(toSummary);
+  const owner = options.owner ?? localUserResourceOwner();
+  return store.skills.map((record) => toSummary(record, owner));
 }
 
 export async function readUserGlobalSkill(
   name: string,
   dataDirOverride?: string,
+  options: UserGlobalSkillStoreOptions = {},
 ): Promise<{ item: UserGlobalSkillSummary; content: string }> {
   const trimmed = name.trim();
   validateSkillName(trimmed);
@@ -208,12 +224,13 @@ export async function readUserGlobalSkill(
   if (!record) {
     throw new ApiError(404, "skill_not_found", `User-global skill not found: ${trimmed}`);
   }
-  return { item: toSummary(record), content: record.content };
+  return { item: toSummary(record, options.owner ?? localUserResourceOwner()), content: record.content };
 }
 
 export async function upsertUserGlobalSkill(
   payload: { name: string; content: string; description?: string; enabled?: boolean },
   dataDirOverride?: string,
+  options: UserGlobalSkillStoreOptions = {},
 ): Promise<{ item: UserGlobalSkillSummary; action: "added" | "updated" }> {
   const name = payload.name.trim();
   validateSkillName(name);
@@ -239,12 +256,13 @@ export async function upsertUserGlobalSkill(
   const skills = store.skills.filter((skill) => skill.name !== name);
   skills.push(next);
   await writeStore({ schemaVersion: STORE_SCHEMA_VERSION, skills: skills.sort(compareRecords) }, dataDirOverride);
-  return { item: toSummary(next), action };
+  return { item: toSummary(next, options.owner ?? localUserResourceOwner()), action };
 }
 
 export async function deleteUserGlobalSkill(
   name: string,
   dataDirOverride?: string,
+  options: UserGlobalSkillStoreOptions = {},
 ): Promise<{ item: UserGlobalSkillSummary }> {
   const trimmed = name.trim();
   validateSkillName(trimmed);
@@ -260,7 +278,7 @@ export async function deleteUserGlobalSkill(
     },
     dataDirOverride,
   );
-  return { item: toSummary(existing) };
+  return { item: toSummary(existing, options.owner ?? localUserResourceOwner()) };
 }
 
 const manifestPath = (rootDir: string) => join(rootDir, MATERIALIZATION_MANIFEST_FILE);

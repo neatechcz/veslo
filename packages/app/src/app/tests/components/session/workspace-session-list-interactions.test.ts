@@ -527,7 +527,7 @@ test("project accordion uses a route-driven open key instead of persisted collap
 test("collapsed sidebar sections keep real drawer state while exposing selected and active sessions", () => {
   assert.match(
     source,
-    /const rowForcesProjectOpen = \(row: FlatSessionRow\) => \{[\s\S]*selectedSessionId[\s\S]*pendingSessionId[\s\S]*sessionStatusById[\s\S]*isBusySession\(row\.workspace\.id, row\.session\.id\);[\s\S]*\};/,
+    /const rowForcesProjectOpen = \(row: FlatSessionRow\) => \{[\s\S]*selectedSessionId[\s\S]*pendingSessionId[\s\S]*rowSessionStatus\(row\)[\s\S]*isBusyRowSession\(row\);[\s\S]*\};/,
     "project visibility should identify selected, pending, and busy sessions",
   );
 
