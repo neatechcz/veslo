@@ -14,8 +14,9 @@ test("catalog MCP install refreshes MCP state after workspace config write", () 
   assert.equal(buildConfigSource.length > 0, true);
   assert.match(
     buildConfigSource,
-    /const oauth:[\s\S]*=\s*entry\.oauth\s*\?\s*\{\}\s*:\s*false;[\s\S]*oauth,/,
+    /const oauth:[\s\S]*=\s*entry\.oauth === false \? false : typeof entry\.oauth === "object" \? entry\.oauth : \{\};[\s\S]*oauth,/,
   );
+  assert.doesNotMatch(buildConfigSource, /entry\.oauth\s*\?\s*\{\}\s*:\s*false/);
 });
 
 test("extensions store still reads den auth before hub MCP install", () => {
