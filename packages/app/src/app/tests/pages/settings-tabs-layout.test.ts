@@ -7,6 +7,7 @@ const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8"
 const enLocaleSource = readFileSync(new URL("../../../i18n/locales/en.ts", import.meta.url), "utf8");
 const csLocaleSource = readFileSync(new URL("../../../i18n/locales/cs.ts", import.meta.url), "utf8");
 const generalSection = source.match(/<Match when=\{activeTab\(\) === "general"\}>[\s\S]*?<\/Match>/)?.[0] ?? "";
+const generalUpdateControlsRow = source.match(/<div class="flex flex-wrap items-center gap-2">[\s\S]*?settings\.auto_update_label[\s\S]*?<\/button>/)?.[0] ?? "";
 const dashboardTabRailPath = new URL("../../components/dashboard-tab-rail.tsx", import.meta.url);
 const dashboardTabRailSource = existsSync(dashboardTabRailPath) ? readFileSync(dashboardTabRailPath, "utf8") : "";
 

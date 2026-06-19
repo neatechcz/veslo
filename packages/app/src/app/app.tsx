@@ -3048,353 +3048,6 @@ export default function App() {
   };
 
   const [composerDraftBySessionId, setComposerDraftBySessionId] = createSignal<Record<string, ComposerDraft>>({});
-  const findComposerTargetOption = (targetId: string): ComposerTargetOption | null => {
-    const id = targetId.trim();
-    if (!id) return null;
-    return composerTargetOptions().find((target) => target.id === id) ?? null;
-  };
-  const findPendingDraftSummaryForTarget = (target: ComposerTargetOption): PendingSessionDraftSummary | null => {
-    for (const draft of pendingDraftSummaries()) {
-      try {
-        const draftKey = resolvePendingDraftKey({
-          kind: draft.kind,
-          workspaceId: draft.workspaceId,
-          directory: draft.directory ?? null,
-          privateWorkspaceId: draft.privateWorkspaceId ?? null,
-        });
-        if (draftKey === target.id) return draft;
-      } catch {
-        // Ignore malformed draft summaries.
-      }
-    }
-    return null;
-  };
-  const loadPendingDraftComposer = async (summary: PendingSessionDraftSummary): Promise<ComposerDraft | null> => {
-    if (!isTauriRuntime()) return null;
-
-    try {
-      const loaded = await pendingSessionDraftsGet(summary.id);
-      if (!loaded) return null;
-
-      const restoreError = formatPendingDraftAttachmentRestoreError(loaded.attachmentFailures);
-      if (restoreError) {
-        setError(restoreError);
-      }
-
-      return loaded.draft.composer;
-    } catch (error) {
-      reportError(error, "pendingDrafts.switch.load");
-      const message = error instanceof Error ? error.message : safeStringify(error);
-      setError(addOpencodeCacheHint(message));
-      return null;
-    }
-  };
-  const putPendingDraftForTarget = async (
-    target: ComposerTargetOption,
-    draft: ComposerDraft,
-  ): Promise<PendingSessionDraftSummary | null> => {
-    if (!isTauriRuntime()) return null;
-
-    const now = Date.now();
-    const existingSummary = findPendingDraftSummaryForTarget(target);
-
-    if (target.kind === "workspace") {
-      const workspaceId = target.workspaceId?.trim() ?? "";
-      const directory = normalizeDirectoryPath(target.directory ?? "");
-      if (!workspaceId || !directory) return null;
-
-      try {
-        const summary = await pendingSessionDraftsPut(existingSummary
-          ? {
-              id: existingSummary.id,
-              kind: existingSummary.kind,
-              workspaceId: existingSummary.workspaceId,
-              directory: existingSummary.directory ?? null,
-              privateWorkspaceId: existingSummary.privateWorkspaceId ?? null,
-              createdAt: existingSummary.createdAt,
-              updatedAt: now,
-              composer: draft,
-            }
-          : {
-              id: `pending-directory-${
-                typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-                  ? crypto.randomUUID()
-                  : `${now}-${Math.random().toString(16).slice(2)}`
-              }`,
-              kind: "directory",
-              workspaceId,
-              directory,
-              privateWorkspaceId: null,
-              createdAt: now,
-              updatedAt: now,
-              composer: draft,
-            });
-        await refreshPendingDraftSummaries();
-        return summary;
-      } catch (error) {
-        reportError(error, "pendingDrafts.switch.putDirectory");
-        const message = error instanceof Error ? error.message : safeStringify(error);
-        setError(addOpencodeCacheHint(message));
-        return null;
-      }
-    }
-
-    if (target.kind === "chat") {
-      if (existingSummary) {
-        const privateWorkspaceId = (existingSummary.privateWorkspaceId ?? existingSummary.workspaceId).trim();
-        if (!privateWorkspaceId) return null;
-
-        try {
-          const summary = await pendingSessionDraftsPut({
-            id: existingSummary.id,
-            kind: existingSummary.kind,
-            workspaceId: existingSummary.workspaceId,
-            directory: existingSummary.directory ?? null,
-            privateWorkspaceId,
-            createdAt: existingSummary.createdAt,
-            updatedAt: now,
-            composer: draft,
-          });
-          await refreshPendingDraftSummaries();
-          return summary;
-        } catch (error) {
-          reportError(error, "pendingDrafts.switch.putPrivate");
-          const message = error instanceof Error ? error.message : safeStringify(error);
-          setError(addOpencodeCacheHint(message));
-          return null;
-        }
-      }
-
-      const scratch = await workspaceStore.createScratchWorkspace();
-      if (!scratch?.id) return null;
-
-      const cleanupFreshScratchWorkspace = async () => {
-        try {
-          const cleanupSucceeded = await workspaceStore.forgetWorkspace(scratch.id, { deleteLocalData: true });
-          if (!cleanupSucceeded) {
-            reportError(
-              new Error(`Failed to clean up failed scratch workspace ${scratch.id}.`),
-              "pendingDrafts.switch.cleanupPrivate",
-            );
-          }
-        } catch (error) {
-          reportError(error, "pendingDrafts.switch.cleanupPrivate");
-        }
-      };
-
-      try {
-        const activatedScratchWorkspace = await workspaceStore.activateWorkspace(scratch.id);
-        if (!activatedScratchWorkspace) {
-          await cleanupFreshScratchWorkspace();
-          return null;
-        }
-
-        const summary = await pendingSessionDraftsPut({
-          id: `pending-new-private-${scratch.id}`,
-          kind: "new-private",
-          workspaceId: scratch.id,
-          directory: null,
-          privateWorkspaceId: scratch.id,
-          createdAt: now,
-          updatedAt: now,
-          composer: draft,
-        });
-        await refreshPendingDraftSummaries();
-        return summary;
-      } catch (error) {
-        await cleanupFreshScratchWorkspace();
-        reportError(error, "pendingDrafts.switch.createPrivate");
-        const message = error instanceof Error ? error.message : safeStringify(error);
-        setError(addOpencodeCacheHint(message));
-        return null;
-      }
-    }
-
-    return null;
-  };
-  const consumeMovedPendingDraft = async (input: {
-    previousStorageKey: string | null;
-    previousSummary: PendingSessionDraftSummary | null;
-    nextStorageKey: string;
-    nextSummary: PendingSessionDraftSummary;
-  }) => {
-    const previousStorageKey = input.previousStorageKey?.trim() ?? "";
-    const nextStorageKey = input.nextStorageKey.trim();
-    if (!previousStorageKey || !nextStorageKey || previousStorageKey === nextStorageKey) return;
-
-    const previousDraftId = input.previousSummary?.id.trim() ?? "";
-    const nextDraftId = input.nextSummary.id.trim();
-    pendingDraftPersistenceGeneration += 1;
-    setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, { storageKey: previousStorageKey }));
-
-    if (!previousDraftId || previousDraftId === nextDraftId || !isTauriRuntime()) return;
-
-    try {
-      const deleted = await pendingSessionDraftsDelete(previousDraftId);
-      if (!deleted) {
-        markPendingDraftConsumed(previousDraftId);
-        console.warn("[pendingDrafts.switch.move] failed to delete moved pending draft", { previousDraftId });
-      } else {
-        clearConsumedPendingDraftId(previousDraftId);
-      }
-    } catch (error) {
-      markPendingDraftConsumed(previousDraftId);
-      reportError(error, "pendingDrafts.switch.move");
-    }
-
-    try {
-      await refreshPendingDraftSummaries();
-    } catch (error) {
-      reportError(error, "pendingDrafts.switch.move.refresh");
-    }
-  };
-  const activateTargetWorkspace = async (
-    target: ComposerTargetOption,
-    summary?: PendingSessionDraftSummary | null,
-  ): Promise<boolean> => {
-    if (target.kind === "workspace") {
-      const workspaceId = target.workspaceId?.trim() ?? "";
-      if (!workspaceId) return false;
-      if (workspaceId === workspaceStore.activeWorkspaceId().trim()) return true;
-      return await workspaceStore.activateWorkspace(workspaceId);
-    }
-
-    if (target.kind === "chat") {
-      if (!summary) return true;
-      const workspaceId = (summary.privateWorkspaceId ?? summary.workspaceId).trim();
-      if (!workspaceId) return false;
-      if (workspaceId === workspaceStore.activeWorkspaceId().trim()) return true;
-      return await workspaceStore.activateWorkspace(workspaceId);
-    }
-
-    return false;
-  };
-  const selectComposerWorkspaceTargetFromPicker = async (): Promise<ComposerTargetOption | "cancelled" | null> => {
-    if (!isTauriRuntime()) return null;
-
-    const selectedDirectory = await workspaceStore.pickWorkspaceFolder();
-    if (selectedDirectory == null || selectedDirectory.trim() === "") return "cancelled";
-
-    const directory = normalizeDirectoryPath(selectedDirectory);
-    if (!directory) return "cancelled";
-
-    const workspace = await workspaceStore.ensureWorkspaceForFolder(selectedDirectory);
-    const workspaceId = workspace?.id?.trim() ?? "";
-    if (!workspaceId) return null;
-
-    publishRegisteredWorkspaceToSidebar(workspaceId);
-
-    const targetId = resolvePendingDraftKey({ kind: "directory", workspaceId, directory });
-    const existingTarget = findComposerTargetOption(targetId);
-    if (existingTarget) return existingTarget;
-
-    const targetWorkspace = workspaceStore.workspaces().find((entry) => entry.id === workspaceId) ?? workspace;
-    const target: ComposerTargetOption = {
-      id: targetId,
-      kind: "workspace",
-      workspaceId,
-      directory,
-      label: targetWorkspace ? composerTargetWorkspaceLabel(targetWorkspace) : directory,
-      description: directory,
-      draftStatus: null,
-    };
-    return {
-      ...target,
-      draftStatus: findPendingDraftSummaryForTarget(target) ? "draft" : null,
-    };
-  };
-  const switchComposerTargetNow = async (
-    targetId: string,
-    resolution?: ComposerTargetSwitchResolution,
-  ): Promise<ComposerTargetSwitchResult> => {
-    let target = findComposerTargetOption(targetId);
-    if (!target) return { status: "blocked", message: t("session.target_not_available", currentLocale()) };
-
-    if (target.kind === "choose-workspace") {
-      const pickedTarget = await selectComposerWorkspaceTargetFromPicker();
-      if (pickedTarget === "cancelled") return { status: "cancelled" };
-      if (!pickedTarget) return { status: "blocked", message: t("session.target_not_available", currentLocale()) };
-      target = pickedTarget;
-    }
-
-    if (target.id === activePendingDraftKey()) return { status: "switched" };
-    if (!isTauriRuntime()) return { status: "blocked", message: t("session.target_not_available", currentLocale()) };
-
-    const currentDraft = composerDraft();
-    const destinationSummary = findPendingDraftSummaryForTarget(target);
-    const destinationDraft = destinationSummary ? await loadPendingDraftComposer(destinationSummary) : null;
-    if (destinationSummary && !destinationDraft) {
-      return { status: "blocked", message: t("session.target_not_available", currentLocale()) };
-    }
-    const decision = resolveComposerTargetConflict({ current: currentDraft, destination: destinationDraft });
-
-    if (decision.kind === "conflict" && !resolution) {
-      return {
-        status: "conflict",
-        conflict: {
-          targetId: target.id,
-          targetLabel: target.label,
-          currentPreview: decision.currentPreview,
-          destinationPreview: decision.destinationPreview,
-        },
-      };
-    }
-
-    const shouldUseCurrent = resolution === "use-current" || decision.kind === "use-current";
-    const shouldLoadExisting = resolution === "load-existing" || decision.kind === "load-destination";
-
-    if (shouldUseCurrent) {
-      const previousPendingDraftKey = currentComposerStorageKey();
-      const previousPendingDraftMeta = activePendingDraftMeta();
-      const activated = await activateTargetWorkspace(target, destinationSummary);
-      if (!activated) return { status: "blocked", message: t("session.target_not_available", currentLocale()) };
-      const summary = await putPendingDraftForTarget(target, currentDraft);
-      if (!summary) return { status: "blocked", message: t("session.target_not_available", currentLocale()) };
-      setComposerDraftBySessionId((current) => setSessionComposerDraft(current, { storageKey: target.id }, currentDraft));
-      setActivePendingDraftKey(target.id);
-      setActivePendingDraftMeta(summary);
-      setView("session");
-      await consumeMovedPendingDraft({
-        previousStorageKey: previousPendingDraftKey,
-        previousSummary: previousPendingDraftMeta,
-        nextStorageKey: target.id,
-        nextSummary: summary,
-      });
-      return { status: "switched" };
-    }
-
-    if (shouldLoadExisting && destinationSummary && destinationDraft) {
-      const activated = await activateTargetWorkspace(target, destinationSummary);
-      if (!activated) return { status: "blocked", message: t("session.target_not_available", currentLocale()) };
-      setComposerDraftBySessionId((current) => setSessionComposerDraft(current, { storageKey: target.id }, destinationDraft));
-      setActivePendingDraftKey(target.id);
-      setActivePendingDraftMeta(destinationSummary);
-      setView("session");
-      return { status: "switched" };
-    }
-
-    const emptyDraft = createEmptyComposerDraft();
-    const activated = await activateTargetWorkspace(target, destinationSummary);
-    if (!activated) return { status: "blocked", message: t("session.target_not_available", currentLocale()) };
-    const summary = await putPendingDraftForTarget(target, emptyDraft);
-    if (!summary) return { status: "blocked", message: t("session.target_not_available", currentLocale()) };
-    setComposerDraftBySessionId((current) => setSessionComposerDraft(current, { storageKey: target.id }, emptyDraft));
-    setActivePendingDraftKey(target.id);
-    setActivePendingDraftMeta(summary);
-    setView("session");
-    return { status: "switched" };
-  };
-  let composerTargetSwitchQueue: Promise<void> = Promise.resolve();
-  const switchComposerTarget = async (
-    targetId: string,
-    resolution?: ComposerTargetSwitchResolution,
-  ): Promise<ComposerTargetSwitchResult> => {
-    const queuedSwitch = composerTargetSwitchQueue
-      .catch(() => undefined)
-      .then(() => switchComposerTargetNow(targetId, resolution));
-    composerTargetSwitchQueue = queuedSwitch.then(() => undefined, () => undefined);
-    return await queuedSwitch;
-  };
   const currentComposerStorageKey = createMemo(() => {
     const sessionId = selectedSessionId();
     if (sessionId) {
@@ -4751,11 +4404,6 @@ export default function App() {
   }
 
   async function compactCurrentSession(sessionIdOverride?: string) {
-    const c = routedClient();
-    if (!c) {
-      throw new Error("Not connected to a server");
-    }
-
     const sessionID = (sessionIdOverride ?? selectedSessionId() ?? "").trim();
     if (!sessionID) {
       throw new Error("Select a session before compacting.");
@@ -4763,7 +4411,7 @@ export default function App() {
     if (!(await ensureSelectedSessionWorkspaceActiveForSend(sessionID))) {
       return;
     }
-    const c = client();
+    const c = routedClient();
     if (!c) {
       throw new Error("Not connected to a server");
     }
@@ -5114,13 +4762,12 @@ export default function App() {
   }
 
   async function undoLastUserMessage() {
-    const c = routedClient();
     const sessionID = (selectedSessionId() ?? "").trim();
     if (!sessionID) return;
     if (!(await ensureSelectedSessionWorkspaceActiveForSend(sessionID))) {
       return;
     }
-    const c = client();
+    const c = routedClient();
     if (!c) return;
 
     // Revert is rejected while the session is busy. We *usually* have an accurate
@@ -5155,13 +4802,12 @@ export default function App() {
   }
 
   async function redoLastUserMessage() {
-    const c = routedClient();
     const sessionID = (selectedSessionId() ?? "").trim();
     if (!sessionID) return;
     if (!(await ensureSelectedSessionWorkspaceActiveForSend(sessionID))) {
       return;
     }
-    const c = client();
+    const c = routedClient();
     if (!c) return;
 
     await abortSessionSafe(c, sessionID);
@@ -6495,82 +6141,6 @@ export default function App() {
       diff: "__vesloWorkspaceRuntimeDiff()",
     });
   });
-  const composerTargetWorkspaceLabel = (workspace: WorkspaceInfo) =>
-    workspace.displayName?.trim() ||
-    workspace.vesloWorkspaceName?.trim() ||
-    workspace.name?.trim() ||
-    workspace.vesloHostUrl?.trim() ||
-    workspace.baseUrl?.trim() ||
-    workspace.path?.trim() ||
-    workspace.id;
-  const composerTargetOptions = createMemo<ComposerTargetOption[]>(() => {
-    const summaries = pendingDraftSummaries();
-    const hasDraft = (key: string) =>
-      summaries.some((draft) => {
-        try {
-          return resolvePendingDraftKey({
-            kind: draft.kind,
-            workspaceId: draft.workspaceId,
-            directory: draft.directory ?? null,
-            privateWorkspaceId: draft.privateWorkspaceId ?? null,
-          }) === key;
-        } catch {
-          return false;
-        }
-      });
-
-    const chatId = resolvePendingDraftKey({ kind: "new-private" });
-    const options: ComposerTargetOption[] = [{
-      id: chatId,
-      kind: "chat",
-      label: t("session.target_chat_label", currentLocale()),
-      description: "",
-      draftStatus: hasDraft(chatId) ? "draft" : null,
-    }];
-
-    for (const workspace of workspaceStore.workspaces()) {
-      const directory = normalizeDirectoryPath(workspace.directory?.trim() || workspace.path?.trim() || "");
-      if (!workspace.id || !directory) continue;
-      if (workspaceStore.isPrivateWorkspacePath(directory)) continue;
-      const id = resolvePendingDraftKey({ kind: "directory", workspaceId: workspace.id, directory });
-      options.push({
-        id,
-        kind: "workspace",
-        workspaceId: workspace.id,
-        directory,
-        label: composerTargetWorkspaceLabel(workspace),
-        description: directory,
-        draftStatus: hasDraft(id) ? "draft" : null,
-      });
-    }
-
-    options.push({
-      id: "__choose-workspace__",
-      kind: "choose-workspace",
-      label: t("session.target_choose_workspace_label", currentLocale()),
-      description: t("session.target_choose_workspace_description", currentLocale()),
-    });
-
-    return options;
-  });
-  const activeWorkspaceComposerTargetId = createMemo(() => {
-    const chatId = resolvePendingDraftKey({ kind: "new-private" });
-    const workspaceId = workspaceStore.activeWorkspaceId().trim();
-    const active = workspaceStore.activeWorkspaceDisplay();
-    const directory = normalizeDirectoryPath(
-      active.directory?.trim() ||
-      active.path?.trim() ||
-      workspaceStore.activeWorkspaceRoot().trim() ||
-      "",
-    );
-
-    if (!workspaceId || !directory || workspaceStore.isPrivateWorkspacePath(directory)) {
-      return chatId;
-    }
-
-    return resolvePendingDraftKey({ kind: "directory", workspaceId, directory });
-  });
-  const activeComposerTargetId = createMemo(() => activePendingDraftKey() ?? activeWorkspaceComposerTargetId());
 
   onCleanup(() => {
     if (typeof window === "undefined") return;

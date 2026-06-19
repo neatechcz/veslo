@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../../pages/dashboard.tsx", import.meta.url), "utf8");
+const sidebarDashboardNavSource = readFileSync(new URL("../../components/session/sidebar-dashboard-nav.tsx", import.meta.url), "utf8");
 
 const leftSidebarStart = source.indexOf('<Show when={leftSidebarVisible()}>');
 const mainStart = source.indexOf('<main class="flex-1 flex flex-col overflow-hidden bg-dls-surface pt-12">');

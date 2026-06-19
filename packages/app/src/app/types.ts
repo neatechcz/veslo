@@ -96,6 +96,7 @@ export type VesloAutomation = {
   createdAt: string;
   updatedAt: string;
   nextRunAt?: string | null;
+  completedAt?: string | null;
   lastRunAt?: string | null;
   lastRunId?: string | null;
 };
@@ -152,87 +153,6 @@ export type PendingSidebarSessionMetadata = {
   workspaceRoot: string;
   title: string;
   createdAt: number;
-};
-
-export type VesloAutomationSchedule =
-  | { kind: "oneShot"; runAt: string; timezone?: string }
-  | { kind: "cron"; expression: string; timezone?: string }
-  | { kind: "interval"; seconds: number }
-  | { kind: "daily"; hour: number; minute: number; timezone?: string }
-  | { kind: "weekly"; weekday: number; hour: number; minute: number; timezone?: string };
-
-export type VesloAutomationStatus = "active" | "paused" | "completed" | "failed" | "cancelled";
-
-export type VesloAutomationRunStatus = "queued" | "running" | "success" | "failed" | "skipped";
-
-export type VesloAutomationTarget = {
-  preferredSessionId?: string;
-  fallbackTitle?: string;
-  agent?: string;
-  model?: string | null;
-  variant?: string | null;
-};
-
-export type VesloAutomation = {
-  id: string;
-  workspaceId: string;
-  name: string;
-  enabled: boolean;
-  status: VesloAutomationStatus;
-  schedule: VesloAutomationSchedule;
-  prompt: string;
-  target?: VesloAutomationTarget;
-  createdAt: string;
-  updatedAt: string;
-  nextRunAt?: string | null;
-  completedAt?: string | null;
-  lastRunId?: string | null;
-};
-
-export type VesloAutomationRun = {
-  id: string;
-  automationId: string;
-  scheduledFor: string;
-  startedAt?: string | null;
-  finishedAt?: string | null;
-  status: VesloAutomationRunStatus;
-  sessionId?: string | null;
-  createdSession: boolean;
-  error?: string | null;
-};
-
-export type VesloAutomationCreatePayload = {
-  name: string;
-  schedule: VesloAutomationSchedule;
-  prompt: string;
-  target?: VesloAutomationTarget;
-  enabled?: boolean;
-};
-
-export type VesloAutomationUpdatePayload = Partial<{
-  name: string;
-  schedule: VesloAutomationSchedule;
-  prompt: string;
-  target: VesloAutomationTarget | null;
-  enabled: boolean;
-  status: VesloAutomationStatus;
-}>;
-
-export type AutomationWorkspaceSummary = {
-  appWorkspaceId: string;
-  serverWorkspaceId: string | null;
-  name: string;
-  path?: string | null;
-  workspaceType: "local" | "remote";
-  status: "ready" | "unavailable" | "error";
-  error?: string | null;
-};
-
-export type WorkspaceAutomationItem = {
-  key: string;
-  workspace: AutomationWorkspaceSummary;
-  automation: VesloAutomation;
-  runs: VesloAutomationRun[];
 };
 
 export type SidebarSessionItem = {

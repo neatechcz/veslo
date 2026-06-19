@@ -15,6 +15,7 @@ import type {
   SkillInventoryItem,
   SkillSaveResult,
   StartupPreference,
+  ScheduledJob,
   LoadedSessionPrefetchInterestChangeHandler,
   AutomationWorkspaceSummary,
   VesloAutomationCreatePayload,

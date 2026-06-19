@@ -2797,8 +2797,7 @@ export default function WorkspaceSessionList(props: Props) {
 
           return (
             <Show when={!(chatSidebarCollapsed() && !shouldForceProjectOpen(chatGroup()))} fallback={
-              <button
-                type="button"
+              <div
                 data-sidebar-chat-collapsed="true"
                 class="mt-2 flex h-11 w-full shrink-0 items-center justify-between gap-2 border-t border-gray-6/70 px-1.5 pt-2"
               >

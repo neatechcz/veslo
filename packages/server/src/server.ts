@@ -42,6 +42,10 @@ import {
   type SkillRemovalRecord,
   type SkillRemovalScope,
 } from "./skill-removal-journal.js";
+import {
+  listDisabledSkills,
+  setSkillEnabledState,
+} from "./skill-enabled-overrides.js";
 import { createOrgMcpRuntimeToken, fetchOrgMcpCatalog, fetchOrgSkillsCatalog } from "./den-catalog.js";
 import {
   getOrganizationSoul,
@@ -58,35 +62,6 @@ import {
   readCachedSoulDocument,
   soulCachePath,
   soulPendingCacheDir,
-  writePendingSoulEdit,
-  type SoulPendingEdit,
-} from "./soul-cache.js";
-import {
-  createSoulVersion,
-  currentSoulVersion,
-  restoreSoulVersion as restoreLocalSoulVersion,
-  type SoulDocument,
-  type SoulScope,
-  type SoulVersion,
-} from "./soul-memory.js";
-import {
-  materializeEffectiveSoul,
-  readSoulMaterializationStatus,
-  type SoulMaterializationResult,
-} from "./soul-materializer.js";
-import {
-  getOrganizationSoul,
-  getSoulVersion,
-  getUserSoul,
-  listSoulVersions,
-  restoreSoulVersion as restoreDenSoulVersion,
-  updateOrganizationSoul,
-  updateUserSoul,
-} from "./soul-den-client.js";
-import {
-  cacheSoulDocument,
-  listPendingSoulEdits,
-  readCachedSoulDocument,
   writePendingSoulEdit,
   type SoulPendingEdit,
 } from "./soul-cache.js";
@@ -8617,6 +8592,55 @@ function createRoutes(
     });
   });
 
+  addRoute(routes, "GET", "/skills/disabled", "client", async (ctx) => {
+    const workspaceId = trimmedSearchParam(ctx.url.searchParams, "workspaceId");
+    if (workspaceId) {
+      await resolveWorkspace(config, workspaceId);
+    }
+    const items = await listDisabledSkills({
+      dataDir: serverDataDir,
+      workspaceId,
+      includeGlobal: true,
+    });
+    return jsonResponse({ items });
+  });
+
+  addRoute(routes, "PATCH", "/skills/enabled-state", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const body = await readJsonBody(ctx.request);
+    const target = requireBodyObject(body, "target") as unknown as DisabledSkillTarget;
+    const enabled = optionalBodyBoolean(body, "enabled");
+    if (enabled === undefined) {
+      throw new ApiError(400, "invalid_enabled", "enabled is required");
+    }
+
+    const workspaceId = typeof target.workspaceId === "string" ? target.workspaceId.trim() : "";
+    const workspace = workspaceId ? await resolveWorkspace(config, workspaceId) : null;
+    const result = await setSkillEnabledState({
+      dataDir: serverDataDir,
+      target,
+      enabled,
+      actor: ctx.actor ?? { type: "remote" },
+    });
+
+    const reloadTrigger: ReloadTrigger = {
+      type: "skill",
+      name: typeof target.name === "string" ? target.name.trim() || undefined : undefined,
+      action: "updated",
+      path: typeof target.path === "string" ? target.path.trim() || undefined : undefined,
+    };
+    if (workspace) {
+      emitReloadEvent(ctx.reloadEvents, workspace, "skills", reloadTrigger);
+    } else if (target.scope === "user-global" || target.scope === "organization" || target.scope === "platform") {
+      for (const configuredWorkspace of config.workspaces) {
+        emitReloadEvent(ctx.reloadEvents, configuredWorkspace, "skills", reloadTrigger);
+      }
+    }
+
+    return jsonResponse(result);
+  });
+
   addRoute(routes, "GET", "/skills/user-global-store", "client", async () => {
     return jsonResponse({ items: await listUserGlobalSkills(serverDataDir) });
   });
@@ -8695,6 +8719,37 @@ function createRoutes(
         path: result.item.path,
         scope: "user-global",
       },
+    });
+  });
+
+  addRoute(routes, "GET", "/skills/user-global/:name", "none", async (ctx) => {
+    await requireHostOrClient(ctx.request, config, ctx.tokens);
+    const name = String(ctx.params.name ?? "").trim();
+    if (!name) {
+      throw new ApiError(400, "invalid_skill_name", "Skill name is required");
+    }
+    const instancePath = trimmedSearchParam(ctx.url.searchParams, "path");
+    if (!instancePath) {
+      throw new ApiError(400, "invalid_skill_path", "User-global exact skill read requires path");
+    }
+    const result = await readGlobalSkillAtPath({ name, path: instancePath });
+    const item = {
+      name,
+      path: result.path,
+      description: "",
+      scope: "global" as const,
+    };
+    const disabledSkills = await listDisabledSkills({
+      dataDir: serverDataDir,
+      includeGlobal: true,
+    });
+    const disabled = disabledSkills.some((record) => disabledRecordMatchesSkill(record, item, undefined));
+    if (disabled && ctx.url.searchParams.get("includeDisabled") !== "true") {
+      throw new ApiError(404, "skill_not_found", `Skill not found: ${name}`);
+    }
+    return jsonResponse({
+      item: disabled ? { ...item, enabled: false, disabledReason: "user" } : item,
+      content: result.content,
     });
   });
 
@@ -8873,13 +8928,15 @@ function createRoutes(
       includeDisabled: options.includeDisabled,
       disabledSkills,
       workspaceId: workspace.id,
+      workspaceOwner: ownerForWorkspace(workspace),
     });
   };
 
   addRoute(routes, "GET", "/workspace/:id/skills", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const includeGlobal = ctx.url.searchParams.get("includeGlobal") === "true";
-    const items = await listSkills(workspace.path, includeGlobal, { workspaceOwner: ownerForWorkspace(workspace) });
+    const includeDisabled = ctx.url.searchParams.get("includeDisabled") === "true";
+    const items = await listWorkspaceRuntimeSkills(workspace, { includeGlobal, includeDisabled });
     return jsonResponse({ items });
   });
 
@@ -8891,7 +8948,7 @@ function createRoutes(
     const threshold = typeof body.threshold === "number" ? body.threshold : undefined;
     const ambiguityDelta = typeof body.ambiguityDelta === "number" ? body.ambiguityDelta : undefined;
     const maxCandidates = typeof body.maxCandidates === "number" ? body.maxCandidates : undefined;
-    const skills = await listSkills(workspace.path, includeGlobal, { workspaceOwner: ownerForWorkspace(workspace) });
+    const skills = await listWorkspaceRuntimeSkills(workspace, { includeGlobal });
     const result = resolveSkillMatch({
       text,
       skills,
@@ -9118,17 +9175,10 @@ function createRoutes(
       }
       const result = await readSkillAtPath(workspace.path, { name, path: instancePath });
       return jsonResponse({
-        item: {
-          name,
-          path: result.path,
-          description: "",
-          scope: "project",
-          owner: ownerForWorkspace(workspace),
-        },
+        item: allowedItem,
         content: result.content,
       });
     }
-    const items = await listSkills(workspace.path, includeGlobal, { workspaceOwner: ownerForWorkspace(workspace) });
     const item = items.find((skill) => skill.name === name);
     if (!item) {
       throw new ApiError(404, "skill_not_found", `Skill not found: ${name}`);

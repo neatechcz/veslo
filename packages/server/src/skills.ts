@@ -3,7 +3,7 @@ import type { Dirent } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
 import { localUserResourceOwner, workspaceResourceOwner } from "./resource-owner.js";
-import type { ResourceOwner, SkillItem } from "./types.js";
+import type { DisabledSkillRecord, ResourceOwner, SkillItem } from "./types.js";
 import { parseFrontmatter, buildFrontmatter } from "./frontmatter.js";
 import { exists } from "./utils.js";
 import { validateDescription, validateSkillName } from "./validators.js";
@@ -30,9 +30,63 @@ export interface SkillRemovalJournalContext {
 }
 
 export type ListSkillsOptions = {
+  includeGlobal?: boolean;
+  includeDisabled?: boolean;
+  disabledSkills?: DisabledSkillRecord[];
+  workspaceId?: string;
   workspaceOwner?: ResourceOwner;
   globalOwner?: ResourceOwner;
 };
+
+function normalizeListSkillsOptions(
+  includeGlobalOrOptions: boolean | ListSkillsOptions,
+  options: ListSkillsOptions,
+): ListSkillsOptions & { includeGlobal: boolean } {
+  if (typeof includeGlobalOrOptions === "boolean") {
+    return {
+      ...options,
+      includeGlobal: includeGlobalOrOptions,
+    };
+  }
+  return {
+    ...includeGlobalOrOptions,
+    includeGlobal: includeGlobalOrOptions.includeGlobal ?? false,
+  };
+}
+
+export function disabledRecordMatchesSkill(
+  record: DisabledSkillRecord,
+  item: SkillItem,
+  workspaceId: string | undefined,
+): boolean {
+  const scope = item.scope === "project" ? "workspace" : "user-global";
+  if (record.path) {
+    if (resolve(record.path) !== resolve(item.path)) return false;
+    if (record.scope !== scope && record.scope !== "organization" && record.scope !== "platform") return false;
+    return !record.workspaceId || !workspaceId || record.workspaceId === workspaceId;
+  }
+
+  if (record.name !== item.name) return false;
+  if (record.scope !== scope) return false;
+  if (scope === "workspace") {
+    return Boolean(workspaceId) && record.workspaceId === workspaceId;
+  }
+  return true;
+}
+
+function applyDisabledSkillRecords(
+  items: SkillItem[],
+  options: Pick<ListSkillsOptions, "disabledSkills" | "workspaceId">,
+): Array<SkillItem & { enabled?: false; disabledReason?: "user" }> {
+  const disabledSkills = options.disabledSkills ?? [];
+  if (disabledSkills.length === 0) return items;
+  return items.map((item) => {
+    const disabled = disabledSkills.some((record) => disabledRecordMatchesSkill(record, item, options.workspaceId));
+    return disabled
+      ? { ...item, enabled: false as const, disabledReason: "user" as const }
+      : item;
+  });
+}
 
 const userHomeDir = (): string => process.env.HOME?.trim() || homedir();
 const userConfigHomeDir = (): string => process.env.XDG_CONFIG_HOME?.trim() || join(userHomeDir(), ".config");
@@ -189,22 +243,23 @@ async function listSkillsInDir(dir: string, scope: "project" | "global", owner: 
 
 export async function listSkills(
   workspaceRoot: string,
-  includeGlobal: boolean,
+  includeGlobalOrOptions: boolean | ListSkillsOptions,
   options: ListSkillsOptions = {},
 ): Promise<SkillItem[]> {
+  const normalizedOptions = normalizeListSkillsOptions(includeGlobalOrOptions, options);
   const roots = await findWorkspaceRoots(workspaceRoot);
   const items: SkillItem[] = [];
   for (const root of roots) {
-    const workspaceOwner = options.workspaceOwner ?? workspaceResourceOwner({ root });
+    const workspaceOwner = normalizedOptions.workspaceOwner ?? workspaceResourceOwner({ root });
     const opencodeDir = join(root, ".opencode", "skills");
     const claudeDir = join(root, ".claude", "skills");
     items.push(...(await listSkillsInDir(opencodeDir, "project", workspaceOwner)));
     items.push(...(await listSkillsInDir(claudeDir, "project", workspaceOwner)));
   }
 
-  if (options.includeGlobal) {
+  if (normalizedOptions.includeGlobal) {
     const homeDir = userHomeDir();
-    const globalOwner = options.globalOwner ?? localUserResourceOwner();
+    const globalOwner = normalizedOptions.globalOwner ?? localUserResourceOwner();
     const globalOpenCode = join(homeDir, ".config", "opencode", "skills");
     const globalClaude = join(homeDir, ".claude", "skills");
     const globalAgents = join(homeDir, ".agents", "skills");
@@ -215,8 +270,8 @@ export async function listSkills(
     items.push(...(await listSkillsInDir(globalAgentLegacy, "global", globalOwner)));
   }
 
-  const markedItems = applyDisabledSkillRecords(items, options);
-  const filteredItems = options.includeDisabled ? markedItems : markedItems.filter((item) => item.enabled !== false);
+  const markedItems = applyDisabledSkillRecords(items, normalizedOptions);
+  const filteredItems = normalizedOptions.includeDisabled ? markedItems : markedItems.filter((item) => item.enabled !== false);
   const seen = new Set<string>();
   return filteredItems.filter((item) => {
     if (seen.has(item.name)) return false;

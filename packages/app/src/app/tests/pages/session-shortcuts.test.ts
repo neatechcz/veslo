@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { resolveEscapeStopShortcut, shouldStopRunOnEscape } from "../../pages/session-shortcuts.js";
+import { isEscapeStopShortcutEligible, resolveEscapeStopShortcut, shouldStopRunOnEscape } from "../../pages/session-shortcuts.js";
 
 test("marks plain Escape eligible for stop workflow when a run is active", () => {
   assert.equal(

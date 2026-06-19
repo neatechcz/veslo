@@ -22,6 +22,7 @@ import { reportError } from "../lib/error-reporter";
 import { readDenAuth, clearDenAuth, validateDenAuth } from "../lib/den-auth";
 import {
   normalizeVesloServerUrl,
+  VesloServerError,
   type VesloServerClient,
   type VesloServerSettings,
 } from "../lib/veslo-server";

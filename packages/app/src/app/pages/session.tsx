@@ -8,10 +8,6 @@ import type {
   ComposerTargetSwitchResolution,
   ComposerTargetSwitchResult,
   ComposerDraft,
-  ComposerTargetConflict,
-  ComposerTargetOption,
-  ComposerTargetSwitchResolution,
-  ComposerTargetSwitchResult,
   MessageGroup,
   MessageWithParts,
   McpServerEntry,
@@ -3700,6 +3696,7 @@ export default function SessionView(props: SessionViewProps) {
     if (reason === "replacement") return "session:replacement";
     return "session:normal";
   };
+  const aiAccessLoading = createMemo(() => props.aiAccessBlockedReason === AI_ACCESS_LOADING_MESSAGE);
 
   const sendPromptImmediate = async (
     draft: ComposerDraft,

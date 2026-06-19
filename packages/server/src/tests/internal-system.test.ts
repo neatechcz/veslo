@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { platform, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { INTERNAL_SYSTEM_VERSION, provisionWorkspaceInternalSystem } from "../internal-system.js";
+import { pathToFileURL } from "node:url";
+import {
+  provisionWorkspaceInternalSystem,
+  resolveVesloAppDataDir,
+} from "../internal-system.js";
 
 async function createWorkspaceRoot(label: string) {
   return await mkdtemp(join(tmpdir(), `veslo-internal-system-${label}-`));
@@ -22,6 +26,102 @@ async function canCreateDirectorySymlink(): Promise<boolean> {
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+}
+
+async function installFakeOpenCodePluginModule(pluginDir: string) {
+  const moduleRoot = join(pluginDir, "node_modules", "@opencode-ai", "plugin");
+  await mkdir(moduleRoot, { recursive: true });
+  await writeFile(join(moduleRoot, "package.json"), JSON.stringify({ type: "module" }), "utf8");
+  await writeFile(
+    join(moduleRoot, "index.js"),
+    `
+export function tool(definition) {
+  return definition;
+}
+
+function schema() {
+  return {
+    optional() { return this; },
+    describe() { return this; },
+  };
+}
+
+tool.schema = {
+  any: schema,
+  boolean: schema,
+  string: schema,
+  enum: () => schema(),
+};
+`,
+    "utf8",
+  );
+}
+
+async function loadGeneratedAutomationTools(workspaceRoot: string) {
+  await provisionWorkspaceInternalSystem(workspaceRoot);
+  const pluginDir = join(workspaceRoot, ".opencode", "plugins");
+  await writeFile(join(pluginDir, "package.json"), JSON.stringify({ type: "module" }), "utf8");
+  await installFakeOpenCodePluginModule(pluginDir);
+
+  const pluginUrl = pathToFileURL(join(pluginDir, "veslo-automations.js")).href;
+  const module = await import(`${pluginUrl}?test=${Date.now()}-${Math.random()}`);
+  return await module.default({
+    client: {
+      session: {
+        get: async () => ({ directory: workspaceRoot }),
+      },
+    },
+  });
+}
+
+const LEGACY_INTERNAL_AGENT_FILES = [
+  "veslo-internal-docx.md",
+  "veslo-internal-pdf.md",
+  "veslo-internal-pptx.md",
+  "veslo-internal-xlsx.md",
+  "veslo-internal-skill-creator.md",
+  "veslo-internal-research.md",
+] as const;
+
+async function expectMissing(path: string) {
+  await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
+}
+
+async function expectNoInternalDelegationRuntime(workspaceRoot: string) {
+  await expectMissing(join(workspaceRoot, ".opencode", "veslo", "internal"));
+  await expectMissing(join(workspaceRoot, ".opencode", "plugins", "veslo-delegate.js"));
+  for (const filename of LEGACY_INTERNAL_AGENT_FILES) {
+    await expectMissing(join(workspaceRoot, ".opencode", "agents", filename));
+  }
+}
+
+function managedAgentBlock(content: string) {
+  const start = content.indexOf("<!-- VESLO_AGENT_INSTRUCTIONS_START -->");
+  const end = content.indexOf("<!-- VESLO_AGENT_INSTRUCTIONS_END -->", start);
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(start);
+  return content.slice(start, end);
+}
+
+function expectNoRuntimeRoutingLanguage(content: string) {
+  const block = managedAgentBlock(content);
+  expect(block).not.toMatch(/\bdelegat(?:e|ed|es|ing|ion)\b/i);
+  expect(block).not.toMatch(/\bsub-?agents?\b/i);
+  expect(block).not.toMatch(/\bchild[- ]sessions?\b/i);
+  expect(block).not.toMatch(/\binternal agents?\b/i);
+  expect(block).not.toContain("veslo-internal-");
+  expect(block).not.toContain(".opencode/veslo/internal");
+}
+
+function managedLegacyAgentDocument(label: string) {
+  return `---
+description: Veslo internal ${label} execution agent
+mode: subagent
+hidden: true
+---
+
+You are a hidden Veslo internal execution agent.
+`;
 }
 
 describe("provisionWorkspaceInternalSystem", () => {
@@ -55,41 +155,9 @@ You are Veslo.
       await expectNoInternalDelegationRuntime(workspaceRoot);
 
       const vesloAgent = await readFile(join(workspaceRoot, ".opencode", "agents", "veslo.md"), "utf8");
-      expect(vesloAgent).toContain("VESLO_INTERNAL_ROUTING_START");
-      expect(vesloAgent).toContain("delegate");
-
-      const plugin = await readFile(
-        join(workspaceRoot, ".opencode", "plugins", "veslo-delegate.js"),
-        "utf8",
-      );
-      expect(plugin).toContain('import { tool } from "@opencode-ai/plugin"');
-      expect(plugin).toContain("veslo-internal-xlsx");
-      expect(plugin).toContain("veslo-internal-docx");
-      expect(plugin).toContain("veslo-internal-research");
-      expect(plugin).toContain("export default async");
-      expect(plugin).toContain('"chat.message"');
-      expect(plugin).toContain("VESLO_ROUTER_FORCE_DELEGATE");
-      expect(plugin).toContain("hasExplicitDelegateRequest");
-      expect(plugin).toContain("spusť subagenta");
-      expect(plugin).toContain('return "veslo-internal-research"');
-      expect(plugin).toContain('" create skill "');
-      expect(plugin).toContain('" .opencode/skills/"');
-      expect(plugin).not.toContain('" skill ",');
-      expect(plugin).not.toContain('" skills ",');
-      expect(plugin).toContain('" listu "');
-      expect(plugin).not.toContain('" list "');
-      expect(plugin).toContain("client.session.get");
-      expect(plugin).toContain("query: { directory: parentDirectory }");
-
-      const manifest = await readFile(
-        join(workspaceRoot, ".opencode", "veslo", "internal", "manifest.json"),
-        "utf8",
-      );
-      expect(manifest).toContain(`"version": "${INTERNAL_SYSTEM_VERSION}"`);
-      expect(manifest).toContain('"schemaVersion": 1');
-      expect(manifest).toContain('"plugins"');
-      expect(manifest).toContain("veslo-delegate.js");
-      expect(manifest).toContain('"routingBlockVersion": 3');
+      expect(vesloAgent).not.toContain("VESLO_INTERNAL_ROUTING_START");
+      expect(vesloAgent).not.toContain("VESLO_INTERNAL_ROUTING_END");
+      expectNoRuntimeRoutingLanguage(vesloAgent);
 
       // AGENTS.md with Veslo instructions at workspace root
       const agentsMd = await readFile(join(workspaceRoot, "AGENTS.md"), "utf8");
@@ -607,33 +675,6 @@ description: User-owned onboarding notes.
       expect(second.unchanged).toBeGreaterThan(0);
       await expectNoInternalDelegationRuntime(workspaceRoot);
       await expectMissing(join(appDataDir, "internal-packs"));
-    } finally {
-      await rm(workspaceRoot, { recursive: true, force: true });
-      await rm(appDataDir, { recursive: true, force: true });
-    }
-  });
-
-  test("keeps existing copied internal packs idempotent in Windows central mode", async () => {
-    if (platform() !== "win32") return;
-
-    const workspaceRoot = await createWorkspaceRoot("windows-copy-fallback");
-    const appDataDir = await createWorkspaceRoot("windows-copy-fallback-appdata");
-
-    try {
-      await provisionWorkspaceInternalSystem(workspaceRoot);
-
-      const second = await provisionWorkspaceInternalSystem(workspaceRoot, appDataDir);
-      expect(second.status).toBe("updated");
-
-      const manifest = JSON.parse(
-        await readFile(join(workspaceRoot, ".opencode", "veslo", "internal", "manifest.json"), "utf8"),
-      );
-      expect(manifest.packsMode).toBe("symlink-fallback-copy");
-      expect(manifest.centralPacksDir).toContain(INTERNAL_SYSTEM_VERSION);
-
-      const third = await provisionWorkspaceInternalSystem(workspaceRoot, appDataDir);
-      expect(third.status).toBe("unchanged");
-      expect(third.written).toBe(0);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
       await rm(appDataDir, { recursive: true, force: true });

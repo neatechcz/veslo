@@ -7,6 +7,7 @@ import type {
   VesloAutomationCreatePayload,
   VesloAutomationRun,
   VesloAutomationUpdatePayload,
+  SkillInventoryRegistryMetadata,
 } from "../types";
 import type { SessionSendOrigin } from "./session-send-contract";
 import { isTauriRuntime } from "../utils";
@@ -628,6 +629,7 @@ export type VesloSkillMaterializationEntry = {
   versionId?: string;
   packageSha256: string;
   source?: VesloManagedSkillSource;
+  removalPolicy?: VesloSkillRegistryRolloutRemovalPolicy;
   target?: "workspace" | "personal-global";
   owner?: VesloResourceOwner;
   skillDir?: string;

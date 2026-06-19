@@ -55,7 +55,7 @@ describe("soul cache", () => {
     const path = await cacheSoulDocument({ dataDir, document: userSoul });
 
     expect(path).toBe(soulCachePath({ dataDir, scope: "user", ownerId: "user_123" }));
-    expect(path).toBe(join(dataDir, "soul-cache", "user", "user_123.json"));
+    expect(path).toBe(join(dataDir, "soul-cache", "user", "dXNlcl8xMjM.json"));
     expect(await exists(path)).toBe(true);
     await expect(readCachedSoulDocument({ dataDir, scope: "user", ownerId: "user_123" })).resolves.toEqual(userSoul);
   });

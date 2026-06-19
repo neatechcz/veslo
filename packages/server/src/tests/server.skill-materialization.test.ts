@@ -7,6 +7,10 @@ import { afterEach, expect, test } from "bun:test";
 import type { SkillPackageFile } from "../skill-package-model.js";
 import { buildSkillPackageManifest } from "../skill-package-model.js";
 import type { SkillPackageArchive } from "../skill-packages.js";
+import {
+  VESLO_AUTOMATIONS_PLATFORM_SKILL,
+  getPlatformManagedPersonalGlobalSkillSet,
+} from "../platform-managed-skills.js";
 import { startServer } from "../server.js";
 import type { WorkspaceSkillLockfile } from "../workspace-skill-lockfile.js";
 

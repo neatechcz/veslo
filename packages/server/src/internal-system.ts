@@ -547,32 +547,21 @@ function firstWorkspaceIdCandidate(value) {
   return "";
 }
 
-function detectDelegateAgentFromText(text) {
-  const value = normalizedText(text);
-
-  if (
-    includesAny(value, [
-      " skill.md ",
-      "/skill.md ",
-      " .opencode/skills ",
-      " .opencode/skills/",
-      " create skill ",
-      " create a skill ",
-      " create new skill ",
-      " write skill ",
-      " author skill ",
-      " update skill ",
-      " update a skill ",
-      " reusable skill ",
-      " new skill ",
-      " vytvor skill ",
-      " vytvorit skill ",
-      " novy skill ",
-      " uprav skill ",
-      " skill creator ",
-    ])
-  ) {
-    return "veslo-internal-skill-creator";
+function firstDirectoryCandidate(value) {
+  if (!value || typeof value !== "object") return "";
+  const direct =
+    cleanString(value.directory) ||
+    cleanString(value.cwd) ||
+    cleanString(value.workdir) ||
+    cleanString(value.path) ||
+    cleanString(value.workspace && value.workspace.directory) ||
+    cleanString(value.workspace && value.workspace.path) ||
+    cleanString(value.workspace && value.workspace.opencode && value.workspace.opencode.directory) ||
+    cleanString(value.project && value.project.directory) ||
+    cleanString(value.project && value.project.path);
+  if (direct) return direct;
+  if (value.data && typeof value.data === "object") {
+    return firstDirectoryCandidate(value.data);
   }
   if (value.session && typeof value.session === "object") {
     return firstDirectoryCandidate(value.session);
@@ -1178,13 +1167,10 @@ export async function provisionWorkspaceInternalSystem(
   await removeLegacyOnboardingSkills(workspaceRoot, stats);
   await cleanupLegacyInternalDelegation(workspaceRoot, stats);
   await ensureSoulFiles(workspaceRoot, stats);
-  const packsMode = await copyInternalPacks(workspaceRoot, stats, centralPacksDir);
-  await writeInternalAgents(workspaceRoot, stats);
-  await writeDelegatePlugin(workspaceRoot, stats);
-  await ensureVesloAgentRouting(workspaceRoot, stats);
+  await writeInternalPlugins(workspaceRoot, stats);
+  await ensureVesloAgentInstructions(workspaceRoot, stats);
   await ensureWorkspaceInstructions(workspaceRoot, stats);
   await ensureSoulInstructions(workspaceRoot, stats);
-  await writeInternalManifest(workspaceRoot, stats, packsMode, centralPacksDir);
 
   return {
     version: INTERNAL_SYSTEM_VERSION,
