@@ -46,6 +46,7 @@ type ComposerProps = {
   stopShortcutConfirmPending?: boolean;
   compactTopSpacing?: boolean;
   compactWidth?: boolean;
+  entryPlacement?: "footer" | "center";
   onSend: (draft: ComposerDraft, options?: ComposerSendOptions) => Promise<boolean>;
   onStop: () => void;
   onDraftChange: (draft: ComposerDraft) => void;
@@ -444,6 +445,11 @@ const buildRangeFromOffsets = (root: HTMLElement, start: number, end: number) =>
 export default function Composer(props: ComposerProps) {
   const translate = useTranslate();
   const composerWidthClass = createMemo(() => "max-w-[960px]");
+  const rootClass = createMemo(() =>
+    props.entryPlacement === "center"
+      ? "relative z-20 bg-transparent px-0 pt-0 pb-0"
+      : `sticky bottom-0 z-20 bg-gradient-to-t from-gray-1 via-gray-1 to-transparent px-8 ${props.compactTopSpacing ? "pt-0" : "pt-12"} pb-3`,
+  );
   let editorRef: HTMLDivElement | undefined;
   let fileInputRef: HTMLInputElement | undefined;
   let mentionSearchRun = 0;
@@ -1702,7 +1708,7 @@ export default function Composer(props: ComposerProps) {
 
   return (
     <div
-      class={`sticky bottom-0 z-20 bg-gradient-to-t from-gray-1 via-gray-1 to-transparent px-8 ${props.compactTopSpacing ? "pt-0" : "pt-12"} pb-3`}
+      class={rootClass()}
       style={{ contain: "layout style" }}
     >
       <div class={`mx-auto w-full ${composerWidthClass()}`}>

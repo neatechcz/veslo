@@ -1513,7 +1513,6 @@ export default function DashboardView(props: DashboardViewProps) {
           <SidebarDashboardNav
             currentTab={props.tab}
             onSelect={handleDashboardTabSelection}
-            soulIconClass={soulNavIconClass()}
           />
         </div>
           <SidebarStatusControls

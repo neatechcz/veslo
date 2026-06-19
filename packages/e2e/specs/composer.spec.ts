@@ -1,10 +1,85 @@
 import { expect } from '@wdio/globals';
 import { navigateToHash, waitForHashRoute } from '../helpers/app-launcher.js';
 
+type ComposerLayoutState = {
+  bodyText: string;
+  headingDisplayed: boolean;
+  rootClass: string;
+  rootTop: number;
+  rootBottom: number;
+  rootMid: number;
+  viewportHeight: number;
+};
+
+async function setComposerText(value: string) {
+  await browser.execute((text) => {
+    const el = document.querySelector('[role="textbox"]') as HTMLElement | null;
+    if (!el) throw new Error('Composer textbox was not found.');
+    el.textContent = text;
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' }));
+    el.focus();
+  }, value);
+  await browser.pause(150);
+}
+
+async function getComposerLayoutState(): Promise<ComposerLayoutState> {
+  return browser.execute(() => {
+    const textbox = document.querySelector('[role="textbox"]') as HTMLElement | null;
+    if (!textbox) throw new Error('Composer textbox was not found.');
+
+    let root: HTMLElement | null = textbox;
+    while (
+      root &&
+      !(
+        root.className.includes('z-20') &&
+        (root.className.includes('sticky') || root.className.includes('relative'))
+      )
+    ) {
+      root = root.parentElement;
+    }
+    if (!root) throw new Error('Composer root was not found.');
+
+    const rect = root.getBoundingClientRect();
+    const heading = document.querySelector('[data-testid="composer-entry-target-heading"]') as HTMLElement | null;
+    return {
+      bodyText: document.body.innerText,
+      headingDisplayed: Boolean(heading && heading.offsetParent !== null),
+      rootClass: root.className,
+      rootTop: rect.top,
+      rootBottom: rect.bottom,
+      rootMid: rect.top + rect.height / 2,
+      viewportHeight: window.innerHeight,
+    };
+  });
+}
+
 describe('Composer', () => {
   before(async () => {
     await navigateToHash('/session');
     await waitForHashRoute('#/session', 5000);
+  });
+
+  it('centers the composer entry on a new session route without quickstart copy', async () => {
+    await navigateToHash('/session');
+    await waitForHashRoute('#/session', 5000);
+    await $('[role="textbox"]').waitForDisplayed({ timeout: 30_000 });
+
+    const state = await getComposerLayoutState();
+    expect(state.headingDisplayed).toBe(true);
+    expect(state.rootClass).toContain('relative');
+    expect(state.rootClass).not.toContain('sticky');
+    expect(Math.abs(state.rootMid - state.viewportHeight / 2)).toBeLessThan(state.viewportHeight * 0.25);
+
+    for (const removedText of [
+      'Co chcete udělat?',
+      'Automatizuj prohlížeč',
+      'Dej mi duši',
+      'What do you want to do?',
+      'Automate your browser',
+      'Give me a soul',
+    ]) {
+      expect(state.bodyText).not.toContain(removedText);
+    }
   });
 
   it('should have a textbox for composing messages', async () => {
@@ -89,5 +164,36 @@ describe('Composer', () => {
       text: draft,
     });
     expect(await textbox.getText()).toContain(draft);
+  });
+
+  it('moves the composer to the footer immediately after the first submit', async () => {
+    await navigateToHash('/session');
+    await waitForHashRoute('#/session', 5000);
+    await $('[role="textbox"]').waitForDisplayed({ timeout: 30_000 });
+
+    const before = await getComposerLayoutState();
+    expect(before.rootClass).toContain('relative');
+    expect(before.headingDisplayed).toBe(true);
+
+    await setComposerText(`Composer layout submit ${Date.now()}`);
+    await browser.keys('Enter');
+
+    await browser.waitUntil(
+      async () => {
+        const after = await getComposerLayoutState();
+        return (
+          after.rootClass.includes('sticky') &&
+          after.rootClass.includes('bottom-0')
+        );
+      },
+      {
+        timeout: 5_000,
+        timeoutMsg: 'Composer did not move to the footer immediately after submit.',
+      },
+    );
+
+    const after = await getComposerLayoutState();
+    expect(after.rootClass).toContain('sticky');
+    expect(after.rootClass).toContain('bottom-0');
   });
 });

@@ -42,7 +42,6 @@ import {
   Check,
   Circle,
   Cpu,
-  HeartPulse,
   HardDrive,
   History,
   ListTodo,
@@ -57,7 +56,6 @@ import {
   SlidersHorizontal,
   Undo2,
   X,
-  Zap,
 } from "lucide-solid";
 
 import Button from "../components/button";
@@ -87,7 +85,6 @@ import {
   isTauriRuntime,
   isWindowsPlatform,
   normalizeDirectoryPath,
-  parseTemplateFrontmatter,
 } from "../utils";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
 import { normalizeLocalFilePath } from "../lib/local-file-path";
@@ -106,9 +103,6 @@ import {
 import { resolveEscapeStopShortcut } from "./session-shortcuts";
 import { currentLocale, t } from "../../i18n";
 import type { UpdateDownloadRetryInfo } from "../context/updater";
-
-import browserSetupTemplate from "../data/commands/browser-setup.md?raw";
-import soulSetupTemplate from "../data/commands/give-me-a-soul.md?raw";
 
 import MessageList, { type PendingMessageState } from "../components/session/message-list";
 import Composer from "../components/session/composer";
@@ -213,7 +207,7 @@ type TempRuntimeUiRenderSource = {
   messageCount: number;
   effectiveMessageCount?: number;
   workspaceSetupVisible?: boolean;
-  quickstartVisible?: boolean;
+  composerEntryVisible?: boolean;
   sessionLoadingVisible?: boolean;
   activePendingDraftKey: string | null;
   clientMessageId?: string;
@@ -437,21 +431,6 @@ type SkillsSetBundleV1 = {
     name?: string;
   };
 };
-
-const BROWSER_AUTOMATION_QUICKSTART_PROMPT = (() => {
-  const parsed = parseTemplateFrontmatter(browserSetupTemplate);
-  return (parsed?.body ?? browserSetupTemplate).trim();
-})();
-
-const SOUL_SETUP_TEMPLATE = (() => {
-  const parsed = parseTemplateFrontmatter(soulSetupTemplate);
-  const name = parsed?.data?.name?.trim() || "give-me-a-soul";
-  const description =
-    parsed?.data?.description?.trim() ||
-    "Enable optional soul mode with persistent memory and scheduled check-ins";
-  const body = (parsed?.body ?? soulSetupTemplate).trim();
-  return { name, description, body };
-})();
 
 const INITIAL_MESSAGE_WINDOW = 140;
 const MESSAGE_WINDOW_LOAD_CHUNK = 120;
@@ -839,6 +818,9 @@ export default function SessionView(props: SessionViewProps) {
     if (target?.kind === "chat") return tr("session.target_heading_chat");
     return formatTr("session.target_heading_workspace", { name: composerEntryTargetName() });
   });
+  const composerResetKey = createMemo(() =>
+    `${props.activeComposerTargetId ?? "__no-target"}:${props.selectedSessionId ?? "__no-session"}`
+  );
   const todoList = createMemo(() => props.todos.filter((todo) => todo.content.trim()));
   const todoCount = createMemo(() => todoList().length);
   const todoCompletedCount = createMemo(() =>
@@ -1120,6 +1102,18 @@ export default function SessionView(props: SessionViewProps) {
     const basePendingKey = pendingSessionQueueKey();
     return pendingQueueKeyAwaitingSessionIdByBaseKey()[basePendingKey] ?? basePendingKey;
   });
+  const [composerEntryDismissedBySessionKey, setComposerEntryDismissedBySessionKey] =
+    createSignal<Record<string, boolean>>({});
+  const composerEntryDismissed = createMemo(() =>
+    Boolean(composerEntryDismissedBySessionKey()[currentSessionQueueKey()]),
+  );
+  const dismissComposerEntryForSessionKey = (sessionKey = currentSessionQueueKey()) => {
+    const key = sessionKey.trim();
+    if (!key) return;
+    setComposerEntryDismissedBySessionKey((current) =>
+      current[key] ? current : { ...current, [key]: true },
+    );
+  };
   const tempRuntimeUiSurface = (): TempRuntimeUiRenderSurface =>
     showWorkspaceSetupEmptyState() ? "workspace-initial" : "conversation";
   const createTempRuntimeUiRenderSnapshot = (
@@ -1476,21 +1470,22 @@ export default function SessionView(props: SessionViewProps) {
       loadingEarlierMessages: props.loadingEarlierMessages,
     })
   );
-  const showQuickstartEmptyState = createMemo(() =>
+  const showComposerEntryState = createMemo(() =>
     effectiveRenderedMessages().length === 0 &&
+    !composerEntryDismissed() &&
     !showWorkspaceSetupEmptyState() &&
     !showSessionLoadingState(),
   );
   createEffect(() => {
     const effectiveMessageCount = effectiveRenderedMessages().length;
     const workspaceSetupVisible = showWorkspaceSetupEmptyState();
-    const quickstartVisible = showQuickstartEmptyState();
+    const composerEntryVisible = showComposerEntryState();
     const sessionLoadingVisible = showSessionLoadingState();
     setTempRuntimeUiRenderSource((current) => ({
       ...current,
       effectiveMessageCount,
       workspaceSetupVisible,
-      quickstartVisible,
+      composerEntryVisible,
       sessionLoadingVisible,
       at: Date.now(),
     }));
@@ -4092,6 +4087,9 @@ export default function SessionView(props: SessionViewProps) {
       queuePaused: queuePaused(),
       showRunIndicator: showRunIndicator(),
     });
+    if (showComposerEntryState()) {
+      dismissComposerEntryForSessionKey();
+    }
 
     const sendNow = Boolean(options.sendNow);
     const editingId = editingQueuedDraftId();
@@ -4206,8 +4204,8 @@ export default function SessionView(props: SessionViewProps) {
         {String(tempRuntimeUiRenderSource().clientConnected)} | routeEntry:{" "}
         {String(tempRuntimeUiRenderSource().activeWorkspaceHasRoutingEntry)} | routeListReady:{" "}
         {String(tempRuntimeUiRenderSource().activeWorkspaceSessionsLoaded)} | setup:{" "}
-        {String(tempRuntimeUiRenderSource().workspaceSetupVisible ?? false)} | quickstart:{" "}
-        {String(tempRuntimeUiRenderSource().quickstartVisible ?? false)} | loading:{" "}
+        {String(tempRuntimeUiRenderSource().workspaceSetupVisible ?? false)} | composerEntry:{" "}
+        {String(tempRuntimeUiRenderSource().composerEntryVisible ?? false)} | loading:{" "}
         {String(tempRuntimeUiRenderSource().sessionLoadingVisible ?? false)} |
         pending: {tempRuntimeUiRenderSource().activePendingDraftKey ?? "none"} | client:{" "}
         {tempRuntimeUiRenderSource().clientMessageId ?? "none"} | origin: {tempRuntimeUiRenderSource().origin ?? "none"} |
@@ -4216,53 +4214,6 @@ export default function SessionView(props: SessionViewProps) {
       </div>
     </Show>
   );
-
-  const handleBrowserAutomationQuickstart = () => {
-    const text =
-      BROWSER_AUTOMATION_QUICKSTART_PROMPT ||
-      "Try Chrome DevTools MCP now. If it is unavailable, explain how to connect Control Chrome in Veslo and ask me to retry.";
-    handleSendPrompt({
-      mode: "prompt",
-      text,
-      resolvedText: text,
-      parts: [{ type: "text", text }],
-      attachments: [],
-    });
-  };
-
-  const handleSoulQuickstart = async () => {
-    const name = SOUL_SETUP_TEMPLATE.name;
-    const slashCommand = `/${name}`;
-    try {
-      const commands = await props.listCommands();
-      const hasCommand = commands.some((cmd) => cmd.name === name);
-      if (hasCommand) {
-        handleSendPrompt({
-          mode: "prompt",
-          text: slashCommand,
-          resolvedText: slashCommand,
-          parts: [{ type: "text", text: slashCommand }],
-          attachments: [],
-          command: { name, arguments: "" },
-        });
-        return;
-      }
-    } catch {
-      // Fall back to prompt-based setup below.
-    }
-
-    const text =
-      currentLocale() === "cs"
-        ? tr("session.quickstart_soul_prompt")
-        : SOUL_SETUP_TEMPLATE.body || tr("session.quickstart_soul_prompt");
-    handleSendPrompt({
-      mode: "prompt",
-      text,
-      resolvedText: text,
-      parts: [{ type: "text", text }],
-      attachments: [],
-    });
-  };
 
   const handleComposerTargetSelect = async (targetId: string) => {
     const result = await props.switchComposerTarget(targetId);
@@ -4656,10 +4607,6 @@ export default function SessionView(props: SessionViewProps) {
     })();
   };
 
-  const soulModeEnabled = createMemo(() =>
-    Boolean(props.soulStatusByWorkspaceId[props.activeWorkspaceId]?.enabled)
-  );
-
   const runtimeAvailableWithoutClient = createMemo(() => {
     void props.clientConnected;
     void props.vesloServerStatus;
@@ -4667,7 +4614,6 @@ export default function SessionView(props: SessionViewProps) {
     return false;
   });
 
-  const soulNavIconClass = () => (soulModeEnabled() ? "soul-nav-icon-active" : "");
   const leftSidebarContent = () => (
     <>
       <div class="flex min-h-0 flex-1 flex-col">
@@ -4774,14 +4720,7 @@ export default function SessionView(props: SessionViewProps) {
         </div>
         <SidebarDashboardNav
           currentTab={props.tab}
-          onSelect={(tab) => {
-            if (tab === "soul") {
-              openSoul();
-              return;
-            }
-            openDashboardTab(tab);
-          }}
-          soulIconClass={soulNavIconClass()}
+          onSelect={openDashboardTab}
         />
       </div>
       <SidebarStatusControls
@@ -5024,42 +4963,61 @@ export default function SessionView(props: SessionViewProps) {
                 </div>
               </div>
             </Show>
-            <Show when={showQuickstartEmptyState()}>
-              <div class="text-center py-16 px-6 space-y-6">
-                <div class="w-16 h-16 bg-dls-hover rounded-3xl mx-auto flex items-center justify-center border border-dls-border">
-                  <Zap class="text-dls-secondary" />
-                </div>
-              <div class="space-y-2">
-                <h3 class="font-product type-title-sm">{tr("session.quickstart_title")}</h3>
-                <p class="font-reading type-reading-md text-dls-secondary max-w-sm mx-auto">
-                  {tr("session.quickstart_description")}
-                </p>
-              </div>
-              <div class="grid gap-3 sm:grid-cols-2 max-w-2xl mx-auto text-left">
-                <button
-                  type="button"
-                  class="rounded-2xl border border-dls-border bg-dls-hover p-4 transition-all hover:bg-dls-active hover:border-gray-7"
-                  onClick={() => {
-                    void handleBrowserAutomationQuickstart();
+          <Show when={showComposerEntryState()}>
+            <div class="mx-auto flex min-h-[min(34rem,calc(100vh-14rem))] w-full max-w-[960px] flex-col justify-center px-4 py-12">
+              <div class="mx-auto flex w-full max-w-[960px] flex-col items-center gap-5 text-center">
+                <ComposerTargetPicker
+                  options={props.composerTargetOptions}
+                  activeTargetId={props.activeComposerTargetId}
+                  disabled={props.busy}
+                  onSelect={(targetId) => {
+                    void handleComposerTargetSelect(targetId);
                   }}
+                />
+                <h2
+                  data-testid="composer-entry-target-heading"
+                  class="font-product type-title-md w-full max-w-[960px] text-balance text-dls-text"
                 >
-                  <div class="font-product type-ui-md font-semibold text-dls-text">{tr("session.quickstart_browser_title")}</div>
-                  <div class="font-reading type-ui-sm mt-1 text-dls-secondary">
-                    {tr("session.quickstart_browser_description")}
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  class="rounded-2xl border border-dls-border bg-dls-hover p-4 transition-all hover:bg-dls-active hover:border-gray-7"
-                  onClick={() => {
-                    void handleSoulQuickstart();
-                  }}
-                >
-                  <div class="font-product type-ui-md font-semibold text-dls-text">{tr("session.quickstart_soul_title")}</div>
-                  <div class="font-reading type-ui-sm mt-1 text-dls-secondary">
-                    {tr("session.quickstart_soul_description")}
-                  </div>
-                </button>
+                  {composerEntryHeading()}
+                </h2>
+                <Show when={composerResetKey()} keyed>
+                  {(_composerKey) => (
+                    <div class="w-full text-left">
+                      <Composer
+                        entryPlacement="center"
+                        initialDraft={props.composerDraft}
+                        prompt={props.composerDraft.text}
+                        developerMode={props.developerMode}
+                        busy={props.busy}
+                        isStreaming={showRunIndicator()}
+                        stopShortcutConfirmPending={escapeStopConfirmationPending()}
+                        compactWidth={useCompactCenterColumn()}
+                        onSend={handleSendPrompt}
+                        onStop={cancelRun}
+                        onDraftChange={handleDraftChange}
+                        selectedAgent={props.selectedSessionAgent}
+                        onSelectAgent={(agent) => {
+                          applySessionAgent(agent);
+                        }}
+                        showNotionBanner={props.showTryNotionPrompt}
+                        onNotionBannerClick={props.onTryNotionPrompt}
+                        toast={toastMessage()}
+                        onToast={(message) => setToastMessage(message)}
+                        listAgents={props.listAgents}
+                        recentFiles={props.workingFiles}
+                        searchFiles={props.searchFiles}
+                        listCommands={props.listCommands}
+                        isRemoteWorkspace={props.activeWorkspaceDisplay.workspaceType === "remote"}
+                        localWorkspacePath={props.activeWorkspaceRoot}
+                        canChooseSessionFolder={props.canChooseSessionFolder}
+                        onChooseSessionFolder={chooseFolderForSession}
+                        attachmentsEnabled={attachmentsEnabled()}
+                        attachmentsDisabledReason={attachmentsDisabledReason()}
+                        engineReady={props.engineReady}
+                      />
+                    </div>
+                  )}
+                </Show>
               </div>
             </div>
           </Show>
@@ -5228,7 +5186,7 @@ export default function SessionView(props: SessionViewProps) {
         </div>
       </Show>
 
-      <Show when={!showWorkspaceSetupEmptyState()}>
+      <Show when={!showWorkspaceSetupEmptyState() && !showComposerEntryState()}>
         <>
               <Show when={props.aiAccessBlockedReason}>
                 <div class="mx-auto mb-3 w-full max-w-[min(100%,72rem)] rounded-2xl border border-amber-7/30 bg-amber-2/30 px-4 py-3 text-sm text-amber-12">

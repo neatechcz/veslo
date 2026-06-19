@@ -1,5 +1,5 @@
 import { Show, createSignal } from "solid-js";
-import { Box, ChevronDown, ChevronUp, HeartPulse, Zap } from "lucide-solid";
+import { Box, ChevronDown, ChevronUp, Zap } from "lucide-solid";
 
 import type { DashboardTab } from "../../types";
 import { currentLocale, t } from "../../../i18n";
@@ -8,10 +8,11 @@ import {
   writeSidebarDashboardNavCollapsed,
 } from "./sidebar-dashboard-nav-prefs";
 
+type VisibleSidebarDashboardTab = Extract<DashboardTab, "skills" | "mcp">;
+
 type SidebarDashboardNavProps = {
   currentTab: DashboardTab;
-  onSelect: (tab: DashboardTab) => void;
-  soulIconClass?: string;
+  onSelect: (tab: VisibleSidebarDashboardTab) => void;
 };
 
 const buttonClass = (active: boolean) =>
@@ -42,14 +43,6 @@ export default function SidebarDashboardNav(props: SidebarDashboardNavProps) {
     <div class="mt-1.5">
       <Show when={!collapsed()}>
         <div class="space-y-0 border-t border-gray-6/70 pt-1.5">
-          <button
-            type="button"
-            class={buttonClass(isActiveTab(props.currentTab, "soul"))}
-            onClick={() => props.onSelect("soul")}
-          >
-            <HeartPulse size={18} class={props.soulIconClass} />
-            {t("nav.soul", currentLocale())}
-          </button>
           <button
             type="button"
             class={buttonClass(isActiveTab(props.currentTab, "skills"))}

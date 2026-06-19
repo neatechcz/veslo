@@ -83,23 +83,43 @@ test("pending draft write-back only runs while the bare pending draft route owns
   );
 });
 
-test("optimistic first submit replaces the quickstart empty state immediately", () => {
+test("bare new-session screen centers the composer entry without quickstart templates", () => {
   assert.match(
     sessionSource,
-    /const showQuickstartEmptyState = createMemo\(\(\) =>\s*effectiveRenderedMessages\(\)\.length === 0 &&\s*!showWorkspaceSetupEmptyState\(\) &&\s*!showSessionLoadingState\(\),\s*\);/s,
-    "quickstart visibility should use rendered messages so an optimistic submitted draft hides the starter templates before backend messages exist",
+    /const showComposerEntryState = createMemo\(\(\) =>[\s\S]*effectiveRenderedMessages\(\)\.length === 0[\s\S]*!showWorkspaceSetupEmptyState\(\)[\s\S]*!showSessionLoadingState\(\)[\s\S]*\);/s,
+    "bare new sessions should derive a dedicated centered composer-entry state from the rendered conversation",
   );
 
   assert.match(
     sessionSource,
-    /<Show when=\{showQuickstartEmptyState\(\)\}>/,
-    "the quickstart starter templates should be controlled by the derived quickstart empty-state memo",
+    /<Show when=\{showComposerEntryState\(\)\}>[\s\S]*entryPlacement="center"[\s\S]*<\/Show>/s,
+    "the centered composer-entry state should render the composer in center placement before the first send",
   );
 
   assert.doesNotMatch(
     sessionSource,
-    /<Show when=\{props\.messages\.length === 0 && !showWorkspaceSetupEmptyState\(\) && !showSessionLoadingState\(\)\}>/,
-    "quickstart visibility must not depend only on backend props.messages length",
+    /session\.quickstart_title|session\.quickstart_description|session\.quickstart_browser_title|session\.quickstart_soul_title|showQuickstartEmptyState/,
+    "bare new sessions should not render the old quickstart heading or starter action cards",
+  );
+});
+
+test("first submit dismisses the centered composer entry before backend handoff resolves", () => {
+  assert.match(
+    sessionSource,
+    /const composerEntryDismissed = createMemo\(\(\) =>\s*Boolean\(composerEntryDismissedBySessionKey\(\)\[currentSessionQueueKey\(\)\]\),\s*\);/s,
+    "the centered entry state should have a local per-session dismissal flag",
+  );
+
+  assert.match(
+    sessionSource,
+    /const showComposerEntryState = createMemo\(\(\) =>\s*effectiveRenderedMessages\(\)\.length === 0 &&\s*!composerEntryDismissed\(\) &&\s*!showWorkspaceSetupEmptyState\(\) &&\s*!showSessionLoadingState\(\),\s*\);/s,
+    "a submit attempt should hide the centered entry even before backend messages or optimistic handoff survive",
+  );
+
+  assert.match(
+    sessionSource,
+    /const handleSendPrompt = async \(draft: ComposerDraft, options: ComposerSendOptions = \{\}\) => \{[\s\S]*if \(showComposerEntryState\(\)\) \{[\s\S]*dismissComposerEntryForSessionKey\(\);[\s\S]*\}/s,
+    "the send handler should dismiss the entry immediately when the user submits from the bare new-session state",
   );
 });
 

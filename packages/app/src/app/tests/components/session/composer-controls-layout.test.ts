@@ -94,3 +94,17 @@ test("composer editor keeps compact typography without horizontal scrollbar", ()
     "editor should wrap long content, avoid horizontal scrollbars, and keep the shared reading typography tokens",
   );
 });
+
+test("composer can render in centered entry placement before the first send", () => {
+  assert.match(
+    composerSource,
+    /entryPlacement\?: "footer" \| "center";/,
+    "composer should expose an explicit placement prop for the bare new-session entry state",
+  );
+
+  assert.match(
+    composerSource,
+    /props\.entryPlacement === "center"\s*\?\s*"relative z-20 bg-transparent px-0 pt-0 pb-0"\s*:\s*`sticky bottom-0 z-20 bg-gradient-to-t from-gray-1 via-gray-1 to-transparent px-8 \$\{props\.compactTopSpacing \? "pt-0" : "pt-12"\} pb-3`/s,
+    "center placement should keep the composer in normal document flow while footer placement stays sticky at the bottom",
+  );
+});
