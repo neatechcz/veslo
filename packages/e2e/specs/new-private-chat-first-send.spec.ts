@@ -401,7 +401,7 @@ async function waitForServerWorkspaceBinding(
         latestPayload = payload;
         active = (payload.items ?? []).find((item) => item.id === workspace.id) ?? null;
         const activeBaseUrl = active?.baseUrl ?? active?.opencode?.baseUrl ?? "";
-        return payload.activeId === workspace.id && isLoopbackHttpUrl(activeBaseUrl);
+        return isLoopbackHttpUrl(activeBaseUrl);
       },
       {
         timeout: 60_000,
@@ -438,7 +438,7 @@ async function waitForOrchestratorWorkspaceRegistration(workspace: WorkspaceInfo
       {
         timeout: 60_000,
         interval: 500,
-        timeoutMsg: `Orchestrator did not register ${workspace.id} before first conversation create.`,
+        timeoutMsg: `Orchestrator did not register ${workspace.id} after first conversation create.`,
       },
     );
   } catch (error) {
@@ -520,7 +520,7 @@ async function createConversationThroughVesloWriteApi(
 }
 
 describe("New private chat first send", () => {
-  it("registers the UI-created private workspace before conversation creation", async function () {
+  it("registers the UI-created private workspace during first conversation creation", async function () {
     this.timeout(WAIT_TIMEOUT_MS + 90_000);
 
     await navigateToHash("/session");
@@ -537,12 +537,12 @@ describe("New private chat first send", () => {
     const server = await waitForVesloServerReady();
     const serverWorkspace = await waitForServerWorkspaceBinding(server, privateWorkspace);
     expect(serverWorkspace.id).toBe(privateWorkspace.id);
-    await waitForOrchestratorWorkspaceRegistration(privateWorkspace);
 
     const conversation = await createConversationThroughVesloWriteApi(server, privateWorkspace);
     expect(trimText(conversation.id)).not.toBe("");
     expect(trimText(conversation.conversationId)).not.toBe("");
     expect(trimText(conversation.opencodeSessionId)).not.toBe("");
+    await waitForOrchestratorWorkspaceRegistration(privateWorkspace);
     await waitForActiveEngineForWorkspace(privateWorkspace);
   });
 });

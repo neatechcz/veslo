@@ -1029,7 +1029,7 @@ function isOrchestratorMountedOpencodeBaseUrl(daemonUrlRaw: string, baseUrlRaw: 
     const basePath = baseUrl.pathname.replace(/\/+$/, "");
     return (
       daemonUrl.origin === baseUrl.origin &&
-      /^\/workspace\/[^/]+\/opencode$/.test(basePath)
+      /^\/workspace\/[^/]*\/opencode$/.test(basePath)
     );
   } catch {
     return false;
