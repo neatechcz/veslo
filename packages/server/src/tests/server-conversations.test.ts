@@ -181,13 +181,24 @@ describe("conversation routes", () => {
     tempDirs.push(workspaceRoot);
     await useTempVesloDataDir();
 
-    let upstreamPath = "";
+    const upstreamPaths: string[] = [];
     const upstream = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        upstreamPath = url.pathname;
+        upstreamPaths.push(url.pathname);
+        if (request.method === "POST" && url.pathname === "/workspaces") {
+          return Response.json({
+            activeId: "ws_orch",
+            workspace: {
+              id: "ws_orch",
+              name: "Orchestrated",
+              path: workspaceRoot,
+              workspaceType: "local",
+            },
+          });
+        }
         if (request.method === "POST" && url.pathname === "/workspace/ws_orch/opencode/session") {
           return Response.json({
             id: "sess-orch",
@@ -232,10 +243,104 @@ describe("conversation routes", () => {
     );
 
     expect(response.status).toBe(201);
-    expect(upstreamPath).toBe("/workspace/ws_orch/opencode/session");
+    expect(upstreamPaths).toEqual([
+      "/workspaces",
+      "/workspace/ws_orch/opencode/session",
+    ]);
     const payload = await response.json() as { id: string; opencodeSessionId: string };
     expect(payload.id).toBe("sess-orch");
     expect(payload.opencodeSessionId).toBe("sess-orch");
+  });
+
+  test("POST /workspace/:id/conversations registers local workspace with orchestrator before session create", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-orchestrator-register-"));
+    tempDirs.push(workspaceRoot);
+    await useTempVesloDataDir();
+
+    let registered = false;
+    const upstreamCalls: Array<{ method: string; pathname: string; body: unknown }> = [];
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const raw = await request.text();
+        const body = raw ? JSON.parse(raw) : null;
+        upstreamCalls.push({ method: request.method, pathname: url.pathname, body });
+
+        if (request.method === "POST" && url.pathname === "/workspaces") {
+          registered = true;
+          return Response.json({
+            activeId: "ws_orch_missing",
+            workspace: {
+              id: "ws_orch_missing",
+              name: "Needs orchestrator",
+              path: workspaceRoot,
+              workspaceType: "local",
+            },
+          });
+        }
+
+        if (request.method === "POST" && url.pathname === "/workspace/ws_orch_missing/opencode/session") {
+          if (!registered) {
+            return Response.json({ error: "workspace not found" }, { status: 404 });
+          }
+          return Response.json({
+            id: "sess-after-register",
+            title: "Registered",
+            directory: workspaceRoot,
+            parentID: null,
+            time: { created: 111, updated: 222 },
+          });
+        }
+
+        return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+      orchestratorDaemonUrl: `http://127.0.0.1:${upstream.port}`,
+      workspaces: [
+        {
+          id: "ws_orch_missing",
+          name: "Needs orchestrator",
+          path: workspaceRoot,
+          baseUrl: "",
+        },
+      ],
+    });
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_orch_missing/conversations`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          directory: workspaceRoot,
+          title: "Registered",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(201);
+    const payload = await response.json() as { id: string; opencodeSessionId: string };
+    expect(payload.id).toBe("sess-after-register");
+    expect(payload.opencodeSessionId).toBe("sess-after-register");
+    expect(upstreamCalls.map((call) => `${call.method} ${call.pathname}`)).toEqual([
+      "POST /workspaces",
+      "POST /workspace/ws_orch_missing/opencode/session",
+    ]);
+    expect(upstreamCalls[0]?.body).toMatchObject({
+      id: "ws_orch_missing",
+      path: workspaceRoot,
+      name: "Needs orchestrator",
+    });
   });
 
   test("POST /workspace/:id/conversations/:conversationId/runs queues and drains when lifecycle has an active run", async () => {
