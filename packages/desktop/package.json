@@ -2,11 +2,12 @@
   "name": "@neatech/veslo",
   "private": true,
   "version": "2026.6.2",
-  "opencodeVersion": "1.14.29",
+  "opencodeVersion": "1.17.4",
   "opencodeRouterVersion": "2026.6.2",
   "type": "module",
   "scripts": {
-    "dev": "VESLO_DATA_DIR=\"$HOME/.veslo/veslo-orchestrator-dev\" VESLO_SERVER_DEV_WATCH=\"1\" VESLO_SERVER_DEV_DIR=\"$PWD/../server\" tauri dev --config src-tauri/tauri.dev.conf.json --config \"{\\\"build\\\":{\\\"devUrl\\\":\\\"http://localhost:${PORT:-5173}\\\"}}\"",
+    "dev": "node ./scripts/tauri-dev.mjs",
+    "dev:cleanup": "node ./scripts/cleanup-dev-processes.mjs",
     "build": "tauri build",
     "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs"
   },

@@ -1,4 +1,4 @@
-import type { ModelRef, SuggestedPlugin } from "./types";
+import type { HubMcpItem, HubMcpOAuthConfig, ModelRef, SuggestedPlugin } from "./types";
 
 export const MODEL_PREF_KEY = "veslo.defaultModel";
 export const SESSION_MODEL_PREF_KEY = "veslo.sessionModels";
@@ -11,6 +11,8 @@ export const AUTO_COMPACT_CONTEXT_PREF_KEY = "veslo.autoCompactContext";
 export const ENGINE_SOURCE_PREF_KEY = "veslo.engineSource";
 export const ENGINE_SOURCE_EXPLICIT_PREF_KEY = "veslo.engineSourceExplicit";
 export const ENGINE_CUSTOM_BIN_PATH_PREF_KEY = "veslo.engineCustomBinPath";
+export const MAX_ENGINES_PREF_KEY = "veslo.maxEngines";
+export const IDLE_SUSPEND_MS_PREF_KEY = "veslo.idleSuspendMs";
 
 export const DEFAULT_MODEL: ModelRef = {
   providerID: "opencode",
@@ -37,7 +39,14 @@ export type McpDirectoryInfo = {
   url?: string;
   type?: "remote" | "local";
   command?: string[];
-  oauth: boolean;
+  oauth: HubMcpOAuthConfig;
+  headers?: Record<string, string>;
+  authorization?: HubMcpItem["authorization"];
+  provider?: {
+    id: string;
+    group?: string;
+  };
+  source?: HubMcpItem["source"];
 };
 
 export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [

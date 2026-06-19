@@ -2,6 +2,7 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { LANGUAGE_PREF_KEY, ONBOARDING_COMPLETE_STORAGE_KEY } from "../constants";
 import { isTauriRuntime } from "../utils";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
+import { wrapStartupRequestAuditFetch } from "./startup-request-audit";
 
 const DEN_AUTH_STORAGE_KEY = "veslo.den.auth";
 const DEN_KEEP_SIGNED_IN_STORAGE_KEY = "veslo.den.keepSignedIn";
@@ -20,7 +21,12 @@ const DESKTOP_AUTH_FALLBACK_TTL_MS = 10 * 60 * 1000;
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
-const resolveFetch = (): FetchLike => (isTauriRuntime() ? tauriFetch : globalThis.fetch);
+const auditedTauriFetch = wrapStartupRequestAuditFetch(
+  tauriFetch as unknown as typeof globalThis.fetch,
+  "tauri.den-auth",
+);
+
+const resolveFetch = (): FetchLike => (isTauriRuntime() ? auditedTauriFetch : globalThis.fetch);
 
 async function fetchWithTimeout(
   fetchImpl: FetchLike,
@@ -354,11 +360,15 @@ function normalizePersistedLanguage(value: unknown): string | null {
   return null;
 }
 
-async function invokeDesktopCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  const runtimeInvoke = (typeof window !== "undefined"
+function runtimeTauriInvoke(): TauriInvoke | null {
+  return (typeof window !== "undefined"
     ? (window as unknown as { __TAURI_INTERNALS__?: { invoke?: TauriInvoke } }).__TAURI_INTERNALS__
         ?.invoke
     : null) as TauriInvoke | null;
+}
+
+async function invokeDesktopCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  const runtimeInvoke = runtimeTauriInvoke();
   if (runtimeInvoke) {
     return runtimeInvoke<T>(command, args);
   }
@@ -375,16 +385,22 @@ function queueDesktopSnapshotWrite(
 ): void {
   if (!isTauriRuntime() || isAutomatedBrowserSession()) return;
   const payloadAuth = auth ? JSON.stringify(auth) : null;
+  const invokeAtQueueTime = runtimeTauriInvoke();
+  const payload = {
+    authJson: payloadAuth,
+    keepSignedIn,
+    language,
+    onboardingComplete,
+  };
   desktopSnapshotWriteQueue = desktopSnapshotWriteQueue
     .catch(() => {})
     .then(async () => {
       try {
-        await invokeDesktopCommand(DEN_AUTH_SNAPSHOT_WRITE_COMMAND, {
-          authJson: payloadAuth,
-          keepSignedIn,
-          language,
-          onboardingComplete,
-        });
+        if (invokeAtQueueTime) {
+          await invokeAtQueueTime(DEN_AUTH_SNAPSHOT_WRITE_COMMAND, payload);
+          return;
+        }
+        await invokeDesktopCommand(DEN_AUTH_SNAPSHOT_WRITE_COMMAND, payload);
       } catch {
         // ignore desktop snapshot write failures
       }

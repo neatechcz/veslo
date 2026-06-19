@@ -4,13 +4,14 @@ import test from "node:test";
 const ORIGINAL_ENV = { ...process.env };
 
 function resetEnv(overrides: Record<string, string | undefined> = {}) {
-  process.env = {
+  for (const key of Object.keys(process.env)) delete process.env[key];
+  Object.assign(process.env, {
     ...ORIGINAL_ENV,
     LETTR_API_KEY: "lettr_test_key",
     AUTH_EMAIL_ADDRESS: "alerts@example.test",
     AUTH_EMAIL_FROM_NAME: "Veslo Ops",
     ...overrides,
-  };
+  });
 }
 
 async function importMailer() {
@@ -18,14 +19,15 @@ async function importMailer() {
 }
 
 test.afterEach(() => {
-  process.env = { ...ORIGINAL_ENV };
+  for (const key of Object.keys(process.env)) delete process.env[key];
+  Object.assign(process.env, ORIGINAL_ENV);
 });
 
 test("admin alert email uses Lettr send-email payload", async () => {
   resetEnv();
   const requests: Array<{ url: string; init: RequestInit }> = [];
-  const originalFetch = global.fetch;
-  global.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
     requests.push({ url: String(url), init: init ?? {} });
     return new Response(null, { status: 202, statusText: "Accepted" });
   }) as typeof fetch;
@@ -39,7 +41,7 @@ test("admin alert email uses Lettr send-email payload", async () => {
       text: "Capacity warning",
     });
   } finally {
-    global.fetch = originalFetch;
+    globalThis.fetch = originalFetch;
   }
 
   assert.equal(requests.length, 1);

@@ -20,6 +20,7 @@ const defaultSpecs = [
   './specs/extensions-mcp.spec.ts',
   './specs/feedback-bug-report.spec.ts',
   './specs/feedback-youtrack-live.spec.ts',
+  './specs/google-mcp-connectors.spec.ts',
   './specs/live-admin-codex-roundtrip.spec.ts',
   './specs/markdown-drop-guard.spec.ts',
   './specs/navigation.spec.ts',

@@ -1,0 +1,76 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+
+const countMatches = (pattern: RegExp) => [...source.matchAll(pattern)].length;
+
+function inactiveWorkspaceBaseUrlHealEffectSource(): string {
+  const comment = source.indexOf("// VSLO-86: heal stale gateway baseURL");
+  const start = source.indexOf("  createEffect(() => {", comment);
+  const end = source.indexOf("  createEffect(() => {", start + 1);
+  assert.ok(start >= 0 && end > start, "inactive workspace baseURL heal effect should be present");
+  return source.slice(start, end);
+}
+
+test("Veslo server polling stores stable capability and host-info signal values", () => {
+  assert.match(
+    source,
+    /const setVesloServerCapabilitiesStable = \(next: VesloServerCapabilities \| null\) => \{[\s\S]*setVesloServerCapabilities\(\(current\) =>[\s\S]*vesloServerCapabilitiesStateKey\(current\) === nextKey \? current : next[\s\S]*\};/,
+    "capabilities should keep the previous signal value when polled content is unchanged",
+  );
+  assert.match(
+    source,
+    /const setVesloServerHostInfoStable = \(next: VesloServerInfo \| null\) => \{[\s\S]*setVesloServerHostInfo\(\(current\) =>[\s\S]*vesloServerHostInfoStateKey\(current\) === nextKey \? current : next[\s\S]*\};/,
+    "host info should keep the previous signal value when polled content is unchanged",
+  );
+  assert.equal(
+    countMatches(/\bsetVesloServerCapabilities\(/g),
+    1,
+    "runtime code should update capabilities through the stable setter only",
+  );
+  assert.equal(
+    countMatches(/\bsetVesloServerHostInfo\(/g),
+    1,
+    "runtime code should update host info through the stable setter only",
+  );
+});
+
+test("Veslo server routing effects ignore host-info diagnostic churn", () => {
+  assert.match(
+    source,
+    /const activeVesloServerRoutingInfo = createMemo\([\s\S]*baseUrl: hostInfo\.baseUrl\?\.trim\(\) \?\? "",[\s\S]*engineUrl: hostInfo\.engineUrl\?\.trim\(\) \?\? "",[\s\S]*clientToken: hostInfo\.clientToken\?\.trim\(\) \?\? "",[\s\S]*equals: \(prev, next\) =>[\s\S]*prev\?\.baseUrl[\s\S]*next\?\.baseUrl[\s\S]*prev\?\.engineUrl[\s\S]*next\?\.engineUrl[\s\S]*prev\?\.clientToken[\s\S]*next\?\.clientToken/s,
+    "routing effects should depend on stable routing fields instead of the full host-info object",
+  );
+  assert.match(
+    source,
+    /const providerRoutingLocalHost = activeVesloServerRoutingInfo\(\);[\s\S]*managed-ai-config-sync:preflight/s,
+    "managed config sync should use stable routing info",
+  );
+});
+
+test("inactive workspace baseURL healing skips active workspace and stale async runs", () => {
+  const effectSource = inactiveWorkspaceBaseUrlHealEffectSource();
+
+  assert.match(
+    source,
+    /let inactiveWorkspaceBaseUrlHealGeneration = 0;/,
+    "inactive workspace healing should track async generations across effect reruns",
+  );
+  assert.match(
+    effectSource,
+    /const activeWorkspaceAppId = activeWorkspace\.id\?\.trim\(\) \|\| workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*const activeWorkspaceId =[\s\S]*resolveConversationServerWorkspaceId\(activeWorkspaceAppId\) \|\|[\s\S]*activeWorkspaceAppId\.startsWith\("ws-"\) \? activeWorkspaceAppId : ""[\s\S]*\(vesloServerWorkspaceId\(\) \?\? ""\)\.trim\(\);/,
+    "inactive workspace healing should resolve the active server workspace id before listing workspaces",
+  );
+  assert.match(
+    effectSource,
+    /const healGeneration = \+\+inactiveWorkspaceBaseUrlHealGeneration;[\s\S]*const isCurrentInactiveWorkspaceHeal = \(\) =>[\s\S]*!cancelled && healGeneration === inactiveWorkspaceBaseUrlHealGeneration;/,
+    "inactive workspace healing should invalidate older async runs",
+  );
+  assert.match(
+    effectSource,
+    /if \(!isCurrentInactiveWorkspaceHeal\(\)\) return;[\s\S]*if \(workspace\.id === activeWorkspaceId\) continue;[\s\S]*if \(!isCurrentInactiveWorkspaceHeal\(\)\) return;\s*await vesloClient\.patchConfig/s,
+    "inactive workspace healing should check generation before patching and skip the active workspace",
+  );
+});

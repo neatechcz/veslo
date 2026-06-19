@@ -7,6 +7,7 @@ import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 
 import { reportError } from "./lib/error-reporter";
+import { recordPerfLog } from "./lib/perf-log";
 import type {
   Client,
   PluginScope,
@@ -15,6 +16,7 @@ import type {
   ResetVesloMode,
   UpdateHandle,
 } from "./types";
+import type { WorkspaceBusyMap } from "./context/workspace-debug";
 import { currentLocale, t } from "../i18n";
 import { addOpencodeCacheHint, isTauriRuntime, safeStringify } from "./utils";
 import { mapConfigProvidersToList } from "./utils/providers";
@@ -27,10 +29,10 @@ import {
 import {
   resetVesloState,
   resetOpencodeCache,
-  sandboxCleanupVesloContainers,
   updaterPrepareInstall,
 } from "./lib/tauri";
 import { unwrap, waitForHealthy } from "./lib/opencode";
+import type { WorkspaceRouting } from "./context/workspace-routing";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../i18n";
 
 function throttle<T extends (...args: any[]) => any>(
@@ -75,8 +77,10 @@ type DownloadUpdateOptions = {
 
 export function createSystemState(options: {
   client: Accessor<Client | null>;
+  routing?: WorkspaceRouting;
   sessions: Accessor<Session[]>;
   sessionStatusById: Accessor<Record<string, string>>;
+  workspaceBusy?: Accessor<WorkspaceBusyMap>;
   refreshPlugins: (scopeOverride?: PluginScope) => Promise<void>;
   refreshSkills: (options?: { force?: boolean }) => Promise<void>;
   refreshMcpServers?: () => Promise<void>;
@@ -88,6 +92,7 @@ export function createSystemState(options: {
   setError: (value: string | null) => void;
   notion?: NotionState;
 }) {
+  const routing = options.routing ?? { active: options.client };
   const [reloadRequired, setReloadRequired] = createSignal(false);
   const [reloadReasons, setReloadReasons] = createSignal<ReloadReason[]>([]);
   const [reloadLastTriggeredAt, setReloadLastTriggeredAt] = createSignal<number | null>(null);
@@ -98,8 +103,9 @@ export function createSystemState(options: {
 
   const [cacheRepairBusy, setCacheRepairBusy] = createSignal(false);
   const [cacheRepairResult, setCacheRepairResult] = createSignal<string | null>(null);
-  const [dockerCleanupBusy, setDockerCleanupBusy] = createSignal(false);
-  const [dockerCleanupResult, setDockerCleanupResult] = createSignal<string | null>(null);
+  // F4Ú8c — Docker cleanup state odebráno (sandbox runs OS-level, žádné containery).
+  const dockerCleanupBusy = () => false;
+  const dockerCleanupResult = () => null as string | null;
 
   const updater = createUpdaterState();
   const {
@@ -145,9 +151,15 @@ export function createSystemState(options: {
     return next;
   };
 
+  const isActiveSessionStatus = (status: string | null | undefined) => {
+    const normalized = status?.trim() ?? "";
+    return Boolean(normalized && normalized !== "idle");
+  };
+
   const anyActiveRuns = createMemo(() => {
     const statuses = options.sessionStatusById();
-    return options.sessions().some((s) => statuses[s.id] === "running");
+    if (options.sessions().some((s) => isActiveSessionStatus(statuses[s.id]))) return true;
+    return Object.values(options.workspaceBusy?.() ?? {}).some((sessions) => Object.keys(sessions).length > 0);
   });
 
   function clearVesloLocalStorage(mode: ResetVesloMode) {
@@ -288,7 +300,7 @@ export function createSystemState(options: {
     const override = options.canReloadWorkspaceEngine?.();
     if (override === true) return true;
     if (override === false) return false;
-    if (!options.client()) return false;
+    if (!routing.active()) return false;
     return true;
   });
 
@@ -298,7 +310,7 @@ export function createSystemState(options: {
   });
 
   async function reloadEngineInstance() {
-    const initialClient = options.client();
+    const initialClient = routing.active();
     if (!initialClient) return false;
 
     const override = options.canReloadWorkspaceEngine?.();
@@ -326,7 +338,7 @@ export function createSystemState(options: {
         unwrap(await initialClient.instance.dispose());
       }
 
-      const nextClient = options.client();
+      const nextClient = routing.active();
       if (!nextClient) {
         throw new Error("OpenCode client unavailable after reload.");
       }
@@ -434,47 +446,26 @@ export function createSystemState(options: {
     }
   }
 
+  // F4Ú8c — cleanupVesloDockerContainers() no-op. Docker sandbox backend
+  // odstraněn ve F4Ú8a/Ú8b; settings UI handler ponecháme jako stub.
   async function cleanupVesloDockerContainers() {
-    if (!isTauriRuntime()) {
-      setDockerCleanupResult("Docker cleanup requires the desktop app.");
-      return;
-    }
-
-    if (dockerCleanupBusy()) return;
-
-    setDockerCleanupBusy(true);
-    setDockerCleanupResult(null);
-    options.setError(null);
-
-    try {
-      const result = await sandboxCleanupVesloContainers();
-      if (!result.candidates.length) {
-        setDockerCleanupResult("No Veslo Docker containers found.");
-        return;
-      }
-
-      const removedCount = result.removed.length;
-      if (result.errors.length) {
-        const first = result.errors[0];
-        setDockerCleanupResult(
-          `Removed ${removedCount}/${result.candidates.length} containers. ${first}`,
-        );
-        return;
-      }
-
-      setDockerCleanupResult(`Removed ${removedCount} Veslo Docker container(s).`);
-    } catch (e) {
-      setDockerCleanupResult(e instanceof Error ? e.message : safeStringify(e));
-    } finally {
-      setDockerCleanupBusy(false);
-    }
+    // intentional no-op
   }
 
   async function checkForUpdates(optionsCheck?: { quiet?: boolean }) {
     if (!isTauriRuntime()) return;
+    const startedAt = Date.now();
+    recordPerfLog(true, "workspace.updater", "check-start", {
+      quiet: Boolean(optionsCheck?.quiet),
+    });
 
     const env = updateEnv();
     if (env && !env.supported) {
+      recordPerfLog(true, "workspace.updater", "check-unsupported", {
+        quiet: Boolean(optionsCheck?.quiet),
+        reason: env.reason ?? null,
+        ms: Date.now() - startedAt,
+      });
       if (!optionsCheck?.quiet) {
         setUpdateStatus({
           state: "error",
@@ -496,12 +487,23 @@ export function createSystemState(options: {
       const checkedAt = Date.now();
 
       if (!update) {
+        recordPerfLog(true, "workspace.updater", "check-end", {
+          quiet: Boolean(optionsCheck?.quiet),
+          available: false,
+          ms: checkedAt - startedAt,
+        });
         setPendingUpdate(null);
         setUpdateStatus({ state: "idle", lastCheckedAt: checkedAt });
         return;
       }
 
       const notes = typeof update.body === "string" ? update.body : undefined;
+      recordPerfLog(true, "workspace.updater", "check-end", {
+        quiet: Boolean(optionsCheck?.quiet),
+        available: true,
+        version: update.version,
+        ms: checkedAt - startedAt,
+      });
       setPendingUpdate({ update, version: update.version, notes });
       setUpdateStatus({
         state: "available",
@@ -512,6 +514,11 @@ export function createSystemState(options: {
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
+      recordPerfLog(true, "workspace.updater", "check-error", {
+        quiet: Boolean(optionsCheck?.quiet),
+        message,
+        ms: Date.now() - startedAt,
+      });
 
       if (optionsCheck?.quiet) {
         setUpdateStatus(prev);
@@ -552,6 +559,7 @@ export function createSystemState(options: {
     if (state.state === "ready") return;
 
     options.setError(null);
+    const startedAt = Date.now();
     let lastCheckedAt =
       state.state === "available" || state.state === "downloading"
         ? state.lastCheckedAt
@@ -570,6 +578,12 @@ export function createSystemState(options: {
       if (!pending) return;
       const downloadPending = pending;
 
+      recordPerfLog(true, "workspace.updater", "download-start", {
+        automatic: Boolean(optionsDownload?.automatic),
+        refreshBeforeDownload: Boolean(optionsDownload?.refreshBeforeDownload),
+        retryAttempt: optionsDownload?.retryAttempt ?? 0,
+        version: pending.version,
+      });
       setUpdateStatus({
         state: "downloading",
         lastCheckedAt,
@@ -589,6 +603,7 @@ export function createSystemState(options: {
 
       let accumulatedBytes = 0;
       let totalBytes: number | null = null;
+      let lastProgressLogAt = 0;
 
       const throttledUpdateProgress = throttle(() => {
         setUpdateStatus((current) => {
@@ -612,6 +627,12 @@ export function createSystemState(options: {
               ? record.data.contentLength
               : null;
           totalBytes = newTotal;
+          recordPerfLog(true, "workspace.updater", "download-progress", {
+            version: pending?.version ?? null,
+            totalBytes,
+            downloadedBytes: accumulatedBytes,
+            started: true,
+          });
           throttledUpdateProgress();
         }
 
@@ -621,22 +642,27 @@ export function createSystemState(options: {
               ? record.data.chunkLength
               : 0;
           accumulatedBytes += chunk;
+          const nowMs = Date.now();
+          if (nowMs - lastProgressLogAt >= 2_000) {
+            lastProgressLogAt = nowMs;
+            recordPerfLog(true, "workspace.updater", "download-progress", {
+              version: pending?.version ?? null,
+              totalBytes,
+              downloadedBytes: accumulatedBytes,
+              started: false,
+            });
+          }
           throttledUpdateProgress();
         }
       });
 
-      if (optionsDownload?.automatic && !updateAutoDownload()) {
-        setUpdateStatus((current) => {
-          if (current.state !== "downloading") return current;
-          return resolveAutoDownloadOptOutStatus({
-            lastCheckedAt,
-            version: downloadPending.version,
-            notes: downloadPending.notes,
-          });
-        });
-        return;
-      }
-
+      recordPerfLog(true, "workspace.updater", "download-end", {
+        automatic: Boolean(optionsDownload?.automatic),
+        version: pending.version,
+        totalBytes,
+        downloadedBytes: accumulatedBytes,
+        ms: Date.now() - startedAt,
+      });
       setUpdateStatus({
         state: "ready",
         lastCheckedAt,
@@ -645,6 +671,12 @@ export function createSystemState(options: {
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
+      recordPerfLog(true, "workspace.updater", "download-error", {
+        automatic: Boolean(optionsDownload?.automatic),
+        version: pending?.version ?? pendingUpdate()?.version ?? null,
+        message,
+        ms: Date.now() - startedAt,
+      });
       const failedPending = pending ?? pendingUpdate();
       if (!failedPending) {
         setUpdateStatus({ state: "error", lastCheckedAt, message });

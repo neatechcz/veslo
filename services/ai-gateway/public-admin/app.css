@@ -356,6 +356,26 @@ a {
   resize: vertical;
 }
 
+.credential-detail-field {
+  display: grid;
+  gap: 8px;
+}
+
+.credential-command-block {
+  display: grid;
+  gap: 10px;
+}
+
+.credential-command-output {
+  min-height: 108px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .credential-create-card {
   margin-bottom: 16px;
 }
@@ -390,6 +410,83 @@ a {
 .error {
   color: var(--danger);
   margin: 0;
+}
+
+.backend-connection-status {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 1000;
+  width: min(360px, calc(100vw - 32px));
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid rgba(116, 200, 255, 0.24);
+  border-radius: 18px;
+  background: rgba(8, 12, 22, 0.94);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.38);
+  backdrop-filter: blur(18px);
+}
+
+.backend-connection-status strong,
+.backend-connection-status span {
+  display: block;
+}
+
+.backend-connection-status strong {
+  font-size: 0.92rem;
+}
+
+.backend-connection-status span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  margin-top: 3px;
+}
+
+.backend-connection-dot {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  margin-top: 5px;
+  border-radius: 999px;
+  background: var(--info);
+  box-shadow: 0 0 0 4px rgba(116, 200, 255, 0.12);
+}
+
+.backend-connection-status[data-state="connecting"] .backend-connection-dot {
+  animation: connection-pulse 1s ease-in-out infinite;
+}
+
+.backend-connection-status[data-state="offline"] {
+  border-color: rgba(246, 198, 106, 0.36);
+}
+
+.backend-connection-status[data-state="offline"] .backend-connection-dot {
+  background: var(--warning);
+  box-shadow: 0 0 0 4px rgba(246, 198, 106, 0.14);
+}
+
+.backend-connection-status[data-state="connected"] {
+  border-color: rgba(68, 209, 157, 0.28);
+}
+
+.backend-connection-status[data-state="connected"] .backend-connection-dot {
+  background: var(--success);
+  box-shadow: 0 0 0 4px rgba(68, 209, 157, 0.14);
+}
+
+@keyframes connection-pulse {
+  0%,
+  100% {
+    opacity: 0.58;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .app-grid {
@@ -912,15 +1009,8 @@ tr.row-muted strong {
     text-align: center;
   }
 
-  .modal-card {
-    padding: 16px;
-  }
-
-  .modal-actions {
-    justify-content: stretch;
-  }
-
-  .modal-actions .button {
-    width: 100%;
+  .backend-connection-status {
+    right: 16px;
+    bottom: 16px;
   }
 }

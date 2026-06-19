@@ -1,62 +1,15 @@
 import { expect } from '@wdio/globals';
 import { navigateToHash, waitForHashRoute } from '../helpers/app-launcher.js';
 
-type WorkspaceInfo = {
-  id: string;
-  path: string;
-  directory?: string | null;
+type ComposerLayoutState = {
+  bodyText: string;
+  headingDisplayed: boolean;
+  rootClass: string;
+  rootTop: number;
+  rootBottom: number;
+  rootMid: number;
+  viewportHeight: number;
 };
-
-type WorkspaceList = {
-  activeId: string;
-  workspaces: WorkspaceInfo[];
-};
-
-async function tauriInvoke<T>(command: string, payload: Record<string, unknown> = {}): Promise<T> {
-  const result = await browser.executeAsync(
-    (
-      args: { command: string; payload: Record<string, unknown> },
-      done: (value: { ok: boolean; value?: unknown; error?: string }) => void,
-    ) => {
-      const invoke = (
-        window as typeof window & {
-          __TAURI_INTERNALS__?: { invoke?: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
-        }
-      ).__TAURI_INTERNALS__?.invoke;
-
-      if (typeof invoke !== 'function') {
-        done({ ok: false, error: 'Tauri invoke bridge is unavailable' });
-        return;
-      }
-
-      invoke(args.command, args.payload).then(
-        (value) => done({ ok: true, value }),
-        (error) =>
-          done({
-            ok: false,
-            error: error instanceof Error ? error.message : String(error),
-          }),
-      );
-    },
-    { command, payload },
-  ) as { ok: boolean; value?: T; error?: string };
-
-  if (!result.ok) {
-    throw new Error(`Tauri invoke failed for ${command}: ${result.error ?? 'unknown error'}`);
-  }
-
-  return result.value as T;
-}
-
-async function clearComposer() {
-  await browser.execute(() => {
-    const el = document.querySelector('[role="textbox"]');
-    if (!el) return;
-    (el as HTMLElement).innerText = '';
-    el.dispatchEvent(new InputEvent('input', { bubbles: true, data: '', inputType: 'deleteContentBackward' }));
-  });
-  await browser.pause(150);
-}
 
 async function setComposerText(value: string) {
   await browser.execute((text) => {
@@ -66,134 +19,38 @@ async function setComposerText(value: string) {
     el.dispatchEvent(new InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' }));
     el.focus();
   }, value);
-  await browser.pause(300);
+  await browser.pause(150);
 }
 
-async function readComposerText() {
-  return browser.execute(() => (document.querySelector('[role="textbox"]')?.textContent ?? ''));
-}
+async function getComposerLayoutState(): Promise<ComposerLayoutState> {
+  return browser.execute(() => {
+    const textbox = document.querySelector('[role="textbox"]') as HTMLElement | null;
+    if (!textbox) throw new Error('Composer textbox was not found.');
 
-async function activeWorkspaceTarget() {
-  const bootstrap = await tauriInvoke<WorkspaceList>('workspace_bootstrap');
-  const activeWorkspace = bootstrap.workspaces.find((workspace) => workspace.id === bootstrap.activeId);
-  const directory = (activeWorkspace?.directory?.trim() || activeWorkspace?.path?.trim() || '').trim();
-  if (!activeWorkspace?.id || !directory) {
-    throw new Error('Active workspace is not ready for composer target test.');
-  }
-  return { workspaceId: activeWorkspace.id, directory };
-}
+    let root: HTMLElement | null = textbox;
+    while (
+      root &&
+      !(
+        root.className.includes('z-20') &&
+        (root.className.includes('sticky') || root.className.includes('relative'))
+      )
+    ) {
+      root = root.parentElement;
+    }
+    if (!root) throw new Error('Composer root was not found.');
 
-async function seedWorkspacePendingDraft(text: string) {
-  const target = await activeWorkspaceTarget();
-  const now = Date.now();
-  await tauriInvoke('pending_session_drafts_put', {
-    draft: {
-      id: `pending-directory-e2e-${now}`,
-      kind: 'directory',
-      workspaceId: target.workspaceId,
-      directory: target.directory,
-      privateWorkspaceId: null,
-      createdAt: now,
-      updatedAt: now,
-      composer: {
-        mode: 'prompt',
-        parts: [{ type: 'text', text }],
-        attachments: [],
-        text,
-        resolvedText: text,
-        command: null,
-      },
-    },
+    const rect = root.getBoundingClientRect();
+    const heading = document.querySelector('[data-testid="composer-entry-target-heading"]') as HTMLElement | null;
+    return {
+      bodyText: document.body.innerText,
+      headingDisplayed: Boolean(heading && heading.offsetParent !== null),
+      rootClass: root.className,
+      rootTop: rect.top,
+      rootBottom: rect.bottom,
+      rootMid: rect.top + rect.height / 2,
+      viewportHeight: window.innerHeight,
+    };
   });
-  return target;
-}
-
-async function seedChatPendingDraft(text: string) {
-  const target = await activeWorkspaceTarget();
-  const now = Date.now();
-  await tauriInvoke('pending_session_drafts_put', {
-    draft: {
-      id: `pending-chat-e2e-${now}`,
-      kind: 'new-private',
-      workspaceId: target.workspaceId,
-      directory: null,
-      privateWorkspaceId: target.workspaceId,
-      createdAt: now,
-      updatedAt: now,
-      composer: {
-        mode: 'prompt',
-        parts: [{ type: 'text', text }],
-        attachments: [],
-        text,
-        resolvedText: text,
-        command: null,
-      },
-    },
-  });
-}
-
-async function openTargetPicker() {
-  const picker = await $('[data-testid="composer-target-picker"]');
-  await picker.waitForDisplayed({ timeout: 20_000 });
-
-  const firstExistingOption = (await $$('[data-testid="composer-target-option"]'))[0];
-  if (!(await firstExistingOption?.isDisplayed().catch(() => false))) {
-    await picker.click();
-  }
-
-  await browser.waitUntil(
-    async () => {
-      const firstOption = (await $$('[data-testid="composer-target-option"]'))[0];
-      return Boolean(await firstOption?.isDisplayed().catch(() => false));
-    },
-    {
-      timeout: 10_000,
-      timeoutMsg: 'Composer target picker options did not open.',
-    },
-  );
-}
-
-async function waitForComposerEntry() {
-  await $('[data-testid="composer-entry-target-heading"]').waitForDisplayed({ timeout: 30_000 });
-  await $('[data-testid="composer-target-picker"]').waitForDisplayed({ timeout: 30_000 });
-}
-
-async function clickTargetOptionByDirectory(directory: string) {
-  await openTargetPicker();
-  const targetDirectory = directory.trim();
-  const options = await $$('[data-testid="composer-target-option"]');
-  for (const option of options) {
-    const optionDirectory = (await option.getAttribute('data-composer-target-directory'))?.trim() ?? '';
-    if (optionDirectory !== targetDirectory) continue;
-    await expect(await option.$('[data-testid="composer-target-draft-badge"]')).toBeDisplayed();
-    await option.click();
-    return;
-  }
-  throw new Error(`Composer target option for ${directory} was not found.`);
-}
-
-async function expectChatTargetOptionFirst() {
-  await openTargetPicker();
-  const options = await $$('[data-testid="composer-target-option"]');
-  expect(options.length).toBeGreaterThan(0);
-  const firstOption = options[0];
-  await expect(firstOption).toBeDisplayed();
-  expect(await firstOption.getAttribute('data-composer-target-kind')).toBe('chat');
-  expect(await firstOption.getText()).toContain('[Pouze chat]');
-  await expect(await firstOption.$('[data-testid="composer-target-draft-badge"]')).toBeDisplayed();
-}
-
-async function waitForConflictModalClosed() {
-  await browser.waitUntil(
-    async () => {
-      const modal = await $('[data-testid="composer-target-conflict-modal"]');
-      return !(await modal.isDisplayed().catch(() => false));
-    },
-    {
-      timeout: 10_000,
-      timeoutMsg: 'Composer target conflict modal did not close.',
-    },
-  );
 }
 
 describe('Composer', () => {
@@ -202,19 +59,27 @@ describe('Composer', () => {
     await waitForHashRoute('#/session', 5000);
   });
 
-  it('shows the centered composer target entry on a new session route', async () => {
+  it('centers the composer entry on a new session route without quickstart copy', async () => {
     await navigateToHash('/session');
     await waitForHashRoute('#/session', 5000);
+    await $('[role="textbox"]').waitForDisplayed({ timeout: 30_000 });
 
-    await waitForComposerEntry();
-    await expect($('[data-testid="composer-entry-target-heading"]')).toBeDisplayed();
-    await expect($('[data-testid="composer-target-picker"]')).toBeDisplayed();
-  });
+    const state = await getComposerLayoutState();
+    expect(state.headingDisplayed).toBe(true);
+    expect(state.rootClass).toContain('relative');
+    expect(state.rootClass).not.toContain('sticky');
+    expect(Math.abs(state.rootMid - state.viewportHeight / 2)).toBeLessThan(state.viewportHeight * 0.25);
 
-  it('opens the target picker and exposes draft-aware options', async () => {
-    await openTargetPicker();
-    await expect($$('[data-testid="composer-target-option"]')[0]).toBeDisplayed();
-    await browser.keys('Escape');
+    for (const removedText of [
+      'Co chcete udělat?',
+      'Automatizuj prohlížeč',
+      'Dej mi duši',
+      'What do you want to do?',
+      'Automate your browser',
+      'Give me a soul',
+    ]) {
+      expect(state.bodyText).not.toContain(removedText);
+    }
   });
 
   it('should have a textbox for composing messages', async () => {
@@ -349,5 +214,36 @@ describe('Composer', () => {
       text: draft,
     });
     expect(await readComposerText()).toContain(draft);
+  });
+
+  it('moves the composer to the footer immediately after the first submit', async () => {
+    await navigateToHash('/session');
+    await waitForHashRoute('#/session', 5000);
+    await $('[role="textbox"]').waitForDisplayed({ timeout: 30_000 });
+
+    const before = await getComposerLayoutState();
+    expect(before.rootClass).toContain('relative');
+    expect(before.headingDisplayed).toBe(true);
+
+    await setComposerText(`Composer layout submit ${Date.now()}`);
+    await browser.keys('Enter');
+
+    await browser.waitUntil(
+      async () => {
+        const after = await getComposerLayoutState();
+        return (
+          after.rootClass.includes('sticky') &&
+          after.rootClass.includes('bottom-0')
+        );
+      },
+      {
+        timeout: 5_000,
+        timeoutMsg: 'Composer did not move to the footer immediately after submit.',
+      },
+    );
+
+    const after = await getComposerLayoutState();
+    expect(after.rootClass).toContain('sticky');
+    expect(after.rootClass).toContain('bottom-0');
   });
 });

@@ -1,0 +1,659 @@
+[scenario]
+name = "pending-session-instance-isolation"
+fail_fast = true
+global_timeout_ms = 520000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "configure sidebar grouping"
+action = "eval"
+script = '''
+window.localStorage.setItem("veslo.sidebar-session-view.v1", "by-project");
+window.localStorage.removeItem("veslo.sidebar-collapsed-projects.v1");
+window.localStorage.removeItem("veslo.sidebar-chat-collapsed.v1");
+true;
+'''
+
+[[step]]
+name = "root exists after sidebar grouping"
+action = "wait"
+target = "#root"
+timeout_ms = 30000
+
+[[step]]
+name = "start pending session isolation task"
+action = "eval"
+script = '''
+const completeSelector = '[data-testid="pending-session-instance-isolation-complete"]';
+const errorSelector = '[data-testid="pending-session-instance-isolation-error"]';
+const progressSelector = '[data-testid="pending-session-instance-isolation-progress"]';
+document.querySelector(completeSelector)?.remove();
+document.querySelector(errorSelector)?.remove();
+document.querySelector(progressSelector)?.remove();
+
+const progressMarker = document.createElement("pre");
+progressMarker.dataset.testid = "pending-session-instance-isolation-progress";
+progressMarker.style.display = "none";
+progressMarker.textContent = "starting";
+document.body.append(progressMarker);
+
+const setProgress = (stage, detail = null) => {
+  window.__vesloPendingSessionInstanceIsolationProgress = {
+    stage,
+    detail,
+    at: new Date().toISOString(),
+  };
+  progressMarker.textContent = JSON.stringify(window.__vesloPendingSessionInstanceIsolationProgress);
+};
+
+const appendMarker = (selector, payload) => {
+  if (document.querySelector(completeSelector) || document.querySelector(errorSelector)) return;
+  const marker = document.createElement("pre");
+  marker.dataset.testid = selector === completeSelector
+    ? "pending-session-instance-isolation-complete"
+    : "pending-session-instance-isolation-error";
+  marker.textContent = JSON.stringify(payload, null, 2);
+  document.body.append(marker);
+};
+
+if (!window.__vesloPendingSessionInstanceIsolationStarted) {
+  window.__vesloPendingSessionInstanceIsolationStarted = true;
+  window.__vesloPendingSessionInstanceIsolationPromise = (async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const trimText = (value) => String(value ?? "").trim();
+    const normalize = (value) => trimText(value).replace(/\s+/g, " ");
+    const normalizePath = (value) => trimText(value).replace(/\\/g, "/").replace(/\/+$/, "");
+    const trimBaseUrl = (value) => normalize(value).replace(/\/+$/, "");
+    const assert = (condition, message) => {
+      if (!condition) throw new Error(message);
+    };
+    const waitUntil = async (predicate, options = {}) => {
+      const timeout = options.timeout ?? 10000;
+      const interval = options.interval ?? 250;
+      const message = options.message ?? "Condition was not met";
+      const deadline = Date.now() + timeout;
+      let latest;
+      while (Date.now() < deadline) {
+        latest = await predicate();
+        if (latest) return latest;
+        await sleep(interval);
+      }
+      throw new Error(`${message}. Latest=${JSON.stringify(latest)}`);
+    };
+    const withTimeout = async (promise, timeout, message) => {
+      let timeoutId;
+      try {
+        return await Promise.race([
+          promise,
+          new Promise((_, reject) => {
+            timeoutId = setTimeout(() => reject(new Error(message)), timeout);
+          }),
+        ]);
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+      }
+    };
+    const tauriInvoke = async (command, payload = {}, timeout = 90000) => {
+      const invoke = window.__TAURI_INTERNALS__?.invoke;
+      assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
+      return await withTimeout(
+        invoke(command, payload),
+        timeout,
+        `Tauri command ${command} did not resolve within ${timeout}ms`,
+      );
+    };
+    const visibleText = (element) => normalize(element?.innerText || element?.textContent || "");
+    const visibleBodyText = () => visibleText(document.querySelector("main") ?? document.body);
+    const conversationPane = () =>
+      document.querySelector('[data-testid="session-conversation-pane"]') ??
+      document.querySelector("main") ??
+      document.body;
+    const visibleTranscriptText = () => visibleText(conversationPane());
+    const assertTextVisible = (text, label = text) => {
+      assert(visibleTranscriptText().includes(text), `${label} was not visible in selected transcript. Transcript=${visibleTranscriptText().slice(0, 2500)} Body=${visibleBodyText().slice(0, 2500)}`);
+    };
+    const assertTextNotVisible = (text, label = text) => {
+      assert(!visibleTranscriptText().includes(text), `${label} leaked into selected transcript. Transcript=${visibleTranscriptText().slice(0, 2500)} Body=${visibleBodyText().slice(0, 2500)}`);
+    };
+    const assertNoSendFailed = () => {
+      const body = visibleBodyText();
+      assert(!/Send failed|Odeslání selhalo|发送失败/i.test(body), `Send failed appeared. Body=${body.slice(0, 2500)} Trace=${JSON.stringify(sendTrace())}`);
+    };
+    const sendTrace = () => Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.slice(-80) : [];
+    const isVisibleElement = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const rect = element.getBoundingClientRect();
+      return Boolean(element.offsetParent) && rect.width > 0 && rect.height > 0;
+    };
+    const buttonValues = (button) => [
+      normalize(button.textContent),
+      normalize(button.title),
+      normalize(button.getAttribute("aria-label")),
+    ].filter(Boolean);
+    const buttonMatchesLabel = (button, labels) => {
+      if (!isVisibleElement(button) || button.disabled) return false;
+      const values = buttonValues(button);
+      return labels.some((label) => values.some((value) => value === label || value.includes(label)));
+    };
+    const findButton = (labels, root = document) =>
+      Array.from(root.querySelectorAll("button")).find((button) => buttonMatchesLabel(button, labels));
+    const dispatchClickSequence = (element) => {
+      element.focus?.();
+      const base = {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        view: window,
+        button: 0,
+      };
+      if (typeof PointerEvent === "function") {
+        element.dispatchEvent(new PointerEvent("pointerdown", {
+          ...base,
+          pointerId: 1,
+          pointerType: "mouse",
+          isPrimary: true,
+          buttons: 1,
+        }));
+        element.dispatchEvent(new PointerEvent("pointerup", {
+          ...base,
+          pointerId: 1,
+          pointerType: "mouse",
+          isPrimary: true,
+          buttons: 0,
+        }));
+      }
+      element.dispatchEvent(new MouseEvent("mousedown", { ...base, buttons: 1 }));
+      element.dispatchEvent(new MouseEvent("mouseup", { ...base, buttons: 0 }));
+      element.dispatchEvent(new MouseEvent("click", { ...base, buttons: 0 }));
+    };
+    const ensureByProjectSidebarMode = async () => {
+      setProgress("ensuring-by-project-sidebar");
+      if (document.querySelector('[data-sidebar-chat-section="true"], [data-sidebar-chat-collapsed="true"]')) return;
+      const moreButton = await waitUntil(() => findButton(["More actions"]), {
+        timeout: 45000,
+        interval: 500,
+        message: `Sidebar more-actions button did not appear. Buttons=${JSON.stringify(Array.from(document.querySelectorAll("button")).filter(isVisibleElement).map(buttonValues))}`,
+      });
+      dispatchClickSequence(moreButton);
+      const byProjectButton = await waitUntil(() =>
+        Array.from(document.querySelectorAll('button[role="menuitemradio"]'))
+          .find((button) => buttonMatchesLabel(button, ["By project", "Podle projektu"])),
+      {
+        timeout: 10000,
+        interval: 250,
+        message: `By-project sidebar menu item did not appear. Buttons=${JSON.stringify(Array.from(document.querySelectorAll("button")).filter(isVisibleElement).map(buttonValues))}`,
+      });
+      dispatchClickSequence(byProjectButton);
+      await waitUntil(() => document.querySelector('[data-sidebar-chat-section="true"], [data-sidebar-chat-collapsed="true"]'), {
+        timeout: 45000,
+        interval: 500,
+        message: `By-project sidebar did not expose the Chats section. Rows=${JSON.stringify(rowSummary())}. Body=${visibleBodyText().slice(0, 2500)}`,
+      });
+    };
+    const findComposerSendButton = (textbox) => {
+      const labels = [
+        "Send now",
+        "Steer agent now",
+        "Queue message",
+        "Send",
+        "Poslat hned",
+        "Nasměrovat agenta teď",
+        "Zařadit zprávu",
+        "Odeslat",
+        "立即发送",
+        "立即引导代理",
+        "加入队列",
+      ];
+      let current = textbox;
+      const containers = [];
+      for (let depth = 0; depth < 10 && current instanceof HTMLElement; depth += 1) {
+        containers.push(current);
+        current = current.parentElement;
+      }
+      for (const container of containers) {
+        const matching = Array.from(container.querySelectorAll("button")).find((button) => buttonMatchesLabel(button, labels));
+        if (matching) return matching;
+      }
+      return findButton(labels);
+    };
+    const waitForComposer = async () => {
+      setProgress("waiting-composer");
+      return await waitUntil(() => {
+        const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
+        return candidate instanceof HTMLElement && isVisibleElement(candidate) ? candidate : false;
+      }, {
+        timeout: 45000,
+        interval: 250,
+        message: `Composer did not appear. Body=${visibleBodyText().slice(0, 2500)}`,
+      });
+    };
+    const setComposerText = (textbox, text) => {
+      textbox.focus();
+      if (textbox.isContentEditable) {
+        textbox.replaceChildren(document.createTextNode(text));
+      } else {
+        textbox.value = text;
+      }
+      textbox.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        data: text,
+        inputType: "insertText",
+      }));
+    };
+    const sendComposerText = async (text) => {
+      setProgress("sending-composer-text", { text });
+      const textbox = await waitForComposer();
+      setComposerText(textbox, text);
+      await waitUntil(() => normalize(textbox.textContent || textbox.value).includes(text), {
+        timeout: 10000,
+        message: `Composer did not retain ${text}`,
+      });
+      const traceLengthBeforeClick = sendTrace().length;
+      const sendButton = await waitUntil(() => findComposerSendButton(textbox), {
+        timeout: 20000,
+        interval: 250,
+        message: `Send button did not become enabled. Buttons=${JSON.stringify(Array.from(document.querySelectorAll("button")).map(buttonValues))}`,
+      });
+      dispatchClickSequence(sendButton);
+      await waitUntil(() => sendTrace().length > traceLengthBeforeClick || visibleTranscriptText().includes(text), {
+        timeout: 20000,
+        interval: 250,
+        message: `Send click did not reach composer handler for ${text}. Trace=${JSON.stringify(sendTrace())}`,
+      });
+      await waitUntil(() => visibleTranscriptText().includes(text), {
+        timeout: 60000,
+        interval: 500,
+        message: `Pending submitted message did not render for ${text}. Transcript=${visibleTranscriptText().slice(0, 2500)} Body=${visibleBodyText().slice(0, 2500)} Trace=${JSON.stringify(sendTrace())}`,
+      });
+      assertNoSendFailed();
+    };
+    const sidebarRows = () => Array.from(document.querySelectorAll('[data-session-sidebar-row="true"]'))
+      .filter(isVisibleElement);
+    const sidebarRowsByText = (text) => sidebarRows().filter((row) => normalize(row.textContent).includes(text));
+    const rowSummary = () => sidebarRows().map((row) => ({
+      id: row.getAttribute("data-session-sidebar-row-id") ?? null,
+      pendingId: row.getAttribute("data-session-sidebar-row-pending-id") ?? null,
+      pending: row.getAttribute("data-session-sidebar-row-pending") ?? null,
+      text: normalize(row.textContent),
+      chat: Boolean(row.closest('[data-sidebar-chat-section="true"]')),
+      projectKey: row.closest("[data-project-key]")?.getAttribute("data-project-key") ?? null,
+      current: row.getAttribute("aria-current") ?? null,
+    }));
+    const routeState = () => ({
+      href: window.location.href,
+      pathname: window.location.pathname,
+      hash: window.location.hash,
+      activePendingDraftKey: window.localStorage.getItem("veslo.active-pending-draft.v1") || "",
+      rows: rowSummary(),
+    });
+    const waitForSidebarRow = async (text, predicate, label) => {
+      return await waitUntil(() => {
+        const match = sidebarRowsByText(text).find((row) => predicate(row));
+        return match || false;
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: `${label} sidebar row did not appear for ${text}. Rows=${JSON.stringify(rowSummary())}`,
+      });
+    };
+    const waitForChatSidebarRow = async (text) =>
+      await waitForSidebarRow(text, (row) => Boolean(row.closest('[data-sidebar-chat-section="true"]')), "chat");
+    const waitForProjectSidebarRow = async (text) =>
+      await waitForSidebarRow(text, (row) => Boolean(row.closest("[data-project-key]")) && !row.closest('[data-sidebar-chat-section="true"]'), "project");
+    const clickSidebarRowByText = async (text, options = {}) => {
+      setProgress("clicking-sidebar-row", { text, options });
+      const row = await waitUntil(() => {
+        const rows = sidebarRowsByText(text).filter((candidate) => {
+          if (options.section === "chat" && !candidate.closest('[data-sidebar-chat-section="true"]')) return false;
+          if (options.section === "project" && !candidate.closest("[data-project-key]")) return false;
+          if (options.projectKey && candidate.closest("[data-project-key]")?.getAttribute("data-project-key") !== options.projectKey) return false;
+          return true;
+        });
+        return rows[0] || false;
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: `Could not find sidebar row ${text}. Rows=${JSON.stringify(rowSummary())}`,
+      });
+      dispatchClickSequence(row);
+      await waitUntil(() => visibleTranscriptText().includes(text), {
+        timeout: 60000,
+        interval: 500,
+        message: `Clicking sidebar row ${text} did not select its transcript. State=${JSON.stringify(routeState())}. Transcript=${visibleTranscriptText().slice(0, 2500)} Body=${visibleBodyText().slice(0, 2500)}`,
+      });
+      return row;
+    };
+    const waitForLocalVesloServerReady = async () => {
+      let latest = null;
+      setProgress("waiting-local-veslo-server");
+      return await waitUntil(async () => {
+        latest = await tauriInvoke("veslo_server_info").catch(() => null);
+        const baseUrl = trimBaseUrl(latest?.baseUrl);
+        const clientToken = normalize(latest?.clientToken);
+        const hostToken = normalize(latest?.hostToken);
+        if (!latest?.running || !baseUrl || !clientToken || !hostToken) return false;
+        const response = await fetch(`${baseUrl}/health`).catch(() => null);
+        if (!response?.ok) return false;
+        const payload = await response.json().catch(() => null);
+        return payload?.ok === true ? { baseUrl, clientToken, hostToken } : false;
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: `Local Veslo server did not become ready. Server info=${JSON.stringify(latest)}`,
+      });
+    };
+    const waitForAiAccessReady = async (connection) => {
+      let latest = null;
+      setProgress("waiting-ai-access");
+      return await waitUntil(async () => {
+        const response = await fetch(`${connection.baseUrl}/ai-gateway/me/ai-access`, {
+          headers: {
+            authorization: `Bearer ${connection.clientToken}`,
+            "x-veslo-gateway-authorization": "Bearer veslo-e2e-managed-ai-token",
+            accept: "application/json",
+          },
+        }).catch((error) => {
+          latest = { error: error?.message || String(error) };
+          return null;
+        });
+        if (!response) return false;
+        const text = await response.text();
+        latest = { status: response.status, body: text.slice(0, 500) };
+        if (!response.ok) return false;
+        const payload = text.trim() ? JSON.parse(text) : null;
+        return payload?.aiAccess?.enabled === true ? payload : false;
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: `AI access endpoint did not become ready. Latest=${JSON.stringify(latest)}`,
+      });
+    };
+    const waitForWorkspaceEngineReady = async (workspace) => {
+      const workspacePath = normalizePath(workspace?.path || workspace?.directory);
+      assert(workspacePath, `Workspace path is missing from bootstrap payload: ${JSON.stringify(workspace)}`);
+      setProgress("activating-workspace-engine", { workspacePath });
+      try {
+        await tauriInvoke("orchestrator_workspace_activate", {
+          workspacePath,
+          name: normalize(workspace?.displayName || workspace?.name) || null,
+        });
+      } catch (error) {
+        setProgress("starting-workspace-engine", { workspacePath, error: error?.message || String(error) });
+        await tauriInvoke("engine_start", {
+          projectDir: workspacePath,
+          preferSidecar: true,
+          opencodeBinPath: null,
+          runtime: "veslo-orchestrator",
+          workspacePaths: [workspacePath],
+        });
+        await tauriInvoke("orchestrator_workspace_activate", {
+          workspacePath,
+          name: normalize(workspace?.displayName || workspace?.name) || null,
+        });
+      }
+      return await waitUntil(async () => {
+        const info = await tauriInvoke("engine_info", {
+          workspaceId: workspace?.id ?? null,
+          workspacePath,
+        }).catch(() => null);
+        return trimBaseUrl(info?.baseUrl) ? info : false;
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: `Workspace engine did not become ready for ${workspacePath}`,
+      });
+    };
+    const openNewChat = async () => {
+      setProgress("opening-new-chat");
+      const previousActivePendingDraftKey = window.localStorage.getItem("veslo.active-pending-draft.v1") || "";
+      const chatButton = await waitUntil(() => {
+        const chatRoots = Array.from(document.querySelectorAll('[data-sidebar-chat-section="true"], [data-sidebar-chat-collapsed="true"]'));
+        for (const chatRoot of chatRoots) {
+          const button = Array.from(chatRoot.querySelectorAll("button")).find((candidate) =>
+            buttonMatchesLabel(candidate, ["New chat", "Chat", "Novy chat", "Nový chat"]) &&
+            !buttonMatchesLabel(candidate, ["Chats", "Chaty"]));
+          if (button) return button;
+        }
+        return false;
+      }, {
+        timeout: 60000,
+        interval: 500,
+        message: `Chat quick-action did not appear. Rows=${JSON.stringify(rowSummary())}. Buttons=${JSON.stringify(Array.from(document.querySelectorAll("button")).filter(isVisibleElement).map(buttonValues))}`,
+      });
+      dispatchClickSequence(chatButton);
+      await waitUntil(() => {
+        const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
+        if (!(candidate instanceof HTMLElement) || !isVisibleElement(candidate)) return false;
+        const activePendingDraftKey = window.localStorage.getItem("veslo.active-pending-draft.v1") || "";
+        return activePendingDraftKey.includes("new-private") && activePendingDraftKey !== previousActivePendingDraftKey
+          ? candidate
+          : false;
+      }, {
+        timeout: 120000,
+        interval: 500,
+        message: `Private chat composer did not open a distinct draft. PreviousPending=${previousActivePendingDraftKey}. ActivePending=${window.localStorage.getItem("veslo.active-pending-draft.v1") || ""}. Rows=${JSON.stringify(rowSummary())}. Body=${visibleBodyText().slice(0, 2500)}`,
+      });
+    };
+    const findProjectCreateButton = (projectRoot) => {
+      const buttons = Array.from(projectRoot.querySelectorAll("button")).filter(isVisibleElement);
+      return buttons.find((button) => buttonMatchesLabel(button, [
+        "Create session in this project",
+        "Vytvořit relaci v tomto projektu",
+        "在此项目中创建会话",
+      ]));
+    };
+    const openNewProjectSession = async () => {
+      setProgress("opening-new-project-session");
+      const previousActivePendingDraftKey = window.localStorage.getItem("veslo.active-pending-draft.v1") || "";
+      const projectRoot = await waitUntil(() => {
+        const candidates = Array.from(document.querySelectorAll("[data-project-key]"))
+          .filter((candidate) => candidate instanceof HTMLElement && isVisibleElement(candidate));
+        return candidates.find((candidate) => !candidate.closest('[data-sidebar-chat-section="true"]') && findProjectCreateButton(candidate)) || false;
+      }, {
+        timeout: 45000,
+        interval: 500,
+        message: `Project group did not appear. Rows=${JSON.stringify(rowSummary())}`,
+      });
+      const button = findProjectCreateButton(projectRoot);
+      assert(button, `Project create-session button was not found. Project=${normalize(projectRoot.textContent)} Buttons=${JSON.stringify(Array.from(projectRoot.querySelectorAll("button")).filter(isVisibleElement).map(buttonValues))}`);
+      dispatchClickSequence(button);
+      await waitUntil(() => {
+        const activePendingDraftKey = window.localStorage.getItem("veslo.active-pending-draft.v1") || "";
+        const alreadyOnDirectoryDraft = previousActivePendingDraftKey.includes("__pending-draft__:directory:");
+        if (!activePendingDraftKey.includes("directory:")) return false;
+        if (!alreadyOnDirectoryDraft && activePendingDraftKey === previousActivePendingDraftKey) return false;
+        const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
+        return candidate instanceof HTMLElement && isVisibleElement(candidate) ? candidate : false;
+      }, {
+        timeout: 120000,
+        interval: 500,
+        message: `Project composer did not open a directory pending draft. PreviousPending=${previousActivePendingDraftKey}. ActivePending=${window.localStorage.getItem("veslo.active-pending-draft.v1") || ""}. Rows=${JSON.stringify(rowSummary())}. Body=${visibleBodyText().slice(0, 2500)}`,
+      });
+      return {
+        projectKey: projectRoot.getAttribute("data-project-key"),
+        label: normalize(projectRoot.textContent),
+      };
+    };
+    const waitForMaterializedSettle = async (text) => {
+      setProgress("waiting-materialized-settle", { text });
+      await waitUntil(() => {
+        const main = document.querySelector("main");
+        const hasPrompt = visibleBodyText().includes(text);
+        const stillRunning = Boolean(main?.querySelector('[data-testid="session-run-indicator"]'));
+        return hasPrompt && !stillRunning;
+      }, {
+        timeout: 180000,
+        interval: 1000,
+        message: `Session did not settle after ${text}. Body=${visibleBodyText().slice(0, 2500)} Trace=${JSON.stringify(sendTrace())}`,
+      });
+    };
+    const waitForActiveRunIndicator = async (text) => {
+      setProgress("waiting-active-run-indicator", { text });
+      await waitUntil(() => {
+        const main = document.querySelector("main");
+        if (!main || !visibleBodyText().includes(text)) return false;
+        const indicator = main.querySelector('[data-testid="session-run-indicator"]');
+        return indicator instanceof HTMLElement && isVisibleElement(indicator) ? indicator : false;
+      }, {
+        timeout: 20000,
+        interval: 250,
+        message: `Session was not actively running after ${text}. Body=${visibleBodyText().slice(0, 2500)} Trace=${JSON.stringify(sendTrace())}`,
+      });
+    };
+
+    const watchdog = setTimeout(() => {
+      appendMarker(errorSelector, {
+        message: "Pending session instance isolation watchdog timed out before the task settled.",
+        progress: window.__vesloPendingSessionInstanceIsolationProgress ?? null,
+        sendTrace: sendTrace(),
+        rows: rowSummary(),
+        body: visibleBodyText().slice(0, 4000),
+      });
+    }, 480000);
+
+    try {
+      const timestamp = Date.now();
+      const messages = {
+        chatA: `pending isolation chat A ${timestamp}`,
+        chatB: `pending isolation chat B ${timestamp}`,
+        chatProject: `pending isolation chat project ${timestamp}`,
+        sameProjectA: `pending isolation same project A ${timestamp}`,
+        sameProjectB: `pending isolation same project B ${timestamp}`,
+      };
+
+      await waitUntil(() => document.querySelector("#root")?.children.length > 0, {
+        timeout: 15000,
+        message: "Veslo root did not render child UI",
+      });
+      window.localStorage.setItem("veslo.sidebar-session-view.v1", "by-project");
+      window.localStorage.removeItem("veslo.sidebar-collapsed-projects.v1");
+      window.localStorage.removeItem("veslo.sidebar-chat-collapsed.v1");
+
+      const connection = await waitForLocalVesloServerReady();
+      await waitForAiAccessReady(connection);
+      const bootstrap = await waitUntil(async () => {
+        const info = await tauriInvoke("workspace_bootstrap").catch(() => null);
+        return Array.isArray(info?.workspaces) && info.workspaces.length > 0 ? info : false;
+      }, {
+        timeout: 45000,
+        interval: 500,
+        message: "Workspace bootstrap did not expose a local workspace",
+      });
+      const activeWorkspace = bootstrap.workspaces.find((workspace) => workspace.id === bootstrap.activeId) ?? bootstrap.workspaces[0];
+      assert(activeWorkspace?.id, `Active workspace is unavailable: ${JSON.stringify(bootstrap)}`);
+      await waitForWorkspaceEngineReady(activeWorkspace);
+      await ensureByProjectSidebarMode();
+
+      await openNewChat();
+      await sendComposerText(messages.chatA);
+      await waitForChatSidebarRow(messages.chatA);
+
+      await openNewChat();
+      await sendComposerText(messages.chatB);
+      await waitForChatSidebarRow(messages.chatB);
+
+      await clickSidebarRowByText(messages.chatA, { section: "chat" });
+      assertTextVisible(messages.chatA, "chat A");
+      assertTextNotVisible(messages.chatB, "chat B");
+      await clickSidebarRowByText(messages.chatB, { section: "chat" });
+      assertTextVisible(messages.chatB, "chat B");
+      assertTextNotVisible(messages.chatA, "chat A");
+
+      await openNewProjectSession();
+      await sendComposerText(messages.chatProject);
+      const projectChatRow = await waitForProjectSidebarRow(messages.chatProject);
+      const projectKey = projectChatRow.closest("[data-project-key]")?.getAttribute("data-project-key");
+      assert(projectKey, `Project row did not expose a project key for ${messages.chatProject}`);
+      await clickSidebarRowByText(messages.chatProject, { section: "project", projectKey });
+      assertTextVisible(messages.chatProject, "project session");
+      assertTextNotVisible(messages.chatA, "chat A");
+      assertTextNotVisible(messages.chatB, "chat B");
+      await waitForChatSidebarRow(messages.chatA);
+      await waitForChatSidebarRow(messages.chatB);
+
+      await openNewProjectSession();
+      await sendComposerText(messages.sameProjectA);
+      const sameProjectARow = await waitForProjectSidebarRow(messages.sameProjectA);
+      const sameProjectAKey = sameProjectARow.closest("[data-project-key]")?.getAttribute("data-project-key");
+      assert(sameProjectAKey === projectKey, `same project A landed in ${sameProjectAKey}, expected ${projectKey}`);
+      await waitForActiveRunIndicator(messages.sameProjectA);
+
+      await openNewProjectSession();
+      await sendComposerText(messages.sameProjectB);
+      const sameProjectBRow = await waitForProjectSidebarRow(messages.sameProjectB);
+      const sameProjectBKey = sameProjectBRow.closest("[data-project-key]")?.getAttribute("data-project-key");
+      assert(sameProjectBKey === projectKey, `same project B landed in ${sameProjectBKey}, expected ${projectKey}`);
+
+      await clickSidebarRowByText(messages.sameProjectA, { section: "project", projectKey });
+      assertTextVisible(messages.sameProjectA, "same project A");
+      assertTextNotVisible(messages.sameProjectB, "same project B");
+      assertTextNotVisible(messages.chatProject, "project session");
+      await clickSidebarRowByText(messages.sameProjectB, { section: "project", projectKey });
+      assertTextVisible(messages.sameProjectB, "same project B");
+      assertTextNotVisible(messages.sameProjectA, "same project A");
+      assertTextNotVisible(messages.chatProject, "project session");
+      await clickSidebarRowByText(messages.sameProjectA, { section: "project", projectKey });
+      assertTextVisible(messages.sameProjectA, "same project A");
+      assertTextNotVisible(messages.sameProjectB, "same project B");
+      assertTextNotVisible(messages.chatProject, "project session");
+      await waitForMaterializedSettle(messages.sameProjectA);
+      await clickSidebarRowByText(messages.sameProjectB, { section: "project", projectKey });
+      assertTextVisible(messages.sameProjectB, "same project B");
+      assertTextNotVisible(messages.sameProjectA, "same project A");
+      assertTextNotVisible(messages.chatProject, "project session");
+      await waitForMaterializedSettle(messages.sameProjectB);
+
+      await waitForProjectSidebarRow(messages.chatProject);
+      await waitForProjectSidebarRow(messages.sameProjectA);
+      await waitForProjectSidebarRow(messages.sameProjectB);
+      await waitForChatSidebarRow(messages.chatA);
+      await waitForChatSidebarRow(messages.chatB);
+      assertNoSendFailed();
+      assert(document.querySelectorAll("[data-message-part-render-fallback]").length === 0, `Message part render fallback was used. Body=${visibleBodyText().slice(0, 2500)}`);
+      assert(document.querySelectorAll("[data-message-block-render-fallback]").length === 0, `Message block render fallback was used. Body=${visibleBodyText().slice(0, 2500)}`);
+
+      appendMarker(completeSelector, {
+        ok: true,
+        messages,
+        projectKey,
+        rows: rowSummary(),
+      });
+    } catch (error) {
+      appendMarker(errorSelector, {
+        message: error?.message || String(error),
+        stack: error?.stack || null,
+        progress: window.__vesloPendingSessionInstanceIsolationProgress ?? null,
+        sendTrace: sendTrace(),
+        rows: rowSummary(),
+        body: visibleBodyText().slice(0, 4000),
+      });
+    } finally {
+      clearTimeout(watchdog);
+    }
+  })();
+}
+
+true;
+'''
+
+[[step]]
+name = "pending session isolation task finished"
+action = "wait"
+target = "[data-testid=\"pending-session-instance-isolation-complete\"], [data-testid=\"pending-session-instance-isolation-error\"]"
+timeout_ms = 500000
+
+[[step]]
+name = "pending session isolation task succeeded"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="pending-session-instance-isolation-error"]');
+if (error) {
+  throw new Error(`Pending session instance isolation failed: ${(error.textContent || "").slice(0, 20000)}`);
+}
+true;
+'''

@@ -1,7 +1,8 @@
-import { readFile, writeFile, rm, readdir, rename, stat } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rm, readdir, realpath, rename, stat } from "node:fs/promises";
+import { appendFileSync, mkdirSync } from "node:fs";
 import { createHash, randomInt, randomUUID } from "node:crypto";
 import { homedir, hostname } from "node:os";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
   ApprovalRequest,
   Capabilities,
@@ -11,6 +12,8 @@ import type {
   ReloadReason,
   ReloadTrigger,
   TokenScope,
+  SandboxBackend,
+  ResourceOwner,
   WorkspaceSkillConflict,
   WorkspaceSkillMaterialization,
   DisabledSkillTarget,
@@ -39,11 +42,38 @@ import {
   type SkillRemovalRecord,
   type SkillRemovalScope,
 } from "./skill-removal-journal.js";
+import { createOrgMcpRuntimeToken, fetchOrgMcpCatalog, fetchOrgSkillsCatalog } from "./den-catalog.js";
 import {
-  listDisabledSkills,
-  setSkillEnabledState,
-} from "./skill-enabled-overrides.js";
-import { fetchOrgMcpCatalog, fetchOrgSkillsCatalog } from "./den-catalog.js";
+  getOrganizationSoul,
+  getSoulVersion,
+  getUserSoul,
+  listSoulVersions,
+  restoreSoulVersion as restoreDenSoulVersion,
+  updateOrganizationSoul,
+  updateUserSoul,
+} from "./soul-den-client.js";
+import {
+  cacheSoulDocument,
+  listPendingSoulEdits,
+  readCachedSoulDocument,
+  soulCachePath,
+  soulPendingCacheDir,
+  writePendingSoulEdit,
+  type SoulPendingEdit,
+} from "./soul-cache.js";
+import {
+  createSoulVersion,
+  currentSoulVersion,
+  restoreSoulVersion as restoreLocalSoulVersion,
+  type SoulDocument,
+  type SoulScope,
+  type SoulVersion,
+} from "./soul-memory.js";
+import {
+  materializeEffectiveSoul,
+  readSoulMaterializationStatus,
+  type SoulMaterializationResult,
+} from "./soul-materializer.js";
 import {
   getOrganizationSoul,
   getSoulVersion,
@@ -104,6 +134,15 @@ import {
 } from "./skill-materializer.js";
 import { getPlatformManagedPersonalGlobalSkillSet } from "./platform-managed-skills.js";
 import type { SkillSetMaterializationResult } from "./skill-materializer.js";
+import {
+  deleteUserGlobalSkill,
+  listUserGlobalSkills,
+  materializeUserGlobalSkillsForWorkspace,
+  readUserGlobalSkill,
+  upsertUserGlobalSkill,
+  userGlobalMaterializedSkillsRoot,
+  userGlobalSkillStorePath,
+} from "./user-skill-store.js";
 import type {
   RegistrySkillPackageArchive,
   RegistrySkillRolloutPolicy,
@@ -119,6 +158,7 @@ import { resolveWorkspaceSkillSet } from "./workspace-skill-set.js";
 import type { WorkspaceSkillRegistryInstallation, WorkspaceSkillRolloutPolicy } from "./workspace-skill-set.js";
 import { writeWorkspaceSkillLockfile } from "./workspace-skill-lockfile.js";
 import { deleteCommand, listCommands, upsertCommand } from "./commands.js";
+import { localUserResourceOwner, organizationResourceOwner, workspaceResourceOwner } from "./resource-owner.js";
 import { deleteScheduledJob, listScheduledJobs, resolveScheduledJob } from "./scheduler.js";
 import { provisionWorkspaceInternalSystem, resolveVesloAppDataDir } from "./internal-system.js";
 import { ApiError, formatError } from "./errors.js";
@@ -130,13 +170,13 @@ import { ReloadEventStore } from "./events.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { opencodeConfigPath, vesloConfigPath, projectCommandsDir, projectSkillsDir } from "./workspace-files.js";
 import { ensureDir, exists, hashToken, shortId } from "./utils.js";
-import { workspaceIdForPath } from "./workspaces.js";
+import { persistServerWorkspaceState, workspaceIdForPath } from "./workspaces.js";
 import { sanitizeCommandName, validateMcpName } from "./validators.js";
 import { TokenService } from "./tokens.js";
 import { TOY_UI_CSS, TOY_UI_HTML, TOY_UI_JS, cssResponse, htmlResponse, jsResponse } from "./toy-ui.js";
 import { FileSessionStore } from "./file-sessions.js";
 import { createSessionArchiveStore } from "./session-archives.js";
-import { deriveLatestRunArtifactsResponse } from "./session-artifacts.js";
+import { deriveLatestRunArtifactsResponse, type SessionArtifactMessage, type SessionArtifactPart } from "./session-artifacts.js";
 import { createSessionTranscriptPrefetchStore } from "./session-transcript-prefetch.js";
 import {
   type AutomationExecutionInput,
@@ -145,8 +185,8 @@ import {
   createAutomationRunner,
 } from "./automation-runner.js";
 import {
-  type AutomationSchedule,
   type AutomationRun,
+  type AutomationSchedule,
   type AutomationStatus,
   type AutomationTarget,
   type VesloAutomation,
@@ -159,6 +199,21 @@ import {
   readAutomationStore,
   resolveAutomationsPath,
 } from "./automation-store.js";
+import { createConversationReadStore } from "./conversation-read-store.js";
+import { createConversationBindingStore } from "./conversation-binding-store.js";
+import { createConversationTranscriptStore } from "./conversation-transcript-store.js";
+import { createConversationService } from "./conversation-service.js";
+import {
+  createConversationRunQueueStore,
+  type ConversationRunQueueItem,
+} from "./conversation-run-queue-store.js";
+import {
+  createOrchestratorLifecycleClient,
+  type LifecycleRunStatus,
+  type OrchestratorLifecycleClient,
+  OrchestratorLifecycleRequestError,
+  RunAlreadyActiveError,
+} from "./orchestrator-lifecycle-client.js";
 import pkg from "../package.json" with { type: "json" };
 
 const SERVER_VERSION = pkg.version;
@@ -181,11 +236,23 @@ const AI_GATEWAY_UPSTREAM_RESPONSE_SNIPPET_MAX = 1000;
 const OPENCODE_JSON_DEFAULT_RESPONSE_MAX_BYTES = 1024 * 1024;
 const OPENCODE_TRANSCRIPT_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
 const OPENCODE_JSON_FETCH_DEFAULT_TIMEOUT_MS = 5_000;
+const OPENCODE_SESSION_CREATE_TIMEOUT_MS = 60_000;
+const OPENCODE_CONVERSATION_SUBMIT_TIMEOUT_MS = 30_000;
+// Send-timeout fix 2026-06-10 — upper bound for the proxy's wait on upstream
+// response HEADERS (body streaming, e.g. SSE, is never cut). Must stay above
+// the orchestrator's 60s cold OpenCode health window so a legitimate POST that
+// cold-spawns the engine is not aborted mid-spawn.
+const OPENCODE_PROXY_HEADERS_DEFAULT_TIMEOUT_MS = 75_000;
+const AI_GATEWAY_PROXY_HEADERS_DEFAULT_TIMEOUT_MS = 45_000;
+const AI_GATEWAY_PROVIDER_START_DEFAULT_TIMEOUT_MS = 30_000;
+const AI_GATEWAY_SESSION_HIT_TTL_MS = 5 * 60 * 1000;
+const AI_GATEWAY_ACTIVE_RUN_TTL_MS = 10 * 60 * 1000;
 const AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS = 30_000;
 export const REDACTED_SECRET_VALUE = "[REDACTED]";
 const GATEWAY_CALLER_AUTH_HEADER = "x-veslo-gateway-authorization";
 const GATEWAY_ACCESS_TOKEN_HEADER = "x-veslo-gateway-token";
 const GATEWAY_SESSION_ID_HEADER = "x-veslo-session-id";
+const GATEWAY_WORKSPACE_ID_HEADER = "x-veslo-workspace-id";
 const AI_GATEWAY_MODEL_DIAGNOSTIC_MAX_REQUEST_BYTES = 64 * 1024;
 const AI_GATEWAY_JSON_REDACTION_MAX_RESPONSE_BYTES = 64 * 1024;
 const AI_GATEWAY_ERROR_DIAGNOSTIC_MAX_RESPONSE_BYTES = 64 * 1024;
@@ -203,6 +270,59 @@ const REDACTED_CONFIG_KEYS = [
 type LogLevel = "info" | "warn" | "error";
 
 type LogAttributes = Record<string, unknown>;
+
+const SEND_WORKFLOW_TRACE_SCHEMA = "send-workflow/v1";
+
+function truthyEnv(name: string): boolean {
+  const value = process.env[name]?.trim().toLowerCase() ?? "";
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
+function resolveSendWorkflowTraceFile(): string {
+  const override = process.env.VESLO_SEND_WORKFLOW_TRACE_FILE?.trim();
+  if (override) return override;
+  const pilotDir = process.env.TAURI_PILOT_LOG_DIR?.trim();
+  if (pilotDir) return join(pilotDir, "send-workflow-trace.ndjson");
+  const runtimeTraceFile = process.env.VESLO_RUNTIME_TRACE_FILE?.trim();
+  if (runtimeTraceFile) return join(dirname(runtimeTraceFile), "send-workflow-trace.ndjson");
+  return join(resolveVesloDataDir(), "send-workflow-trace.ndjson");
+}
+
+function sendWorkflowTraceEnabled(): boolean {
+  return truthyEnv("VESLO_SEND_WORKFLOW_TRACE") || Boolean(process.env.VESLO_SEND_WORKFLOW_TRACE_FILE?.trim());
+}
+
+function recordSendWorkflowTrace(
+  source: string,
+  event: string,
+  payload: Record<string, unknown> = {},
+): void {
+  if (!sendWorkflowTraceEnabled()) return;
+  const entry = {
+    schema: SEND_WORKFLOW_TRACE_SCHEMA,
+    at: new Date().toISOString(),
+    ts: Date.now(),
+    source,
+    event,
+    processPid: process.pid,
+    processRunId: process.env.VESLO_RUN_ID?.trim() || null,
+    ...payload,
+  };
+  try {
+    const file = resolveSendWorkflowTraceFile();
+    mkdirSync(dirname(file), { recursive: true });
+    appendFileSync(file, `${JSON.stringify(entry)}\n`, "utf8");
+  } catch {
+    // Diagnostics must never affect runtime behavior.
+  }
+  if (truthyEnv("VESLO_SEND_WORKFLOW_TRACE_CONSOLE")) {
+    try {
+      console.log(`[veslo:send-workflow] ${event} ${JSON.stringify(entry)}`);
+    } catch {
+      console.log(`[veslo:send-workflow] ${event}`);
+    }
+  }
+}
 
 type ServerLogger = {
   log: (level: LogLevel, message: string, attributes?: LogAttributes) => void;
@@ -249,6 +369,13 @@ function isSensitiveConfigKey(key: string): boolean {
   const normalized = normalizeConfigKey(key);
   if (!normalized) return false;
   if (normalized === "tokensource") return false;
+  // VSLO-86 — x-veslo-gateway-token must round-trip in clear so the frontend
+  // can re-patch opencode.jsonc on disk with a valid token. Without this
+  // exception, getConfig returned "[REDACTED]", the patch effect echoed the
+  // literal back, and engines later sent "[REDACTED]" as the Den gateway
+  // header → AI gateway 401. The same header lives in the allow-list on the
+  // client (GATEWAY_PROVIDER_ALLOWED_HEADER_KEYS); keep both in sync.
+  if (normalized === "xveslogatewaytoken") return false;
   return REDACTED_CONFIG_KEYS.some((segment) => normalized === segment || normalized.endsWith(segment));
 }
 
@@ -411,6 +538,26 @@ function parseWorkspaceMount(pathname: string): { workspaceId: string; restPath:
   const workspaceId = remainder.slice(0, slash);
   const restPath = remainder.slice(slash) || "/";
   if (!workspaceId.trim()) return null;
+  return { workspaceId: decodeURIComponent(workspaceId), restPath };
+}
+
+/**
+ * Canonical multi-workspace OpenCode mount: `/workspace/:id/opencode[/*]`.
+ * Returned `restPath` is the OpenCode-relative path (always starts with `/opencode`),
+ * which `proxyOpencodeRequest` already understands the same way as the short `/w/:id` form.
+ */
+export function parseWorkspaceOpencodeMount(
+  pathname: string,
+): { workspaceId: string; restPath: string } | null {
+  if (!pathname.startsWith("/workspace/")) return null;
+  const remainder = pathname.slice("/workspace/".length);
+  if (!remainder) return null;
+  const slash = remainder.indexOf("/");
+  if (slash === -1) return null;
+  const workspaceId = remainder.slice(0, slash);
+  const restPath = remainder.slice(slash) || "/";
+  if (!workspaceId.trim()) return null;
+  if (restPath !== "/opencode" && !restPath.startsWith("/opencode/")) return null;
   return { workspaceId: decodeURIComponent(workspaceId), restPath };
 }
 
@@ -605,16 +752,28 @@ export function startServer(config: ServerConfig) {
         return finalize(new Response(null, { status: 204 }));
       }
 
-      const mount = parseWorkspaceMount(url.pathname);
-      if (mount && (mount.restPath === "/opencode" || mount.restPath.startsWith("/opencode/"))) {
+      const canonicalOpencodeMount = parseWorkspaceOpencodeMount(url.pathname);
+      const mount = canonicalOpencodeMount ?? parseWorkspaceMount(url.pathname);
+      const opencodeMount =
+        canonicalOpencodeMount ??
+        (mount && (mount.restPath === "/opencode" || mount.restPath.startsWith("/opencode/"))
+          ? mount
+          : null);
+
+      if (opencodeMount) {
         authMode = "client";
         try {
           const actor = await requireClient(request, config, tokens);
-          assertOpencodeProxyAllowed(actor, request.method, mount.restPath);
-          const workspace = await resolveWorkspace(config, mount.workspaceId);
+          assertOpencodeProxyAllowed(actor, request.method, opencodeMount.restPath);
+          const workspace = await resolveWorkspace(config, opencodeMount.workspaceId);
           proxyService = "opencode";
           proxyBaseUrl = workspace.baseUrl?.trim() || undefined;
-          const response = await proxyOpencodeRequest({ request, url, workspace, proxyPath: mount.restPath });
+          const response = await proxyOpencodeRequest({
+            request,
+            url,
+            workspace,
+            proxyPath: opencodeMount.restPath,
+          });
           return finalize(response);
         } catch (error) {
           const apiError = error instanceof ApiError
@@ -863,33 +1022,84 @@ function pathToRegex(path: string, keys: string[]): RegExp {
   return new RegExp(`^${pattern}$`);
 }
 
-function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string) {
+const HOP_BY_HOP_REQUEST_HEADERS = [
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "trailers",
+  "transfer-encoding",
+  "upgrade",
+];
+const ACCEPT_ENCODING_HEADER = "accept-encoding";
+const ACCEPT_ENCODING_IDENTITY = "identity";
+const AI_GATEWAY_LOCAL_ONLY_REQUEST_HEADERS = [
+  "x-session-affinity",
+  "x-session-id",
+];
+
+function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string, workspaceId?: string) {
   const target = new URL(baseUrl);
   const trimmedPath = path.replace(/^\/opencode/, "");
-  target.pathname = trimmedPath.startsWith("/") ? trimmedPath : `/${trimmedPath}`;
+  const suffix = trimmedPath === "" ? "/" : trimmedPath.startsWith("/") ? trimmedPath : `/${trimmedPath}`;
+  const basePath = target.pathname.replace(/\/+$/, "") || "";
+  const workspaceMount = basePath.match(/^\/workspace\/([^/]+)\/opencode(?:\/.*)?$/);
+  if (workspaceMount) {
+    const id = encodeURIComponent(workspaceId ?? decodeURIComponent(workspaceMount[1] ?? ""));
+    target.pathname = `/workspace/${id}/opencode${suffix === "/" ? "" : suffix}`;
+  } else {
+    target.pathname = `${basePath}${suffix === "/" ? "" : suffix}` || "/";
+  }
   target.search = search;
   return target.toString();
+}
+
+function buildOrchestratorWorkspaceOpencodeBaseUrl(config: ServerConfig, workspace: WorkspaceInfo): string {
+  if (workspace.workspaceType !== "local") return "";
+  const daemonUrl = config.orchestratorDaemonUrl?.trim().replace(/\/+$/, "") ?? "";
+  const workspaceId = workspace.id?.trim() ?? "";
+  if (!daemonUrl || !workspaceId) return "";
+  return `${daemonUrl}/workspace/${encodeURIComponent(workspaceId)}/opencode`;
 }
 
 async function fetchOpencodeJson(
   workspace: WorkspaceInfo,
   path: string,
-  init: { method: string; body?: unknown; maxResponseBytes?: number; timeoutMs?: number },
+  init: {
+    method: string;
+    body?: unknown;
+    directory?: string | null;
+    maxResponseBytes?: number;
+    timeoutMs?: number;
+    sendTraceId?: string | null;
+  },
 ) {
   const baseUrl = workspace.baseUrl?.trim() ?? "";
   if (!baseUrl) {
     throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
   }
 
-  const url = new URL(baseUrl);
   const [pathname, search = ""] = path.split("?");
-  url.pathname = pathname.startsWith("/") ? pathname : `/${pathname}`;
-  url.search = search ? `?${search}` : "";
+  const url = new URL(buildOpencodeProxyUrl(
+    baseUrl,
+    pathname.startsWith("/") ? pathname : `/${pathname}`,
+    search ? `?${search}` : "",
+    workspace.id,
+  ));
 
   const headers = new Headers();
   headers.set("Content-Type", "application/json");
+  const sendTraceId = init.sendTraceId?.trim() ?? "";
+  if (sendTraceId) {
+    headers.set("x-veslo-send-trace-id", sendTraceId);
+  }
 
-  const directory = resolveOpencodeDirectory(workspace);
+  const directoryOverride = init.directory?.trim() ?? "";
+  const directory = directoryOverride
+    ? normalizeOpencodeDirectory(directoryOverride)
+    : resolveOpencodeDirectory(workspace);
   if (directory) {
     headers.set("x-opencode-directory", directory);
   }
@@ -900,6 +1110,19 @@ async function fetchOpencodeJson(
   }
 
   const timeoutMs = init.timeoutMs ?? resolveOpenCodeJsonFetchTimeoutMs();
+  const requestStartedAt = Date.now();
+  recordSendWorkflowTrace("server", "server:opencode-json:start", {
+    traceId: sendTraceId || null,
+    workspaceId: workspace.id,
+    workspaceType: workspace.workspaceType,
+    method: init.method,
+    path,
+    targetUrl: url.toString(),
+    directory: directory || null,
+    timeoutMs,
+    hasAuth: Boolean(auth),
+    hasBody: init.body !== undefined,
+  });
   const controller = new AbortController();
   let timedOut = false;
   const timeout = setTimeout(() => {
@@ -947,21 +1170,53 @@ async function fetchOpencodeJson(
       json = null;
     }
     if (!response.ok) {
+      recordSendWorkflowTrace("server", "server:opencode-json:error-status", {
+        traceId: sendTraceId || null,
+        workspaceId: workspace.id,
+        method: init.method,
+        path,
+        status: response.status,
+        durationMs: Date.now() - requestStartedAt,
+      });
       throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
         status: response.status,
         body: json ?? text,
         path,
       });
     }
+    recordSendWorkflowTrace("server", "server:opencode-json:done", {
+      traceId: sendTraceId || null,
+      workspaceId: workspace.id,
+      method: init.method,
+      path,
+      status: response.status,
+      durationMs: Date.now() - requestStartedAt,
+    });
     return json;
   } catch (error) {
     if (error instanceof ApiError) throw error;
     if (timedOut || isAbortError(error)) {
+      recordSendWorkflowTrace("server", "server:opencode-json:timeout", {
+        traceId: sendTraceId || null,
+        workspaceId: workspace.id,
+        method: init.method,
+        path,
+        timeoutMs,
+        durationMs: Date.now() - requestStartedAt,
+      });
       throw new ApiError(502, "opencode_request_timeout", "OpenCode request timed out", {
         path,
         timeoutMs,
       });
     }
+    recordSendWorkflowTrace("server", "server:opencode-json:error", {
+      traceId: sendTraceId || null,
+      workspaceId: workspace.id,
+      method: init.method,
+      path,
+      error: error instanceof Error ? error.message : String(error),
+      durationMs: Date.now() - requestStartedAt,
+    });
     throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
       path,
       error: error instanceof Error ? error.message : String(error),
@@ -1059,19 +1314,28 @@ async function proxyOpencodeRequest(input: {
   }
 
   const proxyPath = input.proxyPath ?? input.url.pathname;
-  const targetUrl = buildOpencodeProxyUrl(baseUrl, proxyPath, input.url.search);
+  const targetUrl = buildOpencodeProxyUrl(baseUrl, proxyPath, input.url.search, workspace?.id);
   const headers = new Headers(input.request.headers);
   headers.delete("authorization");
   headers.delete("x-veslo-host-token");
   headers.delete("x-veslo-client-id");
   headers.delete("host");
   headers.delete("origin");
+  headers.delete("content-length");
+  for (const header of HOP_BY_HOP_REQUEST_HEADERS) {
+    headers.delete(header);
+  }
+  headers.set(ACCEPT_ENCODING_HEADER, ACCEPT_ENCODING_IDENTITY);
 
   // Per-request directory override (e.g. from sessions moved via "Choose folder")
   // takes priority over the workspace-level default.
+  // Always strip a client-supplied `x-opencode-directory` header first so the
+  // engine cannot be redirected to an attacker-chosen path by spoofing this
+  // header through the proxy.
+  headers.delete("x-opencode-directory");
   const queryDir = input.url.searchParams.get("directory")?.trim() || null;
   const directory = queryDir ?? (workspace ? resolveOpencodeDirectory(workspace) : null);
-  if (directory && !headers.has("x-opencode-directory")) {
+  if (directory) {
     headers.set("x-opencode-directory", directory);
   }
 
@@ -1082,13 +1346,63 @@ async function proxyOpencodeRequest(input: {
 
   const method = input.request.method.toUpperCase();
   const body = method === "GET" || method === "HEAD" ? undefined : input.request.body;
-  const response = await fetch(targetUrl, {
-    method,
-    headers,
-    body,
-  });
+  // Bound the wait for upstream response headers only — the timer is cleared
+  // as soon as fetch resolves, so streaming bodies (SSE) are never aborted.
+  // Without this, a hung engine/orchestrator held proxied requests open until
+  // the caller's own timeout fired (observed as 60s client-side hangs).
+  const headersTimeoutMs = resolveOpencodeProxyHeadersTimeoutMs();
+  const controller = new AbortController();
+  let timedOut = false;
+  const headersTimer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, headersTimeoutMs);
+  if (typeof headersTimer === "object" && headersTimer && "unref" in headersTimer) {
+    (headersTimer as { unref?: () => void }).unref?.();
+  }
+  let response: Response;
+  try {
+    response = await fetch(targetUrl, {
+      method,
+      headers,
+      body,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (timedOut || isAbortError(error)) {
+      throw new ApiError(502, "opencode_proxy_timeout", "OpenCode proxy timed out waiting for upstream response", {
+        url: targetUrl,
+        timeoutMs: headersTimeoutMs,
+      });
+    }
+    throw new ApiError(502, "opencode_proxy_failed", "OpenCode proxy request failed", {
+      url: targetUrl,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    clearTimeout(headersTimer);
+  }
 
-  return response;
+  return sanitizeProxyResponse(response);
+}
+
+/**
+ * Strip hop-by-hop and transport-level headers that Bun's native fetch keeps
+ * in the upstream response even after it has already decoded the body for us.
+ * Without this the browser sees `content-encoding: gzip` on a plain-text
+ * payload and bails out with ERR_CONTENT_DECODING_FAILED, breaking any UI
+ * code that reaches through /opencode/* (including session.create).
+ */
+export function sanitizeProxyResponse(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.delete("content-encoding");
+  headers.delete("transfer-encoding");
+  headers.delete("content-length");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 function resolveOpenCodeRouterBaseUrl(): string {
@@ -1169,9 +1483,20 @@ function requireAiGatewaySessionId(request: Request): string {
   return sessionId;
 }
 
+function normalizeAiGatewaySessionId(sessionId?: string | null): string {
+  const normalized = sessionId?.trim() ?? "";
+  if (!normalized) return "";
+  if (normalized === "${OPENCODE_SESSION_ID}") return "";
+  return normalized;
+}
+
 function trimmedHeader(request: Request, name: string): string | undefined {
   const value = request.headers.get(name)?.trim() ?? "";
   return value || undefined;
+}
+
+function headerNamesForTrace(headers: Headers): string[] {
+  return Array.from(headers.keys()).sort((a, b) => a.localeCompare(b));
 }
 
 function resolveAiGatewayProvider(gatewayPath: string): string | undefined {
@@ -1179,22 +1504,402 @@ function resolveAiGatewayProvider(gatewayPath: string): string | undefined {
   return match?.[1] ? decodeURIComponent(match[1]) : undefined;
 }
 
-async function readAiGatewayRequestModel(request: Request): Promise<string | undefined> {
+type AiGatewaySessionHit = {
+  at: number;
+  requestId: string;
+  provider: string | null;
+  gatewayPath: string;
+  sessionId: string | null;
+  workspaceId: string | null;
+};
+
+type ActiveAiGatewayRunContext = {
+  at: number;
+  traceId: string | null;
+  workspaceId: string;
+  conversationId: string;
+  runId: string;
+  opencodeSessionId: string;
+  clientMessageId: string | null;
+  origin: string | null;
+};
+
+type ActiveAiGatewayProxyRequest = {
+  requestId: string;
+  controller: AbortController;
+  startedAt: number;
+  abortReason: string | null;
+  provider: string | null;
+  gatewayPath: string;
+  sessionId: string | null;
+  workspaceId: string | null;
+  traceId: string | null;
+  conversationId: string | null;
+  runId: string | null;
+  opencodeSessionId: string | null;
+  clientMessageId: string | null;
+  origin: string | null;
+};
+
+const aiGatewaySessionHits = new Map<string, AiGatewaySessionHit[]>();
+const aiGatewayWorkspaceHits = new Map<string, AiGatewaySessionHit[]>();
+const activeAiGatewayRunsBySession = new Map<string, ActiveAiGatewayRunContext[]>();
+const activeAiGatewayRunsByWorkspace = new Map<string, ActiveAiGatewayRunContext[]>();
+const activeAiGatewayProxyRequests = new Map<string, ActiveAiGatewayProxyRequest>();
+
+function pruneAiGatewaySessionHits(now = Date.now()): void {
+  const cutoff = now - AI_GATEWAY_SESSION_HIT_TTL_MS;
+  const prune = (hitsByKey: Map<string, AiGatewaySessionHit[]>) => {
+    for (const [key, hits] of hitsByKey) {
+      const liveHits = hits.filter((hit) => hit.at >= cutoff);
+      if (liveHits.length) {
+        hitsByKey.set(key, liveHits);
+      } else {
+        hitsByKey.delete(key);
+      }
+    }
+  };
+  prune(aiGatewaySessionHits);
+  prune(aiGatewayWorkspaceHits);
+}
+
+function pruneActiveAiGatewayRuns(now = Date.now()): void {
+  const cutoff = now - AI_GATEWAY_ACTIVE_RUN_TTL_MS;
+  const prune = (itemsByKey: Map<string, ActiveAiGatewayRunContext[]>) => {
+    for (const [key, items] of itemsByKey) {
+      const liveItems = items.filter((item) => item.at >= cutoff);
+      if (liveItems.length) {
+        itemsByKey.set(key, liveItems);
+      } else {
+        itemsByKey.delete(key);
+      }
+    }
+  };
+  prune(activeAiGatewayRunsBySession);
+  prune(activeAiGatewayRunsByWorkspace);
+}
+
+function registerActiveAiGatewayRun(input: Omit<ActiveAiGatewayRunContext, "at">): void {
+  const now = Date.now();
+  pruneActiveAiGatewayRuns(now);
+  const context: ActiveAiGatewayRunContext = { ...input, at: now };
+  const sessionId = normalizeAiGatewaySessionId(input.opencodeSessionId);
+  if (sessionId) {
+    const items = activeAiGatewayRunsBySession.get(sessionId) ?? [];
+    items.push(context);
+    activeAiGatewayRunsBySession.set(sessionId, items.slice(-10));
+  }
+  const workspaceId = input.workspaceId.trim();
+  if (workspaceId) {
+    const items = activeAiGatewayRunsByWorkspace.get(workspaceId) ?? [];
+    items.push(context);
+    activeAiGatewayRunsByWorkspace.set(workspaceId, items.slice(-10));
+  }
+  recordSendWorkflowTrace("server", "server:ai-gateway-active-run:register", {
+    traceId: input.traceId,
+    workspaceId: input.workspaceId,
+    conversationId: input.conversationId,
+    runId: input.runId,
+    opencodeSessionId: input.opencodeSessionId,
+    clientMessageId: input.clientMessageId,
+    origin: input.origin,
+  });
+}
+
+function resolveActiveAiGatewayRunContext(input: {
+  sessionId?: string | null;
+  workspaceId?: string | null;
+}): ActiveAiGatewayRunContext | null {
+  pruneActiveAiGatewayRuns();
+  const sessionId = normalizeAiGatewaySessionId(input.sessionId);
+  if (sessionId) {
+    const bySession = activeAiGatewayRunsBySession.get(sessionId) ?? [];
+    if (bySession.length) return bySession[bySession.length - 1] ?? null;
+  }
+  const workspaceId = input.workspaceId?.trim() ?? "";
+  if (workspaceId) {
+    const byWorkspace = activeAiGatewayRunsByWorkspace.get(workspaceId) ?? [];
+    if (byWorkspace.length) return byWorkspace[byWorkspace.length - 1] ?? null;
+  }
+  return null;
+}
+
+function registerActiveAiGatewayProxyRequest(input: Omit<ActiveAiGatewayProxyRequest, "abortReason">): ActiveAiGatewayProxyRequest {
+  const entry: ActiveAiGatewayProxyRequest = {
+    ...input,
+    abortReason: null,
+  };
+  activeAiGatewayProxyRequests.set(entry.requestId, entry);
+  return entry;
+}
+
+function unregisterActiveAiGatewayProxyRequest(requestId: string): void {
+  activeAiGatewayProxyRequests.delete(requestId);
+}
+
+function abortActiveAiGatewayProxyRequests(input: {
+  workspaceId: string;
+  runId?: string | null;
+  sessionId?: string | null;
+  reason: string;
+}): ActiveAiGatewayProxyRequest[] {
+  const workspaceId = input.workspaceId.trim();
+  const runId = input.runId?.trim() ?? "";
+  const sessionId = normalizeAiGatewaySessionId(input.sessionId);
+  if (!workspaceId || (!runId && !sessionId)) return [];
+
+  const aborted: ActiveAiGatewayProxyRequest[] = [];
+  for (const entry of activeAiGatewayProxyRequests.values()) {
+    if (entry.workspaceId !== workspaceId) continue;
+    const runMatches = Boolean(runId && entry.runId === runId);
+    const sessionMatches = Boolean(sessionId && entry.sessionId === sessionId);
+    if (!runMatches && !sessionMatches) continue;
+    entry.abortReason = input.reason;
+    entry.controller.abort();
+    aborted.push(entry);
+  }
+
+  if (aborted.length) {
+    const first = aborted[0];
+    recordSendWorkflowTrace("server", "server:ai-gateway:proxy-abort-active", {
+      traceId: first?.traceId ?? null,
+      workspaceId,
+      runId: runId || null,
+      sessionId: sessionId || null,
+      reason: input.reason,
+      requestIds: aborted.map((entry) => entry.requestId),
+      count: aborted.length,
+      conversationIds: Array.from(new Set(aborted.map((entry) => entry.conversationId).filter(Boolean))),
+      clientMessageIds: Array.from(new Set(aborted.map((entry) => entry.clientMessageId).filter(Boolean))),
+    });
+  }
+
+  return aborted;
+}
+
+function recordAiGatewaySessionHit(input: {
+  sessionId?: string;
+  workspaceId?: string;
+  requestId: string;
+  provider: string | null;
+  gatewayPath: string;
+  now?: number;
+}): void {
+  const sessionId = normalizeAiGatewaySessionId(input.sessionId);
+  const workspaceId = input.workspaceId?.trim() ?? "";
+  if (!sessionId && !workspaceId) return;
+  const now = input.now ?? Date.now();
+  pruneAiGatewaySessionHits(now);
+  const hit: AiGatewaySessionHit = {
+    at: now,
+    requestId: input.requestId,
+    provider: input.provider,
+    gatewayPath: input.gatewayPath,
+    sessionId: sessionId || null,
+    workspaceId: workspaceId || null,
+  };
+  if (sessionId) {
+    const hits = aiGatewaySessionHits.get(sessionId) ?? [];
+    hits.push(hit);
+    aiGatewaySessionHits.set(sessionId, hits.slice(-50));
+  }
+  if (workspaceId) {
+    const hits = aiGatewayWorkspaceHits.get(workspaceId) ?? [];
+    hits.push(hit);
+    aiGatewayWorkspaceHits.set(workspaceId, hits.slice(-50));
+  }
+}
+
+function hasAiGatewayProviderHitAfter(input: {
+  sessionId: string;
+  workspaceId: string;
+  startedAt: number;
+}): boolean {
+  const normalizedSessionId = normalizeAiGatewaySessionId(input.sessionId);
+  const normalizedWorkspaceId = input.workspaceId.trim();
+  pruneAiGatewaySessionHits();
+  if (
+    normalizedSessionId &&
+    (aiGatewaySessionHits.get(normalizedSessionId) ?? []).some((hit) => hit.at >= input.startedAt)
+  ) {
+    return true;
+  }
+  if (
+    normalizedWorkspaceId &&
+    (aiGatewayWorkspaceHits.get(normalizedWorkspaceId) ?? []).some((hit) => hit.at >= input.startedAt)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function logAiGatewayProviderStartTimeout(input: Record<string, unknown>): void {
+  try {
+    console.warn(`[veslo:ai-gateway] provider-start-timeout ${JSON.stringify(input)}`);
+  } catch {
+    console.warn("[veslo:ai-gateway] provider-start-timeout");
+  }
+}
+
+function logAiGatewayProviderStartWatch(input: Record<string, unknown>): void {
+  try {
+    console.log(`[veslo:ai-gateway] provider-start-watch ${JSON.stringify(input)}`);
+  } catch {
+    console.log("[veslo:ai-gateway] provider-start-watch");
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForAiGatewayProviderStart(input: {
+  workspaceId: string;
+  conversationId: string;
+  runId: string;
+  opencodeSessionId: string;
+  clientMessageId?: string | null;
+  origin?: string | null;
+  startedAt: number;
+}): Promise<{ started: boolean; timeoutMs: number }> {
+  const timeoutMs = resolveAiGatewayProviderStartTimeoutMs();
+  const opencodeSessionId = input.opencodeSessionId.trim();
+  const workspaceId = input.workspaceId.trim();
+  if (!opencodeSessionId) return { started: false, timeoutMs };
+
+  logAiGatewayProviderStartWatch({
+    workspaceId: input.workspaceId,
+    conversationId: input.conversationId,
+    runId: input.runId,
+    opencodeSessionId,
+    clientMessageId: input.clientMessageId ?? null,
+    origin: input.origin ?? null,
+    timeoutMs,
+  });
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (hasAiGatewayProviderHitAfter({ sessionId: opencodeSessionId, workspaceId, startedAt: input.startedAt })) {
+      return { started: true, timeoutMs };
+    }
+    await sleep(Math.min(100, Math.max(5, deadline - Date.now())));
+  }
+
+  const started = hasAiGatewayProviderHitAfter({ sessionId: opencodeSessionId, workspaceId, startedAt: input.startedAt });
+  if (!started) {
+    logAiGatewayProviderStartTimeout({
+      workspaceId: input.workspaceId,
+      conversationId: input.conversationId,
+      runId: input.runId,
+      opencodeSessionId,
+      clientMessageId: input.clientMessageId ?? null,
+      origin: input.origin ?? null,
+      timeoutMs,
+    });
+  }
+  return { started, timeoutMs };
+}
+
+type AiGatewayRequestDiagnostic = {
+  contentType: string | null;
+  contentLength: number | null;
+  skipped?: string;
+  bodySha256?: string;
+  bodyBytes?: number;
+  jsonKeys?: string[];
+  model?: string;
+  stream?: boolean;
+  messageCount?: number;
+  messageRoles?: string[];
+  lastMessageRole?: string;
+  lastUserContentBytes?: number;
+  toolCount?: number;
+  hasTools?: boolean;
+  hasToolChoice?: boolean;
+  hasResponseFormat?: boolean;
+  hasReasoning?: boolean;
+};
+
+function summarizeChatCompletionBody(json: Record<string, unknown>, text: string): AiGatewayRequestDiagnostic {
+  const messages = Array.isArray(json.messages) ? json.messages : [];
+  const messageRoles = messages
+    .map((message) => {
+      if (!message || typeof message !== "object") return "";
+      const role = (message as { role?: unknown }).role;
+      return typeof role === "string" ? role : "";
+    })
+    .filter(Boolean);
+  const lastUserMessage = [...messages].reverse().find((message) => {
+    if (!message || typeof message !== "object") return false;
+    return (message as { role?: unknown }).role === "user";
+  }) as { content?: unknown } | undefined;
+  const lastUserContent = lastUserMessage?.content;
+  const lastUserContentBytes =
+    typeof lastUserContent === "string"
+      ? Buffer.byteLength(lastUserContent, "utf8")
+      : Array.isArray(lastUserContent)
+        ? Buffer.byteLength(JSON.stringify(lastUserContent), "utf8")
+        : undefined;
+  const model = typeof json.model === "string" && json.model.trim() ? json.model.trim() : undefined;
+  const tools = Array.isArray(json.tools) ? json.tools : undefined;
+
+  return {
+    contentType: null,
+    contentLength: null,
+    bodySha256: createHash("sha256").update(text).digest("hex"),
+    bodyBytes: Buffer.byteLength(text, "utf8"),
+    jsonKeys: Object.keys(json).sort((a, b) => a.localeCompare(b)),
+    model,
+    stream: typeof json.stream === "boolean" ? json.stream : undefined,
+    messageCount: messages.length,
+    messageRoles: messageRoles.slice(-12),
+    lastMessageRole: messageRoles[messageRoles.length - 1],
+    lastUserContentBytes,
+    toolCount: tools?.length,
+    hasTools: Boolean(tools?.length),
+    hasToolChoice: "tool_choice" in json || "toolChoice" in json,
+    hasResponseFormat: "response_format" in json || "responseFormat" in json,
+    hasReasoning: "reasoning" in json || "reasoning_effort" in json || "reasoningEffort" in json,
+  };
+}
+
+async function readAiGatewayRequestDiagnostic(request: Request): Promise<AiGatewayRequestDiagnostic> {
   const contentType = request.headers.get("content-type") ?? "";
-  if (!contentType.toLowerCase().includes("application/json")) return undefined;
+  if (!contentType.toLowerCase().includes("application/json")) {
+    return { contentType: contentType || null, contentLength: null, skipped: "non-json" };
+  }
 
   const contentLength = Number(request.headers.get("content-length") ?? NaN);
-  if (!Number.isFinite(contentLength) || contentLength < 0) return undefined;
-  if (contentLength > AI_GATEWAY_MODEL_DIAGNOSTIC_MAX_REQUEST_BYTES) return undefined;
+  if (!Number.isFinite(contentLength) || contentLength < 0) {
+    return { contentType: contentType || null, contentLength: null, skipped: "unknown-content-length" };
+  }
+  if (contentLength > AI_GATEWAY_MODEL_DIAGNOSTIC_MAX_REQUEST_BYTES) {
+    return {
+      contentType: contentType || null,
+      contentLength,
+      skipped: "content-length-too-large",
+    };
+  }
 
   try {
     const text = await request.clone().text();
     const json = text ? JSON.parse(text) : null;
-    if (!json || typeof json !== "object") return undefined;
-    const model = (json as { model?: unknown }).model;
-    return typeof model === "string" && model.trim() ? model.trim() : undefined;
+    if (!json || typeof json !== "object" || Array.isArray(json)) {
+      return {
+        contentType: contentType || null,
+        contentLength,
+        bodySha256: createHash("sha256").update(text).digest("hex"),
+        bodyBytes: Buffer.byteLength(text, "utf8"),
+        skipped: "non-object-json",
+      };
+    }
+    return {
+      ...summarizeChatCompletionBody(json as Record<string, unknown>, text),
+      contentType: contentType || null,
+      contentLength,
+    };
   } catch {
-    return undefined;
+    return { contentType: contentType || null, contentLength, skipped: "parse-failed" };
   }
 }
 
@@ -1369,6 +2074,44 @@ function buildAiGatewayFailureDetails(input: {
   };
 }
 
+async function proxyAiGatewayReadinessRequest(input: {
+  request: Request;
+  url: URL;
+}) {
+  const baseUrl = resolveAiGatewayBaseUrl();
+  const target = new URL(baseUrl);
+  target.pathname = "/readiness";
+  target.search = input.url.search;
+
+  const requestId = randomUUID();
+  const headers = new Headers();
+  headers.set("Authorization", requireAiGatewayCallerAuth(input.request));
+  headers.set("accept", input.request.headers.get("accept") ?? "application/json");
+  headers.set("x-veslo-request-id", requestId);
+  headers.set("accept-encoding", "identity");
+
+  let response: Response;
+  try {
+    response = await fetch(target.toString(), {
+      method: "GET",
+      headers,
+    });
+  } catch (error) {
+    throw new ApiError(503, "ai_gateway_unreachable", "AI gateway readiness is not reachable on this host", {
+      requestId,
+      baseUrl,
+      targetUrl: target.toString(),
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: sanitizeDecodedProxyResponseHeaders(response.headers),
+  });
+}
+
 async function proxyAiGatewayRequest(input: {
   request: Request;
   url: URL;
@@ -1377,6 +2120,14 @@ async function proxyAiGatewayRequest(input: {
   requireSessionId?: boolean;
   preserveAiAccessToken?: boolean;
 }) {
+  const startedAt = perfMs();
+  let headersPreparedAt = startedAt;
+  let modelDiagnosticStartedAt: number | undefined;
+  let modelDiagnosticFinishedAt: number | undefined;
+  let upstreamFetchStartedAt: number | undefined;
+  let upstreamHeadersReceivedAt: number | undefined;
+  let upstreamBodyDoneAt: number | undefined;
+  let redactionDoneAt: number | undefined;
   const baseUrl = resolveAiGatewayBaseUrl();
   const target = new URL(baseUrl);
   target.pathname = input.gatewayPath.startsWith("/") ? input.gatewayPath : `/${input.gatewayPath}`;
@@ -1388,8 +2139,88 @@ async function proxyAiGatewayRequest(input: {
   const gatewayCallerAuth = input.request.headers.get(GATEWAY_CALLER_AUTH_HEADER)?.trim() ?? "";
   const authorization =
     input.auth === "caller" ? requireAiGatewayCallerAuth(input.request) : requireAiGatewayAccessToken(input.request);
-  const sessionId = input.requireSessionId ? requireAiGatewaySessionId(input.request) : undefined;
-  const model = await readAiGatewayRequestModel(input.request);
+  const incomingSessionId = input.requireSessionId ? requireAiGatewaySessionId(input.request) : undefined;
+  const workspaceId = trimmedHeader(input.request, GATEWAY_WORKSPACE_ID_HEADER);
+  const activeRunContext = resolveActiveAiGatewayRunContext({ sessionId: incomingSessionId, workspaceId });
+  const sessionId = input.requireSessionId
+    ? normalizeAiGatewaySessionId(incomingSessionId) ||
+      normalizeAiGatewaySessionId(activeRunContext?.opencodeSessionId) ||
+      ""
+    : undefined;
+  if (input.requireSessionId && !sessionId) {
+    throw new ApiError(400, "gateway_session_unresolved", "Gateway session id placeholder could not be resolved", {
+      requestId,
+      provider: resolveAiGatewayProvider(input.gatewayPath),
+      incomingSessionId,
+      workspaceId,
+    });
+  }
+  const incomingSessionIdForTrace =
+    incomingSessionId && incomingSessionId !== sessionId ? incomingSessionId : undefined;
+  const sessionResolvedFromActiveRunContext =
+    Boolean(input.requireSessionId) &&
+    Boolean(incomingSessionId) &&
+    incomingSessionId !== sessionId &&
+    Boolean(activeRunContext?.opencodeSessionId);
+  const incomingHeaderNames = headerNamesForTrace(input.request.headers);
+  const incomingInternalHeaderSummary = {
+    hasGatewayAccessToken: Boolean(gatewayAccessToken),
+    hasGatewayCallerAuth: Boolean(gatewayCallerAuth),
+    hasWorkspaceId: Boolean(workspaceId),
+    hasSendTraceId: Boolean(trimmedHeader(input.request, "x-veslo-send-trace-id")),
+    hasSessionId: Boolean(incomingSessionId),
+    hasHostToken: Boolean(trimmedHeader(input.request, "x-veslo-host-token")),
+    hasClientId: Boolean(trimmedHeader(input.request, "x-veslo-client-id")),
+  };
+  recordAiGatewaySessionHit({
+    sessionId,
+    workspaceId,
+    requestId,
+    provider: resolveAiGatewayProvider(input.gatewayPath) ?? null,
+    gatewayPath: input.gatewayPath,
+  });
+  recordSendWorkflowTrace("server", "server:ai-gateway:provider-hit", {
+    traceId: activeRunContext?.traceId ?? null,
+    requestId,
+    provider: resolveAiGatewayProvider(input.gatewayPath) ?? null,
+    gatewayPath: input.gatewayPath,
+    sessionId: sessionId ?? null,
+    incomingSessionId: incomingSessionIdForTrace,
+    workspaceId: workspaceId ?? null,
+    conversationId: activeRunContext?.conversationId ?? null,
+    runId: activeRunContext?.runId ?? null,
+    opencodeSessionId: activeRunContext?.opencodeSessionId ?? null,
+    clientMessageId: activeRunContext?.clientMessageId ?? null,
+    origin: activeRunContext?.origin ?? null,
+    sessionResolvedFromActiveRunContext,
+    incomingHeaders: incomingHeaderNames,
+    incomingInternalHeaders: incomingInternalHeaderSummary,
+  });
+  let model: string | undefined;
+  let requestDiagnostic: AiGatewayRequestDiagnostic | undefined;
+  modelDiagnosticStartedAt = perfMs();
+  const modelDiagnosticPromise = readAiGatewayRequestDiagnostic(input.request)
+    .then((value) => {
+      requestDiagnostic = value;
+      model = value.model;
+      recordSendWorkflowTrace("server", "server:ai-gateway:request-diagnostic", {
+        traceId: activeRunContext?.traceId ?? null,
+        requestId,
+        provider: resolveAiGatewayProvider(input.gatewayPath) ?? null,
+        gatewayPath: input.gatewayPath,
+        sessionId: sessionId ?? null,
+        workspaceId: workspaceId ?? null,
+        conversationId: activeRunContext?.conversationId ?? null,
+        runId: activeRunContext?.runId ?? null,
+        opencodeSessionId: activeRunContext?.opencodeSessionId ?? null,
+        clientMessageId: activeRunContext?.clientMessageId ?? null,
+        ...value,
+      });
+      return value.model;
+    })
+    .finally(() => {
+      modelDiagnosticFinishedAt = perfMs();
+    });
 
   headers.set("Authorization", authorization);
   if (input.requireSessionId) {
@@ -1400,42 +2231,223 @@ async function proxyAiGatewayRequest(input: {
   headers.delete(GATEWAY_ACCESS_TOKEN_HEADER);
   headers.delete("x-veslo-host-token");
   headers.delete("x-veslo-client-id");
+  headers.delete(GATEWAY_WORKSPACE_ID_HEADER);
+  headers.delete("x-veslo-send-trace-id");
+  for (const name of AI_GATEWAY_LOCAL_ONLY_REQUEST_HEADERS) {
+    headers.delete(name);
+  }
+  for (const name of HOP_BY_HOP_REQUEST_HEADERS) {
+    headers.delete(name);
+  }
   headers.delete("host");
   headers.delete("origin");
   headers.delete("content-length");
   headers.set("accept-encoding", "identity");
+  const forwardedHeaderNames = headerNamesForTrace(headers);
 
   const method = input.request.method.toUpperCase();
   const body = method === "GET" || method === "HEAD" ? undefined : input.request.body;
+  headersPreparedAt = perfMs();
+
+  const logEvent = (event: "start", extra: Record<string, unknown> = {}) => {
+    const attributes = {
+      requestId,
+      method,
+      gatewayPath: input.gatewayPath,
+      provider: resolveAiGatewayProvider(input.gatewayPath) ?? null,
+      sessionId: sessionId ?? null,
+      incomingSessionId: incomingSessionIdForTrace,
+      workspaceId: workspaceId ?? null,
+      traceId: activeRunContext?.traceId ?? null,
+      conversationId: activeRunContext?.conversationId ?? null,
+      runId: activeRunContext?.runId ?? null,
+      opencodeSessionId: activeRunContext?.opencodeSessionId ?? null,
+      clientMessageId: activeRunContext?.clientMessageId ?? null,
+      origin: activeRunContext?.origin ?? null,
+      targetOrigin: target.origin,
+      targetPath: target.pathname,
+      sessionResolvedFromActiveRunContext,
+      incomingHeaders: incomingHeaderNames,
+      forwardedHeaders: forwardedHeaderNames,
+      incomingInternalHeaders: incomingInternalHeaderSummary,
+      strippedInternalHeaders: [
+        GATEWAY_CALLER_AUTH_HEADER,
+        GATEWAY_ACCESS_TOKEN_HEADER,
+        "x-veslo-host-token",
+        "x-veslo-client-id",
+        GATEWAY_WORKSPACE_ID_HEADER,
+        "x-veslo-send-trace-id",
+      ],
+      strippedLocalOnlyHeaders: AI_GATEWAY_LOCAL_ONLY_REQUEST_HEADERS,
+      strippedTransportHeaders: [
+        ...HOP_BY_HOP_REQUEST_HEADERS,
+        "host",
+        "origin",
+        "content-length",
+      ],
+      ...extra,
+    };
+    recordSendWorkflowTrace("server", `server:ai-gateway:proxy-${event}`, attributes);
+    try {
+      console.log(`[veslo:ai-gateway] proxy-${event} ${JSON.stringify(attributes)}`);
+    } catch {
+      console.log(`[veslo:ai-gateway] proxy-${event}`);
+    }
+  };
+
+  const logTiming = (status: number, outcome: "ok" | "error", extra: Record<string, unknown> = {}) => {
+    const finishedAt = perfMs();
+    const attributes = {
+      requestId,
+      method,
+      gatewayPath: input.gatewayPath,
+      provider: resolveAiGatewayProvider(input.gatewayPath) ?? null,
+      sessionId: sessionId ?? null,
+      incomingSessionId: incomingSessionIdForTrace,
+      workspaceId: workspaceId ?? null,
+      traceId: activeRunContext?.traceId ?? null,
+      conversationId: activeRunContext?.conversationId ?? null,
+      runId: activeRunContext?.runId ?? null,
+      opencodeSessionId: activeRunContext?.opencodeSessionId ?? null,
+      clientMessageId: activeRunContext?.clientMessageId ?? null,
+      origin: activeRunContext?.origin ?? null,
+      model: model ?? null,
+      requestDiagnostic,
+      status,
+      outcome,
+      totalMs: roundTraceMs(finishedAt - startedAt),
+      localPreflightMs: roundTraceMs((upstreamFetchStartedAt ?? headersPreparedAt) - startedAt),
+      modelDiagnosticMs:
+        modelDiagnosticStartedAt !== undefined && modelDiagnosticFinishedAt !== undefined
+          ? roundTraceMs(modelDiagnosticFinishedAt - modelDiagnosticStartedAt)
+          : undefined,
+      upstreamHeadersMs:
+        upstreamFetchStartedAt !== undefined && upstreamHeadersReceivedAt !== undefined
+          ? roundTraceMs(upstreamHeadersReceivedAt - upstreamFetchStartedAt)
+          : undefined,
+      upstreamBodyMs:
+        upstreamHeadersReceivedAt !== undefined && upstreamBodyDoneAt !== undefined
+          ? roundTraceMs(upstreamBodyDoneAt - upstreamHeadersReceivedAt)
+          : undefined,
+      redactionMs:
+        upstreamHeadersReceivedAt !== undefined && redactionDoneAt !== undefined
+          ? roundTraceMs(redactionDoneAt - upstreamHeadersReceivedAt)
+          : undefined,
+      targetOrigin: target.origin,
+      targetPath: target.pathname,
+      ...extra,
+    };
+    recordSendWorkflowTrace("server", "server:ai-gateway:proxy:timing", attributes);
+    try {
+      console.log(`[veslo:ai-gateway] proxy ${JSON.stringify(attributes)}`);
+    } catch {
+      console.log("[veslo:ai-gateway] proxy");
+    }
+  };
+
+  const headersTimeoutMs = resolveAiGatewayProxyHeadersTimeoutMs();
+  const controller = new AbortController();
+  const activeProxyRequest = registerActiveAiGatewayProxyRequest({
+    requestId,
+    controller,
+    startedAt,
+    provider: resolveAiGatewayProvider(input.gatewayPath) ?? null,
+    gatewayPath: input.gatewayPath,
+    sessionId: sessionId || null,
+    workspaceId: workspaceId ?? null,
+    traceId: activeRunContext?.traceId ?? null,
+    conversationId: activeRunContext?.conversationId ?? null,
+    runId: activeRunContext?.runId ?? null,
+    opencodeSessionId: activeRunContext?.opencodeSessionId ?? null,
+    clientMessageId: activeRunContext?.clientMessageId ?? null,
+    origin: activeRunContext?.origin ?? null,
+  });
+  let timedOut = false;
+  const headersTimer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, headersTimeoutMs);
+  if (typeof headersTimer === "object" && headersTimer && "unref" in headersTimer) {
+    (headersTimer as { unref?: () => void }).unref?.();
+  }
 
   let response: Response;
   try {
+    upstreamFetchStartedAt = perfMs();
+    logEvent("start", { timeoutMs: headersTimeoutMs });
     response = await fetch(target.toString(), {
       method,
       headers,
       body,
+      signal: controller.signal,
     });
+    upstreamHeadersReceivedAt = perfMs();
   } catch (error) {
+    const diagnosticModel = model ?? await modelDiagnosticPromise;
+    if (activeProxyRequest.abortReason) {
+      logTiming(499, "error", {
+        error: "AI gateway proxy request was aborted",
+        abortReason: activeProxyRequest.abortReason,
+        timeoutMs: headersTimeoutMs,
+      });
+      throw new ApiError(499, "ai_gateway_aborted", "AI gateway request was aborted", {
+        requestId,
+        provider: resolveAiGatewayProvider(input.gatewayPath),
+        model: diagnosticModel,
+        sessionId,
+        baseUrl,
+        targetUrl: target.toString(),
+        abortReason: activeProxyRequest.abortReason,
+      });
+    }
+    if (timedOut || isAbortError(error)) {
+      logTiming(504, "error", {
+        error: "AI gateway upstream did not send response headers before timeout",
+        timeoutMs: headersTimeoutMs,
+      });
+      throw new ApiError(504, "ai_gateway_timeout", "AI gateway timed out waiting for upstream response", {
+        requestId,
+        provider: resolveAiGatewayProvider(input.gatewayPath),
+        model: diagnosticModel,
+        sessionId,
+        baseUrl,
+        targetUrl: target.toString(),
+        timeoutMs: headersTimeoutMs,
+      });
+    }
+    logTiming(503, "error", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw new ApiError(503, "ai_gateway_unreachable", "AI gateway is not reachable on this host", {
       requestId,
       provider: resolveAiGatewayProvider(input.gatewayPath),
-      model,
+      model: diagnosticModel,
       sessionId,
       baseUrl,
       targetUrl: target.toString(),
       error: error instanceof Error ? error.message : String(error),
     });
+  } finally {
+    clearTimeout(headersTimer);
+    unregisterActiveAiGatewayProxyRequest(requestId);
   }
 
   const contentType = response.headers.get("content-type") ?? "";
   if (!response.ok) {
     const diagnostic = await readTextPreview(response.body, AI_GATEWAY_ERROR_DIAGNOSTIC_MAX_RESPONSE_BYTES);
+    upstreamBodyDoneAt = perfMs();
+    const diagnosticModel = model ?? await modelDiagnosticPromise;
+    logTiming(response.status, "error", {
+      upstreamStatus: response.status,
+      upstreamContentType: contentType || undefined,
+      upstreamResponseTruncated: diagnostic.truncated || undefined,
+    });
     throw new ApiError(502, "ai_gateway_upstream_failed", "AI gateway upstream request failed", buildAiGatewayFailureDetails({
       requestId,
       request: input.request,
       gatewayPath: input.gatewayPath,
       sessionId,
-      model,
+      model: diagnosticModel,
       response,
       responseText: diagnostic.text,
       responseTextTruncated: diagnostic.truncated,
@@ -1444,6 +2456,10 @@ async function proxyAiGatewayRequest(input: {
   }
 
   if (!contentType.toLowerCase().includes("application/json") || !input.preserveAiAccessToken) {
+    logTiming(response.status, "ok", {
+      streaming: true,
+      upstreamContentType: contentType || undefined,
+    });
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
@@ -1452,18 +2468,30 @@ async function proxyAiGatewayRequest(input: {
   }
 
   const text = await readResponseTextWithLimit(response, AI_GATEWAY_JSON_REDACTION_MAX_RESPONSE_BYTES);
+  upstreamBodyDoneAt = perfMs();
   let json: unknown = null;
   try {
     json = text ? JSON.parse(text) : null;
   } catch {
+    logTiming(response.status, "ok", {
+      streaming: false,
+      upstreamContentType: contentType || undefined,
+      jsonParse: "failed",
+    });
     return new Response(text, {
       status: response.status,
       headers: contentType ? { "Content-Type": contentType } : undefined,
     });
   }
 
+  const redacted = input.preserveAiAccessToken ? redactAiAccessBundleForClient(json) : redactSensitiveConfig(json);
+  redactionDoneAt = perfMs();
+  logTiming(response.status, "ok", {
+    streaming: false,
+    upstreamContentType: contentType || undefined,
+  });
   return jsonResponse(
-    input.preserveAiAccessToken ? redactAiAccessBundleForClient(json) : redactSensitiveConfig(json),
+    redacted,
     response.status,
   );
 }
@@ -1507,7 +2535,7 @@ function withCors(response: Response, request: Request, config: ServerConfig) {
   headers.set("Access-Control-Allow-Origin", allowOrigin);
   headers.set(
     "Access-Control-Allow-Headers",
-    "Authorization, Content-Type, X-Veslo-Host-Token, X-Veslo-Client-Id, x-veslo-account-id, X-Veslo-User-Id, X-Veslo-Den-User-Id, X-Veslo-Org-Id, X-Veslo-Den-Org-Id, X-Veslo-Gateway-Authorization, X-Veslo-Gateway-Token, X-Veslo-Session-Id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
+    "Authorization, Content-Type, X-Veslo-Host-Token, X-Veslo-Client-Id, X-Veslo-Send-Trace-Id, x-veslo-account-id, X-Veslo-User-Id, X-Veslo-Den-User-Id, X-Veslo-Org-Id, X-Veslo-Den-Org-Id, X-Veslo-Gateway-Authorization, X-Veslo-Gateway-Token, X-Veslo-Session-Id, X-Veslo-Workspace-Id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
   );
   headers.set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
   headers.set("Vary", "Origin");
@@ -1567,8 +2595,6 @@ export function resolveArchiveOwnerKey(request: Request): string {
 function buildCapabilities(config: ServerConfig): Capabilities {
   const writeEnabled = !config.readOnly;
   const schemaVersion = 1;
-  const sandboxBackend = resolveSandboxBackend();
-  const sandboxEnabled = resolveSandboxEnabled(sandboxBackend);
   const inboxEnabled = resolveInboxEnabled();
   const outboxEnabled = resolveOutboxEnabled();
   const maxBytes = resolveInboxMaxBytes();
@@ -1594,9 +2620,9 @@ function buildCapabilities(config: ServerConfig): Capabilities {
     mcp: { read: true, write: writeEnabled },
     commands: { read: true, write: writeEnabled },
     config: { read: true, write: writeEnabled },
+    sandbox: resolveSandboxCapability(),
 
     approvals: { mode: config.approval.mode, timeoutMs: config.approval.timeoutMs },
-    sandbox: { enabled: sandboxEnabled, backend: sandboxBackend },
     ui: { toy: toyUiEnabled },
     tokens: { scoped: true, scopes: ["owner", "collaborator", "viewer"] },
     proxy: {
@@ -1616,18 +2642,26 @@ function buildCapabilities(config: ServerConfig): Capabilities {
   };
 }
 
-function resolveSandboxBackend(): Capabilities["sandbox"]["backend"] {
-  const raw = (process.env.VESLO_SANDBOX_BACKEND ?? "").trim().toLowerCase();
-  if (raw === "docker") return "docker";
-  if (raw === "container") return "container";
-  return "none";
-}
-
-function resolveSandboxEnabled(backend: Capabilities["sandbox"]["backend"]): boolean {
-  const raw = (process.env.VESLO_SANDBOX_ENABLED ?? "").trim().toLowerCase();
-  if (["1", "true", "yes", "on"].includes(raw)) return true;
-  if (["0", "false", "no", "off"].includes(raw)) return false;
-  return backend !== "none";
+function resolveSandboxCapability(): Capabilities["sandbox"] {
+  const raw = (process.env.VESLO_SANDBOX_BACKEND ?? "none").trim() as SandboxBackend;
+  const known = new Set<SandboxBackend>([
+    "none",
+    "docker",
+    "container",
+    "mac-sandbox-exec",
+    "windows-wsl2",
+    "windows-job-object",
+    "stub",
+  ]);
+  const activeBackends = new Set<SandboxBackend>([
+    "mac-sandbox-exec",
+    "windows-wsl2",
+  ]);
+  const backend = known.has(raw) ? raw : "none";
+  return {
+    enabled: activeBackends.has(backend) && process.env.VESLO_DISABLE_SANDBOX !== "1",
+    backend,
+  };
 }
 
 function resolveInboxEnabled(): boolean {
@@ -1825,13 +2859,18 @@ export function normalizeWorkspaceRelativePath(input: string, options: { allowSu
   return parts.join("/");
 }
 
-function resolveSafeChildPath(root: string, child: string): string {
-  const rootResolved = resolve(root);
+async function resolveSafeChildPath(root: string, child: string): Promise<string> {
+  // Use realpath when the path exists so that symlinks inside the workspace
+  // pointing outside cannot be used to escape the boundary. Fall back to the
+  // resolved (non-realpath) form when the candidate doesn't exist yet — that
+  // covers write/mkdir operations that legitimately target a future path.
+  const rootResolved = await realpath(root).catch(() => resolve(root));
   const candidate = resolve(rootResolved, child);
-  if (candidate === rootResolved) {
+  const candidateResolved = await realpath(candidate).catch(() => candidate);
+  if (candidateResolved === rootResolved) {
     throw new ApiError(400, "invalid_path", "Path must point to a file");
   }
-  if (!candidate.startsWith(rootResolved + sep)) {
+  if (!candidateResolved.startsWith(rootResolved + sep)) {
     throw new ApiError(400, "invalid_path", "Path traversal is not allowed");
   }
   return candidate;
@@ -1956,6 +2995,86 @@ function parseSessionTranscriptLimit(input: unknown): number {
   return Math.min(Math.floor(parsed), SESSION_TRANSCRIPT_MAX_LIMIT);
 }
 
+function parseSessionTranscriptMessages(input: unknown): unknown[] {
+  if (!Array.isArray(input)) {
+    throw new ApiError(400, "invalid_payload", "messages must be an array");
+  }
+  return input;
+}
+
+function parseSessionTranscriptParts(input: unknown): Record<string, unknown[]> {
+  if (input == null) return {};
+  if (typeof input !== "object" || Array.isArray(input)) {
+    throw new ApiError(400, "invalid_payload", "partsByMessageId must be an object");
+  }
+  const partsByMessageId: Record<string, unknown[]> = {};
+  for (const [messageId, parts] of Object.entries(input as Record<string, unknown>)) {
+    const id = messageId.trim();
+    if (!id) continue;
+    if (!Array.isArray(parts)) {
+      throw new ApiError(400, "invalid_payload", "partsByMessageId values must be arrays");
+    }
+    partsByMessageId[id] = parts;
+  }
+  return partsByMessageId;
+}
+
+function parseTranscriptStringArray(input: unknown, field: string): string[] {
+  if (input == null) return [];
+  if (!Array.isArray(input)) {
+    throw new ApiError(400, "invalid_payload", `${field} must be an array`);
+  }
+  return input
+    .map((value) => (typeof value === "string" ? value.trim() : ""))
+    .filter((value) => value.length > 0);
+}
+
+function parseSessionTranscriptDeletedParts(input: unknown): Record<string, string[]> {
+  if (input == null) return {};
+  if (typeof input !== "object" || Array.isArray(input)) {
+    throw new ApiError(400, "invalid_payload", "deletedPartsByMessageId must be an object");
+  }
+  const deletedPartsByMessageId: Record<string, string[]> = {};
+  for (const [messageId, partIds] of Object.entries(input as Record<string, unknown>)) {
+    const id = messageId.trim();
+    if (!id) continue;
+    const parsed = parseTranscriptStringArray(partIds, "deletedPartsByMessageId values");
+    if (parsed.length > 0) deletedPartsByMessageId[id] = parsed;
+  }
+  return deletedPartsByMessageId;
+}
+
+function isRecordLike(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function resolveTranscriptMessageIdForArtifacts(message: Record<string, unknown>): string {
+  const direct = typeof message.id === "string" ? message.id.trim() : "";
+  if (direct) return direct;
+  const info = isRecordLike(message.info) ? message.info : null;
+  return typeof info?.id === "string" ? info.id.trim() : "";
+}
+
+function attachTranscriptPartsForArtifacts(
+  messages: unknown[],
+  partsByMessageId: Record<string, unknown[]>,
+): SessionArtifactMessage[] {
+  const result: SessionArtifactMessage[] = [];
+  for (const rawMessage of messages) {
+    if (!isRecordLike(rawMessage)) continue;
+    const messageId = resolveTranscriptMessageIdForArtifacts(rawMessage);
+    const persistedParts = messageId ? partsByMessageId[messageId] ?? [] : [];
+    const inlineParts = Array.isArray(rawMessage.parts) ? rawMessage.parts : [];
+    const parts = (persistedParts.length > 0 ? persistedParts : inlineParts)
+      .filter(isRecordLike) as SessionArtifactPart[];
+    result.push({
+      ...rawMessage,
+      parts,
+    });
+  }
+  return result;
+}
+
 function parseSessionIdArray(input: unknown, fieldName: string): string[] {
   if (!Array.isArray(input)) {
     throw new ApiError(400, "invalid_payload", `${fieldName} must be an array`);
@@ -1979,33 +3098,274 @@ function parseOptionalSessionId(input: unknown): string | undefined {
   return normalized ? normalized : undefined;
 }
 
-function resolveSessionTranscriptMessageId(message: unknown): string {
-  if (!message || typeof message !== "object") return "";
-  const record = message as Record<string, unknown>;
-  const fromRoot = typeof record.id === "string" ? record.id.trim() : "";
-  if (fromRoot) return fromRoot;
-  const info = record.info;
-  if (!info || typeof info !== "object") return "";
-  const fromInfo = typeof (info as Record<string, unknown>).id === "string"
-    ? ((info as Record<string, unknown>).id as string).trim()
-    : "";
-  return fromInfo;
+function parseSessionDirectoryMap(input: unknown): Record<string, string> {
+  if (input === undefined || input === null) return {};
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new ApiError(400, "invalid_payload", "sessionDirectoriesById must be an object");
+  }
+
+  const result: Record<string, string> = {};
+  for (const [sessionIdRaw, directoryRaw] of Object.entries(input as Record<string, unknown>)) {
+    const sessionId = sessionIdRaw.trim();
+    if (!sessionId) continue;
+    if (typeof directoryRaw !== "string") {
+      throw new ApiError(400, "invalid_payload", "sessionDirectoriesById entries must be strings");
+    }
+    const directory = directoryRaw.trim();
+    if (!directory) continue;
+    result[sessionId] = directory;
+  }
+  return result;
 }
 
-function deriveSessionTranscriptPartsByMessageId(messages: unknown[]): Record<string, unknown[]> {
-  const partsByMessageId: Record<string, unknown[]> = {};
-  for (const message of messages) {
-    const messageId = resolveSessionTranscriptMessageId(message);
-    if (!messageId) continue;
-    if (!message || typeof message !== "object") {
-      partsByMessageId[messageId] = [];
-      continue;
-    }
-    const parts = (message as Record<string, unknown>).parts;
-    partsByMessageId[messageId] = Array.isArray(parts) ? parts : [];
-  }
-  return partsByMessageId;
+const CONVERSATION_RUN_BODY_FIELDS: Record<string, string[]> = {
+  prompt_async: [
+    "messageID",
+    "model",
+    "agent",
+    "noReply",
+    "tools",
+    "system",
+    "variant",
+    "parts",
+    "reasoning_effort",
+  ],
+  command: [
+    "messageID",
+    "agent",
+    "model",
+    "arguments",
+    "command",
+    "variant",
+    "parts",
+    "reasoning_effort",
+  ],
+  shell: [
+    "agent",
+    "model",
+    "command",
+  ],
+  summarize: [
+    "providerID",
+    "modelID",
+    "auto",
+  ],
+};
+
+function parseConversationRunKind(input: unknown): "prompt_async" | "command" | "shell" | "summarize" {
+  const kind = typeof input === "string" ? input.trim() : "";
+  if (kind === "prompt" || kind === "prompt_async") return "prompt_async";
+  if (kind === "command" || kind === "shell" || kind === "summarize") return kind;
+  throw new ApiError(400, "invalid_payload", "kind must be prompt_async, command, shell, or summarize");
 }
+
+function buildConversationRunBody(kind: "prompt_async" | "command" | "shell" | "summarize", body: Record<string, unknown>) {
+  const result: Record<string, unknown> = {};
+  for (const field of CONVERSATION_RUN_BODY_FIELDS[kind] ?? []) {
+    if (body[field] !== undefined) result[field] = body[field];
+  }
+  return result;
+}
+
+function summarizeConversationRunBodyForTrace(body: Record<string, unknown>) {
+  const model = body.model;
+  const modelSummary =
+    typeof model === "string"
+      ? { type: "string", value: model }
+      : model && typeof model === "object" && !Array.isArray(model)
+        ? {
+            type: "object",
+            providerID:
+              typeof (model as { providerID?: unknown }).providerID === "string"
+                ? (model as { providerID: string }).providerID
+                : null,
+            modelID:
+              typeof (model as { modelID?: unknown }).modelID === "string"
+                ? (model as { modelID: string }).modelID
+                : null,
+          }
+        : model === undefined
+          ? null
+          : { type: typeof model };
+  const parts = Array.isArray(body.parts) ? body.parts : [];
+  const textChars = parts.reduce((total, part) => {
+    if (!part || typeof part !== "object") return total;
+    const text = (part as { text?: unknown }).text;
+    return total + (typeof text === "string" ? text.length : 0);
+  }, 0);
+  return {
+    fields: Object.keys(body).sort(),
+    messageID: typeof body.messageID === "string" ? body.messageID : null,
+    agent: typeof body.agent === "string" ? body.agent : null,
+    variant: typeof body.variant === "string" ? body.variant : null,
+    model: modelSummary,
+    partCount: parts.length,
+    textChars,
+    hasSystem: typeof body.system === "string" && body.system.length > 0,
+    hasTools: Boolean(body.tools && typeof body.tools === "object"),
+    hasReasoningEffort: typeof body.reasoning_effort === "string" && body.reasoning_effort.length > 0,
+    noReply: body.noReply === true,
+  };
+}
+
+function lifecycleRunKind(kind: "prompt_async" | "command" | "shell" | "summarize") {
+  return kind === "prompt_async" ? "prompt" : kind;
+}
+
+function lifecycleRequestApiError(error: OrchestratorLifecycleRequestError): ApiError {
+  const status = error.status === 401 || error.status === 403
+    ? 503
+    : error.status === 404
+      ? 404
+      : error.status === 501
+        ? 501
+        : 503;
+  const code = status === 404
+    ? "lifecycle_not_found"
+    : status === 501
+      ? "lifecycle_unsupported"
+      : "lifecycle_unavailable";
+  return new ApiError(status, code, "Run lifecycle owner is unavailable", {
+    upstreamStatus: error.status,
+    path: error.path,
+    body: error.body,
+  });
+}
+
+type ConversationRunDebugTraceEntry = {
+  source: "server";
+  event: string;
+  at: string;
+  ts: number;
+  traceId?: string;
+  durationMs?: number;
+  [key: string]: unknown;
+};
+
+const roundTraceMs = (value: number) => Math.round(value * 100) / 100;
+
+const perfMs = () =>
+  typeof performance !== "undefined" && typeof performance.now === "function"
+    ? performance.now()
+    : Date.now();
+
+function createConversationRunTracer(request: Request) {
+  const traceId = request.headers.get("x-veslo-send-trace-id")?.trim() || "";
+  const enabled = Boolean(traceId) || ["1", "true", "yes"].includes((process.env.VESLO_FLOW_LOG ?? "").toLowerCase());
+  const entries: ConversationRunDebugTraceEntry[] = [];
+
+  const record = (event: string, payload: Record<string, unknown> = {}) => {
+    const entry: ConversationRunDebugTraceEntry = {
+      source: "server",
+      event,
+      at: new Date().toISOString(),
+      ts: Date.now(),
+      ...(traceId ? { traceId } : {}),
+      ...payload,
+    };
+    entries.push(entry);
+    recordSendWorkflowTrace("server", event, entry);
+    if (enabled) {
+      try {
+        console.log(`[veslo:send-flow] ${event} ${JSON.stringify(entry)}`);
+      } catch {
+        console.log(`[veslo:send-flow] ${event}`);
+      }
+    }
+  };
+
+  const step = async <T,>(
+    event: string,
+    fn: () => Promise<T>,
+    payload: Record<string, unknown> = {},
+  ): Promise<T> => {
+    const startedAt = perfMs();
+    record(`${event}:start`, payload);
+    try {
+      const result = await fn();
+      record(event, {
+        ...payload,
+        durationMs: roundTraceMs(perfMs() - startedAt),
+        outcome: "ok",
+      });
+      return result;
+    } catch (error) {
+      record(`${event}:error`, {
+        ...payload,
+        durationMs: roundTraceMs(perfMs() - startedAt),
+        outcome: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  };
+
+  return { entries, record, step, traceId: traceId || null };
+}
+
+type ConversationRunTracer = ReturnType<typeof createConversationRunTracer>;
+
+function createBackgroundConversationRunTracer(traceId: string | null = null): ConversationRunTracer {
+  const entries: ConversationRunDebugTraceEntry[] = [];
+  const normalizedTraceId = traceId?.trim() || null;
+  const record = (event: string, payload: Record<string, unknown> = {}) => {
+    const entry: ConversationRunDebugTraceEntry = {
+      source: "server",
+      event,
+      at: new Date().toISOString(),
+      ts: Date.now(),
+      ...(normalizedTraceId ? { traceId: normalizedTraceId } : {}),
+      ...payload,
+    };
+    entries.push(entry);
+    recordSendWorkflowTrace("server", event, entry);
+  };
+  const step = async <T,>(
+    event: string,
+    fn: () => Promise<T>,
+    payload: Record<string, unknown> = {},
+  ): Promise<T> => {
+    const startedAt = perfMs();
+    record(`${event}:start`, payload);
+    try {
+      const result = await fn();
+      record(event, {
+        ...payload,
+        durationMs: roundTraceMs(perfMs() - startedAt),
+        outcome: "ok",
+      });
+      return result;
+    } catch (error) {
+      record(`${event}:error`, {
+        ...payload,
+        durationMs: roundTraceMs(perfMs() - startedAt),
+        outcome: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  };
+  return { entries, record, step, traceId: normalizedTraceId };
+}
+
+const ACTIVE_LIFECYCLE_STATUSES = new Set<LifecycleRunStatus>(["submitted", "running", "blocked"]);
+const isActiveLifecycleStatus = (status: LifecycleRunStatus | string | null | undefined): boolean =>
+  Boolean(status && ACTIVE_LIFECYCLE_STATUSES.has(status as LifecycleRunStatus));
+
+function isVesloConversationId(input: string): boolean {
+  return /^conv-[0-9a-f]{20}$/i.test(input.trim());
+}
+
+function requireConversationRunId(body: Record<string, unknown>): string {
+  const runId = optionalBodyString(body, "runId");
+  if (!runId) {
+    throw new ApiError(400, "invalid_payload", "runId is required");
+  }
+  return runId;
+}
+
+const ownerForWorkspace = (workspace: WorkspaceInfo) =>
+  workspaceResourceOwner({ workspaceId: workspace.id, root: workspace.path, label: workspace.name });
 
 function parseCatalogPathFilter(input: string | null): string | null {
   if (!input) return null;
@@ -2208,6 +3568,7 @@ function skillRegistryRequestInput(ctx: RequestContext) {
 type SoulSummary = {
   scope: "organization" | "user" | "workspace";
   ownerId: string;
+  owner: ResourceOwner;
   title: string;
   currentVersionId: string | null;
   updatedAt: string | null;
@@ -2286,6 +3647,23 @@ function soulTitle(scope: SoulScope, workspace?: WorkspaceInfo): string {
   return workspace?.name ? `${workspace.name} Soul` : "Workspace Soul";
 }
 
+function soulResourceOwner(input: {
+  scope: SoulScope;
+  ownerId: string;
+  workspace?: WorkspaceInfo;
+}): ResourceOwner {
+  if (input.scope === "organization") {
+    return organizationResourceOwner({ orgId: input.ownerId, label: "Organization" });
+  }
+  if (input.scope === "user") {
+    return localUserResourceOwner({ userId: input.ownerId, label: "User" });
+  }
+  if (input.workspace) {
+    return ownerForWorkspace(input.workspace);
+  }
+  return workspaceResourceOwner({ workspaceId: input.ownerId });
+}
+
 function soulSummary(input: {
   scope: SoulScope;
   ownerId: string;
@@ -2298,6 +3676,7 @@ function soulSummary(input: {
   return {
     scope: input.scope,
     ownerId: input.ownerId,
+    owner: soulResourceOwner(input),
     title: soulTitle(input.scope, input.workspace),
     currentVersionId: input.document?.currentVersionId ?? null,
     updatedAt: soulUpdatedAt(input.document),
@@ -2456,6 +3835,57 @@ function soulReadPayload(input: {
     ...(input.denSynced === undefined ? {} : { denSynced: input.denSynced }),
     ...(input.materialization === undefined ? {} : { materialization: input.materialization }),
   };
+}
+
+async function buildSoulMaterializationStatus(workspace: WorkspaceInfo): Promise<SoulMaterializationResult | undefined> {
+  return readSoulMaterializationStatus(workspace.path);
+}
+
+function uniqueApprovalPaths(paths: string[]): string[] {
+  return [...new Set(paths.filter((path) => path.trim().length > 0))];
+}
+
+function soulMaterializationApprovalPaths(workspace: WorkspaceInfo): string[] {
+  return [
+    opencodeConfigPath(workspace.path),
+    join(workspace.path, ".opencode", "soul-company.md"),
+    join(workspace.path, ".opencode", "soul-user.md"),
+    join(workspace.path, ".opencode", "soul-workspace.md"),
+    join(workspace.path, ".opencode", "veslo", "soul-manifest.json"),
+  ];
+}
+
+async function configuredSoulMaterializationApprovalPaths(
+  config: ServerConfig,
+  extraPaths: string[],
+): Promise<string[]> {
+  const paths = [...extraPaths];
+  for (const configuredWorkspace of config.workspaces) {
+    const workspace = await resolveWorkspace(config, configuredWorkspace.id);
+    paths.push(...soulMaterializationApprovalPaths(workspace));
+  }
+  return uniqueApprovalPaths(paths);
+}
+
+function globalSoulApprovalWorkspaceId(config: ServerConfig): string {
+  return config.workspaces[0]?.id ?? "__soul__";
+}
+
+async function requireSoulApproval(
+  ctx: RequestContext,
+  input: {
+    workspaceId: string;
+    action: string;
+    summary: string;
+    paths: string[];
+  },
+): Promise<void> {
+  await requireApproval(ctx, {
+    workspaceId: input.workspaceId,
+    action: input.action,
+    summary: input.summary,
+    paths: uniqueApprovalPaths(input.paths),
+  });
 }
 
 function materializationEntryPayload(entry: WorkspaceSkillMaterialization & {
@@ -3092,6 +4522,15 @@ function optionalBodyBoolean(body: Record<string, unknown>, field: string): bool
   return typeof value === "boolean" ? value : undefined;
 }
 
+function optionalBodyHttpUrl(body: Record<string, unknown>, field: string): string | undefined {
+  const value = optionalBodyString(body, field);
+  if (!value) return undefined;
+  if (!value.startsWith("http://") && !value.startsWith("https://")) {
+    throw new ApiError(400, "invalid_payload", `${field} must start with http:// or https://`);
+  }
+  return value.replace(/\/+$/, "");
+}
+
 function requireBodyObject(body: Record<string, unknown>, field: string): Record<string, unknown> {
   const value = body[field];
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -3337,23 +4776,483 @@ function createRoutes(
   const serverDataDir = resolveVesloDataDir();
   const fileSessions = new FileSessionStore();
   const sessionArchives = createSessionArchiveStore();
-  const sessionTranscriptPrefetch = createSessionTranscriptPrefetchStore({
-    loadTranscript: async ({ workspaceId, sessionId, limit }) => {
-      const workspace = await resolveWorkspace(config, workspaceId);
-      const upstreamMessages = await fetchOpencodeJson(
-        workspace,
-        `/session/${encodeURIComponent(sessionId)}/message?limit=${encodeURIComponent(String(limit))}`,
-        { method: "GET", maxResponseBytes: OPENCODE_TRANSCRIPT_RESPONSE_MAX_BYTES },
-      );
-      const messages = Array.isArray(upstreamMessages) ? upstreamMessages : [];
-      return {
-        workspaceId: workspace.id,
-        sessionId,
-        messages,
-        partsByMessageId: deriveSessionTranscriptPartsByMessageId(messages),
-      };
+  const conversationReadStore = createConversationReadStore();
+  const conversationBindingStore = createConversationBindingStore({ dataDir: serverDataDir });
+  const conversationTranscriptStore = createConversationTranscriptStore({ dataDir: serverDataDir });
+  const conversationRunQueueStore = createConversationRunQueueStore({ dataDir: serverDataDir });
+  const conversationService = createConversationService({
+    readStore: conversationReadStore,
+    bindingStore: conversationBindingStore,
+    transcriptStore: conversationTranscriptStore,
+    createOpenCodeSession: async ({ workspace, directory, title, sendTraceId }) => {
+      const scopedWorkspace = directory ? { ...workspace, directory } : workspace;
+      return await fetchOpencodeJson(scopedWorkspace, "/session", {
+        method: "POST",
+        timeoutMs: OPENCODE_SESSION_CREATE_TIMEOUT_MS,
+        sendTraceId,
+        body: {
+          ...(directory ? { directory } : {}),
+          ...(title?.trim() ? { title: title.trim() } : {}),
+        },
+      });
     },
   });
+  const lifecycleClient =
+    config.orchestratorDaemonUrl && config.orchestratorLifecycleToken
+      ? createOrchestratorLifecycleClient({
+          daemonUrl: config.orchestratorDaemonUrl,
+          token: config.orchestratorLifecycleToken,
+        })
+      : null;
+
+  const sessionTranscriptPrefetch = createSessionTranscriptPrefetchStore({
+    loadTranscript: async ({ workspaceId, sessionId, limit, directory }) => {
+      const workspace = await resolveWorkspace(config, workspaceId);
+      const resolvedDirectory = directory ?? resolveOpencodeDirectory(workspace);
+      return await conversationService.loadTranscript({
+        workspace,
+        sessionId,
+        directory: resolvedDirectory,
+        limit,
+      });
+    },
+  });
+
+  const loadConversationTranscriptResponse = async (input: {
+    workspace: WorkspaceInfo;
+    sessionOrConversationId: string;
+    limit: number;
+    directory: string | null;
+  }) => {
+    const binding = await conversationService.resolveOpenCodeSessionForRead({
+      workspaceId: input.workspace.id,
+      directory: input.directory,
+      sessionOrConversationId: input.sessionOrConversationId,
+    });
+    if (!binding && isVesloConversationId(input.sessionOrConversationId)) {
+      throw new ApiError(404, "conversation_not_found", "Conversation was not found in this workspace");
+    }
+    const opencodeSessionId = binding?.engineSessionId ?? input.sessionOrConversationId;
+    const snapshot = await sessionTranscriptPrefetch.getOrLoad({
+      workspaceId: input.workspace.id,
+      sessionId: opencodeSessionId,
+      limit: input.limit,
+      directory: input.directory,
+    });
+    return {
+      workspaceId: input.workspace.id,
+      sessionId: opencodeSessionId,
+      conversationId: binding?.conversationId,
+      opencodeSessionId,
+      limit: snapshot.limit,
+      messages: snapshot.messages,
+      partsByMessageId: snapshot.partsByMessageId,
+      fetchedAt: snapshot.fetchedAt,
+      staleAt: snapshot.staleAt,
+      source: snapshot.source,
+    };
+  };
+
+  const resolveConversationExecutionTarget = async (input: {
+    workspace: WorkspaceInfo;
+    sessionOrConversationId: string;
+    requestedDirectory: string | undefined;
+    missingDirectoryMessage: string;
+  }) => {
+    if (!input.requestedDirectory) {
+      throw new ApiError(400, "invalid_directory", input.missingDirectoryMessage);
+    }
+    const directory = await resolveConversationReadDirectory(
+      input.workspace,
+      input.requestedDirectory,
+    );
+    if (!directory) {
+      throw new ApiError(400, "invalid_directory", "Conversation directory is required");
+    }
+    const binding = await conversationService.resolveOpenCodeSessionForRead({
+      workspaceId: input.workspace.id,
+      directory,
+      sessionOrConversationId: input.sessionOrConversationId,
+    });
+    if (!binding && isVesloConversationId(input.sessionOrConversationId)) {
+      throw new ApiError(404, "conversation_not_found", "Conversation was not found in this workspace");
+    }
+    return {
+      directory,
+      binding,
+      opencodeSessionId: binding?.engineSessionId ?? input.sessionOrConversationId,
+      conversationId: binding?.conversationId ?? input.sessionOrConversationId,
+    };
+  };
+
+  type ConversationExecutionTarget = Awaited<ReturnType<typeof resolveConversationExecutionTarget>>;
+
+  const buildConversationRunSubmitPath = (
+    kind: "prompt_async" | "command" | "shell" | "summarize",
+    opencodeSessionId: string,
+    directory: string,
+  ) => {
+    const query = new URLSearchParams();
+    query.set("directory", directory);
+    return kind === "prompt_async"
+      ? `/session/${encodeURIComponent(opencodeSessionId)}/prompt_async?${query.toString()}`
+      : kind === "command"
+        ? `/session/${encodeURIComponent(opencodeSessionId)}/command?${query.toString()}`
+          : kind === "shell"
+            ? `/session/${encodeURIComponent(opencodeSessionId)}/shell?${query.toString()}`
+            : `/session/${encodeURIComponent(opencodeSessionId)}/summarize?${query.toString()}`;
+  };
+
+  const submitConversationRunToOpenCode = async (input: {
+    runTrace: ConversationRunTracer;
+    workspace: WorkspaceInfo;
+    target: ConversationExecutionTarget;
+    runId: string;
+    kind: "prompt_async" | "command" | "shell" | "summarize";
+    body: Record<string, unknown>;
+    clientMessageId: string | null;
+    origin: string | null;
+    expectAiGatewayStart: boolean;
+    lifecycleOwner: OrchestratorLifecycleClient | null;
+  }) => {
+    const {
+      runTrace,
+      workspace,
+      target,
+      runId,
+      kind,
+      body,
+      clientMessageId,
+      origin,
+      expectAiGatewayStart,
+      lifecycleOwner,
+    } = input;
+    const path = buildConversationRunSubmitPath(kind, target.opencodeSessionId, target.directory);
+    const aiGatewayProviderWatchStartedAt = Date.now();
+    const opencodeRunBody = buildConversationRunBody(kind, body);
+    runTrace.record("server:conversation-run:opencode-submit-body", {
+      workspaceId: workspace.id,
+      conversationId: target.conversationId,
+      runId,
+      kind,
+      clientMessageId,
+      origin,
+      opencodeSessionId: target.opencodeSessionId,
+      body: summarizeConversationRunBodyForTrace(opencodeRunBody),
+    });
+    if (kind === "prompt_async" && expectAiGatewayStart) {
+      registerActiveAiGatewayRun({
+        traceId: runTrace.traceId,
+        workspaceId: workspace.id,
+        conversationId: target.conversationId,
+        runId,
+        opencodeSessionId: target.opencodeSessionId,
+        clientMessageId,
+        origin,
+      });
+    }
+    let upstream: unknown;
+    try {
+      upstream = await runTrace.step(
+        "server:conversation-run:opencode-submit",
+        () => fetchOpencodeJson({ ...workspace, directory: target.directory }, path, {
+          method: "POST",
+          timeoutMs: OPENCODE_CONVERSATION_SUBMIT_TIMEOUT_MS,
+          body: opencodeRunBody,
+          sendTraceId: runTrace.traceId,
+        }),
+        {
+          workspaceId: workspace.id,
+          conversationId: target.conversationId,
+          runId,
+          kind,
+          clientMessageId,
+          origin,
+          opencodeSessionId: target.opencodeSessionId,
+        },
+      );
+    } catch (error) {
+      if (lifecycleOwner) {
+        await runTrace.step(
+          "server:conversation-run:lifecycle-mark-failed",
+          () => lifecycleOwner.markFailed(
+            workspace.id,
+            runId,
+            error instanceof Error ? error.message : String(error),
+          ),
+          {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            runId,
+          },
+        ).catch(() => undefined);
+      }
+      throw error;
+    }
+    if (lifecycleOwner && kind === "prompt_async" && expectAiGatewayStart) {
+      const providerStart = await runTrace.step(
+        "server:conversation-run:ai-gateway-provider-start-watch",
+        () => waitForAiGatewayProviderStart({
+          workspaceId: workspace.id,
+          conversationId: target.conversationId,
+          runId,
+          opencodeSessionId: target.opencodeSessionId,
+          clientMessageId,
+          origin,
+          startedAt: aiGatewayProviderWatchStartedAt,
+        }),
+        {
+          workspaceId: workspace.id,
+          conversationId: target.conversationId,
+          runId,
+          clientMessageId,
+          origin,
+          opencodeSessionId: target.opencodeSessionId,
+        },
+      );
+      if (!providerStart.started) {
+        const error = `AI gateway provider request did not start within ${providerStart.timeoutMs}ms.`;
+        await runTrace.step(
+          "server:conversation-run:lifecycle-mark-failed-ai-gateway-provider-start-timeout",
+          () => lifecycleOwner.markFailed(workspace.id, runId, error),
+          {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            runId,
+            opencodeSessionId: target.opencodeSessionId,
+            timeoutMs: providerStart.timeoutMs,
+          },
+        ).catch(() => undefined);
+        const abortQuery = new URLSearchParams();
+        abortQuery.set("directory", target.directory);
+        await runTrace.step(
+          "server:conversation-run:opencode-abort-ai-gateway-provider-start-timeout",
+          () => fetchOpencodeJson(
+            { ...workspace, directory: target.directory },
+            `/session/${encodeURIComponent(target.opencodeSessionId)}/abort?${abortQuery.toString()}`,
+            { method: "POST", sendTraceId: runTrace.traceId },
+          ),
+          {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            runId,
+            opencodeSessionId: target.opencodeSessionId,
+          },
+        ).catch((abortError) => {
+          runTrace.record("server:conversation-run:opencode-abort-ai-gateway-provider-start-timeout:error", {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            runId,
+            opencodeSessionId: target.opencodeSessionId,
+            error: abortError instanceof Error ? abortError.message : String(abortError),
+          });
+        });
+        throw new ApiError(504, "ai_gateway_provider_start_timeout", error, {
+          workspaceId: workspace.id,
+          conversationId: target.conversationId,
+          runId,
+          opencodeSessionId: target.opencodeSessionId,
+          clientMessageId,
+          origin,
+          timeoutMs: providerStart.timeoutMs,
+        });
+      }
+    }
+    return upstream;
+  };
+
+  const conversationQueueKey = (workspaceId: string, conversationId: string) => `${workspaceId}\0${conversationId}`;
+  const conversationQueueDrainTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const conversationQueueDrainInFlight = new Set<string>();
+  const CONVERSATION_QUEUE_DRAIN_POLL_MS = 1_500;
+
+  const scheduleConversationQueueDrain = (
+    workspaceId: string,
+    conversationId: string,
+    delayMs = 0,
+  ) => {
+    const key = conversationQueueKey(workspaceId, conversationId);
+    if (conversationQueueDrainTimers.has(key)) return;
+    const timer = setTimeout(() => {
+      conversationQueueDrainTimers.delete(key);
+      void drainConversationQueue(workspaceId, conversationId);
+    }, Math.max(0, delayMs));
+    (timer as { unref?: () => void }).unref?.();
+    conversationQueueDrainTimers.set(key, timer);
+  };
+
+  const enqueueConversationRun = (input: {
+    runTrace: ConversationRunTracer;
+    workspace: WorkspaceInfo;
+    target: ConversationExecutionTarget;
+    runId: string;
+    kind: "prompt_async" | "command" | "shell" | "summarize";
+    body: Record<string, unknown>;
+    clientMessageId: string | null;
+    origin: string | null;
+    activeRunId: string | null;
+  }) => {
+    const bodyJson = JSON.stringify({
+      ...input.body,
+      directory: input.target.directory,
+      kind: input.kind,
+      ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
+      ...(input.origin ? { origin: input.origin } : {}),
+    });
+    const queued = conversationRunQueueStore.enqueue({
+      workspaceId: input.workspace.id,
+      conversationId: input.target.conversationId,
+      opencodeSessionId: input.target.opencodeSessionId,
+      directory: input.target.directory,
+      reservedRunId: input.runId,
+      clientMessageId: input.clientMessageId,
+      origin: input.origin,
+      kind: input.kind,
+      bodyJson,
+      activeRunId: input.activeRunId,
+    });
+    input.runTrace.record("server:conversation-run:queued", {
+      workspaceId: input.workspace.id,
+      conversationId: input.target.conversationId,
+      opencodeSessionId: input.target.opencodeSessionId,
+      runId: queued.item.reservedRunId,
+      queueItemId: queued.item.queueItemId,
+      activeRunId: queued.item.activeRunId,
+      queuePosition: queued.queuePosition,
+      inserted: queued.inserted,
+      clientMessageId: input.clientMessageId,
+      origin: input.origin,
+    });
+    scheduleConversationQueueDrain(input.workspace.id, input.target.conversationId, CONVERSATION_QUEUE_DRAIN_POLL_MS);
+    return jsonResponse({
+      ok: true,
+      workspaceId: input.workspace.id,
+      conversationId: input.target.conversationId,
+      opencodeSessionId: input.target.opencodeSessionId,
+      runId: queued.item.reservedRunId,
+      reservedRunId: queued.item.reservedRunId,
+      queueItemId: queued.item.queueItemId,
+      activeRunId: queued.item.activeRunId,
+      queuePosition: queued.queuePosition,
+      clientMessageId: input.clientMessageId,
+      origin: input.origin,
+      status: "queued",
+      kind: input.kind,
+      debugTrace: input.runTrace.entries,
+    }, queued.inserted ? 202 : 200);
+  };
+
+  async function drainConversationQueue(workspaceId: string, conversationId: string): Promise<void> {
+    const key = conversationQueueKey(workspaceId, conversationId);
+    if (conversationQueueDrainInFlight.has(key)) return;
+    conversationQueueDrainInFlight.add(key);
+    let item: ConversationRunQueueItem | null = null;
+    try {
+      const workspace = config.workspaces.find((candidate) => candidate.id === workspaceId);
+      if (!workspace) return;
+      const lifecycleOwner = workspace.workspaceType === "remote" ? null : lifecycleClient;
+      const runTrace = createBackgroundConversationRunTracer();
+      if (lifecycleOwner) {
+        try {
+          const latest = await lifecycleOwner.status(workspace.id, conversationId, "latest");
+          if (latest && isActiveLifecycleStatus(latest.status)) {
+            scheduleConversationQueueDrain(workspaceId, conversationId, CONVERSATION_QUEUE_DRAIN_POLL_MS);
+            return;
+          }
+        } catch (error) {
+          runTrace.record("server:conversation-run:queue-drain-status-error", {
+            workspaceId,
+            conversationId,
+            message: error instanceof Error ? error.message : String(error),
+          });
+          scheduleConversationQueueDrain(workspaceId, conversationId, CONVERSATION_QUEUE_DRAIN_POLL_MS);
+          return;
+        }
+      }
+
+      item = conversationRunQueueStore.nextPending(workspaceId, conversationId);
+      if (!item) return;
+      item = conversationRunQueueStore.markStarting(item.queueItemId);
+      if (!item || item.state !== "starting") return;
+
+      let body: Record<string, unknown>;
+      try {
+        const parsed = JSON.parse(item.bodyJson) as unknown;
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          throw new Error("queued run body must be an object");
+        }
+        body = parsed as Record<string, unknown>;
+      } catch (error) {
+        conversationRunQueueStore.markFailed(item.queueItemId, error instanceof Error ? error.message : String(error));
+        return;
+      }
+
+      const kind = parseConversationRunKind(item.kind);
+      const expectAiGatewayStart = optionalBodyBoolean(body, "expectAiGatewayStart") === true;
+      const target: ConversationExecutionTarget = {
+        directory: item.directory,
+        binding: null,
+        opencodeSessionId: item.opencodeSessionId,
+        conversationId: item.conversationId,
+      };
+
+      if (lifecycleOwner) {
+        try {
+          await runTrace.step(
+            "server:conversation-run:queue-lifecycle-register",
+            () => lifecycleOwner.register({
+              workspaceId: workspace.id,
+              conversationId: item!.conversationId,
+              runId: item!.reservedRunId,
+              engineSessionId: item!.opencodeSessionId,
+              directory: item!.directory,
+              kind: lifecycleRunKind(kind),
+            }),
+            {
+              workspaceId: workspace.id,
+              conversationId: item.conversationId,
+              runId: item.reservedRunId,
+              engineSessionId: item.opencodeSessionId,
+              queueItemId: item.queueItemId,
+            },
+          );
+        } catch (error) {
+          if (error instanceof RunAlreadyActiveError) {
+            conversationRunQueueStore.markPending(item.queueItemId, error.activeRunId);
+            scheduleConversationQueueDrain(workspaceId, conversationId, CONVERSATION_QUEUE_DRAIN_POLL_MS);
+            return;
+          }
+          conversationRunQueueStore.markFailed(item.queueItemId, error instanceof Error ? error.message : String(error));
+          return;
+        }
+      }
+
+      await submitConversationRunToOpenCode({
+        runTrace,
+        workspace,
+        target,
+        runId: item.reservedRunId,
+        kind,
+        body,
+        clientMessageId: item.clientMessageId,
+        origin: item.origin,
+        expectAiGatewayStart,
+        lifecycleOwner,
+      });
+      conversationRunQueueStore.markSubmitted(item.queueItemId);
+      scheduleConversationQueueDrain(workspaceId, conversationId, CONVERSATION_QUEUE_DRAIN_POLL_MS);
+    } catch (error) {
+      if (item) {
+        conversationRunQueueStore.markFailed(item.queueItemId, error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      conversationQueueDrainInFlight.delete(key);
+    }
+  }
+
+  for (const pending of conversationRunQueueStore.pendingConversationKeys()) {
+    scheduleConversationQueueDrain(pending.workspaceId, pending.conversationId, CONVERSATION_QUEUE_DRAIN_POLL_MS);
+  }
 
   const serializeFileSession = (session: {
     id: string;
@@ -3491,11 +5390,23 @@ function createRoutes(
   };
 
   addRoute(routes, "GET", "/health", "none", async () => {
-    return jsonResponse({ ok: true, version: SERVER_VERSION, uptimeMs: Date.now() - config.startedAt });
+    return jsonResponse({
+      ok: true,
+      version: SERVER_VERSION,
+      uptimeMs: Date.now() - config.startedAt,
+      token: config.token,
+      pid: process.pid,
+    });
   });
 
   addRoute(routes, "GET", "/w/:id/health", "none", async () => {
-    return jsonResponse({ ok: true, version: SERVER_VERSION, uptimeMs: Date.now() - config.startedAt });
+    return jsonResponse({
+      ok: true,
+      version: SERVER_VERSION,
+      uptimeMs: Date.now() - config.startedAt,
+      token: config.token,
+      pid: process.pid,
+    });
   });
 
   addRoute(routes, "GET", "/ui", "none", async () => {
@@ -3599,6 +5510,120 @@ function createRoutes(
     return jsonResponse({ items, activeId: active?.id ?? null });
   });
 
+  addRoute(routes, "POST", "/workspaces/local", "host", async (ctx) => {
+    ensureWritable(config);
+    const body = await readJsonBody(ctx.request);
+    const folderPath = typeof body.path === "string" ? body.path.trim() : "";
+    if (!folderPath) {
+      throw new ApiError(400, "invalid_payload", "path is required");
+    }
+    const name = typeof body.name === "string" && body.name.trim()
+      ? body.name.trim()
+      : basename(folderPath);
+    const baseUrl = optionalBodyHttpUrl(body, "baseUrl");
+    const directory = optionalBodyString(body, "directory");
+    const opencodeUsername = optionalBodyString(body, "opencodeUsername");
+    const opencodePassword = optionalBodyString(body, "opencodePassword");
+
+    const workspacePath = resolve(folderPath);
+    await mkdir(workspacePath, { recursive: true });
+
+    const id = workspaceIdForPath(workspacePath);
+    const existing = config.workspaces.find((entry) => entry.id === id);
+    if (existing) {
+      const hasOpencodeMetadata = Boolean(
+        baseUrl || directory || opencodeUsername || opencodePassword,
+      );
+      const nextWorkspace: WorkspaceInfo = {
+        ...existing,
+        ...(name && existing.name !== name ? { name } : {}),
+        ...(baseUrl ? { baseUrl } : {}),
+        ...(directory ? { directory } : {}),
+        ...(opencodeUsername ? { opencodeUsername } : {}),
+        ...(opencodePassword ? { opencodePassword } : {}),
+      };
+      const changed =
+        nextWorkspace.name !== existing.name ||
+        nextWorkspace.baseUrl !== existing.baseUrl ||
+        nextWorkspace.directory !== existing.directory ||
+        nextWorkspace.opencodeUsername !== existing.opencodeUsername ||
+        nextWorkspace.opencodePassword !== existing.opencodePassword;
+      if (changed && (baseUrl || directory || opencodeUsername || opencodePassword)) {
+        config.workspaces = config.workspaces.map((entry) =>
+          entry.id === id ? nextWorkspace : entry,
+        );
+        const persisted = await persistServerWorkspaceState(config);
+        return jsonResponse({
+          activeId: config.workspaces[0]?.id ?? null,
+          items: config.workspaces.map(serializeWorkspace),
+          persisted,
+        });
+      }
+      if (hasOpencodeMetadata) {
+        return jsonResponse({
+          activeId: config.workspaces[0]?.id ?? null,
+          items: config.workspaces.map(serializeWorkspace),
+          persisted: false,
+        });
+      }
+      throw new ApiError(409, "workspace_exists", "Workspace already exists", {
+        id,
+        path: workspacePath,
+      });
+    }
+
+    const workspace: WorkspaceInfo = {
+      id,
+      name,
+      path: workspacePath,
+      workspaceType: "local",
+      ...(baseUrl ? { baseUrl } : {}),
+      ...(directory ? { directory } : {}),
+      ...(opencodeUsername ? { opencodeUsername } : {}),
+      ...(opencodePassword ? { opencodePassword } : {}),
+    };
+
+    // Prepend so it becomes the active workspace (single-active-workspace model).
+    config.workspaces = [workspace, ...config.workspaces];
+    if (!config.authorizedRoots.some((root) => resolve(root) === workspacePath)) {
+      config.authorizedRoots = [...config.authorizedRoots, workspacePath];
+    }
+    const persisted = await persistServerWorkspaceState(config);
+    await ctx.automationRunner.upsertWorkspace({ id: workspace.id, path: workspacePath });
+
+    return jsonResponse(
+      {
+        activeId: workspace.id,
+        items: config.workspaces.map(serializeWorkspace),
+        persisted,
+      },
+      201,
+    );
+  });
+
+  addRoute(routes, "PATCH", "/workspaces/:id", "host", async (ctx) => {
+    ensureWritable(config);
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const nextName = typeof body.name === "string" && body.name.trim()
+      ? body.name.trim()
+      : undefined;
+
+    if (!nextName) {
+      throw new ApiError(400, "invalid_payload", "name must be a non-empty string");
+    }
+
+    config.workspaces = config.workspaces.map((entry) =>
+      entry.id === workspace.id ? { ...entry, name: nextName } : entry,
+    );
+    const persisted = await persistServerWorkspaceState(config);
+
+    return jsonResponse({
+      items: config.workspaces.map(serializeWorkspace),
+      persisted,
+    });
+  });
+
   addRoute(routes, "GET", "/session-archives", "client", async (ctx) => {
     const ownerKey = resolveArchiveOwnerKey(ctx.request);
     return jsonResponse({ items: await sessionArchives.list(ownerKey) });
@@ -3657,6 +5682,13 @@ function createRoutes(
       gatewayPath: "/api/me/ai-access",
       auth: "caller",
       preserveAiAccessToken: true,
+    });
+  });
+
+  addRoute(routes, "GET", "/ai-gateway/readiness", "client", async (ctx) => {
+    return proxyAiGatewayReadinessRequest({
+      request: ctx.request,
+      url: ctx.url,
     });
   });
 
@@ -3735,7 +5767,7 @@ function createRoutes(
     ];
 
     let provision: { version: string; status: "updated" | "unchanged"; written: number; unchanged: number } | null = null;
-    let soulMaterialization: SoulMaterializationResult | null = null;
+    let userGlobalSkills: Awaited<ReturnType<typeof materializeUserGlobalSkillsForWorkspace>> | null = null;
     try {
       provision = await provisionWorkspaceInternalSystem(workspace.path, resolveVesloAppDataDir());
       if (provision.written > 0) {
@@ -3745,7 +5777,19 @@ function createRoutes(
           path: ".opencode/agents/veslo.md",
         });
       }
-      soulMaterialization = await materializeSoulForWorkspace(serverDataDir, ctx, workspace, {}, { workspaceActive: true });
+      userGlobalSkills = await materializeUserGlobalSkillsForWorkspace({
+        workspaceRoot: workspace.path,
+        workspaceId: workspace.id,
+        dataDir: serverDataDir,
+      });
+      if (userGlobalSkills.reloadRequired) {
+        emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
+          type: "skill",
+          name: "veslo-user",
+          action: "updated",
+          path: userGlobalSkills.rootDir,
+        });
+      }
     } catch (error) {
       console.warn("[veslo-server] workspace activation provisioning failed", {
         workspaceId: workspace.id,
@@ -3766,7 +5810,7 @@ function createRoutes(
       activeId: workspace.id,
       workspace: serializeWorkspace(workspace),
       provision,
-      soulMaterialization,
+      userGlobalSkills,
     });
   });
 
@@ -3825,7 +5869,11 @@ function createRoutes(
     const workspace = await resolveWorkspace(config, ctx.params.id);
 
     const result = await provisionWorkspaceInternalSystem(workspace.path, resolveVesloAppDataDir());
-    const soulMaterialization = await materializeSoulForWorkspace(serverDataDir, ctx, workspace);
+    const userGlobalSkills = await materializeUserGlobalSkillsForWorkspace({
+      workspaceRoot: workspace.path,
+      workspaceId: workspace.id,
+      dataDir: serverDataDir,
+    });
 
     await recordAudit(workspace.path, {
       id: shortId(),
@@ -3837,6 +5885,21 @@ function createRoutes(
       timestamp: Date.now(),
     });
 
+    if (result.written > 0) {
+      emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
+        type: "skill",
+        action: "updated",
+        path: ".opencode/veslo/internal",
+      });
+    }
+    if (userGlobalSkills.reloadRequired) {
+      emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
+        type: "skill",
+        name: "veslo-user",
+        action: "updated",
+        path: userGlobalSkills.rootDir,
+      });
+    }
     if (result.written > 0) {
       emitReloadEvent(ctx.reloadEvents, workspace, "agents", {
         type: "agent",
@@ -3852,7 +5915,7 @@ function createRoutes(
       status: result.status,
       written: result.written,
       unchanged: result.unchanged,
-      soulMaterialization,
+      userGlobalSkills,
     });
   });
 
@@ -3883,6 +5946,365 @@ function createRoutes(
     return jsonResponse({ ok: true });
   });
 
+  addRoute(routes, "GET", "/workspace/:id/conversations", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const directory = await resolveConversationReadDirectory(
+      workspace,
+      ctx.url.searchParams.get("directory"),
+    );
+    const result = await conversationService.listConversations({
+      workspace,
+      directory,
+      sync: ctx.url.searchParams.get("sync") === "true" || ctx.url.searchParams.get("sync") === "1",
+    });
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/conversations", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const sendTraceId = ctx.request.headers.get("x-veslo-send-trace-id")?.trim() || null;
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readOptionalJsonBody(ctx.request);
+    const directory = await resolveConversationReadDirectory(
+      workspace,
+      optionalBodyNullableString(body, "directory") ?? null,
+    );
+    const startedAt = Date.now();
+    recordSendWorkflowTrace("server", "server:conversation-create:start", {
+      traceId: sendTraceId,
+      workspaceId: workspace.id,
+      directory,
+      hasTitle: Boolean(optionalBodyNullableString(body, "title")?.trim()),
+    });
+    try {
+      const result = await conversationService.createConversation({
+        workspace,
+        directory,
+        title: optionalBodyNullableString(body, "title") ?? null,
+        sendTraceId,
+      });
+      recordSendWorkflowTrace("server", "server:conversation-create:done", {
+        traceId: sendTraceId,
+        workspaceId: workspace.id,
+        directory,
+        conversationId: result.conversationId,
+        opencodeSessionId: result.opencodeSessionId,
+        durationMs: Date.now() - startedAt,
+      });
+      return jsonResponse(result, 201);
+    } catch (error) {
+      recordSendWorkflowTrace("server", "server:conversation-create:error", {
+        traceId: sendTraceId,
+        workspaceId: workspace.id,
+        directory,
+        durationMs: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/conversations/import", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const rawSessions = body.sessions;
+    if (!Array.isArray(rawSessions)) {
+      throw new ApiError(400, "invalid_payload", "sessions must be an array");
+    }
+    const directory = await resolveConversationReadDirectory(
+      workspace,
+      optionalBodyNullableString(body, "directory") ?? null,
+    );
+    const sessions = rawSessions.map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        throw new ApiError(400, "invalid_payload", "sessions must contain objects");
+      }
+      const record = item as Record<string, unknown>;
+      const time = record.time && typeof record.time === "object" && !Array.isArray(record.time)
+        ? record.time as Record<string, unknown>
+        : null;
+      return {
+        id: typeof record.id === "string" ? record.id : "",
+        title: typeof record.title === "string" ? record.title : null,
+        parentID: typeof record.parentID === "string" ? record.parentID : null,
+        time: {
+          created: typeof time?.created === "number" ? time.created : null,
+          updated: typeof time?.updated === "number" ? time.updated : null,
+        },
+      };
+    });
+    const result = await conversationService.importOpenCodeSessions({
+      workspace,
+      directory,
+      sessions,
+    });
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/conversations/:conversationId/transcript", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const conversationId = (ctx.params.conversationId ?? "").trim();
+    if (!conversationId) {
+      throw new ApiError(400, "invalid_payload", "conversationId is required");
+    }
+    const limit = parseSessionTranscriptLimit(ctx.url.searchParams.get("limit"));
+    const directory = await resolveConversationReadDirectory(
+      workspace,
+      ctx.url.searchParams.get("directory"),
+    );
+    const result = await loadConversationTranscriptResponse({
+      workspace,
+      sessionOrConversationId: conversationId,
+      limit,
+      directory,
+    });
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/conversations/:conversationId/runs", "client", async (ctx) => {
+    const runTrace = createConversationRunTracer(ctx.request);
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    runTrace.record("server:conversation-run:start", {
+      workspaceId: ctx.params.id,
+      conversationId: ctx.params.conversationId,
+    });
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const sessionOrConversationId = (ctx.params.conversationId ?? "").trim();
+    if (!sessionOrConversationId) {
+      throw new ApiError(400, "invalid_payload", "conversationId is required");
+    }
+    const body = await readJsonBody(ctx.request);
+    const kind = parseConversationRunKind(body.kind);
+    const clientMessageId = optionalBodyString(body, "clientMessageId") || optionalBodyString(body, "messageID");
+    const origin = optionalBodyString(body, "origin");
+    const expectAiGatewayStart = optionalBodyBoolean(body, "expectAiGatewayStart") === true;
+    runTrace.record("server:conversation-run:payload", {
+      workspaceId: workspace.id,
+      conversationId: sessionOrConversationId,
+      kind,
+      clientMessageId: clientMessageId || null,
+      origin: origin || null,
+      expectAiGatewayStart,
+    });
+    const target = await runTrace.step(
+      "server:conversation-run:resolve-target",
+      () => resolveConversationExecutionTarget({
+        workspace,
+        sessionOrConversationId,
+        requestedDirectory: optionalBodyString(body, "directory"),
+        missingDirectoryMessage: "Conversation run directory is required",
+      }),
+      {
+        workspaceId: workspace.id,
+        workspaceType: workspace.workspaceType,
+        kind,
+      },
+    );
+    const runId = shortId();
+    const lifecycleOwner = workspace.workspaceType === "remote" ? null : lifecycleClient;
+    runTrace.record("server:conversation-run:lifecycle-owner", {
+      workspaceId: workspace.id,
+      runId,
+      clientMessageId: clientMessageId || null,
+      origin: origin || null,
+      enabled: Boolean(lifecycleOwner),
+      workspaceType: workspace.workspaceType,
+    });
+    if (lifecycleOwner) {
+      try {
+        const active = await runTrace.step(
+          "server:conversation-run:lifecycle-active-peek",
+          () => lifecycleOwner.active(workspace.id, target.conversationId),
+          {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+          },
+        );
+        if (active && isActiveLifecycleStatus(active.status)) {
+          return enqueueConversationRun({
+            runTrace,
+            workspace,
+            target,
+            runId,
+            kind,
+            body,
+            clientMessageId: clientMessageId || null,
+            origin: origin || null,
+            activeRunId: active.runId,
+          });
+        }
+      } catch (error) {
+        runTrace.record("server:conversation-run:lifecycle-active-peek-skipped", {
+          workspaceId: workspace.id,
+          conversationId: target.conversationId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+      try {
+        await runTrace.step(
+          "server:conversation-run:lifecycle-register",
+          () => lifecycleOwner.register({
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            runId,
+            engineSessionId: target.opencodeSessionId,
+            directory: target.directory,
+            kind: lifecycleRunKind(kind),
+          }),
+          {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            runId,
+            engineSessionId: target.opencodeSessionId,
+            kind: lifecycleRunKind(kind),
+          },
+        );
+      } catch (error) {
+        if (error instanceof RunAlreadyActiveError) {
+          return enqueueConversationRun({
+            runTrace,
+            workspace,
+            target,
+            runId,
+            kind,
+            body,
+            clientMessageId: clientMessageId || null,
+            origin: origin || null,
+            activeRunId: error.activeRunId || null,
+          });
+        }
+        if (error instanceof OrchestratorLifecycleRequestError) {
+          throw lifecycleRequestApiError(error);
+        }
+        throw error;
+      }
+    }
+    const upstream = await submitConversationRunToOpenCode({
+      runTrace,
+      workspace,
+      target,
+      runId,
+      kind,
+      body,
+      clientMessageId: clientMessageId || null,
+      origin: origin || null,
+      expectAiGatewayStart,
+      lifecycleOwner,
+    });
+    return jsonResponse({
+      ok: true,
+      workspaceId: workspace.id,
+      conversationId: target.conversationId,
+      opencodeSessionId: target.opencodeSessionId,
+      runId,
+      clientMessageId: clientMessageId || null,
+      origin: origin || null,
+      status: "submitted",
+      kind,
+      upstream,
+      debugTrace: runTrace.entries,
+    });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/conversations/:conversationId/abort", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const sessionOrConversationId = (ctx.params.conversationId ?? "").trim();
+    if (!sessionOrConversationId) {
+      throw new ApiError(400, "invalid_payload", "conversationId is required");
+    }
+    const body = await readJsonBody(ctx.request);
+    const runId = requireConversationRunId(body);
+    const target = await resolveConversationExecutionTarget({
+      workspace,
+      sessionOrConversationId,
+      requestedDirectory: optionalBodyString(body, "directory"),
+      missingDirectoryMessage: "Conversation abort directory is required",
+    });
+    recordSendWorkflowTrace("server", "server:conversation-abort:start", {
+      traceId: null,
+      workspaceId: workspace.id,
+      conversationId: target.conversationId,
+      runId,
+      opencodeSessionId: target.opencodeSessionId,
+      sessionOrConversationId,
+    });
+    const abortedGatewayRequests = abortActiveAiGatewayProxyRequests({
+      workspaceId: workspace.id,
+      runId,
+      sessionId: target.opencodeSessionId,
+      reason: "conversation-abort",
+    });
+    const query = new URLSearchParams();
+    query.set("directory", target.directory);
+    const upstream = await fetchOpencodeJson(
+      { ...workspace, directory: target.directory },
+      `/session/${encodeURIComponent(target.opencodeSessionId)}/abort?${query.toString()}`,
+      { method: "POST" },
+    );
+    const lifecycleOwner = workspace.workspaceType === "remote" ? null : lifecycleClient;
+    if (lifecycleOwner) {
+      await lifecycleOwner.markAbortRequested(workspace.id, runId).catch(() => undefined);
+    }
+    recordSendWorkflowTrace("server", "server:conversation-abort:done", {
+      traceId: null,
+      workspaceId: workspace.id,
+      conversationId: target.conversationId,
+      runId,
+      opencodeSessionId: target.opencodeSessionId,
+      abortedGatewayRequestCount: abortedGatewayRequests.length,
+      upstreamStatus: typeof upstream === "object" && upstream && "status" in upstream ? upstream.status : null,
+    });
+    return jsonResponse({
+      ok: true,
+      workspaceId: workspace.id,
+      conversationId: target.conversationId,
+      opencodeSessionId: target.opencodeSessionId,
+      runId,
+      status: "submitted",
+      kind: "abort",
+      upstream,
+    });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/conversations/:conversationId/runs/:runId", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const conversationId = (ctx.params.conversationId ?? "").trim();
+    const runId = (ctx.params.runId ?? "").trim();
+    if (!conversationId || !runId) {
+      throw new ApiError(400, "invalid_payload", "conversationId and runId are required");
+    }
+    if (!lifecycleClient) {
+      throw new ApiError(503, "lifecycle_unavailable", "Run lifecycle owner is not configured");
+    }
+    let status;
+    try {
+      status = await lifecycleClient.status(workspace.id, conversationId, runId);
+    } catch (error) {
+      if (error instanceof OrchestratorLifecycleRequestError) {
+        throw lifecycleRequestApiError(error);
+      }
+      throw error;
+    }
+    if (!status) {
+      throw new ApiError(404, "run_not_found", "Run was not found for this conversation");
+    }
+    return jsonResponse({
+      ok: true,
+      workspaceId: workspace.id,
+      conversationId,
+      runId: status.runId,
+      status: status.status,
+      stale: status.stale,
+    });
+  });
+
   addRoute(routes, "POST", "/workspace/:id/sessions/transcript-prefetch", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
@@ -3895,14 +6317,79 @@ function createRoutes(
       "expandedSubagentSessionIds",
     );
     const limit = parseSessionTranscriptLimit((body as Record<string, unknown>).limit);
+    const directory = await resolveConversationReadDirectory(
+      workspace,
+      optionalBodyNullableString(payload, "directory") ?? null,
+    );
+    const rawSessionDirectoriesById = parseSessionDirectoryMap(payload.sessionDirectoriesById);
+    const sessionDirectoriesById: Record<string, string> = {};
+    for (const [sessionId, sessionDirectory] of Object.entries(rawSessionDirectoriesById)) {
+      const resolvedSessionDirectory = await resolveConversationReadDirectory(workspace, sessionDirectory);
+      if (!resolvedSessionDirectory) {
+        throw new ApiError(400, "invalid_directory", "Session directory is required");
+      }
+      sessionDirectoriesById[sessionId] = resolvedSessionDirectory;
+    }
     const result = await sessionTranscriptPrefetch.updateInterest({
       workspaceId: workspace.id,
       clickedSessionId,
       selectedSessionId,
       loadedTopLevelSessionIds,
       expandedSubagentSessionIds,
+      directory,
+      sessionDirectoriesById,
       limit,
     });
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/transcript", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const sessionId = (ctx.params.sessionId ?? "").trim();
+    if (!sessionId) {
+      throw new ApiError(400, "invalid_payload", "sessionId is required");
+    }
+    const body = await readJsonBody(ctx.request);
+    const directory = await resolveConversationReadDirectory(
+      workspace,
+      optionalBodyNullableString(body, "directory") ?? null,
+    );
+    if (!directory) {
+      throw new ApiError(400, "invalid_directory", "Conversation directory is required");
+    }
+    const binding = await conversationService.resolveOpenCodeSessionForRead({
+      workspaceId: workspace.id,
+      directory,
+      sessionOrConversationId: sessionId,
+    });
+    if (!binding && isVesloConversationId(sessionId)) {
+      throw new ApiError(404, "conversation_not_found", "Conversation was not found in this workspace");
+    }
+
+    const result = await conversationService.appendTranscript({
+      workspace,
+      sessionId,
+      directory,
+      limit: parseSessionTranscriptLimit(body.limit),
+      messages: parseSessionTranscriptMessages(body.messages),
+      partsByMessageId: parseSessionTranscriptParts(body.partsByMessageId),
+      deletedMessageIds: parseTranscriptStringArray(body.deletedMessageIds, "deletedMessageIds"),
+      deletedPartsByMessageId: parseSessionTranscriptDeletedParts(body.deletedPartsByMessageId),
+    });
+    sessionTranscriptPrefetch.invalidate({
+      workspaceId: workspace.id,
+      sessionId: result.opencodeSessionId,
+      directory,
+    });
+    if (result.conversationId) {
+      sessionTranscriptPrefetch.invalidate({
+        workspaceId: workspace.id,
+        sessionId: result.conversationId,
+        directory,
+      });
+    }
     return jsonResponse(result);
   });
 
@@ -3913,18 +6400,17 @@ function createRoutes(
       throw new ApiError(400, "invalid_payload", "sessionId is required");
     }
     const limit = parseSessionTranscriptLimit(ctx.url.searchParams.get("limit"));
-    const snapshot = await sessionTranscriptPrefetch.getOrLoad({
-      workspaceId: workspace.id,
-      sessionId,
+    const directory = await resolveConversationReadDirectory(
+      workspace,
+      ctx.url.searchParams.get("directory"),
+    );
+    const result = await loadConversationTranscriptResponse({
+      workspace,
+      sessionOrConversationId: sessionId,
       limit,
+      directory,
     });
-    return jsonResponse({
-      workspaceId: workspace.id,
-      sessionId,
-      limit: snapshot.limit,
-      messages: snapshot.messages,
-      partsByMessageId: snapshot.partsByMessageId,
-    });
+    return jsonResponse(result);
   });
 
   addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId/artifacts/latest-run", "client", async (ctx) => {
@@ -3933,19 +6419,27 @@ function createRoutes(
     if (!sessionId) {
       throw new ApiError(400, "invalid_payload", "sessionId is required");
     }
-
-    const messages = await fetchOpencodeJson(
+    const directory = await resolveConversationReadDirectory(
       workspace,
-      `/session/${encodeURIComponent(sessionId)}/message?limit=200`,
-      { method: "GET", maxResponseBytes: OPENCODE_TRANSCRIPT_RESPONSE_MAX_BYTES },
+      ctx.url.searchParams.get("directory"),
+    );
+    const transcript = await loadConversationTranscriptResponse({
+      workspace,
+      sessionOrConversationId: sessionId,
+      limit: SESSION_TRANSCRIPT_MAX_LIMIT,
+      directory,
+    });
+    const messages = attachTranscriptPartsForArtifacts(
+      transcript.messages,
+      transcript.partsByMessageId,
     );
 
     return jsonResponse(
       deriveLatestRunArtifactsResponse({
-        sessionId,
+        sessionId: transcript.opencodeSessionId,
         workspaceId: workspace.id,
-        messages: Array.isArray(messages) ? messages : [],
-      }),
+        messages,
+      }, { workspaceRoot: directory ?? workspace.path }),
     );
   });
 
@@ -4912,7 +7406,7 @@ function createRoutes(
     }
     const inboxRoot = resolveInboxDir(workspace.path);
     const relativePath = decodeInboxId(ctx.params.inboxId);
-    const absPath = resolveSafeChildPath(inboxRoot, relativePath);
+    const absPath = await resolveSafeChildPath(inboxRoot, relativePath);
     if (!(await exists(absPath))) {
       throw new ApiError(404, "inbox_item_not_found", "Inbox item not found");
     }
@@ -4962,7 +7456,7 @@ function createRoutes(
 
     const relativePath = normalizeWorkspaceRelativePath(requestedPath, { allowSubdirs: true });
     const inboxRoot = resolveInboxDir(workspace.path);
-    const dest = resolveSafeChildPath(inboxRoot, relativePath);
+    const dest = await resolveSafeChildPath(inboxRoot, relativePath);
     if (file.size > maxBytes) {
       throw new ApiError(413, "file_too_large", "File exceeds upload limit", { maxBytes, size: file.size });
     }
@@ -5010,7 +7504,7 @@ function createRoutes(
     }
     const outboxRoot = resolveOutboxDir(workspace.path);
     const relativePath = decodeArtifactId(ctx.params.artifactId);
-    const absPath = resolveSafeChildPath(outboxRoot, relativePath);
+    const absPath = await resolveSafeChildPath(outboxRoot, relativePath);
     if (!(await exists(absPath))) {
       throw new ApiError(404, "artifact_not_found", "Artifact not found");
     }
@@ -5112,7 +7606,7 @@ function createRoutes(
 
     for (const relativePath of paths) {
       try {
-        const absPath = resolveSafeChildPath(workspace.path, relativePath);
+        const absPath = await resolveSafeChildPath(workspace.path, relativePath);
         if (!(await exists(absPath))) {
           items.push({ ok: false, path: relativePath, code: "file_not_found", message: "File not found" });
           continue;
@@ -5180,7 +7674,7 @@ function createRoutes(
 
     for (const write of writes) {
       try {
-        const absPath = resolveSafeChildPath(workspace.path, write.path);
+        const absPath = await resolveSafeChildPath(workspace.path, write.path);
         const bytes = Buffer.from(write.contentBase64, "base64");
         if (bytes.byteLength > FILE_SESSION_MAX_FILE_BYTES) {
           items.push({
@@ -5312,13 +7806,13 @@ function createRoutes(
     const approvalPaths: string[] = [];
     for (const op of operations) {
       if (typeof op?.path === "string" && op.path.trim()) {
-        approvalPaths.push(resolveSafeChildPath(workspace.path, normalizeWorkspaceRelativePath(op.path, { allowSubdirs: true })));
+        approvalPaths.push(await resolveSafeChildPath(workspace.path, normalizeWorkspaceRelativePath(op.path, { allowSubdirs: true })));
       }
       if (typeof op?.from === "string" && op.from.trim()) {
-        approvalPaths.push(resolveSafeChildPath(workspace.path, normalizeWorkspaceRelativePath(op.from, { allowSubdirs: true })));
+        approvalPaths.push(await resolveSafeChildPath(workspace.path, normalizeWorkspaceRelativePath(op.from, { allowSubdirs: true })));
       }
       if (typeof op?.to === "string" && op.to.trim()) {
-        approvalPaths.push(resolveSafeChildPath(workspace.path, normalizeWorkspaceRelativePath(op.to, { allowSubdirs: true })));
+        approvalPaths.push(await resolveSafeChildPath(workspace.path, normalizeWorkspaceRelativePath(op.to, { allowSubdirs: true })));
       }
     }
 
@@ -5336,7 +7830,7 @@ function createRoutes(
       try {
         if (type === "mkdir") {
           const path = normalizeWorkspaceRelativePath(String(op.path ?? ""), { allowSubdirs: true });
-          const absPath = resolveSafeChildPath(workspace.path, path);
+          const absPath = await resolveSafeChildPath(workspace.path, path);
           await ensureDir(absPath);
           recordWorkspaceFileEvent(workspace.id, { type: "mkdir", path });
           items.push({ ok: true, type, path });
@@ -5345,7 +7839,7 @@ function createRoutes(
 
         if (type === "delete") {
           const path = normalizeWorkspaceRelativePath(String(op.path ?? ""), { allowSubdirs: true });
-          const absPath = resolveSafeChildPath(workspace.path, path);
+          const absPath = await resolveSafeChildPath(workspace.path, path);
           if (!(await exists(absPath))) {
             items.push({ ok: false, type, path, code: "file_not_found", message: "Path not found" });
             continue;
@@ -5359,8 +7853,8 @@ function createRoutes(
         if (type === "rename") {
           const from = normalizeWorkspaceRelativePath(String(op.from ?? ""), { allowSubdirs: true });
           const to = normalizeWorkspaceRelativePath(String(op.to ?? ""), { allowSubdirs: true });
-          const fromAbs = resolveSafeChildPath(workspace.path, from);
-          const toAbs = resolveSafeChildPath(workspace.path, to);
+          const fromAbs = await resolveSafeChildPath(workspace.path, from);
+          const toAbs = await resolveSafeChildPath(workspace.path, to);
           if (!(await exists(fromAbs))) {
             items.push({ ok: false, type, from, to, code: "file_not_found", message: "Source path not found" });
             continue;
@@ -5393,7 +7887,7 @@ function createRoutes(
       throw new ApiError(400, "invalid_path", "Only markdown files are supported");
     }
 
-    const absPath = resolveSafeChildPath(workspace.path, relativePath);
+    const absPath = await resolveSafeChildPath(workspace.path, relativePath);
     if (!(await exists(absPath))) {
       throw new ApiError(404, "file_not_found", "File not found");
     }
@@ -5443,7 +7937,7 @@ function createRoutes(
       typeof baseUpdatedAtRaw === "number" && Number.isFinite(baseUpdatedAtRaw) ? baseUpdatedAtRaw : null;
     const force = body.force === true;
 
-    const absPath = resolveSafeChildPath(workspace.path, relativePath);
+    const absPath = await resolveSafeChildPath(workspace.path, relativePath);
 
     const before = (await exists(absPath)) ? await stat(absPath) : null;
     if (before && !before.isFile()) {
@@ -5493,7 +7987,7 @@ function createRoutes(
   addRoute(routes, "GET", "/workspace/:id/plugins", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const includeGlobal = ctx.url.searchParams.get("includeGlobal") === "true";
-    const result = await listPlugins(workspace.path, includeGlobal);
+    const result = await listPlugins(workspace.path, includeGlobal, { workspaceOwner: ownerForWorkspace(workspace) });
     return jsonResponse(result);
   });
 
@@ -5527,7 +8021,7 @@ function createRoutes(
         action: "added",
       });
     }
-    const result = await listPlugins(workspace.path, false);
+    const result = await listPlugins(workspace.path, false, { workspaceOwner: ownerForWorkspace(workspace) });
     return jsonResponse(result);
   });
 
@@ -5560,7 +8054,7 @@ function createRoutes(
         action: "removed",
       });
     }
-    const result = await listPlugins(workspace.path, false);
+    const result = await listPlugins(workspace.path, false, { workspaceOwner: ownerForWorkspace(workspace) });
     return jsonResponse(result);
   });
 
@@ -6123,83 +8617,84 @@ function createRoutes(
     });
   });
 
-  addRoute(routes, "GET", "/skills/disabled", "client", async (ctx) => {
-    const workspaceId = trimmedSearchParam(ctx.url.searchParams, "workspaceId");
-    if (workspaceId) {
-      await resolveWorkspace(config, workspaceId);
-    }
-    const items = await listDisabledSkills({
-      dataDir: serverDataDir,
-      workspaceId,
-      includeGlobal: true,
-    });
-    return jsonResponse({ items });
+  addRoute(routes, "GET", "/skills/user-global-store", "client", async () => {
+    return jsonResponse({ items: await listUserGlobalSkills(serverDataDir) });
   });
 
-  addRoute(routes, "PATCH", "/skills/enabled-state", "client", async (ctx) => {
-    ensureWritable(config);
-    requireClientScope(ctx, "collaborator");
-    const body = await readJsonBody(ctx.request);
-    const target = requireBodyObject(body, "target") as unknown as DisabledSkillTarget;
-    const enabled = optionalBodyBoolean(body, "enabled");
-    if (enabled === undefined) {
-      throw new ApiError(400, "invalid_enabled", "enabled is required");
-    }
-
-    const workspaceId = typeof target.workspaceId === "string" ? target.workspaceId.trim() : "";
-    const workspace = workspaceId ? await resolveWorkspace(config, workspaceId) : null;
-    const result = await setSkillEnabledState({
-      dataDir: serverDataDir,
-      target,
-      enabled,
-      actor: ctx.actor ?? { type: "remote" },
-    });
-
-    const reloadTrigger: ReloadTrigger = {
-      type: "skill",
-      name: typeof target.name === "string" ? target.name.trim() || undefined : undefined,
-      action: "updated",
-      path: typeof target.path === "string" ? target.path.trim() || undefined : undefined,
-    };
-    if (workspace) {
-      emitReloadEvent(ctx.reloadEvents, workspace, "skills", reloadTrigger);
-    } else if (target.scope === "user-global" || target.scope === "organization" || target.scope === "platform") {
-      for (const configuredWorkspace of config.workspaces) {
-        emitReloadEvent(ctx.reloadEvents, configuredWorkspace, "skills", reloadTrigger);
-      }
-    }
-
-    return jsonResponse(result);
-  });
-
-  addRoute(routes, "GET", "/skills/user-global/:name", "none", async (ctx) => {
-    await requireHostOrClient(ctx.request, config, ctx.tokens);
+  addRoute(routes, "GET", "/skills/user-global-store/:name", "client", async (ctx) => {
     const name = String(ctx.params.name ?? "").trim();
     if (!name) {
       throw new ApiError(400, "invalid_skill_name", "Skill name is required");
     }
-    const instancePath = trimmedSearchParam(ctx.url.searchParams, "path");
-    if (!instancePath) {
-      throw new ApiError(400, "invalid_skill_path", "User-global exact skill read requires path");
-    }
-    const result = await readGlobalSkillAtPath({ name, path: instancePath });
-    const item = {
-      name,
-      path: result.path,
-      description: "",
-      scope: "global" as const,
-    };
-    const disabledSkills = await listDisabledSkills({
-      dataDir: serverDataDir,
-      includeGlobal: true,
+    return jsonResponse(await readUserGlobalSkill(name, serverDataDir));
+  });
+
+  addRoute(routes, "POST", "/skills/user-global-store", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const body = await readJsonBody(ctx.request);
+    const name = String(body.name ?? "").trim();
+    const content = String(body.content ?? "");
+    const description = body.description ? String(body.description) : undefined;
+    const enabled = typeof body.enabled === "boolean" ? body.enabled : undefined;
+    const result = await upsertUserGlobalSkill({ name, content, description, enabled }, serverDataDir);
+
+    await recordAudit(userGlobalSkillStorePath(serverDataDir), {
+      id: shortId(),
+      workspaceId: "global",
+      actor: ctx.actor ?? { type: "remote" },
+      action: "skills.user_global_store.upsert",
+      target: result.item.path,
+      summary: `Upserted user-global skill ${result.item.name}`,
+      timestamp: Date.now(),
     });
-    const disabled = disabledSkills.some((record) => disabledRecordMatchesSkill(record, item, undefined));
-    if (disabled && ctx.url.searchParams.get("includeDisabled") !== "true") {
-      throw new ApiError(404, "skill_not_found", `Skill not found: ${name}`);
-    }
+
     return jsonResponse({
-      item: disabled ? { ...item, enabled: false, disabledReason: "user" } : item,
-      content: result.content,
+      ok: true,
+      action: result.action,
+      item: result.item,
+      reloadRequired: true,
+      trigger: {
+        type: "skill",
+        name: result.item.name,
+        action: result.action,
+        path: result.item.path,
+        scope: "user-global",
+      },
+    });
+  });
+
+  addRoute(routes, "DELETE", "/skills/user-global-store/:name", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const name = String(ctx.params.name ?? "").trim();
+    if (!name) {
+      throw new ApiError(400, "invalid_skill_name", "Skill name is required");
+    }
+    const result = await deleteUserGlobalSkill(name, serverDataDir);
+
+    await recordAudit(userGlobalSkillStorePath(serverDataDir), {
+      id: shortId(),
+      workspaceId: "global",
+      actor: ctx.actor ?? { type: "remote" },
+      action: "skills.user_global_store.delete",
+      target: result.item.path,
+      summary: `Deleted user-global skill ${result.item.name}`,
+      timestamp: Date.now(),
+    });
+
+    return jsonResponse({
+      ok: true,
+      name: result.item.name,
+      path: result.item.path,
+      reloadRequired: true,
+      trigger: {
+        type: "skill",
+        name: result.item.name,
+        action: "removed",
+        path: result.item.path,
+        scope: "user-global",
+      },
     });
   });
 
@@ -6384,8 +8879,7 @@ function createRoutes(
   addRoute(routes, "GET", "/workspace/:id/skills", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const includeGlobal = ctx.url.searchParams.get("includeGlobal") === "true";
-    const includeDisabled = ctx.url.searchParams.get("includeDisabled") === "true";
-    const items = await listWorkspaceRuntimeSkills(workspace, { includeGlobal, includeDisabled });
+    const items = await listSkills(workspace.path, includeGlobal, { workspaceOwner: ownerForWorkspace(workspace) });
     return jsonResponse({ items });
   });
 
@@ -6397,7 +8891,7 @@ function createRoutes(
     const threshold = typeof body.threshold === "number" ? body.threshold : undefined;
     const ambiguityDelta = typeof body.ambiguityDelta === "number" ? body.ambiguityDelta : undefined;
     const maxCandidates = typeof body.maxCandidates === "number" ? body.maxCandidates : undefined;
-    const skills = await listWorkspaceRuntimeSkills(workspace, { includeGlobal });
+    const skills = await listSkills(workspace.path, includeGlobal, { workspaceOwner: ownerForWorkspace(workspace) });
     const result = resolveSkillMatch({
       text,
       skills,
@@ -6411,6 +8905,45 @@ function createRoutes(
   addRoute(routes, "GET", "/workspace/:id/skills/materialization", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     return jsonResponse(await buildWorkspaceSkillMaterializationStatus(config, workspace));
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/skills/user-global-store/sync", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "skills.user_global_store.sync",
+      summary: "Sync user-global skills into workspace runtime",
+      paths: [userGlobalMaterializedSkillsRoot(workspace.path)],
+    });
+
+    const result = await materializeUserGlobalSkillsForWorkspace({
+      workspaceRoot: workspace.path,
+      workspaceId: workspace.id,
+      dataDir: serverDataDir,
+    });
+
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "skills.user_global_store.sync",
+      target: result.rootDir,
+      summary: `Synced ${result.materializedSkills.length} user-global skill(s) into workspace runtime`,
+      timestamp: Date.now(),
+    });
+
+    if (result.reloadRequired) {
+      emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
+        type: "skill",
+        name: "veslo-user",
+        action: "updated",
+        path: result.rootDir,
+      });
+    }
+
+    return jsonResponse(result);
   });
 
   addRoute(routes, "POST", "/workspace/:id/skills/materialization/sync", "host", async (ctx) => {
@@ -6585,10 +9118,17 @@ function createRoutes(
       }
       const result = await readSkillAtPath(workspace.path, { name, path: instancePath });
       return jsonResponse({
-        item: allowedItem,
+        item: {
+          name,
+          path: result.path,
+          description: "",
+          scope: "project",
+          owner: ownerForWorkspace(workspace),
+        },
         content: result.content,
       });
     }
+    const items = await listSkills(workspace.path, includeGlobal, { workspaceOwner: ownerForWorkspace(workspace) });
     const item = items.find((skill) => skill.name === name);
     if (!item) {
       throw new ApiError(404, "skill_not_found", `Skill not found: ${name}`);
@@ -6681,7 +9221,7 @@ function createRoutes(
 
   addRoute(routes, "GET", "/workspace/:id/mcp", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    const items = await listMcp(workspace.path);
+    const items = await listMcp(workspace.path, { workspaceOwner: ownerForWorkspace(workspace) });
     return jsonResponse({ items });
   });
 
@@ -6726,7 +9266,26 @@ function createRoutes(
       paths: [opencodeConfigPath(workspace.path)],
     });
 
-    const result = await installHubMcp(workspace.path, item);
+    let installItem = item;
+    if (item.authorization?.type === "veslo-server-oauth") {
+      const runtimeToken = await createOrgMcpRuntimeToken({
+        baseUrl: denApiBase,
+        denToken,
+        runtimeTokenPath: item.authorization.runtimeTokenPath,
+      });
+      installItem = {
+        ...item,
+        config: {
+          ...item.config,
+          headers: {
+            ...(item.config.headers ?? {}),
+            "X-Veslo-Connector-Token": runtimeToken.token,
+          },
+        },
+      };
+    }
+
+    const result = await installHubMcp(workspace.path, installItem);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
@@ -6776,7 +9335,7 @@ function createRoutes(
       name,
       action: result.action,
     });
-    const items = await listMcp(workspace.path);
+    const items = await listMcp(workspace.path, { workspaceOwner: ownerForWorkspace(workspace) });
     return jsonResponse({ items });
   });
 
@@ -6808,7 +9367,7 @@ function createRoutes(
         action: "removed",
       });
     }
-    const items = await listMcp(workspace.path);
+    const items = await listMcp(workspace.path, { workspaceOwner: ownerForWorkspace(workspace) });
     return jsonResponse({ items });
   });
 
@@ -6871,7 +9430,7 @@ function createRoutes(
       await requireHost(ctx.request, config, tokens);
     }
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    const items = await listCommands(workspace.path, scope);
+    const items = await listCommands(workspace.path, scope, { workspaceOwner: ownerForWorkspace(workspace) });
     return jsonResponse({ items });
   });
 
@@ -6912,7 +9471,7 @@ function createRoutes(
       action: "updated",
       path,
     });
-    const items = await listCommands(workspace.path, "workspace");
+    const items = await listCommands(workspace.path, "workspace", { workspaceOwner: ownerForWorkspace(workspace) });
     return jsonResponse({ items });
   });
 
@@ -7410,17 +9969,28 @@ function createRoutes(
     requireClientScope(ctx, "collaborator");
     const den = soulDenContext(ctx);
     const denToken = requireSoulDenToken(den);
-    requireSoulOrgId(den);
+    const orgId = requireSoulOrgId(den);
     if (!den.baseUrl) {
       throw new ApiError(503, "soul_den_misconfigured", "Soul Den base URL is missing");
     }
     const body = await readJsonBody(ctx.request);
+    const content = requireSoulText(body, "content");
+    const changeSummary = requireSoulText(body, "changeSummary");
+    const baseVersionId = optionalSoulBaseVersionId(body);
+    await requireSoulApproval(ctx, {
+      workspaceId: globalSoulApprovalWorkspaceId(config),
+      action: "soul.organization.update",
+      summary: "Update Organization Soul",
+      paths: await configuredSoulMaterializationApprovalPaths(config, [
+        soulCachePath({ dataDir: serverDataDir, scope: "organization", ownerId: orgId }),
+      ]),
+    });
     const document = await updateOrganizationSoul({
       ...den,
       token: denToken,
-      content: requireSoulText(body, "content"),
-      changeSummary: requireSoulText(body, "changeSummary"),
-      baseVersionId: optionalSoulBaseVersionId(body),
+      content,
+      changeSummary,
+      baseVersionId,
     });
     await cacheSoulDocument({ dataDir: serverDataDir, document });
     const materialization = await materializeSoulForConfiguredWorkspaces(serverDataDir, config, ctx, {
@@ -7448,6 +10018,15 @@ function createRoutes(
     const content = requireSoulText(body, "content");
     const changeSummary = requireSoulText(body, "changeSummary");
     const baseVersionId = optionalSoulBaseVersionId(body);
+    await requireSoulApproval(ctx, {
+      workspaceId: globalSoulApprovalWorkspaceId(config),
+      action: "soul.user.update",
+      summary: "Update User Soul",
+      paths: await configuredSoulMaterializationApprovalPaths(config, [
+        soulCachePath({ dataDir: serverDataDir, scope: "user", ownerId: userId }),
+        soulPendingCacheDir(serverDataDir),
+      ]),
+    });
 
     if (den.baseUrl && den.denToken) {
       try {
@@ -7510,19 +10089,28 @@ function createRoutes(
     requireClientScope(ctx, "collaborator");
     const den = soulDenContext(ctx);
     const denToken = requireSoulDenToken(den);
-    requireSoulOrgId(den);
+    const orgId = requireSoulOrgId(den);
     if (!den.baseUrl) {
       throw new ApiError(503, "soul_den_misconfigured", "Soul Den base URL is missing");
     }
     const body = await readOptionalJsonBody(ctx.request);
+    const changeSummary = typeof body.changeSummary === "string" && body.changeSummary.trim()
+      ? body.changeSummary
+      : "Restore Organization Soul version";
+    await requireSoulApproval(ctx, {
+      workspaceId: globalSoulApprovalWorkspaceId(config),
+      action: "soul.organization.restore",
+      summary: `Restore Organization Soul version ${ctx.params.versionId}`,
+      paths: await configuredSoulMaterializationApprovalPaths(config, [
+        soulCachePath({ dataDir: serverDataDir, scope: "organization", ownerId: orgId }),
+      ]),
+    });
     const document = await restoreDenSoulVersion({
       ...den,
       token: denToken,
       scope: "organization",
       versionId: ctx.params.versionId,
-      changeSummary: typeof body.changeSummary === "string" && body.changeSummary.trim()
-        ? body.changeSummary
-        : "Restore Organization Soul version",
+      changeSummary,
     });
     await cacheSoulDocument({ dataDir: serverDataDir, document });
     const materialization = await materializeSoulForConfiguredWorkspaces(serverDataDir, config, ctx, {
@@ -7550,6 +10138,14 @@ function createRoutes(
     const changeSummary = typeof body.changeSummary === "string" && body.changeSummary.trim()
       ? body.changeSummary
       : "Restore User Soul version";
+    await requireSoulApproval(ctx, {
+      workspaceId: globalSoulApprovalWorkspaceId(config),
+      action: "soul.user.restore",
+      summary: `Restore User Soul version ${ctx.params.versionId}`,
+      paths: await configuredSoulMaterializationApprovalPaths(config, [
+        soulCachePath({ dataDir: serverDataDir, scope: "user", ownerId: userId }),
+      ]),
+    });
     if (den.baseUrl && den.denToken) {
       try {
         const document = await restoreDenSoulVersion({
@@ -7612,6 +10208,18 @@ function createRoutes(
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
+    const content = requireSoulText(body, "content");
+    const changeSummary = requireSoulText(body, "changeSummary");
+    const baseVersionId = optionalSoulBaseVersionId(body);
+    await requireSoulApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "soul.workspace.update",
+      summary: `Update Workspace Soul for ${workspace.name}`,
+      paths: [
+        soulCachePath({ dataDir: serverDataDir, scope: "workspace", ownerId: workspace.id }),
+        ...soulMaterializationApprovalPaths(workspace),
+      ],
+    });
     const existing = await readCachedSoulDocument({
       dataDir: serverDataDir,
       scope: "workspace",
@@ -7621,12 +10229,12 @@ function createRoutes(
       existing ?? { ...emptySoulDocument("workspace", workspace.id), heartbeatEnabled: true },
       {
         id: soulVersionId("workspace_"),
-        content: requireSoulText(body, "content"),
-        changeSummary: requireSoulText(body, "changeSummary"),
+        content,
+        changeSummary,
         createdAt: new Date().toISOString(),
         createdBy: soulActorId(ctx),
         source: "api",
-        baseVersionId: optionalSoulBaseVersionId(body),
+        baseVersionId,
       },
     );
     const nextDocument = { ...document, heartbeatEnabled: existing?.heartbeatEnabled ?? true };
@@ -7654,12 +10262,22 @@ function createRoutes(
     const document = await readCachedSoulDocument({ dataDir: serverDataDir, scope: "workspace", ownerId: workspace.id });
     if (!document) throw new ApiError(404, "soul_not_found", "Soul document not found");
     const body = await readOptionalJsonBody(ctx.request);
+    const changeSummary = typeof body.changeSummary === "string" && body.changeSummary.trim()
+      ? body.changeSummary
+      : "Restore Workspace Soul version";
+    await requireSoulApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "soul.workspace.restore",
+      summary: `Restore Workspace Soul version ${ctx.params.versionId}`,
+      paths: [
+        soulCachePath({ dataDir: serverDataDir, scope: "workspace", ownerId: workspace.id }),
+        ...soulMaterializationApprovalPaths(workspace),
+      ],
+    });
     const restored = restoreLocalSoulVersion(document, {
       id: soulVersionId("workspace_restore_"),
       restoreSourceVersionId: ctx.params.versionId,
-      changeSummary: typeof body.changeSummary === "string" && body.changeSummary.trim()
-        ? body.changeSummary
-        : "Restore Workspace Soul version",
+      changeSummary,
       createdAt: new Date().toISOString(),
       createdBy: soulActorId(ctx),
     });
@@ -7687,6 +10305,14 @@ function createRoutes(
     const body = await readOptionalJsonBody(ctx.request);
     const existing = await readCachedSoulDocument({ dataDir: serverDataDir, scope: "workspace", ownerId: workspace.id });
     const enabled = typeof body.enabled === "boolean" ? body.enabled : !(existing?.heartbeatEnabled ?? false);
+    await requireSoulApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "soul.workspace.heartbeat-toggle",
+      summary: `${enabled ? "Enable" : "Disable"} Workspace Soul heartbeat`,
+      paths: [
+        soulCachePath({ dataDir: serverDataDir, scope: "workspace", ownerId: workspace.id }),
+      ],
+    });
     const document = { ...(existing ?? emptySoulDocument("workspace", workspace.id)), heartbeatEnabled: enabled };
     await cacheSoulDocument({ dataDir: serverDataDir, document });
     return jsonResponse(soulReadPayload({
@@ -7774,7 +10400,40 @@ async function resolveWorkspace(config: ServerConfig, id: string): Promise<Works
   if (!authorized) {
     throw new ApiError(403, "workspace_unauthorized", "Workspace is not authorized");
   }
-  return { ...workspace, path: resolvedWorkspace };
+  const baseUrl = workspace.baseUrl?.trim() || buildOrchestratorWorkspaceOpencodeBaseUrl(config, workspace);
+  return {
+    ...workspace,
+    path: resolvedWorkspace,
+    ...(baseUrl ? { baseUrl } : {}),
+  };
+}
+
+function isAuthorizedRootSync(workspacePath: string, roots: string[]): boolean {
+  const normalizeAuthorizedPath = (value: string) => {
+    const resolved = normalizeOpencodeDirectory(resolve(value));
+    return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  };
+  const resolvedWorkspace = normalizeAuthorizedPath(workspacePath);
+  for (const root of roots) {
+    const resolvedRoot = normalizeAuthorizedPath(root);
+    if (resolvedWorkspace === resolvedRoot) return true;
+    if (resolvedWorkspace.startsWith(resolvedRoot + sep)) return true;
+  }
+  return false;
+}
+
+async function isAuthorizedRoot(workspacePath: string, roots: string[]): Promise<boolean> {
+  const normalizeAuthorizedPath = (value: string) => {
+    const resolved = normalizeOpencodeDirectory(resolve(value));
+    return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  };
+  const resolvedWorkspace = normalizeAuthorizedPath(workspacePath);
+  for (const root of roots) {
+    const resolvedRoot = normalizeAuthorizedPath(root);
+    if (resolvedWorkspace === resolvedRoot) return true;
+    if (resolvedWorkspace.startsWith(resolvedRoot + sep)) return true;
+  }
+  return false;
 }
 
 function ensureWritable(config: ServerConfig): void {
@@ -7879,6 +10538,30 @@ function resolveOpenCodeJsonFetchTimeoutMs(): number {
     return clampNumber(parsed, 100, 60_000);
   }
   return OPENCODE_JSON_FETCH_DEFAULT_TIMEOUT_MS;
+}
+
+function resolveOpencodeProxyHeadersTimeoutMs(): number {
+  const parsed = parseInteger(process.env.VESLO_OPENCODE_PROXY_HEADERS_TIMEOUT_MS);
+  if (parsed && parsed > 0) {
+    return clampNumber(parsed, 100, 600_000);
+  }
+  return OPENCODE_PROXY_HEADERS_DEFAULT_TIMEOUT_MS;
+}
+
+function resolveAiGatewayProxyHeadersTimeoutMs(): number {
+  const parsed = parseInteger(process.env.VESLO_AI_GATEWAY_PROXY_HEADERS_TIMEOUT_MS);
+  if (parsed && parsed > 0) {
+    return clampNumber(parsed, 100, 600_000);
+  }
+  return AI_GATEWAY_PROXY_HEADERS_DEFAULT_TIMEOUT_MS;
+}
+
+function resolveAiGatewayProviderStartTimeoutMs(): number {
+  const parsed = parseInteger(process.env.VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS);
+  if (parsed && parsed > 0) {
+    return clampNumber(parsed, 10, 600_000);
+  }
+  return AI_GATEWAY_PROVIDER_START_DEFAULT_TIMEOUT_MS;
 }
 
 function isAbortError(error: unknown): boolean {
@@ -9106,9 +11789,74 @@ async function readVesloConfig(workspaceRoot: string): Promise<Record<string, un
 
 function resolveOpencodeDirectory(workspace: WorkspaceInfo): string | null {
   const explicit = workspace.directory?.trim() ?? "";
-  if (explicit) return explicit;
-  if (workspace.workspaceType === "local") return workspace.path;
+  if (explicit) return normalizeOpencodeDirectory(explicit);
+  if (workspace.workspaceType === "local") return normalizeOpencodeDirectory(workspace.path);
   return null;
+}
+
+async function resolveConversationReadDirectory(
+  workspace: WorkspaceInfo,
+  requestedRaw: string | null,
+): Promise<string | null> {
+  const fallback = resolveOpencodeDirectory(workspace);
+  const requested = normalizeConversationReadDirectoryRequest(workspace, requestedRaw, fallback);
+  if (!requested) return fallback;
+
+  if (!isAbsolute(requested)) {
+    throw new ApiError(400, "invalid_directory", "Conversation directory must be absolute");
+  }
+
+  const directory = normalizeOpencodeDirectory(resolve(requested));
+  const allowedRoots = [
+    workspace.path,
+    fallback,
+  ].filter((value): value is string => Boolean(value?.trim()));
+  const authorized = await isAuthorizedRoot(directory, allowedRoots);
+  if (!authorized) {
+    throw new ApiError(403, "directory_unauthorized", "Conversation directory is outside this workspace");
+  }
+  return directory;
+}
+
+function normalizeConversationReadDirectoryRequest(
+  workspace: WorkspaceInfo,
+  requestedRaw: string | null,
+  fallback: string | null,
+): string {
+  const requested = requestedRaw?.trim() ?? "";
+  if (!requested) return "";
+
+  const workspaceRoot = fallback?.trim() || workspace.directory?.trim() || workspace.path?.trim() || "";
+  const slashRequested = requested.replace(/\\/g, "/");
+  if (slashRequested === "/workspace" || slashRequested === "workspace") {
+    return workspaceRoot;
+  }
+  if (slashRequested.startsWith("/workspace/") || slashRequested.startsWith("workspace/")) {
+    const relativePath = slashRequested.replace(/^\/?workspace\/+/, "");
+    return workspaceRoot ? join(workspaceRoot, relativePath) : requested;
+  }
+
+  if (process.platform === "win32") {
+    const wslMount = slashRequested.match(/^\/mnt\/([A-Za-z])(?:\/(.*))?$/);
+    if (wslMount) {
+      const drive = wslMount[1]?.toUpperCase();
+      const rest = wslMount[2]?.trim() ?? "";
+      return drive ? (rest ? `${drive}:/${rest}` : `${drive}:/`) : requested;
+    }
+  }
+
+  return requested;
+}
+
+export function normalizeOpencodeDirectory(directory: string): string {
+  // OpenCode stores/list-filters Windows sessions by regular drive paths
+  // (`C:\Users\...`). Tauri can persist local workspaces as extended-length
+  // paths (`\\?\C:\Users\...`); passing those through as the directory query
+  // makes OpenCode return an empty session list even though the sessions exist.
+  if (process.platform === "win32") {
+    return directory.replace(/^\\\\\?\\/, "").replace(/^\/\/\?\//, "");
+  }
+  return directory;
 }
 
 function buildOpencodeReloadUrl(baseUrl: string, directory?: string | null): string {

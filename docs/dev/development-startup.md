@@ -15,6 +15,28 @@ Use this guide whenever someone asks to start Veslo during development (for exam
 
 Run from repository root.
 
+The public startup command is the same on macOS, Linux, and Windows:
+
+```bash
+pnpm dev
+```
+
+`pnpm dev` delegates to `packages/desktop`, which starts Tauri through
+`packages/desktop/scripts/tauri-dev.mjs`. The wrapper preserves the previous
+dev behavior while avoiding shell-specific inline environment syntax:
+
+- `VESLO_DATA_DIR` defaults to `%LOCALAPPDATA%\com.neatech.veslo.dev\veslo-orchestrator-dev` on Windows (falling back to `%APPDATA%`), and `<home>/.veslo/veslo-orchestrator-dev` on macOS/Linux.
+- On Windows, when `VESLO_DATA_DIR` is not explicitly set, the wrapper copies missing files from the legacy `<home>\.veslo\veslo-orchestrator-dev` dev store and merges legacy `conversation_binding` rows into the AppData store so existing local session history remains visible after the default path migration.
+- `VESLO_SERVER_DEV_WATCH` defaults to `1`
+- `VESLO_SERVER_DEV_DIR` defaults to `packages/server`
+- `PORT` defaults to `5173`
+- Tauri still receives `src-tauri/tauri.dev.conf.json` and a matching
+  `build.devUrl`
+
+Do not require Git Bash, `pnpm --config.script-shell`, or a POSIX shell just to
+start the app on Windows. Developers can keep using the same `pnpm dev` command
+they used before.
+
 1. Verify whether app/dev processes are already running.
 2. Stop previous app/dev processes and verify they are fully stopped.
 3. Rebuild desktop artifacts from source.
@@ -25,19 +47,37 @@ Never launch a second app/dev instance. This rule applies to normal development 
 
 ```bash
 # 1) Mandatory pre-check: detect already-running instances
-pgrep -fl "pnpm -w dev:ui|pnpm --filter @neatech/veslo-ui dev|pnpm --filter @neatech/veslo dev|@tauri-apps/cli/tauri\\.js dev|tauri dev --config src-tauri/tauri.dev.conf.json|vite/bin/vite\\.js|bun --watch src/cli\\.ts|(^|/)target/debug/veslo|target/debug/bundle/macos/(Veslo Dev|Veslo by Neatech)\\.app/Contents/MacOS/veslo" || true
+pgrep -fl "pnpm -w dev:ui|pnpm --filter @neatech/veslo-ui dev|pnpm --filter @neatech/veslo dev|tauri-dev\\.mjs|tauri(\\.js)? dev --config src-tauri/tauri.dev.conf.json|vite/bin/vite.js|bun --watch src/cli\\.ts|/target/debug/veslo|target/debug/bundle/macos/(Veslo Dev|Veslo by Neatech)\\.app/Contents/MacOS/veslo" || true
 
 # 2) Stop previous internally started dev/test runs (safe if nothing is running)
-pkill -f "pnpm -w dev:ui|pnpm --filter @neatech/veslo-ui dev|pnpm --filter @neatech/veslo dev|@tauri-apps/cli/tauri\\.js dev|tauri dev --config src-tauri/tauri.dev.conf.json|vite/bin/vite\\.js|bun --watch src/cli\\.ts|(^|/)target/debug/veslo|target/debug/bundle/macos/(Veslo Dev|Veslo by Neatech)\\.app/Contents/MacOS/veslo" || true
+pkill -f "pnpm -w dev:ui|pnpm --filter @neatech/veslo-ui dev|pnpm --filter @neatech/veslo dev|tauri-dev\\.mjs|tauri(\\.js)? dev --config src-tauri/tauri.dev.conf.json|vite/bin/vite.js|bun --watch src/cli\\.ts|/target/debug/veslo|target/debug/bundle/macos/(Veslo Dev|Veslo by Neatech)\\.app/Contents/MacOS/veslo" || true
 
 # 2b) Mandatory post-check: must be empty before continuing
-pgrep -fl "pnpm -w dev:ui|pnpm --filter @neatech/veslo-ui dev|pnpm --filter @neatech/veslo dev|@tauri-apps/cli/tauri\\.js dev|tauri dev --config src-tauri/tauri.dev.conf.json|vite/bin/vite\\.js|bun --watch src/cli\\.ts|(^|/)target/debug/veslo|target/debug/bundle/macos/(Veslo Dev|Veslo by Neatech)\\.app/Contents/MacOS/veslo" || true
+pgrep -fl "pnpm -w dev:ui|pnpm --filter @neatech/veslo-ui dev|pnpm --filter @neatech/veslo dev|tauri-dev\\.mjs|tauri(\\.js)? dev --config src-tauri/tauri.dev.conf.json|vite/bin/vite.js|bun --watch src/cli\\.ts|/target/debug/veslo|target/debug/bundle/macos/(Veslo Dev|Veslo by Neatech)\\.app/Contents/MacOS/veslo" || true
 
 # 3) Fresh rebuild (desktop native layer)
 pnpm --filter @neatech/veslo exec cargo clean --manifest-path src-tauri/Cargo.toml
 pnpm --filter @neatech/veslo exec cargo build --manifest-path src-tauri/Cargo.toml --no-default-features
 
 # 4) Start dev runtime
+pnpm dev
+```
+
+Windows PowerShell equivalent for the process check/cleanup:
+
+```powershell
+$pattern = 'pnpm|tauri-dev\.mjs|tauri(\.js)? dev|target\\debug\\veslo|vite[/\\]bin[/\\]vite\.js|veslo-orchestrator|veslo-server|veslo-code-router'
+
+Get-CimInstance Win32_Process |
+  Where-Object { $_.CommandLine -match $pattern } |
+  Select-Object ProcessId,Name,CommandLine
+
+Get-CimInstance Win32_Process |
+  Where-Object { $_.CommandLine -match $pattern } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+
+pnpm --filter @neatech/veslo exec cargo clean --manifest-path src-tauri/Cargo.toml
+pnpm --filter @neatech/veslo exec cargo build --manifest-path src-tauri/Cargo.toml --no-default-features
 pnpm dev
 ```
 
@@ -49,6 +89,19 @@ Consider startup complete only when both appear in logs:
 - `Running target/debug/veslo`
 
 If only Vite runs, desktop runtime is not fully started; stop it and use the desktop startup flow.
+
+## Browser Web Dev With Services
+
+For browser-based web development that still needs local Veslo services, run:
+
+```bash
+pnpm dev:web
+```
+
+This starts the Vite web UI plus the headless Veslo orchestrator/server flow via
+`scripts/dev-headless-web.ts`. It is not a substitute for the authoritative
+Tauri desktop runtime above, but it is different from `pnpm dev:ui`, which starts
+only raw Vite.
 
 ## After Server-Side Changes
 

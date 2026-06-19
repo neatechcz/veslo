@@ -150,8 +150,18 @@ export default function McpView(props: McpViewProps) {
         url: entry.url,
         command: entry.command,
         oauth: entry.oauth,
+        headers: entry.headers,
+        authorization: entry.authorization,
+        provider: entry.provider,
+        source: entry.source,
       })),
   );
+
+  const hubProviderLabel = (entry: McpDirectoryInfo) => {
+    const provider = entry.provider?.group?.trim() || entry.provider?.id?.trim();
+    if (!provider) return null;
+    return tr("mcp.hub_provider_label").replace("{provider}", provider);
+  };
 
   const quickConnectStatus = (entry: McpDirectoryInfo) => {
     const key = quickConnectEntryKey(entry);
@@ -339,7 +349,7 @@ export default function McpView(props: McpViewProps) {
                   disabled={connected() || !canConnect() || connecting()}
                   onClick={() => {
                     if (connected()) return;
-                    void props.installHubMcp(entry.name).then((result) => {
+                    void props.installHubMcp(entry.id || entry.name).then((result) => {
                       if (result.ok) {
                         props.refreshMcpServers();
                       }
@@ -377,6 +387,13 @@ export default function McpView(props: McpViewProps) {
                           </span>
                         </Show>
                       </div>
+                      <Show when={hubProviderLabel(entry)}>
+                        {(label) => (
+                          <div class="font-product type-ui-xs mt-1 font-medium text-dls-secondary">
+                            {label()}
+                          </div>
+                        )}
+                      </Show>
                       <p class="font-reading type-ui-sm text-dls-secondary mt-1 line-clamp-2">
                         {entry.description}
                       </p>

@@ -11,15 +11,18 @@ const DEFAULT_VESLO_PORT: u16 = 8787;
 const DEFAULT_MANAGED_AI_BASE_URL: &str = "https://ai.veslo.work";
 const VESLO_SERVER_DEV_WATCH_ENV: &str = "VESLO_SERVER_DEV_WATCH";
 const VESLO_SERVER_DEV_DIR_ENV: &str = "VESLO_SERVER_DEV_DIR";
-const VESLO_DESKTOP_SERVER_PORT_ENV: &str = "VESLO_DESKTOP_SERVER_PORT";
-const PORT_RESTART_RETRY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
-const PORT_RESTART_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+const VESLO_SANDBOX_BACKEND_ENV: &str = "VESLO_SANDBOX_BACKEND";
+const VESLO_DISABLE_SANDBOX_ENV: &str = "VESLO_DISABLE_SANDBOX";
 
-fn parse_dev_watch_flag(value: Option<&str>) -> bool {
+fn parse_env_flag(value: Option<&str>) -> bool {
     matches!(
         value.map(|raw| raw.trim().to_ascii_lowercase()),
         Some(flag) if matches!(flag.as_str(), "1" | "true" | "yes" | "on")
     )
+}
+
+fn parse_dev_watch_flag(value: Option<&str>) -> bool {
+    parse_env_flag(value)
 }
 
 fn should_use_dev_watch_mode() -> bool {
@@ -78,52 +81,84 @@ fn validate_managed_opencode_base_url(opencode_base_url: Option<&str>) -> Result
     ))
 }
 
-#[cfg(test)]
-pub fn resolve_veslo_port() -> Result<u16, String> {
-    let port = configured_veslo_port()?;
-    bind_veslo_port(port)
-}
-
-fn bind_veslo_port(port: u16) -> Result<u16, String> {
-    TcpListener::bind(("0.0.0.0", port))
-        .map(|_| port)
-        .map_err(|error| format!("Veslo server port {port} is unavailable: {error}"))
-}
-
-pub fn resolve_veslo_port_after_restart() -> Result<u16, String> {
-    let port = configured_veslo_port()?;
-    let deadline = std::time::Instant::now() + PORT_RESTART_RETRY_TIMEOUT;
-    loop {
-        match bind_veslo_port(port) {
-            Ok(resolved) => return Ok(resolved),
-            Err(error) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(PORT_RESTART_RETRY_INTERVAL);
-                if std::time::Instant::now() >= deadline {
-                    return Err(error);
-                }
-            }
-            Err(error) => return Err(error),
+/// Find every PID matching a Veslo server bun/binary across the system, except
+/// our own current process. Used to reap zombies after a Tauri main restart:
+/// the shell plugin doesn't kill the spawned child on Drop, so previous
+/// veslo-server processes survive cargo rebuilds and camp on random ports
+/// (and the 8787 socket they vacated stays in TIME_WAIT for a few seconds).
+fn list_stale_veslo_server_pids() -> Vec<u32> {
+    use std::process::Command;
+    let our_pid = std::process::id();
+    let ps = Command::new("ps").args(["-axo", "pid=,command="]).output();
+    let stdout = match ps {
+        Ok(out) if out.status.success() => out.stdout,
+        _ => return Vec::new(),
+    };
+    let mut pids = Vec::new();
+    for line in String::from_utf8_lossy(&stdout).lines() {
+        let trimmed = line.trim_start();
+        let mut parts = trimmed.splitn(2, char::is_whitespace);
+        let pid_str = match parts.next() {
+            Some(value) => value,
+            None => continue,
+        };
+        let command = parts.next().unwrap_or("");
+        let pid: u32 = match pid_str.parse() {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        if pid == our_pid {
+            continue;
+        }
+        let is_veslo_server = command.contains("veslo-server")
+            || command.contains("bun --watch src/cli.ts")
+            || command.contains("bun src/cli.ts");
+        if is_veslo_server {
+            pids.push(pid);
         }
     }
+    pids
 }
 
-fn configured_veslo_port() -> Result<u16, String> {
-    let raw = match env::var(VESLO_DESKTOP_SERVER_PORT_ENV) {
-        Ok(value) => value,
-        Err(_) => return Ok(DEFAULT_VESLO_PORT),
-    };
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Ok(DEFAULT_VESLO_PORT);
+fn kill_pid(pid: u32) {
+    use std::process::Command;
+    let _ = Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .status();
+    // Give the process a moment to clean up, then force-kill if still alive.
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    let _ = Command::new("kill")
+        .args(["-KILL", &pid.to_string()])
+        .status();
+}
+
+pub fn resolve_veslo_port() -> Result<u16, String> {
+    // Reap orphan veslo-server processes from previous Vesla sessions before
+    // attempting to bind. Tauri's shell plugin doesn't kill spawned children
+    // when the main process restarts (cargo rebuild during pnpm dev), so the
+    // previous server keeps holding a random ephemeral port and the 8787
+    // socket it vacated lingers in TIME_WAIT for a couple seconds. Reaping
+    // first + retry loop ensures the new server lands back on the stable
+    // 8787 the workspace opencode.jsonc files were written against.
+    let stale = list_stale_veslo_server_pids();
+    if !stale.is_empty() {
+        for pid in &stale {
+            eprintln!("[veslo-server] reaping stale veslo-server PID {pid}");
+            kill_pid(*pid);
+        }
     }
-    let port = trimmed.parse::<u16>().map_err(|_| {
-        format!("Invalid {VESLO_DESKTOP_SERVER_PORT_ENV}: expected TCP port, got {trimmed}")
-    })?;
-    if port == 0 {
-        return Err(format!(
-            "Invalid {VESLO_DESKTOP_SERVER_PORT_ENV}: desktop server port must be greater than 0"
-        ));
+
+    // TIME_WAIT typically clears within ~1s of the previous owner closing.
+    // Retry the canonical port for up to ~3s before falling back to random.
+    for _ in 0..10 {
+        if TcpListener::bind(("0.0.0.0", DEFAULT_VESLO_PORT)).is_ok() {
+            return Ok(DEFAULT_VESLO_PORT);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
     }
+
+    let listener = TcpListener::bind(("0.0.0.0", 0)).map_err(|e| e.to_string())?;
+    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     Ok(port)
 }
 
@@ -136,6 +171,8 @@ pub fn build_veslo_args(
     host_token: &str,
     opencode_base_url: Option<&str>,
     opencode_directory: Option<&str>,
+    orchestrator_daemon_url: Option<&str>,
+    orchestrator_lifecycle_token: Option<&str>,
 ) -> Vec<String> {
     let mut args = vec![
         "--host".to_string(),
@@ -184,6 +221,20 @@ pub fn build_veslo_args(
         }
     }
 
+    if let Some(url) = orchestrator_daemon_url {
+        if !url.trim().is_empty() {
+            args.push("--orchestrator-url".to_string());
+            args.push(url.to_string());
+        }
+    }
+
+    if let Some(token) = orchestrator_lifecycle_token {
+        if !token.trim().is_empty() {
+            args.push("--orchestrator-lifecycle-token".to_string());
+            args.push(token.to_string());
+        }
+    }
+
     args
 }
 
@@ -211,6 +262,41 @@ fn resolve_managed_ai_base_url() -> String {
     )
 }
 
+fn default_server_sandbox_backend_for_platform() -> &'static str {
+    if cfg!(windows) {
+        "windows-wsl2"
+    } else if cfg!(target_os = "macos") {
+        "mac-sandbox-exec"
+    } else {
+        "none"
+    }
+}
+
+fn resolve_server_sandbox_backend_from_env(
+    explicit_backend: Option<&str>,
+    disable_sandbox: Option<&str>,
+) -> String {
+    if parse_env_flag(disable_sandbox) {
+        return "none".to_string();
+    }
+
+    if let Some(value) = explicit_backend
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return value.to_string();
+    }
+
+    default_server_sandbox_backend_for_platform().to_string()
+}
+
+fn resolve_server_sandbox_backend() -> String {
+    resolve_server_sandbox_backend_from_env(
+        env::var(VESLO_SANDBOX_BACKEND_ENV).ok().as_deref(),
+        env::var(VESLO_DISABLE_SANDBOX_ENV).ok().as_deref(),
+    )
+}
+
 pub fn spawn_veslo_server(
     app: &AppHandle,
     host: &str,
@@ -224,6 +310,8 @@ pub fn spawn_veslo_server(
     opencode_username: Option<&str>,
     opencode_password: Option<&str>,
     opencode_router_health_port: Option<u16>,
+    orchestrator_daemon_url: Option<&str>,
+    orchestrator_lifecycle_token: Option<&str>,
 ) -> Result<(Receiver<CommandEvent>, SupervisedCommandChild), String> {
     validate_managed_opencode_base_url(opencode_base_url)?;
 
@@ -236,6 +324,8 @@ pub fn spawn_veslo_server(
         host_token,
         opencode_base_url,
         opencode_directory,
+        orchestrator_daemon_url,
+        orchestrator_lifecycle_token,
     );
     let use_dev_watch = should_use_dev_watch_mode();
 
@@ -256,6 +346,7 @@ pub fn spawn_veslo_server(
         command.args(server_args).current_dir(cwd)
     }
     .env("VESLO_MANAGED_AI_BASE_URL", resolve_managed_ai_base_url());
+    command = command.env(VESLO_SANDBOX_BACKEND_ENV, resolve_server_sandbox_backend());
 
     if let Some(port) = opencode_router_health_port {
         command = command.env("OPENCODE_ROUTER_HEALTH_PORT", port.to_string());
@@ -412,6 +503,8 @@ mod tests {
             "host-token",
             None,
             None,
+            None,
+            None,
         );
 
         assert!(args
@@ -420,6 +513,29 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|pair| pair == ["--workspace-id", "app-workspace-a"]));
+    }
+
+    #[test]
+    fn build_args_includes_orchestrator_lifecycle_config() {
+        let args = build_veslo_args(
+            "0.0.0.0",
+            8787,
+            &["/tmp/workspace-a".to_string()],
+            &[Some("app-workspace-a".to_string())],
+            "client-token",
+            "host-token",
+            Some("http://127.0.0.1:12345/workspace/ws-a/opencode"),
+            Some("/tmp/workspace-a"),
+            Some("http://127.0.0.1:12345"),
+            Some("lifecycle-token"),
+        );
+
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--orchestrator-url", "http://127.0.0.1:12345"]));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--orchestrator-lifecycle-token", "lifecycle-token"]));
     }
 
     #[test]
@@ -457,5 +573,32 @@ mod tests {
         let resolved = resolve_managed_ai_base_url_from_env(None, None);
 
         assert_eq!(resolved, "https://ai.veslo.work");
+    }
+
+    #[test]
+    fn sandbox_backend_prefers_explicit_env() {
+        let resolved = resolve_server_sandbox_backend_from_env(Some(" windows-wsl2 "), None);
+
+        assert_eq!(resolved, "windows-wsl2");
+    }
+
+    #[test]
+    fn sandbox_backend_disable_flag_wins() {
+        let resolved = resolve_server_sandbox_backend_from_env(Some("windows-wsl2"), Some("true"));
+
+        assert_eq!(resolved, "none");
+    }
+
+    #[test]
+    fn sandbox_backend_defaults_by_platform() {
+        let resolved = resolve_server_sandbox_backend_from_env(None, None);
+
+        if cfg!(windows) {
+            assert_eq!(resolved, "windows-wsl2");
+        } else if cfg!(target_os = "macos") {
+            assert_eq!(resolved, "mac-sandbox-exec");
+        } else {
+            assert_eq!(resolved, "none");
+        }
     }
 }

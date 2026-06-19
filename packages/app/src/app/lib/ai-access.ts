@@ -13,8 +13,27 @@ export const AI_ACCESS_NOT_CONFIGURED_MESSAGE =
   "Your AI access has not been configured by the platform admin yet.";
 export const AI_ACCESS_INVALID_MESSAGE =
   "Assigned AI access is incomplete. Ask your platform admin to update it.";
+export const AI_ACCESS_LOAD_FAILED_MESSAGE = "Failed to load AI access";
+export const AI_ACCESS_ADMIN_MANAGED_MESSAGE_KEY = "ai_access.admin_managed";
+export const AI_ACCESS_LOADING_MESSAGE_KEY = "ai_access.loading";
+export const AI_ACCESS_NOT_CONFIGURED_MESSAGE_KEY = "ai_access.not_configured";
+export const AI_ACCESS_INVALID_MESSAGE_KEY = "ai_access.invalid";
+export const AI_ACCESS_LOAD_FAILED_MESSAGE_KEY = "ai_access.load_failed";
 export const DEFAULT_MANAGED_AI_GATEWAY_BASE_URL = "https://ai.veslo.work";
 const REDACTED_SECRET_VALUE = "[REDACTED]";
+
+const AI_ACCESS_MESSAGE_KEY_BY_TEXT = new Map<string, string>([
+  [AI_ACCESS_ADMIN_MANAGED_MESSAGE, AI_ACCESS_ADMIN_MANAGED_MESSAGE_KEY],
+  [AI_ACCESS_LOADING_MESSAGE, AI_ACCESS_LOADING_MESSAGE_KEY],
+  [AI_ACCESS_NOT_CONFIGURED_MESSAGE, AI_ACCESS_NOT_CONFIGURED_MESSAGE_KEY],
+  [AI_ACCESS_INVALID_MESSAGE, AI_ACCESS_INVALID_MESSAGE_KEY],
+  [AI_ACCESS_LOAD_FAILED_MESSAGE, AI_ACCESS_LOAD_FAILED_MESSAGE_KEY],
+]);
+
+export function resolveManagedAiAccessMessageKey(message: string | null | undefined): string | null {
+  const trimmed = message?.trim() ?? "";
+  return trimmed ? AI_ACCESS_MESSAGE_KEY_BY_TEXT.get(trimmed) ?? null : null;
+}
 
 export type ManagedAiAccessProfile = {
   userId: string;
@@ -80,18 +99,28 @@ export function resolveManagedAiProviderRoutingTarget(input: {
   isDesktopRuntime: boolean;
   workspaceType: "local" | "remote" | null | undefined;
   activeBaseUrl: string | null | undefined;
+  engineBaseUrl?: string | null | undefined;
+  requireEngineBaseUrl?: boolean;
   activeToken: string | null | undefined;
   gatewayBaseUrl: string | null | undefined;
   gatewayToken: string | null | undefined;
-}): { baseUrl: string; serverClientToken: string } | null {
+}): { baseUrl: string; engineBaseUrl: string; serverClientToken: string } | null {
   const activeBaseUrl = normalizeHttpUrl(input.activeBaseUrl);
+  const engineBaseUrl = normalizeHttpUrl(input.engineBaseUrl);
   const activeToken = input.activeToken?.trim() ?? "";
   if (
     input.isDesktopRuntime &&
     input.workspaceType === "local" &&
     isLoopbackHttpUrl(activeBaseUrl)
   ) {
-    return { baseUrl: activeBaseUrl, serverClientToken: activeToken };
+    if (input.requireEngineBaseUrl && (!engineBaseUrl || isLoopbackHttpUrl(engineBaseUrl))) {
+      return null;
+    }
+    return {
+      baseUrl: activeBaseUrl,
+      engineBaseUrl: engineBaseUrl || activeBaseUrl,
+      serverClientToken: activeToken,
+    };
   }
 
   if (input.isDesktopRuntime && input.workspaceType === "local") {
@@ -104,7 +133,25 @@ export function resolveManagedAiProviderRoutingTarget(input: {
     return null;
   }
 
-  return { baseUrl: gatewayBaseUrl, serverClientToken: gatewayToken };
+  return {
+    baseUrl: gatewayBaseUrl,
+    engineBaseUrl: gatewayBaseUrl,
+    serverClientToken: gatewayToken,
+  };
+}
+
+export function requiresManagedAiEngineBaseUrl(input: {
+  isDesktopRuntime: boolean;
+  workspaceType: "local" | "remote" | null | undefined;
+  sandboxEnabled?: boolean | null;
+  sandboxBackend?: string | null;
+}): boolean {
+  return (
+    input.isDesktopRuntime &&
+    input.workspaceType === "local" &&
+    input.sandboxEnabled === true &&
+    input.sandboxBackend === "windows-wsl2"
+  );
 }
 
 function readConfigObject(value: unknown): Record<string, unknown> {
@@ -121,7 +168,7 @@ function parseConfigObject(content: string | null | undefined): Record<string, u
   return readConfigObject(parsed);
 }
 
-function hasManagedGatewayHeaders(value: unknown): boolean {
+function hasManagedGatewayHeaders(value: unknown, expectedWorkspaceId?: string | null): boolean {
   const headers = readConfigObject(value);
   const gatewayToken = typeof headers["x-veslo-gateway-token"] === "string"
     ? headers["x-veslo-gateway-token"].trim()
@@ -129,13 +176,48 @@ function hasManagedGatewayHeaders(value: unknown): boolean {
   const sessionTemplate = typeof headers["x-veslo-session-id"] === "string"
     ? headers["x-veslo-session-id"].trim()
     : "";
-  return Boolean(gatewayToken && sessionTemplate);
+  if (!gatewayToken || !sessionTemplate) return false;
+
+  const workspaceId = expectedWorkspaceId?.trim() ?? "";
+  if (!workspaceId) return true;
+  const configuredWorkspaceId = typeof headers["x-veslo-workspace-id"] === "string"
+    ? headers["x-veslo-workspace-id"].trim()
+    : "";
+  return configuredWorkspaceId === workspaceId;
+}
+
+function hasUsableServerClientCredential(
+  providerId: string,
+  providerConfig: Record<string, unknown>,
+  serverClientToken?: string | null,
+): boolean {
+  const expectedToken = serverClientToken?.trim() ?? "";
+  if (!expectedToken) return false;
+
+  const options = readConfigObject(providerConfig.options);
+  const isOpenAiCompatibleGatewayProvider = providerId === "codex_oauth" || providerId === "openai_compatible";
+  if (isOpenAiCompatibleGatewayProvider) {
+    const apiKey = typeof options.apiKey === "string" ? options.apiKey.trim() : "";
+    return apiKey === expectedToken || apiKey === REDACTED_SECRET_VALUE;
+  }
+
+  const models = readConfigObject(providerConfig.models);
+  return Object.values(models).some((model) => {
+    const headers = readConfigObject(readConfigObject(model).headers);
+    const authorization = typeof headers.Authorization === "string"
+      ? headers.Authorization.trim()
+      : typeof headers.authorization === "string"
+        ? headers.authorization.trim()
+        : "";
+    return authorization === `Bearer ${expectedToken}` || authorization === REDACTED_SECRET_VALUE;
+  });
 }
 
 function hasManagedGatewayProviderRouting(
   providerId: string,
   providerConfig: Record<string, unknown>,
   gatewayBaseUrl?: string | null,
+  workspaceId?: string | null,
 ): boolean {
   const options = readConfigObject(providerConfig.options);
   const baseUrl = normalizeHttpUrl(typeof options.baseURL === "string" ? options.baseURL : "");
@@ -150,10 +232,12 @@ function hasManagedGatewayProviderRouting(
   }
 
   const models = readConfigObject(providerConfig.models);
-  return Object.values(models).some((model) => hasManagedGatewayHeaders(readConfigObject(model).headers));
+  return Object.values(models).some((model) =>
+    hasManagedGatewayHeaders(readConfigObject(model).headers, workspaceId)
+  );
 }
 
-function hasManagedAiGatewayRoutingConfig(
+export function hasManagedAiGatewayRoutingConfig(
   content: string | null | undefined,
   providerId?: string | null,
   gatewayBaseUrl?: string | null,
@@ -171,6 +255,29 @@ function hasManagedAiGatewayRoutingConfig(
       return false;
     }
     return hasManagedGatewayProviderRouting(normalizedId, readConfigObject(rawConfig), gatewayBaseUrl);
+  });
+}
+
+export function hasUsableManagedAiRuntimeConfig(input: {
+  content: string | null | undefined;
+  providerId?: string | null;
+  gatewayBaseUrl?: string | null;
+  serverClientToken?: string | null;
+  workspaceId?: string | null;
+}): boolean {
+  const parsed = parseConfigObject(input.content);
+  const providers = readConfigObject(parsed.provider);
+  const targetProviderId = input.providerId?.trim().toLowerCase() ?? "";
+
+  return Object.entries(providers).some(([candidateId, rawConfig]) => {
+    const normalizedId = candidateId.trim().toLowerCase();
+    const providerConfig = readConfigObject(rawConfig);
+    if (!isGatewayOwnedProvider(normalizedId)) return false;
+    if (targetProviderId && normalizedId !== targetProviderId) return false;
+    if (!hasManagedGatewayProviderRouting(normalizedId, providerConfig, input.gatewayBaseUrl, input.workspaceId)) {
+      return false;
+    }
+    return hasUsableServerClientCredential(normalizedId, providerConfig, input.serverClientToken);
   });
 }
 
@@ -325,7 +432,10 @@ export function extractManagedApiKey(content: string | null | undefined): string
       const options = (entry as Record<string, unknown>).options;
       if (!options || typeof options !== "object") continue;
       const apiKey = (options as Record<string, unknown>).apiKey;
-      if (typeof apiKey === "string" && apiKey.trim()) return apiKey;
+      if (typeof apiKey !== "string") continue;
+      const normalized = apiKey.trim();
+      if (!normalized || normalized === REDACTED_SECRET_VALUE) continue;
+      return normalized;
     }
     return null;
   } catch {
@@ -338,16 +448,19 @@ export function formatManagedAiAccessConfig(
   input: {
     profile: ManagedAiAccessProfile;
     serverBaseUrl: string;
+    engineBaseUrl?: string | null;
     serverClientToken: string;
     gatewayAccessToken: string;
+    workspaceId?: string | null;
   },
 ): string {
   const withDefaultModel = formatConfigWithDefaultModel(content ?? "", input.profile.defaultModel);
   return `${applyGatewayProviderRouting(withDefaultModel, {
     providerId: input.profile.providerId,
-    serverBaseUrl: input.serverBaseUrl,
+    serverBaseUrl: input.engineBaseUrl?.trim() || input.serverBaseUrl,
     serverClientToken: input.serverClientToken,
     gatewayAccessToken: input.gatewayAccessToken,
+    workspaceId: input.workspaceId,
     models: [input.profile.defaultModel.modelID, ...input.profile.allowedModels],
   })}\n`;
 }

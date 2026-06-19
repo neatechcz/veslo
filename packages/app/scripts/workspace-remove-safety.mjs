@@ -32,7 +32,7 @@ try {
 
   run(
     "node",
-    ["--test", "--import=tsx/esm", "src/app/context/workspace-forget-mode.test.ts"],
+    ["--test", "--import=tsx/esm", "src/app/tests/context/workspace-forget-mode.test.ts"],
     { cwd: appDir },
   );
 

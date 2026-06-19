@@ -4,22 +4,34 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::fs::{collect_copy_conflicts, copy_dir_recursive};
-use crate::paths::home_dir;
+use crate::paths::{home_dir, sidecar_path_candidates};
 use crate::types::{
     ExecResult, RemoteType, WorkspaceInfo, WorkspaceList, WorkspaceState, WorkspaceType,
     WorkspaceVesloConfig,
 };
 use crate::workspace::files::{ensure_workspace_files, seed_soul_templates};
+use crate::workspace::reserved::is_reserved_internal_workspace_dir_name;
 use crate::workspace::state::{
     load_workspace_state, private_workspace_root_from_data_dir, save_workspace_state,
     stable_workspace_id, stable_workspace_id_for_remote, stable_workspace_id_for_veslo,
 };
+use crate::workspace::validation::{validate_workspace_path, ValidationMode};
 use crate::workspace::watch::{update_workspace_watch, WorkspaceWatchState};
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{Manager, State};
 use walkdir::WalkDir;
 use zip::write::FileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
+
+fn resolve_workspace_managed_deps_manifest(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let resource_dir = app.path().resource_dir().ok();
+    let current_bin_dir = tauri::process::current_binary(&app.env())
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
+    let sidecar_paths =
+        sidecar_path_candidates(resource_dir.as_deref(), current_bin_dir.as_deref());
+    crate::orchestrator::resolve_opencode_managed_deps_manifest(&sidecar_paths)
+}
 
 // ---------------------------------------------------------------------------
 // OpenCode session cleanup (used by workspace_forget)
@@ -229,6 +241,7 @@ pub fn workspace_bootstrap(
 
     let (data_dir, _) = crate::workspace::state::veslo_state_paths(&app)?;
     let templates_dir = data_dir.join("templates");
+    let managed_deps_manifest_path = resolve_workspace_managed_deps_manifest(&app);
     if let Err(e) = seed_soul_templates(&templates_dir) {
         eprintln!("[workspace] failed to seed soul templates: {e}");
     }
@@ -242,6 +255,7 @@ pub fn workspace_bootstrap(
             &workspace.preset,
             Some(&templates_dir),
             Some(&data_dir),
+            managed_deps_manifest_path.as_deref(),
         ) {
             eprintln!(
                 "[workspace] bootstrap provisioning failed for {}: {}",
@@ -296,6 +310,9 @@ pub fn workspace_forget(
     save_workspace_state(&app, &state)?;
     let active_workspace = state.workspaces.iter().find(|w| w.id == state.active_id);
     update_workspace_watch(&app, watch_state, active_workspace)?;
+
+    // Mirror the deletion into the server registry (best-effort).
+    crate::workspace::server_client::delete_workspace(&app, id);
 
     // Cleanup OpenCode sessions and local files only for explicit destructive forget mode.
     if let Some(ref ws) = forgotten_workspace {
@@ -370,6 +387,15 @@ pub fn workspace_update_display_name(
     }
 
     save_workspace_state(&app, &state)?;
+
+    // Mirror the rename into the server registry. We send the effective name
+    // (display_name if set, otherwise the existing entry.name) so the server
+    // sees what the user sees in the sidebar.
+    if let Some(ws) = state.workspaces.iter().find(|w| w.id == id) {
+        let effective_name = ws.display_name.as_deref().unwrap_or(&ws.name);
+        crate::workspace::server_client::patch_workspace(&app, &ws.id, effective_name);
+    }
+
     println!("[workspace] update display name complete: {id}");
 
     Ok(WorkspaceList {
@@ -387,19 +413,14 @@ pub struct WorkspaceFolderTransferResult {
 
 #[tauri::command]
 pub fn workspace_copy_into_folder(
+    app: tauri::AppHandle,
     source_path: String,
     target_path: String,
     overwrite: bool,
 ) -> Result<WorkspaceFolderTransferResult, String> {
-    let source = PathBuf::from(source_path.trim());
-    let target = PathBuf::from(target_path.trim());
+    let source = validate_workspace_path(&app, &source_path, ValidationMode::InAuthorizedRoot)?;
+    let target = validate_workspace_path(&app, &target_path, ValidationMode::NotSystemPath)?;
 
-    if source.as_os_str().is_empty() {
-        return Err("sourcePath is required".to_string());
-    }
-    if target.as_os_str().is_empty() {
-        return Err("targetPath is required".to_string());
-    }
     if !source.is_dir() {
         return Err(format!("Source is not a directory: {}", source.display()));
     }
@@ -437,10 +458,18 @@ pub fn workspace_create(
     watch_state: State<WorkspaceWatchState>,
 ) -> Result<WorkspaceList, String> {
     println!("[workspace] create local request");
-    let folder = folder_path.trim().to_string();
-    if folder.is_empty() {
-        return Err("folderPath is required".to_string());
+    let folder_path = validate_workspace_path(&app, &folder_path, ValidationMode::NotSystemPath)?;
+    if folder_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(is_reserved_internal_workspace_dir_name)
+    {
+        return Err(
+            "This is an internal Veslo/OpenCode directory and cannot be used as a workspace root"
+                .to_string(),
+        );
     }
+    let folder = folder_path.to_string_lossy().to_string();
 
     let workspace_name = name.trim().to_string();
     if workspace_name.is_empty() {
@@ -458,13 +487,20 @@ pub fn workspace_create(
 
     let (data_dir, _) = crate::workspace::state::veslo_state_paths(&app)?;
     let templates_dir = data_dir.join("templates");
+    let managed_deps_manifest_path = resolve_workspace_managed_deps_manifest(&app);
     if let Err(e) = seed_soul_templates(&templates_dir) {
         eprintln!("[workspace] failed to seed soul templates: {e}");
     }
 
     let id = stable_workspace_id(&folder);
 
-    ensure_workspace_files(&folder, &preset, Some(&templates_dir), Some(&data_dir))?;
+    ensure_workspace_files(
+        &folder,
+        &preset,
+        Some(&templates_dir),
+        Some(&data_dir),
+        managed_deps_manifest_path.as_deref(),
+    )?;
 
     let mut state = load_workspace_state(&app)?;
     upsert_workspace(
@@ -483,15 +519,19 @@ pub fn workspace_create(
             veslo_token: None,
             veslo_workspace_id: None,
             veslo_workspace_name: None,
-            sandbox_backend: None,
-            sandbox_run_id: None,
-            sandbox_container_name: None,
         },
     );
     state.active_id = id.clone();
     save_workspace_state(&app, &state)?;
     let active_workspace = state.workspaces.iter().find(|w| w.id == state.active_id);
     update_workspace_watch(&app, watch_state, active_workspace)?;
+
+    // Mirror the new workspace into the server registry (hybrid C —
+    // server is the future single-source-of-truth, ignored if not running).
+    if let Some(ws) = state.workspaces.iter().find(|w| w.id == id) {
+        crate::workspace::server_client::post_local_workspace(&app, &ws.path, &ws.name);
+    }
+
     println!("[workspace] create local complete: {id}");
 
     Ok(WorkspaceList {
@@ -511,9 +551,6 @@ pub fn workspace_create_remote(
     veslo_token: Option<String>,
     veslo_workspace_id: Option<String>,
     veslo_workspace_name: Option<String>,
-    sandbox_backend: Option<String>,
-    sandbox_run_id: Option<String>,
-    sandbox_container_name: Option<String>,
     watch_state: State<WorkspaceWatchState>,
 ) -> Result<WorkspaceList, String> {
     println!("[workspace] create remote request");
@@ -589,15 +626,6 @@ pub fn workspace_create_remote(
             veslo_token,
             veslo_workspace_id,
             veslo_workspace_name,
-            sandbox_backend: sandbox_backend
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty()),
-            sandbox_run_id: sandbox_run_id
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty()),
-            sandbox_container_name: sandbox_container_name
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty()),
         },
     );
     state.active_id = id.clone();
@@ -624,9 +652,6 @@ pub fn workspace_update_remote(
     veslo_token: Option<String>,
     veslo_workspace_id: Option<String>,
     veslo_workspace_name: Option<String>,
-    sandbox_backend: Option<String>,
-    sandbox_run_id: Option<String>,
-    sandbox_container_name: Option<String>,
 ) -> Result<WorkspaceList, String> {
     println!("[workspace] update remote request: {workspace_id}");
     let mut state = load_workspace_state(&app)?;
@@ -707,27 +732,6 @@ pub fn workspace_update_remote(
         }
     }
 
-    if let Some(next_backend) = sandbox_backend
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
-        entry.sandbox_backend = Some(next_backend);
-    }
-
-    if let Some(next_run_id) = sandbox_run_id
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
-        entry.sandbox_run_id = Some(next_run_id);
-    }
-
-    if let Some(next_container) = sandbox_container_name
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
-        entry.sandbox_container_name = Some(next_container);
-    }
-
     save_workspace_state(&app, &state)?;
     println!("[workspace] update remote complete: {id}");
 
@@ -739,23 +743,17 @@ pub fn workspace_update_remote(
 
 #[tauri::command]
 pub fn workspace_add_authorized_root(
-    _app: tauri::AppHandle,
+    app: tauri::AppHandle,
     workspace_path: String,
     folder_path: String,
 ) -> Result<ExecResult, String> {
-    let workspace_path = workspace_path.trim().to_string();
-    let folder_path = folder_path.trim().to_string();
+    let workspace_path =
+        validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?;
+    let folder_path = validate_workspace_path(&app, &folder_path, ValidationMode::NotSystemPath)?;
+    let workspace_path_str = workspace_path.to_string_lossy().to_string();
+    let folder_path_str = folder_path.to_string_lossy().to_string();
 
-    if workspace_path.is_empty() {
-        return Err("workspacePath is required".to_string());
-    }
-    if folder_path.is_empty() {
-        return Err("folderPath is required".to_string());
-    }
-
-    let veslo_path = PathBuf::from(&workspace_path)
-        .join(".opencode")
-        .join("veslo.json");
+    let veslo_path = workspace_path.join(".opencode").join("veslo.json");
 
     if let Some(parent) = veslo_path.parent() {
         fs::create_dir_all(parent)
@@ -768,14 +766,22 @@ pub fn workspace_add_authorized_root(
         serde_json::from_str(&raw).unwrap_or_default()
     } else {
         let mut cfg = WorkspaceVesloConfig::default();
-        if !cfg.authorized_roots.iter().any(|p| p == &workspace_path) {
-            cfg.authorized_roots.push(workspace_path.clone());
+        if !cfg
+            .authorized_roots
+            .iter()
+            .any(|p| p == &workspace_path_str)
+        {
+            cfg.authorized_roots.push(workspace_path_str.clone());
         }
         cfg
     };
 
-    if !config.authorized_roots.iter().any(|p| p == &folder_path) {
-        config.authorized_roots.push(folder_path);
+    if !config
+        .authorized_roots
+        .iter()
+        .any(|p| p == &folder_path_str)
+    {
+        config.authorized_roots.push(folder_path_str);
     }
 
     fs::write(
@@ -794,21 +800,18 @@ pub fn workspace_add_authorized_root(
 
 #[tauri::command]
 pub fn workspace_veslo_read(
-    _app: tauri::AppHandle,
+    app: tauri::AppHandle,
     workspace_path: String,
 ) -> Result<WorkspaceVesloConfig, String> {
-    let workspace_path = workspace_path.trim().to_string();
-    if workspace_path.is_empty() {
-        return Err("workspacePath is required".to_string());
-    }
+    let workspace_path =
+        validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?;
 
-    let veslo_path = PathBuf::from(&workspace_path)
-        .join(".opencode")
-        .join("veslo.json");
+    let veslo_path = workspace_path.join(".opencode").join("veslo.json");
 
     if !veslo_path.exists() {
         let mut cfg = WorkspaceVesloConfig::default();
-        cfg.authorized_roots.push(workspace_path);
+        cfg.authorized_roots
+            .push(workspace_path.to_string_lossy().to_string());
         return Ok(cfg);
     }
 
@@ -821,18 +824,14 @@ pub fn workspace_veslo_read(
 
 #[tauri::command]
 pub fn workspace_veslo_write(
-    _app: tauri::AppHandle,
+    app: tauri::AppHandle,
     workspace_path: String,
     config: WorkspaceVesloConfig,
 ) -> Result<ExecResult, String> {
-    let workspace_path = workspace_path.trim().to_string();
-    if workspace_path.is_empty() {
-        return Err("workspacePath is required".to_string());
-    }
+    let workspace_path =
+        validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?;
 
-    let veslo_path = PathBuf::from(&workspace_path)
-        .join(".opencode")
-        .join("veslo.json");
+    let veslo_path = workspace_path.join(".opencode").join("veslo.json");
 
     if let Some(parent) = veslo_path.parent() {
         fs::create_dir_all(parent)
@@ -1008,10 +1007,7 @@ pub fn workspace_export_config(
     if workspace_id.is_empty() {
         return Err("workspaceId is required".to_string());
     }
-    let output_path = output_path.trim().to_string();
-    if output_path.is_empty() {
-        return Err("outputPath is required".to_string());
-    }
+    let output_path = validate_workspace_path(&app, &output_path, ValidationMode::NotSystemPath)?;
 
     let state = load_workspace_state(&app)?;
     let workspace = state
@@ -1032,7 +1028,6 @@ pub fn workspace_export_config(
         ));
     }
 
-    let output_path = PathBuf::from(&output_path);
     if let Some(parent) = output_path.parent() {
         fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create export folder {}: {e}", parent.display()))?;
@@ -1107,12 +1102,9 @@ pub fn workspace_import_config(
     if archive_path.is_empty() {
         return Err("archivePath is required".to_string());
     }
-    let target_dir = target_dir.trim().to_string();
-    if target_dir.is_empty() {
-        return Err("targetDir is required".to_string());
-    }
+    let target_path = validate_workspace_path(&app, &target_dir, ValidationMode::NotSystemPath)?;
+    let target_dir = target_path.to_string_lossy().to_string();
 
-    let target_path = PathBuf::from(&target_dir);
     if target_path.exists() {
         let mut entries = fs::read_dir(&target_path)
             .map_err(|e| format!("Failed to read {}: {e}", target_path.display()))?;
@@ -1245,9 +1237,6 @@ pub fn workspace_import_config(
             veslo_token: None,
             veslo_workspace_id: None,
             veslo_workspace_name: None,
-            sandbox_backend: None,
-            sandbox_run_id: None,
-            sandbox_container_name: None,
         },
     );
     state.active_id = id.clone();
@@ -1284,9 +1273,6 @@ mod tests {
             veslo_token: None,
             veslo_workspace_id: None,
             veslo_workspace_name: None,
-            sandbox_backend: None,
-            sandbox_run_id: None,
-            sandbox_container_name: None,
         }
     }
 

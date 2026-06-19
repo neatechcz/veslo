@@ -1,0 +1,100 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
+
+async function readRepoFile(relativePath) {
+  return readFile(path.join(repoRoot, relativePath), "utf8");
+}
+
+function assertIncludesAll(content, expectedValues, context) {
+  for (const value of expectedValues) {
+    assert.ok(content.includes(value), `${context} should document ${value}`);
+  }
+}
+
+function extractSection(content, heading) {
+  const marker = `## ${heading}\n`;
+  const start = content.indexOf(marker);
+  assert.notEqual(start, -1, `Expected section "## ${heading}" to exist`);
+
+  const bodyStart = start + marker.length;
+  const nextSection = content.indexOf("\n## ", bodyStart);
+  return content.slice(bodyStart, nextSection === -1 ? undefined : nextSection);
+}
+
+test("owned-server env templates document backup alert recipients", async () => {
+  const envExample = await readRepoFile("packaging/owned-server/env.example");
+  const envStagingExample = await readRepoFile("packaging/owned-server/env.staging.example");
+
+  assert.match(envExample, /^BACKUP_ALERT_EMAIL_RECIPIENTS=$/m);
+  assert.match(envStagingExample, /^BACKUP_ALERT_EMAIL_RECIPIENTS=$/m);
+});
+
+test("backup runbook documents automated daily backup operations", async () => {
+  const runbook = await readRepoFile("packaging/owned-server/backup/README.md");
+
+  assertIncludesAll(
+    runbook,
+    [
+      "backup-owned-server-databases.sh",
+      "zstd",
+      "Node.js",
+      "/srv/veslo/backups",
+      "BACKUP_ALERT_EMAIL_RECIPIENTS",
+      "backup-owned-server-databases-loop.sh",
+      "docker compose -f packaging/owned-server/compose.yml",
+      "ps backup",
+      "logs -f backup",
+      "zstd -t",
+      "sha256sum -c",
+      "newest two successful backup sets",
+      "controlled failure",
+    ],
+    "backup runbook",
+  );
+});
+
+test("backup runbook documents a pre-dump controlled failure drill", async () => {
+  const runbook = await readRepoFile("packaging/owned-server/backup/README.md");
+
+  assert.doesNotMatch(runbook, /ZSTD_BIN=\/bin\/false/);
+  assert.match(runbook, /BACKUP_TIMESTAMP=/);
+  assert.match(runbook, /Backup timestamp already exists/);
+  assert.match(runbook, /before any database dump/i);
+});
+
+test("backup runbook makes production env authoritative for alert recipients", async () => {
+  const runbook = await readRepoFile("packaging/owned-server/backup/README.md");
+
+  assert.match(runbook, /production env file[\s\S]{0,180}authoritative source[\s\S]{0,180}BACKUP_ALERT_EMAIL_RECIPIENTS/);
+  assert.match(runbook, /same production env file/);
+  assert.doesNotMatch(
+    runbook,
+    /Edit `\/etc\/default\/veslo-owned-server-backup`[^\n.]*BACKUP_ALERT_EMAIL_RECIPIENTS[^\n.]*match/,
+  );
+});
+
+test("state and config reference covers owned-server backup configuration", async () => {
+  const stateReference = await readRepoFile("docs/dev/state-and-config-reference.md");
+  const backupSection = extractSection(stateReference, "Owned-Server Backup Config");
+
+  assertIncludesAll(
+    backupSection,
+    [
+      "BACKUP_ALERT_EMAIL_RECIPIENTS",
+      "LETTR_API_KEY",
+      "AUTH_EMAIL_ADDRESS",
+      "AUTH_EMAIL_FROM_NAME",
+      "/srv/veslo/backups",
+      "zstd",
+      "backup",
+      "BACKUP_DAILY_UTC_TIME",
+      "BACKUP_RANDOM_DELAY_SECONDS",
+    ],
+    "owned-server backup config reference",
+  );
+});

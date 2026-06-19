@@ -110,12 +110,19 @@
     {
       "idx": 15,
       "version": "5",
+      "when": 1781856000000,
+      "tag": "0015_google_workspace_connections",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "5",
       "when": 1780704000000,
       "tag": "0015_vslo_201_admin_gateway_orgs",
       "breakpoints": true
     },
     {
-      "idx": 16,
+      "idx": 17,
       "version": "5",
       "when": 1780707600000,
       "tag": "0016_hash_legacy_organization_invite_tokens",

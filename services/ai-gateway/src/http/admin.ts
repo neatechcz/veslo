@@ -10,9 +10,12 @@ import type { AlertRecord, AlertRepository } from "../alerts/repository.js";
 import { buildCodexCapacityAlerts } from "../alerts/codex-capacity-alerts.js";
 import {
   createCodexCapacityAlertMonitorRunner,
-  type CodexCapacityAlertEmailInput,
   type CodexCapacityAlertMonitorResult,
 } from "../alerts/codex-capacity-monitor.js";
+import {
+  createCredentialAlertEmailMonitorRunner,
+  type CredentialAlertEmailMonitorResult,
+} from "../alerts/credential-alert-email-monitor.js";
 import type { AiAccessProvider, AiAccessRepository, UpsertUserAiAccessPolicyInput, UserAiAccessPolicyRecord } from "../access/repository.js";
 import { MySqlAiAccessRepository } from "../access/mysql-repository.js";
 import { MySqlAlertRepository } from "../alerts/mysql-repository.js";
@@ -26,7 +29,7 @@ import type { SecretStore, StoredSecret } from "../credentials/secret-store.js";
 import type { AiGatewayDb } from "../db/index.js";
 import { createDb } from "../db/index.js";
 import { credentialBindingTable, credentialHealthEventTable, credentialRecordTable, credentialUsageEventTable, sessionLeaseTable, userAiAccessPolicyTable, type CredentialState } from "../db/schema.js";
-import { sendAdminAlertEmail } from "../email/admin-alert-mailer.js";
+import { sendAdminAlertEmail, type AdminAlertEmailInput } from "../email/admin-alert-mailer.js";
 import { env } from "../env.js";
 import type { AdminSessionRecord, LeaseProvider } from "../leases/repository.js";
 import { CODEX_DEFAULT_MODEL, listCodexModelCatalog, resolveCodexModelPolicy } from "../providers/codex-model-catalog.js";
@@ -301,6 +304,36 @@ export type ReconnectCredentialInput = {
   secret: string;
 };
 
+export type RenameCredentialInput = {
+  name: string;
+};
+
+export type CreateCodexAuthUploadSessionInput = {
+  origin: string;
+};
+
+export type CodexAuthUploadInput = {
+  authJson: string;
+};
+
+export type CodexAuthUploadSessionResponse = {
+  upload: {
+    token: string;
+    credentialId: string | null;
+    credentialName: string;
+    uploadUrl: string;
+    expiresAt: string;
+  };
+  command: string;
+};
+
+export type CodexAuthUploadResponse = {
+  ok: true;
+  credentialId: string;
+  credentialName: string;
+  accountId: string;
+};
+
 export type ListCredentialsInput = {
   includeDeleted?: boolean;
 };
@@ -343,6 +376,10 @@ export interface AdminService {
   listCredentials(_token: string, input?: ListCredentialsInput): Promise<{ credentials: CredentialRecord[] }>;
   listCredentialModels(_token: string, credentialId: string): Promise<{ credentialId: string; models: string[]; defaultModel?: string }>;
   createCredential(_token: string, input: CreateCredentialInput, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
+  renameCredential(_token: string, credentialId: string, input: RenameCredentialInput, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
+  createCodexAuthUploadSession(_token: string, credentialId: string, input: CreateCodexAuthUploadSessionInput, actorUserId: string | null): Promise<CodexAuthUploadSessionResponse>;
+  createCodexAuthCredentialUploadSession(_token: string, input: CreateCodexAuthUploadSessionInput, actorUserId: string | null): Promise<CodexAuthUploadSessionResponse>;
+  uploadCodexAuth(token: string, input: CodexAuthUploadInput): Promise<CodexAuthUploadResponse>;
   revokeCredential(_token: string, credentialId: string, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
   drainCredential(_token: string, credentialId: string, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
   rotateCredential(_token: string, credentialId: string, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
@@ -351,6 +388,8 @@ export interface AdminService {
   listSessions(_token: string): Promise<{ sessions: SessionRecord[] }>;
   getUsage(_token: string, input: { groupBy: UsageGroupBy; credentialId: string | null; userId: string | null; orgId: string | null }): Promise<UsageResponse>;
   listAlerts(_token: string): Promise<{ alerts: AlertRecord[] }>;
+  runCodexCapacityAlertEmailMonitor?(): Promise<CodexCapacityAlertMonitorResult>;
+  runCredentialAlertEmailMonitor?(): Promise<CredentialAlertEmailMonitorResult>;
   acknowledgeAlert(_token: string, alertId: string, actorUserId: string | null): Promise<{ alert: AlertRecord }>;
   resolveAlert(_token: string, alertId: string, actorUserId: string | null): Promise<{ alert: AlertRecord }>;
   listAudit(_token: string): Promise<{ events: AuditRecord[] }>;
@@ -391,6 +430,7 @@ type DenAdminApi = {
   disableUser(token: string, userId: string): Promise<AdminUserRecord>;
   enableUser(token: string, userId: string): Promise<AdminUserRecord>;
   deleteUser(token: string, userId: string): Promise<void>;
+  listPlatformAdminRecipients?(token: string | null): Promise<Array<{ userId: string; email: string; name: string | null }>>;
 };
 
 const ADMIN_AUTH_COOKIE_NAME = "veslo.ai-gateway.admin.token";
@@ -398,7 +438,17 @@ const ADMIN_PENDING_AUTH_COOKIE_NAME = "veslo.ai-gateway.admin.browser-auth";
 const ADMIN_AUTH_COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 const ADMIN_PENDING_AUTH_COOKIE_MAX_AGE_SECONDS = 10 * 60;
 const ADMIN_AUTH_RANDOM_BYTES = 32;
+const CODEX_AUTH_UPLOAD_SESSION_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_CODEX_CAPACITY_ALERT_READ_TIMEOUT_MS = 2500;
+
+type CodexAuthUploadSessionRecord = {
+  token: string;
+  mode: "replace" | "create";
+  credentialId: string | null;
+  credentialName: string;
+  actorUserId: string | null;
+  expiresAt: Date;
+};
 
 type PendingAdminBrowserAuth = {
   sessionId: string;
@@ -428,6 +478,7 @@ type AdminSessionReadRepository = {
 };
 
 type AdminCredentialActionRepository = {
+  renameCredential(input: { credentialId: string; name: string }): Promise<boolean>;
   revokeCredential(credentialId: string): Promise<boolean>;
   drainCredential(credentialId: string): Promise<boolean>;
   rotateCredential(credentialId: string): Promise<boolean>;
@@ -462,7 +513,7 @@ type AdminReadModelDependencies = {
   secretStore?: SecretStore;
   openAiCompatibleTransport?: OpenAiCompatibleProviderTransport;
   alertEmailRecipients?: string[];
-  sendAlertEmail?: (input: CodexCapacityAlertEmailInput) => Promise<void>;
+  sendAlertEmail?: (input: AdminAlertEmailInput) => Promise<void>;
   now?: () => Date;
 };
 
@@ -559,6 +610,23 @@ class MySqlAdminSessionReadRepository implements AdminSessionReadRepository {
 
 export class MySqlAdminCredentialActionRepository implements AdminCredentialActionRepository {
   constructor(private readonly db: AiGatewayDb) {}
+
+  async renameCredential(input: { credentialId: string; name: string }): Promise<boolean> {
+    const credential = await this.getCredential(input.credentialId);
+    if (!credential || credential.deleted_at) {
+      return false;
+    }
+
+    await this.db
+      .update(credentialRecordTable)
+      .set({
+        name: input.name,
+        updated_at: new Date(),
+      })
+      .where(eq(credentialRecordTable.id, input.credentialId));
+
+    return true;
+  }
 
   async revokeCredential(credentialId: string): Promise<boolean> {
     return this.transitionCredentialState(credentialId, "revoked", "admin_revoke");
@@ -1182,6 +1250,27 @@ class DenAdminClient {
           : "request_failed";
     throw new HttpError(message, response.status);
   }
+
+  async listPlatformAdminRecipients(token: string | null) {
+    if (!token) {
+      throw new HttpError("den_internal_token_missing", 503);
+    }
+
+    const payload = await this.requestJson("/v1/internal/platform-admin-recipients", {
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${token}`,
+      },
+    }) as { recipients?: Array<{ userId?: string; email?: string; name?: string | null }> };
+
+    return (payload.recipients ?? [])
+      .map((entry) => ({
+        userId: typeof entry.userId === "string" ? entry.userId : "",
+        email: typeof entry.email === "string" ? entry.email.trim().toLowerCase() : "",
+        name: typeof entry.name === "string" ? entry.name : null,
+      }))
+      .filter((entry) => entry.email.includes("@"));
+  }
 }
 
 export function createDefaultAdminService(
@@ -1242,6 +1331,8 @@ export function createDefaultAdminService(
   let credentialRotationService: AutoAssignedCodexCredentialRotationService | null =
     deps.credentialRotationService ?? null;
   let codexCapacityAlertEmailRunner: (() => Promise<CodexCapacityAlertMonitorResult>) | null = null;
+  let credentialAlertEmailRunner: (() => Promise<CredentialAlertEmailMonitorResult>) | null = null;
+  const codexAuthUploadSessions = new Map<string, CodexAuthUploadSessionRecord>();
 
   function getCredentialRotationService() {
     if (!credentialRotationService) {
@@ -1513,6 +1604,59 @@ export function createDefaultAdminService(
     return credential;
   }
 
+  async function getCodexCredentialSecretRecordOrThrow(credentialId: string): Promise<{
+    visible: CredentialRecord;
+    stored: Pick<GatewayCredentialRecord, "provider" | "secretRef"> & { name?: string | null };
+  }> {
+    const visible = await getCredentialOrThrow(credentialId);
+    if (visible.provider !== "codex_oauth") {
+      throw new HttpError("invalid_codex_auth_credential", 400);
+    }
+
+    const stored = await getCredentialSecretLookupRepository().getCredentialRecordById(credentialId);
+    if (!stored) {
+      throw new HttpError("credential_not_found", 404);
+    }
+    if (stored.provider !== "codex_oauth") {
+      throw new HttpError("invalid_codex_auth_credential", 400);
+    }
+
+    return { visible, stored };
+  }
+
+  function pruneExpiredCodexAuthUploadSessions() {
+    const timestamp = now().getTime();
+    for (const [token, session] of codexAuthUploadSessions) {
+      if (session.expiresAt.getTime() <= timestamp) {
+        codexAuthUploadSessions.delete(token);
+      }
+    }
+  }
+
+  function getCodexAuthUploadSession(token: string): CodexAuthUploadSessionRecord | null {
+    pruneExpiredCodexAuthUploadSessions();
+    return codexAuthUploadSessions.get(token) ?? null;
+  }
+
+  function createCodexAuthUploadCommand(input: {
+    uploadUrl: string;
+    credentialId?: string | null;
+    credentialName: string;
+  }) {
+    const command = [
+      "node",
+      "scripts/admin/codex-auth-upload.mjs",
+      "--upload-url",
+      shellQuote(input.uploadUrl),
+      "--credential-name",
+      shellQuote(input.credentialName),
+    ];
+    if (input.credentialId) {
+      command.splice(4, 0, "--credential-id", shellQuote(input.credentialId));
+    }
+    return command.join(" ");
+  }
+
   function canDeleteHealthyUnavailableCredential(credential: CredentialRecord): boolean {
     return credential.state === "healthy" &&
       credential.provider === "codex_oauth" &&
@@ -1526,14 +1670,6 @@ export function createDefaultAdminService(
 
     const status = result.reason === "credential_not_found" ? 404 : 409;
     throw new HttpError(result.reason, status);
-  }
-
-  function requireDenOrganizationProxy<T extends keyof DenAdminApi>(methodName: T): NonNullable<DenAdminApi[T]> {
-    const method = denClient[methodName];
-    if (typeof method !== "function") {
-      throw new HttpError("organization_proxy_unavailable", 503);
-    }
-    return method.bind(denClient) as NonNullable<DenAdminApi[T]>;
   }
 
   async function toCodexCapacityCredentials(
@@ -1686,6 +1822,21 @@ export function createDefaultAdminService(
     }
 
     return codexCapacityAlertEmailRunner;
+  }
+
+  function getCredentialAlertEmailRunner() {
+    if (!credentialAlertEmailRunner) {
+      credentialAlertEmailRunner = createCredentialAlertEmailMonitorRunner({
+        listAlerts: async () => getAlertRepository().listAlerts(),
+        listPlatformAdminRecipients: async () => denClient.listPlatformAdminRecipients?.(env.denInternalToken) ?? [],
+        listFallbackRecipients: async () => alertEmailRecipients,
+        sendEmail: sendAlertEmail,
+        audit: getAuditRepository(),
+        now,
+      });
+    }
+
+    return credentialAlertEmailRunner;
   }
 
   return {
@@ -1917,6 +2068,173 @@ export function createDefaultAdminService(
       });
       return { credential: toAdminCredentialRecord(created) };
     },
+    async renameCredential(_token, credentialId, input, actorUserId) {
+      const name = validateCredentialName(input.name);
+      const updated = await getCredentialActionRepository().renameCredential({ credentialId, name });
+      if (!updated) {
+        throw new HttpError("credential_not_found", 404);
+      }
+      await recordAuditEvent({
+        actorUserId,
+        action: "credential.rename",
+        entityType: "credential",
+        entityId: credentialId,
+        result: "ok",
+        summary: `Renamed credential ${credentialId}.`,
+      });
+      return { credential: await getCredentialOrThrow(credentialId) };
+    },
+    async createCodexAuthUploadSession(_token, credentialId, input, actorUserId) {
+      const { visible } = await getCodexCredentialSecretRecordOrThrow(credentialId);
+      const token = randomBytes(24).toString("hex");
+      const expiresAt = new Date(now().getTime() + CODEX_AUTH_UPLOAD_SESSION_TTL_MS);
+      const credentialName = visible.name;
+      const uploadUrl = `${input.origin.replace(/\/+$/, "")}/admin/api/credentials/codex-auth-upload/${token}`;
+
+      pruneExpiredCodexAuthUploadSessions();
+      codexAuthUploadSessions.set(token, {
+        token,
+        mode: "replace",
+        credentialId,
+        credentialName,
+        actorUserId,
+        expiresAt,
+      });
+
+      await recordAuditEvent({
+        actorUserId,
+        action: "credential.codex_auth_upload_session.create",
+        entityType: "credential",
+        entityId: credentialId,
+        result: "ok",
+        summary: `Created Codex auth upload session for credential ${credentialId}.`,
+      });
+
+      return {
+        upload: {
+          token,
+          credentialId,
+          credentialName,
+          uploadUrl,
+          expiresAt: expiresAt.toISOString(),
+        },
+        command: createCodexAuthUploadCommand({
+          uploadUrl,
+          credentialId,
+          credentialName,
+        }),
+      };
+    },
+    async createCodexAuthCredentialUploadSession(_token, input, actorUserId) {
+      const token = randomBytes(24).toString("hex");
+      const expiresAt = new Date(now().getTime() + CODEX_AUTH_UPLOAD_SESSION_TTL_MS);
+      const credentialName = "New Codex account";
+      const uploadUrl = `${input.origin.replace(/\/+$/, "")}/admin/api/credentials/codex-auth-upload/${token}`;
+
+      pruneExpiredCodexAuthUploadSessions();
+      codexAuthUploadSessions.set(token, {
+        token,
+        mode: "create",
+        credentialId: null,
+        credentialName,
+        actorUserId,
+        expiresAt,
+      });
+
+      await recordAuditEvent({
+        actorUserId,
+        action: "credential.codex_auth_upload_session.create",
+        entityType: "credential",
+        entityId: "new_codex_credential",
+        result: "ok",
+        summary: "Created Codex auth upload session for a new credential.",
+      });
+
+      return {
+        upload: {
+          token,
+          credentialId: null,
+          credentialName,
+          uploadUrl,
+          expiresAt: expiresAt.toISOString(),
+        },
+        command: createCodexAuthUploadCommand({
+          uploadUrl,
+          credentialName,
+        }),
+      };
+    },
+    async uploadCodexAuth(token, input) {
+      const uploadSession = getCodexAuthUploadSession(token);
+      if (!uploadSession) {
+        throw new HttpError("codex_auth_upload_session_not_found", 404);
+      }
+
+      const authJson = validateCodexAuthJson(typeof input.authJson === "string" ? input.authJson : "");
+      const accountId = readCodexAuthAccountId(authJson);
+      if (uploadSession.mode === "create") {
+        const credentialName = buildCodexCredentialNameFromAuthJson(authJson);
+        const stored = await getSecretStore().put({
+          kind: "codex_auth_json",
+          authJson,
+        });
+        const created = await getCredentialWriteRepository().createPlatformCredential({
+          ownerUserId: getPlatformCredentialOwnerUserId("codex_oauth"),
+          name: credentialName,
+          provider: "codex_oauth",
+          credentialType: "oauth",
+          secretRef: stored.secretRef,
+        });
+        codexAuthUploadSessions.delete(token);
+
+        await recordAuditEvent({
+          actorUserId: uploadSession.actorUserId,
+          action: "credential.codex_auth_upload",
+          entityType: "credential",
+          entityId: created.id,
+          result: "ok",
+          summary: `Uploaded Codex auth and created credential ${created.id}.`,
+        });
+
+        return {
+          ok: true,
+          credentialId: created.id,
+          credentialName: toAdminCredentialRecord(created).name,
+          accountId,
+        };
+      }
+
+      if (!uploadSession.credentialId) {
+        throw new HttpError("codex_auth_upload_session_not_found", 404);
+      }
+      const { visible, stored } = await getCodexCredentialSecretRecordOrThrow(uploadSession.credentialId);
+
+      await getSecretStore().replace(stored.secretRef, {
+        kind: "codex_auth_json",
+        authJson,
+      });
+      const updated = await getCredentialActionRepository().reconnectCredential(uploadSession.credentialId);
+      if (!updated) {
+        throw new HttpError("credential_not_found", 404);
+      }
+      codexAuthUploadSessions.delete(token);
+
+      await recordAuditEvent({
+        actorUserId: uploadSession.actorUserId,
+        action: "credential.codex_auth_upload",
+        entityType: "credential",
+        entityId: uploadSession.credentialId,
+        result: "ok",
+        summary: `Uploaded Codex auth for credential ${uploadSession.credentialId}.`,
+      });
+
+      return {
+        ok: true,
+        credentialId: uploadSession.credentialId,
+        credentialName: visible.name,
+        accountId,
+      };
+    },
     async revokeCredential(_token, credentialId, actorUserId) {
       const updated = await getCredentialActionRepository().revokeCredential(credentialId);
       if (!updated) {
@@ -2047,6 +2365,9 @@ export function createDefaultAdminService(
     },
     async runCodexCapacityAlertEmailMonitor() {
       return getCodexCapacityAlertEmailRunner()();
+    },
+    async runCredentialAlertEmailMonitor() {
+      return getCredentialAlertEmailRunner()();
     },
     async acknowledgeAlert(_token, alertId, actorUserId) {
       const acknowledge = getAlertRepository().acknowledgeAlert;
@@ -2295,6 +2616,57 @@ function validateCodexAuthJson(secret: string): string {
   }
 
   return secret;
+}
+
+function readCodexAuthAccountId(authJson: string): string {
+  try {
+    const parsed = JSON.parse(authJson) as { tokens?: { account_id?: unknown } };
+    const accountId = typeof parsed.tokens?.account_id === "string" ? parsed.tokens.account_id.trim() : "";
+    if (accountId) {
+      return accountId;
+    }
+  } catch {
+    // validateCodexAuthJson already maps this for callers.
+  }
+
+  throw new HttpError("invalid_credential_secret", 400);
+}
+
+function buildCodexCredentialNameFromAuthJson(authJson: string): string {
+  const email = readCodexAuthEmail(authJson);
+  return validateCredentialName(`${email} Codex`);
+}
+
+function readCodexAuthEmail(authJson: string): string {
+  try {
+    const parsed = JSON.parse(authJson) as { tokens?: { id_token?: unknown } };
+    const idToken = typeof parsed.tokens?.id_token === "string" ? parsed.tokens.id_token.trim() : "";
+    const [, payload] = idToken.split(".");
+    if (!payload) {
+      throw new Error("missing id token payload");
+    }
+    const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { email?: unknown };
+    const email = typeof claims.email === "string" ? claims.email.trim().toLowerCase() : "";
+    if (email && email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return email;
+    }
+  } catch {
+    // mapped below
+  }
+
+  throw new HttpError("invalid_codex_auth_account_email", 400);
+}
+
+function validateCredentialName(value: unknown): string {
+  const name = typeof value === "string" ? value.trim() : "";
+  if (!name || name.length > 120) {
+    throw new HttpError("invalid_credential_name", 400);
+  }
+  return name;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 function toAdminCredentialRecord(record: GatewayCredentialRecord): CredentialRecord {
@@ -2706,6 +3078,26 @@ function getAdminActorUserId(res: express.Response) {
   return session?.user.email ?? session?.user.id ?? null;
 }
 
+function readFirstHeader(value: unknown): string | null {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (typeof raw !== "string") {
+    return null;
+  }
+  const [first] = raw.split(",");
+  const trimmed = first?.trim();
+  return trimmed || null;
+}
+
+function createRequestOrigin(req: express.Request): string {
+  const protocol = readFirstHeader(req.headers["x-forwarded-proto"]) ?? req.protocol ?? "http";
+  const host = readFirstHeader(req.headers["x-forwarded-host"]) ?? req.get("host");
+  if (!host) {
+    throw new HttpError("codex_auth_upload_origin_unavailable", 500);
+  }
+
+  return `${protocol}://${host}`;
+}
+
 export function createAdminRouter(adminService: AdminService) {
   const router = Router();
   const currentFile = fileURLToPath(import.meta.url);
@@ -2773,6 +3165,20 @@ export function createAdminRouter(adminService: AdminService) {
   router.post("/admin/api/auth/sign-out", (req, res) => {
     res.append("Set-Cookie", serializeAdminCookieClear(req, ADMIN_AUTH_COOKIE_NAME));
     res.status(204).end();
+  });
+
+  router.post("/admin/api/credentials/codex-auth-upload/:token", async (req, res) => {
+    try {
+      const payload = await adminService.uploadCodexAuth(req.params.token, {
+        authJson: typeof req.body?.authJson === "string" ? req.body.authJson : "",
+      });
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "codex_auth_upload_failed" });
+    }
   });
 
   router.use("/admin/api", async (req, res, next) => {
@@ -3145,6 +3551,62 @@ export function createAdminRouter(adminService: AdminService) {
         return;
       }
       res.status(502).json({ error: "credential_create_failed" });
+    }
+  });
+
+  router.patch("/admin/api/credentials/:credentialId", async (req, res) => {
+    try {
+      const payload = await adminService.renameCredential(
+        res.locals.adminToken as string,
+        req.params.credentialId,
+        {
+          name: typeof req.body?.name === "string" ? req.body.name.trim() : "",
+        },
+        getAdminActorUserId(res),
+      );
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "credential_rename_failed" });
+    }
+  });
+
+  router.post("/admin/api/credentials/codex-auth-upload-session", async (req, res) => {
+    try {
+      const payload = await adminService.createCodexAuthCredentialUploadSession(
+        res.locals.adminToken as string,
+        {
+          origin: createRequestOrigin(req),
+        },
+        getAdminActorUserId(res),
+      );
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "codex_auth_upload_session_create_failed" });
+    }
+  });
+
+  router.post("/admin/api/credentials/:credentialId/codex-auth-upload-session", async (req, res) => {
+    try {
+      const payload = await adminService.createCodexAuthUploadSession(
+        res.locals.adminToken as string,
+        req.params.credentialId,
+        {
+          origin: createRequestOrigin(req),
+        },
+        getAdminActorUserId(res),
+      );
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "codex_auth_upload_session_create_failed" });
     }
   });
 

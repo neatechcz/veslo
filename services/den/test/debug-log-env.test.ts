@@ -39,6 +39,15 @@ test("debug log env defaults retention and allows missing unused secrets", () =>
   })
 })
 
+test("internal AI gateway token env parses optional service token", () => {
+  const parsed = parseEnv({
+    ...baseEnv,
+    DEN_AI_GATEWAY_INTERNAL_TOKEN: " internal-token ",
+  })
+
+  assert.equal(parsed.aiGatewayInternalToken, "internal-token")
+})
+
 test("debug log env rejects invalid retention days", () => {
   assert.throws(
     () =>

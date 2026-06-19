@@ -69,6 +69,25 @@ function createCodexAuthJson(refreshToken = "codex-refresh-token") {
   });
 }
 
+function createCodexAuthJsonWithEmail(email: string, refreshToken = "codex-refresh-token") {
+  const encode = (value: unknown) => Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+  const idToken = [
+    encode({ alg: "none", typ: "JWT" }),
+    encode({ email }),
+    "signature",
+  ].join(".");
+
+  return JSON.stringify({
+    auth_mode: "chatgpt",
+    tokens: {
+      id_token: idToken,
+      access_token: "codex-access-token",
+      refresh_token: refreshToken,
+      account_id: "acct_codex_runtime",
+    },
+  });
+}
+
 function createUnusedDenClient() {
   return {
     async startBrowserAuth() {
@@ -155,6 +174,7 @@ function createAlert(id: string, status: AlertRecord["status"]): AlertRecord {
     title: "Provider rate limits increasing",
     severity: "high",
     source: "provider-rate-limit",
+    reason: "rate_limit_exceeded",
     status,
     credentialId: "cred_openai_1",
     affectedSessions: 3,
@@ -186,7 +206,7 @@ function createUsageResponse(): UsageResponse {
 
 function createAdminServiceSpy() {
   const calls = {
-    credential: [] as Array<{ action: string; credentialId: string; token: string; actorUserId: string | null }>,
+    credential: [] as Array<Record<string, unknown>>,
     alert: [] as Array<{ action: string; alertId: string; token: string; actorUserId: string | null }>,
   };
   const session = createSession();
@@ -241,6 +261,50 @@ function createAdminServiceSpy() {
           ...createCredential(credentialId, "revoked", { activeLeases: 0 }),
           deletedAt: "2026-04-03T11:00:00.000Z",
         },
+      };
+    },
+    async renameCredential(token, credentialId, input, actorUserId) {
+      calls.credential.push({ action: "rename", credentialId, token, actorUserId, name: input.name });
+      return {
+        credential: {
+          ...createCredential(credentialId, "healthy", { provider: "codex_oauth", activeLeases: 0 }),
+          name: input.name,
+        },
+      };
+    },
+    async createCodexAuthUploadSession(token, credentialId, input, actorUserId) {
+      calls.credential.push({ action: "codex-auth-upload-session", credentialId, token, actorUserId, origin: input.origin });
+      return {
+        upload: {
+          token: "upload-token",
+          credentialId,
+          credentialName: "Václav Codex",
+          uploadUrl: `${input.origin}/admin/api/credentials/codex-auth-upload/upload-token`,
+          expiresAt: "2026-06-17T08:10:00.000Z",
+        },
+        command: `node scripts/admin/codex-auth-upload.mjs --upload-url '${input.origin}/admin/api/credentials/codex-auth-upload/upload-token' --credential-id '${credentialId}' --credential-name 'Václav Codex'`,
+      };
+    },
+    async createCodexAuthCredentialUploadSession(token, input, actorUserId) {
+      calls.credential.push({ action: "codex-auth-credential-upload-session", token, actorUserId, origin: input.origin });
+      return {
+        upload: {
+          token: "upload-token",
+          credentialId: null,
+          credentialName: "New Codex account",
+          uploadUrl: `${input.origin}/admin/api/credentials/codex-auth-upload/upload-token`,
+          expiresAt: "2026-06-17T08:10:00.000Z",
+        },
+        command: `node scripts/admin/codex-auth-upload.mjs --upload-url '${input.origin}/admin/api/credentials/codex-auth-upload/upload-token' --credential-name 'New Codex account'`,
+      };
+    },
+    async uploadCodexAuth(token, input) {
+      calls.credential.push({ action: "codex-auth-upload", token, authJson: input.authJson });
+      return {
+        ok: true,
+        credentialId: "cred_codex_1",
+        credentialName: "Václav Codex",
+        accountId: "acct_codex_runtime",
       };
     },
     async reconnectCredential(token, credentialId, input, actorUserId) {
@@ -345,6 +409,132 @@ test("DELETE /admin/api/credentials/:credentialId forwards admin actor identity"
     assert.deepEqual(calls.credential, [
       { action: "delete", credentialId: "cred_revoked_1", token: "admin-token", actorUserId: session.user.email },
     ]);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("PATCH /admin/api/credentials/:credentialId forwards credential rename", async () => {
+  const { service, calls, session } = createAdminServiceSpy();
+  const app = createApp({ admin: service });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/credentials/cred_codex_1`, {
+      method: "PATCH",
+      headers: {
+        ...AUTHORIZATION,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ name: "Václav Codex" }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).credential.name, "Václav Codex");
+    assert.deepEqual(calls.credential.at(-1), {
+      action: "rename",
+      credentialId: "cred_codex_1",
+      token: "admin-token",
+      actorUserId: session.user.email,
+      name: "Václav Codex",
+    });
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("POST /admin/api/credentials/:credentialId/codex-auth-upload-session forwards origin and actor", async () => {
+  const { service, calls, session } = createAdminServiceSpy();
+  const app = createApp({ admin: service });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/credentials/cred_codex_1/codex-auth-upload-session`, {
+      method: "POST",
+      headers: AUTHORIZATION,
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.upload.credentialId, "cred_codex_1");
+    assert.match(payload.command, /node scripts\/admin\/codex-auth-upload\.mjs/);
+    assert.deepEqual(calls.credential.at(-1), {
+      action: "codex-auth-upload-session",
+      credentialId: "cred_codex_1",
+      token: "admin-token",
+      actorUserId: session.user.email,
+      origin: `http://127.0.0.1:${port}`,
+    });
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("POST /admin/api/credentials/codex-auth-upload-session prepares a new Codex credential upload", async () => {
+  const { service, calls, session } = createAdminServiceSpy();
+  const app = createApp({ admin: service });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/credentials/codex-auth-upload-session`, {
+      method: "POST",
+      headers: AUTHORIZATION,
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.upload.credentialId, null);
+    assert.equal(payload.upload.credentialName, "New Codex account");
+    assert.doesNotMatch(payload.command, /--credential-id/);
+    assert.deepEqual(calls.credential.at(-1), {
+      action: "codex-auth-credential-upload-session",
+      token: "admin-token",
+      actorUserId: session.user.email,
+      origin: `http://127.0.0.1:${port}`,
+    });
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("POST /admin/api/credentials/codex-auth-upload/:token accepts one-time upload without admin bearer token", async () => {
+  const { service, calls } = createAdminServiceSpy();
+  const app = createApp({ admin: service });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/credentials/codex-auth-upload/upload-token`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ authJson: createCodexAuthJson("fresh-refresh-token") }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      ok: true,
+      credentialId: "cred_codex_1",
+      credentialName: "Václav Codex",
+      accountId: "acct_codex_runtime",
+    });
+    assert.deepEqual(calls.credential.at(-1), {
+      action: "codex-auth-upload",
+      token: "upload-token",
+      authJson: createCodexAuthJson("fresh-refresh-token"),
+    });
   } finally {
     server.close();
     await once(server, "close");
@@ -577,6 +767,279 @@ test("createDefaultAdminService reconnects a Codex credential in place", async (
     {
       action: "credential.reconnect",
       entityId: "cred_codex_1",
+      result: "ok",
+    },
+  ]);
+});
+
+test("createDefaultAdminService uploads Codex auth through a one-time local helper session", async () => {
+  const secretReplacements: unknown[] = [];
+  const reconnectCalls: string[] = [];
+  const auditCalls: Array<{ action: string; entityId: string; result: string }> = [];
+  const refreshedCredential = {
+    ...createCredential("cred_codex_1", "healthy", { provider: "codex_oauth", activeLeases: 0 }),
+    name: "Václav Codex",
+    alertCount: 0,
+    linkedAlertIds: [],
+    lastRefreshAt: "2026-04-03T11:30:00.000Z",
+  };
+  const service = createDefaultAdminService("http://den.example.test", {
+    denClient: createUnusedDenClient(),
+    credentialReadRepository: {
+      async listAdminCredentials() {
+        return [refreshedCredential];
+      },
+    },
+    credentialActionRepository: {
+      async renameCredential() {
+        throw new Error("unused");
+      },
+      async revokeCredential() {
+        throw new Error("unused");
+      },
+      async drainCredential() {
+        throw new Error("unused");
+      },
+      async rotateCredential() {
+        throw new Error("unused");
+      },
+      async deleteCredential() {
+        throw new Error("unused");
+      },
+      async reconnectCredential(credentialId: string) {
+        reconnectCalls.push(credentialId);
+        return true;
+      },
+    } as any,
+    credentialSecretLookupRepository: {
+      async getCredentialRecordById(credentialId: string) {
+        assert.equal(credentialId, "cred_codex_1");
+        return {
+          provider: "codex_oauth",
+          secretRef: "secret_codex_1",
+          name: "Václav Codex",
+        };
+      },
+    },
+    secretStore: {
+      async put() {
+        throw new Error("unused");
+      },
+      async get() {
+        throw new Error("unused");
+      },
+      async replace(secretRef: string, secret: unknown) {
+        secretReplacements.push({ secretRef, secret });
+      },
+    },
+    auditRepository: {
+      async recordEvent(input) {
+        auditCalls.push({
+          action: input.action,
+          entityId: input.entityId,
+          result: input.result,
+        });
+      },
+      async listEvents() {
+        return [];
+      },
+    },
+    alertRepository: {
+      async listAlerts() {
+        return [];
+      },
+    },
+    now: () => new Date("2026-06-17T08:00:00.000Z"),
+  } as any);
+  const freshAuthJson = createCodexAuthJson("fresh-refresh-token");
+
+  const sessionPayload = await (service as any).createCodexAuthUploadSession(
+    "admin-token",
+    "cred_codex_1",
+    { origin: "https://ai.veslo.work" },
+    "admin@example.test",
+  );
+
+  assert.match(sessionPayload.upload.token, /^[a-f0-9]{48}$/);
+  assert.equal(sessionPayload.upload.credentialName, "Václav Codex");
+  assert.equal(sessionPayload.upload.uploadUrl, `https://ai.veslo.work/admin/api/credentials/codex-auth-upload/${sessionPayload.upload.token}`);
+  assert.equal(sessionPayload.upload.expiresAt, "2026-06-17T08:10:00.000Z");
+  assert.match(sessionPayload.command, /node scripts\/admin\/codex-auth-upload\.mjs/);
+
+  const result = await (service as any).uploadCodexAuth(sessionPayload.upload.token, {
+    authJson: freshAuthJson,
+  });
+
+  assert.deepEqual(result, {
+    ok: true,
+    credentialId: "cred_codex_1",
+    credentialName: "Václav Codex",
+    accountId: "acct_codex_runtime",
+  });
+  assert.deepEqual(secretReplacements, [
+    {
+      secretRef: "secret_codex_1",
+      secret: {
+        kind: "codex_auth_json",
+        authJson: freshAuthJson,
+      },
+    },
+  ]);
+  assert.deepEqual(reconnectCalls, ["cred_codex_1"]);
+  assert.deepEqual(auditCalls, [
+    {
+      action: "credential.codex_auth_upload_session.create",
+      entityId: "cred_codex_1",
+      result: "ok",
+    },
+    {
+      action: "credential.codex_auth_upload",
+      entityId: "cred_codex_1",
+      result: "ok",
+    },
+  ]);
+  await assert.rejects(
+    () => (service as any).uploadCodexAuth(sessionPayload.upload.token, {
+      authJson: freshAuthJson,
+    }),
+    /codex_auth_upload_session_not_found/,
+  );
+});
+
+test("createDefaultAdminService creates a new Codex credential from a one-time local helper session", async () => {
+  const secretPuts: unknown[] = [];
+  const credentialCreates: unknown[] = [];
+  const auditCalls: Array<{ action: string; entityId: string; result: string }> = [];
+  const createdAt = new Date("2026-06-17T08:04:00.000Z");
+  const service = createDefaultAdminService("http://den.example.test", {
+    denClient: createUnusedDenClient(),
+    credentialReadRepository: {
+      async listAdminCredentials() {
+        return [];
+      },
+    },
+    credentialActionRepository: {
+      async renameCredential() {
+        throw new Error("unused");
+      },
+      async revokeCredential() {
+        throw new Error("unused");
+      },
+      async drainCredential() {
+        throw new Error("unused");
+      },
+      async rotateCredential() {
+        throw new Error("unused");
+      },
+      async deleteCredential() {
+        throw new Error("unused");
+      },
+      async reconnectCredential() {
+        throw new Error("unused");
+      },
+    } as any,
+    credentialWriteRepository: {
+      async createPlatformCredential(input: unknown) {
+        credentialCreates.push(input);
+        return {
+          id: "cred_codex_new_1",
+          ownerUserId: "platform:codex_oauth",
+          provider: "codex_oauth",
+          credentialType: "oauth",
+          state: "healthy",
+          secretRef: "secret_codex_new_1",
+          name: "new.account@example.test Codex",
+          createdAt,
+          updatedAt: createdAt,
+          lastFailureAt: null,
+          deletedAt: null,
+        };
+      },
+    },
+    credentialSecretLookupRepository: {
+      async getCredentialRecordById() {
+        throw new Error("unused");
+      },
+    },
+    secretStore: {
+      async put(secret: unknown) {
+        secretPuts.push(secret);
+        return { secretRef: "secret_codex_new_1" };
+      },
+      async get() {
+        throw new Error("unused");
+      },
+      async replace() {
+        throw new Error("unused");
+      },
+    },
+    auditRepository: {
+      async recordEvent(input) {
+        auditCalls.push({
+          action: input.action,
+          entityId: input.entityId,
+          result: input.result,
+        });
+      },
+      async listEvents() {
+        return [];
+      },
+    },
+    alertRepository: {
+      async listAlerts() {
+        return [];
+      },
+    },
+    now: () => new Date("2026-06-17T08:00:00.000Z"),
+  } as any);
+  const freshAuthJson = createCodexAuthJsonWithEmail("new.account@example.test", "fresh-refresh-token");
+
+  const sessionPayload = await (service as any).createCodexAuthCredentialUploadSession(
+    "admin-token",
+    { origin: "https://ai.veslo.work" },
+    "admin@example.test",
+  );
+
+  assert.equal(sessionPayload.upload.credentialId, null);
+  assert.equal(sessionPayload.upload.credentialName, "New Codex account");
+  assert.equal(sessionPayload.upload.uploadUrl, `https://ai.veslo.work/admin/api/credentials/codex-auth-upload/${sessionPayload.upload.token}`);
+  assert.doesNotMatch(sessionPayload.command, /--credential-id/);
+  assert.match(sessionPayload.command, /--credential-name 'New Codex account'/);
+
+  const result = await (service as any).uploadCodexAuth(sessionPayload.upload.token, {
+    authJson: freshAuthJson,
+  });
+
+  assert.deepEqual(result, {
+    ok: true,
+    credentialId: "cred_codex_new_1",
+    credentialName: "new.account@example.test Codex",
+    accountId: "acct_codex_runtime",
+  });
+  assert.deepEqual(secretPuts, [
+    {
+      kind: "codex_auth_json",
+      authJson: freshAuthJson,
+    },
+  ]);
+  assert.deepEqual(credentialCreates, [
+    {
+      ownerUserId: "platform:codex_oauth",
+      name: "new.account@example.test Codex",
+      provider: "codex_oauth",
+      credentialType: "oauth",
+      secretRef: "secret_codex_new_1",
+    },
+  ]);
+  assert.deepEqual(auditCalls, [
+    {
+      action: "credential.codex_auth_upload_session.create",
+      entityId: "new_codex_credential",
+      result: "ok",
+    },
+    {
+      action: "credential.codex_auth_upload",
+      entityId: "cred_codex_new_1",
       result: "ok",
     },
   ]);

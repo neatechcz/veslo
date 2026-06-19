@@ -5,6 +5,8 @@ import { parse } from "jsonc-parser";
 import { isTauriRuntime } from "../utils";
 import { isGatewayOwnedProvider, type GatewayOwnedProviderId } from "../utils/providers";
 import { fetchWithTimeout } from "./http";
+import { recordSendWorkflowTrace } from "./send-workflow-trace";
+import { wrapStartupRequestAuditFetch } from "./startup-request-audit";
 
 export type FieldsResult<T> =
   | ({ data: T; error?: undefined } & { request: Request; response: Response })
@@ -17,7 +19,14 @@ export type OpencodeAuth = {
   mode?: "basic" | "veslo";
 };
 
-const DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS = 10_000;
+// VSLO-86 — opencode engine cold-start (Bun JIT + SQLite migration + sandbox
+// init + plugin vendoring) routinely takes 15-30s, and the first proxy request
+// through the orchestrator after a workspace activate must wait for the engine
+// to finish spawning. A 10s frontend timeout (the previous value) raced the
+// engine warmup and surfaced as "Request timed out" Error badges on every
+// workspace in the sidebar. Once the engine is up, requests complete in tens
+// of ms — the longer ceiling only changes worst-case behavior.
+const DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS = 60_000;
 const OAUTH_OPENCODE_REQUEST_TIMEOUT_MS = 5 * 60_000;
 const MCP_AUTH_OPENCODE_REQUEST_TIMEOUT_MS = 90_000;
 const GATEWAY_PROVIDER_SECRET_OPTION_KEYS = new Set([
@@ -27,13 +36,24 @@ const GATEWAY_PROVIDER_SECRET_OPTION_KEYS = new Set([
   "refreshtoken",
   "token",
 ]);
-const GATEWAY_PROVIDER_ALLOWED_HEADER_KEYS = new Set([
-  "xveslogatewaytoken",
-  "xveslosessionid",
-]);
 const SERVER_PATCH_COMPARISON_GATEWAY_TOKEN_VALUE = "__veslo_gateway_token__";
+const SERVER_PATCH_COMPARISON_SECRET_VALUE = "__veslo_secret_value__";
+// VSLO-86 — a literal "[REDACTED]" sitting in opencode.jsonc on disk is a
+// broken state from an earlier patch round-trip where the server returned
+// the redacted value and the app patched it back through formatConfig. The
+// comparison normalizer must distinguish this from a real token so the
+// boot-time effect forces a re-patch with the in-memory gateway token.
+const SERVER_PATCH_COMPARISON_REDACTED_LITERAL = "__veslo_broken_redacted_token__";
+const REDACTED_LITERAL = "[REDACTED]";
 
 export const OPENCODE_SESSION_ID_TEMPLATE = "${OPENCODE_SESSION_ID}";
+const VESLO_GATEWAY_TOKEN_HEADER = "x-veslo-gateway-token";
+const VESLO_SESSION_ID_HEADER = "x-veslo-session-id";
+export const VESLO_WORKSPACE_ID_HEADER = "x-veslo-workspace-id";
+const auditedTauriFetch = wrapStartupRequestAuditFetch(
+  tauriFetch as unknown as typeof globalThis.fetch,
+  "tauri.opencode",
+);
 
 function getRequestUrl(input: RequestInfo | URL): string {
   if (typeof input === "string") return input;
@@ -83,7 +103,7 @@ const createTauriFetch = (auth?: OpencodeAuth) => {
       addAuth(headers);
       const request = new Request(input, { headers });
       return fetchWithTimeout(
-        tauriFetch as unknown as typeof globalThis.fetch,
+        auditedTauriFetch,
         request,
         undefined,
         DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS,
@@ -93,7 +113,7 @@ const createTauriFetch = (auth?: OpencodeAuth) => {
     const headers = new Headers(init?.headers);
     addAuth(headers);
     return fetchWithTimeout(
-      tauriFetch as unknown as typeof globalThis.fetch,
+      auditedTauriFetch,
       input,
       {
         ...init,
@@ -142,6 +162,12 @@ function normalizeConfigKey(input: string): string {
   return input.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+const GATEWAY_PROVIDER_ALLOWED_HEADER_KEYS = new Set([
+  VESLO_GATEWAY_TOKEN_HEADER,
+  VESLO_SESSION_ID_HEADER,
+  VESLO_WORKSPACE_ID_HEADER,
+].map(normalizeConfigKey));
+
 function isGatewayProviderSecretKey(normalizedKey: string): boolean {
   if (!normalizedKey) return false;
   if (GATEWAY_PROVIDER_ALLOWED_HEADER_KEYS.has(normalizedKey)) return false;
@@ -162,6 +188,37 @@ function readConfigObject(value: unknown): Record<string, unknown> {
     return {};
   }
   return value as Record<string, unknown>;
+}
+
+function summarizeUrlForTrace(value: string | null | undefined): Record<string, unknown> {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) return { present: false };
+  try {
+    const parsed = new URL(trimmed);
+    return {
+      present: true,
+      origin: parsed.origin,
+      pathname: parsed.pathname.replace(/\/+$/, "") || "/",
+    };
+  } catch {
+    return {
+      present: true,
+      invalid: true,
+      length: trimmed.length,
+    };
+  }
+}
+
+function headerNamesForTrace(value: unknown): string[] {
+  return Object.keys(readConfigObject(value)).sort((a, b) => a.localeCompare(b));
+}
+
+function modelNamesForTrace(value: unknown): string[] {
+  return Object.keys(readConfigObject(value)).sort((a, b) => a.localeCompare(b));
+}
+
+function recordOpencodeConfigTrace(event: string, payload: Record<string, unknown>) {
+  recordSendWorkflowTrace("opencode-config", event, payload);
 }
 
 function parseConfigContent(content?: string | null): Record<string, unknown> {
@@ -246,10 +303,22 @@ function normalizeConfigForServerPatchComparison(value: unknown): unknown {
     // Server reads redact the gateway access token; local server bearer
     // credentials must remain value-sensitive so token rotation patches config.
     if (normalizedKey === "xveslogatewaytoken") {
-      output[key] =
-        typeof rawValue === "string" && rawValue.trim()
-          ? SERVER_PATCH_COMPARISON_GATEWAY_TOKEN_VALUE
-          : rawValue;
+      const trimmed = typeof rawValue === "string" ? rawValue.trim() : "";
+      if (trimmed === REDACTED_LITERAL) {
+        output[key] = SERVER_PATCH_COMPARISON_REDACTED_LITERAL;
+        continue;
+      }
+      output[key] = trimmed ? SERVER_PATCH_COMPARISON_GATEWAY_TOKEN_VALUE : rawValue;
+      continue;
+    }
+
+    if (isGatewayProviderSecretKey(normalizedKey)) {
+      const trimmed = typeof rawValue === "string" ? rawValue.trim() : "";
+      if (trimmed === REDACTED_LITERAL) {
+        output[key] = SERVER_PATCH_COMPARISON_REDACTED_LITERAL;
+        continue;
+      }
+      output[key] = trimmed ? SERVER_PATCH_COMPARISON_SECRET_VALUE : rawValue;
       continue;
     }
 
@@ -265,7 +334,13 @@ export function managedConfigContentsMatchForServerPatch(
 ): boolean {
   const current = normalizeConfigForServerPatchComparison(parseConfigContent(currentContent));
   const desired = normalizeConfigForServerPatchComparison(parseConfigContent(desiredContent));
-  return JSON.stringify(current) === JSON.stringify(desired);
+  const matches = JSON.stringify(current) === JSON.stringify(desired);
+  recordOpencodeConfigTrace("managed-config-compare", {
+    matches,
+    currentBytes: currentContent?.length ?? 0,
+    desiredBytes: desiredContent?.length ?? 0,
+  });
+  return matches;
 }
 
 export function applyGatewayProviderRouting(
@@ -275,6 +350,7 @@ export function applyGatewayProviderRouting(
     serverBaseUrl: string;
     serverClientToken: string;
     gatewayAccessToken: string;
+    workspaceId?: string | null;
     models?: string[];
   },
 ) {
@@ -297,6 +373,7 @@ export function applyGatewayProviderRouting(
   if (!gatewayAccessToken) {
     throw new Error("Gateway access token is required");
   }
+  const workspaceId = input.workspaceId?.trim() ?? "";
 
   const parsed = parseConfigContent(content);
   const providerRoot = readConfigObject(parsed.provider);
@@ -308,6 +385,23 @@ export function applyGatewayProviderRouting(
   const assignedModels = Array.from(
     new Set((input.models ?? []).map((value) => value.trim()).filter(Boolean)),
   );
+  recordOpencodeConfigTrace("apply-gateway-provider-routing:start", {
+    providerId,
+    workspaceId: workspaceId || null,
+    serverBaseUrl: summarizeUrlForTrace(serverBaseUrl),
+    modelCount: assignedModels.length,
+    models: assignedModels,
+    openAiCompatible: isOpenAiCompatibleGatewayProvider,
+    hasServerClientToken: Boolean(serverClientToken),
+    hasGatewayAccessToken: Boolean(gatewayAccessToken),
+    existingProviderKeys: Object.keys(existingProvider).sort((a, b) => a.localeCompare(b)),
+    existingOptionsKeys: Object.keys(existingOptions).sort((a, b) => a.localeCompare(b)),
+    existingOptionsBaseUrl: summarizeUrlForTrace(
+      typeof existingOptions.baseURL === "string" ? existingOptions.baseURL : null,
+    ),
+    existingProviderHeaderNames: headerNamesForTrace(existingOptions.headers),
+    existingModelNames: modelNamesForTrace(existingModels),
+  });
   const routedModels = assignedModels.reduce<Record<string, unknown>>((models, modelId) => {
     const existingModel = sanitizeGatewayProviderModel(existingModels[modelId]);
     models[modelId] = {
@@ -322,8 +416,9 @@ export function applyGatewayProviderRouting(
       headers: {
         ...existingModel.headers,
         ...(isOpenAiCompatibleGatewayProvider ? {} : { Authorization: `Bearer ${serverClientToken}` }),
-        "x-veslo-gateway-token": gatewayAccessToken,
-        "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
+        [VESLO_GATEWAY_TOKEN_HEADER]: gatewayAccessToken,
+        [VESLO_SESSION_ID_HEADER]: OPENCODE_SESSION_ID_TEMPLATE,
+        ...(workspaceId ? { [VESLO_WORKSPACE_ID_HEADER]: workspaceId } : {}),
       },
     };
     return models;
@@ -361,7 +456,26 @@ export function applyGatewayProviderRouting(
     [providerId]: nextProvider,
   };
 
-  return JSON.stringify(parsed, null, 2);
+  const output = JSON.stringify(parsed, null, 2);
+  recordOpencodeConfigTrace("apply-gateway-provider-routing:done", {
+    providerId,
+    workspaceId: workspaceId || null,
+    serverBaseUrl: summarizeUrlForTrace(serverBaseUrl),
+    routeBaseUrl: summarizeUrlForTrace(`${serverBaseUrl}/ai-gateway/providers/${providerId}/v1`),
+    modelCount: assignedModels.length,
+    models: assignedModels,
+    modelHeaderNames: Object.fromEntries(
+      assignedModels.map((modelId) => [
+        modelId,
+        headerNamesForTrace(readConfigObject(readConfigObject(routedModels[modelId]).headers)),
+      ]),
+    ),
+    providerOptionKeys: Object.keys(nextProvider.options as Record<string, unknown>).sort((a, b) =>
+      a.localeCompare(b)
+    ),
+    outputBytes: output.length,
+  });
+  return output;
 }
 
 export async function waitForHealthy(

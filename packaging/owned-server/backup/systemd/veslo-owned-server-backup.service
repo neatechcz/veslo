@@ -1,0 +1,10 @@
+[Unit]
+Description=Veslo owned-server database backup
+Documentation=file:/srv/veslo/app/packaging/owned-server/backup/README.md
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/veslo-owned-server-backup
+ExecStart=/usr/bin/env bash -c 'set -euo pipefail; app_dir="$${VESLO_APP_DIR:-/srv/veslo/app}"; cd "$$app_dir"; exec ./packaging/owned-server/backup/backup-owned-server-databases.sh'

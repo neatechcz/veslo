@@ -1,6 +1,8 @@
 import { MySqlAiAccessRepository } from "../access/mysql-repository.js";
 import { createAutoAssignedCodexCredentialRotationService } from "../access/auto-assignment-rotation.js";
 import type { AiAccessRepository } from "../access/repository.js";
+import { MySqlAlertRepository } from "../alerts/mysql-repository.js";
+import type { AlertRepository } from "../alerts/repository.js";
 import { MySqlAuditRepository } from "../audit/mysql-repository.js";
 import type { AuditRepository } from "../audit/repository.js";
 import { DenGatewaySessionResolver } from "../auth/gateway-session.js";
@@ -14,6 +16,7 @@ import type { SecretStore } from "../credentials/secret-store.js";
 import { createDb, type AiGatewayDb } from "../db/index.js";
 import { env } from "../env.js";
 import type { ProxyDependencies } from "../http/proxy.js";
+import type { ReadinessDependencies } from "../http/readiness.js";
 import type { UserCredentialDependencies } from "../http/user-credentials.js";
 import { DefaultBindingSelector } from "../leases/binding-selector.js";
 import { LeaseBroker } from "../leases/lease-broker.js";
@@ -29,6 +32,7 @@ import type { UsageRepository } from "../usage/repository.js";
 
 export type RuntimeState = {
   aiAccess: AiAccessRepository;
+  alerts: AlertRepository;
   audit: AuditRepository;
   credentials: CredentialRepository;
   secrets: SecretStore;
@@ -48,6 +52,7 @@ export function createDefaultRuntimeState(options: DefaultRuntimeOptions = {}): 
 
   return {
     aiAccess: new MySqlAiAccessRepository(db),
+    alerts: new MySqlAlertRepository(db),
     audit: new MySqlAuditRepository(db),
     credentials: new MySqlCredentialRepository(db),
     secrets: new MySqlSecretStore(db, secretKey),
@@ -89,6 +94,7 @@ export function createDefaultProxyDependencies(
 
   return {
     aiAccess: runtime.aiAccess,
+    alertRepository: runtime.alerts,
     autoAssignedCodexCredentialRotation: createAutoAssignedCodexCredentialRotationService({
       aiAccess: runtime.aiAccess,
       credentials: runtime.credentials,
@@ -123,6 +129,13 @@ export function createDefaultProxyDependencies(
     anthropicTransport: overrides.anthropicTransport ?? new AnthropicTransport(),
     codexOAuthTransport: overrides.codexOAuthTransport ?? new CodexOAuthInferenceProxyTransport(),
     openAiCompatibleTransport: overrides.openAiCompatibleTransport ?? new OpenAiCompatibleTransport(),
+  };
+}
+
+export function createDefaultReadinessDependencies(runtime: RuntimeState): ReadinessDependencies {
+  return {
+    credentials: runtime.credentials,
+    aiAccess: runtime.aiAccess,
   };
 }
 

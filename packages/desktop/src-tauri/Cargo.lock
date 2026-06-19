@@ -3532,6 +3532,7 @@ dependencies = [
  "bytes",
  "encoding_rs",
  "futures-core",
+ "futures-util",
  "h2",
  "http",
  "http-body",
@@ -3553,12 +3554,14 @@ dependencies = [
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "tower",
  "tower-http",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "wasm-streams 0.4.2",
  "web-sys",
  "webpki-roots 1.0.7",
 ]
@@ -3598,7 +3601,7 @@ dependencies = [
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "wasm-streams",
+ "wasm-streams 0.5.0",
  "web-sys",
 ]
 
@@ -4679,15 +4682,18 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-pilot"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e327181c74cdcb53deaebc4c4af46688a06078d6c528f30df5ef3bf97488137f"
+version = "0.7.0"
+source = "git+https://github.com/mpiton/tauri-pilot?rev=85d9091e616f90167399ac45f89edf028cdb3895#85d9091e616f90167399ac45f89edf028cdb3895"
 dependencies = [
+ "block2",
  "core-foundation 0.10.1",
  "core-graphics 0.24.0",
  "enigo",
  "image",
  "libc",
+ "objc2",
+ "objc2-foundation",
+ "objc2-web-kit",
  "serde",
  "serde_json",
  "tauri",
@@ -5461,6 +5467,8 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "veslo"
 version = "2026.6.2"
 dependencies = [
+ "base64 0.22.1",
+ "futures-util",
  "gethostname 0.4.3",
  "include_dir",
  "json5",
@@ -5470,9 +5478,11 @@ dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
  "os_pipe",
+ "reqwest 0.12.28",
  "rusqlite",
  "serde",
  "serde_json",
+ "sha1",
  "shared_child",
  "tauri",
  "tauri-build",
@@ -5486,6 +5496,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
  "tempfile",
+ "tokio",
  "ureq",
  "uuid",
  "walkdir",
@@ -5630,6 +5641,19 @@ dependencies = [
  "indexmap 2.14.0",
  "wasm-encoder",
  "wasmparser",
+]
+
+[[package]]
+name = "wasm-streams"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "15053d8d85c7eccdbefef60f06769760a563c7f0a9d6902a13d35c7800b0ad65"
+dependencies = [
+ "futures-util",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

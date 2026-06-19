@@ -6,6 +6,8 @@ out/
 dist/
 packages/*/dist/
 tmp/
+.tmp/
+**/.tmp/
 
 # Local git worktrees
 _worktrees/
@@ -50,10 +52,19 @@ vendor/opencode/
 # Local evidence artifacts
 evidence/
 
-# Local Graphify runtime state
-graphify-out/.graphify_root
+# Local latency diagnostics
+packages/app/scripts/workspace-latency.mjs
 
-# Local Codex runtime artifacts; keep the project Graphify hook tracked.
-.codex/*
-!.codex/
-!.codex/hooks.json
+# Local Codex run logs
+.codex-run/
+.codex-runlogs/
+
+# Developer-specific local docs
+dev-specific-docs/
+dev-specific/
+
+# Local Codex runtime artifact
+.codex
+
+# Veslo runtime logs
+docs/sandbox/runtime-logs/

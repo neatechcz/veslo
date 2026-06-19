@@ -28,7 +28,9 @@ export type UpdateStatus =
 export type PendingUpdate = { update: UpdateHandle; version: string; notes?: string } | null;
 
 export const UPDATE_AUTO_CHECK_EVERY_MS = 60 * 60_000;
-export const DEFAULT_UPDATE_AUTO_DOWNLOAD = true;
+export const DEFAULT_UPDATE_AUTO_DOWNLOAD = false;
+export const UPDATE_AUTO_DOWNLOAD_DEFAULT_OFF_MIGRATION_KEY =
+  "veslo.updateAutoDownloadDefaultOff.v1";
 export const UPDATE_AUTO_DOWNLOAD_RETRY_DELAYS_MS = [
   30_000,
   2 * 60_000,
@@ -113,6 +115,33 @@ export function resolveUpdateAutoDownloadPreference(stored: string | null) {
   if (stored === "0") return false;
   if (stored === "1") return true;
   return DEFAULT_UPDATE_AUTO_DOWNLOAD;
+}
+
+export function resolveUpdateAutoDownloadDefaultOffMigration(input: {
+  storedAutoDownload: string | null;
+  migrationComplete: boolean;
+}) {
+  if (input.migrationComplete) {
+    return {
+      storedAutoDownload: input.storedAutoDownload,
+      writeAutoDownload: false,
+      writeMigration: false,
+    };
+  }
+
+  if (input.storedAutoDownload === "0") {
+    return {
+      storedAutoDownload: input.storedAutoDownload,
+      writeAutoDownload: false,
+      writeMigration: true,
+    };
+  }
+
+  return {
+    storedAutoDownload: "0",
+    writeAutoDownload: input.storedAutoDownload !== "0",
+    writeMigration: true,
+  };
 }
 
 export function resolveUpdateStartupPreferences(input: {

@@ -153,6 +153,13 @@ export function createDebugLogPipeline(input: {
 
   return {
     async append(eventOrEvents) {
+      // Drop events silently when no uploader is configured (typical dev mode
+      // without VESLO_DEBUG_LOG_INGEST_URL/_TOKEN). Otherwise the spool grows
+      // indefinitely — Tauri's debug-logs-forwarder posts events every 5s,
+      // the server writes one file per event, and nothing ever drains them.
+      // Saw 138 000 spool files and veslo-server pinned at 550 % CPU in
+      // local dev because of this.
+      if (!uploader) return;
       const events = Array.isArray(eventOrEvents) ? eventOrEvents : [eventOrEvents];
       await appendInternal(events);
     },

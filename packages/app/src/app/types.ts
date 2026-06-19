@@ -3,7 +3,6 @@ import type {
   Part,
   PermissionRequest as ApiPermissionRequest,
   QuestionRequest,
-  ProviderListResponse,
   Session,
 } from "@opencode-ai/sdk/v2/client";
 import type { createClient } from "./lib/opencode";
@@ -11,7 +10,149 @@ import type { OpencodeConfigFile, ScheduledJob as TauriScheduledJob, WorkspaceIn
 
 export type Client = ReturnType<typeof createClient>;
 
-export type ProviderListItem = ProviderListResponse["all"][number];
+export type ProviderListModel = {
+  id: string;
+  name: string;
+  family?: string;
+  release_date?: string;
+  attachment?: boolean;
+  reasoning?: boolean;
+  temperature?: boolean;
+  tool_call?: boolean;
+  interleaved?: boolean | { field: "reasoning_content" | "reasoning_details" };
+  cost?: {
+    input: number;
+    output: number;
+    cache_read?: number;
+    cache_write?: number;
+    context_over_200k?: {
+      input: number;
+      output: number;
+      cache_read?: number;
+      cache_write?: number;
+    };
+  };
+  limit?: {
+    context: number;
+    output: number;
+  };
+  modalities?: {
+    input: Array<"text" | "audio" | "image" | "video" | "pdf">;
+    output: Array<"text" | "audio" | "image" | "video" | "pdf">;
+  };
+  experimental?: boolean;
+  status?: "alpha" | "beta" | "deprecated" | "active";
+  options?: Record<string, unknown>;
+  headers?: Record<string, string>;
+  provider?: {
+    npm: string;
+  };
+  variants?: unknown;
+};
+
+export type ProviderListItem = {
+  api?: string;
+  name: string;
+  env: string[];
+  id: string;
+  npm?: string;
+  models: Record<string, ProviderListModel>;
+};
+
+export type ProviderListState = {
+  all: ProviderListItem[];
+  connected: string[];
+  default: Record<string, string>;
+};
+
+export type VesloAutomationSchedule =
+  | { kind: "oneShot"; runAt: string; timezone?: string }
+  | { kind: "cron"; expression: string; timezone?: string }
+  | { kind: "interval"; seconds: number }
+  | { kind: "daily"; hour: number; minute: number; timezone?: string }
+  | { kind: "weekly"; weekday: number; hour: number; minute: number; timezone?: string };
+
+export type VesloAutomationStatus = "active" | "paused" | "completed" | "failed" | "cancelled";
+
+export type VesloAutomationRunStatus = "queued" | "running" | "success" | "failed" | "skipped";
+
+export type VesloAutomationTarget = {
+  preferredSessionId?: string;
+  fallbackTitle?: string;
+  agent?: string;
+  model?: string | null;
+  variant?: string | null;
+};
+
+export type VesloAutomation = {
+  id: string;
+  workspaceId: string;
+  name: string;
+  enabled: boolean;
+  status: VesloAutomationStatus;
+  schedule: VesloAutomationSchedule;
+  prompt: string;
+  target?: VesloAutomationTarget;
+  createdAt: string;
+  updatedAt: string;
+  nextRunAt?: string | null;
+  lastRunAt?: string | null;
+  lastRunId?: string | null;
+};
+
+export type VesloAutomationRun = {
+  id: string;
+  automationId: string;
+  scheduledFor: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  status: VesloAutomationRunStatus;
+  sessionId?: string | null;
+  createdSession: boolean;
+  error?: string | null;
+};
+
+export type VesloAutomationCreatePayload = {
+  name: string;
+  schedule: VesloAutomationSchedule;
+  prompt: string;
+  target?: VesloAutomationTarget;
+  enabled?: boolean;
+};
+
+export type VesloAutomationUpdatePayload = Partial<{
+  name: string;
+  schedule: VesloAutomationSchedule;
+  prompt: string;
+  target: VesloAutomationTarget | null;
+  enabled: boolean;
+  status: VesloAutomationStatus;
+}>;
+
+export type AutomationWorkspaceSummary = {
+  appWorkspaceId: string;
+  serverWorkspaceId: string | null;
+  name: string;
+  path?: string | null;
+  workspaceType: "local" | "remote";
+  status: "ready" | "unavailable" | "error";
+  error?: string | null;
+};
+
+export type WorkspaceAutomationItem = {
+  key: string;
+  workspace: AutomationWorkspaceSummary;
+  automation: VesloAutomation;
+  runs: VesloAutomationRun[];
+};
+
+export type PendingSidebarSessionMetadata = {
+  id: string;
+  workspaceId: string;
+  workspaceRoot: string;
+  title: string;
+  createdAt: number;
+};
 
 export type VesloAutomationSchedule =
   | { kind: "oneShot"; runAt: string; timezone?: string }
@@ -104,6 +245,11 @@ export type SidebarSessionItem = {
     created?: number | null;
   };
   directory?: string | null;
+  conversationId?: string | null;
+  opencodeSessionId?: string | null;
+  parentConversationId?: string | null;
+  branchId?: string | null;
+  pendingSessionInstanceId?: string | null;
 };
 
 export type SidebarSubagentDecoration = {
@@ -116,6 +262,7 @@ export type LoadedSidebarPrefetchInterest = {
   selectedSessionId: string | null;
   loadedTopLevelSessionIds: string[];
   expandedSubagentSessionIds: string[];
+  sessionDirectoriesById: Record<string, string>;
 };
 
 export type LoadedSessionPrefetchInterestChangeHandler = (
@@ -373,6 +520,13 @@ export type HubSkillInstallTarget =
 export type ManagedSkillSource = "personal" | "workspace" | "organization" | "platform";
 export type WorkspaceSkillRolloutRemovalPolicy = "user_removable" | "admin_removable" | "locked";
 
+export type ResourceOwner = {
+  kind: "workspace" | "user" | "organization" | "platform";
+  id: string;
+  label?: string;
+  root?: string;
+};
+
 export type SkillInventoryLifecycle = "active" | "removed";
 
 export type SkillInventoryRegistryMetadata = {
@@ -462,6 +616,7 @@ export type ResolvedWorkspaceSkill = {
   packageSha256: string;
   source: ManagedSkillSource;
   target: "workspace" | "personal-global";
+  owner?: ResourceOwner;
 };
 
 export type WorkspaceSkillMaterialization = {
@@ -473,6 +628,7 @@ export type WorkspaceSkillMaterialization = {
   source: ManagedSkillSource;
   removalPolicy: WorkspaceSkillRolloutRemovalPolicy;
   target: "workspace" | "personal-global";
+  owner?: ResourceOwner;
 };
 
 export type WorkspaceSkillConflict = {
@@ -497,6 +653,25 @@ export type WorkspaceSkillSetResolution = {
   reloadRequired: boolean;
 };
 
+export type HubMcpOAuthConfig =
+  | boolean
+  | {
+      clientId: string;
+      clientSecret?: string;
+      scope?: string;
+    };
+
+export type HubMcpAuthorization = {
+  type: "veslo-server-oauth";
+  provider: string;
+  connectorId: string;
+  scopes: string[];
+  startPath: string;
+  runtimeTokenPath: string;
+  statusPath: string;
+  disconnectPath: string;
+};
+
 export type HubMcpItem = {
   id: string;
   name: string;
@@ -505,11 +680,21 @@ export type HubMcpItem = {
     type: "remote" | "local";
     url?: string;
     command?: string[];
-    oauth?: boolean;
+    oauth?: HubMcpOAuthConfig;
+    headers?: Record<string, string>;
   };
-  source: {
-    scope: "org";
-    orgId: string;
+  authorization?: HubMcpAuthorization;
+  source:
+    | {
+        scope: "org";
+        orgId: string;
+      }
+    | {
+        scope: "platform";
+      };
+  provider?: {
+    id: string;
+    group?: string;
   };
 };
 
@@ -520,7 +705,14 @@ export type HubMcpCard = {
   type: "remote" | "local";
   url?: string;
   command?: string[];
-  oauth: boolean;
+  oauth: HubMcpOAuthConfig;
+  headers?: Record<string, string>;
+  authorization?: HubMcpAuthorization;
+  provider?: {
+    id: string;
+    group?: string;
+  };
+  source?: HubMcpItem["source"];
 };
 
 export type PluginInstallStep = {
@@ -603,14 +795,17 @@ export type ReloadTrigger = {
 
 export type PendingPermission = ApiPermissionRequest & {
   receivedAt: number;
+  /** VSLO-171 F3Ú7 — workspace origin (multi mode). Undefined in single-active. */
+  workspaceId?: string;
 };
 
 export type PendingQuestion = QuestionRequest & {
   receivedAt: number;
+  workspaceId?: string;
 };
 
 export type TodoItem = {
-  id: string;
+  id?: string;
   content: string;
   status: string;
   priority: string;

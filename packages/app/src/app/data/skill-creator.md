@@ -83,7 +83,7 @@ Quick validation:
 - Uses "when", "use when", or "triggers".
 - Describes the output or action, not just the topic.
 
-## Frontmatter template
+## Frontmatter Template
 
 ```yaml
 ---
@@ -92,7 +92,7 @@ description: Use when users ask to "[specific phrase 1]", "[specific phrase 2]",
 ---
 ```
 
-## Authoring checklist
+## Authoring Checklist
 
 1. Confirm the target scope with the mandatory scope gate.
 2. Define when the skill triggers, what inputs it expects, and what it outputs.

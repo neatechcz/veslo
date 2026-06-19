@@ -100,6 +100,99 @@ test("health /send delivers to directory bindings", async () => {
   store.close();
 });
 
+test("health /bindings and /send resolve workspace alias directories", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "opencodeRouter-health-send-"));
+  const dbPath = path.join(dir, "opencode-router.db");
+  const store = new BridgeStore(dbPath);
+  const healthPort = await freePort();
+
+  const sent = [];
+  const slackAdapter = {
+    key: "slack:default",
+    name: "slack",
+    identityId: "default",
+    maxTextLength: 39_000,
+    async start() {},
+    async stop() {},
+    async sendText(peerId, text) {
+      sent.push({ peerId, text });
+    },
+  };
+
+  store.upsertBinding("slack", "default", "D123", dir.replace(/\\/g, "/").replace(/\/+$/, "") || "/");
+
+  const bridge = await startBridge(
+    {
+      configPath: path.join(dir, "opencode-router.json"),
+      configFile: { version: 1 },
+      opencodeUrl: "http://127.0.0.1:4096",
+      opencodeDirectory: dir,
+      telegramBots: [],
+      slackApps: [],
+      dataDir: dir,
+      dbPath,
+      logFile: path.join(dir, "opencode-router.log"),
+      toolUpdatesEnabled: false,
+      groupsEnabled: false,
+      permissionMode: "allow",
+      toolOutputLimit: 1200,
+      healthPort,
+      logLevel: "silent",
+    },
+    createLoggerStub(),
+    undefined,
+    {
+      client: {
+        global: {
+          health: async () => ({ healthy: true, version: "test" }),
+        },
+      },
+      store,
+      adapters: new Map([["slack:default", slackAdapter]]),
+      disableEventStream: true,
+    },
+  );
+
+  const bindingsResponse = await fetch(
+    `http://127.0.0.1:${healthPort}/bindings?channel=slack&directory=${encodeURIComponent("/workspace")}`,
+  );
+  assert.equal(bindingsResponse.status, 200);
+  const bindingsJson = await bindingsResponse.json();
+  assert.equal(bindingsJson.ok, true);
+  assert.equal(bindingsJson.items.length, 1);
+  assert.equal(bindingsJson.items[0].peerId, "D123");
+
+  if (process.platform === "win32") {
+    const mountAlias = dir
+      .replace(/^([A-Za-z]):[\\/]/, (_, drive) => `/mnt/${String(drive).toLowerCase()}/`)
+      .replace(/\\/g, "/");
+    const mountBindingsResponse = await fetch(
+      `http://127.0.0.1:${healthPort}/bindings?channel=slack&directory=${encodeURIComponent(mountAlias)}`,
+    );
+    assert.equal(mountBindingsResponse.status, 200);
+    const mountBindingsJson = await mountBindingsResponse.json();
+    assert.equal(mountBindingsJson.ok, true);
+    assert.equal(mountBindingsJson.items.length, 1);
+    assert.equal(mountBindingsJson.items[0].peerId, "D123");
+  }
+
+  const sendResponse = await fetch(`http://127.0.0.1:${healthPort}/send`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channel: "slack", directory: "/workspace", text: "hello-alias" }),
+  });
+  assert.equal(sendResponse.status, 200);
+  const sendJson = await sendResponse.json();
+  assert.equal(sendJson.ok, true);
+  assert.equal(sendJson.sent, 1);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].peerId, "D123");
+  assert.equal(sent[0].text, "hello-alias");
+
+  await bridge.stop();
+  store.close();
+});
+
 test("health /send reports no-op when no bindings exist", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "opencodeRouter-health-send-"));
   const dbPath = path.join(dir, "opencode-router.db");

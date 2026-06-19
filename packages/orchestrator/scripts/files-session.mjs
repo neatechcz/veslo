@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const cliPath = resolve(__dirname, "..", "dist", "cli.js");
 const serverCliPath = resolve(__dirname, "..", "..", "server", "src", "cli.ts");
+const cliRuntime = process.env.VESLO_ORCHESTRATOR_TEST_RUNTIME || "bun";
 
 async function findFreePort() {
   return new Promise((resolvePort, reject) => {
@@ -98,7 +99,7 @@ async function terminateProcessTree(child, { gracefulMs = 3000, forceMs = 2000 }
 }
 
 async function runCli(args) {
-  const child = spawn("node", [cliPath, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(cliRuntime, [cliPath, ...args], { stdio: ["ignore", "pipe", "pipe"] });
   let stdout = "";
   let stderr = "";
   child.stdout.setEncoding("utf8");
@@ -112,7 +113,8 @@ async function runCli(args) {
 
   const [code] = await once(child, "exit");
   if (code !== 0) {
-    throw new Error(stderr.trim() || `veslo CLI failed with code ${code}`);
+    const detail = stderr.trim() || stdout.trim() || `veslo CLI failed with code ${code}`;
+    throw new Error(`veslo ${args.join(" ")} failed: ${detail}`);
   }
 
   const trimmed = stdout.trim();
@@ -121,6 +123,7 @@ async function runCli(args) {
 
 const root = await mkdtemp(join(tmpdir(), "veslo-file-session-"));
 const workspace = join(root, "workspace");
+const configPath = join(root, "server.json");
 await mkdir(join(workspace, "notes"), { recursive: true });
 await writeFile(join(workspace, "notes", "remote.md"), "hello from remote\n", "utf8");
 
@@ -133,6 +136,8 @@ const server = spawn(
   "bun",
   [
     serverCliPath,
+    "--config",
+    configPath,
     "--host",
     "127.0.0.1",
     "--port",

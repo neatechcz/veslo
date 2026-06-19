@@ -26,6 +26,10 @@ export function isEscapeStopShortcutEligible(input: StopRunShortcutInput): boole
   return true;
 }
 
+export function shouldStopRunOnEscape(input: StopRunShortcutInput): boolean {
+  return isEscapeStopShortcutEligible(input);
+}
+
 export function resolveEscapeStopShortcut(input: EscapeStopShortcutInput): EscapeStopShortcutAction {
   if (!isEscapeStopShortcutEligible(input)) return "ignore";
   return input.confirmationPending ? "confirm-stop" : "request-confirmation";

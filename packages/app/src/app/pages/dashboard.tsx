@@ -38,6 +38,7 @@ import {
   createVesloServerClient,
   parseVesloWorkspaceIdFromUrl,
 } from "../lib/veslo-server";
+import { reportError } from "../lib/error-reporter";
 import type {
   VesloAuditEntry,
   VesloSoulAuthContext,
@@ -86,6 +87,8 @@ import {
   writeGlobalSidebarDockedPrefs,
 } from "../components/layout/global-sidebar-prefs";
 import { openSessionWithWorkspaceActivation, type SessionBrowseScope } from "./session-navigation";
+import type { WorkspaceActivationOptions } from "../context/workspace-types";
+import type { WorkspaceBusyMap } from "../context/workspace-debug";
 import {
   resolveDashboardTabSelectionAction,
   resolveLeftMenuAction,
@@ -97,7 +100,6 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
-  History,
   HeartPulse,
   Loader2,
   MoreHorizontal,
@@ -130,6 +132,7 @@ export type DashboardViewProps = {
   busyHint: string | null;
   busyLabel: string | null;
   newTaskDisabled: boolean;
+  pendingPermissionCountByWs?: Record<string, number>;
   headerStatus: string;
   error: string | null;
   vesloServerStatus: VesloServerStatus;
@@ -168,7 +171,8 @@ export type DashboardViewProps = {
   activeWorkspaceId: string;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
-  activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  readyEngineWorkspaceIds?: Set<string>;
+  activateWorkspace: (workspaceId: string, options: WorkspaceActivationOptions) => Promise<boolean> | boolean | void;
   testWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean;
   recoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean;
   openCreateWorkspace: () => void;
@@ -185,6 +189,8 @@ export type DashboardViewProps = {
   workspaceSessionPagingById: Record<string, { hasMore: boolean; loadingMore: boolean }>;
   subagentDecorationsBySessionId: Record<string, SidebarSubagentDecoration>;
   archivedSessionIds: string[];
+  sessionStatusById: Record<string, string>;
+  busySessionByWorkspaceId?: WorkspaceBusyMap;
   archiveSession: (workspaceId: string, sessionId: string) => Promise<void> | void;
   unarchiveSession: (workspaceId: string, sessionId: string) => Promise<void> | void;
   loadMoreWorkspaceSidebarSessions: (workspaceId: string) => Promise<void> | void;
@@ -194,10 +200,10 @@ export type DashboardViewProps = {
   openRenameWorkspace: (workspaceId: string) => void;
   editWorkspaceConnection: (workspaceId: string) => void;
   forgetWorkspace: (workspaceId: string) => void;
-  stopSandbox: (workspaceId: string) => void;
   automationItems: WorkspaceAutomationItem[];
   automationWorkspaces: AutomationWorkspaceSummary[];
   defaultAutomationWorkspaceId: string | null;
+  scheduledJobs: ScheduledJob[];
   scheduledJobsSource: "local" | "remote";
   scheduledJobsSourceReady: boolean;
   scheduledJobsStatus: string | null;
@@ -317,6 +323,10 @@ export type DashboardViewProps = {
   toggleShowThinking: () => void;
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
+  maxEngines: number;
+  setMaxEngines: (n: number) => void;
+  idleSuspendMs: number;
+  setIdleSuspendMs: (ms: number) => void;
   modelVariantLabel: string;
   modelVariant: string;
   setModelVariant: (value: string) => void;
@@ -362,7 +372,6 @@ export type DashboardViewProps = {
   pendingPermissions: unknown;
   events: unknown;
   workspaceDebugEvents: unknown;
-  sandboxCreateProgress: unknown;
   clearWorkspaceDebugEvents: () => void;
   safeStringify: (value: unknown) => string;
   repairOpencodeMigration: () => void;
@@ -451,16 +460,11 @@ export default function DashboardView(props: DashboardViewProps) {
     workspace.path?.trim() ||
     t("workspace.fallback_worker", currentLocale());
   const workspaceKindLabel = (workspace: WorkspaceInfo) =>
-    workspace.workspaceType === "remote"
-      ? workspace.sandboxBackend === "docker" ||
-        Boolean(workspace.sandboxRunId?.trim()) ||
-        Boolean(workspace.sandboxContainerName?.trim())
-        ? t("sidebar.workspace_kind_sandbox", currentLocale())
-        : t("sidebar.workspace_kind_remote", currentLocale())
-      : t("sidebar.workspace_kind_local", currentLocale());
+    workspace.workspaceType === "remote" ? "Remote" : "Local";
 
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
     const group = props.workspaceSessionGroups.find((g) => g.workspace.id === workspaceId);
+    const session = group?.sessions.find((item) => item.id === sessionId);
     const workspaceRoot =
       group?.workspace.directory?.trim() ||
       group?.workspace.path?.trim() ||
@@ -471,13 +475,22 @@ export default function DashboardView(props: DashboardViewProps) {
       workspaceId,
       sessionId,
       activateWorkspace: props.activateWorkspace,
-      // Route-driven selection: navigate first and let the route effect own selectSession.
+      // Route-driven selection handles normal id changes. Also select
+      // explicitly after recording the browse scope because the user can
+      // return to the same /session/:id route after switching projects; in
+      // that case the route effect is deduped and would leave the main
+      // transcript on the empty workspace screen.
       openSession: (nextSessionId) => {
         props.setSessionBrowseScope({
           sessionId: nextSessionId,
           workspaceId,
           workspaceRoot: workspaceRoot,
+          directory: session?.directory ?? workspaceRoot,
+          conversationId: session?.conversationId ?? null,
+          opencodeSessionId: session?.opencodeSessionId ?? nextSessionId,
         });
+        void Promise.resolve(props.selectSession(nextSessionId))
+          .catch((error) => reportError(error, "dashboard.openSessionFromList.selectSession"));
         props.setView("session", nextSessionId);
       },
     });
@@ -646,10 +659,10 @@ export default function DashboardView(props: DashboardViewProps) {
   });
 
   const runtimeAvailableWithoutClient = createMemo(() => {
-    if (props.clientConnected) return false;
-    if (props.vesloServerStatus !== "connected") return false;
-    if (props.activeWorkspaceDisplay.workspaceType !== "local") return false;
-    return (props.workspaceConnectionStateById[props.activeWorkspaceId]?.status ?? "idle") === "connected";
+    void props.clientConnected;
+    void props.vesloServerStatus;
+    void props.activeWorkspaceDisplay;
+    return false;
   });
 
   const soulNavIconClass = () => (soulModeEnabled() ? "soul-nav-icon-active" : "");
@@ -690,7 +703,8 @@ export default function DashboardView(props: DashboardViewProps) {
     if (!id) return;
     void (async () => {
       if (id !== props.activeWorkspaceId) {
-        await Promise.resolve(props.activateWorkspace(id));
+        const activated = await Promise.resolve(props.activateWorkspace(id, { origin: "dashboard:open-soul-workspace" }));
+        if (!activated) return;
       }
       props.setTab("soul");
     })();
@@ -1298,7 +1312,7 @@ export default function DashboardView(props: DashboardViewProps) {
   const feedbackButtonLabel = createMemo(() => t("feedback.button", currentLocale()));
 
   const returnToSession = () => {
-    const sessionId = props.selectedSessionId?.trim();
+    const sessionId = props.selectedSessionId?.trim() || props.lastWorkspaceSessionId?.trim();
     props.setView("session", sessionId);
   };
 
@@ -1424,9 +1438,13 @@ export default function DashboardView(props: DashboardViewProps) {
               archivedSessionIds={props.archivedSessionIds}
               activeWorkspaceId={props.activeWorkspaceId}
               selectedSessionId={props.selectedSessionId}
+              sessionStatusById={props.sessionStatusById}
+              busySessionByWorkspaceId={props.busySessionByWorkspaceId}
               allowSelectedParentExpansion={false}
               connectingWorkspaceId={props.connectingWorkspaceId}
+              pendingPermissionCountByWs={props.pendingPermissionCountByWs}
               workspaceConnectionStateById={props.workspaceConnectionStateById}
+              readyEngineWorkspaceIds={props.readyEngineWorkspaceIds}
               newTaskDisabled={props.newTaskDisabled}
               importingWorkspaceConfig={props.importingWorkspaceConfig}
               soulStatusByWorkspaceId={props.soulStatusByWorkspaceId}
@@ -1738,6 +1756,10 @@ export default function DashboardView(props: DashboardViewProps) {
                   toggleShowThinking={props.toggleShowThinking}
                   hideTitlebar={props.hideTitlebar}
                   toggleHideTitlebar={props.toggleHideTitlebar}
+                  maxEngines={props.maxEngines}
+                  setMaxEngines={props.setMaxEngines}
+                  idleSuspendMs={props.idleSuspendMs}
+                  setIdleSuspendMs={props.setIdleSuspendMs}
                   modelVariantLabel={props.modelVariantLabel}
                   modelVariant={props.modelVariant}
                   setModelVariant={props.setModelVariant}
@@ -1763,7 +1785,6 @@ export default function DashboardView(props: DashboardViewProps) {
                   pendingPermissions={props.pendingPermissions}
                   events={props.events}
                   workspaceDebugEvents={props.workspaceDebugEvents}
-                  sandboxCreateProgress={props.sandboxCreateProgress}
                   clearWorkspaceDebugEvents={props.clearWorkspaceDebugEvents}
                   safeStringify={props.safeStringify}
                   repairOpencodeMigration={props.repairOpencodeMigration}
@@ -1859,16 +1880,7 @@ export default function DashboardView(props: DashboardViewProps) {
         </div>
 
         <nav class="md:hidden border-t border-dls-border bg-dls-surface">
-          <div class={`mx-auto max-w-5xl px-4 py-3 grid gap-2 ${props.developerMode ? "grid-cols-5" : "grid-cols-4"}`}>
-            <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "scheduled" ? "text-gray-12" : "text-gray-10"
-              }`}
-              onClick={() => handleDashboardTabSelection("scheduled")}
-            >
-              <History size={18} />
-              {t("nav.automations", currentLocale())}
-            </button>
+          <div class={`mx-auto max-w-5xl px-4 py-3 grid gap-2 ${props.developerMode ? "grid-cols-4" : "grid-cols-3"}`}>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
                 props.tab === "soul" ? "text-gray-12" : "text-gray-10"

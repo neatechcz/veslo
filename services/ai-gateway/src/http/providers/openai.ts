@@ -10,11 +10,16 @@ import type { ResolveLeaseInput, SessionLease } from "../../leases/repository.js
 import type { ProviderTransportResponse } from "../../providers/transport.js";
 import { readOpenAiCompatibleUsage } from "../../usage/token-accounting.js";
 import { applyAiAccessPolicy } from "./access-policy.js";
+import {
+  markProviderCredentialFailure,
+  readUpstreamFailureReason,
+  recordProviderProxyFailureAlert,
+} from "./proxy-failure-alert.js";
 import { normalizeGatewaySessionId } from "./session-id.js";
 import type { ProxyDependencies } from "../proxy.js";
 
 export function createOpenAiProxyRouter(
-  deps: Pick<ProxyDependencies, "credentials" | "usageRepository" | "leaseBroker" | "tokenBroker" | "openAiTransport">,
+  deps: Pick<ProxyDependencies, "credentials" | "alertRepository" | "usageRepository" | "leaseBroker" | "tokenBroker" | "openAiTransport">,
 ) {
   const router = Router();
 
@@ -75,8 +80,22 @@ export function createOpenAiProxyRouter(
     } catch (error) {
       const failure = getUpstreamFailureInput(error);
       if (classifyUpstreamFailure(failure) !== "permanent_credential") {
+        await recordProviderProxyFailureAlert({
+          alertRepository: deps.alertRepository,
+          credentials: deps.credentials,
+          bindingId: initialLease.activeBindingId,
+          provider: "openai",
+          sessionId: scope.sessionId,
+          error,
+        });
         throw error;
       }
+
+      await markProviderCredentialFailure({
+        credentials: deps.credentials,
+        bindingId: initialLease.activeBindingId,
+        reason: readUpstreamFailureReason(failure),
+      });
 
       const reboundLease = await deps.leaseBroker.handleUpstreamFailure({
         ...scope,

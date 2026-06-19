@@ -1,8 +1,12 @@
 use std::fs;
+#[cfg(windows)]
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
+use std::process::Command;
 
 use gethostname::gethostname;
-use local_ip_address::local_ip;
+use local_ip_address::{list_afinet_netifas, local_ip};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tauri::Manager;
@@ -70,7 +74,157 @@ fn generate_token() -> String {
     Uuid::new_v4().to_string()
 }
 
-fn build_urls(port: u16) -> (Option<String>, Option<String>, Option<String>) {
+pub(crate) fn resolve_engine_url(port: u16) -> Option<String> {
+    #[cfg(windows)]
+    {
+        let mut candidates = Vec::new();
+        if let Ok(interfaces) = list_afinet_netifas() {
+            candidates.extend(resolve_engine_urls_from_interfaces(
+                port,
+                interfaces.into_iter(),
+            ));
+        }
+        if let Some(url) = resolve_engine_url_from_wsl_interface(port) {
+            candidates.push(url);
+        }
+        resolve_engine_url_from_candidates(candidates, probe_engine_url_from_wsl)
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = port;
+        None
+    }
+}
+
+#[cfg(windows)]
+fn format_engine_url_from_ip(ip: IpAddr, port: u16) -> Option<String> {
+    if !ip.is_ipv4() || ip.is_loopback() {
+        return None;
+    }
+    Some(format!("http://{ip}:{port}"))
+}
+
+#[cfg(windows)]
+fn resolve_engine_urls_from_interfaces(
+    port: u16,
+    interfaces: impl IntoIterator<Item = (String, IpAddr)>,
+) -> Vec<String> {
+    interfaces
+        .into_iter()
+        .filter_map(|(name, ip)| {
+            let name = name.to_ascii_lowercase();
+            if !name.contains("wsl") {
+                return None;
+            }
+            format_engine_url_from_ip(ip, port)
+        })
+        .collect()
+}
+
+#[cfg(windows)]
+fn resolve_engine_url_from_interfaces(
+    port: u16,
+    interfaces: impl IntoIterator<Item = (String, IpAddr)>,
+) -> Option<String> {
+    resolve_engine_urls_from_interfaces(port, interfaces)
+        .into_iter()
+        .next()
+}
+
+#[cfg(windows)]
+fn resolve_engine_url_from_candidates(
+    candidates: impl IntoIterator<Item = String>,
+    mut probe: impl FnMut(&str) -> bool,
+) -> Option<String> {
+    let mut seen = Vec::<String>::new();
+    for candidate in candidates {
+        let trimmed = candidate.trim().trim_end_matches('/').to_string();
+        if trimmed.is_empty() || seen.iter().any(|value| value == &trimmed) {
+            continue;
+        }
+        seen.push(trimmed.clone());
+        if probe(&trimmed) {
+            return Some(trimmed);
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+fn parse_wsl_engine_url_from_powershell_output(output: &str, port: u16) -> Option<String> {
+    output.lines().find_map(|line| {
+        let value = line.trim().trim_matches('"').trim_matches('\'');
+        let ip = value.parse::<IpAddr>().ok()?;
+        format_engine_url_from_ip(ip, port)
+    })
+}
+
+#[cfg(windows)]
+fn resolve_engine_url_from_wsl_interface(port: u16) -> Option<String> {
+    let output = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias '*WSL*' | Select-Object -ExpandProperty IPAddress",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_wsl_engine_url_from_powershell_output(&stdout, port)
+}
+
+#[cfg(windows)]
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+#[cfg(windows)]
+fn probe_engine_url_from_wsl_once(url: &str) -> bool {
+    let health_url = format!("{}/health", url.trim_end_matches('/'));
+    let script = format!(
+        "URL={}; \
+         if command -v curl >/dev/null 2>&1; then \
+           curl --connect-timeout 1 --max-time 1 -fsS \"$URL\" >/dev/null; \
+         elif command -v wget >/dev/null 2>&1; then \
+           wget --timeout=1 --tries=1 -q -O /dev/null \"$URL\"; \
+         else \
+           exit 127; \
+         fi",
+        shell_quote(&health_url)
+    );
+    Command::new("wsl.exe")
+        .args(["-e", "sh", "-c", &script])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn probe_engine_url_from_wsl(url: &str) -> bool {
+    for attempt in 0..2 {
+        if probe_engine_url_from_wsl_once(url) {
+            return true;
+        }
+        if attempt == 0 {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+    }
+    eprintln!("[veslo-server] WSL engineUrl probe failed for {url}");
+    false
+}
+
+fn build_urls(
+    port: u16,
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
     let hostname = gethostname().to_string_lossy().trim().to_string();
     let mdns_url = if hostname.is_empty() {
         None
@@ -82,8 +236,14 @@ fn build_urls(port: u16) -> (Option<String>, Option<String>, Option<String>) {
     let lan_url = local_ip().ok().map(|ip| format!("http://{ip}:{port}"));
 
     let connect_url = lan_url.clone().or(mdns_url.clone());
+    let engine_url = resolve_engine_url(port);
 
-    (connect_url, mdns_url, lan_url)
+    (connect_url, mdns_url, lan_url, engine_url)
+}
+
+pub fn resolve_connect_url(port: u16) -> Option<String> {
+    let (connect_url, _mdns_url, _lan_url, _engine_url) = build_urls(port);
+    connect_url
 }
 
 fn persisted_state_path(dir: &Path) -> PathBuf {
@@ -108,29 +268,16 @@ fn persisted_state_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| format!("Failed to resolve app local data dir: {e}"))
 }
 
-#[allow(dead_code)]
-pub fn persisted_veslo_server_state_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(persisted_state_path(&persisted_state_dir(app)?))
+#[derive(Debug, Clone, Default)]
+pub(crate) struct HealthIdentity {
+    pub token: Option<String>,
+    pub pid: Option<u32>,
 }
 
-pub fn persisted_veslo_server_plugin_state_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(persisted_plugin_state_path(&persisted_state_dir(app)?))
-}
-
-#[cfg(test)]
-fn persisted_veslo_server_state_path_from_override() -> Option<PathBuf> {
-    persisted_state_dir_override().map(|dir| persisted_state_path(&dir))
-}
-
-#[cfg(test)]
-fn persisted_veslo_server_plugin_state_path_from_override() -> Option<PathBuf> {
-    persisted_state_dir_override().map(|dir| persisted_plugin_state_path(&dir))
-}
-
-pub(crate) fn server_health_ok(base_url: &str) -> bool {
+pub(crate) fn server_health_identity(base_url: &str) -> Option<HealthIdentity> {
     let trimmed = base_url.trim().trim_end_matches('/');
     if trimmed.is_empty() {
-        return false;
+        return None;
     }
 
     let url = format!("{trimmed}/health");
@@ -138,23 +285,65 @@ pub(crate) fn server_health_ok(base_url: &str) -> bool {
         .timeout(std::time::Duration::from_millis(1200))
         .build();
 
-    agent
-        .get(&url)
-        .call()
-        .map(|response| response.status() == 200)
-        .unwrap_or(false)
+    let response = agent.get(&url).call().ok()?;
+    if response.status() != 200 {
+        return None;
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct HealthResponse {
+        #[serde(default)]
+        token: Option<String>,
+        #[serde(default)]
+        pid: Option<u32>,
+    }
+
+    let body: HealthResponse = response.into_json().ok()?;
+    Some(HealthIdentity {
+        token: body.token,
+        pid: body.pid,
+    })
 }
 
 fn persisted_state_to_info_with_health(
     state: &PersistedVesloServerState,
-    health_check: impl Fn(&str) -> bool,
+    health_check: impl Fn(&str) -> Option<HealthIdentity>,
 ) -> Option<VesloServerInfo> {
     let base_url = state
         .base_url
         .clone()
         .filter(|value| !value.trim().is_empty())?;
-    if !health_check(&base_url) {
-        return None;
+
+    let identity = health_check(&base_url)?;
+    // A matching bearer token is stronger than a PID match. In dev watch mode,
+    // the managed Bun watcher PID can differ from the HTTP server PID.
+    let token_verified = matches!(
+        (state.client_token.as_deref(), identity.token.as_deref()),
+        (Some(expected), Some(actual)) if expected == actual
+    );
+
+    // Identity validation: the bearer token is the strongest signal. PID checks
+    // still protect older persisted state that cannot verify a token.
+    if let (Some(expected), Some(actual)) =
+        (state.client_token.as_deref(), identity.token.as_deref())
+    {
+        if expected != actual {
+            eprintln!(
+                "[veslo-server] identity mismatch — token on {base_url} does not match persisted state, rejecting"
+            );
+            return None;
+        }
+    }
+    if !token_verified {
+        if let (Some(expected), Some(actual)) = (state.pid, identity.pid) {
+            if expected != actual {
+                eprintln!(
+                "[veslo-server] identity mismatch — pid on {base_url} is {actual}, expected {expected}, rejecting"
+            );
+                return None;
+            }
+        }
     }
 
     Some(VesloServerInfo {
@@ -165,6 +354,7 @@ fn persisted_state_to_info_with_health(
         connect_url: state.connect_url.clone(),
         mdns_url: state.mdns_url.clone(),
         lan_url: state.lan_url.clone(),
+        engine_url: state.port.and_then(resolve_engine_url),
         client_token: state.client_token.clone(),
         host_token: None,
         pid: state.pid,
@@ -175,7 +365,7 @@ fn persisted_state_to_info_with_health(
 
 fn read_persisted_veslo_server_info_with_cleanup(
     dir: &Path,
-    health_check: impl Fn(&str) -> bool,
+    health_check: impl Fn(&str) -> Option<HealthIdentity>,
     mut cleanup_stale_pid: impl FnMut(u32) -> Result<(), String>,
 ) -> Result<Option<VesloServerInfo>, String> {
     let path = persisted_state_path(dir);
@@ -202,7 +392,7 @@ fn read_persisted_veslo_server_info_with_cleanup(
 }
 
 pub fn read_persisted_veslo_server_info(dir: &Path) -> Result<Option<VesloServerInfo>, String> {
-    read_persisted_veslo_server_info_with_cleanup(dir, server_health_ok, |pid| {
+    read_persisted_veslo_server_info_with_cleanup(dir, server_health_identity, |pid| {
         kill_stale_veslo_server_process(pid)
     })
 }
@@ -253,7 +443,54 @@ pub fn recover_persisted_veslo_server_info(
     app: &AppHandle,
 ) -> Result<Option<VesloServerInfo>, String> {
     let dir = persisted_state_dir(app)?;
-    read_persisted_veslo_server_info(&dir)
+    let from_disk = read_persisted_veslo_server_info(&dir)?;
+    if from_disk.is_some() {
+        return Ok(from_disk);
+    }
+
+    // Dev fallback: a `pnpm dev` workflow can spawn veslo-server outside of
+    // Rust (via `bun --watch`), in which case Tauri never wrote state.json.
+    // If the dev scripts expose `VESLO_DEV_SERVER_URL` we probe it, adopt
+    // the live token+pid from /health, and persist so subsequent reads stay
+    // consistent. Skipped in release builds (env var unset by default).
+    if let Some(info) = discover_external_veslo_server() {
+        let _ = persist_veslo_server_info(app, &info);
+        return Ok(Some(info));
+    }
+
+    Ok(None)
+}
+
+fn discover_external_veslo_server() -> Option<VesloServerInfo> {
+    let base_url = std::env::var("VESLO_DEV_SERVER_URL").ok()?;
+    let trimmed = base_url.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return None;
+    }
+    let identity = server_health_identity(trimmed)?;
+    let port = trimmed
+        .rsplit_once(':')
+        .and_then(|(_, tail)| tail.split('/').next())
+        .and_then(|p| p.parse::<u16>().ok());
+    let (connect_url, mdns_url, lan_url, engine_url) = match port {
+        Some(p) => build_urls(p),
+        None => (None, None, None, None),
+    };
+    Some(VesloServerInfo {
+        running: true,
+        host: Some("0.0.0.0".to_string()),
+        port,
+        base_url: Some(trimmed.to_string()),
+        connect_url,
+        mdns_url,
+        lan_url,
+        engine_url,
+        client_token: identity.token,
+        host_token: None,
+        pid: identity.pid,
+        last_stdout: None,
+        last_stderr: None,
+    })
 }
 
 pub fn clear_persisted_veslo_server_info(app: &AppHandle) -> Result<(), String> {
@@ -356,17 +593,91 @@ pub fn start_veslo_server(
     opencode_username: Option<&str>,
     opencode_password: Option<&str>,
     opencode_router_health_port: Option<u16>,
+    orchestrator_daemon_url: Option<&str>,
+    orchestrator_lifecycle_token: Option<&str>,
 ) -> Result<VesloServerInfo, String> {
+    // VSLO-86 — extend caller-supplied workspaces with every local workspace
+    // from veslo-workspaces.json before spawn. The frontend passes only the
+    // current/active workspace in engine_start, so a freshly-spawned veslo-
+    // server otherwise only knows about that one entry. A sidebar click on
+    // any other locally-registered workspace then 404s on /workspaces/:id/
+    // activate and the activate handler times out at 12s, leaving the user
+    // staring at "Opening conversation…". Pulling the local store now means
+    // veslo-server's --workspace args mirror what the sidebar shows.
+    let mut workspace_paths_owned: Vec<String> = workspace_paths.to_vec();
+    if let Ok(state) = crate::workspace::state::load_workspace_state(app) {
+        for ws in state.workspaces.iter() {
+            if !matches!(ws.workspace_type, crate::types::WorkspaceType::Local) {
+                continue;
+            }
+            let trimmed = ws.path.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if !workspace_paths_owned.iter().any(|p| p.trim() == trimmed) {
+                workspace_paths_owned.push(trimmed.to_string());
+            }
+        }
+    }
+    let workspace_paths: &[String] = &workspace_paths_owned;
+
     let mut state = manager
         .inner
         .lock()
         .map_err(|_| "veslo server mutex poisoned".to_string())?;
+
+    // VSLO-171 — idempotent skip: if a healthy child is already running with
+    // an equivalent workspace set, reuse it instead of kill+respawn. Avoids
+    // rotating the bearer token under an active frontend session.
+    let normalize_paths = |paths: &[String]| -> Vec<String> {
+        let mut normalized: Vec<String> = paths
+            .iter()
+            .map(|path| path.trim().trim_end_matches('/').to_string())
+            .filter(|path| !path.is_empty())
+            .collect();
+        normalized.sort();
+        normalized.dedup();
+        normalized
+    };
+    let requested_paths = normalize_paths(workspace_paths);
+    let existing_paths = normalize_paths(&state.workspace_paths);
+    let normalized_orchestrator_daemon_url = orchestrator_daemon_url
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty());
+    let normalized_orchestrator_lifecycle_token = orchestrator_lifecycle_token
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if state.child.is_some()
+        && !state.child_exited
+        && state.client_token.is_some()
+        && state.host_token.is_some()
+        && state.port.is_some()
+        && requested_paths == existing_paths
+        && state.orchestrator_daemon_url == normalized_orchestrator_daemon_url
+        && state.orchestrator_lifecycle_token == normalized_orchestrator_lifecycle_token
+    {
+        let info = VesloServerManager::snapshot_locked(&mut state);
+        drop(state);
+        // VSLO-86 — re-persist on every idempotent reuse so the on-disk
+        // state.json stays in sync with the live in-memory state across
+        // long-running sessions (port/token rotations from previous boots
+        // would otherwise linger forever, fooling external readers).
+        if let Err(error) = persist_veslo_server_info(app, &info) {
+            eprintln!("[veslo-server] Failed to re-persist on idempotent reuse: {error}");
+        }
+        return Ok(info);
+    }
+
+    // Need to (re)spawn; keep tokens (if any) so the frontend's cached bearer
+    // remains valid across the respawn.
+    let previous_client_token = state.client_token.clone();
+    let previous_host_token = state.host_token.clone();
     VesloServerManager::stop_locked(&mut state);
 
     let host = "0.0.0.0".to_string();
-    let port = resolve_veslo_port_after_restart()?;
-    let client_token = generate_token();
-    let host_token = generate_token();
+    let port = resolve_veslo_port()?;
+    let client_token = previous_client_token.unwrap_or_else(generate_token);
+    let host_token = previous_host_token.unwrap_or_else(generate_token);
     let active_workspace = workspace_paths
         .first()
         .map(|path| path.as_str())
@@ -390,6 +701,8 @@ pub fn start_veslo_server(
         opencode_username,
         opencode_password,
         opencode_router_health_port,
+        normalized_orchestrator_daemon_url.as_deref(),
+        normalized_orchestrator_lifecycle_token.as_deref(),
     )?;
 
     state.child = Some(child);
@@ -397,12 +710,16 @@ pub fn start_veslo_server(
     state.host = Some(host.clone());
     state.port = Some(port);
     state.base_url = Some(format!("http://127.0.0.1:{port}"));
-    let (connect_url, mdns_url, lan_url) = build_urls(port);
+    let (connect_url, mdns_url, lan_url, engine_url) = build_urls(port);
     state.connect_url = connect_url;
     state.mdns_url = mdns_url;
     state.lan_url = lan_url;
+    state.engine_url = engine_url;
     state.client_token = Some(client_token);
     state.host_token = Some(host_token);
+    state.workspace_paths = workspace_paths.to_vec();
+    state.orchestrator_daemon_url = normalized_orchestrator_daemon_url;
+    state.orchestrator_lifecycle_token = normalized_orchestrator_lifecycle_token;
     state.last_stdout = None;
     state.last_stderr = None;
 
@@ -423,10 +740,14 @@ pub fn start_veslo_server(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
     use super::{
-        persist_veslo_server_plugin_state, persisted_veslo_server_plugin_state_path_from_override,
-        persisted_veslo_server_state_path_from_override, read_persisted_veslo_server_info,
-        read_persisted_veslo_server_info_with_cleanup, PersistedVesloServerState,
+        parse_wsl_engine_url_from_powershell_output, resolve_engine_url_from_candidates,
+        resolve_engine_url_from_interfaces,
+    };
+    use super::{
+        read_persisted_veslo_server_info, read_persisted_veslo_server_info_with_cleanup,
+        HealthIdentity, PersistedVesloServerState,
     };
     use crate::types::VesloServerInfo;
     use std::fs;
@@ -434,140 +755,76 @@ mod tests {
     use std::io::Read;
     use std::io::Write;
     use std::net::TcpListener;
-    use std::sync::{Mutex, OnceLock};
+    #[cfg(windows)]
+    use std::net::{IpAddr, Ipv4Addr};
     use std::thread;
     use uuid::Uuid;
 
-    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    struct EnvGuard {
-        key: &'static str,
-        prev: Option<String>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: String) -> Self {
-            let prev = std::env::var(key).ok();
-            std::env::set_var(key, value);
-            Self { key, prev }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match self.prev.take() {
-                Some(value) => std::env::set_var(self.key, value),
-                None => std::env::remove_var(self.key),
-            }
-        }
-    }
-
+    #[cfg(windows)]
     #[test]
-    fn persisted_server_state_path_uses_app_local_data_override() {
-        let _lock = ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let dir = std::env::temp_dir().join(format!("veslo-server-state-path-{}", Uuid::new_v4()));
-        fs::create_dir_all(&dir).expect("create test dir");
-        let _guard = EnvGuard::set(
-            "VESLO_APP_LOCAL_DATA_DIR",
-            dir.to_string_lossy().to_string(),
+    fn resolve_engine_url_uses_wsl_interface_address() {
+        let interfaces = vec![
+            (
+                "vEthernet (Default Switch)".to_string(),
+                IpAddr::V4(Ipv4Addr::new(172, 18, 16, 1)),
+            ),
+            (
+                "vEthernet (WSL (Hyper-V firewall))".to_string(),
+                IpAddr::V4(Ipv4Addr::new(172, 29, 64, 1)),
+            ),
+        ];
+
+        assert_eq!(
+            resolve_engine_url_from_interfaces(8787, interfaces).as_deref(),
+            Some("http://172.29.64.1:8787")
         );
-
-        let path =
-            persisted_veslo_server_state_path_from_override().expect("resolve override state path");
-
-        assert_eq!(path, dir.join("veslo-server-state.json"));
-
-        let _ = fs::remove_dir_all(dir);
     }
 
+    #[cfg(windows)]
     #[test]
-    fn persisted_plugin_state_path_uses_app_local_data_override() {
-        let _lock = ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let dir =
-            std::env::temp_dir().join(format!("veslo-server-plugin-state-path-{}", Uuid::new_v4()));
-        fs::create_dir_all(&dir).expect("create test dir");
-        let _guard = EnvGuard::set(
-            "VESLO_APP_LOCAL_DATA_DIR",
-            dir.to_string_lossy().to_string(),
+    fn parse_wsl_engine_url_from_powershell_output_skips_loopback() {
+        let output = "\r\n127.0.0.1\r\n172.29.64.1\r\n";
+
+        assert_eq!(
+            parse_wsl_engine_url_from_powershell_output(output, 8787).as_deref(),
+            Some("http://172.29.64.1:8787")
         );
-
-        let path = persisted_veslo_server_plugin_state_path_from_override()
-            .expect("resolve plugin state path");
-
-        assert_eq!(path, dir.join("veslo-server-plugin-state.json"));
-
-        let _ = fs::remove_dir_all(dir);
     }
 
+    #[cfg(windows)]
     #[test]
-    fn persist_plugin_state_writes_only_base_url_and_client_token() {
-        let dir =
-            std::env::temp_dir().join(format!("veslo-server-plugin-state-{}", Uuid::new_v4()));
-        fs::create_dir_all(&dir).expect("create test dir");
-        let info = VesloServerInfo {
-            running: true,
-            host: Some("0.0.0.0".to_string()),
-            port: Some(8787),
-            base_url: Some("http://127.0.0.1:8787".to_string()),
-            connect_url: Some("http://127.0.0.1:8787".to_string()),
-            mdns_url: None,
-            lan_url: None,
-            client_token: Some("client-token".to_string()),
-            host_token: Some("host-token".to_string()),
-            pid: Some(12345),
-            last_stdout: None,
-            last_stderr: None,
-        };
+    fn resolve_engine_url_from_candidates_requires_probe_success() {
+        let candidates = vec![
+            "http://172.29.64.1:8787".to_string(),
+            "http://172.30.64.1:8787".to_string(),
+        ];
 
-        persist_veslo_server_plugin_state(&dir, &info).expect("persist plugin state");
-
-        let path = dir.join("veslo-server-plugin-state.json");
-        let payload = fs::read_to_string(&path).expect("read plugin state");
-        let parsed: serde_json::Value = serde_json::from_str(&payload).expect("parse plugin state");
-        assert_eq!(parsed["baseUrl"], "http://127.0.0.1:8787");
-        assert_eq!(parsed["clientToken"], "client-token");
-        assert!(parsed.get("hostToken").is_none());
-        assert!(!payload.contains("host-token"));
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = fs::metadata(&path)
-                .expect("plugin state metadata")
-                .permissions()
-                .mode()
-                & 0o777;
-            assert_eq!(mode, 0o600);
-        }
-
-        let _ = fs::remove_dir_all(dir);
+        assert_eq!(
+            resolve_engine_url_from_candidates(candidates, |url| {
+                url == "http://172.30.64.1:8787"
+            })
+            .as_deref(),
+            Some("http://172.30.64.1:8787")
+        );
     }
 
+    #[cfg(windows)]
     #[test]
-    fn persisted_server_state_serialization_omits_host_token() {
-        let state = PersistedVesloServerState {
-            host: Some("0.0.0.0".to_string()),
-            port: Some(8787),
-            base_url: Some("http://127.0.0.1:8787".to_string()),
-            connect_url: Some("http://127.0.0.1:8787".to_string()),
-            mdns_url: None,
-            lan_url: None,
-            client_token: Some("client-token".to_string()),
-            pid: Some(12345),
-        };
+    fn resolve_engine_url_from_candidates_dedupes_candidates() {
+        let mut probes = 0;
+        let candidates = vec![
+            "http://172.29.64.1:8787".to_string(),
+            "http://172.29.64.1:8787/".to_string(),
+        ];
 
-        let payload = serde_json::to_string_pretty(&state).expect("serialize state");
-
-        assert!(payload.contains("clientToken"));
-        assert!(payload.contains("client-token"));
-        assert!(!payload.contains("hostToken"));
-        assert!(!payload.contains("host-token"));
+        assert_eq!(
+            resolve_engine_url_from_candidates(candidates, |_| {
+                probes += 1;
+                false
+            }),
+            None
+        );
+        assert_eq!(probes, 1);
     }
 
     #[test]
@@ -671,7 +928,7 @@ mod tests {
         let mut recycled_pids = Vec::new();
         let recovered = read_persisted_veslo_server_info_with_cleanup(
             &dir,
-            |_| false,
+            |_| None,
             |pid| {
                 recycled_pids.push(pid);
                 Ok(())
@@ -715,7 +972,7 @@ mod tests {
 
         let recovered = read_persisted_veslo_server_info_with_cleanup(
             &dir,
-            |_| false,
+            |_| None,
             |_| Err("taskkill failed".to_string()),
         )
         .expect("cleanup failure should not stop stale state recovery");
@@ -723,6 +980,134 @@ mod tests {
         assert!(recovered.is_none());
         assert!(!dir.join("veslo-server-state.json").exists());
         assert!(!dir.join("veslo-server-plugin-state.json").exists());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    fn write_persisted_state(dir: &std::path::Path, state: &PersistedVesloServerState) {
+        fs::write(
+            dir.join("veslo-server-state.json"),
+            serde_json::to_string_pretty(state).expect("serialize state"),
+        )
+        .expect("write state file");
+    }
+
+    fn sample_state(token: &str, pid: u32) -> PersistedVesloServerState {
+        PersistedVesloServerState {
+            host: Some("0.0.0.0".to_string()),
+            port: Some(8787),
+            base_url: Some("http://127.0.0.1:8787".to_string()),
+            connect_url: Some("http://127.0.0.1:8787".to_string()),
+            mdns_url: None,
+            lan_url: None,
+            client_token: Some(token.to_string()),
+            host_token: Some("host-token".to_string()),
+            pid: Some(pid),
+        }
+    }
+
+    #[test]
+    fn read_persisted_server_info_rejects_token_mismatch() {
+        let dir = std::env::temp_dir().join(format!("veslo-server-state-token-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create test dir");
+        write_persisted_state(&dir, &sample_state("our-token", 4242));
+
+        let recovered = read_persisted_veslo_server_info_with_cleanup(
+            &dir,
+            |_| {
+                Some(HealthIdentity {
+                    token: Some("foreign-token".to_string()),
+                    pid: Some(4242),
+                })
+            },
+            |_| Ok(()),
+        )
+        .expect("read persisted state");
+
+        assert!(
+            recovered.is_none(),
+            "token mismatch must reject persisted state"
+        );
+        assert!(
+            !dir.join("veslo-server-state.json").exists(),
+            "stale state file must be removed when identity check fails"
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn read_persisted_server_info_tolerates_pid_mismatch_when_token_matches() {
+        let dir = std::env::temp_dir().join(format!("veslo-server-state-pid-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create test dir");
+        write_persisted_state(&dir, &sample_state("our-token", 4242));
+
+        let recovered = read_persisted_veslo_server_info_with_cleanup(
+            &dir,
+            |_| {
+                Some(HealthIdentity {
+                    token: Some("our-token".to_string()),
+                    pid: Some(9999),
+                })
+            },
+            |_| Ok(()),
+        )
+        .expect("read persisted state")
+        .expect("matching token must recover persisted state");
+
+        assert!(recovered.running);
+        assert_eq!(recovered.client_token.as_deref(), Some("our-token"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn read_persisted_server_info_rejects_pid_mismatch_without_token_match() {
+        let dir = std::env::temp_dir().join(format!(
+            "veslo-server-state-pid-no-token-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&dir).expect("create test dir");
+        write_persisted_state(&dir, &sample_state("our-token", 4242));
+
+        let recovered = read_persisted_veslo_server_info_with_cleanup(
+            &dir,
+            |_| {
+                Some(HealthIdentity {
+                    token: None,
+                    pid: Some(9999),
+                })
+            },
+            |_| Ok(()),
+        )
+        .expect("read persisted state");
+
+        assert!(
+            recovered.is_none(),
+            "pid mismatch must reject persisted state when token was not verified"
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn read_persisted_server_info_tolerates_legacy_server_without_identity() {
+        let dir =
+            std::env::temp_dir().join(format!("veslo-server-state-legacy-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create test dir");
+        write_persisted_state(&dir, &sample_state("our-token", 4242));
+
+        let recovered = read_persisted_veslo_server_info_with_cleanup(
+            &dir,
+            |_| Some(HealthIdentity::default()),
+            |_| Ok(()),
+        )
+        .expect("read persisted state")
+        .expect("legacy server response must still recover persisted state");
+
+        assert_eq!(recovered.client_token.as_deref(), Some("our-token"));
+        assert_eq!(recovered.pid, Some(4242));
+        assert!(recovered.running);
 
         let _ = fs::remove_dir_all(dir);
     }

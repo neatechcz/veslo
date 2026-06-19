@@ -145,7 +145,7 @@ export type HealthHandlers = {
   listSlackIdentities?: () => Promise<SlackIdentitiesResult>;
   upsertSlackIdentity?: (input: SlackIdentityUpsertInput) => Promise<UpsertIdentityResult>;
   deleteSlackIdentity?: (id: string) => Promise<DeleteIdentityResult>;
-  listBindings?: (filters?: { channel?: string; identityId?: string }) => Promise<BindingsListResult>;
+  listBindings?: (filters?: { channel?: string; identityId?: string; directory?: string }) => Promise<BindingsListResult>;
   setBinding?: (input: { channel: string; identityId?: string; peerId: string; directory: string }) => Promise<void>;
   clearBinding?: (input: { channel: string; identityId?: string; peerId: string }) => Promise<void>;
   sendMessage?: (input: SendMessageInput) => Promise<SendMessageResult>;
@@ -519,9 +519,11 @@ export async function startHealthServer(
           const parsed = req.url ? new URL(req.url, "http://localhost") : null;
           const channel = typeof parsed?.searchParams.get("channel") === "string" ? parsed?.searchParams.get("channel") ?? undefined : undefined;
           const identityId = typeof parsed?.searchParams.get("identityId") === "string" ? parsed?.searchParams.get("identityId") ?? undefined : undefined;
+          const directory = typeof parsed?.searchParams.get("directory") === "string" ? parsed?.searchParams.get("directory") ?? undefined : undefined;
           const result = await handlers.listBindings({
             ...(channel?.trim() ? { channel: channel.trim() } : {}),
             ...(identityId?.trim() ? { identityId: identityId.trim() } : {}),
+            ...(directory?.trim() ? { directory: directory.trim() } : {}),
           });
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: true, ...result }));

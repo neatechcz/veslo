@@ -147,6 +147,62 @@ test("Codex capacity alerting emits critical visibility alert when no functional
   assert.doesNotMatch(alerts[0]?.runbook ?? "", /new sessions/i);
 });
 
+test("Codex capacity alerting emits visibility alert when any functional credential has unknown limits", () => {
+  const alerts = buildCodexCapacityAlerts(createCapacity({
+    codexCredentials: {
+      total: 2,
+      measurable: 1,
+      unknown: 1,
+      unavailable: 0,
+    },
+    fiveHour: {
+      usedPercent: 30,
+      remainingPercent: 70,
+      measurableCredentials: 1,
+    },
+    weekly: {
+      usedPercent: 20,
+      remainingPercent: 80,
+      measurableCredentials: 1,
+    },
+    credentials: [
+      {
+        id: "cred_visible",
+        name: "Codex Visible",
+        state: "healthy",
+        fiveHourRemainingPercent: 70,
+        weeklyRemainingPercent: 80,
+        statusAvailable: true,
+        limitsAvailable: true,
+      },
+      {
+        id: "cred_unknown",
+        name: "Codex Unknown",
+        state: "healthy",
+        fiveHourRemainingPercent: null,
+        weeklyRemainingPercent: null,
+        statusAvailable: true,
+        limitsAvailable: false,
+      },
+    ],
+  }), "2026-06-06T12:00:00.000Z");
+
+  assert.deepEqual(alerts.map((alert) => ({
+    id: alert.id,
+    title: alert.title,
+    severity: alert.severity,
+    source: alert.source,
+  })), [{
+    id: "alert_codex_capacity_limits_partially_unknown",
+    title: "Codex limit visibility degraded",
+    severity: "high",
+    source: "codex-capacity-visibility",
+  }]);
+  assert.match(alerts[0]?.runbook ?? "", /Some functional Codex credentials do not expose limits/i);
+  assert.match(alerts[0]?.runbook ?? "", /Codex Unknown.*limits unknown/);
+  assert.match(alerts[0]?.runbook ?? "", /Codex Visible.*limits visible/);
+});
+
 test("Codex capacity emails are urgent for 95 percent and critical for 100 percent or invisible limits", () => {
   const capacity = createCapacity({
     fiveHour: {

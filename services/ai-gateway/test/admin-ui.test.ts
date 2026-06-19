@@ -478,6 +478,73 @@ test("GET /admin/app.js keeps the stored admin token during transient session ve
   }
 })
 
+test("GET /admin serves a bottom-right backend connection status driven by admin API requests", async () => {
+  const app = createApp({ admin: createAdminServiceStub() })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const shellResponse = await fetch(`http://127.0.0.1:${port}/admin`, {
+      headers: {
+        cookie: ADMIN_COOKIE,
+      },
+    })
+    const scriptResponse = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+
+    assert.equal(shellResponse.status, 200)
+    assert.equal(scriptResponse.status, 200)
+
+    const html = await shellResponse.text()
+    const script = await scriptResponse.text()
+
+    assert.match(html, /id="backend-connection-status"/)
+    assert.match(html, /role="status"/)
+    assert.match(html, /aria-live="polite"/)
+    assert.match(html, /Connecting to AI Gateway/)
+    assert.match(script, /pendingAdminRequests/)
+    assert.match(script, /setBackendConnectionStatus\("connecting"/)
+    assert.match(script, /Still trying to connect to AI Gateway/)
+    assert.match(script, /setBackendConnectionStatus\(\s*"offline"/)
+    assert.match(script, /setBackendConnectionStatus\("connected"/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js renders inference readiness from the readiness endpoint", async () => {
+  const app = createApp({ admin: createAdminServiceStub() })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const shellResponse = await fetch(`http://127.0.0.1:${port}/admin`, {
+      headers: {
+        cookie: ADMIN_COOKIE,
+      },
+    })
+    const scriptResponse = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+
+    assert.equal(shellResponse.status, 200)
+    assert.equal(scriptResponse.status, 200)
+
+    const html = await shellResponse.text()
+    const script = await scriptResponse.text()
+
+    assert.match(html, /id="readiness-pill"/)
+    assert.match(html, /id="readiness-label"/)
+    assert.match(script, /async function loadReadiness\(\)/)
+    assert.match(script, /fetch\("\/readiness"\)/)
+    assert.match(script, /renderReadiness\(\)/)
+    assert.doesNotMatch(html, /Gateway healthy/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
 test("GET /admin/app.js checks the HTTP-only admin cookie before showing the login panel", async () => {
   const app = createApp()
   const server = app.listen(0, "127.0.0.1")
@@ -725,6 +792,7 @@ test("GET /admin/app.js gates organization-admin navigation and platform-only lo
     assert.match(script, /runAllowedLoad\("users", loadUsers\)/)
     assert.match(script, /runAllowedLoad\("credentials", loadCredentials\)/)
     assert.doesNotMatch(script, /runAllowedLoad\("sessions", loadSessions\)/)
+    assert.doesNotMatch(script, /\bloadSessions\(\)/)
     assert.doesNotMatch(script, /async function loadSessions\(\)/)
     assert.doesNotMatch(script, /function renderSessions\(\)/)
     assert.doesNotMatch(script, /sessionList:\s*document\.getElementById\("session-list"\)/)
@@ -1611,7 +1679,7 @@ test("GET /admin/app.js supports showing and soft-deleting credential archive re
   }
 })
 
-test("GET /admin/app.js supports reconnecting Codex credentials in place", async () => {
+test("GET /admin/app.js supports renaming credentials and preparing local Codex auth upload", async () => {
   const app = createApp()
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
@@ -1622,12 +1690,23 @@ test("GET /admin/app.js supports reconnecting Codex credentials in place", async
 
     assert.equal(response.status, 200)
     const script = await response.text()
-    assert.match(script, /credential\.provider === "codex_oauth"[\s\S]*data-credential-action="reconnect"/)
-    assert.match(script, /Reconnect \$\{credential\.name\}\? Paste a fresh Codex auth\.json/)
-    assert.match(script, /window\.prompt\("Paste the fresh Codex auth\.json/)
-    assert.match(script, /\/credentials\/\$\{encodedCredentialId\}\/reconnect/)
-    assert.match(script, /body:\s*JSON\.stringify\(\{\s*secret:\s*reconnectSecret/)
+    assert.match(script, /codexAuthUploadByCredentialId/)
+    assert.match(script, /data-credential-rename-input/)
+    assert.match(script, /data-credential-rename/)
+    assert.match(script, /async function renameSelectedCredential\(\)/)
+    assert.match(script, /method: "PATCH"/)
+    assert.match(script, /data-credential-codex-upload/)
+    assert.match(script, /codex-auth-upload-session/)
+    assert.match(script, /credential-create-codex-upload/)
+    assert.match(script, /async function prepareNewCodexCredentialUpload\(\)/)
+    assert.match(script, /await fetchJson\("\/credentials\/codex-auth-upload-session"/)
+    assert.match(script, /data-codex-auth-upload-command/)
+    assert.match(script, /data-codex-auth-upload-copy/)
+    assert.match(script, /async function prepareCodexAuthUpload\(\)/)
+    assert.match(script, /async function copyCodexAuthUploadCommand\(\)/)
+    assert.match(script, /navigator\.clipboard\.writeText\(command\)/)
     assert.match(script, /await refreshSelectedUserAiAccessOptions\(\)/)
+    assert.doesNotMatch(script, /window\.prompt\("Paste the fresh Codex auth\.json/)
   } finally {
     server.close()
     await once(server, "close")

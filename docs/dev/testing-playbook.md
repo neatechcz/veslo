@@ -34,7 +34,19 @@ pgrep -fl "pnpm -w dev:ui|pnpm --filter @neatech/veslo-ui dev|pnpm --filter @nea
 
 If a match looks like a user-launched production/bundled app or otherwise cannot be identified as an internally started dev/test runtime, stop and report what is running instead of force-killing it.
 
-Existing `tauri-pilot` app/socket reuse is not the default desktop test flow. Attach to an existing socket only when the user explicitly asks for a debug attach workflow.
+### Convenience script
+
+`scripts/veslo-kill-zombies.sh` automates steps 1–3 above for the sidecar set (veslo-server, veslo-orchestrator, veslo-code-router, veslo-code). It preserves the currently-running `pnpm dev` process group by default and only terminates orphans from earlier sessions:
+
+```bash
+./scripts/veslo-kill-zombies.sh           # dry run (default)
+./scripts/veslo-kill-zombies.sh --kill    # actually terminate orphans
+./scripts/veslo-kill-zombies.sh --all     # terminate everything, including the live dev session
+```
+
+In debug builds (`pnpm dev`), Veslo also runs an equivalent best-effort cleanup at startup — orphan sidecars whose process group differs from the booting Tauri process are SIGTERM'd before the new sidecars spawn. Release builds do not run this cleanup so a shipped Veslo never kills unrelated processes.
+
+Existing WebDriver reuse is not the default desktop test flow. Attach to an existing WebDriver server only when the user explicitly asks for a debug attach workflow.
 
 The `tauri-pilot` launcher waits for the Tauri process it started to exit during teardown and escalates to a force kill if the process ignores the graceful stop signal. This harness cleanup does not replace the preflight above; clear matching Veslo dev/test processes before each desktop runtime launch.
 
@@ -132,6 +144,63 @@ The E2E launcher uses an isolated app profile under `packages/e2e/.tmp-veslo-hom
 The previous Windows sidecar runtime probe was WebDriver-based and is legacy. Convert it to `tauri-pilot` before using it for Windows validation.
 
 The previous visual snapshot flow was WebdriverIO-based and is legacy. Convert the visual check to `tauri-pilot` screenshot assertions before refreshing or relying on baselines.
+
+### Tauri Pilot live desktop testing
+
+Tauri Pilot is available in Veslo debug desktop builds. The repo carries the Rust plugin dependency in `packages/desktop/src-tauri/Cargo.toml`, registers it in `packages/desktop/src-tauri/src/lib.rs` under `#[cfg(debug_assertions)]`, and grants `pilot:default` in `packages/desktop/src-tauri/capabilities/default.json`. It is a live inspection and interaction surface for the real Tauri desktop app, not a release-runtime feature and not a substitute for the WebdriverIO E2E gate when a spec exists.
+
+Use Tauri Pilot when the behavior under test depends on the running desktop shell, the system WebView, sidecar startup, native dialogs, workspace activation, or real app state that a browser-only test cannot represent. It is especially useful for exploratory regression checks, timing probes, reproducing UI bugs with the user's current profile, and validating that the real desktop UI reaches the expected state after a fix.
+
+Tauri Pilot can support these live-testing actions:
+
+- discover and target real Tauri windows
+- capture accessibility snapshots of the current UI
+- click, fill, and assert against snapshot refs such as `@e3`
+- diff UI snapshots after an interaction
+- inspect frontend logs and network activity when the MCP tools are available
+- run JavaScript in the live WebView for DOM checks, app-state probes, and `performance.now()` timing
+- exercise Tauri IPC through the Pilot MCP surface when that is the narrowest useful probe
+
+Keep the test anchored in user-visible behavior first. Use JavaScript eval or IPC only to observe state, gather timings, or isolate a lower-level failure after the normal UI path is understood.
+
+For Windows desktop behavior, run the Desktop Test Runtime Preflight first, start the app with the Windows-native toolchain from the repo root, and use the Windows Tauri Pilot executable:
+
+```bash
+pnpm dev
+
+/mnt/c/Users/jajse/.cargo/bin/tauri-pilot.exe ping
+/mnt/c/Users/jajse/.cargo/bin/tauri-pilot.exe --window main snapshot -i
+```
+
+For complex interactions or timing probes, run JavaScript through stdin:
+
+```bash
+/mnt/c/Users/jajse/.cargo/bin/tauri-pilot.exe --window main eval - <<'EOF'
+performance.now()
+EOF
+```
+
+Recommended live loop:
+
+1. take an initial interactive snapshot and identify stable refs
+2. drive one user action through Pilot
+3. take a fresh snapshot or diff
+4. assert the visible outcome and inspect logs if the UI did not reach the expected state
+5. repeat with small steps so the failing transition is identifiable
+
+When validating workspace opening, workspace-to-server binding, or the first message path, do not replace Tauri Pilot with the local `opencode` CLI. The test must exercise Veslo's configured project runtime, local Veslo server write API, orchestrator-mounted OpenCode endpoint, and selected project model.
+
+For a workspace-to-first-message latency check, measure these checkpoints separately:
+
+1. workspace create/open until the app has the active workspace and engine binding
+2. first message submit until the run is accepted by the server/OpenCode write path
+3. first assistant content or terminal error visible in the desktop UI
+
+For a three-message pass, use one fresh workspace, send three short prompts, and record each result separately. Label the first send as `cold run`; do not average it together with runs 2 and 3. Record the workspace id, workspace path, runtime, model/provider/variant, exact prompt text, exact Tauri Pilot command or script path, and any frontend/server error text.
+
+If a send fails before model streaming with errors such as `OpenCode base URL is missing`, `Conversation directory is outside this workspace`, or `OpenCode request timed out`, classify the result as workspace/server/OpenCode binding failure rather than model latency. Fix that binding path before moving down to lower-level function timing.
+
+See `docs/sandbox/tauri-pilot.md` for the fuller command reference and MCP setup.
 
 ### Live feedback-to-YouTrack smoke
 

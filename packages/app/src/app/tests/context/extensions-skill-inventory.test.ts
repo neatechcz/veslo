@@ -1,0 +1,3051 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { createRoot } from "solid-js";
+
+import type { LocalSkillCard, LocalSkillListScope, WorkspaceInfo } from "../../lib/tauri";
+import { buildSkillInventory, skillMutationTargetFromInstance } from "../../lib/skill-inventory.js";
+import { filterSkillInventoryItems } from "../../lib/skill-inventory-filters.js";
+
+const { createExtensionsStore } = await import("../../context/extensions.js");
+
+const createDenAuthJson = (
+  input: {
+    denApiBase?: string;
+    token?: string;
+    orgId?: string;
+    userId?: string;
+  } = {},
+) => {
+  const token = input.token ?? "den-token";
+  const orgId = input.orgId ?? "org-1";
+  const userId = input.userId ?? "user-1";
+  return JSON.stringify({
+    denApiBase: input.denApiBase ?? "https://api.veslo.test",
+    token,
+    orgId,
+    user: { id: userId },
+    org: { id: orgId },
+  });
+};
+
+function createMemoryStorage(seed: Record<string, string> = {}): Storage {
+  const entries = new Map(Object.entries(seed));
+  return {
+    get length() {
+      return entries.size;
+    },
+    clear() {
+      entries.clear();
+    },
+    getItem(key: string) {
+      return entries.get(key) ?? null;
+    },
+    key(index: number) {
+      return Array.from(entries.keys())[index] ?? null;
+    },
+    removeItem(key: string) {
+      entries.delete(key);
+    },
+    setItem(key: string, value: string) {
+      entries.set(key, value);
+    },
+  };
+}
+
+async function withDenAuthStorage(run: (storage: { localStorage: Storage; sessionStorage: Storage }) => Promise<void>) {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const localStorage = createMemoryStorage();
+  const sessionStorage = createMemoryStorage({ "veslo.den.auth": createDenAuthJson() });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      localStorage,
+      sessionStorage,
+    },
+  });
+
+  try {
+    await run({ localStorage, sessionStorage });
+  } finally {
+    if (previousWindow) {
+      Object.defineProperty(globalThis, "window", previousWindow);
+    } else {
+      delete (globalThis as { window?: unknown }).window;
+    }
+  }
+}
+
+const workspaces: WorkspaceInfo[] = [
+  {
+    id: "ws-alpha",
+    name: "Alpha Workspace",
+    displayName: "Alpha Label",
+    path: "/workspaces/alpha",
+    preset: "starter",
+    workspaceType: "local",
+  },
+  {
+    id: "ws-beta",
+    name: "Beta Workspace",
+    path: "/workspaces/beta",
+    preset: "automation",
+    workspaceType: "local",
+  },
+];
+
+const remoteWorkspace: WorkspaceInfo = {
+  id: "ws-remote",
+  name: "Remote Workspace",
+  displayName: "Remote Label",
+  path: "/workspaces/remote",
+  preset: "server",
+  workspaceType: "remote",
+};
+
+const hubSkill = (name: string) => ({
+  name,
+  description: `${name} from hub`,
+  trigger: `${name} trigger`,
+  source: {
+    owner: "neatech",
+    repo: "veslo-skills",
+    ref: "main",
+    path: `skills/${name}`,
+  },
+});
+
+async function withRegistryMutationStore(
+  run: (context: {
+    store: any;
+    calls: {
+      deleteInstallations: Array<{ installationId: string; input: unknown }>;
+      restoreInstallations: Array<{ installationId: string; input: unknown }>;
+      updatePolicies: Array<{ policyId: string; input: unknown }>;
+      deleteWorkspaceSkills: Array<{ workspaceId: string; name: string; options?: unknown }>;
+      deleteGlobalSkills: Array<{ name: string; options?: unknown }>;
+      batchRemoveSkills: Array<{ input: unknown }>;
+      restoreRemovals: string[];
+      syncGlobalMaterializations: unknown[];
+      syncWorkspaceMaterializations: Array<{ workspaceId: string; options?: unknown }>;
+      hubRefreshes: unknown[];
+      inventoryReads: Array<{ projectDir: string; scope: LocalSkillListScope }>;
+      reloads: unknown[];
+    };
+    errors: string[];
+  }) => Promise<void>,
+) {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      const calls = {
+        deleteInstallations: [] as Array<{ installationId: string; input: unknown }>,
+        restoreInstallations: [] as Array<{ installationId: string; input: unknown }>,
+        updatePolicies: [] as Array<{ policyId: string; input: unknown }>,
+        deleteWorkspaceSkills: [] as Array<{ workspaceId: string; name: string; options?: unknown }>,
+        deleteGlobalSkills: [] as Array<{ name: string; options?: unknown }>,
+        batchRemoveSkills: [] as Array<{ input: unknown }>,
+        restoreRemovals: [] as string[],
+        syncGlobalMaterializations: [] as unknown[],
+        syncWorkspaceMaterializations: [] as Array<{ workspaceId: string; options?: unknown }>,
+        hubRefreshes: [] as unknown[],
+        inventoryReads: [] as Array<{ projectDir: string; scope: LocalSkillListScope }>,
+        reloads: [] as unknown[],
+      };
+      const errors: string[] = [];
+      const vesloServerClient = {
+        async deleteRegistrySkillInstallation(installationId: string, input?: unknown) {
+          calls.deleteInstallations.push({ installationId, input });
+          return {
+            installation: {
+              installationId,
+              skillId: "skill_1",
+              versionId: "version_1",
+              enabled: false,
+              source: "personal",
+              installedAt: "2026-05-31T10:00:00.000Z",
+            },
+          };
+        },
+        async restoreRegistrySkillInstallation(installationId: string, input: unknown) {
+          calls.restoreInstallations.push({ installationId, input });
+          return {
+            installation: {
+              installationId,
+              skillId: "skill_1",
+              versionId: "version_1",
+              enabled: true,
+              source: "personal",
+              installedAt: "2026-05-31T10:00:00.000Z",
+            },
+          };
+        },
+        async updateRegistrySkillRolloutPolicy(policyId: string, input: unknown) {
+          calls.updatePolicies.push({ policyId, input });
+          return {
+            policy: {
+              id: policyId,
+              skillId: "skill_1",
+              versionId: "version_1",
+              target: "workspace",
+              audience: "selected-workspaces",
+              catalogScope: "organization",
+              orgId: "org-1",
+              enabled: Boolean((input as { enabled?: boolean }).enabled),
+              updatePolicy: "latest_approved",
+              removalPolicy: "admin_removable",
+              createdAt: "2026-05-31T10:00:00.000Z",
+            },
+          };
+        },
+	        async deleteGlobalSkill(name: string, options?: unknown) {
+	          calls.deleteGlobalSkills.push({ name, options });
+	          return {
+	            ok: true,
+	            name,
+	            path: `/Users/example/.opencode/skills/${name}`,
+	            removalId: "removal_1",
+	            reloadRequired: true,
+	          };
+	        },
+	        async deleteSkill(workspaceId: string, name: string, options?: unknown) {
+	          calls.deleteWorkspaceSkills.push({ workspaceId, name, options });
+	          return {
+	            ok: true,
+	            name,
+	            path: `/workspaces/${workspaceId}/.opencode/skills/${name}`,
+	            removalId: "workspace_removal_1",
+	            reloadRequired: true,
+	          };
+	        },
+        async batchRemoveSkills(input: unknown) {
+          calls.batchRemoveSkills.push({ input });
+          const items = (input as { items: Array<{ id?: string; name: string; scope: string; path?: string }> }).items;
+          return {
+            ok: true,
+            succeeded: items.length,
+            failed: 0,
+            results: items.map((item, index) => ({
+              ...item,
+              index,
+              ok: true,
+              reloadRequired: true,
+            })),
+          };
+        },
+        async restoreSkillRemoval(removalId: string) {
+          calls.restoreRemovals.push(removalId);
+          return {
+            ok: true,
+            path: "/Users/example/.opencode/skills/restored/SKILL.md",
+            reloadRequired: true,
+          };
+        },
+        async syncGlobalSkillMaterialization(options?: unknown) {
+          calls.syncGlobalMaterializations.push(options);
+          return {
+            scope: "personal-global",
+            status: "synced",
+            registryConfigured: true,
+            materializedSkills: [],
+            synced: true,
+          };
+        },
+        async syncWorkspaceSkillMaterialization(workspaceId: string, options?: unknown) {
+          calls.syncWorkspaceMaterializations.push({ workspaceId, options });
+          return {
+            workspaceId,
+            status: "synced",
+            registryConfigured: true,
+            materializedSkills: [],
+            synced: true,
+          };
+        },
+        async listHubSkills(input: unknown) {
+          calls.hubRefreshes.push(input);
+          return { items: [] };
+        },
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [workspaces[0]],
+        vesloServerClient: () => vesloServerClient as never,
+        vesloServerStatus: () => "connected",
+        vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+        vesloServerWorkspaceId: () => "ws-alpha",
+        listLocalSkillsScoped: async (projectDir, scope) => {
+          calls.inventoryReads.push({ projectDir, scope });
+          return [];
+        },
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: (value) => {
+          if (value) errors.push(value);
+        },
+        markReloadRequired: (...args) => {
+          calls.reloads.push(args);
+        },
+      });
+
+      try {
+        await run({ store, calls, errors });
+      } finally {
+        dispose();
+      }
+    });
+  });
+}
+
+test("skill inventory preserves removed lifecycle metadata and filters removed rows by default", () => {
+  const items = buildSkillInventory({
+    globalSkills: [
+      {
+        name: "legacy-review",
+        path: "/Users/example/.opencode/skills/legacy-review/SKILL.md",
+        scope: "organization",
+        lifecycle: "removed",
+        removedAt: "2026-05-31T10:00:00.000Z",
+        removedBy: "user-1",
+        removeReason: "cleanup",
+        registry: {
+          skillId: "skill_1",
+          installationId: "install_1",
+          policyId: "policy_1",
+          versionId: "version_1",
+          packageSha256: "sha_1",
+          source: "organization",
+          removalPolicy: "admin_removable",
+        },
+        restoreTarget: {
+          scope: "organization",
+          orgId: "org-1",
+        },
+      },
+    ],
+    workspaceSkillsByWorkspaceId: {},
+    hubSkills: [],
+  });
+
+  const [item] = items;
+  assert.equal(item?.globalInstance?.scope, "organization");
+  assert.equal(item?.globalInstance?.lifecycle, "removed");
+  assert.equal(item?.globalInstance?.removedAt, "2026-05-31T10:00:00.000Z");
+  assert.equal(item?.globalInstance?.removedBy, "user-1");
+  assert.equal(item?.globalInstance?.removeReason, "cleanup");
+  assert.equal(item?.globalInstance?.registry?.installationId, "install_1");
+  assert.equal(item?.globalInstance?.registry?.policyId, "policy_1");
+  assert.equal(item?.globalInstance?.registry?.source, "organization");
+  assert.deepEqual(item?.globalInstance?.restoreTarget, {
+    scope: "organization",
+    orgId: "org-1",
+  });
+  assert.equal(item?.globalInstance?.writable, false);
+
+  assert.equal(filterSkillInventoryItems(items, { includeDeleted: false }).length, 0);
+  assert.equal(filterSkillInventoryItems(items, { includeDeleted: true }).length, 1);
+});
+
+test("registry installation removal calls the Veslo server client with Den context and refreshes managed inventory", async () => {
+  await withRegistryMutationStore(async ({ store, calls }) => {
+    const [item] = buildSkillInventory({
+      globalSkills: [
+        {
+          name: "personal-helper",
+          path: "/Users/example/.opencode/skills/veslo-managed/personal-helper/SKILL.md",
+          scope: "user-global",
+          registry: {
+            installationId: "install_1",
+            versionId: "version_1",
+            source: "personal",
+            removalPolicy: "user_removable",
+          },
+        },
+      ],
+      workspaceSkillsByWorkspaceId: {},
+      hubSkills: [],
+    });
+    assert.ok(item?.globalInstance);
+
+    const result = await store.removeSkillInstance(skillMutationTargetFromInstance(item.globalInstance));
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(calls.deleteInstallations, [
+      {
+        installationId: "install_1",
+        input: {
+          denApiBase: "https://api.veslo.test",
+          denToken: "den-token",
+          denOrgId: "org-1",
+          denUserId: "user-1",
+        },
+      },
+    ]);
+    assert.equal(calls.restoreInstallations.length, 0);
+    assert.equal(calls.updatePolicies.length, 0);
+    assert.deepEqual(calls.syncGlobalMaterializations, [
+      {
+        denApiBase: "https://api.veslo.test",
+        denToken: "den-token",
+        denOrgId: "org-1",
+        denUserId: "user-1",
+      },
+    ]);
+    assert.ok(calls.hubRefreshes.length > 0);
+    assert.ok(calls.inventoryReads.length > 0);
+    assert.deepEqual(calls.reloads, [["skills", { type: "skill", name: "personal-helper", action: "removed" }]]);
+  });
+});
+
+test("batch skill removal calls the Veslo server client with selected targets and Den context", async () => {
+  await withRegistryMutationStore(async ({ store, calls }) => {
+    const items = buildSkillInventory({
+      globalSkills: [
+        {
+          name: "personal-helper",
+          path: "/Users/example/.opencode/skills/veslo-managed/personal-helper/SKILL.md",
+          scope: "user-global",
+          registry: {
+            installationId: "install_1",
+            versionId: "version_1",
+            source: "personal",
+            removalPolicy: "user_removable",
+          },
+        },
+      ],
+      workspaceSkillsByWorkspaceId: {
+        "ws-alpha": {
+          workspace: {
+            id: "ws-alpha",
+            label: "Alpha Label",
+            path: "/workspaces/alpha",
+          },
+          skills: [
+            {
+              name: "workspace-helper",
+              path: "/workspaces/alpha/.opencode/skills/workspace-helper/SKILL.md",
+              scope: "workspace",
+            },
+          ],
+        },
+      },
+      hubSkills: [],
+    });
+    const globalInstance = items.find((item) => item.name === "personal-helper")?.globalInstance;
+    const workspaceInstance = items.find((item) => item.name === "workspace-helper")?.workspaceInstances[0];
+    assert.ok(globalInstance);
+    assert.ok(workspaceInstance);
+
+    const result = await store.batchRemoveSkillInstances([
+      skillMutationTargetFromInstance(globalInstance),
+      skillMutationTargetFromInstance(workspaceInstance),
+    ]);
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(calls.batchRemoveSkills, [
+      {
+        input: {
+          denApiBase: "https://api.veslo.test",
+          denToken: "den-token",
+          denOrgId: "org-1",
+          denUserId: "user-1",
+          items: [
+            {
+              id: "user-global::personal-helper:/Users/example/.opencode/skills/veslo-managed/personal-helper/SKILL.md",
+              name: "personal-helper",
+              scope: "user-global",
+              path: "/Users/example/.opencode/skills/veslo-managed/personal-helper/SKILL.md",
+              reason: "user-requested",
+              registry: {
+                installationId: "install_1",
+              },
+            },
+            {
+              id: "workspace:ws-alpha:workspace-helper:/workspaces/alpha/.opencode/skills/workspace-helper/SKILL.md",
+              name: "workspace-helper",
+              scope: "workspace",
+              path: "/workspaces/alpha/.opencode/skills/workspace-helper/SKILL.md",
+              workspaceId: "ws-alpha",
+              reason: "user-requested",
+            },
+          ],
+        },
+      },
+    ]);
+    assert.deepEqual(calls.syncGlobalMaterializations, [
+      {
+        denApiBase: "https://api.veslo.test",
+        denToken: "den-token",
+        denOrgId: "org-1",
+        denUserId: "user-1",
+      },
+    ]);
+    assert.deepEqual(calls.syncWorkspaceMaterializations, [
+      {
+        workspaceId: "ws-alpha",
+        options: {
+          denApiBase: "https://api.veslo.test",
+          denToken: "den-token",
+          denOrgId: "org-1",
+          denUserId: "user-1",
+        },
+      },
+    ]);
+    assert.ok(calls.hubRefreshes.length > 0);
+    assert.ok(calls.inventoryReads.length > 0);
+    assert.deepEqual(calls.reloads, [
+      ["skills", { type: "skill", name: "personal-helper", action: "removed" }],
+      ["skills", { type: "skill", name: "workspace-helper", action: "removed" }],
+    ]);
+  });
+});
+
+test("managed global materializations are removed through registry installation metadata", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      const calls = {
+        deleteInstallations: [] as Array<{ installationId: string; input: unknown }>,
+        deleteGlobalSkills: [] as Array<{ name: string; options?: unknown }>,
+        syncGlobalMaterializations: [] as unknown[],
+      };
+      const vesloServerClient = {
+        async listHubSkills() {
+          return { items: [] };
+        },
+        async getGlobalSkillMaterializationStatus() {
+          return {
+            scope: "personal-global",
+            status: "current",
+            registryConfigured: true,
+            rootDir: "/Users/example/.opencode/skills/veslo-managed",
+            materializedSkills: [
+              {
+                installationId: "install_global_helper",
+                skillId: "skill_global_helper",
+                name: "global-helper",
+                versionId: "version_1",
+                packageSha256: "a".repeat(64),
+                target: "personal-global",
+                skillDir: "/Users/example/.opencode/skills/veslo-managed/global-helper",
+              },
+            ],
+          };
+        },
+        async deleteRegistrySkillInstallation(installationId: string, input?: unknown) {
+          calls.deleteInstallations.push({ installationId, input });
+          return { installation: { installationId, skillId: "skill_global_helper", versionId: "version_1", enabled: false } };
+        },
+        async deleteGlobalSkill(name: string, options?: unknown) {
+          calls.deleteGlobalSkills.push({ name, options });
+          return { ok: true, name, path: `/Users/example/.opencode/skills/${name}/SKILL.md` };
+        },
+        async syncGlobalSkillMaterialization(options?: unknown) {
+          calls.syncGlobalMaterializations.push(options);
+          return {
+            scope: "personal-global",
+            status: "synced",
+            registryConfigured: true,
+            materializedSkills: [],
+            synced: true,
+          };
+        },
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [workspaces[0]],
+        vesloServerClient: () => vesloServerClient as never,
+        vesloServerStatus: () => "connected",
+        vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+        vesloServerWorkspaceId: () => "ws-alpha",
+        listLocalSkillsScoped: async (_projectDir, scope) =>
+          scope === "global"
+            ? [
+                {
+                  name: "global-helper",
+                  path: "/Users/example/.opencode/skills/veslo-managed/global-helper",
+                },
+              ]
+            : [],
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      await store.refreshSkillInventory({ force: true });
+
+      const item = store.skillInventory().find((candidate) => candidate.name === "global-helper");
+      assert.ok(item?.globalInstance);
+      assert.equal(item.globalInstance.registry?.installationId, "install_global_helper");
+
+      const result = await store.removeSkillInstance(skillMutationTargetFromInstance(item.globalInstance));
+
+      assert.equal(result.ok, true);
+      assert.deepEqual(calls.deleteInstallations, [
+        {
+          installationId: "install_global_helper",
+          input: {
+            denApiBase: "https://api.veslo.test",
+            denToken: "den-token",
+            denOrgId: "org-1",
+            denUserId: "user-1",
+          },
+        },
+      ]);
+      assert.equal(calls.deleteGlobalSkills.length, 0);
+      assert.deepEqual(calls.syncGlobalMaterializations, [
+        {
+          denApiBase: "https://api.veslo.test",
+          denToken: "den-token",
+          denOrgId: "org-1",
+          denUserId: "user-1",
+        },
+      ]);
+
+      dispose();
+    });
+  });
+});
+
+test("non-rollout platform materializations preserve platform locked inventory metadata", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      const calls = {
+        deleteInstallations: [] as Array<{ installationId: string; input: unknown }>,
+        deleteGlobalSkills: [] as Array<{ name: string; options?: unknown }>,
+      };
+      const vesloServerClient = {
+        async listHubSkills() {
+          return { items: [] };
+        },
+        async getGlobalSkillMaterializationStatus() {
+          return {
+            scope: "personal-global",
+            status: "current",
+            registryConfigured: false,
+            rootDir: "/Users/example/.config/opencode/skills/veslo-managed",
+            materializedSkills: [
+              {
+                installationId: "platform_install_veslo_automations",
+                skillId: "platform_skill_veslo_automations",
+                name: "veslo-automations",
+                versionId: "platform_version_veslo_automations_v1",
+                packageSha256: "c".repeat(64),
+                source: "platform",
+                removalPolicy: "locked",
+                target: "personal-global",
+                skillDir: "/Users/example/.config/opencode/skills/veslo-managed/veslo-automations",
+              },
+            ],
+          };
+        },
+        async deleteRegistrySkillInstallation(installationId: string, input?: unknown) {
+          calls.deleteInstallations.push({ installationId, input });
+          return { installation: { installationId, enabled: false } };
+        },
+        async deleteGlobalSkill(name: string, options?: unknown) {
+          calls.deleteGlobalSkills.push({ name, options });
+          return { ok: true, name };
+        },
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [workspaces[0]],
+        vesloServerClient: () => vesloServerClient as never,
+        vesloServerStatus: () => "connected",
+        vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+        vesloServerWorkspaceId: () => "ws-alpha",
+        listLocalSkillsScoped: async (_projectDir, scope) =>
+          scope === "global"
+            ? [
+                {
+                  name: "veslo-automations",
+                  path: "/Users/example/.config/opencode/skills/veslo-managed/veslo-automations",
+                },
+              ]
+            : [],
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      await store.refreshSkillInventory({ force: true });
+
+      const item = store.skillInventory().find((candidate) => candidate.name === "veslo-automations");
+      assert.ok(item?.globalInstance);
+      assert.equal(item.globalInstance.registry?.installationId, "platform_install_veslo_automations");
+      assert.equal(item.globalInstance.registry?.source, "platform");
+      assert.equal(item.globalInstance.registry?.removalPolicy, "locked");
+
+      const result = await store.removeSkillInstance(skillMutationTargetFromInstance(item.globalInstance));
+      assert.equal(result.ok, false);
+      assert.deepEqual(calls.deleteInstallations, []);
+      assert.deepEqual(calls.deleteGlobalSkills, []);
+
+      dispose();
+    });
+  });
+});
+
+test("skill inventory applies disabled state and platform scope to materialized platform skills", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      const managedSkillDir = "/Users/example/.config/opencode/skills/veslo-managed/veslo-automations";
+      const skillPath = `${managedSkillDir}/SKILL.md`;
+      const vesloServerClient = {
+        async listHubSkills() {
+          return { items: [] };
+        },
+        async getGlobalSkillMaterializationStatus() {
+          return {
+            scope: "personal-global",
+            status: "current",
+            registryConfigured: false,
+            rootDir: "/Users/example/.config/opencode/skills/veslo-managed",
+            materializedSkills: [
+              {
+                installationId: "platform_install_veslo_automations",
+                skillId: "platform_skill_veslo_automations",
+                name: "veslo-automations",
+                versionId: "platform_version_veslo_automations_v1",
+                packageSha256: "c".repeat(64),
+                source: "platform",
+                removalPolicy: "locked",
+                target: "personal-global",
+                skillDir: managedSkillDir,
+              },
+            ],
+          };
+        },
+        async listDisabledSkills() {
+          return {
+            items: [
+              {
+                id: "disabled_platform_policy",
+                name: "veslo-automations",
+                scope: "platform",
+                path: skillPath,
+                registry: {
+                  installationId: "platform_install_veslo_automations",
+                  source: "platform",
+                },
+                disabledAt: "2026-06-06T10:00:00.000Z",
+              },
+            ],
+          };
+        },
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [workspaces[0]],
+        vesloServerClient: () => vesloServerClient as never,
+        vesloServerStatus: () => "connected",
+        vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+        vesloServerWorkspaceId: () => "ws-alpha",
+        listLocalSkillsScoped: async (_projectDir, scope) =>
+          scope === "global"
+            ? [
+                {
+                  name: "veslo-automations",
+                  path: managedSkillDir,
+                },
+              ]
+            : [],
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      await store.refreshSkillInventory({ force: true });
+
+      const item = store.skillInventory().find((candidate) => candidate.name === "veslo-automations");
+      assert.ok(item?.globalInstance);
+      assert.equal(item.globalInstance.scope, "platform");
+      assert.equal(item.globalInstance.enabled, false);
+      assert.equal(item.globalInstance.disabledReason, "user");
+      assert.equal(item.globalInstance.readable, false);
+      assert.equal(item.globalInstance.writable, false);
+      assert.equal(item.globalInstance.registry?.installationId, "platform_install_veslo_automations");
+      assert.equal(item.globalInstance.registry?.source, "platform");
+
+      dispose();
+    });
+  });
+});
+
+test("skill enabled state mutation calls the Veslo server and refreshes inventory", async () => {
+  await createRoot(async (dispose) => {
+    const enabledPatches: Array<{ target: unknown; enabled: boolean }> = [];
+    const reloads: unknown[] = [];
+    const skillPath = "/Users/example/.config/opencode/skills/research/SKILL.md";
+    const vesloServerClient = {
+      async listHubSkills() {
+        return { items: [] };
+      },
+      async listDisabledSkills() {
+        return {
+          items: enabledPatches.length > 0 && enabledPatches.at(-1)?.enabled === false
+            ? [
+                {
+                  id: "disabled_research",
+                  name: "research",
+                  scope: "user-global",
+                  path: skillPath,
+                  disabledAt: "2026-06-06T10:00:00.000Z",
+                },
+              ]
+            : [],
+        };
+      },
+      async setSkillEnabledState(input: { target: unknown; enabled: boolean }) {
+        enabledPatches.push(input);
+        return { ok: true, enabled: input.enabled };
+      },
+    };
+
+    const store = createExtensionsStore({
+      client: () => null,
+      projectDir: () => "/workspaces/alpha",
+      activeWorkspaceId: () => "ws-alpha",
+      activeWorkspaceRoot: () => "/workspaces/alpha",
+      workspaceType: () => "local",
+      workspaces: () => [workspaces[0]],
+      vesloServerClient: () => vesloServerClient as never,
+      vesloServerStatus: () => "connected",
+      vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+      vesloServerWorkspaceId: () => "ws-alpha",
+      listLocalSkillsScoped: async (_projectDir, scope) =>
+        scope === "global"
+          ? [
+              {
+                name: "research",
+                path: skillPath,
+              },
+            ]
+          : [],
+      setBusy: () => undefined,
+      setBusyLabel: () => undefined,
+      setBusyStartedAt: () => undefined,
+      setError: () => undefined,
+      markReloadRequired: (...args) => {
+        reloads.push(args);
+      },
+    });
+
+    await store.refreshSkillInventory({ force: true });
+    const initialInstance = store.skillInventory().find((item) => item.name === "research")?.globalInstance;
+    assert.ok(initialInstance);
+    assert.equal(initialInstance.enabled, true);
+
+    const result = await store.setSkillInstanceEnabled(skillMutationTargetFromInstance(initialInstance), false);
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(enabledPatches, [
+      {
+        enabled: false,
+        target: {
+          name: "research",
+          path: skillPath,
+          scope: "user-global",
+        },
+      },
+    ]);
+    assert.deepEqual(reloads, [["skills", { type: "skill", name: "research", action: "updated" }]]);
+    const updatedInstance = store.skillInventory().find((item) => item.name === "research")?.globalInstance;
+    assert.equal(updatedInstance?.enabled, false);
+
+    dispose();
+  });
+});
+
+test("server materialization metadata wins over stale local managed marker metadata", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      const calls = {
+        deleteInstallations: [] as Array<{ installationId: string; input: unknown }>,
+        deleteGlobalSkills: [] as Array<{ name: string; options?: unknown }>,
+      };
+      const managedSkillDir = "/Users/example/.config/opencode/skills/veslo-managed/veslo-automations";
+      const vesloServerClient = {
+        async listHubSkills() {
+          return { items: [] };
+        },
+        async getGlobalSkillMaterializationStatus() {
+          return {
+            scope: "personal-global",
+            status: "current",
+            registryConfigured: false,
+            rootDir: "/Users/example/.config/opencode/skills/veslo-managed",
+            materializedSkills: [
+              {
+                installationId: "platform_install_veslo_automations",
+                skillId: "platform_skill_veslo_automations",
+                name: "veslo-automations",
+                versionId: "platform_version_veslo_automations_v1",
+                packageSha256: "d".repeat(64),
+                source: "platform",
+                removalPolicy: "locked",
+                target: "personal-global",
+                skillDir: managedSkillDir,
+              },
+            ],
+          };
+        },
+        async deleteRegistrySkillInstallation(installationId: string, input?: unknown) {
+          calls.deleteInstallations.push({ installationId, input });
+          return { installation: { installationId, enabled: false } };
+        },
+        async deleteGlobalSkill(name: string, options?: unknown) {
+          calls.deleteGlobalSkills.push({ name, options });
+          return { ok: true, name };
+        },
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [workspaces[0]],
+        vesloServerClient: () => vesloServerClient as never,
+        vesloServerStatus: () => "connected",
+        vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+        vesloServerWorkspaceId: () => "ws-alpha",
+        listLocalSkillsScoped: async (_projectDir, scope) =>
+          scope === "global"
+            ? [
+                {
+                  name: "veslo-automations",
+                  path: managedSkillDir,
+                  registry: {
+                    installationId: "stale_personal_install",
+                    skillId: "stale_personal_skill",
+                    versionId: "stale_version",
+                    packageSha256: "e".repeat(64),
+                    source: "personal",
+                    removalPolicy: "user_removable",
+                  },
+                },
+              ]
+            : [],
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      await store.refreshSkillInventory({ force: true });
+
+      const item = store.skillInventory().find((candidate) => candidate.name === "veslo-automations");
+      assert.ok(item?.globalInstance);
+      assert.equal(item.globalInstance.registry?.installationId, "platform_install_veslo_automations");
+      assert.equal(item.globalInstance.registry?.skillId, "platform_skill_veslo_automations");
+      assert.equal(item.globalInstance.registry?.source, "platform");
+      assert.equal(item.globalInstance.registry?.removalPolicy, "locked");
+
+      const result = await store.removeSkillInstance(skillMutationTargetFromInstance(item.globalInstance));
+      assert.equal(result.ok, false);
+      assert.deepEqual(calls.deleteInstallations, []);
+      assert.deepEqual(calls.deleteGlobalSkills, []);
+
+      dispose();
+    });
+  });
+});
+
+test("managed rollout materializations are removed through rollout policy metadata", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      const calls = {
+        updatePolicies: [] as Array<{ policyId: string; input: unknown }>,
+        deleteGlobalSkills: [] as Array<{ name: string; options?: unknown }>,
+        syncGlobalMaterializations: [] as unknown[],
+      };
+      const vesloServerClient = {
+        async listHubSkills() {
+          return { items: [] };
+        },
+        async getGlobalSkillMaterializationStatus() {
+          return {
+            scope: "personal-global",
+            status: "current",
+            registryConfigured: true,
+            rootDir: "/Users/example/.opencode/skills/veslo-managed",
+            materializedSkills: [
+              {
+                installationId: "rollout:policy_org_helper",
+                skillId: "skill_org_helper",
+                name: "org-helper",
+                versionId: "version_1",
+                packageSha256: "b".repeat(64),
+                target: "personal-global",
+                skillDir: "/Users/example/.opencode/skills/veslo-managed/org-helper",
+              },
+            ],
+          };
+        },
+        async updateRegistrySkillRolloutPolicy(policyId: string, input: unknown) {
+          calls.updatePolicies.push({ policyId, input });
+          return { policy: { id: policyId, enabled: Boolean((input as { enabled?: boolean }).enabled) } };
+        },
+        async deleteGlobalSkill(name: string, options?: unknown) {
+          calls.deleteGlobalSkills.push({ name, options });
+          return { ok: true, name, path: `/Users/example/.opencode/skills/${name}/SKILL.md` };
+        },
+        async syncGlobalSkillMaterialization(options?: unknown) {
+          calls.syncGlobalMaterializations.push(options);
+          return {
+            scope: "personal-global",
+            status: "synced",
+            registryConfigured: true,
+            materializedSkills: [],
+            synced: true,
+          };
+        },
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [workspaces[0]],
+        vesloServerClient: () => vesloServerClient as never,
+        vesloServerStatus: () => "connected",
+        vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+        vesloServerWorkspaceId: () => "ws-alpha",
+        listLocalSkillsScoped: async (_projectDir, scope) =>
+          scope === "global"
+            ? [
+                {
+                  name: "org-helper",
+                  path: "/Users/example/.opencode/skills/veslo-managed/org-helper",
+                },
+              ]
+            : [],
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      await store.refreshSkillInventory({ force: true });
+
+      const item = store.skillInventory().find((candidate) => candidate.name === "org-helper");
+      assert.ok(item?.globalInstance);
+      assert.equal(item.globalInstance.registry?.policyId, "policy_org_helper");
+
+      const result = await store.removeSkillInstance(skillMutationTargetFromInstance(item.globalInstance));
+
+      assert.equal(result.ok, true);
+      assert.deepEqual(calls.updatePolicies, [
+        {
+          policyId: "policy_org_helper",
+          input: {
+            enabled: false,
+            denApiBase: "https://api.veslo.test",
+            denToken: "den-token",
+            denOrgId: "org-1",
+            denUserId: "user-1",
+          },
+        },
+      ]);
+      assert.equal(calls.deleteGlobalSkills.length, 0);
+      assert.deepEqual(calls.syncGlobalMaterializations, [
+        {
+          denApiBase: "https://api.veslo.test",
+          denToken: "den-token",
+          denOrgId: "org-1",
+          denUserId: "user-1",
+        },
+      ]);
+
+      dispose();
+    });
+  });
+});
+
+test("locked platform rollout materializations are blocked through materialization metadata", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      const calls = {
+        updatePolicies: [] as Array<{ policyId: string; input: unknown }>,
+        deleteGlobalSkills: [] as Array<{ name: string; options?: unknown }>,
+        syncGlobalMaterializations: [] as unknown[],
+      };
+      const vesloServerClient = {
+        async listHubSkills() {
+          return { items: [] };
+        },
+        async getGlobalSkillMaterializationStatus() {
+          return {
+            scope: "personal-global",
+            status: "current",
+            registryConfigured: true,
+            rootDir: "/Users/example/.opencode/skills/veslo-managed",
+            materializedSkills: [
+              {
+                installationId: "rollout:policy_platform_docx",
+                skillId: "skill_platform_docx",
+                name: "veslo-docx",
+                versionId: "version_1",
+                packageSha256: "c".repeat(64),
+                source: "platform",
+                target: "personal-global",
+                removalPolicy: "locked",
+                skillDir: "/Users/example/.opencode/skills/veslo-managed/veslo-docx",
+              },
+            ],
+          };
+        },
+        async updateRegistrySkillRolloutPolicy(policyId: string, input: unknown) {
+          calls.updatePolicies.push({ policyId, input });
+          return { policy: { id: policyId, enabled: Boolean((input as { enabled?: boolean }).enabled) } };
+        },
+        async deleteGlobalSkill(name: string, options?: unknown) {
+          calls.deleteGlobalSkills.push({ name, options });
+          return { ok: true, name, path: `/Users/example/.opencode/skills/${name}/SKILL.md` };
+        },
+        async syncGlobalSkillMaterialization(options?: unknown) {
+          calls.syncGlobalMaterializations.push(options);
+          return {
+            scope: "personal-global",
+            status: "synced",
+            registryConfigured: true,
+            materializedSkills: [],
+            synced: true,
+          };
+        },
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [workspaces[0]],
+        vesloServerClient: () => vesloServerClient as never,
+        vesloServerStatus: () => "limited",
+        vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+        vesloServerWorkspaceId: () => "ws-alpha",
+        listLocalSkillsScoped: async (_projectDir, scope) =>
+          scope === "global"
+            ? [
+                {
+                  name: "veslo-docx",
+                  path: "/Users/example/.opencode/skills/veslo-managed/veslo-docx",
+                  registry: {
+                    installationId: "install_local_docx",
+                    source: "personal",
+                    removalPolicy: "user_removable",
+                  },
+                },
+              ]
+            : [],
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      await store.refreshSkillInventory({ force: true });
+
+      const item = store.skillInventory().find((candidate) => candidate.name === "veslo-docx");
+      assert.ok(item?.globalInstance);
+      assert.equal(item.globalInstance.registry?.policyId, "policy_platform_docx");
+      assert.equal(item.globalInstance.registry?.source, "platform");
+      assert.equal(item.globalInstance.registry?.removalPolicy, "locked");
+
+      const result = await store.removeSkillInstance(skillMutationTargetFromInstance(item.globalInstance));
+
+      assert.equal(result.ok, false);
+      assert.match(result.message ?? "", /locked|cannot|unavailable/i);
+      assert.deepEqual(calls.updatePolicies, []);
+      assert.deepEqual(calls.deleteGlobalSkills, []);
+      assert.deepEqual(calls.syncGlobalMaterializations, []);
+
+      dispose();
+    });
+  });
+});
+
+test("registry installation restore calls the Veslo server client with restore and Den context", async () => {
+  await withRegistryMutationStore(async ({ store, calls }) => {
+    const result = await store.restoreSkillInstance({
+      name: "personal-helper",
+      path: "/Users/example/.opencode/skills/veslo-managed/personal-helper/SKILL.md",
+      scope: "user-global",
+      registry: {
+        installationId: "install_1",
+        versionId: "version_2",
+        source: "personal",
+        removalPolicy: "user_removable",
+      },
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(calls.restoreInstallations, [
+      {
+        installationId: "install_1",
+        input: {
+          denApiBase: "https://api.veslo.test",
+          denToken: "den-token",
+          denOrgId: "org-1",
+          denUserId: "user-1",
+          ownerUserId: "user-1",
+          versionId: "version_2",
+        },
+      },
+    ]);
+    assert.equal(calls.deleteInstallations.length, 0);
+    assert.equal(calls.updatePolicies.length, 0);
+    assert.ok(calls.hubRefreshes.length > 0);
+    assert.ok(calls.inventoryReads.length > 0);
+    assert.deepEqual(calls.reloads, [["skills", { type: "skill", name: "personal-helper", action: "added" }]]);
+  });
+});
+
+test("organization rollout removal and restore disable and enable the registry rollout policy", async () => {
+  await withRegistryMutationStore(async ({ store, calls }) => {
+    const target = {
+      name: "org-helper",
+      path: "",
+      scope: "organization",
+      registry: {
+        policyId: "policy_1",
+        source: "organization",
+        removalPolicy: "admin_removable",
+      },
+    };
+
+    const removeResult = await store.removeSkillInstance(target);
+    const restoreResult = await store.restoreSkillInstance(target);
+
+    assert.equal(removeResult.ok, true);
+    assert.equal(restoreResult.ok, true);
+    assert.deepEqual(calls.updatePolicies, [
+      {
+        policyId: "policy_1",
+        input: {
+          enabled: false,
+          denApiBase: "https://api.veslo.test",
+          denToken: "den-token",
+          denOrgId: "org-1",
+          denUserId: "user-1",
+        },
+      },
+      {
+        policyId: "policy_1",
+        input: {
+          enabled: true,
+          denApiBase: "https://api.veslo.test",
+          denToken: "den-token",
+          denOrgId: "org-1",
+          denUserId: "user-1",
+        },
+      },
+    ]);
+    assert.equal(calls.deleteInstallations.length, 0);
+    assert.equal(calls.restoreInstallations.length, 0);
+    assert.deepEqual(calls.syncGlobalMaterializations, [
+      {
+        denApiBase: "https://api.veslo.test",
+        denToken: "den-token",
+        denOrgId: "org-1",
+        denUserId: "user-1",
+      },
+      {
+        denApiBase: "https://api.veslo.test",
+        denToken: "den-token",
+        denOrgId: "org-1",
+        denUserId: "user-1",
+      },
+    ]);
+    assert.deepEqual(calls.reloads, [
+      ["skills", { type: "skill", name: "org-helper", action: "removed" }],
+      ["skills", { type: "skill", name: "org-helper", action: "added" }],
+    ]);
+  });
+});
+
+test("locked registry removal policy is blocked before managed mutations", async () => {
+  await withRegistryMutationStore(async ({ store, calls, errors }) => {
+    const result = await store.removeSkillInstance({
+      name: "locked-helper",
+      path: "/Users/example/.opencode/skills/veslo-managed/locked-helper/SKILL.md",
+      scope: "user-global",
+      registry: {
+        installationId: "install_locked",
+        source: "personal",
+        removalPolicy: "locked",
+      },
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(result.message ?? "", /locked|cannot|unavailable/i);
+    assert.equal(calls.deleteInstallations.length, 0);
+    assert.equal(calls.restoreInstallations.length, 0);
+    assert.equal(calls.updatePolicies.length, 0);
+    assert.equal(calls.deleteGlobalSkills.length, 0);
+    assert.equal(calls.restoreRemovals.length, 0);
+    assert.deepEqual(errors, []);
+  });
+});
+
+test("unmanaged user-global removal uses the Veslo server recoverable delete route", async () => {
+  await withRegistryMutationStore(async ({ store, calls }) => {
+    const result = await store.removeSkillInstance({
+      name: "global-helper",
+      path: "/Users/example/.opencode/skills/global-helper/SKILL.md",
+      scope: "user-global",
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(calls.deleteGlobalSkills, [
+      {
+        name: "global-helper",
+        options: {
+          path: "/Users/example/.opencode/skills/global-helper/SKILL.md",
+          reason: "user-requested",
+        },
+      },
+    ]);
+    assert.equal(calls.deleteInstallations.length, 0);
+    assert.equal(calls.restoreInstallations.length, 0);
+    assert.equal(calls.restoreRemovals.length, 0);
+    assert.equal(calls.updatePolicies.length, 0);
+    assert.deepEqual(calls.reloads, [["skills", { type: "skill", name: "global-helper", action: "removed" }]]);
+  });
+});
+
+test("unmanaged user-global removal normalizes directory paths before recoverable delete", async () => {
+  await withRegistryMutationStore(async ({ store, calls }) => {
+    const result = await store.removeSkillInstance({
+      name: "global-helper",
+      path: "/Users/example/.opencode/skills/global-helper",
+      scope: "user-global",
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(calls.deleteGlobalSkills, [
+      {
+        name: "global-helper",
+        options: {
+          path: "/Users/example/.opencode/skills/global-helper/SKILL.md",
+          reason: "user-requested",
+        },
+      },
+    ]);
+  });
+});
+
+test("unmanaged workspace removal uses target workspace Veslo server recoverable delete route", async () => {
+  await withRegistryMutationStore(async ({ store, calls }) => {
+    const result = await store.removeSkillInstance({
+      name: "workspace-helper",
+      path: "/workspaces/beta/.opencode/skills/workspace-helper/SKILL.md",
+      scope: "workspace",
+      workspaceId: "ws-beta",
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(calls.deleteWorkspaceSkills, [
+      {
+        workspaceId: "ws-beta",
+        name: "workspace-helper",
+        options: {
+          path: "/workspaces/beta/.opencode/skills/workspace-helper/SKILL.md",
+        },
+      },
+    ]);
+    assert.equal(calls.deleteInstallations.length, 0);
+    assert.equal(calls.deleteGlobalSkills.length, 0);
+    assert.equal(calls.restoreInstallations.length, 0);
+    assert.equal(calls.restoreRemovals.length, 0);
+    assert.equal(calls.updatePolicies.length, 0);
+    assert.deepEqual(calls.reloads, []);
+  });
+});
+
+test("skill inventory does not report removed installs as installed when hub entries remain visible", () => {
+  const items = buildSkillInventory({
+    globalSkills: [
+      {
+        name: "legacy-global",
+        path: "/Users/example/.opencode/skills/legacy-global/SKILL.md",
+        scope: "user-global",
+        lifecycle: "removed",
+      },
+    ],
+    workspaceSkillsByWorkspaceId: {
+      "ws-alpha": {
+        workspace: { id: "ws-alpha", label: "Alpha", kind: "local" },
+        skills: [
+          {
+            name: "legacy-workspace",
+            path: "/workspaces/alpha/.opencode/skills/legacy-workspace/SKILL.md",
+            scope: "workspace",
+            lifecycle: "removed",
+          },
+        ],
+      },
+    },
+    hubSkills: [hubSkill("legacy-global"), hubSkill("legacy-workspace")],
+  });
+
+  const filtered = filterSkillInventoryItems(items, { includeDeleted: false });
+
+  assert.deepEqual(
+    filtered.map((item) => ({
+      name: item.name,
+      status: item.status,
+      hasGlobal: Boolean(item.globalInstance),
+      workspaceCount: item.workspaceInstances.length,
+      hasHub: Boolean(item.hubItem),
+    })),
+    [
+      {
+        name: "legacy-global",
+        status: "hub-only",
+        hasGlobal: false,
+        workspaceCount: 0,
+        hasHub: true,
+      },
+      {
+        name: "legacy-workspace",
+        status: "hub-only",
+        hasGlobal: false,
+        workspaceCount: 0,
+        hasHub: true,
+      },
+    ],
+  );
+});
+
+test("extensions store exposes an app-wide skill inventory from global, workspace, and hub sources", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      const localCalls: Array<{ projectDir: string; scope: LocalSkillListScope }> = [];
+      const listLocalSkillsScoped = async (
+        projectDir: string,
+        scope: LocalSkillListScope,
+      ): Promise<LocalSkillCard[]> => {
+        localCalls.push({ projectDir, scope });
+        if (scope === "global") {
+          return [
+            {
+              name: "research",
+              description: "Global research",
+              path: "/Users/example/.opencode/skills/research/SKILL.md",
+            },
+          ];
+        }
+        if (projectDir === "/workspaces/alpha") {
+          return [
+            {
+              name: "deploy",
+              description: "Alpha deploy",
+              path: "/workspaces/alpha/.opencode/skills/deploy/SKILL.md",
+            },
+          ];
+        }
+        return [];
+      };
+
+      const vesloServerClient = {
+        async listHubSkills(input: { denToken: string; denOrgId: string }) {
+          assert.deepEqual(input, { denToken: "den-token", denOrgId: "org-1" });
+          return {
+            items: [
+              {
+                name: "planning",
+                description: "Planning from hub",
+                trigger: "plan work",
+                source: {
+                  owner: "neatech",
+                  repo: "veslo-skills",
+                  ref: "main",
+                  path: "skills/planning",
+                },
+              },
+            ],
+          };
+        },
+      };
+
+      try {
+        const store = createExtensionsStore({
+          client: () => null,
+          projectDir: () => "/workspaces/alpha",
+          activeWorkspaceId: () => "ws-alpha",
+          activeWorkspaceRoot: () => "/workspaces/alpha",
+          workspaceType: () => "local",
+          workspaces: () => [...workspaces, remoteWorkspace],
+          vesloServerClient: () => vesloServerClient as never,
+          vesloServerStatus: () => "connected",
+          vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+          vesloServerWorkspaceId: () => "ws-alpha",
+          listLocalSkillsScoped,
+          setBusy: () => undefined,
+          setBusyLabel: () => undefined,
+          setBusyStartedAt: () => undefined,
+          setError: () => undefined,
+        });
+
+        assert.equal(typeof store.skillInventory, "function");
+        assert.equal(typeof store.skillInventoryStatus, "function");
+        assert.equal(typeof store.refreshSkillInventory, "function");
+
+        await store.refreshSkillInventory({ force: true });
+
+        assert.deepEqual(localCalls, [
+          { projectDir: "", scope: "global" },
+          { projectDir: "/workspaces/alpha", scope: "workspace" },
+          { projectDir: "/workspaces/beta", scope: "workspace" },
+        ]);
+
+        const inventory = store.skillInventory();
+        assert.equal(inventory.filter((item) => item.name === "research").length, 1);
+
+        const globalSkill = inventory.find((item) => item.name === "research");
+        assert.equal(globalSkill?.status, "global");
+        assert.equal(globalSkill?.globalInstance?.path, "/Users/example/.opencode/skills/research/SKILL.md");
+        assert.equal(globalSkill?.workspaceInstances.length, 0);
+
+        const workspaceSkill = inventory.find((item) => item.name === "deploy");
+        assert.equal(workspaceSkill?.status, "workspace-only");
+        assert.equal(workspaceSkill?.workspaceInstances.length, 1);
+        assert.equal(workspaceSkill?.workspaceInstances[0]?.workspaceId, "ws-alpha");
+        assert.equal(workspaceSkill?.workspaceInstances[0]?.workspaceLabel, "Alpha Label");
+        assert.equal(workspaceSkill?.workspaceInstances[0]?.path, "/workspaces/alpha/.opencode/skills/deploy/SKILL.md");
+
+        const hubSkill = inventory.find((item) => item.name === "planning");
+        assert.equal(hubSkill?.status, "hub-only");
+        assert.equal(hubSkill?.hubItem?.description, "Planning from hub");
+        assert.equal(hubSkill?.hubItem?.source.path, "skills/planning");
+        assert.equal(store.skillInventoryStatus(), null);
+      } finally {
+        dispose();
+      }
+    });
+  });
+});
+
+test("skill inventory includes recoverable local removal records and restores them through the Veslo server", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      const removalReads: unknown[] = [];
+      const restoreCalls: string[] = [];
+      const reloads: unknown[] = [];
+      const vesloServerClient = {
+        async listSkillRemovals(params?: unknown) {
+          removalReads.push(params);
+          const scope = (params as { scope?: string } | undefined)?.scope;
+          const workspaceId = (params as { workspaceId?: string } | undefined)?.workspaceId;
+          if (scope === "user-global") {
+            return {
+              items: [
+                {
+                  id: "rem_global",
+                  name: "legacy-global",
+                  scope: "user-global",
+                  path: "/Users/example/.config/opencode/skills/legacy-global/SKILL.md",
+                  status: "removed",
+                  removedAt: "2026-05-31T10:00:00.000Z",
+                  reason: "cleanup",
+                  canRestore: true,
+                },
+              ],
+            };
+          }
+          if (scope === "workspace" && workspaceId === "ws-alpha") {
+            return {
+              items: [
+                {
+                  id: "rem_workspace",
+                  name: "legacy-workspace",
+                  scope: "workspace",
+                  workspaceId,
+                  path: "/workspaces/alpha/.opencode/skills/legacy-workspace/SKILL.md",
+                  status: "removed",
+                  removedAt: "2026-05-31T11:00:00.000Z",
+                  canRestore: true,
+                },
+              ],
+            };
+          }
+          return { items: [] };
+        },
+        async restoreSkillRemoval(removalId: string) {
+          restoreCalls.push(removalId);
+          return {
+            ok: true,
+            path: "/Users/example/.config/opencode/skills/legacy-global/SKILL.md",
+            reloadRequired: true,
+          };
+        },
+      };
+
+      try {
+        const store = createExtensionsStore({
+          client: () => null,
+          projectDir: () => "/workspaces/alpha",
+          activeWorkspaceId: () => "ws-alpha",
+          activeWorkspaceRoot: () => "/workspaces/alpha",
+          workspaceType: () => "local",
+          workspaces: () => [workspaces[0]],
+          vesloServerClient: () => vesloServerClient as never,
+          vesloServerStatus: () => "connected",
+          vesloServerCapabilities: () => ({ hub: { skills: { read: false } } }) as never,
+          vesloServerWorkspaceId: () => "ws-alpha",
+          listLocalSkillsScoped: async () => [],
+          setBusy: () => undefined,
+          setBusyLabel: () => undefined,
+          setBusyStartedAt: () => undefined,
+          setError: () => undefined,
+          markReloadRequired: (...args) => {
+            reloads.push(args);
+          },
+        });
+
+        await store.refreshSkillInventory({ force: true });
+
+        assert.deepEqual(removalReads.slice(0, 2), [
+          { scope: "user-global" },
+          { scope: "workspace", workspaceId: "ws-alpha" },
+        ]);
+        const inventory = store.skillInventory();
+        const globalItem = inventory.find((item) => item.name === "legacy-global");
+        const workspaceItem = inventory.find((item) => item.name === "legacy-workspace");
+        assert.equal(globalItem?.globalInstance?.lifecycle, "removed");
+        assert.equal(globalItem?.globalInstance?.path, "/Users/example/.config/opencode/skills/legacy-global/SKILL.md");
+        assert.equal(globalItem?.globalInstance?.readable, false);
+        assert.equal(globalItem?.globalInstance?.writable, false);
+        assert.equal(globalItem?.globalInstance?.removedAt, "2026-05-31T10:00:00.000Z");
+        assert.equal(globalItem?.globalInstance?.removeReason, "cleanup");
+        assert.deepEqual(globalItem?.globalInstance?.restoreTarget, {
+          scope: "user-global",
+          removalId: "rem_global",
+        });
+        assert.equal(workspaceItem?.workspaceInstances[0]?.lifecycle, "removed");
+        assert.equal(workspaceItem?.workspaceInstances[0]?.path, "/workspaces/alpha/.opencode/skills/legacy-workspace/SKILL.md");
+        assert.deepEqual(workspaceItem?.workspaceInstances[0]?.restoreTarget, {
+          scope: "workspace",
+          workspaceId: "ws-alpha",
+          removalId: "rem_workspace",
+        });
+        assert.equal(filterSkillInventoryItems(inventory, { includeDeleted: false }).length, 0);
+
+        assert.ok(globalItem?.globalInstance);
+        const result = await store.restoreSkillInstance(skillMutationTargetFromInstance(globalItem.globalInstance));
+
+        assert.equal(result.ok, true);
+        assert.deepEqual(restoreCalls, ["rem_global"]);
+        assert.deepEqual(reloads, [["skills", { type: "skill", name: "legacy-global", action: "added" }]]);
+        assert.ok(removalReads.length > 2, "restore should refresh local removal inventory");
+      } finally {
+        dispose();
+      }
+    });
+  });
+});
+
+test("skill inventory includes extra selected-session workspace directories", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      const localCalls: Array<{ projectDir: string; scope: LocalSkillListScope }> = [];
+      const listLocalSkillsScoped = async (
+        projectDir: string,
+        scope: LocalSkillListScope,
+      ): Promise<LocalSkillCard[]> => {
+        localCalls.push({ projectDir, scope });
+        if (scope === "global") {
+          return [{ name: "global-helper", path: "/Users/example/.opencode/skills/global-helper/SKILL.md" }];
+        }
+        if (projectDir === "/workspaces/session-only") {
+          return [{
+            name: "session-workspace-helper",
+            path: "/workspaces/session-only/.opencode/skills/session-workspace-helper/SKILL.md",
+          }];
+        }
+        return [];
+      };
+
+      try {
+        const store = createExtensionsStore({
+          client: () => null,
+          projectDir: () => "/workspaces/alpha",
+          activeWorkspaceId: () => "ws-alpha",
+          activeWorkspaceRoot: () => "/workspaces/alpha",
+          workspaceType: () => "local",
+          workspaces: () => [workspaces[0]],
+          extraSkillInventoryWorkspaces: () => [{
+            id: "session:/workspaces/session-only",
+            label: "Session Only",
+            path: "/workspaces/session-only",
+          }],
+          vesloServerClient: () => null,
+          vesloServerStatus: () => "disconnected",
+          vesloServerCapabilities: () => null,
+          vesloServerWorkspaceId: () => null,
+          listLocalSkillsScoped,
+          setBusy: () => undefined,
+          setBusyLabel: () => undefined,
+          setBusyStartedAt: () => undefined,
+          setError: () => undefined,
+        });
+
+        await store.refreshSkillInventory({ force: true });
+
+        assert.deepEqual(localCalls, [
+          { projectDir: "", scope: "global" },
+          { projectDir: "/workspaces/alpha", scope: "workspace" },
+          { projectDir: "/workspaces/session-only", scope: "workspace" },
+        ]);
+        const item = store.skillInventory().find((entry) => entry.name === "session-workspace-helper");
+        assert.equal(item?.workspaceInstances[0]?.workspaceId, "session:/workspaces/session-only");
+        assert.equal(item?.workspaceInstances[0]?.workspaceLabel, "Session Only");
+      } finally {
+        dispose();
+      }
+    });
+  });
+});
+
+test("skill inventory hides store-backed user skill runtime materializations from workspace rows", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      const listLocalSkillsScoped = async (
+        projectDir: string,
+        scope: LocalSkillListScope,
+      ): Promise<LocalSkillCard[]> => {
+        if (scope === "workspace" && projectDir === "/workspaces/alpha") {
+          return [
+            {
+              name: "portable-helper",
+              path: "/workspaces/alpha/.opencode/skills/veslo-user/portable-helper/SKILL.md",
+              description: "Portable helper",
+            },
+          ];
+        }
+        return [];
+      };
+      const vesloServerClient = {
+        async listUserGlobalSkillStore() {
+          return {
+            items: [
+              {
+                name: "portable-helper",
+                path: "veslo-user-store://portable-helper",
+                description: "Portable helper",
+                scope: "user-global",
+                source: "veslo-user-store",
+                hash: "a".repeat(64),
+                enabled: true,
+                createdAt: "2026-06-18T10:00:00.000Z",
+                updatedAt: "2026-06-18T10:01:00.000Z",
+              },
+            ],
+          };
+        },
+      };
+
+      try {
+        const store = createExtensionsStore({
+          client: () => null,
+          projectDir: () => "/workspaces/alpha",
+          activeWorkspaceId: () => "ws-alpha",
+          activeWorkspaceRoot: () => "/workspaces/alpha",
+          workspaceType: () => "local",
+          workspaces: () => [workspaces[0]],
+          vesloServerClient: () => vesloServerClient as never,
+          vesloServerStatus: () => "connected",
+          vesloServerCapabilities: () => ({ hub: { skills: { read: false } } }) as never,
+          vesloServerWorkspaceId: () => "ws-alpha",
+          listLocalSkillsScoped,
+          setBusy: () => undefined,
+          setBusyLabel: () => undefined,
+          setBusyStartedAt: () => undefined,
+          setError: () => undefined,
+        });
+
+        await store.refreshSkillInventory({ force: true });
+
+        const item = store.skillInventory().find((entry) => entry.name === "portable-helper");
+        assert.equal(item?.globalInstance?.path, "veslo-user-store://portable-helper");
+        assert.equal(item?.workspaceInstances.length, 0);
+        assert.equal(item?.status, "global");
+      } finally {
+        dispose();
+      }
+    });
+  });
+});
+
+test("skill inventory refreshes hub entries when the Veslo server client changes", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      const hubCalls: string[] = [];
+      const clientA = {
+        async listHubSkills() {
+          hubCalls.push("client-a");
+          return { items: [hubSkill("planning-client-a")] };
+        },
+      };
+      const clientB = {
+        async listHubSkills() {
+          hubCalls.push("client-b");
+          return { items: [hubSkill("planning-client-b")] };
+        },
+      };
+      let activeClient: typeof clientA | typeof clientB = clientA;
+
+      try {
+        const store = createExtensionsStore({
+          client: () => null,
+          projectDir: () => "/workspaces/alpha",
+          activeWorkspaceId: () => "ws-alpha",
+          activeWorkspaceRoot: () => "/workspaces/alpha",
+          workspaceType: () => "local",
+          workspaces: () => [],
+          vesloServerClient: () => activeClient as never,
+          vesloServerStatus: () => "connected",
+          vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+          vesloServerWorkspaceId: () => "ws-alpha",
+          listLocalSkillsScoped: async () => [],
+          setBusy: () => undefined,
+          setBusyLabel: () => undefined,
+          setBusyStartedAt: () => undefined,
+          setError: () => undefined,
+        });
+
+        await store.refreshSkillInventory({ force: true });
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-client-a"), true);
+
+        activeClient = clientB;
+        await store.refreshSkillInventory();
+
+        assert.deepEqual(hubCalls, ["client-a", "client-b"]);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-client-a"), false);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-client-b"), true);
+      } finally {
+        dispose();
+      }
+    });
+  });
+});
+
+test("skill inventory retries after a failed forced refresh", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      let failGlobalRead = false;
+      const listLocalSkillsScoped = async (
+        projectDir: string,
+        scope: LocalSkillListScope,
+      ): Promise<LocalSkillCard[]> => {
+        if (scope === "global") {
+          if (failGlobalRead) throw new Error("global read failed");
+          return [{ name: "research", path: "/Users/example/.opencode/skills/research/SKILL.md" }];
+        }
+        return projectDir ? [] : [];
+      };
+
+      try {
+        const store = createExtensionsStore({
+          client: () => null,
+          projectDir: () => "/workspaces/alpha",
+          activeWorkspaceId: () => "ws-alpha",
+          activeWorkspaceRoot: () => "/workspaces/alpha",
+          workspaceType: () => "local",
+          workspaces: () => [],
+          vesloServerClient: () => null,
+          vesloServerStatus: () => "disconnected",
+          vesloServerCapabilities: () => null,
+          vesloServerWorkspaceId: () => null,
+          listLocalSkillsScoped,
+          setBusy: () => undefined,
+          setBusyLabel: () => undefined,
+          setBusyStartedAt: () => undefined,
+          setError: () => undefined,
+        });
+
+        await store.refreshSkillInventory({ force: true });
+        assert.equal(store.skillInventory().some((item) => item.name === "research"), true);
+
+        failGlobalRead = true;
+        await store.refreshSkillInventory({ force: true });
+        assert.deepEqual(store.skillInventory(), []);
+        assert.equal(store.skillInventoryStatus(), "global read failed");
+
+        failGlobalRead = false;
+        await store.refreshSkillInventory();
+
+        assert.equal(store.skillInventoryStatus(), null);
+        assert.equal(store.skillInventory().some((item) => item.name === "research"), true);
+      } finally {
+        dispose();
+      }
+    });
+  });
+});
+
+test("skill inventory settles with local-only inventory when hub refresh fails", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      let hubCallCount = 0;
+      const vesloServerClient = {
+        async listHubSkills() {
+          hubCallCount += 1;
+          await new Promise((resolveTick) => setTimeout(resolveTick, 0));
+          throw new Error("Hub unavailable");
+        },
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [],
+        vesloServerClient: () => vesloServerClient as never,
+        vesloServerStatus: () => "connected",
+        vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+        vesloServerWorkspaceId: () => "ws-alpha",
+        listLocalSkillsScoped: async (_projectDir, scope) =>
+          scope === "global"
+            ? [{ name: "research", path: "/Users/example/.opencode/skills/research/SKILL.md" }]
+            : [],
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      const refresh = store.refreshSkillInventory({ force: true });
+      try {
+        const result = await Promise.race([
+          refresh.then(() => "settled" as const),
+          new Promise<"timeout">((resolve) => setTimeout(resolve, 100, "timeout")),
+        ]);
+
+        if (result === "timeout") {
+          store.abortRefreshes();
+          await refresh.catch(() => undefined);
+          assert.fail(`skill inventory refresh did not settle after ${hubCallCount} hub calls`);
+        }
+
+        assert.equal(hubCallCount, 1);
+        assert.equal(store.skillInventory().some((item) => item.name === "research"), true);
+        assert.match(store.skillInventoryStatus() ?? "", /Hub unavailable/);
+      } finally {
+        store.abortRefreshes();
+        await refresh.catch(() => undefined);
+        dispose();
+      }
+    });
+  });
+});
+
+test("skill inventory settles when hub and local inventory reads both fail", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      let hubCallCount = 0;
+      let localCallCount = 0;
+      let allowCleanupSuccess = false;
+      const vesloServerClient = {
+        async listHubSkills() {
+          hubCallCount += 1;
+          await new Promise((resolveTick) => setTimeout(resolveTick, 0));
+          if (allowCleanupSuccess) return { items: [] };
+          throw new Error("Hub unavailable");
+        },
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [],
+        vesloServerClient: () => vesloServerClient as never,
+        vesloServerStatus: () => "connected",
+        vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+        vesloServerWorkspaceId: () => "ws-alpha",
+        listLocalSkillsScoped: async () => {
+          localCallCount += 1;
+          await new Promise((resolveTick) => setTimeout(resolveTick, 0));
+          if (allowCleanupSuccess) return [];
+          throw new Error("global read failed");
+        },
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      const refresh = store.refreshSkillInventory({ force: true });
+      try {
+        const result = await Promise.race([
+          refresh.then(() => "settled" as const),
+          new Promise<"timeout">((resolve) => setTimeout(resolve, 100, "timeout")),
+        ]);
+
+        if (result === "timeout") {
+          allowCleanupSuccess = true;
+          store.abortRefreshes();
+          await refresh.catch(() => undefined);
+          assert.fail(
+            `skill inventory refresh did not settle after ${hubCallCount} hub calls and ${localCallCount} local calls`,
+          );
+        }
+
+        assert.equal(hubCallCount, 1);
+        assert.equal(localCallCount, 1);
+        assert.deepEqual(store.skillInventory(), []);
+        assert.equal(store.skillInventoryStatus(), "global read failed");
+      } finally {
+        store.abortRefreshes();
+        await refresh.catch(() => undefined);
+        dispose();
+      }
+    });
+  });
+});
+
+test("skill inventory waits for an in-flight hub skill refresh before caching", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      const hubSkillsRelease: { current?: () => void } = {};
+      let markHubSkillsStarted: (() => void) | null = null;
+      const hubSkillsStarted = new Promise<void>((resolve) => {
+        markHubSkillsStarted = resolve;
+      });
+      const vesloServerClient = {
+        async listHubSkills() {
+          assert.ok(markHubSkillsStarted);
+          markHubSkillsStarted();
+          await new Promise<void>((release) => {
+            hubSkillsRelease.current = release;
+          });
+          return { items: [hubSkill("planning")] };
+        },
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [],
+        vesloServerClient: () => vesloServerClient as never,
+        vesloServerStatus: () => "connected",
+        vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+        vesloServerWorkspaceId: () => "ws-alpha",
+        listLocalSkillsScoped: async () => [],
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      const hubRefresh = store.refreshHubSkills({ force: true });
+      try {
+        await hubSkillsStarted;
+        let inventoryResolved = false;
+        const inventoryRefresh = store.refreshSkillInventory({ force: true }).then(() => {
+          inventoryResolved = true;
+        });
+
+        await new Promise((resolveTick) => setTimeout(resolveTick, 0));
+        assert.equal(inventoryResolved, false, "inventory refresh should wait for in-flight hub skills");
+
+        const releaseHubSkills = hubSkillsRelease.current;
+        assert.ok(releaseHubSkills);
+        releaseHubSkills();
+        await Promise.all([hubRefresh, inventoryRefresh]);
+
+        assert.equal(store.skillInventory().some((item) => item.name === "planning"), true);
+      } finally {
+        hubSkillsRelease.current?.();
+        await hubRefresh.catch(() => undefined);
+        dispose();
+      }
+    });
+  });
+});
+
+test("skill inventory refresh waits for a same-context hub reload before returning cached inventory", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      const hubSkillsRelease: { current?: () => void } = {};
+      let hubCallCount = 0;
+      let markSecondHubSkillsStarted: (() => void) | null = null;
+      const secondHubSkillsStarted = new Promise<void>((resolve) => {
+        markSecondHubSkillsStarted = resolve;
+      });
+      const vesloServerClient = {
+        async listHubSkills() {
+          hubCallCount += 1;
+          const callId = hubCallCount;
+          if (callId === 2) {
+            assert.ok(markSecondHubSkillsStarted);
+            markSecondHubSkillsStarted();
+            await new Promise<void>((release) => {
+              hubSkillsRelease.current = release;
+            });
+          }
+          return { items: [hubSkill(`planning-${callId}`)] };
+        },
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [],
+        vesloServerClient: () => vesloServerClient as never,
+        vesloServerStatus: () => "connected",
+        vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+        vesloServerWorkspaceId: () => "ws-alpha",
+        listLocalSkillsScoped: async () => [],
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      await store.refreshSkillInventory({ force: true });
+      assert.equal(store.skillInventory().some((item) => item.name === "planning-1"), true);
+
+      const hubRefresh = store.refreshHubSkills({ force: true });
+      try {
+        await secondHubSkillsStarted;
+        let inventoryResolved = false;
+        const inventoryRefresh = store.refreshSkillInventory().then(() => {
+          inventoryResolved = true;
+        });
+
+        await new Promise((resolveTick) => setTimeout(resolveTick, 0));
+        assert.equal(inventoryResolved, false, "cached inventory refresh should wait for in-flight hub reload");
+
+        const releaseHubSkills = hubSkillsRelease.current;
+        assert.ok(releaseHubSkills);
+        releaseHubSkills();
+        await Promise.all([hubRefresh, inventoryRefresh]);
+
+        assert.equal(hubCallCount, 2);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-1"), false);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-2"), true);
+      } finally {
+        hubSkillsRelease.current?.();
+        await hubRefresh.catch(() => undefined);
+        dispose();
+      }
+    });
+  });
+});
+
+test("skill inventory rebuilds after a completed same-context hub reload", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      let hubCallCount = 0;
+      const vesloServerClient = {
+        async listHubSkills() {
+          hubCallCount += 1;
+          return { items: [hubSkill(`planning-${hubCallCount}`)] };
+        },
+      };
+
+      try {
+        const store = createExtensionsStore({
+          client: () => null,
+          projectDir: () => "/workspaces/alpha",
+          activeWorkspaceId: () => "ws-alpha",
+          activeWorkspaceRoot: () => "/workspaces/alpha",
+          workspaceType: () => "local",
+          workspaces: () => [],
+          vesloServerClient: () => vesloServerClient as never,
+          vesloServerStatus: () => "connected",
+          vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+          vesloServerWorkspaceId: () => "ws-alpha",
+          listLocalSkillsScoped: async () => [],
+          setBusy: () => undefined,
+          setBusyLabel: () => undefined,
+          setBusyStartedAt: () => undefined,
+          setError: () => undefined,
+        });
+
+        await store.refreshSkillInventory({ force: true });
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-1"), true);
+
+        await store.refreshHubSkills({ force: true });
+        await store.refreshSkillInventory();
+
+        assert.equal(hubCallCount, 2);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-1"), false);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-2"), true);
+      } finally {
+        dispose();
+      }
+    });
+  });
+});
+
+test("skill inventory rebuilds after active local skills refresh changes local source data", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      let globalSkillVersion = 1;
+      const listLocalSkillsScoped = async (
+        projectDir: string,
+        scope: LocalSkillListScope,
+      ): Promise<LocalSkillCard[]> => {
+        if (scope === "global") {
+          return [
+            {
+              name: `research-${globalSkillVersion}`,
+              path: `/Users/example/.opencode/skills/research-${globalSkillVersion}/SKILL.md`,
+            },
+          ];
+        }
+        return projectDir ? [] : [];
+      };
+      const vesloServerClient = {
+        async listSkills() {
+          return { items: [] };
+        },
+      };
+
+      try {
+        const store = createExtensionsStore({
+          client: () => null,
+          projectDir: () => "/workspaces/alpha",
+          activeWorkspaceId: () => "ws-alpha",
+          activeWorkspaceRoot: () => "/workspaces/alpha",
+          workspaceType: () => "local",
+          workspaces: () => [],
+          vesloServerClient: () => vesloServerClient as never,
+          vesloServerStatus: () => "connected",
+          vesloServerCapabilities: () =>
+            ({
+              skills: { read: true },
+              hub: { skills: { read: false } },
+            }) as never,
+          vesloServerWorkspaceId: () => "ws-alpha",
+          listLocalSkillsScoped,
+          setBusy: () => undefined,
+          setBusyLabel: () => undefined,
+          setBusyStartedAt: () => undefined,
+          setError: () => undefined,
+        });
+
+        await store.refreshSkillInventory({ force: true });
+        assert.equal(store.skillInventory().some((item) => item.name === "research-1"), true);
+
+        globalSkillVersion = 2;
+        await store.refreshSkills({ force: true });
+        await store.refreshSkillInventory();
+
+        assert.equal(store.skillInventory().some((item) => item.name === "research-1"), false);
+        assert.equal(store.skillInventory().some((item) => item.name === "research-2"), true);
+      } finally {
+        dispose();
+      }
+    });
+  });
+});
+
+test("concurrent skill inventory refresh callers await the in-flight refresh", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      const globalSkillsRelease: { current?: () => void } = {};
+      let markGlobalSkillsStarted: (() => void) | null = null;
+      const globalSkillsStarted = new Promise<void>((resolve) => {
+        markGlobalSkillsStarted = resolve;
+      });
+      const listLocalSkillsScoped = async (
+        projectDir: string,
+        scope: LocalSkillListScope,
+      ): Promise<LocalSkillCard[]> => {
+        if (scope === "global") {
+          assert.ok(markGlobalSkillsStarted);
+          markGlobalSkillsStarted();
+          await new Promise<void>((release) => {
+            globalSkillsRelease.current = release;
+          });
+          return [{ name: "research", path: "/Users/example/.opencode/skills/research/SKILL.md" }];
+        }
+        return projectDir ? [] : [];
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [],
+        vesloServerClient: () => null,
+        vesloServerStatus: () => "disconnected",
+        vesloServerCapabilities: () => null,
+        vesloServerWorkspaceId: () => null,
+        listLocalSkillsScoped,
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      const firstRefresh = store.refreshSkillInventory({ force: true });
+      try {
+        await globalSkillsStarted;
+
+        let secondResolved = false;
+        const secondRefresh = store.refreshSkillInventory().then(() => {
+          secondResolved = true;
+        });
+
+        await new Promise((resolveTick) => setTimeout(resolveTick, 0));
+        assert.equal(secondResolved, false, "second inventory refresh should await the first refresh");
+
+        const releaseGlobalSkills = globalSkillsRelease.current;
+        assert.ok(releaseGlobalSkills);
+        releaseGlobalSkills();
+        await Promise.all([firstRefresh, secondRefresh]);
+
+        assert.equal(secondResolved, true);
+        assert.equal(store.skillInventory().some((item) => item.name === "research"), true);
+      } finally {
+        globalSkillsRelease.current?.();
+        await firstRefresh.catch(() => undefined);
+        dispose();
+      }
+    });
+  });
+});
+
+test("forced skill inventory refresh reruns after awaiting an in-flight refresh", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      const globalSkillsRelease: { current?: () => void } = {};
+      let markGlobalSkillsStarted: (() => void) | null = null;
+      const globalSkillsStarted = new Promise<void>((resolve) => {
+        markGlobalSkillsStarted = resolve;
+      });
+      let globalReadCount = 0;
+      const listLocalSkillsScoped = async (
+        projectDir: string,
+        scope: LocalSkillListScope,
+      ): Promise<LocalSkillCard[]> => {
+        if (scope === "global") {
+          globalReadCount += 1;
+          const readId = globalReadCount;
+          if (readId === 1) {
+            assert.ok(markGlobalSkillsStarted);
+            markGlobalSkillsStarted();
+            await new Promise<void>((release) => {
+              globalSkillsRelease.current = release;
+            });
+          }
+          return [{ name: `research-${readId}`, path: `/Users/example/.opencode/skills/research-${readId}/SKILL.md` }];
+        }
+        return projectDir ? [] : [];
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [],
+        vesloServerClient: () => null,
+        vesloServerStatus: () => "disconnected",
+        vesloServerCapabilities: () => null,
+        vesloServerWorkspaceId: () => null,
+        listLocalSkillsScoped,
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      const firstRefresh = store.refreshSkillInventory({ force: true });
+      try {
+        await globalSkillsStarted;
+
+        const forcedRefresh = store.refreshSkillInventory({ force: true });
+
+        const releaseGlobalSkills = globalSkillsRelease.current;
+        assert.ok(releaseGlobalSkills);
+        releaseGlobalSkills();
+        await Promise.all([firstRefresh, forcedRefresh]);
+
+        assert.equal(globalReadCount, 2);
+        assert.equal(store.skillInventory().some((item) => item.name === "research-1"), false);
+        assert.equal(store.skillInventory().some((item) => item.name === "research-2"), true);
+      } finally {
+        globalSkillsRelease.current?.();
+        await firstRefresh.catch(() => undefined);
+        dispose();
+      }
+    });
+  });
+});
+
+test("skill inventory reruns after Den auth changes while an inventory refresh is in flight", async () => {
+  await withDenAuthStorage(async ({ localStorage, sessionStorage }) => {
+    await createRoot(async (dispose) => {
+      const initialAuth = createDenAuthJson({ orgId: "org-1", token: "token-a" });
+      localStorage.setItem("veslo.den.auth", initialAuth);
+      sessionStorage.setItem("veslo.den.auth", initialAuth);
+
+      const hubCalls: Array<{ orgId: string; token: string }> = [];
+      const globalSkillsRelease: { current?: () => void } = {};
+      let globalReadCount = 0;
+      let markGlobalSkillsStarted: (() => void) | null = null;
+      const globalSkillsStarted = new Promise<void>((resolve) => {
+        markGlobalSkillsStarted = resolve;
+      });
+      const vesloServerClient = {
+        async listHubSkills(input: { denToken: string; denOrgId: string }) {
+          hubCalls.push({ orgId: input.denOrgId, token: input.denToken });
+          return { items: [hubSkill(`planning-${input.denOrgId}`)] };
+        },
+      };
+      const listLocalSkillsScoped = async (
+        projectDir: string,
+        scope: LocalSkillListScope,
+      ): Promise<LocalSkillCard[]> => {
+        if (scope === "global") {
+          globalReadCount += 1;
+          if (globalReadCount === 1) {
+            assert.ok(markGlobalSkillsStarted);
+            markGlobalSkillsStarted();
+            await new Promise<void>((release) => {
+              globalSkillsRelease.current = release;
+            });
+          }
+          return [];
+        }
+        return projectDir ? [] : [];
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [],
+        vesloServerClient: () => vesloServerClient as never,
+        vesloServerStatus: () => "connected",
+        vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+        vesloServerWorkspaceId: () => "ws-alpha",
+        listLocalSkillsScoped,
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      const firstRefresh = store.refreshSkillInventory({ force: true });
+      try {
+        await globalSkillsStarted;
+
+        const nextAuth = createDenAuthJson({ orgId: "org-2", token: "token-b" });
+        localStorage.setItem("veslo.den.auth", nextAuth);
+        sessionStorage.setItem("veslo.den.auth", nextAuth);
+
+        let secondResolved = false;
+        const secondRefresh = store.refreshSkillInventory().then(() => {
+          secondResolved = true;
+        });
+
+        await new Promise((resolveTick) => setTimeout(resolveTick, 0));
+        assert.equal(secondResolved, false, "second inventory refresh should wait for current context");
+
+        const releaseGlobalSkills = globalSkillsRelease.current;
+        assert.ok(releaseGlobalSkills);
+        releaseGlobalSkills();
+        await Promise.all([firstRefresh, secondRefresh]);
+
+        assert.deepEqual(hubCalls, [
+          { orgId: "org-1", token: "token-a" },
+          { orgId: "org-2", token: "token-b" },
+        ]);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-org-1"), false);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-org-2"), true);
+      } finally {
+        globalSkillsRelease.current?.();
+        await firstRefresh.catch(() => undefined);
+        dispose();
+      }
+    });
+  });
+});
+
+test("skill inventory reruns after local source revision changes while an inventory refresh is in flight", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      let globalSkillVersion = 1;
+      const inventoryReads: string[] = [];
+      const workspaceSkillsRelease: { current?: () => void } = {};
+      let markWorkspaceSkillsStarted: (() => void) | null = null;
+      const workspaceSkillsStarted = new Promise<void>((resolve) => {
+        markWorkspaceSkillsStarted = resolve;
+      });
+      const listLocalSkillsScoped = async (
+        projectDir: string,
+        scope: LocalSkillListScope,
+      ): Promise<LocalSkillCard[]> => {
+        if (scope === "global") {
+          inventoryReads.push(`global-${globalSkillVersion}`);
+          return [
+            {
+              name: `research-${globalSkillVersion}`,
+              path: `/Users/example/.opencode/skills/research-${globalSkillVersion}/SKILL.md`,
+            },
+          ];
+        }
+        if (projectDir === "/workspaces/alpha") {
+          inventoryReads.push(`workspace-${globalSkillVersion}`);
+          if (inventoryReads.filter((entry) => entry.startsWith("workspace-")).length === 1) {
+            assert.ok(markWorkspaceSkillsStarted);
+            markWorkspaceSkillsStarted();
+            await new Promise<void>((release) => {
+              workspaceSkillsRelease.current = release;
+            });
+          }
+        }
+        return [];
+      };
+      const vesloServerClient = {
+        async listSkills() {
+          return { items: [] };
+        },
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [workspaces[0] as WorkspaceInfo],
+        vesloServerClient: () => vesloServerClient as never,
+        vesloServerStatus: () => "connected",
+        vesloServerCapabilities: () =>
+          ({
+            skills: { read: true },
+            hub: { skills: { read: false } },
+          }) as never,
+        vesloServerWorkspaceId: () => "ws-alpha",
+        listLocalSkillsScoped,
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      const firstRefresh = store.refreshSkillInventory({ force: true });
+      try {
+        await workspaceSkillsStarted;
+
+        globalSkillVersion = 2;
+        await store.refreshSkills({ force: true });
+
+        let secondResolved = false;
+        const secondRefresh = store.refreshSkillInventory().then(() => {
+          secondResolved = true;
+        });
+
+        await new Promise((resolveTick) => setTimeout(resolveTick, 0));
+        assert.equal(secondResolved, false, "second inventory refresh should wait for the new local source revision");
+
+        const releaseWorkspaceSkills = workspaceSkillsRelease.current;
+        assert.ok(releaseWorkspaceSkills);
+        releaseWorkspaceSkills();
+        await Promise.all([firstRefresh, secondRefresh]);
+
+        assert.deepEqual(inventoryReads, ["global-1", "workspace-1", "global-2", "workspace-2"]);
+        assert.equal(store.skillInventory().some((item) => item.name === "research-1"), false);
+        assert.equal(store.skillInventory().some((item) => item.name === "research-2"), true);
+      } finally {
+        workspaceSkillsRelease.current?.();
+        await firstRefresh.catch(() => undefined);
+        dispose();
+      }
+    });
+  });
+});
+
+test("skill inventory reruns after a failed in-flight refresh when workspace context changes", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      let activeWorkspaces: WorkspaceInfo[] = [workspaces[0] as WorkspaceInfo];
+      const reads: string[] = [];
+      const alphaWorkspaceRelease: { current?: () => void } = {};
+      let markAlphaWorkspaceStarted: (() => void) | null = null;
+      const alphaWorkspaceStarted = new Promise<void>((resolve) => {
+        markAlphaWorkspaceStarted = resolve;
+      });
+      const listLocalSkillsScoped = async (
+        projectDir: string,
+        scope: LocalSkillListScope,
+      ): Promise<LocalSkillCard[]> => {
+        reads.push(`${scope}:${projectDir}`);
+        if (scope === "global") {
+          return [];
+        }
+        if (projectDir === "/workspaces/alpha") {
+          assert.ok(markAlphaWorkspaceStarted);
+          markAlphaWorkspaceStarted();
+          await new Promise<void>((release) => {
+            alphaWorkspaceRelease.current = release;
+          });
+          throw new Error("alpha workspace read failed");
+        }
+        if (projectDir === "/workspaces/beta") {
+          return [{ name: "beta-skill", path: "/workspaces/beta/.opencode/skills/beta-skill/SKILL.md" }];
+        }
+        return [];
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => activeWorkspaces,
+        vesloServerClient: () => null,
+        vesloServerStatus: () => "disconnected",
+        vesloServerCapabilities: () => null,
+        vesloServerWorkspaceId: () => null,
+        listLocalSkillsScoped,
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      const firstRefresh = store.refreshSkillInventory({ force: true });
+      try {
+        await alphaWorkspaceStarted;
+
+        activeWorkspaces = [workspaces[1] as WorkspaceInfo];
+        const secondRefresh = store.refreshSkillInventory();
+
+        const releaseAlphaWorkspace = alphaWorkspaceRelease.current;
+        assert.ok(releaseAlphaWorkspace);
+        releaseAlphaWorkspace();
+        await Promise.all([firstRefresh, secondRefresh]);
+
+        assert.deepEqual(reads, [
+          "global:",
+          "workspace:/workspaces/alpha",
+          "global:",
+          "workspace:/workspaces/beta",
+        ]);
+        assert.equal(store.skillInventoryStatus(), null);
+        assert.equal(store.skillInventory().some((item) => item.name === "beta-skill"), true);
+      } finally {
+        alphaWorkspaceRelease.current?.();
+        await firstRefresh.catch(() => undefined);
+        dispose();
+      }
+    });
+  });
+});
+
+test("skill inventory does not cache hub skills from an in-flight refresh after Den auth changes", async () => {
+  await withDenAuthStorage(async ({ localStorage, sessionStorage }) => {
+    await createRoot(async (dispose) => {
+      const hubCalls: string[] = [];
+      const hubSkillsRelease: { current?: () => void } = {};
+      let markHubSkillsStarted: (() => void) | null = null;
+      const hubSkillsStarted = new Promise<void>((resolve) => {
+        markHubSkillsStarted = resolve;
+      });
+      const vesloServerClient = {
+        async listHubSkills(input: { denOrgId: string }) {
+          hubCalls.push(input.denOrgId);
+          if (input.denOrgId === "org-1") {
+            assert.ok(markHubSkillsStarted);
+            markHubSkillsStarted();
+            await new Promise<void>((release) => {
+              hubSkillsRelease.current = release;
+            });
+          }
+          return { items: [hubSkill(`planning-${input.denOrgId}`)] };
+        },
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [],
+        vesloServerClient: () => vesloServerClient as never,
+        vesloServerStatus: () => "connected",
+        vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+        vesloServerWorkspaceId: () => "ws-alpha",
+        listLocalSkillsScoped: async () => [],
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      const hubRefresh = store.refreshHubSkills({ force: true });
+      try {
+        await hubSkillsStarted;
+
+        const nextAuth = createDenAuthJson({ orgId: "org-2" });
+        localStorage.setItem("veslo.den.auth", nextAuth);
+        sessionStorage.setItem("veslo.den.auth", nextAuth);
+
+        const inventoryRefresh = store.refreshSkillInventory();
+        await new Promise((resolveTick) => setTimeout(resolveTick, 0));
+
+        const releaseHubSkills = hubSkillsRelease.current;
+        assert.ok(releaseHubSkills);
+        releaseHubSkills();
+        await Promise.all([hubRefresh, inventoryRefresh]);
+
+        assert.deepEqual(hubCalls, ["org-1", "org-2"]);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-org-1"), false);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-org-2"), true);
+      } finally {
+        hubSkillsRelease.current?.();
+        await hubRefresh.catch(() => undefined);
+        dispose();
+      }
+    });
+  });
+});
+
+test("skill inventory invalidates cached hub entries when Den auth context changes", async () => {
+  await withDenAuthStorage(async ({ localStorage, sessionStorage }) => {
+    await createRoot(async (dispose) => {
+      const hubCalls: string[] = [];
+      const vesloServerClient = {
+        async listHubSkills(input: { denOrgId: string }) {
+          hubCalls.push(input.denOrgId);
+          return { items: [hubSkill(`planning-${input.denOrgId}`)] };
+        },
+      };
+
+      try {
+        const store = createExtensionsStore({
+          client: () => null,
+          projectDir: () => "/workspaces/alpha",
+          activeWorkspaceId: () => "ws-alpha",
+          activeWorkspaceRoot: () => "/workspaces/alpha",
+          workspaceType: () => "local",
+          workspaces: () => [],
+          vesloServerClient: () => vesloServerClient as never,
+          vesloServerStatus: () => "connected",
+          vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+          vesloServerWorkspaceId: () => "ws-alpha",
+          listLocalSkillsScoped: async () => [],
+          setBusy: () => undefined,
+          setBusyLabel: () => undefined,
+          setBusyStartedAt: () => undefined,
+          setError: () => undefined,
+        });
+
+        await store.refreshSkillInventory({ force: true });
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-org-1"), true);
+
+        const nextAuth = createDenAuthJson({ orgId: "org-2" });
+        localStorage.setItem("veslo.den.auth", nextAuth);
+        sessionStorage.setItem("veslo.den.auth", nextAuth);
+        await store.refreshSkillInventory();
+
+        assert.deepEqual(hubCalls, ["org-1", "org-2"]);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-org-1"), false);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-org-2"), true);
+      } finally {
+        dispose();
+      }
+    });
+  });
+});
+
+test("skill inventory invalidates cached hub entries when the Den token changes for the same org", async () => {
+  await withDenAuthStorage(async ({ localStorage, sessionStorage }) => {
+    await createRoot(async (dispose) => {
+      const initialAuth = createDenAuthJson({ token: "token-a" });
+      localStorage.setItem("veslo.den.auth", initialAuth);
+      sessionStorage.setItem("veslo.den.auth", initialAuth);
+
+      const hubCalls: string[] = [];
+      const vesloServerClient = {
+        async listHubSkills(input: { denToken: string; denOrgId: string }) {
+          assert.equal(input.denOrgId, "org-1");
+          hubCalls.push(input.denToken);
+          return { items: [hubSkill(`planning-${input.denToken}`)] };
+        },
+      };
+
+      try {
+        const store = createExtensionsStore({
+          client: () => null,
+          projectDir: () => "/workspaces/alpha",
+          activeWorkspaceId: () => "ws-alpha",
+          activeWorkspaceRoot: () => "/workspaces/alpha",
+          workspaceType: () => "local",
+          workspaces: () => [],
+          vesloServerClient: () => vesloServerClient as never,
+          vesloServerStatus: () => "connected",
+          vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+          vesloServerWorkspaceId: () => "ws-alpha",
+          listLocalSkillsScoped: async () => [],
+          setBusy: () => undefined,
+          setBusyLabel: () => undefined,
+          setBusyStartedAt: () => undefined,
+          setError: () => undefined,
+        });
+
+        await store.refreshSkillInventory({ force: true });
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-token-a"), true);
+
+        const nextAuth = createDenAuthJson({ token: "token-b" });
+        localStorage.setItem("veslo.den.auth", nextAuth);
+        sessionStorage.setItem("veslo.den.auth", nextAuth);
+        await store.refreshSkillInventory();
+
+        assert.deepEqual(hubCalls, ["token-a", "token-b"]);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-token-a"), false);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-token-b"), true);
+      } finally {
+        dispose();
+      }
+    });
+  });
+});
+
+test("skill inventory does not cache hub skills from an in-flight refresh after the Den token changes", async () => {
+  await withDenAuthStorage(async ({ localStorage, sessionStorage }) => {
+    await createRoot(async (dispose) => {
+      const initialAuth = createDenAuthJson({ token: "token-a" });
+      localStorage.setItem("veslo.den.auth", initialAuth);
+      sessionStorage.setItem("veslo.den.auth", initialAuth);
+
+      const hubCalls: string[] = [];
+      const hubSkillsRelease: { current?: () => void } = {};
+      let markHubSkillsStarted: (() => void) | null = null;
+      const hubSkillsStarted = new Promise<void>((resolve) => {
+        markHubSkillsStarted = resolve;
+      });
+      const vesloServerClient = {
+        async listHubSkills(input: { denToken: string; denOrgId: string }) {
+          assert.equal(input.denOrgId, "org-1");
+          hubCalls.push(input.denToken);
+          if (input.denToken === "token-a") {
+            assert.ok(markHubSkillsStarted);
+            markHubSkillsStarted();
+            await new Promise<void>((release) => {
+              hubSkillsRelease.current = release;
+            });
+          }
+          return { items: [hubSkill(`planning-${input.denToken}`)] };
+        },
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [],
+        vesloServerClient: () => vesloServerClient as never,
+        vesloServerStatus: () => "connected",
+        vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+        vesloServerWorkspaceId: () => "ws-alpha",
+        listLocalSkillsScoped: async () => [],
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      const hubRefresh = store.refreshHubSkills({ force: true });
+      try {
+        await hubSkillsStarted;
+
+        const nextAuth = createDenAuthJson({ token: "token-b" });
+        localStorage.setItem("veslo.den.auth", nextAuth);
+        sessionStorage.setItem("veslo.den.auth", nextAuth);
+
+        const inventoryRefresh = store.refreshSkillInventory();
+        await new Promise((resolveTick) => setTimeout(resolveTick, 0));
+
+        const releaseHubSkills = hubSkillsRelease.current;
+        assert.ok(releaseHubSkills);
+        releaseHubSkills();
+        await Promise.all([hubRefresh, inventoryRefresh]);
+
+        assert.deepEqual(hubCalls, ["token-a", "token-b"]);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-token-a"), false);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-token-b"), true);
+      } finally {
+        hubSkillsRelease.current?.();
+        await hubRefresh.catch(() => undefined);
+        dispose();
+      }
+    });
+  });
+});
+
+test("skill inventory invalidates cached hub entries when the Den API base changes", async () => {
+  await withDenAuthStorage(async ({ localStorage, sessionStorage }) => {
+    await createRoot(async (dispose) => {
+      const initialAuth = createDenAuthJson({
+        denApiBase: "https://api-a.veslo.test",
+        token: "token-a",
+      });
+      localStorage.setItem("veslo.den.auth", initialAuth);
+      sessionStorage.setItem("veslo.den.auth", initialAuth);
+
+      const hubCalls: string[] = [];
+      const vesloServerClient = {
+        async listHubSkills() {
+          const callId = `call-${hubCalls.length + 1}`;
+          hubCalls.push(callId);
+          return { items: [hubSkill(`planning-${callId}`)] };
+        },
+      };
+
+      try {
+        const store = createExtensionsStore({
+          client: () => null,
+          projectDir: () => "/workspaces/alpha",
+          activeWorkspaceId: () => "ws-alpha",
+          activeWorkspaceRoot: () => "/workspaces/alpha",
+          workspaceType: () => "local",
+          workspaces: () => [],
+          vesloServerClient: () => vesloServerClient as never,
+          vesloServerStatus: () => "connected",
+          vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+          vesloServerWorkspaceId: () => "ws-alpha",
+          listLocalSkillsScoped: async () => [],
+          setBusy: () => undefined,
+          setBusyLabel: () => undefined,
+          setBusyStartedAt: () => undefined,
+          setError: () => undefined,
+        });
+
+        await store.refreshSkillInventory({ force: true });
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-call-1"), true);
+
+        const nextAuth = createDenAuthJson({
+          denApiBase: "https://api-b.veslo.test",
+          token: "token-a",
+        });
+        localStorage.setItem("veslo.den.auth", nextAuth);
+        sessionStorage.setItem("veslo.den.auth", nextAuth);
+        await store.refreshSkillInventory();
+
+        assert.deepEqual(hubCalls, ["call-1", "call-2"]);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-call-1"), false);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-call-2"), true);
+      } finally {
+        dispose();
+      }
+    });
+  });
+});
+
+test("skill inventory invalidates cached hub entries when the Den user changes for the same org and token", async () => {
+  await withDenAuthStorage(async ({ localStorage, sessionStorage }) => {
+    await createRoot(async (dispose) => {
+      const initialAuth = createDenAuthJson({
+        token: "token-a",
+        userId: "user-a",
+      });
+      localStorage.setItem("veslo.den.auth", initialAuth);
+      sessionStorage.setItem("veslo.den.auth", initialAuth);
+
+      const hubCalls: string[] = [];
+      const vesloServerClient = {
+        async listHubSkills(input: { denToken: string; denOrgId: string }) {
+          assert.deepEqual(input, { denToken: "token-a", denOrgId: "org-1" });
+          const callId = `call-${hubCalls.length + 1}`;
+          hubCalls.push(callId);
+          return { items: [hubSkill(`planning-${callId}`)] };
+        },
+      };
+
+      try {
+        const store = createExtensionsStore({
+          client: () => null,
+          projectDir: () => "/workspaces/alpha",
+          activeWorkspaceId: () => "ws-alpha",
+          activeWorkspaceRoot: () => "/workspaces/alpha",
+          workspaceType: () => "local",
+          workspaces: () => [],
+          vesloServerClient: () => vesloServerClient as never,
+          vesloServerStatus: () => "connected",
+          vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+          vesloServerWorkspaceId: () => "ws-alpha",
+          listLocalSkillsScoped: async () => [],
+          setBusy: () => undefined,
+          setBusyLabel: () => undefined,
+          setBusyStartedAt: () => undefined,
+          setError: () => undefined,
+        });
+
+        await store.refreshSkillInventory({ force: true });
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-call-1"), true);
+
+        const nextAuth = createDenAuthJson({
+          token: "token-a",
+          userId: "user-b",
+        });
+        localStorage.setItem("veslo.den.auth", nextAuth);
+        sessionStorage.setItem("veslo.den.auth", nextAuth);
+        await store.refreshSkillInventory();
+
+        assert.deepEqual(hubCalls, ["call-1", "call-2"]);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-call-1"), false);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-call-2"), true);
+      } finally {
+        dispose();
+      }
+    });
+  });
+});

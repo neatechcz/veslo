@@ -14,6 +14,7 @@ fn main() {
     ensure_orchestrator_sidecar();
     ensure_chrome_devtools_mcp_sidecar();
     ensure_versions_manifest();
+    ensure_opencode_managed_deps_manifest();
     tauri_build::build();
 }
 
@@ -88,6 +89,48 @@ fn ensure_versions_manifest() {
     }
     if !target_path.exists() {
         let _ = fs::write(&target_path, "{}\n");
+    }
+}
+
+fn ensure_opencode_managed_deps_manifest() {
+    let profile = env::var("PROFILE").unwrap_or_default();
+    if profile == "release" {
+        return;
+    }
+
+    let target = env::var("CARGO_CFG_TARGET_TRIPLE")
+        .or_else(|_| env::var("TARGET"))
+        .or_else(|_| env::var("TAURI_ENV_TARGET_TRIPLE"))
+        .unwrap_or_default();
+    if target.is_empty() {
+        return;
+    }
+
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."));
+    let sidecar_dir = manifest_dir.join("sidecars");
+    let canonical_path = sidecar_dir.join("opencode-managed-deps.json");
+    let mut target_name = format!("opencode-managed-deps.json-{target}");
+    if target.contains("windows") {
+        target_name.push_str(".exe");
+    }
+    let target_path = sidecar_dir.join(target_name);
+
+    if canonical_path.exists() && target_path.exists() {
+        return;
+    }
+
+    if fs::create_dir_all(&sidecar_dir).is_err() {
+        return;
+    }
+
+    let stub = "{\n  \"schemaVersion\": 1,\n  \"packages\": []\n}\n";
+    if !canonical_path.exists() {
+        let _ = fs::write(&canonical_path, stub);
+    }
+    if !target_path.exists() {
+        let _ = fs::write(&target_path, stub);
     }
 }
 

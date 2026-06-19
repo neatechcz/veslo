@@ -2,7 +2,8 @@ import { readdir, readFile, writeFile, mkdir, rm } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
-import type { DisabledSkillRecord, SkillItem } from "./types.js";
+import { localUserResourceOwner, workspaceResourceOwner } from "./resource-owner.js";
+import type { ResourceOwner, SkillItem } from "./types.js";
 import { parseFrontmatter, buildFrontmatter } from "./frontmatter.js";
 import { exists } from "./utils.js";
 import { validateDescription, validateSkillName } from "./validators.js";
@@ -27,6 +28,11 @@ export interface SkillRemovalJournalContext {
   actor: Actor;
   reason?: string;
 }
+
+export type ListSkillsOptions = {
+  workspaceOwner?: ResourceOwner;
+  globalOwner?: ResourceOwner;
+};
 
 const userHomeDir = (): string => process.env.HOME?.trim() || homedir();
 const userConfigHomeDir = (): string => process.env.XDG_CONFIG_HOME?.trim() || join(userHomeDir(), ".config");
@@ -107,6 +113,7 @@ async function parseSkillEntry(
   skillPath: string,
   entryName: string,
   scope: "project" | "global",
+  owner: ResourceOwner,
 ): Promise<SkillItem | null> {
   let content: string;
   try {
@@ -129,6 +136,7 @@ async function parseSkillEntry(
     description: metadata.description ?? "",
     path: skillPath,
     scope,
+    owner,
     trigger: metadata.trigger,
     disableModelInvocation: metadata.disableModelInvocation,
     userInvocable: metadata.userInvocable,
@@ -139,7 +147,7 @@ async function parseSkillEntry(
   };
 }
 
-async function listSkillsInDir(dir: string, scope: "project" | "global"): Promise<SkillItem[]> {
+async function listSkillsInDir(dir: string, scope: "project" | "global", owner: ResourceOwner): Promise<SkillItem[]> {
   if (!(await exists(dir))) return [];
   let entries: Dirent[];
   try {
@@ -153,7 +161,7 @@ async function listSkillsInDir(dir: string, scope: "project" | "global"): Promis
     const skillPath = join(dir, entry.name, "SKILL.md");
     if (await exists(skillPath)) {
       // Direct skill: <dir>/<name>/SKILL.md
-      const item = await parseSkillEntry(skillPath, entry.name, scope);
+      const item = await parseSkillEntry(skillPath, entry.name, scope, owner);
       if (item) items.push(item);
     } else {
       // Domain/category folder: <dir>/<domain>/<name>/SKILL.md – scan one level deeper.
@@ -171,7 +179,7 @@ async function listSkillsInDir(dir: string, scope: "project" | "global"): Promis
         if (!subEntry.isDirectory()) continue;
         const subSkillPath = join(domainDir, subEntry.name, "SKILL.md");
         if (!(await exists(subSkillPath))) continue;
-        const item = await parseSkillEntry(subSkillPath, subEntry.name, scope);
+        const item = await parseSkillEntry(subSkillPath, subEntry.name, scope, owner);
         if (item) items.push(item);
       }
     }
@@ -179,83 +187,32 @@ async function listSkillsInDir(dir: string, scope: "project" | "global"): Promis
   return items;
 }
 
-export type ListSkillsOptions = {
-  includeGlobal: boolean;
-  includeDisabled?: boolean;
-  disabledSkills?: DisabledSkillRecord[];
-  workspaceId?: string;
-};
-
-function normalizeListSkillsOptions(includeGlobalOrOptions: boolean | ListSkillsOptions): ListSkillsOptions {
-  if (typeof includeGlobalOrOptions === "boolean") {
-    return { includeGlobal: includeGlobalOrOptions };
-  }
-  return {
-    includeGlobal: includeGlobalOrOptions.includeGlobal,
-    includeDisabled: includeGlobalOrOptions.includeDisabled,
-    disabledSkills: includeGlobalOrOptions.disabledSkills,
-    workspaceId: includeGlobalOrOptions.workspaceId,
-  };
-}
-
-export function disabledRecordMatchesSkill(
-  record: DisabledSkillRecord,
-  item: SkillItem,
-  workspaceId: string | undefined,
-): boolean {
-  const scope = item.scope === "project" ? "workspace" : "user-global";
-  if (record.path) {
-    if (resolve(record.path) !== resolve(item.path)) return false;
-    if (record.scope !== scope && record.scope !== "organization" && record.scope !== "platform") return false;
-    return !record.workspaceId || !workspaceId || record.workspaceId === workspaceId;
-  }
-
-  if (record.name !== item.name) return false;
-  if (record.scope !== scope) return false;
-  if (scope === "workspace") {
-    return Boolean(workspaceId) && record.workspaceId === workspaceId;
-  }
-  return true;
-}
-
-function applyDisabledSkillRecords(
-  items: SkillItem[],
-  options: Pick<ListSkillsOptions, "disabledSkills" | "workspaceId">,
-): SkillItem[] {
-  const disabledSkills = options.disabledSkills ?? [];
-  if (disabledSkills.length === 0) return items;
-  return items.map((item) => {
-    const disabled = disabledSkills.some((record) => disabledRecordMatchesSkill(record, item, options.workspaceId));
-    return disabled
-      ? { ...item, enabled: false as const, disabledReason: "user" as const }
-      : item;
-  });
-}
-
 export async function listSkills(
   workspaceRoot: string,
-  includeGlobalOrOptions: boolean | ListSkillsOptions,
+  includeGlobal: boolean,
+  options: ListSkillsOptions = {},
 ): Promise<SkillItem[]> {
-  const options = normalizeListSkillsOptions(includeGlobalOrOptions);
   const roots = await findWorkspaceRoots(workspaceRoot);
   const items: SkillItem[] = [];
   for (const root of roots) {
+    const workspaceOwner = options.workspaceOwner ?? workspaceResourceOwner({ root });
     const opencodeDir = join(root, ".opencode", "skills");
     const claudeDir = join(root, ".claude", "skills");
-    items.push(...(await listSkillsInDir(opencodeDir, "project")));
-    items.push(...(await listSkillsInDir(claudeDir, "project")));
+    items.push(...(await listSkillsInDir(opencodeDir, "project", workspaceOwner)));
+    items.push(...(await listSkillsInDir(claudeDir, "project", workspaceOwner)));
   }
 
   if (options.includeGlobal) {
     const homeDir = userHomeDir();
+    const globalOwner = options.globalOwner ?? localUserResourceOwner();
     const globalOpenCode = join(homeDir, ".config", "opencode", "skills");
     const globalClaude = join(homeDir, ".claude", "skills");
     const globalAgents = join(homeDir, ".agents", "skills");
     const globalAgentLegacy = join(homeDir, ".agent", "skills");
-    items.push(...(await listSkillsInDir(globalOpenCode, "global")));
-    items.push(...(await listSkillsInDir(globalClaude, "global")));
-    items.push(...(await listSkillsInDir(globalAgents, "global")));
-    items.push(...(await listSkillsInDir(globalAgentLegacy, "global")));
+    items.push(...(await listSkillsInDir(globalOpenCode, "global", globalOwner)));
+    items.push(...(await listSkillsInDir(globalClaude, "global", globalOwner)));
+    items.push(...(await listSkillsInDir(globalAgents, "global", globalOwner)));
+    items.push(...(await listSkillsInDir(globalAgentLegacy, "global", globalOwner)));
   }
 
   const markedItems = applyDisabledSkillRecords(items, options);
@@ -273,7 +230,7 @@ const isPathInside = (parent: string, child: string): boolean => {
   return rel === "" || (Boolean(rel) && !rel.startsWith("..") && !isAbsolute(rel));
 };
 
-const prepareSkillContent = (payload: { name: string; content: string; description?: string }): string => {
+export const prepareSkillContent = (payload: { name: string; content: string; description?: string }): string => {
   const name = payload.name.trim();
   validateSkillName(name);
   if (!payload.content) {

@@ -8,10 +8,32 @@ import AppEntry from "./app/entry";
 import { PlatformProvider, type Platform } from "./app/context/platform";
 import { isTauriRuntime } from "./app/utils";
 import { reportError } from "./app/lib/error-reporter";
+import { recordPerfLog } from "./app/lib/perf-log";
+import {
+  installStartupRequestAudit,
+  resolveStartupRequestAuditWindowMs,
+} from "./app/lib/startup-request-audit";
 import { initLocale } from "./i18n";
 
 bootstrapTheme();
 initLocale();
+
+const readStoredRequestAuditWindowMs = () => {
+  try {
+    return window.localStorage.getItem("veslo:request-audit-window-ms");
+  } catch {
+    return null;
+  }
+};
+
+installStartupRequestAudit({
+  enabled: isTauriRuntime(),
+  windowMs: resolveStartupRequestAuditWindowMs({
+    envValue: import.meta.env.VITE_VESLO_REQUEST_AUDIT_WINDOW_MS,
+    storedValue: readStoredRequestAuditWindowMs(),
+  }),
+  log: (event, payload) => recordPerfLog(true, "workspace.requests", event, payload),
+});
 
 const root = document.getElementById("root");
 

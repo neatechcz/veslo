@@ -15,17 +15,26 @@ import { isAdminAlertEmailConfigured, sendAdminAlertEmail } from "./email/admin-
 import { env } from "./env.js"
 import { createDbFeedbackProjectorStore, createFeedbackProjector } from "./feedback/projector.js"
 import { createDebugLogsIngestRouter } from "./http/debug-logs.js"
+import { createInternalPlatformAdminRecipientsRouter } from "./http/internal-platform-admin-recipients.js"
 import { asyncRoute, errorMiddleware } from "./http/errors.js"
 import { requireSession } from "./http/session.js"
 import { desktopAuthRouter } from "./http/desktop-auth.js"
 import { desktopAuthV2Router } from "./http/desktop-auth-v2.js"
-import { createAdminRuntimeRouter, isBootstrapPlatformAdminEmail, requirePlatformAdminSnapshot } from "./http/admin-runtime.js"
+import { createAdminRuntimeRouter, listActivePlatformAdminRecipients, requirePlatformAdminSnapshot } from "./http/admin-runtime.js"
 import { createFeedbackRouter } from "./http/feedback.js"
 import { createManagedAiAdminUiRouter } from "./managed-ai/http/admin.js"
 import {
   DefaultOpenAiOAuthClient,
   createUnavailableOpenAiOAuthClient,
 } from "./managed-ai/credentials/openai-oauth.js"
+import {
+  DefaultGoogleWorkspaceOAuthClient,
+  createUnavailableGoogleWorkspaceOAuthClient,
+} from "./google-workspace/oauth.js"
+import {
+  DbGoogleWorkspaceConnectionStore,
+  UnavailableGoogleWorkspaceConnectionStore,
+} from "./google-workspace/store.js"
 import { createProxyRouter } from "./managed-ai/http/proxy.js"
 import { createUserCredentialsRouter } from "./managed-ai/http/user-credentials.js"
 import { createDbSkillRegistryStore } from "./skills/db-store.js"
@@ -41,8 +50,9 @@ import {
 import { createCodexCapacityAlertMonitorRunner } from "./managed-ai/alerts/codex-capacity-monitor.js"
 import { buildCodexCapacityOverview } from "./managed-ai/usage/codex-capacity.js"
 import { orgsRouter } from "./http/orgs.js"
-import { orgMcpCatalogRouter } from "./http/org-mcp-catalog.js"
+import { createOrgMcpCatalogRouter } from "./http/org-mcp-catalog.js"
 import { orgSkillsCatalogRouter } from "./http/org-skills-catalog.js"
+import { createGoogleWorkspaceRouter } from "./http/google-workspace.js"
 import { workersRouter } from "./http/workers.js"
 import { createYouTrackRestIssueClient } from "./integrations/youtrack-rest.js"
 
@@ -107,6 +117,10 @@ if (corsOrigins.length > 0) {
 app.all("/api/auth/*", createAuthNodeHandler(toNodeHandler(auth), guardEmailSignupRequest))
 app.use("/v1", feedbackRouter)
 app.use("/v1/internal", debugLogsIngestRouter)
+app.use("/v1/internal", createInternalPlatformAdminRecipientsRouter({
+  token: env.aiGatewayInternalToken,
+  listRecipients: listActivePlatformAdminRecipients,
+}))
 if (managedAiRuntime) {
   app.use("/providers", managedAiProxyJsonParser)
 }
@@ -167,8 +181,17 @@ app.use("/v2/desktop-auth", desktopAuthV2Router)
 app.use("/v1/admin", createAdminRuntimeRouter({ managedAi: managedAiRuntime, debugLogs: debugLogService }))
 app.use("/admin/api", createAdminRuntimeRouter({ managedAi: managedAiRuntime, debugLogs: debugLogService }))
 app.use("/v1/orgs", orgsRouter)
-app.use("/v1/orgs", orgMcpCatalogRouter)
+app.use("/v1/orgs", createOrgMcpCatalogRouter({
+  connectorBaseUrl: env.googleWorkspace.connectorBaseUrl,
+}))
 app.use("/v1/orgs", orgSkillsCatalogRouter)
+app.use("/v1", createGoogleWorkspaceRouter({
+  oauth: createGoogleWorkspaceOAuthClient(),
+  store: createGoogleWorkspaceConnectionStore(),
+  stateSecret: env.googleWorkspace.oauthStateSecret,
+  redirectUri: env.googleWorkspace.oauthRedirectUri,
+  successRedirectUrl: env.googleWorkspace.oauthSuccessRedirectUrl,
+}))
 app.use("/v1/workers", workersRouter)
 app.use(errorMiddleware)
 
@@ -182,6 +205,30 @@ function createOpenAiOAuthClient() {
     clientId: config.clientId,
     clientSecret: config.clientSecret,
     redirectBase: config.redirectBase,
+  })
+}
+
+function createGoogleWorkspaceOAuthClient() {
+  const config = env.googleWorkspace
+  if (!config.oauthClientId || !config.oauthClientSecret) {
+    return createUnavailableGoogleWorkspaceOAuthClient()
+  }
+
+  return new DefaultGoogleWorkspaceOAuthClient({
+    clientId: config.oauthClientId,
+    clientSecret: config.oauthClientSecret,
+  })
+}
+
+function createGoogleWorkspaceConnectionStore() {
+  const config = env.googleWorkspace
+  if (!config.tokenSecretKey) {
+    return new UnavailableGoogleWorkspaceConnectionStore()
+  }
+
+  return new DbGoogleWorkspaceConnectionStore({
+    db,
+    secretKey: config.tokenSecretKey,
   })
 }
 
@@ -760,6 +807,29 @@ async function ensureTables() {
     `)
     await ensureIndex("audit_event", "audit_event_org_id", ["org_id"])
     await ensureIndex("audit_event", "audit_event_worker_id", ["worker_id"])
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`google_workspace_connection\` (
+        \`id\` varchar(64) NOT NULL,
+        \`org_id\` varchar(64) NOT NULL,
+        \`user_id\` varchar(64) NOT NULL,
+        \`connector_id\` enum('google-gmail','google-calendar','google-drive') NOT NULL,
+        \`state\` enum('connected','revoked','error') NOT NULL,
+        \`scopes\` text NOT NULL,
+        \`access_token_expires_at\` timestamp(3),
+        \`grant_iv\` text NOT NULL,
+        \`grant_auth_tag\` text NOT NULL,
+        \`grant_ciphertext\` longtext NOT NULL,
+        \`connected_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        \`revoked_at\` timestamp(3),
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        CONSTRAINT \`google_workspace_connection_id\` PRIMARY KEY(\`id\`)
+      )
+    `)
+    await ensureIndex("google_workspace_connection", "google_workspace_connection_scope", ["org_id", "user_id", "connector_id"], true)
+    await ensureIndex("google_workspace_connection", "google_workspace_connection_org_user", ["org_id", "user_id"])
+    await ensureIndex("google_workspace_connection", "google_workspace_connection_state", ["state"])
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`feedback_report\` (

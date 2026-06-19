@@ -450,16 +450,63 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
 
   const formatPeer = (_channel: ChannelName, peerId: string) => peerId;
 
-  const normalizeDirectory = (input: string) => {
+  const normalizeDirectoryBase = (input: string) => {
     const trimmed = input.trim();
     if (!trimmed) return "";
     const unified = trimmed.replace(/\\/g, "/");
     const withoutTrailing = unified.replace(/\/+$/, "");
-    const normalized = withoutTrailing || "/";
-    return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+    return withoutTrailing || "/";
+  };
+
+  const wslMountPathToWindowsDirectoryPath = (input: string) => {
+    const match = normalizeDirectoryBase(input).match(/^\/mnt\/([A-Za-z])(?:\/(.*))?$/);
+    if (!match) return null;
+    const drive = match[1]?.toUpperCase();
+    if (!drive) return null;
+    const rest = match[2]?.replace(/\//g, "\\") ?? "";
+    return rest ? `${drive}:\\${rest}` : `${drive}:\\`;
+  };
+
+  const workspaceRootBase = normalizeDirectoryBase(workspaceRoot);
+
+  const normalizeDirectory = (input: string) => {
+    const normalized = normalizeDirectoryBase(input);
+    if (!normalized) return "";
+    let comparable = normalized;
+    if (normalized === "/workspace" || normalized === "workspace") {
+      comparable = workspaceRootBase;
+    } else if (normalized.startsWith("/workspace/")) {
+      comparable = `${workspaceRootBase}/${normalized.slice("/workspace/".length)}`;
+    } else if (normalized.startsWith("workspace/")) {
+      comparable = `${workspaceRootBase}/${normalized.slice("workspace/".length)}`;
+    }
+    if (process.platform === "win32") {
+      comparable = wslMountPathToWindowsDirectoryPath(comparable) ?? comparable;
+      return comparable.toLowerCase();
+    }
+    return comparable;
   };
 
   const workspaceRootNormalized = normalizeDirectory(workspaceRoot);
+
+  const directoryMatches = (left: string, right: string) =>
+    normalizeDirectory(left) === normalizeDirectory(right);
+
+  const scopedDirectoryInputToHostPath = (input: string) => {
+    const normalized = normalizeDirectoryBase(input);
+    if (!normalized) return "";
+    if (normalized === "/workspace" || normalized === "workspace") return workspaceRoot;
+    if (normalized.startsWith("/workspace/")) {
+      return join(workspaceRoot, normalized.slice("/workspace/".length));
+    }
+    if (normalized.startsWith("workspace/")) {
+      return join(workspaceRoot, normalized.slice("workspace/".length));
+    }
+    if (process.platform === "win32") {
+      return wslMountPathToWindowsDirectoryPath(normalized) ?? input;
+    }
+    return input;
+  };
 
   const isWithinWorkspaceRoot = (candidate: string) => {
     const resolved = resolve(candidate || workspaceRoot);
@@ -474,7 +521,8 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
   const resolveScopedDirectory = (input: string): { ok: true; directory: string } | { ok: false; error: string } => {
     const trimmed = input.trim();
     if (!trimmed) return { ok: false, error: "Directory is required." };
-    const resolved = resolve(isAbsolute(trimmed) ? trimmed : join(workspaceRoot, trimmed));
+    const scopedInput = scopedDirectoryInputToHostPath(trimmed);
+    const resolved = resolve(isAbsolute(scopedInput) ? scopedInput : join(workspaceRoot, scopedInput));
     if (!isWithinWorkspaceRoot(resolved)) {
       return {
         ok: false,
@@ -1234,9 +1282,10 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           return { id, deleted };
         },
 
-        listBindings: async (filters?: { channel?: string; identityId?: string }) => {
+        listBindings: async (filters?: { channel?: string; identityId?: string; directory?: string }) => {
           const channelRaw = filters?.channel?.trim().toLowerCase();
           const identityIdRaw = filters?.identityId?.trim();
+          const directoryRaw = filters?.directory?.trim();
           let channel: ChannelName | undefined;
           if (channelRaw) {
             if (channelRaw === "telegram" || channelRaw === "slack") {
@@ -1246,9 +1295,18 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
             }
           }
           const identityId = identityIdRaw ? normalizeIdentityId(identityIdRaw) : undefined;
+          let normalizedDir = "";
+          if (directoryRaw) {
+            const scoped = resolveScopedDirectory(directoryRaw);
+            if (!scoped.ok) throw new Error(scoped.error);
+            normalizedDir = scoped.directory;
+          }
           const bindings = store.listBindings({ ...(channel ? { channel } : {}), ...(identityId ? { identityId } : {}) });
+          const scopedBindings = normalizedDir
+            ? bindings.filter((entry) => directoryMatches(entry.directory, normalizedDir))
+            : bindings;
           return {
-            items: bindings.map((entry) => ({
+            items: scopedBindings.map((entry) => ({
               channel: entry.channel,
               identityId: entry.identity_id,
               peerId: entry.peer_id,
@@ -1370,7 +1428,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
               const configured = listIdentityConfigs(channel).find((entry) => {
                 if (!entry.directory) return false;
                 if (!adapters.has(adapterKey(channel, entry.id))) return false;
-                return normalizeDirectory(entry.directory) === normalizedDir;
+                return directoryMatches(entry.directory, normalizedDir);
               });
               if (configured?.id) return configured.id;
             }
@@ -1451,8 +1509,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           const bindings = store.listBindings({
             channel,
             ...(identityId ? { identityId } : {}),
-            directory: normalizedDir,
-          });
+          }).filter((entry) => directoryMatches(entry.directory, normalizedDir));
           if (bindings.length === 0) {
             return {
               channel,
@@ -1872,7 +1929,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
     ensureEventSubscription(boundDirectory);
 
     const sessionID =
-      session?.session_id && normalizeDirectory(session?.directory ?? "") === normalizeDirectory(boundDirectory)
+      session?.session_id && directoryMatches(session?.directory ?? "", boundDirectory)
         ? session.session_id
         : await createSession({
             channel: inbound.channel,

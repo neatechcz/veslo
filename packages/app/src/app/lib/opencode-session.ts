@@ -18,16 +18,22 @@ import { unwrap } from "./opencode";
 /**
  * Abort an active session. Silently succeeds if the session is already idle.
  */
-export async function abortSession(client: Client, sessionID: string): Promise<void> {
-  unwrap(await client.session.abort({ sessionID }));
+export async function abortSession(client: Client, sessionID: string, options?: { directory?: string }): Promise<void> {
+  unwrap(await client.session.abort({
+    sessionID,
+    ...(options?.directory ? { directory: options.directory } : {}),
+  }));
 }
 
 /**
  * Abort an active session, swallowing errors (useful before revert/undo).
  */
-export async function abortSessionSafe(client: Client, sessionID: string): Promise<void> {
+export async function abortSessionSafe(client: Client, sessionID: string, options?: { directory?: string }): Promise<void> {
   try {
-    await client.session.abort({ sessionID });
+    await client.session.abort({
+      sessionID,
+      ...(options?.directory ? { directory: options.directory } : {}),
+    });
   } catch {
     // intentional: abort may fail if session is already idle
   }

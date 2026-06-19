@@ -2,7 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { isTauriRuntime } from "../utils";
 import { validateMcpServerName } from "../mcp";
-import type { ComposerAttachment, ComposerDraft, ComposerPart, SkillInventoryRegistryMetadata } from "../types";
+import { wrapStartupRequestAuditFetch } from "./startup-request-audit";
+import type { ComposerAttachment, ComposerDraft, ComposerPart, ModelRef, SkillInventoryRegistryMetadata } from "../types";
 
 export type EngineInfo = {
   running: boolean;
@@ -26,11 +27,43 @@ export type VesloServerInfo = {
   connectUrl: string | null;
   mdnsUrl: string | null;
   lanUrl: string | null;
+  engineUrl: string | null;
   clientToken: string | null;
   hostToken: string | null;
   pid: number | null;
   lastStdout: string | null;
   lastStderr: string | null;
+};
+
+type ManagedAiAccessProofCommandModelRef = {
+  providerId: string;
+  modelId: string;
+};
+
+type ManagedAiAccessProofCommandRead = {
+  fetchedAt: number;
+  providerId: string;
+  defaultModel: ManagedAiAccessProofCommandModelRef;
+  allowedModels: string[];
+  updatedAt: string | null;
+  runtimeConfigFingerprint?: string | null;
+};
+
+export type ManagedAiAccessProofRead = {
+  fetchedAt: number;
+  providerId: string;
+  defaultModel: ModelRef;
+  allowedModels: string[];
+  updatedAt: string | null;
+  runtimeConfigFingerprint?: string | null;
+};
+
+export type ManagedAiAccessProofWrite = {
+  providerId: string;
+  defaultModel: ModelRef;
+  allowedModels: string[];
+  updatedAt: string | null;
+  runtimeConfigFingerprint?: string | null;
 };
 
 export type OrchestratorDaemonState = {
@@ -119,11 +152,6 @@ export type WorkspaceInfo = {
   vesloToken?: string | null;
   vesloWorkspaceId?: string | null;
   vesloWorkspaceName?: string | null;
-
-  // Sandbox lifecycle metadata (desktop-managed)
-  sandboxBackend?: "docker" | null;
-  sandboxRunId?: string | null;
-  sandboxContainerName?: string | null;
 };
 
 export type WorkspaceList = {
@@ -227,6 +255,11 @@ type RawPendingSessionDraftAttachmentInput = RawPendingSessionDraftAttachmentSum
   bytes: number[];
 };
 
+const auditedTauriFetch = wrapStartupRequestAuditFetch(
+  tauriFetch as unknown as typeof globalThis.fetch,
+  "tauri.command-http",
+);
+
 type RawPendingSessionDraftComposerInput = Omit<
   RawPendingSessionDraftComposerSummary,
   "attachments"
@@ -320,6 +353,60 @@ export async function readClipboardFilePaths(): Promise<string[]> {
   }
 }
 
+const toCommandModelRef = (model: ModelRef): ManagedAiAccessProofCommandModelRef => ({
+  providerId: model.providerID,
+  modelId: model.modelID,
+});
+
+const fromCommandModelRef = (model: ManagedAiAccessProofCommandModelRef): ModelRef => ({
+  providerID: model.providerId,
+  modelID: model.modelId,
+});
+
+export async function accessProofAiRead(input: {
+  cacheKey: string;
+  maxAgeMs: number;
+}): Promise<ManagedAiAccessProofRead | null> {
+  if (!isTauriRuntime()) return null;
+  const result = await invoke<ManagedAiAccessProofCommandRead | null>("access_proof_ai_read", {
+    cacheKey: input.cacheKey,
+    maxAgeMs: input.maxAgeMs,
+  });
+  if (!result) return null;
+  return {
+    fetchedAt: result.fetchedAt,
+    providerId: result.providerId,
+    defaultModel: fromCommandModelRef(result.defaultModel),
+    allowedModels: Array.isArray(result.allowedModels) ? result.allowedModels : [],
+    updatedAt: result.updatedAt ?? null,
+    runtimeConfigFingerprint: result.runtimeConfigFingerprint ?? null,
+  };
+}
+
+export async function accessProofAiWrite(input: {
+  cacheKey: string;
+  proof: ManagedAiAccessProofWrite;
+}): Promise<boolean> {
+  if (!isTauriRuntime()) return false;
+  return invoke<boolean>("access_proof_ai_write", {
+    cacheKey: input.cacheKey,
+    proof: {
+      providerId: input.proof.providerId,
+      defaultModel: toCommandModelRef(input.proof.defaultModel),
+      allowedModels: input.proof.allowedModels,
+      updatedAt: input.proof.updatedAt,
+      runtimeConfigFingerprint: input.proof.runtimeConfigFingerprint ?? null,
+    },
+  });
+}
+
+export async function accessProofAiClear(cacheKey?: string | null): Promise<boolean> {
+  if (!isTauriRuntime()) return false;
+  return invoke<boolean>("access_proof_ai_clear", {
+    cacheKey: cacheKey?.trim() || null,
+  });
+}
+
 export async function pendingSessionDraftsList(): Promise<PendingSessionDraftSummary[]> {
   return invoke<RawPendingSessionDraftSummary[]>("pending_session_drafts_list");
 }
@@ -378,6 +465,9 @@ export async function engineStart(
     runtime?: "direct" | "veslo-orchestrator";
     workspacePaths?: string[];
     opencodeBinPath?: string | null;
+    // VSLO-171 F3Ú9: Performance settings forwarded to orchestrator daemon.
+    maxEngines?: number | null;
+    idleSuspendMs?: number | null;
   },
 ): Promise<EngineInfo> {
   return invoke<EngineInfo>("engine_start", {
@@ -386,6 +476,8 @@ export async function engineStart(
     opencodeBinPath: options?.opencodeBinPath ?? null,
     runtime: options?.runtime ?? null,
     workspacePaths: options?.workspacePaths ?? null,
+    maxEngines: options?.maxEngines ?? null,
+    idleSuspendMs: options?.idleSuspendMs ?? null,
   });
 }
 
@@ -440,11 +532,6 @@ export async function workspaceCreateRemote(input: {
   vesloToken?: string | null;
   vesloWorkspaceId?: string | null;
   vesloWorkspaceName?: string | null;
-
-  // Sandbox lifecycle metadata (desktop-managed)
-  sandboxBackend?: "docker" | null;
-  sandboxRunId?: string | null;
-  sandboxContainerName?: string | null;
 }): Promise<WorkspaceList> {
   return invoke<WorkspaceList>("workspace_create_remote", {
     baseUrl: input.baseUrl,
@@ -455,9 +542,6 @@ export async function workspaceCreateRemote(input: {
     vesloToken: input.vesloToken ?? null,
     vesloWorkspaceId: input.vesloWorkspaceId ?? null,
     vesloWorkspaceName: input.vesloWorkspaceName ?? null,
-    sandboxBackend: input.sandboxBackend ?? null,
-    sandboxRunId: input.sandboxRunId ?? null,
-    sandboxContainerName: input.sandboxContainerName ?? null,
   });
 }
 
@@ -471,11 +555,6 @@ export async function workspaceUpdateRemote(input: {
   vesloToken?: string | null;
   vesloWorkspaceId?: string | null;
   vesloWorkspaceName?: string | null;
-
-  // Sandbox lifecycle metadata (desktop-managed)
-  sandboxBackend?: "docker" | null;
-  sandboxRunId?: string | null;
-  sandboxContainerName?: string | null;
 }): Promise<WorkspaceList> {
   return invoke<WorkspaceList>("workspace_update_remote", {
     workspaceId: input.workspaceId,
@@ -487,9 +566,6 @@ export async function workspaceUpdateRemote(input: {
     vesloToken: input.vesloToken ?? null,
     vesloWorkspaceId: input.vesloWorkspaceId ?? null,
     vesloWorkspaceName: input.vesloWorkspaceName ?? null,
-    sandboxBackend: input.sandboxBackend ?? null,
-    sandboxRunId: input.sandboxRunId ?? null,
-    sandboxContainerName: input.sandboxContainerName ?? null,
   });
 }
 
@@ -660,103 +736,20 @@ export type OrchestratorDetachedHost = {
   token: string;
   hostToken: string;
   port: number;
-  sandboxBackend?: "docker" | null;
-  sandboxRunId?: string | null;
-  sandboxContainerName?: string | null;
 };
 
 export async function orchestratorStartDetached(input: {
   workspacePath: string;
-  sandboxBackend?: "none" | "docker" | null;
   runId?: string | null;
   vesloToken?: string | null;
   vesloHostToken?: string | null;
 }): Promise<OrchestratorDetachedHost> {
   return invoke<OrchestratorDetachedHost>("orchestrator_start_detached", {
     workspacePath: input.workspacePath,
-    sandboxBackend: input.sandboxBackend ?? null,
     runId: input.runId ?? null,
     vesloToken: input.vesloToken ?? null,
     vesloHostToken: input.vesloHostToken ?? null,
   });
-}
-
-export type SandboxDoctorResult = {
-  installed: boolean;
-  daemonRunning: boolean;
-  permissionOk: boolean;
-  ready: boolean;
-  clientVersion?: string | null;
-  serverVersion?: string | null;
-  error?: string | null;
-  debug?: {
-    candidates: string[];
-    selectedBin?: string | null;
-    versionCommand?: {
-      status: number;
-      stdout: string;
-      stderr: string;
-    } | null;
-    infoCommand?: {
-      status: number;
-      stdout: string;
-      stderr: string;
-    } | null;
-  } | null;
-};
-
-export async function sandboxDoctor(): Promise<SandboxDoctorResult> {
-  return invoke<SandboxDoctorResult>("sandbox_doctor");
-}
-
-export async function sandboxStop(containerName: string): Promise<ExecResult> {
-  return invoke<ExecResult>("sandbox_stop", { containerName });
-}
-
-export type VesloDockerCleanupResult = {
-  candidates: string[];
-  removed: string[];
-  errors: string[];
-};
-
-export async function sandboxCleanupVesloContainers(): Promise<VesloDockerCleanupResult> {
-  return invoke<VesloDockerCleanupResult>("sandbox_cleanup_veslo_containers");
-}
-
-export type SandboxDebugProbeResult = {
-  startedAt: number;
-  finishedAt: number;
-  runId: string;
-  workspacePath: string;
-  ready: boolean;
-  doctor: SandboxDoctorResult;
-  detachedHost?: OrchestratorDetachedHost | null;
-  dockerInspect?: {
-    status: number;
-    stdout: string;
-    stderr: string;
-  } | null;
-  dockerLogs?: {
-    status: number;
-    stdout: string;
-    stderr: string;
-  } | null;
-  cleanup: {
-    containerName?: string | null;
-    containerRemoved: boolean;
-    removeResult?: {
-      status: number;
-      stdout: string;
-      stderr: string;
-    } | null;
-    workspaceRemoved: boolean;
-    errors: string[];
-  };
-  error?: string | null;
-};
-
-export async function sandboxDebugProbe(): Promise<SandboxDebugProbeResult> {
-  return invoke<SandboxDebugProbeResult>("sandbox_debug_probe");
 }
 
 export async function vesloServerInfo(): Promise<VesloServerInfo> {
@@ -767,8 +760,30 @@ export async function vesloServerRestart(): Promise<VesloServerInfo> {
   return invoke<VesloServerInfo>("veslo_server_restart");
 }
 
-export async function engineInfo(): Promise<EngineInfo> {
-  return invoke<EngineInfo>("engine_info");
+export async function engineInfo(
+  workspaceId?: string,
+  workspacePath?: string,
+): Promise<EngineInfo> {
+  return invoke<EngineInfo>("engine_info", {
+    workspaceId: workspaceId ?? null,
+    workspacePath: workspacePath ?? null,
+  });
+}
+
+export type OrchestratorEngineSnapshot = {
+  workspaceId: string;
+  pid: number;
+  port: number;
+  baseUrl: string;
+  workdir: string;
+  configDir: string;
+  state: "spawning" | "ready" | "idle" | "suspended" | "crashed" | string;
+  spawnedAt: number;
+  lastActivityAt: number;
+};
+
+export async function orchestratorEnginesList(): Promise<OrchestratorEngineSnapshot[]> {
+  return invoke<OrchestratorEngineSnapshot[]>("orchestrator_engines_list");
 }
 
 export async function engineDoctor(options?: {
@@ -1141,7 +1156,7 @@ export async function getOpenCodeRouterGroupsEnabled(): Promise<boolean | null> 
   try {
     const status = await getOpenCodeRouterStatus();
     const healthPort = status?.healthPort ?? 3005;
-    const response = await (isTauriRuntime() ? tauriFetch : fetch)(`http://127.0.0.1:${healthPort}/config/groups`, {
+    const response = await (isTauriRuntime() ? auditedTauriFetch : fetch)(`http://127.0.0.1:${healthPort}/config/groups`, {
       method: "GET",
       headers: { "Content-Type": "application/json" },
     });
@@ -1159,7 +1174,7 @@ export async function setOpenCodeRouterGroupsEnabled(enabled: boolean): Promise<
   try {
     const status = await getOpenCodeRouterStatus();
     const healthPort = status?.healthPort ?? 3005;
-    const response = await (isTauriRuntime() ? tauriFetch : fetch)(`http://127.0.0.1:${healthPort}/config/groups`, {
+    const response = await (isTauriRuntime() ? auditedTauriFetch : fetch)(`http://127.0.0.1:${healthPort}/config/groups`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled }),
@@ -1337,4 +1352,23 @@ export async function startWindowDragging(): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`[tauri.startWindowDragging] Failed to start drag: ${message}`);
   }
+}
+
+/**
+ * VSLO-86 — forward a webview log line to the Tauri stderr (and thus to
+ * /tmp/veslo.log) so workspace activation, ensureEngine, SSE, and message-send
+ * diagnostics survive without opening DevTools. Fire-and-forget; silently
+ * drops outside the Tauri runtime.
+ */
+export function logUiEvent(scope: string, message: string, payload?: unknown): void {
+  if (!isTauriRuntime()) return;
+  let serialized: string | undefined;
+  if (payload !== undefined) {
+    try {
+      serialized = typeof payload === "string" ? payload : JSON.stringify(payload);
+    } catch {
+      serialized = String(payload);
+    }
+  }
+  void invoke("log_ui_event", { scope, message, payload: serialized }).catch(() => {});
 }

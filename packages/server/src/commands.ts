@@ -1,14 +1,24 @@
 import { readdir, readFile, writeFile, rm, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import type { CommandItem } from "./types.js";
+import { localUserResourceOwner, workspaceResourceOwner } from "./resource-owner.js";
+import type { CommandItem, ResourceOwner } from "./types.js";
 import { parseFrontmatter, buildFrontmatter } from "./frontmatter.js";
 import { exists } from "./utils.js";
 import { projectCommandsDir } from "./workspace-files.js";
 import { validateCommandName, sanitizeCommandName } from "./validators.js";
 import { ApiError } from "./errors.js";
 
-async function listCommandsInDir(dir: string, scope: "workspace" | "global"): Promise<CommandItem[]> {
+export type ListCommandsOptions = {
+  workspaceOwner?: ResourceOwner;
+  globalOwner?: ResourceOwner;
+};
+
+async function listCommandsInDir(
+  dir: string,
+  scope: "workspace" | "global",
+  owner: ResourceOwner,
+): Promise<CommandItem[]> {
   if (!(await exists(dir))) return [];
   const entries = await readdir(dir, { withFileTypes: true });
   const items: CommandItem[] = [];
@@ -32,17 +42,26 @@ async function listCommandsInDir(dir: string, scope: "workspace" | "global"): Pr
       model: typeof data.model === "string" ? data.model : null,
       subtask: typeof data.subtask === "boolean" ? data.subtask : undefined,
       scope,
+      owner,
     });
   }
   return items;
 }
 
-export async function listCommands(workspaceRoot: string, scope: "workspace" | "global"): Promise<CommandItem[]> {
+export async function listCommands(
+  workspaceRoot: string,
+  scope: "workspace" | "global",
+  options: ListCommandsOptions = {},
+): Promise<CommandItem[]> {
   if (scope === "global") {
     const dir = join(homedir(), ".config", "opencode", "commands");
-    return listCommandsInDir(dir, "global");
+    return listCommandsInDir(dir, "global", options.globalOwner ?? localUserResourceOwner());
   }
-  return listCommandsInDir(projectCommandsDir(workspaceRoot), "workspace");
+  return listCommandsInDir(
+    projectCommandsDir(workspaceRoot),
+    "workspace",
+    options.workspaceOwner ?? workspaceResourceOwner({ root: workspaceRoot }),
+  );
 }
 
 export async function upsertCommand(

@@ -54,11 +54,19 @@ const schema = z.object({
   DEN_LOG_MASTER_KEY: z.string().optional(),
   DEN_LOG_MASTER_KEY_VERSION: z.string().optional(),
   DEN_LOG_RETENTION_DAYS: z.string().optional(),
+  DEN_AI_GATEWAY_INTERNAL_TOKEN: z.string().optional(),
   MANAGED_AI_DATABASE_URL: z.string().optional(),
   MANAGED_AI_SECRET_KEY: z.string().optional(),
   MANAGED_AI_OPENAI_CLIENT_ID: z.string().optional(),
   MANAGED_AI_OPENAI_CLIENT_SECRET: z.string().optional(),
   MANAGED_AI_OPENAI_REDIRECT_BASE: z.string().optional(),
+  GOOGLE_WORKSPACE_OAUTH_CLIENT_ID: z.string().optional(),
+  GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_WORKSPACE_OAUTH_REDIRECT_URI: z.string().optional(),
+  GOOGLE_WORKSPACE_OAUTH_STATE_SECRET: z.string().optional(),
+  GOOGLE_WORKSPACE_OAUTH_SUCCESS_REDIRECT_URL: z.string().optional(),
+  GOOGLE_WORKSPACE_TOKEN_SECRET_KEY: z.string().optional(),
+  GOOGLE_WORKSPACE_CONNECTOR_BASE_URL: z.string().optional(),
 })
 
 function parseJsonStringArray(raw: string | undefined, label: string) {
@@ -98,14 +106,40 @@ function normalizeOrigin(origin: string): string {
   return value.replace(/\/+$/, "")
 }
 
+function normalizedSecret(raw: string | undefined, label: string, minimumLength = 32) {
+  const value = raw?.trim() || null
+  if (!value) {
+    return null
+  }
+  if (value.length < minimumLength) {
+    throw new Error(`${label} must be at least ${minimumLength} characters.`)
+  }
+  return value
+}
+
 export function parseEnv(input: NodeJS.ProcessEnv = process.env) {
   const parsed = schema.parse(input)
   const corsOrigins = parsed.CORS_ORIGINS?.split(",").map((origin) => normalizeOrigin(origin)).filter(Boolean)
   const polarFeatureGateEnabled = (parsed.POLAR_FEATURE_GATE_ENABLED ?? "false").toLowerCase() === "true"
   const nodeEnv = (input.NODE_ENV ?? "development").toLowerCase()
+  const googleOauthClientId = parsed.GOOGLE_WORKSPACE_OAUTH_CLIENT_ID?.trim() || null
+  const googleOauthClientSecret = parsed.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET?.trim() || null
+  const googleTokenSecretKey = normalizedSecret(
+    parsed.GOOGLE_WORKSPACE_TOKEN_SECRET_KEY,
+    "GOOGLE_WORKSPACE_TOKEN_SECRET_KEY",
+  )
+  const googleOauthConfigured = Boolean(googleOauthClientId || googleOauthClientSecret)
 
   if (nodeEnv === "production" && (corsOrigins ?? []).includes("*")) {
     throw new Error("CORS_ORIGINS cannot contain '*' in production for DEN")
+  }
+  if (nodeEnv === "production" && googleOauthConfigured) {
+    if (!googleOauthClientId || !googleOauthClientSecret) {
+      throw new Error("GOOGLE_WORKSPACE_OAUTH_CLIENT_ID and GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET must be configured together.")
+    }
+    if (!googleTokenSecretKey) {
+      throw new Error("GOOGLE_WORKSPACE_TOKEN_SECRET_KEY is required when Google Workspace OAuth is enabled in production.")
+    }
   }
 
   return {
@@ -178,7 +212,21 @@ export function parseEnv(input: NodeJS.ProcessEnv = process.env) {
       masterKeyVersion: parsed.DEN_LOG_MASTER_KEY_VERSION?.trim() || null,
       retentionDays: parsePositiveNumber(parsed.DEN_LOG_RETENTION_DAYS, 30, "DEN_LOG_RETENTION_DAYS"),
     },
+    aiGatewayInternalToken: parsed.DEN_AI_GATEWAY_INTERNAL_TOKEN?.trim() || null,
     managedAi: parseManagedAiEnv(parsed),
+    googleWorkspace: {
+      oauthClientId: googleOauthClientId,
+      oauthClientSecret: googleOauthClientSecret,
+      oauthRedirectUri: parsed.GOOGLE_WORKSPACE_OAUTH_REDIRECT_URI?.trim() || null,
+      oauthStateSecret:
+        parsed.GOOGLE_WORKSPACE_OAUTH_STATE_SECRET?.trim() || parsed.BETTER_AUTH_SECRET.trim(),
+      oauthSuccessRedirectUrl:
+        parsed.GOOGLE_WORKSPACE_OAUTH_SUCCESS_REDIRECT_URL?.trim() ||
+        "https://app.veslo.work/settings/integrations/google",
+      tokenSecretKey: googleTokenSecretKey,
+      connectorBaseUrl: parsed.GOOGLE_WORKSPACE_CONNECTOR_BASE_URL?.trim().replace(/\/+$/, "") ||
+        parsed.BETTER_AUTH_URL.trim().replace(/\/+$/, ""),
+    },
   }
 }
 

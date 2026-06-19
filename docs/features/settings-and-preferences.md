@@ -11,12 +11,11 @@ Current visible tabs:
 - `general`
 - `archived`
 - `scheduled` link tab
-- `soul` link tab
 - `skills` link tab
 - `mcp` link tab
 
-The `scheduled`, `soul`, `skills`, and `mcp` entries are navigation links, not Settings-owned content.
-They route to their existing dashboard destinations. The desktop/session left menu exposes only the high-frequency dashboard links (`scheduled` and `skills`), so Settings remains the full cross-dashboard tab rail for `scheduled`, `soul`, `skills`, and `mcp`.
+The `scheduled`, `skills`, and `mcp` entries are navigation links, not Settings-owned content.
+They route to the same dashboard destinations as the left menu and must preserve the left-menu ordering and behavior.
 
 Settings-owned content is limited to the `general` and `archived` tabs. Support and diagnostics controls can still exist behind internal gating, but they are not exposed as visible Settings tabs in the default product surface.
 
@@ -34,10 +33,10 @@ Examples:
 
 - theme mode
 - language
-- always-on update checks and default-on auto-download behavior
+- update check and opt-in auto-download behavior
 
 These are app-level preferences, mostly stored in browser storage.
-Desktop update checks are always enabled. Update downloads are enabled by default; Settings can opt out to keep the manual download action. If an automatic download is already running, Settings can pause it by turning automatic download off.
+Desktop update checks are enabled by default; downloads remain manual unless Settings opts in to auto-download.
 When a desktop update has already been detected, the dashboard/session left menu also surfaces the update prompt with progress, a manual download action for opt-out users, and an install action once ready. Settings remains the detailed configuration and diagnostic surface for update checks.
 
 ## Archived Sessions
@@ -87,7 +86,7 @@ These are primarily debugging and support surfaces. If behavior changes, update 
 
 ## Dashboard Link Tabs
 
-Settings includes link tabs for Automations, Soul, Skills, and Extensions.
+Settings includes link tabs for Automations, Skills, and Extensions.
 Those entries are aliases to the existing dashboard pages, so their page content,
 state, and source-of-truth behavior remain owned by the same destinations that
 they route to. Automations and Skills are also reachable from the left menu;

@@ -6,6 +6,7 @@ import type { VesloSessionArchiveRecord } from "./veslo-server";
 export type SessionArchiveItem = AppSessionArchiveItem;
 
 export const LEGACY_SIDEBAR_ARCHIVED_SESSION_IDS_KEY = "veslo.sidebar-archived-session-ids.v1";
+const ARCHIVED_SIDEBAR_SESSION_KEY_SEPARATOR = "\0";
 
 const normalizeUrl = (value?: string | null) => {
   const trimmed = value?.trim() ?? "";
@@ -49,6 +50,23 @@ export function buildWorkspaceIdentity(workspace?: WorkspaceInfo | null): string
 
   const root = normalizeDirectoryPath(workspace.path ?? workspace.directory ?? "");
   return root ? `local:${root}` : "";
+}
+
+export function buildArchivedSidebarSessionKey(input: {
+  workspaceId?: string | null;
+  sessionId?: string | null;
+}) {
+  const workspaceId = input.workspaceId?.trim() ?? "";
+  const sessionId = input.sessionId?.trim() ?? "";
+  if (!workspaceId || !sessionId) return sessionId;
+  return [workspaceId, sessionId].join(ARCHIVED_SIDEBAR_SESSION_KEY_SEPARATOR);
+}
+
+export function archivedSidebarSessionKeyFromRecord(record: Pick<VesloSessionArchiveRecord, "sessionId" | "workspaceIdAtArchive">) {
+  return buildArchivedSidebarSessionKey({
+    workspaceId: record.workspaceIdAtArchive,
+    sessionId: record.sessionId,
+  });
 }
 
 export function buildSessionArchiveSnapshot(input: {

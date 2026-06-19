@@ -4,11 +4,18 @@ export type ApprovalMode = "manual" | "auto";
 
 export type TokenScope = "owner" | "collaborator" | "viewer";
 
-export type SandboxBackend = "none" | "docker" | "container";
-
 export type ProviderPlacement = "in-sandbox" | "host-machine" | "client-machine" | "external";
 
 export type LogFormat = "pretty" | "json";
+
+export type SandboxBackend =
+  | "none"
+  | "docker"
+  | "container"
+  | "mac-sandbox-exec"
+  | "windows-wsl2"
+  | "windows-job-object"
+  | "stub";
 
 export interface WorkspaceConfig {
   id?: string;
@@ -17,8 +24,21 @@ export interface WorkspaceConfig {
   workspaceType?: WorkspaceType;
   baseUrl?: string;
   directory?: string;
+  opencodeDbPath?: string;
+  opencodeDataDir?: string;
+  opencodeDataHome?: string;
   opencodeUsername?: string;
   opencodePassword?: string;
+  opencode?: {
+    baseUrl?: string;
+    directory?: string;
+    dbPath?: string;
+    dataDir?: string;
+    dataHome?: string;
+    xdgDataHome?: string;
+    username?: string;
+    password?: string;
+  };
 }
 
 export interface WorkspaceInfo {
@@ -28,11 +48,18 @@ export interface WorkspaceInfo {
   workspaceType: WorkspaceType;
   baseUrl?: string;
   directory?: string;
+  opencodeDbPath?: string;
+  opencodeDataDir?: string;
+  opencodeDataHome?: string;
   opencodeUsername?: string;
   opencodePassword?: string;
   opencode?: {
     baseUrl?: string;
     directory?: string;
+    dbPath?: string;
+    dataDir?: string;
+    dataHome?: string;
+    xdgDataHome?: string;
     username?: string;
     password?: string;
   };
@@ -73,6 +100,8 @@ export interface ServerConfig {
   denApiBase?: string;
   skillRegistryBaseUrl?: string;
   skillRegistryToken?: string;
+  orchestratorDaemonUrl?: string;
+  orchestratorLifecycleToken?: string;
 }
 
 export interface Capabilities {
@@ -93,9 +122,9 @@ export interface Capabilities {
   mcp: { read: boolean; write: boolean };
   commands: { read: boolean; write: boolean };
   config: { read: boolean; write: boolean };
+  sandbox?: { enabled: boolean; backend: SandboxBackend };
 
   approvals: { mode: ApprovalMode; timeoutMs: number };
-  sandbox: { enabled: boolean; backend: SandboxBackend };
   ui: { toy: boolean };
   tokens: { scoped: boolean; scopes: TokenScope[] };
   proxy: {
@@ -142,10 +171,20 @@ export interface ApiErrorBody {
   details?: unknown;
 }
 
+export type ResourceOwnerKind = "workspace" | "user" | "organization" | "platform";
+
+export interface ResourceOwner {
+  kind: ResourceOwnerKind;
+  id: string;
+  label?: string;
+  root?: string;
+}
+
 export interface PluginItem {
   spec: string;
   source: "config" | "dir.project" | "dir.global";
   scope: "project" | "global";
+  owner?: ResourceOwner;
   path?: string;
 }
 
@@ -153,6 +192,7 @@ export interface McpItem {
   name: string;
   config: Record<string, unknown>;
   source: "config.project" | "config.global" | "config.remote";
+  owner?: ResourceOwner;
   disabledByTools?: boolean;
 }
 
@@ -161,8 +201,7 @@ export interface SkillItem {
   path: string;
   description: string;
   scope: "project" | "global";
-  enabled?: boolean;
-  disabledReason?: "user";
+  owner?: ResourceOwner;
   trigger?: string;
   disableModelInvocation?: boolean;
   userInvocable?: boolean;
@@ -258,7 +297,7 @@ export type ResolvedWorkspaceSkill = {
   packageSha256: string;
   source: ManagedSkillSource;
   target: "workspace" | "personal-global";
-  removalPolicy: WorkspaceSkillRolloutRemovalPolicy;
+  owner?: ResourceOwner;
 };
 
 export type WorkspaceSkillMaterialization = {
@@ -269,7 +308,7 @@ export type WorkspaceSkillMaterialization = {
   packageSha256: string;
   source: ManagedSkillSource;
   target: "workspace" | "personal-global";
-  removalPolicy: WorkspaceSkillRolloutRemovalPolicy;
+  owner?: ResourceOwner;
 };
 
 export type WorkspaceSkillConflict = {
@@ -322,6 +361,25 @@ export interface HubSkillItem {
   };
 }
 
+export type HubMcpOAuthConfig =
+  | boolean
+  | {
+      clientId: string;
+      clientSecret?: string;
+      scope?: string;
+    };
+
+export type HubMcpAuthorization = {
+  type: "veslo-server-oauth";
+  provider: string;
+  connectorId: string;
+  scopes: string[];
+  startPath: string;
+  runtimeTokenPath: string;
+  statusPath: string;
+  disconnectPath: string;
+};
+
 export interface HubMcpItem {
   id: string;
   name: string;
@@ -330,11 +388,16 @@ export interface HubMcpItem {
     type: "remote" | "local";
     url?: string;
     command?: string[];
-    oauth?: boolean;
+    oauth?: HubMcpOAuthConfig;
+    headers?: Record<string, string>;
   };
-  source: {
-    scope: "org";
-    orgId: string;
+  authorization?: HubMcpAuthorization;
+  source:
+    | { scope: "org"; orgId: string }
+    | { scope: "platform" };
+  provider?: {
+    id: string;
+    group?: string;
   };
 }
 
@@ -346,6 +409,7 @@ export interface CommandItem {
   model?: string | null;
   subtask?: boolean;
   scope: "workspace" | "global";
+  owner?: ResourceOwner;
 }
 
 export interface Actor {

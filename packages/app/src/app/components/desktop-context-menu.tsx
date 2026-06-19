@@ -115,13 +115,13 @@ export default function DesktopContextMenu() {
     const handleContextMenu = (event: MouseEvent) => {
       if (event.defaultPrevented) return;
 
-      event.preventDefault();
       const text = selectedTextForTarget(event.target);
       if (text.length === 0) {
         close();
         return;
       }
 
+      event.preventDefault();
       setMenu({
         copied: false,
         text,

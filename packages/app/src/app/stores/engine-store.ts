@@ -11,6 +11,7 @@ import { createLocalRuntimeLifecycle } from "../utils/local-runtime-lifecycle";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 import { t, currentLocale } from "../../i18n";
 import type { OpencodeAuth } from "../lib/opencode";
+import type { WorkspaceRouting } from "../context/workspace-routing";
 import {
   engineDoctor,
   engineInfo,
@@ -18,10 +19,8 @@ import {
   engineStart,
   engineStop,
   orchestratorInstanceDispose,
-  sandboxDoctor,
   type EngineDoctorResult,
   type EngineInfo,
-  type SandboxDoctorResult,
   type WorkspaceInfo,
 } from "../lib/tauri";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
@@ -41,6 +40,9 @@ export interface EngineStoreDeps {
   // Engine source / bin path
   engineSource: () => "path" | "sidecar" | "custom";
   engineCustomBinPath?: () => string;
+  // VSLO-171 F3Ú9: pool tuning passed down to orchestrator on spawn.
+  maxEngines?: () => number | null;
+  idleSuspendMs?: () => number | null;
   isWindowsPlatform: () => boolean;
 
   // UI state setters
@@ -61,6 +63,7 @@ export interface EngineStoreDeps {
   setOnboardingStep: (step: OnboardingStep) => void;
   setView: (value: any) => void;
   client: () => any;
+  routing: WorkspaceRouting;
   onEngineStable?: () => void;
 
   // Server connection
@@ -96,15 +99,14 @@ export function createEngineStore(deps: EngineStoreDeps) {
   const [engineDoctorResult, setEngineDoctorResult] = createSignal<EngineDoctorResult | null>(null);
   const [engineDoctorCheckedAt, setEngineDoctorCheckedAt] = createSignal<number | null>(null);
   const [engineInstallLogs, setEngineInstallLogs] = createSignal<string | null>(null);
-  const [sandboxDoctorResult, setSandboxDoctorResult] = createSignal<SandboxDoctorResult | null>(null);
-  const [sandboxDoctorCheckedAt, setSandboxDoctorCheckedAt] = createSignal<number | null>(null);
-  const [sandboxDoctorBusy, setSandboxDoctorBusy] = createSignal(false);
 
   const localRuntimeLifecycle = createLocalRuntimeLifecycle({
     engineSource: deps.engineSource,
     engineCustomBinPath: deps.engineCustomBinPath,
     resolveEngineRuntime: deps.resolveEngineRuntime,
     resolveWorkspacePaths: deps.resolveWorkspacePaths,
+    maxEngines: deps.maxEngines,
+    idleSuspendMs: deps.idleSuspendMs,
     setEngine,
     setEngineAuth,
     startEngine: engineStart,
@@ -113,15 +115,15 @@ export function createEngineStore(deps: EngineStoreDeps) {
     activateOrchestratorWorkspace: deps.activateOrchestratorWorkspace,
     activateVesloHostWorkspace: deps.activateVesloHostWorkspace,
     connectToServer: deps.connectToServer,
-    connectQuiet: async (baseUrl, directory, auth) =>
+    connectQuiet: async (baseUrl, directory, auth, context) =>
       await deps.connectToServer(
         baseUrl,
         directory,
         {
-          workspaceId: deps.activeWorkspaceId().trim() || undefined,
-          workspaceType: "local",
-          targetRoot: directory,
-          reason: "engine-quiet-reconnect",
+          workspaceId: context?.workspaceId?.trim() || deps.activeWorkspaceId().trim() || undefined,
+          workspaceType: context?.workspaceType ?? "local",
+          targetRoot: context?.targetRoot ?? directory,
+          reason: context?.reason ?? "engine-quiet-reconnect",
         },
         auth,
         { quiet: true, navigate: false },
@@ -139,17 +141,15 @@ export function createEngineStore(deps: EngineStoreDeps) {
       const syncLocalState = !isRemoteWorkspace;
       const activeWorkspaceRoot = normalizeDirectoryPath(deps.activeWorkspaceRoot().trim());
       const engineProjectDir = normalizeDirectoryPath(info.projectDir?.trim() ?? "");
-      const browsingDifferentLocalWorkspace =
-        syncLocalState &&
-        !deps.client() &&
-        activeWorkspaceRoot.length > 0 &&
-        engineProjectDir.length > 0 &&
-        activeWorkspaceRoot !== engineProjectDir;
+      const engineSnapshotMatchesActiveWorkspace =
+        !activeWorkspaceRoot ||
+        !engineProjectDir ||
+        activeWorkspaceRoot === engineProjectDir;
 
-      if (info.projectDir && syncLocalState && !browsingDifferentLocalWorkspace) {
+      if (info.projectDir && syncLocalState && engineSnapshotMatchesActiveWorkspace) {
         deps.setProjectDir(info.projectDir);
       }
-      if (info.baseUrl && syncLocalState && !browsingDifferentLocalWorkspace) {
+      if (info.baseUrl && syncLocalState && engineSnapshotMatchesActiveWorkspace) {
         deps.setBaseUrl(info.baseUrl);
       }
 
@@ -176,35 +176,6 @@ export function createEngineStore(deps: EngineStoreDeps) {
       setEngineDoctorResult(null);
       setEngineDoctorCheckedAt(Date.now());
       setEngineInstallLogs(e instanceof Error ? e.message : safeStringify(e));
-    }
-  }
-
-  async function refreshSandboxDoctor() {
-    if (!isTauriRuntime()) {
-      setSandboxDoctorResult(null);
-      setSandboxDoctorCheckedAt(Date.now());
-      return null;
-    }
-    if (sandboxDoctorBusy()) return sandboxDoctorResult();
-    setSandboxDoctorBusy(true);
-    try {
-      const result = await sandboxDoctor();
-      setSandboxDoctorResult(result);
-      return result;
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      const fallback: SandboxDoctorResult = {
-        installed: false,
-        daemonRunning: false,
-        permissionOk: false,
-        ready: false,
-        error: message,
-      };
-      setSandboxDoctorResult(fallback);
-      return fallback;
-    } finally {
-      setSandboxDoctorCheckedAt(Date.now());
-      setSandboxDoctorBusy(false);
     }
   }
 
@@ -443,13 +414,9 @@ export function createEngineStore(deps: EngineStoreDeps) {
     engineDoctorCheckedAt,
     engineInstallLogs,
     setEngineInstallLogs,
-    sandboxDoctorResult,
-    sandboxDoctorCheckedAt,
-    sandboxDoctorBusy,
     // Methods
     refreshEngine,
     refreshEngineDoctor,
-    refreshSandboxDoctor,
     startHost,
     stopHost,
     reloadWorkspaceEngine,

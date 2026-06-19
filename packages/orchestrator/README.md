@@ -68,6 +68,8 @@ The command prints pairing details (Veslo server URL + token, OpenCode URL + aut
 Use `--detach` to keep services running and exit the dashboard. The detach summary includes the
 Veslo URL, tokens, and the `opencode attach` command.
 
+*** DEPRECATED ***
+
 ## Sandbox mode (Docker / Apple container)
 
 `veslo` can run the sidecars inside a Linux container boundary while still mounting your workspace
@@ -106,6 +108,8 @@ Additional mounts are blocked unless you create an allowlist at:
 - `~/.config/veslo/sandbox-mount-allowlist.json`
 
 Override with `VESLO_SANDBOX_MOUNT_ALLOWLIST`.
+
+*** DEPRECATED ***
 
 ## Logging
 

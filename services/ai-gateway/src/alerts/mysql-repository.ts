@@ -8,7 +8,13 @@ import {
   credentialHealthEventTable,
   sessionLeaseTable,
 } from "../db/schema.js";
-import type { AlertActionInput, AlertRecord, AlertRepository, AlertSignalSummary } from "./repository.js";
+import type {
+  AlertActionInput,
+  AlertRecord,
+  AlertRepository,
+  AlertSignalSummary,
+  RecordProviderFailureAlertInput,
+} from "./repository.js";
 
 export class MySqlAlertRepository implements AlertRepository {
   constructor(private readonly db: AiGatewayDb) {}
@@ -72,6 +78,8 @@ export class MySqlAlertRepository implements AlertRepository {
       }
     }
 
+    const latestRecoveryByCredential = latestHealthyRecoveryByCredential(healthEventRows);
+
     return healthEventRows.map((row) => {
       const alert = buildAlertRecord({
         eventId: row.eventId,
@@ -81,16 +89,30 @@ export class MySqlAlertRepository implements AlertRepository {
         occurredAt: toIsoString(row.occurredAt),
         affectedSessions: activeLeasesByCredential.get(row.credentialId) ?? 0,
       });
+      const derivedAlert = isRecoveredByLaterHealthyEvent(row, latestRecoveryByCredential)
+        ? { ...alert, status: "resolved" as const, owner: null }
+        : alert;
       const override = latestAuditByAlertId.get(alert.id);
-      if (!override) {
-        return alert;
+      if (!override || derivedAlert.status === "resolved") {
+        return derivedAlert;
       }
 
       return {
-        ...alert,
+        ...derivedAlert,
         status: override.action === "alert.resolve" ? "resolved" : "acknowledged",
         owner: override.actor,
       };
+    });
+  }
+
+  async recordProviderFailure(input: RecordProviderFailureAlertInput): Promise<void> {
+    await this.db.insert(credentialHealthEventTable).values({
+      id: `health_${randomUUID()}`,
+      credential_record_id: input.credentialId,
+      from_state: "healthy",
+      to_state: "degraded",
+      reason: formatProviderFailureReason(input.provider, input.reason),
+      created_at: input.occurredAt ?? new Date(),
     });
   }
 
@@ -143,8 +165,26 @@ export class MySqlAlertRepository implements AlertRepository {
 }
 
 export function buildAlertRecord(input: AlertSignalSummary): AlertRecord {
-  const reason = (input.reason ?? "").toLowerCase();
+  const originalReason = input.reason ?? null;
+  const reason = (originalReason ?? "").toLowerCase();
   const status = input.toState === "healthy" ? "resolved" : "active";
+
+  if (isProviderProxyFailure(reason)) {
+    return {
+      id: `alert_${input.eventId}`,
+      title: "AI inference upstream is unreachable",
+      severity: "critical",
+      source: "gateway-operations",
+      reason: originalReason,
+      status,
+      credentialId: input.credentialId,
+      affectedSessions: input.affectedSessions,
+      firstSeenAt: input.occurredAt,
+      lastSeenAt: input.occurredAt,
+      owner: null,
+      runbook: "Check container outbound networking, DNS, firewall/NAT rules, and upstream provider reachability.",
+    };
+  }
 
   if (isAuthFailure(reason)) {
     return {
@@ -152,6 +192,7 @@ export function buildAlertRecord(input: AlertSignalSummary): AlertRecord {
       title: "invalid_grant returned by upstream OAuth",
       severity: "high",
       source: "provider-auth",
+      reason: originalReason,
       status,
       credentialId: input.credentialId,
       affectedSessions: input.affectedSessions,
@@ -168,6 +209,7 @@ export function buildAlertRecord(input: AlertSignalSummary): AlertRecord {
       title: "Provider rate limits increasing",
       severity: "high",
       source: "provider-rate-limit",
+      reason: originalReason,
       status,
       credentialId: input.credentialId,
       affectedSessions: input.affectedSessions,
@@ -184,6 +226,7 @@ export function buildAlertRecord(input: AlertSignalSummary): AlertRecord {
       title: "Unusual upstream error activity detected",
       severity: "critical",
       source: "gateway-operations",
+      reason: originalReason,
       status,
       credentialId: input.credentialId,
       affectedSessions: input.affectedSessions,
@@ -199,6 +242,7 @@ export function buildAlertRecord(input: AlertSignalSummary): AlertRecord {
     title: `Credential health changed to ${input.toState}`,
     severity: input.toState === "unhealthy" ? "high" : "medium",
     source: "credential-health",
+    reason: originalReason,
     status,
     credentialId: input.credentialId,
     affectedSessions: input.affectedSessions,
@@ -207,6 +251,24 @@ export function buildAlertRecord(input: AlertSignalSummary): AlertRecord {
     owner: null,
     runbook: "Inspect recent credential health transitions and active routing impact.",
   };
+}
+
+function isProviderProxyFailure(reason: string) {
+  return (
+    reason.includes("provider_proxy_failure") ||
+    reason.includes("network_connect_timeout") ||
+    reason.includes("network_dns_failure") ||
+    reason.includes("network_connection_failed") ||
+    reason.includes("network_fetch_failed")
+  );
+}
+
+function formatProviderFailureReason(provider: string, reason: string): string {
+  const normalizedReason = reason.trim() || "unknown";
+  const prefix = isProviderProxyFailure(normalizedReason)
+    ? "provider_proxy_failure"
+    : "provider_failure";
+  return `${prefix}:${provider}:${normalizedReason}`;
 }
 
 function isAuthFailure(reason: string) {
@@ -235,6 +297,39 @@ function isUnusualActivity(reason: string) {
     reason.includes("upstream_5xx") ||
     reason.includes("error_activity")
   );
+}
+
+function latestHealthyRecoveryByCredential(
+  rows: Array<{ credentialId: string; toState: string; occurredAt: Date | string }>,
+) {
+  const latest = new Map<string, number>();
+  for (const row of rows) {
+    if (row.toState !== "healthy") continue;
+
+    const occurredAt = toTimestampMs(row.occurredAt);
+    const previous = latest.get(row.credentialId);
+    if (previous === undefined || occurredAt > previous) {
+      latest.set(row.credentialId, occurredAt);
+    }
+  }
+
+  return latest;
+}
+
+function isRecoveredByLaterHealthyEvent(
+  row: { credentialId: string; toState: string; occurredAt: Date | string },
+  latestRecoveryByCredential: Map<string, number>,
+) {
+  if (row.toState === "healthy") {
+    return false;
+  }
+
+  const recoveredAt = latestRecoveryByCredential.get(row.credentialId);
+  return recoveredAt !== undefined && recoveredAt > toTimestampMs(row.occurredAt);
+}
+
+function toTimestampMs(value: Date | string) {
+  return value instanceof Date ? value.getTime() : Date.parse(value);
 }
 
 function toIsoString(value: Date | string | null) {

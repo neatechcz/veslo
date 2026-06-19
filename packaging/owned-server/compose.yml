@@ -88,6 +88,40 @@ services:
       - worker-image
     command: ["true"]
 
+  backup:
+    image: veslo-owned-server-backup:local
+    build:
+      context: ../..
+      dockerfile: packaging/owned-server/Dockerfile
+      target: backup
+    restart: unless-stopped
+    init: true
+    depends_on:
+      den-db:
+        condition: service_healthy
+      ai-gateway-db:
+        condition: service_healthy
+    volumes:
+      - /srv/veslo/backups:/srv/veslo/backups
+    environment:
+      CI: "true"
+      NODE_ENV: production
+      BACKUP_ROOT: /srv/veslo/backups
+      MYSQL_DUMP_MODE: direct
+      DEN_DB_HOST: den-db
+      DEN_DB_NAME: ${DEN_DB_NAME:-den}
+      DEN_DB_ROOT_PASSWORD: ${DEN_DB_ROOT_PASSWORD:-replace_with_den_root_password}
+      AI_GATEWAY_DB_HOST: ai-gateway-db
+      AI_GATEWAY_DB_NAME: ${AI_GATEWAY_DB_NAME:-veslo_ai_gateway}
+      AI_GATEWAY_DB_ROOT_PASSWORD: ${AI_GATEWAY_DB_ROOT_PASSWORD:-replace_with_ai_gateway_root_password}
+      LETTR_API_KEY: ${LETTR_API_KEY:-}
+      AUTH_EMAIL_ADDRESS: ${AUTH_EMAIL_ADDRESS:-}
+      AUTH_EMAIL_FROM_NAME: ${AUTH_EMAIL_FROM_NAME:-Veslo}
+      BACKUP_ALERT_EMAIL_RECIPIENTS: ${BACKUP_ALERT_EMAIL_RECIPIENTS:-}
+      AI_GATEWAY_ALERT_EMAIL_RECIPIENTS: ${AI_GATEWAY_ALERT_EMAIL_RECIPIENTS:-}
+      BACKUP_DAILY_UTC_TIME: ${BACKUP_DAILY_UTC_TIME:-02:15:00}
+      BACKUP_RANDOM_DELAY_SECONDS: ${BACKUP_RANDOM_DELAY_SECONDS:-900}
+
   den:
     <<: *node-app
     image: veslo-owned-server-den:local
@@ -115,6 +149,7 @@ services:
       LETTR_API_KEY: ${LETTR_API_KEY:-}
       AUTH_EMAIL_ADDRESS: ${AUTH_EMAIL_ADDRESS:-}
       AUTH_EMAIL_FROM_NAME: ${AUTH_EMAIL_FROM_NAME:-Veslo}
+      DEN_AI_GATEWAY_INTERNAL_TOKEN: ${DEN_AI_GATEWAY_INTERNAL_TOKEN:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-https://app.veslo.work,https://ai.veslo.work}
       DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: ${DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED:-true}
       PROVISIONER_MODE: ${PROVISIONER_MODE:-render}
@@ -157,6 +192,13 @@ services:
       DEN_LOG_MASTER_KEY: ${DEN_LOG_MASTER_KEY:-}
       DEN_LOG_MASTER_KEY_VERSION: ${DEN_LOG_MASTER_KEY_VERSION:-}
       DEN_LOG_RETENTION_DAYS: ${DEN_LOG_RETENTION_DAYS:-30}
+      GOOGLE_WORKSPACE_OAUTH_CLIENT_ID: ${GOOGLE_WORKSPACE_OAUTH_CLIENT_ID:-}
+      GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET: ${GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET:-}
+      GOOGLE_WORKSPACE_OAUTH_REDIRECT_URI: ${GOOGLE_WORKSPACE_OAUTH_REDIRECT_URI:-https://api.veslo.work/v1/integrations/google/oauth/callback}
+      GOOGLE_WORKSPACE_OAUTH_STATE_SECRET: ${GOOGLE_WORKSPACE_OAUTH_STATE_SECRET:-}
+      GOOGLE_WORKSPACE_OAUTH_SUCCESS_REDIRECT_URL: ${GOOGLE_WORKSPACE_OAUTH_SUCCESS_REDIRECT_URL:-https://app.veslo.work/settings/integrations/google}
+      GOOGLE_WORKSPACE_TOKEN_SECRET_KEY: ${GOOGLE_WORKSPACE_TOKEN_SECRET_KEY:-}
+      GOOGLE_WORKSPACE_CONNECTOR_BASE_URL: ${GOOGLE_WORKSPACE_CONNECTOR_BASE_URL:-https://api.veslo.work}
       MANAGED_AI_DATABASE_URL: ${MANAGED_AI_DATABASE_URL:-}
       MANAGED_AI_SECRET_KEY: ${MANAGED_AI_SECRET_KEY:-}
       MANAGED_AI_OPENAI_CLIENT_ID: ${MANAGED_AI_OPENAI_CLIENT_ID:-}
@@ -205,11 +247,13 @@ services:
       AI_GATEWAY_OPENAI_CLIENT_SECRET: ${AI_GATEWAY_OPENAI_CLIENT_SECRET:-replace_with_openai_client_secret}
       AI_GATEWAY_OPENAI_REDIRECT_BASE: ${AI_GATEWAY_OPENAI_REDIRECT_BASE:-https://ai.veslo.work/auth/openai}
       AI_GATEWAY_DEN_API_BASE: ${AI_GATEWAY_DEN_API_BASE:-https://api.veslo.work}
+      AI_GATEWAY_DEN_INTERNAL_TOKEN: ${AI_GATEWAY_DEN_INTERNAL_TOKEN:-}
       LETTR_API_KEY: ${LETTR_API_KEY:-}
       AUTH_EMAIL_ADDRESS: ${AUTH_EMAIL_ADDRESS:-}
       AUTH_EMAIL_FROM_NAME: ${AUTH_EMAIL_FROM_NAME:-Veslo}
       AI_GATEWAY_ALERT_EMAIL_RECIPIENTS: ${AI_GATEWAY_ALERT_EMAIL_RECIPIENTS:-}
       AI_GATEWAY_CODEX_CAPACITY_ALERT_EMAIL_INTERVAL_MS: ${AI_GATEWAY_CODEX_CAPACITY_ALERT_EMAIL_INTERVAL_MS:-300000}
+      AI_GATEWAY_CREDENTIAL_ALERT_EMAIL_INTERVAL_MS: ${AI_GATEWAY_CREDENTIAL_ALERT_EMAIL_INTERVAL_MS:-60000}
       AI_GATEWAY_CODEX_COMMAND: ${AI_GATEWAY_CODEX_COMMAND:-codex}
       AI_GATEWAY_CODEX_HOME: ${AI_GATEWAY_CODEX_HOME:-/var/lib/veslo-ai-gateway/codex}
       AI_GATEWAY_CODEX_ALLOW_HOST_HOME: ${AI_GATEWAY_CODEX_ALLOW_HOST_HOME:-}

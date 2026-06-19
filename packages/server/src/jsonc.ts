@@ -9,11 +9,17 @@ interface ParseResult<T> {
   raw: string;
 }
 
+function stripTrailingNulPadding(raw: string): string {
+  if (!raw.includes("\0")) return raw;
+  // Only end-of-file NUL padding is recoverable; embedded NULs remain invalid.
+  return raw.replace(/\0+([ \t\r\n]*)$/u, "$1");
+}
+
 export async function readJsoncFile<T>(path: string, fallback: T): Promise<ParseResult<T>> {
   if (!(await exists(path))) {
     return { data: fallback, raw: "" };
   }
-  const raw = await readFile(path, "utf8");
+  const raw = stripTrailingNulPadding(await readFile(path, "utf8"));
   const errors: { error: number; offset: number; length: number }[] = [];
   const data = parse(raw, errors, { allowTrailingComma: true }) as T;
   if (errors.length > 0) {
@@ -36,7 +42,7 @@ export async function updateJsoncTopLevel(path: string, updates: Record<string, 
     return;
   }
 
-  let content = await readFile(path, "utf8");
+  let content = stripTrailingNulPadding(await readFile(path, "utf8"));
   const formattingOptions = { insertSpaces: true, tabSize: 2, eol: "\n" };
   for (const [key, value] of Object.entries(updates)) {
     const edits = modify(content, [key], value, { formattingOptions });

@@ -4,18 +4,10 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
 import { isTauriRuntime } from "../utils";
 import { reportError } from "../lib/error-reporter";
+import { wrapStartupRequestAuditFetch } from "../lib/startup-request-audit";
+import { isWorkspaceOpencodeProxyUrl, normalizeServerUrl, serverDisplayName } from "./server-url";
 
-export function normalizeServerUrl(input: string) {
-  const trimmed = input.trim();
-  if (!trimmed) return;
-  const withProtocol = /^https?:\/\//.test(trimmed) ? trimmed : `http://${trimmed}`;
-  return withProtocol.replace(/\/+$/, "");
-}
-
-export function serverDisplayName(url: string) {
-  if (!url) return "";
-  return url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
-}
+export { isWorkspaceOpencodeProxyUrl, normalizeServerUrl, serverDisplayName } from "./server-url";
 
 type ServerContextValue = {
   url: string;
@@ -110,13 +102,21 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
 
   const checkHealth = async (url: string) => {
     if (!url) return false;
+    if (isWorkspaceOpencodeProxyUrl(url)) {
+      return false;
+    }
     const token = readVesloToken();
     const headers = token && url.includes("/opencode") ? { Authorization: `Bearer ${token}` } : undefined;
     const client = createOpencodeClient({
       baseUrl: url,
       headers,
       signal: AbortSignal.timeout(3000),
-      fetch: isTauriRuntime() ? tauriFetch : undefined,
+      fetch: isTauriRuntime()
+        ? wrapStartupRequestAuditFetch(
+            tauriFetch as unknown as typeof globalThis.fetch,
+            "tauri.server.health",
+          )
+        : undefined,
     });
     return client.global
       .health()

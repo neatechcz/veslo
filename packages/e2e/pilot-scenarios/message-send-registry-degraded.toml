@@ -235,12 +235,12 @@ const findComposerSendButton = (textbox) => {
     "Queue message",
     "Send",
     "Poslat hned",
-    "Nasměrovat agenta teď",
-    "Zařadit zprávu",
+    "Nasm?rovat agenta te?",
+    "Za?adit zpr?vu",
     "Odeslat",
-    "立即发送",
-    "立即引导代理",
-    "加入队列",
+    "????",
+    "??????",
+    "????",
   ];
   let current = textbox;
   const containers = [];
@@ -267,7 +267,7 @@ const waitForComposer = async () => {
     interval: 250,
     message: `Composer did not appear. Body=${bodyText().slice(0, 2000)}`,
   }).catch(async () => {
-    const chatButton = findButton(["Chat", "聊天"]);
+    const chatButton = findButton(["Chat", "??"]);
     if (chatButton) {
       chatButton.click();
       await sleep(500);
@@ -354,7 +354,7 @@ setProgress("waiting-fixture-response", { token });
 await waitUntil(() => {
   assertNoSkillRegistryError();
   const text = bodyText();
-  if (/Send failed|Odeslání selhalo|发送失败/i.test(text)) {
+  if (/Send failed|Odesl?n? selhalo|????/i.test(text)) {
     throw new Error(`Message send failed before fixture response. Trace=${JSON.stringify(sendTrace())}. Body=${text.slice(0, 2000)}`);
   }
   const occurrences = text.split(token).length - 1;

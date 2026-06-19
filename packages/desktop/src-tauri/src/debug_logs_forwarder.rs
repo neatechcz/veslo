@@ -16,6 +16,9 @@ const FLUSHING_PREFIX: &str = "flushing-";
 const SPOOL_MAX_BYTES: u64 = 50 * 1024 * 1024; // 50 MB before retention drop
 const RETENTION_LOW_BYTES: u64 = 35 * 1024 * 1024; // truncate down to ~35 MB
 const MAX_EVENTS_PER_BATCH: usize = 500;
+const MAX_LOG_LINE_BYTES: usize = 64 * 1024;
+const MAX_BATCH_BODY_BYTES: usize = 224 * 1024;
+const BATCH_SIZE_PROBE_ID: &str = "00000000-0000-0000-0000-000000000000";
 
 #[derive(Clone, Copy, Debug)]
 pub enum LogStream {
@@ -56,6 +59,37 @@ pub struct DebugLogsForwarder {
     sequence: AtomicU64,
 }
 
+#[derive(Debug)]
+enum PostBatchError {
+    Status(u16),
+    Transport(String),
+}
+
+impl std::fmt::Display for PostBatchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PostBatchError::Status(status) => write!(f, "HTTP {status}"),
+            PostBatchError::Transport(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+fn truncate_utf8_to_bytes(input: &str, max_bytes: usize) -> String {
+    if input.len() <= max_bytes {
+        return input.to_string();
+    }
+    const SUFFIX: &str = "...[truncated]";
+    let limit = max_bytes.saturating_sub(SUFFIX.len());
+    if limit == 0 {
+        return SUFFIX.chars().take(max_bytes).collect();
+    }
+    let mut end = limit.min(input.len());
+    while end > 0 && !input.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{}", &input[..end], SUFFIX)
+}
+
 impl DebugLogsForwarder {
     pub fn new(spool_dir: PathBuf) -> Self {
         let _ = fs::create_dir_all(&spool_dir);
@@ -73,6 +107,7 @@ impl DebugLogsForwarder {
         if trimmed.is_empty() {
             return;
         }
+        let trimmed = truncate_utf8_to_bytes(trimmed, MAX_LOG_LINE_BYTES);
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -201,12 +236,62 @@ fn parse_events(path: &PathBuf) -> std::io::Result<Vec<serde_json::Value>> {
     Ok(out)
 }
 
+fn batch_body_len(batch_id: &str, events: &[serde_json::Value]) -> Option<usize> {
+    serde_json::to_vec(&serde_json::json!({
+        "batchId": batch_id,
+        "events": events,
+    }))
+    .ok()
+    .map(|bytes| bytes.len())
+}
+
+fn build_event_batches(events: Vec<serde_json::Value>) -> (Vec<Vec<serde_json::Value>>, usize) {
+    let mut batches = Vec::new();
+    let mut current: Vec<serde_json::Value> = Vec::new();
+    let mut dropped = 0;
+
+    for event in events {
+        if current.len() >= MAX_EVENTS_PER_BATCH {
+            batches.push(std::mem::take(&mut current));
+        }
+
+        let mut tentative = current.clone();
+        tentative.push(event.clone());
+        if batch_body_len(BATCH_SIZE_PROBE_ID, &tentative)
+            .map(|len| len <= MAX_BATCH_BODY_BYTES)
+            .unwrap_or(false)
+        {
+            current.push(event);
+            continue;
+        }
+
+        if !current.is_empty() {
+            batches.push(std::mem::take(&mut current));
+        }
+
+        if batch_body_len(BATCH_SIZE_PROBE_ID, std::slice::from_ref(&event))
+            .map(|len| len <= MAX_BATCH_BODY_BYTES)
+            .unwrap_or(false)
+        {
+            current.push(event);
+        } else {
+            dropped += 1;
+        }
+    }
+
+    if !current.is_empty() {
+        batches.push(current);
+    }
+
+    (batches, dropped)
+}
+
 fn post_batch(
     base_url: &str,
     host_token: &str,
     batch_id: &str,
     events: Vec<serde_json::Value>,
-) -> Result<(), String> {
+) -> Result<(), PostBatchError> {
     let url = format!("{}/debug-logs", base_url.trim_end_matches('/'));
     let payload = serde_json::json!({
         "batchId": batch_id,
@@ -222,10 +307,13 @@ fn post_batch(
         .set("Content-Type", "application/json")
         .set("x-veslo-host-token", host_token)
         .send_string(&payload.to_string())
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| match e {
+            ureq::Error::Status(status, _) => PostBatchError::Status(status),
+            other => PostBatchError::Transport(other.to_string()),
+        })?;
 
     if !(200..300).contains(&response.status()) {
-        return Err(format!("HTTP {}", response.status()));
+        return Err(PostBatchError::Status(response.status()));
     }
     Ok(())
 }
@@ -282,12 +370,19 @@ pub fn spawn_flush_task(
                 continue;
             }
 
+            let (batches, dropped) = build_event_batches(events);
+            if dropped > 0 {
+                eprintln!("[debug-logs-forwarder] dropped {dropped} oversized debug log event(s)");
+            }
+
             let mut all_ok = true;
-            for chunk in events.chunks(MAX_EVENTS_PER_BATCH) {
+            for chunk_vec in batches {
                 let batch_id = Uuid::new_v4().to_string();
-                let chunk_vec: Vec<serde_json::Value> = chunk.to_vec();
                 match post_batch(&base_url, &host_token, &batch_id, chunk_vec) {
                     Ok(()) => {}
+                    Err(PostBatchError::Status(413)) => {
+                        eprintln!("[debug-logs-forwarder] dropping oversized debug log batch after HTTP 413");
+                    }
                     Err(error) => {
                         eprintln!("[debug-logs-forwarder] post failed: {error}");
                         all_ok = false;
@@ -301,6 +396,55 @@ pub fn spawn_flush_task(
             }
         }
     });
+}
+
+#[cfg(test)]
+mod batch_tests {
+    use super::*;
+
+    #[test]
+    fn truncate_utf8_to_bytes_preserves_utf8_boundaries() {
+        let input = "\u{017E}".repeat(40_000);
+        let truncated = truncate_utf8_to_bytes(&input, 1024);
+
+        assert!(truncated.len() <= 1024);
+        assert!(truncated.ends_with("...[truncated]"));
+        assert!(std::str::from_utf8(truncated.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn build_event_batches_respects_body_byte_limit() {
+        let events = (0..20)
+            .map(|idx| {
+                serde_json::json!({
+                    "id": idx,
+                    "payload": { "line": "x".repeat(16 * 1024) },
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let (batches, dropped) = build_event_batches(events);
+
+        assert_eq!(dropped, 0);
+        assert!(batches.len() > 1);
+        for batch in batches {
+            let len = batch_body_len(BATCH_SIZE_PROBE_ID, &batch).unwrap();
+            assert!(len <= MAX_BATCH_BODY_BYTES, "batch len {len}");
+        }
+    }
+
+    #[test]
+    fn build_event_batches_drops_single_oversized_event() {
+        let events = vec![serde_json::json!({
+            "id": "too-large",
+            "payload": { "line": "x".repeat(MAX_BATCH_BODY_BYTES + 1024) },
+        })];
+
+        let (batches, dropped) = build_event_batches(events);
+
+        assert!(batches.is_empty());
+        assert_eq!(dropped, 1);
+    }
 }
 
 #[cfg(test)]

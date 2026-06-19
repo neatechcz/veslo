@@ -58,6 +58,19 @@ export class CodexOAuthInferenceProxyTransport implements CodexOAuthProviderTran
       });
     }
 
+    if (wantsStream) {
+      const streamed = toChatCompletionSseStream(response.body, getString(requestBody, "model"));
+      return {
+        status: response.status,
+        body: streamed.body,
+        headers: {
+          ...headers,
+          "content-type": "text/event-stream",
+        },
+        usagePromise: streamed.usage,
+      };
+    }
+
     const parsedResponse = parseCodexResponsesSse(await response.text(), getString(requestBody, "model"));
     const body = wantsStream ? toChatCompletionSse(parsedResponse) : toChatCompletionBody(parsedResponse);
 
@@ -85,6 +98,12 @@ type CodexResponsesParsed = {
   textDeltas: string[];
   toolCalls: ChatCompletionToolCall[];
   usage: TokenUsageAccounting | null;
+};
+
+type CodexResponsesStreamState = CodexResponsesParsed & {
+  done: boolean;
+  roleSent: boolean;
+  toolCallsByKey: Map<string, ChatCompletionToolCall & { index: number }>;
 };
 
 type ChatCompletionToolCall = {
@@ -347,47 +366,7 @@ function parseCodexResponsesSse(body: string, fallbackModel: string | null): Cod
       continue;
     }
 
-    const response = getRecord(data.response);
-    if (response) {
-      parsed.id = getString(response, "id") ?? parsed.id;
-      parsed.created = readFiniteNumber(response.created_at) ?? parsed.created;
-      parsed.model = getString(response, "model") ?? parsed.model;
-      parsed.usage = readResponsesUsage(response.usage) ?? parsed.usage;
-    }
-
-    const type = getString(data, "type") ?? event.event;
-    if (type === "response.output_text.delta") {
-      const delta = getRawString(data, "delta");
-      if (delta !== null) {
-        parsed.textDeltas.push(delta);
-      }
-      continue;
-    }
-
-    if (type === "response.output_item.added" || type === "response.output_item.done") {
-      const item = getRecord(data.item);
-      if (item && getString(item, "type") === "function_call") {
-        upsertFunctionCall(toolCallsByKey, data, item);
-      }
-      continue;
-    }
-
-    if (type === "response.function_call_arguments.delta") {
-      const toolCall = getFunctionCallByData(toolCallsByKey, data);
-      const delta = getRawString(data, "delta");
-      if (toolCall && delta !== null) {
-        toolCall.function.arguments += delta;
-      }
-      continue;
-    }
-
-    if (type === "response.function_call_arguments.done") {
-      const toolCall = getFunctionCallByData(toolCallsByKey, data);
-      const args = getRawString(data, "arguments");
-      if (toolCall && args !== null) {
-        toolCall.function.arguments = args;
-      }
-    }
+    applyCodexResponsesEvent(parsed, toolCallsByKey, data, event.event);
   }
 
   parsed.toolCalls = [...toolCallsByKey.values()]
@@ -395,6 +374,58 @@ function parseCodexResponsesSse(body: string, fallbackModel: string | null): Cod
     .map(({ index: _index, ...toolCall }) => toolCall);
 
   return parsed;
+}
+
+function applyCodexResponsesEvent(
+  parsed: CodexResponsesParsed,
+  toolCallsByKey: Map<string, ChatCompletionToolCall & { index: number }>,
+  data: Record<string, unknown>,
+  eventName: string,
+): string | null {
+  const response = getRecord(data.response);
+  if (response) {
+    parsed.id = getString(response, "id") ?? parsed.id;
+    parsed.created = readFiniteNumber(response.created_at) ?? parsed.created;
+    parsed.model = getString(response, "model") ?? parsed.model;
+    parsed.usage = readResponsesUsage(response.usage) ?? parsed.usage;
+  }
+
+  const type = getString(data, "type") ?? eventName;
+  if (type === "response.output_text.delta") {
+    const delta = getRawString(data, "delta");
+    if (delta !== null) {
+      parsed.textDeltas.push(delta);
+      return delta;
+    }
+    return null;
+  }
+
+  if (type === "response.output_item.added" || type === "response.output_item.done") {
+    const item = getRecord(data.item);
+    if (item && getString(item, "type") === "function_call") {
+      upsertFunctionCall(toolCallsByKey, data, item);
+    }
+    return null;
+  }
+
+  if (type === "response.function_call_arguments.delta") {
+    const toolCall = getFunctionCallByData(toolCallsByKey, data);
+    const delta = getRawString(data, "delta");
+    if (toolCall && delta !== null) {
+      toolCall.function.arguments += delta;
+    }
+    return null;
+  }
+
+  if (type === "response.function_call_arguments.done") {
+    const toolCall = getFunctionCallByData(toolCallsByKey, data);
+    const args = getRawString(data, "arguments");
+    if (toolCall && args !== null) {
+      toolCall.function.arguments = args;
+    }
+  }
+
+  return null;
 }
 
 function parseSseEvents(body: string): Array<{ event: string; data: unknown }> {
@@ -429,6 +460,191 @@ function parseSseEvents(body: string): Array<{ event: string; data: unknown }> {
   }
 
   return events;
+}
+
+function toChatCompletionSseStream(
+  upstreamBody: ReadableStream<Uint8Array> | null,
+  fallbackModel: string | null,
+): { body: ReadableStream<Uint8Array>; usage: Promise<TokenUsageAccounting | undefined> } {
+  let resolveUsage: (usage: TokenUsageAccounting | undefined) => void = () => undefined;
+  let rejectUsage: (error: unknown) => void = () => undefined;
+  const usage = new Promise<TokenUsageAccounting | undefined>((resolve, reject) => {
+    resolveUsage = resolve;
+    rejectUsage = reject;
+  });
+
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const state: CodexResponsesStreamState = {
+        id: "resp_codex_oauth",
+        created: Math.floor(Date.now() / 1000),
+        model: fallbackModel ?? "unknown",
+        textDeltas: [],
+        toolCalls: [],
+        usage: null,
+        done: false,
+        roleSent: false,
+        toolCallsByKey: new Map(),
+      };
+
+      try {
+        if (!upstreamBody) {
+          finishChatCompletionSseStream(controller, state);
+          resolveUsage(undefined);
+          return;
+        }
+
+        const reader = upstreamBody.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            buffer += decoder.decode();
+            buffer = processSseBuffer(buffer, state, controller, true);
+            if (!state.done) {
+              finishChatCompletionSseStream(controller, state);
+            }
+            resolveUsage(state.usage ?? undefined);
+            return;
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+          buffer = processSseBuffer(buffer, state, controller, false);
+        }
+      } catch (error) {
+        rejectUsage(error);
+        controller.error(error);
+      }
+    },
+  });
+
+  return { body, usage };
+}
+
+function processSseBuffer(
+  input: string,
+  state: CodexResponsesStreamState,
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  flush: boolean,
+): string {
+  let buffer = input;
+  while (true) {
+    const boundary = findSseBoundary(buffer);
+    if (!boundary) {
+      break;
+    }
+
+    const block = buffer.slice(0, boundary.index);
+    buffer = buffer.slice(boundary.index + boundary.length);
+    processSseBlock(block, state, controller);
+  }
+
+  if (flush && buffer.trim().length > 0) {
+    processSseBlock(buffer, state, controller);
+    return "";
+  }
+
+  return buffer;
+}
+
+function findSseBoundary(buffer: string): { index: number; length: number } | null {
+  const crlf = buffer.indexOf("\r\n\r\n");
+  const lf = buffer.indexOf("\n\n");
+  if (crlf === -1 && lf === -1) {
+    return null;
+  }
+  if (crlf !== -1 && (lf === -1 || crlf < lf)) {
+    return { index: crlf, length: 4 };
+  }
+  return { index: lf, length: 2 };
+}
+
+function processSseBlock(
+  block: string,
+  state: CodexResponsesStreamState,
+  controller: ReadableStreamDefaultController<Uint8Array>,
+): void {
+  if (state.done) {
+    return;
+  }
+
+  for (const event of parseSseEvents(block)) {
+    if (state.done) {
+      return;
+    }
+
+    const data = getRecord(event.data);
+    if (!data) {
+      continue;
+    }
+
+    const delta = applyCodexResponsesEvent(state, state.toolCallsByKey, data, event.event);
+    state.toolCalls = [...state.toolCallsByKey.values()]
+      .sort((left, right) => left.index - right.index)
+      .map(({ index: _index, ...toolCall }) => toolCall);
+
+    if (delta !== null) {
+      ensureChatCompletionSseRole(controller, state);
+      enqueueChatCompletionSseChunk(controller, state, { index: 0, delta: { content: delta }, finish_reason: null });
+      continue;
+    }
+
+    const type = getString(data, "type") ?? event.event;
+    if (type === "response.created") {
+      ensureChatCompletionSseRole(controller, state);
+      continue;
+    }
+
+    if (type === "response.completed") {
+      finishChatCompletionSseStream(controller, state);
+    }
+  }
+}
+
+function ensureChatCompletionSseRole(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  state: CodexResponsesStreamState,
+): void {
+  if (state.roleSent) {
+    return;
+  }
+  state.roleSent = true;
+  enqueueChatCompletionSseChunk(controller, state, { index: 0, delta: { role: "assistant" }, finish_reason: null });
+}
+
+function finishChatCompletionSseStream(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  state: CodexResponsesStreamState,
+): void {
+  if (state.done) {
+    return;
+  }
+
+  ensureChatCompletionSseRole(controller, state);
+  state.toolCalls.forEach((toolCall, index) => {
+    enqueueChatCompletionSseChunk(controller, state, {
+      index: 0,
+      delta: {
+        tool_calls: [
+          {
+            index,
+            ...toolCall,
+          },
+        ],
+      },
+      finish_reason: null,
+    });
+  });
+  enqueueChatCompletionSseChunk(controller, state, {
+    index: 0,
+    delta: {},
+    finish_reason: state.toolCalls.length > 0 ? "tool_calls" : "stop",
+  });
+  controller.enqueue(encodeSseText("data: [DONE]\n\n"));
+  state.done = true;
+  controller.close();
 }
 
 function upsertFunctionCall(
@@ -565,6 +781,28 @@ function toChatCompletionSse(parsed: CodexResponsesParsed): string {
   events.push("data: [DONE]\n\n");
 
   return events.join("");
+}
+
+function enqueueChatCompletionSseChunk(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  parsed: CodexResponsesParsed,
+  choice: Record<string, unknown>,
+): void {
+  controller.enqueue(encodeSseText(`data: ${JSON.stringify(makeChatCompletionChunk(parsed, choice))}\n\n`));
+}
+
+function makeChatCompletionChunk(parsed: CodexResponsesParsed, choice: Record<string, unknown>): Record<string, unknown> {
+  return {
+    id: parsed.id,
+    object: "chat.completion.chunk",
+    created: parsed.created,
+    model: parsed.model,
+    choices: [choice],
+  };
+}
+
+function encodeSseText(value: string): Uint8Array {
+  return new TextEncoder().encode(value);
 }
 
 function toOpenAiUsage(usage: TokenUsageAccounting | null): Record<string, unknown> | null {

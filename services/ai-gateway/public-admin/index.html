@@ -44,7 +44,10 @@
         <section class="sidebar-card subtle">
           <div class="eyebrow">Live signals</div>
           <div class="stack tight">
-            <div class="pill-row"><span class="dot good"></span> Gateway healthy</div>
+            <div class="pill-row" id="readiness-pill">
+              <span class="dot info" id="readiness-dot"></span>
+              <span id="readiness-label">Checking inference readiness</span>
+            </div>
             <div class="pill-row"><span class="dot warn"></span> 2 credential alerts</div>
           </div>
         </section>
@@ -225,8 +228,11 @@
               </label>
               <div class="button-row">
                 <button class="button button-primary" id="credential-create-submit" type="button">Create credential</button>
+                <button class="button button-secondary" id="credential-create-codex-upload" type="button">Prepare Codex account upload</button>
+                <button class="button button-secondary hidden" id="credential-create-codex-copy" type="button">Copy command</button>
                 <p class="editor-note credential-create-status" id="credential-create-status">Secrets are stored encrypted and assigned to the provider platform pool. For Codex / ChatGPT runtime, paste the full Codex <code>auth.json</code> with <code>id_token</code>, <code>access_token</code>, <code>refresh_token</code>, and <code>account_id</code>.</p>
               </div>
+              <textarea class="input credential-command-output hidden" id="credential-create-codex-command" readonly></textarea>
             </div>
             <div class="credentials-layout modal-list-layout">
               <div class="table-shell">
@@ -740,5 +746,20 @@
         </div>
       </div>
     </dialog>
+
+    <div
+      id="backend-connection-status"
+      class="backend-connection-status hidden"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      data-state="connecting"
+    >
+      <span class="backend-connection-dot" aria-hidden="true"></span>
+      <div>
+        <strong id="backend-connection-label">Connecting to AI Gateway...</strong>
+        <span id="backend-connection-detail">Waiting for backend response.</span>
+      </div>
+    </div>
   </body>
 </html>

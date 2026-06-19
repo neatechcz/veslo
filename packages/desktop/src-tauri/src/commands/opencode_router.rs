@@ -15,6 +15,7 @@ use crate::process_supervisor::spawn_output_collector_with_forwarder;
 use crate::supervised_process::CommandEvent;
 use crate::types::OpenCodeRouterInfo;
 use crate::utils::truncate_output;
+use crate::workspace::validation::{validate_workspace_path, ValidationMode};
 
 /// Check if opencodeRouter health endpoint is responding on given port
 fn check_health_endpoint(port: u16) -> Option<serde_json::Value> {
@@ -216,6 +217,11 @@ pub fn opencodeRouter_start(
     opencode_password: Option<String>,
     health_port: Option<u16>,
 ) -> Result<OpenCodeRouterInfo, String> {
+    let workspace_path =
+        validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?
+            .to_string_lossy()
+            .to_string();
+
     let mut state = manager
         .inner
         .lock()

@@ -3,6 +3,7 @@ import type { Accessor, JSX } from "solid-js";
 import { useOutsideClick } from "./use-outside-click";
 import {
   Archive,
+  ChevronRight,
   ChevronUp,
   Folder,
   FolderPlus,
@@ -16,12 +17,17 @@ import {
 
 import type { VesloSoulStatus } from "../../lib/veslo-server";
 import type { WorkspaceInfo } from "../../lib/tauri";
+import { recordPerfLog } from "../../lib/perf-log";
+import { buildArchivedSidebarSessionKey } from "../../lib/session-archive-model";
 import type {
   LoadedSessionPrefetchInterestChangeHandler,
   SidebarSubagentDecoration,
   WorkspaceConnectionState,
   WorkspaceSessionGroup,
 } from "../../types";
+import type { WorkspaceActivationOptions } from "../../context/workspace-types";
+import type { WorkspaceBusyMap } from "../../context/workspace-debug";
+import { readSessionStatus } from "../../lib/scoped-session-status";
 import {
   getWorkspaceTaskLoadErrorDisplay,
   isWindowsPlatform,
@@ -36,7 +42,6 @@ import {
   displayTimestamp,
   formatSessionRelativeAge,
   formatSessionTimestampTooltip,
-  isProjectCollapsed,
   resolveSessionRowClickAction,
   requiredVisibleCountForExpandedSession,
   rowVisibleByExpansion,
@@ -45,7 +50,6 @@ import {
   splitProjectGroupsForSidebar,
   splitSessionDisplayLabel,
   rootRowsForSessionTree,
-  toggleProjectCollapsed,
   type FlatSessionRow,
   type ProjectSessionGroup,
 } from "./workspace-session-list-model";
@@ -74,13 +78,11 @@ import {
 import { resolveRenderableProjectGroups } from "./workspace-session-list-render-model";
 import {
   PROJECT_ORDER_PROMOTED_EVENT,
-  readCollapsedProjectMap,
   readChatSidebarCollapsed,
   readChatSidebarHeight,
   readExpandedParentSessionIds,
   readProjectOrder,
   readSidebarViewMode,
-  writeCollapsedProjectMap,
   writeChatSidebarCollapsed,
   writeChatSidebarHeight,
   writeExpandedParentSessionIds,
@@ -104,14 +106,20 @@ type Props = {
   pendingSelectedWorkspaceId?: string | null;
   suspendProjectReorder?: boolean;
   sessionStatusById?: Record<string, string>;
+  busySessionByWorkspaceId?: WorkspaceBusyMap;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
+  /** VSLO-171 F3Ú7c — per-workspace pending permission counts for sidebar badges. */
+  pendingPermissionCountByWs?: Record<string, number>;
+  /** Workspace IDs whose orchestrator engine is currently in `ready` state.
+   *  Switching into those is instant (no spawn wait). */
+  readyEngineWorkspaceIds?: Set<string>;
   importingWorkspaceConfig: boolean;
   showRemoteActions?: boolean;
   soulStatusByWorkspaceId: Record<string, VesloSoulStatus | null>;
   isPrivateWorkspacePath?: (folder: string | null | undefined) => boolean;
-  onActivateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  onActivateWorkspace: (workspaceId: string, options: WorkspaceActivationOptions) => Promise<boolean> | boolean | void;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
   onDeleteSession?: (workspaceId: string, sessionId: string) => void;
   onOpenPendingDirectoryDraftInWorkspace: (workspaceId: string) => void;
@@ -215,11 +223,7 @@ const workspaceLabel = (workspace: WorkspaceInfo) =>
 
 const workspaceKindLabel = (workspace: WorkspaceInfo) =>
   workspace.workspaceType === "remote"
-    ? workspace.sandboxBackend === "docker" ||
-      Boolean(workspace.sandboxRunId?.trim()) ||
-      Boolean(workspace.sandboxContainerName?.trim())
-      ? t("sidebar.workspace_kind_sandbox", currentLocale())
-      : t("sidebar.workspace_kind_remote", currentLocale())
+    ? t("sidebar.workspace_kind_remote", currentLocale())
     : t("sidebar.workspace_kind_local", currentLocale());
 
 const sidebarControlTooltipClass =
@@ -467,9 +471,7 @@ export default function WorkspaceSessionList(props: Props) {
   const loadMoreLabel = (count: number) => tr("sidebar.load_more").replace("{count}", String(count));
   const revealLabel = isWindowsPlatform() ? tr("sidebar.reveal_in_explorer") : tr("sidebar.reveal_in_finder");
   const [sidebarModeSignal, setSidebarModeSignal] = createSignal<SidebarViewMode>(readSidebarViewMode());
-  const [collapsedProjects, setCollapsedProjects] = createSignal<Record<string, boolean>>(
-    readCollapsedProjectMap(),
-  );
+  const [openProjectKey, setOpenProjectKey] = createSignal<string | null>(null);
   const [projectOrder, setProjectOrder] = createSignal<string[]>(readProjectOrder());
   const [projectVisibleByKey, setProjectVisibleByKey] = createSignal<Record<string, number>>({});
   const [recentVisibleCount, setRecentVisibleCount] = createSignal(3);
@@ -503,40 +505,90 @@ export default function WorkspaceSessionList(props: Props) {
   let recentSentinelRef: HTMLDivElement | undefined;
   let projectDragPreviewElement: HTMLDivElement | null = null;
   let recentMouseUpSessionActivation: { sessionId: string; at: number } | null = null;
+  let suppressedProjectClickKey: string | null = null;
+  let clearSuppressedProjectClickTimer: number | null = null;
 
   const sidebarMode = createMemo(() => sidebarModeSignal());
+  const recordAccordionOpenKey = (reason: string, projectKey: string | null) => {
+    recordPerfLog(true, "workspace.sidebar", "accordion-open-key", {
+      reason,
+      projectKey,
+      activeWorkspaceId: props.activeWorkspaceId.trim() || null,
+    });
+  };
+  const setProjectAccordionOpenKey = (projectKey: string | null, reason: string) => {
+    setOpenProjectKey((current) => {
+      if (current === projectKey) return current;
+      recordAccordionOpenKey(reason, projectKey);
+      return projectKey;
+    });
+  };
   const setSidebarMode = (value: SidebarViewMode) => {
     setSidebarModeSignal(value);
     writeSidebarViewMode(value);
   };
-  const toggleProjectCollapse = (projectKey: string) =>
-    setCollapsedProjects((previous) => {
-      const next = toggleProjectCollapsed(previous, projectKey);
-      writeCollapsedProjectMap(next);
+  let manualAccordionWorkspaceId = "";
+  let manualAccordionProjectKey = "";
+  const openProjectAccordion = (projectKey: string) => {
+    const key = projectKey.trim();
+    if (!key) return;
+    manualAccordionWorkspaceId = "";
+    manualAccordionProjectKey = "";
+    setProjectAccordionOpenKey(key, "project-open");
+  };
+  const toggleProjectAccordion = (projectKey: string) => {
+    const key = projectKey.trim();
+    if (!key) return;
+    manualAccordionWorkspaceId = props.activeWorkspaceId.trim();
+    manualAccordionProjectKey = key;
+    setOpenProjectKey((current) => {
+      const next = current === key ? null : key;
+      if (current !== next) {
+        recordAccordionOpenKey("user-toggle", next);
+      }
       return next;
     });
+  };
+  const suppressNextProjectClick = (projectKey: string) => {
+    suppressedProjectClickKey = projectKey;
+    if (clearSuppressedProjectClickTimer !== null && typeof window !== "undefined") {
+      window.clearTimeout(clearSuppressedProjectClickTimer);
+    }
+    clearSuppressedProjectClickTimer = typeof window === "undefined"
+      ? null
+      : window.setTimeout(() => {
+          suppressedProjectClickKey = null;
+          clearSuppressedProjectClickTimer = null;
+        }, 0);
+  };
+  const handleProjectOpenClick = (projectKey: string, workspaceId: string) => {
+    if (suppressedProjectClickKey === projectKey) {
+      suppressedProjectClickKey = null;
+      return;
+    }
+    openProjectAccordion(projectKey);
+    void Promise.resolve(props.onActivateWorkspace(workspaceId, { origin: "workspace-session-list:project-open" }));
+  };
+  onCleanup(() => {
+    if (clearSuppressedProjectClickTimer !== null && typeof window !== "undefined") {
+      window.clearTimeout(clearSuppressedProjectClickTimer);
+    }
+  });
   const rowIndentStyle = (row: FlatSessionRow) =>
     row.nestingLevel > 0 ? { "padding-left": `${12 + Math.min(row.nestingLevel, 6) * 14}px` } : undefined;
 
   const archivedSessionIds = () => props.archivedSessionIds ?? [];
-  const sessionWorkspaceById = createMemo(() => {
-    const map = new Map<string, string>();
-    for (const group of props.workspaceSessionGroups) {
-      const workspaceId = group.workspace.id;
-      for (const session of group.sessions) {
-        map.set(session.id, workspaceId);
-      }
-    }
-    return map;
-  });
   const archivedSessionIdSet = createMemo(
     () => new Set(archivedSessionIds().map((sessionId) => sessionId.trim()).filter(Boolean)),
   );
-  const isSessionArchived = (sessionId: string) => archivedSessionIdSet().has(sessionId.trim());
-  const isArchiveConfirmationPending = (sessionId: string) =>
-    pendingArchiveConfirmationSessionId() === sessionId.trim();
+  const archiveKeyFor = (workspaceId: string, sessionId: string) =>
+    buildArchivedSidebarSessionKey({ workspaceId, sessionId });
+  const isSessionArchived = (workspaceId: string, sessionId: string) =>
+    archivedSessionIdSet().has(archiveKeyFor(workspaceId, sessionId));
+  const isArchiveConfirmationPending = (workspaceId: string, sessionId: string) =>
+    pendingArchiveConfirmationSessionId() === archiveKeyFor(workspaceId, sessionId);
   const sessionHoverActionsSuspended = createMemo(() => Boolean(props.pendingSelectedSessionId?.trim()));
-  const shouldShowSessionRow = (row: FlatSessionRow) => !isSessionArchived(row.session.id);
+  const shouldShowSessionRow = (row: FlatSessionRow) => !isSessionArchived(row.workspace.id, row.session.id);
 
   const recentRows = createMemo<FlatSessionRow[]>(() =>
     buildRecentRows(props.workspaceSessionGroups, props.isPrivateWorkspacePath),
@@ -611,6 +663,67 @@ export default function WorkspaceSessionList(props: Props) {
   const recentFallbackProjectGroups = createMemo(() =>
     normalProjectGroups().filter((group) => group.isWorkspaceOnlyProject && group.sessions.length === 0),
   );
+  const projectKeyForWorkspaceId = (workspaceId: string) => {
+    const id = workspaceId.trim();
+    if (!id) return "";
+    return normalProjectGroups().find((group) => group.workspace.id === id)?.key ?? "";
+  };
+
+  let projectAccordionInitialized = false;
+  let lastAccordionWorkspaceId = "";
+  let lastAccordionWorkspaceProjectKey = "";
+  createEffect(() => {
+    if (sidebarMode() !== "by-project") return;
+    const activeWorkspaceId = props.activeWorkspaceId.trim();
+    const activeProjectKey = projectKeyForWorkspaceId(activeWorkspaceId);
+    const projectKeys = new Set(normalProjectGroups().map((group) => group.key));
+    const currentOpenKey = openProjectKey();
+    const userOwnsAccordionForActiveWorkspace =
+      Boolean(manualAccordionWorkspaceId) &&
+      manualAccordionWorkspaceId === activeWorkspaceId;
+
+    if (currentOpenKey && !projectKeys.has(currentOpenKey)) {
+      if (userOwnsAccordionForActiveWorkspace && currentOpenKey === manualAccordionProjectKey) {
+        setProjectAccordionOpenKey(null, "manual-current-key-missing");
+        projectAccordionInitialized = true;
+        lastAccordionWorkspaceId = activeWorkspaceId;
+        lastAccordionWorkspaceProjectKey = activeProjectKey;
+        return;
+      }
+      manualAccordionWorkspaceId = "";
+      manualAccordionProjectKey = "";
+      setProjectAccordionOpenKey(activeProjectKey || null, "auto-current-key-missing");
+    }
+
+    if (!activeProjectKey) return;
+    const activeWorkspaceChanged = activeWorkspaceId !== lastAccordionWorkspaceId;
+    const activeProjectKeyChanged = activeProjectKey !== lastAccordionWorkspaceProjectKey;
+    const currentTracksPreviousActiveProject =
+      !currentOpenKey || currentOpenKey === lastAccordionWorkspaceProjectKey;
+
+    if (
+      !projectAccordionInitialized ||
+      activeWorkspaceChanged
+    ) {
+      manualAccordionWorkspaceId = "";
+      manualAccordionProjectKey = "";
+      setProjectAccordionOpenKey(
+        activeProjectKey,
+        projectAccordionInitialized ? "auto-active-workspace" : "auto-init",
+      );
+    } else if (userOwnsAccordionForActiveWorkspace) {
+      // A manual drawer click is user intent. Sidebar title hydration and
+      // session-list refreshes must not immediately reopen the active project
+      // after the user collapsed it, or steal focus from a manually opened
+      // inactive project.
+    } else if (activeProjectKeyChanged && currentTracksPreviousActiveProject) {
+      setProjectAccordionOpenKey(activeProjectKey, "auto-active-project-key");
+    }
+
+    projectAccordionInitialized = true;
+    lastAccordionWorkspaceId = activeWorkspaceId;
+    lastAccordionWorkspaceProjectKey = activeProjectKey;
+  });
 
   const recentHierarchy = createMemo(() => buildRowHierarchyLookup(visibleRecentRows()));
   const recentHasChildren = (sessionId: string) =>
@@ -1007,29 +1120,28 @@ export default function WorkspaceSessionList(props: Props) {
     handleSessionRowClick(row, hasChildren);
   };
 
-  const handleSessionArchiveAction = async (event: MouseEvent, sessionId: string) => {
+  const handleSessionArchiveAction = async (event: MouseEvent, workspaceId: string, sessionId: string) => {
     event.stopPropagation();
+    const targetWorkspaceId = workspaceId.trim();
     const id = sessionId.trim();
-    if (!id) return;
-    const archived = isSessionArchived(id);
-    const workspaceId = sessionWorkspaceById().get(id) ?? "";
-    if (!workspaceId) return;
+    if (!targetWorkspaceId || !id) return;
+    const archived = isSessionArchived(targetWorkspaceId, id);
 
     if (archived) {
-      await Promise.resolve(props.onUnarchiveSession?.(workspaceId, id));
+      await Promise.resolve(props.onUnarchiveSession?.(targetWorkspaceId, id));
       return;
     }
 
-    if (!isArchiveConfirmationPending(id)) {
+    if (!isArchiveConfirmationPending(targetWorkspaceId, id)) {
       if (event.currentTarget instanceof HTMLButtonElement) {
         pendingArchiveConfirmButtonRef = event.currentTarget;
       }
-      setPendingArchiveConfirmationSessionId(id);
+      setPendingArchiveConfirmationSessionId(archiveKeyFor(targetWorkspaceId, id));
       return;
     }
 
     setPendingArchiveConfirmationSessionId(null);
-    await Promise.resolve(props.onArchiveSession?.(workspaceId, id));
+    await Promise.resolve(props.onArchiveSession?.(targetWorkspaceId, id));
   };
 
   const handleSessionRowContextMenu = (
@@ -1291,6 +1403,7 @@ export default function WorkspaceSessionList(props: Props) {
     if (!drag || event.pointerId !== drag.pointerId) return;
 
     if (drag.active) {
+      suppressNextProjectClick(drag.sourceKey);
       const indicator = resolveProjectDropIndicatorFromPoint(event.clientX, event.clientY, drag.sourceKey) ??
         projectDropIndicator();
       if (indicator && indicator.key !== drag.sourceKey) {
@@ -1466,6 +1579,7 @@ export default function WorkspaceSessionList(props: Props) {
       .map((row) => ({
         workspaceId: row.workspace.id,
         sessionId: row.session.id,
+        directory: row.session.directory ?? row.projectRoot,
         updatedAt: row.updatedAt,
       }));
     const expandedSubagentRows = currentRows
@@ -1473,6 +1587,7 @@ export default function WorkspaceSessionList(props: Props) {
       .map((row) => ({
         workspaceId: row.workspace.id,
         sessionId: row.session.id,
+        directory: row.session.directory ?? row.projectRoot,
         updatedAt: row.updatedAt,
       }));
     const loadedInterest = deriveLoadedSidebarPrefetchInterest({
@@ -1489,6 +1604,7 @@ export default function WorkspaceSessionList(props: Props) {
         selectedSessionId: null,
         loadedTopLevelSessionIds: [],
         expandedSubagentSessionIds: [],
+        sessionDirectoriesById: {},
       };
       const signature = JSON.stringify(interest);
       if (lastReportedLoadedInterestByWorkspace.get(workspaceId) === signature) continue;
@@ -1504,6 +1620,7 @@ export default function WorkspaceSessionList(props: Props) {
         selectedSessionId: null,
         loadedTopLevelSessionIds: [],
         expandedSubagentSessionIds: [],
+        sessionDirectoriesById: {},
       });
     }
   });
@@ -1516,6 +1633,7 @@ export default function WorkspaceSessionList(props: Props) {
         selectedSessionId: null,
         loadedTopLevelSessionIds: [],
         expandedSubagentSessionIds: [],
+        sessionDirectoriesById: {},
       });
     }
     lastReportedLoadedInterestByWorkspace.clear();
@@ -1570,6 +1688,44 @@ export default function WorkspaceSessionList(props: Props) {
 
   const taskLoadErrorFor = (workspace: WorkspaceInfo, error: string | null) =>
     getWorkspaceTaskLoadErrorDisplay(workspace, error);
+
+  const sessionIdentityIds = (session: { id: string; conversationId?: string | null; opencodeSessionId?: string | null }) => [
+    session.id,
+    session.opencodeSessionId ?? "",
+    session.conversationId ?? "",
+  ].map((value) => value.trim()).filter(Boolean);
+
+  const isBusySession = (workspaceId: string, sessionId: string) =>
+    Boolean(props.busySessionByWorkspaceId?.[workspaceId]?.[sessionId]);
+
+  const isBusyRowSession = (row: FlatSessionRow) =>
+    sessionIdentityIds(row.session).some((id) => isBusySession(row.workspace.id, id));
+
+  const rowSessionStatus = (row: FlatSessionRow) => {
+    const statuses = props.sessionStatusById ?? {};
+    for (const id of sessionIdentityIds(row.session)) {
+      const status = readSessionStatus(statuses, row.workspace.id, id);
+      if (status !== "idle") return status;
+    }
+    return "idle";
+  };
+
+  const rowForcesProjectOpen = (row: FlatSessionRow) => {
+    const selectedSessionId = props.selectedSessionId?.trim() ?? "";
+    if (selectedSessionId && row.session.id === selectedSessionId) return true;
+
+    const pendingSessionId = props.pendingSelectedSessionId?.trim() ?? "";
+    if (pendingSessionId && row.session.id === pendingSessionId) {
+      const pendingWorkspaceId = props.pendingSelectedWorkspaceId?.trim() ?? "";
+      if (!pendingWorkspaceId || pendingWorkspaceId === row.workspace.id) return true;
+    }
+
+    if (rowSessionStatus(row) !== "idle") return true;
+    return isBusyRowSession(row);
+  };
+
+  const shouldForceProjectOpen = (group: ProjectSessionGroup) =>
+    group.sessions.some(rowForcesProjectOpen);
 
   const workspaceMenuContext = createMemo(() => {
     const target = workspaceMenuTarget();
@@ -1764,7 +1920,9 @@ export default function WorkspaceSessionList(props: Props) {
     const workspace = () => row.workspace;
     const session = () => row.session;
     const isSelected = () => isRowSelected(workspace().id, session().id);
-    const isSessionActive = () => (props.sessionStatusById?.[session().id] ?? "idle") !== "idle";
+    const isSessionActive = () =>
+      rowSessionStatus(row) !== "idle" ||
+      isBusyRowSession(row);
     const isUnread = () => isSessionUnread(session().id);
     const labelOverride = () => options.label?.().trim() ?? "";
     const label = () => {
@@ -1774,7 +1932,7 @@ export default function WorkspaceSessionList(props: Props) {
         : sessionLabelParts(row);
     };
     const labelColor = () => labelOverride() ? "" : sessionLabelColor(row);
-    const archiveConfirmationPending = () => isArchiveConfirmationPending(row.session.id);
+    const archiveConfirmationPending = () => isArchiveConfirmationPending(row.workspace.id, row.session.id);
     const showWorkspaceMenu = options.showWorkspaceMenu !== false;
 
     return (
@@ -1797,7 +1955,7 @@ export default function WorkspaceSessionList(props: Props) {
           <span class="relative min-w-0 flex-1">
             <span class="flex items-center gap-1.5 min-w-0">
               <Show when={isSessionActive()}>
-                <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
+                <Loader2 size={11} class="shrink-0 animate-spin text-amber-10" />
               </Show>
               <span
                 class="text-[13px] text-gray-12 truncate"
@@ -1846,15 +2004,15 @@ export default function WorkspaceSessionList(props: Props) {
             class={archiveConfirmationPending()
               ? "rounded-md border border-amber-7 bg-amber-3 px-2 py-0.5 text-[11px] font-medium text-amber-11 hover:bg-amber-4"
               : "p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"}
-            onClick={(event) => handleSessionArchiveAction(event, row.session.id)}
+            onClick={(event) => handleSessionArchiveAction(event, row.workspace.id, row.session.id)}
             aria-label={archiveConfirmationPending()
               ? tr("sidebar.archive_confirm")
-              : isSessionArchived(row.session.id)
+              : isSessionArchived(row.workspace.id, row.session.id)
               ? tr("sidebar.unarchive_session")
               : tr("sidebar.archive_session")}
             title={archiveConfirmationPending()
               ? tr("sidebar.archive_confirm")
-              : isSessionArchived(row.session.id)
+              : isSessionArchived(row.workspace.id, row.session.id)
               ? tr("sidebar.unarchive_session")
               : tr("sidebar.archive_session")}
             ref={(el) => {
@@ -1879,7 +2037,9 @@ export default function WorkspaceSessionList(props: Props) {
     const workspace = () => row.workspace;
     const session = () => row.session;
     const isSelected = () => isRowSelected(workspace().id, session().id);
-    const isSessionActive = () => (props.sessionStatusById?.[session().id] ?? "idle") !== "idle";
+    const isSessionActive = () =>
+      rowSessionStatus(row) !== "idle" ||
+      isBusyRowSession(row);
     const isUnread = () => isSessionUnread(session().id);
     const isConnecting = () => isConnectingWorkspace(workspace().id);
     const soulStatus = () => props.soulStatusByWorkspaceId[workspace().id] ?? null;
@@ -1887,7 +2047,7 @@ export default function WorkspaceSessionList(props: Props) {
     const taskLoadError = () => taskLoadErrorFor(workspace(), row.error);
     const label = () => sessionLabelParts(row);
     const labelColor = () => sessionLabelColor(row);
-    const archiveConfirmationPending = () => isArchiveConfirmationPending(session().id);
+    const archiveConfirmationPending = () => isArchiveConfirmationPending(workspace().id, session().id);
     const anchorKey = `${options.anchorPrefix}:${row.rowKey}`;
 
     return (
@@ -1907,7 +2067,7 @@ export default function WorkspaceSessionList(props: Props) {
           <span class="relative min-w-0 flex-1">
             <span class="flex items-center gap-1.5 min-w-0">
               <Show when={isSessionActive()}>
-                <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
+                <Loader2 size={11} class="shrink-0 animate-spin text-amber-10" />
               </Show>
               <span
                 class="text-[13px] text-gray-12 truncate"
@@ -1951,7 +2111,7 @@ export default function WorkspaceSessionList(props: Props) {
               <Show when={row.status === "error"}>
                 <span
                   class={`text-[10px] px-1.5 py-0.5 rounded-full border ${
-                    taskLoadError().tone === "offline"
+                    (taskLoadError().tone as string) === "offline"
                       ? "border-amber-7 text-amber-11 bg-amber-3"
                       : "border-red-7 text-red-11 bg-red-3"
                   }`}
@@ -1989,15 +2149,15 @@ export default function WorkspaceSessionList(props: Props) {
             class={archiveConfirmationPending()
               ? "rounded-md border border-amber-7 bg-amber-3 px-2 py-0.5 text-[11px] font-medium text-amber-11 hover:bg-amber-4"
               : "p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"}
-            onClick={(event) => handleSessionArchiveAction(event, session().id)}
+            onClick={(event) => handleSessionArchiveAction(event, workspace().id, session().id)}
             aria-label={archiveConfirmationPending()
               ? tr("sidebar.archive_confirm")
-              : isSessionArchived(session().id)
+              : isSessionArchived(workspace().id, session().id)
               ? tr("sidebar.unarchive_session")
               : tr("sidebar.archive_session")}
             title={archiveConfirmationPending()
               ? tr("sidebar.archive_confirm")
-              : isSessionArchived(session().id)
+              : isSessionArchived(workspace().id, session().id)
               ? tr("sidebar.unarchive_session")
               : tr("sidebar.archive_session")}
             ref={(el) => {
@@ -2114,11 +2274,7 @@ export default function WorkspaceSessionList(props: Props) {
         >
           {(errorDisplay) => (
             <div
-              class={`px-2 py-1.5 text-xs rounded-lg border ${
-                errorDisplay().tone === "offline"
-                  ? "text-amber-11 bg-amber-3 border-amber-7"
-                  : "text-red-11 bg-red-3 border-red-7"
-              }`}
+              class="px-2 py-1.5 text-xs rounded-lg border text-red-11 bg-red-3 border-red-7"
               title={errorDisplay().title}
             >
               {errorDisplay().message}
@@ -2315,7 +2471,7 @@ export default function WorkspaceSessionList(props: Props) {
                                   <Show when={project.status === "error"}>
                                     <span
                                       class={`text-[10px] px-1.5 py-0.5 rounded-full border ${
-                                        taskLoadError().tone === "offline"
+                                        (taskLoadError().tone as string) === "offline"
                                           ? "border-amber-7 text-amber-11 bg-amber-3"
                                           : "border-red-7 text-red-11 bg-red-3"
                                       }`}
@@ -2403,7 +2559,7 @@ export default function WorkspaceSessionList(props: Props) {
                 const isDraggedProject = () => draggingProjectKey() === project.key;
                 const dropIndicatorPosition = () =>
                   projectDropIndicator()?.key === project.key ? projectDropIndicator()?.position : null;
-                const collapsed = () => isProjectCollapsed(collapsedProjects(), project.key);
+                const drawerCollapsed = () => openProjectKey() !== project.key;
                 const projectPaging = () => projectPagingForGroup(project);
                 const projectHierarchy = () => buildRowHierarchyLookup(project.sessions);
                 const visibleCount = () => projectVisibleCountForGroup(project);
@@ -2411,6 +2567,8 @@ export default function WorkspaceSessionList(props: Props) {
                 const hasChildren = (sessionId: string) =>
                   (projectHierarchy().childrenByParentId.get(sessionId)?.length ?? 0) > 0;
                 const visibleRows = () => visibleProjectRowsForGroup(project);
+                const forcedVisibleRows = () =>
+                  drawerCollapsed() ? visibleRows().filter(rowForcesProjectOpen) : [];
                 const hasHiddenRows = () => projectTreeVisibleRows().length > visibleCount();
                 const canLoadMoreProjectRows = () => hasHiddenRows() || projectPaging().hasMore;
                 const projectLoadMoreCount = () =>
@@ -2449,69 +2607,92 @@ export default function WorkspaceSessionList(props: Props) {
                     <div class="relative flex items-start gap-2">
                       <div
                         class="min-w-0 flex-1"
-                        draggable
                         data-project-drag-preview
+                        draggable
                         onDragStart={(event) => handleProjectDragStart(event, project.key)}
                         onDragEnd={handleProjectDragEnd}
                       >
-                        <button
-                          type="button"
-                          class={`w-full rounded-lg px-1.5 py-1 text-left transition-colors ${
+                        <div
+                          class={`w-full rounded-lg px-1.5 py-1 transition-colors ${
                             isActiveWorkspace()
                               ? "text-gray-12"
                               : "text-gray-11 hover:text-gray-12 hover:bg-gray-2/70"
                           }`}
                           title={project.projectTitle}
-                          aria-label={project.projectLabel ? `${tr("sidebar.open_project")} ${project.projectLabel}` : tr("sidebar.open_project")}
                           onPointerDown={(event) => handleProjectPointerDown(event, project.key, projectDragLabel())}
-                          onClick={() => toggleProjectCollapse(project.key)}
                         >
-                          <div class="flex items-center gap-2 min-w-0">
-                            <Folder
-                              size={13}
-                              class="shrink-0 text-gray-8 cursor-pointer"
+                          <div class="flex items-center gap-1 min-w-0">
+                            <button
+                              type="button"
+                              class="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-gray-8 transition-colors hover:bg-gray-3 hover:text-gray-11"
+                              data-sidebar-project-toggle={project.key}
+                              aria-expanded={!drawerCollapsed()}
+                              aria-label={
+                                drawerCollapsed()
+                                  ? `${tr("sidebar.expand_project_conversations")} ${project.projectLabel}`
+                                  : `${tr("sidebar.collapse_project_conversations")} ${project.projectLabel}`
+                              }
                               onClick={(event) => {
                                 event.stopPropagation();
-                                toggleProjectCollapse(project.key);
-                              }}
-                            />
-                            <span
-                              class="truncate text-[12px] font-semibold text-gray-10 cursor-pointer"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                toggleProjectCollapse(project.key);
+                                toggleProjectAccordion(project.key);
                               }}
                             >
-                              {project.projectLabel}
-                            </span>
-                            <Show when={workspace().workspaceType === "remote"}>
-                              <span class="shrink-0 text-[10px] text-gray-8 uppercase tracking-[0.12em]">
-                                {workspaceKindLabel(workspace())}
+                              <ChevronRight
+                                size={13}
+                                class={`transition-transform ${drawerCollapsed() ? "" : "rotate-90"}`}
+                              />
+                            </button>
+                            <button
+                              type="button"
+                              class="min-w-0 flex-1 appearance-none border-none bg-transparent p-0 text-left text-inherit"
+                              aria-label={project.projectLabel ? `${tr("sidebar.open_project")} ${project.projectLabel}` : tr("sidebar.open_project")}
+                              onClick={() => handleProjectOpenClick(project.key, workspace().id)}
+                            >
+                              <span class="flex items-center gap-2 min-w-0">
+                                <Folder size={13} class="shrink-0 text-gray-8" />
+                                <span class="truncate text-[12px] font-semibold text-gray-10">
+                                  {project.projectLabel}
+                                </span>
+                                <Show when={props.readyEngineWorkspaceIds?.has(workspace().id)}>
+                                  <span
+                                    class="h-1.5 w-1.5 shrink-0 rounded-full bg-green-9"
+                                    title="Engine ready — switching is instant"
+                                  />
+                                </Show>
+                                <Show when={workspace().workspaceType === "remote"}>
+                                  <span class="shrink-0 text-[10px] text-gray-8 uppercase tracking-[0.12em]">
+                                    {workspaceKindLabel(workspace())}
+                                  </span>
+                                </Show>
+                                <Show when={soulEnabled()}>
+                                  <span class="inline-flex items-center gap-1 rounded-full border border-ruby-7 bg-ruby-3 px-1.5 py-0.5 text-[10px] text-ruby-11">
+                                    <HeartPulse size={10} />
+                                    {tr("sidebar.soul_badge")}
+                                  </span>
+                                </Show>
+                                <Show when={isConnecting()}>
+                                  <Loader2 size={11} class="animate-spin text-gray-10" />
+                                </Show>
+                                <Show when={(props.pendingPermissionCountByWs?.[workspace().id] ?? 0) > 0}>
+                                  <span
+                                    class="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-9 text-white text-[10px] font-semibold"
+                                    title="Pending permission request"
+                                  >
+                                    {props.pendingPermissionCountByWs![workspace().id]}
+                                  </span>
+                                </Show>
+                                <Show when={project.status === "error"}>
+                                  <span
+                                    class="text-[10px] px-1.5 py-0.5 rounded-full border border-red-7 text-red-11 bg-red-3"
+                                    title={taskLoadError().title}
+                                  >
+                                    {taskLoadError().label}
+                                  </span>
+                                </Show>
                               </span>
-                            </Show>
-                            <Show when={soulEnabled()}>
-                              <span class="inline-flex items-center gap-1 rounded-full border border-ruby-7 bg-ruby-3 px-1.5 py-0.5 text-[10px] text-ruby-11">
-                                <HeartPulse size={10} />
-                                {tr("sidebar.soul_badge")}
-                              </span>
-                            </Show>
-                            <Show when={isConnecting()}>
-                              <Loader2 size={11} class="animate-spin text-gray-10" />
-                            </Show>
-                            <Show when={project.status === "error"}>
-                              <span
-                                class={`text-[10px] px-1.5 py-0.5 rounded-full border ${
-                                  taskLoadError().tone === "offline"
-                                    ? "border-amber-7 text-amber-11 bg-amber-3"
-                                    : "border-red-7 text-red-11 bg-red-3"
-                                }`}
-                                title={taskLoadError().title}
-                              >
-                                {taskLoadError().label}
-                              </span>
-                            </Show>
+                            </button>
                           </div>
-                        </button>
+                        </div>
                       </div>
 
                       <div class="flex items-center gap-1 shrink-0">
@@ -2536,7 +2717,7 @@ export default function WorkspaceSessionList(props: Props) {
                     </div>
 
                     <AnimatedCollapse
-                      open={!collapsed()}
+                      open={!drawerCollapsed()}
                       region="project"
                       innerClass="pl-5 pt-0.5 space-y-0"
                     >
@@ -2575,6 +2756,16 @@ export default function WorkspaceSessionList(props: Props) {
                         </Show>
                       </>
                     </AnimatedCollapse>
+                    <Show when={drawerCollapsed() && forcedVisibleRows().length > 0}>
+                      <div class="pl-5 pt-0.5 space-y-0">
+                        {renderSessionTreeRows(() => forcedVisibleRows(), hasChildren, {
+                          anchorPrefix: "project-session-forced",
+                          soulEnabled,
+                          canRecover,
+                          isConnectionActionBusy,
+                        })}
+                      </div>
+                    </Show>
                     </div>
                   );
                 }}
@@ -2605,8 +2796,9 @@ export default function WorkspaceSessionList(props: Props) {
             shouldShowLessVisibleRowsControl(visibleCount(), PROJECT_VISIBLE_DEFAULT);
 
           return (
-            <Show when={!chatSidebarCollapsed()} fallback={
-              <div
+            <Show when={!(chatSidebarCollapsed() && !shouldForceProjectOpen(chatGroup()))} fallback={
+              <button
+                type="button"
                 data-sidebar-chat-collapsed="true"
                 class="mt-2 flex h-11 w-full shrink-0 items-center justify-between gap-2 border-t border-gray-6/70 px-1.5 pt-2"
               >

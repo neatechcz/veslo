@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -10,9 +11,8 @@ use crate::orchestrator;
 use crate::orchestrator::manager::OrchestratorManager;
 use crate::paths::home_dir;
 use crate::platform::command_for_program;
-use crate::types::{ExecResult, WorkspaceVesloConfig};
+use crate::types::ExecResult;
 use crate::veslo_server::manager::VesloServerManager;
-use crate::workspace::state::load_workspace_state;
 use rusqlite::{params, Connection};
 use tauri::{AppHandle, Manager, State};
 
@@ -126,87 +126,7 @@ fn validate_server_name(name: &str) -> Result<String, String> {
     Ok(trimmed.to_string())
 }
 
-fn read_workspace_veslo_config(workspace_path: &Path) -> Result<WorkspaceVesloConfig, String> {
-    let veslo_path = workspace_path.join(".opencode").join("veslo.json");
-    if !veslo_path.exists() {
-        let mut cfg = WorkspaceVesloConfig::default();
-        let workspace_value = workspace_path.to_string_lossy().to_string();
-        if !workspace_value.trim().is_empty() {
-            cfg.authorized_roots.push(workspace_value);
-        }
-        return Ok(cfg);
-    }
-
-    let raw = fs::read_to_string(&veslo_path)
-        .map_err(|e| format!("Failed to read {}: {e}", veslo_path.display()))?;
-
-    serde_json::from_str::<WorkspaceVesloConfig>(&raw)
-        .map_err(|e| format!("Failed to parse {}: {e}", veslo_path.display()))
-}
-
-fn load_authorized_roots(app: &AppHandle) -> Result<Vec<PathBuf>, String> {
-    let state = load_workspace_state(app)?;
-    let mut roots = Vec::new();
-
-    for workspace in state.workspaces {
-        let workspace_path = PathBuf::from(&workspace.path);
-        let mut config = read_workspace_veslo_config(&workspace_path)?;
-
-        if config.authorized_roots.is_empty() {
-            config.authorized_roots.push(workspace.path.clone());
-        }
-
-        for root in config.authorized_roots {
-            let trimmed = root.trim();
-            if !trimmed.is_empty() {
-                roots.push(PathBuf::from(trimmed));
-            }
-        }
-    }
-
-    if roots.is_empty() {
-        return Err("No authorized roots configured".to_string());
-    }
-
-    Ok(roots)
-}
-
-fn validate_project_dir(app: &AppHandle, project_dir: &str) -> Result<PathBuf, String> {
-    let trimmed = project_dir.trim();
-    if trimmed.is_empty() {
-        return Err("project_dir is required".to_string());
-    }
-
-    let project_path = PathBuf::from(trimmed);
-    if !project_path.is_absolute() {
-        return Err("project_dir must be an absolute path".to_string());
-    }
-
-    let canonical = fs::canonicalize(&project_path)
-        .map_err(|e| format!("Failed to resolve project_dir: {e}"))?;
-
-    if !canonical.is_dir() {
-        return Err("project_dir must be a directory".to_string());
-    }
-
-    let roots = load_authorized_roots(app)?;
-    let mut allowed = false;
-    for root in roots {
-        let Ok(root) = fs::canonicalize(&root) else {
-            continue;
-        };
-        if canonical.starts_with(&root) {
-            allowed = true;
-            break;
-        }
-    }
-
-    if !allowed {
-        return Err("project_dir is not within an authorized root".to_string());
-    }
-
-    Ok(canonical)
-}
+use crate::workspace::validation::{validate_project_dir, validate_workspace_path, ValidationMode};
 
 fn resolve_opencode_program(
     app: &AppHandle,
@@ -318,6 +238,88 @@ pub fn reset_veslo_state(
     Ok(())
 }
 
+/// VSLO-86 — webview console events forwarded to Tauri stderr so they land
+/// in /tmp/veslo.log alongside Rust-side logs. Used by `_wsLog`, `wsDebug`,
+/// and the SSE/session loggers when running inside the Tauri runtime, so
+/// production diagnostics don't require opening DevTools.
+#[tauri::command]
+pub fn log_ui_event(app: AppHandle, scope: String, message: String, payload: Option<String>) {
+    if scope == "send-workflow-trace" {
+        append_send_workflow_trace_event(&message, payload.as_deref());
+    }
+    let line = match payload.as_deref() {
+        Some(p) if !p.is_empty() => format!("[ui:{}] {} {}", scope, message, p),
+        _ => format!("[ui:{}] {}", scope, message),
+    };
+    eprintln!("{}", line);
+    if let Some(forwarder) =
+        app.try_state::<std::sync::Arc<crate::debug_logs_forwarder::DebugLogsForwarder>>()
+    {
+        forwarder.append(
+            "Veslo UI",
+            crate::debug_logs_forwarder::LogStream::Stderr,
+            &line,
+        );
+    }
+}
+
+fn truthy_env(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| {
+            let trimmed = value.trim();
+            trimmed == "1"
+                || trimmed.eq_ignore_ascii_case("true")
+                || trimmed.eq_ignore_ascii_case("yes")
+        })
+        .unwrap_or(false)
+}
+
+fn resolve_send_workflow_trace_file() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("VESLO_SEND_WORKFLOW_TRACE_FILE") {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return Some(PathBuf::from(trimmed));
+        }
+    }
+    if !truthy_env("VESLO_SEND_WORKFLOW_TRACE") {
+        return None;
+    }
+    if let Ok(dir) = std::env::var("TAURI_PILOT_LOG_DIR") {
+        let trimmed = dir.trim();
+        if !trimmed.is_empty() {
+            return Some(PathBuf::from(trimmed).join("send-workflow-trace.ndjson"));
+        }
+    }
+    if let Ok(runtime_trace) = std::env::var("VESLO_RUNTIME_TRACE_FILE") {
+        let trimmed = runtime_trace.trim();
+        if !trimmed.is_empty() {
+            if let Some(parent) = PathBuf::from(trimmed).parent() {
+                return Some(parent.join("send-workflow-trace.ndjson"));
+            }
+        }
+    }
+    None
+}
+
+fn append_send_workflow_trace_event(message: &str, payload: Option<&str>) {
+    let Some(path) = resolve_send_workflow_trace_file() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let line = match payload {
+        Some(raw) if !raw.trim().is_empty() => raw.trim().to_string(),
+        _ => format!(
+            "{{\"schema\":\"send-workflow/v1\",\"source\":\"ui\",\"event\":{}}}",
+            serde_json::to_string(message).unwrap_or_else(|_| "\"ui-event\"".to_string())
+        ),
+    };
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{}", line);
+    }
+}
+
 #[tauri::command]
 pub fn app_build_info(app: AppHandle) -> AppBuildInfo {
     let version = app.package_info().version.to_string();
@@ -348,32 +350,15 @@ pub fn obsidian_is_available() -> bool {
 }
 
 #[tauri::command]
-pub fn open_in_obsidian(file_path: String) -> Result<(), String> {
-    let trimmed = file_path.trim();
-    println!("[misc][obsidian] open request path={trimmed}");
-    if trimmed.is_empty() {
-        println!("[misc][obsidian] rejected: empty path");
-        return Err("file_path is required".to_string());
-    }
-
-    let path = PathBuf::from(trimmed);
-    if !path.is_absolute() {
-        println!(
-            "[misc][obsidian] rejected: non-absolute path={}",
-            path.display()
-        );
-        return Err("file_path must be an absolute path".to_string());
-    }
-    if !path.exists() {
-        println!(
-            "[misc][obsidian] missing path={} cwd={}",
-            path.display(),
-            std::env::current_dir()
-                .map(|dir| dir.display().to_string())
-                .unwrap_or_else(|_| "(unknown)".to_string())
-        );
-        return Err(format!("File does not exist: {}", path.display()));
-    }
+pub fn open_in_obsidian(app: AppHandle, file_path: String) -> Result<(), String> {
+    let path = match validate_workspace_path(&app, &file_path, ValidationMode::InAuthorizedRoot) {
+        Ok(canonical) => canonical,
+        Err(e) => {
+            println!("[misc][obsidian] rejected: {e}");
+            return Err(e);
+        }
+    };
+    println!("[misc][obsidian] open request path={}", path.display());
 
     #[cfg(target_os = "macos")]
     {
@@ -603,6 +588,7 @@ mod tests {
         update_session_directory_in_db,
     };
     use rusqlite::Connection;
+    use std::path::PathBuf;
 
     #[test]
     fn sanitize_workspace_id_collapses_separators() {
@@ -614,11 +600,11 @@ mod tests {
     fn normalize_mirror_path_strips_workspace_prefixes() {
         let path = normalize_obsidian_mirror_relative_path("/workspace/notes/plan.md")
             .expect("path should normalize");
-        assert_eq!(path.to_string_lossy(), "notes/plan.md");
+        assert_eq!(path, PathBuf::from("notes").join("plan.md"));
 
         let path = normalize_obsidian_mirror_relative_path("workspace/notes/plan.md")
             .expect("path should normalize");
-        assert_eq!(path.to_string_lossy(), "notes/plan.md");
+        assert_eq!(path, PathBuf::from("notes").join("plan.md"));
     }
 
     #[test]

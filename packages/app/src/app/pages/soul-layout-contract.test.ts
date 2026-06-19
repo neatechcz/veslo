@@ -14,6 +14,8 @@ const zhSource = readFileSync(new URL("../../i18n/locales/zh.ts", import.meta.ur
 test("SoulView consumes overview source summaries instead of legacy prompt setup state", () => {
   assert.match(soulSource, /VesloSoulOverviewResponse/);
   assert.match(soulSource, /VesloSoulSummary/);
+  assert.match(vesloServerSource, /export type VesloSoulSummary = \{[\s\S]*owner:\s*VesloResourceOwner;/);
+  assert.match(vesloServerSource, /export type VesloSoulMaterializationFile = \{[\s\S]*owner\?:\s*VesloResourceOwner \| null;/);
   assert.match(soulSource, /soulOverview:\s*VesloSoulOverviewResponse\s*\|\s*null;/);
   assert.match(soulSource, /soulOverviewError:\s*string\s*\|\s*null;/);
   assert.match(soulSource, /soulOverviewBusy:\s*boolean;/);

@@ -41,7 +41,24 @@ test('createAppLaunchEnv configures pilot and forces x11 on linux so GTK-backed 
   assert.equal('WAYLAND_DISPLAY' in env, false);
 });
 
-test('createAppLaunchEnv isolates Windows app, local, WebView2, and pilot storage so stale desktop state does not override the E2E snapshot', () => {
+test('createAppLaunchEnv forwards the Den API base for fixture-backed catalog E2E runs', () => {
+  const env = createAppLaunchEnv(
+    {
+      HOME: '/tmp/home',
+    },
+    {
+      platform: 'darwin',
+      port: 4445,
+      opencodeHome: '/tmp/opencode-home',
+      snapshotPath: '/tmp/opencode-home/.veslo/den-auth.json',
+      denApiBase: 'http://127.0.0.1:54321/',
+    },
+  );
+
+  assert.equal(env.VESLO_DEN_API_BASE, 'http://127.0.0.1:54321');
+});
+
+test('createAppLaunchEnv isolates Windows app, local, and WebView2 storage so stale desktop state does not override the E2E snapshot', () => {
   const env = createAppLaunchEnv(
     {
       USERPROFILE: 'C:\\Users\\micha',

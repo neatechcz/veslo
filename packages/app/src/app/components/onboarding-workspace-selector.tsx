@@ -2,10 +2,11 @@ import { For, Show, createEffect, createSignal } from "solid-js";
 
 import { CheckCircle2, FolderPlus, Loader2 } from "lucide-solid";
 import { useTranslate } from "../../i18n";
+import Button from "./button";
 
 export default function OnboardingWorkspaceSelector(props: {
   defaultPath: string;
-  onConfirm: (preset: "starter" | "automation" | "minimal", folder: string | null) => void;
+  onConfirm: (preset: "starter" | "automation" | "minimal", folder: string | null) => void | Promise<void>;
   onPickFolder: () => Promise<string | null>;
 }) {
   const translate = useTranslate();
@@ -13,6 +14,7 @@ export default function OnboardingWorkspaceSelector(props: {
   const [preset, setPreset] = createSignal<"starter" | "automation" | "minimal">("starter");
   const [selectedFolder, setSelectedFolder] = createSignal(props.defaultPath);
   const [pickingFolder, setPickingFolder] = createSignal(false);
+  const [submitting, setSubmitting] = createSignal(false);
 
   const options = () => [
     {
@@ -46,6 +48,17 @@ export default function OnboardingWorkspaceSelector(props: {
       }
     } finally {
       setPickingFolder(false);
+    }
+  };
+
+  const handleConfirm = async () => {
+    const folder = selectedFolder().trim();
+    if (!folder || submitting()) return;
+    setSubmitting(true);
+    try {
+      await props.onConfirm(preset(), folder);
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -133,6 +146,20 @@ export default function OnboardingWorkspaceSelector(props: {
         </div>
       </div>
 
+      <div class="p-6 border-t border-gray-6 bg-gray-1 flex justify-end">
+        <Button
+          onClick={handleConfirm}
+          disabled={!canContinue() || submitting()}
+          title={!canContinue() ? translate("dashboard.choose_folder_continue") : undefined}
+        >
+          <Show when={submitting()} fallback={translate("dashboard.create_workspace_confirm")}>
+            <span class="inline-flex items-center gap-2">
+              <Loader2 size={16} class="animate-spin" />
+              {translate("dashboard.opening")}
+            </span>
+          </Show>
+        </Button>
+      </div>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { APP_WINDOW_MIN_WIDTH } from "./window-size-contract.mjs";
@@ -8,6 +8,7 @@ import { APP_WINDOW_MIN_WIDTH } from "./window-size-contract.mjs";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const tauriConfigPath = resolve(__dirname, "../src-tauri/tauri.conf.json");
+const srcTauriDir = resolve(__dirname, "../src-tauri");
 
 test("desktop window keeps Tauri native drag-drop disabled for HTML5 file drop", () => {
   const config = JSON.parse(readFileSync(tauriConfigPath, "utf8"));
@@ -46,4 +47,47 @@ test("Windows updater MSI installs write a verbose diagnostic log", () => {
     ["/l*v", "C:\\ProgramData\\veslo-updater-msi.log"],
     "Windows updater should pass verbose MSI logging args so failed in-app updates leave diagnostics",
   );
+});
+
+test("Windows MSI bundles and schedules managed WSL sandbox provisioning", () => {
+  const config = JSON.parse(readFileSync(tauriConfigPath, "utf8"));
+  const resources = config?.bundle?.resources ?? {};
+  const wix = config?.bundle?.windows?.wix ?? {};
+
+  assert.equal(
+    resources["../package.json"],
+    "package.json",
+    "MSI must bundle the desktop package manifest so the installer wrapper passes the pinned OpenCode version",
+  );
+  assert.equal(
+    resources["../../orchestrator/scripts/windows-wsl2-sandbox-provision.ps1"],
+    "windows-wsl2-sandbox-provision.ps1",
+    "MSI must bundle the managed WSL provisioning helper into the app resources directory",
+  );
+  assert.equal(
+    resources["windows/wsl2-sandbox-installer.ps1"],
+    "wsl2-sandbox-installer.ps1",
+    "MSI must bundle the installer wrapper that calls the provisioning helper",
+  );
+  assert.ok(
+    wix.fragmentPaths?.includes("windows/wsl2-sandbox-installer.wxs"),
+    "MSI must include the WiX fragment that schedules WSL distro provisioning",
+  );
+  assert.ok(
+    wix.componentGroupRefs?.includes("VesloWslProvisioningInstallerComponents"),
+    "MSI must reference the WSL provisioning fragment so WiX links the custom action into the final package",
+  );
+
+  const fragmentPath = resolve(srcTauriDir, "windows/wsl2-sandbox-installer.wxs");
+  const wrapperPath = resolve(srcTauriDir, "windows/wsl2-sandbox-installer.ps1");
+  assert.ok(existsSync(fragmentPath), "Expected the WSL provisioning WiX fragment to exist");
+  assert.ok(existsSync(wrapperPath), "Expected the WSL provisioning installer wrapper to exist");
+
+  const fragment = readFileSync(fragmentPath, "utf8");
+  assert.match(fragment, /ComponentGroup\s+Id="VesloWslProvisioningInstallerComponents"/);
+  assert.match(fragment, /CustomAction\s+[^>]*Id="VesloProvisionWslSandbox"/s);
+  assert.match(fragment, /After="InstallFiles"/);
+  assert.match(fragment, /Return="ignore"/);
+  assert.match(fragment, /wsl2-sandbox-installer\.ps1/);
+  assert.match(readFileSync(wrapperPath, "utf8"), /package\.json/);
 });

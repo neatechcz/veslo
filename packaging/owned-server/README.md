@@ -10,6 +10,7 @@ This directory is the source of truth for the owned-server deployment template f
 - `ai-gateway`: standalone AI Gateway on internal port 4034.
 - `web`: Next.js cloud app on internal port 3005.
 - `worker-manager`: internal worker container manager on port 8790.
+- `backup`: daily database backup scheduler that writes compressed backup sets to `/srv/veslo/backups`.
 - `worker-runtime-image`: build-only Compose profile for the owned worker runtime image.
 - `proxy`: Caddy reverse proxy and TLS endpoint on public ports 80 and 443.
 
@@ -59,7 +60,7 @@ Compose creates these named volumes:
 - `caddy-data` for certificates and Caddy state.
 - `caddy-config` for Caddy runtime config.
 
-Backups must be copied off-server. Database dump and restore automation is added in the later backup phase; until then, treat these volumes as stateful production data.
+Backups must be copied off-server. Automated daily database backup operations live in `backup/README.md`. The production Compose stack runs the `backup` scheduler service, keeps `/srv/veslo/backups` as the server-local staging and retention path, and should continue copying encrypted backup sets off-server.
 
 Owned cloud worker workspace volumes are created dynamically with names like `veslo-worker-<worker-id>-workspace`. Worker deletion through Den removes the matching worker container and volume.
 
@@ -100,7 +101,7 @@ Required GitHub Actions configuration:
 - `OWNED_SERVER_APP_DIR`: stable Git checkout directory on the owned server.
 - `OWNED_SERVER_ENV_FILE`: production env file path on the owned server.
 
-On each run, the workflow creates or updates the stable checkout, checks out the requested branch with the job `GITHUB_TOKEN`, validates the Compose configuration, builds `worker-runtime-image`, `worker-manager`, `den`, `ai-gateway`, and `web`, starts database dependencies, runs Den and AI Gateway migrations, starts the full stack, and verifies internal plus public health endpoints.
+On each run, the workflow creates or updates the stable checkout, checks out the requested branch with the job `GITHUB_TOKEN`, validates the Compose configuration, builds `worker-runtime-image`, `worker-manager`, `backup`, `den`, `ai-gateway`, and `web`, starts database dependencies, runs Den and AI Gateway migrations, starts the full stack, and verifies internal plus public health endpoints. When requested, it also verifies the backup scheduler and creates one immediate backup set.
 
 Keep production secrets in the server-side env file and GitHub secrets. Do not commit them.
 
@@ -116,7 +117,13 @@ sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/
 sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env exec -T worker-manager node -e "fetch('http://127.0.0.1:8790/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 ```
 
-Compose also defines container health checks for Den `/health`, AI Gateway `/health`, worker manager `/health`, and the web app `/`.
+For AI inference readiness after credentials and AI-access policies are expected to be configured, use:
+
+```bash
+curl -i https://ai.veslo.work/readiness
+```
+
+Compose also defines container health checks for Den `/health`, AI Gateway `/health`, worker manager `/health`, and the web app `/`. These intentionally remain liveness checks, not inference-readiness checks.
 
 ## Logs
 

@@ -10,8 +10,8 @@ use crate::paths::home_dir;
 use crate::paths::{prepended_path_env, sidecar_path_candidates};
 use crate::supervised_process::{self, CommandEvent, SupervisedCommandChild};
 use crate::types::{
-    OrchestratorBinaryState, OrchestratorDaemonState, OrchestratorOpencodeState,
-    OrchestratorSidecarInfo, OrchestratorStatus, OrchestratorWorkspace,
+    OrchestratorBinaryState, OrchestratorDaemonState, OrchestratorEngineSnapshot,
+    OrchestratorOpencodeState, OrchestratorSidecarInfo, OrchestratorStatus, OrchestratorWorkspace,
 };
 
 pub mod manager;
@@ -21,6 +21,7 @@ pub mod manager;
 pub struct OrchestratorAuthFile {
     pub opencode_username: Option<String>,
     pub opencode_password: Option<String>,
+    pub lifecycle_token: Option<String>,
     pub project_dir: Option<String>,
     pub updated_at: Option<u64>,
 }
@@ -51,6 +52,8 @@ pub struct OrchestratorHealth {
     pub binaries: Option<OrchestratorBinaryState>,
     pub active_id: Option<String>,
     pub workspace_count: Option<usize>,
+    #[serde(default)]
+    pub engines: Vec<OrchestratorEngineSnapshot>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -71,8 +74,12 @@ pub struct OrchestratorSpawnOptions {
     pub opencode_port: Option<u16>,
     pub opencode_username: Option<String>,
     pub opencode_password: Option<String>,
+    pub lifecycle_token: Option<String>,
     pub cors: Option<String>,
-    pub veslo_server_state_path: Option<String>,
+    /// VSLO-171 F3Ú9: max concurrent engines in pool (1-16). None = orchestrator default.
+    pub max_engines: Option<u32>,
+    /// VSLO-171 F3Ú9: idle suspend threshold in ms. None = orchestrator default.
+    pub idle_suspend_ms: Option<u64>,
 }
 
 pub fn resolve_orchestrator_data_dir() -> String {
@@ -82,6 +89,21 @@ pub fn resolve_orchestrator_data_dir() -> String {
 
     if let Some(dir) = env_dir {
         return dir;
+    }
+
+    #[cfg(windows)]
+    {
+        if let Some(root) = env::var("LOCALAPPDATA")
+            .ok()
+            .or_else(|| env::var("APPDATA").ok())
+            .filter(|value| !value.trim().is_empty())
+        {
+            return PathBuf::from(root)
+                .join("com.neatech.veslo")
+                .join("veslo-orchestrator")
+                .to_string_lossy()
+                .to_string();
+        }
     }
 
     if let Some(home) = home_dir() {
@@ -103,6 +125,129 @@ fn orchestrator_auth_path(data_dir: &str) -> PathBuf {
     Path::new(data_dir).join("veslo-orchestrator-auth.json")
 }
 
+fn read_opencode_version_from_manifest(path: &Path) -> Option<String> {
+    let payload = fs::read_to_string(path).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&payload).ok()?;
+    let version = parsed
+        .get("veslo-code")
+        .and_then(|entry| entry.get("version"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+
+    Some(version.to_string())
+}
+
+fn resolve_manifest_opencode_version(sidecar_paths: &[PathBuf]) -> Option<String> {
+    let mut names = vec!["versions.json".to_string(), "versions.json.exe".to_string()];
+    let target = env::var("TAURI_ENV_TARGET_TRIPLE")
+        .ok()
+        .or_else(|| env::var("TARGET").ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    if let Some(target) = target {
+        names.push(format!("versions.json-{target}"));
+        names.push(format!("versions.json-{target}.exe"));
+    }
+
+    for dir in sidecar_paths {
+        for name in &names {
+            if let Some(version) = read_opencode_version_from_manifest(&dir.join(name)) {
+                return Some(version);
+            }
+        }
+
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if !name.starts_with("versions.json-") {
+                    continue;
+                }
+                if let Some(version) = read_opencode_version_from_manifest(&entry.path()) {
+                    return Some(version);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn managed_deps_manifest_has_expected_packages(path: &Path) -> bool {
+    let payload = match fs::read_to_string(path) {
+        Ok(payload) => payload,
+        Err(_) => return false,
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&payload) {
+        Ok(parsed) => parsed,
+        Err(_) => return false,
+    };
+    if parsed.get("schemaVersion").and_then(|value| value.as_u64()) != Some(1) {
+        return false;
+    }
+    let Some(packages) = parsed.get("packages").and_then(|value| value.as_array()) else {
+        return false;
+    };
+
+    let has_package = |name: &str, version: &str| {
+        packages.iter().any(|entry| {
+            entry.get("name").and_then(|value| value.as_str()) == Some(name)
+                && entry.get("version").and_then(|value| value.as_str()) == Some(version)
+                && entry
+                    .get("files")
+                    .and_then(|value| value.as_array())
+                    .map(|files| !files.is_empty())
+                    .unwrap_or(false)
+        })
+    };
+
+    has_package("@opencode-ai/plugin", "1.17.4") && has_package("zod", "4.1.8")
+}
+
+pub(crate) fn resolve_opencode_managed_deps_manifest(sidecar_paths: &[PathBuf]) -> Option<PathBuf> {
+    let mut names = vec![
+        "opencode-managed-deps.json".to_string(),
+        "opencode-managed-deps.json.exe".to_string(),
+    ];
+    let target = env::var("TAURI_ENV_TARGET_TRIPLE")
+        .ok()
+        .or_else(|| env::var("TARGET").ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    if let Some(target) = target {
+        names.push(format!("opencode-managed-deps.json-{target}"));
+        names.push(format!("opencode-managed-deps.json-{target}.exe"));
+    }
+
+    for dir in sidecar_paths {
+        for name in &names {
+            let path = dir.join(name);
+            if managed_deps_manifest_has_expected_packages(&path) {
+                return Some(path);
+            }
+        }
+
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if !name.starts_with("opencode-managed-deps.json-") {
+                    continue;
+                }
+                let path = entry.path();
+                if managed_deps_manifest_has_expected_packages(&path) {
+                    return Some(path);
+                }
+            }
+        }
+    }
+
+    None
+}
+
 pub fn read_orchestrator_auth(data_dir: &str) -> Option<OrchestratorAuthFile> {
     let path = orchestrator_auth_path(data_dir);
     let payload = fs::read_to_string(path).ok()?;
@@ -113,6 +258,7 @@ pub fn write_orchestrator_auth(
     data_dir: &str,
     opencode_username: Option<&str>,
     opencode_password: Option<&str>,
+    lifecycle_token: Option<&str>,
     project_dir: Option<&str>,
 ) -> Result<(), String> {
     let path = orchestrator_auth_path(data_dir);
@@ -124,6 +270,7 @@ pub fn write_orchestrator_auth(
     let payload = OrchestratorAuthFile {
         opencode_username: opencode_username.map(|value| value.to_string()),
         opencode_password: opencode_password.map(|value| value.to_string()),
+        lifecycle_token: lifecycle_token.map(|value| value.to_string()),
         project_dir: project_dir.map(|value| value.to_string()),
         updated_at: Some(crate::utils::now_ms()),
     };
@@ -264,11 +411,29 @@ pub fn spawn_orchestrator_daemon(
         }
     }
 
+    if let Some(token) = &options.lifecycle_token {
+        if !token.trim().is_empty() {
+            args.push("--lifecycle-token".to_string());
+            args.push(token.to_string());
+        }
+    }
+
     if let Some(cors) = &options.cors {
         if !cors.trim().is_empty() {
             args.push("--cors".to_string());
             args.push(cors.to_string());
         }
+    }
+
+    // VSLO-171 F3Ú9: pool tuning from Settings → Performance.
+    if let Some(max) = options.max_engines {
+        args.push("--max-engines".to_string());
+        args.push(max.to_string());
+    }
+
+    if let Some(idle) = options.idle_suspend_ms {
+        args.push("--idle-suspend-ms".to_string());
+        args.push(idle.to_string());
     }
 
     let mut command = command.args(args);
@@ -292,6 +457,21 @@ pub fn spawn_orchestrator_daemon(
         command = command.env(key, value);
     }
 
+    if env::var_os("OPENCODE_VERSION").is_none() {
+        if let Some(version) = resolve_manifest_opencode_version(&sidecar_paths) {
+            command = command.env("OPENCODE_VERSION", version);
+        }
+    }
+
+    if env::var_os("VESLO_OPENCODE_MANAGED_DEPS_FILE").is_none() {
+        if let Some(path) = resolve_opencode_managed_deps_manifest(&sidecar_paths) {
+            command = command.env(
+                "VESLO_OPENCODE_MANAGED_DEPS_FILE",
+                path.to_string_lossy().to_string(),
+            );
+        }
+    }
+
     command
         .spawn()
         .map_err(|e| format!("Failed to start orchestrator: {e}"))
@@ -299,7 +479,10 @@ pub fn spawn_orchestrator_daemon(
 
 #[cfg(test)]
 mod tests {
-    use super::{build_orchestrator_env_overrides, request_orchestrator_shutdown};
+    use super::{
+        request_orchestrator_shutdown, resolve_manifest_opencode_version,
+        resolve_opencode_managed_deps_manifest,
+    };
     use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -371,6 +554,57 @@ mod tests {
         handle.join().expect("server thread");
         let _ = fs::remove_dir_all(dir);
     }
+
+    #[test]
+    fn resolve_manifest_opencode_version_reads_sidecar_manifest() {
+        let dir = std::env::temp_dir().join(format!(
+            "veslo-orchestrator-version-manifest-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&dir).expect("create test dir");
+        fs::write(
+            dir.join("versions.json.exe"),
+            r#"{"veslo-code":{"version":"1.17.4","sha256":"abc"}}"#,
+        )
+        .expect("write manifest");
+
+        let version = resolve_manifest_opencode_version(&[dir.clone()]);
+        assert_eq!(version.as_deref(), Some("1.17.4"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn managed_deps_manifest_resolver_ignores_empty_stub_and_selects_real_manifest() {
+        let dir = std::env::temp_dir().join(format!(
+            "veslo-orchestrator-managed-deps-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&dir).expect("create test dir");
+        fs::write(
+            dir.join("opencode-managed-deps.json"),
+            r#"{"schemaVersion":1,"packages":[]}"#,
+        )
+        .expect("write empty manifest");
+        let target_manifest = dir.join("opencode-managed-deps.json-x86_64-pc-windows-msvc.exe");
+        fs::write(
+            &target_manifest,
+            r#"{
+  "schemaVersion": 1,
+  "packages": [
+    { "name": "@opencode-ai/plugin", "version": "1.17.4", "files": [{ "path": "package.json", "contentBase64": "e30=" }] },
+    { "name": "zod", "version": "4.1.8", "files": [{ "path": "package.json", "contentBase64": "e30=" }] }
+  ]
+}"#,
+        )
+        .expect("write real manifest");
+
+        let resolved = resolve_opencode_managed_deps_manifest(&[dir.clone()])
+            .expect("resolve managed deps manifest");
+        assert_eq!(resolved, target_manifest);
+
+        let _ = fs::remove_dir_all(dir);
+    }
 }
 
 pub fn orchestrator_status_from_state(
@@ -398,6 +632,7 @@ pub fn orchestrator_status_from_state(
         active_id,
         workspace_count,
         workspaces,
+        engines: Vec::new(),
         last_error,
     }
 }
@@ -443,6 +678,7 @@ pub fn resolve_orchestrator_status(
                 active_id,
                 workspace_count,
                 workspaces,
+                engines: health.engines,
                 last_error: None,
             }
         }

@@ -1,17 +1,20 @@
 export type SessionTranscriptSnapshot = {
   workspaceId: string;
   sessionId: string;
+  directory?: string;
   limit: number;
   messages: unknown[];
   partsByMessageId: Record<string, unknown[]>;
   fetchedAt: number;
   staleAt: number;
+  source?: "sqlite" | "unavailable";
 };
 
 export type SessionTranscriptLoadInput = {
   workspaceId: string;
   sessionId: string;
   limit: number;
+  directory?: string | null;
 };
 
 export type SessionTranscriptLoadResult = {
@@ -21,6 +24,7 @@ export type SessionTranscriptLoadResult = {
   partsByMessageId?: Record<string, unknown[]>;
   fetchedAt?: number;
   staleAt?: number;
+  source?: "sqlite" | "unavailable";
 };
 
 export type SessionTranscriptPrefetchInterest = {
@@ -29,6 +33,8 @@ export type SessionTranscriptPrefetchInterest = {
   selectedSessionId?: string | null;
   loadedTopLevelSessionIds: string[];
   expandedSubagentSessionIds: string[];
+  directory?: string | null;
+  sessionDirectoriesById?: Record<string, string | null | undefined>;
   limit?: number;
 };
 
@@ -58,6 +64,11 @@ type InFlightLoad = {
   promise: Promise<SessionTranscriptSnapshot>;
 };
 
+type QueueItem = {
+  sessionId: string;
+  directory: string;
+};
+
 const DEFAULT_LIMIT = 140;
 const DEFAULT_STALE_TTL_MS = 20_000;
 const DEFAULT_MAX_ENTRIES_PER_WORKSPACE = 24;
@@ -67,7 +78,15 @@ const normalizeId = (value: string | null | undefined) => value?.trim() ?? "";
 
 const nowMs = () => Date.now();
 
-const inFlightKey = (workspaceId: string, sessionId: string) => `${workspaceId}:${sessionId}`;
+const normalizeDirectory = (value: string | null | undefined) => value?.trim() ?? "";
+
+const inFlightKey = (workspaceId: string, sessionId: string, directory?: string | null) =>
+  `${workspaceId}:${normalizeDirectory(directory)}:${sessionId}`;
+
+const cacheKey = (sessionId: string, directory?: string | null) =>
+  `${normalizeDirectory(directory)}\0${sessionId}`;
+
+const queueItemKey = (item: QueueItem) => cacheKey(item.sessionId, item.directory);
 
 const toPositiveInt = (value: number | undefined, fallback: number) => {
   if (!Number.isFinite(value) || (value ?? 0) <= 0) return fallback;
@@ -92,10 +111,11 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
   const staleTtlMs = toPositiveInt(options.staleTtlMs, DEFAULT_STALE_TTL_MS);
   const autoPrefetchOnInterest = options.autoPrefetchOnInterest ?? true;
 
-  const queueByWorkspace = new Map<string, string[]>();
+  const queueByWorkspace = new Map<string, QueueItem[]>();
   const desiredLimitByWorkspace = new Map<string, Map<string, number>>();
   const cacheByWorkspace = new Map<string, Map<string, CacheEntry>>();
   const inFlightBySession = new Map<string, InFlightLoad>();
+  const invalidatedAtBySession = new Map<string, number>();
   const pumpByWorkspace = new Map<string, Promise<void>>();
 
   const workspaceCache = (workspaceId: string) => {
@@ -118,12 +138,12 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
 
   const snapshotIsWarm = (snapshot: SessionTranscriptSnapshot) => snapshot.staleAt > nowMs();
 
-  const touchCacheEntry = (workspaceId: string, sessionId: string) => {
+  const touchCacheEntry = (workspaceId: string, sessionId: string, directory?: string | null) => {
     const cache = workspaceCache(workspaceId);
-    const entry = cache.get(sessionId);
+    const entry = cache.get(cacheKey(sessionId, directory));
     if (!entry) return;
     entry.lastAccessedAt = nowMs();
-    cache.set(sessionId, entry);
+    cache.set(cacheKey(sessionId, directory), entry);
   };
 
   const estimateSnapshotBytes = (snapshot: SessionTranscriptSnapshot) => {
@@ -169,9 +189,9 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
     }
   };
 
-  const setCachedSnapshot = (snapshot: SessionTranscriptSnapshot) => {
+  const setCachedSnapshot = (snapshot: SessionTranscriptSnapshot, directory?: string | null) => {
     const cache = workspaceCache(snapshot.workspaceId);
-    cache.set(snapshot.sessionId, {
+    cache.set(cacheKey(snapshot.sessionId, directory ?? snapshot.directory), {
       snapshot,
       lastAccessedAt: nowMs(),
       byteSize: estimateSnapshotBytes(snapshot),
@@ -179,37 +199,74 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
     evictWorkspaceCacheIfNeeded(snapshot.workspaceId);
   };
 
-  const getWarmSnapshot = (input: { workspaceId: string; sessionId: string; limit?: number }) => {
+  const getWarmSnapshot = (input: {
+    workspaceId: string;
+    sessionId: string;
+    limit?: number;
+    directory?: string | null;
+  }) => {
     const workspaceId = normalizeId(input.workspaceId);
     const sessionId = normalizeId(input.sessionId);
+    const directory = normalizeDirectory(input.directory);
     const requiredLimit = toPositiveInt(input.limit, 1);
     if (!workspaceId || !sessionId) return null;
     const cache = workspaceCache(workspaceId);
-    const entry = cache.get(sessionId);
+    const entry = cache.get(cacheKey(sessionId, directory));
     if (!entry) return null;
     if (!snapshotIsWarm(entry.snapshot)) return null;
     if (entry.snapshot.limit < requiredLimit) return null;
-    touchCacheEntry(workspaceId, sessionId);
+    touchCacheEntry(workspaceId, sessionId, directory);
     return entry.snapshot;
   };
 
-  const setDesiredLimit = (workspaceId: string, sessionId: string, limit: number) => {
-    workspaceDesiredLimits(workspaceId).set(sessionId, toPositiveInt(limit, defaultLimit));
+  const setDesiredLimit = (
+    workspaceId: string,
+    sessionId: string,
+    limit: number,
+    directory?: string | null,
+  ) => {
+    workspaceDesiredLimits(workspaceId).set(cacheKey(sessionId, directory), toPositiveInt(limit, defaultLimit));
   };
 
-  const resolveDesiredLimit = (workspaceId: string, sessionId: string, fallback?: number) => {
-    const fromWorkspace = workspaceDesiredLimits(workspaceId).get(sessionId);
+  const resolveDesiredLimit = (
+    workspaceId: string,
+    sessionId: string,
+    fallback?: number,
+    directory?: string | null,
+  ) => {
+    const fromWorkspace = workspaceDesiredLimits(workspaceId).get(cacheKey(sessionId, directory));
     return toPositiveInt(fromWorkspace ?? fallback, defaultLimit);
   };
 
+  const normalizeSessionDirectories = (input: SessionTranscriptPrefetchInterest) => {
+    const defaultDirectory = normalizeDirectory(input.directory);
+    const directories = new Map<string, string>();
+    const raw = input.sessionDirectoriesById;
+    if (raw && typeof raw === "object") {
+      for (const [sessionIdRaw, directoryRaw] of Object.entries(raw)) {
+        const sessionId = normalizeId(sessionIdRaw);
+        const directory = normalizeDirectory(directoryRaw);
+        if (sessionId && directory) directories.set(sessionId, directory);
+      }
+    }
+    return { defaultDirectory, directories };
+  };
+
   const normalizeInterestQueue = (input: SessionTranscriptPrefetchInterest) => {
-    const ordered: string[] = [];
+    const ordered: QueueItem[] = [];
     const seen = new Set<string>();
+    const { defaultDirectory, directories } = normalizeSessionDirectories(input);
     const push = (value: string | null | undefined) => {
-      const normalized = normalizeId(value);
-      if (!normalized || seen.has(normalized)) return;
-      seen.add(normalized);
-      ordered.push(normalized);
+      const sessionId = normalizeId(value);
+      if (!sessionId) return;
+      const item = {
+        sessionId,
+        directory: directories.get(sessionId) ?? defaultDirectory,
+      };
+      const key = queueItemKey(item);
+      if (seen.has(key)) return;
+      seen.add(key);
+      ordered.push(item);
     };
 
     push(input.clickedSessionId);
@@ -220,47 +277,55 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
     return ordered;
   };
 
-  const removeFromQueue = (workspaceId: string, sessionId: string) => {
+  const removeFromQueue = (workspaceId: string, sessionId: string, directory?: string | null) => {
     const queue = queueByWorkspace.get(workspaceId);
     if (!queue || queue.length === 0) return;
+    const targetKey = cacheKey(sessionId, directory);
     queueByWorkspace.set(
       workspaceId,
-      queue.filter((item) => item !== sessionId),
+      queue.filter((item) => queueItemKey(item) !== targetKey),
     );
   };
 
   const ensureLoaded = async (input: SessionTranscriptLoadInput) => {
     const workspaceId = normalizeId(input.workspaceId);
     const sessionId = normalizeId(input.sessionId);
-    const limit = resolveDesiredLimit(workspaceId, sessionId, input.limit);
+    const directory = normalizeDirectory(input.directory);
+    const limit = resolveDesiredLimit(workspaceId, sessionId, input.limit, directory);
     if (!workspaceId || !sessionId) {
       throw new Error("workspaceId and sessionId are required");
     }
 
-    const warm = getWarmSnapshot({ workspaceId, sessionId, limit });
+    const warm = getWarmSnapshot({ workspaceId, sessionId, limit, directory });
     if (warm) return warm;
 
-    const dedupeKey = inFlightKey(workspaceId, sessionId);
+    const dedupeKey = inFlightKey(workspaceId, sessionId, directory);
     const existing = inFlightBySession.get(dedupeKey);
     if (existing && existing.limit >= limit) return existing.promise;
 
+    const loadStartedAt = nowMs();
     const run = (async () => {
-      const raw = await options.loadTranscript({ workspaceId, sessionId, limit });
+      const raw = await options.loadTranscript({ workspaceId, sessionId, limit, directory: directory || undefined });
       const fetchedAt = Number.isFinite(raw.fetchedAt) ? Math.floor(raw.fetchedAt as number) : nowMs();
       const staleAt = Number.isFinite(raw.staleAt) && (raw.staleAt as number) > fetchedAt
         ? Math.floor(raw.staleAt as number)
         : fetchedAt + staleTtlMs;
       const snapshot: SessionTranscriptSnapshot = {
-        workspaceId: normalizeId(raw.workspaceId) || workspaceId,
-        sessionId: normalizeId(raw.sessionId) || sessionId,
+        workspaceId,
+        sessionId,
+        ...(directory ? { directory } : {}),
         limit,
         messages: Array.isArray(raw.messages) ? raw.messages : [],
         partsByMessageId: sanitizePartsByMessageId(raw.partsByMessageId),
         fetchedAt,
         staleAt,
+        source: raw.source,
       };
-      setCachedSnapshot(snapshot);
-      removeFromQueue(workspaceId, sessionId);
+      const invalidatedAt = invalidatedAtBySession.get(dedupeKey) ?? 0;
+      if (snapshot.source !== "unavailable" && invalidatedAt <= loadStartedAt) {
+        setCachedSnapshot(snapshot, directory);
+      }
+      removeFromQueue(workspaceId, sessionId, directory);
       return snapshot;
     })();
 
@@ -284,15 +349,17 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
       while (true) {
         const queue = queueByWorkspace.get(workspaceId) ?? [];
         if (queue.length === 0) break;
-        const sessionId = normalizeId(queue[0]);
+        const next = queue[0];
+        const sessionId = normalizeId(next?.sessionId);
+        const directory = normalizeDirectory(next?.directory);
         if (!sessionId) {
           queue.shift();
           queueByWorkspace.set(workspaceId, queue);
           continue;
         }
 
-        const limit = resolveDesiredLimit(workspaceId, sessionId);
-        const warm = getWarmSnapshot({ workspaceId, sessionId, limit });
+        const limit = resolveDesiredLimit(workspaceId, sessionId, undefined, directory);
+        const warm = getWarmSnapshot({ workspaceId, sessionId, limit, directory });
         if (warm) {
           queue.shift();
           queueByWorkspace.set(workspaceId, queue);
@@ -300,9 +367,9 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
         }
 
         try {
-          await ensureLoaded({ workspaceId, sessionId, limit });
+          await ensureLoaded({ workspaceId, sessionId, limit, directory: directory || undefined });
         } catch {
-          removeFromQueue(workspaceId, sessionId);
+          removeFromQueue(workspaceId, sessionId, directory);
           continue;
         }
       }
@@ -325,14 +392,17 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
       queueByWorkspace.set(workspaceId, queue);
 
       const limit = toPositiveInt(input.limit, defaultLimit);
-      for (const sessionId of queue) {
-        setDesiredLimit(workspaceId, sessionId, limit);
+      for (const item of queue) {
+        setDesiredLimit(workspaceId, item.sessionId, limit, item.directory);
       }
 
       const items = queue
-        .map((sessionId) => getWarmSnapshot({ workspaceId, sessionId, limit }))
+        .map((item) => getWarmSnapshot({ workspaceId, sessionId: item.sessionId, limit, directory: item.directory }))
         .filter((snapshot): snapshot is SessionTranscriptSnapshot => Boolean(snapshot));
-      const queuedSessionIds = queue.filter((sessionId) => !items.some((snapshot) => snapshot.sessionId === sessionId));
+      const warmKeys = new Set(items.map((snapshot) => cacheKey(snapshot.sessionId, snapshot.directory)));
+      const queuedSessionIds = queue
+        .filter((item) => !warmKeys.has(queueItemKey(item)))
+        .map((item) => item.sessionId);
 
       if (autoPrefetchOnInterest) {
         void pumpWorkspace(workspaceId);
@@ -343,27 +413,40 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
 
     getWarmSnapshot,
 
-    listWarmSnapshots(input: { workspaceId: string; sessionIds?: string[] }) {
+    invalidate(input: { workspaceId: string; sessionId: string; directory?: string | null }) {
       const workspaceId = normalizeId(input.workspaceId);
+      const sessionId = normalizeId(input.sessionId);
+      const directory = normalizeDirectory(input.directory);
+      if (!workspaceId || !sessionId) return;
+      invalidatedAtBySession.set(inFlightKey(workspaceId, sessionId, directory), nowMs());
+      inFlightBySession.delete(inFlightKey(workspaceId, sessionId, directory));
+      workspaceCache(workspaceId).delete(cacheKey(sessionId, directory));
+    },
+
+    listWarmSnapshots(input: { workspaceId: string; sessionIds?: string[]; directory?: string | null }) {
+      const workspaceId = normalizeId(input.workspaceId);
+      const directory = normalizeDirectory(input.directory);
       if (!workspaceId) return [];
       const cache = workspaceCache(workspaceId);
       const sessionIds = input.sessionIds
         ? input.sessionIds.map((value) => normalizeId(value)).filter(Boolean)
-        : Array.from(cache.keys());
+        : Array.from(cache.values())
+            .filter((entry) => normalizeDirectory(entry.snapshot.directory) === directory)
+            .map((entry) => entry.snapshot.sessionId);
       const seen = new Set<string>();
       const snapshots: SessionTranscriptSnapshot[] = [];
       for (const sessionId of sessionIds) {
         if (seen.has(sessionId)) continue;
         seen.add(sessionId);
-        const limit = resolveDesiredLimit(workspaceId, sessionId);
-        const warm = getWarmSnapshot({ workspaceId, sessionId, limit });
+        const limit = resolveDesiredLimit(workspaceId, sessionId, undefined, directory);
+        const warm = getWarmSnapshot({ workspaceId, sessionId, limit, directory });
         if (warm) snapshots.push(warm);
       }
       return snapshots;
     },
 
     getOrLoad(input: SessionTranscriptLoadInput) {
-      setDesiredLimit(input.workspaceId, input.sessionId, input.limit);
+      setDesiredLimit(input.workspaceId, input.sessionId, input.limit, input.directory);
       return ensureLoaded(input);
     },
 
@@ -374,13 +457,13 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
     debugQueue(workspaceIdRaw: string) {
       const workspaceId = normalizeId(workspaceIdRaw);
       if (!workspaceId) return [];
-      return [...(queueByWorkspace.get(workspaceId) ?? [])];
+      return [...(queueByWorkspace.get(workspaceId) ?? [])].map((item) => item.sessionId);
     },
 
     debugCacheSessionIds(workspaceIdRaw: string) {
       const workspaceId = normalizeId(workspaceIdRaw);
       if (!workspaceId) return [];
-      return [...workspaceCache(workspaceId).keys()];
+      return [...workspaceCache(workspaceId).values()].map((entry) => entry.snapshot.sessionId);
     },
   };
 }

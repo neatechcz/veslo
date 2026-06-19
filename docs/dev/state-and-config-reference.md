@@ -10,6 +10,7 @@ This document describes the main persistence and config surfaces used by Veslo.
 - OpenCode config: `opencode.json` or `opencode.jsonc`.
 - Server connection state: browser storage keys managed by `veslo-server.ts`.
 - Den auth state: browser storage keys managed by `den-auth.ts`.
+- Desktop local proof cache: app-data JSON managed by Tauri commands.
 
 ## App-Global Browser Preferences
 
@@ -36,7 +37,7 @@ Common keys:
 - `veslo.engineRuntime`
 - `veslo.onboardingComplete`
 
-Automatic update checks are always enabled; legacy stored `veslo.updateAutoCheck=0` values are ignored and overwritten on the next preference persist. `veslo.updateAutoDownload` is default-on when absent. A stored `0` is an explicit opt-out and keeps the manual download flow. Turning auto-download off while an automatic download is active pauses the auto-download flow and restores the update to manual availability; a late automatic completion is ignored for UI state. When enabled, failed automatic update downloads are retried with bounded backoff. The retry state is runtime-only; only the preference and last successful check time are stored.
+`veslo.updateAutoDownload` is default-off when absent. A stored `1` is an explicit opt-in; otherwise an available update stays in the manual download flow. Legacy default-on stored values are migrated off once with `veslo.updateAutoDownloadDefaultOff.v1`. When enabled, failed automatic update downloads are retried with bounded backoff. The retry state is runtime-only; only the preference, migration marker, and last successful check time are stored.
 
 `veslo.modelVariant` stores the app-global model variant / thinking effort. The built-in default is `xhigh` (Max). Existing stored values from before the Max-default migration are overwritten to `xhigh` once and marked by `veslo.modelVariant.maxDefaultMigration`; later user changes remain stored in `veslo.modelVariant`.
 
@@ -68,6 +69,10 @@ Workspace activation state is runtime-only state managed by `packages/app/src/ap
 - In Tauri local-to-local browsing mode, the active workspace can be `connected` even while the live OpenCode client is intentionally detached.
 - In that browsing mode the app loads sidebar/session history from SQLite first, checking the active workspace's `.opencode/opencode.db` before legacy/global OpenCode database locations, and only re-attaches the engine when the user performs an action that requires it, such as sending a message.
 - The sidebar connection dot treats this state as runtime-available when the Veslo server is also connected, so browsing a different local workspace does not appear as a false runtime failure.
+- The fullscreen workspace switch overlay is driven by an explicit blocking switch target, not by `connectingWorkspaceId` itself or by global engine `busyLabel` values. `connectingWorkspaceId` remains a runtime/sidebar guard; passive local browsing and scoped runtime warmup must not create a blocking overlay target.
+- Runtime readiness checks that can target a concrete workspace should use workspace-scoped readiness (`isWorkspaceRuntimeReady(workspaceId)` in the app shell), not the global `engineReady` signal. The global signal remains a compatibility fallback for the active workspace; send, SSE, sidebar live sync, permission polling, and MCP runtime reads are expected to gate on the target workspace.
+- Runtime readiness and app-level routing client reads are owned by the app runtime owner. It derives runtime availability from orchestrator ready snapshots, workspace routing entries, active legacy `engineReady`, and workspace busy state, then exposes an owner-gated routing wrapper for session, extension/skill, system-state, and routing-context consumers. It does not start, stop, or activate engines; lifecycle mutations still belong to the workspace/runtime controllers.
+- MCP runtime status refresh is single-flight by workspace, project directory, and the current MCP entry list key. If the configured MCP entry list changes while an older status request is in flight, the new list must schedule its own runtime status read and stale older success or failure results must not overwrite or clear the current status UI.
 
 ## Den Auth State
 
@@ -115,29 +120,9 @@ Desktop-managed local Veslo server uses the fixed port `8787`. The desktop runti
 
 Managed local sidecars distinguish internal runtime URLs from advertised connect URLs. Same-machine communication between the desktop shell, `veslo-server`, `veslo-orchestrator`, OpenCode, and `veslo-code-router` uses loopback OpenCode URLs such as `http://127.0.0.1:<port>`. LAN or mDNS connect URLs are for external clients only; they must not be passed as the local `--opencode-base-url` or `--opencode-url`, because sleep/resume and network changes can invalidate those addresses while the local OpenCode process remains healthy.
 
-Desktop-managed OpenCode, Veslo server, Veslo orchestrator, and OpenCode Router processes launch through the desktop supervised-process wrapper. On Windows, that wrapper applies the hidden-process creation flags before spawn so first launch, restart, and fallback command startup do not create visible console windows. Sidecar stdout/stderr still flows through the debug-log forwarding path below.
+On Windows, OpenCode runs inside the WSL2/bwrap backend. Host workspace paths such as `C:\Users\...\repo`, WSL mount paths such as `/mnt/c/Users/.../repo`, and the sandbox alias `/workspace` can all describe the same active workspace. Session list filters, sidebar scoping, and conversation binding lookups must treat these forms as equivalent. This equivalence does not solve OpenCode data-home location by itself: a DB stored in WSL guest home still needs an explicit host-readable path or a server-side content tunnel.
 
-## OpenCode Workspace Runtime State
-
-The durable runtime contract for OpenCode workspace execution is
-`docs/dev/opencode-workspace-runtime-architecture.md`.
-
-State ownership summary:
-
-- the app owns prepared user intent and visible UI state,
-- Veslo server owns workspace-scoped conversations, run records, and
-  conversation-to-OpenCode-session bindings,
-- the orchestrator owns execution strategy and process routing,
-- the desktop shell owns the local Veslo server process lifecycle.
-
-An OpenCode session is created in a workspace directory and remains bound to
-that directory through the Veslo conversation. Workspace switching changes only
-the visible UI context; it must not retarget an existing conversation, run, or
-OpenCode session.
-
-The local Veslo server should be recoverable without an active workspace.
-`Invalid bearer token` between the app and local server is treated as stale
-local connection state, not as a failed message or failed conversation.
+The local server reports the active path mode through `/capabilities.sandbox`. Desktop-launched `veslo-server` processes must receive `VESLO_SANDBOX_BACKEND` from the Tauri shell so the app can choose sandbox path aliases before host paths when WSL2 is active. `VESLO_DISABLE_SANDBOX=1` remains the hard opt-out and forces `backend=none`.
 
 ## Desktop Debug Log Forwarder
 
@@ -174,7 +159,9 @@ Environment variables (all optional):
 Pipeline behavior:
 
 - `enabled` is derived as `Boolean(ingestUrl && ingestToken)`. Without both vars the spool keeps collecting and retention prunes the oldest entries; nothing is sent over the network. Flip the two vars and the pipeline starts uploading on the next tick — no restart required for the upload to start, but the running process must be restarted to pick up new env values.
-- Spool location: `${VESLO_DATA_DIR or ~/.veslo/veslo-server}/debug-log-spool/events/`. One JSON file per event today (file-per-event format owned by `debug-log-spool.ts`); switching to JSONL append-only is tracked separately as a follow-up.
+- Server data dir default: `VESLO_DATA_DIR` wins when set. Without it, Windows uses `%LOCALAPPDATA%\com.neatech.veslo\veslo-server` (falling back to `%APPDATA%`), while macOS/Linux keep `<home>/.veslo/veslo-server`. On Windows, an existing legacy `<home>\.veslo\veslo-server` directory is copied into the AppData default on first resolve; if that copy fails, the server falls back to the legacy path so existing bindings and caches do not disappear after update.
+- Desktop orchestrator data dir default: `VESLO_DATA_DIR` also controls the managed orchestrator. Dev startup sets it to `%LOCALAPPDATA%\com.neatech.veslo.dev\veslo-orchestrator-dev` on Windows so scratch, engine state, and OpenCode config stay under AppData. When that dev default is used, the Windows launcher copies missing files from the legacy `<home>\.veslo\veslo-orchestrator-dev` store and merges legacy `conversation_binding` rows into the AppData binding DB. Without an override, the production desktop fallback uses `%LOCALAPPDATA%\com.neatech.veslo\veslo-orchestrator` on Windows and `<home>/.veslo/veslo-orchestrator` on macOS/Linux.
+- Spool location: `<server data dir>/debug-log-spool/events/`. One JSON file per event today (file-per-event format owned by `debug-log-spool.ts`); switching to JSONL append-only is tracked separately as a follow-up.
 - Upload retry policy lives in `debug-log-uploader.ts` (3 attempts, 250 ms initial, 2× multiplier, capped at 2 s). Failed batches stay leased in the manifest and the next flush tick re-leases them after the lease TTL.
 - Retention is enforced asynchronously after appends and by a maintenance loop that runs even when remote upload is disabled. The spool can temporarily exceed `VESLO_LOG_SPOOL_MAX_BYTES`, but `/debug-logs` ingest stays off the cleanup hot path and bulk-prunes old unleased events back toward the low-water mark.
 - `POST /debug-logs` validates the host token and batch body before returning `202`, then appends the events to the durable spool asynchronously. Append failures are logged locally; sidecar log forwarding must not block server health or other UI-facing routes on disk cleanup.
@@ -206,11 +193,39 @@ Read path:
 
 This backend-first slice is platform-admin-only. A narrower `debug-logs-reader` role and full static Admin UI page remain follow-up work.
 
+## Owned-Server Backup Config
+
+Owned-server database backups are production Compose operations, not app runtime state. The production backup root is `/srv/veslo/backups`, mounted into the `backup` service from the host.
+
+Backup failure email reuses the existing Lettr configuration from the owned-server env file. The production env file used by the deployment workflow is the authoritative source for backup alert recipients and mail transport values:
+
+- `LETTR_API_KEY`
+- `AUTH_EMAIL_ADDRESS`
+- `AUTH_EMAIL_FROM_NAME`
+- `BACKUP_ALERT_EMAIL_RECIPIENTS`
+- `AI_GATEWAY_ALERT_EMAIL_RECIPIENTS`
+
+`BACKUP_ALERT_EMAIL_RECIPIENTS` should contain all current admins who must receive failure alerts. It belongs beside the Lettr values in the production env file. If the dedicated backup recipient list is blank, the alert helper falls back to `AI_GATEWAY_ALERT_EMAIL_RECIPIENTS`.
+
+The production backup image includes `zstd`, Node.js, and the MySQL client. Compressed dumps are written as `.sql.zst` files and verified with `zstd -t`. Checksums are verified with `sha256sum -c`.
+
+Scheduling is owned by the `backup` service in `packaging/owned-server/compose.yml`. The service runs `packaging/owned-server/backup/backup-owned-server-databases-loop.sh`, which starts `backup-owned-server-databases.sh` daily at `BACKUP_DAILY_UTC_TIME` plus up to `BACKUP_RANDOM_DELAY_SECONDS` jitter. The deployment workflow can also run an immediate one-off backup with `run_backup_now`.
+
 ## Managed-AI Routing and Accounting
 
 Managed-AI inference routing is configured separately from signed-in app identity. Desktop and orchestrator defaults use the owned standalone AI Gateway at `https://ai.veslo.work`; `VESLO_MANAGED_AI_BASE_URL` overrides it, with `VESLO_AI_GATEWAY_BASE_URL` retained as the legacy fallback. The previous Render AI Gateway remains a transition and rollback surface, not the default for new builds.
 
-Desktop local workspaces separate the managed-AI access-policy source from the OpenCode provider routing target. The app may load the user's policy and gateway token from DEN or standalone AI Gateway, but the generated provider `baseURL` in `opencode.json` points at the active local Veslo server so prompts keep flowing through the local-first runtime.
+AI Gateway `/health` is process liveness only. Use `/readiness` when the product, admin UI, or monitors need to show AI inference availability: it checks upstream provider reachability, at least one healthy credential, and at least one enabled AI-access policy. The local server exposes the same frontend-visible readiness through `/ai-gateway/readiness`; send-time provider proxy failures remain authoritative and continue returning normalized upstream failure diagnostics.
+
+The desktop app keeps a local managed-AI access proof cache so it does not have to repeat `GET /ai-gateway/me/ai-access` on every reactive pass or process restart. The cache lives in:
+
+- `${VESLO_APP_DATA_DIR or app_data_dir()}/access-proofs.v1.json`
+
+Managed-AI proof entries are valid for 3 days. They store only non-secret policy metadata: a hashed cache key, fetch time, provider id, default model, allowed models, and optional policy timestamps/fingerprints. Gateway or Den bearer tokens are never written to this file; prompt/config paths still use the current Den auth token or local Veslo server client token at runtime. The cache key is based on Den user id, org id, and the managed gateway base URL. On desktop the app prefers stable Den/gateway identity over the local loopback Veslo server URL so local sidecar port changes do not invalidate the proof.
+
+The same file format has a reserved `workspacePermissions` array for future local permission proof caching. That path is not active in the frontend today; workspace permission polling is still governed by runtime engine readiness and existing workspace config.
+
+Desktop local workspaces separate the managed-AI access-policy source from the OpenCode provider routing target. The app may load the user's policy and gateway token from DEN or standalone AI Gateway, but the generated provider `baseURL` in `opencode.json` points at the active local Veslo server so prompts keep flowing through the local-first runtime. The generated model headers must also include the current `x-veslo-workspace-id`; the local proxy uses it to correlate active runs across multiple workspaces and to recover when OpenCode sends the session placeholder before expansion.
 
 When the local Veslo server proxies managed-AI requests, successful JSON and streamed provider responses are passed through. Upstream non-2xx failures are normalized to a local `502` JSON error so a managed-AI gateway/provider block is not reported as local server authentication failure. The error details include a generated request id, provider/model/session/user/org context when available, upstream status/request id/content type, and a short sanitized upstream response snippet.
 
@@ -220,23 +235,19 @@ The local server also treats body parsing as byte-bounded infrastructure. AI gat
 
 OpenCode JSON helper calls made by the local server use a bounded upstream timeout so stale interface URLs or hung sockets cannot hold UI-facing server routes for OS-level TCP timeouts. The default is 5000 ms and can be overridden for diagnostics/tests with `VESLO_OPENCODE_JSON_FETCH_TIMEOUT_MS`. Streaming pass-through proxy routes are not governed by this helper timeout.
 
+Streaming pass-through OpenCode proxy routes (`/workspace/:id/opencode/*`) bound only the wait for upstream response headers (default 75 000 ms, override with `VESLO_OPENCODE_PROXY_HEADERS_TIMEOUT_MS`); once headers arrive, streamed bodies such as SSE are never cut. The orchestrator side of the same proxy never spawns an engine for `GET`/`HEAD` requests: when no engine is running for the workspace it responds immediately with `503 engine_not_running`, so background status polls (MCP, permission, LSP, health) fail fast instead of triggering and waiting on a 30-60 s engine cold start. Engines spawn only through explicit workspace activation and through non-GET proxy requests (the send path).
+
 The desktop app recognizes managed Codex credential exhaustion or missing eligible binding inside these normalized errors and formats it as an actionable AI access failure. Prompt sends that hit this condition set the session run state to failed and insert the error into the transcript instead of leaving OpenCode's empty assistant turn looking like an active run.
 
 DEN managed-AI uses `MANAGED_AI_DATABASE_URL`. Standalone AI Gateway uses `AI_GATEWAY_DATABASE_URL`. Their assignment, credential, eligibility, and usage views match only when those services are intentionally pointed at the same managed-AI backing database and compatible config.
 
-Standalone AI Gateway sends Codex capacity alert e-mails from the backend monitor when all of these are configured:
-
-- `LETTR_API_KEY` - Lettr API key used by both DEN auth mail and AI Gateway alert mail.
-- `AUTH_EMAIL_ADDRESS` - sender address.
-- `AUTH_EMAIL_FROM_NAME` - optional sender display name.
-- `AI_GATEWAY_ALERT_EMAIL_RECIPIENTS` - comma or whitespace separated incident recipients. Configure this with the Platform Admin/ops recipients that must receive 95%, 100%, and Codex-limit-visibility alerts.
-- `AI_GATEWAY_CODEX_CAPACITY_ALERT_EMAIL_INTERVAL_MS` - optional monitor interval, default 300000.
-
-If any required e-mail sender setting or recipient list is empty, the standalone AI Gateway still shows alerts in `/admin/alerts` but logs that capacity alert e-mails are disabled. Successful delivery attempts are recorded as audit events with action `codex_capacity_alert.email.sent`; failed attempts are recorded with `codex_capacity_alert.email.failed`. The monitor suppresses repeat sends per alert and recipient for 24 hours.
-
-Managed-AI provider assignments may use `openai`, `anthropic`, `codex_oauth`, or `openai_compatible`. The desktop app treats these assignments as read-only policy and writes local OpenCode routing for the assigned provider. AI access rows also store `assignment_origin`: `auto_assigned` for DEN sign-up Codex defaults and `admin_assigned` for explicit admin edits or legacy rows. For `codex_oauth`, OpenCode still owns local tool execution and calls the local Veslo server route `/ai-gateway/providers/codex_oauth/v1`; the configured managed-AI service keeps the Codex OAuth auth JSON server-side, translates the OpenAI-compatible request to the ChatGPT Codex Responses endpoint, and translates the response back for OpenCode. Standalone AI Gateway admin model pickers use live upstream discovery for `openai_compatible` credentials and a gateway-owned Codex model catalog for `codex_oauth` credentials. Codex status probes run from temporary Codex homes with the bundled `@openai/codex` CLI pinned at `0.137.0` or newer so successful probes write subscription rate-limit snapshots into session logs; refreshed probe auth JSON is written back to the credential's encrypted secret when Codex rotates it. If a Codex status probe reports refresh-token reuse, the standalone admin service quarantines the credential as unhealthy; the admin Reconnect action replaces the stored auth JSON in place and marks the same credential healthy again. If a Codex status probe reports that a specific model is unsupported for the credential's ChatGPT account, the credential remains available and that model is filtered from the credential's admin model list. Any assigned Codex row can be repaired to another healthy eligible Codex credential on the next request when its assigned credential becomes unhealthy, revoked, missing, permanently unavailable, or exhausted; the original assignment origin is preserved after repair, and legacy repairs without a stored model use the Codex catalog default. For `openai_compatible`, OpenCode uses the local Veslo server route `/ai-gateway/providers/openai_compatible/v1`; the upstream custom base URL and API key remain server-side in the configured managed-AI service's encrypted secret store.
+Managed-AI provider assignments may use `openai`, `anthropic`, `codex_oauth`, or `openai_compatible`. The desktop app treats these assignments as read-only policy and writes local OpenCode routing for the assigned provider. AI access rows also store `assignment_origin`: `auto_assigned` for DEN sign-up Codex defaults and `admin_assigned` for explicit admin edits or legacy rows. For `codex_oauth`, OpenCode still owns local tool execution and calls the local Veslo server route `/ai-gateway/providers/codex_oauth/v1`; the configured managed-AI service keeps the Codex OAuth auth JSON server-side, translates the OpenAI-compatible request to the ChatGPT Codex Responses endpoint, and translates the response back for OpenCode. Standalone AI Gateway admin model pickers use live upstream discovery for `openai_compatible` credentials and a gateway-owned Codex model catalog for `codex_oauth` credentials. Codex status probes run from temporary Codex homes with the gateway's default Codex model, and refreshed probe auth JSON is written back to the credential's encrypted secret when Codex rotates it. If a Codex status probe reports refresh-token reuse, the standalone admin service quarantines the credential as unhealthy; the admin Reconnect action replaces the stored auth JSON in place and marks the same credential healthy again. If a Codex status probe reports that a specific model is unsupported for the credential's ChatGPT account, the credential remains available and that model is filtered from the credential's admin model list. Any assigned Codex row can be repaired to another healthy eligible Codex credential on the next request when its assigned credential becomes unhealthy, revoked, missing, permanently unavailable, or exhausted; the original assignment origin is preserved after repair, and legacy repairs without a stored model use the Codex catalog default. For `openai_compatible`, OpenCode uses the local Veslo server route `/ai-gateway/providers/openai_compatible/v1`; the upstream custom base URL and API key remain server-side in the configured managed-AI service's encrypted secret store.
 
 Standalone AI Gateway credentials can be soft-deleted only after they are no longer usable and are not referenced by user AI-access policy. Active leases and assignment references still block soft-delete unless the credential is already revoked. Soft-deleted rows keep their credential id for audit, usage, and alert history, but `deleted_at` removes them from default admin lists, assignment options, rotation, and runtime selection; their stored secret is replaced with a deleted tombstone.
+
+Standalone AI Gateway credential/account alert emails use DEN platform admins as the primary recipient list. DEN exposes them through `GET /v1/internal/platform-admin-recipients`, guarded by `DEN_AI_GATEWAY_INTERNAL_TOKEN`; AI Gateway calls that route with `AI_GATEWAY_DEN_INTERNAL_TOKEN`. `AI_GATEWAY_ALERT_EMAIL_RECIPIENTS` is a fallback for credential alerts when DEN lookup fails and is the configured recipient list for Codex capacity alerts. AI Gateway must also receive `LETTR_API_KEY`, `AUTH_EMAIL_ADDRESS`, and `AUTH_EMAIL_FROM_NAME` for email delivery. `AI_GATEWAY_CREDENTIAL_ALERT_EMAIL_INTERVAL_MS` controls the per-credential/account fault monitor cadence; `AI_GATEWAY_CODEX_CAPACITY_ALERT_EMAIL_INTERVAL_MS` controls the separate Codex capacity monitor cadence. The Codex capacity monitor emails for high/critical capacity thresholds and for partial or total loss of Codex limit visibility, including the case where a healthy credential shows `Codex OK, limits unknown` while other credentials still expose measurable limits.
+
+The credential alert monitor emails the first active unresolved fault per credential/account reason and recipient, then throttles repeats for the same credential, same normalized reason/title, and same recipient for 24 hours. Later healthy credential-health events resolve earlier fault alerts for the same credential, so an expired throttle does not resend email after the underlying issue has recovered. It covers provider auth failures, quota/rate-limit failures, provider network failures, OpenAI-compatible/Codex transport failures, and assigned credentials that can no longer be resolved. It intentionally does not email for request validation errors, missing gateway auth/session headers, AI-access policy denial, recovered or already resolved alerts, or Codex capacity alerts handled by the capacity monitor.
 
 Usage rows store request id, user id, org id, session id, credential record id, input tokens, output tokens, cached tokens, and total tokens. See `docs/features/session-runtime.md` for runtime selection, `all_codex_credentials_exhausted`, and temporary ineligibility semantics.
 
@@ -313,11 +324,23 @@ Use this surface for:
 
 Veslo pages that mutate plugins or MCP are usually editing this config, not `.opencode/veslo.json`.
 
+Platform Google Workspace MCP installs write normal remote MCP entries into
+OpenCode config. The entries point at Veslo-owned connector endpoints and may
+include non-secret runtime headers. They must not include Google OAuth client
+secrets, Google access tokens, or Google refresh tokens.
+
+Google Workspace authorization is server-managed for production. Den owns the
+Google OAuth callback, exchanges the code with Veslo's Google client secret,
+and stores encrypted per-user grants by organization, user, and connector.
+OpenCode config only represents local runtime installation, not Google grant
+ownership.
+
 ## Skills Inventory
 
-The Skills page builds an app-wide inventory from three sources:
+The Skills page builds an app-wide inventory from four sources:
 
-- user skills from user-level OpenCode-compatible skill roots
+- user skills from the Veslo user skill store
+- legacy user skills from user-level OpenCode-compatible skill roots
 - workspace-local skills discovered per readable local workspace
 - Hub skills from the existing prepared catalog flow
 
@@ -338,8 +361,8 @@ Use product terminology consistently:
 
 Recoverable local skill removals are stored by Veslo server under:
 
-- `${VESLO_DATA_DIR or ~/.veslo/veslo-server}/skill-removals/records/`
-- `${VESLO_DATA_DIR or ~/.veslo/veslo-server}/skill-removals/snapshots/`
+- `<server data dir>/skill-removals/records/`
+- `<server data dir>/skill-removals/snapshots/`
 
 Each removal record stores the removal id, skill name, scope (`workspace` or
 `user-global`), original path, actor, optional reason, snapshot hash, status,
@@ -366,11 +389,19 @@ User skills are runtime-available skills, not organization catalog or
 admin-approved skills. Organization promotion and bulk rollout remain future
 work until the Den/admin backend owns those concepts.
 
-For inventory correctness, user skill roots and workspace skill roots are read
-separately. Runtime-effective discovery may still include both scopes for active
-workspace behavior, but the inventory must not expand user skills under every
-workspace. Workspace rows represent only real workspace-local instances or
-overrides.
+For inventory correctness, Veslo user skill store entries, legacy user skill
+roots, and workspace skill roots are read separately. Runtime-effective
+discovery may still include both scopes for active workspace behavior, but the
+inventory must not expand user skills under every workspace. Workspace rows
+represent only real workspace-local instances or overrides.
+
+Veslo-created user skills are stored under the server data directory in the
+user skill store. Enabled store entries are materialized into each active
+workspace under `.opencode/skills/veslo-user/<name>/SKILL.md` during workspace
+activation or explicit store sync. The store remains the source of truth; the
+workspace copy is a runtime artifact for OpenCode and sandbox visibility. Sync
+must not overwrite an existing workspace skill with the same name and should
+return a conflict instead.
 
 Private app-created workspaces, including new private chat workspaces, remove
 workspace-local skill directories that are exact copies of user-root skills
@@ -414,9 +445,10 @@ Registry-owned state:
 Local Veslo state:
 
 - downloaded package archives before install
-- cached package archives under `${VESLO_DATA_DIR or ~/.veslo/veslo-server}/skill-package-cache/`, keyed by package SHA-256 and verified before use
+- cached package archives under `<server data dir>/skill-package-cache/`, keyed by package SHA-256 and verified before use
 - unpacked runtime skill directories controlled by the local Veslo server
 - server-controlled workspace skill materializations under `.opencode/skills/veslo-managed/`, with a root manifest and per-skill ownership markers
+- app-facing resource inventory owner envelopes for MCP config entries, skills, plugins, commands, and Veslo user-global skill store records; these describe durable definition ownership and do not own MCP polling or connection state
 - pre-change backups for server-controlled materialization replacement/removal under the Veslo data directory
 - workspace activation or reload state after a skill set changes
 - any temporary install progress, errors, or selected install target in the app UI

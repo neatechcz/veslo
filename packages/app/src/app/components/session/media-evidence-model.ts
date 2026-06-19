@@ -1,5 +1,5 @@
 import type { Part } from "@opencode-ai/sdk/v2/client";
-import { getBasename as basename, normalizePath } from "../../utils/workspace-path";
+import { getBasename as basename, normalizePath, workspaceArtifactPathToRelative } from "../../utils/workspace-path";
 
 export type MediaEvidenceKind = "analyzed" | "created";
 export type MediaEvidenceStatus = "available" | "missing" | "tooLarge" | "unsupported" | "redacted";
@@ -191,15 +191,17 @@ function toFileUrl(path: string, workspaceRoot?: string): string | undefined {
   if (!normalizedPath) return undefined;
   const normalizedRoot = normalizePath(workspaceRoot ?? "");
   if (normalizedRoot && hasParentPathSegment(normalizedRoot)) return undefined;
+  const artifactRelative = workspaceArtifactPathToRelative(normalizedPath, normalizedRoot);
+  const pathForUrl = artifactRelative ?? normalizedPath;
 
-  if (isAbsolutePath(normalizedPath)) {
+  if (isAbsolutePath(pathForUrl)) {
     if (!isNonEmptyString(workspaceRoot)) return undefined;
-    return toAbsoluteFileUrl(normalizedPath);
+    return toAbsoluteFileUrl(pathForUrl);
   }
 
   if (!normalizedRoot) return undefined;
   if (!isAbsolutePath(normalizedRoot)) return undefined;
-  return toAbsoluteFileUrl(`${normalizedRoot.replace(/\/+$/, "")}/${normalizedPath.replace(/^\/+/, "")}`);
+  return toAbsoluteFileUrl(`${normalizedRoot.replace(/\/+$/, "")}/${pathForUrl.replace(/^\/+/, "")}`);
 }
 
 function titleForPath(path: string): string {
@@ -351,21 +353,24 @@ function getCreatedBitmapPath(part: Part, workspaceRoot?: string): string | null
       if (isNonEmptyString(value) && isUrlLikePath(value)) {
         continue;
       }
-      if (isNonEmptyString(value) && hasParentPathSegment(normalizePath(value))) {
+      const normalizedValue = isNonEmptyString(value) ? normalizePath(value) : "";
+      const artifactRelative = workspaceArtifactPathToRelative(normalizedValue, workspaceRoot);
+      const candidatePath = artifactRelative ?? normalizedValue;
+      if (isNonEmptyString(value) && hasParentPathSegment(candidatePath)) {
         continue;
       }
       if (
         isNonEmptyString(value) &&
-        isAbsolutePath(normalizePath(value)) &&
+        isAbsolutePath(candidatePath) &&
         isNonEmptyString(workspaceRoot) &&
-        !isPathWithinRoot(normalizePath(value), workspaceRoot)
+        !isPathWithinRoot(candidatePath, workspaceRoot)
       ) {
         continue;
       }
       if (isNonEmptyString(value) && hasSvgFamilyExtension(value, { decode: true })) {
         continue;
       }
-      if (isNonEmptyString(value) && getBitmapMime(value)) return value;
+      if (isNonEmptyString(value) && getBitmapMime(candidatePath)) return candidatePath;
     }
   }
   return null;

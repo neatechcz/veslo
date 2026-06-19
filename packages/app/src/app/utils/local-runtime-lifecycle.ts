@@ -11,6 +11,9 @@ export type LocalRuntimeStartOptions = {
   opencodeBinPath: string | null;
   runtime: EngineInfo["runtime"];
   workspacePaths: string[];
+  // VSLO-171 F3Ú9: pool tuning forwarded to orchestrator daemon.
+  maxEngines?: number | null;
+  idleSuspendMs?: number | null;
 };
 
 export type LocalRuntimeConnectMode = "server" | "quiet";
@@ -31,11 +34,14 @@ export interface LocalRuntimeLifecycleDeps {
   engineCustomBinPath?: () => string;
   resolveEngineRuntime: () => EngineInfo["runtime"];
   resolveWorkspacePaths: () => string[];
+  // VSLO-171 F3Ú9: pool tuning accessors from Settings preferences.
+  maxEngines?: () => number | null;
+  idleSuspendMs?: () => number | null;
   setEngine: (info: EngineInfo) => void;
   setEngineAuth: (auth: OpencodeAuth | null) => void;
   startEngine: (workspacePath: string, options: LocalRuntimeStartOptions) => Promise<EngineInfo>;
   stopEngine: () => Promise<EngineInfo>;
-  readEngineInfo: () => Promise<EngineInfo>;
+  readEngineInfo: (workspaceId?: string, workspacePath?: string) => Promise<EngineInfo>;
   activateOrchestratorWorkspace: (input: {
     workspacePath: string;
     name?: string | null;
@@ -57,7 +63,12 @@ export interface LocalRuntimeLifecycleDeps {
     baseUrl: string,
     directory: string,
     auth?: OpencodeAuth,
-    context?: { reason?: string },
+    context?: {
+      workspaceId?: string;
+      workspaceType?: WorkspaceInfo["workspaceType"];
+      targetRoot?: string;
+      reason?: string;
+    },
   ) => Promise<boolean>;
 }
 
@@ -75,6 +86,8 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
     opencodeBinPath: deps.engineSource() === "custom" ? deps.engineCustomBinPath?.().trim() || null : null,
     runtime,
     workspacePaths: deps.resolveWorkspacePaths(),
+    maxEngines: deps.maxEngines?.() ?? null,
+    idleSuspendMs: deps.idleSuspendMs?.() ?? null,
   });
 
   const syncEngineSnapshot = (info: EngineInfo): OpencodeAuth | undefined => {
@@ -95,12 +108,62 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
     info: EngineInfo,
     options: LocalRuntimeReconnectOptions,
   ) => {
-    const auth = syncEngineSnapshot(info);
-    const baseUrl = info.baseUrl?.trim() ?? "";
+    let activeInfo = info;
+    const mountWorkspaceId = (value: string | null | undefined) => {
+      const baseUrl = value?.trim() ?? "";
+      if (!baseUrl) return "";
+      try {
+        const match = new URL(baseUrl).pathname.match(/^\/workspace\/([^/]+)\/opencode(?:\/.*)?$/);
+        return match ? decodeURIComponent(match[1] ?? "").trim() : "";
+      } catch {
+        return "";
+      }
+    };
+    const snapshotWorkspaceId = mountWorkspaceId(activeInfo.baseUrl);
+    if (
+      options.workspaceId &&
+      activeInfo.runtime === "veslo-orchestrator" &&
+      snapshotWorkspaceId &&
+      snapshotWorkspaceId !== options.workspaceId
+    ) {
+      activeInfo = await deps.readEngineInfo(options.workspaceId, options.workspacePath);
+    }
+
+    let auth = syncEngineSnapshot(activeInfo);
+    let baseUrl = activeInfo.baseUrl?.trim() ?? "";
+
+    // VSLO-171 — orchestrator F2Ú7 spawn-on-demand: engine_info returns an
+    // empty baseUrl when the per-workspace engine hasn't been spawned yet.
+    // Poll engine_info (with workspaceId) until baseUrl is populated so
+    // connectToServer can run instead of being silently skipped.
+    if (!baseUrl && options.workspaceId) {
+      const pollStart = Date.now();
+      const timeoutMs = 10_000;
+      const pollIntervalMs = 200;
+      while (Date.now() - pollStart < timeoutMs) {
+        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+        try {
+          activeInfo = await deps.readEngineInfo(options.workspaceId, options.workspacePath);
+        } catch {
+          continue;
+        }
+        baseUrl = activeInfo.baseUrl?.trim() ?? "";
+        if (baseUrl) {
+          auth = syncEngineSnapshot(activeInfo);
+          break;
+        }
+      }
+    }
+
     if (!baseUrl) return true;
 
     if ((options.connectMode ?? "server") === "quiet") {
-      return await deps.connectQuiet(baseUrl, options.workspacePath, auth, { reason: options.reason });
+      return await deps.connectQuiet(baseUrl, options.workspacePath, auth ?? undefined, {
+        workspaceId: options.workspaceId,
+        workspaceType: "local",
+        targetRoot: options.workspacePath,
+        reason: options.reason,
+      });
     }
 
     return await deps.connectToServer(
@@ -133,7 +196,7 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
   async function startHost(
     options: Pick<
       LocalRuntimeReconnectOptions,
-      "workspacePath" | "workspaceId" | "reason" | "navigate" | "connectMode"
+      "workspacePath" | "workspaceId" | "reason" | "connectMode" | "navigate"
     >,
   ) {
     const runtime = deps.resolveEngineRuntime();
@@ -149,8 +212,12 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
       }
       await activateOrchestratorWorkspace(options);
       const nextInfo = await withTimeoutOrThrow(
-        deps.readEngineInfo(),
-        { timeoutMs: 12_000, label: "engine_info" },
+        deps.readEngineInfo(options.workspaceId, options.workspacePath),
+        // VSLO-86 — widened from 12s to 30s. After the orchestrator HTTP
+        // POSTs return, the engine itself still has to finish spawning
+        // (sandbox-exec + opencode serve), and the polling for the per-
+        // workspace baseUrl can run past 12s on cold start.
+        { timeoutMs: 30_000, label: "engine_info" },
       );
       return await reconnectFromEngineSnapshot(nextInfo, options);
     }
@@ -166,12 +233,12 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
   async function reattachOrchestratorWorkspace(
     options: Pick<
       LocalRuntimeReconnectOptions,
-      "workspacePath" | "workspaceId" | "workspaceName" | "reason" | "navigate" | "connectMode"
+      "workspacePath" | "workspaceId" | "workspaceName" | "reason" | "connectMode" | "navigate"
     >,
   ) {
     await activateOrchestratorWorkspace(options);
     const nextInfo = await withTimeoutOrThrow(
-      deps.readEngineInfo(),
+      deps.readEngineInfo(options.workspaceId, options.workspacePath),
       { timeoutMs: 12_000, label: "engine_info" },
     );
     return await reconnectFromEngineSnapshot(nextInfo, options);

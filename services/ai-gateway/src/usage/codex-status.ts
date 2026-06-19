@@ -3,6 +3,7 @@ import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { CODEX_DEFAULT_MODEL } from "../providers/codex-model-catalog.js";
 import { materializeCodexAuthJson } from "../providers/codex-cli-worker-transport.js";
 
 export type CodexUsageStatusSource =
@@ -448,6 +449,8 @@ async function runCodexExecRateLimitProbe(input: {
         "--ask-for-approval",
         "never",
         "exec",
+        "--model",
+        CODEX_DEFAULT_MODEL,
         "--cd",
         scratchDir,
         "--skip-git-repo-check",

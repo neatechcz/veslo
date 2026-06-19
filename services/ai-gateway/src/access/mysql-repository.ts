@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 import type { AiGatewayDb } from "../db/index.js";
@@ -14,6 +14,15 @@ import type {
 
 export class MySqlAiAccessRepository implements AiAccessRepository {
   constructor(private readonly db: AiGatewayDb) {}
+
+  async countEnabledPolicies(): Promise<number> {
+    const rows = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(userAiAccessPolicyTable)
+      .where(and(eq(userAiAccessPolicyTable.enabled, 1), isNotNull(userAiAccessPolicyTable.provider)));
+
+    return Number(rows[0]?.count ?? 0);
+  }
 
   async getUserAiAccess(userId: string): Promise<UserAiAccessPolicyRecord | null> {
     const rows = await this.db

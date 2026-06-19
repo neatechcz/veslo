@@ -2,10 +2,16 @@ import { minimatch } from "minimatch";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import type { HubMcpItem, McpItem } from "./types.js";
+import { localUserResourceOwner, workspaceResourceOwner } from "./resource-owner.js";
+import type { HubMcpItem, McpItem, ResourceOwner } from "./types.js";
 import { readJsoncFile, updateJsoncTopLevel } from "./jsonc.js";
 import { opencodeConfigPath } from "./workspace-files.js";
 import { validateMcpConfig, validateMcpName } from "./validators.js";
+
+export type ListMcpOptions = {
+  workspaceOwner?: ResourceOwner;
+  globalOwner?: ResourceOwner;
+};
 
 function globalOpenCodeConfigPath(): string {
   const base = join(homedir(), ".config", "opencode");
@@ -37,12 +43,14 @@ function isMcpDisabledByTools(config: Record<string, unknown>, name: string): bo
   return patterns.some((pattern) => candidates.some((candidate) => minimatch(candidate, pattern)));
 }
 
-export async function listMcp(workspaceRoot: string): Promise<McpItem[]> {
+export async function listMcp(workspaceRoot: string, options: ListMcpOptions = {}): Promise<McpItem[]> {
   const { data: config } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
   const { data: globalConfig } = await readJsoncFile(globalOpenCodeConfigPath(), {} as Record<string, unknown>);
 
   const projectMcpMap = getMcpConfig(config);
   const globalMcpMap = getMcpConfig(globalConfig);
+  const workspaceOwner = options.workspaceOwner ?? workspaceResourceOwner({ root: workspaceRoot });
+  const globalOwner = options.globalOwner ?? localUserResourceOwner();
 
   const items: McpItem[] = [];
 
@@ -53,6 +61,7 @@ export async function listMcp(workspaceRoot: string): Promise<McpItem[]> {
       name,
       config: entry,
       source: "config.global",
+      owner: globalOwner,
       disabledByTools:
         (isMcpDisabledByTools(globalConfig, name) || isMcpDisabledByTools(config, name)) || undefined,
     });
@@ -64,6 +73,7 @@ export async function listMcp(workspaceRoot: string): Promise<McpItem[]> {
       name,
       config: entry,
       source: "config.project",
+      owner: workspaceOwner,
       disabledByTools: isMcpDisabledByTools(config, name) || undefined,
     });
   }
@@ -109,8 +119,11 @@ export async function installHubMcp(
 
   if (item.config.type === "remote") {
     config.url = item.config.url;
-    if (typeof item.config.oauth === "boolean") {
+    if (typeof item.config.oauth === "boolean" || typeof item.config.oauth === "object") {
       config.oauth = item.config.oauth;
+    }
+    if (item.config.headers && Object.keys(item.config.headers).length > 0) {
+      config.headers = item.config.headers;
     }
   }
 

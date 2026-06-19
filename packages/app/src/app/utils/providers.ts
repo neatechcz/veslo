@@ -1,7 +1,5 @@
-import type { Provider as ConfigProvider, ProviderListResponse } from "@opencode-ai/sdk/v2/client";
-
-type ProviderListItem = ProviderListResponse["all"][number];
-type ProviderListModel = ProviderListItem["models"][string];
+import type { Provider as ConfigProvider } from "@opencode-ai/sdk/v2/client";
+import type { ProviderListItem, ProviderListModel } from "../types";
 
 type ProviderConnectionItem = Pick<ProviderListItem, "id" | "env">;
 
@@ -76,37 +74,39 @@ export const extractOpenAiCompatibleModelIds = (payload: unknown) => {
   return Array.from(ids);
 };
 
+const MODEL_MODALITIES = ["text", "audio", "image", "video", "pdf"] as const;
+type ModelModality = (typeof MODEL_MODALITIES)[number];
+
+const enabledModalities = (value: unknown): ModelModality[] => {
+  if (!value || typeof value !== "object") return [];
+  const record = value as Record<string, unknown>;
+  return MODEL_MODALITIES.filter((key) => record[key] === true);
+};
+
 const buildModalities = (caps?: ConfigProvider["models"][string]["capabilities"]) => {
   if (!caps) return undefined;
-
-  const input = Object.entries(caps.input)
-    .filter(([, enabled]) => enabled)
-    .map(([key]) => key as "text" | "audio" | "image" | "video" | "pdf");
-  const output = Object.entries(caps.output)
-    .filter(([, enabled]) => enabled)
-    .map(([key]) => key as "text" | "audio" | "image" | "video" | "pdf");
-
+  const input = enabledModalities(caps.input);
+  const output = enabledModalities(caps.output);
   if (!input.length && !output.length) return undefined;
   return { input, output };
 };
 
-const mapModel = (model: ConfigProvider["models"][string]): ProviderListModel => {
-  const interleaved = model.capabilities?.interleaved;
-  const modalities = buildModalities(model.capabilities);
-  const status = model.status === "alpha" || model.status === "beta" || model.status === "deprecated"
-    ? model.status
-    : undefined;
+const normalizeModelStatus = (value: unknown): ProviderListModel["status"] => {
+  return value === "alpha" || value === "beta" || value === "deprecated" || value === "active" ? value : undefined;
+};
 
+const mapModel = (modelId: string, model: ConfigProvider["models"][string]): ProviderListModel => {
+  const status = normalizeModelStatus(model.status);
   return {
-    id: model.id,
-    name: model.name ?? model.id,
+    id: model.id ?? modelId,
+    name: model.name ?? model.id ?? modelId,
     family: model.family,
     release_date: model.release_date ?? "",
     attachment: model.capabilities?.attachment ?? false,
-    reasoning: model.capabilities?.reasoning ?? false,
+    reasoning: Boolean(model.capabilities?.reasoning),
     temperature: model.capabilities?.temperature ?? false,
     tool_call: model.capabilities?.toolcall ?? false,
-    interleaved: interleaved === false ? undefined : interleaved,
+    interleaved: model.capabilities?.interleaved ? true : undefined,
     cost: model.cost
       ? {
           input: model.cost.input,
@@ -124,7 +124,7 @@ const mapModel = (model: ConfigProvider["models"][string]): ProviderListModel =>
         }
       : undefined,
     limit: model.limit,
-    modalities,
+    modalities: buildModalities(model.capabilities),
     experimental: status === "alpha" ? true : undefined,
     status,
     options: model.options ?? {},
@@ -134,19 +134,15 @@ const mapModel = (model: ConfigProvider["models"][string]): ProviderListModel =>
   };
 };
 
-export const mapConfigProvidersToList = (providers: ConfigProvider[]): ProviderListResponse["all"] =>
-  providers.map((provider) => {
-    const models = Object.fromEntries(
-      Object.entries(provider.models ?? {}).map(([key, model]) => [key, mapModel(model)]),
-    );
-
-    return {
-      id: provider.id,
-      name: provider.name ?? provider.id,
-      env: provider.env ?? [],
-      models,
-    };
-  });
+export const mapConfigProvidersToList = (providers: ConfigProvider[]): ProviderListItem[] =>
+  providers.map((provider) => ({
+    id: provider.id,
+    name: provider.name ?? provider.id,
+    env: provider.env ?? [],
+    models: Object.fromEntries(
+      Object.entries(provider.models ?? {}).map(([modelId, model]) => [modelId, mapModel(modelId, model)]),
+    ),
+  }));
 
 export const resolveEffectiveConnectedProviderIds = (
   providers: ProviderConnectionItem[],

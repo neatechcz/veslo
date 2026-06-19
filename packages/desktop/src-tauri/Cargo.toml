@@ -17,12 +17,12 @@ notify = "6.1"
 os_pipe = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-shared_child = "1"
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["devtools"] }
 tauri-plugin-deep-link = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-http = { version = "2.5.6", default-features = false, features = ["rustls-tls", "http2", "charset", "macos-system-configuration"] }
 tauri-plugin-opener = "2.5.3"
+tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot", rev = "85d9091e616f90167399ac45f89edf028cdb3895" }
 tauri-plugin-shell = "2"
 tauri-plugin-single-instance = "2"
 uuid = { version = "1", features = ["v4"] }
@@ -33,7 +33,14 @@ local-ip-address = "0.5"
 walkdir = "2.5"
 zip = "0.6"
 include_dir = "0.7"
-tauri-plugin-pilot = { version = "0.7.1", default-features = false }
+tauri-plugin-webdriver = { version = "0.2", optional = true }
+sha1 = "0.10"
+# VSLO-86 — async SSE streaming in Rust so engine event subscription doesn't
+# block paralel short requests through the Tauri http plugin's IPC channel.
+reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls", "http2", "charset"] }
+futures-util = "0.3"
+tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread"] }
+base64 = "0.22"
 
 [profile.release]
 panic = "abort"
@@ -45,6 +52,10 @@ strip = true
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-process = "2.3.1"
 tauri-plugin-updater = "2.9.0"
+
+[target.'cfg(windows)'.dependencies]
+os_pipe = "1"
+shared_child = "1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"

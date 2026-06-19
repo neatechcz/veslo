@@ -54,7 +54,7 @@ export type OnboardingViewProps = {
   onRememberStartupToggle: () => void;
   onStartHost: () => void;
   onRepairMigration: () => void;
-  onCreateWorkspace: (preset: "starter" | "automation" | "minimal", folder: string | null) => void;
+  onCreateWorkspace: (preset: "starter" | "automation" | "minimal", folder: string | null) => void | Promise<void>;
   onPickWorkspaceFolder: () => Promise<string | null>;
   onImportWorkspaceConfig: () => void;
   importingWorkspaceConfig: boolean;

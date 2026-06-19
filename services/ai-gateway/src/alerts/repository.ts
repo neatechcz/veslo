@@ -3,6 +3,7 @@ export type AlertRecord = {
   title: string;
   severity: "critical" | "high" | "medium";
   source: string;
+  reason: string | null;
   status: "active" | "acknowledged" | "resolved";
   credentialId: string | null;
   affectedSessions: number;
@@ -26,8 +27,17 @@ export type AlertActionInput = {
   actorUserId?: string | null;
 };
 
+export type RecordProviderFailureAlertInput = {
+  credentialId: string;
+  provider: string;
+  sessionId: string;
+  reason: string;
+  occurredAt?: Date | null;
+};
+
 export interface AlertRepository {
   listAlerts(): Promise<AlertRecord[]>;
+  recordProviderFailure?(input: RecordProviderFailureAlertInput): Promise<void>;
   acknowledgeAlert?(input: AlertActionInput): Promise<AlertRecord | null>;
   resolveAlert?(input: AlertActionInput): Promise<AlertRecord | null>;
 }

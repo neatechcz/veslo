@@ -8,7 +8,6 @@ import type {
   GlobalHealthResponse,
   LspStatus,
   Project,
-  ProviderListResponse,
   ProviderAuthResponse,
   Message,
   Part,
@@ -16,11 +15,12 @@ import type {
   VcsInfo,
 } from "@opencode-ai/sdk/v2/client";
 
-import type { McpStatusMap, TodoItem } from "../types";
+import type { McpStatusMap, ProviderListState, TodoItem } from "../types";
 import { unwrap } from "../lib/opencode";
 import { safeStringify } from "../utils";
 import { isGatewayOwnedProvider, mapConfigProvidersToList, mergeConnectedProviderIds } from "../utils/providers";
 import { useGlobalSDK } from "./global-sdk";
+import { useServer } from "./server";
 
 export type WorkspaceState = {
   status: "idle" | "loading" | "partial" | "ready";
@@ -43,7 +43,7 @@ type GlobalState = {
   error?: string;
   serverVersion?: string;
   config: Config;
-  provider: ProviderListResponse;
+  provider: ProviderListState;
   providerAuth: ProviderAuthResponse;
   mcp: Record<string, McpStatusMap>;
   lsp: Record<string, LspStatus[]>;
@@ -73,7 +73,8 @@ const createWorkspaceState = (): WorkspaceState => ({
 
 export function GlobalSyncProvider(props: ParentProps) {
   const globalSDK = useGlobalSDK();
-  const defaultProvider: ProviderListResponse = { all: [], connected: [], default: {} };
+  const server = useServer();
+  const defaultProvider: ProviderListState = { all: [], connected: [], default: {} };
   const [globalStore, setGlobalStore] = createStore<GlobalState>({
     ready: false,
     error: undefined,
@@ -258,7 +259,13 @@ export function GlobalSyncProvider(props: ParentProps) {
 
   createEffect(() => {
     const url = globalSDK.url();
-    if (!url) return;
+    // Send-timeout fix 2026-06-10 — this refresh used to burst engine-proxy
+    // reads (config/providers/mcp/lsp/project) as soon as the URL was known,
+    // even when no engine was running, which cold-spawned the engine via the
+    // orchestrator proxy. Gate on the health poll instead; the healthy
+    // false->true flip also re-fires the burst once the engine comes up.
+    const isHealthy = server.healthy() === true;
+    if (!url || !isHealthy) return;
     void refresh();
   });
 

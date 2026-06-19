@@ -46,7 +46,7 @@ const appendPathsToDraft = (draft: ComposerDraft, relativePaths: string[]): Comp
 const modelSupportsInlineImages = (model: ModelRef, providers: ProviderListItem[]) => {
   const provider = providers.find((entry) => entry.id === model.providerID);
   const modelInfo = provider?.models?.[model.modelID];
-  return Boolean(modelInfo?.modalities?.input?.includes("image"));
+  return Boolean(modelInfo?.modalities?.input?.includes("image") || modelInfo?.attachment);
 };
 
 const NON_VISION_IMAGE_ERROR =

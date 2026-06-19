@@ -18,6 +18,8 @@ test("owned-server deployment workflow deploys the Compose stack on the owned-se
   for (const requiredText of [
     "name: Deploy Owned Server",
     "workflow_dispatch",
+    "install_backup_timer",
+    "run_backup_now",
     "runs-on:",
     "self-hosted",
     "linux",
@@ -32,7 +34,7 @@ test("owned-server deployment workflow deploys the Compose stack on the owned-se
     "git_auth fetch --prune origin",
     "packaging/owned-server/compose.yml",
     "docker compose",
-    "build worker-runtime-image worker-manager den ai-gateway web",
+    "build worker-runtime-image worker-manager backup den ai-gateway web",
     "pnpm --filter @neatech/den db:migrate",
     "pnpm --filter @neatech/ai-gateway db:migrate",
     "https://api.veslo.work/health",
@@ -40,6 +42,12 @@ test("owned-server deployment workflow deploys the Compose stack on the owned-se
     "https://app.veslo.work",
     "compose exec -T worker-manager",
     "http://127.0.0.1:8790/health",
+    "Install owned-server backup scheduler",
+    "compose up -d backup",
+    "Run owned-server backup now",
+    "compose run --rm --no-deps backup",
+    "sha256sum -c den.sql.zst.sha256",
+    "sha256sum -c ai-gateway.sql.zst.sha256",
   ]) {
     assert.match(workflowSource, new RegExp(requiredText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
   }

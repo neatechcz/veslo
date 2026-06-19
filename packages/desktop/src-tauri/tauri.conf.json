@@ -19,7 +19,7 @@
         "minWidth": 390,
         "height": 820,
         "resizable": true,
-        "devtools": false,
+        "devtools": true,
         "dragDropEnabled": false
       }
     ],
@@ -36,7 +36,13 @@
     "windows": {
       "wix": {
         "upgradeCode": "d7c34db0-c7b1-5844-91a5-7beada0715b0",
-        "version": "26.6.2"
+        "version": "26.6.2",
+        "fragmentPaths": [
+          "windows/wsl2-sandbox-installer.wxs"
+        ],
+        "componentGroupRefs": [
+          "VesloWslProvisioningInstallerComponents"
+        ]
       }
     },
     "icon": [
@@ -53,8 +59,14 @@
       "sidecars/veslo-code-router",
       "sidecars/veslo-orchestrator",
       "sidecars/chrome-devtools-mcp",
-      "sidecars/versions.json"
-    ]
+      "sidecars/versions.json",
+      "sidecars/opencode-managed-deps.json"
+    ],
+    "resources": {
+      "../package.json": "package.json",
+      "../../orchestrator/scripts/windows-wsl2-sandbox-provision.ps1": "windows-wsl2-sandbox-provision.ps1",
+      "windows/wsl2-sandbox-installer.ps1": "wsl2-sandbox-installer.ps1"
+    }
   },
   "plugins": {
     "deep-link": {

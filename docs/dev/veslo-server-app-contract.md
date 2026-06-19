@@ -19,12 +19,35 @@ The app treats Veslo server as the canonical workspace-control API for:
 
 The app should prefer these server surfaces over inventing parallel client-only behavior.
 
-For OpenCode prompt execution, workspace switching, conversation/session
-binding, sandboxed execution, and non-sandbox multi-workspace execution, use
-`docs/dev/opencode-workspace-runtime-architecture.md` as the canonical runtime
-contract. In short: the app sends user intent, Veslo server owns the
-conversation/run boundary, and OpenCode session ids/directories are internal
-runtime details controlled by Veslo.
+## Resource Ownership Contract
+
+App-facing inventory records for local MCP entries, skills, plugins, commands,
+and Veslo-created user-global skills may include an `owner` envelope:
+
+```ts
+type ResourceOwner = {
+  kind: "workspace" | "user" | "organization" | "platform";
+  id: string;
+  label?: string;
+  root?: string;
+};
+```
+
+`owner` identifies who owns the durable definition of the item. Existing
+`scope` and `source` fields remain as legacy provenance and ordering metadata
+during migration.
+
+- Workspace-owned resources are definitions stored in workspace config or
+  workspace-local files. Workspace routes should use the configured
+  `workspace.id`; direct helper calls may fall back to a normalized root path.
+- User-owned resources are definitions stored in user-global config/files or
+  the Veslo user-global skill store. Local desktop without cloud identity uses
+  the local user owner fallback.
+- Organization and platform owners are reserved for registry-managed or
+  policy-managed resources.
+- For MCP, this owner is the config/listing owner only. MCP polling,
+  connection state, OAuth grant ownership, and runtime refresh ownership remain
+  separate concerns and must not be inferred from this field.
 
 ## Auth Model
 
@@ -156,19 +179,26 @@ Server-controlled registry package materialization is a local server responsibil
 - `POST /workspace/:id/skills/materialization/sync`
   Requires host or owner auth. Downloads the desired registry workspace skill set and matching selected-workspace rollout policies, validates package archives, writes server-controlled runtime skill directories, returns any resolver `conflicts`, and returns `pending` without mutating files when the caller reports an active run.
 
-Before starting or switching a local runtime, the app must check
-`GET /skills/materialization` and run `POST /skills/materialization/sync-global`
-when the global status is pending or reload-required, including the no-registry
-platform-managed case. This global check happens before the workspace
-materialization status can skip because no registry is configured. If a run is
-active, the app sends `activeRun: true` so the server records pending sync
-instead of mutating managed skill files.
+Veslo-created user skills use a local server store separate from legacy
+filesystem user skill roots:
 
-If registry-backed materialization fails because the remote registry or Den
-control plane is unavailable, prompt send warmup should continue with the
-existing local materialized skill state and report the registry failure as
-degraded telemetry. Local write/config/runtime failures remain blocking because
-they can leave the runtime skill set unsafe or inconsistent.
+- `GET /skills/user-global-store`
+  Requires client auth. Returns store-backed user skills with virtual
+  `veslo-user-store://<name>` paths.
+- `GET /skills/user-global-store/:name`
+  Requires client auth. Returns the normalized `SKILL.md` content for one
+  store-backed user skill.
+- `POST /skills/user-global-store`
+  Requires collaborator client auth. Creates or updates one store-backed user
+  skill in the Veslo data directory.
+- `DELETE /skills/user-global-store/:name`
+  Requires collaborator client auth. Deletes one store-backed user skill from
+  the Veslo data directory.
+- `POST /workspace/:id/skills/user-global-store/sync`
+  Requires collaborator client auth plus host approval for the materialization
+  path. Writes enabled store-backed user skills into
+  `.opencode/skills/veslo-user/` for that workspace, removes stale managed
+  copies, and returns conflicts instead of overwriting workspace-local skills.
 
 Rollout policy resolution must enforce target exclusivity: the same effective
 skill/audience cannot be materialized as both a user skill and a workspace skill.
@@ -238,6 +268,8 @@ Common app flows:
 
 - `GET /workspaces`
   Discover available workspaces and active workspace.
+- `POST /workspaces/local`
+  Register a desktop-local workspace with the server before workspace-scoped config, mutation, or OpenCode write flows depend on it.
 - `GET /workspace/:id/config`
   Read workspace-scoped Veslo config.
 - `PATCH /workspace/:id/config`
@@ -247,50 +279,40 @@ Common app flows:
 
 Use workspace-scoped URLs whenever possible, including the mounted `/w/:id/...` forms.
 
-## Automations Contract
+### Local Workspace Registration
 
-Veslo server is the app-facing API for workspace automations. The app should use
-these routes instead of writing automation JSON directly:
+For desktop-local workspaces, the app should preserve the raw platform path when registering the workspace and include current OpenCode routing metadata when available: `baseUrl`, `directory`, `opencodeUsername`, and `opencodePassword`. A duplicate `POST /workspaces/local` with updated OpenCode metadata may update the existing workspace registration instead of failing as a plain duplicate.
 
-- `GET /workspace/:id/automations`
-  Requires client auth. Viewer, collaborator, and owner tokens can read. Returns
-  `{ items, updatedAt }`; reading migrates legacy Agent Lab automation state
-  into the canonical automation store when needed. On read-only servers, legacy
-  items are returned as an in-memory view and the canonical file is not written.
-- `POST /workspace/:id/automations`
-  Requires collaborator client auth. Creates an automation from `name`,
-  `prompt`, `schedule`, optional `target`, and optional `enabled`/`status`.
-  Active enabled automations return a persisted `automation.nextRunAt`. A
-  caller-supplied duplicate automation id is rejected with a conflict response.
-- `PATCH /workspace/:id/automations/:automationId`
-  Requires collaborator client auth. Updates name, prompt, schedule, target, and
-  pause/resume/cancel state. Paused, disabled, completed, failed, and cancelled
-  automations do not have a scheduled `nextRunAt`. Terminal states are not
-  reactivated by bare `enabled: true`; reactivation requires explicit active
-  status and an updated future one-shot or recurring schedule.
-- `DELETE /workspace/:id/automations/:automationId`
-  Requires collaborator client auth. Cancels the automation by marking it
-  disabled with `status: "cancelled"` and `nextRunAt: null`; run history is
-  preserved.
-- `POST /workspace/:id/automations/:automationId/run`
-  Requires collaborator client auth. Runs the automation immediately through the
-  workspace OpenCode upstream and returns `{ run }`. Target `agent`, `model`,
-  and `variant` values are forwarded to the OpenCode prompt request when set.
-- `GET /workspace/:id/automations/:automationId/runs`
-  Requires client auth. Viewer, collaborator, and owner tokens can read run
-  history. Returns `{ items }`.
+When a local workspace has no explicit OpenCode `baseUrl`, a desktop-launched server may derive the effective OpenCode base URL from its orchestrator daemon URL and the workspace id using the mounted workspace route: `{orchestratorDaemonUrl}/workspace/:id/opencode`. The app should still pass fresh engine metadata when it has it, because explicit routing data avoids stale path-only registrations.
 
-Automation mutation routes record audit actions `automations.create`,
-`automations.update`, `automations.delete`, and `automations.run`. The server
-refreshes the in-process automation runner after create/update/delete so local
-schedules reflect persisted state.
+Windows path checks must tolerate extended-length prefixes such as `\\?\` and compare normalized roots case-insensitively for authorization. The raw path should remain available for persistence and engine handoff; normalized paths are for comparison.
 
-Agent Lab compatibility routes under
-`/workspace/:id/agentlab/automations...` remain available for older callers.
-They read through the canonical automation store and legacy migration path
-where practical, but list only legacy-compatible schedules (`interval`, `daily`,
-`weekly`) and report failed manual runs as failures. New app work should target
-`/workspace/:id/automations`.
+### Conversation and Transcript Reads
+
+`GET /workspace/:id/conversations` is host-first by default. When the host
+conversation store already has rows, the route returns those rows without
+touching the sandbox or OpenCode database. App code may pass `sync=true` only
+for a workspace whose engine is already warm or has an active run, including
+ready or busy routed workspaces that are not the selected UI workspace. That
+opt-in read unions the live source with host bindings and tunnels any missing
+sessions back into the host store; it must not be used to cold-start another
+workspace runtime.
+
+`POST /workspace/:id/conversations/:conversationId/runs` is server-authoritative
+for conversation run admission. A successful immediate submit returns
+`status: "submitted"` with `runId`. If the orchestrator lifecycle reports an
+active run for the conversation, the server persists the request in its durable
+run queue and returns `status: "queued"` with `queueItemId`, `reservedRunId`,
+`activeRunId`, and `queuePosition`. App clients must treat `queued` as an
+accepted send, not as a failed send or transcript error. `run_already_active`
+is an internal lifecycle lock signal and should not be surfaced as the normal
+client-facing response for this route.
+
+`POST /workspace/:id/sessions/:sessionId/transcript` persists live transcript
+snapshots into the host store. `messages` plus `partsByMessageId` are the
+current snapshot; callers may also send `deletedMessageIds` and
+`deletedPartsByMessageId` so host-first transcript reads do not resurrect parts
+or messages that the live stream removed.
 
 ## Capability Discovery
 

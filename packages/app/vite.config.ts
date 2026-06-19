@@ -28,6 +28,9 @@ export default defineConfig({
   server: {
     port: devPort,
     strictPort: true,
+    watch: {
+      ignored: ["**/src/app/tests/**", "**/*.test.ts", "**/*.test.tsx"],
+    },
     ...(allowedHosts.size > 0 ? { allowedHosts: Array.from(allowedHosts) } : {}),
   },
   build: {

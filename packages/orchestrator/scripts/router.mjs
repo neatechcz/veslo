@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const cliPath = resolve(__dirname, "..", "dist", "cli.js");
+const cliRuntime = process.env.VESLO_ORCHESTRATOR_TEST_RUNTIME || "bun";
 
 async function findFreePort() {
   return new Promise((resolve, reject) => {
@@ -65,7 +66,7 @@ async function waitFor(url, daemon, daemonLogs, timeoutMs = 30_000, pollMs = 250
 }
 
 async function runCli(args, dataDir) {
-  const child = spawn("node", [cliPath, ...args], {
+  const child = spawn(cliRuntime, [cliPath, ...args], {
     env: {
       ...process.env,
       VESLO_DATA_DIR: dataDir,
@@ -86,7 +87,8 @@ async function runCli(args, dataDir) {
 
   const [code] = await once(child, "exit");
   if (code !== 0) {
-    throw new Error(stderr.trim() || `veslo failed with code ${code}`);
+    const detail = stderr.trim() || stdout.trim() || `veslo failed with code ${code}`;
+    throw new Error(`veslo ${args.join(" ")} failed: ${detail}`);
   }
   const trimmed = stdout.trim();
   return trimmed ? JSON.parse(trimmed) : null;
@@ -108,7 +110,7 @@ const opencodePort = await findFreePort();
 const daemonUrl = `http://127.0.0.1:${daemonPort}`;
 
 const daemon = spawn(
-  "node",
+  cliRuntime,
   [
     cliPath,
     "daemon",
@@ -151,7 +153,8 @@ try {
   const idB = addedB.workspace.id;
 
   const status1 = await runCli(["daemon", "status", "--json"], dataDir);
-  const pid1 = status1.opencode.pid;
+  assert.ok(Array.isArray(status1.engines), "daemon status should expose engine pool snapshot");
+  assert.equal(status1.engines.length, 0, "metadata-only workspace commands should not spawn engines");
 
   const pathA = await runCli(["workspace", "path", idA, "--json"], dataDir);
   const pathB = await runCli(["workspace", "path", idB, "--json"], dataDir);
@@ -160,14 +163,18 @@ try {
   assert.equal(normalizeMacOSTempPath(pathB.path.directory), normalizeMacOSTempPath(workspaceB));
 
   const status2 = await runCli(["daemon", "status", "--json"], dataDir);
-  const pid2 = status2.opencode.pid;
-  assert.equal(pid1, pid2);
+  assert.ok(Array.isArray(status2.engines), "daemon status should expose engine pool snapshot");
+  assert.equal(status2.engines.length, 0, "workspace path lookups should not spawn engines");
 
   const disposed = await runCli(["instance", "dispose", idA, "--json"], dataDir);
   assert.equal(disposed.disposed, true);
 
   const pathA2 = await runCli(["workspace", "path", idA, "--json"], dataDir);
   assert.equal(normalizeMacOSTempPath(pathA2.path.directory), normalizeMacOSTempPath(workspaceA));
+
+  const status3 = await runCli(["daemon", "status", "--json"], dataDir);
+  assert.ok(Array.isArray(status3.engines), "daemon status should expose engine pool snapshot");
+  assert.equal(status3.engines.length, 0, "disposing an idle workspace should not spawn engines");
 
   await runCli(["daemon", "stop", "--json"], dataDir);
   await Promise.race([once(daemon, "exit"), new Promise((resolve) => setTimeout(resolve, 3000))]);

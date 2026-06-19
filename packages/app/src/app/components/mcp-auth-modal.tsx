@@ -16,6 +16,16 @@ const MCP_AUTH_POLL_INTERVAL_MS = 2_000;
 const MCP_AUTH_TIMEOUT_MS = 90_000;
 const MCP_AUTH_DISCOVERY_TIMEOUT_MS = 15_000;
 
+export type McpAuthActiveSession = {
+  id: string;
+  title: string;
+  workspaceId?: string | null;
+  workspaceRoot?: string | null;
+  directory?: string | null;
+  conversationId?: string | null;
+  opencodeSessionId?: string | null;
+};
+
 export type McpAuthModalProps = {
   open: boolean;
   onClose: () => void;
@@ -23,13 +33,13 @@ export type McpAuthModalProps = {
   onReloadEngine?: () => void | Promise<void>;
   reloadRequired?: boolean;
   reloadBlocked?: boolean;
-  activeSessions?: Array<{ id: string; title: string }>;
+  activeSessions?: McpAuthActiveSession[];
   isRemoteWorkspace?: boolean;
   client: Client | null;
   entry: McpDirectoryInfo | null;
   projectDir: string;
   language: Language;
-  onForceStopSession?: (sessionID: string) => void | Promise<void>;
+  onForceStopSession?: (sessionID: string, session?: McpAuthActiveSession) => void | Promise<void>;
 };
 
 export default function McpAuthModal(props: McpAuthModalProps) {
@@ -141,7 +151,10 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     }
   };
 
-  const resolveSlug = (name: string) => validateMcpServerName(name).toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  const resolveServerKey = (entry: McpDirectoryInfo) => validateMcpServerName(entry.id?.trim() || entry.name);
+
+  const resolveSlug = (entry: McpDirectoryInfo) =>
+    resolveServerKey(entry).toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
   const waitForMcpAvailability = async (slug: string) => {
     const startedAt = Date.now();
@@ -183,7 +196,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
 
     let slug = "";
     try {
-      slug = resolveSlug(entry.name);
+      slug = resolveSlug(entry);
     } catch (err) {
       const message = err instanceof Error ? err.message : translate("mcp.auth.failed_to_start_oauth");
       setError(message);
@@ -327,7 +340,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     setCliAuthResult(null);
 
     try {
-      const result = await opencodeMcpAuth(props.projectDir, entry.name);
+      const result = await opencodeMcpAuth(props.projectDir, resolveServerKey(entry));
       if (result.ok) {
         setError(null);
         setNeedsReload(true);
@@ -381,7 +394,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
       try {
         await reloadEngine();
         if (!props.open) return;
-        const slug = resolveSlug(entry.name);
+        const slug = resolveSlug(entry);
         const status = await waitForMcpAvailability(slug);
         if (!status) {
           setAwaitingReload(false);
@@ -425,11 +438,14 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     startAuth(true);
   };
 
-  const handleForceStopSession = async (sessionID: string) => {
+  const handleForceStopSession = async (
+    sessionID: string,
+    session?: McpAuthActiveSession,
+  ) => {
     if (!props.onForceStopSession || forceStopBusySessionID()) return;
     setForceStopBusySessionID(sessionID);
     try {
-      await props.onForceStopSession(sessionID);
+      await props.onForceStopSession(sessionID, session);
     } finally {
       setForceStopBusySessionID(null);
     }
@@ -486,8 +502,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
 
     let slug = "";
     try {
-      const safeName = validateMcpServerName(entry.name);
-      slug = safeName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      slug = resolveSlug(entry);
     } catch (err) {
       const message = err instanceof Error ? err.message : translate("mcp.auth.failed_to_start_oauth");
       setError(message);
@@ -551,8 +566,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
 
     let slug = "";
     try {
-      const safeName = validateMcpServerName(entry.name);
-      slug = safeName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      slug = resolveSlug(entry);
     } catch (err) {
       const message = err instanceof Error ? err.message : translate("mcp.auth.failed_to_start_oauth");
       setError(message);
@@ -664,7 +678,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                           <button
                             type="button"
                             class="text-xs text-amber-11 underline underline-offset-2 hover:text-amber-12 transition-colors disabled:no-underline disabled:opacity-60"
-                            onClick={() => handleForceStopSession(session.id)}
+                            onClick={() => handleForceStopSession(session.id, session)}
                             disabled={forceStopBusySessionID() === session.id}
                           >
                             {forceStopBusySessionID() === session.id
@@ -872,6 +886,10 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                         {translate("mcp.auth.step3_description")}
                     </p>
                   </div>
+                </div>
+
+                <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 text-xs text-gray-10">
+                  {translate("mcp.auth.local_token_notice")}
                 </div>
               </div>
 

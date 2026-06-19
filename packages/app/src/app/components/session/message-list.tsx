@@ -773,14 +773,11 @@ export default function MessageList(props: MessageListProps) {
     Boolean(entry.row.technicalDetail) && (entry.part?.type !== "reasoning" || props.showThinking);
 
   const ProgressComment = (commentProps: { item: ProgressCommentItem }) => {
-    const commentCopyId = () => `${commentProps.item.id}:copy`;
-    const copyLabel = () =>
-      copyingId() === commentCopyId()
-        ? __vesloT("common.copied", __vesloCurrentLocale())
-        : __vesloT("common.copy", __vesloCurrentLocale());
+    const commentCopyId = () => `progress-comment:${commentProps.item.id}`;
+    const copyLabel = () => __vesloT("common.copy", __vesloCurrentLocale());
     return (
-      <div data-testid="session-progress-comment" class="group/progress-comment flex items-start gap-2 font-reading type-reading-md text-gray-12 antialiased">
-        <div data-testid="session-progress-comment-value" class="min-w-0 flex-1 select-text">
+      <div data-testid="session-progress-comment" class="group/progress-comment relative font-reading type-reading-md text-gray-12 antialiased">
+        <div data-testid="session-progress-comment-value" class="select-text">
           <PartView
             part={commentProps.item.part}
             developerMode={props.developerMode}
@@ -794,7 +791,7 @@ export default function MessageList(props: MessageListProps) {
         <button
           type="button"
           data-testid="session-progress-comment-copy"
-          class="mt-0.5 shrink-0 rounded p-1 text-dls-secondary opacity-100 transition-colors hover:bg-dls-hover hover:text-dls-text focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.24)] md:opacity-0 md:group-hover/progress-comment:opacity-100 md:group-focus-within/progress-comment:opacity-100 select-none"
+          class="absolute -right-2 top-0 rounded p-1 text-dls-secondary opacity-0 pointer-events-none transition-colors transition-opacity hover:bg-dls-hover hover:text-dls-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.24)] group-hover/progress-comment:opacity-100 group-hover/progress-comment:pointer-events-auto group-focus-within/progress-comment:opacity-100 group-focus-within/progress-comment:pointer-events-auto select-none"
           title={copyLabel()}
           aria-label={copyLabel()}
           onClick={(event) => {
@@ -1342,57 +1339,39 @@ export default function MessageList(props: MessageListProps) {
 
                                       <Show when={canShowTimelineTechnicalDetail(entry)}>
                                         {(() => {
-                                          const rowDetailId = timelineDetailId(entry);
-                                          const detailCopyId = `${rowDetailId}:copy`;
-                                          const detailCopyLabel =
-                                            copyingId() === detailCopyId
-                                              ? __vesloT("common.copied", __vesloCurrentLocale())
-                                              : __vesloT("common.copy", __vesloCurrentLocale());
+                                          const detailCopyId = `${entry.id}:technical-detail:copy`;
+                                          const copyLabel = __vesloT("common.copy", __vesloCurrentLocale());
                                           return (
-                                            <div class="mt-2">
-                                              <button
-                                                type="button"
-                                                class="font-product type-ui-xs inline-flex cursor-pointer items-center gap-1 text-gray-10 hover:text-gray-11"
-                                                aria-expanded={timelineDetailExpanded(rowDetailId)}
-                                                onClick={(event) => {
-                                                  event.preventDefault();
-                                                  event.stopPropagation();
-                                                  toggleTimelineDetail(rowDetailId);
-                                                }}
-                                              >
-                                                <ChevronRight
-                                                  size={12}
-                                                  class={`shrink-0 transition-transform duration-200 ${timelineDetailExpanded(rowDetailId) ? "rotate-90" : ""}`}
-                                                />
+                                            <details class="mt-2">
+                                              <summary class="font-product type-ui-xs inline-flex cursor-pointer list-none items-center gap-1 text-gray-10 hover:text-gray-11">
+                                                <ChevronDown size={12} class="shrink-0" />
                                                 {tr("session.timeline_technical_detail")}
-                                              </button>
-                                              <Show when={timelineDetailExpanded(rowDetailId)}>
-                                                <div class="mt-1 flex items-start gap-2 rounded-xl bg-gray-2 px-2 py-1">
-                                                  <pre
-                                                    data-testid="session-timeline-technical-detail-value"
-                                                    class="min-w-0 flex-1 select-text whitespace-pre-wrap break-all bg-transparent p-0 font-mono type-ui-xs text-gray-10"
-                                                  >
-                                                    <code>{row.technicalDetail}</code>
-                                                  </pre>
-                                                  <button
-                                                    type="button"
-                                                    data-testid="session-timeline-technical-detail-copy"
-                                                    class="mt-0.5 shrink-0 rounded p-1 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.24)] select-none"
-                                                    title={detailCopyLabel}
-                                                    aria-label={detailCopyLabel}
-                                                    onClick={(event) => {
-                                                      event.preventDefault();
-                                                      event.stopPropagation();
-                                                      handleCopy(String(row.technicalDetail ?? ""), detailCopyId);
-                                                    }}
-                                                  >
-                                                    <Show when={copyingId() === detailCopyId} fallback={<Copy size={12} />}>
-                                                      <Check size={12} class="text-green-10" />
-                                                    </Show>
-                                                  </button>
-                                                </div>
-                                              </Show>
-                                            </div>
+                                              </summary>
+                                              <div class="mt-1 flex items-start gap-2 rounded-xl bg-gray-2 px-2 py-1">
+                                                <pre
+                                                  data-testid="session-timeline-technical-detail-value"
+                                                  class="min-w-0 flex-1 select-text whitespace-pre-wrap break-all bg-transparent p-0 font-mono type-ui-xs text-gray-10"
+                                                >
+                                                  <code>{row.technicalDetail}</code>
+                                                </pre>
+                                                <button
+                                                  type="button"
+                                                  data-testid="session-timeline-technical-detail-copy"
+                                                  class="mt-0.5 shrink-0 rounded p-1 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.24)] select-none"
+                                                  title={copyLabel}
+                                                  aria-label={copyLabel}
+                                                  onClick={(event) => {
+                                                    event.preventDefault();
+                                                    event.stopPropagation();
+                                                    handleCopy(String(row.technicalDetail ?? ""), detailCopyId);
+                                                  }}
+                                                >
+                                                  <Show when={copyingId() === detailCopyId} fallback={<Copy size={12} />}>
+                                                    <Check size={12} class="text-green-10" />
+                                                  </Show>
+                                                </button>
+                                              </div>
+                                            </details>
                                           );
                                         })()}
                                       </Show>

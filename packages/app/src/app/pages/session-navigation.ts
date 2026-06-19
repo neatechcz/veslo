@@ -1,9 +1,12 @@
+import type { WorkspaceActivationOptions } from "../context/workspace-types";
+
 export type OpenSessionWithWorkspaceActivationInput = {
   activeWorkspaceId: string;
   getActiveWorkspaceId?: () => string;
   workspaceId: string;
   sessionId: string;
-  activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  activateWorkspace: (workspaceId: string, options: WorkspaceActivationOptions) => Promise<boolean> | boolean | void;
+  activateWorkspaceBeforeOpen?: boolean;
   openSession: (sessionId: string) => void;
 };
 
@@ -13,13 +16,16 @@ export type SessionBrowseScope = {
   sessionId: string;
   workspaceId: string;
   workspaceRoot: string;
+  directory?: string | null;
+  conversationId?: string | null;
+  opencodeSessionId?: string | null;
 };
 
 export type CreateSessionWithWorkspaceActivationInput = {
   activeWorkspaceId: string;
   getActiveWorkspaceId?: () => string;
   workspaceId: string;
-  activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  activateWorkspace: (workspaceId: string, options: WorkspaceActivationOptions) => Promise<boolean> | boolean | void;
   createSession: () => Promise<string | undefined> | string | undefined | void;
 };
 
@@ -27,7 +33,7 @@ export type OpenPendingDraftWithWorkspaceActivationInput = {
   activeWorkspaceId: string;
   getActiveWorkspaceId?: () => string;
   workspaceId: string;
-  activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  activateWorkspace: (workspaceId: string, options: WorkspaceActivationOptions) => Promise<boolean> | boolean | void;
   openPendingDraft: () => Promise<string | boolean | undefined> | string | boolean | undefined | void;
 };
 
@@ -38,7 +44,7 @@ export type CreateSessionFromDirectorySelectionInput = {
   ensureWorkspaceForFolder: (
     folder: string,
   ) => Promise<{ id: string } | null> | { id: string } | null;
-  activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  activateWorkspace: (workspaceId: string, options: WorkspaceActivationOptions) => Promise<boolean> | boolean | void;
   createSession: () => Promise<string | undefined> | string | undefined | void;
 };
 
@@ -49,7 +55,7 @@ export type OpenPendingDraftFromDirectorySelectionInput = {
   ensureWorkspaceForFolder: (
     folder: string,
   ) => Promise<{ id: string } | null> | { id: string } | null;
-  activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  activateWorkspace: (workspaceId: string, options: WorkspaceActivationOptions) => Promise<boolean> | boolean | void;
   openPendingDraft: (
     target: { workspaceId: string; directory: string },
   ) => Promise<string | boolean | undefined> | string | boolean | undefined | void;
@@ -75,12 +81,21 @@ export async function openSessionWithWorkspaceActivation(
 ): Promise<OpenSessionWithWorkspaceActivationResult> {
   const sessionId = input.sessionId.trim();
   const workspaceId = input.workspaceId.trim();
+  const activeWorkspaceId = input.activeWorkspaceId.trim();
+  const getActiveWorkspaceId = () => input.getActiveWorkspaceId?.().trim() || activeWorkspaceId;
   if (!sessionId || !workspaceId) return "blocked";
 
   const token = ++openSessionNavigationToken;
 
   const run = async () => {
     if (token !== openSessionNavigationToken) return "superseded";
+
+    if (input.activateWorkspaceBeforeOpen && workspaceId !== getActiveWorkspaceId()) {
+      const activated = await Promise.resolve(input.activateWorkspace(workspaceId, {
+        origin: "session-navigation:open-session-before-open",
+      }));
+      if (!activated) return "blocked";
+    }
 
     if (token !== openSessionNavigationToken) return "superseded";
     input.openSession(sessionId);
@@ -109,7 +124,7 @@ export async function createSessionWithWorkspaceActivation(
     if (token !== createSessionNavigationToken) return false;
 
     if (workspaceId !== getActiveWorkspaceId()) {
-      const activated = await Promise.resolve(input.activateWorkspace(workspaceId));
+      const activated = await Promise.resolve(input.activateWorkspace(workspaceId, { origin: "session-navigation:create-session" }));
       if (!activated) return false;
     }
 
@@ -141,7 +156,7 @@ export async function openPendingDraftWithWorkspaceActivation(
     if (token !== openPendingDraftNavigationToken) return false;
 
     if (workspaceId !== getActiveWorkspaceId()) {
-      const activated = await Promise.resolve(input.activateWorkspace(workspaceId));
+      const activated = await Promise.resolve(input.activateWorkspace(workspaceId, { origin: "session-navigation:open-pending-draft" }));
       if (!activated) return false;
     }
 

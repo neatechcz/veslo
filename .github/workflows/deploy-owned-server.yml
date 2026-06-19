@@ -8,6 +8,16 @@ on:
         required: false
         type: string
         default: ""
+      install_backup_timer:
+        description: "Install or update the owned-server daily database backup scheduler."
+        required: true
+        type: boolean
+        default: true
+      run_backup_now:
+        description: "Run one owned-server database backup after a successful deployment."
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -24,6 +34,8 @@ jobs:
       OWNED_SERVER_APP_DIR: ${{ vars.OWNED_SERVER_APP_DIR || '/home/neatech/veslo-owned-server-production' }}
       OWNED_SERVER_ENV_FILE: ${{ vars.OWNED_SERVER_ENV_FILE || '/home/neatech/veslo-owned-server-dark-launch-inputs/env/production.env' }}
       DEPLOY_BRANCH: ${{ github.event.inputs.branch || github.ref_name }}
+      INSTALL_BACKUP_TIMER: ${{ inputs.install_backup_timer }}
+      RUN_BACKUP_NOW: ${{ inputs.run_backup_now }}
       REPO_URL: https://github.com/${{ github.repository }}.git
       GITHUB_TOKEN: ${{ github.token }}
     steps:
@@ -62,9 +74,12 @@ jobs:
           fi
 
           cd "$OWNED_SERVER_APP_DIR"
+          git reset --hard
+          git clean -fd
           git_auth fetch --prune origin "+refs/heads/$DEPLOY_BRANCH:refs/remotes/origin/$DEPLOY_BRANCH"
-          git checkout --detach "origin/$DEPLOY_BRANCH"
+          git checkout --force --detach "origin/$DEPLOY_BRANCH"
           git reset --hard "origin/$DEPLOY_BRANCH"
+          git clean -fd
 
           test -f "$OWNED_SERVER_ENV_FILE"
           test -f packaging/owned-server/compose.yml
@@ -74,7 +89,7 @@ jobs:
           }
 
           compose config --quiet
-          compose build worker-runtime-image worker-manager den ai-gateway web
+          compose build worker-runtime-image worker-manager backup den ai-gateway web
           compose up -d den-db ai-gateway-db worker-manager
           compose run --rm --no-deps den pnpm --filter @neatech/den db:migrate
           compose run --rm --no-deps ai-gateway pnpm --filter @neatech/ai-gateway db:migrate
@@ -104,3 +119,54 @@ jobs:
               exit 1
             fi
           done
+
+      - name: Install owned-server backup scheduler
+        if: env.INSTALL_BACKUP_TIMER == 'true'
+        run: |
+          set -euo pipefail
+
+          cd "$OWNED_SERVER_APP_DIR"
+
+          compose() {
+            sudo -n docker compose -f packaging/owned-server/compose.yml --env-file "$OWNED_SERVER_ENV_FILE" "$@"
+          }
+
+          for key in LETTR_API_KEY AUTH_EMAIL_ADDRESS AUTH_EMAIL_FROM_NAME; do
+            if ! grep -Eq "^${key}=.+" "$OWNED_SERVER_ENV_FILE"; then
+              echo "::error::Missing backup alert env value: $key"
+              exit 1
+            fi
+          done
+
+          if ! grep -Eq '^(BACKUP_ALERT_EMAIL_RECIPIENTS|AI_GATEWAY_ALERT_EMAIL_RECIPIENTS)=.+@.+' "$OWNED_SERVER_ENV_FILE"; then
+            echo "::error::Missing backup alert recipients in owned-server env file"
+            exit 1
+          fi
+
+          compose up -d backup
+          compose ps backup
+
+      - name: Run owned-server backup now
+        if: env.RUN_BACKUP_NOW == 'true'
+        run: |
+          set -euo pipefail
+
+          cd "$OWNED_SERVER_APP_DIR"
+
+          compose() {
+            sudo -n docker compose -f packaging/owned-server/compose.yml --env-file "$OWNED_SERVER_ENV_FILE" "$@"
+          }
+
+          compose run --rm --no-deps backup bash ./packaging/owned-server/backup/backup-owned-server-databases.sh
+          compose run --rm --no-deps backup bash -lc '
+            set -euo pipefail
+            latest="$(find /srv/veslo/backups -mindepth 1 -maxdepth 1 -type d -name "????????T??????Z" -print | sort | tail -n 1)"
+            test -n "$latest"
+            cd "$latest"
+            zstd -t den.sql.zst ai-gateway.sql.zst
+            sha256sum -c den.sql.zst.sha256
+            sha256sum -c ai-gateway.sql.zst.sha256
+            printf "Latest backup: %s\n" "$latest"
+            ls -lh den.sql.zst ai-gateway.sql.zst manifest.json
+            cat manifest.json
+          '

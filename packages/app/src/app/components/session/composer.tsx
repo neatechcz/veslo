@@ -5,7 +5,8 @@ import { ArrowUp, File as FileIcon, Loader2, Paperclip, Square, Terminal, X, Zap
 
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, SlashCommandOption } from "../../types";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
-import { readClipboardFilePaths } from "../../lib/tauri";
+import { logUiEvent, readClipboardFilePaths } from "../../lib/tauri";
+import { recordSendWorkflowTrace } from "../../lib/send-workflow-trace";
 import { currentLocale, t, useTranslate } from "../../../i18n";
 import { extractFileReferencePathsFromDataTransfer, extractFilesFromDataTransfer, isFileDragTransfer } from "../../utils/data-transfer-files";
 import { looksLikePdfDocumentPrefix } from "../../utils/pdf-signature";
@@ -29,6 +30,11 @@ type MentionGroup = {
 export type ComposerSendOptions = {
   sendNow?: boolean;
   source?: "button" | "enter" | "ctrl-enter";
+  sendTraceId?: string;
+};
+
+type ComposerSendTraceRoot = typeof window & {
+  __vesloActiveSendTraceId?: string | null;
 };
 
 type ComposerProps = {
@@ -54,7 +60,6 @@ type ComposerProps = {
   recentFiles: string[];
   searchFiles: (query: string) => Promise<string[]>;
   isRemoteWorkspace: boolean;
-  isSandboxWorkspace: boolean;
   localWorkspacePath?: string | null;
   canChooseSessionFolder: boolean;
   onChooseSessionFolder: () => Promise<void> | void;
@@ -84,20 +89,58 @@ function recordSendTrace(event: string, payload?: Record<string, unknown>) {
   try {
     const root = window as typeof window & {
       __vesloSendTrace?: Array<Record<string, unknown>>;
+      __vesloSendTraceSeq?: number;
+      __vesloSendTraceStartPerfMsById?: Record<string, number>;
     };
     const logs = root.__vesloSendTrace ?? [];
-    logs.push({
+    const id = (root.__vesloSendTraceSeq ?? 0) + 1;
+    root.__vesloSendTraceSeq = id;
+    const traceId =
+      typeof payload?.traceId === "string"
+        ? payload.traceId
+        : typeof payload?.sendTraceId === "string"
+          ? payload.sendTraceId
+          : undefined;
+    const perfMs = Math.round(perfNow() * 100) / 100;
+    const startPerfMsById = root.__vesloSendTraceStartPerfMsById ?? (root.__vesloSendTraceStartPerfMsById = {});
+    const relativeMs =
+      traceId
+        ? Math.round((perfMs - (startPerfMsById[traceId] ?? (startPerfMsById[traceId] = perfMs))) * 100) / 100
+        : undefined;
+    const entry = {
+      id,
       at: new Date().toISOString(),
+      ts: Date.now(),
+      perfMs,
+      ...(relativeMs !== undefined ? { relativeMs } : {}),
       source: "composer",
+      ...(traceId ? { traceId } : {}),
       event,
       ...(payload ?? {}),
-    });
-    if (logs.length > 120) logs.splice(0, logs.length - 120);
+    };
+    logs.push(entry);
+    if (logs.length > 500) logs.splice(0, logs.length - 500);
     root.__vesloSendTrace = logs;
+    recordSendWorkflowTrace("composer", event, payload);
+    console.log(`[SENDTRACE] composer:${event}`, entry);
+    logUiEvent("send-trace", `composer:${event}`, entry);
   } catch {
     // ignore
   }
 }
+
+function setActiveSendTraceId(sendTraceId: string | null) {
+  if (typeof window === "undefined") return;
+  (window as ComposerSendTraceRoot).__vesloActiveSendTraceId = sendTraceId;
+}
+
+const makeComposerSendTraceId = () => {
+  const suffix =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`;
+  return `send_${suffix.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64)}`;
+};
 
 const fileToDataUrl = (file: File) =>
   new Promise<string>((resolve, reject) => {
@@ -981,8 +1024,10 @@ export default function Composer(props: ComposerProps) {
 
   const sendDraft = async (options: ComposerSendOptions = {}) => {
     if (options.sendNow && sendNowPending()) return;
+    options = { ...options, sendTraceId: options.sendTraceId ?? makeComposerSendTraceId() };
 
     recordSendTrace("sendDraft:start", {
+      sendTraceId: options.sendTraceId,
       busy: props.busy,
       streaming: props.isStreaming,
       sendNow: options.sendNow,
@@ -1018,6 +1063,7 @@ export default function Composer(props: ComposerProps) {
     setSlashOpen(false);
     setSlashQuery("");
     recordSendTrace("sendDraft:onSend", {
+      sendTraceId: options.sendTraceId,
       textLength: text.length,
       attachmentCount: draft.attachments.length,
       sendNow: options.sendNow,
@@ -1026,11 +1072,14 @@ export default function Composer(props: ComposerProps) {
     let sent = false;
     let sendPromise: Promise<boolean>;
     try {
+      setActiveSendTraceId(options.sendTraceId ?? null);
       sendPromise = props.onSend(submittedDraft, options);
     } catch (error) {
+      setActiveSendTraceId(null);
       setSending(false);
       if (options.sendNow) setSendNowPending(false);
       recordSendTrace("sendDraft:onSend:error", {
+        sendTraceId: options.sendTraceId,
         message: error instanceof Error ? error.message : String(error),
         sendNow: options.sendNow,
         source: options.source,
@@ -1056,14 +1105,17 @@ export default function Composer(props: ComposerProps) {
       sent = await sendPromise;
     } catch (error) {
       recordSendTrace("sendDraft:onSend:error", {
+        sendTraceId: options.sendTraceId,
         message: error instanceof Error ? error.message : String(error),
         sendNow: options.sendNow,
         source: options.source,
       });
     } finally {
+      setActiveSendTraceId(null);
       if (options.sendNow) setSendNowPending(false);
     }
     recordSendTrace("sendDraft:onSend:result", {
+      sendTraceId: options.sendTraceId,
       sent,
       busy: props.busy,
       streaming: props.isStreaming,
@@ -1308,7 +1360,7 @@ export default function Composer(props: ComposerProps) {
 
     const plainForCheck = clipboard.getData("text/plain") ?? "";
     const trimmedForCheck = plainForCheck.trim();
-    if (trimmedForCheck && (props.isSandboxWorkspace || props.isRemoteWorkspace)) {
+    if (trimmedForCheck && props.isRemoteWorkspace) {
       const hasFileUrl = /file:\/\//i.test(trimmedForCheck);
       const hasAbsolutePosix = /(^|\s)\/(Users|home|var|etc|opt|tmp|private|Volumes|Applications)\//.test(trimmedForCheck);
       const hasAbsoluteWindows = /(^|\s)[a-zA-Z]:\\/.test(trimmedForCheck);

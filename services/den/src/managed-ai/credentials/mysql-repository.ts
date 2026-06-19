@@ -19,6 +19,7 @@ import type {
   ListRecentCredentialUsageInput,
   ListUserCredentialsInput,
   MarkCredentialStateInput,
+  RenameCredentialInput,
   RecentCredentialUsageRecord,
   RevokeUserCredentialInput,
 } from "./repository.js"
@@ -343,6 +344,23 @@ export class MySqlCredentialRepository implements CredentialRepository {
 
   async revokeCredential(credentialId: string): Promise<boolean> {
     return this.transitionCredentialState(credentialId, "revoked", "admin_revoke")
+  }
+
+  async renameCredential(input: RenameCredentialInput): Promise<boolean> {
+    const credential = await this.getCredential(input.credentialId)
+    if (!credential) {
+      return false
+    }
+
+    await this.db
+      .update(credentialRecordTable)
+      .set({
+        name: input.name,
+        updated_at: new Date(),
+      })
+      .where(eq(credentialRecordTable.id, input.credentialId))
+
+    return true
   }
 
   async drainCredential(credentialId: string): Promise<boolean> {
