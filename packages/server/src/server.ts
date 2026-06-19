@@ -205,6 +205,7 @@ const OPENCODE_TRANSCRIPT_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
 const OPENCODE_JSON_FETCH_DEFAULT_TIMEOUT_MS = 5_000;
 const OPENCODE_SESSION_CREATE_TIMEOUT_MS = 60_000;
 const OPENCODE_CONVERSATION_SUBMIT_TIMEOUT_MS = 30_000;
+const ORCHESTRATOR_WORKSPACE_REGISTER_TIMEOUT_MS = 5_000;
 // Send-timeout fix 2026-06-10 — upper bound for the proxy's wait on upstream
 // response HEADERS (body streaming, e.g. SSE, is never cut). Must stay above
 // the orchestrator's 60s cold OpenCode health window so a legitimate POST that
@@ -1019,6 +1020,131 @@ function buildOrchestratorWorkspaceOpencodeBaseUrl(config: ServerConfig, workspa
   const workspaceId = workspace.id?.trim() ?? "";
   if (!daemonUrl || !workspaceId) return "";
   return `${daemonUrl}/workspace/${encodeURIComponent(workspaceId)}/opencode`;
+}
+
+function isOrchestratorMountedOpencodeBaseUrl(daemonUrlRaw: string, baseUrlRaw: string): boolean {
+  try {
+    const daemonUrl = new URL(daemonUrlRaw);
+    const baseUrl = new URL(baseUrlRaw);
+    const basePath = baseUrl.pathname.replace(/\/+$/, "");
+    return (
+      daemonUrl.origin === baseUrl.origin &&
+      /^\/workspace\/[^/]+\/opencode$/.test(basePath)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function shouldUseOrchestratorWorkspaceBaseUrl(config: ServerConfig, workspace: WorkspaceInfo): boolean {
+  if (workspace.workspaceType !== "local") return false;
+  const daemonUrlRaw = config.orchestratorDaemonUrl?.trim() ?? "";
+  if (!daemonUrlRaw) return false;
+  const configuredBaseUrl = workspace.baseUrl?.trim() ?? "";
+  return !configuredBaseUrl || isOrchestratorMountedOpencodeBaseUrl(daemonUrlRaw, configuredBaseUrl);
+}
+
+function resolveWorkspaceOpencodeBaseUrl(config: ServerConfig, workspace: WorkspaceInfo): string {
+  if (shouldUseOrchestratorWorkspaceBaseUrl(config, workspace)) {
+    return buildOrchestratorWorkspaceOpencodeBaseUrl(config, workspace);
+  }
+  return workspace.baseUrl?.trim() ?? "";
+}
+
+function withResolvedWorkspaceOpencodeBaseUrl(config: ServerConfig, workspace: WorkspaceInfo): WorkspaceInfo {
+  const baseUrl = resolveWorkspaceOpencodeBaseUrl(config, workspace);
+  return baseUrl ? { ...workspace, baseUrl } : workspace;
+}
+
+function isOrchestratorBackedLocalWorkspace(config: ServerConfig, workspace: WorkspaceInfo): boolean {
+  return shouldUseOrchestratorWorkspaceBaseUrl(config, workspace);
+}
+
+async function ensureOrchestratorWorkspaceRegistered(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  sendTraceId?: string | null,
+): Promise<void> {
+  if (!isOrchestratorBackedLocalWorkspace(config, workspace)) return;
+
+  const daemonUrl = config.orchestratorDaemonUrl?.trim().replace(/\/+$/, "") ?? "";
+  const workspaceId = workspace.id?.trim() ?? "";
+  const workspacePath = workspace.path?.trim() ?? "";
+  if (!daemonUrl || !workspaceId || !workspacePath) return;
+
+  const url = `${daemonUrl}/workspaces`;
+  const traceId = sendTraceId?.trim() || null;
+  const payload = {
+    id: workspaceId,
+    path: workspacePath,
+    name: workspace.name?.trim() || undefined,
+  };
+
+  recordSendWorkflowTrace("server", "server:orchestrator-workspace-register:start", {
+    traceId,
+    workspaceId,
+    path: workspacePath,
+    url,
+  });
+
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    ORCHESTRATOR_WORKSPACE_REGISTER_TIMEOUT_MS,
+  );
+  if (typeof timeout === "object" && timeout && "unref" in timeout) {
+    (timeout as { unref?: () => void }).unref?.();
+  }
+
+  const startedAt = Date.now();
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const text = await readResponseTextWithLimit(response, 64 * 1024);
+      let body: unknown = text;
+      try {
+        body = text ? JSON.parse(text) : null;
+      } catch {
+        // keep plain text body
+      }
+      recordSendWorkflowTrace("server", "server:orchestrator-workspace-register:error-status", {
+        traceId,
+        workspaceId,
+        status: response.status,
+        durationMs: Date.now() - startedAt,
+      });
+      throw new ApiError(502, "orchestrator_workspace_register_failed", "Failed to register workspace with orchestrator", {
+        status: response.status,
+        body,
+      });
+    }
+
+    recordSendWorkflowTrace("server", "server:orchestrator-workspace-register:done", {
+      traceId,
+      workspaceId,
+      status: response.status,
+      durationMs: Date.now() - startedAt,
+    });
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    recordSendWorkflowTrace("server", "server:orchestrator-workspace-register:error", {
+      traceId,
+      workspaceId,
+      error: message,
+      durationMs: Date.now() - startedAt,
+    });
+    throw new ApiError(502, "orchestrator_workspace_register_failed", "Failed to register workspace with orchestrator", {
+      error: message,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function fetchOpencodeJson(
@@ -4635,7 +4761,11 @@ function createRoutes(
     bindingStore: conversationBindingStore,
     transcriptStore: conversationTranscriptStore,
     createOpenCodeSession: async ({ workspace, directory, title, sendTraceId }) => {
-      const scopedWorkspace = directory ? { ...workspace, directory } : workspace;
+      const scopedWorkspace = withResolvedWorkspaceOpencodeBaseUrl(
+        config,
+        directory ? { ...workspace, directory } : workspace,
+      );
+      await ensureOrchestratorWorkspaceRegistered(config, scopedWorkspace, sendTraceId);
       return await fetchOpencodeJson(scopedWorkspace, "/session", {
         method: "POST",
         timeoutMs: OPENCODE_SESSION_CREATE_TIMEOUT_MS,
@@ -10200,7 +10330,7 @@ async function resolveWorkspace(config: ServerConfig, id: string): Promise<Works
   if (!authorized) {
     throw new ApiError(403, "workspace_unauthorized", "Workspace is not authorized");
   }
-  const baseUrl = workspace.baseUrl?.trim() || buildOrchestratorWorkspaceOpencodeBaseUrl(config, workspace);
+  const baseUrl = resolveWorkspaceOpencodeBaseUrl(config, workspace);
   return {
     ...workspace,
     path: resolvedWorkspace,

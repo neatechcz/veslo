@@ -54,6 +54,19 @@ type ServerWorkspaceList = {
   items?: ServerWorkspaceInfo[];
 };
 
+type OrchestratorStatus = {
+  running?: boolean;
+  activeId?: string | null;
+  daemon?: {
+    baseUrl?: string | null;
+  } | null;
+  workspaces?: Array<{
+    id?: string | null;
+    path?: string | null;
+  }>;
+  lastError?: string | null;
+};
+
 type ConversationCreateResult = {
   id?: string;
   conversationId?: string;
@@ -407,6 +420,40 @@ async function waitForServerWorkspaceBinding(
   return active!;
 }
 
+async function waitForOrchestratorWorkspaceRegistration(workspace: WorkspaceInfo): Promise<OrchestratorStatus> {
+  const expectedDirectory = normalizePath(workspaceDirectory(workspace));
+  let latest: OrchestratorStatus | null = null;
+
+  try {
+    await browser.waitUntil(
+      async () => {
+        latest = await tauriInvoke<OrchestratorStatus>("orchestrator_status").catch(() => null);
+        if (!latest?.running) return false;
+        return (latest.workspaces ?? []).some((item) => {
+          if (item.id !== workspace.id) return false;
+          const itemPath = normalizePath(item.path);
+          return itemPath === expectedDirectory || itemPath.endsWith(`/${expectedDirectory.split("/").pop() ?? ""}`);
+        });
+      },
+      {
+        timeout: 60_000,
+        interval: 500,
+        timeoutMsg: `Orchestrator did not register ${workspace.id} before first conversation create.`,
+      },
+    );
+  } catch (error) {
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}\nLatest orchestrator status:\n${JSON.stringify(
+        latest,
+        null,
+        2,
+      )}`,
+    );
+  }
+
+  return latest!;
+}
+
 async function waitForActiveEngineForWorkspace(workspace: WorkspaceInfo): Promise<EngineInfo> {
   const expectedDirectory = normalizePath(workspaceDirectory(workspace));
   let latest: EngineInfo | null = null;
@@ -490,11 +537,12 @@ describe("New private chat first send", () => {
     const server = await waitForVesloServerReady();
     const serverWorkspace = await waitForServerWorkspaceBinding(server, privateWorkspace);
     expect(serverWorkspace.id).toBe(privateWorkspace.id);
-    await waitForActiveEngineForWorkspace(privateWorkspace);
+    await waitForOrchestratorWorkspaceRegistration(privateWorkspace);
 
     const conversation = await createConversationThroughVesloWriteApi(server, privateWorkspace);
     expect(trimText(conversation.id)).not.toBe("");
     expect(trimText(conversation.conversationId)).not.toBe("");
     expect(trimText(conversation.opencodeSessionId)).not.toBe("");
+    await waitForActiveEngineForWorkspace(privateWorkspace);
   });
 });
