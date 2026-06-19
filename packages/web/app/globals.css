@@ -728,6 +728,36 @@ body {
   margin-top: 0.45rem;
 }
 
+.ow-about-grid {
+  display: grid;
+  gap: 0.8rem;
+  margin-top: 0.85rem;
+}
+
+@media (min-width: 780px) {
+  .ow-about-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.ow-about-item {
+  border: 1px solid #e2e8f0;
+  border-radius: 1rem;
+  background: #f8fafc;
+  padding: 1rem;
+}
+
+.ow-about-item h3 {
+  margin: 0 0 0.45rem;
+  font-size: 0.95rem;
+}
+
+.ow-about-item p {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
 .ow-note-box,
 .ow-paywall-box,
 .ow-lookup-box,
