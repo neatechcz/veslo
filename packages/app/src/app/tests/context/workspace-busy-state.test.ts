@@ -13,10 +13,10 @@ test("workspace busy state tracks and clears by session id", () => {
     });
 
     busy.markWorkspaceBusy(" ws-a ", "session-1");
-    assert.equal(busy.workspaceBusy()["ws-a"]?.sessionId, "session-1");
+    assert.equal(Boolean(busy.workspaceBusy()["ws-a"]?.["session-1"]), true);
 
     busy.clearWorkspaceBusy("ws-a", "different-session");
-    assert.equal(busy.workspaceBusy()["ws-a"]?.sessionId, "session-1");
+    assert.equal(Boolean(busy.workspaceBusy()["ws-a"]?.["session-1"]), true);
 
     busy.clearWorkspaceBusy("ws-a", "session-1");
     assert.equal(busy.workspaceBusy()["ws-a"], undefined);
@@ -41,13 +41,13 @@ test("workspace busy state preserves startedAt for repeated busy marks of the sa
       });
 
       busy.markWorkspaceBusy("ws-a", "session-1");
-      const startedAt = busy.workspaceBusy()["ws-a"]?.startedAt;
+      const startedAt = busy.workspaceBusy()["ws-a"]?.["session-1"]?.startedAt;
       assert.equal(startedAt, 1_000);
 
       now = 2_000;
       busy.markWorkspaceBusy("ws-a", "session-1");
 
-      assert.equal(busy.workspaceBusy()["ws-a"]?.startedAt, startedAt);
+      assert.equal(busy.workspaceBusy()["ws-a"]?.["session-1"]?.startedAt, startedAt);
       assert.deepEqual(events.map((entry) => entry.event), ["mark", "mark-existing"]);
 
       dispose();
@@ -69,10 +69,30 @@ test("clear all except preserves the selected workspace only", () => {
     busy.clearWorkspaceBusyAllExcept("ws-b");
 
     assert.equal(busy.workspaceBusy()["ws-a"], undefined);
-    assert.equal(busy.workspaceBusy()["ws-b"]?.sessionId, "session-b");
+    assert.equal(Boolean(busy.workspaceBusy()["ws-b"]?.["session-b"]), true);
     assert.equal(events.at(-1)?.event, "clear-all-except");
     assert.equal(events.at(-1)?.payload?.keepWorkspaceId, "ws-b");
     assert.deepEqual(events.at(-1)?.payload?.droppedWorkspaceIds, ["ws-a"]);
+
+    dispose();
+  });
+});
+
+test("workspace busy state can track multiple sessions in one workspace", () => {
+  createRoot((dispose) => {
+    const busy = createWorkspaceBusyState();
+
+    busy.markWorkspaceBusy("ws-a", "session-1");
+    busy.markWorkspaceBusy("ws-a", "session-2");
+
+    assert.deepEqual(Object.keys(busy.workspaceBusy()["ws-a"] ?? {}).sort(), ["session-1", "session-2"]);
+
+    busy.clearWorkspaceBusy("ws-a", "session-1");
+    assert.equal(Boolean(busy.workspaceBusy()["ws-a"]?.["session-1"]), false);
+    assert.equal(Boolean(busy.workspaceBusy()["ws-a"]?.["session-2"]), true);
+
+    busy.clearWorkspaceBusy("ws-a", "session-2");
+    assert.equal(busy.workspaceBusy()["ws-a"], undefined);
 
     dispose();
   });

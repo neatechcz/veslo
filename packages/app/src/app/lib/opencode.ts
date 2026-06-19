@@ -6,6 +6,7 @@ import { isTauriRuntime } from "../utils";
 import { isGatewayOwnedProvider, type GatewayOwnedProviderId } from "../utils/providers";
 import { fetchWithTimeout } from "./http";
 import { recordSendWorkflowTrace } from "./send-workflow-trace";
+import { wrapStartupRequestAuditFetch } from "./startup-request-audit";
 
 export type FieldsResult<T> =
   | ({ data: T; error?: undefined } & { request: Request; response: Response })
@@ -49,6 +50,10 @@ export const OPENCODE_SESSION_ID_TEMPLATE = "${OPENCODE_SESSION_ID}";
 const VESLO_GATEWAY_TOKEN_HEADER = "x-veslo-gateway-token";
 const VESLO_SESSION_ID_HEADER = "x-veslo-session-id";
 export const VESLO_WORKSPACE_ID_HEADER = "x-veslo-workspace-id";
+const auditedTauriFetch = wrapStartupRequestAuditFetch(
+  tauriFetch as unknown as typeof globalThis.fetch,
+  "tauri.opencode",
+);
 
 function getRequestUrl(input: RequestInfo | URL): string {
   if (typeof input === "string") return input;
@@ -98,7 +103,7 @@ const createTauriFetch = (auth?: OpencodeAuth) => {
       addAuth(headers);
       const request = new Request(input, { headers });
       return fetchWithTimeout(
-        tauriFetch as unknown as typeof globalThis.fetch,
+        auditedTauriFetch,
         request,
         undefined,
         DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS,
@@ -108,7 +113,7 @@ const createTauriFetch = (auth?: OpencodeAuth) => {
     const headers = new Headers(init?.headers);
     addAuth(headers);
     return fetchWithTimeout(
-      tauriFetch as unknown as typeof globalThis.fetch,
+      auditedTauriFetch,
       input,
       {
         ...init,

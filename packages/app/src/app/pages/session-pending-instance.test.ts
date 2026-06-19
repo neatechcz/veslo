@@ -123,7 +123,7 @@ test("sendPromptImmediate starts run UI state by captured key and resets failure
   );
   assert.match(
     source,
-    /const resetRunState = \(sessionKey = currentSessionQueueKey\(\)\) => \{/,
+    /const resetRunState = \(sessionKey = currentSessionQueueKey\(\), reason = "reset"\) => \{/,
     "resetRunState should default to the active key but allow a captured send key",
   );
   assert.match(
@@ -226,16 +226,21 @@ test("pending session materialization remaps only that pending run UI state", ()
   );
 });
 
-test("session switching resets only keyed run UI state", () => {
+test("session switching preserves keyed run UI state until runtime idle", () => {
   assert.match(
     source,
-    /const previousSessionKey = previousSessionId \? sessionQueueKeyForSessionId\(previousSessionId\) : null;[\s\S]*if \(!pendingKey && previousSessionKey\) \{\s*resetRunState\(previousSessionKey\);\s*\}/,
-    "session switching should reset only the previous keyed run state when no pending remap is in flight",
+    /const previousSessionKey = previousSessionId \? sessionQueueKeyForSessionId\(previousSessionId\) : null;[\s\S]*if \(!pendingKey && previousSessionKey\) \{\s*preserveRunStateOnSessionSwitch\(previousSessionKey\);\s*\}/,
+    "session switching should preserve the previous keyed run state when no pending remap is in flight",
   );
   assert.doesNotMatch(
     source,
-    /if \(!pendingKey\) \{\s*resetRunState\(\);\s*\}/,
-    "session switching should not reset whatever run state is globally active",
+    /if \(!pendingKey && previousSessionKey\) \{\s*resetRunState\(previousSessionKey\);/,
+    "session switching should not reset the previous run UI state; scoped idle status owns cleanup",
+  );
+  assert.match(
+    source,
+    /for \(const \[sessionKey, runState\] of Object\.entries\(untrack\(runStateBySessionKey\)\)\) \{[\s\S]*const previousStatus = statusForQueueKey\(sessionKey, previousStatuses\);[\s\S]*const status = statusForQueueKey\(sessionKey, statuses\);[\s\S]*if \(!isActiveRunStatus\(previousStatus\) \|\| isActiveRunStatus\(status\)\) continue;[\s\S]*resetRunState\(sessionKey, "session-status-idle"\);[\s\S]*\}/,
+    "background scoped session status should reset preserved run UI state only after runtime idle",
   );
 });
 
@@ -508,8 +513,8 @@ test("app sendPrompt wires scoped materialized handoff before selecting the crea
   );
   assert.match(
     createNeededSource,
-    /const materializedSessionId = createdSessionId\?\.trim\(\);[\s\S]*if \(materializedSessionId\) \{\s*sessionID = materializedSessionId;\s*\} else \{\s*const selectedAfterCreate = selectedSessionId\(\);[\s\S]*sessionID = isPendingSessionInstanceId\(selectedAfterCreate\) \? null : selectedAfterCreate;\s*\}/,
-    "sendPrompt should use the created id for routing without firing a late string-only materialization callback",
+    /const materializedSessionId = createdSessionId\?\.trim\(\);[\s\S]*if \(materializedSessionId\) \{\s*sessionID = materializedSessionId;\s*pendingSidebarRowRegistered = false;\s*\} else \{\s*cleanupPendingSidebarSession\(\);[\s\S]*const selectedAfterCreate = selectedSessionId\(\);[\s\S]*sessionID = isPendingSessionInstanceId\(selectedAfterCreate\) \? null : selectedAfterCreate;\s*\}/,
+    "sendPrompt should use the created id for routing, keep the materialized row, and clean up only failed pending placeholders",
   );
   assert.doesNotMatch(
     createNeededSource,
@@ -542,7 +547,7 @@ test("materializing an active pending first send does not immediately drain the 
   );
   assert.match(
     effectSource,
-    /if \(\s*!materializedPendingSubmit &&\s*props\.sessionStatusById\[sessionId\] === "idle" &&\s*!queuePausedForSessionKey\(sessionKey\)\s*\) \{\s*void drainNextQueuedDraft\("queue-drain", sessionKey\);/s,
+    /if \(\s*!materializedPendingSubmit &&\s*statusForSessionId\(sessionId, props\.sessionStatusById\) === "idle" &&\s*!queuePausedForSessionKey\(sessionKey\)\s*\) \{\s*void drainNextQueuedDraft\("queue-drain", sessionKey\);/s,
     "selected-session materialization should not drain a just-materialized sending first draft",
   );
 });

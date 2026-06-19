@@ -4,7 +4,8 @@ import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 
-test("initial automatic updater download starts in automatic mode", () => {
+test("opt-in automatic updater download starts in automatic mode", () => {
+  assert.match(source, /if \(!updateAutoDownload\(\)\) return;[\s\S]*?downloadUpdate\(\{\s*automatic: true\s*\}/);
   assert.match(
     source,
     /downloadUpdate\(\{\s*automatic: true\s*\}\)\.catch\(e => reportError\(e, "updates\.download"\)\)/,

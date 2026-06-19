@@ -202,42 +202,49 @@ describe("conversation binding store", () => {
     expect(sessions.map((session) => session.engineSessionId)).toEqual(["sess-new", "sess-old"]);
   });
 
-  test("falls back to all workspace sessions when the directory form does not match", async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-bindings-dir-fallback-"));
+  test("matches across Windows <-> WSL path forms via directory variants (no workspace-wide widening)", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-bindings-dir-bridge-"));
     tempDirs.push(dataDir);
     const store = createConversationBindingStore({ dataDir, now: () => 1_000 });
 
     // Bound under the engine's WSL path form...
     await store.bindOpenCodeSession({
       workspaceId: "ws-a",
-      directory: "/mnt/c/Users/jajse/Desktop/test-repo/test-repo2",
+      directory: "/mnt/c/Users/alice/AppData/Local/Veslo/test-repo/test-repo2",
       engineSessionId: "sess-wsl",
       title: "WSL",
       updatedAt: 30,
     });
 
-    // ...but browse passes the Windows path form, which the directory variants
-    // do NOT translate to /mnt/c. A strict directory match would return nothing
-    // and hide the conversation; the workspace-wide fallback must still list it.
+    // ...but browse passes the Windows path form. The directory variants bridge
+    // C:\… <-> /mnt/c/… so the row is found by a STRICT directory match.
     const sessions = await store.listOpenCodeSessions({
       workspaceId: "ws-a",
-      directory: "C:\\Users\\jajse\\Desktop\\test-repo\\test-repo2",
+      directory: "C:\\Users\\alice\\AppData\\Local\\Veslo\\test-repo\\test-repo2",
     });
 
     expect(sessions.map((session) => session.engineSessionId)).toEqual(["sess-wsl"]);
 
-    // Isolation: a different workspace must not be pulled in by the fallback.
+    // A genuinely different directory in the same workspace must NOT leak in —
+    // directory scoping stays strict (no workspace-wide widening on miss).
     await store.bindOpenCodeSession({
-      workspaceId: "ws-b",
-      directory: "/mnt/c/other",
-      engineSessionId: "sess-other-ws",
+      workspaceId: "ws-a",
+      directory: "/mnt/c/Users/alice/AppData/Local/Veslo/test-repo/other-repo",
+      engineSessionId: "sess-other-dir",
       updatedAt: 40,
     });
-    const isolated = await store.listOpenCodeSessions({
+    const scoped = await store.listOpenCodeSessions({
       workspaceId: "ws-a",
-      directory: "C:\\Users\\jajse\\Desktop\\test-repo\\test-repo2",
+      directory: "C:\\Users\\alice\\AppData\\Local\\Veslo\\test-repo\\test-repo2",
     });
-    expect(isolated.map((session) => session.engineSessionId)).toEqual(["sess-wsl"]);
+    expect(scoped.map((session) => session.engineSessionId)).toEqual(["sess-wsl"]);
+
+    // And a sibling subdirectory with no sessions returns [] (not the whole ws).
+    const emptyNested = await store.listOpenCodeSessions({
+      workspaceId: "ws-a",
+      directory: "C:\\Users\\alice\\AppData\\Local\\Veslo\\test-repo\\test-repo2\\nested",
+    });
+    expect(emptyNested).toEqual([]);
   });
 
   test("orders same-timestamp sessions deterministically for parallel conversation starts", async () => {
@@ -279,7 +286,7 @@ describe("conversation binding store", () => {
     const store = createConversationBindingStore({ dataDir, now: () => 1_000 });
     await store.bindOpenCodeSession({
       workspaceId: "ws-a",
-      directory: "c:\\users\\jajse\\desktop\\test-repo\\test-repo2",
+      directory: "c:\\users\\alice\\appdata\\local\\veslo\\test-repo\\test-repo2",
       engineSessionId: "sess-a",
       title: "Session A",
       updatedAt: 20,
@@ -287,14 +294,14 @@ describe("conversation binding store", () => {
 
     const sessions = await store.listOpenCodeSessions({
       workspaceId: "ws-a",
-      directory: "\\\\?\\C:\\Users\\jajse\\Desktop\\test-repo\\test-repo2",
+      directory: "\\\\?\\C:\\Users\\alice\\AppData\\Local\\Veslo\\test-repo\\test-repo2",
     });
 
     expect(sessions.map((session) => session.engineSessionId)).toEqual(["sess-a"]);
 
     const resolved = await store.resolveOpenCodeSession({
       workspaceId: "ws-a",
-      directory: "//?/C:/Users/jajse/Desktop/test-repo/test-repo2",
+      directory: "//?/C:/Users/alice/AppData/Local/Veslo/test-repo/test-repo2",
       sessionOrConversationId: sessions[0]?.conversationId ?? "",
     });
     expect(resolved?.engineSessionId).toBe("sess-a");
@@ -344,14 +351,14 @@ describe("conversation binding store", () => {
 
     const first = await store.bindOpenCodeSession({
       workspaceId: "ws-a",
-      directory: "C:\\Users\\Jajse\\Desktop\\test-repo\\test-repo2",
+      directory: "C:\\Users\\Alice\\AppData\\Local\\Veslo\\test-repo\\test-repo2",
       engineSessionId: "sess-a",
       title: "First",
       updatedAt: 20,
     });
     const second = await store.bindOpenCodeSession({
       workspaceId: "ws-a",
-      directory: "//?/c:/users/jajse/desktop/test-repo/test-repo2",
+      directory: "//?/c:/users/alice/appdata/local/veslo/test-repo/test-repo2",
       engineSessionId: "sess-a",
       title: "Second",
       updatedAt: 40,
@@ -363,11 +370,38 @@ describe("conversation binding store", () => {
 
     const sessions = await store.listOpenCodeSessions({
       workspaceId: "ws-a",
-      directory: "c:\\users\\jajse\\desktop\\test-repo\\test-repo2",
+      directory: "c:\\users\\alice\\appdata\\local\\veslo\\test-repo\\test-repo2",
     });
 
     expect(sessions.map((session) => session.engineSessionId)).toEqual(["sess-a"]);
     expect(sessions[0]?.conversationId).toBe(first.conversationId);
+  });
+
+  test("matches WSL mount and Windows directory variants when resolving bindings", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-conversation-bindings-wsl-path-"));
+    tempDirs.push(dataDir);
+    const store = createConversationBindingStore({ dataDir, now: () => 1_000 });
+
+    const binding = await store.bindOpenCodeSession({
+      workspaceId: "ws-a",
+      directory: "/mnt/c/Users/alice/AppData/Local/Veslo/test-repo/test-repo2",
+      engineSessionId: "sess-a",
+      title: "Session A",
+      updatedAt: 20,
+    });
+
+    const listed = await store.listOpenCodeSessions({
+      workspaceId: "ws-a",
+      directory: "C:\\Users\\alice\\AppData\\Local\\Veslo\\test-repo\\test-repo2",
+    });
+    expect(listed.map((session) => session.engineSessionId)).toEqual(["sess-a"]);
+
+    const resolved = await store.resolveOpenCodeSession({
+      workspaceId: "ws-a",
+      directory: "C:/Users/alice/AppData/Local/Veslo/test-repo/test-repo2",
+      sessionOrConversationId: binding.conversationId,
+    });
+    expect(resolved?.engineSessionId).toBe("sess-a");
   });
 
   test("links Windows child sessions to an existing parent across path spellings", async () => {
@@ -377,14 +411,14 @@ describe("conversation binding store", () => {
 
     const parent = await store.bindOpenCodeSession({
       workspaceId: "ws-a",
-      directory: "C:\\Users\\Jajse\\Desktop\\test-repo\\test-repo2",
+      directory: "C:\\Users\\Alice\\AppData\\Local\\Veslo\\test-repo\\test-repo2",
       engineSessionId: "sess-parent",
       title: "Parent",
       updatedAt: 20,
     });
     const child = await store.bindOpenCodeSession({
       workspaceId: "ws-a",
-      directory: "//?/c:/users/jajse/desktop/test-repo/test-repo2",
+      directory: "//?/c:/users/alice/appdata/local/veslo/test-repo/test-repo2",
       engineSessionId: "sess-child",
       parentEngineSessionId: "sess-parent",
       title: "Child",
@@ -401,7 +435,7 @@ describe("conversation binding store", () => {
 
     const child = await store.bindOpenCodeSession({
       workspaceId: "ws-a",
-      directory: "//?/c:/users/jajse/desktop/test-repo/test-repo2",
+      directory: "//?/c:/users/alice/appdata/local/veslo/test-repo/test-repo2",
       engineSessionId: "sess-child",
       parentEngineSessionId: "sess-parent",
       title: "Child",
@@ -409,7 +443,7 @@ describe("conversation binding store", () => {
     });
     const parent = await store.bindOpenCodeSession({
       workspaceId: "ws-a",
-      directory: "C:\\Users\\Jajse\\Desktop\\test-repo\\test-repo2",
+      directory: "C:\\Users\\Alice\\AppData\\Local\\Veslo\\test-repo\\test-repo2",
       engineSessionId: "sess-parent",
       title: "Parent",
       updatedAt: 20,
@@ -419,7 +453,7 @@ describe("conversation binding store", () => {
 
     const resolvedChild = await store.resolveOpenCodeSession({
       workspaceId: "ws-a",
-      directory: "\\\\?\\C:\\Users\\jajse\\Desktop\\test-repo\\test-repo2",
+      directory: "\\\\?\\C:\\Users\\alice\\AppData\\Local\\Veslo\\test-repo\\test-repo2",
       sessionOrConversationId: "sess-child",
     });
 

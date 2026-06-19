@@ -167,6 +167,8 @@ import { availableChatWidthForLayout, reconcileSidebarLayoutForRootWidth } from 
 import { resolveSessionTitlebarContext } from "./session-titlebar-context";
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
+import { readSessionStatus } from "../lib/scoped-session-status";
+import type { WorkspaceBusyMap } from "../context/workspace-debug";
 
 function recordSendTrace(event: string, payload?: Record<string, unknown>) {
   if (typeof window === "undefined") return;
@@ -398,7 +400,7 @@ export type SessionViewProps = {
   setSessionAgent: (sessionId: string, agent: string | null) => void;
   saveSession: (sessionId: string) => Promise<string>;
   sessionStatusById: Record<string, string>;
-  busySessionByWorkspaceId?: Record<string, { sessionId: string; startedAt: number }>;
+  busySessionByWorkspaceId?: WorkspaceBusyMap;
   hasEarlierMessages: boolean;
   loadingEarlierMessages: boolean;
   loadEarlierMessages: (sessionId: string) => Promise<void>;
@@ -1094,6 +1096,13 @@ export default function SessionView(props: SessionViewProps) {
   };
   const workspaceIdForQueueKey = (sessionKey: string) =>
     parseUiConversationKey(sessionKey)?.workspaceId ?? props.activeWorkspaceId;
+  const statusForQueueKey = (sessionKey: string, statuses: Record<string, string>) => {
+    const sessionId = sessionIdForQueueKey(sessionKey);
+    if (!sessionId) return "idle";
+    return readSessionStatus(statuses, workspaceIdForQueueKey(sessionKey), sessionId);
+  };
+  const statusForSessionId = (sessionId: string, statuses: Record<string, string>) =>
+    readSessionStatus(statuses, workspaceIdForSessionQueue(sessionId), sessionId);
   const [pendingQueueKeyAwaitingSessionIdByBaseKey, setPendingQueueKeyAwaitingSessionIdByBaseKey] =
     createSignal<Record<string, string>>({});
   const currentSessionQueueKey = createMemo(() => {
@@ -1306,6 +1315,10 @@ export default function SessionView(props: SessionViewProps) {
     left.lastProgressAt === right.lastProgressAt &&
     left.baseline.assistantId === right.baseline.assistantId &&
     left.baseline.partCount === right.baseline.partCount;
+  const isActiveRunStatus = (status: string | null | undefined) => {
+    const normalized = status?.trim().toLowerCase() ?? "";
+    return Boolean(normalized && normalized !== "idle");
+  };
   const updateRunStateForSessionKey = (sessionKey: string, update: (current: RunUiState) => RunUiState) => {
     const key = sessionKey.trim();
     if (!key) return;
@@ -1316,12 +1329,13 @@ export default function SessionView(props: SessionViewProps) {
       return { ...current, [key]: next };
     });
   };
-  const resetRunState = (sessionKey = currentSessionQueueKey()) => {
+  const resetRunState = (sessionKey = currentSessionQueueKey(), reason = "reset") => {
     const key = sessionKey.trim();
     if (!key) return;
     const previous = untrack(runStateBySessionKey)[key];
     if (previous) {
       recordSendTrace("run-state:reset", {
+        reason,
         sessionKey: key,
         startedAt: previous.startedAt,
         hasBegun: previous.hasBegun,
@@ -1332,6 +1346,19 @@ export default function SessionView(props: SessionViewProps) {
       if (!(key in current)) return current;
       const { [key]: _removedRunState, ...rest } = current;
       return rest;
+    });
+  };
+  const preserveRunStateOnSessionSwitch = (sessionKey: string) => {
+    const key = sessionKey.trim();
+    if (!key) return;
+    const previous = untrack(runStateBySessionKey)[key];
+    if (!previous) return;
+    recordSendTrace("run-state:preserve-session-switch", {
+      sessionKey: key,
+      status: statusForQueueKey(key, props.sessionStatusById),
+      startedAt: previous.startedAt,
+      hasBegun: previous.hasBegun,
+      lastProgressAt: previous.lastProgressAt,
     });
   };
 
@@ -2493,11 +2520,11 @@ export default function SessionView(props: SessionViewProps) {
           ? pendingQueueKeyAwaitingSessionIdByBaseKey()[pendingBaseKey] ?? null
           : null;
         const previousSessionKey = previousSessionId ? sessionQueueKeyForSessionId(previousSessionId) : null;
-        // Reset run state when switching sessions so a stuck error from a
-        // previous session doesn't bleed into the new one. Pending first sends
-        // remap their optimistic draft to the materialized session instead.
+        // Switching sessions is navigation, not a runtime lifecycle operation:
+        // preserve the previous keyed run UI state and let scoped runtime
+        // status clear it when that conversation actually becomes idle.
         if (!pendingKey && previousSessionKey) {
-          resetRunState(previousSessionKey);
+          preserveRunStateOnSessionSwitch(previousSessionKey);
         }
         const previousEditingQueuedDraftId = editingQueuedDraftId();
         restoreEditingQueuedDraft(sessionQueueKeyForSessionId(previousSessionId), previousEditingQueuedDraftId);
@@ -2517,7 +2544,7 @@ export default function SessionView(props: SessionViewProps) {
         const sessionKey = sessionQueueKeyForSessionId(sessionId);
         if (
           !materializedPendingSubmit &&
-          props.sessionStatusById[sessionId] === "idle" &&
+          statusForSessionId(sessionId, props.sessionStatusById) === "idle" &&
           !queuePausedForSessionKey(sessionKey)
         ) {
           void drainNextQueuedDraft("queue-drain", sessionKey);
@@ -2729,10 +2756,19 @@ export default function SessionView(props: SessionViewProps) {
         for (const sessionKey of Object.keys(queuedDraftsBySessionKey())) {
           const sessionId = sessionIdForQueueKey(sessionKey);
           if (!sessionId) continue;
-          if (previousStatuses[sessionId] === undefined || previousStatuses[sessionId] === "idle") continue;
-          if (statuses[sessionId] !== "idle") continue;
+          if (statusForQueueKey(sessionKey, previousStatuses) === "idle") continue;
+          if (statusForQueueKey(sessionKey, statuses) !== "idle") continue;
           if (queuePausedForSessionKey(sessionKey)) continue;
           void drainNextQueuedDraft("queue-drain", sessionKey);
+        }
+        for (const [sessionKey, runState] of Object.entries(untrack(runStateBySessionKey))) {
+          if (!runState.startedAt && !runState.hasBegun) continue;
+          const sessionId = sessionIdForQueueKey(sessionKey);
+          if (!sessionId) continue;
+          const previousStatus = statusForQueueKey(sessionKey, previousStatuses);
+          const status = statusForQueueKey(sessionKey, statuses);
+          if (!isActiveRunStatus(previousStatus) || isActiveRunStatus(status)) continue;
+          resetRunState(sessionKey, "session-status-idle");
         }
       },
     ),
@@ -3705,8 +3741,9 @@ export default function SessionView(props: SessionViewProps) {
     const origin = sessionSendOriginForReason(options.reason);
     const clientMessageId = createSessionClientMessageId();
     const expectedSessionKey = options.expectedSessionKey;
-    const targetSessionId = expectedSessionKey ? sessionIdForQueueKey(expectedSessionKey) : null;
-    const expectedWorkspaceId = expectedSessionKey ? workspaceIdForQueueKey(expectedSessionKey) : props.activeWorkspaceId;
+    const baseSessionKey = expectedSessionKey ?? currentSessionQueueKey();
+    const targetSessionId = sessionIdForQueueKey(baseSessionKey);
+    const expectedWorkspaceId = workspaceIdForQueueKey(baseSessionKey) || props.activeWorkspaceId;
     markTempRuntimeUiRenderSource("SessionView.sendPromptImmediate", options.reason ?? "normal", {
       clientMessageId,
       origin,
@@ -3728,7 +3765,6 @@ export default function SessionView(props: SessionViewProps) {
     });
     if (expectedSessionKey && currentSessionQueueKey() !== expectedSessionKey && !targetSessionId) return false;
     const showOptimisticSubmit = !options.replaceMessageId && options.reason !== "queue-drain";
-    const baseSessionKey = expectedSessionKey ?? currentSessionQueueKey();
     const pendingSessionBaseKeyBeforeHandoff = !targetSessionId && !sessionIdForQueueKey(baseSessionKey)
       ? isPendingSessionInstanceId(baseSessionKey)
         ? pendingSessionQueueKey()

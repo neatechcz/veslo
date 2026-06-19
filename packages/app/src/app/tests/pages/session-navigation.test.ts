@@ -211,8 +211,8 @@ test("app routes selected session browsing through DB scope", () => {
   );
   assert.match(
     appSource,
-    /shouldBrowseSessionFromDb: \(sessionId\) => \{[\s\S]*const transcriptScope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*if \(transcriptScope\) return true;[\s\S]*return !engineReady\(\);[\s\S]*\},/s,
-    "session store should force DB browsing for scoped sidebar selections",
+    /shouldBrowseSessionFromDb: \(sessionId\) => \{[\s\S]*const transcriptScope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*if \(transcriptScope\) return true;[\s\S]*return !isWorkspaceRuntimeReady\(workspaceStore\.activeWorkspaceId\(\)\.trim\(\)\);[\s\S]*\},/s,
+    "session store should force DB browsing for scoped sidebar selections or non-ready active workspace runtime",
   );
   assert.match(
     appSource,
@@ -229,8 +229,8 @@ test("app activates selected session workspace at send time, not browse time", (
   );
   assert.match(
     sendPromptSource,
-    /selectedSessionIgnoredForForeignWorkspace: Boolean\([\s\S]*selectedSessionCandidate && !selectedSessionBelongsToActiveWorkspace,[\s\S]*\),/s,
-    "send trace should expose when a stale selected session was ignored for active-workspace sends",
+    /const explicitTargetSessionId = isPendingSessionInstanceId\(options\.targetSessionId\)[\s\S]*let sessionID = explicitTargetSessionId \|\| selectedRealSessionId;[\s\S]*selectedSessionIgnoredForForeignWorkspace: Boolean\([\s\S]*selectedSessionCandidate && !selectedSessionBelongsToActiveWorkspace && !explicitTargetSessionId,[\s\S]*\),/s,
+    "send trace should expose when a stale selected session was ignored, but not when it was passed as the explicit send target",
   );
   assert.match(
     workspaceSendTargetSource,

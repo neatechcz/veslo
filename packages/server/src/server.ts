@@ -13,6 +13,7 @@ import type {
   ReloadTrigger,
   TokenScope,
   SandboxBackend,
+  ResourceOwner,
   WorkspaceSkillConflict,
   WorkspaceSkillMaterialization,
 } from "./types.js";
@@ -100,6 +101,15 @@ import {
   workspaceManagedSkillsRoot,
 } from "./skill-materializer.js";
 import type { SkillSetMaterializationResult } from "./skill-materializer.js";
+import {
+  deleteUserGlobalSkill,
+  listUserGlobalSkills,
+  materializeUserGlobalSkillsForWorkspace,
+  readUserGlobalSkill,
+  upsertUserGlobalSkill,
+  userGlobalMaterializedSkillsRoot,
+  userGlobalSkillStorePath,
+} from "./user-skill-store.js";
 import type {
   RegistrySkillPackageArchive,
   RegistrySkillRolloutPolicy,
@@ -115,6 +125,7 @@ import { resolveWorkspaceSkillSet } from "./workspace-skill-set.js";
 import type { WorkspaceSkillRegistryInstallation, WorkspaceSkillRolloutPolicy } from "./workspace-skill-set.js";
 import { writeWorkspaceSkillLockfile } from "./workspace-skill-lockfile.js";
 import { deleteCommand, listCommands, upsertCommand } from "./commands.js";
+import { localUserResourceOwner, organizationResourceOwner, workspaceResourceOwner } from "./resource-owner.js";
 import { deleteScheduledJob, listScheduledJobs, resolveScheduledJob } from "./scheduler.js";
 import { provisionWorkspaceInternalSystem, resolveVesloAppDataDir } from "./internal-system.js";
 import { ApiError, formatError } from "./errors.js";
@@ -132,7 +143,7 @@ import { TokenService } from "./tokens.js";
 import { TOY_UI_CSS, TOY_UI_HTML, TOY_UI_JS, cssResponse, htmlResponse, jsResponse } from "./toy-ui.js";
 import { FileSessionStore } from "./file-sessions.js";
 import { createSessionArchiveStore } from "./session-archives.js";
-import { deriveLatestRunArtifactsResponse } from "./session-artifacts.js";
+import { deriveLatestRunArtifactsResponse, type SessionArtifactMessage, type SessionArtifactPart } from "./session-artifacts.js";
 import { createSessionTranscriptPrefetchStore } from "./session-transcript-prefetch.js";
 import {
   type AutomationExecutionInput,
@@ -157,9 +168,15 @@ import {
 } from "./automation-store.js";
 import { createConversationReadStore } from "./conversation-read-store.js";
 import { createConversationBindingStore } from "./conversation-binding-store.js";
+import { createConversationTranscriptStore } from "./conversation-transcript-store.js";
 import { createConversationService } from "./conversation-service.js";
 import {
+  createConversationRunQueueStore,
+  type ConversationRunQueueItem,
+} from "./conversation-run-queue-store.js";
+import {
   createOrchestratorLifecycleClient,
+  type LifecycleRunStatus,
   type OrchestratorLifecycleClient,
   OrchestratorLifecycleRequestError,
   RunAlreadyActiveError,
@@ -2935,6 +2952,86 @@ function parseSessionTranscriptLimit(input: unknown): number {
   return Math.min(Math.floor(parsed), SESSION_TRANSCRIPT_MAX_LIMIT);
 }
 
+function parseSessionTranscriptMessages(input: unknown): unknown[] {
+  if (!Array.isArray(input)) {
+    throw new ApiError(400, "invalid_payload", "messages must be an array");
+  }
+  return input;
+}
+
+function parseSessionTranscriptParts(input: unknown): Record<string, unknown[]> {
+  if (input == null) return {};
+  if (typeof input !== "object" || Array.isArray(input)) {
+    throw new ApiError(400, "invalid_payload", "partsByMessageId must be an object");
+  }
+  const partsByMessageId: Record<string, unknown[]> = {};
+  for (const [messageId, parts] of Object.entries(input as Record<string, unknown>)) {
+    const id = messageId.trim();
+    if (!id) continue;
+    if (!Array.isArray(parts)) {
+      throw new ApiError(400, "invalid_payload", "partsByMessageId values must be arrays");
+    }
+    partsByMessageId[id] = parts;
+  }
+  return partsByMessageId;
+}
+
+function parseTranscriptStringArray(input: unknown, field: string): string[] {
+  if (input == null) return [];
+  if (!Array.isArray(input)) {
+    throw new ApiError(400, "invalid_payload", `${field} must be an array`);
+  }
+  return input
+    .map((value) => (typeof value === "string" ? value.trim() : ""))
+    .filter((value) => value.length > 0);
+}
+
+function parseSessionTranscriptDeletedParts(input: unknown): Record<string, string[]> {
+  if (input == null) return {};
+  if (typeof input !== "object" || Array.isArray(input)) {
+    throw new ApiError(400, "invalid_payload", "deletedPartsByMessageId must be an object");
+  }
+  const deletedPartsByMessageId: Record<string, string[]> = {};
+  for (const [messageId, partIds] of Object.entries(input as Record<string, unknown>)) {
+    const id = messageId.trim();
+    if (!id) continue;
+    const parsed = parseTranscriptStringArray(partIds, "deletedPartsByMessageId values");
+    if (parsed.length > 0) deletedPartsByMessageId[id] = parsed;
+  }
+  return deletedPartsByMessageId;
+}
+
+function isRecordLike(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function resolveTranscriptMessageIdForArtifacts(message: Record<string, unknown>): string {
+  const direct = typeof message.id === "string" ? message.id.trim() : "";
+  if (direct) return direct;
+  const info = isRecordLike(message.info) ? message.info : null;
+  return typeof info?.id === "string" ? info.id.trim() : "";
+}
+
+function attachTranscriptPartsForArtifacts(
+  messages: unknown[],
+  partsByMessageId: Record<string, unknown[]>,
+): SessionArtifactMessage[] {
+  const result: SessionArtifactMessage[] = [];
+  for (const rawMessage of messages) {
+    if (!isRecordLike(rawMessage)) continue;
+    const messageId = resolveTranscriptMessageIdForArtifacts(rawMessage);
+    const persistedParts = messageId ? partsByMessageId[messageId] ?? [] : [];
+    const inlineParts = Array.isArray(rawMessage.parts) ? rawMessage.parts : [];
+    const parts = (persistedParts.length > 0 ? persistedParts : inlineParts)
+      .filter(isRecordLike) as SessionArtifactPart[];
+    result.push({
+      ...rawMessage,
+      parts,
+    });
+  }
+  return result;
+}
+
 function parseSessionIdArray(input: unknown, fieldName: string): string[] {
   if (!Array.isArray(input)) {
     throw new ApiError(400, "invalid_payload", `${fieldName} must be an array`);
@@ -3163,6 +3260,55 @@ function createConversationRunTracer(request: Request) {
   return { entries, record, step, traceId: traceId || null };
 }
 
+type ConversationRunTracer = ReturnType<typeof createConversationRunTracer>;
+
+function createBackgroundConversationRunTracer(traceId: string | null = null): ConversationRunTracer {
+  const entries: ConversationRunDebugTraceEntry[] = [];
+  const normalizedTraceId = traceId?.trim() || null;
+  const record = (event: string, payload: Record<string, unknown> = {}) => {
+    const entry: ConversationRunDebugTraceEntry = {
+      source: "server",
+      event,
+      at: new Date().toISOString(),
+      ts: Date.now(),
+      ...(normalizedTraceId ? { traceId: normalizedTraceId } : {}),
+      ...payload,
+    };
+    entries.push(entry);
+    recordSendWorkflowTrace("server", event, entry);
+  };
+  const step = async <T,>(
+    event: string,
+    fn: () => Promise<T>,
+    payload: Record<string, unknown> = {},
+  ): Promise<T> => {
+    const startedAt = perfMs();
+    record(`${event}:start`, payload);
+    try {
+      const result = await fn();
+      record(event, {
+        ...payload,
+        durationMs: roundTraceMs(perfMs() - startedAt),
+        outcome: "ok",
+      });
+      return result;
+    } catch (error) {
+      record(`${event}:error`, {
+        ...payload,
+        durationMs: roundTraceMs(perfMs() - startedAt),
+        outcome: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  };
+  return { entries, record, step, traceId: normalizedTraceId };
+}
+
+const ACTIVE_LIFECYCLE_STATUSES = new Set<LifecycleRunStatus>(["submitted", "running", "blocked"]);
+const isActiveLifecycleStatus = (status: LifecycleRunStatus | string | null | undefined): boolean =>
+  Boolean(status && ACTIVE_LIFECYCLE_STATUSES.has(status as LifecycleRunStatus));
+
 function isVesloConversationId(input: string): boolean {
   return /^conv-[0-9a-f]{20}$/i.test(input.trim());
 }
@@ -3174,6 +3320,9 @@ function requireConversationRunId(body: Record<string, unknown>): string {
   }
   return runId;
 }
+
+const ownerForWorkspace = (workspace: WorkspaceInfo) =>
+  workspaceResourceOwner({ workspaceId: workspace.id, root: workspace.path, label: workspace.name });
 
 function parseCatalogPathFilter(input: string | null): string | null {
   if (!input) return null;
@@ -3379,6 +3528,7 @@ function skillRegistryRequestInput(ctx: RequestContext) {
 type SoulSummary = {
   scope: "organization" | "user" | "workspace";
   ownerId: string;
+  owner: ResourceOwner;
   title: string;
   currentVersionId: string | null;
   updatedAt: string | null;
@@ -3457,6 +3607,23 @@ function soulTitle(scope: SoulScope, workspace?: WorkspaceInfo): string {
   return workspace?.name ? `${workspace.name} Soul` : "Workspace Soul";
 }
 
+function soulResourceOwner(input: {
+  scope: SoulScope;
+  ownerId: string;
+  workspace?: WorkspaceInfo;
+}): ResourceOwner {
+  if (input.scope === "organization") {
+    return organizationResourceOwner({ orgId: input.ownerId, label: "Organization" });
+  }
+  if (input.scope === "user") {
+    return localUserResourceOwner({ userId: input.ownerId, label: "User" });
+  }
+  if (input.workspace) {
+    return ownerForWorkspace(input.workspace);
+  }
+  return workspaceResourceOwner({ workspaceId: input.ownerId });
+}
+
 function soulSummary(input: {
   scope: SoulScope;
   ownerId: string;
@@ -3469,6 +3636,7 @@ function soulSummary(input: {
   return {
     scope: input.scope,
     ownerId: input.ownerId,
+    owner: soulResourceOwner(input),
     title: soulTitle(input.scope, input.workspace),
     currentVersionId: input.document?.currentVersionId ?? null,
     updatedAt: soulUpdatedAt(input.document),
@@ -4498,9 +4666,12 @@ function createRoutes(
   const sessionArchives = createSessionArchiveStore();
   const conversationReadStore = createConversationReadStore();
   const conversationBindingStore = createConversationBindingStore({ dataDir: serverDataDir });
+  const conversationTranscriptStore = createConversationTranscriptStore({ dataDir: serverDataDir });
+  const conversationRunQueueStore = createConversationRunQueueStore({ dataDir: serverDataDir });
   const conversationService = createConversationService({
     readStore: conversationReadStore,
     bindingStore: conversationBindingStore,
+    transcriptStore: conversationTranscriptStore,
     createOpenCodeSession: async ({ workspace, directory, title, sendTraceId }) => {
       const scopedWorkspace = directory ? { ...workspace, directory } : workspace;
       return await fetchOpencodeJson(scopedWorkspace, "/session", {
@@ -4601,6 +4772,375 @@ function createRoutes(
       conversationId: binding?.conversationId ?? input.sessionOrConversationId,
     };
   };
+
+  type ConversationExecutionTarget = Awaited<ReturnType<typeof resolveConversationExecutionTarget>>;
+
+  const buildConversationRunSubmitPath = (
+    kind: "prompt_async" | "command" | "shell" | "summarize",
+    opencodeSessionId: string,
+    directory: string,
+  ) => {
+    const query = new URLSearchParams();
+    query.set("directory", directory);
+    return kind === "prompt_async"
+      ? `/session/${encodeURIComponent(opencodeSessionId)}/prompt_async?${query.toString()}`
+      : kind === "command"
+        ? `/session/${encodeURIComponent(opencodeSessionId)}/command?${query.toString()}`
+          : kind === "shell"
+            ? `/session/${encodeURIComponent(opencodeSessionId)}/shell?${query.toString()}`
+            : `/session/${encodeURIComponent(opencodeSessionId)}/summarize?${query.toString()}`;
+  };
+
+  const submitConversationRunToOpenCode = async (input: {
+    runTrace: ConversationRunTracer;
+    workspace: WorkspaceInfo;
+    target: ConversationExecutionTarget;
+    runId: string;
+    kind: "prompt_async" | "command" | "shell" | "summarize";
+    body: Record<string, unknown>;
+    clientMessageId: string | null;
+    origin: string | null;
+    expectAiGatewayStart: boolean;
+    lifecycleOwner: OrchestratorLifecycleClient | null;
+  }) => {
+    const {
+      runTrace,
+      workspace,
+      target,
+      runId,
+      kind,
+      body,
+      clientMessageId,
+      origin,
+      expectAiGatewayStart,
+      lifecycleOwner,
+    } = input;
+    const path = buildConversationRunSubmitPath(kind, target.opencodeSessionId, target.directory);
+    const aiGatewayProviderWatchStartedAt = Date.now();
+    const opencodeRunBody = buildConversationRunBody(kind, body);
+    runTrace.record("server:conversation-run:opencode-submit-body", {
+      workspaceId: workspace.id,
+      conversationId: target.conversationId,
+      runId,
+      kind,
+      clientMessageId,
+      origin,
+      opencodeSessionId: target.opencodeSessionId,
+      body: summarizeConversationRunBodyForTrace(opencodeRunBody),
+    });
+    if (kind === "prompt_async" && expectAiGatewayStart) {
+      registerActiveAiGatewayRun({
+        traceId: runTrace.traceId,
+        workspaceId: workspace.id,
+        conversationId: target.conversationId,
+        runId,
+        opencodeSessionId: target.opencodeSessionId,
+        clientMessageId,
+        origin,
+      });
+    }
+    let upstream: unknown;
+    try {
+      upstream = await runTrace.step(
+        "server:conversation-run:opencode-submit",
+        () => fetchOpencodeJson({ ...workspace, directory: target.directory }, path, {
+          method: "POST",
+          timeoutMs: OPENCODE_CONVERSATION_SUBMIT_TIMEOUT_MS,
+          body: opencodeRunBody,
+          sendTraceId: runTrace.traceId,
+        }),
+        {
+          workspaceId: workspace.id,
+          conversationId: target.conversationId,
+          runId,
+          kind,
+          clientMessageId,
+          origin,
+          opencodeSessionId: target.opencodeSessionId,
+        },
+      );
+    } catch (error) {
+      if (lifecycleOwner) {
+        await runTrace.step(
+          "server:conversation-run:lifecycle-mark-failed",
+          () => lifecycleOwner.markFailed(
+            workspace.id,
+            runId,
+            error instanceof Error ? error.message : String(error),
+          ),
+          {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            runId,
+          },
+        ).catch(() => undefined);
+      }
+      throw error;
+    }
+    if (lifecycleOwner && kind === "prompt_async" && expectAiGatewayStart) {
+      const providerStart = await runTrace.step(
+        "server:conversation-run:ai-gateway-provider-start-watch",
+        () => waitForAiGatewayProviderStart({
+          workspaceId: workspace.id,
+          conversationId: target.conversationId,
+          runId,
+          opencodeSessionId: target.opencodeSessionId,
+          clientMessageId,
+          origin,
+          startedAt: aiGatewayProviderWatchStartedAt,
+        }),
+        {
+          workspaceId: workspace.id,
+          conversationId: target.conversationId,
+          runId,
+          clientMessageId,
+          origin,
+          opencodeSessionId: target.opencodeSessionId,
+        },
+      );
+      if (!providerStart.started) {
+        const error = `AI gateway provider request did not start within ${providerStart.timeoutMs}ms.`;
+        await runTrace.step(
+          "server:conversation-run:lifecycle-mark-failed-ai-gateway-provider-start-timeout",
+          () => lifecycleOwner.markFailed(workspace.id, runId, error),
+          {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            runId,
+            opencodeSessionId: target.opencodeSessionId,
+            timeoutMs: providerStart.timeoutMs,
+          },
+        ).catch(() => undefined);
+        const abortQuery = new URLSearchParams();
+        abortQuery.set("directory", target.directory);
+        await runTrace.step(
+          "server:conversation-run:opencode-abort-ai-gateway-provider-start-timeout",
+          () => fetchOpencodeJson(
+            { ...workspace, directory: target.directory },
+            `/session/${encodeURIComponent(target.opencodeSessionId)}/abort?${abortQuery.toString()}`,
+            { method: "POST", sendTraceId: runTrace.traceId },
+          ),
+          {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            runId,
+            opencodeSessionId: target.opencodeSessionId,
+          },
+        ).catch((abortError) => {
+          runTrace.record("server:conversation-run:opencode-abort-ai-gateway-provider-start-timeout:error", {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            runId,
+            opencodeSessionId: target.opencodeSessionId,
+            error: abortError instanceof Error ? abortError.message : String(abortError),
+          });
+        });
+        throw new ApiError(504, "ai_gateway_provider_start_timeout", error, {
+          workspaceId: workspace.id,
+          conversationId: target.conversationId,
+          runId,
+          opencodeSessionId: target.opencodeSessionId,
+          clientMessageId,
+          origin,
+          timeoutMs: providerStart.timeoutMs,
+        });
+      }
+    }
+    return upstream;
+  };
+
+  const conversationQueueKey = (workspaceId: string, conversationId: string) => `${workspaceId}\0${conversationId}`;
+  const conversationQueueDrainTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const conversationQueueDrainInFlight = new Set<string>();
+  const CONVERSATION_QUEUE_DRAIN_POLL_MS = 1_500;
+
+  const scheduleConversationQueueDrain = (
+    workspaceId: string,
+    conversationId: string,
+    delayMs = 0,
+  ) => {
+    const key = conversationQueueKey(workspaceId, conversationId);
+    if (conversationQueueDrainTimers.has(key)) return;
+    const timer = setTimeout(() => {
+      conversationQueueDrainTimers.delete(key);
+      void drainConversationQueue(workspaceId, conversationId);
+    }, Math.max(0, delayMs));
+    (timer as { unref?: () => void }).unref?.();
+    conversationQueueDrainTimers.set(key, timer);
+  };
+
+  const enqueueConversationRun = (input: {
+    runTrace: ConversationRunTracer;
+    workspace: WorkspaceInfo;
+    target: ConversationExecutionTarget;
+    runId: string;
+    kind: "prompt_async" | "command" | "shell" | "summarize";
+    body: Record<string, unknown>;
+    clientMessageId: string | null;
+    origin: string | null;
+    activeRunId: string | null;
+  }) => {
+    const bodyJson = JSON.stringify({
+      ...input.body,
+      directory: input.target.directory,
+      kind: input.kind,
+      ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
+      ...(input.origin ? { origin: input.origin } : {}),
+    });
+    const queued = conversationRunQueueStore.enqueue({
+      workspaceId: input.workspace.id,
+      conversationId: input.target.conversationId,
+      opencodeSessionId: input.target.opencodeSessionId,
+      directory: input.target.directory,
+      reservedRunId: input.runId,
+      clientMessageId: input.clientMessageId,
+      origin: input.origin,
+      kind: input.kind,
+      bodyJson,
+      activeRunId: input.activeRunId,
+    });
+    input.runTrace.record("server:conversation-run:queued", {
+      workspaceId: input.workspace.id,
+      conversationId: input.target.conversationId,
+      opencodeSessionId: input.target.opencodeSessionId,
+      runId: queued.item.reservedRunId,
+      queueItemId: queued.item.queueItemId,
+      activeRunId: queued.item.activeRunId,
+      queuePosition: queued.queuePosition,
+      inserted: queued.inserted,
+      clientMessageId: input.clientMessageId,
+      origin: input.origin,
+    });
+    scheduleConversationQueueDrain(input.workspace.id, input.target.conversationId, CONVERSATION_QUEUE_DRAIN_POLL_MS);
+    return jsonResponse({
+      ok: true,
+      workspaceId: input.workspace.id,
+      conversationId: input.target.conversationId,
+      opencodeSessionId: input.target.opencodeSessionId,
+      runId: queued.item.reservedRunId,
+      reservedRunId: queued.item.reservedRunId,
+      queueItemId: queued.item.queueItemId,
+      activeRunId: queued.item.activeRunId,
+      queuePosition: queued.queuePosition,
+      clientMessageId: input.clientMessageId,
+      origin: input.origin,
+      status: "queued",
+      kind: input.kind,
+      debugTrace: input.runTrace.entries,
+    }, queued.inserted ? 202 : 200);
+  };
+
+  async function drainConversationQueue(workspaceId: string, conversationId: string): Promise<void> {
+    const key = conversationQueueKey(workspaceId, conversationId);
+    if (conversationQueueDrainInFlight.has(key)) return;
+    conversationQueueDrainInFlight.add(key);
+    let item: ConversationRunQueueItem | null = null;
+    try {
+      const workspace = config.workspaces.find((candidate) => candidate.id === workspaceId);
+      if (!workspace) return;
+      const lifecycleOwner = workspace.workspaceType === "remote" ? null : lifecycleClient;
+      const runTrace = createBackgroundConversationRunTracer();
+      if (lifecycleOwner) {
+        try {
+          const latest = await lifecycleOwner.status(workspace.id, conversationId, "latest");
+          if (latest && isActiveLifecycleStatus(latest.status)) {
+            scheduleConversationQueueDrain(workspaceId, conversationId, CONVERSATION_QUEUE_DRAIN_POLL_MS);
+            return;
+          }
+        } catch (error) {
+          runTrace.record("server:conversation-run:queue-drain-status-error", {
+            workspaceId,
+            conversationId,
+            message: error instanceof Error ? error.message : String(error),
+          });
+          scheduleConversationQueueDrain(workspaceId, conversationId, CONVERSATION_QUEUE_DRAIN_POLL_MS);
+          return;
+        }
+      }
+
+      item = conversationRunQueueStore.nextPending(workspaceId, conversationId);
+      if (!item) return;
+      item = conversationRunQueueStore.markStarting(item.queueItemId);
+      if (!item || item.state !== "starting") return;
+
+      let body: Record<string, unknown>;
+      try {
+        const parsed = JSON.parse(item.bodyJson) as unknown;
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          throw new Error("queued run body must be an object");
+        }
+        body = parsed as Record<string, unknown>;
+      } catch (error) {
+        conversationRunQueueStore.markFailed(item.queueItemId, error instanceof Error ? error.message : String(error));
+        return;
+      }
+
+      const kind = parseConversationRunKind(item.kind);
+      const expectAiGatewayStart = optionalBodyBoolean(body, "expectAiGatewayStart") === true;
+      const target: ConversationExecutionTarget = {
+        directory: item.directory,
+        binding: null,
+        opencodeSessionId: item.opencodeSessionId,
+        conversationId: item.conversationId,
+      };
+
+      if (lifecycleOwner) {
+        try {
+          await runTrace.step(
+            "server:conversation-run:queue-lifecycle-register",
+            () => lifecycleOwner.register({
+              workspaceId: workspace.id,
+              conversationId: item!.conversationId,
+              runId: item!.reservedRunId,
+              engineSessionId: item!.opencodeSessionId,
+              directory: item!.directory,
+              kind: lifecycleRunKind(kind),
+            }),
+            {
+              workspaceId: workspace.id,
+              conversationId: item.conversationId,
+              runId: item.reservedRunId,
+              engineSessionId: item.opencodeSessionId,
+              queueItemId: item.queueItemId,
+            },
+          );
+        } catch (error) {
+          if (error instanceof RunAlreadyActiveError) {
+            conversationRunQueueStore.markPending(item.queueItemId, error.activeRunId);
+            scheduleConversationQueueDrain(workspaceId, conversationId, CONVERSATION_QUEUE_DRAIN_POLL_MS);
+            return;
+          }
+          conversationRunQueueStore.markFailed(item.queueItemId, error instanceof Error ? error.message : String(error));
+          return;
+        }
+      }
+
+      await submitConversationRunToOpenCode({
+        runTrace,
+        workspace,
+        target,
+        runId: item.reservedRunId,
+        kind,
+        body,
+        clientMessageId: item.clientMessageId,
+        origin: item.origin,
+        expectAiGatewayStart,
+        lifecycleOwner,
+      });
+      conversationRunQueueStore.markSubmitted(item.queueItemId);
+      scheduleConversationQueueDrain(workspaceId, conversationId, CONVERSATION_QUEUE_DRAIN_POLL_MS);
+    } catch (error) {
+      if (item) {
+        conversationRunQueueStore.markFailed(item.queueItemId, error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      conversationQueueDrainInFlight.delete(key);
+    }
+  }
+
+  for (const pending of conversationRunQueueStore.pendingConversationKeys()) {
+    scheduleConversationQueueDrain(pending.workspaceId, pending.conversationId, CONVERSATION_QUEUE_DRAIN_POLL_MS);
+  }
 
   const serializeFileSession = (session: {
     id: string;
@@ -5115,6 +5655,7 @@ function createRoutes(
     ];
 
     let provision: { version: string; status: "updated" | "unchanged"; written: number; unchanged: number } | null = null;
+    let userGlobalSkills: Awaited<ReturnType<typeof materializeUserGlobalSkillsForWorkspace>> | null = null;
     try {
       provision = await provisionWorkspaceInternalSystem(workspace.path, resolveVesloAppDataDir());
       if (provision.written > 0) {
@@ -5127,6 +5668,19 @@ function createRoutes(
           type: "agent",
           action: "updated",
           path: ".opencode/agents",
+        });
+      }
+      userGlobalSkills = await materializeUserGlobalSkillsForWorkspace({
+        workspaceRoot: workspace.path,
+        workspaceId: workspace.id,
+        dataDir: serverDataDir,
+      });
+      if (userGlobalSkills.reloadRequired) {
+        emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
+          type: "skill",
+          name: "veslo-user",
+          action: "updated",
+          path: userGlobalSkills.rootDir,
         });
       }
     } catch (error) {
@@ -5149,6 +5703,7 @@ function createRoutes(
       activeId: workspace.id,
       workspace: serializeWorkspace(workspace),
       provision,
+      userGlobalSkills,
     });
   });
 
@@ -5207,6 +5762,11 @@ function createRoutes(
     const workspace = await resolveWorkspace(config, ctx.params.id);
 
     const result = await provisionWorkspaceInternalSystem(workspace.path, resolveVesloAppDataDir());
+    const userGlobalSkills = await materializeUserGlobalSkillsForWorkspace({
+      workspaceRoot: workspace.path,
+      workspaceId: workspace.id,
+      dataDir: serverDataDir,
+    });
 
     await recordAudit(workspace.path, {
       id: shortId(),
@@ -5224,6 +5784,16 @@ function createRoutes(
         action: "updated",
         path: ".opencode/veslo/internal",
       });
+    }
+    if (userGlobalSkills.reloadRequired) {
+      emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
+        type: "skill",
+        name: "veslo-user",
+        action: "updated",
+        path: userGlobalSkills.rootDir,
+      });
+    }
+    if (result.written > 0) {
       emitReloadEvent(ctx.reloadEvents, workspace, "agents", {
         type: "agent",
         action: "updated",
@@ -5238,6 +5808,7 @@ function createRoutes(
       status: result.status,
       written: result.written,
       unchanged: result.unchanged,
+      userGlobalSkills,
     });
   });
 
@@ -5277,6 +5848,7 @@ function createRoutes(
     const result = await conversationService.listConversations({
       workspace,
       directory,
+      sync: ctx.url.searchParams.get("sync") === "true" || ctx.url.searchParams.get("sync") === "1",
     });
     return jsonResponse(result);
   });
@@ -5437,6 +6009,35 @@ function createRoutes(
     });
     if (lifecycleOwner) {
       try {
+        const active = await runTrace.step(
+          "server:conversation-run:lifecycle-active-peek",
+          () => lifecycleOwner.active(workspace.id, target.conversationId),
+          {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+          },
+        );
+        if (active && isActiveLifecycleStatus(active.status)) {
+          return enqueueConversationRun({
+            runTrace,
+            workspace,
+            target,
+            runId,
+            kind,
+            body,
+            clientMessageId: clientMessageId || null,
+            origin: origin || null,
+            activeRunId: active.runId,
+          });
+        }
+      } catch (error) {
+        runTrace.record("server:conversation-run:lifecycle-active-peek-skipped", {
+          workspaceId: workspace.id,
+          conversationId: target.conversationId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+      try {
         await runTrace.step(
           "server:conversation-run:lifecycle-register",
           () => lifecycleOwner.register({
@@ -5457,8 +6058,16 @@ function createRoutes(
         );
       } catch (error) {
         if (error instanceof RunAlreadyActiveError) {
-          throw new ApiError(409, "run_already_active", "A run is already active for this conversation", {
-            activeRunId: error.activeRunId,
+          return enqueueConversationRun({
+            runTrace,
+            workspace,
+            target,
+            runId,
+            kind,
+            body,
+            clientMessageId: clientMessageId || null,
+            origin: origin || null,
+            activeRunId: error.activeRunId || null,
           });
         }
         if (error instanceof OrchestratorLifecycleRequestError) {
@@ -5467,146 +6076,18 @@ function createRoutes(
         throw error;
       }
     }
-    const query = new URLSearchParams();
-    query.set("directory", target.directory);
-    const path =
-      kind === "prompt_async"
-        ? `/session/${encodeURIComponent(target.opencodeSessionId)}/prompt_async?${query.toString()}`
-        : kind === "command"
-          ? `/session/${encodeURIComponent(target.opencodeSessionId)}/command?${query.toString()}`
-            : kind === "shell"
-              ? `/session/${encodeURIComponent(target.opencodeSessionId)}/shell?${query.toString()}`
-              : `/session/${encodeURIComponent(target.opencodeSessionId)}/summarize?${query.toString()}`;
-    let upstream: unknown;
-    const aiGatewayProviderWatchStartedAt = Date.now();
-    const opencodeRunBody = buildConversationRunBody(kind, body);
-    runTrace.record("server:conversation-run:opencode-submit-body", {
-      workspaceId: workspace.id,
-      conversationId: target.conversationId,
+    const upstream = await submitConversationRunToOpenCode({
+      runTrace,
+      workspace,
+      target,
       runId,
       kind,
+      body,
       clientMessageId: clientMessageId || null,
       origin: origin || null,
-      opencodeSessionId: target.opencodeSessionId,
-      body: summarizeConversationRunBodyForTrace(opencodeRunBody),
+      expectAiGatewayStart,
+      lifecycleOwner,
     });
-    if (kind === "prompt_async" && expectAiGatewayStart) {
-      registerActiveAiGatewayRun({
-        traceId: runTrace.traceId,
-        workspaceId: workspace.id,
-        conversationId: target.conversationId,
-        runId,
-        opencodeSessionId: target.opencodeSessionId,
-        clientMessageId: clientMessageId || null,
-        origin: origin || null,
-      });
-    }
-    try {
-      upstream = await runTrace.step(
-        "server:conversation-run:opencode-submit",
-        () => fetchOpencodeJson({ ...workspace, directory: target.directory }, path, {
-          method: "POST",
-          timeoutMs: OPENCODE_CONVERSATION_SUBMIT_TIMEOUT_MS,
-          body: opencodeRunBody,
-          sendTraceId: runTrace.traceId,
-        }),
-        {
-          workspaceId: workspace.id,
-          conversationId: target.conversationId,
-          runId,
-          kind,
-          clientMessageId: clientMessageId || null,
-          origin: origin || null,
-          opencodeSessionId: target.opencodeSessionId,
-        },
-      );
-    } catch (error) {
-      if (lifecycleOwner) {
-        await runTrace.step(
-          "server:conversation-run:lifecycle-mark-failed",
-          () => lifecycleOwner.markFailed(
-            workspace.id,
-            runId,
-            error instanceof Error ? error.message : String(error),
-          ),
-          {
-            workspaceId: workspace.id,
-            conversationId: target.conversationId,
-            runId,
-          },
-        ).catch(() => undefined);
-      }
-      throw error;
-    }
-    if (lifecycleOwner && kind === "prompt_async" && expectAiGatewayStart) {
-      const providerStart = await runTrace.step(
-        "server:conversation-run:ai-gateway-provider-start-watch",
-        () => waitForAiGatewayProviderStart({
-          workspaceId: workspace.id,
-          conversationId: target.conversationId,
-          runId,
-          opencodeSessionId: target.opencodeSessionId,
-          clientMessageId: clientMessageId || null,
-          origin: origin || null,
-          startedAt: aiGatewayProviderWatchStartedAt,
-        }),
-        {
-          workspaceId: workspace.id,
-          conversationId: target.conversationId,
-          runId,
-          clientMessageId: clientMessageId || null,
-          origin: origin || null,
-          opencodeSessionId: target.opencodeSessionId,
-        },
-      );
-      if (!providerStart.started) {
-        const error = `AI gateway provider request did not start within ${providerStart.timeoutMs}ms.`;
-        await runTrace.step(
-          "server:conversation-run:lifecycle-mark-failed-ai-gateway-provider-start-timeout",
-          () => lifecycleOwner.markFailed(workspace.id, runId, error),
-          {
-            workspaceId: workspace.id,
-            conversationId: target.conversationId,
-            runId,
-            opencodeSessionId: target.opencodeSessionId,
-            timeoutMs: providerStart.timeoutMs,
-          },
-        ).catch(() => undefined);
-        const abortQuery = new URLSearchParams();
-        abortQuery.set("directory", target.directory);
-        await runTrace.step(
-          "server:conversation-run:opencode-abort-ai-gateway-provider-start-timeout",
-          () => fetchOpencodeJson(
-            { ...workspace, directory: target.directory },
-            `/session/${encodeURIComponent(target.opencodeSessionId)}/abort?${abortQuery.toString()}`,
-            { method: "POST", sendTraceId: runTrace.traceId },
-          ),
-          {
-            workspaceId: workspace.id,
-            conversationId: target.conversationId,
-            runId,
-            opencodeSessionId: target.opencodeSessionId,
-          },
-        ).catch((abortError) => {
-          runTrace.record("server:conversation-run:opencode-abort-ai-gateway-provider-start-timeout:error", {
-            workspaceId: workspace.id,
-            conversationId: target.conversationId,
-            runId,
-            opencodeSessionId: target.opencodeSessionId,
-            error: abortError instanceof Error ? abortError.message : String(abortError),
-          });
-        });
-        throw new ApiError(504, "ai_gateway_provider_start_timeout", error, {
-          workspaceId: workspace.id,
-          conversationId: target.conversationId,
-          runId,
-          opencodeSessionId: target.opencodeSessionId,
-          clientMessageId: clientMessageId || null,
-          origin: origin || null,
-          timeoutMs: providerStart.timeoutMs,
-        });
-      }
-    }
     return jsonResponse({
       ok: true,
       workspaceId: workspace.id,
@@ -5755,6 +6236,56 @@ function createRoutes(
     return jsonResponse(result);
   });
 
+  addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/transcript", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const sessionId = (ctx.params.sessionId ?? "").trim();
+    if (!sessionId) {
+      throw new ApiError(400, "invalid_payload", "sessionId is required");
+    }
+    const body = await readJsonBody(ctx.request);
+    const directory = await resolveConversationReadDirectory(
+      workspace,
+      optionalBodyNullableString(body, "directory") ?? null,
+    );
+    if (!directory) {
+      throw new ApiError(400, "invalid_directory", "Conversation directory is required");
+    }
+    const binding = await conversationService.resolveOpenCodeSessionForRead({
+      workspaceId: workspace.id,
+      directory,
+      sessionOrConversationId: sessionId,
+    });
+    if (!binding && isVesloConversationId(sessionId)) {
+      throw new ApiError(404, "conversation_not_found", "Conversation was not found in this workspace");
+    }
+
+    const result = await conversationService.appendTranscript({
+      workspace,
+      sessionId,
+      directory,
+      limit: parseSessionTranscriptLimit(body.limit),
+      messages: parseSessionTranscriptMessages(body.messages),
+      partsByMessageId: parseSessionTranscriptParts(body.partsByMessageId),
+      deletedMessageIds: parseTranscriptStringArray(body.deletedMessageIds, "deletedMessageIds"),
+      deletedPartsByMessageId: parseSessionTranscriptDeletedParts(body.deletedPartsByMessageId),
+    });
+    sessionTranscriptPrefetch.invalidate({
+      workspaceId: workspace.id,
+      sessionId: result.opencodeSessionId,
+      directory,
+    });
+    if (result.conversationId) {
+      sessionTranscriptPrefetch.invalidate({
+        workspaceId: workspace.id,
+        sessionId: result.conversationId,
+        directory,
+      });
+    }
+    return jsonResponse(result);
+  });
+
   addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId/transcript", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const sessionId = (ctx.params.sessionId ?? "").trim();
@@ -5785,22 +6316,23 @@ function createRoutes(
       workspace,
       ctx.url.searchParams.get("directory"),
     );
-    const search = new URLSearchParams();
-    search.set("limit", "200");
-    if (directory) search.set("directory", directory);
-
-    const messages = await fetchOpencodeJson(
+    const transcript = await loadConversationTranscriptResponse({
       workspace,
-      `/session/${encodeURIComponent(sessionId)}/message?${search.toString()}`,
-      { method: "GET", directory, maxResponseBytes: OPENCODE_TRANSCRIPT_RESPONSE_MAX_BYTES },
+      sessionOrConversationId: sessionId,
+      limit: SESSION_TRANSCRIPT_MAX_LIMIT,
+      directory,
+    });
+    const messages = attachTranscriptPartsForArtifacts(
+      transcript.messages,
+      transcript.partsByMessageId,
     );
 
     return jsonResponse(
       deriveLatestRunArtifactsResponse({
-        sessionId,
+        sessionId: transcript.opencodeSessionId,
         workspaceId: workspace.id,
-        messages: Array.isArray(messages) ? messages : [],
-      }, { workspaceRoot: workspace.path }),
+        messages,
+      }, { workspaceRoot: directory ?? workspace.path }),
     );
   });
 
@@ -7344,7 +7876,7 @@ function createRoutes(
   addRoute(routes, "GET", "/workspace/:id/plugins", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const includeGlobal = ctx.url.searchParams.get("includeGlobal") === "true";
-    const result = await listPlugins(workspace.path, includeGlobal);
+    const result = await listPlugins(workspace.path, includeGlobal, { workspaceOwner: ownerForWorkspace(workspace) });
     return jsonResponse(result);
   });
 
@@ -7378,7 +7910,7 @@ function createRoutes(
         action: "added",
       });
     }
-    const result = await listPlugins(workspace.path, false);
+    const result = await listPlugins(workspace.path, false, { workspaceOwner: ownerForWorkspace(workspace) });
     return jsonResponse(result);
   });
 
@@ -7411,7 +7943,7 @@ function createRoutes(
         action: "removed",
       });
     }
-    const result = await listPlugins(workspace.path, false);
+    const result = await listPlugins(workspace.path, false, { workspaceOwner: ownerForWorkspace(workspace) });
     return jsonResponse(result);
   });
 
@@ -7974,6 +8506,87 @@ function createRoutes(
     });
   });
 
+  addRoute(routes, "GET", "/skills/user-global-store", "client", async () => {
+    return jsonResponse({ items: await listUserGlobalSkills(serverDataDir) });
+  });
+
+  addRoute(routes, "GET", "/skills/user-global-store/:name", "client", async (ctx) => {
+    const name = String(ctx.params.name ?? "").trim();
+    if (!name) {
+      throw new ApiError(400, "invalid_skill_name", "Skill name is required");
+    }
+    return jsonResponse(await readUserGlobalSkill(name, serverDataDir));
+  });
+
+  addRoute(routes, "POST", "/skills/user-global-store", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const body = await readJsonBody(ctx.request);
+    const name = String(body.name ?? "").trim();
+    const content = String(body.content ?? "");
+    const description = body.description ? String(body.description) : undefined;
+    const enabled = typeof body.enabled === "boolean" ? body.enabled : undefined;
+    const result = await upsertUserGlobalSkill({ name, content, description, enabled }, serverDataDir);
+
+    await recordAudit(userGlobalSkillStorePath(serverDataDir), {
+      id: shortId(),
+      workspaceId: "global",
+      actor: ctx.actor ?? { type: "remote" },
+      action: "skills.user_global_store.upsert",
+      target: result.item.path,
+      summary: `Upserted user-global skill ${result.item.name}`,
+      timestamp: Date.now(),
+    });
+
+    return jsonResponse({
+      ok: true,
+      action: result.action,
+      item: result.item,
+      reloadRequired: true,
+      trigger: {
+        type: "skill",
+        name: result.item.name,
+        action: result.action,
+        path: result.item.path,
+        scope: "user-global",
+      },
+    });
+  });
+
+  addRoute(routes, "DELETE", "/skills/user-global-store/:name", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const name = String(ctx.params.name ?? "").trim();
+    if (!name) {
+      throw new ApiError(400, "invalid_skill_name", "Skill name is required");
+    }
+    const result = await deleteUserGlobalSkill(name, serverDataDir);
+
+    await recordAudit(userGlobalSkillStorePath(serverDataDir), {
+      id: shortId(),
+      workspaceId: "global",
+      actor: ctx.actor ?? { type: "remote" },
+      action: "skills.user_global_store.delete",
+      target: result.item.path,
+      summary: `Deleted user-global skill ${result.item.name}`,
+      timestamp: Date.now(),
+    });
+
+    return jsonResponse({
+      ok: true,
+      name: result.item.name,
+      path: result.item.path,
+      reloadRequired: true,
+      trigger: {
+        type: "skill",
+        name: result.item.name,
+        action: "removed",
+        path: result.item.path,
+        scope: "user-global",
+      },
+    });
+  });
+
   addRoute(routes, "DELETE", "/skills/user-global/:name", "none", async (ctx) => {
     ensureWritable(config);
     const actor = await requireHostOrClient(ctx.request, config, ctx.tokens);
@@ -8137,7 +8750,7 @@ function createRoutes(
   addRoute(routes, "GET", "/workspace/:id/skills", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const includeGlobal = ctx.url.searchParams.get("includeGlobal") === "true";
-    const items = await listSkills(workspace.path, includeGlobal);
+    const items = await listSkills(workspace.path, includeGlobal, { workspaceOwner: ownerForWorkspace(workspace) });
     return jsonResponse({ items });
   });
 
@@ -8149,7 +8762,7 @@ function createRoutes(
     const threshold = typeof body.threshold === "number" ? body.threshold : undefined;
     const ambiguityDelta = typeof body.ambiguityDelta === "number" ? body.ambiguityDelta : undefined;
     const maxCandidates = typeof body.maxCandidates === "number" ? body.maxCandidates : undefined;
-    const skills = await listSkills(workspace.path, includeGlobal);
+    const skills = await listSkills(workspace.path, includeGlobal, { workspaceOwner: ownerForWorkspace(workspace) });
     const result = resolveSkillMatch({
       text,
       skills,
@@ -8163,6 +8776,45 @@ function createRoutes(
   addRoute(routes, "GET", "/workspace/:id/skills/materialization", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     return jsonResponse(await buildWorkspaceSkillMaterializationStatus(config, workspace));
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/skills/user-global-store/sync", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "skills.user_global_store.sync",
+      summary: "Sync user-global skills into workspace runtime",
+      paths: [userGlobalMaterializedSkillsRoot(workspace.path)],
+    });
+
+    const result = await materializeUserGlobalSkillsForWorkspace({
+      workspaceRoot: workspace.path,
+      workspaceId: workspace.id,
+      dataDir: serverDataDir,
+    });
+
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "skills.user_global_store.sync",
+      target: result.rootDir,
+      summary: `Synced ${result.materializedSkills.length} user-global skill(s) into workspace runtime`,
+      timestamp: Date.now(),
+    });
+
+    if (result.reloadRequired) {
+      emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
+        type: "skill",
+        name: "veslo-user",
+        action: "updated",
+        path: result.rootDir,
+      });
+    }
+
+    return jsonResponse(result);
   });
 
   addRoute(routes, "POST", "/workspace/:id/skills/materialization/sync", "host", async (ctx) => {
@@ -8335,11 +8987,12 @@ function createRoutes(
           path: result.path,
           description: "",
           scope: "project",
+          owner: ownerForWorkspace(workspace),
         },
         content: result.content,
       });
     }
-    const items = await listSkills(workspace.path, includeGlobal);
+    const items = await listSkills(workspace.path, includeGlobal, { workspaceOwner: ownerForWorkspace(workspace) });
     const item = items.find((skill) => skill.name === name);
     if (!item) {
       throw new ApiError(404, "skill_not_found", `Skill not found: ${name}`);
@@ -8432,7 +9085,7 @@ function createRoutes(
 
   addRoute(routes, "GET", "/workspace/:id/mcp", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    const items = await listMcp(workspace.path);
+    const items = await listMcp(workspace.path, { workspaceOwner: ownerForWorkspace(workspace) });
     return jsonResponse({ items });
   });
 
@@ -8527,7 +9180,7 @@ function createRoutes(
       name,
       action: result.action,
     });
-    const items = await listMcp(workspace.path);
+    const items = await listMcp(workspace.path, { workspaceOwner: ownerForWorkspace(workspace) });
     return jsonResponse({ items });
   });
 
@@ -8559,7 +9212,7 @@ function createRoutes(
         action: "removed",
       });
     }
-    const items = await listMcp(workspace.path);
+    const items = await listMcp(workspace.path, { workspaceOwner: ownerForWorkspace(workspace) });
     return jsonResponse({ items });
   });
 
@@ -8622,7 +9275,7 @@ function createRoutes(
       await requireHost(ctx.request, config, tokens);
     }
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    const items = await listCommands(workspace.path, scope);
+    const items = await listCommands(workspace.path, scope, { workspaceOwner: ownerForWorkspace(workspace) });
     return jsonResponse({ items });
   });
 
@@ -8663,7 +9316,7 @@ function createRoutes(
       action: "updated",
       path,
     });
-    const items = await listCommands(workspace.path, "workspace");
+    const items = await listCommands(workspace.path, "workspace", { workspaceOwner: ownerForWorkspace(workspace) });
     return jsonResponse({ items });
   });
 
@@ -10991,7 +11644,7 @@ async function resolveConversationReadDirectory(
   requestedRaw: string | null,
 ): Promise<string | null> {
   const fallback = resolveOpencodeDirectory(workspace);
-  const requested = requestedRaw?.trim() ?? "";
+  const requested = normalizeConversationReadDirectoryRequest(workspace, requestedRaw, fallback);
   if (!requested) return fallback;
 
   if (!isAbsolute(requested)) {
@@ -11008,6 +11661,36 @@ async function resolveConversationReadDirectory(
     throw new ApiError(403, "directory_unauthorized", "Conversation directory is outside this workspace");
   }
   return directory;
+}
+
+function normalizeConversationReadDirectoryRequest(
+  workspace: WorkspaceInfo,
+  requestedRaw: string | null,
+  fallback: string | null,
+): string {
+  const requested = requestedRaw?.trim() ?? "";
+  if (!requested) return "";
+
+  const workspaceRoot = fallback?.trim() || workspace.directory?.trim() || workspace.path?.trim() || "";
+  const slashRequested = requested.replace(/\\/g, "/");
+  if (slashRequested === "/workspace" || slashRequested === "workspace") {
+    return workspaceRoot;
+  }
+  if (slashRequested.startsWith("/workspace/") || slashRequested.startsWith("workspace/")) {
+    const relativePath = slashRequested.replace(/^\/?workspace\/+/, "");
+    return workspaceRoot ? join(workspaceRoot, relativePath) : requested;
+  }
+
+  if (process.platform === "win32") {
+    const wslMount = slashRequested.match(/^\/mnt\/([A-Za-z])(?:\/(.*))?$/);
+    if (wslMount) {
+      const drive = wslMount[1]?.toUpperCase();
+      const rest = wslMount[2]?.trim() ?? "";
+      return drive ? (rest ? `${drive}:/${rest}` : `${drive}:/`) : requested;
+    }
+  }
+
+  return requested;
 }
 
 export function normalizeOpencodeDirectory(directory: string): string {

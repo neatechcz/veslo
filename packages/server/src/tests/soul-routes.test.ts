@@ -175,13 +175,34 @@ test("GET /soul returns organization, user, and workspace summaries", async () =
 
   expect(response.status).toBe(200);
   const payload = await response.json() as {
-    organization: { scope: string; ownerId: string; currentVersionId: string | null; status: string; canEdit: boolean };
-    user: { scope: string; ownerId: string; currentVersionId: string | null; status: string; canEdit: boolean };
-    workspaces: Array<{ scope: string; ownerId: string; currentVersionId: string | null; status: string }>;
+    organization: {
+      scope: string;
+      ownerId: string;
+      owner: { kind: string; id: string; label?: string };
+      currentVersionId: string | null;
+      status: string;
+      canEdit: boolean;
+    };
+    user: {
+      scope: string;
+      ownerId: string;
+      owner: { kind: string; id: string; label?: string };
+      currentVersionId: string | null;
+      status: string;
+      canEdit: boolean;
+    };
+    workspaces: Array<{
+      scope: string;
+      ownerId: string;
+      owner: { kind: string; id: string; label?: string; root?: string };
+      currentVersionId: string | null;
+      status: string;
+    }>;
   };
   expect(payload.organization).toMatchObject({
     scope: "organization",
     ownerId: "org_1",
+    owner: { kind: "organization", id: "org_1", label: "Organization" },
     currentVersionId: "org_v1",
     status: "active",
     canEdit: true,
@@ -189,6 +210,7 @@ test("GET /soul returns organization, user, and workspace summaries", async () =
   expect(payload.user).toMatchObject({
     scope: "user",
     ownerId: "user_1",
+    owner: { kind: "user", id: "user_1", label: "User" },
     currentVersionId: "user_v1",
     status: "active",
     canEdit: true,
@@ -196,12 +218,14 @@ test("GET /soul returns organization, user, and workspace summaries", async () =
   expect(payload.workspaces).toContainEqual(expect.objectContaining({
     scope: "workspace",
     ownerId: "ws_active",
+    owner: expect.objectContaining({ kind: "workspace", id: "ws_active", label: "Active Workspace" }),
     currentVersionId: expect.any(String),
     status: "active",
   }));
   expect(payload.workspaces).toContainEqual(expect.objectContaining({
     scope: "workspace",
     ownerId: "ws_inactive",
+    owner: expect.objectContaining({ kind: "workspace", id: "ws_inactive", label: "Inactive Workspace" }),
     currentVersionId: null,
     status: "not_configured",
   }));
@@ -227,11 +251,18 @@ test("GET /soul/organization returns read model", async () => {
   expect(response.status).toBe(200);
   const payload = await response.json() as {
     document: SoulDocument;
-    summary: { ownerId: string; title: string; currentVersionId: string | null; status: string };
+    summary: {
+      ownerId: string;
+      owner: { kind: string; id: string; label?: string };
+      title: string;
+      currentVersionId: string | null;
+      status: string;
+    };
   };
   expect(payload.document).toEqual(organization);
   expect(payload.summary).toMatchObject({
     ownerId: "org_1",
+    owner: { kind: "organization", id: "org_1", label: "Organization" },
     title: "Organization Soul",
     currentVersionId: "org_v1",
     status: "active",
@@ -533,9 +564,22 @@ test("workspace soul routes work for configured workspaces that are not active",
   });
 
   expect(update.status).toBe(200);
-  const updatePayload = await update.json() as { document: SoulDocument; summary: { currentVersionId: string | null } };
+  const updatePayload = await update.json() as {
+    document: SoulDocument;
+    summary: {
+      ownerId: string;
+      owner: { kind: string; id: string; label?: string; root?: string };
+      currentVersionId: string | null;
+    };
+  };
   expect(updatePayload.document.scope).toBe("workspace");
   expect(updatePayload.document.ownerId).toBe("ws_inactive");
+  expect(updatePayload.summary.ownerId).toBe("ws_inactive");
+  expect(updatePayload.summary.owner).toMatchObject({
+    kind: "workspace",
+    id: "ws_inactive",
+    label: "Inactive Workspace",
+  });
   expect(updatePayload.document.heartbeatEnabled).toBe(true);
   expect(updatePayload.document.versions).toHaveLength(1);
   expect(updatePayload.summary.currentVersionId).toBe(updatePayload.document.currentVersionId);

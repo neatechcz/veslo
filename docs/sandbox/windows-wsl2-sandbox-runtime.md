@@ -131,9 +131,21 @@ Current implemented behavior:
 Not yet implemented:
 
 - first-run UI onboarding
-- installer/desktop invocation of the provisioning helper
 - versioned runtime manifest
 - user-facing repair flow
+
+Implemented installer bridge:
+
+- the Windows MSI bundles the provisioning helper as an app resource
+- it also bundles the desktop package manifest (`package.json`) so the wrapper passes
+  the currently pinned OpenCode version to the provisioner
+- a WiX custom action runs a best-effort wrapper after app files are installed
+- the wrapper first checks the existing `VesloSandbox` runtime, then provisions
+  or repairs it only when missing/incomplete
+- provisioning failures do not roll back the Veslo MSI; they are logged to
+  `%LOCALAPPDATA%\Veslo\logs\wsl2-sandbox-installer.log` for later repair
+- the MSI does not run `wsl --install`; enabling WSL and any reboot/admin
+  requirement still belongs to explicit onboarding or enterprise deployment
 
 Smoke tests should only verify the environment. They must not install packages,
 repair WSL, or modify user distros.

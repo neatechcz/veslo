@@ -30,7 +30,7 @@ test("createSessionAndOpen uses the creation flow helpers before selecting the s
   );
   assert.match(
     createSource,
-    /const wsId = resolveCreatedSessionWorkspaceId\(\{[\s\S]*pendingSidebarSession,[\s\S]*targetWorkspaceId: targetWorkspace\?\.workspaceId,[\s\S]*connectingWorkspaceId: workspaceStore\.connectingWorkspaceId\(\),[\s\S]*activeWorkspaceId: workspaceStore\.activeWorkspaceId\(\),[\s\S]*\}\);/,
+    /const createdWorkspaceId = resolveCreatedSessionWorkspaceId\(\{[\s\S]*pendingSidebarSession,[\s\S]*targetWorkspaceId: targetWorkspace\?\.workspaceId,[\s\S]*connectingWorkspaceId: workspaceStore\.connectingWorkspaceId\(\),[\s\S]*activeWorkspaceId: workspaceStore\.activeWorkspaceId\(\),[\s\S]*\}\);[\s\S]*if \(createdWorkspaceId\) \{[\s\S]*rememberConversationScope\(\{[\s\S]*workspaceId: createdWorkspaceId,[\s\S]*\}\);[\s\S]*const wsId = createdWorkspaceId;/,
     "workspace id selection should live in the creation flow helper",
   );
   assert.match(

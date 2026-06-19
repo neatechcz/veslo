@@ -176,12 +176,10 @@ describe("bounded server body handling", () => {
     const upstreamPort = await listenNodeServer(upstream);
     const server = await startFixture({ opencodeBaseUrl: `http://127.0.0.1:${upstreamPort}` });
 
-    const response = await fetch(
-      `http://127.0.0.1:${server.port}/workspace/ws_opencode/sessions/sess_oversized/artifacts/latest-run`,
-      {
-        headers: { Authorization: "Bearer client-token" },
-      },
-    );
+    const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_opencode/sessions/sess_oversized`, {
+      method: "DELETE",
+      headers: { Authorization: "Bearer client-token" },
+    });
 
     expect(response.status).toBe(502);
     const payload = await response.json() as { code: string };
@@ -200,13 +198,11 @@ describe("bounded server body handling", () => {
 
       const controller = new AbortController();
       const startedAt = Date.now();
-      const responsePromise = fetch(
-        `http://127.0.0.1:${server.port}/workspace/ws_opencode/sessions/sess_hung/artifacts/latest-run`,
-        {
-          headers: { Authorization: "Bearer client-token" },
-          signal: controller.signal,
-        },
-      ).then(async (response) => ({
+      const responsePromise = fetch(`http://127.0.0.1:${server.port}/workspace/ws_opencode/sessions/sess_hung`, {
+        method: "DELETE",
+        headers: { Authorization: "Bearer client-token" },
+        signal: controller.signal,
+      }).then(async (response) => ({
         kind: "response" as const,
         status: response.status,
         payload: await response.json().catch(() => null) as { code?: string } | null,

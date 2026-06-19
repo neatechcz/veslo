@@ -81,12 +81,36 @@ function normalizeWindowsExtendedPath(value: string): string {
   return value.replace(/^\\\\\?\\/, "").replace(/^\/\/\?\//, "");
 }
 
+function isWslMountPath(value: string): boolean {
+  return /^\/mnt\/[a-z](?:\/|$)/i.test(value.replace(/\\/g, "/"));
+}
+
+function wslMountPathToWindowsPath(value: string): string | null {
+  const match = value.replace(/\\/g, "/").match(/^\/mnt\/([a-zA-Z])(?:\/(.*))?$/);
+  if (!match) return null;
+  const drive = match[1]?.toUpperCase();
+  if (!drive) return null;
+  const rest = (match[2] ?? "").replace(/\//g, "\\");
+  return rest ? `${drive}:\\${rest}` : `${drive}:\\`;
+}
+
+function windowsPathToWslMountPath(value: string): string | null {
+  const normalized = normalizeWindowsExtendedPath(value).replace(/\\/g, "/");
+  const match = normalized.match(/^([A-Za-z]):(?:\/(.*))?$/);
+  if (!match) return null;
+  const drive = match[1]?.toLowerCase();
+  if (!drive) return null;
+  const rest = match[2]?.replace(/^\/+/, "").replace(/\/+$/, "") ?? "";
+  return rest ? `/mnt/${drive}/${rest}` : `/mnt/${drive}`;
+}
+
 function shouldUseWindowsDirectoryLookup(value: string): boolean {
   return /^\\\\\?\\/.test(value) ||
     /^\/\/\?\//.test(value) ||
     /^[a-z]:[\\/]/i.test(value) ||
     /^\\\\[^\\]/.test(value) ||
-    value.includes("\\");
+    value.includes("\\") ||
+    isWslMountPath(value);
 }
 
 function directoryLookupVariants(value: string, windowsLookup: boolean): string[] {
@@ -115,6 +139,18 @@ function directoryLookupVariants(value: string, windowsLookup: boolean): string[
   const slash = withoutExtendedPrefix.replace(/\\/g, "/");
   add(slash);
   add(slash.toLowerCase());
+  const wslMount = windowsPathToWslMountPath(slash);
+  if (wslMount) {
+    add(wslMount);
+    add(wslMount.toLowerCase());
+  }
+  const windowsFromWsl = wslMountPathToWindowsPath(slash);
+  if (windowsFromWsl) {
+    add(windowsFromWsl);
+    add(windowsFromWsl.toLowerCase());
+    add(windowsFromWsl.replace(/\\/g, "/"));
+    add(windowsFromWsl.replace(/\\/g, "/").toLowerCase());
+  }
 
   return [...variants];
 }
@@ -436,16 +472,14 @@ export function createConversationBindingStore(options?: {
            ORDER BY updated_at DESC, created_at DESC, engine_session_id ASC
            LIMIT ?${limitIndex}`,
         ).all(workspaceId, ...directories, ...lowerDirectories, ENGINE, limit);
-        if (rows.length > 0) {
-          return rows.map(rowToBinding);
-        }
-
-        // Workspace-wide fallback: a local workspace maps to one directory, but
-        // the stored directory form (Windows `C:\…` vs WSL `/mnt/c/…` vs the
-        // engine's own path) can differ from the browse path. Don't hide the
-        // entire sidebar on a path-form mismatch — return everything bound to
-        // this workspace so the conversation still lists.
-        return listForWorkspace(db);
+        // Strict directory scoping. The directory *variants* above already
+        // bridge path-form differences (extended-prefix, case, slash vs
+        // backslash, Windows `C:\…` <-> WSL `/mnt/c/…`), so a non-empty
+        // workspace directory legitimately matches its rows here. We do NOT
+        // widen to a workspace-wide list on an empty result: a real
+        // subdirectory with no sessions must return [] (otherwise directory
+        // scoping, e.g. nested project folders, silently leaks sibling rows).
+        return rows.map(rowToBinding);
       });
     },
 

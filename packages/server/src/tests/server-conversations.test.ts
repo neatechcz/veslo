@@ -238,6 +238,151 @@ describe("conversation routes", () => {
     expect(payload.opencodeSessionId).toBe("sess-orch");
   });
 
+  test("POST /workspace/:id/conversations/:conversationId/runs queues and drains when lifecycle has an active run", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-queue-"));
+    tempDirs.push(workspaceRoot);
+    await useTempVesloDataDir();
+
+    const engineSubmits: string[] = [];
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (request.method === "POST" && url.pathname === "/session") {
+          return Response.json({
+            id: "sess-queued",
+            title: "Queued",
+            directory: workspaceRoot,
+            parentID: null,
+            time: { created: 111, updated: 222 },
+          });
+        }
+        if (request.method === "POST" && url.pathname === "/session/sess-queued/prompt_async") {
+          engineSubmits.push(url.pathname);
+          return Response.json({ ok: true });
+        }
+        return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+    let lifecycleStatus = "running";
+    const orchestratorRequests: string[] = [];
+    const registerRequests: string[] = [];
+    const orchestrator = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        orchestratorRequests.push(`${request.method} ${url.pathname}`);
+        if (request.headers.get(ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER) !== "lifecycle-token") {
+          return Response.json({ error: "unauthorized" }, { status: 401 });
+        }
+        if (
+          request.method === "GET" &&
+          url.pathname.endsWith("/runs/active")
+        ) {
+          return Response.json({
+            ok: true,
+            workspaceId: "ws_1",
+            conversationId: "conv-active",
+            runId: "run-active",
+            status: "running",
+            stale: false,
+          });
+        }
+        if (
+          request.method === "GET" &&
+          url.pathname.endsWith("/runs/latest")
+        ) {
+          return Response.json({
+            ok: true,
+            workspaceId: "ws_1",
+            conversationId: "conv-active",
+            runId: "run-active",
+            status: lifecycleStatus,
+            stale: false,
+          });
+        }
+        if (request.method === "POST" && url.pathname === "/workspace/ws_1/runs/register") {
+          const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+          registerRequests.push(typeof body?.runId === "string" ? body.runId : "");
+          lifecycleStatus = "running";
+          return Response.json({ ok: true, ...body, workspaceId: "ws_1", status: "running", stale: false });
+        }
+        return Response.json({ error: "unexpected orchestrator route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(orchestrator as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+      orchestratorDaemonUrl: `http://127.0.0.1:${orchestrator.port}`,
+      orchestratorLifecycleToken: "lifecycle-token",
+    });
+
+    const createResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          directory: workspaceRoot,
+          title: "Queued",
+        }),
+      },
+    );
+    expect(createResponse.status).toBe(201);
+    const created = await createResponse.json() as { conversationId: string };
+
+    const runResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+          "X-Veslo-Send-Trace-Id": "send-queued",
+        },
+        body: JSON.stringify({
+          kind: "prompt_async",
+          directory: workspaceRoot,
+          clientMessageId: "msg-queued",
+          parts: [{ type: "text", text: "Queue me" }],
+        }),
+      },
+    );
+    expect(runResponse.status).toBe(202);
+    const payload = await runResponse.json() as {
+      status?: string;
+      queueItemId?: string;
+      activeRunId?: string;
+      queuePosition?: number;
+      debugTrace?: Array<{ event: string }>;
+    };
+    expect(payload.status).toBe("queued");
+    expect(payload.queueItemId).toMatch(/^queue_/);
+    expect(payload.activeRunId).toBe("run-active");
+    expect(payload.queuePosition).toBe(1);
+    expect(payload.debugTrace?.some((entry) => entry.event === "server:conversation-run:queued")).toBe(true);
+    expect(engineSubmits).toEqual([]);
+    expect(registerRequests).toEqual([]);
+    expect(orchestratorRequests.some((entry) => entry.endsWith("/runs/active"))).toBe(true);
+
+    lifecycleStatus = "completed";
+    await waitForCondition(
+      () => engineSubmits.length > 0,
+      { timeoutMs: 3_000, message: "expected queued run to drain after active run completed" },
+    );
+    expect(registerRequests).toHaveLength(1);
+    expect(engineSubmits).toEqual(["/session/sess-queued/prompt_async"]);
+  });
+
   test.if(process.platform === "win32")("POST /workspace/:id/conversations accepts Windows directory casing differences", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "Veslo-Server-Conversations-Case-"));
     tempDirs.push(workspaceRoot);
@@ -846,9 +991,10 @@ describe("conversation routes", () => {
       typeof entry.durationMs === "number"
     )).toBe(true);
     expect(events.indexOf("orchestrator-register")).toBeLessThan(events.indexOf("engine-submit"));
-    expect(orchestratorRequests[0]?.token).toBe("lifecycle-token");
-    expect(orchestratorRequests[0]?.body?.kind).toBe("prompt");
-    expect(orchestratorRequests[0]?.body?.engineSessionId).toBe("sess-created");
+    const registerRequest = orchestratorRequests.find((entry) => entry.pathname === "/workspace/ws_1/runs/register");
+    expect(registerRequest?.token).toBe("lifecycle-token");
+    expect(registerRequest?.body?.kind).toBe("prompt");
+    expect(registerRequest?.body?.engineSessionId).toBe("sess-created");
     expect(engineRequests.some((entry) =>
       entry.pathname === "/workspace/ws_1/opencode/session/sess-created/prompt_async"
     )).toBe(true);
@@ -916,7 +1062,17 @@ describe("conversation routes", () => {
         }),
       },
     );
-    expect(conflictResponse.status).toBe(409);
+    expect(conflictResponse.status).toBe(202);
+    const conflictPayload = await conflictResponse.json() as {
+      status?: string;
+      activeRunId?: string | null;
+      queueItemId?: string;
+      queuePosition?: number;
+    };
+    expect(conflictPayload.status).toBe("queued");
+    expect(conflictPayload.activeRunId).toBe("run-active");
+    expect(conflictPayload.queueItemId).toMatch(/^queue_/);
+    expect(conflictPayload.queuePosition).toBe(1);
     expect(engineRequests).toHaveLength(engineRequestsBeforeConflict);
   });
 

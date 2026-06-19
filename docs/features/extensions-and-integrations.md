@@ -40,7 +40,11 @@ Current skills surface includes:
 - local skill import
 - reading and saving skill content
 
-Skills are filesystem-backed and usually live under `.opencode/skills/`.
+Workspace skills are filesystem-backed and usually live under
+`.opencode/skills/`. User skills created or promoted through Veslo are stored in
+the Veslo user skill store under the server data directory, then materialized
+into the active workspace runtime under `.opencode/skills/veslo-user/` so
+sandboxed OpenCode runs can see them without mounting host user skill roots.
 
 The Skills page is an app-wide inventory, not a current-workspace-only view. It
 separates user skills from workspace-specific skills. A user skill is shown once
@@ -51,17 +55,19 @@ shown as workspace overrides.
 Settings can expose Skills as a link tab, but that tab routes to this same
 Skills page. It must not duplicate or summarize the inventory inside Settings.
 
-User skills in this surface are runtime skills discovered from local
-OpenCode-compatible user-level skill roots. They are not organization catalog
-entries and do not imply Den/admin approval. Promotion to an organization catalog,
-system-approved catalog, or bulk organization rollout remains future work.
+User skills in this surface are runtime skills loaded from the Veslo user skill
+store plus legacy local OpenCode-compatible user-level skill roots. They are not
+organization catalog entries and do not imply Den/admin approval. Promotion to
+an organization catalog, system-approved catalog, or bulk organization rollout
+remains future work.
 Starter workspace provisioning does not install creator skills such as
 `skill-creator`, `plugin-creator`, or `agent-creator` into workspace-local
 skill roots. Those creator skills are expected to be supplied through the
 user skill root when available. Private app-created workspace provisioning also
-removes workspace-local skill directories that are exact copies of a user-root
-skill, including during new private chat setup, so the user root remains the
-single source for user skills.
+removes workspace-local skill directories that are exact copies of a legacy
+user-root skill, including during new private chat setup. Veslo-created user
+skills should use the store as the source of truth; workspace materializations
+under `veslo-user` are runtime copies.
 
 Hub skill installs require an explicit target. Today, the supported target is
 the active workspace; all-workspaces Hub install is visible as unavailable until

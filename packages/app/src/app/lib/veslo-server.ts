@@ -13,6 +13,7 @@ import { isTauriRuntime } from "../utils";
 import type { ScheduledJob } from "./tauri";
 import { mergeVesloServerSettingsWithEnv } from "./cloud-policy";
 import { fetchWithTimeout } from "./http";
+import { wrapStartupRequestAuditFetch } from "./startup-request-audit";
 
 export type VesloServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "veslo" | "opencode" };
@@ -108,10 +109,18 @@ export type VesloWorkspaceList = {
   activeId?: string | null;
 };
 
+export type VesloResourceOwner = {
+  kind: "workspace" | "user" | "organization" | "platform";
+  id: string;
+  label?: string;
+  root?: string;
+};
+
 export type VesloPluginItem = {
   spec: string;
   source: "config" | "dir.project" | "dir.global";
   scope: "project" | "global";
+  owner?: VesloResourceOwner;
   path?: string;
 };
 
@@ -120,6 +129,7 @@ export type VesloSkillItem = {
   path: string;
   description: string;
   scope: "project" | "global";
+  owner?: VesloResourceOwner;
   trigger?: string;
   disableModelInvocation?: boolean;
   userInvocable?: boolean;
@@ -131,6 +141,55 @@ export type VesloSkillItem = {
 export type VesloSkillContent = {
   item: VesloSkillItem;
   content: string;
+};
+
+export type VesloUserGlobalSkillStoreItem = {
+  name: string;
+  path: string;
+  description: string;
+  scope: "user-global";
+  source: "veslo-user-store";
+  owner?: VesloResourceOwner;
+  hash: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type VesloUserGlobalSkillStoreContent = {
+  item: VesloUserGlobalSkillStoreItem;
+  content: string;
+};
+
+export type VesloUserGlobalSkillStoreMutationResult = {
+  ok: true;
+  action?: "added" | "updated";
+  item?: VesloUserGlobalSkillStoreItem;
+  name?: string;
+  path?: string;
+  reloadRequired?: boolean;
+  trigger?: VesloReloadTrigger & { scope?: "user-global" };
+};
+
+export type VesloUserGlobalSkillStoreSyncResult = {
+  workspaceId?: string;
+  status: "synced" | string;
+  synced: boolean;
+  reloadRequired: boolean;
+  rootDir: string;
+  materializedSkills: Array<{
+    name: string;
+    hash: string;
+    skillDir: string;
+    materializedAt: string;
+  }>;
+  removedSkillNames: string[];
+  conflicts: Array<{
+    code: string;
+    name: string;
+    message: string;
+    localPath?: string;
+  }>;
 };
 
 export type VesloSkillResolveCandidate = {
@@ -504,6 +563,7 @@ export type VesloSkillMaterializationEntry = {
   versionId?: string;
   packageSha256: string;
   target?: "workspace" | "personal-global";
+  owner?: VesloResourceOwner;
   skillDir?: string;
   materializedAt?: string;
 };
@@ -661,12 +721,14 @@ export type VesloCommandItem = {
   model?: string | null;
   subtask?: boolean;
   scope: "workspace" | "global";
+  owner?: VesloResourceOwner;
 };
 
 export type VesloMcpItem = {
   name: string;
   config: Record<string, unknown>;
   source: "config.project" | "config.global" | "config.remote";
+  owner?: VesloResourceOwner;
   disabledByTools?: boolean;
 };
 
@@ -965,6 +1027,15 @@ export type VesloSessionTranscriptPrefetchResult = {
   items: VesloSessionTranscriptSnapshot[];
 };
 
+export type VesloSessionTranscriptAppendInput = {
+  directory?: string | null;
+  limit?: number;
+  messages: MessageInfo[];
+  partsByMessageId: Record<string, Part[]>;
+  deletedMessageIds?: string[];
+  deletedPartsByMessageId?: Record<string, string[]>;
+};
+
 export type VesloConversationList = {
   workspaceId: string;
   items: Array<Session & {
@@ -1032,7 +1103,7 @@ export type VesloConversationRunDebugTraceEntry = {
   [key: string]: unknown;
 };
 
-export type VesloConversationRunResult = {
+export type VesloConversationRunSubmittedResult = {
   ok: boolean;
   workspaceId: string;
   conversationId: string;
@@ -1045,6 +1116,25 @@ export type VesloConversationRunResult = {
   upstream?: unknown;
   debugTrace?: VesloConversationRunDebugTraceEntry[];
 };
+
+export type VesloConversationRunQueuedResult = {
+  ok: boolean;
+  workspaceId: string;
+  conversationId: string;
+  opencodeSessionId: string;
+  runId?: string;
+  reservedRunId: string;
+  queueItemId: string;
+  activeRunId?: string | null;
+  queuePosition: number;
+  clientMessageId?: string | null;
+  origin?: string | null;
+  status: "queued";
+  kind: VesloConversationRunKind;
+  debugTrace?: VesloConversationRunDebugTraceEntry[];
+};
+
+export type VesloConversationRunResult = VesloConversationRunSubmittedResult | VesloConversationRunQueuedResult;
 
 export type VesloConversationAbortResult = {
   ok: boolean;
@@ -1135,6 +1225,7 @@ export type VesloSoulDocument = {
 export type VesloSoulSummary = {
   scope: VesloSoulScope;
   ownerId: string;
+  owner: VesloResourceOwner;
   title: string;
   currentVersionId: string | null;
   updatedAt: string | null;
@@ -1155,6 +1246,7 @@ export type VesloSoulMaterializationFile = {
   path: string;
   scope: VesloSoulScope;
   ownerId: string | null;
+  owner?: VesloResourceOwner | null;
   documentId: string | null;
   currentVersionId: string | null;
   sourceVersionId: string | null;
@@ -2198,8 +2290,13 @@ export async function requestManagedAiAccessBundle(baseUrl: string, userToken: s
   });
 }
 
+const auditedTauriFetch = wrapStartupRequestAuditFetch(
+  tauriFetch as unknown as typeof globalThis.fetch,
+  "tauri.veslo-server",
+);
+
 // Use Tauri's fetch when running in the desktop app to avoid CORS issues
-const resolveFetch = () => (isTauriRuntime() ? tauriFetch : globalThis.fetch);
+const resolveFetch = () => (isTauriRuntime() ? auditedTauriFetch : globalThis.fetch);
 
 const DEFAULT_VESLO_SERVER_TIMEOUT_MS = 10_000;
 
@@ -2482,10 +2579,11 @@ export function createVesloServerClient(options: {
         `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}`,
         { token, hostToken, method: "DELETE", timeoutMs: timeouts.deleteSession },
       ),
-    listConversations: (workspaceId: string, directory?: string) => {
+    listConversations: (workspaceId: string, directory?: string, options?: { sync?: boolean }) => {
       const search = new URLSearchParams();
       const directoryRaw = directory?.trim() ?? "";
       if (directoryRaw) search.set("directory", directoryRaw);
+      if (options?.sync === true) search.set("sync", "true");
       const query = search.toString();
       return requestJson<VesloConversationList>(
         baseUrl,
@@ -2598,6 +2696,12 @@ export function createVesloServerClient(options: {
         { token, hostToken, timeoutMs: timeouts.sessionTranscript },
       );
     },
+    appendSessionTranscript: (workspaceId: string, sessionId: string, input: VesloSessionTranscriptAppendInput) =>
+      requestJson<VesloSessionTranscriptSnapshot>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/transcript`,
+        { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.sessionTranscript },
+      ),
     exportWorkspace: (workspaceId: string) =>
       requestJson<VesloWorkspaceExport>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/export`, {
         token,
@@ -3217,6 +3321,48 @@ export function createVesloServerClient(options: {
           hostToken,
           body: skillMaterializationSyncBody(options),
           extraHeaders: buildDenContextHeaders(options),
+          timeoutMs: timeouts.skillMaterialization,
+        },
+      ),
+    listUserGlobalSkillStore: () =>
+      requestJson<{ items: VesloUserGlobalSkillStoreItem[] }>(
+        baseUrl,
+        "/skills/user-global-store",
+        { token, hostToken },
+      ),
+    getUserGlobalSkillStoreSkill: (name: string) =>
+      requestJson<VesloUserGlobalSkillStoreContent>(
+        baseUrl,
+        `/skills/user-global-store/${encodeURIComponent(name)}`,
+        { token, hostToken },
+      ),
+    upsertUserGlobalSkillStoreSkill: (
+      payload: { name: string; content: string; description?: string; enabled?: boolean },
+    ) =>
+      requestJson<VesloUserGlobalSkillStoreMutationResult>(
+        baseUrl,
+        "/skills/user-global-store",
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: payload,
+        },
+      ),
+    deleteUserGlobalSkillStoreSkill: (name: string) =>
+      requestJson<VesloUserGlobalSkillStoreMutationResult>(
+        baseUrl,
+        `/skills/user-global-store/${encodeURIComponent(name)}`,
+        { token, hostToken, method: "DELETE" },
+      ),
+    syncUserGlobalSkillStore: (workspaceId: string) =>
+      requestJson<VesloUserGlobalSkillStoreSyncResult>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/skills/user-global-store/sync`,
+        {
+          token,
+          hostToken,
+          method: "POST",
           timeoutMs: timeouts.skillMaterialization,
         },
       ),

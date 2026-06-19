@@ -5,6 +5,8 @@ type SidebarSessionSyncGuardInput = {
   allSessionCount: number;
   scopedSessionCount: number;
   existingTargetSessionCount?: number;
+  freshlyCreatedSessionCount?: number;
+  activeSendInProgress?: boolean;
 };
 
 /**
@@ -28,12 +30,28 @@ export const shouldSyncSidebarFromSessionStore = (
   const existingTargetSessionCount = Number.isFinite(input.existingTargetSessionCount)
     ? Math.max(0, Math.floor(input.existingTargetSessionCount ?? 0))
     : 0;
+  const freshlyCreatedSessionCount = Number.isFinite(input.freshlyCreatedSessionCount)
+    ? Math.max(0, Math.floor(input.freshlyCreatedSessionCount ?? 0))
+    : 0;
+  const activeSendInProgress = input.activeSendInProgress === true;
 
   if (!targetWorkspaceId) return false;
 
   const switchingWorkspace =
     connectingWorkspaceId.length > 0 &&
     connectingWorkspaceId !== activeWorkspaceId;
+
+  // During a send/switch window, the live session store may contain only the
+  // currently materializing row while the host sidebar list is still loading.
+  // Do not let that live-only view become the full sidebar list unless the
+  // sidebar already has rows to merge with or the create path materialized one.
+  if (
+    activeSendInProgress &&
+    existingTargetSessionCount === 0 &&
+    freshlyCreatedSessionCount === 0
+  ) {
+    return false;
+  }
 
   if (!switchingWorkspace) return true;
 
@@ -42,6 +60,11 @@ export const shouldSyncSidebarFromSessionStore = (
 
   // Safe once we have scoped rows for the target workspace.
   if (scopedSessionCount > 0) return true;
+
+  // A create-success path has already materialized this session into the
+  // target sidebar rows. Let the bridge run so fresh rows are not treated as
+  // stale previous-workspace state during connect/switch windows.
+  if (freshlyCreatedSessionCount > 0) return true;
 
   // Also safe when the freshly loaded store is legitimately empty, unless the
   // target already has rows that would be wiped by a startup-empty store.
@@ -65,6 +88,7 @@ export const shouldPreserveSidebarRowsOnRead = (input: {
   incomingCount: number;
   existingCount: number;
 }): boolean => {
+  if (input.incomingCount > 0) return false;
   if (!input.available) return true;
-  return input.incomingCount === 0 && input.existingCount > 0;
+  return input.existingCount > 0;
 };

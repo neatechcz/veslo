@@ -36,7 +36,7 @@ Common keys:
 - `veslo.engineRuntime`
 - `veslo.onboardingComplete`
 
-`veslo.updateAutoDownload` is default-on when absent. A stored `0` is an explicit opt-out and keeps the manual download flow. When enabled, failed automatic update downloads are retried with bounded backoff. The retry state is runtime-only; only the preference and last successful check time are stored.
+`veslo.updateAutoDownload` is default-off when absent. A stored `1` is an explicit opt-in; otherwise an available update stays in the manual download flow. Legacy default-on stored values are migrated off once with `veslo.updateAutoDownloadDefaultOff.v1`. When enabled, failed automatic update downloads are retried with bounded backoff. The retry state is runtime-only; only the preference, migration marker, and last successful check time are stored.
 
 `veslo.modelVariant` stores the app-global model variant / thinking effort. The built-in default is `xhigh` (Max). Existing stored values from before the Max-default migration are overwritten to `xhigh` once and marked by `veslo.modelVariant.maxDefaultMigration`; later user changes remain stored in `veslo.modelVariant`.
 
@@ -68,6 +68,10 @@ Workspace activation state is runtime-only state managed by `packages/app/src/ap
 - In Tauri local-to-local browsing mode, the active workspace can be `connected` even while the live OpenCode client is intentionally detached.
 - In that browsing mode the app loads sidebar/session history from SQLite first, and only re-attaches the engine when the user performs an action that requires it, such as sending a message.
 - The sidebar connection dot treats this state as runtime-available when the Veslo server is also connected, so browsing a different local workspace does not appear as a false runtime failure.
+- The fullscreen workspace switch overlay is driven by an explicit blocking switch target, not by `connectingWorkspaceId` itself or by global engine `busyLabel` values. `connectingWorkspaceId` remains a runtime/sidebar guard; passive local browsing and scoped runtime warmup must not create a blocking overlay target.
+- Runtime readiness checks that can target a concrete workspace should use workspace-scoped readiness (`isWorkspaceRuntimeReady(workspaceId)` in the app shell), not the global `engineReady` signal. The global signal remains a compatibility fallback for the active workspace; send, SSE, sidebar live sync, permission polling, and MCP runtime reads are expected to gate on the target workspace.
+- Runtime readiness and app-level routing client reads are owned by the app runtime owner. It derives runtime availability from orchestrator ready snapshots, workspace routing entries, active legacy `engineReady`, and workspace busy state, then exposes an owner-gated routing wrapper for session, extension/skill, system-state, and routing-context consumers. It does not start, stop, or activate engines; lifecycle mutations still belong to the workspace/runtime controllers.
+- MCP runtime status refresh is single-flight by workspace, project directory, and the current MCP entry list key. If the configured MCP entry list changes while an older status request is in flight, the new list must schedule its own runtime status read and stale older success or failure results must not overwrite or clear the current status UI.
 
 ## Den Auth State
 
@@ -113,6 +117,10 @@ The desktop shell also persists the managed local `veslo-server` process snapsho
 
 Managed local sidecars distinguish internal runtime URLs from advertised connect URLs. Same-machine communication between the desktop shell, `veslo-server`, `veslo-orchestrator`, OpenCode, and `veslo-code-router` uses loopback OpenCode URLs such as `http://127.0.0.1:<port>`. LAN or mDNS connect URLs are for external clients only; they must not be passed as the local `--opencode-base-url` or `--opencode-url`, because sleep/resume and network changes can invalidate those addresses while the local OpenCode process remains healthy.
 
+On Windows, OpenCode runs inside the WSL2/bwrap backend. Host workspace paths such as `C:\Users\...\repo`, WSL mount paths such as `/mnt/c/Users/.../repo`, and the sandbox alias `/workspace` can all describe the same active workspace. Session list filters, sidebar scoping, and conversation binding lookups must treat these forms as equivalent. This equivalence does not solve OpenCode data-home location by itself: a DB stored in WSL guest home still needs an explicit host-readable path or a server-side content tunnel.
+
+The local server reports the active path mode through `/capabilities.sandbox`. Desktop-launched `veslo-server` processes must receive `VESLO_SANDBOX_BACKEND` from the Tauri shell so the app can choose sandbox path aliases before host paths when WSL2 is active. `VESLO_DISABLE_SANDBOX=1` remains the hard opt-out and forces `backend=none`.
+
 ## Desktop Debug Log Forwarder
 
 The Tauri shell forwards stdout/stderr from every supervised sidecar (`veslo-server`, `opencode-router`, `veslo-orchestrator`, `engine`) into the veslo-server debug log pipeline. Implementation lives in `packages/desktop/src-tauri/src/debug_logs_forwarder.rs`.
@@ -148,7 +156,9 @@ Environment variables (all optional):
 Pipeline behavior:
 
 - `enabled` is derived as `Boolean(ingestUrl && ingestToken)`. Without both vars the spool keeps collecting and retention prunes the oldest entries; nothing is sent over the network. Flip the two vars and the pipeline starts uploading on the next tick — no restart required for the upload to start, but the running process must be restarted to pick up new env values.
-- Spool location: `${VESLO_DATA_DIR or ~/.veslo/veslo-server}/debug-log-spool/events/`. One JSON file per event today (file-per-event format owned by `debug-log-spool.ts`); switching to JSONL append-only is tracked separately as a follow-up.
+- Server data dir default: `VESLO_DATA_DIR` wins when set. Without it, Windows uses `%LOCALAPPDATA%\com.neatech.veslo\veslo-server` (falling back to `%APPDATA%`), while macOS/Linux keep `<home>/.veslo/veslo-server`. On Windows, an existing legacy `<home>\.veslo\veslo-server` directory is copied into the AppData default on first resolve; if that copy fails, the server falls back to the legacy path so existing bindings and caches do not disappear after update.
+- Desktop orchestrator data dir default: `VESLO_DATA_DIR` also controls the managed orchestrator. Dev startup sets it to `%LOCALAPPDATA%\com.neatech.veslo.dev\veslo-orchestrator-dev` on Windows so scratch, engine state, and OpenCode config stay under AppData. When that dev default is used, the Windows launcher copies missing files from the legacy `<home>\.veslo\veslo-orchestrator-dev` store and merges legacy `conversation_binding` rows into the AppData binding DB. Without an override, the production desktop fallback uses `%LOCALAPPDATA%\com.neatech.veslo\veslo-orchestrator` on Windows and `<home>/.veslo/veslo-orchestrator` on macOS/Linux.
+- Spool location: `<server data dir>/debug-log-spool/events/`. One JSON file per event today (file-per-event format owned by `debug-log-spool.ts`); switching to JSONL append-only is tracked separately as a follow-up.
 - Upload retry policy lives in `debug-log-uploader.ts` (3 attempts, 250 ms initial, 2× multiplier, capped at 2 s). Failed batches stay leased in the manifest and the next flush tick re-leases them after the lease TTL.
 - Retention is enforced asynchronously after appends and by a maintenance loop that runs even when remote upload is disabled. The spool can temporarily exceed `VESLO_LOG_SPOOL_MAX_BYTES`, but `/debug-logs` ingest stays off the cleanup hot path and bulk-prunes old unleased events back toward the low-water mark.
 - `POST /debug-logs` validates the host token and batch body before returning `202`, then appends the events to the durable spool asynchronously. Append failures are logged locally; sidecar log forwarding must not block server health or other UI-facing routes on disk cleanup.
@@ -194,7 +204,7 @@ Managed-AI proof entries are valid for 3 days. They store only non-secret policy
 
 The same file format has a reserved `workspacePermissions` array for future local permission proof caching. That path is not active in the frontend today; workspace permission polling is still governed by runtime engine readiness and existing workspace config.
 
-Desktop local workspaces separate the managed-AI access-policy source from the OpenCode provider routing target. The app may load the user's policy and gateway token from DEN or standalone AI Gateway, but the generated provider `baseURL` in `opencode.json` points at the active local Veslo server so prompts keep flowing through the local-first runtime.
+Desktop local workspaces separate the managed-AI access-policy source from the OpenCode provider routing target. The app may load the user's policy and gateway token from DEN or standalone AI Gateway, but the generated provider `baseURL` in `opencode.json` points at the active local Veslo server so prompts keep flowing through the local-first runtime. The generated model headers must also include the current `x-veslo-workspace-id`; the local proxy uses it to correlate active runs across multiple workspaces and to recover when OpenCode sends the session placeholder before expansion.
 
 When the local Veslo server proxies managed-AI requests, successful JSON and streamed provider responses are passed through. Upstream non-2xx failures are normalized to a local `502` JSON error so a managed-AI gateway/provider block is not reported as local server authentication failure. The error details include a generated request id, provider/model/session/user/org context when available, upstream status/request id/content type, and a short sanitized upstream response snippet.
 
@@ -266,9 +276,10 @@ Veslo pages that mutate plugins or MCP are usually editing this config, not `.op
 
 ## Skills Inventory
 
-The Skills page builds an app-wide inventory from three sources:
+The Skills page builds an app-wide inventory from four sources:
 
-- user skills from user-level OpenCode-compatible skill roots
+- user skills from the Veslo user skill store
+- legacy user skills from user-level OpenCode-compatible skill roots
 - workspace-local skills discovered per readable local workspace
 - Hub skills from the existing prepared catalog flow
 
@@ -289,8 +300,8 @@ Use product terminology consistently:
 
 Recoverable local skill removals are stored by Veslo server under:
 
-- `${VESLO_DATA_DIR or ~/.veslo/veslo-server}/skill-removals/records/`
-- `${VESLO_DATA_DIR or ~/.veslo/veslo-server}/skill-removals/snapshots/`
+- `<server data dir>/skill-removals/records/`
+- `<server data dir>/skill-removals/snapshots/`
 
 Each removal record stores the removal id, skill name, scope (`workspace` or
 `user-global`), original path, actor, optional reason, snapshot hash, status,
@@ -317,11 +328,19 @@ User skills are runtime-available skills, not organization catalog or
 admin-approved skills. Organization promotion and bulk rollout remain future
 work until the Den/admin backend owns those concepts.
 
-For inventory correctness, user skill roots and workspace skill roots are read
-separately. Runtime-effective discovery may still include both scopes for active
-workspace behavior, but the inventory must not expand user skills under every
-workspace. Workspace rows represent only real workspace-local instances or
-overrides.
+For inventory correctness, Veslo user skill store entries, legacy user skill
+roots, and workspace skill roots are read separately. Runtime-effective
+discovery may still include both scopes for active workspace behavior, but the
+inventory must not expand user skills under every workspace. Workspace rows
+represent only real workspace-local instances or overrides.
+
+Veslo-created user skills are stored under the server data directory in the
+user skill store. Enabled store entries are materialized into each active
+workspace under `.opencode/skills/veslo-user/<name>/SKILL.md` during workspace
+activation or explicit store sync. The store remains the source of truth; the
+workspace copy is a runtime artifact for OpenCode and sandbox visibility. Sync
+must not overwrite an existing workspace skill with the same name and should
+return a conflict instead.
 
 Private app-created workspaces, including new private chat workspaces, remove
 workspace-local skill directories that are exact copies of user-root skills
@@ -365,9 +384,10 @@ Registry-owned state:
 Local Veslo state:
 
 - downloaded package archives before install
-- cached package archives under `${VESLO_DATA_DIR or ~/.veslo/veslo-server}/skill-package-cache/`, keyed by package SHA-256 and verified before use
+- cached package archives under `<server data dir>/skill-package-cache/`, keyed by package SHA-256 and verified before use
 - unpacked runtime skill directories controlled by the local Veslo server
 - server-controlled workspace skill materializations under `.opencode/skills/veslo-managed/`, with a root manifest and per-skill ownership markers
+- app-facing resource inventory owner envelopes for MCP config entries, skills, plugins, commands, and Veslo user-global skill store records; these describe durable definition ownership and do not own MCP polling or connection state
 - pre-change backups for server-controlled materialization replacement/removal under the Veslo data directory
 - workspace activation or reload state after a skill set changes
 - any temporary install progress, errors, or selected install target in the app UI

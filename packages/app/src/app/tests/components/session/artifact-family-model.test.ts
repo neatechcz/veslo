@@ -35,6 +35,10 @@ const fileRows = (family: Record<string, unknown>) =>
     };
   });
 
+const POSIX_WORKSPACE_ROOT = "/tmp/veslo-artifact-fixture";
+const POSIX_EXTERNAL_SKILL_PATH = "/tmp/veslo-home/.codex/skills/systematic-debugging/SKILL.md";
+const WINDOWS_WORKSPACE_ROOT = "C:/Users/alice/AppData/Local/Veslo/fixtures/artifact-workspace";
+
 test("buildArtifactFamilies groups server latest-run artifacts into Files, Skills, MCP, and Soul families", () => {
   const families = buildArtifactFamilies({
     artifacts: [
@@ -347,7 +351,7 @@ test("absolute system paths outside workspace root are filtered from file artifa
         kind: "file_discovered",
         status: "scanned",
         title: "SKILL.md",
-        path: "/Users/vaclavsoukup/.codex/skills/systematic-debugging/SKILL.md",
+        path: POSIX_EXTERNAL_SKILL_PATH,
         timestamp: 20,
       }),
       artifact({
@@ -356,12 +360,12 @@ test("absolute system paths outside workspace root are filtered from file artifa
         kind: "file_discovered",
         status: "scanned",
         title: "session.tsx",
-        path: "/Users/vaclavsoukup/AI agent projects/Veslo/packages/app/src/app/pages/session.tsx",
+        path: `${POSIX_WORKSPACE_ROOT}/packages/app/src/app/pages/session.tsx`,
         timestamp: 10,
       }),
     ],
     preferServerArtifacts: true,
-    workspaceRoot: "/Users/vaclavsoukup/AI agent projects/Veslo",
+    workspaceRoot: POSIX_WORKSPACE_ROOT,
   });
 
   assert.deepEqual(families.map(familyLabel), ["Files"]);
@@ -388,7 +392,7 @@ test("maps WSL and host absolute server artifact paths to workspace-relative fil
         kind: "file_discovered",
         status: "scanned",
         title: "opened.md",
-        path: "/mnt/c/Users/me/project/docs/opened.md",
+        path: "/mnt/c/Users/alice/AppData/Local/Veslo/fixtures/artifact-workspace/docs/opened.md",
         timestamp: 20,
       }),
       artifact({
@@ -397,12 +401,12 @@ test("maps WSL and host absolute server artifact paths to workspace-relative fil
         kind: "file_discovered",
         status: "scanned",
         title: "host.ts",
-        path: "C:/Users/me/project/src/host.ts",
+        path: `${WINDOWS_WORKSPACE_ROOT}/src/host.ts`,
         timestamp: 10,
       }),
     ],
     preferServerArtifacts: true,
-    workspaceRoot: "C:/Users/me/project",
+    workspaceRoot: WINDOWS_WORKSPACE_ROOT,
   });
 
   assert.deepEqual(families.map(familyLabel), ["Files"]);
@@ -424,12 +428,12 @@ test("maps WSL paths in legacy fallback artifacts", () => {
       {
         id: "legacy-mount",
         name: "opened.md",
-        path: "/mnt/c/Users/me/project/docs/opened.md",
+        path: "/mnt/c/Users/alice/AppData/Local/Veslo/fixtures/artifact-workspace/docs/opened.md",
         kind: "file",
         fileInteraction: "opened",
       },
     ],
-    workspaceRoot: "C:/Users/me/project",
+    workspaceRoot: WINDOWS_WORKSPACE_ROOT,
   });
 
   assert.deepEqual(families.map(familyLabel), ["Files"]);
@@ -470,7 +474,7 @@ test("technical config and instruction files are filtered in fallback data", () 
         kind: "file",
       },
     ],
-    workspaceRoot: "/Users/vaclavsoukup/AI agent projects/Veslo",
+    workspaceRoot: POSIX_WORKSPACE_ROOT,
   });
 
   assert.deepEqual(families.map(familyLabel), ["Files"]);
@@ -524,7 +528,7 @@ test("right sidebar artifacts keep user files and hide helper cache build and sk
         kind: "skill_used",
         status: "used",
         title: "SKILL.md",
-        path: "/Users/vaclavsoukup/.codex/skills/systematic-debugging/SKILL.md",
+        path: POSIX_EXTERNAL_SKILL_PATH,
         timestamp: 26,
       }),
       artifact({

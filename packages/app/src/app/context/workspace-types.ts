@@ -4,6 +4,7 @@ import type { OpencodeAuth } from "../lib/opencode";
 export type WorkspaceActivationOptions = {
   origin: string;
   promoteToFront?: boolean;
+  blockingOverlay?: boolean;
 };
 
 export type WorkspaceConnectContext = {

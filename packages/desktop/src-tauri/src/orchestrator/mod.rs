@@ -91,6 +91,21 @@ pub fn resolve_orchestrator_data_dir() -> String {
         return dir;
     }
 
+    #[cfg(windows)]
+    {
+        if let Some(root) = env::var("LOCALAPPDATA")
+            .ok()
+            .or_else(|| env::var("APPDATA").ok())
+            .filter(|value| !value.trim().is_empty())
+        {
+            return PathBuf::from(root)
+                .join("com.neatech.veslo")
+                .join("veslo-orchestrator")
+                .to_string_lossy()
+                .to_string();
+        }
+    }
+
     if let Some(home) = home_dir() {
         return home
             .join(".veslo")

@@ -6,7 +6,7 @@ import { resolveComposerWorkspaceLabel } from "../../../components/session/compo
 test("shows only the last directory name for local workspace paths", () => {
   const result = resolveComposerWorkspaceLabel({
     isRemoteWorkspace: false,
-    localWorkspacePath: "/Users/vaclavsoukup/AI agent projects/Openwork",
+    localWorkspacePath: "/tmp/veslo-fixture/AI agent projects/Openwork",
     localLabel: "Local workspace",
     remoteLabel: "Remote workspace",
   });
@@ -20,7 +20,7 @@ test("shows only the last directory name for local workspace paths", () => {
 test("handles Windows-style local workspace paths", () => {
   const result = resolveComposerWorkspaceLabel({
     isRemoteWorkspace: false,
-    localWorkspacePath: "C:\\Users\\vaclav\\Projects\\Openwork\\",
+    localWorkspacePath: "C:\\workspace\\veslo-fixture\\Projects\\Openwork\\",
     localLabel: "Local workspace",
     remoteLabel: "Remote workspace",
   });

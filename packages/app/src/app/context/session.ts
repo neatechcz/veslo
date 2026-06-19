@@ -19,6 +19,8 @@ import type {
 } from "../types";
 import {
   addOpencodeCacheHint,
+  type DirectoryQueryPathMode,
+  directoryQueryPathVariants,
   extractSessionId,
   normalizeDirectoryQueryPath,
   normalizeDirectoryPath,
@@ -30,10 +32,19 @@ import {
 } from "../utils";
 import { unwrap, type OpencodeAuth } from "../lib/opencode";
 import { engineSseSubscribe, isEngineSseAvailable } from "../lib/engine-sse";
+import {
+  DEFAULT_WORKSPACE_SNAPSHOT_CACHE_LIMIT,
+  selectWorkspaceSnapshotEvictions,
+} from "../lib/workspace-snapshot-cache";
 import type { WorkspaceRouting, RoutingClient } from "./workspace-routing";
 import { finishPerf, perfNow, recordPerfLog, runtimePerfAuditEnabled } from "../lib/perf-log";
 import { formatSessionError, truncateErrorField } from "../lib/session-error";
 import { detectChromeMcpCompletedError } from "../lib/chrome-mcp-error";
+import {
+  pickSessionStatusSnapshot,
+  readSessionStatus,
+  withSessionStatus,
+} from "../lib/scoped-session-status";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../types";
 import { createSelectSessionGuard } from "./select-session-guard";
 import {
@@ -133,6 +144,9 @@ export type WorkspaceSessionCache = {
   sessionErrorTurns: Record<string, SessionErrorTurn[]>;
   messages: Record<string, MessageInfo[]>;
   parts: Record<string, Part[]>;
+  messageLimitBySession: Record<string, number>;
+  messageCompleteBySession: Record<string, boolean>;
+  transcriptFreshnessBySession: Record<string, TranscriptFreshness>;
   todos: Record<string, TodoItem[]>;
   pendingPermissions: PendingPermission[];
   pendingQuestions: PendingQuestion[];
@@ -225,7 +239,9 @@ export function createSessionStore(options: {
   selectedSessionId: () => string | null;
   setSelectedSessionId: (id: string | null) => void;
   selectSessionScopeKey?: (sessionID: string) => string;
+  resolveSessionWorkspaceId?: (sessionID: string) => string | null;
   sessionDirectoryOverrideById?: () => Record<string, string>;
+  directoryQueryPathMode?: () => DirectoryQueryPathMode;
   developerMode: () => boolean;
   setError: (message: string | null) => void;
   setSseConnected: (connected: boolean) => void;
@@ -234,10 +250,22 @@ export function createSessionStore(options: {
   onHotReloadApplied?: () => void;
   onSessionLoadComplete?: () => void;
   loadOfflineTranscript?: (sessionID: string, limit: number) => Promise<VesloSessionTranscriptSnapshot | null>;
+  appendTranscriptSnapshot?: (input: {
+    workspaceId: string;
+    sessionId: string;
+    directory?: string | null;
+    limit?: number;
+    messages: MessageInfo[];
+    partsByMessageId: Record<string, Part[]>;
+    deletedMessageIds?: string[];
+    deletedPartsByMessageId?: Record<string, string[]>;
+    reason?: string;
+  }) => Promise<void> | void;
   conversationReader?: () => {
     listConversations: (
       workspaceId: string,
       directory?: string,
+      options?: { sync?: boolean },
     ) => Promise<{ items: Session[]; source?: "sqlite" | "unavailable" }>;
   } | null;
   /**
@@ -246,8 +274,9 @@ export function createSessionStore(options: {
    * once). When false, selectSession prefers the offline transcript over an
    * SDK `session.messages` call so that just clicking through session history
    * never accidentally cold-spawns sandbox-exec + opencode serve.
-   */
+  */
   engineReady?: () => boolean;
+  isWorkspaceRuntimeReady?: (workspaceId: string) => boolean;
   shouldBrowseSessionFromDb?: (sessionID: string) => boolean;
   onSessionBusyChange?: (sessionId: string, busy: boolean, workspaceId?: string) => void;
   onAssistantResponseObserved?: (sessionId: string) => void;
@@ -291,6 +320,59 @@ export function createSessionStore(options: {
       // ignore
     }
   };
+
+  const isWorkspaceRuntimeReady = (workspaceId?: string | null) => {
+    const id = workspaceId?.trim() ?? "";
+    if (id && options.isWorkspaceRuntimeReady) return options.isWorkspaceRuntimeReady(id);
+    return options.engineReady ? options.engineReady() : true;
+  };
+
+  const isActiveWorkspaceRuntimeReady = () =>
+    isWorkspaceRuntimeReady(options.routing.activeWorkspaceId().trim());
+
+  const resolveSessionWorkspaceId = (sessionID: string) =>
+    options.resolveSessionWorkspaceId?.(sessionID)?.trim() ?? "";
+
+  const clientForSession = (sessionID: string) => {
+    const workspaceId = resolveSessionWorkspaceId(sessionID);
+    return {
+      workspaceId,
+      client: workspaceId ? options.routing.client(workspaceId) : options.routing.active(),
+    };
+  };
+
+  const sessionReadPolicy = (sessionID: string, workspaceId: string) => {
+    const activeWorkspaceId = options.routing.activeWorkspaceId().trim();
+    const foreignWorkspace = Boolean(workspaceId && activeWorkspaceId && workspaceId !== activeWorkspaceId);
+    const runtimeReady = workspaceId
+      ? isWorkspaceRuntimeReady(workspaceId)
+      : isActiveWorkspaceRuntimeReady();
+    const configuredBrowseFromDb = options.shouldBrowseSessionFromDb?.(sessionID) ?? false;
+    const browseModeOnly = !runtimeReady;
+    const browseFromDb = configuredBrowseFromDb || browseModeOnly || foreignWorkspace;
+    return {
+      activeWorkspaceId,
+      browseFromDb,
+      browseModeOnly,
+      configuredBrowseFromDb,
+      foreignWorkspace,
+      sessionWorkspaceId: workspaceId,
+    };
+  };
+
+  const isSessionNotFoundError = (error: unknown) => {
+    const message = error instanceof Error ? error.message : safeStringify(error);
+    return /Session not found|NotFoundError|status\W*404|\b404\b/i.test(message);
+  };
+
+  const hasAnyRefreshableRuntime = () => {
+    const entryIds = options.routing.entryIds();
+    if (entryIds.length > 0) {
+      return entryIds.some((workspaceId) => isWorkspaceRuntimeReady(workspaceId));
+    }
+    return isActiveWorkspaceRuntimeReady();
+  };
+
   const MAX_RELOAD_DETECTION_KEYS = 5000;
 
   const sessionDirectoryOverrides = () => options.sessionDirectoryOverrideById?.() ?? {};
@@ -322,6 +404,23 @@ export function createSessionStore(options: {
   const [transcriptFreshnessBySession, setTranscriptFreshnessBySession] = createSignal<
     Record<string, TranscriptFreshness>
   >({});
+
+  const statusWorkspaceId = (workspaceId?: string | null) =>
+    workspaceId?.trim() || options.routing.activeWorkspaceId().trim();
+
+  const readStatusForSession = (sessionID: string | null | undefined, workspaceId?: string | null) =>
+    readSessionStatus(store.sessionStatus, statusWorkspaceId(workspaceId), sessionID);
+
+  const setSessionStatusForWorkspace = (
+    sessionID: string | null | undefined,
+    status: string,
+    workspaceId?: string | null,
+  ) => {
+    const id = sessionID?.trim() ?? "";
+    if (!id) return;
+    setStore("sessionStatus", withSessionStatus(store.sessionStatus, statusWorkspaceId(workspaceId), id, status));
+  };
+
   const reloadDetectionSet = new Set<string>();
   const invalidToolDetectionSet = new Set<string>();
   const chromeMcpFailureDetectionSet = new Set<string>();
@@ -331,6 +430,18 @@ export function createSessionStore(options: {
   // VSLO-171 F3Ú6a — per-workspace cache for save/load on workspace switch.
   // Only populated in multi-routing mode (caller decides via options.routing.mode()).
   const perWorkspaceCache = new Map<string, WorkspaceSessionCache>();
+  const pruneWorkspaceSnapshotCache = (keepIds: Array<string | null | undefined> = []) => {
+    const activeWorkspaceId = options.routing.activeWorkspaceId()?.trim() ?? "";
+    const evictIds = selectWorkspaceSnapshotEvictions(
+      Array.from(perWorkspaceCache.values()).map((entry) => ({
+        workspaceId: entry.workspaceId,
+        lastUsed: entry.lastUsed,
+      })),
+      DEFAULT_WORKSPACE_SNAPSHOT_CACHE_LIMIT,
+      [activeWorkspaceId, ...keepIds],
+    );
+    for (const id of evictIds) perWorkspaceCache.delete(id);
+  };
   // VSLO-171 F3Ú7a — per-workspace pending permissions. In multi mode the
   // polling effect (in app.tsx) iterates routing.forEach() and refreshes each
   // workspace's permissions independently. Sidebar badge reads aggregate
@@ -367,11 +478,11 @@ export function createSessionStore(options: {
     return result;
   });
 
-  const skillPathPattern = /[\\/]\.opencode[\\/](skill|skills)[\\/]/i;
+  const skillPathPattern = /(?:^|[\\/])\.opencode[\\/](skill|skills)[\\/]/i;
   const skillNamePattern = /[\\/]\.opencode[\\/](?:skill|skills)[\\/]+([^\\/]+)/i;
-  const commandPathPattern = /[\\/]\.opencode[\\/](command|commands)[\\/]/i;
+  const commandPathPattern = /(?:^|[\\/])\.opencode[\\/](command|commands)[\\/]/i;
   const commandNamePattern = /[\\/]\.opencode[\\/](?:command|commands)[\\/]+([^\\/]+)/i;
-  const agentPathPattern = /[\\/]\.opencode[\\/](agent|agents)[\\/]/i;
+  const agentPathPattern = /(?:^|[\\/])\.opencode[\\/](agent|agents)[\\/]/i;
   const agentNamePattern = /[\\/]\.opencode[\\/](?:agent|agents)[\\/]+([^\\/]+)/i;
   const opencodeConfigPattern = /(?:^|[\\/])opencode\.jsonc?\b/i;
   const opencodePathPattern = /(?:^|[\\/])\.opencode[\\/]/i;
@@ -568,8 +679,8 @@ export function createSessionStore(options: {
     // Ensure the UI doesn't get stuck in a "Responding" state when the model
     // tries to call a tool that isn't available.
     if (part.sessionID) {
-      setStore("sessionStatus", part.sessionID, "idle");
-      notifySessionBusy(part.sessionID, "idle");
+      setSessionStatusForWorkspace(part.sessionID, "idle");
+      notifySessionBusy(part.sessionID, "idle", statusWorkspaceId());
     }
 
     const record = part as any;
@@ -592,8 +703,8 @@ export function createSessionStore(options: {
 
     // Keep run state consistent with a surfaced execution failure.
     if (part.sessionID) {
-      setStore("sessionStatus", part.sessionID, "idle");
-      notifySessionBusy(part.sessionID, "idle");
+      setSessionStatusForWorkspace(part.sessionID, "idle");
+      notifySessionBusy(part.sessionID, "idle", statusWorkspaceId());
       appendSessionErrorTurn(part.sessionID, addOpencodeCacheHint(detected));
     }
     options.setError(addOpencodeCacheHint(detected));
@@ -725,7 +836,7 @@ export function createSessionStore(options: {
   const selectedSessionStatus = createMemo(() => {
     const id = options.selectedSessionId();
     if (!id) return "idle";
-    return store.sessionStatus[id] ?? "idle";
+    return readStatusForSession(id);
   });
 
   const messages = createMemo<MessageWithParts[]>(() => {
@@ -781,7 +892,10 @@ export function createSessionStore(options: {
     // Note: We intentionally normalize slashes + trailing separators but do NOT
     // lowercase on Windows for the query value because the server does strict
     // string equality against the stored session.directory.
-    const queryDirectory = normalizeDirectoryQueryPath(scopeRoot) || undefined;
+    const queryDirectories = directoryQueryPathVariants(scopeRoot, {
+      mode: options.directoryQueryPathMode?.() ?? "auto",
+    });
+    const queryDirectory = (queryDirectories[0] ?? normalizeDirectoryQueryPath(scopeRoot)) || undefined;
 
     const start = Date.now();
     sessionDebug("sessions:load:start", { scopeRoot: scopeRoot ?? null, queryDirectory: queryDirectory ?? null });
@@ -789,11 +903,14 @@ export function createSessionStore(options: {
     let usedConversationRead = false;
     const workspaceId = options.routing.activeWorkspaceId().trim();
     const c = options.routing.active();
+    const workspaceRuntimeReady = isWorkspaceRuntimeReady(workspaceId);
     const reader = options.conversationReader?.() ?? null;
     if (workspaceId && reader) {
       try {
-        const result = await reader.listConversations(workspaceId, queryDirectory);
-        if (result.source !== "unavailable" || options.engineReady?.() === false || !c) {
+        const result = await reader.listConversations(workspaceId, queryDirectory, {
+          sync: Boolean(c) && workspaceRuntimeReady,
+        });
+        if (result.source !== "unavailable" || !workspaceRuntimeReady || !c) {
           list = result.items;
           usedConversationRead = true;
           sessionDebug("sessions:load:conversation-read", {
@@ -813,7 +930,7 @@ export function createSessionStore(options: {
           workspaceId,
           error: error instanceof Error ? error.message : safeStringify(error),
         });
-        if (options.engineReady?.() === false || !c) {
+        if (!workspaceRuntimeReady || !c) {
           list = [];
           usedConversationRead = true;
         }
@@ -823,8 +940,24 @@ export function createSessionStore(options: {
     if (!list) {
       if (!c) return;
       // Keep `roots` unset so the backend returns both root sessions and child/subagent sessions.
-      list = unwrap(await c.session.list({ directory: queryDirectory }));
-      sessionDebug("sessions:load:raw", { count: list.length, ms: Date.now() - start });
+      const candidates: Array<string | undefined> = queryDirectories.length > 0 ? queryDirectories : [undefined];
+      const mergedById = new Map<string, Session>();
+      const usedQueryDirectories: Array<string | null> = [];
+      for (const candidate of candidates) {
+        usedQueryDirectories.push(candidate ?? null);
+        const fetchedList = unwrap(await c.session.list({ directory: candidate }));
+        for (const session of fetchedList) {
+          mergedById.set(session.id, session);
+        }
+      }
+      list = Array.from(mergedById.values());
+      sessionDebug("sessions:load:raw", {
+        count: list.length,
+        queryDirectory: usedQueryDirectories[0] ?? null,
+        queryDirectories: usedQueryDirectories,
+        queryDirectoryFallbacks: Math.max(0, candidates.length - 1),
+        ms: Date.now() - start,
+      });
     }
 
     // Defensive client-side filter in case the server returns sessions spanning
@@ -838,7 +971,7 @@ export function createSessionStore(options: {
 
     const overrideIds = root
       ? Object.entries(sessionDirectoryOverrides())
-        .filter(([, directory]) => normalizeDirectoryPath(directory) === root)
+        .filter(([, directory]) => sessionDirectoryMatchesRoot(directory, root))
         .map(([sessionID]) => sessionID)
       : [];
 
@@ -896,7 +1029,7 @@ export function createSessionStore(options: {
   }
 
   async function refreshPendingPermissions() {
-    if (options.engineReady && !options.engineReady()) {
+    if (!hasAnyRefreshableRuntime()) {
       recordPerfLog(runtimePerfAuditEnabled(), "session.permissions", "skip-engine-not-ready", {
         activeWorkspaceId: options.routing.activeWorkspaceId() || null,
         activeSendTraceId: activeSendTraceId(),
@@ -930,6 +1063,7 @@ export function createSessionStore(options: {
       const prevByWs = pendingPermissionsByWs();
       const clientsToProbe: Array<{ wsId: string; client: RoutingClient }> = [];
       options.routing.forEach((wsId, client) => {
+        if (!isWorkspaceRuntimeReady(wsId)) return;
         clientsToProbe.push({ wsId, client });
       });
       // If no per-WS clients have been ensured yet, fall back to the global
@@ -1026,6 +1160,7 @@ export function createSessionStore(options: {
       const activeWs = options.routing.activeWorkspaceId();
       const clientsToProbe: Array<{ wsId: string; client: RoutingClient }> = [];
       options.routing.forEach((wsId, client) => {
+        if (!isWorkspaceRuntimeReady(wsId)) return;
         clientsToProbe.push({ wsId, client });
       });
       const now = Date.now();
@@ -1165,9 +1300,296 @@ export function createSessionStore(options: {
     return transcriptFreshnessBySession()[sessionID] ?? null;
   }
 
-  async function selectSession(sessionID: string) {
-    const c = options.routing.active();
+  const transcriptIngestTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const backgroundTranscriptIngestTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const transcriptIngestInFlight = new Map<string, Promise<void>>();
+  const pendingTranscriptDeletedMessageIds = new Map<string, Set<string>>();
+  const pendingTranscriptDeletedPartsByMessageId = new Map<string, Map<string, Set<string>>>();
+  const TRANSCRIPT_INGEST_DEBOUNCE_MS = 600;
+  const BACKGROUND_TRANSCRIPT_INGEST_DEBOUNCE_MS = 2_500;
 
+  const transcriptIngestKey = (workspaceId: string, sessionID: string) => `${workspaceId}\0${sessionID}`;
+
+  const resolveTranscriptIngestWorkspaceId = (sourceWsId?: string | null) =>
+    sourceWsId?.trim() || options.routing.activeWorkspaceId().trim();
+
+  const resolveSessionIdForMessage = (messageID: string) => {
+    const id = messageID.trim();
+    if (!id) return "";
+    for (const [sessionID, messages] of Object.entries(store.messages)) {
+      if (messages.some((message) => message.id === id)) return sessionID;
+    }
+    return "";
+  };
+
+  const recordPendingTranscriptMessageDeletion = (
+    workspaceId: string,
+    sessionID: string,
+    messageID: string,
+  ) => {
+    const key = transcriptIngestKey(workspaceId, sessionID);
+    const id = messageID.trim();
+    if (!id) return;
+    const messages = pendingTranscriptDeletedMessageIds.get(key) ?? new Set<string>();
+    messages.add(id);
+    pendingTranscriptDeletedMessageIds.set(key, messages);
+    pendingTranscriptDeletedPartsByMessageId.get(key)?.delete(id);
+  };
+
+  const recordPendingTranscriptPartDeletion = (
+    workspaceId: string,
+    sessionID: string,
+    messageID: string,
+    partID: string,
+  ) => {
+    const key = transcriptIngestKey(workspaceId, sessionID);
+    const messageId = messageID.trim();
+    const partId = partID.trim();
+    if (!messageId || !partId) return;
+    let partsByMessage = pendingTranscriptDeletedPartsByMessageId.get(key);
+    if (!partsByMessage) {
+      partsByMessage = new Map<string, Set<string>>();
+      pendingTranscriptDeletedPartsByMessageId.set(key, partsByMessage);
+    }
+    const parts = partsByMessage.get(messageId) ?? new Set<string>();
+    parts.add(partId);
+    partsByMessage.set(messageId, parts);
+  };
+
+  const pendingTranscriptDeletionsForKey = (key: string) => {
+    const deletedMessageIds = [...(pendingTranscriptDeletedMessageIds.get(key) ?? new Set<string>())];
+    const deletedPartsByMessageId: Record<string, string[]> = {};
+    for (const [messageID, partIds] of pendingTranscriptDeletedPartsByMessageId.get(key) ?? new Map()) {
+      const values = [...partIds];
+      if (values.length > 0) deletedPartsByMessageId[messageID] = values;
+    }
+    return { deletedMessageIds, deletedPartsByMessageId };
+  };
+
+  const clearPendingTranscriptDeletions = (
+    key: string,
+    deletions: { deletedMessageIds?: string[]; deletedPartsByMessageId?: Record<string, string[]> },
+  ) => {
+    const messageSet = pendingTranscriptDeletedMessageIds.get(key);
+    for (const messageID of deletions.deletedMessageIds ?? []) {
+      messageSet?.delete(messageID);
+    }
+    if (messageSet && messageSet.size === 0) pendingTranscriptDeletedMessageIds.delete(key);
+
+    const partsByMessage = pendingTranscriptDeletedPartsByMessageId.get(key);
+    for (const [messageID, partIds] of Object.entries(deletions.deletedPartsByMessageId ?? {})) {
+      const partSet = partsByMessage?.get(messageID);
+      for (const partID of partIds) partSet?.delete(partID);
+      if (partSet && partSet.size === 0) partsByMessage?.delete(messageID);
+    }
+    if (partsByMessage && partsByMessage.size === 0) {
+      pendingTranscriptDeletedPartsByMessageId.delete(key);
+    }
+  };
+
+  const buildTranscriptIngestPayload = (
+    workspaceId: string,
+    sessionID: string,
+    reason: string,
+  ) => {
+    const activeWorkspaceId = options.routing.activeWorkspaceId().trim();
+    if (activeWorkspaceId && activeWorkspaceId !== workspaceId) return null;
+    const key = transcriptIngestKey(workspaceId, sessionID);
+    const pendingDeletions = pendingTranscriptDeletionsForKey(key);
+
+    const session = store.sessions.find((candidate) => candidate.id === sessionID) ?? null;
+    const directory = session
+      ? resolveSessionDirectory(session)
+      : normalizeDirectoryPath(options.activeWorkspaceRoot());
+    if (!workspaceId || !sessionID || !directory) return null;
+
+    const messagesForSession = sortById(
+      (store.messages[sessionID] ?? []).filter((message): message is MessageInfo => Boolean(message?.id)),
+    );
+    const hasPendingDeletions =
+      pendingDeletions.deletedMessageIds.length > 0 ||
+      Object.keys(pendingDeletions.deletedPartsByMessageId).length > 0;
+    if (messagesForSession.length === 0 && !hasPendingDeletions) return null;
+
+    const partsByMessageId: Record<string, Part[]> = {};
+    for (const message of messagesForSession) {
+      partsByMessageId[message.id] = sortById(
+        (store.parts[message.id] ?? []).filter((part): part is Part => Boolean(part?.id)),
+      );
+    }
+
+    return {
+      workspaceId,
+      sessionId: sessionID,
+      directory,
+      limit: Math.max(messageLimitBySession()[sessionID] ?? 0, messagesForSession.length),
+      messages: messagesForSession,
+      partsByMessageId,
+      deletedMessageIds: pendingDeletions.deletedMessageIds,
+      deletedPartsByMessageId: pendingDeletions.deletedPartsByMessageId,
+      reason,
+    };
+  };
+
+  const flushTranscriptIngestion = (workspaceId: string, sessionID: string, reason: string) => {
+    const key = transcriptIngestKey(workspaceId, sessionID);
+    const timer = transcriptIngestTimers.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      transcriptIngestTimers.delete(key);
+    }
+
+    const writer = options.appendTranscriptSnapshot;
+    if (!writer) return;
+    const payload = buildTranscriptIngestPayload(workspaceId, sessionID, reason);
+    if (!payload) return;
+
+    const previous = transcriptIngestInFlight.get(key) ?? Promise.resolve();
+    const run = previous
+      .catch(() => undefined)
+      .then(async () => {
+        await writer(payload);
+        clearPendingTranscriptDeletions(key, payload);
+      })
+      .catch((error) => {
+        sessionWarn("transcript-ingest:failed", {
+          workspaceId,
+          sessionID,
+          reason,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    const tracked = run.finally(() => {
+      if (transcriptIngestInFlight.get(key) === tracked) {
+        transcriptIngestInFlight.delete(key);
+      }
+    });
+    transcriptIngestInFlight.set(key, tracked);
+  };
+
+  const scheduleTranscriptIngestion = (
+    sessionID: string,
+    sourceWsId: string | undefined,
+    reason: string,
+    delayMs = TRANSCRIPT_INGEST_DEBOUNCE_MS,
+  ) => {
+    if (!options.appendTranscriptSnapshot) return;
+    const workspaceId = resolveTranscriptIngestWorkspaceId(sourceWsId);
+    if (!workspaceId || !sessionID) return;
+    const key = transcriptIngestKey(workspaceId, sessionID);
+    const existing = transcriptIngestTimers.get(key);
+    if (existing) clearTimeout(existing);
+    transcriptIngestTimers.set(
+      key,
+      setTimeout(() => flushTranscriptIngestion(workspaceId, sessionID, reason), delayMs),
+    );
+  };
+
+  const flushBackgroundTranscriptIngestion = async (
+    workspaceId: string,
+    sessionID: string,
+    reason: string,
+  ) => {
+    const key = transcriptIngestKey(workspaceId, sessionID);
+    const timer = backgroundTranscriptIngestTimers.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      backgroundTranscriptIngestTimers.delete(key);
+    }
+
+    const writer = options.appendTranscriptSnapshot;
+    if (!writer) return;
+    const c = options.routing.client(workspaceId);
+    if (!c) return;
+
+    const previous = transcriptIngestInFlight.get(key) ?? Promise.resolve();
+    const run = previous
+      .catch(() => undefined)
+      .then(async () => {
+        const entry = options.routing.entry(workspaceId);
+        const session = applySessionDirectoryOverride(
+          unwrap(await withTimeout(c.session.get({ sessionID }), 8_000, "background session.get")),
+        );
+        const directory =
+          resolveSessionDirectory(session) ||
+          normalizeDirectoryPath(entry?.directory ?? "");
+        if (!directory) return;
+
+        const limit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, messageLimitBySession()[sessionID] ?? 0);
+        const transcript = unwrap(
+          await withTimeout(c.session.messages({ sessionID, limit }), 12_000, "background session.messages"),
+        ) as MessageWithParts[];
+        const messages = sortById(
+          transcript
+            .map((message) => message.info)
+            .filter((info): info is MessageInfo => Boolean(info?.id)),
+        );
+        if (messages.length === 0) return;
+
+        const partsByMessageId: Record<string, Part[]> = {};
+        for (const message of transcript) {
+          if (!message.info?.id) continue;
+          partsByMessageId[message.info.id] = sortById(
+            message.parts.filter((part): part is Part => Boolean(part?.id)),
+          );
+        }
+
+        await writer({
+          workspaceId,
+          sessionId: sessionID,
+          directory,
+          limit: Math.max(limit, messages.length),
+          messages,
+          partsByMessageId,
+          reason,
+        });
+      })
+      .catch((error) => {
+        sessionWarn("background-transcript-ingest:failed", {
+          workspaceId,
+          sessionID,
+          reason,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    const tracked = run.finally(() => {
+      if (transcriptIngestInFlight.get(key) === tracked) {
+        transcriptIngestInFlight.delete(key);
+      }
+    });
+    transcriptIngestInFlight.set(key, tracked);
+    await tracked;
+  };
+
+  const scheduleBackgroundTranscriptIngestion = (
+    sessionID: string,
+    workspaceId: string,
+    reason: string,
+    delayMs = BACKGROUND_TRANSCRIPT_INGEST_DEBOUNCE_MS,
+  ) => {
+    if (!options.appendTranscriptSnapshot) return;
+    const normalizedWorkspaceId = workspaceId.trim();
+    const normalizedSessionId = sessionID.trim();
+    if (!normalizedWorkspaceId || !normalizedSessionId) return;
+    const key = transcriptIngestKey(normalizedWorkspaceId, normalizedSessionId);
+    const existing = backgroundTranscriptIngestTimers.get(key);
+    if (existing) clearTimeout(existing);
+    backgroundTranscriptIngestTimers.set(
+      key,
+      setTimeout(() => {
+        void flushBackgroundTranscriptIngestion(normalizedWorkspaceId, normalizedSessionId, reason);
+      }, delayMs),
+    );
+  };
+
+  onCleanup(() => {
+    for (const timer of transcriptIngestTimers.values()) clearTimeout(timer);
+    transcriptIngestTimers.clear();
+    for (const timer of backgroundTranscriptIngestTimers.values()) clearTimeout(timer);
+    backgroundTranscriptIngestTimers.clear();
+  });
+
+  async function selectSession(sessionID: string) {
     const perfEnabled = options.developerMode();
     options.setSelectedSessionId(sessionID);
     options.setError(null);
@@ -1211,47 +1633,81 @@ export function createSessionStore(options: {
       const existingLimit = messageLimitBySession()[sessionID] ?? 0;
       const requestLimit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, existingLimit);
       setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: true }));
-      const browseModeOnly = options.engineReady ? !options.engineReady() : false;
-      const browseFromDb = options.shouldBrowseSessionFromDb?.(sessionID) ?? browseModeOnly;
-      mark("client check", { hasClient: Boolean(c), browseModeOnly, browseFromDb, sessionID });
+      const sessionClient = clientForSession(sessionID);
+      const c = sessionClient.client;
+      const readPolicy = sessionReadPolicy(sessionID, sessionClient.workspaceId);
+      const loadOfflineTranscriptFallback = async (reason: string) => {
+        mark("calling offline transcript fallback", {
+          limit: requestLimit,
+          reason,
+          activeWorkspaceId: readPolicy.activeWorkspaceId || null,
+          sessionWorkspaceId: readPolicy.sessionWorkspaceId || null,
+        });
+        let snapshot: VesloSessionTranscriptSnapshot | null = null;
+        try {
+          snapshot = (await options.loadOfflineTranscript?.(sessionID, requestLimit)) ?? null;
+        } catch (error) {
+          addError(error);
+          mark("offline transcript fallback failed", {
+            reason,
+            error: error instanceof Error ? error.message : safeStringify(error),
+          });
+          return false;
+        }
+        if (abortIfStale("selection changed before offline transcript applied")) return true;
+        if (snapshot) {
+          hydrateTranscriptSnapshot(snapshot);
+          setStore("todos", sessionID, []);
+          mark("offline transcript fallback done", {
+            count: snapshot.messages.length,
+            limit: requestLimit,
+            reason,
+          });
+          return true;
+        }
+        mark("offline transcript fallback unavailable", { reason });
+        return false;
+      };
+      mark("client check", {
+        hasClient: Boolean(c),
+        browseModeOnly: readPolicy.browseModeOnly,
+        browseFromDb: readPolicy.browseFromDb,
+        configuredBrowseFromDb: readPolicy.configuredBrowseFromDb,
+        foreignWorkspace: readPolicy.foreignWorkspace,
+        sessionID,
+        activeWorkspaceId: readPolicy.activeWorkspaceId || null,
+        sessionWorkspaceId: readPolicy.sessionWorkspaceId || null,
+      });
       // VSLO-86 — in browse mode (engineReady=false), the user hasn't asked
       // for the engine yet. Hitting `c.session.messages` here would force a
       // 30-60s sandbox-exec cold spawn just so we could pull the same
       // messages already cached locally. Fall through to the offline
       // transcript instead so passive sidebar clicking stays free.
-      if (!c || browseFromDb) {
+      if (!c || readPolicy.browseFromDb) {
         try {
-          mark("calling offline transcript fallback", { limit: requestLimit });
-          let snapshot: VesloSessionTranscriptSnapshot | null = null;
-          try {
-            snapshot = (await options.loadOfflineTranscript?.(sessionID, requestLimit)) ?? null;
-          } catch (error) {
-            addError(error);
-            mark("offline transcript fallback failed", {
-              error: error instanceof Error ? error.message : safeStringify(error),
-            });
-            return;
-          }
-          if (abortIfStale("selection changed before offline transcript applied")) return;
-          if (snapshot) {
-            hydrateTranscriptSnapshot(snapshot);
-            setStore("todos", sessionID, []);
-            mark("offline transcript fallback done", {
-              count: snapshot.messages.length,
-              limit: requestLimit,
-            });
-          } else {
-            mark("offline transcript fallback unavailable");
-          }
+          await loadOfflineTranscriptFallback(!c ? "client unavailable" : "read policy");
         } finally {
           setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
         }
         return;
       }
       mark("calling session.messages", { limit: requestLimit });
-      const msgs = unwrap(
-        await withTimeout(c.session.messages({ sessionID, limit: requestLimit }), 12000, "session.messages"),
-      );
+      let msgs: MessageWithParts[];
+      try {
+        msgs = unwrap(
+          await withTimeout(c.session.messages({ sessionID, limit: requestLimit }), 12000, "session.messages"),
+        );
+      } catch (error) {
+        mark("session.messages failed", {
+          error: error instanceof Error ? error.message : safeStringify(error),
+        });
+        if (isSessionNotFoundError(error)) {
+          const recovered = await loadOfflineTranscriptFallback("session not found");
+          if (recovered) return;
+        }
+        addError(error);
+        return;
+      }
       mark("session.messages done", { limit: requestLimit, count: msgs.length });
       setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
       if (abortIfStale("selection changed before messages applied")) return;
@@ -1306,7 +1762,6 @@ export function createSessionStore(options: {
   }
 
   async function loadEarlierMessages(sessionID: string, chunk = SESSION_MESSAGE_LOAD_CHUNK) {
-    const c = options.routing.active();
     if (!sessionID) return;
     if (messageLoadBusyBySession()[sessionID]) return;
     if (messageCompleteBySession()[sessionID]) return;
@@ -1316,16 +1771,32 @@ export function createSessionStore(options: {
 
     setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: true }));
     try {
-      const browseFromDb = options.shouldBrowseSessionFromDb?.(sessionID) ?? false;
-      if (!c || browseFromDb) {
+      const sessionClient = clientForSession(sessionID);
+      const c = sessionClient.client;
+      const readPolicy = sessionReadPolicy(sessionID, sessionClient.workspaceId);
+      const loadOfflineTranscriptFallback = async () => {
         const snapshot = (await options.loadOfflineTranscript?.(sessionID, nextLimit)) ?? null;
-        if (snapshot) hydrateTranscriptSnapshot(snapshot);
+        if (!snapshot) return false;
+        hydrateTranscriptSnapshot(snapshot);
+        return true;
+      };
+      if (!c || readPolicy.browseFromDb) {
+        await loadOfflineTranscriptFallback();
         return;
       }
-      const msgs = unwrap(await withTimeout(c.session.messages({ sessionID, limit: nextLimit }), 12000, "session.messages"));
-      setMessagesForSession(sessionID, msgs);
-      setMessageLimitBySession((prev) => ({ ...prev, [sessionID]: nextLimit }));
-      setMessageCompleteBySession((prev) => ({ ...prev, [sessionID]: msgs.length < nextLimit }));
+      try {
+        const msgs = unwrap(
+          await withTimeout(c.session.messages({ sessionID, limit: nextLimit }), 12000, "session.messages"),
+        );
+        setMessagesForSession(sessionID, msgs);
+        setMessageLimitBySession((prev) => ({ ...prev, [sessionID]: nextLimit }));
+        setMessageCompleteBySession((prev) => ({ ...prev, [sessionID]: msgs.length < nextLimit }));
+      } catch (error) {
+        if (isSessionNotFoundError(error) && await loadOfflineTranscriptFallback()) {
+          return;
+        }
+        throw error;
+      }
     } catch (error) {
       addError(error);
     } finally {
@@ -1531,17 +2002,77 @@ export function createSessionStore(options: {
     return false;
   };
 
-  const notifyBackgroundSessionBusy = (event: OpencodeEvent, workspaceId: string) => {
+  const applyBackgroundWorkspaceEvent = (event: OpencodeEvent, workspaceId: string) => {
     if (!workspaceId || !event.properties || typeof event.properties !== "object") return;
     const record = event.properties as Record<string, unknown>;
     const sessionID = extractSessionId(record);
-    if (!sessionID) return;
-    if (event.type === "session.status") {
-      notifySessionBusy(sessionID, normalizeSessionStatus(record.status), workspaceId);
+
+    if (event.type === "session.status" && sessionID) {
+      const normalized = normalizeSessionStatus(record.status);
+      recordSessionStatusTrace("background-sse-session-status", {
+        sessionId: sessionID,
+        status: normalized,
+        sourceWorkspaceId: workspaceId,
+        previous: readStatusForSession(sessionID, workspaceId),
+      });
+      setSessionStatusForWorkspace(sessionID, normalized, workspaceId);
+      notifySessionBusy(sessionID, normalized, workspaceId);
       return;
     }
-    if (event.type === "session.idle" || event.type === "session.error") {
+
+    if ((event.type === "session.idle" || event.type === "session.error") && sessionID) {
+      recordSessionStatusTrace("background-sse-session-idle", {
+        sessionId: sessionID,
+        status: "idle",
+        sourceWorkspaceId: workspaceId,
+        previous: readStatusForSession(sessionID, workspaceId),
+      });
+      setSessionStatusForWorkspace(sessionID, "idle", workspaceId);
       notifySessionBusy(sessionID, "idle", workspaceId);
+      scheduleBackgroundTranscriptIngestion(sessionID, workspaceId, event.type, 0);
+      return;
+    }
+
+    if (event.type === "message.updated") {
+      const info = record.info as Message | undefined;
+      const targetSessionID = info?.sessionID?.trim() || sessionID;
+      if (!targetSessionID) return;
+      if ((info as { role?: string } | undefined)?.role === "assistant") {
+        options.onAssistantResponseObserved?.(targetSessionID);
+      }
+      scheduleBackgroundTranscriptIngestion(targetSessionID, workspaceId, "background message.updated");
+      return;
+    }
+
+    if (event.type === "message.part.updated") {
+      const part = record.part as Part | undefined;
+      const targetSessionID = part?.sessionID?.trim() || sessionID;
+      if (!targetSessionID) return;
+      scheduleBackgroundTranscriptIngestion(targetSessionID, workspaceId, "background message.part.updated");
+      return;
+    }
+
+    if (event.type === "message.removed" && sessionID) {
+      scheduleBackgroundTranscriptIngestion(sessionID, workspaceId, "background message.removed", 0);
+      return;
+    }
+
+    if (event.type === "message.part.removed" && sessionID) {
+      scheduleBackgroundTranscriptIngestion(sessionID, workspaceId, "background message.part.removed", 0);
+      return;
+    }
+
+    if (event.type === "permission.asked" || event.type === "permission.replied") {
+      void refreshPendingPermissions();
+      return;
+    }
+
+    if (
+      event.type === "question.asked" ||
+      event.type === "question.replied" ||
+      event.type === "question.rejected"
+    ) {
+      void refreshPendingQuestions();
     }
   };
 
@@ -1554,10 +2085,11 @@ export function createSessionStore(options: {
     if (sourceWsId) {
       const activeWsId = options.routing.activeWorkspaceId();
       if (activeWsId && sourceWsId !== activeWsId) {
-        // Background event for a non-active workspace. Keep the workspace-level
-        // run indicator current, but skip the single active-session store. When
-        // the user switches back, loadSessions() re-fetches the full state.
-        notifyBackgroundSessionBusy(event, sourceWsId);
+        // Background event for a non-active workspace. Keep runtime status,
+        // permission/question prompts, and durable transcript ingestion current,
+        // but do not merge background message parts into the single visible
+        // active-session store.
+        applyBackgroundWorkspaceEvent(event, sourceWsId);
         return;
       }
     }
@@ -1656,9 +2188,9 @@ export function createSessionStore(options: {
             sessionId: sessionID,
             status: normalized,
             sourceWorkspaceId: sourceWsId ?? null,
-            previous: store.sessionStatus[sessionID] ?? "idle",
+            previous: readStatusForSession(sessionID, sourceWsId),
           });
-          setStore("sessionStatus", sessionID, normalized);
+          setSessionStatusForWorkspace(sessionID, normalized, sourceWsId);
           notifySessionBusy(sessionID, normalized, sourceWsId);
           if (sessionID === options.selectedSessionId() && normalized !== "idle") {
             options.setError(null);
@@ -1676,9 +2208,9 @@ export function createSessionStore(options: {
             sessionId: sessionID,
             status: "idle",
             sourceWorkspaceId: sourceWsId ?? null,
-            previous: store.sessionStatus[sessionID] ?? "idle",
+            previous: readStatusForSession(sessionID, sourceWsId),
           });
-          setStore("sessionStatus", sessionID, "idle");
+          setSessionStatusForWorkspace(sessionID, "idle", sourceWsId);
           notifySessionBusy(sessionID, "idle", sourceWsId);
           // VSLO-171.F3Ú6: SSE event handler will dispatch on per-workspace
           // client (from event payload workspaceId) once SSE multiplex lands.
@@ -1693,6 +2225,7 @@ export function createSessionStore(options: {
               // ignore
             }
           }
+          scheduleTranscriptIngestion(sessionID, sourceWsId, "session.idle", 0);
         }
       }
     }
@@ -1706,7 +2239,7 @@ export function createSessionStore(options: {
         const record = event.properties as Record<string, unknown>;
         const sessionID = extractSessionId(record);
         if (sessionID) {
-          setStore("sessionStatus", sessionID, "idle");
+          setSessionStatusForWorkspace(sessionID, "idle", sourceWsId);
           notifySessionBusy(sessionID, "idle", sourceWsId);
         }
         const errorObj = record.error as Record<string, unknown> | undefined;
@@ -1747,6 +2280,7 @@ export function createSessionStore(options: {
           if ((info as { role?: string }).role === "assistant") {
             options.onAssistantResponseObserved?.(info.sessionID);
           }
+          scheduleTranscriptIngestion(info.sessionID, sourceWsId, "message.updated");
         }
       }
     }
@@ -1757,6 +2291,10 @@ export function createSessionStore(options: {
         const sessionID = extractSessionId(record);
         const messageID = typeof record.messageID === "string" ? record.messageID : null;
         if (sessionID && messageID) {
+          const workspaceId = resolveTranscriptIngestWorkspaceId(sourceWsId);
+          if (workspaceId && isKnownSessionId(sessionID)) {
+            recordPendingTranscriptMessageDeletion(workspaceId, sessionID, messageID);
+          }
           setStore("messages", sessionID, (current = []) => removeMessageInfo(current, messageID));
           setStore("parts", messageID, []);
           setStore(
@@ -1765,6 +2303,9 @@ export function createSessionStore(options: {
               delete draft[messageID];
             }),
           );
+          if (workspaceId && isKnownSessionId(sessionID)) {
+            scheduleTranscriptIngestion(sessionID, sourceWsId, "message.removed", 0);
+          }
         }
       }
     }
@@ -1845,6 +2386,7 @@ export function createSessionStore(options: {
           maybeMarkReloadRequired(part);
           maybeHandleInvalidToolError(part);
           maybeHandleChromeMcpCompletedError(resolvedPart);
+          scheduleTranscriptIngestion(part.sessionID, sourceWsId, "message.part.updated");
         }
       }
     }
@@ -1852,10 +2394,19 @@ export function createSessionStore(options: {
     if (event.type === "message.part.removed") {
       if (event.properties && typeof event.properties === "object") {
         const record = event.properties as Record<string, unknown>;
+        const sessionID = extractSessionId(record);
         const messageID = typeof record.messageID === "string" ? record.messageID : null;
         const partID = typeof record.partID === "string" ? record.partID : null;
         if (messageID && partID) {
+          const resolvedSessionID = sessionID || resolveSessionIdForMessage(messageID);
+          const workspaceId = resolveTranscriptIngestWorkspaceId(sourceWsId);
+          if (workspaceId && resolvedSessionID && isKnownSessionId(resolvedSessionID)) {
+            recordPendingTranscriptPartDeletion(workspaceId, resolvedSessionID, messageID, partID);
+          }
           setStore("parts", messageID, (current = []) => removePartInfo(current, partID));
+          if (resolvedSessionID && isKnownSessionId(resolvedSessionID)) {
+            scheduleTranscriptIngestion(resolvedSessionID, sourceWsId, "message.part.removed");
+          }
         }
       }
     }
@@ -2024,10 +2575,10 @@ export function createSessionStore(options: {
         try {
           const fetched = unwrap(await c.session.get({ sessionID })) as Record<string, unknown>;
           const normalized = normalizeSessionStatus(fetched?.status);
-          setStore("sessionStatus", sessionID, normalized);
+          setSessionStatusForWorkspace(sessionID, normalized, sourceWsId);
           notifySessionBusy(sessionID, normalized, sourceWsId);
         } catch {
-          setStore("sessionStatus", sessionID, "idle");
+          setSessionStatusForWorkspace(sessionID, "idle", sourceWsId);
           notifySessionBusy(sessionID, "idle", sourceWsId);
           continue;
         }
@@ -2221,11 +2772,6 @@ export function createSessionStore(options: {
   };
 
   createEffect(() => {
-    if (options.engineReady?.() === false) {
-      options.setSseConnected(false);
-      return;
-    }
-
     // VSLO-86 F4Ú12 — outer effect tracks routing.entryIds() so streams
     // re-fan-out when workspaces are ensured/released. Falls back to the
     // global client signal so the legacy single-active boot path keeps
@@ -2236,10 +2782,11 @@ export function createSessionStore(options: {
     const targets: Array<{ wsId: string; client: RoutingClient }> = [];
     if (entryIds.length > 0) {
       for (const wsId of entryIds) {
+        if (!isWorkspaceRuntimeReady(wsId)) continue;
         const c = options.routing.client(wsId);
         if (c) targets.push({ wsId, client: c });
       }
-    } else if (fallback) {
+    } else if (fallback && isActiveWorkspaceRuntimeReady()) {
       targets.push({ wsId: "", client: fallback });
     }
 
@@ -2248,7 +2795,10 @@ export function createSessionStore(options: {
     // previous active workspace are rejected until loadSessions() repopulates.
     workspaceSessionIds.clear();
 
-    if (targets.length === 0) return;
+    if (targets.length === 0) {
+      options.setSseConnected(false);
+      return;
+    }
 
     const cleanups: Array<() => void> = [];
     for (const target of targets) {
@@ -2270,21 +2820,44 @@ export function createSessionStore(options: {
     return store.sessions.some((session) => session.id === selectedSessionId) ? selectedSessionId : null;
   };
 
+  const pickSnapshotRecord = <T,>(
+    record: Record<string, T>,
+    keys: ReadonlySet<string>,
+  ): Record<string, T> => {
+    const next: Record<string, T> = {};
+    for (const [key, value] of Object.entries(record)) {
+      if (keys.has(key)) next[key] = value;
+    }
+    return next;
+  };
+
   const saveWorkspaceSnapshot = (workspaceId: string) => {
     if (!workspaceId) return;
+    const sessionIds = new Set(store.sessions.map((session) => session.id).filter(Boolean));
+    const messagesForSnapshot = pickSnapshotRecord(store.messages, sessionIds);
+    const messageIds = new Set<string>();
+    for (const messages of Object.values(messagesForSnapshot)) {
+      for (const message of messages) {
+        if (message.id) messageIds.add(message.id);
+      }
+    }
     perWorkspaceCache.set(workspaceId, {
       workspaceId,
       sessions: store.sessions.slice(),
-      sessionStatus: { ...store.sessionStatus },
-      sessionErrorTurns: { ...store.sessionErrorTurns },
-      messages: { ...store.messages },
-      parts: { ...store.parts },
-      todos: { ...store.todos },
+      sessionStatus: pickSessionStatusSnapshot(store.sessionStatus, workspaceId, sessionIds),
+      sessionErrorTurns: pickSnapshotRecord(store.sessionErrorTurns, sessionIds),
+      messages: messagesForSnapshot,
+      parts: pickSnapshotRecord(store.parts, messageIds),
+      messageLimitBySession: pickSnapshotRecord(messageLimitBySession(), sessionIds),
+      messageCompleteBySession: pickSnapshotRecord(messageCompleteBySession(), sessionIds),
+      transcriptFreshnessBySession: pickSnapshotRecord(transcriptFreshnessBySession(), sessionIds),
+      todos: pickSnapshotRecord(store.todos, sessionIds),
       pendingPermissions: store.pendingPermissions.slice(),
       pendingQuestions: store.pendingQuestions.slice(),
       selectedSessionId: selectedSessionIdForSnapshot(),
       lastUsed: Date.now(),
     });
+    pruneWorkspaceSnapshotCache([workspaceId]);
   };
 
   const loadWorkspaceSnapshot = (workspaceId: string): boolean => {
@@ -2309,6 +2882,10 @@ export function createSessionStore(options: {
         { merge: false }
       )
     );
+    setMessageLimitBySession({ ...(snapshot.messageLimitBySession ?? {}) });
+    setMessageCompleteBySession({ ...(snapshot.messageCompleteBySession ?? {}) });
+    setMessageLoadBusyBySession({});
+    setTranscriptFreshnessBySession({ ...(snapshot.transcriptFreshnessBySession ?? {}) });
     workspaceSessionIds.clear();
     for (const s of snapshot.sessions) workspaceSessionIds.add(s.id);
     const snapshotSelectedSessionId = snapshot.selectedSessionId?.trim() ?? "";
@@ -2319,6 +2896,7 @@ export function createSessionStore(options: {
     options.setSelectedSessionId(selectedSessionId);
     snapshot.selectedSessionId = selectedSessionId;
     snapshot.lastUsed = Date.now();
+    pruneWorkspaceSnapshotCache([workspaceId]);
     return true;
   };
 

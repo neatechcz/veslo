@@ -29,8 +29,23 @@ test("local workspace activation lives in a scoped activation module", () => {
   );
   assert.match(
     localSource,
-    /deps\.setEngineReady\?\.\(false\);[\s\S]*await deps\.populateSidebarFromDb!\(id, next\.path\);/,
-    "browse mode must mark engine not-ready before DB hydration",
+    /deps\.setWorkspaces\(ws\.workspaces\);[\s\S]*deps\.syncActiveWorkspaceId\(ws\.activeId\);[\s\S]*await deps\.activateVesloHostWorkspace\(next\.path\);/s,
+    "local workspace activation should sync the Veslo server active workspace after local workspaceSetActive succeeds",
+  );
+  assert.match(
+    facadeSource,
+    /createWorkspaceLocalActivation\(\{[\s\S]*activateVesloHostWorkspace,[\s\S]*setError: options\.setError,/s,
+    "workspace facade should wire Veslo server active-workspace sync into local activation",
+  );
+  assert.match(
+    localSource,
+    /deps\.setEngineReady\?\.\(selection\.targetRuntimeReady\);[\s\S]*await deps\.populateSidebarFromDb!\(id, next\.path\);/,
+    "browse mode should preserve target runtime readiness before title-only DB hydration",
+  );
+  assert.match(
+    localSource,
+    /if \(selection\.passiveBrowseActivation\) \{[\s\S]*activate:local:veslo-host-active:skip[\s\S]*reason: "passive-browse"[\s\S]*\} else \{[\s\S]*await deps\.activateVesloHostWorkspace\(next\.path\);/s,
+    "passive local browse should not call Veslo server workspace activation/provisioning",
   );
   assert.match(
     localSource,

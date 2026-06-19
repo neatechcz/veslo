@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { isTauriRuntime } from "../utils";
 import { validateMcpServerName } from "../mcp";
+import { wrapStartupRequestAuditFetch } from "./startup-request-audit";
 import type { ComposerAttachment, ComposerDraft, ComposerPart, ModelRef, SkillInventoryRegistryMetadata } from "../types";
 
 export type EngineInfo = {
@@ -253,6 +254,11 @@ type RawPendingSessionDraftGetResult = {
 type RawPendingSessionDraftAttachmentInput = RawPendingSessionDraftAttachmentSummary & {
   bytes: number[];
 };
+
+const auditedTauriFetch = wrapStartupRequestAuditFetch(
+  tauriFetch as unknown as typeof globalThis.fetch,
+  "tauri.command-http",
+);
 
 type RawPendingSessionDraftComposerInput = Omit<
   RawPendingSessionDraftComposerSummary,
@@ -1150,7 +1156,7 @@ export async function getOpenCodeRouterGroupsEnabled(): Promise<boolean | null> 
   try {
     const status = await getOpenCodeRouterStatus();
     const healthPort = status?.healthPort ?? 3005;
-    const response = await (isTauriRuntime() ? tauriFetch : fetch)(`http://127.0.0.1:${healthPort}/config/groups`, {
+    const response = await (isTauriRuntime() ? auditedTauriFetch : fetch)(`http://127.0.0.1:${healthPort}/config/groups`, {
       method: "GET",
       headers: { "Content-Type": "application/json" },
     });
@@ -1168,7 +1174,7 @@ export async function setOpenCodeRouterGroupsEnabled(enabled: boolean): Promise<
   try {
     const status = await getOpenCodeRouterStatus();
     const healthPort = status?.healthPort ?? 3005;
-    const response = await (isTauriRuntime() ? tauriFetch : fetch)(`http://127.0.0.1:${healthPort}/config/groups`, {
+    const response = await (isTauriRuntime() ? auditedTauriFetch : fetch)(`http://127.0.0.1:${healthPort}/config/groups`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled }),

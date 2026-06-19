@@ -54,7 +54,7 @@ test("managed AI bootstrap writes config with the managed gateway token when pre
 test("managed AI bootstrap routes desktop local providers through the local Veslo server target", () => {
   assert.match(
     source,
-    /const providerRoutingLocalHost = activeVesloServerHostInfo\(\);[\s\S]*?const providerRoutingLocalBaseUrl =[\s\S]*?providerRoutingLocalHost\?\.baseUrl \?\? deriveLocalVesloServerUrlFromOpencodeBaseUrl\(baseUrl\(\)\) \?\? "";[\s\S]*?const providerRoutingRequiresEngineBaseUrl = requiresManagedAiEngineBaseUrl\(\{[\s\S]*?const providerRoutingEngineBaseUrl =[\s\S]*?providerRoutingLocalHost\?\.engineUrl \?\? "";[\s\S]*?resolveManagedAiProviderRoutingTarget\(\{[\s\S]*?workspaceType: workspace\.workspaceType,[\s\S]*?activeBaseUrl: providerRoutingLocalBaseUrl,[\s\S]*?engineBaseUrl: providerRoutingEngineBaseUrl,[\s\S]*?requireEngineBaseUrl: providerRoutingRequiresEngineBaseUrl,[\s\S]*?activeToken: providerRoutingLocalHost\?\.clientToken \?\? "",[\s\S]*?gatewayBaseUrl: gatewayClient\?\.baseUrl \?\? "",[\s\S]*?\}\)/s,
+    /const providerRoutingLocalHost = activeVesloServerRoutingInfo\(\);[\s\S]*?const providerRoutingLocalBaseUrl =[\s\S]*?providerRoutingLocalHost\?\.baseUrl \?\? deriveLocalVesloServerUrlFromOpencodeBaseUrl\(baseUrl\(\)\) \?\? "";[\s\S]*?const providerRoutingRequiresEngineBaseUrl = requiresManagedAiEngineBaseUrl\(\{[\s\S]*?const providerRoutingEngineBaseUrl =[\s\S]*?providerRoutingLocalHost\?\.engineUrl \?\? "";[\s\S]*?resolveManagedAiProviderRoutingTarget\(\{[\s\S]*?workspaceType: workspace\.workspaceType,[\s\S]*?activeBaseUrl: providerRoutingLocalBaseUrl,[\s\S]*?engineBaseUrl: providerRoutingEngineBaseUrl,[\s\S]*?requireEngineBaseUrl: providerRoutingRequiresEngineBaseUrl,[\s\S]*?activeToken: providerRoutingLocalHost\?\.clientToken \?\? "",[\s\S]*?gatewayBaseUrl: gatewayClient\?\.baseUrl \?\? "",[\s\S]*?\}\)/s,
     "managed AI config writes should resolve provider routing from the local host snapshot instead of the remote access gateway client",
   );
   assert.match(
@@ -125,6 +125,24 @@ test("managed AI bootstrap can use a validated current runtime config while acce
     ensureSource,
     /const waitDecision = resolveManagedAiBootstrapWaitDecision\(\{[\s\S]*managedProfilePresent: hasManagedProfile,[\s\S]*bootstrapBusy: deps\.managedAiBootstrapBusy\(\),[\s\S]*canUseCurrentManagedConfig,[\s\S]*\}\);[\s\S]*hasManagedProfile: waitDecision\.hasManagedProfile,/,
     "managed bootstrap should only skip waiting when the current runtime config is usable",
+  );
+});
+
+test("managed AI runtime config validation is workspace-scoped", () => {
+  const start = source.indexOf("const hasUsableManagedAiRuntimeConfigForSend = async");
+  const end = source.indexOf("const sendRuntimeReadiness = createSendRuntimeReadiness", start);
+  assert.ok(start >= 0 && end > start, "managed AI runtime config validation source should be present");
+  const validationSource = source.slice(start, end);
+
+  assert.match(
+    validationSource,
+    /hasUsableManagedAiRuntimeConfig\(\{[\s\S]*content: JSON\.stringify\(config\.opencode \?\? \{\}, null, 2\),[\s\S]*workspaceId: vesloWorkspaceId,[\s\S]*\}\)/,
+    "server-backed config validation should require the current Veslo workspace id",
+  );
+  assert.match(
+    validationSource,
+    /hasUsableManagedAiRuntimeConfig\(\{[\s\S]*content: configFile\.content,[\s\S]*workspaceId: vesloWorkspaceId,[\s\S]*\}\)/,
+    "project config validation should require the current Veslo workspace id when it is known",
   );
 });
 

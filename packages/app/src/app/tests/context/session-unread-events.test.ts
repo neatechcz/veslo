@@ -23,10 +23,12 @@ test("message updated events report only assistant responses after accepting the
 test("message part updates are not used as unread response triggers", () => {
   const callbackIndex = source.indexOf("onAssistantResponseObserved");
   const messageBranchIndex = source.indexOf('if (event.type === "message.updated")');
-  const partBranchIndex = source.indexOf('if (event.type === "message.part.updated")', messageBranchIndex);
+  const activePartAnchor = source.indexOf('if (event.type === "command.executed")', messageBranchIndex);
+  const partBranchIndex = source.indexOf('if (event.type === "message.part.updated")', activePartAnchor);
   const partRemovedBranchIndex = source.indexOf('if (event.type === "message.part.removed")', partBranchIndex);
   assert.ok(callbackIndex >= 0, "callback should exist");
   assert.ok(messageBranchIndex >= 0, "message.updated branch should exist");
+  assert.ok(activePartAnchor >= 0, "active command branch should precede active part branch");
   assert.ok(partBranchIndex >= 0, "message.part.updated branch should exist");
   assert.ok(partRemovedBranchIndex > partBranchIndex, "part removed branch should follow part updated branch");
 

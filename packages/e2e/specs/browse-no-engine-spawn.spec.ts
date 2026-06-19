@@ -28,7 +28,27 @@ async function clickSidebarText(text: string): Promise<boolean> {
   }, text);
 }
 
-async function clickFirstSessionInActiveWorkspace(): Promise<boolean> {
+async function snapshotBrowseShellState() {
+  return browser.execute(() => {
+    const bodyText = document.body.innerText;
+    const textbox = document.querySelector('[role="textbox"]') as HTMLElement | null;
+    const composerVisible = Boolean(textbox && textbox.offsetParent !== null);
+    const blockingOverlayActive =
+      bodyText.includes('Opening conversation') ||
+      bodyText.includes('Switching workspace') ||
+      bodyText.includes('OtevĂ­rĂˇm') ||
+      bodyText.includes('NaÄŤĂ­tĂˇm dĹ™Ă­vÄ›jĹˇĂ­ zprĂˇvy');
+    const clickableWorkspaceCount = Array.from(document.querySelectorAll('button, [role="button"], a'))
+      .filter((el) => {
+        const text = (el.textContent ?? '').trim();
+        return text.includes('veslo-test3') && text.length < 200;
+      })
+      .length;
+    return { composerVisible, blockingOverlayActive, clickableWorkspaceCount };
+  });
+}
+
+async function clickFirstSessionInActiveWorkspace(): Promise<string | null> {
   return browser.execute(() => {
     // Sessions appear as buttons inside the sidebar with short titles like
     // "Požadavek na odpověď ..." / "New session ..." / "AHOJ_PONG ...". We
@@ -72,8 +92,12 @@ describe('Browse mode never spawns an engine (VSLO-86)', () => {
       expect(clicked).toBe(true);
       await browser.pause(2000);
       const count = countEngines();
+      const shell = await snapshotBrowseShellState();
       console.log(`[browse] after click ${ws}: engines=${count}`);
+      console.log(`[browse] after click ${ws}: shell=${JSON.stringify(shell)}`);
       expect(count).toBe(0);
+      expect(shell.blockingOverlayActive).toBe(false);
+      expect(shell.clickableWorkspaceCount).toBeGreaterThan(0);
     }
   });
 

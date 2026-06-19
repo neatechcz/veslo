@@ -857,6 +857,71 @@ test("hasUsableManagedAiRuntimeConfig accepts current managed codex routing", ()
   );
 });
 
+test("hasUsableManagedAiRuntimeConfig accepts workspace-scoped managed codex routing", () => {
+  const content = formatManagedAiAccessConfig("{}", {
+    profile: managedCodexProfile,
+    serverBaseUrl: "http://127.0.0.1:8787",
+    engineBaseUrl: "http://172.29.64.1:8787",
+    serverClientToken: "veslo-client-token",
+    gatewayAccessToken: "gateway-access-token",
+    workspaceId: "ws_1",
+  });
+
+  assert.equal(
+    hasUsableManagedAiRuntimeConfig({
+      content,
+      providerId: "codex_oauth",
+      gatewayBaseUrl: "http://172.29.64.1:8787",
+      serverClientToken: "veslo-client-token",
+      workspaceId: "ws_1",
+    }),
+    true,
+  );
+});
+
+test("hasUsableManagedAiRuntimeConfig rejects missing workspace-scoped gateway routing", () => {
+  const content = formatManagedAiAccessConfig("{}", {
+    profile: managedCodexProfile,
+    serverBaseUrl: "http://127.0.0.1:8787",
+    engineBaseUrl: "http://172.29.64.1:8787",
+    serverClientToken: "veslo-client-token",
+    gatewayAccessToken: "gateway-access-token",
+  });
+
+  assert.equal(
+    hasUsableManagedAiRuntimeConfig({
+      content,
+      providerId: "codex_oauth",
+      gatewayBaseUrl: "http://172.29.64.1:8787",
+      serverClientToken: "veslo-client-token",
+      workspaceId: "ws_1",
+    }),
+    false,
+  );
+});
+
+test("hasUsableManagedAiRuntimeConfig rejects stale workspace-scoped gateway routing", () => {
+  const content = formatManagedAiAccessConfig("{}", {
+    profile: managedCodexProfile,
+    serverBaseUrl: "http://127.0.0.1:8787",
+    engineBaseUrl: "http://172.29.64.1:8787",
+    serverClientToken: "veslo-client-token",
+    gatewayAccessToken: "gateway-access-token",
+    workspaceId: "ws_old",
+  });
+
+  assert.equal(
+    hasUsableManagedAiRuntimeConfig({
+      content,
+      providerId: "codex_oauth",
+      gatewayBaseUrl: "http://172.29.64.1:8787",
+      serverClientToken: "veslo-client-token",
+      workspaceId: "ws_1",
+    }),
+    false,
+  );
+});
+
 test("hasUsableManagedAiRuntimeConfig rejects stale managed base URLs", () => {
   const content = formatManagedAiAccessConfig("{}", {
     profile: managedCodexProfile,

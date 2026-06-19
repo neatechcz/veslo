@@ -13,8 +13,13 @@ test("veslo server registry sync lives outside workspace facade", () => {
   assert.match(registrySource, /activateWorkspace\(match\.id\)/);
   assert.match(
     registrySource,
-    /reconcileManagedAiApiKeys:skip"[\s\S]*error: err instanceof Error \? err\.message : String\(err\)/,
-    "registry sync should preserve concrete per-workspace reconciliation errors in debug logs",
+    /reconcileManagedAiApiKeys:skip"[\s\S]*managed-config-owned-by-app-sync/,
+    "registry sync should leave managed config writes to the app-level managed config sync owner",
+  );
+  assert.doesNotMatch(
+    registrySource,
+    /patchConfig\(/,
+    "registry sync should not patch managed AI config independently",
   );
   assert.doesNotMatch(facadeSource, /const reconcileManagedAiApiKeys = async/);
 });

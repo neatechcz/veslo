@@ -86,12 +86,36 @@ function normalizeWindowsExtendedPath(value: string): string {
   return value.replace(/^\\\\\?\\/, "").replace(/^\/\/\?\//, "");
 }
 
+function isWslMountPath(value: string): boolean {
+  return /^\/mnt\/[a-z](?:\/|$)/i.test(value.replace(/\\/g, "/"));
+}
+
+function wslMountPathToWindowsPath(value: string): string | null {
+  const match = value.replace(/\\/g, "/").match(/^\/mnt\/([a-zA-Z])(?:\/(.*))?$/);
+  if (!match) return null;
+  const drive = match[1]?.toUpperCase();
+  if (!drive) return null;
+  const rest = (match[2] ?? "").replace(/\//g, "\\");
+  return rest ? `${drive}:\\${rest}` : `${drive}:\\`;
+}
+
+function windowsPathToWslMountPath(value: string): string | null {
+  const normalized = normalizeWindowsExtendedPath(value).replace(/\\/g, "/");
+  const match = normalized.match(/^([A-Za-z]):(?:\/(.*))?$/);
+  if (!match) return null;
+  const drive = match[1]?.toLowerCase();
+  if (!drive) return null;
+  const rest = match[2]?.replace(/^\/+/, "").replace(/\/+$/, "") ?? "";
+  return rest ? `/mnt/${drive}/${rest}` : `/mnt/${drive}`;
+}
+
 function shouldUseWindowsDirectoryLookup(value: string): boolean {
   return /^\\\\\?\\/.test(value) ||
     /^\/\/\?\//.test(value) ||
     /^[a-z]:[\\/]/i.test(value) ||
     /^\\\\[^\\]/.test(value) ||
-    value.includes("\\");
+    value.includes("\\") ||
+    isWslMountPath(value);
 }
 
 function directoryLookupVariants(value: string, windowsLookup: boolean): string[] {
@@ -120,6 +144,18 @@ function directoryLookupVariants(value: string, windowsLookup: boolean): string[
   const slash = withoutExtendedPrefix.replace(/\\/g, "/");
   add(slash);
   add(slash.toLowerCase());
+  const wslMount = windowsPathToWslMountPath(slash);
+  if (wslMount) {
+    add(wslMount);
+    add(wslMount.toLowerCase());
+  }
+  const windowsFromWsl = wslMountPathToWindowsPath(slash);
+  if (windowsFromWsl) {
+    add(windowsFromWsl);
+    add(windowsFromWsl.toLowerCase());
+    add(windowsFromWsl.replace(/\\/g, "/"));
+    add(windowsFromWsl.replace(/\\/g, "/").toLowerCase());
+  }
 
   return [...variants];
 }

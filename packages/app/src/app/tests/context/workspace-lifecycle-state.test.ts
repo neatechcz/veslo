@@ -69,6 +69,38 @@ test("superseded activation events do not overwrite newer workspace state", () =
   assert.equal(state.byWorkspace["ws-b"]?.phase, "activating");
 });
 
+test("superseded same-workspace activation events do not overwrite newer version", () => {
+  let state = createInitialWorkspaceLifecycleState();
+
+  state = reduceWorkspaceLifecycleState(state, {
+    type: "activation-started",
+    workspaceId: "ws-a",
+    version: 1,
+    origin: "first-click",
+    workspaceType: "local",
+  });
+
+  state = reduceWorkspaceLifecycleState(state, {
+    type: "activation-started",
+    workspaceId: "ws-a",
+    version: 2,
+    origin: "second-click",
+    workspaceType: "local",
+  });
+
+  state = reduceWorkspaceLifecycleState(state, {
+    type: "failed",
+    workspaceId: "ws-a",
+    version: 1,
+    message: "late failure",
+  });
+
+  assert.equal(state.activeWorkspaceId, "ws-a");
+  assert.equal(state.activationVersion, 2);
+  assert.equal(state.byWorkspace["ws-a"]?.phase, "activating");
+  assert.equal(state.byWorkspace["ws-a"]?.message, null);
+});
+
 test("runtime-starting and failed events are scoped per workspace", () => {
   let state = createInitialWorkspaceLifecycleState();
 

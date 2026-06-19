@@ -61,64 +61,11 @@ export function createWorkspaceServerRegistry(deps: WorkspaceServerRegistryDeps)
   };
 
   const reconcileManagedAiApiKeys = async () => {
-    const client = deps.vesloServerClient?.();
-    const hostInfo = deps.vesloServerHostInfo?.();
-    const currentToken = hostInfo?.clientToken?.trim() ?? "";
-    const currentBaseUrl = (
-      hostInfo?.engineUrl?.trim() ||
-      hostInfo?.baseUrl?.trim() ||
-      ""
-    ).replace(/\/+$/, "");
-    if (!client || !currentToken) return;
-    let serverItems: Array<{ id: string; workspaceType?: string; path?: string }> = [];
-    try {
-      const response = await client.listWorkspaces();
-      serverItems = Array.isArray(response.items) ? response.items : [];
-    } catch {
-      return;
-    }
-    for (const ws of serverItems) {
-      if (ws.workspaceType !== "local" || !ws.id) continue;
-      try {
-        const config = await client.getConfig(ws.id);
-        const opencode = (config.opencode ?? {}) as Record<string, unknown>;
-        const provider = opencode.provider;
-        if (!provider || typeof provider !== "object") continue;
-        let changed = false;
-        for (const entry of Object.values(provider as Record<string, unknown>)) {
-          if (!entry || typeof entry !== "object") continue;
-          const opts = (entry as Record<string, unknown>).options;
-          if (!opts || typeof opts !== "object") continue;
-          const optsRecord = opts as Record<string, unknown>;
-          if (
-            typeof optsRecord.apiKey === "string" &&
-            optsRecord.apiKey !== currentToken
-          ) {
-            optsRecord.apiKey = currentToken;
-            changed = true;
-          }
-          if (
-            currentBaseUrl &&
-            typeof optsRecord.baseURL === "string"
-          ) {
-            const rest = optsRecord.baseURL.replace(/^https?:\/\/[^/]+/, "");
-            const next = `${currentBaseUrl}${rest}`;
-            if (optsRecord.baseURL !== next) {
-              optsRecord.baseURL = next;
-              changed = true;
-            }
-          }
-        }
-        if (changed) {
-          await client.patchConfig(ws.id, { opencode });
-        }
-      } catch (err) {
-        deps.wsDebug("reconcileManagedAiApiKeys:skip", {
-          workspaceId: ws.id,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
+    // Managed AI config writes are owned by the app-level managed config sync,
+    // which has the full profile, gateway token, and inactive-workspace guards.
+    deps.wsDebug("reconcileManagedAiApiKeys:skip", {
+      reason: "managed-config-owned-by-app-sync",
+    });
   };
 
   const reconcileVesloServerWorkspaces = async () => {

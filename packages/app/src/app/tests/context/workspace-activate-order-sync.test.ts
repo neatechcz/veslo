@@ -177,13 +177,23 @@ test("routing ensure failures preserve concrete UI error messages", () => {
   );
 });
 
-test("browsing mode keeps the live client but marks the engine not ready before SQLite-backed browsing", () => {
+test("browsing mode keeps the live client and preserves target runtime readiness before SQLite-backed browsing", () => {
   const localActivationSource = readContextSource("workspace-activation-local.ts");
 
   assert.match(
     localActivationSource,
-    /if \(startedFromLocalMode && workspaceChanged && isTauriRuntime\(\) && deps\.populateSidebarFromDb\) \{[\s\S]*deps\.setEngineReady\?\.\(false\);[\s\S]*\}/s,
-    "browse mode must mark the engine not ready before async SQLite hydration",
+    /const targetRuntimeReady = Boolean\(deps\.isWorkspaceRuntimeReady\?\.\(id\)\);/,
+    "local activation should ask for workspace-scoped runtime readiness before touching global engineReady",
+  );
+  assert.match(
+    localActivationSource,
+    /if \(targetRuntimeReady\) \{[\s\S]*deps\.setEngineReady\?\.\(true\);[\s\S]*\} else if \(startedFromLocalMode && workspaceChanged && isTauriRuntime\(\) && deps\.populateSidebarFromDb\) \{[\s\S]*deps\.setEngineReady\?\.\(false\);[\s\S]*\}/s,
+    "browse mode must not demote engineReady when the target workspace already has a ready route/runtime",
+  );
+  assert.match(
+    localActivationSource,
+    /deps\.setEngineReady\?\.\(selection\.targetRuntimeReady\);[\s\S]*await deps\.populateSidebarFromDb!\(id, next\.path\);/s,
+    "SQLite-backed browse should publish target readiness before title-only DB hydration",
   );
   assert.match(
     localActivationSource,
@@ -202,6 +212,16 @@ test("browsing mode keeps the live client but marks the engine not ready before 
   );
   assert.match(
     localActivationSource,
+    /!selection\.passiveBrowseActivation[\s\S]*!\(selection\.startedFromLocalMode \|\| selection\.wasLocalConnection \|\| isColdBoot \|\| needsEngineWarmup\)/s,
+    "local browse mode should be limited to explicit passive browse activations, not send or compose activations",
+  );
+  assert.match(
+    localActivationSource,
+    /if \(selection\.passiveBrowseActivation\) \{[\s\S]*activate:local:veslo-host-active:skip[\s\S]*\} else \{[\s\S]*await deps\.activateVesloHostWorkspace\(next\.path\);/s,
+    "passive browse should not call Veslo server /workspaces/:id/activate through host activation",
+  );
+  assert.match(
+    localActivationSource,
     /if \(selection\.workspaceChanged && !selection\.displayedSessionCleared\) \{[\s\S]*deps\.clearDisplayedSessionState\("local_browse_workspace_changed"/s,
     "browse mode should keep its fallback clear path for callers that did not clear before identity switch",
   );
@@ -213,7 +233,93 @@ test("browsing mode keeps the live client but marks the engine not ready before 
   );
 });
 
-test("project-open workspace switches clear stale session routes before activation", () => {
+test("passive browse path is non-spawning and title-only", () => {
+  const facadeSource = readWorkspaceFacadeSource();
+  const match = facadeSource.match(/async function browseWorkspace[\s\S]*?const connectionController/);
+  assert.ok(match, "workspace facade should expose a dedicated browseWorkspace function");
+  const browseSource = match[0] ?? "";
+
+  assert.match(
+    browseSource,
+    /isPassiveLocalBrowseActivationOrigin\(activationOptions\.origin\)/,
+    "browseWorkspace should only accept explicit passive browse origins",
+  );
+  assert.match(
+    browseSource,
+    /workspaceSetActive\(id, \{ promoteToFront: activationOptions\.promoteToFront \?\? false \}\)/,
+    "passive browse may update the local Tauri active marker because this command is state-only",
+  );
+  assert.match(
+    browseSource,
+    /await options\.populateSidebarFromDb\(id, nextRoot\)/,
+    "passive browse should load only title rows from the host DB",
+  );
+  assert.doesNotMatch(
+    browseSource,
+    /activateVesloHostWorkspace|orchestratorWorkspaceActivate|ensureEngineForWorkspace|restartWorkspaceRuntime|workspaceRouting\.ensure|hydrateLatestSessionFromDb|setConnectingWorkspaceId|status: "connecting"/,
+    "passive browse must not call server/orchestrator activate, runtime ensure/restart, transcript hydration, or connecting state",
+  );
+});
+
+test("workspace store wires lifecycle reducer to activation and passive browse events", () => {
+  const facadeSource = readWorkspaceFacadeSource();
+
+  assert.match(
+    facadeSource,
+    /createInitialWorkspaceLifecycleState,[\s\S]*reduceWorkspaceLifecycleState,[\s\S]*type WorkspaceLifecycleEvent,/s,
+    "workspace store should import the existing lifecycle reducer instead of introducing another runtime state model",
+  );
+  assert.match(
+    facadeSource,
+    /const \[workspaceLifecycleState, setWorkspaceLifecycleState\] =[\s\S]*createSignal\(createInitialWorkspaceLifecycleState\(\)\);[\s\S]*const dispatchWorkspaceLifecycle = \(event: WorkspaceLifecycleEvent\) => \{[\s\S]*reduceWorkspaceLifecycleState\(state, event\)/s,
+    "workspace store should own one lifecycle signal backed by the shared reducer",
+  );
+  assert.match(
+    facadeSource,
+    /dispatchWorkspaceLifecycle\(\{[\s\S]*type: "activation-started",[\s\S]*workspaceId: id,[\s\S]*version: myVersion,[\s\S]*origin: activationOptions\.origin \?\? "unknown",[\s\S]*workspaceType: next\.workspaceType,/s,
+    "blocking activation should publish activation-started with the activation guard version",
+  );
+  assert.match(
+    facadeSource,
+    /dispatchWorkspaceLifecycle\([\s\S]*type: "connected",[\s\S]*workspaceId: id,[\s\S]*version: myVersion,[\s\S]*reason: activationOptions\.origin \?\? "activation"/s,
+    "successful activation should publish a versioned connected event",
+  );
+  assert.match(
+    facadeSource,
+    /dispatchWorkspaceLifecycle\(\{[\s\S]*type: "browse-ready",[\s\S]*workspaceId: id,[\s\S]*root: nextRoot,[\s\S]*\}\);[\s\S]*wsDebug\("browse:local:done"/s,
+    "passive browse should publish browse-ready after title-only DB hydration finishes",
+  );
+  assert.match(
+    facadeSource,
+    /workspaceLifecycleState,/,
+    "workspace lifecycle state should be exposed from the store for diagnostics and future overlay derivation",
+  );
+});
+
+test("app controllers use the shared browse-policy activation wrapper instead of raw workspace activation", () => {
+  assert.match(
+    appSource,
+    /const activateWorkspaceThroughBrowsePolicy = \([\s\S]*return activateWorkspaceWithBrowsePolicy\(store, workspaceId, options\);[\s\S]*\};/s,
+    "App should expose one shared wrapper that delegates passive browse decisions to the tested browse policy",
+  );
+  assert.match(
+    appSource,
+    /createPendingSessionDraftController\([\s\S]*workspace: \{[\s\S]*activateWorkspace: activateWorkspaceThroughBrowsePolicy,[\s\S]*createScratchWorkspace/s,
+    "pending draft controller should use the browse-policy wrapper",
+  );
+  assert.match(
+    appSource,
+    /createComposerTargetController\([\s\S]*workspace: \{[\s\S]*activateWorkspace: activateWorkspaceThroughBrowsePolicy,[\s\S]*pickWorkspaceFolder/s,
+    "composer target controller should use the browse-policy wrapper",
+  );
+  assert.match(
+    appSource,
+    /createWorkspaceSendTarget<Client>\(\{[\s\S]*activeWorkspaceId: \(\) => workspaceStore\.activeWorkspaceId\(\),[\s\S]*activateWorkspace: activateWorkspaceThroughBrowsePolicy,[\s\S]*recordSendTrace/s,
+    "send target activation should use the browse-policy wrapper",
+  );
+});
+
+test("project-open workspace switches clear stale session routes before passive browse", () => {
   assert.match(
     appSource,
     /const shouldClearSessionRouteForProjectOpen = \(workspaceId: string, origin\?: string \| null\) => \{[\s\S]*origin !== "workspace-session-list:project-open"[\s\S]*location\.pathname\.toLowerCase\(\)\.startsWith\("\/session\/"\)[\s\S]*nextWorkspaceId !== workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*\};/s,
@@ -222,8 +328,8 @@ test("project-open workspace switches clear stale session routes before activati
 
   assert.match(
     appSource,
-    /if \(shouldClearSessionRouteForProjectOpen\(workspaceId, options\?\.origin\)\) \{[\s\S]*wsDebug\("route:workspace-project-open:clear-session-route"[\s\S]*navigate\("\/session", \{ replace: true \}\);[\s\S]*\}[\s\S]*return workspaceStore\.activateWorkspace\(workspaceId, options\);/s,
-    "route reset must happen before workspace activation so route effects cannot reselect the old session",
+    /if \(shouldClearSessionRouteForProjectOpen\(workspaceId, options\?\.origin\)\) \{[\s\S]*wsDebug\("route:workspace-project-open:clear-session-route"[\s\S]*navigate\("\/session", \{ replace: true \}\);[\s\S]*\}[\s\S]*if \(isPassiveLocalBrowseActivationOrigin\(options\?\.origin\)\) \{[\s\S]*return activateWorkspaceThroughBrowsePolicy\(workspaceId, options\);[\s\S]*\}[\s\S]*return workspaceStore\.activateWorkspace\(workspaceId, options\);/s,
+    "route reset must happen before passive browse so route effects cannot reselect the old session",
   );
 });
 
@@ -264,8 +370,38 @@ test("bootstrap pre-loads the sidebar from SQLite without starting the engine", 
   );
   assert.match(
     source,
+    /async function bootstrapOnboarding\(\)[\s\S]*?lazy boot — skip Veslo host activation[\s\S]*?options\.populateSidebarFromDb\(/s,
+    "bootstrap passive browse must skip Veslo host activation before reading DB conversation titles",
+  );
+  assert.match(
+    source,
     /async function bootstrapOnboarding\(\)[\s\S]*?options\.setEngineReady\?\.\(false\)/s,
     "bootstrap must explicitly mark engine as not-ready so browsing-mode UI activates",
+  );
+});
+
+test("lazy browse stays title-only and does not auto-hydrate or auto-select the latest session", () => {
+  const localActivationSource = readContextSource("workspace-activation-local.ts");
+
+  assert.match(
+    localActivationSource,
+    /activate:local->local:browsingMode:skipLatestHydration[\s\S]*reason: "title-only-browse"/s,
+    "local browse mode should explicitly skip latest transcript hydration",
+  );
+  assert.doesNotMatch(
+    localActivationSource,
+    /await deps\.hydrateLatestSessionFromDb/,
+    "local browse mode must not hydrate transcript or auto-select latest conversation",
+  );
+  assert.match(
+    source,
+    /async function bootstrapOnboarding\(\)[\s\S]*?lazy boot — skip latest transcript hydration[\s\S]*?markOnboardingComplete\(\);/s,
+    "bootstrap passive browse should stay title-only",
+  );
+  assert.doesNotMatch(
+    source,
+    /await options\.hydrateLatestSessionFromDb\(activeWorkspace\.id, workspacePath\)/,
+    "bootstrap must not hydrate transcript or auto-select latest conversation",
   );
 });
 
@@ -349,7 +485,7 @@ test("orchestrator browse attach preserves busy state for other live workspaces"
 
   assert.match(
     ensureSource,
-    /if \(deps\.resolveEngineRuntime\(\) !== "veslo-orchestrator"\) \{\s*deps\.clearWorkspaceBusyAllExcept\(workspace\.id\);\s*\}/,
+    /const runtime = deps\.resolveEngineRuntime\(\);[\s\S]*if \(runtime !== "veslo-orchestrator"\) \{\s*deps\.clearWorkspaceBusyAllExcept\(workspace\.id\);\s*\}/,
     "orchestrator workspace switching must not clear busy state for other pooled workspaces",
   );
 });

@@ -74,7 +74,7 @@ Relevant keys in local storage:
 - `veslo.updateAutoDownload`
 - `veslo.updateLastCheckedAt`
 
-`veslo.updateAutoDownload` is default-on when absent. Users can opt out through Settings, which stores an explicit disabled preference and keeps the manual download flow available.
+`veslo.updateAutoDownload` is default-off when absent. Users can opt in through Settings; otherwise the app only announces the available update and keeps the manual download flow available. Legacy default-on stored values are migrated off once so older installs stop downloading updater artifacts on every launch unless the user enables auto-download again.
 
 ### 4. Manual checks
 
@@ -88,7 +88,7 @@ If Tauri reports an available update, Veslo stores the returned update handle an
 
 ### 5. Downloading
 
-Downloads start automatically by default after an update is detected. Users can opt out through Settings, which keeps the update in the available state until they choose Download manually.
+Downloads do not start automatically by default after an update is detected. The update remains available until the user chooses Download, unless the user has explicitly enabled auto-download in Settings.
 
 The app listens to Tauri download events and converts them into progress state for the UI.
 

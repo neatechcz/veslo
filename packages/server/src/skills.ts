@@ -2,7 +2,8 @@ import { readdir, readFile, writeFile, mkdir, rm } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
-import type { SkillItem } from "./types.js";
+import { localUserResourceOwner, workspaceResourceOwner } from "./resource-owner.js";
+import type { ResourceOwner, SkillItem } from "./types.js";
 import { parseFrontmatter, buildFrontmatter } from "./frontmatter.js";
 import { exists } from "./utils.js";
 import { validateDescription, validateSkillName } from "./validators.js";
@@ -24,6 +25,11 @@ export interface SkillRemovalJournalContext {
   actor: Actor;
   reason?: string;
 }
+
+export type ListSkillsOptions = {
+  workspaceOwner?: ResourceOwner;
+  globalOwner?: ResourceOwner;
+};
 
 const userHomeDir = (): string => process.env.HOME?.trim() || homedir();
 
@@ -47,6 +53,7 @@ async function parseSkillEntry(
   skillPath: string,
   entryName: string,
   scope: "project" | "global",
+  owner: ResourceOwner,
 ): Promise<SkillItem | null> {
   let content: string;
   try {
@@ -69,6 +76,7 @@ async function parseSkillEntry(
     description: metadata.description ?? "",
     path: skillPath,
     scope,
+    owner,
     trigger: metadata.trigger,
     disableModelInvocation: metadata.disableModelInvocation,
     userInvocable: metadata.userInvocable,
@@ -78,7 +86,7 @@ async function parseSkillEntry(
   };
 }
 
-async function listSkillsInDir(dir: string, scope: "project" | "global"): Promise<SkillItem[]> {
+async function listSkillsInDir(dir: string, scope: "project" | "global", owner: ResourceOwner): Promise<SkillItem[]> {
   if (!(await exists(dir))) return [];
   let entries: Dirent[];
   try {
@@ -92,7 +100,7 @@ async function listSkillsInDir(dir: string, scope: "project" | "global"): Promis
     const skillPath = join(dir, entry.name, "SKILL.md");
     if (await exists(skillPath)) {
       // Direct skill: <dir>/<name>/SKILL.md
-      const item = await parseSkillEntry(skillPath, entry.name, scope);
+      const item = await parseSkillEntry(skillPath, entry.name, scope, owner);
       if (item) items.push(item);
     } else {
       // Domain/category folder: <dir>/<domain>/<name>/SKILL.md – scan one level deeper.
@@ -110,7 +118,7 @@ async function listSkillsInDir(dir: string, scope: "project" | "global"): Promis
         if (!subEntry.isDirectory()) continue;
         const subSkillPath = join(domainDir, subEntry.name, "SKILL.md");
         if (!(await exists(subSkillPath))) continue;
-        const item = await parseSkillEntry(subSkillPath, subEntry.name, scope);
+        const item = await parseSkillEntry(subSkillPath, subEntry.name, scope, owner);
         if (item) items.push(item);
       }
     }
@@ -118,26 +126,32 @@ async function listSkillsInDir(dir: string, scope: "project" | "global"): Promis
   return items;
 }
 
-export async function listSkills(workspaceRoot: string, includeGlobal: boolean): Promise<SkillItem[]> {
+export async function listSkills(
+  workspaceRoot: string,
+  includeGlobal: boolean,
+  options: ListSkillsOptions = {},
+): Promise<SkillItem[]> {
   const roots = await findWorkspaceRoots(workspaceRoot);
   const items: SkillItem[] = [];
   for (const root of roots) {
+    const workspaceOwner = options.workspaceOwner ?? workspaceResourceOwner({ root });
     const opencodeDir = join(root, ".opencode", "skills");
     const claudeDir = join(root, ".claude", "skills");
-    items.push(...(await listSkillsInDir(opencodeDir, "project")));
-    items.push(...(await listSkillsInDir(claudeDir, "project")));
+    items.push(...(await listSkillsInDir(opencodeDir, "project", workspaceOwner)));
+    items.push(...(await listSkillsInDir(claudeDir, "project", workspaceOwner)));
   }
 
   if (includeGlobal) {
     const homeDir = userHomeDir();
+    const globalOwner = options.globalOwner ?? localUserResourceOwner();
     const globalOpenCode = join(homeDir, ".config", "opencode", "skills");
     const globalClaude = join(homeDir, ".claude", "skills");
     const globalAgents = join(homeDir, ".agents", "skills");
     const globalAgentLegacy = join(homeDir, ".agent", "skills");
-    items.push(...(await listSkillsInDir(globalOpenCode, "global")));
-    items.push(...(await listSkillsInDir(globalClaude, "global")));
-    items.push(...(await listSkillsInDir(globalAgents, "global")));
-    items.push(...(await listSkillsInDir(globalAgentLegacy, "global")));
+    items.push(...(await listSkillsInDir(globalOpenCode, "global", globalOwner)));
+    items.push(...(await listSkillsInDir(globalClaude, "global", globalOwner)));
+    items.push(...(await listSkillsInDir(globalAgents, "global", globalOwner)));
+    items.push(...(await listSkillsInDir(globalAgentLegacy, "global", globalOwner)));
   }
 
   const seen = new Set<string>();
@@ -153,7 +167,7 @@ const isPathInside = (parent: string, child: string): boolean => {
   return rel === "" || (Boolean(rel) && !rel.startsWith("..") && !isAbsolute(rel));
 };
 
-const prepareSkillContent = (payload: { name: string; content: string; description?: string }): string => {
+export const prepareSkillContent = (payload: { name: string; content: string; description?: string }): string => {
   const name = payload.name.trim();
   validateSkillName(name);
   if (!payload.content) {

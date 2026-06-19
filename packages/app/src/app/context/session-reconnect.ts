@@ -24,7 +24,7 @@ export const isRunningStatus = (status: string | null | undefined): boolean => {
 
 export const beginOutageEpisode = (sessionStatusById: Record<string, string>): OutageEpisode => {
   const runningSessionIds = Object.entries(sessionStatusById)
-    .filter(([, status]) => isRunningStatus(status))
+    .filter(([sessionID, status]) => !sessionID.includes("\0") && isRunningStatus(status))
     .map(([sessionID]) => sessionID);
 
   return {

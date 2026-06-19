@@ -1076,6 +1076,167 @@ test("skill materialization helpers call workspace and global status and sync en
   }
 });
 
+test("user-global skill store helpers call local server store and sync routes", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; headers: Headers; body: string | null }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+      body: typeof init?.body === "string" ? init.body : null,
+    });
+    const url = new URL(String(input));
+    if (url.pathname === "/skills/user-global-store") {
+      if ((init?.method ?? "GET") === "POST") {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            action: "updated",
+            item: {
+              name: "portable-helper",
+              path: "veslo-user-store://portable-helper",
+              description: "Portable helper",
+              scope: "user-global",
+              source: "veslo-user-store",
+              hash: "a".repeat(64),
+              enabled: true,
+              createdAt: "2026-06-18T10:00:00.000Z",
+              updatedAt: "2026-06-18T10:01:00.000Z",
+            },
+            reloadRequired: true,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          items: [
+            {
+              name: "portable-helper",
+              path: "veslo-user-store://portable-helper",
+              description: "Portable helper",
+              scope: "user-global",
+              source: "veslo-user-store",
+              hash: "a".repeat(64),
+              enabled: true,
+              createdAt: "2026-06-18T10:00:00.000Z",
+              updatedAt: "2026-06-18T10:01:00.000Z",
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (url.pathname === "/skills/user-global-store/portable-helper") {
+      if ((init?.method ?? "GET") === "DELETE") {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            name: "portable-helper",
+            path: "veslo-user-store://portable-helper",
+            reloadRequired: true,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          item: {
+            name: "portable-helper",
+            path: "veslo-user-store://portable-helper",
+            description: "Portable helper",
+            scope: "user-global",
+            source: "veslo-user-store",
+            hash: "a".repeat(64),
+            enabled: true,
+            createdAt: "2026-06-18T10:00:00.000Z",
+            updatedAt: "2026-06-18T10:01:00.000Z",
+          },
+          content: "---\nname: portable-helper\ndescription: Portable helper\n---\n",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (url.pathname === "/workspace/workspace-a/skills/user-global-store/sync") {
+      return new Response(
+        JSON.stringify({
+          workspaceId: "workspace-a",
+          status: "synced",
+          synced: true,
+          reloadRequired: true,
+          rootDir: "/workspace/.opencode/skills/veslo-user",
+          materializedSkills: [],
+          removedSkillNames: [],
+          conflicts: [],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    return new Response("not found", { status: 404 });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+
+    const list = await client.listUserGlobalSkillStore();
+    const detail = await client.getUserGlobalSkillStoreSkill("portable-helper");
+    const upsert = await client.upsertUserGlobalSkillStoreSkill({
+      name: "portable-helper",
+      content: "# Portable helper\n",
+      enabled: true,
+    });
+    const sync = await client.syncUserGlobalSkillStore("workspace-a");
+    const deleted = await client.deleteUserGlobalSkillStoreSkill("portable-helper");
+
+    assert.equal(list.items[0]?.name, "portable-helper");
+    assert.equal(detail.content.includes("portable-helper"), true);
+    assert.equal(upsert.action, "updated");
+    assert.equal(sync.rootDir, "/workspace/.opencode/skills/veslo-user");
+    assert.equal(deleted.name, "portable-helper");
+    assert.deepEqual(calls.map((call) => ({ url: call.url, method: call.method, body: call.body })), [
+      {
+        url: "https://veslo.example/skills/user-global-store",
+        method: "GET",
+        body: null,
+      },
+      {
+        url: "https://veslo.example/skills/user-global-store/portable-helper",
+        method: "GET",
+        body: null,
+      },
+      {
+        url: "https://veslo.example/skills/user-global-store",
+        method: "POST",
+        body: JSON.stringify({
+          name: "portable-helper",
+          content: "# Portable helper\n",
+          enabled: true,
+        }),
+      },
+      {
+        url: "https://veslo.example/workspace/workspace-a/skills/user-global-store/sync",
+        method: "POST",
+        body: null,
+      },
+      {
+        url: "https://veslo.example/skills/user-global-store/portable-helper",
+        method: "DELETE",
+        body: null,
+      },
+    ]);
+    assert.equal(calls[0]?.headers.get("authorization"), "Bearer token-123");
+    assert.equal(calls[0]?.headers.get("x-veslo-host-token"), "host-token-123");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("skill removal helpers call local server routes with host and client auth", async () => {
   const previousFetch = globalThis.fetch;
   const calls: Array<{ url: string; method: string; headers: Headers; body: string | null }> = [];

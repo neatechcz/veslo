@@ -60,6 +60,7 @@ export type OrchestratorLifecycleClient = {
     conversationId: string,
     runIdOrLatest: string,
   ): Promise<LifecycleRunStatusResult | null>;
+  active(workspaceId: string, conversationId: string): Promise<LifecycleRunStatusResult | null>;
 };
 
 async function readJsonSafely(response: Response): Promise<unknown> {
@@ -143,6 +144,32 @@ export function createOrchestratorLifecycleClient(options: {
     }
   };
 
+  const getStatus = async (
+    workspaceId: string,
+    conversationId: string,
+    runIdOrLatest: string,
+  ): Promise<LifecycleRunStatusResult | null> => {
+    const path = `/workspace/${encodeURIComponent(workspaceId)}/conversations/${encodeURIComponent(conversationId)}/runs/${encodeURIComponent(runIdOrLatest)}`;
+    const response = await request(path, { headers });
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      throw new OrchestratorLifecycleRequestError(path, response.status, await readJsonSafely(response));
+    }
+    const payload = await response.json() as {
+      runId?: unknown;
+      status?: unknown;
+      stale?: unknown;
+    };
+    if (typeof payload.runId !== "string" || typeof payload.status !== "string") {
+      throw new OrchestratorLifecycleRequestError(path, 502, payload);
+    }
+    return {
+      runId: payload.runId,
+      status: payload.status as LifecycleRunStatus,
+      stale: payload.stale === true,
+    };
+  };
+
   return {
     async register(input) {
       await post(`/workspace/${encodeURIComponent(input.workspaceId)}/runs/register`, {
@@ -169,25 +196,11 @@ export function createOrchestratorLifecycleClient(options: {
     },
 
     async status(workspaceId, conversationId, runIdOrLatest) {
-      const path = `/workspace/${encodeURIComponent(workspaceId)}/conversations/${encodeURIComponent(conversationId)}/runs/${encodeURIComponent(runIdOrLatest)}`;
-      const response = await request(path, { headers });
-      if (response.status === 404) return null;
-      if (!response.ok) {
-        throw new OrchestratorLifecycleRequestError(path, response.status, await readJsonSafely(response));
-      }
-      const payload = await response.json() as {
-        runId?: unknown;
-        status?: unknown;
-        stale?: unknown;
-      };
-      if (typeof payload.runId !== "string" || typeof payload.status !== "string") {
-        throw new OrchestratorLifecycleRequestError(path, 502, payload);
-      }
-      return {
-        runId: payload.runId,
-        status: payload.status as LifecycleRunStatus,
-        stale: payload.stale === true,
-      };
+      return getStatus(workspaceId, conversationId, runIdOrLatest);
+    },
+
+    async active(workspaceId, conversationId) {
+      return getStatus(workspaceId, conversationId, "active");
     },
   };
 }

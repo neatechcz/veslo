@@ -18,11 +18,13 @@ describe("engine path mapping", () => {
   test("maps host workspace paths to the WSL sandbox workspace", () => {
     expect(hostDirectoryToEngineDirectory("\\\\?\\C:\\Work\\project", mapping)).toBe("/workspace");
     expect(hostDirectoryToEngineDirectory("C:\\Work\\project\\docs", mapping)).toBe("/workspace/docs");
+    expect(hostDirectoryToEngineDirectory("/mnt/c/Work/project/docs", mapping)).toBe("/workspace/docs");
   });
 
   test("maps sandbox workspace paths back to host workspace paths", () => {
     expect(engineDirectoryToHostDirectory("/workspace", mapping)).toBe("\\\\?\\C:\\Work\\project");
     expect(engineDirectoryToHostDirectory("/workspace/docs", mapping)).toBe("\\\\?\\C:\\Work\\project\\docs");
+    expect(engineDirectoryToHostDirectory("/mnt/c/Work/project/docs", mapping)).toBe("\\\\?\\C:\\Work\\project\\docs");
   });
 
   test("removes session list directory filter for WSL2 engines", () => {

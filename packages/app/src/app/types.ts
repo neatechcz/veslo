@@ -437,6 +437,13 @@ export type HubSkillInstallTarget =
 
 export type ManagedSkillSource = "personal" | "workspace" | "organization" | "platform";
 
+export type ResourceOwner = {
+  kind: "workspace" | "user" | "organization" | "platform";
+  id: string;
+  label?: string;
+  root?: string;
+};
+
 export type SkillInventoryLifecycle = "active" | "removed";
 
 export type SkillInventoryRegistryMetadata = {
@@ -524,6 +531,7 @@ export type ResolvedWorkspaceSkill = {
   packageSha256: string;
   source: ManagedSkillSource;
   target: "workspace" | "personal-global";
+  owner?: ResourceOwner;
 };
 
 export type WorkspaceSkillMaterialization = {
@@ -533,6 +541,7 @@ export type WorkspaceSkillMaterialization = {
   versionId: string;
   packageSha256: string;
   target: "workspace" | "personal-global";
+  owner?: ResourceOwner;
 };
 
 export type WorkspaceSkillConflict = {

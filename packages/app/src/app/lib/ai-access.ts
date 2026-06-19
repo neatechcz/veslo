@@ -168,7 +168,7 @@ function parseConfigObject(content: string | null | undefined): Record<string, u
   return readConfigObject(parsed);
 }
 
-function hasManagedGatewayHeaders(value: unknown): boolean {
+function hasManagedGatewayHeaders(value: unknown, expectedWorkspaceId?: string | null): boolean {
   const headers = readConfigObject(value);
   const gatewayToken = typeof headers["x-veslo-gateway-token"] === "string"
     ? headers["x-veslo-gateway-token"].trim()
@@ -176,7 +176,14 @@ function hasManagedGatewayHeaders(value: unknown): boolean {
   const sessionTemplate = typeof headers["x-veslo-session-id"] === "string"
     ? headers["x-veslo-session-id"].trim()
     : "";
-  return Boolean(gatewayToken && sessionTemplate);
+  if (!gatewayToken || !sessionTemplate) return false;
+
+  const workspaceId = expectedWorkspaceId?.trim() ?? "";
+  if (!workspaceId) return true;
+  const configuredWorkspaceId = typeof headers["x-veslo-workspace-id"] === "string"
+    ? headers["x-veslo-workspace-id"].trim()
+    : "";
+  return configuredWorkspaceId === workspaceId;
 }
 
 function hasUsableServerClientCredential(
@@ -210,6 +217,7 @@ function hasManagedGatewayProviderRouting(
   providerId: string,
   providerConfig: Record<string, unknown>,
   gatewayBaseUrl?: string | null,
+  workspaceId?: string | null,
 ): boolean {
   const options = readConfigObject(providerConfig.options);
   const baseUrl = normalizeHttpUrl(typeof options.baseURL === "string" ? options.baseURL : "");
@@ -224,7 +232,9 @@ function hasManagedGatewayProviderRouting(
   }
 
   const models = readConfigObject(providerConfig.models);
-  return Object.values(models).some((model) => hasManagedGatewayHeaders(readConfigObject(model).headers));
+  return Object.values(models).some((model) =>
+    hasManagedGatewayHeaders(readConfigObject(model).headers, workspaceId)
+  );
 }
 
 export function hasManagedAiGatewayRoutingConfig(
@@ -253,6 +263,7 @@ export function hasUsableManagedAiRuntimeConfig(input: {
   providerId?: string | null;
   gatewayBaseUrl?: string | null;
   serverClientToken?: string | null;
+  workspaceId?: string | null;
 }): boolean {
   const parsed = parseConfigObject(input.content);
   const providers = readConfigObject(parsed.provider);
@@ -263,7 +274,9 @@ export function hasUsableManagedAiRuntimeConfig(input: {
     const providerConfig = readConfigObject(rawConfig);
     if (!isGatewayOwnedProvider(normalizedId)) return false;
     if (targetProviderId && normalizedId !== targetProviderId) return false;
-    if (!hasManagedGatewayProviderRouting(normalizedId, providerConfig, input.gatewayBaseUrl)) return false;
+    if (!hasManagedGatewayProviderRouting(normalizedId, providerConfig, input.gatewayBaseUrl, input.workspaceId)) {
+      return false;
+    }
     return hasUsableServerClientCredential(normalizedId, providerConfig, input.serverClientToken);
   });
 }

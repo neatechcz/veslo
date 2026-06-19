@@ -58,6 +58,7 @@ import type {
   VesloSkillRemovalItem,
   VesloSkillRemovalScope,
   VesloServerStatus,
+  VesloUserGlobalSkillStoreItem,
 } from "../lib/veslo-server";
 import { readDenAuth } from "../lib/den-auth";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
@@ -70,6 +71,8 @@ type ManagedSkillMutationTarget = SkillMutationTarget & {
   registry?: SkillInstance["registry"];
   restoreTarget?: SkillInstance["restoreTarget"];
 };
+
+const USER_GLOBAL_SKILL_STORE_PATH_PREFIX = "veslo-user-store://";
 
 const vesloServerClientIdentities = new WeakMap<object, string>();
 let nextVesloServerClientIdentity = 1;
@@ -401,6 +404,78 @@ export function createExtensionsStore(options: {
     workspace.path?.trim() ||
     workspace.id;
 
+  type UserGlobalSkillStoreClient = VesloServerClient & {
+    listUserGlobalSkillStore?: () => Promise<{ items: VesloUserGlobalSkillStoreItem[] }>;
+    getUserGlobalSkillStoreSkill?: (name: string) => Promise<{ item: VesloUserGlobalSkillStoreItem; content: string }>;
+    upsertUserGlobalSkillStoreSkill?: (
+      payload: { name: string; content: string; description?: string; enabled?: boolean },
+    ) => Promise<unknown>;
+    deleteUserGlobalSkillStoreSkill?: (name: string) => Promise<unknown>;
+    syncUserGlobalSkillStore?: (workspaceId: string) => Promise<{ reloadRequired?: boolean }>;
+  };
+
+  const getUserGlobalSkillStoreClient = (): UserGlobalSkillStoreClient | null => {
+    const vesloClient = options.vesloServerClient();
+    if (options.vesloServerStatus() === "connected" && vesloClient) {
+      return vesloClient as UserGlobalSkillStoreClient;
+    }
+    return null;
+  };
+
+  const isUserGlobalSkillStorePath = (value: string | undefined) =>
+    String(value ?? "").trim().startsWith(USER_GLOBAL_SKILL_STORE_PATH_PREFIX);
+
+  const isUserGlobalSkillRuntimeMaterializationPath = (value: string | undefined) =>
+    String(value ?? "").trim().replace(/\\/g, "/").includes("/.opencode/skills/veslo-user/");
+
+  const userGlobalSkillStoreNameFromPath = (value: string | undefined) => {
+    const trimmed = String(value ?? "").trim();
+    if (!trimmed.startsWith(USER_GLOBAL_SKILL_STORE_PATH_PREFIX)) return "";
+    const encoded = trimmed.slice(USER_GLOBAL_SKILL_STORE_PATH_PREFIX.length).split("/")[0] ?? "";
+    try {
+      return decodeURIComponent(encoded).trim();
+    } catch {
+      return "";
+    }
+  };
+
+  const syncUserGlobalSkillStoreForActiveWorkspace = async () => {
+    const client = getUserGlobalSkillStoreClient();
+    const workspaceId = options.vesloServerWorkspaceId()?.trim() || options.activeWorkspaceId().trim();
+    if (!workspaceId || typeof client?.syncUserGlobalSkillStore !== "function") return;
+    try {
+      const result = await client.syncUserGlobalSkillStore(workspaceId);
+      if (result?.reloadRequired) {
+        options.markReloadRequired?.("skills", { type: "skill", name: "veslo-user", action: "updated" });
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      options.setError(addOpencodeCacheHint(message));
+      options.markReloadRequired?.("skills", { type: "skill", name: "veslo-user", action: "updated" });
+    }
+  };
+
+  const loadUserGlobalSkillStoreInputs = async (): Promise<SkillInventorySkillInput[]> => {
+    const client = getUserGlobalSkillStoreClient();
+    if (typeof client?.listUserGlobalSkillStore !== "function") return [];
+    try {
+      const result = await client.listUserGlobalSkillStore();
+      return (result.items ?? [])
+        .filter((item) => item.enabled !== false)
+        .map((item): SkillInventorySkillInput => ({
+          name: item.name,
+          path: item.path,
+          scope: "user-global",
+          description: item.description,
+          source: "opencode",
+          readable: true,
+          writable: true,
+        }));
+    } catch {
+      return [];
+    }
+  };
+
   async function refreshSkillInventory(optionsOverride?: { force?: boolean }) {
     let forceRefresh = optionsOverride?.force === true;
 
@@ -724,6 +799,7 @@ export function createExtensionsStore(options: {
             await listScopedSkills("", "global"),
             await loadGlobalMaterializationRegistryIndex(),
           );
+          globalSkills.push(...(await loadUserGlobalSkillStoreInputs()));
           globalSkills.push(...(await listRemovedSkillInputs(removalClient, { scope: "user-global" })));
           if (refreshSkillInventoryAborted) return "aborted";
 
@@ -731,7 +807,8 @@ export function createExtensionsStore(options: {
 
           for (const workspace of localWorkspaces) {
             const skills = attachMaterializationRegistryMetadata(
-              await listScopedSkills(workspace.path, "workspace"),
+              (await listScopedSkills(workspace.path, "workspace"))
+                .filter((skill) => !isUserGlobalSkillRuntimeMaterializationPath(skill.path)),
               await loadWorkspaceMaterializationRegistryIndex(workspace.id),
             );
             skills.push(...(await listRemovedSkillInputs(removalClient, {
@@ -1972,6 +2049,34 @@ export function createExtensionsStore(options: {
   async function removeUserGlobalFilesystemSkillInstance(target: ManagedSkillMutationTarget): Promise<SkillSaveResult> {
     const name = target.name.trim();
     const path = target.path.trim();
+    if (isUserGlobalSkillStorePath(path)) {
+      const storeName = userGlobalSkillStoreNameFromPath(path) || name;
+      const vesloClient = getUserGlobalSkillStoreClient();
+      if (!storeName || typeof vesloClient?.deleteUserGlobalSkillStoreSkill !== "function") {
+        return managedSkillMutationUnavailable(translate("skills.user_global_recoverable_remove_unavailable"));
+      }
+
+      options.setBusy(true);
+      options.setError(null);
+      setSkillsStatus(null);
+
+      try {
+        await vesloClient.deleteUserGlobalSkillStoreSkill(storeName);
+        await syncUserGlobalSkillStoreForActiveWorkspace();
+        const message = translate("skills.uninstalled");
+        setSkillsStatus(message);
+        await refreshAfterLocalRecoverableSkillMutation({ ...target, name: storeName, path }, "removed");
+        return { ok: true, message };
+      } catch (e) {
+        const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+        const hintedMessage = addOpencodeCacheHint(message);
+        options.setError(hintedMessage);
+        return { ok: false, message: hintedMessage };
+      } finally {
+        options.setBusy(false);
+      }
+    }
+
     const entryFilePath = skillEntryFilePathForMutationPath(path);
     if (!name || !entryFilePath) return managedSkillMutationUnavailable(translate("skills.failed_load_skill"));
 
@@ -2363,6 +2468,36 @@ export function createExtensionsStore(options: {
         return { ok: false, message };
       }
 
+      const storeClient = getUserGlobalSkillStoreClient();
+      if (typeof storeClient?.upsertUserGlobalSkillStoreSkill === "function") {
+        await storeClient.upsertUserGlobalSkillStoreSkill({
+          name,
+          content: current.content,
+          enabled: true,
+        });
+
+        if (deleteSource) {
+          const deleteResult = await uninstallSkillAtPath(sourceRoot, name, entryFilePath);
+          if (!deleteResult.ok) {
+            throw new Error(deleteResult.stderr || deleteResult.stdout || translate("skills.uninstall_failed"));
+          }
+        }
+
+        await syncUserGlobalSkillStoreForActiveWorkspace();
+        const message = translate(deleteSource ? "skills.moved_to_global" : "skills.copied_to_global");
+        setSkillsStatus(message);
+        if (isActiveWorkspaceTarget) {
+          options.markReloadRequired?.("skills", {
+            type: "skill",
+            name,
+            action: deleteSource ? "updated" : "added",
+          });
+          await refreshSkills({ force: true });
+        }
+        await refreshSkillInventory({ force: true });
+        return { ok: true, message };
+      }
+
       const installResult = await installGlobalSkillTemplate(name, current.content, { overwrite: false });
       if (!installResult.ok) {
         const message = installResult.stderr || installResult.stdout || translate("skills.failed_save_skill");
@@ -2449,6 +2584,32 @@ export function createExtensionsStore(options: {
     setSkillsStatus(null);
 
     try {
+      if (isUserGlobalSkillStorePath(target.path)) {
+        const storeName = userGlobalSkillStoreNameFromPath(target.path) || trimmed;
+        const storeClient = getUserGlobalSkillStoreClient();
+        if (!storeName || typeof storeClient?.getUserGlobalSkillStoreSkill !== "function") {
+          const message = translate("skills.failed_load_skill");
+          setSkillsStatus(message);
+          return { ok: false, message };
+        }
+        const current = await storeClient.getUserGlobalSkillStoreSkill(storeName);
+        const installResult = await installSkillTemplate(targetDir, trimmed, current.content, { overwrite: false });
+        if (!installResult.ok) {
+          const message = installResult.stderr || installResult.stdout || translate("skills.failed_save_skill");
+          setSkillsStatus(message);
+          return { ok: false, message };
+        }
+
+        const message = translate("skills.copied_to_workspace");
+        setSkillsStatus(message);
+        if (isActiveWorkspace) {
+          options.markReloadRequired?.("skills", { type: "skill", name: trimmed, action: "added" });
+          await refreshSkills({ force: true });
+        }
+        await refreshSkillInventory({ force: true });
+        return { ok: true, message };
+      }
+
       const current = await readLocalSkillAtPath(targetDir, trimmed, entryFilePath);
       if (normalizeSkillMutationPath(current.path) !== entryFilePath) {
         const message = translate("skills.failed_load_skill");

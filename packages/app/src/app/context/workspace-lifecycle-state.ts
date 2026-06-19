@@ -48,7 +48,7 @@ export type WorkspaceLifecycleEvent =
       type: "connected";
       workspaceId: string;
       version?: number;
-      runtime: EngineRuntime;
+      runtime?: EngineRuntime;
       reason: string;
     }
   | { type: "degraded"; workspaceId: string; message: string; reason: string }
@@ -71,6 +71,7 @@ function shouldIgnoreVersion(
 ) {
   if (event.version === undefined) return false;
   if (event.version === state.activationVersion) return false;
+  if (event.version < state.activationVersion) return true;
   return state.activeWorkspaceId !== event.workspaceId;
 }
 

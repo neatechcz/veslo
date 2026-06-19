@@ -7,6 +7,12 @@ import { buildMediaEvidenceForParts } from "../../../components/session/media-ev
 const part = (id: string, value: Record<string, unknown>): Part =>
   ({ id, sessionID: "s1", messageID: "m1", ...value }) as any;
 
+const WINDOWS_WORKSPACE_ROOT = "C:/Users/alice/AppData/Local/Veslo/fixtures/media-workspace";
+const WINDOWS_WORKSPACE_ROOT_LOWER = "c:/users/alice/appdata/local/veslo/fixtures/media-workspace";
+const WINDOWS_NATIVE_WORKSPACE_ROOT = "C:\\Users\\alice\\AppData\\Local\\Veslo\\fixtures\\media-workspace";
+const WINDOWS_NATIVE_OUTSIDE_ROOT = "C:\\Users\\alice\\AppData\\Local\\Veslo\\fixtures\\other-workspace";
+const WSL_WINDOWS_WORKSPACE_ROOT = "/mnt/c/Users/alice/AppData/Local/Veslo/fixtures/media-workspace";
+
 test("classifies inline image file parts as analyzed by default", () => {
   const evidence = buildMediaEvidenceForParts({
     sourceId: "message:m1",
@@ -786,18 +792,18 @@ test("does not create file evidence for posix case-mismatched workspace paths", 
 test("keeps windows workspace containment case-insensitive", () => {
   const evidence = buildMediaEvidenceForParts({
     sourceId: "tool:p3-windows-case",
-    workspaceRoot: "C:/Users/me/project",
+    workspaceRoot: WINDOWS_WORKSPACE_ROOT,
     parts: [
       part("p3-windows-case", {
         type: "tool",
         tool: "write",
-        state: { status: "completed", input: { filePath: "c:/users/me/project/result.png" } },
+        state: { status: "completed", input: { filePath: `${WINDOWS_WORKSPACE_ROOT_LOWER}/result.png` } },
       }),
     ],
   });
 
   assert.equal(evidence.length, 1);
-  assert.equal(evidence[0]?.src, "file:///C:/Users/me/project/result.png");
+  assert.equal(evidence[0]?.src, `file:///${WINDOWS_WORKSPACE_ROOT}/result.png`);
 });
 
 test("keeps absolute file evidence inside workspace root", () => {
@@ -1013,46 +1019,46 @@ test("encodes reserved filename characters in workspace file urls", () => {
 test("formats windows absolute file urls", () => {
   const evidence = buildMediaEvidenceForParts({
     sourceId: "tool:p3d",
-    workspaceRoot: "C:/Users/me/project",
+    workspaceRoot: WINDOWS_WORKSPACE_ROOT,
     parts: [
       part("p3d", {
         type: "tool",
         tool: "write",
-        state: { status: "completed", input: { filePath: "C:/Users/me/project/result.png" } },
+        state: { status: "completed", input: { filePath: `${WINDOWS_WORKSPACE_ROOT}/result.png` } },
       }),
     ],
   });
 
   assert.equal(evidence.length, 1);
-  assert.equal(evidence[0]?.src, "file:///C:/Users/me/project/result.png");
+  assert.equal(evidence[0]?.src, `file:///${WINDOWS_WORKSPACE_ROOT}/result.png`);
 });
 
 test("formats windows native absolute file urls", () => {
   const evidence = buildMediaEvidenceForParts({
     sourceId: "tool:p3d-native",
-    workspaceRoot: "C:\\Users\\me\\project",
+    workspaceRoot: WINDOWS_NATIVE_WORKSPACE_ROOT,
     parts: [
       part("p3d-native", {
         type: "tool",
         tool: "write",
-        state: { status: "completed", input: { filePath: "C:\\Users\\me\\project\\result image.png" } },
+        state: { status: "completed", input: { filePath: `${WINDOWS_NATIVE_WORKSPACE_ROOT}\\result image.png` } },
       }),
     ],
   });
 
   assert.equal(evidence.length, 1);
-  assert.equal(evidence[0]?.src, "file:///C:/Users/me/project/result%20image.png");
+  assert.equal(evidence[0]?.src, `file:///${WINDOWS_WORKSPACE_ROOT}/result%20image.png`);
 });
 
 test("keeps windows native absolute paths outside workspace root rejected", () => {
   const evidence = buildMediaEvidenceForParts({
     sourceId: "tool:p3d-native-outside",
-    workspaceRoot: "C:\\Users\\me\\project",
+    workspaceRoot: WINDOWS_NATIVE_WORKSPACE_ROOT,
     parts: [
       part("p3d-native-outside", {
         type: "tool",
         tool: "write",
-        state: { status: "completed", input: { filePath: "C:\\Users\\me\\other\\result.png" } },
+        state: { status: "completed", input: { filePath: `${WINDOWS_NATIVE_OUTSIDE_ROOT}\\result.png` } },
       }),
     ],
   });
@@ -1081,7 +1087,7 @@ test("keeps rootless absolute created paths missing without file urls", () => {
 test("formats windows workspace file urls for relative created paths", () => {
   const evidence = buildMediaEvidenceForParts({
     sourceId: "tool:p3e",
-    workspaceRoot: "C:/Users/me/project",
+    workspaceRoot: WINDOWS_WORKSPACE_ROOT,
     parts: [
       part("p3e", {
         type: "tool",
@@ -1092,13 +1098,13 @@ test("formats windows workspace file urls for relative created paths", () => {
   });
 
   assert.equal(evidence.length, 1);
-  assert.equal(evidence[0]?.src, "file:///C:/Users/me/project/artifacts/result.png");
+  assert.equal(evidence[0]?.src, `file:///${WINDOWS_WORKSPACE_ROOT}/artifacts/result.png`);
 });
 
 test("formats WSL sandbox and mount created paths against the host workspace root", () => {
   const evidence = buildMediaEvidenceForParts({
     sourceId: "tool:p3e-wsl",
-    workspaceRoot: "C:/Users/me/project",
+    workspaceRoot: WINDOWS_WORKSPACE_ROOT,
     parts: [
       part("p3e-wsl-workspace", {
         type: "tool",
@@ -1108,7 +1114,7 @@ test("formats WSL sandbox and mount created paths against the host workspace roo
       part("p3e-wsl-mount", {
         type: "tool",
         tool: "write",
-        state: { status: "completed", input: { filePath: "/mnt/c/Users/me/project/artifacts/from-mount.webp" } },
+        state: { status: "completed", input: { filePath: `${WSL_WINDOWS_WORKSPACE_ROOT}/artifacts/from-mount.webp` } },
       }),
     ],
   });
@@ -1119,12 +1125,12 @@ test("formats WSL sandbox and mount created paths against the host workspace roo
     [
       {
         path: "artifacts/result.png",
-        src: "file:///C:/Users/me/project/artifacts/result.png",
+        src: `file:///${WINDOWS_WORKSPACE_ROOT}/artifacts/result.png`,
         status: "available",
       },
       {
         path: "artifacts/from-mount.webp",
-        src: "file:///C:/Users/me/project/artifacts/from-mount.webp",
+        src: `file:///${WINDOWS_WORKSPACE_ROOT}/artifacts/from-mount.webp`,
         status: "available",
       },
     ],

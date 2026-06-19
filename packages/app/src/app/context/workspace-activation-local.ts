@@ -6,6 +6,7 @@ import {
 } from "../lib/tauri";
 import { isTauriRuntime } from "../utils";
 import type { createLocalRuntimeLifecycle } from "../utils/local-runtime-lifecycle";
+import { isPassiveLocalBrowseActivationOrigin } from "./workspace-activation-controller";
 import type { WorkspaceActivationOptions } from "./workspace-types";
 
 export type LocalActivationSelection = {
@@ -19,6 +20,8 @@ export type LocalActivationSelection = {
   actualEngineScope: string;
   workspaceChanged: boolean;
   displayedSessionCleared: boolean;
+  passiveBrowseActivation: boolean;
+  targetRuntimeReady: boolean;
 };
 
 export type WorkspaceLocalActivationDeps = {
@@ -68,8 +71,10 @@ export type WorkspaceLocalActivationDeps = {
   setWorkspaceConfig: (value: any) => void;
   setWorkspaceConfigLoaded: (value: boolean) => void;
   setEngineReady?: (value: boolean) => void;
+  isWorkspaceRuntimeReady?: (workspaceId: string) => boolean;
   populateSidebarFromDb?: (workspaceId: string, directory: string) => Promise<void>;
   hydrateLatestSessionFromDb?: (workspaceId: string, directory: string) => Promise<void>;
+  activateVesloHostWorkspace: (workspacePath: string) => Promise<void>;
   setError: (value: string | null) => void;
   setBusy: (value: boolean) => void;
   setBusyLabel: (value: string | null) => void;
@@ -108,6 +113,8 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
     const nextWorkspaceScope = deps.normalizeWorkspaceScopePath(nextRoot, "local");
     const actualEngineDir = deps.engine()?.projectDir?.trim() ?? "";
     const actualEngineScope = deps.normalizeWorkspaceScopePath(actualEngineDir, "local");
+    const passiveBrowseActivation = isPassiveLocalBrowseActivationOrigin(deps.activationOptions.origin);
+    const targetRuntimeReady = Boolean(deps.isWorkspaceRuntimeReady?.(id));
     const projectDirOutOfSync =
       Boolean(previousProjectDirScope && oldWorkspaceScope) &&
       previousProjectDirScope !== oldWorkspaceScope;
@@ -129,6 +136,8 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
       projectDirOutOfSync,
       actualEngineDir,
       actualEngineScope,
+      passiveBrowseActivation,
+      targetRuntimeReady,
     });
     if (projectDirOutOfSync) {
       deps.wsDebug("activate:local:projectDir-out-of-sync", {
@@ -166,7 +175,9 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
       deps.setProjectDir(nextRoot);
     });
 
-    if (startedFromLocalMode && workspaceChanged && isTauriRuntime() && deps.populateSidebarFromDb) {
+    if (targetRuntimeReady) {
+      deps.setEngineReady?.(true);
+    } else if (startedFromLocalMode && workspaceChanged && isTauriRuntime() && deps.populateSidebarFromDb) {
       deps.setEngineReady?.(false);
     }
 
@@ -181,12 +192,15 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
       actualEngineScope,
       workspaceChanged,
       displayedSessionCleared,
+      passiveBrowseActivation,
+      targetRuntimeReady,
     };
   }
 
   async function persistLocalWorkspaceSelection(
     id: string,
     next: WorkspaceInfo,
+    selection: LocalActivationSelection,
   ) {
     if (isTauriRuntime()) {
       deps.setWorkspaceConfigLoaded(false);
@@ -226,6 +240,24 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
         }
         deps.setWorkspaces(ws.workspaces);
         deps.syncActiveWorkspaceId(ws.activeId);
+        if (selection.passiveBrowseActivation) {
+          deps.wsDebug("activate:local:veslo-host-active:skip", {
+            id,
+            path: next.path,
+            reason: "passive-browse",
+          });
+        } else {
+          try {
+            await deps.activateVesloHostWorkspace(next.path);
+            deps.wsDebug("activate:local:veslo-host-active:done", { id, path: next.path });
+          } catch (e) {
+            deps.wsDebug("activate:local:veslo-host-active:failed", {
+              id,
+              path: next.path,
+              error: e instanceof Error ? e.message : deps.safeStringify(e),
+            });
+          }
+        }
         deps.wsLog("[workspace:activate] STEP 3 — workspaceSetActive DONE");
       } catch (e) {
         deps.wsLog("[workspace:activate] STEP 3 — workspaceSetActive FAILED", e instanceof Error ? e.message : String(e));
@@ -350,6 +382,7 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
     const isColdBoot = !deps.routingActive() && deps.startupPreference() === "local";
     if (
       !canBrowseOffline ||
+      !selection.passiveBrowseActivation ||
       !(selection.startedFromLocalMode || selection.wasLocalConnection || isColdBoot || needsEngineWarmup)
     ) {
       return false;
@@ -358,7 +391,7 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
     deps.wsLog("[workspace:activate] STEP 5-BROWSE — browsing mode, loading from SQLite", { id, path: next.path });
     deps.wsDebug("activate:local->local:browsingMode", { id, nextPath: next.path });
 
-    deps.setEngineReady?.(false);
+    deps.setEngineReady?.(selection.targetRuntimeReady);
     if (selection.workspaceChanged && !selection.displayedSessionCleared) {
       deps.clearDisplayedSessionState("local_browse_workspace_changed", {
         workspaceId: id,
@@ -376,13 +409,10 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
       deps.wsLog("[workspace:activate] STEP 5-BROWSE — populateSidebarFromDb failed", e);
     }
 
-    try {
-      if (deps.hydrateLatestSessionFromDb) {
-        await deps.hydrateLatestSessionFromDb(id, next.path);
-      }
-    } catch (e) {
-      deps.wsLog("[workspace:activate] STEP 5-BROWSE — hydrateLatestSessionFromDb failed", e);
-    }
+    deps.wsDebug("activate:local->local:browsingMode:skipLatestHydration", {
+      id,
+      reason: "title-only-browse",
+    });
 
     deps.updateWorkspaceConnectionState(id, { status: "connected", message: null });
     deps.wsDebug("activate:local->local:browsingMode:done", { id, ms: Date.now() - deps.activateStart });
@@ -445,7 +475,7 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
     next: WorkspaceInfo,
   ) {
     const selection = prepareLocalWorkspaceSelection(id, next);
-    if (!(await persistLocalWorkspaceSelection(id, next))) return false;
+    if (!(await persistLocalWorkspaceSelection(id, next, selection))) return false;
 
     deps.wsLog("[workspace:activate] STEP 4 — branch decision", {
       isRemote: false,

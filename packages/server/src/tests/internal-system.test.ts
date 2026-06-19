@@ -93,6 +93,10 @@ You are Veslo.
       expect(plugin).toContain("hasExplicitDelegateRequest");
       expect(plugin).toContain("spusť subagenta");
       expect(plugin).toContain('return "veslo-internal-research"');
+      expect(plugin).toContain('" create skill "');
+      expect(plugin).toContain('" .opencode/skills/"');
+      expect(plugin).not.toContain('" skill ",');
+      expect(plugin).not.toContain('" skills ",');
       expect(plugin).toContain('" listu "');
       expect(plugin).not.toContain('" list "');
       expect(plugin).toContain("client.session.get");

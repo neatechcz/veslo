@@ -102,7 +102,7 @@ test("idle transition drains only after a non-idle status and only when queue is
   );
   assert.match(
     source,
-    /const sessionId = sessionIdForQueueKey\(sessionKey\);[\s\S]*if \(!sessionId\) continue;[\s\S]*previousStatuses\[sessionId\][\s\S]*statuses\[sessionId\]/s,
+    /const sessionId = sessionIdForQueueKey\(sessionKey\);[\s\S]*if \(!sessionId\) continue;[\s\S]*statusForQueueKey\(sessionKey, previousStatuses\)[\s\S]*statusForQueueKey\(sessionKey, statuses\)/s,
     "background queue status checks should resolve scoped UI keys back to raw session ids",
   );
 });
@@ -110,8 +110,8 @@ test("idle transition drains only after a non-idle status and only when queue is
 test("queued drain uses a stable session key and guards stale navigation", () => {
   assert.match(
     source,
-    /const targetSessionId = expectedSessionKey \? sessionIdForQueueKey\(expectedSessionKey\) : null;[\s\S]*if \(expectedSessionKey && currentSessionQueueKey\(\) !== expectedSessionKey && !targetSessionId\) return false;/s,
-    "immediate sends should target stale real sessions but refuse stale pending queues",
+    /const baseSessionKey = expectedSessionKey \?\? currentSessionQueueKey\(\);\s*const targetSessionId = sessionIdForQueueKey\(baseSessionKey\);\s*const expectedWorkspaceId = workspaceIdForQueueKey\(baseSessionKey\) \|\| props\.activeWorkspaceId;[\s\S]*if \(expectedSessionKey && currentSessionQueueKey\(\) !== expectedSessionKey && !targetSessionId\) return false;/s,
+    "immediate sends should target the captured real session key but refuse stale pending queues",
   );
 
   assert.match(
@@ -176,6 +176,26 @@ test("session queue keys follow the UI conversation workspace scope", () => {
     appSource,
     /activeUiConversationRef: activeUiConversationRef\(\),/,
     "app should pass the scoped visible conversation identity into SessionView",
+  );
+});
+
+test("normal sends from a browsed real session pass the current scoped target session", () => {
+  assert.match(
+    source,
+    /const baseSessionKey = expectedSessionKey \?\? currentSessionQueueKey\(\);\s*const targetSessionId = sessionIdForQueueKey\(baseSessionKey\);/s,
+    "normal sends should derive targetSessionId from the current scoped session key when no expected queue key is provided",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /const targetSessionId = expectedSessionKey \? sessionIdForQueueKey\(expectedSessionKey\) : null;/,
+    "normal sends from historical scoped sessions must not drop targetSessionId to null",
+  );
+
+  assert.match(
+    source,
+    /const promptSendOptions:[\s\S]*\.\.\.\(targetSessionId \? \{ targetSessionId \} : \{\}\),[\s\S]*props\.sendPromptAsync\(draft, promptSendOptions\)/s,
+    "the resolved target session should be forwarded to the app send path",
   );
 });
 
@@ -249,13 +269,18 @@ test("rejected pending queue drain updates the remapped item key", () => {
 
 test("app prompt send accepts an explicit target session without freezing model bootstrap", () => {
   const sendStart = appSource.indexOf("async function sendPrompt");
-  const targetCapture = appSource.indexOf("let sessionID = isPendingSessionInstanceId(options.targetSessionId)", sendStart);
+  const targetCapture = appSource.indexOf("const explicitTargetSessionId = isPendingSessionInstanceId(options.targetSessionId)", sendStart);
   const bootstrap = appSource.indexOf('"sendPrompt:ensure-managed-ai-bootstrap-ready"', sendStart);
   const modelResolution = appSource.indexOf("const model = modelForSession(sessionID);", sendStart);
   const agentResolution = appSource.indexOf("const agent = agentForSession(sessionID);", sendStart);
 
   assert.notEqual(sendStart, -1, "app sendPrompt should exist");
   assert.ok(targetCapture > sendStart, "sendPrompt should accept a captured target session id");
+  assert.match(
+    appSource.slice(targetCapture, bootstrap),
+    /let sessionID = explicitTargetSessionId \|\| selectedRealSessionId;/,
+    "sendPrompt should prefer an explicit target session over implicit active-workspace selection",
+  );
   assert.ok(modelResolution > bootstrap, "model should resolve after managed AI bootstrap");
   assert.ok(agentResolution > bootstrap, "agent should resolve after managed AI bootstrap");
 });

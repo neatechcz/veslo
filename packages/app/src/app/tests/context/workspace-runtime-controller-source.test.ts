@@ -26,6 +26,26 @@ test("lazy runtime ensure lives in workspace runtime controller", () => {
   );
   assert.match(
     runtimeSource,
+    /dispatchLifecycle\?: \(event: WorkspaceLifecycleEvent\) => void;/,
+    "runtime controller should accept lifecycle dispatch from the workspace store instead of owning another state model",
+  );
+  assert.match(
+    runtimeSource,
+    /deps\.dispatchLifecycle\?\.\(\{[\s\S]*type: "runtime-starting",[\s\S]*workspaceId: id,[\s\S]*runtime,[\s\S]*reason: "ensure-engine-for-workspace",[\s\S]*\}\);[\s\S]*recordSendWorkflowTrace\("workspace-runtime", "ensure-engine:start"/s,
+    "explicit runtime ensure should publish runtime-starting before it can spawn or attach the engine",
+  );
+  assert.match(
+    runtimeSource,
+    /deps\.updateWorkspaceConnectionState\(id, \{ status: "connected", message: null \}\);[\s\S]*deps\.dispatchLifecycle\?\.\(\{[\s\S]*type: "connected",[\s\S]*workspaceId: id,[\s\S]*runtime,[\s\S]*reason: "ensure-engine-for-workspace",[\s\S]*\}\);/s,
+    "runtime ensure success should publish a workspace-scoped connected event",
+  );
+  assert.match(
+    runtimeSource,
+    /deps\.dispatchLifecycle\?\.\(\{[\s\S]*type: "failed",[\s\S]*workspaceId: id,[\s\S]*message,[\s\S]*\}\);[\s\S]*return false;/s,
+    "runtime ensure failures should publish workspace-scoped failed events with the concrete message",
+  );
+  assert.match(
+    runtimeSource,
     /const message = messageFromUnknownError\(e, deps\.safeStringify\);[\s\S]*deps\.setError\(message\);/,
     "runtime ensure failures should keep concrete engine startup messages for the UI",
   );

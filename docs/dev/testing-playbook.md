@@ -197,7 +197,7 @@ The live spec disables WebdriverIO spec retries while `E2E_LIVE_FEEDBACK_YOUTRAC
 Run server tests if relevant, and rebuild the server binary used by orchestrator-driven flows:
 
 ```bash
-pnpm --filter openwork-server build:bin
+pnpm --filter veslo-server build:bin
 ```
 
 If app behavior depends on that server change, verify the app against the rebuilt binary.

@@ -2,6 +2,84 @@ import type { WorkspaceInfo } from "../lib/tauri";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 import type { WorkspaceActivationOptions } from "./workspace-types";
 
+export type WorkspaceSwitchOverlayTarget = {
+  workspaceId: string;
+  version: number;
+};
+
+const NON_BLOCKING_LOCAL_BROWSE_ORIGINS = new Set([
+  "app:new-private-existing-pending-draft",
+  "app:new-private-scratch-workspace",
+  "app:open-directory-session-from-picker",
+  "app:open-pending-directory-draft-workspace",
+  "composer-target:chat",
+  "composer-target:create-private",
+  "composer-target:workspace",
+  "dashboard:open-soul-workspace",
+  "send-target:selected-session-workspace",
+  "session-navigation:open-session-before-open",
+  "session-navigation:open-pending-draft",
+  "session:open-soul-workspace",
+  "workspace-session-list:project-open",
+]);
+
+export function isPassiveLocalBrowseActivationOrigin(origin?: string | null) {
+  return NON_BLOCKING_LOCAL_BROWSE_ORIGINS.has(origin?.trim() ?? "");
+}
+
+export type WorkspaceBrowsePolicyStore = {
+  workspaces: () => Array<Pick<WorkspaceInfo, "id" | "workspaceType">>;
+  browseWorkspace: (
+    workspaceId: string | undefined,
+    options: WorkspaceActivationOptions,
+  ) => Promise<boolean>;
+  activateWorkspace: (
+    workspaceId: string | undefined,
+    options: WorkspaceActivationOptions,
+  ) => Promise<boolean>;
+};
+
+export async function activateWorkspaceWithBrowsePolicy(
+  store: WorkspaceBrowsePolicyStore,
+  workspaceId: string | undefined,
+  options: WorkspaceActivationOptions,
+) {
+  const id = workspaceId?.trim() ?? "";
+  if (!id) return false;
+
+  if (!isPassiveLocalBrowseActivationOrigin(options.origin)) {
+    return await store.activateWorkspace(id, options);
+  }
+
+  const target = store.workspaces().find((workspace) => workspace.id === id) ?? null;
+  if (!target) return false;
+
+  if (target.workspaceType === "local") {
+    return await store.browseWorkspace(id, options);
+  }
+
+  return await store.activateWorkspace(id, options);
+}
+
+export function shouldSuppressWorkspaceSwitchOverlayForActivation(input: {
+  workspaceType?: WorkspaceInfo["workspaceType"] | null;
+  origin?: string | null;
+  promoteToFront?: boolean;
+  blockingOverlay?: boolean;
+}) {
+  return !shouldShowBlockingWorkspaceOverlayForActivation(input);
+}
+
+export function shouldShowBlockingWorkspaceOverlayForActivation(input: {
+  workspaceType?: WorkspaceInfo["workspaceType"] | null;
+  origin?: string | null;
+  promoteToFront?: boolean;
+  blockingOverlay?: boolean;
+}) {
+  if (input.blockingOverlay !== undefined) return input.blockingOverlay;
+  return input.workspaceType === "remote";
+}
+
 export type WorkspaceActivationRunContext = {
   id: string;
   next: WorkspaceInfo;
@@ -19,6 +97,15 @@ export type WorkspaceActivationControllerDeps = {
   hasActiveRoute: () => boolean;
   setConnectingWorkspaceId: (
     value: string | null | ((prev: string | null) => string | null),
+  ) => void;
+  setWorkspaceSwitchOverlaySuppressionToken?: (
+    value: string | null | ((prev: string | null) => string | null),
+  ) => void;
+  setWorkspaceSwitchOverlayTarget?: (
+    value:
+      | WorkspaceSwitchOverlayTarget
+      | null
+      | ((prev: WorkspaceSwitchOverlayTarget | null) => WorkspaceSwitchOverlayTarget | null),
   ) => void;
   updateWorkspaceConnectionState: (workspaceId: string, next: any) => void;
   wsActivateGuard: {
@@ -65,6 +152,32 @@ export function createWorkspaceActivationController(deps: WorkspaceActivationCon
 
     const myVersion = deps.wsActivateGuard.enter(id);
     const isSuperseded = () => deps.wsActivateGuard.isSuperseded(myVersion);
+    const overlaySuppressionToken = shouldSuppressWorkspaceSwitchOverlayForActivation({
+      workspaceType: next.workspaceType,
+      origin: activationOptions.origin,
+      promoteToFront: activationOptions.promoteToFront,
+      blockingOverlay: activationOptions.blockingOverlay,
+    })
+      ? `${id}:${myVersion}`
+      : "";
+    const overlayTarget = overlaySuppressionToken
+      ? null
+      : {
+          workspaceId: id,
+          version: myVersion,
+        };
+    const clearOverlaySuppressionToken = () => {
+      if (!overlaySuppressionToken) return;
+      deps.setWorkspaceSwitchOverlaySuppressionToken?.((current) =>
+        current === overlaySuppressionToken ? null : current,
+      );
+    };
+    const clearOverlayTarget = () => {
+      if (!overlayTarget) return;
+      deps.setWorkspaceSwitchOverlayTarget?.((current) =>
+        current?.version === overlayTarget.version ? null : current,
+      );
+    };
 
     console.log("[workspace] activate", {
       id: next.id,
@@ -85,6 +198,22 @@ export function createWorkspaceActivationController(deps: WorkspaceActivationCon
     });
 
     deps.setConnectingWorkspaceId(id);
+    if (overlayTarget) {
+      deps.setWorkspaceSwitchOverlayTarget?.(overlayTarget);
+      deps.wsDebug("activate:overlay:blocking", {
+        id: next.id,
+        origin: activationOptions.origin,
+        version: myVersion,
+      });
+    }
+    if (overlaySuppressionToken) {
+      deps.setWorkspaceSwitchOverlaySuppressionToken?.(overlaySuppressionToken);
+      deps.wsDebug("activate:overlay:suppressed", {
+        id: next.id,
+        origin: activationOptions.origin,
+        token: overlaySuppressionToken,
+      });
+    }
     deps.updateWorkspaceConnectionState(id, { status: "connecting", message: null });
 
     let activateTimeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -96,6 +225,8 @@ export function createWorkspaceActivationController(deps: WorkspaceActivationCon
         deps.setError(message);
         deps.updateWorkspaceConnectionState(id, { status: "error", message });
         deps.wsActivateGuard.exit(myVersion, deps.setConnectingWorkspaceId);
+        clearOverlaySuppressionToken();
+        clearOverlayTarget();
         deps.setBusy(false);
         deps.setBusyLabel(null);
         deps.setBusyStartedAt(null);
@@ -108,6 +239,8 @@ export function createWorkspaceActivationController(deps: WorkspaceActivationCon
 
     if (isSuperseded()) {
       deps.wsDebug("activate:superseded:early", { id });
+      clearOverlaySuppressionToken();
+      clearOverlayTarget();
       return false;
     }
 
@@ -134,6 +267,8 @@ export function createWorkspaceActivationController(deps: WorkspaceActivationCon
         ms: Date.now() - activateStart,
       });
       deps.wsActivateGuard.exit(myVersion, deps.setConnectingWorkspaceId);
+      clearOverlaySuppressionToken();
+      clearOverlayTarget();
       deps.wsDebug("activate:finally", { id, ms: Date.now() - activateStart });
     }
   }

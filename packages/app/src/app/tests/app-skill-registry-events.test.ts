@@ -45,7 +45,7 @@ test("app wires registry event polling into skill inventory and materialization 
   );
   assert.match(
     workspacePendingHandler,
-    /workspaceStore\.workspaceBusy\(\)\[update\.workspaceId\][\s\S]*syncWorkspaceSkillMaterialization\(update\.workspaceId,\s*\{[\s\S]*skillRegistryMaterializationAuthContext\(\)[\s\S]*activeRun: true[\s\S]*\}\)/s,
+    /hasWorkspaceBusySessions\(workspaceStore\.workspaceBusy\(\), update\.workspaceId\)[\s\S]*syncWorkspaceSkillMaterialization\(update\.workspaceId,\s*\{[\s\S]*skillRegistryMaterializationAuthContext\(\)[\s\S]*activeRun: true[\s\S]*\}\)/s,
     "Active workspace updates must request pending materialization instead of mutating files under a running session",
   );
   assert.match(
@@ -90,7 +90,7 @@ test("app wires registry event polling into skill inventory and materialization 
   );
   assert.match(
     source,
-    /if\s*\(busyWorkspaces\[workspaceId\]\)\s*continue;[\s\S]*replayPendingSkillRegistryWorkspaceUpdate\(client,\s*workspaceId,\s*pending\)/s,
+    /if\s*\(hasWorkspaceBusySessions\(busyWorkspaces,\s*workspaceId\)\)\s*continue;[\s\S]*replayPendingSkillRegistryWorkspaceUpdate\(client,\s*workspaceId,\s*pending\)/s,
     "Pending workspace registry updates should wait until that workspace is no longer busy",
   );
   assert.match(
@@ -100,7 +100,7 @@ test("app wires registry event polling into skill inventory and materialization 
   );
   assert.match(
     source,
-    /pendingGlobalSkillRegistryReplay\(\)[\s\S]*Object\.values\(workspaceStore\.workspaceBusy\(\)\)\.some\(Boolean\)[\s\S]*syncGlobalSkillMaterialization\(skillRegistryMaterializationAuthContext\(\)\)/s,
+    /pendingGlobalSkillRegistryReplay\(\)[\s\S]*hasAnyWorkspaceBusySessions\(workspaceStore\.workspaceBusy\(\)\)[\s\S]*syncGlobalSkillMaterialization\(skillRegistryMaterializationAuthContext\(\)\)/s,
     "Pending global registry updates should replay once every workspace is idle",
   );
   assert.match(

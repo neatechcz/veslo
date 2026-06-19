@@ -19,6 +19,7 @@ describe("local OpenCode URL wiring", () => {
 
     expect(routerStart).toContain("opencodeUrl: opencodeBaseUrl");
     expect(serverStart).toContain("opencodeBaseUrl: opencodeBaseUrl");
+    expect(serverStart).toContain("sandboxBackend: configuredSandboxBackend");
     expect(serverVerify).toContain("expectedOpencodeBaseUrl: opencodeBaseUrl");
     expect(routerStart).not.toContain("opencodeUrl: opencodeConnectUrl");
     expect(serverStart).not.toContain("opencodeBaseUrl: opencodeConnectUrl");

@@ -147,7 +147,7 @@ test("real session route fallback ignores active pending draft context", () => {
   );
   assert.match(
     routeSource,
-    /shouldFallbackFromSessionRoute\(\{\s*sessionsLoaded: sessionsLoadedForActiveWorkspace\(\),\s*routeSessionId: id,\s*routeWorkspaceId: resolveSelectedSessionBrowseScope\(id\)\?\.workspaceId \?\? null,\s*activeWorkspaceId: workspaceStore\.activeWorkspaceId\(\),\s*sessionIdsInStore,\s*sessionIdsInSidebar,\s*scopedSessionIds: scopedSessionIds\(\),\s*selectedSessionId: selectedSessionId\(\),\s*visibleMessageCount: visibleMessages\(\)\.length,\s*selectedSessionStatus: selectedSessionStatus\(\),\s*selectedSessionLoadingEarlierMessages: selectedSessionLoadingEarlierMessages\(\),\s*\}\)/s,
+    /const routeBrowseScope = id \? resolveSelectedSessionBrowseScope\(id\) : null;[\s\S]*const routeWorkspaceId = routeBrowseScope\?\.workspaceId \?\? null;[\s\S]*shouldFallbackFromSessionRoute\(\{\s*sessionsLoaded: sessionsLoadedForActiveWorkspace\(\),\s*routeSessionId: id,\s*routeWorkspaceId,\s*activeWorkspaceId: workspaceStore\.activeWorkspaceId\(\),\s*sessionIdsInStore,\s*sessionIdsInSidebar,\s*scopedSessionIds: scopedSessionIds\(\),\s*selectedSessionId: selectedSessionId\(\),\s*visibleMessageCount: visibleMessages\(\)\.length,\s*selectedSessionStatus: visibleSelectedSessionStatus\(\),\s*selectedSessionLoadingEarlierMessages: selectedSessionLoadingEarlierMessages\(\),\s*\}\)/s,
     "real session route fallback should use persisted, sidebar, scoped, and currently displayed session state without pending preloader state",
   );
   assert.match(

@@ -325,4 +325,32 @@ describe("session transcript prefetch core", () => {
       store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-a", limit: 200 })?.messages.length,
     ).toBe(200);
   });
+
+  test("invalidates warm snapshots after a live host transcript append", async () => {
+    let calls = 0;
+    const store = createSessionTranscriptPrefetchStore({
+      loadTranscript: async ({ workspaceId, sessionId }) => {
+        calls += 1;
+        return {
+          workspaceId,
+          sessionId,
+          messages: [{ id: `m-${calls}` }],
+          partsByMessageId: {},
+        };
+      },
+    });
+
+    const first = await store.getOrLoad({ workspaceId: "ws_local", sessionId: "sess-a", limit: 140 });
+    expect(first.messages).toEqual([{ id: "m-1" }]);
+    expect(store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-a" })?.messages).toEqual([
+      { id: "m-1" },
+    ]);
+
+    store.invalidate({ workspaceId: "ws_local", sessionId: "sess-a" });
+    expect(store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-a" })).toBeNull();
+
+    const second = await store.getOrLoad({ workspaceId: "ws_local", sessionId: "sess-a", limit: 140 });
+    expect(calls).toBe(2);
+    expect(second.messages).toEqual([{ id: "m-2" }]);
+  });
 });

@@ -208,11 +208,39 @@ test("dashboard view props expose unread session ids", () => {
   );
 });
 
+test("dashboard view props expose background session activity state", () => {
+  assert.match(
+    dashboardSource,
+    /sessionStatusById: Record<string, string>;/,
+    "DashboardViewProps should include live session status state for sidebar rows",
+  );
+
+  assert.match(
+    dashboardSource,
+    /busySessionByWorkspaceId\?: WorkspaceBusyMap;/,
+    "DashboardViewProps should include workspace busy state for background sidebar rows",
+  );
+});
+
 test("session wires unread session ids into WorkspaceSessionList", () => {
   assert.match(
     sessionSource,
     /unreadSessionIds=\{props\.unreadSessionIds\}/,
     "Session should pass unread session ids into WorkspaceSessionList",
+  );
+});
+
+test("dashboard wires background session activity state into WorkspaceSessionList", () => {
+  assert.match(
+    dashboardSource,
+    /sessionStatusById=\{props\.sessionStatusById\}/,
+    "Dashboard should pass live session status into WorkspaceSessionList",
+  );
+
+  assert.match(
+    dashboardSource,
+    /busySessionByWorkspaceId=\{props\.busySessionByWorkspaceId\}/,
+    "Dashboard should pass workspace busy state into WorkspaceSessionList",
   );
 });
 

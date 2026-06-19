@@ -165,6 +165,7 @@ Scope:
 Rules:
 - Only run for explicit requests to create/update reusable skills.
 - Create or update skills only in this workspace at \`.opencode/skills/<name>/SKILL.md\`.
+- Do not write user-global/shared skills directly. Create a workspace skill and tell the user it can be promoted through Veslo when needed.
 - Keep the resulting skill concise and runnable.
 - Do not write company-global/shared skills in this flow.
 - Do not dump raw JSON, manifests, tool payloads, or full generated file contents unless explicitly requested.
@@ -487,14 +488,22 @@ function detectDelegateAgentFromText(text) {
 
   if (
     includesAny(value, [
-      " skill ",
-      " skills ",
       " skill.md ",
+      "/skill.md ",
       " .opencode/skills ",
+      " .opencode/skills/",
       " create skill ",
+      " create a skill ",
+      " create new skill ",
+      " write skill ",
+      " author skill ",
       " update skill ",
+      " update a skill ",
+      " reusable skill ",
+      " new skill ",
       " vytvor skill ",
       " vytvorit skill ",
+      " novy skill ",
       " uprav skill ",
       " skill creator ",
     ])

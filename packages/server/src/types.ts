@@ -171,10 +171,20 @@ export interface ApiErrorBody {
   details?: unknown;
 }
 
+export type ResourceOwnerKind = "workspace" | "user" | "organization" | "platform";
+
+export interface ResourceOwner {
+  kind: ResourceOwnerKind;
+  id: string;
+  label?: string;
+  root?: string;
+}
+
 export interface PluginItem {
   spec: string;
   source: "config" | "dir.project" | "dir.global";
   scope: "project" | "global";
+  owner?: ResourceOwner;
   path?: string;
 }
 
@@ -182,6 +192,7 @@ export interface McpItem {
   name: string;
   config: Record<string, unknown>;
   source: "config.project" | "config.global" | "config.remote";
+  owner?: ResourceOwner;
   disabledByTools?: boolean;
 }
 
@@ -190,6 +201,7 @@ export interface SkillItem {
   path: string;
   description: string;
   scope: "project" | "global";
+  owner?: ResourceOwner;
   trigger?: string;
   disableModelInvocation?: boolean;
   userInvocable?: boolean;
@@ -274,6 +286,7 @@ export type ResolvedWorkspaceSkill = {
   packageSha256: string;
   source: ManagedSkillSource;
   target: "workspace" | "personal-global";
+  owner?: ResourceOwner;
 };
 
 export type WorkspaceSkillMaterialization = {
@@ -283,6 +296,7 @@ export type WorkspaceSkillMaterialization = {
   versionId: string;
   packageSha256: string;
   target: "workspace" | "personal-global";
+  owner?: ResourceOwner;
 };
 
 export type WorkspaceSkillConflict = {
@@ -359,6 +373,7 @@ export interface CommandItem {
   model?: string | null;
   subtask?: boolean;
   scope: "workspace" | "global";
+  owner?: ResourceOwner;
 }
 
 export interface Actor {

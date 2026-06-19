@@ -1,11 +1,17 @@
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import { readdir } from "node:fs/promises";
-import type { PluginItem } from "./types.js";
+import { localUserResourceOwner, workspaceResourceOwner } from "./resource-owner.js";
+import type { PluginItem, ResourceOwner } from "./types.js";
 import { readJsoncFile, updateJsoncTopLevel } from "./jsonc.js";
 import { opencodeConfigPath, projectPluginsDir } from "./workspace-files.js";
 import { exists } from "./utils.js";
 import { validatePluginSpec } from "./validators.js";
+
+export type ListPluginsOptions = {
+  workspaceOwner?: ResourceOwner;
+  globalOwner?: ResourceOwner;
+};
 
 export function normalizePluginSpec(spec: string): string {
   const trimmed = spec.trim();
@@ -30,7 +36,12 @@ function pluginListFromConfig(config: Record<string, unknown>): string[] {
   return [];
 }
 
-async function listPluginFiles(dir: string, scope: "project" | "global", workspaceRoot?: string): Promise<PluginItem[]> {
+async function listPluginFiles(
+  dir: string,
+  scope: "project" | "global",
+  owner: ResourceOwner,
+  workspaceRoot?: string,
+): Promise<PluginItem[]> {
   if (!(await exists(dir))) return [];
   const entries = await readdir(dir, { withFileTypes: true });
   const items: PluginItem[] = [];
@@ -43,27 +54,35 @@ async function listPluginFiles(dir: string, scope: "project" | "global", workspa
       spec: `file://${absolutePath}`,
       source: scope === "project" ? "dir.project" : "dir.global",
       scope,
+      owner,
       path: relativePath,
     });
   }
   return items;
 }
 
-export async function listPlugins(workspaceRoot: string, includeGlobal: boolean): Promise<{ items: PluginItem[]; loadOrder: string[] }> {
+export async function listPlugins(
+  workspaceRoot: string,
+  includeGlobal: boolean,
+  options: ListPluginsOptions = {},
+): Promise<{ items: PluginItem[]; loadOrder: string[] }> {
   const { data: config } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
   const pluginSpecs = pluginListFromConfig(config);
+  const workspaceOwner = options.workspaceOwner ?? workspaceResourceOwner({ root: workspaceRoot });
+  const globalOwner = options.globalOwner ?? localUserResourceOwner();
   const items: PluginItem[] = pluginSpecs.map((spec) => ({
     spec,
     source: "config",
     scope: "project",
+    owner: workspaceOwner,
   }));
 
   const projectDir = projectPluginsDir(workspaceRoot);
-  items.push(...(await listPluginFiles(projectDir, "project", workspaceRoot)));
+  items.push(...(await listPluginFiles(projectDir, "project", workspaceOwner, workspaceRoot)));
 
   if (includeGlobal) {
     const globalDir = join(homedir(), ".config", "opencode", "plugins");
-    items.push(...(await listPluginFiles(globalDir, "global")));
+    items.push(...(await listPluginFiles(globalDir, "global", globalOwner)));
   }
 
   return {

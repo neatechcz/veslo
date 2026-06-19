@@ -12,36 +12,37 @@ import {
   resolveAutoDownloadFailureStatus,
   resolveAutoDownloadOptOutStatus,
   resolveNextUpdateDownloadRetry,
+  resolveUpdateAutoDownloadDefaultOffMigration,
   resolveUpdateAutoDownloadPreference,
   resolveUpdateStartupPreferences,
   shouldAutoCheckForUpdatesAt,
 } from "../../context/updater.js";
 
-test("auto-download defaults to enabled", () => {
-  assert.equal(DEFAULT_UPDATE_AUTO_DOWNLOAD, true);
+test("auto-download defaults to disabled", () => {
+  assert.equal(DEFAULT_UPDATE_AUTO_DOWNLOAD, false);
 
   createRoot((dispose) => {
     const updater = createUpdaterState();
-    assert.equal(updater.updateAutoDownload(), true);
+    assert.equal(updater.updateAutoDownload(), false);
     dispose();
   });
 });
 
 test("stored auto-download preference overrides the default", () => {
-  assert.equal(resolveUpdateAutoDownloadPreference(null), true);
-  assert.equal(resolveUpdateAutoDownloadPreference(""), true);
+  assert.equal(resolveUpdateAutoDownloadPreference(null), false);
+  assert.equal(resolveUpdateAutoDownloadPreference(""), false);
   assert.equal(resolveUpdateAutoDownloadPreference("1"), true);
   assert.equal(resolveUpdateAutoDownloadPreference("0"), false);
-  assert.equal(resolveUpdateAutoDownloadPreference("unexpected"), true);
+  assert.equal(resolveUpdateAutoDownloadPreference("unexpected"), false);
 });
 
-test("startup update preferences default to auto-check and auto-download enabled", () => {
+test("startup update preferences default to auto-check enabled and auto-download disabled", () => {
   assert.deepEqual(
     resolveUpdateStartupPreferences({
       storedAutoCheck: null,
       storedAutoDownload: null,
     }),
-    { autoCheck: true, autoDownload: true },
+    { autoCheck: true, autoDownload: false },
   );
 });
 
@@ -55,13 +56,13 @@ test("startup update preferences preserve explicit auto-download opt-out", () =>
   );
 });
 
-test("startup update preferences let enabled auto-download imply auto-check", () => {
+test("startup update preferences let explicit auto-download imply auto-check", () => {
   assert.deepEqual(
     resolveUpdateStartupPreferences({
       storedAutoCheck: "0",
       storedAutoDownload: null,
     }),
-    { autoCheck: true, autoDownload: true },
+    { autoCheck: false, autoDownload: false },
   );
   assert.deepEqual(
     resolveUpdateStartupPreferences({
@@ -69,6 +70,58 @@ test("startup update preferences let enabled auto-download imply auto-check", ()
       storedAutoDownload: "1",
     }),
     { autoCheck: true, autoDownload: true },
+  );
+});
+
+test("legacy auto-download default is migrated to manual download once", () => {
+  assert.deepEqual(
+    resolveUpdateAutoDownloadDefaultOffMigration({
+      storedAutoDownload: "1",
+      migrationComplete: false,
+    }),
+    {
+      storedAutoDownload: "0",
+      writeAutoDownload: true,
+      writeMigration: true,
+    },
+  );
+
+  assert.deepEqual(
+    resolveUpdateAutoDownloadDefaultOffMigration({
+      storedAutoDownload: null,
+      migrationComplete: false,
+    }),
+    {
+      storedAutoDownload: "0",
+      writeAutoDownload: true,
+      writeMigration: true,
+    },
+  );
+});
+
+test("auto-download migration preserves later explicit choices", () => {
+  assert.deepEqual(
+    resolveUpdateAutoDownloadDefaultOffMigration({
+      storedAutoDownload: "1",
+      migrationComplete: true,
+    }),
+    {
+      storedAutoDownload: "1",
+      writeAutoDownload: false,
+      writeMigration: false,
+    },
+  );
+
+  assert.deepEqual(
+    resolveUpdateAutoDownloadDefaultOffMigration({
+      storedAutoDownload: "0",
+      migrationComplete: false,
+    }),
+    {
+      storedAutoDownload: "0",
+      writeAutoDownload: false,
+      writeMigration: true,
+    },
   );
 });
 

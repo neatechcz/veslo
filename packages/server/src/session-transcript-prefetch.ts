@@ -115,6 +115,7 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
   const desiredLimitByWorkspace = new Map<string, Map<string, number>>();
   const cacheByWorkspace = new Map<string, Map<string, CacheEntry>>();
   const inFlightBySession = new Map<string, InFlightLoad>();
+  const invalidatedAtBySession = new Map<string, number>();
   const pumpByWorkspace = new Map<string, Promise<void>>();
 
   const workspaceCache = (workspaceId: string) => {
@@ -302,6 +303,7 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
     const existing = inFlightBySession.get(dedupeKey);
     if (existing && existing.limit >= limit) return existing.promise;
 
+    const loadStartedAt = nowMs();
     const run = (async () => {
       const raw = await options.loadTranscript({ workspaceId, sessionId, limit, directory: directory || undefined });
       const fetchedAt = Number.isFinite(raw.fetchedAt) ? Math.floor(raw.fetchedAt as number) : nowMs();
@@ -319,7 +321,8 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
         staleAt,
         source: raw.source,
       };
-      if (snapshot.source !== "unavailable") {
+      const invalidatedAt = invalidatedAtBySession.get(dedupeKey) ?? 0;
+      if (snapshot.source !== "unavailable" && invalidatedAt <= loadStartedAt) {
         setCachedSnapshot(snapshot, directory);
       }
       removeFromQueue(workspaceId, sessionId, directory);
@@ -409,6 +412,16 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
     },
 
     getWarmSnapshot,
+
+    invalidate(input: { workspaceId: string; sessionId: string; directory?: string | null }) {
+      const workspaceId = normalizeId(input.workspaceId);
+      const sessionId = normalizeId(input.sessionId);
+      const directory = normalizeDirectory(input.directory);
+      if (!workspaceId || !sessionId) return;
+      invalidatedAtBySession.set(inFlightKey(workspaceId, sessionId, directory), nowMs());
+      inFlightBySession.delete(inFlightKey(workspaceId, sessionId, directory));
+      workspaceCache(workspaceId).delete(cacheKey(sessionId, directory));
+    },
 
     listWarmSnapshots(input: { workspaceId: string; sessionIds?: string[]; directory?: string | null }) {
       const workspaceId = normalizeId(input.workspaceId);

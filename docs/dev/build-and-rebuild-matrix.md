@@ -8,7 +8,7 @@ Use this matrix to decide what must be rebuilt after a code change.
 | --- | --- | --- |
 | `packages/app/src` UI-only logic | `pnpm typecheck` plus focused app tests | Solid app compile and behavior checks |
 | `packages/app/src` with desktop-only behavior assumptions | Run through Tauri desktop runtime | Browser-only checks are not authoritative |
-| `packages/server/src` | `pnpm --filter openwork-server build:bin` | Orchestrator uses the built server binary, not TS sources |
+| `packages/server/src` | `pnpm --filter veslo-server build:bin` | Orchestrator uses the built server binary, not TS sources |
 | `packages/desktop/src-tauri` | Rebuild desktop runtime | Native commands and shell behavior live in Tauri |
 | `packages/e2e` | Re-run targeted WebdriverIO spec | Snapshots and runtime expectations changed |
 | `packages/orchestrator/src` | Re-run orchestrator tests and relevant host flows | Sidecar orchestration is CLI-owned |
@@ -26,7 +26,7 @@ pnpm --filter @neatech/veslo-ui test:unit
 ### Server binary
 
 ```bash
-pnpm --filter openwork-server build:bin
+pnpm --filter veslo-server build:bin
 ```
 
 ### Desktop runtime
