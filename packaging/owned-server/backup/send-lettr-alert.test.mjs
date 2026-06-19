@@ -180,6 +180,47 @@ test("buildCliAlertInput redacts secrets before building text and HTML bodies", 
   assert.deepEqual(buildLettrPayload(input).body.to, ["backup@example.test"]);
 });
 
+test("redactSecrets covers owned-server secret assignment shapes", async () => {
+  const { buildCliAlertInput, redactSecrets } = await importHelper();
+  const text = [
+    "DB_PASSWORD=den-secret",
+    "MYSQL_ROOT_PASSWORD=root-secret",
+    "DATABASE_URL=mysql://user:pass@host/db",
+    "AI_GATEWAY_DATABASE_URL=mysql://gateway:secret@ai-gateway-db:3306/veslo_ai_gateway",
+    "OPENAI_API_KEY=sk-secret",
+    "CUSTOM_API_KEY=custom-secret",
+    "OTHER_KEY=key-secret",
+    "SERVICE_CREDENTIAL=credential-secret",
+    "Harmless prose mentions password, token, secret, and api key without assignments.",
+  ].join("\n");
+
+  const expected = [
+    "DB_PASSWORD=[REDACTED]",
+    "MYSQL_ROOT_PASSWORD=[REDACTED]",
+    "DATABASE_URL=[REDACTED]",
+    "AI_GATEWAY_DATABASE_URL=[REDACTED]",
+    "OPENAI_API_KEY=[REDACTED]",
+    "CUSTOM_API_KEY=[REDACTED]",
+    "OTHER_KEY=[REDACTED]",
+    "SERVICE_CREDENTIAL=[REDACTED]",
+    "Harmless prose mentions password, token, secret, and api key without assignments.",
+  ].join("\n");
+
+  assert.equal(redactSecrets(text), expected);
+
+  const input = buildCliAlertInput({
+    env: {
+      LETTR_API_KEY: "lettr-key",
+      AUTH_EMAIL_ADDRESS: "auth@example.test",
+      AUTH_EMAIL_FROM_NAME: "Veslo Ops",
+      BACKUP_ALERT_EMAIL_RECIPIENTS: "backup@example.test",
+    },
+    text,
+  });
+  assert.equal(input.text, expected);
+  assert.doesNotMatch(input.html, /den-secret|root-secret|pass@host|sk-secret|credential-secret/);
+});
+
 function withTestTimeout(promise) {
   return Promise.race([
     promise,

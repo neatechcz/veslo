@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 const LETTR_ENDPOINT = "https://app.lettr.com/api/emails";
 const DEFAULT_BODY_MAX_BYTES = 64 * 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
-const SECRET_ASSIGNMENT_PATTERN = /\b([A-Z0-9_]*(?:TOKEN|SECRET)|LETTR_API_KEY|PASSWORD)(\s*=\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s\r\n]+)/gi;
+const ENV_ASSIGNMENT_PATTERN = /\b([A-Z_][A-Z0-9_]*)(\s*=\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s\r\n]+)/gi;
+const SECRET_KEY_PARTS = ["PASSWORD", "TOKEN", "SECRET", "API_KEY", "KEY", "CREDENTIAL", "DATABASE_URL"];
 
 export function parseRecipients(value) {
   if (!value) return [];
@@ -127,7 +128,10 @@ export function buildCliAlertInput({ env = process.env, text = "" } = {}) {
 }
 
 export function redactSecrets(value) {
-  return String(value).replace(SECRET_ASSIGNMENT_PATTERN, "$1$2[REDACTED]");
+  return String(value).replace(ENV_ASSIGNMENT_PATTERN, (match, key, separator) => {
+    if (!shouldRedactEnvAssignment(key)) return match;
+    return `${key}${separator}[REDACTED]`;
+  });
 }
 
 async function main() {
@@ -144,6 +148,11 @@ function positiveInteger(value, name) {
     throw new Error(`${name} must be a positive integer`);
   }
   return parsed;
+}
+
+function shouldRedactEnvAssignment(key) {
+  const normalizedKey = String(key).toUpperCase();
+  return SECRET_KEY_PARTS.some((part) => normalizedKey.includes(part));
 }
 
 function escapeHtml(value) {
