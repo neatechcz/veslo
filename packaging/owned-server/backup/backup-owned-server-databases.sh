@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -21,6 +22,7 @@ final_dir="$backup_root/$timestamp"
 
 failure_step=""
 failure_message=""
+node_alert_available=0
 
 strip_simple_quotes() {
   local value="$1"
@@ -85,7 +87,43 @@ remove_raw_staged_sql_artifacts() {
     return 0
   fi
 
-  find "$staging_dir" -type f -name '*.sql' -exec rm -f {} +
+  local raw_path
+  while IFS= read -r -d '' raw_path; do
+    if ! rm -f -- "$raw_path"; then
+      return 1
+    fi
+  done < <(find "$staging_dir" -type f -name '*.sql' -print0)
+}
+
+secure_dir() {
+  chmod 0700 "$1"
+}
+
+secure_file() {
+  chmod 0600 "$1"
+}
+
+secure_backup_tree() {
+  local dir="$1"
+
+  if [[ ! -d "$dir" ]]; then
+    return 0
+  fi
+
+  find "$dir" -type d -exec chmod 0700 {} +
+  find "$dir" -type f -exec chmod 0600 {} +
+}
+
+validate_node_runtime() {
+  if ! command -v "$node_bin" >/dev/null 2>&1; then
+    echo "Required NODE_BIN is not executable or not found: $node_bin"
+    return 1
+  fi
+
+  if ! "$node_bin" -e 'if (typeof fetch !== "function") { process.exit(1); }' >/dev/null 2>&1; then
+    echo "Required NODE_BIN must be Node 18+ (Node.js 18 or newer) with global fetch support: $node_bin"
+    return 1
+  fi
 }
 
 send_failure_alert() {
@@ -99,6 +137,11 @@ send_failure_alert() {
   local alert_AUTH_EMAIL_FROM_NAME
   local alert_BACKUP_ALERT_EMAIL_RECIPIENTS
   local alert_AI_GATEWAY_ALERT_EMAIL_RECIPIENTS
+
+  if (( node_alert_available != 1 )); then
+    echo "Backup failure alert not sent because NODE_BIN is unavailable or lacks global fetch support: $node_bin" >&2
+    return 0
+  fi
 
   host="$(hostname 2>/dev/null || printf 'unknown')"
   subject="Veslo backup failed on $host at $timestamp"
@@ -142,14 +185,21 @@ fail_backup() {
   echo "Backup failed during $failure_step: $failure_message" >&2
 
   if [[ -d "$staging_dir" ]]; then
-    mkdir -p "$backup_root/.failed"
-    rm -rf "$failed_dir"
-    if ! remove_raw_staged_sql_artifacts; then
-      echo "Failed to remove raw SQL files from failed staging artifacts." >&2
-    elif mv "$staging_dir" "$failed_dir"; then
+    if ! mkdir -p "$backup_root/.failed"; then
+      echo "Failed to prepare failed artifacts directory: $backup_root/.failed" >&2
+    elif ! secure_dir "$backup_root/.failed"; then
+      echo "Failed to harden failed artifacts directory permissions: $backup_root/.failed" >&2
+    elif ! rm -rf -- "$failed_dir"; then
+      echo "Failed to remove previous failed artifacts directory: $failed_dir" >&2
+    elif ! remove_raw_staged_sql_artifacts; then
+      echo "Failed to remove raw SQL files from failed staging artifacts; not preserving failed artifacts." >&2
+    elif ! mv "$staging_dir" "$failed_dir"; then
+      echo "Failed to move staging artifacts to $failed_dir." >&2
+    elif ! secure_backup_tree "$failed_dir"; then
+      echo "Failed to harden failed artifact permissions: $failed_dir" >&2
       artifacts_path="$failed_dir"
     else
-      echo "Failed to move staging artifacts to $failed_dir." >&2
+      artifacts_path="$failed_dir"
     fi
   fi
 
@@ -157,8 +207,22 @@ fail_backup() {
   exit 1
 }
 
+node_preflight_message=""
+if ! node_preflight_message="$(validate_node_runtime)"; then
+  failure_step="preflight"
+  failure_message="$node_preflight_message"
+  echo "Backup failed during $failure_step: $failure_message" >&2
+  send_failure_alert ""
+  exit 1
+fi
+node_alert_available=1
+
 if ! mkdir -p "$backup_root" "$(dirname "$lock_file")"; then
   fail_backup "prepare" "Failed to create backup root or lock directory"
+fi
+
+if ! secure_dir "$backup_root"; then
+  fail_backup "prepare" "Failed to harden backup root permissions: $backup_root"
 fi
 
 if ! exec 9>"$lock_file"; then
@@ -177,12 +241,20 @@ if ! mkdir -p "$backup_root/.in-progress" "$backup_root/.failed"; then
   fail_backup "prepare" "Failed to create backup staging directories"
 fi
 
+if ! secure_dir "$backup_root/.in-progress" || ! secure_dir "$backup_root/.failed"; then
+  fail_backup "prepare" "Failed to harden backup staging directory permissions"
+fi
+
 if [[ -e "$staging_dir" || -e "$final_dir" ]]; then
   fail_backup "prepare" "Backup timestamp already exists: $timestamp"
 fi
 
 if ! mkdir -p "$staging_dir"; then
   fail_backup "prepare" "Failed to create staging directory: $staging_dir"
+fi
+
+if ! secure_dir "$staging_dir"; then
+  fail_backup "prepare" "Failed to harden staging directory permissions: $staging_dir"
 fi
 
 dump_compress_verify() {
@@ -202,8 +274,16 @@ dump_compress_verify() {
     fail_backup "$output_name dump" "Failed to dump $service_name/$database_name"
   fi
 
+  if ! secure_file "$raw_path"; then
+    fail_backup "$output_name permissions" "Failed to harden raw dump permissions: $raw_path"
+  fi
+
   if ! "$zstd_bin" -3 -q -c "$raw_path" > "$compressed_path"; then
     fail_backup "$output_name compression" "Failed to compress $raw_path with zstd"
+  fi
+
+  if ! secure_file "$compressed_path"; then
+    fail_backup "$output_name permissions" "Failed to harden compressed dump permissions: $compressed_path"
   fi
 
   if ! "$zstd_bin" -t "$compressed_path" >/dev/null; then
@@ -221,7 +301,13 @@ dump_compress_verify() {
     fail_backup "$output_name checksum" "Failed to write checksum for $compressed_name"
   fi
 
-  rm -f "$raw_path"
+  if ! secure_file "$checksum_path"; then
+    fail_backup "$output_name permissions" "Failed to harden checksum permissions: $checksum_path"
+  fi
+
+  if ! rm -f -- "$raw_path"; then
+    fail_backup "$output_name raw SQL cleanup" "Failed to remove raw SQL dump after compression: $raw_path"
+  fi
 }
 
 json_file_entry() {
@@ -290,6 +376,10 @@ JSON
   if ! mv "$manifest_tmp" "$staging_dir/manifest.json"; then
     fail_backup "manifest" "Failed to move backup manifest into place"
   fi
+
+  if ! secure_file "$staging_dir/manifest.json"; then
+    fail_backup "manifest" "Failed to harden backup manifest permissions"
+  fi
 }
 
 prune_old_successful_sets() {
@@ -317,7 +407,7 @@ prune_old_successful_sets() {
   fi
 
   for set_name in "${successful_sets[@]:0:$prune_count}"; do
-    if ! rm -rf "$backup_root/$set_name"; then
+    if ! rm -rf -- "$backup_root/$set_name"; then
       fail_backup "retention" "Failed to delete old successful backup set: $backup_root/$set_name"
     fi
   done
@@ -329,6 +419,10 @@ write_manifest
 
 if ! mv "$staging_dir" "$final_dir"; then
   fail_backup "promote" "Failed to promote staging backup to $final_dir"
+fi
+
+if ! secure_backup_tree "$final_dir"; then
+  fail_backup "promote" "Failed to harden final backup permissions: $final_dir"
 fi
 
 prune_old_successful_sets

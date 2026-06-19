@@ -25,6 +25,7 @@ Defaults:
 COMPOSE_FILE=packaging/owned-server/compose.yml
 ENV_FILE=/srv/veslo/env/production.env
 DOCKER_COMPOSE="docker compose"
+NODE_BIN=node
 ```
 
 On the current owned server, use `sudo docker compose`:
@@ -45,12 +46,14 @@ The full owned-server rehearsal procedure lives in `packaging/owned-server/rehea
 
 ## Automated Daily Backup
 
-Install `zstd` before enabling the timer. The backup runner requires `zstd` for compression and integrity checks:
+Install `zstd` and Node.js 18 or newer before enabling the timer. The backup runner requires `zstd` for compression and integrity checks, and it requires Node.js 18+ with global `fetch` support for Lettr failure alerts:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y zstd
+sudo apt-get install -y zstd nodejs
 ```
+
+If the host `node` is not Node.js 18+, set `NODE_BIN` in `/etc/default/veslo-owned-server-backup` to an executable Node.js 18+ binary provided by the server image or repository runtime. The runner validates `NODE_BIN` before any database dump starts. If that preflight fails, no raw dump artifacts are created and the journal logs that the failure email could not be sent because the alert runtime itself is unavailable.
 
 Set `/srv/veslo/env/production.env` as the authoritative source for `BACKUP_ALERT_EMAIL_RECIPIENTS`, and populate it with all current admins who must receive failure emails. The backup alert path reads `ENV_FILE` and reuses the existing Lettr env values from the same production env file:
 

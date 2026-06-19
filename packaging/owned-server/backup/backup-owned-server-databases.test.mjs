@@ -26,6 +26,10 @@ function shellSingleQuote(value) {
   return `'${String(value).replaceAll("'", "'\\''")}'`;
 }
 
+function mode(stats) {
+  return stats.mode & 0o777;
+}
+
 async function writeSuccessManifest(dir, timestamp) {
   await writeFile(
     path.join(dir, "manifest.json"),
@@ -169,6 +173,15 @@ exit 0
     path.join(bin, "node"),
     `#!/usr/bin/env bash
 set -euo pipefail
+case "\${1:-}" in
+  -e|--eval)
+    if [[ "\${FAKE_NODE_NO_FETCH:-0}" == "1" ]]; then
+      echo "simulated node without fetch" >&2
+      exit 42
+    fi
+    exit 0
+    ;;
+esac
 {
   printf '%s\\n' "\${BACKUP_ALERT_SUBJECT:-missing subject}"
   cat
@@ -177,9 +190,55 @@ set -euo pipefail
   );
 
   await writeExecutable(
+    path.join(bin, "mkdir"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${FAIL_FAILED_MKDIR_SECOND:-0}" == "1" ]]; then
+  for arg in "$@"; do
+    case "$arg" in
+      */.failed)
+        marker="\${FAILED_MKDIR_MARKER:?missing FAILED_MKDIR_MARKER}"
+        if [[ -e "$marker" ]]; then
+          echo "simulated failed artifact mkdir failure" >&2
+          exit 76
+        fi
+        : > "$marker"
+        ;;
+    esac
+  done
+fi
+exec /bin/mkdir "$@"
+`,
+  );
+
+  await writeExecutable(
     path.join(bin, "rm"),
     `#!/usr/bin/env bash
 set -euo pipefail
+if [[ "\${FAIL_RAW_SQL_RM_ONCE:-0}" == "1" ]]; then
+  for arg in "$@"; do
+    case "$arg" in
+      *.sql)
+        marker="\${RAW_SQL_RM_FAIL_MARKER:?missing RAW_SQL_RM_FAIL_MARKER}"
+        if [[ ! -e "$marker" ]]; then
+          : > "$marker"
+          echo "simulated raw SQL cleanup failure" >&2
+          exit 74
+        fi
+        ;;
+    esac
+  done
+fi
+if [[ "\${FAIL_FAILED_DIR_RM:-0}" == "1" ]]; then
+  for arg in "$@"; do
+    case "$arg" in
+      */.failed/*)
+        echo "simulated failed artifact directory cleanup failure" >&2
+        exit 72
+        ;;
+    esac
+  done
+fi
 if [[ "\${FAIL_RETENTION_RM:-0}" == "1" ]]; then
   for arg in "$@"; do
     case "$arg" in
@@ -229,6 +288,11 @@ appendFileSync(
     wrapper,
     `#!/usr/bin/env bash
 set -euo pipefail
+case "\${1:-}" in
+  -e|--eval)
+    exec ${shellSingleQuote(process.execPath)} "$@"
+    ;;
+esac
 exec ${shellSingleQuote(process.execPath)} ${shellSingleQuote(captureModule)} "$@"
 `,
   );
@@ -236,10 +300,13 @@ exec ${shellSingleQuote(process.execPath)} ${shellSingleQuote(captureModule)} "$
   return wrapper;
 }
 
-function runScript(env, { timeoutMs = 5000 } = {}) {
+function runScript(env, { timeoutMs = 5000, umask = null } = {}) {
   return new Promise((resolve) => {
     let timedOut = false;
-    const child = spawn("bash", [runner], {
+    const args = umask
+      ? ["-c", `umask ${umask}; exec bash "$1"`, "veslo-backup-test", runner]
+      : [runner];
+    const child = spawn("bash", args, {
       cwd: repoRoot,
       env: {
         HOME: tmpdir(),
@@ -304,8 +371,10 @@ async function createHarness(t) {
       COMPOSE_FILE: "packaging/owned-server/compose.yml",
       DOCKER_COMPOSE: path.join(bin, "fake-compose"),
       ENV_FILE: envFile,
+      FAILED_MKDIR_MARKER: path.join(root, "failed-mkdir-marker"),
       NODE_BIN: path.join(bin, "node"),
       PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`,
+      RAW_SQL_RM_FAIL_MARKER: path.join(root, "raw-rm-fail-marker"),
       ZSTD_BIN: path.join(bin, "zstd"),
     },
     root,
@@ -358,6 +427,37 @@ test("runner creates a complete compressed backup set for both databases", async
   await assert.rejects(readFile(alertLog, "utf8"), { code: "ENOENT" });
 });
 
+test("runner hardens backup directories and files even when launched with permissive umask", async (t) => {
+  const { env, root } = await createHarness(t);
+  const timestamp = "20260619T021000Z";
+
+  const result = await runScript(
+    {
+      ...env,
+      BACKUP_TIMESTAMP: timestamp,
+    },
+    { umask: "000" },
+  );
+
+  assert.equal(result.code, 0, result.stderr);
+
+  const setDir = path.join(root, timestamp);
+  assert.equal(mode(await stat(root)), 0o700);
+  assert.equal(mode(await stat(path.join(root, ".in-progress"))), 0o700);
+  assert.equal(mode(await stat(path.join(root, ".failed"))), 0o700);
+  assert.equal(mode(await stat(setDir)), 0o700);
+
+  for (const fileName of [
+    "ai-gateway.sql.zst",
+    "ai-gateway.sql.zst.sha256",
+    "den.sql.zst",
+    "den.sql.zst.sha256",
+    "manifest.json",
+  ]) {
+    assert.equal(mode(await stat(path.join(setDir, fileName))), 0o600, `${fileName} permissions`);
+  }
+});
+
 test("retention keeps only the newest two successful timestamp backup sets after a successful new run", async (t) => {
   const { alertLog, env, root } = await createHarness(t);
 
@@ -405,6 +505,42 @@ test("missing zstd exits non-zero and invokes the failure alert helper", async (
   assert.match(alert, /Host:/);
   assert.match(alert, /Timestamp: 20260619T030000Z/);
   assert.match(alert, /zstd/);
+});
+
+test("missing node fails before dumps and logs that the alert runtime is unavailable", async (t) => {
+  const { composeLog, env, root } = await createHarness(t);
+  const timestamp = "20260619T030500Z";
+
+  const result = await runScript({
+    ...env,
+    BACKUP_TIMESTAMP: timestamp,
+    NODE_BIN: path.join(root, "missing-node"),
+  });
+
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, /Node|NODE_BIN|fetch/i);
+  assert.match(result.stderr, /alert/i);
+  await assert.rejects(stat(path.join(root, timestamp)), { code: "ENOENT" });
+  await assert.rejects(stat(path.join(root, ".in-progress", timestamp)), { code: "ENOENT" });
+  await assert.rejects(readFile(composeLog, "utf8"), { code: "ENOENT" });
+});
+
+test("node without fetch fails before dumps and reports Node 18 requirement", async (t) => {
+  const { composeLog, env, root } = await createHarness(t);
+  const timestamp = "20260619T030600Z";
+
+  const result = await runScript({
+    ...env,
+    BACKUP_TIMESTAMP: timestamp,
+    FAKE_NODE_NO_FETCH: "1",
+  });
+
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, /fetch/i);
+  assert.match(result.stderr, /Node 18/i);
+  await assert.rejects(stat(path.join(root, timestamp)), { code: "ENOENT" });
+  await assert.rejects(stat(path.join(root, ".in-progress", timestamp)), { code: "ENOENT" });
+  await assert.rejects(readFile(composeLog, "utf8"), { code: "ENOENT" });
 });
 
 test("failure alert env parser preserves unquoted spaces and passes alert keys", async (t) => {
@@ -506,6 +642,32 @@ test("failing second database dump leaves no successful set and moves staging to
   assert.match(alert, /ai-gateway/);
 });
 
+test("failed artifact directories are private when launched with permissive umask", async (t) => {
+  const { env, root } = await createHarness(t);
+  const timestamp = "20260619T040500Z";
+
+  const result = await runScript(
+    {
+      ...env,
+      BACKUP_TIMESTAMP: timestamp,
+      FAIL_AI_GATEWAY_DUMP: "1",
+    },
+    { umask: "000" },
+  );
+
+  assert.notEqual(result.code, 0);
+
+  const failedDir = path.join(root, ".failed", timestamp);
+  assert.equal(mode(await stat(path.join(root, ".failed"))), 0o700);
+  assert.equal(mode(await stat(failedDir)), 0o700);
+  for (const fileName of await readdir(failedDir)) {
+    const fileStat = await stat(path.join(failedDir, fileName));
+    if (fileStat.isFile()) {
+      assert.equal(mode(fileStat), 0o600, `${fileName} permissions`);
+    }
+  }
+});
+
 test("compression failure preserves failed artifacts without raw SQL dumps", async (t) => {
   const { alertLog, env, root } = await createHarness(t);
   const timestamp = "20260619T041000Z";
@@ -532,6 +694,76 @@ test("compression failure preserves failed artifacts without raw SQL dumps", asy
   assert.match(alert, /Veslo backup failed/);
   assert.match(alert, /Timestamp: 20260619T041000Z/);
   assert.match(alert, /compression/);
+});
+
+test("raw SQL cleanup failure after compression alerts and preserves sanitized failed artifacts", async (t) => {
+  const { alertLog, env, root } = await createHarness(t);
+  const timestamp = "20260619T041500Z";
+
+  const result = await runScript({
+    ...env,
+    BACKUP_TIMESTAMP: timestamp,
+    FAIL_RAW_SQL_RM_ONCE: "1",
+  });
+
+  assert.notEqual(result.code, 0);
+  await assert.rejects(stat(path.join(root, timestamp)), { code: "ENOENT" });
+  await assert.rejects(stat(path.join(root, ".in-progress", timestamp)), { code: "ENOENT" });
+
+  const failedDir = path.join(root, ".failed", timestamp);
+  const failedEntries = await readdir(failedDir);
+  assert.ok(failedEntries.includes("den.sql.zst"));
+  assert.equal(
+    failedEntries.filter((entry) => entry.endsWith(".sql")).length,
+    0,
+    `failed artifacts should not preserve raw SQL files: ${failedEntries.join(", ")}`,
+  );
+
+  const alert = await readFile(alertLog, "utf8");
+  assert.match(alert, /raw SQL cleanup/i);
+  assert.match(alert, /Timestamp: 20260619T041500Z/);
+  assert.match(alert, /\.failed\/20260619T041500Z/);
+});
+
+test("failed artifact cleanup rm failure is logged without blocking failure alert", async (t) => {
+  const { alertLog, env, root } = await createHarness(t);
+  const timestamp = "20260619T042000Z";
+  await mkdir(path.join(root, ".failed", timestamp), { recursive: true });
+
+  const result = await runScript({
+    ...env,
+    BACKUP_TIMESTAMP: timestamp,
+    FAIL_AI_GATEWAY_DUMP: "1",
+    FAIL_FAILED_DIR_RM: "1",
+  });
+
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, /failed artifact/i);
+
+  const alert = await readFile(alertLog, "utf8");
+  assert.match(alert, /Veslo backup failed/);
+  assert.match(alert, /Timestamp: 20260619T042000Z/);
+  assert.match(alert, /ai-gateway/);
+});
+
+test("failed artifact mkdir failure is logged without blocking failure alert", async (t) => {
+  const { alertLog, env, root } = await createHarness(t);
+  const timestamp = "20260619T042500Z";
+
+  const result = await runScript({
+    ...env,
+    BACKUP_TIMESTAMP: timestamp,
+    FAIL_AI_GATEWAY_DUMP: "1",
+    FAIL_FAILED_MKDIR_SECOND: "1",
+  });
+
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, /failed artifact/i);
+
+  const alert = await readFile(alertLog, "utf8");
+  assert.match(alert, /Veslo backup failed/);
+  assert.match(alert, /Timestamp: 20260619T042500Z/);
+  assert.match(alert, /ai-gateway/);
 });
 
 test("missing checksum metadata fails before promotion and alerts", async (t) => {

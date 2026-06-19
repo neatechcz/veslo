@@ -42,6 +42,7 @@ test("backup runbook documents automated daily backup operations", async () => {
     [
       "backup-owned-server-databases.sh",
       "zstd",
+      "Node.js 18",
       "/srv/veslo/backups",
       "BACKUP_ALERT_EMAIL_RECIPIENTS",
       "systemctl status veslo-owned-server-backup.timer",
