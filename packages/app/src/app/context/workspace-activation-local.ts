@@ -47,7 +47,12 @@ export type WorkspaceLocalActivationDeps = {
   engine: () => EngineInfo | null;
   resolveEngineRuntime: () => EngineInfo["runtime"];
   localRuntimeLifecycle: ReturnType<typeof createLocalRuntimeLifecycle>;
-  startHost: (opts?: { workspacePath?: string; navigate?: boolean }) => Promise<boolean>;
+  startHost: (opts?: {
+    workspacePath?: string;
+    workspaceId?: string;
+    workspaceName?: string | null;
+    navigate?: boolean;
+  }) => Promise<boolean>;
   syncWorkspaceSkillMaterializationBeforeRuntime: (
     workspace: WorkspaceInfo,
     options: { reason: string },
@@ -350,7 +355,12 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
       deps.wsLog("[workspace:activate] STEP 4a.5 — startHost (no reuse)...", { path: next.path });
       const startHostAt = Date.now();
       const ok = await deps.withTimeoutOrThrow(
-        deps.startHost({ workspacePath: next.path, navigate: false }),
+        deps.startHost({
+          workspacePath: next.path,
+          workspaceId: next.id,
+          workspaceName: next.displayName?.trim() || next.name?.trim() || null,
+          navigate: false,
+        }),
         { timeoutMs: deps.startHostTimeoutMs, label: "startHost" },
       );
       deps.wsLog("[workspace:activate] STEP 4a.5 — startHost DONE", { ok, ms: Date.now() - startHostAt });

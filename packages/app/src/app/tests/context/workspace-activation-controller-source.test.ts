@@ -111,6 +111,49 @@ test("browse policy never falls back to activation for local passive browse", as
   assert.deepEqual(calls, ["browse"]);
 });
 
+test("new private pending draft origins require runtime activation", async () => {
+  for (const origin of [
+    "app:new-private-existing-pending-draft",
+    "app:new-private-scratch-workspace",
+  ]) {
+    assert.equal(
+      isPassiveLocalBrowseActivationOrigin(origin),
+      false,
+      `${origin} must not use passive local browse before first send`,
+    );
+
+    const calls: string[] = [];
+    const ok = await activateWorkspaceWithBrowsePolicy(
+      {
+        workspaces: () => [{ id: "ws-private", workspaceType: "local" }],
+        browseWorkspace: async () => {
+          calls.push("browse");
+          return false;
+        },
+        activateWorkspace: async () => {
+          calls.push("activate");
+          return true;
+        },
+      },
+      "ws-private",
+      { origin },
+    );
+
+    assert.equal(ok, true);
+    assert.deepEqual(calls, ["activate"]);
+  }
+});
+
+test("remote to local activation starts host with the target workspace id", () => {
+  const localActivationSource = readContextSource("workspace-activation-local.ts");
+
+  assert.match(
+    localActivationSource,
+    /deps\.startHost\(\{[\s\S]*workspacePath: next\.path,[\s\S]*workspaceId: next\.id,[\s\S]*navigate: false,[\s\S]*\}\)/,
+    "startHost must use the workspace being activated when reconnecting from a stale route",
+  );
+});
+
 test("browse policy keeps activation for remote or explicit runtime activation", async () => {
   const remoteCalls: string[] = [];
   const remoteOk = await activateWorkspaceWithBrowsePolicy(

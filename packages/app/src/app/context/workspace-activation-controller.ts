@@ -8,8 +8,6 @@ export type WorkspaceSwitchOverlayTarget = {
 };
 
 const NON_BLOCKING_LOCAL_BROWSE_ORIGINS = new Set([
-  "app:new-private-existing-pending-draft",
-  "app:new-private-scratch-workspace",
   "app:open-directory-session-from-picker",
   "app:open-pending-directory-draft-workspace",
   "composer-target:chat",

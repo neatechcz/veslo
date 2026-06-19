@@ -196,11 +196,19 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
   async function startHost(
     options: Pick<
       LocalRuntimeReconnectOptions,
-      "workspacePath" | "workspaceId" | "reason" | "connectMode" | "navigate"
+      "workspacePath" | "workspaceId" | "workspaceName" | "reason" | "connectMode" | "navigate"
     >,
   ) {
     const runtime = deps.resolveEngineRuntime();
     const info = await deps.startEngine(options.workspacePath, buildStartOptions(runtime));
+    if (runtime === "veslo-orchestrator" && options.workspaceId?.trim()) {
+      await activateOrchestratorWorkspace(options);
+      const nextInfo = await withTimeoutOrThrow(
+        deps.readEngineInfo(options.workspaceId, options.workspacePath),
+        { timeoutMs: 30_000, label: "engine_info" },
+      );
+      return await reconnectFromEngineSnapshot(nextInfo, options);
+    }
     return await reconnectFromEngineSnapshot(info, options);
   }
 

@@ -7,7 +7,7 @@ const source = readFileSync(new URL("../../stores/engine-store.ts", import.meta.
 test("startHost clears the stale live client before launching a different local host", () => {
   assert.match(
     source,
-    /async function startHost\(optionsOverride\?: \{ workspacePath\?: string; navigate\?: boolean \}\) \{[\s\S]*deps\.setClient\(null\);[\s\S]*deps\.setConnectedVersion\(null\);[\s\S]*deps\.setSelectedSessionId\(null\);[\s\S]*deps\.setMessages\(\[\]\);[\s\S]*deps\.setTodos\(\[\]\);[\s\S]*deps\.setPendingPermissions\(\[\]\);[\s\S]*deps\.setSessionStatusById\(\{\}\);[\s\S]*deps\.setSseConnected\(false\);[\s\S]*const ok = await localRuntimeLifecycle\.startHost\(/s,
+    /async function startHost\(optionsOverride\?: \{[\s\S]*workspacePath\?: string;[\s\S]*navigate\?: boolean;[\s\S]*\}\) \{[\s\S]*deps\.setClient\(null\);[\s\S]*deps\.setConnectedVersion\(null\);[\s\S]*deps\.setSelectedSessionId\(null\);[\s\S]*deps\.setMessages\(\[\]\);[\s\S]*deps\.setTodos\(\[\]\);[\s\S]*deps\.setPendingPermissions\(\[\]\);[\s\S]*deps\.setSessionStatusById\(\{\}\);[\s\S]*deps\.setSseConnected\(false\);[\s\S]*const ok = await localRuntimeLifecycle\.startHost\(/s,
     "startHost must drop the previous workspace client before delegating engine start to the shared helper so session opens cannot race against a stale engine connection",
   );
 });

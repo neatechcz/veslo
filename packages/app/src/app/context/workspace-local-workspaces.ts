@@ -32,7 +32,12 @@ export type WorkspaceLocalWorkspacesDeps = {
   syncActiveWorkspaceId: (id?: string) => void;
   routing: WorkspaceRouting;
   activateWorkspace: (workspaceId: string, options: WorkspaceActivationOptions) => Promise<boolean>;
-  startHost: (opts?: { workspacePath?: string; navigate?: boolean }) => Promise<boolean>;
+  startHost: (opts?: {
+    workspacePath?: string;
+    workspaceId?: string;
+    workspaceName?: string | null;
+    navigate?: boolean;
+  }) => Promise<boolean>;
   openSessionState: {
     loadSessions: (scopeRoot?: string) => Promise<void>;
     setView: (value: any) => void;
@@ -99,7 +104,7 @@ export function createWorkspaceLocalWorkspaces(deps: WorkspaceLocalWorkspacesDep
     const hasClient = Boolean(deps.routing.client(workspaceId));
     const ok = hasClient
       ? await deps.activateWorkspace(workspaceId, { origin: "workspace:activate-fresh-local" })
-      : await deps.startHost({ workspacePath, navigate: false });
+      : await deps.startHost({ workspacePath, workspaceId, navigate: false });
     if (!ok) return false;
     await openEmptySession(deps.activeWorkspaceRoot().trim() || workspacePath);
     return true;
@@ -268,7 +273,12 @@ export function createWorkspaceLocalWorkspaces(deps: WorkspaceLocalWorkspacesDep
       return false;
     }
 
-    const started = await deps.startHost({ workspacePath: workspace.path, navigate: false });
+    const started = await deps.startHost({
+      workspacePath: workspace.path,
+      workspaceId: workspace.id,
+      workspaceName: workspace.displayName?.trim() || workspace.name?.trim() || null,
+      navigate: false,
+    });
     if (!started) return false;
     return Boolean(deps.routing.client(id));
   }

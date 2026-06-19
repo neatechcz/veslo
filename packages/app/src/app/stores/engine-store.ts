@@ -179,7 +179,12 @@ export function createEngineStore(deps: EngineStoreDeps) {
     }
   }
 
-  async function startHost(optionsOverride?: { workspacePath?: string; navigate?: boolean }) {
+  async function startHost(optionsOverride?: {
+    workspacePath?: string;
+    workspaceId?: string;
+    workspaceName?: string | null;
+    navigate?: boolean;
+  }) {
     if (CLOUD_ONLY_MODE) {
       return deps.blockLocalAction("cloud_only_host_mode_removed", "Local host mode has been removed.");
     }
@@ -256,11 +261,18 @@ export function createEngineStore(deps: EngineStoreDeps) {
         deps.setAuthorizedDirs([dir]);
       }
 
+      const explicitWorkspaceId = optionsOverride?.workspaceId?.trim() ?? "";
       const activeLocalWorkspace =
         deps.activeWorkspaceInfo()?.workspaceType === "local" ? deps.activeWorkspaceInfo() : null;
+      const explicitWorkspaceName = optionsOverride?.workspaceName?.trim() ?? "";
       const ok = await localRuntimeLifecycle.startHost({
         workspacePath: dir,
-        workspaceId: activeLocalWorkspace?.id,
+        workspaceId: explicitWorkspaceId || activeLocalWorkspace?.id,
+        workspaceName:
+          explicitWorkspaceName ||
+          activeLocalWorkspace?.displayName?.trim() ||
+          activeLocalWorkspace?.name?.trim() ||
+          null,
         reason: "host-start",
         navigate: optionsOverride?.navigate ?? true,
       });

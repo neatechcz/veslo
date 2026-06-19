@@ -200,7 +200,7 @@ test("startHost can reconnect quietly without routing through the shared server 
   ]);
 });
 
-test("startHost reconnects through workspace-scoped engine info for orchestrator runtime", async () => {
+test("startHost activates the target workspace before reconnecting an orchestrator runtime", async () => {
   const harness = createHarness({
     runtime: "veslo-orchestrator",
     startInfo: makeEngineInfo({
@@ -225,6 +225,8 @@ test("startHost reconnects through workspace-scoped engine info for orchestrator
   assert.equal(ok, true);
   assert.deepEqual(harness.calls, [
     "startEngine:/tmp/new:veslo-orchestrator",
+    "activateOrchestrator:/tmp/new:",
+    "activateHost:/tmp/new",
     "readEngineInfo",
     "setEngine:/tmp/new",
     "setEngineAuth:demo-user",

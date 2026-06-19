@@ -42,7 +42,12 @@ export interface ConfigStoreDeps {
   setCreateRemoteWorkspaceOpen: (open: boolean) => void;
   markOnboardingComplete: () => void;
   activateFreshLocalWorkspace: (id: string | null, folder: string) => Promise<boolean>;
-  startHost: (opts?: { workspacePath?: string; navigate?: boolean }) => Promise<boolean>;
+  startHost: (opts?: {
+    workspacePath?: string;
+    workspaceId?: string;
+    workspaceName?: string | null;
+    navigate?: boolean;
+  }) => Promise<boolean>;
   engineSource: () => string;
   engineCustomBinPath?: () => string;
   engineStop: () => Promise<EngineInfo>;
@@ -258,6 +263,8 @@ export function createConfigStore(deps: ConfigStoreDeps) {
 
       const started = await deps.startHost({
         workspacePath: root,
+        workspaceId: workspace.id,
+        workspaceName: workspace.displayName?.trim() || workspace.name?.trim() || null,
         navigate: optionsOverride?.navigate ?? false,
       });
       if (!started) {
