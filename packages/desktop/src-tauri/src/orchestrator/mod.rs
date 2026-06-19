@@ -76,6 +76,7 @@ pub struct OrchestratorSpawnOptions {
     pub opencode_password: Option<String>,
     pub lifecycle_token: Option<String>,
     pub cors: Option<String>,
+    pub veslo_server_state_path: Option<String>,
     /// VSLO-171 F3Ú9: max concurrent engines in pool (1-16). None = orchestrator default.
     pub max_engines: Option<u32>,
     /// VSLO-171 F3Ú9: idle suspend threshold in ms. None = orchestrator default.
@@ -480,8 +481,8 @@ pub fn spawn_orchestrator_daemon(
 #[cfg(test)]
 mod tests {
     use super::{
-        request_orchestrator_shutdown, resolve_manifest_opencode_version,
-        resolve_opencode_managed_deps_manifest,
+        build_orchestrator_env_overrides, request_orchestrator_shutdown,
+        resolve_manifest_opencode_version, resolve_opencode_managed_deps_manifest,
     };
     use std::fs;
     use std::io::{Read, Write};

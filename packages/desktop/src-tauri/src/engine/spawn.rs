@@ -6,6 +6,7 @@ use tauri::{AppHandle, Manager};
 use crate::paths::{candidate_xdg_config_dirs, candidate_xdg_data_dirs, maybe_infer_xdg_home};
 use crate::paths::{prepended_path_env, sidecar_path_candidates};
 use crate::supervised_process::{self, CommandEvent, SupervisedCommandChild};
+use crate::veslo_server::persisted_veslo_server_plugin_state_path;
 
 pub fn find_free_port() -> Result<u16, String> {
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(|e| e.to_string())?;

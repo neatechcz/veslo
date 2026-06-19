@@ -263,8 +263,8 @@ pub fn veslo_server_restart(
 #[cfg(test)]
 mod tests {
     use super::{
-        active_local_workspace_path, refresh_running_engine_url, sanitize_live_info_with_health,
-        HealthIdentity,
+        active_local_workspace_path, local_workspace_paths_for_server_restart,
+        refresh_running_engine_url, sanitize_live_info_with_health, HealthIdentity,
     };
     use crate::types::{
         RemoteType, VesloServerInfo, WorkspaceInfo, WorkspaceState, WorkspaceType,

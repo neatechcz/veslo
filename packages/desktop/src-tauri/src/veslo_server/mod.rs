@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use gethostname::gethostname;
-use local_ip_address::{list_afinet_netifas, local_ip};
+#[cfg(windows)]
+use local_ip_address::list_afinet_netifas;
+use local_ip_address::local_ip;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tauri::Manager;
@@ -266,6 +268,15 @@ fn persisted_state_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_local_data_dir()
         .map_err(|e| format!("Failed to resolve app local data dir: {e}"))
+}
+
+#[allow(dead_code)]
+pub fn persisted_veslo_server_state_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(persisted_state_path(&persisted_state_dir(app)?))
+}
+
+pub fn persisted_veslo_server_plugin_state_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(persisted_plugin_state_path(&persisted_state_dir(app)?))
 }
 
 #[derive(Debug, Clone, Default)]
@@ -675,7 +686,7 @@ pub fn start_veslo_server(
     VesloServerManager::stop_locked(&mut state);
 
     let host = "0.0.0.0".to_string();
-    let port = resolve_veslo_port()?;
+    let port = resolve_veslo_port_after_restart()?;
     let client_token = previous_client_token.unwrap_or_else(generate_token);
     let host_token = previous_host_token.unwrap_or_else(generate_token);
     let active_workspace = workspace_paths
@@ -749,7 +760,6 @@ mod tests {
         read_persisted_veslo_server_info, read_persisted_veslo_server_info_with_cleanup,
         HealthIdentity, PersistedVesloServerState,
     };
-    use crate::types::VesloServerInfo;
     use std::fs;
     use std::io::ErrorKind;
     use std::io::Read;
@@ -1001,7 +1011,6 @@ mod tests {
             mdns_url: None,
             lan_url: None,
             client_token: Some(token.to_string()),
-            host_token: Some("host-token".to_string()),
             pid: Some(pid),
         }
     }

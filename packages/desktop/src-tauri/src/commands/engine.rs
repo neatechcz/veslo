@@ -16,7 +16,9 @@ use crate::orchestrator::{self, OrchestratorSpawnOptions};
 use crate::supervised_process::CommandEvent;
 use crate::types::{EngineDoctorResult, EngineInfo, EngineRuntime, ExecResult};
 use crate::utils::truncate_output;
-use crate::veslo_server::{manager::VesloServerManager, start_veslo_server};
+use crate::veslo_server::{
+    manager::VesloServerManager, persisted_veslo_server_plugin_state_path, start_veslo_server,
+};
 use crate::workspace::server_client::reconcile_server_workspaces;
 use serde_json::json;
 use std::time::Duration;
@@ -646,6 +648,9 @@ pub fn engine_start(
         let daemon_host = "127.0.0.1".to_string();
         let opencode_bin = program.to_string_lossy().to_string();
         let lifecycle_token = Uuid::new_v4().to_string();
+        let veslo_server_state_path = persisted_veslo_server_plugin_state_path(&app)
+            .ok()
+            .map(|path| path.to_string_lossy().to_string());
 
         let mut health = None;
         for attempt in 1..=max_start_attempts {
@@ -663,6 +668,7 @@ pub fn engine_start(
                 opencode_password: opencode_password.clone(),
                 lifecycle_token: Some(lifecycle_token.clone()),
                 cors: Some("*".to_string()),
+                veslo_server_state_path: veslo_server_state_path.clone(),
                 max_engines,
                 idle_suspend_ms,
             };

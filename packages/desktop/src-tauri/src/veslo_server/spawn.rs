@@ -11,8 +11,11 @@ const DEFAULT_VESLO_PORT: u16 = 8787;
 const DEFAULT_MANAGED_AI_BASE_URL: &str = "https://ai.veslo.work";
 const VESLO_SERVER_DEV_WATCH_ENV: &str = "VESLO_SERVER_DEV_WATCH";
 const VESLO_SERVER_DEV_DIR_ENV: &str = "VESLO_SERVER_DEV_DIR";
+const VESLO_DESKTOP_SERVER_PORT_ENV: &str = "VESLO_DESKTOP_SERVER_PORT";
 const VESLO_SANDBOX_BACKEND_ENV: &str = "VESLO_SANDBOX_BACKEND";
 const VESLO_DISABLE_SANDBOX_ENV: &str = "VESLO_DISABLE_SANDBOX";
+const PORT_RESTART_RETRY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+const PORT_RESTART_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
 fn parse_env_flag(value: Option<&str>) -> bool {
     matches!(
@@ -81,84 +84,52 @@ fn validate_managed_opencode_base_url(opencode_base_url: Option<&str>) -> Result
     ))
 }
 
-/// Find every PID matching a Veslo server bun/binary across the system, except
-/// our own current process. Used to reap zombies after a Tauri main restart:
-/// the shell plugin doesn't kill the spawned child on Drop, so previous
-/// veslo-server processes survive cargo rebuilds and camp on random ports
-/// (and the 8787 socket they vacated stays in TIME_WAIT for a few seconds).
-fn list_stale_veslo_server_pids() -> Vec<u32> {
-    use std::process::Command;
-    let our_pid = std::process::id();
-    let ps = Command::new("ps").args(["-axo", "pid=,command="]).output();
-    let stdout = match ps {
-        Ok(out) if out.status.success() => out.stdout,
-        _ => return Vec::new(),
-    };
-    let mut pids = Vec::new();
-    for line in String::from_utf8_lossy(&stdout).lines() {
-        let trimmed = line.trim_start();
-        let mut parts = trimmed.splitn(2, char::is_whitespace);
-        let pid_str = match parts.next() {
-            Some(value) => value,
-            None => continue,
-        };
-        let command = parts.next().unwrap_or("");
-        let pid: u32 = match pid_str.parse() {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        if pid == our_pid {
-            continue;
-        }
-        let is_veslo_server = command.contains("veslo-server")
-            || command.contains("bun --watch src/cli.ts")
-            || command.contains("bun src/cli.ts");
-        if is_veslo_server {
-            pids.push(pid);
-        }
-    }
-    pids
-}
-
-fn kill_pid(pid: u32) {
-    use std::process::Command;
-    let _ = Command::new("kill")
-        .args(["-TERM", &pid.to_string()])
-        .status();
-    // Give the process a moment to clean up, then force-kill if still alive.
-    std::thread::sleep(std::time::Duration::from_millis(250));
-    let _ = Command::new("kill")
-        .args(["-KILL", &pid.to_string()])
-        .status();
-}
-
+#[cfg(test)]
 pub fn resolve_veslo_port() -> Result<u16, String> {
-    // Reap orphan veslo-server processes from previous Vesla sessions before
-    // attempting to bind. Tauri's shell plugin doesn't kill spawned children
-    // when the main process restarts (cargo rebuild during pnpm dev), so the
-    // previous server keeps holding a random ephemeral port and the 8787
-    // socket it vacated lingers in TIME_WAIT for a couple seconds. Reaping
-    // first + retry loop ensures the new server lands back on the stable
-    // 8787 the workspace opencode.jsonc files were written against.
-    let stale = list_stale_veslo_server_pids();
-    if !stale.is_empty() {
-        for pid in &stale {
-            eprintln!("[veslo-server] reaping stale veslo-server PID {pid}");
-            kill_pid(*pid);
+    let port = configured_veslo_port()?;
+    bind_veslo_port(port)
+}
+
+fn bind_veslo_port(port: u16) -> Result<u16, String> {
+    TcpListener::bind(("0.0.0.0", port))
+        .map(|_| port)
+        .map_err(|error| format!("Veslo server port {port} is unavailable: {error}"))
+}
+
+pub fn resolve_veslo_port_after_restart() -> Result<u16, String> {
+    let port = configured_veslo_port()?;
+    let deadline = std::time::Instant::now() + PORT_RESTART_RETRY_TIMEOUT;
+    loop {
+        match bind_veslo_port(port) {
+            Ok(resolved) => return Ok(resolved),
+            Err(error) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(PORT_RESTART_RETRY_INTERVAL);
+                if std::time::Instant::now() >= deadline {
+                    return Err(error);
+                }
+            }
+            Err(error) => return Err(error),
         }
     }
+}
 
-    // TIME_WAIT typically clears within ~1s of the previous owner closing.
-    // Retry the canonical port for up to ~3s before falling back to random.
-    for _ in 0..10 {
-        if TcpListener::bind(("0.0.0.0", DEFAULT_VESLO_PORT)).is_ok() {
-            return Ok(DEFAULT_VESLO_PORT);
-        }
-        std::thread::sleep(std::time::Duration::from_millis(300));
+fn configured_veslo_port() -> Result<u16, String> {
+    let raw = match env::var(VESLO_DESKTOP_SERVER_PORT_ENV) {
+        Ok(value) => value,
+        Err(_) => return Ok(DEFAULT_VESLO_PORT),
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(DEFAULT_VESLO_PORT);
     }
-
-    let listener = TcpListener::bind(("0.0.0.0", 0)).map_err(|e| e.to_string())?;
-    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    let port = trimmed.parse::<u16>().map_err(|_| {
+        format!("Invalid {VESLO_DESKTOP_SERVER_PORT_ENV}: expected TCP port, got {trimmed}")
+    })?;
+    if port == 0 {
+        return Err(format!(
+            "Invalid {VESLO_DESKTOP_SERVER_PORT_ENV}: desktop server port must be greater than 0"
+        ));
+    }
     Ok(port)
 }
 

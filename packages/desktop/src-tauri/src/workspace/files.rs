@@ -504,7 +504,7 @@ pub fn ensure_workspace_files(
     preset: &str,
     templates_dir: Option<&Path>,
     app_data_dir: Option<&Path>,
-    managed_deps_manifest_path: Option<&Path>,
+    _managed_deps_manifest_path: Option<&Path>,
 ) -> Result<(), String> {
     let root = PathBuf::from(workspace_path);
 
@@ -528,11 +528,7 @@ pub fn ensure_workspace_files(
     let central_packs_dir = app_data_dir
         .map(|dir| crate::workspace::internal_provision::provision_central_packs(dir))
         .transpose()?;
-    let provision = provision_internal_workspace_assets(
-        &root,
-        central_packs_dir.as_deref(),
-        managed_deps_manifest_path,
-    )?;
+    let provision = provision_internal_workspace_assets(&root, central_packs_dir.as_deref())?;
     let provision_status = match provision.status {
         ProvisionStatus::Updated => "updated",
         ProvisionStatus::Unchanged => "unchanged",
@@ -754,7 +750,8 @@ mod tests {
         let root = temp_workspace_root("no-runtime-soul-seed");
         let root_str = root.to_string_lossy().to_string();
 
-        ensure_workspace_files(&root_str, "starter", None, None).expect("seed workspace files");
+        ensure_workspace_files(&root_str, "starter", None, None, None)
+            .expect("seed workspace files");
 
         assert!(!root.join(".opencode").join("soul-company.md").exists());
         assert!(!root.join(".opencode").join("soul-user.md").exists());
