@@ -565,6 +565,17 @@ export type HubMcpOAuthConfig =
       scope?: string;
     };
 
+export type HubMcpAuthorization = {
+  type: "veslo-server-oauth";
+  provider: string;
+  connectorId: string;
+  scopes: string[];
+  startPath: string;
+  runtimeTokenPath: string;
+  statusPath: string;
+  disconnectPath: string;
+};
+
 export type HubMcpItem = {
   id: string;
   name: string;
@@ -574,7 +585,9 @@ export type HubMcpItem = {
     url?: string;
     command?: string[];
     oauth?: HubMcpOAuthConfig;
+    headers?: Record<string, string>;
   };
+  authorization?: HubMcpAuthorization;
   source:
     | {
         scope: "org";
@@ -597,6 +610,8 @@ export type HubMcpCard = {
   url?: string;
   command?: string[];
   oauth: HubMcpOAuthConfig;
+  headers?: Record<string, string>;
+  authorization?: HubMcpAuthorization;
   provider?: {
     id: string;
     group?: string;

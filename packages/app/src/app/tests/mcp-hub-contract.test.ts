@@ -43,8 +43,12 @@ test("hub mcp cards preserve provider metadata and install by catalog identity",
   assert.match(constantsSource, /source\?:\s*HubMcpItem\["source"\];/);
   assert.match(pageConversionSource, /provider:\s*entry\.provider,/);
   assert.match(pageConversionSource, /source:\s*entry\.source,/);
+  assert.match(pageConversionSource, /headers:\s*entry\.headers,/);
+  assert.match(pageConversionSource, /authorization:\s*entry\.authorization,/);
   assert.match(activationEntrySource, /provider:\s*selectedEntry\.provider,/);
   assert.match(activationEntrySource, /source:\s*selectedEntry\.source,/);
+  assert.match(activationEntrySource, /headers:\s*selectedEntry\.headers/);
+  assert.match(activationEntrySource, /authorization:\s*selectedEntry\.authorization/);
   assert.match(installClickSource, /props\.installHubMcp\(entry\.id \|\| entry\.name\)/);
 });
 

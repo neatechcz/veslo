@@ -175,9 +175,8 @@ async function waitForInstalledGmail(): Promise<McpPageSnapshot> {
 
     if (installed.modalText) {
       const modalText = normalizeText(installed.modalText);
-      expect(modalText).toContain('Authorize the account in your browser');
-      expect(modalText).toContain('user OAuth tokens stay in the local MCP/OpenCode runtime');
-      expect(modalText).toContain('not stored in Veslo cloud');
+      expect(modalText).not.toContain('user OAuth tokens stay in the local MCP/OpenCode runtime');
+      expect(modalText).not.toContain('not stored in Veslo cloud');
     }
   });
 });

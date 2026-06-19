@@ -265,12 +265,15 @@ Use this surface for:
 Veslo pages that mutate plugins or MCP are usually editing this config, not `.opencode/veslo.json`.
 
 Platform Google Workspace MCP installs write normal remote MCP entries into
-OpenCode config. The entries include the Google-managed endpoint URL plus
-Veslo-owned OAuth client metadata such as client id, client secret reference,
-and scopes. Deployments must provide the Veslo-owned Google OAuth client values
-behind those references before enabling the platform connectors for users. The
-entries must not include user Google refresh tokens; user OAuth token material
-belongs to the local MCP/OpenCode runtime on the user's device.
+OpenCode config. The entries point at Veslo-owned connector endpoints and may
+include non-secret runtime headers. They must not include Google OAuth client
+secrets, Google access tokens, or Google refresh tokens.
+
+Google Workspace authorization is server-managed for production. Den owns the
+Google OAuth callback, exchanges the code with Veslo's Google client secret,
+and stores encrypted per-user grants by organization, user, and connector.
+OpenCode config only represents local runtime installation, not Google grant
+ownership.
 
 ## Skills Inventory
 

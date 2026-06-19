@@ -161,7 +161,7 @@ test("GET /hub/mcp returns items from den org catalog", async () => {
   ]);
 });
 
-test("GET /hub/mcp accepts platform Google MCP entries with OAuth config", async () => {
+test("GET /hub/mcp accepts platform Google MCP entries with server OAuth metadata", async () => {
   const denServer = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -174,12 +174,24 @@ test("GET /hub/mcp accepts platform Google MCP entries with OAuth config", async
             description: "Search Gmail.",
             config: {
               type: "remote",
-              url: "https://gmailmcp.googleapis.com/mcp/v1",
-              oauth: {
-                clientId: "{env:VESLO_GOOGLE_MCP_CLIENT_ID}",
-                clientSecret: "{env:VESLO_GOOGLE_MCP_CLIENT_SECRET}",
-                scope: "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+              url: "https://api.veslo.work/v1/orgs/org_1/integrations/google/google-gmail/mcp",
+              oauth: false,
+              headers: {
+                "X-Veslo-Connector": "google-gmail",
               },
+            },
+            authorization: {
+              type: "veslo-server-oauth",
+              provider: "google",
+              connectorId: "google-gmail",
+              scopes: [
+                "https://www.googleapis.com/auth/gmail.readonly",
+                "https://www.googleapis.com/auth/gmail.compose",
+              ],
+              startPath: "/v1/orgs/org_1/integrations/google/google-gmail/oauth/start",
+              runtimeTokenPath: "/v1/orgs/org_1/integrations/google/google-gmail/runtime-token",
+              statusPath: "/v1/orgs/org_1/integrations/google/connections",
+              disconnectPath: "/v1/orgs/org_1/integrations/google/google-gmail/connection",
             },
             source: { scope: "platform" },
             provider: { id: "google", group: "Google" },
@@ -206,7 +218,11 @@ test("GET /hub/mcp accepts platform Google MCP entries with OAuth config", async
   const payload = await response.json() as { items: Array<any> };
   expect(payload.items[0].source.scope).toBe("platform");
   expect(payload.items[0].provider).toEqual({ id: "google", group: "Google" });
-  expect(payload.items[0].config.oauth.scope).toContain("gmail.readonly");
+  expect(payload.items[0].config.oauth).toBe(false);
+  expect(payload.items[0].config.headers).toEqual({ "X-Veslo-Connector": "google-gmail" });
+  expect(payload.items[0].authorization.scopes).toContain("https://www.googleapis.com/auth/gmail.readonly");
+  expect(payload.items[0].authorization.runtimeTokenPath).toBe("/v1/orgs/org_1/integrations/google/google-gmail/runtime-token");
+  expect(JSON.stringify(payload)).not.toContain("VESLO_GOOGLE_MCP_CLIENT_SECRET");
 });
 
 test("GET /capabilities exposes hub mcp access without repo metadata", async () => {
@@ -288,33 +304,57 @@ test("POST /workspace/:id/mcp/hub/:name installs catalog MCP config", async () =
   expect(configRaw).toContain("https://mcp.example.test/demo");
 });
 
-test("POST /workspace/:id/mcp/hub/:name preserves Google OAuth object", async () => {
+test("POST /workspace/:id/mcp/hub/:name preserves Veslo connector headers without Google OAuth secrets", async () => {
   const denServer = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch: async () =>
-      new Response(JSON.stringify({
-        items: [
-          {
-            id: "google-gmail",
-            name: "Google Gmail",
-            config: {
-              type: "remote",
-              url: "https://gmailmcp.googleapis.com/mcp/v1",
-              oauth: {
-                clientId: "{env:VESLO_GOOGLE_MCP_CLIENT_ID}",
-                clientSecret: "{env:VESLO_GOOGLE_MCP_CLIENT_SECRET}",
-                scope: "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+    fetch: async (request) => {
+      const url = new URL(request.url);
+      if (url.pathname === "/v1/orgs/org_1/integrations/google/google-gmail/runtime-token") {
+        return new Response(JSON.stringify({
+          token: "runtime-token-123",
+          expiresAt: "2030-06-19T12:00:00.000Z",
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      return new Response(JSON.stringify({
+          items: [
+            {
+              id: "google-gmail",
+              name: "Google Gmail",
+              config: {
+                type: "remote",
+                url: "https://api.veslo.work/v1/orgs/org_1/integrations/google/google-gmail/mcp",
+                oauth: false,
+                headers: {
+                  "X-Veslo-Connector": "google-gmail",
+                },
               },
+              authorization: {
+                type: "veslo-server-oauth",
+                provider: "google",
+                connectorId: "google-gmail",
+                scopes: [
+                  "https://www.googleapis.com/auth/gmail.readonly",
+                  "https://www.googleapis.com/auth/gmail.compose",
+                ],
+                startPath: "/v1/orgs/org_1/integrations/google/google-gmail/oauth/start",
+                runtimeTokenPath: "/v1/orgs/org_1/integrations/google/google-gmail/runtime-token",
+                statusPath: "/v1/orgs/org_1/integrations/google/connections",
+                disconnectPath: "/v1/orgs/org_1/integrations/google/google-gmail/connection",
+              },
+              source: { scope: "platform" },
+              provider: { id: "google", group: "Google" },
             },
-            source: { scope: "platform" },
-            provider: { id: "google", group: "Google" },
-          },
-        ],
-      }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
+          ],
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+    },
   });
   runningServers.push(denServer as { stop?: (closeActiveConnections?: boolean) => void });
 
@@ -334,9 +374,13 @@ test("POST /workspace/:id/mcp/hub/:name preserves Google OAuth object", async ()
   expect(response.status).toBe(200);
   const configRaw = await readFile(join(workspaceRoot, "opencode.jsonc"), "utf8");
   expect(configRaw).toContain("\"google-gmail\"");
-  expect(configRaw).toContain("\"clientId\": \"{env:VESLO_GOOGLE_MCP_CLIENT_ID}\"");
-  expect(configRaw).toContain("\"clientSecret\": \"{env:VESLO_GOOGLE_MCP_CLIENT_SECRET}\"");
-  expect(configRaw).toContain("gmail.readonly");
+  expect(configRaw).toContain("https://api.veslo.work/v1/orgs/org_1/integrations/google/google-gmail/mcp");
+  expect(configRaw).toContain("\"oauth\": false");
+  expect(configRaw).toContain("\"X-Veslo-Connector\": \"google-gmail\"");
+  expect(configRaw).toContain("\"X-Veslo-Connector-Token\": \"runtime-token-123\"");
+  expect(configRaw).not.toContain("VESLO_GOOGLE_MCP_CLIENT_ID");
+  expect(configRaw).not.toContain("VESLO_GOOGLE_MCP_CLIENT_SECRET");
+  expect(configRaw).not.toContain("clientSecret");
 });
 
 test("POST /workspace/:id/mcp/hub/:name preserves oauth false in config", async () => {

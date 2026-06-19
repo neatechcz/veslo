@@ -115,9 +115,9 @@ entries:
 - Google Calendar
 - Google Drive
 
-They are not one combined Google connector. Each entry maps to a Google-managed
-remote MCP endpoint and is distributed through Veslo/Den catalog metadata as a
-platform connector.
+They are not one combined Google connector. Each entry is distributed through
+Veslo/Den catalog metadata as a platform connector and points local runtimes at
+a Veslo-owned connector endpoint.
 
 For normal Veslo usage, Veslo owns and distributes the Google OAuth client
 configuration. Users should not create their own Google Cloud project, approve a
@@ -126,15 +126,17 @@ Google connectors. A Veslo deployment must still be configured with the
 Veslo-owned Google OAuth app values before these connectors are enabled for
 public users.
 
-The MVP token boundary is local-first: Veslo cloud and catalog metadata do not
-store user Google refresh tokens. The local MCP/OpenCode runtime starts the
-OAuth flow and handles Google token material on the user's device.
+The production token boundary is server-managed: catalog metadata and local
+OpenCode config do not contain Google OAuth client secrets or user Google token
+material. Den starts Google OAuth, receives the production callback, exchanges
+the code using Veslo's Google client secret, and stores encrypted per-user
+Google grants server-side.
 
 Keep these states distinct in product behavior and docs:
 
 - catalog-visible: the connector is available from Veslo/Den catalog metadata
 - installed/configured: OpenCode config contains the remote MCP entry
-- locally authorized: the user completed the local OAuth flow for that entry
+- server-authorized: the user completed Veslo-managed Google OAuth for that entry
 - runtime-connected: the live runtime reports the MCP server as usable
 - reload-needed: config changed but the runtime has not loaded it yet
 

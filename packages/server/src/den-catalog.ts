@@ -1,5 +1,5 @@
 import { ApiError } from "./errors.js";
-import type { HubMcpItem, HubSkillItem } from "./types.js";
+import type { HubMcpAuthorization, HubMcpItem, HubSkillItem } from "./types.js";
 
 type DenCatalogPayload = {
   items?: unknown;
@@ -67,6 +67,70 @@ function toMcpOAuthConfig(value: unknown, index: number) {
   };
 }
 
+const FORBIDDEN_MCP_HEADER_NAMES = new Set([
+  "authorization",
+  "cookie",
+  "set-cookie",
+  "x-veslo-den-token",
+  "x-veslo-connector-token",
+]);
+
+function toMcpHeaders(value: unknown, index: number): Record<string, string> | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ApiError(502, "den_catalog_invalid_payload", `Invalid Den catalog headers at index ${index}`);
+  }
+
+  const result: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedKey = key.trim().toLowerCase();
+    if (
+      !key.trim() ||
+      FORBIDDEN_MCP_HEADER_NAMES.has(normalizedKey) ||
+      typeof entry !== "string" ||
+      /bearer\s+/i.test(entry) ||
+      /\{env:/i.test(entry)
+    ) {
+      throw new ApiError(502, "den_catalog_invalid_payload", `Invalid Den catalog headers at index ${index}`);
+    }
+    result[key] = entry;
+  }
+  return result;
+}
+
+function toMcpAuthorization(value: unknown, index: number): HubMcpAuthorization | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ApiError(502, "den_catalog_invalid_payload", `Invalid Den catalog authorization at index ${index}`);
+  }
+
+  const payload = value as Record<string, unknown>;
+  if (
+    payload.type !== "veslo-server-oauth" ||
+    typeof payload.provider !== "string" ||
+    typeof payload.connectorId !== "string" ||
+    !Array.isArray(payload.scopes) ||
+    payload.scopes.some((scope) => typeof scope !== "string") ||
+    typeof payload.startPath !== "string" ||
+    typeof payload.runtimeTokenPath !== "string" ||
+    typeof payload.statusPath !== "string" ||
+    typeof payload.disconnectPath !== "string"
+  ) {
+    throw new ApiError(502, "den_catalog_invalid_payload", `Invalid Den catalog authorization at index ${index}`);
+  }
+
+  return {
+    type: "veslo-server-oauth",
+    provider: payload.provider,
+    connectorId: payload.connectorId,
+    scopes: payload.scopes as string[],
+    startPath: payload.startPath,
+    runtimeTokenPath: payload.runtimeTokenPath,
+    statusPath: payload.statusPath,
+    disconnectPath: payload.disconnectPath,
+  };
+}
+
 function toHubMcpItem(item: unknown, index: number): HubMcpItem {
   if (!item || typeof item !== "object") {
     throw new ApiError(502, "den_catalog_invalid_payload", `Invalid Den catalog item at index ${index}`);
@@ -124,6 +188,8 @@ function toHubMcpItem(item: unknown, index: number): HubMcpItem {
   }
 
   const oauth = toMcpOAuthConfig(config.oauth, index);
+  const headers = toMcpHeaders(config.headers, index);
+  const authorization = toMcpAuthorization(payload.authorization, index);
 
   return {
     id: payload.id,
@@ -134,7 +200,9 @@ function toHubMcpItem(item: unknown, index: number): HubMcpItem {
       ...(typeof config.url === "string" ? { url: config.url } : {}),
       ...(Array.isArray(config.command) ? { command: config.command as string[] } : {}),
       ...(oauth !== undefined ? { oauth } : {}),
+      ...(headers !== undefined ? { headers } : {}),
     },
+    ...(authorization !== undefined ? { authorization } : {}),
     source: normalizedSource,
     ...(provider !== undefined
       ? {
@@ -271,4 +339,70 @@ export async function fetchOrgMcpCatalog(input: {
   }
 
   return payload.items.map((item, index) => toHubMcpItem(item, index));
+}
+
+export async function createOrgMcpRuntimeToken(input: {
+  baseUrl: string;
+  denToken: string;
+  runtimeTokenPath: string;
+}): Promise<{ token: string; expiresAt: string | null }> {
+  const baseUrl = normalizeBaseUrl(input.baseUrl);
+  if (!baseUrl) {
+    throw new ApiError(500, "den_catalog_misconfigured", "Den catalog base URL is missing");
+  }
+
+  const denToken = input.denToken.trim();
+  if (!denToken) {
+    throw new ApiError(401, "den_token_required", "Den token is required");
+  }
+
+  const path = input.runtimeTokenPath.trim();
+  if (!path.startsWith("/v1/")) {
+    throw new ApiError(502, "den_catalog_invalid_payload", "Den runtime token path is invalid");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${denToken}`,
+      },
+    });
+  } catch (error) {
+    throw new ApiError(
+      502,
+      "den_runtime_token_fetch_failed",
+      "Failed to fetch Den MCP runtime token",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+
+  if (!response.ok) {
+    const details = await response.text().catch(() => "");
+    throw new ApiError(
+      502,
+      "den_runtime_token_fetch_failed",
+      `Failed to fetch Den MCP runtime token (${response.status})`,
+      details || path,
+    );
+  }
+
+  const payload = await response.json().catch(() => null) as {
+    token?: unknown;
+    expiresAt?: unknown;
+  } | null;
+  if (
+    !payload ||
+    typeof payload.token !== "string" ||
+    (payload.expiresAt !== null && payload.expiresAt !== undefined && typeof payload.expiresAt !== "string")
+  ) {
+    throw new ApiError(502, "den_catalog_invalid_payload", "Den MCP runtime token payload is invalid");
+  }
+
+  return {
+    token: payload.token,
+    expiresAt: typeof payload.expiresAt === "string" ? payload.expiresAt : null,
+  };
 }

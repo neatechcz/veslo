@@ -124,14 +124,21 @@ test("org mcp catalog includes platform Google Workspace connectors", async () =
         config: {
           type: string
           url: string
-          oauth: {
-            clientId: string
-            clientSecret: string
-            scope: string
-          }
+          oauth: boolean
+          headers?: Record<string, string>
         }
         source: { scope: string }
         provider?: { id: string; group: string }
+        authorization?: {
+          type: string
+          provider: string
+          connectorId: string
+          scopes: string[]
+          startPath: string
+          runtimeTokenPath: string
+          statusPath: string
+          disconnectPath: string
+        }
       }>
     }
 
@@ -144,7 +151,7 @@ test("org mcp catalog includes platform Google Workspace connectors", async () =
     const expectedConnectors = [
       {
         id: "google-gmail",
-        url: "https://gmailmcp.googleapis.com/mcp/v1",
+        urlPattern: /\/v1\/orgs\/org_1\/integrations\/google\/google-gmail\/mcp$/,
         scopes: [
           "https://www.googleapis.com/auth/gmail.readonly",
           "https://www.googleapis.com/auth/gmail.compose",
@@ -152,7 +159,7 @@ test("org mcp catalog includes platform Google Workspace connectors", async () =
       },
       {
         id: "google-calendar",
-        url: "https://calendarmcp.googleapis.com/mcp/v1",
+        urlPattern: /\/v1\/orgs\/org_1\/integrations\/google\/google-calendar\/mcp$/,
         scopes: [
           "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
           "https://www.googleapis.com/auth/calendar.events.freebusy",
@@ -161,7 +168,7 @@ test("org mcp catalog includes platform Google Workspace connectors", async () =
       },
       {
         id: "google-drive",
-        url: "https://drivemcp.googleapis.com/mcp/v1",
+        urlPattern: /\/v1\/orgs\/org_1\/integrations\/google\/google-drive\/mcp$/,
         scopes: [
           "https://www.googleapis.com/auth/drive.readonly",
           "https://www.googleapis.com/auth/drive.file",
@@ -177,11 +184,32 @@ test("org mcp catalog includes platform Google Workspace connectors", async () =
       assert.equal(item.source.scope, "platform")
       assert.equal(item.provider?.id, "google")
       assert.equal(item.config.type, "remote")
-      assert.equal(item.config.url, expected.url)
-      assert.deepEqual(item.config.oauth.scope.split(" "), expected.scopes)
-      assert.equal(item.config.oauth.clientId, "{env:VESLO_GOOGLE_MCP_CLIENT_ID}")
-      assert.equal(item.config.oauth.clientSecret, "{env:VESLO_GOOGLE_MCP_CLIENT_SECRET}")
+      assert.match(item.config.url, expected.urlPattern)
+      assert.equal(item.config.oauth, false)
+      assert.equal(item.config.headers?.["X-Veslo-Connector"], expected.id)
+      assert.equal(item.authorization?.type, "veslo-server-oauth")
+      assert.equal(item.authorization?.provider, "google")
+      assert.equal(item.authorization?.connectorId, expected.id)
+      assert.deepEqual(item.authorization?.scopes, expected.scopes)
+      assert.equal(
+        item.authorization?.startPath,
+        `/v1/orgs/org_1/integrations/google/${expected.id}/oauth/start`,
+      )
+      assert.equal(
+        item.authorization?.runtimeTokenPath,
+        `/v1/orgs/org_1/integrations/google/${expected.id}/runtime-token`,
+      )
+      assert.equal(item.authorization?.statusPath, "/v1/orgs/org_1/integrations/google/connections")
+      assert.equal(
+        item.authorization?.disconnectPath,
+        `/v1/orgs/org_1/integrations/google/${expected.id}/connection`,
+      )
     }
+
+    const serializedPayload = JSON.stringify(payload)
+    assert.doesNotMatch(serializedPayload, /VESLO_GOOGLE_MCP_CLIENT_ID/)
+    assert.doesNotMatch(serializedPayload, /VESLO_GOOGLE_MCP_CLIENT_SECRET/)
+    assert.doesNotMatch(serializedPayload, /clientSecret/)
   } finally {
     await server.close()
   }
@@ -189,5 +217,6 @@ test("org mcp catalog includes platform Google Workspace connectors", async () =
 
 test("den index mounts org mcp catalog router under /v1/orgs", () => {
   const source = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8")
-  assert.match(source, /app\.use\("\/v1\/orgs",\s*orgMcpCatalogRouter\)/)
+  assert.match(source, /app\.use\("\/v1\/orgs",\s*createOrgMcpCatalogRouter\(/)
+  assert.match(source, /connectorBaseUrl:\s*env\.googleWorkspace\.connectorBaseUrl/)
 })

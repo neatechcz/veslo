@@ -40,6 +40,8 @@ export type McpDirectoryInfo = {
   type?: "remote" | "local";
   command?: string[];
   oauth: HubMcpOAuthConfig;
+  headers?: Record<string, string>;
+  authorization?: HubMcpItem["authorization"];
   provider?: {
     id: string;
     group?: string;

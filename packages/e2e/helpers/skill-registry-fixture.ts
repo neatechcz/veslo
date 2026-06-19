@@ -38,62 +38,68 @@ export const E2E_SKILL_REGISTRY_TOKEN = 'veslo-e2e-default-token';
 export const E2E_SKILL_REGISTRY_WORKSPACE_ID = 'e2e-visual-workspace';
 export const E2E_GOOGLE_MCP_CATALOG_USER_ID = 'user_veslo_google_mcp_e2e';
 
-const GOOGLE_MCP_OAUTH = {
-  clientId: '{env:VESLO_GOOGLE_MCP_CLIENT_ID}',
-  clientSecret: '{env:VESLO_GOOGLE_MCP_CLIENT_SECRET}',
-};
-
-export const E2E_GOOGLE_MCP_CONNECTORS = [
+const E2E_GOOGLE_MCP_CONNECTOR_DEFINITIONS = [
   {
     id: 'google-gmail',
     name: 'Google Gmail',
     description: 'Search Gmail threads and create draft email through Google MCP.',
-    config: {
-      type: 'remote',
-      url: 'https://gmailmcp.googleapis.com/mcp/v1',
-      oauth: {
-        ...GOOGLE_MCP_OAUTH,
-        scope: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose',
-      },
-    },
-    source: { scope: 'platform' },
-    provider: { id: 'google', group: 'Google' },
+    scopes: [
+      'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/gmail.compose',
+    ],
   },
   {
     id: 'google-calendar',
     name: 'Google Calendar',
     description: 'List calendars, inspect availability, and manage events through Google MCP.',
-    config: {
-      type: 'remote',
-      url: 'https://calendarmcp.googleapis.com/mcp/v1',
-      oauth: {
-        ...GOOGLE_MCP_OAUTH,
-        scope: [
-          'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
-          'https://www.googleapis.com/auth/calendar.events.freebusy',
-          'https://www.googleapis.com/auth/calendar.events.readonly',
-        ].join(' '),
-      },
-    },
-    source: { scope: 'platform' },
-    provider: { id: 'google', group: 'Google' },
+    scopes: [
+      'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
+      'https://www.googleapis.com/auth/calendar.events.freebusy',
+      'https://www.googleapis.com/auth/calendar.events.readonly',
+    ],
   },
   {
     id: 'google-drive',
     name: 'Google Drive',
     description: 'Find and work with Google Drive files through Google MCP.',
+    scopes: [
+      'https://www.googleapis.com/auth/drive.readonly',
+      'https://www.googleapis.com/auth/drive.file',
+    ],
+  },
+] as const;
+
+export function buildE2EGoogleMcpConnectors(baseUrl: string, orgId = E2E_SKILL_REGISTRY_ORG_ID) {
+  const normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, '');
+  const orgPath = `/v1/orgs/${encodeURIComponent(orgId)}`;
+  return E2E_GOOGLE_MCP_CONNECTOR_DEFINITIONS.map((connector) => ({
+    id: connector.id,
+    name: connector.name,
+    description: connector.description,
     config: {
       type: 'remote',
-      url: 'https://drivemcp.googleapis.com/mcp/v1',
-      oauth: {
-        ...GOOGLE_MCP_OAUTH,
-        scope: 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file',
+      url: `${normalizedBaseUrl}${orgPath}/integrations/google/${connector.id}/mcp`,
+      oauth: false,
+      headers: {
+        'X-Veslo-Connector': connector.id,
       },
+    },
+    authorization: {
+      type: 'veslo-server-oauth',
+      provider: 'google',
+      connectorId: connector.id,
+      scopes: [...connector.scopes],
+      startPath: `${orgPath}/integrations/google/${connector.id}/oauth/start`,
+      runtimeTokenPath: `${orgPath}/integrations/google/${connector.id}/runtime-token`,
+      statusPath: `${orgPath}/integrations/google/connections`,
+      disconnectPath: `${orgPath}/integrations/google/${connector.id}/connection`,
     },
     source: { scope: 'platform' },
     provider: { id: 'google', group: 'Google' },
-  },
-] as const;
+  }));
+}
+
+export const E2E_GOOGLE_MCP_CONNECTORS = buildE2EGoogleMcpConnectors('https://api.veslo.work');
 
 export function shouldUseGoogleMcpCatalogFixture(
   env: Record<string, string | undefined> = process.env,
@@ -386,7 +392,51 @@ function handleRegistryRequest(req: IncomingMessage, res: ServerResponse): void 
       return;
     }
 
-    json(res, 200, { items: E2E_GOOGLE_MCP_CONNECTORS });
+    json(res, 200, { items: buildE2EGoogleMcpConnectors(base, googleMcpCatalogMatch[1]) });
+    return;
+  }
+
+  const googleMcpRuntimeTokenMatch = /^\/v1\/orgs\/([^/]+)\/integrations\/google\/([^/]+)\/runtime-token$/.exec(url.pathname);
+  if (req.method === 'POST' && googleMcpRuntimeTokenMatch?.[1] && googleMcpRuntimeTokenMatch?.[2]) {
+    if (!shouldUseGoogleMcpCatalogFixture()) {
+      json(res, 404, { code: 'not_found', message: `Unhandled registry fixture path: ${url.pathname}` });
+      return;
+    }
+
+    const authHeader = req.headers.authorization?.trim() ?? '';
+    if (authHeader !== `Bearer ${E2E_SKILL_REGISTRY_TOKEN}`) {
+      json(res, 401, { code: 'den_token_required', message: 'Missing or invalid Den token header' });
+      return;
+    }
+
+    json(res, 200, {
+      token: `e2e-runtime-token-${decodeURIComponent(googleMcpRuntimeTokenMatch[2])}`,
+      connectorId: decodeURIComponent(googleMcpRuntimeTokenMatch[2]),
+      expiresAt: '2030-06-19T12:00:00.000Z',
+    });
+    return;
+  }
+
+  const googleMcpOAuthStartMatch = /^\/v1\/orgs\/([^/]+)\/integrations\/google\/([^/]+)\/oauth\/start$/.exec(url.pathname);
+  if (req.method === 'GET' && googleMcpOAuthStartMatch?.[1] && googleMcpOAuthStartMatch?.[2]) {
+    if (!shouldUseGoogleMcpCatalogFixture()) {
+      json(res, 404, { code: 'not_found', message: `Unhandled registry fixture path: ${url.pathname}` });
+      return;
+    }
+
+    const authHeader = req.headers.authorization?.trim() ?? '';
+    if (authHeader !== `Bearer ${E2E_SKILL_REGISTRY_TOKEN}`) {
+      json(res, 401, { code: 'den_token_required', message: 'Missing or invalid Den token header' });
+      return;
+    }
+
+    const connectorId = decodeURIComponent(googleMcpOAuthStartMatch[2]);
+    json(res, 200, {
+      authorizeUrl: `${base}/__e2e/google-oauth/${encodeURIComponent(connectorId)}`,
+      state: `e2e-state-${connectorId}`,
+      connectorId,
+      scopes: E2E_GOOGLE_MCP_CONNECTOR_DEFINITIONS.find((connector) => connector.id === connectorId)?.scopes ?? [],
+    });
     return;
   }
 

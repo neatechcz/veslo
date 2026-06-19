@@ -150,6 +150,8 @@ export default function McpView(props: McpViewProps) {
         url: entry.url,
         command: entry.command,
         oauth: entry.oauth,
+        headers: entry.headers,
+        authorization: entry.authorization,
         provider: entry.provider,
         source: entry.source,
       })),

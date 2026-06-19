@@ -253,6 +253,17 @@ export type VesloHubMcpOAuthConfig =
       scope?: string;
     };
 
+export type VesloHubMcpAuthorization = {
+  type: "veslo-server-oauth";
+  provider: string;
+  connectorId: string;
+  scopes: string[];
+  startPath: string;
+  runtimeTokenPath: string;
+  statusPath: string;
+  disconnectPath: string;
+};
+
 export type VesloHubMcpItem = {
   id: string;
   name: string;
@@ -262,7 +273,9 @@ export type VesloHubMcpItem = {
     url?: string;
     command?: string[];
     oauth?: VesloHubMcpOAuthConfig;
+    headers?: Record<string, string>;
   };
+  authorization?: VesloHubMcpAuthorization;
   source:
     | {
         scope: "org";

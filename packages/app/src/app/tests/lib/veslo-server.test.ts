@@ -1355,13 +1355,24 @@ test("listHubMcp preserves platform connector metadata", async () => {
             description: "Find Drive files.",
             config: {
               type: "remote",
-              url: "https://drivemcp.googleapis.com/mcp/v1",
-              oauth: {
-                clientId: "{env:VESLO_GOOGLE_MCP_CLIENT_ID}",
-                clientSecret: "{env:VESLO_GOOGLE_MCP_CLIENT_SECRET}",
-                scope:
-                  "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file",
+              url: "https://api.veslo.work/v1/orgs/org_123/integrations/google/google-drive/mcp",
+              oauth: false,
+              headers: {
+                "X-Veslo-Connector": "google-drive",
               },
+            },
+            authorization: {
+              type: "veslo-server-oauth",
+              provider: "google",
+              connectorId: "google-drive",
+              scopes: [
+                "https://www.googleapis.com/auth/drive.readonly",
+                "https://www.googleapis.com/auth/drive.file",
+              ],
+              startPath: "/v1/orgs/org_123/integrations/google/google-drive/oauth/start",
+              runtimeTokenPath: "/v1/orgs/org_123/integrations/google/google-drive/runtime-token",
+              statusPath: "/v1/orgs/org_123/integrations/google/connections",
+              disconnectPath: "/v1/orgs/org_123/integrations/google/google-drive/connection",
             },
             source: { scope: "platform" },
             provider: { id: "google", group: "Google" },
@@ -1389,7 +1400,14 @@ test("listHubMcp preserves platform connector metadata", async () => {
     assert.equal(calls.length, 1);
     assert.equal(result.items[0]?.source.scope, "platform");
     assert.equal(result.items[0]?.provider?.id, "google");
-    assert.equal(typeof result.items[0]?.config.oauth, "object");
+    assert.equal(result.items[0]?.config.oauth, false);
+    assert.deepEqual(result.items[0]?.config.headers, { "X-Veslo-Connector": "google-drive" });
+    assert.equal(result.items[0]?.authorization?.type, "veslo-server-oauth");
+    assert.equal(
+      result.items[0]?.authorization?.runtimeTokenPath,
+      "/v1/orgs/org_123/integrations/google/google-drive/runtime-token",
+    );
+    assert.doesNotMatch(JSON.stringify(result), /VESLO_GOOGLE_MCP_CLIENT_SECRET|clientSecret/);
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -1417,13 +1435,24 @@ test("refreshHubMcp preserves platform connector metadata in card state", async 
                   description: "Find Drive files.",
                   config: {
                     type: "remote",
-                    url: "https://drivemcp.googleapis.com/mcp/v1",
-                    oauth: {
-                      clientId: "{env:VESLO_GOOGLE_MCP_CLIENT_ID}",
-                      clientSecret: "{env:VESLO_GOOGLE_MCP_CLIENT_SECRET}",
-                      scope:
-                        "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file",
+                    url: "https://api.veslo.work/v1/orgs/org_123/integrations/google/google-drive/mcp",
+                    oauth: false,
+                    headers: {
+                      "X-Veslo-Connector": "google-drive",
                     },
+                  },
+                  authorization: {
+                    type: "veslo-server-oauth",
+                    provider: "google",
+                    connectorId: "google-drive",
+                    scopes: [
+                      "https://www.googleapis.com/auth/drive.readonly",
+                      "https://www.googleapis.com/auth/drive.file",
+                    ],
+                    startPath: "/v1/orgs/org_123/integrations/google/google-drive/oauth/start",
+                    runtimeTokenPath: "/v1/orgs/org_123/integrations/google/google-drive/runtime-token",
+                    statusPath: "/v1/orgs/org_123/integrations/google/connections",
+                    disconnectPath: "/v1/orgs/org_123/integrations/google/google-drive/connection",
                   },
                   source: { scope: "platform" },
                   provider: { id: "google", group: "Google" },
@@ -1452,7 +1481,13 @@ test("refreshHubMcp preserves platform connector metadata in card state", async 
         const card = store.hubMcpCards()[0];
         assert.equal(card?.source?.scope, "platform");
         assert.equal(card?.provider?.id, "google");
-        assert.equal(typeof card?.oauth, "object");
+        assert.equal(card?.oauth, false);
+        assert.deepEqual(card?.headers, { "X-Veslo-Connector": "google-drive" });
+        assert.equal(card?.authorization?.type, "veslo-server-oauth");
+        assert.equal(
+          card?.authorization?.runtimeTokenPath,
+          "/v1/orgs/org_123/integrations/google/google-drive/runtime-token",
+        );
       } finally {
         dispose();
       }

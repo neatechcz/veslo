@@ -38,7 +38,7 @@ import {
   type SkillRemovalRecord,
   type SkillRemovalScope,
 } from "./skill-removal-journal.js";
-import { fetchOrgMcpCatalog, fetchOrgSkillsCatalog } from "./den-catalog.js";
+import { createOrgMcpRuntimeToken, fetchOrgMcpCatalog, fetchOrgSkillsCatalog } from "./den-catalog.js";
 import {
   getOrganizationSoul,
   getSoulVersion,
@@ -8477,7 +8477,26 @@ function createRoutes(
       paths: [opencodeConfigPath(workspace.path)],
     });
 
-    const result = await installHubMcp(workspace.path, item);
+    let installItem = item;
+    if (item.authorization?.type === "veslo-server-oauth") {
+      const runtimeToken = await createOrgMcpRuntimeToken({
+        baseUrl: denApiBase,
+        denToken,
+        runtimeTokenPath: item.authorization.runtimeTokenPath,
+      });
+      installItem = {
+        ...item,
+        config: {
+          ...item.config,
+          headers: {
+            ...(item.config.headers ?? {}),
+            "X-Veslo-Connector-Token": runtimeToken.token,
+          },
+        },
+      };
+    }
+
+    const result = await installHubMcp(workspace.path, installItem);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
