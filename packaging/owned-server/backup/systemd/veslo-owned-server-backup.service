@@ -6,5 +6,5 @@ After=network-online.target docker.service
 
 [Service]
 Type=oneshot
-EnvironmentFile=/etc/default/veslo-owned-server-backup
-ExecStart=/usr/bin/env bash -c 'set -euo pipefail; cd "$VESLO_APP_DIR"; exec ./packaging/owned-server/backup/backup-owned-server-databases.sh'
+EnvironmentFile=-/etc/default/veslo-owned-server-backup
+ExecStart=/usr/bin/env bash -c 'set -euo pipefail; app_dir="$${VESLO_APP_DIR:-/srv/veslo/app}"; cd "$$app_dir"; exec ./packaging/owned-server/backup/backup-owned-server-databases.sh'

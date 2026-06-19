@@ -39,10 +39,11 @@ test("service runs the owned-server database backup script from VESLO_APP_DIR", 
   const service = await readExampleFile("veslo-owned-server-backup.service");
 
   assertHasLine(service, "Type=oneshot");
-  assertHasLine(service, "EnvironmentFile=/etc/default/veslo-owned-server-backup");
+  assertHasLine(service, "EnvironmentFile=-/etc/default/veslo-owned-server-backup");
 
   const execStart = getLine(service, "ExecStart=");
-  assert.match(execStart, /cd "\$[{]?VESLO_APP_DIR[}]?"/);
+  assert.match(execStart, /VESLO_APP_DIR:-\/srv\/veslo\/app/);
+  assert.match(execStart, /cd "\$\$app_dir"/);
   assert.match(execStart, /backup-owned-server-databases\.sh/);
 });
 
