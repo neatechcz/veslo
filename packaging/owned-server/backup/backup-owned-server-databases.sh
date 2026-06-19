@@ -22,12 +22,75 @@ final_dir="$backup_root/$timestamp"
 failure_step=""
 failure_message=""
 
+strip_simple_quotes() {
+  local value="$1"
+  local first=""
+  local last=""
+
+  if (( ${#value} >= 2 )); then
+    first="${value:0:1}"
+    last="${value: -1}"
+    if [[ "$first" == "$last" && ( "$first" == "'" || "$first" == '"' ) ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+  fi
+
+  printf '%s' "$value"
+}
+
+read_alert_env_file() {
+  alert_LETTR_API_KEY="${LETTR_API_KEY:-}"
+  alert_AUTH_EMAIL_ADDRESS="${AUTH_EMAIL_ADDRESS:-}"
+  alert_AUTH_EMAIL_FROM_NAME="${AUTH_EMAIL_FROM_NAME:-}"
+  alert_BACKUP_ALERT_EMAIL_RECIPIENTS="${BACKUP_ALERT_EMAIL_RECIPIENTS:-}"
+  alert_AI_GATEWAY_ALERT_EMAIL_RECIPIENTS="${AI_GATEWAY_ALERT_EMAIL_RECIPIENTS:-}"
+
+  if [[ ! -f "$env_file" ]]; then
+    return 0
+  fi
+
+  local line
+  local key
+  local value
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ -z "$line" || "$line" == \#* || "$line" != *=* ]] && continue
+
+    key="${line%%=*}"
+    value="${line#*=}"
+
+    case "$key" in
+      LETTR_API_KEY)
+        alert_LETTR_API_KEY="$(strip_simple_quotes "$value")"
+        ;;
+      AUTH_EMAIL_ADDRESS)
+        alert_AUTH_EMAIL_ADDRESS="$(strip_simple_quotes "$value")"
+        ;;
+      AUTH_EMAIL_FROM_NAME)
+        alert_AUTH_EMAIL_FROM_NAME="$(strip_simple_quotes "$value")"
+        ;;
+      BACKUP_ALERT_EMAIL_RECIPIENTS)
+        alert_BACKUP_ALERT_EMAIL_RECIPIENTS="$(strip_simple_quotes "$value")"
+        ;;
+      AI_GATEWAY_ALERT_EMAIL_RECIPIENTS)
+        alert_AI_GATEWAY_ALERT_EMAIL_RECIPIENTS="$(strip_simple_quotes "$value")"
+        ;;
+    esac
+  done < "$env_file"
+}
+
 send_failure_alert() {
   local artifacts_path="${1:-}"
   local host
   local subject
   local body
   local alert_status
+  local alert_LETTR_API_KEY
+  local alert_AUTH_EMAIL_ADDRESS
+  local alert_AUTH_EMAIL_FROM_NAME
+  local alert_BACKUP_ALERT_EMAIL_RECIPIENTS
+  local alert_AI_GATEWAY_ALERT_EMAIL_RECIPIENTS
 
   host="$(hostname 2>/dev/null || printf 'unknown')"
   subject="Veslo backup failed on $host at $timestamp"
@@ -45,14 +108,15 @@ BODY
   set +e
   (
     set +e
-    set -a
-    if [[ -f "$env_file" ]]; then
-      # shellcheck disable=SC1090
-      . "$env_file" 2>/dev/null
-    fi
-    set +a
+    read_alert_env_file
 
-    BACKUP_ALERT_SUBJECT="$subject" "$node_bin" "$alert_helper" <<< "$body"
+    LETTR_API_KEY="$alert_LETTR_API_KEY" \
+      AUTH_EMAIL_ADDRESS="$alert_AUTH_EMAIL_ADDRESS" \
+      AUTH_EMAIL_FROM_NAME="$alert_AUTH_EMAIL_FROM_NAME" \
+      BACKUP_ALERT_EMAIL_RECIPIENTS="$alert_BACKUP_ALERT_EMAIL_RECIPIENTS" \
+      AI_GATEWAY_ALERT_EMAIL_RECIPIENTS="$alert_AI_GATEWAY_ALERT_EMAIL_RECIPIENTS" \
+      BACKUP_ALERT_SUBJECT="$subject" \
+      "$node_bin" "$alert_helper" <<< "$body"
   )
   alert_status=$?
   set -e
@@ -159,8 +223,26 @@ json_file_entry() {
   local checksum
   local size
 
-  checksum="$(awk '{print $1}' "$checksum_path")"
-  size="$(wc -c < "$path" | tr -d '[:space:]')"
+  if [[ ! -f "$path" ]]; then
+    fail_backup "manifest" "Missing compressed dump for manifest: $name"
+  fi
+
+  if ! IFS=' ' read -r checksum _ < "$checksum_path"; then
+    fail_backup "manifest" "Missing checksum metadata for manifest: $name"
+  fi
+
+  if [[ ! "$checksum" =~ ^[a-f0-9]{64}$ ]]; then
+    fail_backup "manifest" "Invalid checksum metadata for manifest: $name"
+  fi
+
+  if ! size="$(wc -c < "$path")"; then
+    fail_backup "manifest" "Failed to read compressed dump size for manifest: $name"
+  fi
+  size="${size//[[:space:]]/}"
+
+  if [[ ! "$size" =~ ^[0-9]+$ ]]; then
+    fail_backup "manifest" "Invalid compressed dump size for manifest: $name"
+  fi
 
   cat <<JSON
     {
@@ -174,7 +256,9 @@ JSON
 }
 
 write_manifest() {
-  {
+  local manifest_tmp="$staging_dir/manifest.json.tmp"
+
+  if ! {
     cat <<JSON
 {
   "status": "success",
@@ -189,21 +273,33 @@ JSON
   ]
 }
 JSON
-  } > "$staging_dir/manifest.json"
+  } > "$manifest_tmp"; then
+    fail_backup "manifest" "Failed to write backup manifest"
+  fi
+
+  if ! mv "$manifest_tmp" "$staging_dir/manifest.json"; then
+    fail_backup "manifest" "Failed to move backup manifest into place"
+  fi
 }
 
 prune_old_successful_sets() {
   local successful_sets=()
+  local candidate_sets
   local set_path
   local set_name
   local prune_count
 
+  if ! candidate_sets="$(find "$backup_root" -mindepth 1 -maxdepth 1 -type d -name '????????T??????Z' -print | sort)"; then
+    fail_backup "retention" "Failed to list successful backup sets"
+  fi
+
   while IFS= read -r set_path; do
+    [[ -z "$set_path" ]] && continue
     set_name="$(basename "$set_path")"
     if [[ -f "$set_path/manifest.json" ]] && grep -Eq '"status"[[:space:]]*:[[:space:]]*"success"' "$set_path/manifest.json"; then
       successful_sets+=("$set_name")
     fi
-  done < <(find "$backup_root" -mindepth 1 -maxdepth 1 -type d -name '????????T??????Z' -print | sort)
+  done <<< "$candidate_sets"
 
   prune_count=$((${#successful_sets[@]} - 2))
   if (( prune_count <= 0 )); then
@@ -211,22 +307,20 @@ prune_old_successful_sets() {
   fi
 
   for set_name in "${successful_sets[@]:0:$prune_count}"; do
-    rm -rf "$backup_root/$set_name"
+    if ! rm -rf "$backup_root/$set_name"; then
+      fail_backup "retention" "Failed to delete old successful backup set: $backup_root/$set_name"
+    fi
   done
 }
 
 dump_compress_verify "den-db" "den" "den"
 dump_compress_verify "ai-gateway-db" "veslo_ai_gateway" "ai-gateway"
-if ! write_manifest; then
-  fail_backup "manifest" "Failed to write backup manifest"
-fi
+write_manifest
 
 if ! mv "$staging_dir" "$final_dir"; then
   fail_backup "promote" "Failed to promote staging backup to $final_dir"
 fi
 
-if ! prune_old_successful_sets; then
-  fail_backup "retention" "Failed to prune old successful backup sets"
-fi
+prune_old_successful_sets
 
 echo "Backup set written: $final_dir"

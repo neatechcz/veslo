@@ -22,6 +22,10 @@ async function writeExecutable(filePath, content) {
   await chmod(filePath, 0o755);
 }
 
+function shellSingleQuote(value) {
+  return `'${String(value).replaceAll("'", "'\\''")}'`;
+}
+
 async function writeSuccessManifest(dir, timestamp) {
   await writeFile(
     path.join(dir, "manifest.json"),
@@ -138,6 +142,9 @@ esac
     `#!/usr/bin/env bash
 set -euo pipefail
 for file in "$@"; do
+  if [[ "\${EMPTY_AI_GATEWAY_CHECKSUM:-0}" == "1" && "$file" == *ai-gateway.sql.zst ]]; then
+    continue
+  fi
   printf '%064d  %s\\n' 0 "$file"
 done
 `,
@@ -164,6 +171,65 @@ set -euo pipefail
 } >> "${alertLog}"
 `,
   );
+
+  await writeExecutable(
+    path.join(bin, "rm"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${FAIL_RETENTION_RM:-0}" == "1" ]]; then
+  for arg in "$@"; do
+    case "$arg" in
+      *20260614T020000Z) exit 73 ;;
+    esac
+  done
+fi
+exec /bin/rm "$@"
+`,
+  );
+}
+
+async function writeNodeAlertCapture(bin, captureLog) {
+  const captureModule = path.join(bin, "capture-alert-env.mjs");
+  await writeFile(
+    captureModule,
+    `
+import { appendFileSync } from "node:fs";
+
+let body = "";
+process.stdin.setEncoding("utf8");
+for await (const chunk of process.stdin) {
+  body += chunk;
+}
+
+appendFileSync(
+  ${JSON.stringify(captureLog)},
+  JSON.stringify({
+    argv: process.argv.slice(2),
+    env: {
+      LETTR_API_KEY: process.env.LETTR_API_KEY,
+      AUTH_EMAIL_ADDRESS: process.env.AUTH_EMAIL_ADDRESS,
+      AUTH_EMAIL_FROM_NAME: process.env.AUTH_EMAIL_FROM_NAME,
+      BACKUP_ALERT_EMAIL_RECIPIENTS: process.env.BACKUP_ALERT_EMAIL_RECIPIENTS,
+      AI_GATEWAY_ALERT_EMAIL_RECIPIENTS: process.env.AI_GATEWAY_ALERT_EMAIL_RECIPIENTS,
+    },
+    body,
+  }) + "\\n",
+  "utf8",
+);
+`,
+    "utf8",
+  );
+
+  const wrapper = path.join(bin, "capture-node");
+  await writeExecutable(
+    wrapper,
+    `#!/usr/bin/env bash
+set -euo pipefail
+exec ${shellSingleQuote(process.execPath)} ${shellSingleQuote(captureModule)} "$@"
+`,
+  );
+
+  return wrapper;
 }
 
 function runScript(env, { timeoutMs = 5000 } = {}) {
@@ -337,6 +403,44 @@ test("missing zstd exits non-zero and invokes the failure alert helper", async (
   assert.match(alert, /zstd/);
 });
 
+test("failure alert env parser preserves unquoted spaces and passes alert keys", async (t) => {
+  const { bin, env, root } = await createHarness(t);
+  const envFile = path.join(root, "compose-valid.env");
+  const captureLog = path.join(root, "alert-env.jsonl");
+  const captureNode = await writeNodeAlertCapture(bin, captureLog);
+
+  await writeFile(
+    envFile,
+    [
+      "LETTR_API_KEY=lettr_test_key",
+      "AUTH_EMAIL_ADDRESS='auth@example.test'",
+      "AUTH_EMAIL_FROM_NAME=Veslo Ops",
+      'BACKUP_ALERT_EMAIL_RECIPIENTS="admin@example.test ops@example.test"',
+      "AI_GATEWAY_ALERT_EMAIL_RECIPIENTS='fallback@example.test'",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const result = await runScript({
+    ...env,
+    BACKUP_TIMESTAMP: "20260619T031000Z",
+    ENV_FILE: envFile,
+    NODE_BIN: captureNode,
+    ZSTD_BIN: path.join(root, "missing-zstd"),
+  });
+
+  assert.notEqual(result.code, 0);
+
+  const [alert] = (await readFile(captureLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+  assert.equal(alert.env.LETTR_API_KEY, "lettr_test_key");
+  assert.equal(alert.env.AUTH_EMAIL_ADDRESS, "auth@example.test");
+  assert.equal(alert.env.AUTH_EMAIL_FROM_NAME, "Veslo Ops");
+  assert.equal(alert.env.BACKUP_ALERT_EMAIL_RECIPIENTS, "admin@example.test ops@example.test");
+  assert.equal(alert.env.AI_GATEWAY_ALERT_EMAIL_RECIPIENTS, "fallback@example.test");
+  assert.match(alert.body, /Timestamp: 20260619T031000Z/);
+});
+
 test("failing second database dump leaves no successful set and moves staging to failed artifacts", async (t) => {
   const { alertLog, env, root } = await createHarness(t);
   const timestamp = "20260619T040000Z";
@@ -362,6 +466,26 @@ test("failing second database dump leaves no successful set and moves staging to
   assert.match(alert, /Failed artifacts:/);
   assert.match(alert, /\.failed\/20260619T040000Z/);
   assert.match(alert, /ai-gateway/);
+});
+
+test("missing checksum metadata fails before promotion and alerts", async (t) => {
+  const { alertLog, env, root } = await createHarness(t);
+  const timestamp = "20260619T045000Z";
+
+  const result = await runScript({
+    ...env,
+    BACKUP_TIMESTAMP: timestamp,
+    EMPTY_AI_GATEWAY_CHECKSUM: "1",
+  });
+
+  assert.notEqual(result.code, 0);
+  assert.doesNotMatch(result.stdout, /Backup set written/);
+  await assert.rejects(stat(path.join(root, timestamp)), { code: "ENOENT" });
+  assert.ok(await stat(path.join(root, ".failed", timestamp)));
+
+  const alert = await readFile(alertLog, "utf8");
+  assert.match(alert, /manifest|checksum/i);
+  assert.match(alert, /Timestamp: 20260619T045000Z/);
 });
 
 test("retention does not delete old successful sets when the new run fails", async (t) => {
@@ -391,6 +515,40 @@ test("retention does not delete old successful sets when the new run fails", asy
   assert.deepEqual(successfulSets, ["20260616T020000Z", "20260617T020000Z", "20260618T020000Z"]);
   await assert.rejects(stat(path.join(root, "20260619T050000Z")), { code: "ENOENT" });
   assert.ok(await stat(path.join(root, ".failed", "20260619T050000Z")));
+});
+
+test("retention delete failure exits non-zero after promotion and alerts", async (t) => {
+  const { alertLog, env, root } = await createHarness(t);
+
+  for (const timestamp of [
+    "20260614T020000Z",
+    "20260615T020000Z",
+    "20260616T020000Z",
+    "20260617T020000Z",
+  ]) {
+    const setDir = path.join(root, timestamp);
+    await mkdir(setDir, { recursive: true });
+    await writeFile(path.join(setDir, "den.sql.zst"), `den backup ${timestamp}\n`, "utf8");
+    await writeFile(path.join(setDir, "den.sql.zst.sha256"), `den checksum ${timestamp}\n`, "utf8");
+    await writeFile(path.join(setDir, "ai-gateway.sql.zst"), `gateway backup ${timestamp}\n`, "utf8");
+    await writeFile(path.join(setDir, "ai-gateway.sql.zst.sha256"), `gateway checksum ${timestamp}\n`, "utf8");
+    await writeSuccessManifest(setDir, timestamp);
+  }
+
+  const result = await runScript({
+    ...env,
+    BACKUP_TIMESTAMP: "20260619T055000Z",
+    FAIL_RETENTION_RM: "1",
+  });
+
+  assert.notEqual(result.code, 0);
+  assert.doesNotMatch(result.stdout, /Backup set written/);
+  assert.ok(await stat(path.join(root, "20260619T055000Z")));
+  assert.ok(await stat(path.join(root, "20260614T020000Z")));
+
+  const alert = await readFile(alertLog, "utf8");
+  assert.match(alert, /retention/i);
+  assert.match(alert, /Timestamp: 20260619T055000Z/);
 });
 
 test("overlapping lock failure exits non-zero without running dumps", async (t) => {
