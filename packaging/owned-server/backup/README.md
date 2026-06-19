@@ -9,7 +9,7 @@ Run these commands from the repo root on the owned server.
 
 ## Policy
 
-- Run automated database backups daily through the systemd timer.
+- Run automated database backups daily through the production Compose `backup` service.
 - Run manual backups immediately before production cutover and before any destructive restore.
 - Copy backups off the owned server after each run. The server-local copy is not the backup of record.
 - Encrypt backups before long-term storage or transmission outside the server.
@@ -46,60 +46,42 @@ The full owned-server rehearsal procedure lives in `packaging/owned-server/rehea
 
 ## Automated Daily Backup
 
-Install `zstd` and Node.js 18 or newer before enabling the timer. The backup runner requires `zstd` for compression and integrity checks, and it requires Node.js 18+ with global `fetch` support for Lettr failure alerts:
+Production uses the `backup` service in `packaging/owned-server/compose.yml`. The backup image includes the MySQL client, `zstd`, and Node.js for Lettr failure alerts. It dumps the MySQL services over the internal Compose network and writes backup sets to the host bind mount at `/srv/veslo/backups`.
 
-```bash
-sudo apt-get update
-sudo apt-get install -y zstd nodejs
-```
-
-If the host `node` is not Node.js 18+, set `NODE_BIN` in `/etc/default/veslo-owned-server-backup` to an executable Node.js 18+ binary provided by the server image or repository runtime. The runner validates `NODE_BIN` before any database dump starts. If that preflight fails, no raw dump artifacts are created and the journal logs that the failure email could not be sent because the alert runtime itself is unavailable.
-
-Set `/srv/veslo/env/production.env` as the authoritative source for `BACKUP_ALERT_EMAIL_RECIPIENTS`, and populate it with all current admins who must receive failure emails. The backup alert path reads `ENV_FILE` and reuses the existing Lettr env values from the same production env file:
+Set the production env file as the authoritative source for `BACKUP_ALERT_EMAIL_RECIPIENTS`, and populate it with all current admins who must receive failure emails. The backup alert path reuses the existing Lettr env values from the same production env file:
 
 ```bash
 LETTR_API_KEY=...
 AUTH_EMAIL_ADDRESS=auth@veslo.work
 AUTH_EMAIL_FROM_NAME=Veslo
 BACKUP_ALERT_EMAIL_RECIPIENTS=admin1@example.com,admin2@example.com
+BACKUP_DAILY_UTC_TIME=02:15:00
+BACKUP_RANDOM_DELAY_SECONDS=900
 ```
 
-Copy the systemd env, service, and timer examples onto the owned server:
+Build and start the production backup scheduler through the same Compose command used by the deployment workflow:
 
 ```bash
-sudo install -m 0600 packaging/owned-server/backup/systemd/veslo-owned-server-backup.env.example /etc/default/veslo-owned-server-backup
-sudo install -m 0644 packaging/owned-server/backup/systemd/veslo-owned-server-backup.service /etc/systemd/system/veslo-owned-server-backup.service
-sudo install -m 0644 packaging/owned-server/backup/systemd/veslo-owned-server-backup.timer /etc/systemd/system/veslo-owned-server-backup.timer
-sudo systemctl daemon-reload
+sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env build backup
+sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env up -d backup
 ```
 
-Edit `/etc/default/veslo-owned-server-backup` so `VESLO_APP_DIR`, `BACKUP_ROOT`, `ENV_FILE`, `COMPOSE_FILE`, and `DOCKER_COMPOSE` match the production host. Do not configure `BACKUP_ALERT_EMAIL_RECIPIENTS` there; keep recipients in `/srv/veslo/env/production.env` beside the Lettr config. The default backup root is `/srv/veslo/backups`.
-
-Run the first manual backup through systemd before enabling the daily schedule:
+Run the first manual backup through the same backup image:
 
 ```bash
-sudo systemctl start veslo-owned-server-backup.service
+sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env run --rm --no-deps backup bash ./packaging/owned-server/backup/backup-owned-server-databases.sh
 ```
 
-Then enable the timer:
+Check scheduler status and logs:
 
 ```bash
-sudo systemctl enable --now veslo-owned-server-backup.timer
+sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env ps backup
+sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env logs -f backup
 ```
 
-Check timer status:
+The scheduler runs `packaging/owned-server/backup/backup-owned-server-databases-loop.sh`, which starts `backup-owned-server-databases.sh` daily at `BACKUP_DAILY_UTC_TIME` plus up to `BACKUP_RANDOM_DELAY_SECONDS` jitter. The runner dumps both databases, compresses each dump with `zstd`, verifies compressed contents, writes checksums, promotes a completed set atomically, and prunes only successful sets beyond the newest two successful backup sets.
 
-```bash
-systemctl status veslo-owned-server-backup.timer
-```
-
-Check backup logs:
-
-```bash
-journalctl -u veslo-owned-server-backup.service
-```
-
-The timer runs `packaging/owned-server/backup/backup-owned-server-databases.sh`. The runner dumps both databases, compresses each dump with `zstd`, verifies compressed contents, writes checksums, promotes a completed set atomically, and prunes only successful sets beyond the newest two successful backup sets.
+The `systemd/` files in this directory remain available for hosts that explicitly prefer a host timer and allow the required root operations. Production uses the Compose `backup` service because the owned-server runner is intentionally limited to Docker operations.
 
 Successful backup sets live under `/srv/veslo/backups/<UTC timestamp>/`:
 
@@ -117,28 +99,28 @@ In-progress artifacts live under `/srv/veslo/backups/.in-progress/`. Failed arti
 Verify the latest backup files after the first manual run:
 
 ```bash
-latest="$(find /srv/veslo/backups -mindepth 1 -maxdepth 1 -type d -name '????????T??????Z' | sort | tail -n 1)"
-cd "$latest"
-zstd -t den.sql.zst ai-gateway.sql.zst
-sha256sum -c den.sql.zst.sha256
-sha256sum -c ai-gateway.sql.zst.sha256
+sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env run --rm --no-deps backup bash -lc '
+  latest="$(find /srv/veslo/backups -mindepth 1 -maxdepth 1 -type d -name "????????T??????Z" | sort | tail -n 1)"
+  cd "$latest"
+  zstd -t den.sql.zst ai-gateway.sql.zst
+  sha256sum -c den.sql.zst.sha256
+  sha256sum -c ai-gateway.sql.zst.sha256
+'
 ```
 
 Trigger one controlled failure to verify exactly one failure email reaches the configured admins. Use an existing successful backup timestamp so the runner fails during preflight with `Backup timestamp already exists`, before any database dump starts:
 
 ```bash
-latest="$(find /srv/veslo/backups -mindepth 1 -maxdepth 1 -type d -name '????????T??????Z' | sort | tail -n 1)"
+latest="$(sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env run --rm --no-deps backup bash -lc 'find /srv/veslo/backups -mindepth 1 -maxdepth 1 -type d -name "????????T??????Z" | sort | tail -n 1')"
 existing_timestamp="$(basename "$latest")"
-sudo systemctl set-environment BACKUP_TIMESTAMP="$existing_timestamp"
-sudo systemctl start veslo-owned-server-backup.service || true
-sudo systemctl unset-environment BACKUP_TIMESTAMP
+sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env run --rm --no-deps -e BACKUP_TIMESTAMP="$existing_timestamp" backup bash ./packaging/owned-server/backup/backup-owned-server-databases.sh || true
 ```
 
 After the email arrives, confirm the failure in the logs and verify the next normal manual run succeeds before relying on the timer:
 
 ```bash
-journalctl -u veslo-owned-server-backup.service -n 100
-sudo systemctl start veslo-owned-server-backup.service
+sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env logs --tail=100 backup
+sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env run --rm --no-deps backup bash ./packaging/owned-server/backup/backup-owned-server-databases.sh
 ```
 
 ## Manual Backup

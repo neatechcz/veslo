@@ -44,10 +44,10 @@ To deploy production:
 2. Select `Deploy Owned Server`.
 3. Run the workflow manually.
 4. Leave the `branch` input empty to deploy the selected workflow branch, or enter a branch to override it for that run.
-5. Keep `install_backup_timer` enabled for production deploys so the repo-owned systemd timer is installed or refreshed on the server.
+5. Keep `install_backup_timer` enabled for production deploys so the repo-owned Compose backup scheduler is installed or refreshed on the server.
 6. Enable `run_backup_now` only when the deploy should also create and verify an immediate database backup set.
 
-The workflow creates or updates a stable Git checkout on the owned server, checks out the requested branch, validates the production environment file and Compose file, builds the app and worker images, runs Den and AI Gateway migrations, starts the Compose stack, and verifies internal plus public health endpoints. When `install_backup_timer` is enabled, it also installs the host backup dependencies, installs or refreshes the systemd service and timer, validates Lettr alert env values, and keeps the daily timer enabled. When `run_backup_now` is enabled, it starts the backup service once and verifies the compressed dumps plus checksums. AI Gateway health is process liveness; use AI Gateway `/readiness` separately when an operator needs the inference-available signal.
+The workflow creates or updates a stable Git checkout on the owned server, checks out the requested branch, validates the production environment file and Compose file, builds the app and worker images, runs Den and AI Gateway migrations, starts the Compose stack, and verifies internal plus public health endpoints. When `install_backup_timer` is enabled, it validates Lettr alert env values and starts the Compose-managed `backup` scheduler. When `run_backup_now` is enabled, it runs the backup container once and verifies the compressed dumps plus checksums. AI Gateway health is process liveness; use AI Gateway `/readiness` separately when an operator needs the inference-available signal.
 
 Required GitHub Actions configuration:
 
@@ -104,5 +104,5 @@ For changes to production deployment behavior:
 1. Confirm `Deploy Owned Server` has no `push` trigger.
 2. Confirm no active GitHub Actions workflow deploys production through Render.
 3. Confirm the workflow validates the self-hosted runner path, server-side env file, Compose config, migrations, stack startup, internal worker-manager health, and public Den, AI Gateway, and web endpoints.
-4. Confirm the workflow installs or refreshes the owned-server backup timer when requested and verifies immediate backup sets when `run_backup_now` is enabled.
+4. Confirm the workflow installs or refreshes the owned-server backup scheduler when requested and verifies immediate backup sets when `run_backup_now` is enabled.
 5. Confirm this document and any service-local deployment notes match the workflow.

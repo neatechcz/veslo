@@ -47,6 +47,18 @@ EXPOSE 8790
 
 CMD ["pnpm", "--filter", "@neatech/worker-manager", "start"]
 
+FROM base AS backup
+
+COPY packaging ./packaging
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends default-mysql-client zstd \
+  && rm -rf /var/lib/apt/lists/*
+
+ENV NODE_ENV=production
+
+CMD ["bash", "./packaging/owned-server/backup/backup-owned-server-databases-loop.sh"]
+
 FROM base AS worker-runtime
 
 ARG BUN_VERSION=1.3.6

@@ -192,20 +192,21 @@ This backend-first slice is platform-admin-only. A narrower `debug-logs-reader` 
 
 ## Owned-Server Backup Config
 
-Owned-server database backups are host-level operations around the Compose stack, not app runtime state. The production backup root is `/srv/veslo/backups` unless `BACKUP_ROOT` overrides it in the systemd environment.
+Owned-server database backups are production Compose operations, not app runtime state. The production backup root is `/srv/veslo/backups`, mounted into the `backup` service from the host.
 
-Backup failure email reuses the existing Lettr configuration from the owned-server env file. `/srv/veslo/env/production.env` is the authoritative source for backup alert recipients and mail transport values:
+Backup failure email reuses the existing Lettr configuration from the owned-server env file. The production env file used by the deployment workflow is the authoritative source for backup alert recipients and mail transport values:
 
 - `LETTR_API_KEY`
 - `AUTH_EMAIL_ADDRESS`
 - `AUTH_EMAIL_FROM_NAME`
 - `BACKUP_ALERT_EMAIL_RECIPIENTS`
+- `AI_GATEWAY_ALERT_EMAIL_RECIPIENTS`
 
-`BACKUP_ALERT_EMAIL_RECIPIENTS` should contain all current admins who must receive failure alerts. It belongs beside the Lettr values in the production env file, not in `/etc/default/veslo-owned-server-backup`. It is separate from AI Gateway credential alert routing so backup failures can notify operators even when app services are unhealthy.
+`BACKUP_ALERT_EMAIL_RECIPIENTS` should contain all current admins who must receive failure alerts. It belongs beside the Lettr values in the production env file. If the dedicated backup recipient list is blank, the alert helper falls back to `AI_GATEWAY_ALERT_EMAIL_RECIPIENTS`.
 
-The backup runner requires `zstd` on the host, or an explicit `ZSTD_BIN` override, because compressed dumps are written as `.sql.zst` files and verified with `zstd -t`. Checksums are verified with `sha256sum -c`.
+The production backup image includes `zstd`, Node.js, and the MySQL client. Compressed dumps are written as `.sql.zst` files and verified with `zstd -t`. Checksums are verified with `sha256sum -c`.
 
-Scheduling is owned by host systemd through `veslo-owned-server-backup.service` and `veslo-owned-server-backup.timer`. The service loads `/etc/default/veslo-owned-server-backup`, changes into the checked-out app directory, and runs `packaging/owned-server/backup/backup-owned-server-databases.sh`. The timer should be installed and monitored on the owned server, not through Docker Compose or the desktop runtime.
+Scheduling is owned by the `backup` service in `packaging/owned-server/compose.yml`. The service runs `packaging/owned-server/backup/backup-owned-server-databases-loop.sh`, which starts `backup-owned-server-databases.sh` daily at `BACKUP_DAILY_UTC_TIME` plus up to `BACKUP_RANDOM_DELAY_SECONDS` jitter. The deployment workflow can also run an immediate one-off backup with `run_backup_now`.
 
 ## Managed-AI Routing and Accounting
 

@@ -42,11 +42,13 @@ test("backup runbook documents automated daily backup operations", async () => {
     [
       "backup-owned-server-databases.sh",
       "zstd",
-      "Node.js 18",
+      "Node.js",
       "/srv/veslo/backups",
       "BACKUP_ALERT_EMAIL_RECIPIENTS",
-      "systemctl status veslo-owned-server-backup.timer",
-      "journalctl -u veslo-owned-server-backup.service",
+      "backup-owned-server-databases-loop.sh",
+      "docker compose -f packaging/owned-server/compose.yml",
+      "ps backup",
+      "logs -f backup",
       "zstd -t",
       "sha256sum -c",
       "newest two successful backup sets",
@@ -68,8 +70,8 @@ test("backup runbook documents a pre-dump controlled failure drill", async () =>
 test("backup runbook makes production env authoritative for alert recipients", async () => {
   const runbook = await readRepoFile("packaging/owned-server/backup/README.md");
 
-  assert.match(runbook, /\/srv\/veslo\/env\/production\.env[\s\S]{0,160}authoritative source[\s\S]{0,160}BACKUP_ALERT_EMAIL_RECIPIENTS/);
-  assert.match(runbook, /Do not configure `BACKUP_ALERT_EMAIL_RECIPIENTS` there/);
+  assert.match(runbook, /production env file[\s\S]{0,180}authoritative source[\s\S]{0,180}BACKUP_ALERT_EMAIL_RECIPIENTS/);
+  assert.match(runbook, /same production env file/);
   assert.doesNotMatch(
     runbook,
     /Edit `\/etc\/default\/veslo-owned-server-backup`[^\n.]*BACKUP_ALERT_EMAIL_RECIPIENTS[^\n.]*match/,
@@ -89,7 +91,9 @@ test("state and config reference covers owned-server backup configuration", asyn
       "AUTH_EMAIL_FROM_NAME",
       "/srv/veslo/backups",
       "zstd",
-      "veslo-owned-server-backup.timer",
+      "backup",
+      "BACKUP_DAILY_UTC_TIME",
+      "BACKUP_RANDOM_DELAY_SECONDS",
     ],
     "owned-server backup config reference",
   );

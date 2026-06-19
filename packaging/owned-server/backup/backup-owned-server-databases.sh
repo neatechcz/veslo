@@ -37,11 +37,11 @@ strip_simple_quotes() {
 }
 
 read_alert_env_file() {
-  alert_LETTR_API_KEY=""
-  alert_AUTH_EMAIL_ADDRESS=""
-  alert_AUTH_EMAIL_FROM_NAME=""
-  alert_BACKUP_ALERT_EMAIL_RECIPIENTS=""
-  alert_AI_GATEWAY_ALERT_EMAIL_RECIPIENTS=""
+  alert_LETTR_API_KEY="${LETTR_API_KEY:-}"
+  alert_AUTH_EMAIL_ADDRESS="${AUTH_EMAIL_ADDRESS:-}"
+  alert_AUTH_EMAIL_FROM_NAME="${AUTH_EMAIL_FROM_NAME:-}"
+  alert_BACKUP_ALERT_EMAIL_RECIPIENTS="${BACKUP_ALERT_EMAIL_RECIPIENTS:-}"
+  alert_AI_GATEWAY_ALERT_EMAIL_RECIPIENTS="${AI_GATEWAY_ALERT_EMAIL_RECIPIENTS:-}"
 
   if [[ ! -f "$env_file" ]]; then
     return 0

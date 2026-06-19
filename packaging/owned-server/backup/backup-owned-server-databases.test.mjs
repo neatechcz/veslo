@@ -77,6 +77,45 @@ esac
   );
 
   await writeExecutable(
+    path.join(bin, "mysqldump"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+
+host=""
+port=""
+database=""
+args=("$@")
+
+for ((i = 0; i < \${#args[@]}; i++)); do
+  case "\${args[$i]}" in
+    -h)
+      host="\${args[$((i + 1))]}"
+      ;;
+    -P)
+      port="\${args[$((i + 1))]}"
+      ;;
+  esac
+done
+
+database="\${args[$((\${#args[@]} - 1))]}"
+printf 'direct %s %s %s %s\\n' "$host" "$port" "$database" "\${MYSQL_PWD:-}" >> "${composeLog}"
+
+case "$host:$database:\${MYSQL_PWD:-}" in
+  den-db:den:den-root)
+    printf '%s\\n' '-- MySQL dump 10.13  Distrib 8.4' 'CREATE TABLE den_direct_probe (id int);'
+    ;;
+  ai-gateway-db:veslo_ai_gateway:gateway-root)
+    printf '%s\\n' '-- MySQL dump 10.13  Distrib 8.4' 'CREATE TABLE gateway_direct_probe (id int);'
+    ;;
+  *)
+    echo "unexpected direct dump: $host/$database" >&2
+    exit 8
+    ;;
+esac
+`,
+  );
+
+  await writeExecutable(
     path.join(bin, "zstd"),
     `#!/usr/bin/env bash
 set -euo pipefail
@@ -426,6 +465,32 @@ test("runner creates a complete compressed backup set for both databases", async
   const composeCalls = await readFile(composeLog, "utf8");
   assert.match(composeCalls, /\bexec -T den-db\b[\s\S]*\bden\b/);
   assert.match(composeCalls, /\bexec -T ai-gateway-db\b[\s\S]*\bveslo_ai_gateway\b/);
+
+  await assert.rejects(readFile(alertLog, "utf8"), { code: "ENOENT" });
+});
+
+test("runner can dump directly over the Compose network without Docker Compose", async (t) => {
+  const { alertLog, composeLog, env, root } = await createHarness(t);
+
+  const result = await runScript({
+    ...env,
+    BACKUP_TIMESTAMP: "20260619T020500Z",
+    DEN_DB_ROOT_PASSWORD: "den-root",
+    AI_GATEWAY_DB_ROOT_PASSWORD: "gateway-root",
+    DOCKER_COMPOSE: path.join(root, "missing-compose"),
+    MYSQL_DUMP_MODE: "direct",
+  });
+
+  assert.equal(result.code, 0, result.stderr);
+
+  const setDir = path.join(root, "20260619T020500Z");
+  assert.match(await readFile(path.join(setDir, "den.sql.zst"), "utf8"), /CREATE TABLE den_direct_probe/);
+  assert.match(await readFile(path.join(setDir, "ai-gateway.sql.zst"), "utf8"), /CREATE TABLE gateway_direct_probe/);
+
+  const dumpCalls = await readFile(composeLog, "utf8");
+  assert.match(dumpCalls, /direct den-db 3306 den den-root/);
+  assert.match(dumpCalls, /direct ai-gateway-db 3306 veslo_ai_gateway gateway-root/);
+  assert.doesNotMatch(dumpCalls, /\bexec -T\b/);
 
   await assert.rejects(readFile(alertLog, "utf8"), { code: "ENOENT" });
 });
