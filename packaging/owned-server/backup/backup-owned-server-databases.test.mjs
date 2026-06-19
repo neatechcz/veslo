@@ -54,6 +54,10 @@ case "$service:$database" in
     printf '%s\\n' '-- MySQL dump 10.13  Distrib 8.4' 'CREATE TABLE den_probe (id int);'
     ;;
   ai-gateway-db:veslo_ai_gateway)
+    if [[ "\${FAIL_AI_GATEWAY_DUMP:-0}" == "1" ]]; then
+      echo "simulated ai-gateway dump failure" >&2
+      exit 42
+    fi
     printf '%s\\n' '-- MySQL dump 10.13  Distrib 8.4' 'CREATE TABLE gateway_probe (id int);'
     ;;
   *)
@@ -143,6 +147,9 @@ done
     path.join(bin, "flock"),
     `#!/usr/bin/env bash
 set -euo pipefail
+if [[ "\${FAIL_FLOCK:-0}" == "1" ]]; then
+  exit 75
+fi
 exit 0
 `,
   );
@@ -309,4 +316,99 @@ test("retention keeps only the newest two successful timestamp backup sets after
   const manifest = JSON.parse(await readFile(path.join(root, "20260619T020000Z", "manifest.json"), "utf8"));
   assert.equal(manifest.status, "success");
   await assert.rejects(readFile(alertLog, "utf8"), { code: "ENOENT" });
+});
+
+test("missing zstd exits non-zero and invokes the failure alert helper", async (t) => {
+  const { alertLog, env, root } = await createHarness(t);
+
+  const result = await runScript({
+    ...env,
+    BACKUP_TIMESTAMP: "20260619T030000Z",
+    ZSTD_BIN: path.join(root, "missing-zstd"),
+  });
+
+  assert.notEqual(result.code, 0);
+  await assert.rejects(stat(path.join(root, "20260619T030000Z")), { code: "ENOENT" });
+
+  const alert = await readFile(alertLog, "utf8");
+  assert.match(alert, /Veslo backup failed/);
+  assert.match(alert, /Host:/);
+  assert.match(alert, /Timestamp: 20260619T030000Z/);
+  assert.match(alert, /zstd/);
+});
+
+test("failing second database dump leaves no successful set and moves staging to failed artifacts", async (t) => {
+  const { alertLog, env, root } = await createHarness(t);
+  const timestamp = "20260619T040000Z";
+
+  const result = await runScript({
+    ...env,
+    BACKUP_TIMESTAMP: timestamp,
+    FAIL_AI_GATEWAY_DUMP: "1",
+  });
+
+  assert.notEqual(result.code, 0);
+  await assert.rejects(stat(path.join(root, timestamp)), { code: "ENOENT" });
+  await assert.rejects(stat(path.join(root, ".in-progress", timestamp)), { code: "ENOENT" });
+
+  const failedDir = path.join(root, ".failed", timestamp);
+  const failedEntries = await readdir(failedDir);
+  assert.ok(failedEntries.includes("den.sql.zst"));
+  assert.ok(failedEntries.includes("den.sql.zst.sha256"));
+
+  const alert = await readFile(alertLog, "utf8");
+  assert.match(alert, /Veslo backup failed/);
+  assert.match(alert, /Timestamp: 20260619T040000Z/);
+  assert.match(alert, /Failed artifacts:/);
+  assert.match(alert, /\.failed\/20260619T040000Z/);
+  assert.match(alert, /ai-gateway/);
+});
+
+test("retention does not delete old successful sets when the new run fails", async (t) => {
+  const { env, root } = await createHarness(t);
+
+  for (const timestamp of ["20260616T020000Z", "20260617T020000Z", "20260618T020000Z"]) {
+    const setDir = path.join(root, timestamp);
+    await mkdir(setDir, { recursive: true });
+    await writeFile(path.join(setDir, "den.sql.zst"), `den backup ${timestamp}\n`, "utf8");
+    await writeFile(path.join(setDir, "den.sql.zst.sha256"), `den checksum ${timestamp}\n`, "utf8");
+    await writeFile(path.join(setDir, "ai-gateway.sql.zst"), `gateway backup ${timestamp}\n`, "utf8");
+    await writeFile(path.join(setDir, "ai-gateway.sql.zst.sha256"), `gateway checksum ${timestamp}\n`, "utf8");
+    await writeSuccessManifest(setDir, timestamp);
+  }
+
+  const result = await runScript({
+    ...env,
+    BACKUP_TIMESTAMP: "20260619T050000Z",
+    FAIL_AI_GATEWAY_DUMP: "1",
+  });
+
+  assert.notEqual(result.code, 0);
+
+  const successfulSets = (await readdir(root))
+    .filter((entry) => /^\d{8}T\d{6}Z$/.test(entry))
+    .sort();
+  assert.deepEqual(successfulSets, ["20260616T020000Z", "20260617T020000Z", "20260618T020000Z"]);
+  await assert.rejects(stat(path.join(root, "20260619T050000Z")), { code: "ENOENT" });
+  assert.ok(await stat(path.join(root, ".failed", "20260619T050000Z")));
+});
+
+test("overlapping lock failure exits non-zero without running dumps", async (t) => {
+  const { alertLog, composeLog, env, root } = await createHarness(t);
+
+  const result = await runScript({
+    ...env,
+    BACKUP_LOCK_FILE: path.join(root, "custom-backup.lock"),
+    BACKUP_TIMESTAMP: "20260619T060000Z",
+    FAIL_FLOCK: "1",
+  });
+
+  assert.notEqual(result.code, 0);
+  await assert.rejects(stat(path.join(root, "20260619T060000Z")), { code: "ENOENT" });
+  await assert.rejects(readFile(composeLog, "utf8"), { code: "ENOENT" });
+
+  const alert = await readFile(alertLog, "utf8");
+  assert.match(alert, /Veslo backup failed/);
+  assert.match(alert, /Timestamp: 20260619T060000Z/);
+  assert.match(alert, /lock/i);
 });
