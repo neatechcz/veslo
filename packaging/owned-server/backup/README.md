@@ -9,11 +9,12 @@ Run these commands from the repo root on the owned server.
 
 ## Policy
 
-- Run automated database backups daily.
+- Run automated database backups daily through the systemd timer.
 - Run manual backups immediately before production cutover and before any destructive restore.
 - Copy backups off the owned server after each run. The server-local copy is not the backup of record.
 - Encrypt backups before long-term storage or transmission outside the server.
 - Test restore at least once before cutover, then on a recurring cadence after production migration.
+- Keep the newest two successful backup sets on the owned server. Failed artifacts are retained separately for diagnosis.
 - Record every backup and restore rehearsal in `docs/plans/assets/owned-server-migration/verification-log.md` with sanitized paths, timestamps, and checksums.
 
 ## Environment
@@ -42,7 +43,101 @@ DOCKER_COMPOSE="sudo docker compose -p veslo-owned-server-staging"
 
 The full owned-server rehearsal procedure lives in `packaging/owned-server/rehearsal/README.md`.
 
-## Backup
+## Automated Daily Backup
+
+Install `zstd` before enabling the timer. The backup runner requires `zstd` for compression and integrity checks:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y zstd
+```
+
+Populate `BACKUP_ALERT_EMAIL_RECIPIENTS` in `/srv/veslo/env/production.env` with all current admins who must receive failure emails. The backup alert path reuses the existing Lettr env values:
+
+```bash
+LETTR_API_KEY=...
+AUTH_EMAIL_ADDRESS=auth@veslo.work
+AUTH_EMAIL_FROM_NAME=Veslo
+BACKUP_ALERT_EMAIL_RECIPIENTS=admin1@example.com,admin2@example.com
+```
+
+Copy the systemd env, service, and timer examples onto the owned server:
+
+```bash
+sudo install -m 0600 packaging/owned-server/backup/systemd/veslo-owned-server-backup.env.example /etc/default/veslo-owned-server-backup
+sudo install -m 0644 packaging/owned-server/backup/systemd/veslo-owned-server-backup.service /etc/systemd/system/veslo-owned-server-backup.service
+sudo install -m 0644 packaging/owned-server/backup/systemd/veslo-owned-server-backup.timer /etc/systemd/system/veslo-owned-server-backup.timer
+sudo systemctl daemon-reload
+```
+
+Edit `/etc/default/veslo-owned-server-backup` so `VESLO_APP_DIR`, `BACKUP_ROOT`, `ENV_FILE`, `COMPOSE_FILE`, `DOCKER_COMPOSE`, and `BACKUP_ALERT_EMAIL_RECIPIENTS` match the production host. The default backup root is `/srv/veslo/backups`.
+
+Run the first manual backup through systemd before enabling the daily schedule:
+
+```bash
+sudo systemctl start veslo-owned-server-backup.service
+```
+
+Then enable the timer:
+
+```bash
+sudo systemctl enable --now veslo-owned-server-backup.timer
+```
+
+Check timer status:
+
+```bash
+systemctl status veslo-owned-server-backup.timer
+```
+
+Check backup logs:
+
+```bash
+journalctl -u veslo-owned-server-backup.service
+```
+
+The timer runs `packaging/owned-server/backup/backup-owned-server-databases.sh`. The runner dumps both databases, compresses each dump with `zstd`, verifies compressed contents, writes checksums, promotes a completed set atomically, and prunes only successful sets beyond the newest two successful backup sets.
+
+Successful backup sets live under `/srv/veslo/backups/<UTC timestamp>/`:
+
+```text
+/srv/veslo/backups/20260619T021500Z/
+  den.sql.zst
+  den.sql.zst.sha256
+  ai-gateway.sql.zst
+  ai-gateway.sql.zst.sha256
+  manifest.json
+```
+
+In-progress artifacts live under `/srv/veslo/backups/.in-progress/`. Failed artifacts are moved to `/srv/veslo/backups/.failed/<UTC timestamp>/` and are not pruned by the successful-set retention policy.
+
+Verify the latest backup files after the first manual run:
+
+```bash
+latest="$(find /srv/veslo/backups -mindepth 1 -maxdepth 1 -type d -name '????????T??????Z' | sort | tail -n 1)"
+cd "$latest"
+zstd -t den.sql.zst ai-gateway.sql.zst
+sha256sum -c den.sql.zst.sha256
+sha256sum -c ai-gateway.sql.zst.sha256
+```
+
+Trigger one controlled failure to verify exactly one failure email reaches the configured admins:
+
+```bash
+sudo cp /etc/default/veslo-owned-server-backup /etc/default/veslo-owned-server-backup.before-alert-test
+printf '\nZSTD_BIN=/bin/false\n' | sudo tee -a /etc/default/veslo-owned-server-backup
+sudo systemctl start veslo-owned-server-backup.service || true
+sudo mv /etc/default/veslo-owned-server-backup.before-alert-test /etc/default/veslo-owned-server-backup
+```
+
+After the email arrives, confirm the failure in the logs and verify the next normal manual run succeeds before relying on the timer:
+
+```bash
+journalctl -u veslo-owned-server-backup.service -n 100
+sudo systemctl start veslo-owned-server-backup.service
+```
+
+## Manual Backup
 
 Back up Den:
 

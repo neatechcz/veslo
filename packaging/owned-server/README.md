@@ -59,7 +59,7 @@ Compose creates these named volumes:
 - `caddy-data` for certificates and Caddy state.
 - `caddy-config` for Caddy runtime config.
 
-Backups must be copied off-server. Database dump and restore automation is added in the later backup phase; until then, treat these volumes as stateful production data.
+Backups must be copied off-server. Automated daily database backup operations live in `backup/README.md`. Install the systemd timer there before production cutover, keep `/srv/veslo/backups` as the server-local staging and retention path, and continue copying encrypted backup sets off-server.
 
 Owned cloud worker workspace volumes are created dynamically with names like `veslo-worker-<worker-id>-workspace`. Worker deletion through Den removes the matching worker container and volume.
 
