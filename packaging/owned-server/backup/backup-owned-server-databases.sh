@@ -16,10 +16,6 @@ node_bin="${NODE_BIN:-node}"
 timestamp="${BACKUP_TIMESTAMP:-$(date -u +%Y%m%dT%H%M%SZ)}"
 lock_file="${BACKUP_LOCK_FILE:-$backup_root/.backup.lock}"
 
-staging_dir="$backup_root/.in-progress/$timestamp"
-failed_dir="$backup_root/.failed/$timestamp"
-final_dir="$backup_root/$timestamp"
-
 failure_step=""
 failure_message=""
 node_alert_available=0
@@ -126,6 +122,13 @@ validate_node_runtime() {
   fi
 }
 
+validate_backup_timestamp() {
+  if [[ ! "$timestamp" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
+    printf 'Invalid backup timestamp: expected UTC format YYYYMMDDTHHMMSSZ, got: %s\n' "$timestamp" >&2
+    exit 1
+  fi
+}
+
 send_failure_alert() {
   local artifacts_path="${1:-}"
   local host
@@ -206,6 +209,12 @@ fail_backup() {
   send_failure_alert "$artifacts_path"
   exit 1
 }
+
+validate_backup_timestamp
+
+staging_dir="$backup_root/.in-progress/$timestamp"
+failed_dir="$backup_root/.failed/$timestamp"
+final_dir="$backup_root/$timestamp"
 
 node_preflight_message=""
 if ! node_preflight_message="$(validate_node_runtime)"; then

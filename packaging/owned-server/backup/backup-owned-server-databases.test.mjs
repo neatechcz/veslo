@@ -342,8 +342,11 @@ function runScript(env, { timeoutMs = 5000, umask = null } = {}) {
   });
 }
 
-async function createHarness(t) {
-  const root = await makeTempDir(t, "veslo-backup-root-");
+async function createHarness(t, options = {}) {
+  const root = options.root ?? (await makeTempDir(t, "veslo-backup-root-"));
+  if (options.root) {
+    await mkdir(root, { recursive: true });
+  }
   const bin = await makeTempDir(t, "veslo-backup-bin-");
   const envFile = path.join(root, "production.env");
   const alertLog = path.join(root, "alerts.log");
@@ -540,6 +543,27 @@ test("node without fetch fails before dumps and reports Node 18 requirement", as
   assert.match(result.stderr, /Node 18/i);
   await assert.rejects(stat(path.join(root, timestamp)), { code: "ENOENT" });
   await assert.rejects(stat(path.join(root, ".in-progress", timestamp)), { code: "ENOENT" });
+  await assert.rejects(readFile(composeLog, "utf8"), { code: "ENOENT" });
+});
+
+test("invalid backup timestamp is rejected before cleanup can delete outside backup root", async (t) => {
+  const parent = await makeTempDir(t, "veslo-backup-traversal-");
+  const root = path.join(parent, "nested", "backup-root");
+  const victimDir = path.join(parent, "nested", "victim");
+  const victimFile = path.join(victimDir, "sentinel.txt");
+
+  await mkdir(victimDir, { recursive: true });
+  await writeFile(victimFile, "do not delete\n", "utf8");
+
+  const { composeLog, env } = await createHarness(t, { root });
+
+  const result = await runScript({
+    ...env,
+    BACKUP_TIMESTAMP: "../../victim",
+  });
+
+  assert.notEqual(result.code, 0);
+  assert.equal(await readFile(victimFile, "utf8"), "do not delete\n");
   await assert.rejects(readFile(composeLog, "utf8"), { code: "ENOENT" });
 });
 
