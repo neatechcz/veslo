@@ -1,4 +1,5 @@
 import { CloudControlPanel } from "../components/cloud-control";
+import Link from "next/link";
 
 export default function HomePage() {
   return (
@@ -17,6 +18,11 @@ export default function HomePage() {
       </header>
 
       <CloudControlPanel />
+
+      <footer className="ow-public-footer">
+        <Link href="/privacy">Privacy Policy</Link>
+        <Link href="/terms">Terms</Link>
+      </footer>
     </main>
   );
 }

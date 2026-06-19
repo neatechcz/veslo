@@ -572,6 +572,105 @@ body {
   text-decoration-color: currentColor;
 }
 
+.ow-public-footer {
+  position: relative;
+  z-index: 5;
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  font-size: 0.8rem;
+}
+
+.ow-public-footer a,
+.ow-legal-nav a {
+  color: #334155;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.ow-public-footer a:hover,
+.ow-legal-nav a:hover {
+  color: var(--ow-accent);
+  text-decoration: underline;
+  text-underline-offset: 0.2rem;
+}
+
+.ow-legal-shell {
+  min-height: 100vh;
+  background: #fafafa;
+  color: var(--ow-ink);
+  padding: 2rem 1.2rem 4rem;
+}
+
+.ow-legal-container {
+  width: min(100%, 58rem);
+  margin: 0 auto;
+}
+
+.ow-legal-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 2rem;
+  font-size: 0.9rem;
+}
+
+.ow-legal-doc {
+  border: 1px solid #e2e8f0;
+  border-radius: 1.4rem;
+  background: #fff;
+  padding: clamp(1.3rem, 4vw, 2.4rem);
+  box-shadow: 0 12px 38px rgba(15, 23, 42, 0.06);
+}
+
+.ow-legal-kicker {
+  margin: 0 0 0.9rem;
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ow-legal-doc h1,
+.ow-legal-doc h2,
+.ow-legal-doc p {
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.ow-legal-doc h1 {
+  margin-top: 0;
+  margin-bottom: 1rem;
+  font-size: clamp(2rem, 5vw, 3rem);
+  line-height: 1.08;
+}
+
+.ow-legal-doc h2 {
+  margin-top: 2rem;
+  margin-bottom: 0.55rem;
+  font-size: 1.05rem;
+}
+
+.ow-legal-doc p,
+.ow-legal-doc li {
+  color: #475569;
+  font-size: 0.98rem;
+  line-height: 1.65;
+}
+
+.ow-legal-doc ul {
+  margin: 0.8rem 0 0;
+  padding-left: 1.2rem;
+}
+
+.ow-legal-doc li + li {
+  margin-top: 0.45rem;
+}
+
 .ow-note-box,
 .ow-paywall-box,
 .ow-lookup-box,
