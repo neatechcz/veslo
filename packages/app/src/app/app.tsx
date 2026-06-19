@@ -538,6 +538,11 @@ type AppReplaceUserMessageOptions = SessionSendOptionsBase & {
   targetSessionId?: string | null;
 };
 
+type CommandListScope = {
+  workspaceId?: string | null;
+  directory?: string | null;
+};
+
 const SEND_TRACE_LIMIT = 500;
 const MANAGED_AI_ACCESS_CACHE_STORAGE_KEY = "veslo.managedAiAccess.v1";
 const MANAGED_AI_ACCESS_CACHE_TTL_MS = 30 * 60 * 1000;
@@ -3572,12 +3577,26 @@ export default function App() {
         return draft;
       }
 
+      const commandDirectory =
+        targetWorkspace?.directory?.trim() ||
+        targetWorkspace?.workspaceRoot?.trim() ||
+        "";
       const commands = await sendTraceStep(
         "maybeResolveSkillCommand:list-commands",
-        () => listCommands(),
+        () =>
+          listCommands(
+            targetWorkspaceId
+              ? {
+                  workspaceId: targetWorkspaceId,
+                  directory: commandDirectory,
+                }
+              : undefined,
+          ),
         {
           ...(tracePayload ?? {}),
           matchedName,
+          targetWorkspaceId: targetWorkspaceId || null,
+          commandDirectory: commandDirectory || null,
         },
       );
       const matchedCommand = commands.find(
@@ -4943,10 +4962,20 @@ export default function App() {
     })),
   );
 
-  async function listCommands(): Promise<{ id: string; name: string; description?: string; source?: "command" | "mcp" | "skill" }[]> {
-    const c = routedClient();
+  async function listCommands(
+    scope: CommandListScope = {},
+  ): Promise<{ id: string; name: string; description?: string; source?: "command" | "mcp" | "skill" }[]> {
+    const scopedWorkspaceId = scope.workspaceId?.trim() ?? "";
+    const c = scopedWorkspaceId ? routedClient(scopedWorkspaceId) : routedClient();
     if (!c) return [];
-    const list = await listCommandsTyped(c, workspaceStore.activeWorkspaceRoot().trim() || undefined);
+    const scopedDirectory = scope.directory?.trim() ?? "";
+    const directory =
+      scopedDirectory ||
+      (scopedWorkspaceId
+        ? workspaceRootForId(scopedWorkspaceId, null)
+        : workspaceStore.activeWorkspaceRoot().trim()) ||
+      undefined;
+    const list = await listCommandsTyped(c, directory);
     if (list.some((entry) => entry.name === "compact")) {
       return list;
     }
@@ -5458,6 +5487,7 @@ export default function App() {
     clientDirectory: () => clientDirectory(),
     workspaces: () => workspaceStore.workspaces(),
     routedClient,
+    releaseWorkspaceRoute: (workspaceId) => workspaceRouting.release(workspaceId),
     ensureEngineForWorkspace: (workspaceId) => workspaceStore.ensureEngineForWorkspace(workspaceId),
     connectToServer: (nextBaseUrl, directory, context, auth, connectOptions) =>
       workspaceStore.connectToServer(nextBaseUrl, directory, context, auth, connectOptions),

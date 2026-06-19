@@ -1183,6 +1183,68 @@ async function fetchOpencodeJson(
   }
 }
 
+function detailsText(details: unknown): string {
+  try {
+    return JSON.stringify(details);
+  } catch {
+    return String(details);
+  }
+}
+
+function shouldRetryOpenCodeViaOrchestrator(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false;
+  if (error.code === "opencode_request_timeout") return true;
+  if (error.code !== "opencode_request_failed") return false;
+  const details = isRecordLike(error.details) ? error.details : {};
+  const status = typeof details.status === "number" ? details.status : null;
+  const text = detailsText(error.details).toLowerCase();
+  return (
+    status === 404 ||
+    status === 502 ||
+    status === 503 ||
+    text.includes("engine_not_running") ||
+    text.includes("connection refused") ||
+    text.includes("econnrefused") ||
+    text.includes("failed to fetch") ||
+    text.includes("fetch failed") ||
+    text.includes("error sending request")
+  );
+}
+
+function orchestratorFallbackWorkspace(config: ServerConfig, workspace: WorkspaceInfo): WorkspaceInfo | null {
+  const baseUrl = buildOrchestratorWorkspaceOpencodeBaseUrl(config, workspace);
+  if (!baseUrl) return null;
+  if (workspace.baseUrl?.trim() === baseUrl) return null;
+  return { ...workspace, baseUrl };
+}
+
+async function fetchOpencodeJsonWithOrchestratorFallback(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  path: string,
+  init: Parameters<typeof fetchOpencodeJson>[2],
+) {
+  try {
+    return await fetchOpencodeJson(workspace, path, init);
+  } catch (error) {
+    const fallback = orchestratorFallbackWorkspace(config, workspace);
+    if (!fallback || !shouldRetryOpenCodeViaOrchestrator(error)) {
+      throw error;
+    }
+    recordSendWorkflowTrace("server", "server:opencode-json:fallback-orchestrator", {
+      traceId: init.sendTraceId?.trim() || null,
+      workspaceId: workspace.id,
+      method: init.method,
+      path,
+      primaryBaseUrl: workspace.baseUrl?.trim() || null,
+      fallbackBaseUrl: fallback.baseUrl ?? null,
+      error: error instanceof Error ? error.message : String(error),
+      code: error instanceof ApiError ? error.code : null,
+    });
+    return await fetchOpencodeJson(fallback, path, init);
+  }
+}
+
 function createOpenCodeAutomationExecutor(
   config: ServerConfig,
 ): (input: AutomationExecutionInput) => Promise<AutomationExecutionResult> {
@@ -3723,6 +3785,7 @@ async function materializeSoulForConfiguredWorkspaces(
   config: ServerConfig,
   ctx: RequestContext,
   overrides: Partial<Record<SoulScope, SoulDocument | null>>,
+  options: { activeWorkspaceIds?: Set<string> } = {},
 ): Promise<{
   ok: boolean;
   pending: boolean;
@@ -3732,7 +3795,9 @@ async function materializeSoulForConfiguredWorkspaces(
   const workspaces = [];
   for (const configuredWorkspace of config.workspaces) {
     const workspace = await resolveWorkspace(config, configuredWorkspace.id);
-    const result = await materializeSoulForWorkspace(dataDir, ctx, workspace, overrides);
+    const result = await materializeSoulForWorkspace(dataDir, ctx, workspace, overrides, {
+      workspaceActive: options.activeWorkspaceIds?.has(workspace.id) === true,
+    });
     workspaces.push({ workspaceId: workspace.id, result });
   }
   return {
@@ -3757,6 +3822,19 @@ function soulReadPayload(input: {
     ...(input.denSynced === undefined ? {} : { denSynced: input.denSynced }),
     ...(input.materialization === undefined ? {} : { materialization: input.materialization }),
   };
+}
+
+function activeSoulWorkspaceIdsFromBody(body: Record<string, unknown>): Set<string> {
+  const raw = Array.isArray(body.activeWorkspaceIds) ? body.activeWorkspaceIds : [];
+  return new Set(
+    raw
+      .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+      .filter(Boolean),
+  );
+}
+
+function soulWorkspaceActiveFromBody(body: Record<string, unknown>, workspaceId: string): boolean {
+  return body.activeRun === true || activeSoulWorkspaceIdsFromBody(body).has(workspaceId);
 }
 
 async function buildSoulMaterializationStatus(workspace: WorkspaceInfo): Promise<SoulMaterializationResult | undefined> {
@@ -4636,7 +4714,7 @@ function createRoutes(
     transcriptStore: conversationTranscriptStore,
     createOpenCodeSession: async ({ workspace, directory, title, sendTraceId }) => {
       const scopedWorkspace = directory ? { ...workspace, directory } : workspace;
-      return await fetchOpencodeJson(scopedWorkspace, "/session", {
+      return await fetchOpencodeJsonWithOrchestratorFallback(config, scopedWorkspace, "/session", {
         method: "POST",
         timeoutMs: OPENCODE_SESSION_CREATE_TIMEOUT_MS,
         sendTraceId,
@@ -4805,7 +4883,7 @@ function createRoutes(
     try {
       upstream = await runTrace.step(
         "server:conversation-run:opencode-submit",
-        () => fetchOpencodeJson({ ...workspace, directory: target.directory }, path, {
+        () => fetchOpencodeJsonWithOrchestratorFallback(config, { ...workspace, directory: target.directory }, path, {
           method: "POST",
           timeoutMs: OPENCODE_CONVERSATION_SUBMIT_TIMEOUT_MS,
           body: opencodeRunBody,
@@ -4877,7 +4955,8 @@ function createRoutes(
         abortQuery.set("directory", target.directory);
         await runTrace.step(
           "server:conversation-run:opencode-abort-ai-gateway-provider-start-timeout",
-          () => fetchOpencodeJson(
+          () => fetchOpencodeJsonWithOrchestratorFallback(
+            config,
             { ...workspace, directory: target.directory },
             `/session/${encodeURIComponent(target.opencodeSessionId)}/abort?${abortQuery.toString()}`,
             { method: "POST", sendTraceId: runTrace.traceId },
@@ -6090,7 +6169,8 @@ function createRoutes(
     });
     const query = new URLSearchParams();
     query.set("directory", target.directory);
-    const upstream = await fetchOpencodeJson(
+    const upstream = await fetchOpencodeJsonWithOrchestratorFallback(
+      config,
       { ...workspace, directory: target.directory },
       `/session/${encodeURIComponent(target.opencodeSessionId)}/abort?${query.toString()}`,
       { method: "POST" },
@@ -9701,6 +9781,34 @@ function createRoutes(
     return jsonResponse(soulReadPayload(await readWorkspaceSoulModel(ctx, workspace)));
   });
 
+  addRoute(routes, "POST", "/workspace/:id/soul/materialization/sync", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readOptionalJsonBody(ctx.request);
+    await requireSoulApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "soul.materialization.sync",
+      summary: `Sync Soul runtime files for ${workspace.name}`,
+      paths: soulMaterializationApprovalPaths(workspace),
+    });
+    const result = await materializeSoulForWorkspace(serverDataDir, ctx, workspace, {}, {
+      workspaceActive: soulWorkspaceActiveFromBody(body, workspace.id),
+    });
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "soul.materialization.sync",
+      target: workspace.path,
+      summary: result.pending
+        ? "Soul runtime sync is pending because the workspace has an active run"
+        : "Synced Soul runtime files",
+      timestamp: Date.now(),
+    });
+    return jsonResponse(result, result.pending ? 202 : 200);
+  });
+
   addRoute(routes, "GET", "/soul/:scope/versions", "client", async (ctx) => {
     const scope = validateSoulScopeParam(ctx.params.scope);
     if (scope === "workspace") {
@@ -9795,6 +9903,8 @@ function createRoutes(
     await cacheSoulDocument({ dataDir: serverDataDir, document });
     const materialization = await materializeSoulForConfiguredWorkspaces(serverDataDir, config, ctx, {
       organization: document,
+    }, {
+      activeWorkspaceIds: activeSoulWorkspaceIdsFromBody(body),
     });
     return jsonResponse(soulReadPayload({
       document,
@@ -9840,6 +9950,8 @@ function createRoutes(
         await cacheSoulDocument({ dataDir: serverDataDir, document });
         const materialization = await materializeSoulForConfiguredWorkspaces(serverDataDir, config, ctx, {
           user: document,
+        }, {
+          activeWorkspaceIds: activeSoulWorkspaceIdsFromBody(body),
         });
         return jsonResponse(soulReadPayload({
           document,
@@ -9915,6 +10027,8 @@ function createRoutes(
     await cacheSoulDocument({ dataDir: serverDataDir, document });
     const materialization = await materializeSoulForConfiguredWorkspaces(serverDataDir, config, ctx, {
       organization: document,
+    }, {
+      activeWorkspaceIds: activeSoulWorkspaceIdsFromBody(body),
     });
     return jsonResponse(soulReadPayload({
       document,
@@ -9958,6 +10072,8 @@ function createRoutes(
         await cacheSoulDocument({ dataDir: serverDataDir, document });
         const materialization = await materializeSoulForConfiguredWorkspaces(serverDataDir, config, ctx, {
           user: document,
+        }, {
+          activeWorkspaceIds: activeSoulWorkspaceIdsFromBody(body),
         });
         return jsonResponse(soulReadPayload({
           document,
@@ -9987,6 +10103,8 @@ function createRoutes(
     await cacheSoulDocument({ dataDir: serverDataDir, document: restored });
     const materialization = await materializeSoulForConfiguredWorkspaces(serverDataDir, config, ctx, {
       user: restored,
+    }, {
+      activeWorkspaceIds: activeSoulWorkspaceIdsFromBody(body),
     });
     return jsonResponse(soulReadPayload({
       document: restored,
@@ -10041,6 +10159,8 @@ function createRoutes(
     await cacheSoulDocument({ dataDir: serverDataDir, document: nextDocument });
     const materialization = await materializeSoulForWorkspace(serverDataDir, ctx, workspace, {
       workspace: nextDocument,
+    }, {
+      workspaceActive: soulWorkspaceActiveFromBody(body, workspace.id),
     });
     return jsonResponse(soulReadPayload({
       document: nextDocument,
@@ -10084,6 +10204,8 @@ function createRoutes(
     await cacheSoulDocument({ dataDir: serverDataDir, document: restored });
     const materialization = await materializeSoulForWorkspace(serverDataDir, ctx, workspace, {
       workspace: restored,
+    }, {
+      workspaceActive: soulWorkspaceActiveFromBody(body, workspace.id),
     });
     return jsonResponse(soulReadPayload({
       document: restored,

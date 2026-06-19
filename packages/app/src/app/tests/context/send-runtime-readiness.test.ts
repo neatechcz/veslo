@@ -34,6 +34,7 @@ function createHarness(overrides: HarnessOverrides = {}) {
   const engineReadyValues: boolean[] = [];
   const sseConnectedValues: boolean[] = [];
   const ensureEngineCalls: Array<string | undefined> = [];
+  const routeReleaseCalls: string[] = [];
   const connectCalls: Array<{
     baseUrl: string;
     directory: string | undefined;
@@ -72,6 +73,10 @@ function createHarness(overrides: HarnessOverrides = {}) {
       },
     ],
     routedClient: (workspaceId?: string) => clients.get(workspaceId ?? "active") ?? null,
+    releaseWorkspaceRoute: (workspaceId: string) => {
+      routeReleaseCalls.push(workspaceId);
+      clients.delete(workspaceId);
+    },
     ensureEngineForWorkspace: async (workspaceId?: string) => {
       ensureEngineCalls.push(workspaceId);
       return true;
@@ -114,6 +119,7 @@ function createHarness(overrides: HarnessOverrides = {}) {
     engineReadyValues,
     sseConnectedValues,
     ensureEngineCalls,
+    routeReleaseCalls,
     connectCalls,
     engineInfoCalls,
   };
@@ -251,7 +257,7 @@ test("local runtime readiness skips duplicate health probes when preflight is al
 });
 
 test("local runtime readiness restarts the target workspace engine for dead endpoints", async () => {
-  const { readiness, clients, events, ensureEngineCalls, engineReadyValues, sseConnectedValues, busyValues, busyLabels } =
+  const { readiness, clients, events, ensureEngineCalls, routeReleaseCalls, engineReadyValues, sseConnectedValues, busyValues, busyLabels } =
     createHarness({
       ensureEngineForWorkspace: async (workspaceId?: string) => {
         ensureEngineCalls.push(workspaceId);
@@ -273,6 +279,7 @@ test("local runtime readiness restarts the target workspace engine for dead endp
   };
 
   assert.equal(await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight), true);
+  assert.deepEqual(routeReleaseCalls, ["target"]);
   assert.deepEqual(ensureEngineCalls, ["target"]);
   assert.equal(preflight.runtimeHealthOk, true);
   assert.deepEqual(engineReadyValues, []);
@@ -281,6 +288,69 @@ test("local runtime readiness restarts the target workspace engine for dead endp
   assert.deepEqual(busyLabels, []);
   assert.ok(events.some((entry) => entry.event === "sendPrompt:runtime-recovery-start"));
   assert.ok(events.some((entry) => entry.event === "sendPrompt:runtime-recovery-ok"));
+});
+
+test("local runtime readiness recovers when health throws engine_not_running", async () => {
+  const order: string[] = [];
+  const { readiness, clients, ensureEngineCalls, routeReleaseCalls } = createHarness({
+    releaseWorkspaceRoute: (workspaceId: string) => {
+      order.push(`release:${workspaceId}`);
+      routeReleaseCalls.push(workspaceId);
+      clients.delete(workspaceId);
+    },
+    ensureEngineForWorkspace: async (workspaceId?: string) => {
+      order.push(`ensure:${workspaceId ?? ""}`);
+      ensureEngineCalls.push(workspaceId);
+      clients.set("target", createClient("target-recovered"));
+      return true;
+    },
+  });
+  clients.set(
+    "target",
+    createClient("target-stale", async () => {
+      throw new Error('{"error":"engine_not_running","workspaceId":"target"}');
+    }),
+  );
+
+  const preflight = {
+    traceId: "trace-engine-not-running-thrown",
+    targetWorkspace: { workspaceId: "target", workspaceRoot: "/repo/target", directory: "/repo/target" },
+    runtimeHealthOk: false,
+  };
+
+  assert.equal(await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight), true);
+  assert.deepEqual(routeReleaseCalls, ["target"]);
+  assert.deepEqual(ensureEngineCalls, ["target"]);
+  assert.deepEqual(order, ["release:target", "ensure:target"]);
+  assert.equal(preflight.runtimeHealthOk, true);
+});
+
+test("local runtime readiness recovers when health resolves an SDK engine_not_running error result", async () => {
+  const { readiness, clients, ensureEngineCalls, routeReleaseCalls } = createHarness({
+    ensureEngineForWorkspace: async (workspaceId?: string) => {
+      ensureEngineCalls.push(workspaceId);
+      clients.set("target", createClient("target-recovered"));
+      return true;
+    },
+  });
+  clients.set(
+    "target",
+    createClient("target-stale", async () => ({
+      error: { error: "engine_not_running", workspaceId: "target" },
+      response: { status: 503 },
+    })),
+  );
+
+  const preflight = {
+    traceId: "trace-engine-not-running-result",
+    targetWorkspace: { workspaceId: "target", workspaceRoot: "/repo/target", directory: "/repo/target" },
+    runtimeHealthOk: false,
+  };
+
+  assert.equal(await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight), true);
+  assert.deepEqual(routeReleaseCalls, ["target"]);
+  assert.deepEqual(ensureEngineCalls, ["target"]);
+  assert.equal(preflight.runtimeHealthOk, true);
 });
 
 test("local runtime readiness reflects recovery in active UI only for the active workspace", async () => {
@@ -422,6 +492,7 @@ test("engine-info reconnect scopes the lookup and connection to the active local
 test("local runtime health error helpers classify dead endpoints and probe timeouts", () => {
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("failed to fetch")), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("ECONNREFUSED")), true);
+  assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error('{"error":"engine_not_running"}')), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("permission denied")), false);
   assert.equal(isLocalRuntimeHealthTimeoutError(new Error(localRuntimeHealthTimeoutMessage)), true);
 });

@@ -68,6 +68,7 @@ export type SendRuntimeReadinessDeps<Client extends SendRuntimeClient = SendRunt
   clientDirectory: () => string;
   workspaces: () => SendRuntimeWorkspaceInfo[];
   routedClient: (workspaceId?: string) => Client | null | undefined;
+  releaseWorkspaceRoute?: (workspaceId: string) => void;
   ensureEngineForWorkspace: (workspaceId?: string) => Promise<boolean>;
   connectToServer: (
     baseUrl: string,
@@ -138,6 +139,7 @@ export function shouldRecoverLocalRuntimeFromHealthError(
   const message = messageFromUnknownError(error, safeStringify);
   const normalized = message.toLowerCase();
   return (
+    normalized.includes("engine_not_running") ||
     normalized.includes("error sending request") ||
     normalized.includes("connection refused") ||
     message.includes("ECONNREFUSED") ||
@@ -151,6 +153,40 @@ export function shouldRecoverLocalRuntimeFromHealthError(
     message.includes("ECONNRESET") ||
     normalized.includes("networkerror")
   );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function assertLocalRuntimeHealthOk(
+  result: unknown,
+  safeStringify: (value: unknown) => string,
+): unknown {
+  let payload = result;
+  if (isRecord(result)) {
+    if ("data" in result) {
+      if (result.data !== undefined) {
+        payload = result.data;
+      } else if (result.error !== undefined && result.error !== null) {
+        throw new Error(messageFromUnknownError(result.error, safeStringify));
+      }
+    } else if (result.error !== undefined && result.error !== null) {
+      throw new Error(messageFromUnknownError(result.error, safeStringify));
+    }
+
+    if (isRecord(result.response)) {
+      const status = typeof result.response.status === "number" ? result.response.status : null;
+      if (status !== null && status >= 400) {
+        throw new Error(`OpenCode health returned status ${status}`);
+      }
+    }
+  }
+
+  if (isRecord(payload) && payload.healthy === false) {
+    throw new Error("Server reported unhealthy");
+  }
+  return payload;
 }
 
 export async function withLocalRuntimeHealthTimeout<T>(
@@ -260,7 +296,11 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
       try {
         await deps.sendTraceStep(
           `${reason}:runtime-health`,
-          () => withLocalRuntimeHealthTimeout(currentClient.global.health()),
+          () => withLocalRuntimeHealthTimeout(
+            currentClient.global.health().then((result) =>
+              assertLocalRuntimeHealthOk(result, deps.safeStringify)
+            ),
+          ),
           {
             ...(tracePayload ?? {}),
             hasClient: true,
@@ -289,6 +329,14 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
     }
 
     deps.recordSendTrace(`${reason}:runtime-recovery-start`, tracePayload);
+    const recoveryWorkspaceId = targetWorkspaceId || deps.activeWorkspaceId().trim();
+    if (recoveryWorkspaceId) {
+      deps.releaseWorkspaceRoute?.(recoveryWorkspaceId);
+      deps.recordSendTrace(`${reason}:runtime-route-released`, {
+        ...(tracePayload ?? {}),
+        workspaceId: recoveryWorkspaceId,
+      });
+    }
     if (targetIsActiveWorkspace) {
       deps.setEngineReady(false);
       deps.setSseConnected(false);
