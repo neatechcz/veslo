@@ -30,7 +30,7 @@ async function writeSuccessManifest(dir, timestamp) {
   );
 }
 
-async function writeFakeCommands(bin, alertLog) {
+async function writeFakeCommands(bin, alertLog, composeLog) {
   await mkdir(bin, { recursive: true });
 
   await writeExecutable(
@@ -39,21 +39,25 @@ async function writeFakeCommands(bin, alertLog) {
 set -euo pipefail
 
 service=""
+database=""
 for arg in "$@"; do
   case "$arg" in
     den-db|ai-gateway-db) service="$arg" ;;
+    den|veslo_ai_gateway) database="$arg" ;;
   esac
 done
 
-case "$service" in
-  den-db)
+printf '%s\\n' "$*" >> "${composeLog}"
+
+case "$service:$database" in
+  den-db:den)
     printf '%s\\n' '-- MySQL dump 10.13  Distrib 8.4' 'CREATE TABLE den_probe (id int);'
     ;;
-  ai-gateway-db)
+  ai-gateway-db:veslo_ai_gateway)
     printf '%s\\n' '-- MySQL dump 10.13  Distrib 8.4' 'CREATE TABLE gateway_probe (id int);'
     ;;
   *)
-    echo "missing service" >&2
+    echo "unexpected service/database pair: $service/$database" >&2
     exit 7
     ;;
 esac
@@ -155,22 +159,42 @@ set -euo pipefail
   );
 }
 
-function runScript(env) {
+function runScript(env, { timeoutMs = 5000 } = {}) {
   return new Promise((resolve) => {
+    let timedOut = false;
     const child = spawn("bash", [runner], {
       cwd: repoRoot,
-      env: { ...process.env, ...env },
+      env: {
+        HOME: tmpdir(),
+        PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+        TMPDIR: tmpdir(),
+        ...env,
+      },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      stderr += `Timed out after ${timeoutMs}ms\n`;
+      child.kill("SIGTERM");
+      setTimeout(() => child.kill("SIGKILL"), 250).unref?.();
+    }, timeoutMs);
+    timeout.unref?.();
     child.stdout.on("data", (chunk) => {
       stdout += chunk;
     });
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
     });
-    child.on("close", (code) => resolve({ code, stdout, stderr }));
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      resolve({ code: null, error, signal: null, stderr, stdout, timedOut });
+    });
+    child.on("close", (code, signal) => {
+      clearTimeout(timeout);
+      resolve({ code, signal, stdout, stderr, timedOut });
+    });
   });
 }
 
@@ -179,6 +203,7 @@ async function createHarness(t) {
   const bin = await makeTempDir(t, "veslo-backup-bin-");
   const envFile = path.join(root, "production.env");
   const alertLog = path.join(root, "alerts.log");
+  const composeLog = path.join(root, "compose.log");
 
   await writeFile(
     envFile,
@@ -191,18 +216,19 @@ async function createHarness(t) {
     ].join("\n"),
     "utf8",
   );
-  await writeFakeCommands(bin, alertLog);
+  await writeFakeCommands(bin, alertLog, composeLog);
 
   return {
     alertLog,
     bin,
+    composeLog,
     env: {
       BACKUP_ROOT: root,
       COMPOSE_FILE: "packaging/owned-server/compose.yml",
       DOCKER_COMPOSE: path.join(bin, "fake-compose"),
       ENV_FILE: envFile,
       NODE_BIN: path.join(bin, "node"),
-      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`,
       ZSTD_BIN: path.join(bin, "zstd"),
     },
     root,
@@ -210,7 +236,7 @@ async function createHarness(t) {
 }
 
 test("runner creates a complete compressed backup set for both databases", async (t) => {
-  const { alertLog, env, root } = await createHarness(t);
+  const { alertLog, composeLog, env, root } = await createHarness(t);
 
   const result = await runScript({
     ...env,
@@ -221,7 +247,7 @@ test("runner creates a complete compressed backup set for both databases", async
 
   const entries = await readdir(root);
   assert.ok(entries.includes("20260619T020000Z"));
-  assert.ok(!entries.includes(".in-progress"));
+  await assert.rejects(stat(path.join(root, ".in-progress", "20260619T020000Z")), { code: "ENOENT" });
 
   const setDir = path.join(root, "20260619T020000Z");
   const expectedFiles = [
@@ -247,6 +273,10 @@ test("runner creates a complete compressed backup set for both databases", async
   assert.equal(manifest.timestamp, "20260619T020000Z");
   assert.ok(JSON.stringify(manifest).includes("den.sql.zst"));
   assert.ok(JSON.stringify(manifest).includes("ai-gateway.sql.zst"));
+
+  const composeCalls = await readFile(composeLog, "utf8");
+  assert.match(composeCalls, /\bexec -T den-db\b[\s\S]*\bden\b/);
+  assert.match(composeCalls, /\bexec -T ai-gateway-db\b[\s\S]*\bveslo_ai_gateway\b/);
 
   await assert.rejects(readFile(alertLog, "utf8"), { code: "ENOENT" });
 });
