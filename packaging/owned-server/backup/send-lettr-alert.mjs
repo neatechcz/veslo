@@ -3,6 +3,9 @@
 import { fileURLToPath } from "node:url";
 
 const LETTR_ENDPOINT = "https://app.lettr.com/api/emails";
+const DEFAULT_BODY_MAX_BYTES = 64 * 1024;
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const SECRET_ASSIGNMENT_PATTERN = /\b([A-Z0-9_]*(?:TOKEN|SECRET)|LETTR_API_KEY|PASSWORD)(\s*=\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s\r\n]+)/gi;
 
 export function parseRecipients(value) {
   if (!value) return [];
@@ -47,45 +50,100 @@ export function buildLettrPayload(input) {
 
 export async function sendLettrAlert(input, fetchImpl = globalThis.fetch) {
   const { apiKey, body } = buildLettrPayload(input);
-  const response = await fetchImpl(LETTR_ENDPOINT, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
+  const timeoutMs = positiveInteger(input.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS, "BACKUP_ALERT_REQUEST_TIMEOUT_MS");
+  const controller = new AbortController();
+  let timeout;
+
+  const fetchPromise = Promise.resolve().then(() =>
+    fetchImpl(LETTR_ENDPOINT, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }),
+  );
+
+  const timeoutPromise = new Promise((_, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`Failed to send backup failure alert: request timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    timeout.unref?.();
   });
+
+  let response;
+  try {
+    response = await Promise.race([fetchPromise, timeoutPromise]);
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`Failed to send backup failure alert: request timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    fetchPromise.catch(() => {});
+  }
 
   if (!response.ok) {
     throw new Error(`Failed to send backup failure alert: ${response.status} ${response.statusText}`);
   }
 }
 
-async function main() {
-  const text = await readStdin();
+export async function readStdin(stream = process.stdin, options = {}) {
+  const maxBytes = positiveInteger(options.maxBytes ?? DEFAULT_BODY_MAX_BYTES, "BACKUP_ALERT_BODY_MAX_BYTES");
+  let body = "";
+  let bytes = 0;
 
-  await sendLettrAlert({
-    lettrApiKey: process.env.LETTR_API_KEY,
-    from: process.env.AUTH_EMAIL_ADDRESS,
-    fromName: process.env.AUTH_EMAIL_FROM_NAME,
-    backupRecipients: process.env.BACKUP_ALERT_EMAIL_RECIPIENTS,
-    aiGatewayRecipients: process.env.AI_GATEWAY_ALERT_EMAIL_RECIPIENTS,
-    subject: process.env.BACKUP_ALERT_SUBJECT ?? "Veslo backup failed",
-    text,
-    html: `<pre>${escapeHtml(text)}</pre>`,
-  });
+  stream.setEncoding?.("utf8");
+
+  for await (const chunk of stream) {
+    const text = String(chunk);
+    bytes += Buffer.byteLength(text, "utf8");
+    if (bytes > maxBytes) {
+      throw new Error(`BACKUP_ALERT_BODY_MAX_BYTES exceeded (${maxBytes} bytes)`);
+    }
+    body += text;
+  }
+
+  return body;
 }
 
-function readStdin() {
-  return new Promise((resolve, reject) => {
-    let body = "";
-    process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (chunk) => {
-      body += chunk;
-    });
-    process.stdin.on("error", reject);
-    process.stdin.on("end", () => resolve(body));
+export function buildCliAlertInput({ env = process.env, text = "" } = {}) {
+  const redactedText = redactSecrets(text);
+  return {
+    lettrApiKey: env.LETTR_API_KEY,
+    from: env.AUTH_EMAIL_ADDRESS,
+    fromName: env.AUTH_EMAIL_FROM_NAME,
+    backupRecipients: env.BACKUP_ALERT_EMAIL_RECIPIENTS,
+    aiGatewayRecipients: env.AI_GATEWAY_ALERT_EMAIL_RECIPIENTS,
+    subject: env.BACKUP_ALERT_SUBJECT ?? "Veslo backup failed",
+    text: redactedText,
+    html: `<pre>${escapeHtml(redactedText)}</pre>`,
+    timeoutMs: positiveInteger(env.BACKUP_ALERT_REQUEST_TIMEOUT_MS ?? DEFAULT_REQUEST_TIMEOUT_MS, "BACKUP_ALERT_REQUEST_TIMEOUT_MS"),
+  };
+}
+
+export function redactSecrets(value) {
+  return String(value).replace(SECRET_ASSIGNMENT_PATTERN, "$1$2[REDACTED]");
+}
+
+async function main() {
+  const text = await readStdin(process.stdin, {
+    maxBytes: positiveInteger(process.env.BACKUP_ALERT_BODY_MAX_BYTES ?? DEFAULT_BODY_MAX_BYTES, "BACKUP_ALERT_BODY_MAX_BYTES"),
   });
+
+  await sendLettrAlert(buildCliAlertInput({ env: process.env, text }));
+}
+
+function positiveInteger(value, name) {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return parsed;
 }
 
 function escapeHtml(value) {
