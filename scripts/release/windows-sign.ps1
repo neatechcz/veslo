@@ -148,7 +148,7 @@ if (-not (Test-Path $targetPath)) {
 }
 
 $targetName = [System.IO.Path]::GetFileName($targetPath)
-if ($targetName -like "versions.json*") {
+if ($targetName -like "versions.json*" -or $targetName -like "opencode-managed-deps.json*") {
   Write-Host "Skipping signing for non-executable sidecar manifest: $targetPath"
   exit 0
 }

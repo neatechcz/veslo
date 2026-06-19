@@ -206,11 +206,12 @@ test("Windows signing PowerShell script declares parameters before executable st
   assert.match(statements.join("\n"), /Set-StrictMode -Version Latest/);
 });
 
-test("Windows signing PowerShell script skips the bundled versions manifest", () => {
+test("Windows signing PowerShell script skips bundled JSON sidecar manifests", () => {
   const scriptPath = resolve(import.meta.dirname, "../../scripts/release/windows-sign.ps1");
   const script = readFileSync(scriptPath, "utf8");
 
   assert.match(script, /versions\.json\*/);
+  assert.match(script, /opencode-managed-deps\.json\*/);
   assert.match(script, /Skipping signing for non-executable sidecar manifest/);
   assert.match(script, /exit 0/);
 });
