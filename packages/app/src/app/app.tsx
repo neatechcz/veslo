@@ -9688,12 +9688,14 @@ export default function App() {
       if (!entry.url) {
         throw new Error("Missing MCP URL.");
       }
-      const oauth: McpRemoteConfig["oauth"] = entry.oauth ? {} : false;
+      const oauth: McpRemoteConfig["oauth"] =
+        entry.oauth === false ? false : typeof entry.oauth === "object" ? entry.oauth : {};
       return {
         type: "remote",
         url: entry.url,
         enabled: true,
         oauth,
+        ...(entry.headers ? { headers: entry.headers } : {}),
       };
     }
 
@@ -9706,6 +9708,45 @@ export default function App() {
       command: entry.command,
       enabled: true,
     };
+  }
+
+  async function startServerManagedMcpOAuth(entry: McpDirectoryInfo): Promise<boolean> {
+    if (entry.authorization?.type !== "veslo-server-oauth") {
+      return false;
+    }
+
+    const denAuth = readDenAuth();
+    const denApiBase = denAuth?.denApiBase?.trim().replace(/\/+$/, "") ?? "";
+    const denToken = denAuth?.token?.trim() ?? "";
+    if (!denApiBase || !denToken) {
+      throw new Error("Sign in to Veslo before connecting this provider.");
+    }
+
+    const startPath = entry.authorization.startPath.trim();
+    if (!startPath.startsWith("/v1/")) {
+      throw new Error("Invalid provider authorization path.");
+    }
+
+    const response = await fetch(`${denApiBase}${startPath}`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${denToken}`,
+      },
+    });
+    if (!response.ok) {
+      const details = await response.text().catch(() => "");
+      throw new Error(details || `Provider authorization failed (${response.status})`);
+    }
+
+    const payload = await response.json().catch(() => null) as { authorizeUrl?: unknown } | null;
+    if (!payload || typeof payload.authorizeUrl !== "string" || !payload.authorizeUrl.trim()) {
+      throw new Error("Provider authorization did not return a browser URL.");
+    }
+
+    await openDesktopAuthUrl(payload.authorizeUrl);
+    setMcpStatus(t("mcp.auth.follow_browser_steps", currentLocale()));
+    return true;
   }
 
   async function activateInstalledMcp(entry: McpDirectoryInfo, slug = quickConnectEntryKey(entry)) {
@@ -9721,7 +9762,11 @@ export default function App() {
     setMcpStatuses(status as McpStatusMap);
     await refreshMcpServers({ mode: "explicit", reason: "mcp-activate-installed" });
 
-    if (entry.oauth) {
+    if (await startServerManagedMcpOAuth(entry)) {
+      setMcpAuthEntry(null);
+      setMcpAuthNeedsReload(true);
+      setMcpAuthModalOpen(false);
+    } else if (entry.oauth) {
       setMcpAuthEntry(entry);
       setMcpAuthNeedsReload(true);
       setMcpAuthModalOpen(true);
@@ -9921,11 +9966,22 @@ export default function App() {
       ...(selectedEntry.url ? { url: selectedEntry.url } : {}),
       ...(selectedEntry.command ? { command: selectedEntry.command } : {}),
       oauth: selectedEntry.oauth,
+      ...(selectedEntry.headers ? { headers: selectedEntry.headers } : {}),
+      ...(selectedEntry.authorization ? { authorization: selectedEntry.authorization } : {}),
+      provider: selectedEntry.provider,
+      source: selectedEntry.source,
     };
 
     try {
       setMcpStatus(null);
       setMcpConnectingName(entry.name);
+      if (entry.authorization?.type === "veslo-server-oauth") {
+        await refreshMcpServers({ mode: "explicit", reason: "hub-mcp-server-oauth-installed" });
+        await startServerManagedMcpOAuth(entry);
+        await refreshMcpServers({ mode: "explicit", reason: "hub-mcp-server-oauth-started" });
+        return result;
+      }
+
       await activateInstalledMcp(entry, entry.id || quickConnectEntryKey(entry));
       return result;
     } catch (error) {

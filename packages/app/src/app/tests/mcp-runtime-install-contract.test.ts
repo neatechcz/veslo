@@ -7,6 +7,7 @@ const storeSource = readFileSync(new URL("../context/extensions.ts", import.meta
 
 test("catalog MCP install refreshes MCP state after workspace config write", () => {
   const buildConfigSource = appSource.match(/function buildMcpAddConfig[\s\S]*?async function activateInstalledMcp/)?.[0] ?? "";
+  const activateSource = appSource.match(/async function activateInstalledMcp[\s\S]*?async function connectMcp/)?.[0] ?? "";
 
   assert.match(appSource, /await refreshMcpServers\(\{ mode: "explicit", reason: "mcp-activate-installed" \}\)/);
   assert.match(appSource, /activeClient\.mcp\.add/);
@@ -14,7 +15,18 @@ test("catalog MCP install refreshes MCP state after workspace config write", () 
   assert.equal(buildConfigSource.length > 0, true);
   assert.match(
     buildConfigSource,
-    /const oauth:[\s\S]*=\s*entry\.oauth\s*\?\s*\{\}\s*:\s*false;[\s\S]*oauth,/,
+    /const oauth:[\s\S]*=\s*entry\.oauth === false \? false : typeof entry\.oauth === "object" \? entry\.oauth : \{\};[\s\S]*oauth,/,
+  );
+  assert.match(buildConfigSource, /entry\.headers \? \{ headers: entry\.headers \} : \{\}/);
+  assert.doesNotMatch(buildConfigSource, /entry\.oauth\s*\?\s*\{\}\s*:\s*false/);
+  assert.match(appSource, /async function startServerManagedMcpOAuth/);
+  assert.match(appSource, /entry\.authorization\?\.type !== "veslo-server-oauth"/);
+  assert.match(appSource, /Authorization: `Bearer \$\{denToken\}`/);
+  assert.match(appSource, /await openDesktopAuthUrl\(payload\.authorizeUrl\)/);
+  assert.match(activateSource, /if \(await startServerManagedMcpOAuth\(entry\)\)[\s\S]*\} else if \(entry\.oauth\)/);
+  assert.match(
+    appSource,
+    /if \(entry\.authorization\?\.type === "veslo-server-oauth"\) \{[\s\S]*reason: "hub-mcp-server-oauth-installed"[\s\S]*await startServerManagedMcpOAuth\(entry\)[\s\S]*return result;[\s\S]*await activateInstalledMcp/,
   );
 });
 

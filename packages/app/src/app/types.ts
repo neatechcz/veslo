@@ -566,6 +566,25 @@ export type WorkspaceSkillSetResolution = {
   reloadRequired: boolean;
 };
 
+export type HubMcpOAuthConfig =
+  | boolean
+  | {
+      clientId: string;
+      clientSecret?: string;
+      scope?: string;
+    };
+
+export type HubMcpAuthorization = {
+  type: "veslo-server-oauth";
+  provider: string;
+  connectorId: string;
+  scopes: string[];
+  startPath: string;
+  runtimeTokenPath: string;
+  statusPath: string;
+  disconnectPath: string;
+};
+
 export type HubMcpItem = {
   id: string;
   name: string;
@@ -574,11 +593,21 @@ export type HubMcpItem = {
     type: "remote" | "local";
     url?: string;
     command?: string[];
-    oauth?: boolean;
+    oauth?: HubMcpOAuthConfig;
+    headers?: Record<string, string>;
   };
-  source: {
-    scope: "org";
-    orgId: string;
+  authorization?: HubMcpAuthorization;
+  source:
+    | {
+        scope: "org";
+        orgId: string;
+      }
+    | {
+        scope: "platform";
+      };
+  provider?: {
+    id: string;
+    group?: string;
   };
 };
 
@@ -589,7 +618,14 @@ export type HubMcpCard = {
   type: "remote" | "local";
   url?: string;
   command?: string[];
-  oauth: boolean;
+  oauth: HubMcpOAuthConfig;
+  headers?: Record<string, string>;
+  authorization?: HubMcpAuthorization;
+  provider?: {
+    id: string;
+    group?: string;
+  };
+  source?: HubMcpItem["source"];
 };
 
 export type PluginInstallStep = {

@@ -1,7 +1,7 @@
 # Google Workspace MCP Connectors Design
 
 **Date:** 2026-06-18
-**Status:** Approved
+**Status:** Superseded by `docs/plans/2026-06-19-google-workspace-server-oauth-design.md`
 
 ## Goal
 
@@ -9,6 +9,10 @@ Add platform-distributed Google connectors that let Veslo users connect Gmail,
 Google Calendar, and Google Drive through Google-managed remote MCP servers,
 while keeping Google OAuth tokens local to the user's device for the first
 version.
+
+This was the original local-token MVP design. The production server OAuth
+direction supersedes it: Veslo now owns the server callback, server-side grant
+storage, and runtime connector boundary.
 
 ## Context
 

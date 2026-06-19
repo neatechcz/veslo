@@ -13,6 +13,59 @@ import {
 
 const LOCAL_SESSION_ARCHIVE_OWNER_KEY = "local:desktop";
 
+function createMemoryStorage(seed: Record<string, string> = {}): Storage {
+  const entries = new Map(Object.entries(seed));
+  return {
+    get length() {
+      return entries.size;
+    },
+    clear() {
+      entries.clear();
+    },
+    getItem(key: string) {
+      return entries.get(key) ?? null;
+    },
+    key(index: number) {
+      return Array.from(entries.keys())[index] ?? null;
+    },
+    removeItem(key: string) {
+      entries.delete(key);
+    },
+    setItem(key: string, value: string) {
+      entries.set(key, value);
+    },
+  };
+}
+
+async function withDenAuthStorage(run: () => Promise<void>) {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      localStorage: createMemoryStorage(),
+      sessionStorage: createMemoryStorage({
+        "veslo.den.auth": JSON.stringify({
+          denApiBase: "https://api.veslo.test",
+          token: "den-token",
+          orgId: "org_123",
+          user: { id: "user_123" },
+          org: { id: "org_123" },
+        }),
+      }),
+    },
+  });
+
+  try {
+    await run();
+  } finally {
+    if (previousWindow) {
+      Object.defineProperty(globalThis, "window", previousWindow);
+    } else {
+      delete (globalThis as { window?: unknown }).window;
+    }
+  }
+}
+
 test("deriveLocalVesloServerUrlFromOpencodeBaseUrl rewrites local loopback hosts to Veslo port", () => {
   const derived = deriveLocalVesloServerUrlFromOpencodeBaseUrl("http://127.0.0.1:64792");
   assert.equal(derived, "http://127.0.0.1:8787");
@@ -1443,6 +1496,164 @@ test("listHubMcp forwards den auth context headers when provided", async () => {
   } finally {
     globalThis.fetch = previousFetch;
   }
+});
+
+test("listHubMcp preserves platform connector metadata", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; headers: Headers }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+    });
+    return new Response(
+      JSON.stringify({
+        items: [
+          {
+            id: "google-drive",
+            name: "Google Drive",
+            description: "Find Drive files.",
+            config: {
+              type: "remote",
+              url: "https://api.veslo.work/v1/orgs/org_123/integrations/google/google-drive/mcp",
+              oauth: false,
+              headers: {
+                "X-Veslo-Connector": "google-drive",
+              },
+            },
+            authorization: {
+              type: "veslo-server-oauth",
+              provider: "google",
+              connectorId: "google-drive",
+              scopes: [
+                "https://www.googleapis.com/auth/drive.readonly",
+                "https://www.googleapis.com/auth/drive.file",
+              ],
+              startPath: "/v1/orgs/org_123/integrations/google/google-drive/oauth/start",
+              runtimeTokenPath: "/v1/orgs/org_123/integrations/google/google-drive/runtime-token",
+              statusPath: "/v1/orgs/org_123/integrations/google/connections",
+              disconnectPath: "/v1/orgs/org_123/integrations/google/google-drive/connection",
+            },
+            source: { scope: "platform" },
+            provider: { id: "google", group: "Google" },
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+    });
+
+    const result = await client.listHubMcp({
+      denToken: "den-token",
+      denOrgId: "org_123",
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(result.items[0]?.source.scope, "platform");
+    assert.equal(result.items[0]?.provider?.id, "google");
+    assert.equal(result.items[0]?.config.oauth, false);
+    assert.deepEqual(result.items[0]?.config.headers, { "X-Veslo-Connector": "google-drive" });
+    assert.equal(result.items[0]?.authorization?.type, "veslo-server-oauth");
+    assert.equal(
+      result.items[0]?.authorization?.runtimeTokenPath,
+      "/v1/orgs/org_123/integrations/google/google-drive/runtime-token",
+    );
+    assert.doesNotMatch(JSON.stringify(result), /VESLO_GOOGLE_MCP_CLIENT_SECRET|clientSecret/);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("refreshHubMcp preserves platform connector metadata in card state", async () => {
+  const { createRoot } = await import("solid-js");
+  const { createExtensionsStore } = await import("../../context/extensions.js");
+
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        vesloServerClient: () =>
+          ({
+            listHubMcp: async () => ({
+              items: [
+                {
+                  id: "google-drive",
+                  name: "Google Drive",
+                  description: "Find Drive files.",
+                  config: {
+                    type: "remote",
+                    url: "https://api.veslo.work/v1/orgs/org_123/integrations/google/google-drive/mcp",
+                    oauth: false,
+                    headers: {
+                      "X-Veslo-Connector": "google-drive",
+                    },
+                  },
+                  authorization: {
+                    type: "veslo-server-oauth",
+                    provider: "google",
+                    connectorId: "google-drive",
+                    scopes: [
+                      "https://www.googleapis.com/auth/drive.readonly",
+                      "https://www.googleapis.com/auth/drive.file",
+                    ],
+                    startPath: "/v1/orgs/org_123/integrations/google/google-drive/oauth/start",
+                    runtimeTokenPath: "/v1/orgs/org_123/integrations/google/google-drive/runtime-token",
+                    statusPath: "/v1/orgs/org_123/integrations/google/connections",
+                    disconnectPath: "/v1/orgs/org_123/integrations/google/google-drive/connection",
+                  },
+                  source: { scope: "platform" },
+                  provider: { id: "google", group: "Google" },
+                },
+              ],
+            }),
+          }) as any,
+        vesloServerStatus: () => "connected",
+        vesloServerCapabilities: () => ({
+          skills: { read: true, write: true, source: "veslo" },
+          hub: { mcp: { read: true, install: true } },
+          plugins: { read: true, write: true },
+          mcp: { read: true, write: true },
+          commands: { read: true, write: true },
+          config: { read: true, write: true },
+        }),
+        vesloServerWorkspaceId: () => "workspace-1",
+        setBusy: () => {},
+        setBusyLabel: () => {},
+        setBusyStartedAt: () => {},
+        setError: () => {},
+      });
+
+      try {
+        await store.refreshHubMcp({ force: true });
+        const card = store.hubMcpCards()[0];
+        assert.equal(card?.source?.scope, "platform");
+        assert.equal(card?.provider?.id, "google");
+        assert.equal(card?.oauth, false);
+        assert.deepEqual(card?.headers, { "X-Veslo-Connector": "google-drive" });
+        assert.equal(card?.authorization?.type, "veslo-server-oauth");
+        assert.equal(
+          card?.authorization?.runtimeTokenPath,
+          "/v1/orgs/org_123/integrations/google/google-drive/runtime-token",
+        );
+      } finally {
+        dispose();
+      }
+    });
+  });
 });
 
 test("installHubMcp forwards den auth context headers when provided", async () => {

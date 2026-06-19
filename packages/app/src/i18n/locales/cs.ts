@@ -571,6 +571,7 @@ export default {
   "mcp.available_apps": "Dostupné aplikace",
   "mcp.one_click_connect": "Připojení jedním kliknutím",
   "mcp.org_catalog_placeholder": "Zde budou dostupné MCP aplikace pro vaši organizaci.",
+  "mcp.hub_provider_label": "Sdílený poskytovatel: {provider}",
   "mcp.tap_to_connect": "Klepnutím připojit",
   "mcp.connected_badge": "Připojeno",
   "mcp.your_apps": "Vaše aplikace",
@@ -711,6 +712,7 @@ export default {
 
   // MCP Auth Modal
   "mcp.auth.open_browser_signin": "Pro dokončení přihlášení otevřeme váš prohlížeč.",
+  "mcp.auth.local_token_notice": "Účet autorizujete v prohlížeči. V konfiguraci Veslo je jen konfigurace MCP OAuth klienta; uživatelské OAuth tokeny zůstávají v lokální MCP/OpenCode runtime nebo lokálním profilu a neukládají do cloudu Veslo.",
   "mcp.auth.connect_server": "Připojit {server}",
   "mcp.auth.already_connected": "Už je připojeno",
   "mcp.auth.already_connected_description": "{server} už je ověřený a připravený k použití.",

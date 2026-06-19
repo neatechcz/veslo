@@ -304,6 +304,25 @@ export type VesloHubSkillItem = {
   };
 };
 
+export type VesloHubMcpOAuthConfig =
+  | boolean
+  | {
+      clientId: string;
+      clientSecret?: string;
+      scope?: string;
+    };
+
+export type VesloHubMcpAuthorization = {
+  type: "veslo-server-oauth";
+  provider: string;
+  connectorId: string;
+  scopes: string[];
+  startPath: string;
+  runtimeTokenPath: string;
+  statusPath: string;
+  disconnectPath: string;
+};
+
 export type VesloHubMcpItem = {
   id: string;
   name: string;
@@ -312,11 +331,21 @@ export type VesloHubMcpItem = {
     type: "remote" | "local";
     url?: string;
     command?: string[];
-    oauth?: boolean;
+    oauth?: VesloHubMcpOAuthConfig;
+    headers?: Record<string, string>;
   };
-  source: {
-    scope: "org";
-    orgId: string;
+  authorization?: VesloHubMcpAuthorization;
+  source:
+    | {
+        scope: "org";
+        orgId: string;
+      }
+    | {
+        scope: "platform";
+      };
+  provider?: {
+    id: string;
+    group?: string;
   };
 };
 

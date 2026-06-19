@@ -34,6 +34,8 @@ export const FeedbackType = ["bug"] as const
 export const FeedbackStatus = ["pending", "projected", "failed"] as const
 export const FeedbackScreenshotStatus = ["captured", "failed"] as const
 export const FeedbackProjectorAttemptStatus = ["pending", "succeeded", "failed"] as const
+export const GoogleWorkspaceConnector = ["google-gmail", "google-calendar", "google-drive"] as const
+export const GoogleWorkspaceConnectionState = ["connected", "revoked", "error"] as const
 
 export const AuthUserTable = mysqlTable(
   "user",
@@ -435,6 +437,30 @@ export const AuditEventTable = mysqlTable(
     created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
   (table) => [index("audit_event_org_id").on(table.org_id), index("audit_event_worker_id").on(table.worker_id)],
+)
+
+export const GoogleWorkspaceConnectionTable = mysqlTable(
+  "google_workspace_connection",
+  {
+    id: id().primaryKey(),
+    org_id: varchar("org_id", { length: 64 }).notNull(),
+    user_id: varchar("user_id", { length: 64 }).notNull(),
+    connector_id: mysqlEnum("connector_id", GoogleWorkspaceConnector).notNull(),
+    state: mysqlEnum("state", GoogleWorkspaceConnectionState).notNull(),
+    scopes: text("scopes").notNull(),
+    access_token_expires_at: timestamp("access_token_expires_at", { fsp: 3 }),
+    grant_iv: text("grant_iv").notNull(),
+    grant_auth_tag: text("grant_auth_tag").notNull(),
+    grant_ciphertext: longtext("grant_ciphertext").notNull(),
+    connected_at: timestamp("connected_at", { fsp: 3 }).notNull().defaultNow(),
+    revoked_at: timestamp("revoked_at", { fsp: 3 }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("google_workspace_connection_scope").on(table.org_id, table.user_id, table.connector_id),
+    index("google_workspace_connection_org_user").on(table.org_id, table.user_id),
+    index("google_workspace_connection_state").on(table.state),
+  ],
 )
 
 export * from "../skills/schema.js"

@@ -349,6 +349,25 @@ export interface HubSkillItem {
   };
 }
 
+export type HubMcpOAuthConfig =
+  | boolean
+  | {
+      clientId: string;
+      clientSecret?: string;
+      scope?: string;
+    };
+
+export type HubMcpAuthorization = {
+  type: "veslo-server-oauth";
+  provider: string;
+  connectorId: string;
+  scopes: string[];
+  startPath: string;
+  runtimeTokenPath: string;
+  statusPath: string;
+  disconnectPath: string;
+};
+
 export interface HubMcpItem {
   id: string;
   name: string;
@@ -357,11 +376,16 @@ export interface HubMcpItem {
     type: "remote" | "local";
     url?: string;
     command?: string[];
-    oauth?: boolean;
+    oauth?: HubMcpOAuthConfig;
+    headers?: Record<string, string>;
   };
-  source: {
-    scope: "org";
-    orgId: string;
+  authorization?: HubMcpAuthorization;
+  source:
+    | { scope: "org"; orgId: string }
+    | { scope: "platform" };
+  provider?: {
+    id: string;
+    group?: string;
   };
 }
 

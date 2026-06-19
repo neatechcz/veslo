@@ -4,9 +4,11 @@ import { join, resolve, dirname, win32, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { prepareDesktopAuthSeed } from './desktop-auth-seed.js';
 import {
+  createGoogleMcpCatalogDenAuthJson,
   E2E_SKILL_REGISTRY_ORG_ID,
   E2E_SKILL_REGISTRY_TOKEN,
   E2E_SKILL_REGISTRY_USER_ID,
+  shouldUseGoogleMcpCatalogFixture,
   startSkillRegistryFixture,
   stopSkillRegistryFixture,
 } from './skill-registry-fixture.js';
@@ -58,6 +60,7 @@ type AppLaunchEnvOptions = {
   port: number;
   opencodeHome: string;
   snapshotPath: string;
+  denApiBase?: string | null;
 };
 
 export function resolveWebDriverPort(env: Record<string, string | undefined> = process.env): number {
@@ -225,6 +228,7 @@ export function createAppLaunchEnv(
   const vesloDataDir = joinForPlatform(options.opencodeHome, '.veslo');
   const vesloAppDataDir = joinForPlatform(vesloDataDir, 'app-data');
   const vesloAppLocalDataDir = joinForPlatform(vesloDataDir, 'app-local-data');
+  const denApiBase = options.denApiBase?.trim().replace(/\/+$/, '') ?? '';
   const env: NodeJS.ProcessEnv = {
     ...baseEnv,
     TAURI_WEBDRIVER_PORT: String(options.port),
@@ -233,6 +237,7 @@ export function createAppLaunchEnv(
     VESLO_APP_DATA_DIR: vesloAppDataDir,
     VESLO_APP_LOCAL_DATA_DIR: vesloAppLocalDataDir,
     VESLO_DEN_AUTH_SNAPSHOT_PATH: options.snapshotPath,
+    ...(denApiBase ? { VESLO_DEN_API_BASE: denApiBase } : {}),
   };
 
   if (platform === 'win32') {
@@ -331,9 +336,13 @@ export async function ensureWebDriverReady(
 
 export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
   if (await hasReadyWebDriverServer(port)) {
-    if (shouldUseManagedAiGatewayFixture()) {
+    if (shouldUseManagedAiGatewayFixture() || shouldUseGoogleMcpCatalogFixture()) {
+      const fixtureNames = [
+        shouldUseManagedAiGatewayFixture() ? 'E2E_MANAGED_AI_GATEWAY_FIXTURE=1' : null,
+        shouldUseGoogleMcpCatalogFixture() ? 'E2E_GOOGLE_MCP_CATALOG_FIXTURE=1' : null,
+      ].filter(Boolean).join(' and ');
       throw new Error(
-        `Refusing to reuse an existing WebDriver server on port ${port} while E2E_MANAGED_AI_GATEWAY_FIXTURE=1. Stop the existing desktop app before running the managed AI fixture spec.`,
+        `Refusing to reuse an existing WebDriver server on port ${port} while ${fixtureNames}. Stop the existing desktop app before running the fixture spec.`,
       );
     }
     console.log(`[e2e] Reusing existing WebDriver server on port ${port}.`);
@@ -345,9 +354,11 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
   const binaryPath = resolveBinaryPath();
   console.log(`[e2e] Launching Tauri binary: ${binaryPath}`);
   console.log(`[e2e] WebDriver port: ${port}`);
-  const skillRegistryFixtureBaseUrl = process.env.E2E_SKILL_REGISTRY_FIXTURE?.trim() === '0'
+  const useGoogleMcpCatalogFixture = shouldUseGoogleMcpCatalogFixture();
+  const skillRegistryFixtureBaseUrl = process.env.E2E_SKILL_REGISTRY_FIXTURE?.trim() === '0' && !useGoogleMcpCatalogFixture
     ? null
     : await startSkillRegistryFixture();
+  const googleMcpCatalogFixtureBaseUrl = useGoogleMcpCatalogFixture ? skillRegistryFixtureBaseUrl : null;
   const managedAiGatewayFixtureBaseUrl = (await startManagedAiGatewayFixtureIfRequested())?.baseUrl ?? null;
   const exposeSkillRegistryServerEnv = process.env.E2E_SKILL_REGISTRY_SERVER_ENV?.trim() !== '0';
   const seedDenAuthFromSkillRegistryFixture =
@@ -362,6 +373,11 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
           user: { id: E2E_MANAGED_AI_USER_ID, email: 'veslo-managed-ai-e2e@example.test' },
           org: { id: E2E_MANAGED_AI_ORG_ID, slug: 'veslo-managed-ai-e2e' },
         }),
+      }
+    : googleMcpCatalogFixtureBaseUrl
+    ? {
+        ...process.env,
+        E2E_DEN_AUTH_JSON: createGoogleMcpCatalogDenAuthJson(googleMcpCatalogFixtureBaseUrl),
       }
     : seedDenAuthFromSkillRegistryFixture
     ? {
@@ -378,6 +394,9 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
   if (skillRegistryFixtureBaseUrl) {
     console.log(`[e2e] Skill registry fixture: ${skillRegistryFixtureBaseUrl}`);
   }
+  if (googleMcpCatalogFixtureBaseUrl) {
+    console.log(`[e2e] Google MCP catalog fixture: ${googleMcpCatalogFixtureBaseUrl}`);
+  }
 
   const tmpDir = join(resolveDesktopRoot(), '..', 'e2e', '.tmp-opencode-home');
   let env: NodeJS.ProcessEnv;
@@ -390,6 +409,7 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
       port,
       opencodeHome: CUSTOM_OPENCODE_HOME,
       snapshotPath,
+      denApiBase: googleMcpCatalogFixtureBaseUrl,
     });
     seedDefaultWorkspaceState(CUSTOM_OPENCODE_HOME, env);
     console.log(`[e2e] Using custom OPENCODE_HOME: ${CUSTOM_OPENCODE_HOME}`);
@@ -401,6 +421,7 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
       port,
       opencodeHome: tmpDir,
       snapshotPath,
+      denApiBase: googleMcpCatalogFixtureBaseUrl,
     });
     env.HOME = ISOLATED_PROFILE_ROOT;
     env.USERPROFILE = ISOLATED_PROFILE_ROOT;
@@ -414,6 +435,7 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
     env = {
       ...process.env,
       TAURI_WEBDRIVER_PORT: String(port),
+      ...(googleMcpCatalogFixtureBaseUrl ? { VESLO_DEN_API_BASE: googleMcpCatalogFixtureBaseUrl } : {}),
     } as NodeJS.ProcessEnv;
     if (process.platform === 'linux') {
       delete env.WAYLAND_DISPLAY;

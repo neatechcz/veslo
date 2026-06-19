@@ -119,8 +119,11 @@ export async function installHubMcp(
 
   if (item.config.type === "remote") {
     config.url = item.config.url;
-    if (typeof item.config.oauth === "boolean") {
+    if (typeof item.config.oauth === "boolean" || typeof item.config.oauth === "object") {
       config.oauth = item.config.oauth;
+    }
+    if (item.config.headers && Object.keys(item.config.headers).length > 0) {
+      config.headers = item.config.headers;
     }
   }
 

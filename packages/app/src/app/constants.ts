@@ -1,4 +1,4 @@
-import type { ModelRef, SuggestedPlugin } from "./types";
+import type { HubMcpItem, HubMcpOAuthConfig, ModelRef, SuggestedPlugin } from "./types";
 
 export const MODEL_PREF_KEY = "veslo.defaultModel";
 export const SESSION_MODEL_PREF_KEY = "veslo.sessionModels";
@@ -39,7 +39,14 @@ export type McpDirectoryInfo = {
   url?: string;
   type?: "remote" | "local";
   command?: string[];
-  oauth: boolean;
+  oauth: HubMcpOAuthConfig;
+  headers?: Record<string, string>;
+  authorization?: HubMcpItem["authorization"];
+  provider?: {
+    id: string;
+    group?: string;
+  };
+  source?: HubMcpItem["source"];
 };
 
 export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [

@@ -112,6 +112,43 @@ MCP config is still OpenCode config, not `.opencode/veslo.json`.
 Settings can expose Extensions as a link tab, but that tab routes to the same
 MCP dashboard page. The MCP page remains the owner of connected-app behavior.
 
+### Platform Google Workspace MCP Connectors
+
+Veslo provides Google Workspace MCP connectors as three separate platform
+entries:
+
+- Google Gmail
+- Google Calendar
+- Google Drive
+
+They are not one combined Google connector. Each entry is distributed through
+Veslo/Den catalog metadata as a platform connector and points local runtimes at
+a Veslo-owned connector endpoint.
+
+For normal Veslo usage, Veslo owns and distributes the Google OAuth client
+configuration. Users should not create their own Google Cloud project, approve a
+Google CLI, or supply Google OAuth client values just to use the platform
+Google connectors. A Veslo deployment must still be configured with the
+Veslo-owned Google OAuth app values before these connectors are enabled for
+public users.
+
+The production token boundary is server-managed: catalog metadata and local
+OpenCode config do not contain Google OAuth client secrets or user Google token
+material. Den starts Google OAuth, receives the production callback, exchanges
+the code using Veslo's Google client secret, and stores encrypted per-user
+Google grants server-side.
+
+Keep these states distinct in product behavior and docs:
+
+- catalog-visible: the connector is available from Veslo/Den catalog metadata
+- installed/configured: OpenCode config contains the remote MCP entry
+- server-authorized: the user completed Veslo-managed Google OAuth for that entry
+- runtime-connected: the live runtime reports the MCP server as usable
+- reload-needed: config changed but the runtime has not loaded it yet
+
+Catalog visibility and installed config are not proof that Google OAuth has
+completed or that the live runtime is connected.
+
 ## Messaging
 
 Messaging channels and identities are managed through the `identities.tsx` surface and OpenCode Router-backed APIs.
