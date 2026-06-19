@@ -238,6 +238,22 @@ test("release checklist documents Windows signing timeout controls", () => {
   assert.match(checklist, /Azure Artifact Signing request/);
 });
 
+test("Windows signing workflows allow slow Azure signing responses", () => {
+  const workflowPaths = [
+    "../../.github/workflows/build-desktop.yml",
+    "../../.github/workflows/build-windows-msi.yml",
+    "../../.github/workflows/prerelease.yml",
+    "../../.github/workflows/release-macos-aarch64.yml",
+  ];
+
+  for (const workflowPath of workflowPaths) {
+    const workflow = readFileSync(resolve(import.meta.dirname, workflowPath), "utf8");
+
+    assert.match(workflow, /VESLO_WINDOWS_SIGNING_TIMEOUT_SECONDS:\s*900/);
+    assert.match(workflow, /VESLO_WINDOWS_SIGNING_MAX_ATTEMPTS:\s*2/);
+  }
+});
+
 test("Windows workflows use the shared Artifact Signing dlib package installer", () => {
   const installerPath = resolve(
     import.meta.dirname,

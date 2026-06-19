@@ -19,6 +19,8 @@ jobs:
       TARGET_TRIPLE: x86_64-pc-windows-msvc
       TAURI_WINDOWS_RELEASE_CONFIG: src-tauri/tauri.windows.release.conf.json
       VESLO_WINDOWS_SIGNING_DESCRIPTION: Veslo by Neatech
+      VESLO_WINDOWS_SIGNING_TIMEOUT_SECONDS: 900
+      VESLO_WINDOWS_SIGNING_MAX_ATTEMPTS: 2
 
     steps:
       - name: Enable git long paths
