@@ -214,6 +214,8 @@ OpenCode JSON helper calls made by the local server use a bounded upstream timeo
 
 Streaming pass-through OpenCode proxy routes (`/workspace/:id/opencode/*`) bound only the wait for upstream response headers (default 75 000 ms, override with `VESLO_OPENCODE_PROXY_HEADERS_TIMEOUT_MS`); once headers arrive, streamed bodies such as SSE are never cut. The orchestrator side of the same proxy never spawns an engine for `GET`/`HEAD` requests: when no engine is running for the workspace it responds immediately with `503 engine_not_running`, so background status polls (MCP, permission, LSP, health) fail fast instead of triggering and waiting on a 30-60 s engine cold start. Engines spawn only through explicit workspace activation and through non-GET proxy requests (the send path).
 
+Send preflight health checks treat local OpenCode `engine_not_running`, wrapped OpenCode request failures, and local 502/503 health responses as stale runtime signals. The app must re-run workspace-scoped engine activation before reading the routed client used for the prompt, including when an existing session still has a cached route.
+
 The desktop app recognizes managed Codex credential exhaustion or missing eligible binding inside these normalized errors and formats it as an actionable AI access failure. Prompt sends that hit this condition set the session run state to failed and insert the error into the transcript instead of leaving OpenCode's empty assistant turn looking like an active run.
 
 DEN managed-AI uses `MANAGED_AI_DATABASE_URL`. Standalone AI Gateway uses `AI_GATEWAY_DATABASE_URL`. Their assignment, credential, eligibility, and usage views match only when those services are intentionally pointed at the same managed-AI backing database and compatible config.

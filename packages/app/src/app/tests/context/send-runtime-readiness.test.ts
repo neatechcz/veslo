@@ -283,6 +283,34 @@ test("local runtime readiness restarts the target workspace engine for dead endp
   assert.ok(events.some((entry) => entry.event === "sendPrompt:runtime-recovery-ok"));
 });
 
+test("local runtime readiness restarts the target workspace engine for engine_not_running responses", async () => {
+  const { readiness, clients, events, ensureEngineCalls } = createHarness({
+    ensureEngineForWorkspace: async (workspaceId?: string) => {
+      ensureEngineCalls.push(workspaceId);
+      clients.set("target", createClient("target-recovered"));
+      return true;
+    },
+  });
+  clients.set(
+    "target",
+    createClient("target-stale", async () => {
+      throw new Error('{"error":"engine_not_running","workspaceId":"target"}');
+    }),
+  );
+
+  const preflight = {
+    traceId: "trace-engine-not-running",
+    targetWorkspace: { workspaceId: "target", workspaceRoot: "/repo/target", directory: "/repo/target" },
+    runtimeHealthOk: false,
+  };
+
+  assert.equal(await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight), true);
+  assert.deepEqual(ensureEngineCalls, ["target"]);
+  assert.equal(preflight.runtimeHealthOk, true);
+  assert.ok(events.some((entry) => entry.event === "sendPrompt:runtime-recovery-start"));
+  assert.ok(events.some((entry) => entry.event === "sendPrompt:runtime-recovery-ok"));
+});
+
 test("local runtime readiness reflects recovery in active UI only for the active workspace", async () => {
   const { readiness, clients, ensureEngineCalls, engineReadyValues, sseConnectedValues, busyValues, busyLabels } =
     createHarness({
@@ -422,6 +450,15 @@ test("engine-info reconnect scopes the lookup and connection to the active local
 test("local runtime health error helpers classify dead endpoints and probe timeouts", () => {
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("failed to fetch")), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("ECONNREFUSED")), true);
+  assert.equal(
+    shouldRecoverLocalRuntimeFromHealthError(new Error('{"error":"engine_not_running","workspaceId":"target"}')),
+    true,
+  );
+  assert.equal(
+    shouldRecoverLocalRuntimeFromHealthError(new Error('{"error":"opencode_request_failed","status":503}')),
+    true,
+  );
+  assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("upstream status 502")), true);
   assert.equal(shouldRecoverLocalRuntimeFromHealthError(new Error("permission denied")), false);
   assert.equal(isLocalRuntimeHealthTimeoutError(new Error(localRuntimeHealthTimeoutMessage)), true);
 });
