@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Veslo owned-server database backups daily
+
+[Timer]
+OnCalendar=*-*-* 02:15:00 UTC
+RandomizedDelaySec=15m
+Persistent=true
+Unit=veslo-owned-server-backup.service
+
+[Install]
+WantedBy=timers.target
