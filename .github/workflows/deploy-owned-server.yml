@@ -8,6 +8,16 @@ on:
         required: false
         type: string
         default: ""
+      install_backup_timer:
+        description: "Install or update the owned-server daily database backup timer."
+        required: true
+        type: boolean
+        default: true
+      run_backup_now:
+        description: "Run one owned-server database backup after a successful deployment."
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -24,6 +34,8 @@ jobs:
       OWNED_SERVER_APP_DIR: ${{ vars.OWNED_SERVER_APP_DIR || '/home/neatech/veslo-owned-server-production' }}
       OWNED_SERVER_ENV_FILE: ${{ vars.OWNED_SERVER_ENV_FILE || '/home/neatech/veslo-owned-server-dark-launch-inputs/env/production.env' }}
       DEPLOY_BRANCH: ${{ github.event.inputs.branch || github.ref_name }}
+      INSTALL_BACKUP_TIMER: ${{ inputs.install_backup_timer }}
+      RUN_BACKUP_NOW: ${{ inputs.run_backup_now }}
       REPO_URL: https://github.com/${{ github.repository }}.git
       GITHUB_TOKEN: ${{ github.token }}
     steps:
@@ -107,3 +119,74 @@ jobs:
               exit 1
             fi
           done
+
+      - name: Install owned-server backup timer
+        if: env.INSTALL_BACKUP_TIMER == 'true'
+        run: |
+          set -euo pipefail
+
+          cd "$OWNED_SERVER_APP_DIR"
+
+          if ! command -v zstd >/dev/null 2>&1 || \
+             ! command -v node >/dev/null 2>&1 || \
+             ! node -e 'if (typeof fetch !== "function") process.exit(1)' >/dev/null 2>&1; then
+            sudo -n apt-get update
+            sudo -n apt-get install -y zstd nodejs
+          fi
+
+          command -v zstd
+          node -e 'if (typeof fetch !== "function") process.exit(1); console.log(process.version)'
+
+          for key in LETTR_API_KEY AUTH_EMAIL_ADDRESS AUTH_EMAIL_FROM_NAME; do
+            if ! grep -Eq "^${key}=.+" "$OWNED_SERVER_ENV_FILE"; then
+              echo "::error::Missing backup alert env value: $key"
+              exit 1
+            fi
+          done
+
+          if ! grep -Eq '^(BACKUP_ALERT_EMAIL_RECIPIENTS|AI_GATEWAY_ALERT_EMAIL_RECIPIENTS)=.+@.+' "$OWNED_SERVER_ENV_FILE"; then
+            echo "::error::Missing backup alert recipients in owned-server env file"
+            exit 1
+          fi
+
+          sudo -n install -d -m 0700 /srv/veslo/backups
+
+          backup_env="$(mktemp)"
+          cat > "$backup_env" <<EOF
+          VESLO_APP_DIR=$OWNED_SERVER_APP_DIR
+          BACKUP_ROOT=/srv/veslo/backups
+          ENV_FILE=$OWNED_SERVER_ENV_FILE
+          COMPOSE_FILE=packaging/owned-server/compose.yml
+          DOCKER_COMPOSE=sudo -n docker compose
+          NODE_BIN=$(command -v node)
+          EOF
+          sudo -n install -m 0600 "$backup_env" /etc/default/veslo-owned-server-backup
+          rm -f "$backup_env"
+
+          sudo -n install -m 0644 packaging/owned-server/backup/systemd/veslo-owned-server-backup.service /etc/systemd/system/veslo-owned-server-backup.service
+          sudo -n install -m 0644 packaging/owned-server/backup/systemd/veslo-owned-server-backup.timer /etc/systemd/system/veslo-owned-server-backup.timer
+          sudo -n systemctl daemon-reload
+          sudo -n systemctl enable --now veslo-owned-server-backup.timer
+          sudo -n systemctl --no-pager status veslo-owned-server-backup.timer
+
+      - name: Run owned-server backup now
+        if: env.RUN_BACKUP_NOW == 'true'
+        run: |
+          set -euo pipefail
+
+          sudo -n systemctl start veslo-owned-server-backup.service
+          sudo -n systemctl --no-pager status veslo-owned-server-backup.service
+
+          latest="$(sudo -n find /srv/veslo/backups -mindepth 1 -maxdepth 1 -type d -name '????????T??????Z' -print | sort | tail -n 1)"
+          test -n "$latest"
+
+          sudo -n bash -lc '
+            set -euo pipefail
+            cd "$1"
+            zstd -t den.sql.zst ai-gateway.sql.zst
+            sha256sum -c den.sql.zst.sha256
+            sha256sum -c ai-gateway.sql.zst.sha256
+            printf "Latest backup: %s\n" "$1"
+            ls -lh den.sql.zst ai-gateway.sql.zst manifest.json
+            cat manifest.json
+          ' sh "$latest"

@@ -18,6 +18,8 @@ test("owned-server deployment workflow deploys the Compose stack on the owned-se
   for (const requiredText of [
     "name: Deploy Owned Server",
     "workflow_dispatch",
+    "install_backup_timer",
+    "run_backup_now",
     "runs-on:",
     "self-hosted",
     "linux",
@@ -40,6 +42,13 @@ test("owned-server deployment workflow deploys the Compose stack on the owned-se
     "https://app.veslo.work",
     "compose exec -T worker-manager",
     "http://127.0.0.1:8790/health",
+    "Install owned-server backup timer",
+    "apt-get install -y zstd nodejs",
+    "veslo-owned-server-backup.timer",
+    "Run owned-server backup now",
+    "systemctl start veslo-owned-server-backup.service",
+    "sha256sum -c den.sql.zst.sha256",
+    "sha256sum -c ai-gateway.sql.zst.sha256",
   ]) {
     assert.match(workflowSource, new RegExp(requiredText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
   }
