@@ -572,6 +572,63 @@ body {
   text-decoration-color: currentColor;
 }
 
+.ow-public-intro {
+  position: relative;
+  z-index: 5;
+  width: min(100%, 48rem);
+  display: grid;
+  gap: 0.85rem;
+  text-align: center;
+  padding: 1.2rem 0 0.2rem;
+}
+
+.ow-public-kicker {
+  margin: 0;
+  color: var(--ow-accent);
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ow-public-intro h1 {
+  margin: 0;
+  font-size: clamp(2rem, 5vw, 3.25rem);
+  line-height: 1.06;
+}
+
+.ow-public-intro p {
+  margin: 0;
+  color: #475569;
+  font-size: 1rem;
+  line-height: 1.62;
+}
+
+.ow-public-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  justify-content: center;
+  align-items: center;
+  margin-top: 0.25rem;
+}
+
+.ow-public-actions a {
+  color: #1b29ff;
+  font-size: 0.88rem;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.ow-public-actions a:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.2rem;
+}
+
+.ow-cloud-control-anchor {
+  display: contents;
+}
+
 .ow-public-footer {
   position: relative;
   z-index: 5;
