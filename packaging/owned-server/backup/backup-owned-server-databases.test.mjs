@@ -121,6 +121,10 @@ case "$mode" in
     fi
     ;;
   compress)
+    if [[ "\${FAIL_ZSTD_COMPRESS:-0}" == "1" ]]; then
+      echo "simulated zstd compression failure" >&2
+      exit 43
+    fi
     if [[ -n "$output" ]]; then
       if [[ \${#inputs[@]} -eq 0 ]]; then
         cat > "$output"
@@ -441,6 +445,40 @@ test("failure alert env parser preserves unquoted spaces and passes alert keys",
   assert.match(alert.body, /Timestamp: 20260619T031000Z/);
 });
 
+test("failure alert env parser preserves AI Gateway fallback when backup recipients are blank", async (t) => {
+  const { bin, env, root } = await createHarness(t);
+  const envFile = path.join(root, "fallback-recipients.env");
+  const captureLog = path.join(root, "fallback-alert-env.jsonl");
+  const captureNode = await writeNodeAlertCapture(bin, captureLog);
+
+  await writeFile(
+    envFile,
+    [
+      "LETTR_API_KEY=lettr_test_key",
+      "AUTH_EMAIL_ADDRESS=auth@example.test",
+      "AUTH_EMAIL_FROM_NAME=Veslo Ops",
+      "BACKUP_ALERT_EMAIL_RECIPIENTS=",
+      "AI_GATEWAY_ALERT_EMAIL_RECIPIENTS=fallback@example.test",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const result = await runScript({
+    ...env,
+    BACKUP_TIMESTAMP: "20260619T032000Z",
+    ENV_FILE: envFile,
+    NODE_BIN: captureNode,
+    ZSTD_BIN: path.join(root, "missing-zstd"),
+  });
+
+  assert.notEqual(result.code, 0);
+
+  const [alert] = (await readFile(captureLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+  assert.equal(alert.env.BACKUP_ALERT_EMAIL_RECIPIENTS, "");
+  assert.equal(alert.env.AI_GATEWAY_ALERT_EMAIL_RECIPIENTS, "fallback@example.test");
+});
+
 test("failing second database dump leaves no successful set and moves staging to failed artifacts", async (t) => {
   const { alertLog, env, root } = await createHarness(t);
   const timestamp = "20260619T040000Z";
@@ -466,6 +504,34 @@ test("failing second database dump leaves no successful set and moves staging to
   assert.match(alert, /Failed artifacts:/);
   assert.match(alert, /\.failed\/20260619T040000Z/);
   assert.match(alert, /ai-gateway/);
+});
+
+test("compression failure preserves failed artifacts without raw SQL dumps", async (t) => {
+  const { alertLog, env, root } = await createHarness(t);
+  const timestamp = "20260619T041000Z";
+
+  const result = await runScript({
+    ...env,
+    BACKUP_TIMESTAMP: timestamp,
+    FAIL_ZSTD_COMPRESS: "1",
+  });
+
+  assert.notEqual(result.code, 0);
+  await assert.rejects(stat(path.join(root, timestamp)), { code: "ENOENT" });
+  await assert.rejects(stat(path.join(root, ".in-progress", timestamp)), { code: "ENOENT" });
+
+  const failedDir = path.join(root, ".failed", timestamp);
+  const failedEntries = await readdir(failedDir);
+  assert.equal(
+    failedEntries.filter((entry) => entry.endsWith(".sql")).length,
+    0,
+    `failed artifacts should not preserve raw SQL files: ${failedEntries.join(", ")}`,
+  );
+
+  const alert = await readFile(alertLog, "utf8");
+  assert.match(alert, /Veslo backup failed/);
+  assert.match(alert, /Timestamp: 20260619T041000Z/);
+  assert.match(alert, /compression/);
 });
 
 test("missing checksum metadata fails before promotion and alerts", async (t) => {

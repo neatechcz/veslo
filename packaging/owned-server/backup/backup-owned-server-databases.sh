@@ -39,11 +39,11 @@ strip_simple_quotes() {
 }
 
 read_alert_env_file() {
-  alert_LETTR_API_KEY="${LETTR_API_KEY:-}"
-  alert_AUTH_EMAIL_ADDRESS="${AUTH_EMAIL_ADDRESS:-}"
-  alert_AUTH_EMAIL_FROM_NAME="${AUTH_EMAIL_FROM_NAME:-}"
-  alert_BACKUP_ALERT_EMAIL_RECIPIENTS="${BACKUP_ALERT_EMAIL_RECIPIENTS:-}"
-  alert_AI_GATEWAY_ALERT_EMAIL_RECIPIENTS="${AI_GATEWAY_ALERT_EMAIL_RECIPIENTS:-}"
+  alert_LETTR_API_KEY=""
+  alert_AUTH_EMAIL_ADDRESS=""
+  alert_AUTH_EMAIL_FROM_NAME=""
+  alert_BACKUP_ALERT_EMAIL_RECIPIENTS=""
+  alert_AI_GATEWAY_ALERT_EMAIL_RECIPIENTS=""
 
   if [[ ! -f "$env_file" ]]; then
     return 0
@@ -78,6 +78,14 @@ read_alert_env_file() {
         ;;
     esac
   done < "$env_file"
+}
+
+remove_raw_staged_sql_artifacts() {
+  if [[ ! -d "$staging_dir" ]]; then
+    return 0
+  fi
+
+  find "$staging_dir" -type f -name '*.sql' -exec rm -f {} +
 }
 
 send_failure_alert() {
@@ -136,7 +144,9 @@ fail_backup() {
   if [[ -d "$staging_dir" ]]; then
     mkdir -p "$backup_root/.failed"
     rm -rf "$failed_dir"
-    if mv "$staging_dir" "$failed_dir"; then
+    if ! remove_raw_staged_sql_artifacts; then
+      echo "Failed to remove raw SQL files from failed staging artifacts." >&2
+    elif mv "$staging_dir" "$failed_dir"; then
       artifacts_path="$failed_dir"
     else
       echo "Failed to move staging artifacts to $failed_dir." >&2

@@ -55,6 +55,26 @@ test("backup runbook documents automated daily backup operations", async () => {
   );
 });
 
+test("backup runbook documents a pre-dump controlled failure drill", async () => {
+  const runbook = await readRepoFile("packaging/owned-server/backup/README.md");
+
+  assert.doesNotMatch(runbook, /ZSTD_BIN=\/bin\/false/);
+  assert.match(runbook, /BACKUP_TIMESTAMP=/);
+  assert.match(runbook, /Backup timestamp already exists/);
+  assert.match(runbook, /before any database dump/i);
+});
+
+test("backup runbook makes production env authoritative for alert recipients", async () => {
+  const runbook = await readRepoFile("packaging/owned-server/backup/README.md");
+
+  assert.match(runbook, /\/srv\/veslo\/env\/production\.env[\s\S]{0,160}authoritative source[\s\S]{0,160}BACKUP_ALERT_EMAIL_RECIPIENTS/);
+  assert.match(runbook, /Do not configure `BACKUP_ALERT_EMAIL_RECIPIENTS` there/);
+  assert.doesNotMatch(
+    runbook,
+    /Edit `\/etc\/default\/veslo-owned-server-backup`[^\n.]*BACKUP_ALERT_EMAIL_RECIPIENTS[^\n.]*match/,
+  );
+});
+
 test("state and config reference covers owned-server backup configuration", async () => {
   const stateReference = await readRepoFile("docs/dev/state-and-config-reference.md");
   const backupSection = extractSection(stateReference, "Owned-Server Backup Config");

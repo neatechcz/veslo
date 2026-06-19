@@ -52,7 +52,7 @@ sudo apt-get update
 sudo apt-get install -y zstd
 ```
 
-Populate `BACKUP_ALERT_EMAIL_RECIPIENTS` in `/srv/veslo/env/production.env` with all current admins who must receive failure emails. The backup alert path reuses the existing Lettr env values:
+Set `/srv/veslo/env/production.env` as the authoritative source for `BACKUP_ALERT_EMAIL_RECIPIENTS`, and populate it with all current admins who must receive failure emails. The backup alert path reads `ENV_FILE` and reuses the existing Lettr env values from the same production env file:
 
 ```bash
 LETTR_API_KEY=...
@@ -70,7 +70,7 @@ sudo install -m 0644 packaging/owned-server/backup/systemd/veslo-owned-server-ba
 sudo systemctl daemon-reload
 ```
 
-Edit `/etc/default/veslo-owned-server-backup` so `VESLO_APP_DIR`, `BACKUP_ROOT`, `ENV_FILE`, `COMPOSE_FILE`, `DOCKER_COMPOSE`, and `BACKUP_ALERT_EMAIL_RECIPIENTS` match the production host. The default backup root is `/srv/veslo/backups`.
+Edit `/etc/default/veslo-owned-server-backup` so `VESLO_APP_DIR`, `BACKUP_ROOT`, `ENV_FILE`, `COMPOSE_FILE`, and `DOCKER_COMPOSE` match the production host. Do not configure `BACKUP_ALERT_EMAIL_RECIPIENTS` there; keep recipients in `/srv/veslo/env/production.env` beside the Lettr config. The default backup root is `/srv/veslo/backups`.
 
 Run the first manual backup through systemd before enabling the daily schedule:
 
@@ -109,7 +109,7 @@ Successful backup sets live under `/srv/veslo/backups/<UTC timestamp>/`:
   manifest.json
 ```
 
-In-progress artifacts live under `/srv/veslo/backups/.in-progress/`. Failed artifacts are moved to `/srv/veslo/backups/.failed/<UTC timestamp>/` and are not pruned by the successful-set retention policy.
+In-progress artifacts live under `/srv/veslo/backups/.in-progress/`. Failed artifacts are moved to `/srv/veslo/backups/.failed/<UTC timestamp>/` and are not pruned by the successful-set retention policy. Before preserving failed artifacts, the runner removes raw `.sql` files from staging so failed-artifact directories do not retain uncompressed production dumps.
 
 Verify the latest backup files after the first manual run:
 
@@ -121,13 +121,14 @@ sha256sum -c den.sql.zst.sha256
 sha256sum -c ai-gateway.sql.zst.sha256
 ```
 
-Trigger one controlled failure to verify exactly one failure email reaches the configured admins:
+Trigger one controlled failure to verify exactly one failure email reaches the configured admins. Use an existing successful backup timestamp so the runner fails during preflight with `Backup timestamp already exists`, before any database dump starts:
 
 ```bash
-sudo cp /etc/default/veslo-owned-server-backup /etc/default/veslo-owned-server-backup.before-alert-test
-printf '\nZSTD_BIN=/bin/false\n' | sudo tee -a /etc/default/veslo-owned-server-backup
+latest="$(find /srv/veslo/backups -mindepth 1 -maxdepth 1 -type d -name '????????T??????Z' | sort | tail -n 1)"
+existing_timestamp="$(basename "$latest")"
+sudo systemctl set-environment BACKUP_TIMESTAMP="$existing_timestamp"
 sudo systemctl start veslo-owned-server-backup.service || true
-sudo mv /etc/default/veslo-owned-server-backup.before-alert-test /etc/default/veslo-owned-server-backup
+sudo systemctl unset-environment BACKUP_TIMESTAMP
 ```
 
 After the email arrives, confirm the failure in the logs and verify the next normal manual run succeeds before relying on the timer:

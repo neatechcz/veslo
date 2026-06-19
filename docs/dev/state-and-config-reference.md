@@ -184,14 +184,14 @@ This backend-first slice is platform-admin-only. A narrower `debug-logs-reader` 
 
 Owned-server database backups are host-level operations around the Compose stack, not app runtime state. The production backup root is `/srv/veslo/backups` unless `BACKUP_ROOT` overrides it in the systemd environment.
 
-Backup failure email reuses the existing Lettr configuration from the owned-server env file:
+Backup failure email reuses the existing Lettr configuration from the owned-server env file. `/srv/veslo/env/production.env` is the authoritative source for backup alert recipients and mail transport values:
 
 - `LETTR_API_KEY`
 - `AUTH_EMAIL_ADDRESS`
 - `AUTH_EMAIL_FROM_NAME`
 - `BACKUP_ALERT_EMAIL_RECIPIENTS`
 
-`BACKUP_ALERT_EMAIL_RECIPIENTS` should contain all current admins who must receive failure alerts. It is separate from AI Gateway credential alert routing so backup failures can notify operators even when app services are unhealthy.
+`BACKUP_ALERT_EMAIL_RECIPIENTS` should contain all current admins who must receive failure alerts. It belongs beside the Lettr values in the production env file, not in `/etc/default/veslo-owned-server-backup`. It is separate from AI Gateway credential alert routing so backup failures can notify operators even when app services are unhealthy.
 
 The backup runner requires `zstd` on the host, or an explicit `ZSTD_BIN` override, because compressed dumps are written as `.sql.zst` files and verified with `zstd -t`. Checksums are verified with `sha256sum -c`.
 

@@ -66,5 +66,5 @@ test("environment example documents owned-server backup defaults", async () => {
   assert.equal(env.get("ENV_FILE"), "/srv/veslo/env/production.env");
   assert.equal(env.get("COMPOSE_FILE"), "packaging/owned-server/compose.yml");
   assert.equal(env.get("DOCKER_COMPOSE"), "docker compose");
-  assert.equal(env.get("BACKUP_ALERT_EMAIL_RECIPIENTS"), "admin1@example.com,admin2@example.com");
+  assert.equal(env.has("BACKUP_ALERT_EMAIL_RECIPIENTS"), false);
 });
