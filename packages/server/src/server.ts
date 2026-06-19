@@ -13,6 +13,7 @@ import type {
   ReloadTrigger,
   TokenScope,
   SandboxBackend,
+  ResourceOwner,
   WorkspaceSkillConflict,
   WorkspaceSkillMaterialization,
 } from "./types.js";
@@ -124,7 +125,7 @@ import { resolveWorkspaceSkillSet } from "./workspace-skill-set.js";
 import type { WorkspaceSkillRegistryInstallation, WorkspaceSkillRolloutPolicy } from "./workspace-skill-set.js";
 import { writeWorkspaceSkillLockfile } from "./workspace-skill-lockfile.js";
 import { deleteCommand, listCommands, upsertCommand } from "./commands.js";
-import { workspaceResourceOwner } from "./resource-owner.js";
+import { localUserResourceOwner, organizationResourceOwner, workspaceResourceOwner } from "./resource-owner.js";
 import { deleteScheduledJob, listScheduledJobs, resolveScheduledJob } from "./scheduler.js";
 import { provisionWorkspaceInternalSystem, resolveVesloAppDataDir } from "./internal-system.js";
 import { ApiError, formatError } from "./errors.js";
@@ -3489,6 +3490,7 @@ function skillRegistryRequestInput(ctx: RequestContext) {
 type SoulSummary = {
   scope: "organization" | "user" | "workspace";
   ownerId: string;
+  owner: ResourceOwner;
   title: string;
   currentVersionId: string | null;
   updatedAt: string | null;
@@ -3567,6 +3569,23 @@ function soulTitle(scope: SoulScope, workspace?: WorkspaceInfo): string {
   return workspace?.name ? `${workspace.name} Soul` : "Workspace Soul";
 }
 
+function soulResourceOwner(input: {
+  scope: SoulScope;
+  ownerId: string;
+  workspace?: WorkspaceInfo;
+}): ResourceOwner {
+  if (input.scope === "organization") {
+    return organizationResourceOwner({ orgId: input.ownerId, label: "Organization" });
+  }
+  if (input.scope === "user") {
+    return localUserResourceOwner({ userId: input.ownerId, label: "User" });
+  }
+  if (input.workspace) {
+    return ownerForWorkspace(input.workspace);
+  }
+  return workspaceResourceOwner({ workspaceId: input.ownerId });
+}
+
 function soulSummary(input: {
   scope: SoulScope;
   ownerId: string;
@@ -3579,6 +3598,7 @@ function soulSummary(input: {
   return {
     scope: input.scope,
     ownerId: input.ownerId,
+    owner: soulResourceOwner(input),
     title: soulTitle(input.scope, input.workspace),
     currentVersionId: input.document?.currentVersionId ?? null,
     updatedAt: soulUpdatedAt(input.document),

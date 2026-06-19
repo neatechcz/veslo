@@ -2,8 +2,10 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+import { localUserResourceOwner, organizationResourceOwner, workspaceResourceOwner } from "./resource-owner.js";
 import { readJsoncFile, updateJsoncTopLevel } from "./jsonc.js";
 import { currentSoulVersion, type SoulDocument, type SoulScope } from "./soul-memory.js";
+import type { ResourceOwner } from "./types.js";
 import { opencodeConfigPath } from "./workspace-files.js";
 import { ensureDir, exists } from "./utils.js";
 
@@ -56,6 +58,7 @@ export type SoulMaterializationConflict = {
 
 type SoulMaterializationFileResult = SoulMaterializationManifestFile & {
   absolutePath: string;
+  owner: ResourceOwner | null;
 };
 
 export type SoulMaterializationSuccess = {
@@ -143,6 +146,7 @@ export async function readSoulMaterializationStatus(
   const files = manifest.files.map((file) => ({
     ...file,
     absolutePath: join(workspaceRoot, file.path),
+    owner: soulFileResourceOwner(file.scope, file.ownerId),
   }));
   const contents = await Promise.all(files.map(async (file) => {
     try {
@@ -360,11 +364,13 @@ async function ensureSoulInstructions(configPath: string): Promise<void> {
 
 function manifestFileForSnapshot(snapshot: SourceSnapshot, materializedAt: string): SoulMaterializationFileResult {
   const document = snapshot.document;
+  const ownerId = document?.ownerId ?? null;
   return {
     path: snapshot.relativePath,
     absolutePath: snapshot.absolutePath,
     scope: snapshot.scope,
-    ownerId: document?.ownerId ?? null,
+    ownerId,
+    owner: soulFileResourceOwner(snapshot.scope, ownerId),
     documentId: document?.id ?? null,
     currentVersionId: document?.currentVersionId ?? null,
     sourceVersionId: snapshot.versionId,
@@ -379,7 +385,7 @@ function manifestForFiles(
   effectiveContent: string,
   generatedAt: string,
 ): SoulMaterializationManifest {
-  const manifestFiles = files.map(({ absolutePath: _absolutePath, ...file }) => file);
+  const manifestFiles = files.map(({ absolutePath: _absolutePath, owner: _owner, ...file }) => file);
   return {
     schemaVersion: MANIFEST_SCHEMA_VERSION,
     generatedAt,
@@ -395,6 +401,20 @@ function manifestForFiles(
     },
     files: manifestFiles,
   };
+}
+
+function soulFileResourceOwner(
+  scope: SoulScope,
+  ownerId: string | null,
+): ResourceOwner | null {
+  if (!ownerId) return null;
+  if (scope === "organization") {
+    return organizationResourceOwner({ orgId: ownerId, label: "Organization" });
+  }
+  if (scope === "user") {
+    return localUserResourceOwner({ userId: ownerId, label: "User" });
+  }
+  return workspaceResourceOwner({ workspaceId: ownerId });
 }
 
 async function writeManagedFile(path: string, content: string): Promise<void> {

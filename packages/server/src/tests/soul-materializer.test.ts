@@ -5,6 +5,7 @@ import { afterEach, expect, test } from "bun:test";
 
 import {
   materializeEffectiveSoul,
+  readSoulMaterializationStatus,
   soulMaterializationManifestPath,
   type SoulMaterializationManifest,
 } from "../soul-materializer.js";
@@ -89,6 +90,18 @@ test("effective Soul composes Organization, User, Workspace in order and writes 
   expect(result.ok).toBe(true);
   if (!result.ok) throw new Error(result.message);
   expect(result.effectiveContent).toBe("Organization memory\n\nUser memory\n\nWorkspace memory");
+  expect(result.files).toContainEqual(expect.objectContaining({
+    path: ".opencode/soul-company.md",
+    owner: { kind: "organization", id: "org_1", label: "Organization" },
+  }));
+  expect(result.files).toContainEqual(expect.objectContaining({
+    path: ".opencode/soul-user.md",
+    owner: { kind: "user", id: "user_1", label: "User" },
+  }));
+  expect(result.files).toContainEqual(expect.objectContaining({
+    path: ".opencode/soul-workspace.md",
+    owner: { kind: "workspace", id: "ws_1" },
+  }));
   expect(await readFile(join(workspaceRoot, ".opencode", "soul-company.md"), "utf8")).toBe("Organization memory\n");
   expect(await readFile(join(workspaceRoot, ".opencode", "soul-user.md"), "utf8")).toBe("User memory\n");
   expect(await readFile(join(workspaceRoot, ".opencode", "soul-workspace.md"), "utf8")).toBe("Workspace memory\n");
@@ -123,6 +136,13 @@ test("materializer writes and updates managed runtime files and manifest", async
     ownerId: "user_1",
     currentVersionId: "user_v2",
     managedBy: "veslo-soul-materializer",
+  }));
+  const status = await readSoulMaterializationStatus(workspaceRoot);
+  expect(status?.ok).toBe(true);
+  if (!status?.ok) throw new Error(status?.message ?? "Expected Soul materialization status");
+  expect(status.files).toContainEqual(expect.objectContaining({
+    path: ".opencode/soul-user.md",
+    owner: { kind: "user", id: "user_1", label: "User" },
   }));
 });
 

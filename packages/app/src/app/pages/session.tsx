@@ -1321,6 +1321,10 @@ export default function SessionView(props: SessionViewProps) {
     left.lastProgressAt === right.lastProgressAt &&
     left.baseline.assistantId === right.baseline.assistantId &&
     left.baseline.partCount === right.baseline.partCount;
+  const isActiveRunStatus = (status: string | null | undefined) => {
+    const normalized = status?.trim().toLowerCase() ?? "";
+    return Boolean(normalized && normalized !== "idle");
+  };
   const updateRunStateForSessionKey = (sessionKey: string, update: (current: RunUiState) => RunUiState) => {
     const key = sessionKey.trim();
     if (!key) return;
@@ -1331,12 +1335,13 @@ export default function SessionView(props: SessionViewProps) {
       return { ...current, [key]: next };
     });
   };
-  const resetRunState = (sessionKey = currentSessionQueueKey()) => {
+  const resetRunState = (sessionKey = currentSessionQueueKey(), reason = "reset") => {
     const key = sessionKey.trim();
     if (!key) return;
     const previous = untrack(runStateBySessionKey)[key];
     if (previous) {
       recordSendTrace("run-state:reset", {
+        reason,
         sessionKey: key,
         startedAt: previous.startedAt,
         hasBegun: previous.hasBegun,
@@ -1347,6 +1352,19 @@ export default function SessionView(props: SessionViewProps) {
       if (!(key in current)) return current;
       const { [key]: _removedRunState, ...rest } = current;
       return rest;
+    });
+  };
+  const preserveRunStateOnSessionSwitch = (sessionKey: string) => {
+    const key = sessionKey.trim();
+    if (!key) return;
+    const previous = untrack(runStateBySessionKey)[key];
+    if (!previous) return;
+    recordSendTrace("run-state:preserve-session-switch", {
+      sessionKey: key,
+      status: statusForQueueKey(key, props.sessionStatusById),
+      startedAt: previous.startedAt,
+      hasBegun: previous.hasBegun,
+      lastProgressAt: previous.lastProgressAt,
     });
   };
 
@@ -2507,11 +2525,11 @@ export default function SessionView(props: SessionViewProps) {
           ? pendingQueueKeyAwaitingSessionIdByBaseKey()[pendingBaseKey] ?? null
           : null;
         const previousSessionKey = previousSessionId ? sessionQueueKeyForSessionId(previousSessionId) : null;
-        // Reset run state when switching sessions so a stuck error from a
-        // previous session doesn't bleed into the new one. Pending first sends
-        // remap their optimistic draft to the materialized session instead.
+        // Switching sessions is navigation, not a runtime lifecycle operation:
+        // preserve the previous keyed run UI state and let scoped runtime
+        // status clear it when that conversation actually becomes idle.
         if (!pendingKey && previousSessionKey) {
-          resetRunState(previousSessionKey);
+          preserveRunStateOnSessionSwitch(previousSessionKey);
         }
         const previousEditingQueuedDraftId = editingQueuedDraftId();
         restoreEditingQueuedDraft(sessionQueueKeyForSessionId(previousSessionId), previousEditingQueuedDraftId);
@@ -2747,6 +2765,15 @@ export default function SessionView(props: SessionViewProps) {
           if (statusForQueueKey(sessionKey, statuses) !== "idle") continue;
           if (queuePausedForSessionKey(sessionKey)) continue;
           void drainNextQueuedDraft("queue-drain", sessionKey);
+        }
+        for (const [sessionKey, runState] of Object.entries(untrack(runStateBySessionKey))) {
+          if (!runState.startedAt && !runState.hasBegun) continue;
+          const sessionId = sessionIdForQueueKey(sessionKey);
+          if (!sessionId) continue;
+          const previousStatus = statusForQueueKey(sessionKey, previousStatuses);
+          const status = statusForQueueKey(sessionKey, statuses);
+          if (!isActiveRunStatus(previousStatus) || isActiveRunStatus(status)) continue;
+          resetRunState(sessionKey, "session-status-idle");
         }
       },
     ),

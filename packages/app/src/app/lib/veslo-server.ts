@@ -1225,6 +1225,7 @@ export type VesloSoulDocument = {
 export type VesloSoulSummary = {
   scope: VesloSoulScope;
   ownerId: string;
+  owner: VesloResourceOwner;
   title: string;
   currentVersionId: string | null;
   updatedAt: string | null;
@@ -1245,6 +1246,7 @@ export type VesloSoulMaterializationFile = {
   path: string;
   scope: VesloSoulScope;
   ownerId: string | null;
+  owner?: VesloResourceOwner | null;
   documentId: string | null;
   currentVersionId: string | null;
   sourceVersionId: string | null;

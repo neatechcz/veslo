@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <DirectoryRef Id="INSTALLDIR">
+      <Component Id="VesloWslProvisioningInstallerAnchor" Guid="36d5c50b-0df9-45ac-a2ae-6f0032f108d4">
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\Neatech\Veslo"
+          Name="WslProvisioningInstallerBridge"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <ComponentGroup Id="VesloWslProvisioningInstallerComponents">
+      <ComponentRef Id="VesloWslProvisioningInstallerAnchor" />
+    </ComponentGroup>
+
+    <CustomAction
+      Id="VesloProvisionWslSandbox"
+      Directory="INSTALLDIR"
+      Execute="deferred"
+      Impersonate="yes"
+      Return="ignore"
+      ExeCommand="&quot;[SystemFolder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -ExecutionPolicy Bypass -File &quot;[INSTALLDIR]resources\wsl2-sandbox-installer.ps1&quot;" />
+
+    <InstallExecuteSequence>
+      <Custom Action="VesloProvisionWslSandbox" After="InstallFiles"><![CDATA[NOT REMOVE~="ALL"]]></Custom>
+    </InstallExecuteSequence>
+  </Fragment>
+</Wix>

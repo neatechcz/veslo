@@ -26,6 +26,8 @@ const serverPkg = readJson(resolve(root, "packages", "server", "package.json"));
 const opencodeRouterPkg = readJson(resolve(root, "packages", "opencode-router", "package.json"));
 const tauriConfig = readJson(resolve(root, "packages", "desktop", "src-tauri", "tauri.conf.json"));
 const cargoVersion = readCargoVersion(resolve(root, "packages", "desktop", "src-tauri", "Cargo.toml"));
+const tauriBundleResources = tauriConfig.bundle?.resources ?? {};
+const tauriWindowsWix = tauriConfig.bundle?.windows?.wix ?? {};
 
 const versions = {
   app: appPkg.version ?? null,
@@ -116,6 +118,49 @@ addCheck(
   "Windows MSI upgrade code is pinned",
   typeof versions.windowsMsiUpgradeCode === "string" && versions.windowsMsiUpgradeCode.trim().length > 0,
   versions.windowsMsiUpgradeCode ?? "?",
+);
+addCheck(
+  "Windows MSI bundles desktop package manifest for WSL provisioning version pin",
+  tauriBundleResources["../package.json"] === "package.json" &&
+    existsSync(resolve(root, "packages", "desktop", "package.json")),
+  tauriBundleResources["../package.json"] ?? "?",
+);
+addCheck(
+  "Windows MSI bundles WSL sandbox provisioner",
+  tauriBundleResources["../../orchestrator/scripts/windows-wsl2-sandbox-provision.ps1"] ===
+    "windows-wsl2-sandbox-provision.ps1" &&
+    existsSync(resolve(root, "packages", "orchestrator", "scripts", "windows-wsl2-sandbox-provision.ps1")),
+  tauriBundleResources["../../orchestrator/scripts/windows-wsl2-sandbox-provision.ps1"] ?? "?",
+);
+addCheck(
+  "Windows MSI bundles WSL sandbox installer wrapper",
+  tauriBundleResources["windows/wsl2-sandbox-installer.ps1"] === "wsl2-sandbox-installer.ps1" &&
+    existsSync(resolve(root, "packages", "desktop", "src-tauri", "windows", "wsl2-sandbox-installer.ps1")),
+  tauriBundleResources["windows/wsl2-sandbox-installer.ps1"] ?? "?",
+);
+const wslInstallerFragmentPath = resolve(
+  root,
+  "packages",
+  "desktop",
+  "src-tauri",
+  "windows",
+  "wsl2-sandbox-installer.wxs",
+);
+const wslInstallerFragment = existsSync(wslInstallerFragmentPath) ? readText(wslInstallerFragmentPath) : "";
+addCheck(
+  "Windows MSI schedules WSL sandbox provisioning action",
+  Array.isArray(tauriWindowsWix.fragmentPaths) &&
+    tauriWindowsWix.fragmentPaths.includes("windows/wsl2-sandbox-installer.wxs") &&
+    Array.isArray(tauriWindowsWix.componentGroupRefs) &&
+    tauriWindowsWix.componentGroupRefs.includes("VesloWslProvisioningInstallerComponents") &&
+    /ComponentGroup\s+Id="VesloWslProvisioningInstallerComponents"/.test(wslInstallerFragment) &&
+    /Id="VesloProvisionWslSandbox"/.test(wslInstallerFragment) &&
+    /After="InstallFiles"/.test(wslInstallerFragment) &&
+    /Return="ignore"/.test(wslInstallerFragment) &&
+    /package\.json/.test(readText(resolve(root, "packages", "desktop", "src-tauri", "windows", "wsl2-sandbox-installer.ps1"))),
+  Array.isArray(tauriWindowsWix.fragmentPaths)
+    ? tauriWindowsWix.fragmentPaths.join(", ")
+    : "?",
 );
 addCheck(
   "OpenCodeRouter version pinned in desktop",

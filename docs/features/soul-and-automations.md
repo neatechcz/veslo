@@ -28,6 +28,12 @@ Current Soul behavior includes:
 - steering hints such as loose ends and next action
 - run heartbeat now flow
 
+Soul documents stay keyed by `scope + ownerId` internally. API read models also
+include a derived `owner` object with the same `kind/id/label/root` shape used
+by other Veslo resources, so organization, user, and workspace Soul sources can
+share inventory, audit, and multi-workspace ownership logic without migrating
+the stored Soul document format.
+
 ## Soul Setup Expectations
 
 Soul setup relies on a combination of:

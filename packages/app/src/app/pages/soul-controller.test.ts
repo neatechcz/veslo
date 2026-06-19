@@ -62,6 +62,11 @@ function summary(input: {
   return {
     scope: input.scope,
     ownerId: input.ownerId,
+    owner: {
+      kind: input.scope,
+      id: input.ownerId,
+      label: input.title,
+    },
     title: input.title,
     currentVersionId: input.currentVersionId,
     updatedAt: "2026-06-06T10:00:00.000Z",
