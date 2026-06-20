@@ -142,9 +142,21 @@ Optional macOS signing and notarization secrets:
 - `APPLE_SIGNING_IDENTITY`
 - `APPLE_CODESIGN_CERT_P12_BASE64`
 - `APPLE_CODESIGN_CERT_PASSWORD`
+
+macOS notarization can use either App Store Connect API key credentials:
+
 - `APPLE_NOTARY_API_KEY_ID`
 - `APPLE_NOTARY_API_ISSUER_ID`
 - `APPLE_NOTARY_API_KEY_P8_BASE64`
+
+Or Apple ID app-specific password credentials:
+
+- `APPLE_NOTARY_APPLE_ID`
+- `APPLE_NOTARY_APP_SPECIFIC_PASSWORD`
+- `APPLE_TEAM_ID` as a repository variable or secret
+
+Use the Apple ID path when the Developer Program account can access certificates at
+developer.apple.com but is not enabled for App Store Connect API keys.
 
 The signing decision is centralized in `scripts/release/release-signing.mjs`.
 

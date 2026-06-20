@@ -22,6 +22,12 @@ packages/desktop/src-tauri/sidecars/
 .env.*
 !.env.example
 
+# Local signing material
+Cert/
+*.p12
+*.p8
+AuthKey_*.p8
+
 # Bun build artifacts
 *.bun-build
 
