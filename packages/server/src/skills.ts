@@ -77,7 +77,7 @@ export function disabledRecordMatchesSkill(
 function applyDisabledSkillRecords(
   items: SkillItem[],
   options: Pick<ListSkillsOptions, "disabledSkills" | "workspaceId">,
-): Array<SkillItem & { enabled?: false; disabledReason?: "user" }> {
+): SkillItem[] {
   const disabledSkills = options.disabledSkills ?? [];
   if (disabledSkills.length === 0) return items;
   return items.map((item) => {

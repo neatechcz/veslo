@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, expect, test } from "bun:test";
 
 import { listSkills } from "../skills.js";
+import type { DisabledSkillRecord } from "../types.js";
 
 const tempDirs: string[] = [];
 

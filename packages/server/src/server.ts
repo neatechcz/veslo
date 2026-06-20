@@ -959,16 +959,6 @@ export function startServer(config: ServerConfig) {
   return server;
 }
 
-function isAuthorizedRootSync(workspacePath: string, roots: string[]): boolean {
-  const resolvedWorkspace = resolve(workspacePath);
-  for (const root of roots) {
-    const resolvedRoot = resolve(root);
-    if (resolvedWorkspace === resolvedRoot) return true;
-    if (resolvedWorkspace.startsWith(resolvedRoot + sep)) return true;
-  }
-  return false;
-}
-
 function matchRoute(routes: Route[], method: string, path: string) {
   for (const route of routes) {
     if (route.method !== method) continue;
@@ -3892,10 +3882,6 @@ function materializationSummaryPayload(entry: WorkspaceSkillMaterialization) {
     target: entry.target,
     removalPolicy: entry.removalPolicy,
   };
-}
-
-async function buildSoulMaterializationStatus(workspace: WorkspaceInfo): Promise<SoulMaterializationResult | undefined> {
-  return readSoulMaterializationStatus(workspace.path);
 }
 
 const materializationMatchesDesired = (

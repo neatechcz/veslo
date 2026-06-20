@@ -201,6 +201,8 @@ export interface SkillItem {
   path: string;
   description: string;
   scope: "project" | "global";
+  enabled?: boolean;
+  disabledReason?: "user";
   owner?: ResourceOwner;
   trigger?: string;
   disableModelInvocation?: boolean;
@@ -297,6 +299,7 @@ export type ResolvedWorkspaceSkill = {
   packageSha256: string;
   source: ManagedSkillSource;
   target: "workspace" | "personal-global";
+  removalPolicy: WorkspaceSkillRolloutRemovalPolicy;
   owner?: ResourceOwner;
 };
 
@@ -308,6 +311,7 @@ export type WorkspaceSkillMaterialization = {
   packageSha256: string;
   source: ManagedSkillSource;
   target: "workspace" | "personal-global";
+  removalPolicy: WorkspaceSkillRolloutRemovalPolicy;
   owner?: ResourceOwner;
 };
 

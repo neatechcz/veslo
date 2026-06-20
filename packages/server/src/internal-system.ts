@@ -1,4 +1,4 @@
-import { lstat, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, readdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { exists, ensureDir } from "./utils.js";
@@ -11,6 +11,7 @@ const AUTOMATIONS_PLUGIN_FILE = "veslo-automations.js";
 
 const ROUTING_BLOCK_START = "<!-- VESLO_INTERNAL_ROUTING_START -->";
 const ROUTING_BLOCK_END = "<!-- VESLO_INTERNAL_ROUTING_END -->";
+const ROUTING_BLOCK_VERSION = 3;
 
 const INSTRUCTIONS_BLOCK_START = "<!-- VESLO_INSTRUCTIONS_START -->";
 const INSTRUCTIONS_BLOCK_END = "<!-- VESLO_INSTRUCTIONS_END -->";
@@ -29,6 +30,9 @@ const LEGACY_INTERNAL_AGENT_FILES = [
 ] as const;
 
 const LEGACY_INTERNAL_AGENT_NAMES = LEGACY_INTERNAL_AGENT_FILES.map((name) => name.replace(/\.md$/i, ""));
+const INTERNAL_PACKS = LEGACY_INTERNAL_PACKS;
+const INTERNAL_AGENT_FILES = LEGACY_INTERNAL_AGENT_FILES;
+const MANIFEST_SCHEMA_VERSION = 1;
 
 type ProvisionStats = { written: number; unchanged: number };
 type InternalPacksMode = "symlink" | "copy" | "symlink-fallback-copy";
